@@ -69,16 +69,16 @@
 - Modify: `.github/workflows/ci.yml`
 - Create: `.github/workflows/release.yml`
 
-- [ ] Update official checkout/artifact action majors from current upstream
+- [x] Update official checkout/artifact action majors from current upstream
   documentation.
-- [ ] Add exact Rust 1.85 and source-package gates to normal CI while preserving
+- [x] Add exact Rust 1.85 and source-package gates to normal CI while preserving
   read-only permissions.
-- [ ] Add tag validation, four native build/archive/verification jobs, artifact
+- [x] Add tag validation, four native build/archive/verification jobs, artifact
   aggregation, and draft release creation with `--verify-tag`.
-- [ ] Validate workflow syntax and statically assert that only the release job
+- [x] Validate workflow syntax and statically assert that only the release job
   has `contents: write`, no workflow invokes `cargo publish`, and draft creation
   is mandatory.
-- [ ] Commit as `ci: prepare tag-gated draft releases`.
+- [x] Commit as `ci: prepare tag-gated draft releases`.
 
 ### Task 4: External-user and release-owner documentation
 

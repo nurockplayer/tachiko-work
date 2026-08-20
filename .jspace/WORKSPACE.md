@@ -267,3 +267,21 @@ registry-publication decision.
   mode, concurrent publication, both post-move and lock-acquisition signal
   windows, and release-policy duplication. Final scoped re-review approved the
   task with no remaining Critical or Important finding.
+
+### Task 3 evidence: CI and tag-gated draft release
+
+- Commits `86e603e` and `918a0c3` pin reconciled action commits, add read-only
+  stable and exact-Rust-1.85 CI, and add the four-target tag workflow.
+- The tag must exactly equal `v${workspace_version}` from the shared release
+  helper. Every runner builds, packages, verifies, extracts, and executes its
+  native target before upload.
+- Asset aggregation requires exactly four archives and four checksums and
+  revalidates every digest. Only the final job receives `contents: write`.
+- An authenticated paginated preflight includes draft releases and rejects any
+  existing exact tag record before `gh release create --verify-tag --draft`.
+  No path invokes `cargo publish` or promotes the draft automatically.
+- Review caught a malformed annotated rust-cache ref and GitHub's allowance for
+  duplicate same-tag drafts; both were fixed. Actionlint, pinned-action
+  resolution, static security checks, and final scoped re-review passed with no
+  remaining Critical or Important finding.
+- No tag, push, release, or other public state change was performed.
