@@ -456,3 +456,46 @@ the product's no-overwrite safety boundary.
   tagged release remain explicit later decisions.
 - No tag, push, draft release, registry publication, hosting visibility change,
   or other public state mutation was performed.
+
+## Active phase: computational formula authoring
+
+### Goal
+
+Let a designer create and revise deterministic game-balance formulas without
+editing the tagged canonical AST, while preserving typed references, semantic
+review, bounded execution, Git-native outputs, and AI approval.
+
+### Reconciled authority
+
+- Product checkpoint: `e3af399` (`feat: ship semantic entity lifecycle`).
+- Product decision: `docs/decisions/ADR-0014-computational-formula-authoring.md`.
+- Design: `docs/superpowers/specs/2026-08-20-formula-authoring.md`.
+- Plan: `docs/superpowers/plans/2026-08-20-formula-authoring.md`.
+- ADR-0010 deliberately deferred formula authoring until the editing workflow
+  stabilized. The product now validates scalar and entity lifecycle changes,
+  but formula creation still requires hand-authored JSON AST nodes.
+- The existing expression model already fixes the supported computational
+  boundary, so this phase adds a projection onto it rather than a new runtime.
+
+### Locked boundaries
+
+1. Bracketed `[entity.field]` references are unambiguous and use the semantic
+   identifier grammar.
+2. The language maps only to finite numeric literals, current arithmetic,
+   parentheses, unary signs, `min`, and `max`.
+3. Parser limits are 4,096 bytes, 256 nodes, and 64 nested constructs; failures
+   identify a stable byte position.
+4. Canonical explain/diff formatting is accepted parser input.
+5. Formula edits validate, calculate, and compare an immutable candidate before
+   exclusive output persistence.
+6. Typed AI formula suggestions remain inert and approval-required; formulas
+   cannot be silently replaced by scalar suggestions.
+7. Formula clearing, new runtime operations, schema authoring, scripting, and
+   spreadsheet compatibility remain deferred.
+
+### Verification gates
+
+- Test-first parser, workflow, AI, CLI, and output-safety seams.
+- A real Moonfall formula-authoring journey with deterministic bytes and
+  parse/reference/cycle rejection.
+- Full release verification and independent P0-P2 review before checkpointing.
