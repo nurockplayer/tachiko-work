@@ -89,14 +89,14 @@
 - Create: `SECURITY.md`
 - Modify: `.jspace/WORKSPACE.md`
 
-- [ ] Document binary checksum/install steps, source installation, supported
+- [x] Document binary checksum/install steps, source installation, supported
   targets, and the current unsigned-binary limitation.
-- [ ] Replace the generic release outline with the exact local validation,
+- [x] Replace the generic release outline with the exact local validation,
   version/tag, draft review, publication, and rollback procedure.
-- [ ] Add concise contribution quality gates and a private vulnerability
+- [x] Add concise contribution quality gates and a private vulnerability
   reporting policy that does not invent an unavailable contact address.
-- [ ] Record completed phase decisions and verification in j-space.
-- [ ] Commit as `docs: document release and support workflow`.
+- [x] Record completed phase decisions and verification in j-space.
+- [x] Commit as `docs: document release and support workflow`.
 
 ### Task 5: Release verification and independent review
 

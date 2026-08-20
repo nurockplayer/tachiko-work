@@ -55,6 +55,11 @@ tachiko-0.1.0-x86_64-apple-darwin.tar.gz
 tachiko-0.1.0-x86_64-pc-windows-msvc.tar.gz
 ```
 
+The GitHub repository is currently private. Even after a release is published,
+only authenticated GitHub users who have been granted repository access can
+download its assets. Publishing a release does not change repository
+visibility, and these instructions do not authorize changing it.
+
 Download the matching archive and its adjacent `.sha256` file from the same
 release. On Linux or macOS, run the checksum command for your platform and then
 extract the archive:

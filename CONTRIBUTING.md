@@ -10,9 +10,9 @@ Install stable Rust for development and the exact minimum version for
 compatibility checks:
 
 ```sh
-rustup toolchain install stable --component rustfmt clippy
+rustup toolchain install stable --component rustfmt,clippy
 rustup toolchain install 1.85.0
-cargo check --workspace --all-targets --locked
+cargo +1.85.0 check --workspace --all-targets --locked
 ```
 
 Use the checked-in `Cargo.lock`. The project does not require a global install;
