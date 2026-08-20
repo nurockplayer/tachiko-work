@@ -46,7 +46,7 @@ grep -F "renamed steel_sword -> moonblade" "${smoke_dir}/rename.txt" >/dev/null
 "${tachiko_bin}" validate "${renamed}" >"${smoke_dir}/validate-renamed.txt"
 "${tachiko_bin}" explain "${renamed}" moonblade.dps >"${smoke_dir}/explain.txt"
 grep -F "moonblade.dps = 50" "${smoke_dir}/explain.txt" >/dev/null
-grep -F "formula: (moonblade.damage / moonblade.attack_interval)" \
+grep -F "formula: ([moonblade.damage] / [moonblade.attack_interval])" \
   "${smoke_dir}/explain.txt" >/dev/null
 "${tachiko_bin}" calculate "${renamed}" >"${smoke_dir}/calculate.json"
 grep -F '"moonblade.damage": 45.0' "${smoke_dir}/calculate.json" >/dev/null

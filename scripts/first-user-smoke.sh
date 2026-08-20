@@ -27,7 +27,7 @@ grep -F "weapons · Iron Sword [iron_sword]" "${smoke_dir}/show.txt" >/dev/null
 grep -F "dps: 40 (formula)" "${smoke_dir}/show.txt" >/dev/null
 
 "${tachiko_bin}" explain "${base}" iron_sword.dps >"${smoke_dir}/explain.txt"
-grep -F "formula: (iron_sword.damage / iron_sword.attack_interval)" \
+grep -F "formula: ([iron_sword.damage] / [iron_sword.attack_interval])" \
   "${smoke_dir}/explain.txt" >/dev/null
 
 "${tachiko_bin}" set "${base}" iron_sword.damage 45 \

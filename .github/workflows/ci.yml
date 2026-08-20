@@ -54,6 +54,9 @@ jobs:
       - name: Exercise the entity lifecycle journey
         run: bash scripts/entity-lifecycle-smoke.sh
 
+      - name: Exercise the formula authoring journey
+        run: bash scripts/formula-authoring-smoke.sh
+
   minimum-rust:
     name: Minimum supported Rust 1.85.0
     runs-on: ubuntu-24.04

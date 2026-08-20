@@ -34,12 +34,17 @@ both components use `is_valid_identifier`.
 
 The parser rejects empty input, unknown functions/tokens, malformed numbers or
 references, missing delimiters/operands, non-finite literals, trailing content,
-input over 4,096 bytes, more than 256 AST nodes, or nesting beyond 64. Errors
-include the byte position where parsing became impossible and a stable message.
+input over 4,096 bytes, more than 256 AST nodes, post-desugaring AST depth over
+64, or a canonical formatted representation over 4,096 bytes. Syntactic nesting
+is also bounded before recursion. Errors include the byte position where
+parsing became impossible and a stable message.
 
-The canonical formatter uses the existing stable number rendering, bracketed
-references, parentheses around every binary operation, and `min`/`max` calls.
-Every successfully parsed expression must format and parse to the same AST.
+The canonical formatter uses the shortest round-tripping finite `f64`
+representation, bracketed references, parentheses around every binary
+operation, and `min`/`max` calls. Every successfully parsed expression must
+format within the source limit and parse to the same AST. A public iterative
+complexity gate applies the node/depth/canonical-byte rules to typed ASTs that
+did not originate in the parser.
 
 ## Workflow contract
 
@@ -55,10 +60,12 @@ therefore fail before persistence through existing typed diagnostics/errors.
 
 ## CLI contract
 
-`tachiko formula set INPUT FIELD EXPRESSION --output OUTPUT` is a nested Clap
+`tachiko formula set INPUT FIELD --expression 'EXPRESSION' --output OUTPUT` is a nested Clap
 surface parallel to `tachiko entity`. The command:
 
 - parses `FIELD` as one `entity.field` path;
+- accepts one named expression value with hyphen-value handling; shell examples
+  quote it so brackets, parentheses, `*`, and spaces are transported literally;
 - rejects the same input/output path;
 - loads a canonical validated source;
 - invokes `set_formula`;
@@ -72,7 +79,9 @@ file and preserve every existing byte.
 ## AI integration
 
 `suggest_field_change` accepts `Value::Formula` only for schema-numeric fields.
-It may replace a stored number or another formula, validates and calculates the
+It first applies the same iterative 256-node, 64-depth, and 4,096-canonical-byte
+gate as parser results, before any recursive validation or calculation. It may
+replace a stored number or another formula, validates and calculates the
 candidate, and remains inert with `requires_approval = true`. An existing
 formula still rejects a proposed scalar value so AI cannot silently erase
 computational intent.
@@ -80,14 +89,20 @@ computational intent.
 ## Verification
 
 - Parser tests lock precedence, associativity, unary behavior, all AST shapes,
-  identifier forms, scientific numbers, whitespace, round trips, diagnostics,
-  resource limits, and deterministic repeated results.
+  identifier forms, shortest scientific-number rendering, whitespace, round
+  trips, diagnostics, balanced node limits, flat-chain AST depth, canonical
+  byte admissibility, and deterministic repeated results.
 - Workflow tests cover numeric-to-formula, formula-to-formula, no-op, wrong
   target type, parse error, missing/non-numeric reference, cycle, division by
   zero, and source immutability.
-- AI tests cover inert valid formula proposals and refusal of formula-to-scalar.
+- AI tests cover numeric-to-formula, formula-to-different-formula, identical
+  formula no-op, formula-to-scalar refusal, wrong schema type, invalid
+  reference/cycle/calculation rejection, approval, source immutability, and
+  accepted/rejected typed AST node/depth/canonical-byte boundaries.
 - CLI tests cover help, success/impact/explain guidance, parse and semantic
-  errors, same-path and existing-output protection, and no-write failures.
+  errors, same-path and existing-output protection, no-write failures, and
+  transport of canonical explain output, `-1`, `-[entity.field]`, multiplication,
+  and spaced expressions while `--output` remains recognized.
 - A formula-authoring smoke edits the Moonfall DPS formula, verifies a result of
   45, proves repeat canonical bytes, and exercises parse/reference/cycle
   rejection before validate, diff, explain, and export.

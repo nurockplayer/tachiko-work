@@ -483,8 +483,9 @@ review, bounded execution, Git-native outputs, and AI approval.
    identifier grammar.
 2. The language maps only to finite numeric literals, current arithmetic,
    parentheses, unary signs, `min`, and `max`.
-3. Parser limits are 4,096 bytes, 256 nodes, and 64 nested constructs; failures
-   identify a stable byte position.
+3. Parser and typed-AST limits are 4,096 source/canonical bytes, 256 nodes, and
+   64 post-desugaring AST-depth levels; failures identify a stable byte position
+   or typed complexity error before recursive processing.
 4. Canonical explain/diff formatting is accepted parser input.
 5. Formula edits validate, calculate, and compare an immutable candidate before
    exclusive output persistence.
@@ -493,9 +494,68 @@ review, bounded execution, Git-native outputs, and AI approval.
 7. Formula clearing, new runtime operations, schema authoring, scripting, and
    spreadsheet compatibility remain deferred.
 
+The pre-implementation review found that syntactic nesting alone did not bound
+flat-chain AST depth or guarantee canonical reparse, and that typed AI formulas
+could bypass text-parser limits. It also identified shell transport ambiguity
+for leading hyphens. The contract now requires one shared iterative complexity
+gate, canonical-byte admissibility with shortest finite-number rendering, and a
+quoted named `--expression` option with explicit hyphen-value handling.
+
 ### Verification gates
 
 - Test-first parser, workflow, AI, CLI, and output-safety seams.
 - A real Moonfall formula-authoring journey with deterministic bytes and
   parse/reference/cycle rejection.
 - Full release verification and independent P0-P2 review before checkpointing.
+
+### Task 1 evidence: bounded formula language
+
+- Commits `35c16c4` and `bfcddeb` add bracketed semantic references,
+  precedence-aware arithmetic, unary signs, parentheses, `min`/`max`, stable
+  byte-position errors, and one canonical formatter.
+- Review exposed flat-chain depth/canonical-roundtrip and typed-AI bypass gaps.
+  The fix added one public iterative gate for 256 nodes, 64 post-desugaring AST
+  depth, and 4,096 canonical bytes, plus bit-exact shortest Display/scientific
+  finite-number selection.
+- All 24 formula-engine tests passed, including exact and excess boundaries,
+  balanced node trees, flat and unary depth, canonical expansion, extreme
+  numbers, source bytes, deterministic round trips, and all expression shapes.
+  Warnings-as-errors Clippy and exact Rust 1.85 all-target checking passed.
+
+### Task 2 evidence: validated computational edits
+
+- Commit `c7b523a` adds immutable `set_formula` for schema-numeric fields through
+  the shared validate → calculate → semantic-diff finalizer.
+- Workflow and semantic-diff rendering now consume the formula engine's
+  canonical bracketed formatter instead of maintaining divergent renderers.
+- All 20 workflow and eight diff-engine tests passed. Coverage includes
+  numeric-to-formula, formula-to-formula, no-op, wrong type, invalid syntax,
+  missing reference, cycle, division by zero, derived impact, source
+  immutability, and copy/paste diff/explain syntax.
+
+### Task 3 evidence: AI approval and CLI transport
+
+- Commit `d56e2b6` allows bounded typed formula suggestions for numeric fields
+  while preserving inert approval, validation, calculation, source
+  immutability, no-op refusal, and formula-to-scalar protection.
+- `tachiko formula set` uses a quoted named `--expression` option with explicit
+  hyphen-value handling, canonical exclusive output, semantic impact, and an
+  explain next step.
+- All eight AI and 31 CLI tests passed. Typed ASTs at the node/depth boundaries
+  succeed; excess depth, nodes, or canonical bytes return typed errors before
+  recursion. Process tests prove canonical explain output, `-1`, unary reference
+  negation, multiplication, spaces, and `--output` reach the correct parser and
+  preserve every file on failure.
+
+### Task 4 evidence: computational-authoring journey
+
+- The new real journey revises Moonfall DPS to
+  `min(60, [iron_sword.damage] / [iron_sword.attack_interval] + 5)`, verifies
+  the 45-DPS result, canonical explanation and diff, deterministic repeated
+  bytes, validation, calculation, and runtime export.
+- Invalid syntax, a missing reference, and a dependency cycle each return an
+  actionable error and create no output. Bash syntax and ShellCheck passed.
+- README and the Moonfall guide document quoted authoring syntax, operations,
+  limits, error behavior, AI approval, and the copy/paste explain contract.
+  All four product journeys passed twice against the same built CLI; ordinary
+  CI and the local release gate now require all four.

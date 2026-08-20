@@ -49,14 +49,19 @@ canonical formatter. The language supports:
 
 Bracketed paths remove ambiguity between decimal literals, subtraction, and
 semantic identifiers that may contain `-`. Both path components must satisfy
-the semantic-core identifier grammar. The formatter emits fully parenthesized
-binary expressions and bracketed references, so output from `tachiko explain`
-can be pasted back into the authoring command.
+the semantic-core identifier grammar. The formatter emits shortest
+round-tripping finite numbers, fully parenthesized binary expressions, and
+bracketed references, so output from `tachiko explain` can be pasted back into
+the authoring command.
 
-Parsing is side-effect free and limited to 4,096 input bytes, 256 expression
-nodes, and 64 nested constructs. Failures report a stable byte position and an
-actionable reason. The parser does not perform document lookup; semantic-core
-validation remains the authority for reference existence and numeric type.
+Parsing is side-effect free and limited to 4,096 source bytes, 256 expression
+nodes, 64 levels of post-desugaring AST depth, and 4,096 canonical formatted
+bytes. Both parser-built and directly supplied typed expressions pass the same
+iterative complexity gate before recursive processing. This makes flat operator
+chains and generated AI ASTs subject to the same resource boundary. Failures
+report a stable byte position and an actionable reason. The parser does not
+perform document lookup; semantic-core validation remains the authority for
+reference existence and numeric type.
 
 The workflow adds a validated formula edit that:
 
@@ -69,17 +74,23 @@ The workflow adds a validated formula edit that:
 The CLI exposes:
 
 ```text
-tachiko formula set INPUT.ro ENTITY.FIELD EXPRESSION --output OUTPUT.ro
+tachiko formula set INPUT.ro ENTITY.FIELD --expression 'EXPRESSION' --output OUTPUT.ro
 ```
 
 It exclusively creates a distinct output, prints semantic impact, and suggests
 `explain` as the next step. Replacing a formula with a stored scalar remains an
 explicitly separate operation and is not smuggled through scalar `set`.
 
+The named expression option has explicit hyphen-value handling, so quoted
+canonical formulas, multiplication, spaces, `-1`, and `-[entity.field]` reach
+the parser without colliding with CLI options. Shell examples always quote the
+formula to prevent glob expansion.
+
 The AI API may propose a typed `Value::Formula` for a numeric field through its
 existing inert suggestion model. Formula-to-formula and numeric-to-formula
-suggestions require approval; formula-to-scalar suggestions remain refused.
-The AI API still performs no write.
+suggestions pass the shared iterative complexity gate and require approval;
+formula-to-scalar suggestions remain refused. The AI API still performs no
+write.
 
 ## Consequences
 

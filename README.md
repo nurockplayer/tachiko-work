@@ -22,6 +22,7 @@ The current product provides a complete, safe game-balance workflow:
 - semantic diff with derived formula impact;
 - guided starter creation, browsing, explanation, and typed edits;
 - validated entity duplication, relationship-safe rename, and protected removal;
+- bounded formula creation and revision with canonical expression syntax;
 - CLI validation and evaluated runtime JSON export;
 - read-only AI structure/formula/impact queries and approval-required suggestions.
 
@@ -154,6 +155,29 @@ target. Removing an unreferenced entity is explicit and safe:
 tachiko entity remove with-moonblade.ro moonblade --output without-moonblade.ro
 ```
 
+## Author computations
+
+Create or revise a formula on any schema-numeric field. References use
+bracketed semantic paths, arithmetic follows standard precedence, and `min` and
+`max` each accept two expressions:
+
+```sh
+tachiko formula set balance.ro iron_sword.dps \
+  --expression 'min(60, [iron_sword.damage] / [iron_sword.attack_interval] + 5)' \
+  --output capped-dps.ro
+tachiko explain capped-dps.ro iron_sword.dps
+tachiko diff balance.ro capped-dps.ro
+```
+
+The result is 45 DPS. `explain` prints canonical syntax that can be pasted back
+into `--expression`. Always quote formulas in a shell so brackets, parentheses,
+spaces, and `*` are passed literally. Invalid syntax, missing or non-numeric
+references, cycles, division by zero, non-finite results, and expressions over
+the bounded size/depth limits create no output.
+
+Typed AI formula proposals use the same complexity and semantic gates, remain
+inert, and require an approved write path.
+
 ## Combine independent balance branches
 
 Start each branch from the same canonical document and create a distinct output
@@ -176,12 +200,12 @@ producing new semantic inputs and rerunning the command.
 
 - `semantic-core`: document, schema, typed values/references, validation
 - `storage`: canonical `.ro` parsing, versioning, and serialization
-- `formula-engine`: deterministic expression evaluation and dependencies
+- `formula-engine`: bounded expression parsing, canonical formatting, evaluation, and dependencies
 - `diff-engine`: entity/field changes and calculated impact
 - `merge-engine`: deterministic typed three-way semantic reconciliation
 - `ai-api`: read/explain/suggest-only semantic operations
-- `workflow`: reusable starter, explanation, safe-edit, and entity lifecycle operations
-- `cli`: creation, exploration, lifecycle, review, merge, validation, and export workflows
+- `workflow`: reusable starter, explanation, scalar/formula editing, and entity lifecycle operations
+- `cli`: creation, exploration, computational authoring, lifecycle, review, merge, validation, and export
 
 For a fast contributor check after an edit, run:
 
@@ -196,7 +220,7 @@ components plus the exact minimum toolchain. Then run the complete
 release-equivalent gate from a clean local commit. The gate selects stable for
 all normal and nested commands even if the caller has another rustup override;
 it separately checks Rust 1.85 compatibility, warning-free documentation,
-deterministic dependency notices, Cargo packages, all real user journeys, and
+deterministic dependency notices, Cargo packages, all four real user journeys, and
 the native release archive:
 
 ```sh

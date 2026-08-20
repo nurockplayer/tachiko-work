@@ -121,7 +121,7 @@ relationships to other entities retain their original meaning:
   "$moonfall_demo/moonfall-with-moonblade.ro" moonblade.dps
 ```
 
-The final formula is `(moonblade.damage / moonblade.attack_interval)` and
+The final formula is `([moonblade.damage] / [moonblade.attack_interval])` and
 calculates to 50 DPS. Rename also rewrites stored typed relationships and
 references from formulas owned by other entities.
 
@@ -135,6 +135,28 @@ removed explicitly:
   "$moonfall_demo/moonfall-with-moonblade.ro" moonblade \
   --output "$moonfall_demo/moonfall-pruned.ro"
 ```
+
+## Author a formula
+
+Formula authoring projects directly onto the typed expression model. This
+variant adds a flat 5-DPS bonus and a 60-DPS cap without editing JSON:
+
+```sh
+./target/debug/tachiko formula set \
+  "$moonfall_demo/moonfall.ro" iron_sword.dps \
+  --expression 'min(60, [iron_sword.damage] / [iron_sword.attack_interval] + 5)' \
+  --output "$moonfall_demo/moonfall-capped-dps.ro"
+./target/debug/tachiko explain \
+  "$moonfall_demo/moonfall-capped-dps.ro" iron_sword.dps
+./target/debug/tachiko diff \
+  "$moonfall_demo/moonfall.ro" "$moonfall_demo/moonfall-capped-dps.ro"
+```
+
+The new result is 45. References use `[entity.field]`; supported operations are
+finite numbers, `+`, `-`, `*`, `/`, parentheses, unary signs, `min`, and `max`.
+Quote `--expression` values in the shell. Tachiko refuses invalid syntax,
+references, cycles, calculation failures, unchanged formulas, and bounded
+complexity violations before creating an output.
 
 ## Why `.ro` in Git
 

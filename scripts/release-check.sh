@@ -82,6 +82,9 @@ bash scripts/collaboration-smoke.sh
 echo "==> semantic entity lifecycle workflow"
 bash scripts/entity-lifecycle-smoke.sh
 
+echo "==> computational formula authoring workflow"
+bash scripts/formula-authoring-smoke.sh
+
 native_target="$(rustc -vV | awk '/^host: / { print $2 }')"
 [[ -n "${native_target}" ]] || {
   echo "release-check: could not determine the native Rust target" >&2
