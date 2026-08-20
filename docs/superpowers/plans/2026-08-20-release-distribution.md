@@ -32,18 +32,18 @@
 - Create: `LICENSE-MIT`
 - Create: `CHANGELOG.md`
 
-- [ ] Record the current failing `cargo package --workspace --allow-dirty
+- [x] Record the current failing `cargo package --workspace --allow-dirty
   --locked --no-verify` output for missing dependency versions.
-- [ ] Add shared workspace package metadata and a specific description for each
+- [x] Add shared workspace package metadata and a specific description for each
   crate.
-- [ ] Add `version = "0.1.0"` beside every internal `path` dependency,
+- [x] Add `version = "0.1.0"` beside every internal `path` dependency,
   including development dependencies.
-- [ ] Add canonical Apache-2.0 and MIT texts plus a `0.1.0` changelog based only
+- [x] Add canonical Apache-2.0 and MIT texts plus a `0.1.0` changelog based only
   on implemented product behavior.
-- [ ] Run source packaging and inspect every archive for the inherited README,
+- [x] Run source packaging and inspect every archive for the inherited README,
   SPDX license expression, and repository metadata; both canonical license
   texts remain mandatory in the repository and native binary archives.
-- [ ] Commit as `build: make workspace crates packageable`.
+- [x] Commit as `build: make workspace crates packageable`.
 
 ### Task 2: Reproducible native archive scripts
 

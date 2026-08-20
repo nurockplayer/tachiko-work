@@ -237,3 +237,15 @@ registry-publication decision.
 - Release workflow validation proves tag/version equality, draft-only behavior,
   existing-tag verification, and least-privilege permissions.
 - A single local release-check script reproduces all platform-independent gates.
+
+### Task 1 evidence: package and legal contract
+
+- Commit `93316aa` adds complete shared metadata, crate-specific descriptions,
+  compatible versions for all 19 internal path dependencies, canonical dual
+  license texts, and the factual `0.1.0` changelog.
+- `cargo package --workspace --locked --no-verify` produced all eight source
+  archives; each retained the inherited README, SPDX expression, repository,
+  and normalized registry dependency versions.
+- Locked workspace check and all 98 tests across 17 suites passed.
+- Independent package/standards review reported zero Critical, Important, or
+  Minor findings.
