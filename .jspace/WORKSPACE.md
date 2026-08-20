@@ -123,3 +123,37 @@ can use without understanding `.ro` internals.
 - Final independent product/spec review: no remaining actionable findings.
 - The user's release-ownership instruction authorizes committing this verified
   checkpoint before beginning the next product phase.
+
+## Active phase: semantic collaboration
+
+### Goal
+
+Let a game team safely combine concurrent balance branches through typed,
+validated three-way merge instead of resolving raw JSON conflicts.
+
+### Reconciled authority
+
+- Product checkpoint: `393bc69` (`feat: ship first usable Tachiko Work product`).
+- Product decision: `docs/decisions/ADR-0011-semantic-three-way-merge.md`.
+- Design: `docs/superpowers/specs/2026-08-20-semantic-merge.md`.
+- ADR-0002 requires semantic merge for the game-development wedge; ADR-0008
+  deferred it until the now-verified usability milestone.
+- ADR-0003 remains proposed, so this phase operates on the semantic model and
+  canonical `.ro` inputs without inventing `.roproj` behavior.
+
+### Locked boundaries
+
+1. A UI-independent merge engine owns three-way model reconciliation.
+2. Independent fields inside existing schemas/entities merge recursively.
+3. Conflicts preserve typed base/ours/theirs meaning in stable path order.
+4. Conflict-free candidates must validate and calculate before persistence.
+5. CLI output is exclusive-create; conflict and invalid candidates write nothing.
+6. Git-driver configuration and interactive resolution remain follow-up adapters.
+
+### Verification gates
+
+- Every merge rule follows a red/green test cycle.
+- Engine tests cover compatible, conflicting, invalid, and deterministic cases.
+- CLI process tests cover success, conflict, and overwrite safety.
+- A real collaboration smoke test exercises merge, validation, and impact review.
+- Full formatting, clippy, tests, docs, and both smoke journeys must pass.
