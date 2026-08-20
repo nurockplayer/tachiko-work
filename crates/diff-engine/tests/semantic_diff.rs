@@ -106,6 +106,29 @@ fn changed_balance_value_reports_direct_and_derived_meaning() {
 }
 
 #[test]
+fn formula_changes_render_in_canonical_copy_paste_syntax() {
+    let before = balance_document(100.0);
+    let mut after = before.clone();
+    after.entities.get_mut("sword").unwrap().fields.insert(
+        FieldId::from("dps"),
+        Value::Formula(Expression::Add {
+            left: Box::new(Expression::Divide {
+                left: Box::new(reference("sword", "damage")),
+                right: Box::new(reference("sword", "attack_interval")),
+            }),
+            right: Box::new(Expression::Number(5.0)),
+        }),
+    );
+
+    let rendered = diff(&before, &after).unwrap().render_text();
+
+    assert!(rendered.contains(
+        "dps: ([sword.damage] / [sword.attack_interval]) -> (([sword.damage] / [sword.attack_interval]) + 5)"
+    ));
+    assert!(rendered.contains("affected dps: 80 -> 85"));
+}
+
+#[test]
 fn entity_addition_and_removal_are_semantic() {
     let before = balance_document(100.0);
     let mut after = before.clone();

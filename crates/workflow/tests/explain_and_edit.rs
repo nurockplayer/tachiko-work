@@ -1,6 +1,9 @@
-use tachiko_semantic_core::{EntityId, FieldDefinition, FieldId, FieldRef, FieldType, Value};
+use tachiko_formula_engine::calculate;
+use tachiko_semantic_core::{
+    EntityId, Expression, FieldDefinition, FieldId, FieldRef, FieldType, Value,
+};
 use tachiko_workflow::{
-    StarterTemplate, WorkflowError, create_document, explain_field, set_scalar,
+    StarterTemplate, WorkflowError, create_document, explain_field, set_formula, set_scalar,
 };
 
 #[test]
@@ -13,7 +16,7 @@ fn formula_explanation_connects_expression_dependencies_and_result() {
     assert_eq!(explanation.display_value, "40");
     assert_eq!(
         explanation.expression.as_deref(),
-        Some("(iron_sword.damage / iron_sword.attack_interval)")
+        Some("([iron_sword.damage] / [iron_sword.attack_interval])")
     );
     assert_eq!(
         explanation.dependencies,
@@ -23,6 +26,119 @@ fn formula_explanation_connects_expression_dependencies_and_result() {
         ]
     );
     assert!(explanation.affected_formulas.is_empty());
+}
+
+#[test]
+fn formula_edit_maps_authoring_syntax_to_a_valid_immutable_preview() {
+    let document = create_document(StarterTemplate::GameBalance, "game", "Game");
+    let field = FieldRef::new("iron_sword", "dps");
+    let input = "min(60, [iron_sword.damage] / [iron_sword.attack_interval] + 5)";
+
+    let preview = set_formula(&document, &field, input).expect("formula edit should be valid");
+
+    assert_eq!(
+        preview.document.entities["iron_sword"].fields["dps"],
+        Value::Formula(Expression::Minimum {
+            left: Box::new(Expression::Number(60.0)),
+            right: Box::new(Expression::Add {
+                left: Box::new(Expression::Divide {
+                    left: Box::new(Expression::Reference(
+                        FieldRef::new("iron_sword", "damage",)
+                    )),
+                    right: Box::new(Expression::Reference(FieldRef::new(
+                        "iron_sword",
+                        "attack_interval",
+                    ))),
+                }),
+                right: Box::new(Expression::Number(5.0)),
+            }),
+        })
+    );
+    assert_eq!(
+        calculate(&preview.document).unwrap().value(&field),
+        Some(45.0)
+    );
+    assert_eq!(
+        calculate(&document).unwrap().value(&field),
+        Some(40.0),
+        "formula editing must not mutate the source"
+    );
+    let rendered = preview.diff.render_text();
+    assert!(rendered.contains(
+        "dps: ([iron_sword.damage] / [iron_sword.attack_interval]) -> min(60, (([iron_sword.damage] / [iron_sword.attack_interval]) + 5))"
+    ));
+    assert!(rendered.contains("affected dps: 40 -> 45"));
+}
+
+#[test]
+fn formula_edit_can_turn_a_stored_number_into_a_computed_field() {
+    let document = create_document(StarterTemplate::GameBalance, "game", "Game");
+    let field = FieldRef::new("iron_sword", "damage");
+
+    let preview = set_formula(&document, &field, "[iron_sword.price] / 3")
+        .expect("a numeric input may become a formula");
+
+    assert!(matches!(
+        preview.document.entities["iron_sword"].fields["damage"],
+        Value::Formula(_)
+    ));
+    let calculation = calculate(&preview.document).unwrap();
+    assert_eq!(calculation.value(&field), Some(40.0));
+    assert_eq!(
+        calculation.value(&FieldRef::new("iron_sword", "dps")),
+        Some(40.0 / 0.9)
+    );
+}
+
+#[test]
+fn formula_edit_refuses_invalid_targets_syntax_semantics_and_calculation() {
+    let document = create_document(StarterTemplate::GameBalance, "game", "Game");
+
+    let wrong_type = set_formula(&document, &FieldRef::new("iron_sword", "name"), "1 + 2")
+        .expect_err("text fields cannot become formulas");
+    assert!(matches!(
+        wrong_type,
+        WorkflowError::NonNumericFormulaField { .. }
+    ));
+
+    let invalid = set_formula(&document, &FieldRef::new("iron_sword", "dps"), "min(1,")
+        .expect_err("invalid syntax must fail");
+    assert!(matches!(invalid, WorkflowError::InvalidFormula { .. }));
+
+    let no_change = set_formula(
+        &document,
+        &FieldRef::new("iron_sword", "dps"),
+        "[iron_sword.damage] / [iron_sword.attack_interval]",
+    )
+    .expect_err("the same formula must be refused");
+    assert!(matches!(no_change, WorkflowError::NoChange { .. }));
+
+    let missing_field = set_formula(&document, &FieldRef::new("iron_sword", "missing"), "1")
+        .expect_err("missing fields must fail");
+    assert!(matches!(missing_field, WorkflowError::MissingField { .. }));
+
+    let missing_reference = set_formula(
+        &document,
+        &FieldRef::new("iron_sword", "dps"),
+        "[missing.damage]",
+    )
+    .expect_err("missing references must fail validation");
+    assert!(matches!(
+        missing_reference,
+        WorkflowError::InvalidDocument { .. }
+    ));
+
+    let cycle = set_formula(
+        &document,
+        &FieldRef::new("iron_sword", "dps"),
+        "[iron_sword.dps] + 1",
+    )
+    .expect_err("cycles must fail calculation");
+    assert!(matches!(cycle, WorkflowError::Calculation(_)));
+
+    let division_by_zero = set_formula(&document, &FieldRef::new("iron_sword", "dps"), "1 / 0")
+        .expect_err("division by zero must fail calculation");
+    assert!(matches!(division_by_zero, WorkflowError::Calculation(_)));
 }
 
 #[test]

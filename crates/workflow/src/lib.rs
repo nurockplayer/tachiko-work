@@ -3,7 +3,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use tachiko_diff_engine::{DiffError, SemanticDiff, diff};
-use tachiko_formula_engine::{CalculationError, calculate};
+use tachiko_formula_engine::{
+    CalculationError, FormulaParseError, calculate, format_expression, parse_expression,
+};
 use tachiko_semantic_core::{
     Diagnostic, Document, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldRef,
     FieldType, Schema, SchemaId, Value, is_valid_identifier, validate_document,
@@ -101,6 +103,14 @@ pub enum WorkflowError {
     MissingSchema { schema: SchemaId },
     #[error("field '{field}' is a formula; edit its inputs instead")]
     FormulaEdit { field: FieldRef },
+    #[error("field '{field}' is not numeric; formulas require a numeric field")]
+    NonNumericFormulaField { field: FieldRef },
+    #[error("invalid formula for '{field}': {source}")]
+    InvalidFormula {
+        field: FieldRef,
+        #[source]
+        source: FormulaParseError,
+    },
     #[error("'{input}' is not a valid {expected} value for '{field}'")]
     InvalidValue {
         field: FieldRef,
@@ -324,6 +334,74 @@ pub fn set_scalar(
     };
     edited_entity.fields.insert(field.field.clone(), value);
 
+    finalize_edit(document, edited)
+}
+
+/// Parse and apply a formula edit to a schema-numeric field without mutating
+/// the source document.
+///
+/// The candidate is validated, calculated, and semantically compared before it
+/// is returned. Stored numeric inputs may become formulas; formulas may be
+/// revised. Other schema types are never coerced.
+///
+/// # Errors
+///
+/// Returns an error for missing or non-numeric fields, invalid formula syntax,
+/// an unchanged formula, validation or calculation failure, or comparison
+/// failure.
+pub fn set_formula(
+    document: &Document,
+    field: &FieldRef,
+    input: &str,
+) -> Result<EditPreview, WorkflowError> {
+    let entity =
+        document
+            .entities
+            .get(&field.entity)
+            .ok_or_else(|| WorkflowError::MissingEntity {
+                entity: field.entity.clone(),
+            })?;
+    let existing = entity
+        .fields
+        .get(&field.field)
+        .ok_or_else(|| WorkflowError::MissingField {
+            field: field.clone(),
+        })?;
+    let definition = document
+        .schemas
+        .get(&entity.schema)
+        .ok_or_else(|| WorkflowError::MissingSchema {
+            schema: entity.schema.clone(),
+        })?
+        .fields
+        .get(&field.field)
+        .ok_or_else(|| WorkflowError::MissingField {
+            field: field.clone(),
+        })?;
+    if definition.field_type != FieldType::Number {
+        return Err(WorkflowError::NonNumericFormulaField {
+            field: field.clone(),
+        });
+    }
+
+    let expression = parse_expression(input).map_err(|source| WorkflowError::InvalidFormula {
+        field: field.clone(),
+        source,
+    })?;
+    let value = Value::Formula(expression);
+    if existing == &value {
+        return Err(WorkflowError::NoChange {
+            field: field.clone(),
+        });
+    }
+
+    let mut edited = document.clone();
+    let Some(edited_entity) = edited.entities.get_mut(&field.entity) else {
+        return Err(WorkflowError::MissingEntity {
+            entity: field.entity.clone(),
+        });
+    };
+    edited_entity.fields.insert(field.field.clone(), value);
     finalize_edit(document, edited)
 }
 
@@ -786,35 +864,6 @@ fn format_value(value: &Value) -> String {
         Value::Reference(entity) => format!("→ {entity}"),
         Value::Formula(_) => "formula".to_owned(),
     }
-}
-
-fn format_expression(expression: &Expression) -> String {
-    match expression {
-        Expression::Number(number) => format_number(*number),
-        Expression::Reference(reference) => reference.to_string(),
-        Expression::Add { left, right } => format_binary(left, "+", right),
-        Expression::Subtract { left, right } => format_binary(left, "-", right),
-        Expression::Multiply { left, right } => format_binary(left, "*", right),
-        Expression::Divide { left, right } => format_binary(left, "/", right),
-        Expression::Minimum { left, right } => format!(
-            "min({}, {})",
-            format_expression(left),
-            format_expression(right)
-        ),
-        Expression::Maximum { left, right } => format!(
-            "max({}, {})",
-            format_expression(left),
-            format_expression(right)
-        ),
-    }
-}
-
-fn format_binary(left: &Expression, operator: &str, right: &Expression) -> String {
-    format!(
-        "({} {operator} {})",
-        format_expression(left),
-        format_expression(right)
-    )
 }
 
 fn format_number(number: f64) -> String {

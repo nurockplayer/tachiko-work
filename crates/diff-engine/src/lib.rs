@@ -2,10 +2,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use tachiko_formula_engine::{CalculationError, calculate};
+use tachiko_formula_engine::{CalculationError, calculate, format_expression};
 use tachiko_semantic_core::{
-    Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldRef, Schema,
-    SchemaId, Value,
+    Document, DocumentId, Entity, EntityId, FieldDefinition, FieldId, FieldRef, Schema, SchemaId,
+    Value,
 };
 use thiserror::Error;
 
@@ -528,39 +528,6 @@ fn format_value(value: &Value) -> String {
         Value::Reference(entity) => format!("reference({entity})"),
         Value::Formula(expression) => format_expression(expression),
     }
-}
-
-fn format_expression(expression: &Expression) -> String {
-    match expression {
-        Expression::Number(number) => format_number(*number),
-        Expression::Reference(reference) => reference.to_string(),
-        Expression::Add { left, right } => format_binary(left, "+", right),
-        Expression::Subtract { left, right } => format_binary(left, "-", right),
-        Expression::Multiply { left, right } => format_binary(left, "*", right),
-        Expression::Divide { left, right } => format_binary(left, "/", right),
-        Expression::Minimum { left, right } => {
-            format!(
-                "min({}, {})",
-                format_expression(left),
-                format_expression(right)
-            )
-        }
-        Expression::Maximum { left, right } => {
-            format!(
-                "max({}, {})",
-                format_expression(left),
-                format_expression(right)
-            )
-        }
-    }
-}
-
-fn format_binary(left: &Expression, operator: &str, right: &Expression) -> String {
-    format!(
-        "({} {operator} {})",
-        format_expression(left),
-        format_expression(right)
-    )
 }
 
 fn format_number(number: f64) -> String {
