@@ -1,0 +1,24 @@
+[package]
+name = "tachiko-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "tachiko"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tachiko-diff-engine = { path = "../diff-engine" }
+tachiko-formula-engine = { path = "../formula-engine" }
+tachiko-semantic-core = { path = "../semantic-core" }
+tachiko-storage = { path = "../storage" }
+tachiko-workflow = { path = "../workflow" }
+thiserror.workspace = true
+
+[lints]
+workspace = true

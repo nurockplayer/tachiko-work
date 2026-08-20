@@ -6,7 +6,7 @@ Do not build Office compatibility first.
 
 Prove the new model first.
 
-## Suggested Components
+## MVP Components
 
 ```
 Rust Core
@@ -16,19 +16,24 @@ Rust Core
  +-- formula engine
  +-- storage
  +-- diff engine
-
-Frontend
- |
- +-- React UI
- +-- spreadsheet interaction
+ +-- CLI
+ +-- AI semantic read/query
+ +-- game balance example
 ```
 
 ## MVP Success Criteria
 
-A designer can modify game data.
+A developer or technical designer can create and modify game balance data.
 
-A developer can review changes through Git.
+A developer can review semantic changes through Git-friendly diff.
 
-The system can validate and explain the impact of changes.
+The system can validate documents, calculate formulas, and explain the model and
+impact of changes through the CLI and AI read/query interface.
 
-This proves the foundation before expanding into general productivity.
+This proves the semantic foundation before expanding into general productivity.
+
+## Deferred After the MVP
+
+The graphical workspace, including React and spreadsheet-style interaction, is a
+later layer. Semantic merge, realtime collaboration, cloud SaaS, Office
+compatibility, engine plugins, and enterprise permissions are also deferred.

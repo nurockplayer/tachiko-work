@@ -6,37 +6,30 @@ The first product is not an Excel replacement.
 
 It is a Git-native computational data workflow for game development.
 
-## Phase 1: Foundation
+## MVP: Semantic Game-Balance Workflow
 
-- semantic table model
-- typed schema
-- JSONL Git representation
+- semantic document model
+- versioned `.ro` foundation
+- schema validation
+- formula computation
 - deterministic serialization
-- CLI validation
-
-## Phase 2: Designer Workflow
-
-- spreadsheet-like editor
-- formulas
-- references
-- views
-- comments
-
-## Phase 3: Engineering Workflow
-
 - semantic diff
-- semantic merge
-- pull request integration
-- CI validation
+- CLI workflow
+- game balance example
+- AI semantic read/query capability
 
-## Phase 4: Engine Integration
+## Deferred after the MVP
 
-Targets:
+The following remain future roadmap layers and are not MVP deliverables:
 
-- Unity
-- Unreal Engine
-- Godot
+- spreadsheet or React UI and broader designer views
+- semantic merge and realtime collaboration
+- cloud SaaS and enterprise permissions
+- Office/Excel compatibility
+- Unity, Unreal, or Godot engine plugins
 
 ## Success Metric
 
-A designer can modify game data comfortably while engineers receive reviewable, testable, version-controlled changes.
+A developer or technical designer can create, calculate, validate, and review
+game balance data through a version-controlled semantic workflow, with AI able
+to explain the model and impact.

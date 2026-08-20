@@ -1,0 +1,15 @@
+[package]
+name = "tachiko-ai-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+tachiko-diff-engine = { path = "../diff-engine" }
+tachiko-formula-engine = { path = "../formula-engine" }
+tachiko-semantic-core = { path = "../semantic-core" }
+thiserror.workspace = true
+
+[lints]
+workspace = true

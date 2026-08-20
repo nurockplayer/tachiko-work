@@ -4,37 +4,24 @@
 
 The first prototype should prove that Git-native computational data is possible.
 
-## Phase 0
+## MVP: Semantic Game-Balance Core
 
-Semantic core:
+The first implementation proves the core hypothesis with:
 
-- Entity model
-- Schema
-- Formula evaluation
-- Serialization
+- semantic documents
+- versioned `.ro` foundation
+- schema validation
+- formula computation
+- semantic diff
+- CLI workflow
+- game balance example
+- AI semantic read/query capability
 
-## Phase 1
+## After the MVP
 
-Game data prototype:
+Future layers may add:
 
-- Spreadsheet UI
-- Typed tables
-- Validation
-- Diff
-
-## Phase 2
-
-Git workflow:
-
-- Branch support
-- Semantic merge
-- CLI tools
-- CI integration
-
-## Phase 3
-
-Engine integration:
-
-- Unity
-- Unreal
-- Godot
+- graphical and spreadsheet-style UI
+- semantic merge and broader collaboration workflows
+- cloud SaaS and enterprise permissions
+- engine plugins and Office compatibility

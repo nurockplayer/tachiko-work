@@ -1,8 +1,12 @@
-# ADR-0008: Developer MVP Validation and Next Phase Boundary
+# ADR-0009: Developer MVP Validation and Next Phase Boundary
 
 ## Status
 
 Accepted
+
+This record was originally added with the duplicate number ADR-0008. It was
+renumbered to ADR-0009 when the conflict was discovered; its decision and
+accepted status are unchanged.
 
 ## Context
 

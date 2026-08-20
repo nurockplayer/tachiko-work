@@ -1,0 +1,257 @@
+{
+  "format_version": 1,
+  "id": "game-balance",
+  "title": "Moonfall: starter balance",
+  "schemas": {
+    "characters": {
+      "id": "characters",
+      "fields": {
+        "level": {
+          "field_type": {
+            "type": "number"
+          },
+          "required": true
+        },
+        "name": {
+          "field_type": {
+            "type": "text"
+          },
+          "required": true
+        },
+        "weapon": {
+          "field_type": {
+            "type": "reference",
+            "schema": "weapons"
+          },
+          "required": true
+        }
+      }
+    },
+    "economy": {
+      "id": "economy",
+      "fields": {
+        "currency": {
+          "field_type": {
+            "type": "text"
+          },
+          "required": true
+        },
+        "gold_per_match": {
+          "field_type": {
+            "type": "number"
+          },
+          "required": true
+        },
+        "matches_for_sword": {
+          "field_type": {
+            "type": "number"
+          },
+          "required": true
+        },
+        "upgrade_cost": {
+          "field_type": {
+            "type": "number"
+          },
+          "required": true
+        }
+      }
+    },
+    "items": {
+      "id": "items",
+      "fields": {
+        "category": {
+          "field_type": {
+            "type": "text"
+          },
+          "required": true
+        },
+        "grants_weapon": {
+          "field_type": {
+            "type": "reference",
+            "schema": "weapons"
+          },
+          "required": true
+        },
+        "name": {
+          "field_type": {
+            "type": "text"
+          },
+          "required": true
+        },
+        "price": {
+          "field_type": {
+            "type": "number"
+          },
+          "required": true
+        }
+      }
+    },
+    "weapons": {
+      "id": "weapons",
+      "fields": {
+        "attack_interval": {
+          "field_type": {
+            "type": "number"
+          },
+          "required": true
+        },
+        "damage": {
+          "field_type": {
+            "type": "number"
+          },
+          "required": true
+        },
+        "dps": {
+          "field_type": {
+            "type": "number"
+          },
+          "required": true
+        },
+        "name": {
+          "field_type": {
+            "type": "text"
+          },
+          "required": true
+        },
+        "price": {
+          "field_type": {
+            "type": "number"
+          },
+          "required": true
+        }
+      }
+    }
+  },
+  "entities": {
+    "alric": {
+      "id": "alric",
+      "schema": "characters",
+      "fields": {
+        "level": {
+          "kind": "number",
+          "value": 4.0
+        },
+        "name": {
+          "kind": "text",
+          "value": "Alric"
+        },
+        "weapon": {
+          "kind": "reference",
+          "value": "iron_sword"
+        }
+      }
+    },
+    "iron_sword": {
+      "id": "iron_sword",
+      "schema": "weapons",
+      "fields": {
+        "attack_interval": {
+          "kind": "number",
+          "value": 0.9
+        },
+        "damage": {
+          "kind": "number",
+          "value": 36.0
+        },
+        "dps": {
+          "kind": "formula",
+          "value": {
+            "op": "divide",
+            "args": {
+              "left": {
+                "op": "reference",
+                "args": {
+                  "entity": "iron_sword",
+                  "field": "damage"
+                }
+              },
+              "right": {
+                "op": "reference",
+                "args": {
+                  "entity": "iron_sword",
+                  "field": "attack_interval"
+                }
+              }
+            }
+          }
+        },
+        "name": {
+          "kind": "text",
+          "value": "Iron Sword"
+        },
+        "price": {
+          "kind": "number",
+          "value": 120.0
+        }
+      }
+    },
+    "shop": {
+      "id": "shop",
+      "schema": "economy",
+      "fields": {
+        "currency": {
+          "kind": "text",
+          "value": "gold"
+        },
+        "gold_per_match": {
+          "kind": "number",
+          "value": 50.0
+        },
+        "matches_for_sword": {
+          "kind": "formula",
+          "value": {
+            "op": "divide",
+            "args": {
+              "left": {
+                "op": "reference",
+                "args": {
+                  "entity": "iron_sword",
+                  "field": "price"
+                }
+              },
+              "right": {
+                "op": "reference",
+                "args": {
+                  "entity": "shop",
+                  "field": "gold_per_match"
+                }
+              }
+            }
+          }
+        },
+        "upgrade_cost": {
+          "kind": "formula",
+          "value": {
+            "op": "reference",
+            "args": {
+              "entity": "tempered_blade",
+              "field": "price"
+            }
+          }
+        }
+      }
+    },
+    "tempered_blade": {
+      "id": "tempered_blade",
+      "schema": "items",
+      "fields": {
+        "category": {
+          "kind": "text",
+          "value": "weapon upgrade"
+        },
+        "grants_weapon": {
+          "kind": "reference",
+          "value": "iron_sword"
+        },
+        "name": {
+          "kind": "text",
+          "value": "Tempered Blade"
+        },
+        "price": {
+          "kind": "number",
+          "value": 200.0
+        }
+      }
+    }
+  }
+}
