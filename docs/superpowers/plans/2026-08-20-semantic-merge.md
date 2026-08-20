@@ -104,7 +104,7 @@ Run: `rtk git commit -m "feat: add semantic merge engine"`
 - `MergeSide::{Base, Ours, Theirs}` identifies unsafe inputs.
 - `MergeError::{InvalidInput, InputCalculation, InvalidMergedDocument, MergedCalculation}` rejects unsafe inputs and combined candidates.
 
-- [ ] **Step 1: Write failing conflict and validation tests**
+- [x] **Step 1: Write failing conflict and validation tests**
 
 Add tests with hand-derived assertions:
 
@@ -121,13 +121,13 @@ with its side, a combined broken reference rejected as `InvalidMergedDocument`,
 and cross-branch formula/reference changes that produce division by zero only
 after combination rejected as `MergedCalculation`.
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 Run: `cargo test -p tachiko-merge-engine --test three_way_merge`
 
 Expected: conflict payload, ordering, and invalid-candidate assertions fail.
 
-- [ ] **Step 3: Implement typed conflict capture and final validation**
+- [x] **Step 3: Implement typed conflict capture and final validation**
 
 Every failed scalar or optional-entry choice pushes one typed conflict. Sort
 conflicts by `path`; return `MergeOutcome::Conflicted` when non-empty. Otherwise:
@@ -144,13 +144,13 @@ calculate(&candidate).map_err(MergeError::MergedCalculation)?;
 Ok(MergeOutcome::Merged(candidate))
 ```
 
-- [ ] **Step 4: Run merge-engine tests and verify GREEN**
+- [x] **Step 4: Run merge-engine tests and verify GREEN**
 
 Run: `cargo test -p tachiko-merge-engine --all-targets`
 
 Expected: all compatible, conflict, ordering, and safety cases pass.
 
-- [ ] **Step 5: Commit conflict and safety behavior**
+- [x] **Step 5: Commit conflict and safety behavior**
 
 Run: `rtk git add crates/merge-engine`
 
