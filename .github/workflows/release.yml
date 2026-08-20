@@ -26,26 +26,9 @@ jobs:
         id: version
         shell: bash
         run: |
-          workspace_version="$(awk '
-            /^\[workspace\.package\][[:space:]]*$/ {
-              in_workspace_package = 1
-              next
-            }
-            in_workspace_package && /^\[/ {
-              exit
-            }
-            in_workspace_package && /^[[:space:]]*version[[:space:]]*=/ {
-              line = $0
-              sub(/^[^"]*"/, "", line)
-              sub(/".*/, "", line)
-              print line
-              exit
-            }
-          ' Cargo.toml)"
-          if [[ ! "${workspace_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
-            echo "Could not derive a valid workspace version from Cargo.toml" >&2
-            exit 1
-          fi
+          # shellcheck source=scripts/release-lib.sh
+          source "${GITHUB_WORKSPACE}/scripts/release-lib.sh"
+          workspace_version="$(tachiko_workspace_version "${GITHUB_WORKSPACE}")"
           expected_tag="v${workspace_version}"
           if [[ "${GITHUB_REF_NAME}" != "${expected_tag}" ]]; then
             echo "Release tag '${GITHUB_REF_NAME}' must exactly match '${expected_tag}'" >&2
@@ -65,7 +48,7 @@ jobs:
           components: clippy, rustfmt
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1 # v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       - name: Run the full release check
         run: bash scripts/release-check.sh
@@ -97,7 +80,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1 # v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           key: ${{ matrix.target }}
 
@@ -172,6 +155,26 @@ jobs:
               sha256sum --check "${checksum}"
             done
           )
+
+      - name: Reject an existing release for this tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          matching_release_count="$(
+            gh api --paginate \
+              --method GET \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "repos/${GITHUB_REPOSITORY}/releases?per_page=100" |
+              jq --slurp --arg tag "${GITHUB_REF_NAME}" \
+                '[.[][] | select(.tag_name == $tag)] | length'
+          )"
+          if [[ "${matching_release_count}" -ne 0 ]]; then
+            echo "Tag '${GITHUB_REF_NAME}' already has ${matching_release_count} release record(s)." >&2
+            echo "Review and deliberately remove or retain the existing release before rerunning." >&2
+            exit 1
+          fi
 
       - name: Create draft release
         env:
