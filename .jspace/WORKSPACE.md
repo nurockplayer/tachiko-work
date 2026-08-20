@@ -356,3 +356,43 @@ registry-publication decision.
   the complete release phase with no remaining P0, P1, or P2 finding.
 - The branch remains the delivery unit. No tag, push, GitHub draft, crates.io
   package, visibility change, or public release was created.
+
+## Active phase: semantic entity lifecycle
+
+### Goal
+
+Let a game designer grow and reorganize the balance roster without hand-editing
+canonical JSON, while preserving typed relationships, formulas, Git review, and
+the product's no-overwrite safety boundary.
+
+### Reconciled authority
+
+- Product checkpoint: `37b76d3` (`build: ship release distribution contract`).
+- Product decision: `docs/decisions/ADR-0013-semantic-entity-lifecycle.md`.
+- Design: `docs/superpowers/specs/2026-08-20-entity-lifecycle.md`.
+- Plan: `docs/superpowers/plans/2026-08-20-entity-lifecycle.md`.
+- ADR-0010 intentionally deferred formula authoring, but the current semantic
+  model already has typed entity references and formula field references that
+  can support safe structural lifecycle changes.
+- The canonical starter has only one weapon. Existing scalar editing can tune
+  it but cannot create a second roster member without JSON knowledge.
+
+### Locked boundaries
+
+1. `duplicate` rebases formula self-references but preserves stored and formula
+   relationships to other entities.
+2. `rename` rewrites every typed entity and formula reference to the old ID.
+3. `remove` is non-cascading and refuses sorted external dependents.
+4. Every operation validates, calculates, and semantically compares its
+   immutable candidate before returning.
+5. `tachiko entity` outputs are distinct, exclusive-create canonical files.
+6. Schema, field, and formula authoring remain separately deferred contracts.
+
+### Verification gates
+
+- Focused test-first coverage for identifier, transformation, CLI, and output
+  safety rules.
+- A real duplicate, tune, rename, explain, blocked-remove, successful-remove
+  game-balance journey in CI and the local release gate.
+- Full release verification and independent product/safety review before the
+  phase checkpoint.
