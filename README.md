@@ -3,6 +3,11 @@
 A Rust-native, Git-native, and AI-native workspace for semantic structured data
 and computation.
 
+> **Public pre-alpha:** this repository is intentionally public so users,
+> reviewers, AI tools, and future contributors can inspect the implementation,
+> architecture, and decision history. Public source does not mean the product,
+> APIs, formats, or licensing policy are stable or formally released.
+
 ## Vision
 
 Tachiko Work is not an Office clone.
@@ -59,10 +64,9 @@ tachiko-0.1.0-x86_64-apple-darwin.tar.gz
 tachiko-0.1.0-x86_64-pc-windows-msvc.tar.gz
 ```
 
-The GitHub repository is currently private. Even after a release is published,
-only authenticated GitHub users who have been granted repository access can
-download its assets. Publishing a release does not change repository
-visibility, and these instructions do not authorize changing it.
+The GitHub repository is intentionally public during pre-alpha development.
+Publishing a GitHub release remains a separate release-owner decision; no tag or
+binary release exists merely because the source repository is public.
 
 Download the matching archive and its adjacent `.sha256` file from the same
 release. On Linux or macOS, run the checksum command for your platform and then
@@ -100,7 +104,9 @@ bypassing its security policy.
 
 Every archive also includes `THIRD_PARTY_LICENSES.md`, the generated inventory
 and exact license/notice texts for the locked dependencies used by the CLI.
-Tachiko's own terms remain in `LICENSE-APACHE` and `LICENSE-MIT`.
+Revisions already published under `Apache-2.0 OR MIT` retain those historical
+license grants. The long-term license-by-component policy is still being decided
+in issue #15; see [`docs/governance/licensing-posture.md`](docs/governance/licensing-posture.md).
 
 ## Try it in five minutes
 
@@ -244,8 +250,10 @@ rustup toolchain install 1.85.0 --profile minimal
 bash scripts/release-check.sh
 ```
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for change expectations,
-[`SECURITY.md`](SECURITY.md) for responsible reporting, and the
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the current contribution boundary,
+[`SECURITY.md`](SECURITY.md) for responsible reporting, the
+[`licensing posture`](docs/governance/licensing-posture.md) for provisional
+governance, and the
 [`release-owner runbook`](docs/governance/release-process.md) for the tag and
 publication boundary.
 
