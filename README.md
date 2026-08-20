@@ -27,17 +27,67 @@ The current product provides a complete, safe game-balance workflow:
 It deliberately does not include a spreadsheet UI, Office compatibility,
 realtime collaboration, cloud infrastructure, or game-engine plugins.
 
-## Install from source
+## Installation status
 
-Tachiko Work requires Rust 1.85 or newer. From a repository checkout:
+Tachiko Work does not yet have a tagged or published binary release. Until the
+first release is published, install the CLI from a repository checkout. This
+requires Rust 1.85 or newer:
 
 ```sh
 cargo install --path crates/cli --locked
 tachiko --version
+# tachiko 0.1.0
 ```
 
 The installed binary is named `tachiko`. Contributors can instead use
 `cargo run -p tachiko-cli -- <command>` without installing it.
+
+### Binary archives after the first release
+
+The release workflow is ready to produce one native archive for each supported
+target, but these files will not exist until an exact version tag has passed the
+release workflow and its draft has been reviewed and published:
+
+```text
+tachiko-0.1.0-x86_64-unknown-linux-gnu.tar.gz
+tachiko-0.1.0-aarch64-apple-darwin.tar.gz
+tachiko-0.1.0-x86_64-apple-darwin.tar.gz
+tachiko-0.1.0-x86_64-pc-windows-msvc.tar.gz
+```
+
+Download the matching archive and its adjacent `.sha256` file from the same
+release. On Linux or macOS, run the checksum command for your platform and then
+extract the archive:
+
+```sh
+archive=tachiko-0.1.0-aarch64-apple-darwin.tar.gz
+
+sha256sum --check "$archive.sha256"       # Linux
+shasum -a 256 --check "$archive.sha256"  # macOS
+
+tar -xzf "$archive"
+"./${archive%.tar.gz}/tachiko" --version
+# tachiko 0.1.0
+```
+
+On Windows x86-64, PowerShell can verify and extract the release without extra
+tools:
+
+```powershell
+$Archive = "tachiko-0.1.0-x86_64-pc-windows-msvc.tar.gz"
+$Expected = ((Get-Content "${Archive}.sha256" -Raw).Trim() -split '\s+')[0].ToLowerInvariant()
+$Actual = (Get-FileHash -Algorithm SHA256 $Archive).Hash.ToLowerInvariant()
+if ($Actual -ne $Expected) { throw "SHA-256 checksum mismatch" }
+
+tar.exe -xzf $Archive
+& ".\tachiko-0.1.0-x86_64-pc-windows-msvc\tachiko.exe" --version
+# tachiko 0.1.0
+```
+
+The initial archives are checksummed but are not signed, and the macOS binaries
+are not notarized. Operating systems may warn or block execution. If your
+environment requires signed software, build from reviewed source instead of
+bypassing its security policy.
 
 ## Try it in five minutes
 
@@ -96,15 +146,28 @@ producing new semantic inputs and rerunning the command.
 - `workflow`: reusable starter, overview, explanation, and safe-edit operations
 - `cli`: the complete `init` → `show` → `explain` → `set` → `diff` → `merge` workflow
 
-Run all quality gates, including the real product journey, with:
+For a fast contributor check after an edit, run:
 
 ```sh
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace --all-targets
-bash scripts/first-user-smoke.sh
-bash scripts/collaboration-smoke.sh
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --all-targets --locked
 ```
+
+Before requesting review, run the complete release-equivalent gate from a clean
+local commit. It also checks warning-free documentation, Rust 1.85
+compatibility, Cargo packages, both real user journeys, and the native release
+archive:
+
+```sh
+rustup toolchain install 1.85.0
+bash scripts/release-check.sh
+```
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for change expectations,
+[`SECURITY.md`](SECURITY.md) for responsible reporting, and the
+[`release-owner runbook`](docs/governance/release-process.md) for the tag and
+publication boundary.
 
 ## Principles
 

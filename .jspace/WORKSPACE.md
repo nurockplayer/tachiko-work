@@ -285,3 +285,25 @@ registry-publication decision.
   resolution, static security checks, and final scoped re-review passed with no
   remaining Critical or Important finding.
 - No tag, push, release, or other public state change was performed.
+
+### Task 4 evidence: external-user and owner documentation
+
+- The README now distinguishes the currently available source installation
+  from the not-yet-tagged binary release, names all four future archives, and
+  provides checksum, extraction, and exact-version checks for Unix and Windows.
+- The executable owner runbook covers a clean reviewed commit, version and
+  changelog alignment, the complete local release gate, an exact annotated tag,
+  deliberate tag-push authorization, eight-asset draft review, four native
+  clean-machine smokes, manual publication, external verification, and an
+  immutable fail-forward policy.
+- Contribution guidance records stable and exact-Rust-1.85 setup, focused and
+  full quality gates, semantic/Git/no-overwrite/AI-approval boundaries, and
+  review-ready test, ADR, changelog, and pull-request expectations.
+- The security policy truthfully records that no private channel is currently
+  advertised. It requests a detail-free ordinary coordination issue until
+  GitHub private vulnerability reporting is enabled and promises no unsupported
+  SLA.
+- Documentation preserves crates.io publication, signing, and notarization as
+  deferred release decisions. The owner runbook records current private-hosting
+  verification without authorizing a visibility change; no tag or release state
+  was created.
