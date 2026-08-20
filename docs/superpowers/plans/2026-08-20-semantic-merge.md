@@ -32,7 +32,7 @@
 - Consumes: `tachiko_semantic_core::{Document, Schema, Entity, FieldDefinition, Value}` and `tachiko_formula_engine::calculate`.
 - Produces: `merge(&Document, &Document, &Document) -> Result<MergeOutcome, MergeError>`, `MergeOutcome::{Merged, Conflicted}`, `MergeConflict`, and typed `MergeValue`.
 
-- [ ] **Step 1: Write the failing independent-change tests**
+- [x] **Step 1: Write the failing independent-change tests**
 
 ```rust
 #[test]
@@ -58,13 +58,13 @@ fn identical_two_sided_change_is_not_a_conflict() {
 }
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run: `cargo test -p tachiko-merge-engine --test three_way_merge`
 
 Expected: compilation fails because `tachiko-merge-engine` and its API do not exist.
 
-- [ ] **Step 3: Implement minimal recursive compatible merge**
+- [x] **Step 3: Implement minimal recursive compatible merge**
 
 Implement the standard scalar rule:
 
@@ -81,13 +81,13 @@ Use `BTreeSet` key unions for schemas, fields, entities, and entity fields.
 Recurse into entries present in all three inputs; apply add/delete rules for
 optional entries. Construct a complete candidate only when no conflicts exist.
 
-- [ ] **Step 4: Run the focused test and verify GREEN**
+- [x] **Step 4: Run the focused test and verify GREEN**
 
 Run: `cargo test -p tachiko-merge-engine --test three_way_merge`
 
 Expected: compatible-change tests pass with no warnings.
 
-- [ ] **Step 5: Commit the compatible merge engine**
+- [x] **Step 5: Commit the compatible merge engine**
 
 Run: `rtk git add crates/merge-engine Cargo.toml Cargo.lock`
 
