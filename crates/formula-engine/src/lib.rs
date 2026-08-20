@@ -1,9 +1,13 @@
 //! Deterministic formula evaluation for Tachiko Work.
 
+mod parser;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use tachiko_semantic_core::{Document, Expression, FieldRef, Value};
 use thiserror::Error;
+
+pub use parser::{FormulaParseError, format_expression, parse_expression};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Calculation {
