@@ -105,7 +105,7 @@
 - Modify only files needed to address verified findings.
 
 - [x] Run `bash scripts/release-check.sh` from a clean branch checkout.
-- [ ] Independently review the implementation against ADR-0012, the design,
+- [x] Independently review the implementation against ADR-0012, the design,
   security boundaries, Cargo packaging, and first-user install ergonomics.
 - [x] Fix every actionable finding and rerun the smallest relevant gate followed
   by the full release check.
@@ -114,5 +114,5 @@
 - [x] Make the full local gate explicitly select installed stable Rust for all
   ordinary and nested commands while retaining the exact 1.85.0 MSRV check.
 - [x] Update this plan and j-space with exact outcome evidence.
-- [ ] Commit the verified checkpoint as
+- [x] Commit the verified checkpoint as
   `build: ship release distribution contract`.
