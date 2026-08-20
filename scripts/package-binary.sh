@@ -50,6 +50,8 @@ checksum_path="${archive_path}.sha256"
 
 lock_dir="${output_dir}/.${artifact_root}.lock"
 lock_owned=0
+lock_created=0
+pending_signal_status=0
 work_dir=""
 published_archive=0
 published_checksum=0
@@ -82,13 +84,37 @@ handle_signal() {
   exit "${status}"
 }
 
+defer_signal() {
+  local status="$1"
+  if [[ "${pending_signal_status}" -eq 0 ]]; then
+    pending_signal_status="${status}"
+  fi
+}
+
+# Signal delivery is deferred across the only ownership critical section:
+# mkdir may have created the lock before Bash can record that this process owns
+# it. Once ownership is recorded, pending signals exit through normal cleanup.
 trap cleanup EXIT
+trap 'defer_signal 129' HUP
+trap 'defer_signal 130' INT
+trap 'defer_signal 143' TERM
+if mkdir "${lock_dir}" 2>/dev/null; then
+  lock_created=1
+  if [[ "${TACHIKO_RELEASE_TEST_INTERRUPT_AFTER_LOCK_MKDIR:-0}" == "1" ]]; then
+    kill -TERM "$$"
+  fi
+  lock_owned=1
+fi
+
+# Install immediate handling before observing deferred state. A signal arriving
+# during this transition is therefore either recorded or handled immediately.
 trap 'handle_signal 129' HUP
 trap 'handle_signal 130' INT
 trap 'handle_signal 143' TERM
-if mkdir "${lock_dir}" 2>/dev/null; then
-  lock_owned=1
-else
+if [[ "${pending_signal_status}" -ne 0 ]]; then
+  exit "${pending_signal_status}"
+fi
+if [[ "${lock_created}" -ne 1 ]]; then
   fail "artifact is already being packaged or has a stale lock: ${lock_dir}"
 fi
 

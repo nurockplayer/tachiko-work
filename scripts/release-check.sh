@@ -89,6 +89,22 @@ if bash scripts/verify-release-archive.sh "${native_target}" "${tampered_archive
   exit 1
 fi
 
+echo "==> interrupted lock acquisition cleanup"
+lock_interrupted_dir="${release_output_dir}/lock-interrupted"
+mkdir "${lock_interrupted_dir}"
+lock_interrupt_status=0
+TACHIKO_RELEASE_TEST_INTERRUPT_AFTER_LOCK_MKDIR=1 \
+  bash scripts/package-binary.sh "${native_target}" "${lock_interrupted_dir}" >/dev/null 2>&1 ||
+  lock_interrupt_status="$?"
+if [[ "${lock_interrupt_status}" -lt 128 ]]; then
+  echo "release-check: lock-window interruption must exit with a signal-like status; got ${lock_interrupt_status}" >&2
+  exit 1
+fi
+if [[ -n "$(find "${lock_interrupted_dir}" ! -path "${lock_interrupted_dir}" -print)" ]]; then
+  echo "release-check: lock-window interruption left a lock, output, or partial state" >&2
+  exit 1
+fi
+
 echo "==> interrupted publication cleanup"
 interrupted_dir="${release_output_dir}/interrupted"
 mkdir "${interrupted_dir}"
