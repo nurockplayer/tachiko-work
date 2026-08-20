@@ -226,7 +226,7 @@ Run: `rtk git commit -m "feat: expose safe semantic merge CLI"`
   merges independent edits, validates the result, and asserts the semantic diff.
 - CI executes both first-user and collaboration smoke contracts.
 
-- [ ] **Step 1: Create and run the collaboration smoke script against the live CLI**
+- [x] **Step 1: Create and run the collaboration smoke script against the live CLI**
 
 Use `mktemp -d`, exclusive output names, `tachiko set` for each branch, `tachiko
 merge`, `tachiko validate`, and `tachiko diff`. Assert merged damage `45`, merged
@@ -235,13 +235,13 @@ attack interval `0.8`, and calculated DPS `56.25`. Run:
 
 Expected before final wiring: failure at the first missing or mismatched product behavior; after convergence: exit 0 with a one-line success summary.
 
-- [ ] **Step 2: Document the branch collaboration workflow**
+- [x] **Step 2: Document the branch collaboration workflow**
 
 Add the exact three-way command to the root and example READMEs. Update the live
 crate dependency graph and j-space evidence. Add a CI step that executes the
 script rather than grepping its source.
 
-- [ ] **Step 3: Run both smoke contracts**
+- [x] **Step 3: Run both smoke contracts**
 
 Run: `bash scripts/first-user-smoke.sh`
 
@@ -249,7 +249,7 @@ Run: `bash scripts/collaboration-smoke.sh`
 
 Expected: both exit 0 and report their complete journeys.
 
-- [ ] **Step 4: Commit onboarding and smoke coverage**
+- [x] **Step 4: Commit onboarding and smoke coverage**
 
 Run: `rtk git add README.md examples scripts .github docs .jspace`
 
