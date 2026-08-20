@@ -63,8 +63,12 @@ the path locally while packaged manifests remain resolvable.
 The package gate uses `cargo package --workspace --locked --no-verify` because
 workspace packages depend on sibling archives that have not been published to
 a registry. Compilation is independently proved by stable and exact-MSRV
-workspace builds. The source archive list must contain the legal and README
-payload inherited from workspace metadata.
+workspace builds. Each source archive must inherit the root README and retain
+the SPDX license expression plus repository metadata. Cargo has a singular
+`license-file` field that is used instead of the SPDX expression, so exact
+copies of both license texts are required in the repository and binary
+archives; the final crate-archive license layout is decided with the deferred
+crates.io publication boundary.
 
 ## Automation
 

@@ -221,6 +221,14 @@ and an explicit release-authorization boundary.
 6. Code signing, notarization, attestations, package managers, and auto-update
    remain follow-up release capabilities.
 
+Cargo package inspection established that a member archive can inherit the
+workspace README, while Cargo's singular `license-file` replaces rather than
+augments the dual-license SPDX expression. The release keeps
+`Apache-2.0 OR MIT` as authoritative package metadata and requires both exact
+texts in the repository and every binary archive. Per-member license copies and
+the final crates.io archive policy remain coupled to the explicitly deferred
+registry-publication decision.
+
 ### Verification gates
 
 - Every crate packages from the workspace with versioned internal dependencies.
