@@ -39,7 +39,7 @@ Decision Issue
 Focused discussion / research
     |
     v
-Decision Log comments
+Question Logs + Decision Logs
     |
     v
 Final decision
@@ -67,6 +67,22 @@ A Decision Issue preserves the problem and the reasoning history. It should cont
 
 A Decision Issue is not itself an Accepted architecture decision.
 
+### Question Logs
+
+Important questions raised during discussion are part of the architectural record and should be preserved when they materially shape the problem, expose an assumption, introduce a useful analogy, challenge an existing direction, or may remain valuable if technology and ecosystem conditions change later.
+
+Question Logs should preserve, as closely as practical:
+
+- the substantive question or problem framing that was raised;
+- why the question mattered;
+- assumptions it challenged;
+- evidence or alternatives it caused the project to investigate;
+- the current answer or status, including whether the question remains open.
+
+Questions should not be discarded merely because a current answer has been reached. A good question can outlive its present answer and may need to be revisited when standards, libraries, markets, product constraints, or implementation evidence change.
+
+The goal is not to archive every conversational sentence. Routine clarification, repetition, and chat scaffolding can be omitted. The goal is to preserve all materially important questions and problem framings without requiring future maintainers to reconstruct them from raw chat history.
+
 ### Decision Logs
 
 Important discussion milestones should be recorded as concise issue comments rather than relying on chat-session history.
@@ -80,13 +96,15 @@ Decision Logs should preserve:
 - unresolved questions;
 - consequences for existing specs, ADRs, and implementation issues.
 
+Question Logs explain **what was worth asking and why**. Decision Logs explain **how the answer evolved and what was decided**. Both belong in the related Decision Issue.
+
 The goal is to preserve the reasoning chain without requiring future maintainers to read raw conversation transcripts.
 
 ### ADR
 
 An ADR records the final canonical architectural decision after the discussion has matured.
 
-The ADR should summarize the decision, rationale, consequences, and rejected alternatives. Detailed conversational history belongs in the related Decision Issue.
+The ADR should summarize the decision, rationale, consequences, and rejected alternatives. Detailed conversational history, Question Logs, and Decision Logs belong in the related Decision Issue.
 
 Where practical, ADRs should reference their Decision Issue, and Decision Issues should reference the resulting ADR.
 
