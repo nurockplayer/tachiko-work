@@ -1,24 +1,26 @@
-# .roproj Format Specification (Deferred, ADR-0003)
+# .roproj Format Specification (Accepted Direction, Not Yet Implemented)
 
 ## Purpose
 
-`.roproj` is the proposed Git-native working representation defined by ADR-0003.
-It is a deferred direction and is **not implemented** in the current v0.1 release.
+ADR-0003 is Accepted and defines `.roproj` as Tachiko Work's canonical editable/source representation for Git-native work.
 
-## Goals (deferred)
+The current v0.1 CLI does not yet implement `.roproj`; it uses deterministic `.ro` files as a transitional persistence path while the semantic model and authoring workflows stabilize.
 
-This goal remains proposed:
+## Target goals
 
-- deterministic
-- human readable
-- UTF-8
-- diff friendly
-- merge friendly
-- CI friendly
+`.roproj` must provide:
 
-## Example
+- deterministic serialization
+- human-readable changes where practical
+- UTF-8 textual materialization
+- diff-friendly structure
+- merge-friendly stable identifiers
+- branch/PR-friendly workflows
+- CI and semantic-tooling integration
 
-```
+## Illustrative layout
+
+```text
 project.roproj/
 ├── manifest.json
 ├── schema.json
@@ -30,21 +32,18 @@ project.roproj/
 └── tests/
 ```
 
-## Git Workflow
+The exact physical layout remains evolvable until implementation.
 
-Current v0.1 users work through `.ro` files for branch/merge/review/validate flows.
-`.roproj` workflow details are deferred until ADR-0003 is implemented.
+## Git workflow
 
-## Canonical Ordering
+Current v0.1 users already exercise branch/edit/semantic-merge/review/validate flows through `.ro` files.
 
-Serialization must define:
+The target ADR-0003 workflow moves the canonical editable materialization to `.roproj`, with `.ro` generated as a portable artifact rather than maintained as an independent source of truth.
 
-- stable ordering
-- normalized formatting
-- deterministic output
+## Canonical ordering
 
-so equivalent documents produce equivalent Git history.
+Materialization must define stable ordering, normalized formatting, and deterministic output so equivalent semantic documents produce equivalent Git history.
 
-## Design Goal
+## Design principle
 
-Git remains a storage and collaboration protocol, not the user interface.
+Git remains a storage and collaboration protocol, not the user interface. Users edit through Tachiko Work semantic operations; Git stores reviewable semantic history.
