@@ -30,7 +30,9 @@ For a new version, update all of the following in one reviewed change:
 - every explicit version on an internal path dependency in `crates/*/Cargo.toml`;
 - `Cargo.lock`;
 - `CHANGELOG.md`, including the release date, user-visible changes, migrations
-  when needed, and the final version link.
+  when needed, and the final version link;
+- `THIRD_PARTY_LICENSES.md` whenever `Cargo.lock` or the CLI runtime dependency
+  closure changes.
 
 After editing manifests, refresh the lockfile with a normal Cargo check, inspect
 the diff, commit the version and changelog change, and confirm the checkout is
@@ -38,24 +40,32 @@ clean again:
 
 ```sh
 cargo check --workspace --all-targets
+bash scripts/generate-third-party-licenses.sh > THIRD_PARTY_LICENSES.md
 git diff --check
 git status --short
 ```
 
 ## 2. Run the complete local release gate
 
-Install the exact minimum toolchain once, then run the repository-owned gate
-from the repository root:
+Install stable Rust with the formatter and linter plus the exact minimum
+toolchain, then run the repository-owned gate from the repository root:
 
 ```sh
-rustup toolchain install 1.85.0
+rustup toolchain install stable --profile minimal
+rustup component add --toolchain stable rustfmt clippy
+rustup toolchain install 1.85.0 --profile minimal
 bash scripts/release-check.sh
 ```
 
-The command must finish with `release check passed`. It checks formatting,
-warnings-as-errors Clippy, all tests, warning-free documentation, exact Rust
-1.85 compatibility, all Cargo source packages, the first-user and collaboration
-journeys, and a checksummed native archive that is extracted and executed.
+The command must report the selected stable `rustc` and finish with `release
+check passed`. It process-locally selects stable for every bare Cargo/Rust
+command and nested smoke/build script, even if `RUSTUP_TOOLCHAIN` named another
+installed toolchain on entry. It does not modify the caller's persistent rustup
+override. The gate checks formatting, warnings-as-errors Clippy, all tests,
+warning-free documentation, exact Rust 1.85 compatibility, deterministic
+dependency-license regeneration, all Cargo source packages, the first-user and
+collaboration journeys, and a checksummed native archive that is extracted and
+executed.
 
 If the gate changes tracked files or exposes a problem, fix and review the
 release commit, rerun the complete gate, and start this runbook again from the
@@ -120,8 +130,11 @@ Before publication, confirm:
 - every checksum validates against its archive;
 - generated notes accurately reflect `CHANGELOG.md`, including migrations or
   known limitations;
-- each archive contains only the executable, README, changelog, and both
-  license texts;
+- each archive contains only the executable, README, changelog, both Tachiko
+  license texts, and `THIRD_PARTY_LICENSES.md`;
+- the checked-in dependency notice matches a fresh locked all-target Cargo
+  inventory and retains every vendored license, copying, notice, unlicense, or
+  copyright file;
 - the release remains a draft and no crates.io package was published.
 
 The initial binaries are unsigned and macOS binaries are not notarized. Keep

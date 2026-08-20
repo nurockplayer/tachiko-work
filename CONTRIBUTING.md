@@ -10,9 +10,10 @@ Install stable Rust for development and the exact minimum version for
 compatibility checks:
 
 ```sh
-rustup toolchain install stable --component rustfmt,clippy
-rustup toolchain install 1.85.0
-cargo +1.85.0 check --workspace --all-targets --locked
+rustup toolchain install stable --profile minimal
+rustup component add --toolchain stable rustfmt clippy
+rustup toolchain install 1.85.0 --profile minimal
+rustup run 1.85.0 cargo check --workspace --all-targets --locked
 ```
 
 Use the checked-in `Cargo.lock`. The project does not require a global install;
@@ -48,10 +49,12 @@ bash scripts/release-check.sh
 ```
 
 The clean commit is required because Cargo source packaging rejects dirty
-package inputs. The full gate also checks documentation, Rust 1.85, Cargo
-packages, executable product journeys, and a native release archive. Do not
-claim a change is ready when a relevant gate is skipped; state the exact
-limitation in the pull request.
+package inputs. The full gate selects stable for bare and nested Rust commands,
+regardless of an inherited `RUSTUP_TOOLCHAIN`, and separately checks exact Rust
+1.85 compatibility. It also checks documentation, deterministic audited
+dependency notices, Cargo packages, executable product journeys, and a native
+release archive. Do not claim a change is ready when a relevant gate is
+skipped; state the exact limitation in the pull request.
 
 ## Preserve the product contract
 
@@ -85,6 +88,9 @@ scan its direct consumers and tests and verify downstream compatibility.
 - Update `CHANGELOG.md` for user-visible behavior, migrations, compatibility,
   security, or distribution changes. A behavior-preserving internal refactor
   does not need a changelog entry.
+- Regenerate `THIRD_PARTY_LICENSES.md` after any `Cargo.lock` or runtime
+  dependency change with `bash scripts/generate-third-party-licenses.sh > THIRD_PARTY_LICENSES.md`;
+  the full gate rejects stale output.
 
 ## Pull requests
 

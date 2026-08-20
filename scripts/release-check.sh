@@ -7,6 +7,26 @@ script_dir="${repo_root}/scripts"
 source "${script_dir}/release-lib.sh"
 cd "${repo_root}"
 
+if ! command -v rustup >/dev/null 2>&1; then
+  echo "release-check: rustup is required; install stable and Rust 1.85.0 before running the release gate" >&2
+  exit 1
+fi
+if ! stable_description="$(rustup run stable rustc --version 2>/dev/null)"; then
+  echo "release-check: stable Rust is not installed; run 'rustup toolchain install stable'" >&2
+  exit 1
+fi
+
+# Select stable for the entire gate, including bare cargo/rustc invocations and
+# nested smoke/packaging scripts. This process-local export overrides an
+# inherited toolchain selection without modifying the caller's rustup override.
+export RUSTUP_TOOLCHAIN=stable
+selected_description="$(rustc --version)"
+if [[ "${selected_description}" != "${stable_description}" ]]; then
+  echo "release-check: stable selection failed; expected '${stable_description}', found '${selected_description}'" >&2
+  exit 1
+fi
+echo "==> selected release toolchain: ${selected_description}"
+
 echo "==> formatting"
 cargo fmt --all --check
 
@@ -20,10 +40,6 @@ echo "==> warning-free documentation"
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 
 echo "==> minimum supported Rust 1.85.0"
-if ! command -v rustup >/dev/null 2>&1; then
-  echo "release-check: rustup is required to verify Rust 1.85.0; install rustup and run 'rustup toolchain install 1.85.0'" >&2
-  exit 1
-fi
 if ! msrv_description="$(rustup run 1.85.0 rustc --version 2>/dev/null)"; then
   echo "release-check: Rust 1.85.0 is not installed; run 'rustup toolchain install 1.85.0'" >&2
   exit 1
@@ -33,6 +49,26 @@ if [[ "${msrv_description}" != rustc\ 1.85.0\ * ]]; then
   exit 1
 fi
 rustup run 1.85.0 cargo check --workspace --all-targets --locked
+
+echo "==> audited third-party license notices"
+notice_check_dir="$(mktemp -d "${TMPDIR:-/tmp}/tachiko-notice-check.XXXXXX")"
+cleanup_notice_check() {
+  rm -rf -- "${notice_check_dir}"
+}
+trap cleanup_notice_check EXIT
+bash scripts/generate-third-party-licenses.sh >"${notice_check_dir}/generated.md"
+if ! cmp -s THIRD_PARTY_LICENSES.md "${notice_check_dir}/generated.md"; then
+  echo "release-check: THIRD_PARTY_LICENSES.md is stale; regenerate it with 'bash scripts/generate-third-party-licenses.sh > THIRD_PARTY_LICENSES.md'" >&2
+  exit 1
+fi
+cp "${notice_check_dir}/generated.md" "${notice_check_dir}/modified.md"
+printf '\n<!-- release-check drift probe -->\n' >>"${notice_check_dir}/modified.md"
+if cmp -s THIRD_PARTY_LICENSES.md "${notice_check_dir}/modified.md"; then
+  echo "release-check: dependency-license drift control failed to reject a modified notice" >&2
+  exit 1
+fi
+rm -rf -- "${notice_check_dir}"
+trap - EXIT
 
 echo "==> Cargo source packages"
 cargo package --workspace --locked --no-verify

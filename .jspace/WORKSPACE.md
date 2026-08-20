@@ -216,8 +216,8 @@ and an explicit release-authorization boundary.
 2. An existing exact `v${workspace_version}` tag authorizes artifact building.
 3. The workflow creates a draft release only; a human retains publish authority.
 4. Crate archives are validated but are not published to crates.io.
-5. Each native binary archive includes both licenses, README, and changelog plus
-   an adjacent SHA-256 checksum.
+5. Each native binary archive includes both Tachiko licenses, audited
+   third-party notices, README, and changelog plus an adjacent SHA-256 checksum.
 6. Code signing, notarization, attestations, package managers, and auto-update
    remain follow-up release capabilities.
 
@@ -307,3 +307,32 @@ registry-publication decision.
   deferred release decisions. The owner runbook records current private-hosting
   verification without authorizing a visibility change; no tag or release state
   was created.
+
+### Final release-review remediation
+
+- A bounded consumer scan confirmed `tachiko_release_payloads` is the single
+  member policy consumed by both native packaging and exact archive
+  verification; adding `THIRD_PARTY_LICENSES.md` there updates both surfaces
+  without parallel file lists. The four archives plus four checksums remain the
+  same eight external assets.
+- Dependency notices are generated from the locked all-target normal
+  `tachiko-cli` closure and byte-exact vendored legal files. The inventory
+  includes Windows-only and proc-macro packages, excludes Tachiko workspace
+  crates, and deduplicates identical legal texts by SHA-256 while retaining
+  every package/file attribution.
+- The complete local gate now requires installed stable Rust, exports a
+  process-local `RUSTUP_TOOLCHAIN=stable` before any main gate, reports the
+  selected compiler, and retains an explicit `rustup run 1.85.0` MSRV check.
+  This prevents a caller's older temporary override from weakening normal
+  release verification without changing any persistent rustup setting.
+- Deterministic regeneration under macOS system Bash 3.2 byte-matched the
+  checked-in notice; a deliberately modified copy failed comparison. Its 30
+  external package rows exactly matched Cargo's locked all-target normal tree,
+  including `windows-link`, `windows-sys`, and the derive/proc-macro closure.
+- Invoking the full clean-checkout release gate with an inherited
+  `RUSTUP_TOOLCHAIN=1.85.0` reported and used stable Rust 1.97.1 for normal
+  gates, then passed the explicit Rust 1.85.0 check, 98 tests across 17 suites,
+  eight Cargo packages, both product smokes, and native archive verification.
+  The exact seven-member archive contains one executable, README, changelog,
+  both Tachiko licenses, and `THIRD_PARTY_LICENSES.md`; the verifier executed
+  the extracted CLI successfully.

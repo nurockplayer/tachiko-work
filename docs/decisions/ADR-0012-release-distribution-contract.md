@@ -55,12 +55,19 @@ Tachiko Work adopts a tag-gated distribution contract:
   security policy, contribution guide, and executable release checklist.
 - Stable CI runs the full quality and product workflow. A separate exact Rust
   1.85 job proves the declared minimum against all targets with the lockfile.
+- The complete local gate requires rustup, selects installed stable Rust for
+  all ordinary and nested commands, and separately invokes exact Rust 1.85.0
+  for the MSRV check. It does not depend on the caller's default toolchain.
 - A release tag must exactly equal `v` plus the workspace version. Tag builds
   produce native archives for Linux x86-64, macOS arm64, macOS x86-64, and
   Windows x86-64.
-- Each archive contains the `tachiko` executable, README, changelog, and both
-  licenses, and has an adjacent SHA-256 checksum. CI extracts and executes the
-  native archive before accepting it.
+- Each archive contains the `tachiko` executable, README, changelog, both
+  Tachiko licenses, and a generated `THIRD_PARTY_LICENSES.md`, and has an
+  adjacent SHA-256 checksum. The notice deterministically inventories the
+  locked all-target normal `tachiko-cli` dependency closure, including
+  platform-specific and proc-macro packages, and preserves every discovered
+  vendored license/notice text. CI extracts and executes the native archive
+  before accepting it.
 - The tag workflow uses only an already-existing tag and creates a **draft**
   GitHub release. It never publishes the draft automatically and never invokes
   `cargo publish`.
@@ -80,6 +87,8 @@ Positive:
 - the declared MSRV becomes tested product behavior instead of documentation;
 - source packages and binary artifacts are reproducible from one versioned
   repository state;
+- dependency attribution is audited against Cargo's lockfile, dependency tree,
+  and vendored source instead of relying on a hand-maintained legal summary;
 - a tag authorizes release preparation while final publication remains a
   deliberate review step;
 - CI credentials remain read-only outside the tag-gated release job.

@@ -94,6 +94,10 @@ are not notarized. Operating systems may warn or block execution. If your
 environment requires signed software, build from reviewed source instead of
 bypassing its security policy.
 
+Every archive also includes `THIRD_PARTY_LICENSES.md`, the generated inventory
+and exact license/notice texts for the locked dependencies used by the CLI.
+Tachiko's own terms remain in `LICENSE-APACHE` and `LICENSE-MIT`.
+
 ## Try it in five minutes
 
 Create a project you can immediately understand:
@@ -159,13 +163,18 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --all-targets --locked
 ```
 
-Before requesting review, run the complete release-equivalent gate from a clean
-local commit. It also checks warning-free documentation, Rust 1.85
-compatibility, Cargo packages, both real user journeys, and the native release
-archive:
+Before requesting review, install stable Rust with its formatting and linting
+components plus the exact minimum toolchain. Then run the complete
+release-equivalent gate from a clean local commit. The gate selects stable for
+all normal and nested commands even if the caller has another rustup override;
+it separately checks Rust 1.85 compatibility, warning-free documentation,
+deterministic dependency notices, Cargo packages, both real user journeys, and
+the native release archive:
 
 ```sh
-rustup toolchain install 1.85.0
+rustup toolchain install stable --profile minimal
+rustup component add --toolchain stable rustfmt clippy
+rustup toolchain install 1.85.0 --profile minimal
 bash scripts/release-check.sh
 ```
 

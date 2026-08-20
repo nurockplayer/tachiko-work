@@ -19,10 +19,10 @@ tachiko-0.1.0-x86_64-pc-windows-msvc.tar.gz
 ```
 
 Each archive expands to a same-named directory containing the executable,
-`README.md`, `CHANGELOG.md`, `LICENSE-APACHE`, and `LICENSE-MIT`. The adjacent
-`.sha256` file records a portable SHA-256 digest using only the archive filename.
-Running `tachiko --version` from an extracted native archive is the executable
-acceptance test.
+`README.md`, `CHANGELOG.md`, `LICENSE-APACHE`, `LICENSE-MIT`, and
+`THIRD_PARTY_LICENSES.md`. The adjacent `.sha256` file records a portable
+SHA-256 digest using only the archive filename. Running `tachiko --version`
+from an extracted native archive is the executable acceptance test.
 
 Source installation remains supported with `cargo install --path crates/cli
 --locked`. Workspace crates must also produce valid Cargo source archives, but
@@ -67,14 +67,29 @@ workspace builds. Each source archive must inherit the root README and retain
 the SPDX license expression plus repository metadata. Cargo has a singular
 `license-file` field that is used instead of the SPDX expression, so exact
 copies of both license texts are required in the repository and binary
-archives; the final crate-archive license layout is decided with the deferred
-crates.io publication boundary.
+archives, together with the audited third-party notice described below; the
+final crate-archive license layout is decided with the deferred crates.io
+publication boundary.
 
 ## Automation
 
 Stable CI runs formatting, warnings-as-errors Clippy, all tests, warning-free
-documentation, source packaging, and both executable user journeys. The exact
-Rust 1.85 job runs `cargo check --workspace --all-targets --locked`.
+documentation, source packaging, and both executable user journeys. The local
+release-equivalent gate requires rustup and an installed stable toolchain,
+exports a process-local stable selection before any main gate, and reports the
+selected `rustc`; nested scripts therefore cannot inherit an older caller
+override. The exact Rust 1.85 job and the local gate run `rustup run 1.85.0
+cargo check --workspace --all-targets --locked` separately.
+
+`THIRD_PARTY_LICENSES.md` is generated without a new package dependency. The
+generator uses `cargo +stable vendor --locked --versioned-dirs` for exact source
+texts and `cargo +stable tree -p tachiko-cli --edges normal --target all` for
+the runtime closure. Tachiko workspace crates are excluded; every external
+name, version, declared license, locked source, and repository is inventoried.
+Every recursively discovered `LICENSE*`, `COPYING*`, `NOTICE*`, `UNLICENSE*`,
+or `COPYRIGHT*` file is attributed, and identical texts are deduplicated by
+SHA-256. A package without such a file fails generation. The full release gate
+regenerates to a temporary file and byte-compares it with the checked-in notice.
 
 The tag workflow uses fixed native GitHub-hosted runner labels and current
 official artifact actions. Each matrix job installs stable Rust, builds the
@@ -88,6 +103,8 @@ with generated notes.
 - A tag/version mismatch stops before any build or release write.
 - A missing binary, legal file, checksum tool, or malformed archive fails its
   matrix job.
+- Missing dependency legal text or drift between `Cargo.lock`, the Cargo tree,
+  vendored sources, and the checked-in third-party notice fails the local gate.
 - A checksum mismatch or non-running native executable fails before upload.
 - An existing release makes creation fail; assets are never overwritten by the
   workflow.

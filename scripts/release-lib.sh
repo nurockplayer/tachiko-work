@@ -49,7 +49,7 @@ tachiko_executable_name() {
 }
 
 tachiko_release_payloads() {
-  printf '%s\n' README.md CHANGELOG.md LICENSE-APACHE LICENSE-MIT
+  printf '%s\n' README.md CHANGELOG.md LICENSE-APACHE LICENSE-MIT THIRD_PARTY_LICENSES.md
 }
 
 tachiko_sha256_digest() {

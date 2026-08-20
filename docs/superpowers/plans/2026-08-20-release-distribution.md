@@ -16,7 +16,8 @@
   CI write permissions.
 - Preserve local path development while adding registry-compatible internal
   dependency versions.
-- Release archives must be native-tested and include both license texts.
+- Release archives must be native-tested and include both Tachiko license texts
+  plus audited third-party notices.
 - Use explicit supported runner labels rather than moving `-latest` aliases.
 - Use official GitHub artifact actions and `gh release create --verify-tag`.
 - All new executable behavior follows a demonstrated red/green test cycle.
@@ -103,11 +104,15 @@
 **Files:**
 - Modify only files needed to address verified findings.
 
-- [ ] Run `bash scripts/release-check.sh` from a clean branch checkout.
+- [x] Run `bash scripts/release-check.sh` from a clean branch checkout.
 - [ ] Independently review the implementation against ADR-0012, the design,
   security boundaries, Cargo packaging, and first-user install ergonomics.
-- [ ] Fix every actionable finding and rerun the smallest relevant gate followed
+- [x] Fix every actionable finding and rerun the smallest relevant gate followed
   by the full release check.
-- [ ] Update this plan and j-space with exact outcome evidence.
+- [x] Add deterministic locked all-target third-party license generation, ship
+  its checked-in output in every native archive, and reject notice drift.
+- [x] Make the full local gate explicitly select installed stable Rust for all
+  ordinary and nested commands while retaining the exact 1.85.0 MSRV check.
+- [x] Update this plan and j-space with exact outcome evidence.
 - [ ] Commit the verified checkpoint as
   `build: ship release distribution contract`.
