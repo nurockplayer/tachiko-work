@@ -432,3 +432,27 @@ the product's no-overwrite safety boundary.
   smoke. The local `actionlint` executable is unavailable on this host; the CI
   change is a single existing-pattern shell step and remains covered by final
   workflow review.
+
+### Outcome
+
+- Commits `7eb2cf6`, `6f79baf`, and `670f9c8` ship the UI-independent semantic
+  transformations, cohesive nested CLI, onboarding, Moonfall roster guide,
+  CI contract, and local release-gate integration.
+- The complete gate was invoked with inherited `RUSTUP_TOOLCHAIN=1.85.0` and
+  selected stable Rust 1.97.1 for ordinary work. Formatting, warnings-as-errors
+  Clippy, 113 tests across 19 suites, warning-free docs, exact Rust 1.85, all
+  eight Cargo source packages, dependency-notice freshness, and all three real
+  product journeys passed.
+- The native macOS arm64 release archive was byte-identical across strict and
+  ordinary umasks. Checksum and safe-payload validation, extracted
+  `tachiko 0.1.0` execution, tamper rejection, both interruption windows, and
+  concurrent no-clobber publication all passed.
+- Independent phase review reproduced 55 focused semantic-core, workflow, and
+  CLI tests plus the complete release check. It approved ADR/implementation,
+  recursive reference semantics, deletion safety, canonical persistence,
+  product guidance, CI, and the smoke contract with no actionable P0-P2 issue.
+- Formula, schema, and field authoring; cascading reference migration; `.roproj`;
+  graphical UI; signing; notarization; crates.io publication; and an actual
+  tagged release remain explicit later decisions.
+- No tag, push, draft release, registry publication, hosting visibility change,
+  or other public state mutation was performed.

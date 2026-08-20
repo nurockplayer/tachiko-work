@@ -64,10 +64,10 @@ canonical `.ro` storage, Bash smoke contracts, GitHub Actions.
 
 ## Task 4: Release verification and review
 
-- [ ] Run `bash scripts/release-check.sh` from the reconciled branch.
-- [ ] Independently review the complete phase against ADR-0013, repository
+- [x] Run `bash scripts/release-check.sh` from the reconciled branch.
+- [x] Independently review the complete phase against ADR-0013, repository
   rules, product ergonomics, safety, deterministic behavior, and regressions.
-- [ ] Fix every actionable P0-P2 finding with regression coverage and rerun the
+- [x] Fix every actionable P0-P2 finding with regression coverage and rerun the
   relevant gate.
-- [ ] Record exact evidence and remaining boundaries in j-space, then create a
+- [x] Record exact evidence and remaining boundaries in j-space, then create a
   clean product checkpoint without tagging, pushing, or publishing.
