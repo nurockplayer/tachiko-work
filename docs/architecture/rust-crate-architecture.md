@@ -103,6 +103,9 @@ External formats belong at the boundary:
 - CSV
 - JSON
 
+These are future adapter categories; only core JSON `.ro` input/output is active in
+v0.1.
+
 ## Rust Responsibilities
 
 Rust is responsible for:

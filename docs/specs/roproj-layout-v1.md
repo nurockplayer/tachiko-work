@@ -1,8 +1,9 @@
-# Tachiko Work .roproj Layout v1
+# Tachiko Work .roproj Layout v1 (Deferred)
 
 ## Purpose
 
-`.roproj` is the Git-native working representation of a Tachiko Work project.
+This is a deferred ADR-0003 draft. `.roproj` is not part of the implemented
+v0.1 CLI contract.
 
 ## Example
 
@@ -19,7 +20,7 @@ project.roproj/
 └── assets/
 ```
 
-## Requirements
+## Requirements (deferred)
 
 - UTF-8
 - deterministic ordering

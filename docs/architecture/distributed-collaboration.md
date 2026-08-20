@@ -12,11 +12,17 @@ Tachiko Work workflow:
 
 User actions become typed operations against a semantic model.
 
+Current v0.1 behavior:
+
+- branch-based collaboration uses deterministic semantic three-way merge on `.ro` documents.
+- conflicts are returned with typed path-level payloads.
+- no realtime/collaborative cursor model is implemented.
+
 ## Goals
 
-- Real-time collaboration
-- Offline editing
-- Deterministic synchronization
+- Real-time collaboration (future)
+- Offline editing with future adapter support
+- Deterministic synchronization (future)
 - Conflict awareness
 - Git compatibility
 

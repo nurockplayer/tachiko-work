@@ -2,7 +2,7 @@
 
 ## Goal
 
-Support both normal users and Git repositories without creating separate sources of truth.
+Support users and Git workflows from one semantic model.
 
 ## Representations
 
@@ -19,6 +19,8 @@ Designed for:
 - desktop usage
 - transport
 
+Current implementation status: `.ro` is the implemented persistence format in v0.1.
+
 ### Git working representation
 
 ```
@@ -33,17 +35,21 @@ project.roproj/
 └── tests/
 ```
 
-Designed for:
+Planned representation (not implemented in v0.1, proposed in ADR-0003):
 
 - Git diff
 - branch workflows
 - code review
 - CI
 
+This representation is intentionally deferred until ADR-0003 is accepted.
+
 ## Rule
 
-`.ro` and `.roproj` are two representations of the same semantic model.
+`.ro` is the active v0.1 persisted representation.
+
+`.ro` and `.roproj` are the target dual-representation model under ADR-0003.
 
 The semantic model is the source of truth.
 
-The system must provide deterministic round-trip conversion.
+The system does not yet provide deterministic `.ro` ↔ `.roproj` conversion.

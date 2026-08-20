@@ -24,11 +24,13 @@ The workflow separates design intent from engineering history.
 
 ## Tachiko Work Solution
 
-- Git-native spreadsheet
+- Git-native CLI workflow
 - Typed game data
 - Semantic diff
 - Balance validation
 - Engine integration
+
+Current v0.1 remains CLI-first and does not include a spreadsheet UI.
 
 ## Long Term
 

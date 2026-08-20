@@ -6,29 +6,23 @@ Git is a storage and collaboration protocol, not the user interface.
 
 ## Representation
 
-A logical Tachiko Work document can have:
+Current v0.1 workflow storage is the single-file `.ro` envelope in this repository.
 
 ```
 project.ro
-
-project.roproj/
-├── manifest.json
-├── schema.json
-├── data/*.jsonl
-├── formulas/
-├── views/
-└── tests/
 ```
 
-`.ro` is optimized for portable packages.
+`.ro` is optimized for portable packages, deterministic review snapshots, and direct
+CLI read/write operations.
 
-`.roproj` is optimized for Git workflows.
+`.roproj` remains a deferred design direction in ADR-0003 and is not implemented in
+this release.
 
-Both represent the same semantic model.
+The model itself is the compatibility boundary for future representations.
 
 ## Benefits
 
-- Human readable diffs
+- Git reviewable, byte-stable diffs at the semantic-document level
 - Branch based workflows
 - Semantic merge
 - CI validation

@@ -22,7 +22,7 @@ This creates disconnected versions of the truth.
 
 ## Tachiko Work Opportunity
 
-Create the spreadsheet that belongs in a Git repository.
+Create a semantic balance workflow that fits cleanly in a Git repository.
 
 Features:
 
@@ -31,9 +31,11 @@ Features:
 - references
 - formulas
 - semantic diff
-- semantic merge
+- three-way semantic merge
 - pull-request friendly review
 - balance validation CI
+
+Current release boundary: this is CLI-first with `.ro` persistence.
 
 ## Long Term Expansion
 
@@ -46,3 +48,10 @@ The same foundation can expand into:
 - research documents
 - enterprise spreadsheets
 - AI-native knowledge work
+
+Non-implemented work in this release remains:
+
+- spreadsheet-native GUI editing
+- `.roproj`/working-copy workflow
+- realtime/online collaboration
+- engine plugins and hosted multiplayer pipelines

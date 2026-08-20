@@ -21,8 +21,10 @@ Problems:
 - hidden formulas
 
 ### Desired Workflow
+  
+v0.1 target is CLI-first, not GUI-first.
 
-The designer edits a familiar spreadsheet interface.
+The designer uses deterministic commands and canonical text output:
 
 The system provides:
 
@@ -31,6 +33,11 @@ The system provides:
 - references
 - impact analysis
 - review history
+
+### Future Interface
+
+Spreadsheet-style editing and richer designer tooling are planned as future
+workflow layers and are not part of this release.
 
 ## Programmer
 

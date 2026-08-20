@@ -18,6 +18,9 @@ The semantic model is the source of truth.
 
 `.ro` is a representation.
 
+For v0.1, `.ro` is the shipped storage representation used by CLI validation,
+calculation, diff, merge, and export flows.
+
 ## Requirements
 
 A valid `.ro` package should provide:
@@ -31,19 +34,13 @@ A valid `.ro` package should provide:
 
 ## Relationship With .roproj
 
-`.ro` and `.roproj` represent the same logical document.
+ADR-0003 defines `.roproj` as a future dual representation.
 
-`.ro` is optimized for humans moving documents.
+v0.1 status:
 
-`.roproj` is optimized for Git workflows.
-
-Conversion must be deterministic:
-
-```
-.roproj -> .ro -> .roproj
-```
-
-must preserve semantic meaning.
+- `.ro` is implemented and stable.
+- `.roproj` is not implemented in this phase.
+- Deterministic `.ro` ↔ `.roproj` round-trips are not yet available.
 
 ## Future Considerations
 

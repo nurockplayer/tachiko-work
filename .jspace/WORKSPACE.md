@@ -581,3 +581,18 @@ quoted named `--expression` option with explicit hyphen-value handling.
   - No P0/P1/P2 findings.
   - No code defects requiring fixes remained after this independent review.
   - No speculative functionality was added; no feature phase was started.
+
+- Documentation reconciliation outcome (post-checkpoint):
+  - Current `v0.1` CLI-first implementation is now reflected across
+    `README.md`, `docs/decisions`, `docs/architecture`, `docs/specs`, and
+    `docs/product`.
+  - Explicitly marked as deferred/future: GUI/UI, `.roproj` production workflow,
+    engine plugins, cloud/realtime collaboration, CRDT/event-sourcing, and
+    realtime AI editing workflows.
+  - Formula docs now distinguish implemented syntax (`+ - * /`, parentheses,
+    unary operators, `min`/`max`, bounded size/depth limits) from future
+    capabilities.
+  - Semantic merge docs now match implemented typed three-way `.ro` merge with
+    typed conflict output, deterministic path ordering, and no partial writes.
+  - AI docs now match the implemented read/explain/suggest model and explicit
+    approval gate.

@@ -4,7 +4,7 @@
 
 The first product is not an Office replacement.
 
-It is a Git-native computational data platform for game development.
+It is a CLI-first, Git-native computational data platform for game development.
 
 ## Problem
 
@@ -49,6 +49,8 @@ Support:
 - semantic diff
 - CLI operations
 - AI semantic read/query
+- three-way semantic merge
+- entity lifecycle and formula editing
 
 ### Game balance proof
 
@@ -61,9 +63,9 @@ Provide a game balance example covering:
 
 ## Deferred after the MVP
 
-Spreadsheet or React UI, semantic merge, realtime collaboration, cloud SaaS,
-Office/Excel compatibility, engine plugins, and enterprise permissions remain
-future layers over the semantic model.
+GUI/React spreadsheet-style UI, realtime collaboration, cloud SaaS,
+Office/Excel compatibility, `.roproj` workflow production, engine plugins, and
+enterprise permissions remain future layers over the semantic model.
 
 ## Example MVP workflow
 

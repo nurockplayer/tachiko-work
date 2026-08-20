@@ -2,7 +2,14 @@
 
 ## Principle
 
-Conflicts should be resolved at the semantic level, not by comparing text files.
+Conflicts are resolved at the semantic level, not by comparing text files.
+
+The v0.1 merge behavior:
+
+- unchanged values from both sides pass through
+- single-sided changes are accepted
+- conflicting changes return typed conflict objects (base/ours/theirs)
+- merged outputs must validate and calculate before persistence
 
 ## Example
 
@@ -29,6 +36,11 @@ Dragon.hp
 ```
 
 require review.
+
+Current implementation notes:
+
+- path-order is stable and deterministic.
+- typed payload preserves semantic context; no partial documents are emitted on conflict.
 
 ## Goals
 

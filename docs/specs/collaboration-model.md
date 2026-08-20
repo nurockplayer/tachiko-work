@@ -2,7 +2,7 @@
 
 ## Principle
 
-Collaboration should operate on semantic changes, not raw file edits.
+Collaboration currently starts from semantic changes, not raw file edits.
 
 ## Operations
 
@@ -16,11 +16,20 @@ A change should describe intent:
 
 ## Merge Model
 
-Semantic merge should understand:
+Implemented semantic merge:
 
-- independent field changes
-- conflicting intent
-- dependency impact
+- independent field updates
+- typed field-level conflicts
+- dependent and merged candidate validation
+
+The merge contract also covers schema, entity membership, and references through
+typed three-way reconciliation.
+
+Future work:
+
+- operation-log or realtime adapters
+- interactive conflict resolvers
+- branch-aware user identity and comments
 
 Example:
 

@@ -44,7 +44,6 @@ Validation should run in:
 
 - local editor
 - CLI
-- Git hooks
 - GitHub Actions
 
 ## Goal

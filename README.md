@@ -14,7 +14,7 @@ truth.
 
 ## First usable product
 
-The current product provides a complete, safe game-balance workflow:
+The current product provides a complete, safe CLI-first game-balance workflow:
 
 - typed schemas, entities, fields, and references;
 - canonical, versioned `.ro` serialization;
@@ -22,7 +22,9 @@ The current product provides a complete, safe game-balance workflow:
 - semantic diff with derived formula impact;
 - guided starter creation, browsing, explanation, and typed edits;
 - validated entity duplication, relationship-safe rename, and protected removal;
-- bounded formula creation and revision with canonical expression syntax;
+- bounded formula creation and revision with canonical expression syntax:
+  `finite literal`, `+ - * /`, unary signs, parentheses,
+  `[entity.field]` references, and `min`/`max`;
 - CLI validation and evaluated runtime JSON export;
 - read-only AI structure/formula/impact queries and approval-required suggestions.
 
@@ -157,9 +159,16 @@ tachiko entity remove with-moonblade.ro moonblade --output without-moonblade.ro
 
 ## Author computations
 
-Create or revise a formula on any schema-numeric field. References use
-bracketed semantic paths, arithmetic follows standard precedence, and `min` and
-`max` each accept two expressions:
+Create or revise a formula on any schema-numeric field.
+
+Implemented v0.1 formula grammar (copy-paste ready):
+
+- `[entity.field]` references
+- `+`, `-`, `*`, `/` operators with normal precedence
+- unary `+` and unary `-`
+- parentheses
+- `min(lhs, rhs)` and `max(lhs, rhs)`
+- finite decimal and scientific literals only
 
 ```sh
 tachiko formula set balance.ro iron_sword.dps \
@@ -170,10 +179,15 @@ tachiko diff balance.ro capped-dps.ro
 ```
 
 The result is 45 DPS. `explain` prints canonical syntax that can be pasted back
-into `--expression`. Always quote formulas in a shell so brackets, parentheses,
-spaces, and `*` are passed literally. Invalid syntax, missing or non-numeric
-references, cycles, division by zero, non-finite results, and expressions over
-the bounded size/depth limits create no output.
+into `--expression`.
+
+Valid forms are intentionally limited to this grammar; there is no conditional,
+comparison, lookup, or function table extension in v0.1.
+
+Always quote formulas in a shell so brackets, parentheses, spaces, and `*` are
+passed literally. Invalid syntax, missing or non-numeric references, cycles,
+division by zero, non-finite results, and expressions over the bounded
+size/depth limits create no output.
 
 Typed AI formula proposals use the same complexity and semantic gates, remain
 inert, and require an approved write path.

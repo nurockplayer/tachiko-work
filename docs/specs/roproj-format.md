@@ -1,14 +1,13 @@
-# .roproj Format Specification
+# .roproj Format Specification (Deferred, ADR-0003)
 
 ## Purpose
 
-`.roproj` is the Git-native working representation of a Tachiko Work project.
+`.roproj` is the proposed Git-native working representation defined by ADR-0003.
+It is a deferred direction and is **not implemented** in the current v0.1 release.
 
-It exists because binary document formats are poor Git citizens.
+## Goals (deferred)
 
-## Goals
-
-A `.roproj` directory should be:
+This goal remains proposed:
 
 - deterministic
 - human readable
@@ -33,15 +32,8 @@ project.roproj/
 
 ## Git Workflow
 
-Users should be able to:
-
-- branch
-- commit
-- review
-- merge
-- validate
-
-without manually editing raw files.
+Current v0.1 users work through `.ro` files for branch/merge/review/validate flows.
+`.roproj` workflow details are deferred until ADR-0003 is implemented.
 
 ## Canonical Ordering
 
@@ -55,4 +47,4 @@ so equivalent documents produce equivalent Git history.
 
 ## Design Goal
 
-Git becomes a storage and collaboration protocol, not the user interface.
+Git remains a storage and collaboration protocol, not the user interface.
