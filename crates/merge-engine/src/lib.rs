@@ -4,7 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use tachiko_formula_engine::{CalculationError, calculate};
 use tachiko_semantic_core::{
-    Document, DocumentId, Entity, EntityId, FieldDefinition, FieldId, Schema, SchemaId, Value,
+    Diagnostic, Document, DocumentId, Entity, EntityId, FieldDefinition, FieldId, Schema, SchemaId,
+    Value, validate_document,
 };
 use thiserror::Error;
 
@@ -34,22 +35,46 @@ pub enum MergeValue {
     FieldValue(Value),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MergeSide {
+    Base,
+    Ours,
+    Theirs,
+}
+
 #[derive(Debug, Error)]
 pub enum MergeError {
+    #[error("invalid {side:?} input: {diagnostics:?}")]
+    InvalidInput {
+        side: MergeSide,
+        diagnostics: Vec<Diagnostic>,
+    },
+    #[error("could not calculate {side:?} input: {source}")]
+    InputCalculation {
+        side: MergeSide,
+        #[source]
+        source: CalculationError,
+    },
+    #[error("invalid merged document: {diagnostics:?}")]
+    InvalidMergedDocument { diagnostics: Vec<Diagnostic> },
     #[error("could not calculate merged document: {0}")]
-    Calculation(#[from] CalculationError),
+    MergedCalculation(CalculationError),
 }
 
 /// Merge semantic changes from `ours` and `theirs` against their common `base`.
 ///
 /// # Errors
 ///
-/// Returns [`MergeError`] when a conflict-free candidate cannot be calculated.
+/// Returns [`MergeError`] when an input or conflict-free candidate is unsafe.
 pub fn merge(
     base: &Document,
     ours: &Document,
     theirs: &Document,
 ) -> Result<MergeOutcome, MergeError> {
+    validate_and_calculate_input(MergeSide::Base, base)?;
+    validate_and_calculate_input(MergeSide::Ours, ours)?;
+    validate_and_calculate_input(MergeSide::Theirs, theirs)?;
+
     let mut conflicts = Vec::new();
     let id = merge_scalar(
         "id",
@@ -87,7 +112,7 @@ pub fn merge(
 
     let (Some(id), Some(title), Some(schemas), Some(entities)) = (id, title, schemas, entities)
     else {
-        return Ok(MergeOutcome::Conflicted(conflicts));
+        unreachable!("missing merge selection must have produced a conflict")
     };
     let candidate = Document {
         id,
@@ -95,9 +120,22 @@ pub fn merge(
         schemas,
         entities,
     };
-    calculate(&candidate)?;
+    let diagnostics = validate_document(&candidate);
+    if !diagnostics.is_empty() {
+        return Err(MergeError::InvalidMergedDocument { diagnostics });
+    }
+    calculate(&candidate).map_err(MergeError::MergedCalculation)?;
 
     Ok(MergeOutcome::Merged(candidate))
+}
+
+fn validate_and_calculate_input(side: MergeSide, document: &Document) -> Result<(), MergeError> {
+    let diagnostics = validate_document(document);
+    if !diagnostics.is_empty() {
+        return Err(MergeError::InvalidInput { side, diagnostics });
+    }
+    calculate(document).map_err(|source| MergeError::InputCalculation { side, source })?;
+    Ok(())
 }
 
 fn merge_schemas(
