@@ -4,30 +4,33 @@
 
 Git is a storage and collaboration protocol, not the user interface.
 
-## Representation
+## Current v0.1 workflow
 
-Current v0.1 workflow storage is the single-file `.ro` envelope in this repository.
+The implemented CLI currently reads and writes deterministic single-file `.ro` documents:
 
-```
+```text
 project.ro
 ```
 
-`.ro` is optimized for portable packages, deterministic review snapshots, and direct
-CLI read/write operations.
+That path is already used for branch-based editing, semantic diff, semantic three-way merge, validation, calculation, CI smoke journeys, and reviewable data changes.
 
-`.roproj` remains a deferred design direction in ADR-0003 and is not implemented in
-this release.
+## Accepted target representation
+
+ADR-0003 is Accepted and defines `project.roproj/` as the canonical editable/source representation for the mature Git-native workflow, with `.ro` as a portable artifact.
+
+`.roproj` implementation is deferred, not the decision itself. The current `.ro`-based workflow is therefore a validated transitional product path while the semantic model and authoring contracts stabilize.
 
 The model itself is the compatibility boundary for future representations.
 
-## Benefits
+## Benefits already validated
 
-- Git reviewable, byte-stable diffs at the semantic-document level
-- Branch based workflows
-- Semantic merge
+- deterministic semantic-document serialization
+- branch-based workflows
+- semantic diff
+- semantic three-way merge
 - CI validation
-- Reviewable data changes
+- reviewable data changes
 
 ## Goal
 
-Make non-programmers first-class participants in Git-based workflows.
+Make non-programmers first-class participants in Git-based workflows without making Git itself the user interface.
