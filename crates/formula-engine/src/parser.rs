@@ -15,6 +15,20 @@ pub struct FormulaParseError {
     pub message: String,
 }
 
+/// A post-desugaring expression complexity limit violation.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum ExpressionComplexityError {
+    /// The AST contains more than 256 expression nodes.
+    #[error("expression exceeds 256-node limit")]
+    NodeLimit,
+    /// The AST contains a root-to-leaf path deeper than 64 nodes.
+    #[error("expression exceeds 64-depth limit")]
+    DepthLimit,
+    /// Canonical rendering would exceed the 4,096-byte parser input limit.
+    #[error("canonical expression exceeds 4096-byte limit")]
+    CanonicalLengthLimit,
+}
+
 impl FormulaParseError {
     fn new(position: usize, message: impl Into<String>) -> Self {
         Self {
@@ -29,8 +43,8 @@ impl FormulaParseError {
 /// # Errors
 ///
 /// Returns [`FormulaParseError`] for invalid syntax, identifiers, non-finite
-/// numeric literals, trailing content, or a breached input, node, or nesting
-/// limit.
+/// numeric literals, trailing content, or a breached input, node, AST-depth,
+/// canonical-byte, or syntactic-nesting limit.
 pub fn parse_expression(input: &str) -> Result<Expression, FormulaParseError> {
     if input.len() > MAX_INPUT_BYTES {
         return Err(FormulaParseError::new(
@@ -38,7 +52,51 @@ pub fn parse_expression(input: &str) -> Result<Expression, FormulaParseError> {
             "expression exceeds 4096-byte limit",
         ));
     }
-    Parser::new(input).parse()
+    let expression = Parser::new(input).parse()?;
+    validate_expression_complexity(&expression)
+        .map_err(|error| FormulaParseError::new(input.len(), error.to_string()))?;
+    Ok(expression)
+}
+
+/// Validate resource limits on a post-desugaring expression AST.
+///
+/// Traversal is iterative, so deeply nested untrusted AST values are rejected
+/// without recursively walking them. Canonical byte length is computed from
+/// each node's formatting contribution without first allocating the rendered
+/// expression.
+///
+/// # Errors
+///
+/// Returns a typed error when the expression exceeds 256 nodes, a depth of 64,
+/// or 4,096 bytes in canonical form.
+pub fn validate_expression_complexity(
+    expression: &Expression,
+) -> Result<(), ExpressionComplexityError> {
+    let mut nodes = 0_usize;
+    let mut stack = vec![(expression, 1_usize)];
+    while let Some((node, depth)) = stack.pop() {
+        if depth > MAX_NESTING {
+            return Err(ExpressionComplexityError::DepthLimit);
+        }
+        nodes += 1;
+        if nodes > MAX_AST_NODES {
+            return Err(ExpressionComplexityError::NodeLimit);
+        }
+        push_children(&mut stack, node, depth + 1);
+    }
+
+    let mut canonical_bytes = 0_usize;
+    let mut stack = vec![expression];
+    while let Some(node) = stack.pop() {
+        canonical_bytes = canonical_bytes
+            .checked_add(canonical_byte_contribution(node))
+            .ok_or(ExpressionComplexityError::CanonicalLengthLimit)?;
+        if canonical_bytes > MAX_INPUT_BYTES {
+            return Err(ExpressionComplexityError::CanonicalLengthLimit);
+        }
+        push_child_nodes(&mut stack, node);
+    }
+    Ok(())
 }
 
 /// Render an expression in deterministic, copy/paste-safe canonical syntax.
@@ -75,10 +133,63 @@ fn format_binary(left: &Expression, operator: &str, right: &Expression) -> Strin
 }
 
 fn format_number(number: f64) -> String {
-    if number.fract() == 0.0 {
-        format!("{number:.0}")
+    let display = number.to_string();
+    let scientific = format!("{number:e}");
+    let scientific_round_trips = scientific
+        .parse::<f64>()
+        .is_ok_and(|parsed| parsed.to_bits() == number.to_bits());
+
+    if scientific.len() < display.len() && scientific_round_trips {
+        scientific
     } else {
-        number.to_string()
+        display
+    }
+}
+
+fn canonical_byte_contribution(expression: &Expression) -> usize {
+    match expression {
+        Expression::Number(number) => format_number(*number).len(),
+        Expression::Reference(reference) => {
+            reference.entity.as_str().len() + reference.field.as_str().len() + 3
+        }
+        Expression::Add { .. }
+        | Expression::Subtract { .. }
+        | Expression::Multiply { .. }
+        | Expression::Divide { .. } => 5,
+        Expression::Minimum { .. } | Expression::Maximum { .. } => 7,
+    }
+}
+
+fn push_children<'expression>(
+    stack: &mut Vec<(&'expression Expression, usize)>,
+    expression: &'expression Expression,
+    child_depth: usize,
+) {
+    if let Some((left, right)) = binary_children(expression) {
+        stack.push((right, child_depth));
+        stack.push((left, child_depth));
+    }
+}
+
+fn push_child_nodes<'expression>(
+    stack: &mut Vec<&'expression Expression>,
+    expression: &'expression Expression,
+) {
+    if let Some((left, right)) = binary_children(expression) {
+        stack.push(right);
+        stack.push(left);
+    }
+}
+
+fn binary_children(expression: &Expression) -> Option<(&Expression, &Expression)> {
+    match expression {
+        Expression::Add { left, right }
+        | Expression::Subtract { left, right }
+        | Expression::Multiply { left, right }
+        | Expression::Divide { left, right }
+        | Expression::Minimum { left, right }
+        | Expression::Maximum { left, right } => Some((left, right)),
+        Expression::Number(_) | Expression::Reference(_) => None,
     }
 }
 

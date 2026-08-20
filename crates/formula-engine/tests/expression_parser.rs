@@ -1,4 +1,7 @@
-use tachiko_formula_engine::{FormulaParseError, format_expression, parse_expression};
+use tachiko_formula_engine::{
+    ExpressionComplexityError, FormulaParseError, format_expression, parse_expression,
+    validate_expression_complexity,
+};
 use tachiko_semantic_core::{Expression, FieldRef};
 
 fn number(value: f64) -> Expression {
@@ -7,6 +10,56 @@ fn number(value: f64) -> Expression {
 
 fn reference(entity: &str, field: &str) -> Expression {
     Expression::Reference(FieldRef::new(entity, field))
+}
+
+fn left_associative_sum(terms: usize) -> String {
+    std::iter::repeat_n("1", terms)
+        .collect::<Vec<_>>()
+        .join("+")
+}
+
+fn left_associative_ast(terms: usize, value: f64) -> Expression {
+    let mut expression = number(value);
+    for _ in 1..terms {
+        expression = Expression::Add {
+            left: Box::new(expression),
+            right: Box::new(number(value)),
+        };
+    }
+    expression
+}
+
+fn balanced_sum(leaves: usize) -> String {
+    balanced_sum_with_leaf(leaves, "1")
+}
+
+fn balanced_sum_with_leaf(leaves: usize, leaf: &str) -> String {
+    if leaves == 1 {
+        return leaf.to_owned();
+    }
+    let left = leaves / 2;
+    let right = leaves - left;
+    format!(
+        "({}+{})",
+        balanced_sum_with_leaf(left, leaf),
+        balanced_sum_with_leaf(right, leaf)
+    )
+}
+
+fn balanced_ast(leaves: usize) -> Expression {
+    balanced_ast_with_leaf(leaves, &number(1.0))
+}
+
+fn balanced_ast_with_leaf(leaves: usize, leaf: &Expression) -> Expression {
+    if leaves == 1 {
+        return leaf.clone();
+    }
+    let left = leaves / 2;
+    let right = leaves - left;
+    Expression::Add {
+        left: Box::new(balanced_ast_with_leaf(left, leaf)),
+        right: Box::new(balanced_ast_with_leaf(right, leaf)),
+    }
 }
 
 fn assert_parse_error(input: &str, position: usize, message: &str) {
@@ -110,6 +163,29 @@ fn decimal_and_scientific_literals_are_finite_f64_values() {
         ("1E-3", 0.001),
     ] {
         assert_eq!(parse_expression(input).unwrap(), number(expected));
+    }
+}
+
+#[test]
+fn canonical_numbers_preserve_extreme_subnormal_precision_and_negative_zero_bits() {
+    for (input, expected) in [
+        ("1e308", "1e308"),
+        ("5e-324", "5e-324"),
+        ("1.2345678901234567", "1.2345678901234567"),
+        ("100", "100"),
+        ("-0", "-0"),
+    ] {
+        let expression = parse_expression(input).unwrap();
+        let canonical = format_expression(&expression);
+
+        assert_eq!(canonical, expected);
+        let Expression::Number(original) = expression else {
+            panic!("numeric input must parse to a number")
+        };
+        let Expression::Number(reparsed) = parse_expression(&canonical).unwrap() else {
+            panic!("canonical number must reparse to a number")
+        };
+        assert_eq!(reparsed.to_bits(), original.to_bits());
     }
 }
 
@@ -221,19 +297,86 @@ fn input_limit_is_exactly_4096_bytes() {
 }
 
 #[test]
-fn node_limit_allows_255_nodes_and_rejects_the_257th_ast_node() {
-    let accepted = std::iter::repeat_n("1", 128).collect::<Vec<_>>().join("+");
-    assert!(parse_expression(&accepted).is_ok());
-
-    let rejected = std::iter::repeat_n("1", 129).collect::<Vec<_>>().join("+");
-    assert_parse_error(&rejected, 256, "expression exceeds 256-node limit");
-}
-
-#[test]
 fn nesting_limit_allows_64_constructs_and_rejects_the_65th() {
     let accepted = format!("{}1{}", "(".repeat(64), ")".repeat(64));
     assert_eq!(parse_expression(&accepted).unwrap(), number(1.0));
 
     let rejected = format!("{}1{}", "(".repeat(65), ")".repeat(65));
     assert_parse_error(&rejected, 64, "expression exceeds 64-nesting limit");
+}
+
+#[test]
+fn balanced_node_limit_allows_255_nodes_and_rejects_257() {
+    let accepted_input = balanced_sum(128);
+    let accepted = parse_expression(&accepted_input).expect("255 balanced nodes should parse");
+    assert_eq!(validate_expression_complexity(&accepted), Ok(()));
+
+    let rejected_ast = balanced_ast(129);
+    assert_eq!(
+        validate_expression_complexity(&rejected_ast),
+        Err(ExpressionComplexityError::NodeLimit)
+    );
+    let rejected = parse_expression(&balanced_sum(129)).unwrap_err();
+    assert_eq!(rejected.message, "expression exceeds 256-node limit");
+}
+
+#[test]
+fn post_desugaring_depth_allows_64_and_rejects_65_in_flat_chains() {
+    let accepted_input = left_associative_sum(64);
+    let accepted = parse_expression(&accepted_input).expect("depth 64 should parse");
+    assert_eq!(validate_expression_complexity(&accepted), Ok(()));
+    let canonical = format_expression(&accepted);
+    assert_eq!(parse_expression(&canonical).unwrap(), accepted);
+
+    let rejected_input = left_associative_sum(65);
+    assert_parse_error(
+        &rejected_input,
+        rejected_input.len(),
+        "expression exceeds 64-depth limit",
+    );
+    assert_eq!(
+        validate_expression_complexity(&left_associative_ast(65, 1.0)),
+        Err(ExpressionComplexityError::DepthLimit)
+    );
+}
+
+#[test]
+fn unary_desugaring_participates_in_post_construction_depth() {
+    let accepted_input = format!("{}[a.b]", "-".repeat(63));
+    let accepted = parse_expression(&accepted_input).expect("desugared depth 64 should parse");
+    assert_eq!(validate_expression_complexity(&accepted), Ok(()));
+
+    let rejected_input = format!("{}[a.b]", "-".repeat(64));
+    assert_parse_error(
+        &rejected_input,
+        rejected_input.len(),
+        "expression exceeds 64-depth limit",
+    );
+}
+
+#[test]
+fn canonical_byte_limit_is_enforced_after_construction() {
+    let exact_field = "x".repeat(4_092);
+    let exact_input = format!("[a.{exact_field}]");
+    assert_eq!(exact_input.len(), 4_096);
+    let exact = parse_expression(&exact_input).expect("4096 canonical bytes should parse");
+    assert_eq!(format_expression(&exact).len(), 4_096);
+    assert_eq!(validate_expression_complexity(&exact), Ok(()));
+    assert_eq!(parse_expression(&format_expression(&exact)).unwrap(), exact);
+
+    let field = "x".repeat(24);
+    let leaf_input = format!("[a.{field}]");
+    let rejected_input = balanced_sum_with_leaf(128, &leaf_input);
+    assert!(rejected_input.len() < 4_096);
+    assert_parse_error(
+        &rejected_input,
+        rejected_input.len(),
+        "canonical expression exceeds 4096-byte limit",
+    );
+    let rejected_ast = balanced_ast_with_leaf(128, &reference("a", &field));
+    assert!(format_expression(&rejected_ast).len() > 4_096);
+    assert_eq!(
+        validate_expression_complexity(&rejected_ast),
+        Err(ExpressionComplexityError::CanonicalLengthLimit)
+    );
 }

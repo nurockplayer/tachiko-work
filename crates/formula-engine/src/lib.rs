@@ -7,7 +7,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use tachiko_semantic_core::{Document, Expression, FieldRef, Value};
 use thiserror::Error;
 
-pub use parser::{FormulaParseError, format_expression, parse_expression};
+pub use parser::{
+    ExpressionComplexityError, FormulaParseError, format_expression, parse_expression,
+    validate_expression_complexity,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Calculation {
