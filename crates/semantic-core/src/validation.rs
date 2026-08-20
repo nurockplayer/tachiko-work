@@ -28,6 +28,24 @@ pub struct Diagnostic {
     pub message: String,
 }
 
+/// Return whether a value follows Tachiko's stable semantic identifier grammar.
+///
+/// Identifiers are non-empty lowercase ASCII paths. The first character must
+/// be a letter or digit; subsequent characters may also contain `_` and `-`.
+#[must_use]
+pub fn is_valid_identifier(identifier: &str) -> bool {
+    let mut characters = identifier.chars();
+    let Some(first) = characters.next() else {
+        return false;
+    };
+    (first.is_ascii_lowercase() || first.is_ascii_digit())
+        && characters.all(|character| {
+            character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || matches!(character, '_' | '-')
+        })
+}
+
 impl Diagnostic {
     fn new(path: impl Into<String>, code: DiagnosticCode, message: impl Into<String>) -> Self {
         Self {
@@ -149,16 +167,7 @@ fn validate_identifier(
         return;
     }
 
-    let mut characters = identifier.chars();
-    let valid_start = characters
-        .next()
-        .is_some_and(|character| character.is_ascii_lowercase() || character.is_ascii_digit());
-    let valid_rest = characters.all(|character| {
-        character.is_ascii_lowercase()
-            || character.is_ascii_digit()
-            || matches!(character, '_' | '-')
-    });
-    if !valid_start || !valid_rest {
+    if !is_valid_identifier(identifier) {
         diagnostics.push(Diagnostic::new(
             path,
             DiagnosticCode::InvalidIdentifier,

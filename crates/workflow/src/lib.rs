@@ -1,12 +1,12 @@
 //! User-facing workflows built on Tachiko Work's semantic engine.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use tachiko_diff_engine::{DiffError, SemanticDiff, diff};
 use tachiko_formula_engine::{CalculationError, calculate};
 use tachiko_semantic_core::{
     Diagnostic, Document, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldRef,
-    FieldType, Schema, SchemaId, Value, validate_document,
+    FieldType, Schema, SchemaId, Value, is_valid_identifier, validate_document,
 };
 use thiserror::Error;
 
@@ -81,6 +81,20 @@ pub struct EditPreview {
 pub enum WorkflowError {
     #[error("entity '{entity}' does not exist")]
     MissingEntity { entity: EntityId },
+    #[error("entity id '{entity}' is not a valid semantic identifier")]
+    InvalidEntityIdentifier { entity: EntityId },
+    #[error("entity '{entity}' already exists")]
+    EntityAlreadyExists { entity: EntityId },
+    #[error("cannot rename entity '{entity}' to itself")]
+    NoOpEntityRename { entity: EntityId },
+    #[error(
+        "cannot remove entity '{entity}' because it is referenced by {}",
+        format_dependent_fields(.dependents)
+    )]
+    EntityReferenced {
+        entity: EntityId,
+        dependents: Vec<FieldRef>,
+    },
     #[error("field '{field}' does not exist")]
     MissingField { field: FieldRef },
     #[error("schema '{schema}' does not exist")]
@@ -310,6 +324,193 @@ pub fn set_scalar(
     };
     edited_entity.fields.insert(field.field.clone(), value);
 
+    finalize_edit(document, edited)
+}
+
+/// Duplicate an entity into a new semantic identity without mutating the source.
+///
+/// Formula references owned by the copied entity that point back to the source
+/// are recursively rebased to the target. Stored references and references to
+/// other entities retain their existing meaning.
+///
+/// # Errors
+///
+/// Returns an error when the source is absent, the target identifier is invalid
+/// or occupied, or the candidate fails validation, calculation, or semantic diff.
+pub fn duplicate_entity(
+    document: &Document,
+    source: impl AsRef<str>,
+    target: impl AsRef<str>,
+) -> Result<EditPreview, WorkflowError> {
+    let source = EntityId::from(source.as_ref());
+    let target = EntityId::from(target.as_ref());
+    let source_entity =
+        document
+            .entities
+            .get(&source)
+            .ok_or_else(|| WorkflowError::MissingEntity {
+                entity: source.clone(),
+            })?;
+    require_available_target(document, &target)?;
+
+    let mut duplicate = source_entity.clone();
+    duplicate.id = target.clone();
+    for value in duplicate.fields.values_mut() {
+        if let Value::Formula(expression) = value {
+            rewrite_expression_entity(expression, &source, &target);
+        }
+    }
+
+    let mut edited = document.clone();
+    edited.entities.insert(target, duplicate);
+    finalize_edit(document, edited)
+}
+
+/// Rename an entity and every typed relationship that points to it.
+///
+/// # Errors
+///
+/// Returns an error for a no-op, absent source, invalid or occupied target, or
+/// when the rewritten candidate fails validation, calculation, or semantic diff.
+pub fn rename_entity(
+    document: &Document,
+    source: impl AsRef<str>,
+    target: impl AsRef<str>,
+) -> Result<EditPreview, WorkflowError> {
+    let source = EntityId::from(source.as_ref());
+    let target = EntityId::from(target.as_ref());
+    if source == target {
+        return Err(WorkflowError::NoOpEntityRename { entity: source });
+    }
+    if !document.entities.contains_key(&source) {
+        return Err(WorkflowError::MissingEntity { entity: source });
+    }
+    require_available_target(document, &target)?;
+
+    let mut edited = document.clone();
+    let Some(mut renamed) = edited.entities.remove(&source) else {
+        return Err(WorkflowError::MissingEntity { entity: source });
+    };
+    renamed.id = target.clone();
+    edited.entities.insert(target.clone(), renamed);
+
+    for entity in edited.entities.values_mut() {
+        for value in entity.fields.values_mut() {
+            match value {
+                Value::Reference(reference) if reference == &source => {
+                    *reference = target.clone();
+                }
+                Value::Formula(expression) => {
+                    rewrite_expression_entity(expression, &source, &target);
+                }
+                Value::Number(_) | Value::Text(_) | Value::Boolean(_) | Value::Reference(_) => {}
+            }
+        }
+    }
+
+    finalize_edit(document, edited)
+}
+
+/// Remove an entity when no field owned by another entity refers to it.
+///
+/// # Errors
+///
+/// Returns an error when the entity is absent, when sorted dependent field paths
+/// block removal, or when the candidate fails validation, calculation, or diff.
+pub fn remove_entity(
+    document: &Document,
+    target: impl AsRef<str>,
+) -> Result<EditPreview, WorkflowError> {
+    let target = EntityId::from(target.as_ref());
+    if !document.entities.contains_key(&target) {
+        return Err(WorkflowError::MissingEntity { entity: target });
+    }
+
+    let dependents = document
+        .entities
+        .iter()
+        .filter(|(entity_id, _)| *entity_id != &target)
+        .flat_map(|(entity_id, entity)| {
+            entity
+                .fields
+                .iter()
+                .filter(|(_, value)| value_references_entity(value, &target))
+                .map(|(field_id, _)| FieldRef::new(entity_id.clone(), field_id.clone()))
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    if !dependents.is_empty() {
+        return Err(WorkflowError::EntityReferenced {
+            entity: target,
+            dependents,
+        });
+    }
+
+    let mut edited = document.clone();
+    edited.entities.remove(&target);
+    finalize_edit(document, edited)
+}
+
+fn require_available_target(document: &Document, target: &EntityId) -> Result<(), WorkflowError> {
+    if !is_valid_identifier(target.as_str()) {
+        return Err(WorkflowError::InvalidEntityIdentifier {
+            entity: target.clone(),
+        });
+    }
+    if document.entities.contains_key(target) {
+        return Err(WorkflowError::EntityAlreadyExists {
+            entity: target.clone(),
+        });
+    }
+    Ok(())
+}
+
+fn rewrite_expression_entity(expression: &mut Expression, source: &EntityId, target: &EntityId) {
+    match expression {
+        Expression::Number(_) => {}
+        Expression::Reference(reference) => {
+            if &reference.entity == source {
+                reference.entity = target.clone();
+            }
+        }
+        Expression::Add { left, right }
+        | Expression::Subtract { left, right }
+        | Expression::Multiply { left, right }
+        | Expression::Divide { left, right }
+        | Expression::Minimum { left, right }
+        | Expression::Maximum { left, right } => {
+            rewrite_expression_entity(left, source, target);
+            rewrite_expression_entity(right, source, target);
+        }
+    }
+}
+
+fn value_references_entity(value: &Value, target: &EntityId) -> bool {
+    match value {
+        Value::Reference(reference) => reference == target,
+        Value::Formula(expression) => expression_references_entity(expression, target),
+        Value::Number(_) | Value::Text(_) | Value::Boolean(_) => false,
+    }
+}
+
+fn expression_references_entity(expression: &Expression, target: &EntityId) -> bool {
+    match expression {
+        Expression::Number(_) => false,
+        Expression::Reference(reference) => &reference.entity == target,
+        Expression::Add { left, right }
+        | Expression::Subtract { left, right }
+        | Expression::Multiply { left, right }
+        | Expression::Divide { left, right }
+        | Expression::Minimum { left, right }
+        | Expression::Maximum { left, right } => {
+            expression_references_entity(left, target)
+                || expression_references_entity(right, target)
+        }
+    }
+}
+
+fn finalize_edit(document: &Document, edited: Document) -> Result<EditPreview, WorkflowError> {
     let diagnostics = validate_document(&edited);
     if !diagnostics.is_empty() {
         let summary = format_diagnostics(&diagnostics);
@@ -325,6 +526,14 @@ pub fn set_scalar(
         document: edited,
         diff: semantic_diff,
     })
+}
+
+fn format_dependent_fields(dependents: &[FieldRef]) -> String {
+    dependents
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn field_value<'document>(
