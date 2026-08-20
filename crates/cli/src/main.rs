@@ -53,6 +53,11 @@ enum Commands {
         #[command(subcommand)]
         command: EntityCommands,
     },
+    /// Create or revise computed fields safely
+    Formula {
+        #[command(subcommand)]
+        command: FormulaCommands,
+    },
     /// Compare two document versions by semantic meaning
     Diff { before: PathBuf, after: PathBuf },
     /// Merge semantic changes from two document versions
@@ -97,6 +102,22 @@ enum EntityCommands {
         input: PathBuf,
         /// Entity identifier to remove
         entity: String,
+        /// New .ro document to create; existing files are never overwritten
+        #[arg(long)]
+        output: PathBuf,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum FormulaCommands {
+    /// Set a numeric field formula
+    Set {
+        input: PathBuf,
+        /// Field identifier in entity.field form
+        field: String,
+        /// Formula expression; quote it in a shell
+        #[arg(long, allow_hyphen_values = true)]
+        expression: String,
         /// New .ro document to create; existing files are never overwritten
         #[arg(long)]
         output: PathBuf,
@@ -167,6 +188,14 @@ fn execute(cli: Cli) -> Result<String, commands::CommandError> {
                 entity,
                 output,
             } => commands::remove_entity_document(&input, &entity, &output),
+        },
+        Commands::Formula { command } => match command {
+            FormulaCommands::Set {
+                input,
+                field,
+                expression,
+                output,
+            } => commands::set_formula_document(&input, &field, &expression, &output),
         },
         Commands::Diff { before, after } => commands::diff_documents(&before, &after),
         Commands::Merge {

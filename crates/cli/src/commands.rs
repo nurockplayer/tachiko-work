@@ -15,7 +15,7 @@ use tachiko_semantic_core::{Document, FieldRef, Value};
 use tachiko_storage::{FormatError, load, to_canonical_string};
 use tachiko_workflow::{
     EditPreview, FieldKind, StarterTemplate, WorkflowError, create_document, duplicate_entity,
-    explain_field, overview, remove_entity, rename_entity, set_scalar,
+    explain_field, overview, remove_entity, rename_entity, set_formula, set_scalar,
 };
 use thiserror::Error;
 
@@ -239,6 +239,27 @@ pub fn remove_entity_document(
         preview.diff.render_text(),
         output.display(),
         output.display()
+    ))
+}
+
+pub fn set_formula_document(
+    input: &Path,
+    field: &str,
+    expression: &str,
+    output: &Path,
+) -> Result<String, CommandError> {
+    ensure_distinct_paths(input, output)?;
+    let document = load(input)?;
+    let field = parse_field_ref(field)?;
+    let preview = set_formula(&document, &field, expression)?;
+    write_edit_preview(&preview, output)?;
+
+    Ok(format!(
+        "{}wrote {}\n\nNext:\n  tachiko explain {} {}\n",
+        preview.diff.render_text(),
+        output.display(),
+        output.display(),
+        field
     ))
 }
 

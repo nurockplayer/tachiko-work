@@ -342,7 +342,7 @@ fn explain_makes_formula_and_impact_relationships_discoverable() {
     assert!(formula.status.success());
     let formula_text = String::from_utf8(formula.stdout).unwrap();
     assert!(formula_text.contains("iron_sword.dps = 40"));
-    assert!(formula_text.contains("formula: (iron_sword.damage / iron_sword.attack_interval)"));
+    assert!(formula_text.contains("formula: ([iron_sword.damage] / [iron_sword.attack_interval])"));
     assert!(formula_text.contains("depends on:"));
     assert!(formula_text.contains("iron_sword.damage"));
 
@@ -648,6 +648,182 @@ fn entity_commands_preserve_input_and_existing_output_paths() {
 }
 
 #[test]
+fn formula_set_writes_a_calculated_formula_and_prints_semantic_impact() {
+    let temp = TempDir::new();
+    let input = temp.path().join("balance.ro");
+    let output_path = temp.path().join("capped-dps.ro");
+    assert!(run(&["init", input.to_str().unwrap()]).status.success());
+
+    let output = run(&[
+        "formula",
+        "set",
+        input.to_str().unwrap(),
+        "iron_sword.dps",
+        "--expression",
+        "min(60, [iron_sword.damage] / [iron_sword.attack_interval] + 5)",
+        "--output",
+        output_path.to_str().unwrap(),
+    ]);
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(matches!(
+        load(&output_path).unwrap().entities["iron_sword"].fields["dps"],
+        Value::Formula(Expression::Minimum { .. })
+    ));
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("affected dps: 40 -> 45"));
+    assert!(stdout.contains("wrote"));
+    assert!(stdout.contains("tachiko explain"));
+    assert_eq!(
+        load(&input).unwrap().entities["iron_sword"].fields["dps"],
+        Value::Formula(Expression::Divide {
+            left: Box::new(Expression::Reference(FieldRef::new("iron_sword", "damage"))),
+            right: Box::new(Expression::Reference(FieldRef::new(
+                "iron_sword",
+                "attack_interval",
+            ))),
+        })
+    );
+}
+
+#[test]
+fn formula_set_rejects_parse_reference_cycle_and_target_errors_without_output() {
+    let temp = TempDir::new();
+    let input = temp.path().join("balance.ro");
+    assert!(run(&["init", input.to_str().unwrap()]).status.success());
+
+    for (name, field, expression, expected) in [
+        ("parse", "iron_sword.dps", "min(1,", "byte"),
+        (
+            "reference",
+            "iron_sword.dps",
+            "[missing.damage]",
+            "has no target entity",
+        ),
+        (
+            "cycle",
+            "iron_sword.dps",
+            "[iron_sword.dps] + 1",
+            "dependency cycle",
+        ),
+        ("target", "iron_sword.name", "1 + 2", "not numeric"),
+    ] {
+        let output_path = temp.path().join(format!("{name}.ro"));
+        let output = run(&[
+            "formula",
+            "set",
+            input.to_str().unwrap(),
+            field,
+            "--expression",
+            expression,
+            "--output",
+            output_path.to_str().unwrap(),
+        ]);
+
+        assert!(!output.status.success(), "{name} unexpectedly succeeded");
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(
+            stderr.contains(expected),
+            "{name} missing '{expected}': {stderr}"
+        );
+        assert!(!output_path.exists(), "{name} created an output");
+    }
+}
+
+#[test]
+fn formula_set_preserves_same_path_and_existing_output_bytes() {
+    let temp = TempDir::new();
+    let input = temp.path().join("balance.ro");
+    let existing = temp.path().join("existing.ro");
+    assert!(run(&["init", input.to_str().unwrap()]).status.success());
+    fs::write(&existing, "preserve me").unwrap();
+
+    let same_path = run(&[
+        "formula",
+        "set",
+        input.to_str().unwrap(),
+        "iron_sword.dps",
+        "--expression",
+        "[iron_sword.damage] + 1",
+        "--output",
+        input.to_str().unwrap(),
+    ]);
+    assert!(!same_path.status.success());
+    assert!(String::from_utf8_lossy(&same_path.stderr).contains("same as the input"));
+
+    let overwrite = run(&[
+        "formula",
+        "set",
+        input.to_str().unwrap(),
+        "iron_sword.dps",
+        "--expression",
+        "[iron_sword.damage] + 1",
+        "--output",
+        existing.to_str().unwrap(),
+    ]);
+    assert!(!overwrite.status.success());
+    assert_eq!(fs::read_to_string(existing).unwrap(), "preserve me");
+}
+
+#[test]
+fn formula_expression_option_transports_canonical_spaced_and_hyphen_values() {
+    let temp = TempDir::new();
+    let input = temp.path().join("balance.ro");
+    assert!(run(&["init", input.to_str().unwrap()]).status.success());
+
+    for (name, expression) in [
+        ("negative", "-1"),
+        ("negative-reference", "-[iron_sword.damage]"),
+        ("multiply", "[iron_sword.damage] * 2"),
+    ] {
+        let output_path = temp.path().join(format!("{name}.ro"));
+        let output = run(&[
+            "formula",
+            "set",
+            input.to_str().unwrap(),
+            "iron_sword.dps",
+            "--expression",
+            expression,
+            "--output",
+            output_path.to_str().unwrap(),
+        ]);
+        assert!(
+            output.status.success(),
+            "{expression} did not reach the parser: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output_path.exists());
+    }
+
+    let explanation = run(&["explain", input.to_str().unwrap(), "iron_sword.dps"]);
+    assert!(explanation.status.success());
+    let canonical = String::from_utf8(explanation.stdout)
+        .unwrap()
+        .lines()
+        .find_map(|line| line.strip_prefix("formula: "))
+        .expect("explain should print canonical formula syntax")
+        .to_owned();
+    let no_op_path = temp.path().join("canonical-no-op.ro");
+    let no_op = run(&[
+        "formula",
+        "set",
+        input.to_str().unwrap(),
+        "iron_sword.dps",
+        "--expression",
+        &canonical,
+        "--output",
+        no_op_path.to_str().unwrap(),
+    ]);
+    assert!(!no_op.status.success());
+    assert!(String::from_utf8_lossy(&no_op.stderr).contains("already has that value"));
+    assert!(!no_op_path.exists());
+}
+
+#[test]
 fn merge_writes_a_merged_document_and_prints_semantic_impact() {
     let temp = TempDir::new();
     let base_path = temp.path().join("base.ro");
@@ -835,6 +1011,7 @@ fn top_level_help_describes_the_complete_first_user_workflow() {
         "Explain a field",
         "Create a changed document",
         "Grow, rename, or remove entities safely",
+        "Create or revise computed fields safely",
         "Compare two document versions",
     ] {
         assert!(text.contains(phrase), "missing help text: {phrase}\n{text}");
@@ -854,4 +1031,13 @@ fn entity_help_makes_lifecycle_operations_discoverable() {
     ] {
         assert!(text.contains(phrase), "missing help text: {phrase}\n{text}");
     }
+}
+
+#[test]
+fn formula_help_makes_computational_authoring_discoverable() {
+    let output = run(&["formula", "--help"]);
+
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains("Set a numeric field formula"));
 }

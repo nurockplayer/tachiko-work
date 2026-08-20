@@ -1,7 +1,9 @@
 //! Read-only semantic queries for Tachiko Work.
 
 use tachiko_diff_engine::{DiffError, SemanticChange, diff};
-use tachiko_formula_engine::{CalculationError, calculate};
+use tachiko_formula_engine::{
+    CalculationError, ExpressionComplexityError, calculate, validate_expression_complexity,
+};
 use tachiko_semantic_core::{
     Diagnostic, Document, DocumentId, Expression, FieldId, FieldRef, FieldType, SchemaId, Value,
     validate_document,
@@ -75,6 +77,12 @@ pub enum SuggestionError {
     MissingField { field: FieldRef },
     #[error("field '{field}' is a formula; suggest a change to its inputs instead")]
     FormulaEdit { field: FieldRef },
+    #[error("formula for '{field}' exceeds authoring complexity limits: {source}")]
+    ExpressionComplexity {
+        field: FieldRef,
+        #[source]
+        source: ExpressionComplexityError,
+    },
     #[error("value for '{field}' does not match its schema type")]
     TypeMismatch { field: FieldRef },
     #[error("'{field}' already has that value")]
@@ -217,7 +225,7 @@ pub fn suggest_field_change(
             .ok_or_else(|| SuggestionError::MissingField {
                 field: field.clone(),
             })?;
-    if matches!(existing, Value::Formula(_)) {
+    if matches!(existing, Value::Formula(_)) && !matches!(value, Value::Formula(_)) {
         return Err(SuggestionError::FormulaEdit { field });
     }
     if existing == &value {
@@ -232,6 +240,14 @@ pub fn suggest_field_change(
         })?;
     if !value_matches_type(&value, &definition.field_type) {
         return Err(SuggestionError::TypeMismatch { field });
+    }
+    if let Value::Formula(expression) = &value {
+        validate_expression_complexity(expression).map_err(|source| {
+            SuggestionError::ExpressionComplexity {
+                field: field.clone(),
+                source,
+            }
+        })?;
     }
 
     let mut proposed = document.clone();
@@ -261,7 +277,7 @@ pub fn suggest_field_change(
 fn value_matches_type(value: &Value, field_type: &FieldType) -> bool {
     matches!(
         (value, field_type),
-        (Value::Number(_), FieldType::Number)
+        (Value::Number(_) | Value::Formula(_), FieldType::Number)
             | (Value::Text(_), FieldType::Text)
             | (Value::Boolean(_), FieldType::Boolean)
             | (Value::Reference(_), FieldType::Reference { .. })

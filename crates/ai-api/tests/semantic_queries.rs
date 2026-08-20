@@ -88,6 +88,28 @@ fn reference(entity: &str, field: &str) -> Expression {
     Expression::Reference(FieldRef::new(entity, field))
 }
 
+fn left_deep_sum(depth: usize) -> Expression {
+    let mut expression = Expression::Number(1.0);
+    for _ in 1..depth {
+        expression = Expression::Add {
+            left: Box::new(expression),
+            right: Box::new(Expression::Number(1.0)),
+        };
+    }
+    expression
+}
+
+fn balanced_sum(leaves: usize) -> Expression {
+    if leaves == 1 {
+        return Expression::Number(1.0);
+    }
+    let left = leaves / 2;
+    Expression::Add {
+        left: Box::new(balanced_sum(left)),
+        right: Box::new(balanced_sum(leaves - left)),
+    }
+}
+
 fn assert_close(actual: f64, expected: f64) {
     assert!((actual - expected).abs() < 1e-9);
 }
@@ -173,6 +195,123 @@ fn suggest_field_change_is_inert_and_requires_approval() {
     assert!(suggestion.requires_approval);
     assert_eq!(suggestion.field, FieldRef::new("sword", "damage"));
     assert_eq!(suggestion.value, Value::Number(120.0));
+}
+
+#[test]
+fn typed_formula_suggestions_are_inert_validated_and_require_approval() {
+    let document = balance_document(100.0);
+    let original = document.clone();
+    let proposed = Value::Formula(Expression::Minimum {
+        left: Box::new(Expression::Number(100.0)),
+        right: Box::new(Expression::Multiply {
+            left: Box::new(reference("sword", "damage")),
+            right: Box::new(Expression::Number(0.75)),
+        }),
+    });
+
+    let suggestion =
+        suggest_field_change(&document, FieldRef::new("sword", "dps"), proposed.clone())
+            .expect("a valid typed formula should be approval-ready");
+
+    assert_eq!(document, original);
+    assert_eq!(suggestion.field, FieldRef::new("sword", "dps"));
+    assert_eq!(suggestion.value, proposed);
+    assert!(suggestion.requires_approval);
+
+    let input_to_formula = suggest_field_change(
+        &document,
+        FieldRef::new("sword", "damage"),
+        Value::Formula(Expression::Multiply {
+            left: Box::new(reference("sword", "attack_interval")),
+            right: Box::new(Expression::Number(80.0)),
+        }),
+    )
+    .expect("a stored numeric input may become an approval-required formula");
+    assert!(matches!(input_to_formula.value, Value::Formula(_)));
+}
+
+#[test]
+fn typed_formula_suggestions_share_human_authoring_complexity_limits() {
+    let document = balance_document(100.0);
+
+    for expression in [left_deep_sum(64), balanced_sum(128)] {
+        let suggestion = suggest_field_change(
+            &document,
+            FieldRef::new("sword", "dps"),
+            Value::Formula(expression),
+        )
+        .expect("an AI formula exactly at a complexity boundary should be valid");
+        assert!(suggestion.requires_approval);
+    }
+
+    for expression in [
+        left_deep_sum(65),
+        balanced_sum(129),
+        Expression::Reference(FieldRef::new("a".repeat(4_094), "x")),
+    ] {
+        let error = suggest_field_change(
+            &document,
+            FieldRef::new("sword", "dps"),
+            Value::Formula(expression),
+        )
+        .expect_err("AI formulas must not bypass authoring resource limits");
+
+        assert!(
+            matches!(error, SuggestionError::ExpressionComplexity { .. }),
+            "unexpected error: {error:?}"
+        );
+    }
+}
+
+#[test]
+fn typed_formula_suggestions_reject_noops_types_semantics_and_calculation() {
+    let document = balance_document(100.0);
+    let existing = document.entities["sword"].fields["dps"].clone();
+
+    let no_op = suggest_field_change(&document, FieldRef::new("sword", "dps"), existing)
+        .expect_err("identical formulas should not be approval-ready");
+    assert!(matches!(no_op, SuggestionError::NoChange { .. }));
+
+    let wrong_type = suggest_field_change(
+        &document,
+        FieldRef::new("sword", "name"),
+        Value::Formula(Expression::Number(1.0)),
+    )
+    .expect_err("text fields cannot accept formula suggestions");
+    assert!(matches!(wrong_type, SuggestionError::TypeMismatch { .. }));
+
+    let missing_reference = suggest_field_change(
+        &document,
+        FieldRef::new("sword", "dps"),
+        Value::Formula(reference("missing", "damage")),
+    )
+    .expect_err("missing references must fail semantic validation");
+    assert!(matches!(
+        missing_reference,
+        SuggestionError::InvalidDocument { .. }
+    ));
+
+    let cycle = suggest_field_change(
+        &document,
+        FieldRef::new("sword", "dps"),
+        Value::Formula(Expression::Add {
+            left: Box::new(reference("sword", "dps")),
+            right: Box::new(Expression::Number(1.0)),
+        }),
+    )
+    .expect_err("cycles must fail calculation");
+    assert!(matches!(cycle, SuggestionError::Calculation(_)));
+
+    let division_by_zero = suggest_field_change(
+        &document,
+        FieldRef::new("sword", "dps"),
+        Value::Formula(Expression::Divide {
+            left: Box::new(Expression::Number(1.0)),
+            right: Box::new(Expression::Number(0.0)),
+        }),
+    )
+    .expect_err("division by zero must fail calculation");
+    assert!(matches!(division_by_zero, SuggestionError::Calculation(_)));
 }
 
 #[test]
