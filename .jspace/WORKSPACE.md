@@ -24,14 +24,18 @@ exportable without requiring a user to understand `.ro` internals.
 - `formula-engine`: typed numeric expression evaluation and dependency impact.
 - `diff-engine`: entity/field changes plus recalculated formula impact.
 - `ai-api`: read/explain/suggest-only semantic projection; no direct mutation API.
-- `tachiko-cli`: `init`, `validate`, `calculate`, `diff`, and `export` workflows.
+- `merge-engine`: typed three-way model reconciliation, typed conflict reporting,
+  and validation/calculation of conflict-free candidates before persistence.
+- `tachiko-cli`: `init`, `validate`, `calculate`, `diff`, `merge`, and `export`
+  workflows with exclusive output creation.
 
 ## Dependency graph
 
 1. Semantic core contracts and validation.
 2. Storage and formula engine against the stable core.
-3. Diff engine against formula results.
-4. CLI integration across all core crates.
+3. Diff and merge engines against formula results.
+4. CLI integration across all core crates; merge writes only conflict-free,
+   valid semantic candidates and never configures a Git driver.
 5. In parallel after contracts stabilize:
    - AI read/explain/suggestion facade.
    - Game-balance example and workflow documentation.
@@ -155,5 +159,7 @@ validated three-way merge instead of resolving raw JSON conflicts.
 - Every merge rule follows a red/green test cycle.
 - Engine tests cover compatible, conflicting, invalid, and deterministic cases.
 - CLI process tests cover success, conflict, and overwrite safety.
-- A real collaboration smoke test exercises merge, validation, and impact review.
+- A real collaboration smoke test creates canonical base/ours/theirs inputs,
+  asserts merged damage `45`, attack interval `0.8`, and DPS `56.25`, then
+  validates and reviews the semantic impact.
 - Full formatting, clippy, tests, docs, and both smoke journeys must pass.

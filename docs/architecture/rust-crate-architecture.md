@@ -15,22 +15,24 @@ tachiko-work/
 │   ├── formula-engine/
 │   ├── storage/
 │   ├── diff-engine/
+│   ├── merge-engine/
 │   ├── ai-api/
 │   ├── workflow/
 │   └── cli/
 ```
 
-The workspace keeps the first-product dependency direction explicit:
+The workspace keeps the live direct-crate dependency direction explicit; arrows
+point from a dependent crate toward the crate it uses:
 
 ```text
-semantic-core
-├── storage
-├── formula-engine
-│   └── diff-engine
-│       ├── ai-api
-│       └── workflow
-└────────── workflow
-             └── cli (+ storage)
+storage ────────────────────────────────────────────────────→ semantic-core
+formula-engine ─────────────────────────────────────────────→ semantic-core
+diff-engine ───────────────→ formula-engine, semantic-core
+merge-engine ──────────────→ formula-engine, semantic-core
+ai-api ────────────────────→ diff-engine, formula-engine, semantic-core
+workflow ──────────────────→ diff-engine, formula-engine, semantic-core
+cli ───────────────────────→ storage, workflow, diff-engine, merge-engine,
+                               formula-engine, semantic-core
 ```
 
 Schema types and validation live in `semantic-core` because they enforce one
@@ -64,13 +66,17 @@ Handles serialization:
 The semantic model remains authoritative. `.roproj` is still proposed by
 ADR-0003 and does not belong to the implemented storage contract yet.
 
-### formula-engine and diff-engine
+### formula-engine, diff-engine, and merge-engine
 
 `formula-engine` owns deterministic calculation and dependency tracking.
 `diff-engine` compares semantic documents and reports both direct changes and
 derived formula impact as typed values. It also provides a deterministic,
 domain-level text summary; the CLI remains responsible for terminal behavior.
-Neither engine owns persistence.
+`merge-engine` owns three-way reconciliation of typed semantic documents. It
+uses the semantic core and formula engine to reject invalid merged candidates
+before persistence; the CLI performs exclusive output creation and terminal
+rendering. None of these engines owns persistence, raw-text merge behavior,
+Git-driver configuration, or interactive resolution.
 
 ### ai-api and workflow
 

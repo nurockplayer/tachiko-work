@@ -70,6 +70,34 @@ damage: 36 -> 45
 affected dps: 40 -> 50
 ```
 
+## Collaborate on independent balance changes
+
+Create each branch from the same base and keep all branch and merge outputs
+distinct. This combines a damage change with an attack-interval change through
+the semantic model, then verifies the merged result:
+
+```sh
+./target/debug/tachiko set "$moonfall_demo/moonfall.ro" iron_sword.damage 45 \
+  --output "$moonfall_demo/moonfall-ours.ro"
+./target/debug/tachiko set "$moonfall_demo/moonfall.ro" iron_sword.attack_interval 0.8 \
+  --output "$moonfall_demo/moonfall-theirs.ro"
+./target/debug/tachiko merge \
+  "$moonfall_demo/moonfall.ro" \
+  "$moonfall_demo/moonfall-ours.ro" \
+  "$moonfall_demo/moonfall-theirs.ro" \
+  --output "$moonfall_demo/moonfall-merged.ro"
+./target/debug/tachiko validate "$moonfall_demo/moonfall-merged.ro"
+./target/debug/tachiko calculate "$moonfall_demo/moonfall-merged.ro"
+./target/debug/tachiko diff \
+  "$moonfall_demo/moonfall.ro" "$moonfall_demo/moonfall-merged.ro"
+```
+
+The merged semantic values are `damage: 45`, `attack_interval: 0.8`, and
+`dps: 56.25`. The merge command is an exclusive create: it writes neither a
+conflicted nor an invalid candidate, and it never overwrites an existing file.
+It operates on Tachiko's typed model rather than raw JSON text and does not
+install a Git merge driver or provide interactive resolution.
+
 ## Why `.ro` in Git
 
 `.ro` is canonical UTF-8 JSON: stable map ordering and formatting make

@@ -67,6 +67,24 @@ The checked-in Moonfall example and expected output are documented in
 Use `tachiko init scratch.ro --template empty` only when you intentionally want
 to author schemas and entities directly in canonical `.ro` JSON.
 
+## Combine independent balance branches
+
+Start each branch from the same canonical document and create a distinct output
+for every edit. Tachiko reconciles typed semantic changes; it does not perform
+raw-text conflict resolution or modify Git configuration.
+
+```sh
+tachiko merge base.ro ours.ro theirs.ro --output merged.ro
+tachiko validate merged.ro
+tachiko calculate merged.ro
+tachiko diff base.ro merged.ro
+```
+
+For example, if one branch changes `iron_sword.damage` to `45` and another
+changes `iron_sword.attack_interval` to `0.8`, the merged document has DPS
+`56.25`. A conflict or invalid candidate creates no output; resolve it by
+producing new semantic inputs and rerunning the command.
+
 ## Workspace
 
 - `semantic-core`: document, schema, typed values/references, validation
@@ -84,6 +102,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --all-targets
 bash scripts/first-user-smoke.sh
+bash scripts/collaboration-smoke.sh
 ```
 
 ## Principles
