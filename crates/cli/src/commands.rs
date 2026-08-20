@@ -10,6 +10,7 @@ use serde::Serialize;
 use serde_json::{Value as JsonValue, json};
 use tachiko_diff_engine::{DiffError, diff};
 use tachiko_formula_engine::{Calculation, CalculationError, calculate};
+use tachiko_merge_engine::{MergeConflict, MergeError, MergeOutcome, merge};
 use tachiko_semantic_core::{Document, FieldRef, Value};
 use tachiko_storage::{FormatError, load, to_canonical_string};
 use tachiko_workflow::{
@@ -27,6 +28,10 @@ pub enum CommandError {
     Diff(#[from] DiffError),
     #[error(transparent)]
     Workflow(#[from] WorkflowError),
+    #[error(transparent)]
+    Merge(#[from] MergeError),
+    #[error("merge conflicts:\n{conflicts}")]
+    MergeConflicts { conflicts: String },
     #[error("invalid field '{value}'; expected entity.field (for example, iron_sword.damage)")]
     InvalidFieldReference { value: String },
     #[error("output '{}' is the same as the input; choose a new path", path.display())]
@@ -186,6 +191,30 @@ pub fn diff_documents(before: &Path, after: &Path) -> Result<String, CommandErro
     Ok(diff(&before, &after)?.render_text())
 }
 
+pub fn merge_documents(
+    base_path: &Path,
+    ours_path: &Path,
+    theirs_path: &Path,
+    output: &Path,
+) -> Result<String, CommandError> {
+    let base = load(base_path)?;
+    let ours = load(ours_path)?;
+    let theirs = load(theirs_path)?;
+    let merged = match merge(&base, &ours, &theirs)? {
+        MergeOutcome::Merged(document) => document,
+        MergeOutcome::Conflicted(conflicts) => {
+            return Err(CommandError::MergeConflicts {
+                conflicts: render_merge_conflicts(&conflicts),
+            });
+        }
+    };
+    let impact = diff(&base, &merged)?.render_text();
+    let encoded = to_canonical_string(&merged)?;
+    write_new(output, encoded.as_bytes())?;
+
+    Ok(format!("{impact}wrote {}\n", output.display()))
+}
+
 pub fn export(input: &Path, output: &Path) -> Result<String, CommandError> {
     let document = load(input)?;
     let calculation = calculate(&document)?;
@@ -272,6 +301,17 @@ fn write_new(path: &Path, contents: &[u8]) -> Result<(), CommandError> {
             path: path.to_owned(),
             source,
         })
+}
+
+fn render_merge_conflicts(conflicts: &[MergeConflict]) -> String {
+    let mut output = String::new();
+    for conflict in conflicts {
+        let _ = writeln!(output, "  {}", conflict.path);
+        let _ = writeln!(output, "    base: {:?}", conflict.base);
+        let _ = writeln!(output, "    ours: {:?}", conflict.ours);
+        let _ = writeln!(output, "    theirs: {:?}", conflict.theirs);
+    }
+    output.trim_end().to_owned()
 }
 
 #[derive(Serialize)]

@@ -225,6 +225,7 @@ dependencies = [
  "serde_json",
  "tachiko-diff-engine",
  "tachiko-formula-engine",
+ "tachiko-merge-engine",
  "tachiko-semantic-core",
  "tachiko-storage",
  "tachiko-workflow",

@@ -15,6 +15,7 @@ serde.workspace = true
 serde_json.workspace = true
 tachiko-diff-engine = { path = "../diff-engine" }
 tachiko-formula-engine = { path = "../formula-engine" }
+tachiko-merge-engine = { path = "../merge-engine" }
 tachiko-semantic-core = { path = "../semantic-core" }
 tachiko-storage = { path = "../storage" }
 tachiko-workflow = { path = "../workflow" }

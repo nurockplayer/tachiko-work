@@ -97,6 +97,14 @@ fn number_field() -> FieldDefinition {
     }
 }
 
+fn with_attack_interval(mut document: Document, attack_interval: f64) -> Document {
+    document.entities.get_mut("sword").unwrap().fields.insert(
+        FieldId::from("attack_interval"),
+        Value::Number(attack_interval),
+    );
+    document
+}
+
 #[test]
 fn init_creates_a_valid_semantic_document() {
     let temp = TempDir::new();
@@ -450,6 +458,103 @@ fn set_refuses_invalid_field_syntax_formula_edits_and_existing_outputs() {
         load(&input).unwrap().entities["iron_sword"].fields["damage"],
         Value::Number(36.0)
     );
+}
+
+#[test]
+fn merge_writes_a_merged_document_and_prints_semantic_impact() {
+    let temp = TempDir::new();
+    let base_path = temp.path().join("base.ro");
+    let ours_path = temp.path().join("ours.ro");
+    let theirs_path = temp.path().join("theirs.ro");
+    let merged_path = temp.path().join("merged.ro");
+    let base = balance_document(100.0);
+    let ours = balance_document(120.0);
+    let theirs = with_attack_interval(balance_document(100.0), 1.0);
+    save(&base_path, &base).unwrap();
+    save(&ours_path, &ours).unwrap();
+    save(&theirs_path, &theirs).unwrap();
+
+    let output = run(&[
+        "merge",
+        base_path.to_str().unwrap(),
+        ours_path.to_str().unwrap(),
+        theirs_path.to_str().unwrap(),
+        "--output",
+        merged_path.to_str().unwrap(),
+    ]);
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        load(&merged_path).unwrap().entities["sword"].fields["damage"],
+        Value::Number(120.0)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("wrote"));
+    assert!(stdout.contains("affected dps"));
+}
+
+#[test]
+fn merge_reports_typed_conflicts_without_creating_output() {
+    let temp = TempDir::new();
+    let base_path = temp.path().join("base.ro");
+    let ours_path = temp.path().join("ours.ro");
+    let theirs_path = temp.path().join("theirs.ro");
+    let merged_path = temp.path().join("merged.ro");
+    save(&base_path, &balance_document(100.0)).unwrap();
+    save(&ours_path, &balance_document(120.0)).unwrap();
+    save(&theirs_path, &balance_document(140.0)).unwrap();
+
+    let output = run(&[
+        "merge",
+        base_path.to_str().unwrap(),
+        ours_path.to_str().unwrap(),
+        theirs_path.to_str().unwrap(),
+        "--output",
+        merged_path.to_str().unwrap(),
+    ]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("entities.sword.fields.damage"));
+    assert!(stderr.contains("FieldValue(Number(100.0))"));
+    assert!(stderr.contains("FieldValue(Number(120.0))"));
+    assert!(stderr.contains("FieldValue(Number(140.0))"));
+    assert!(!merged_path.exists());
+}
+
+#[test]
+fn merge_preserves_existing_output_bytes() {
+    let temp = TempDir::new();
+    let base_path = temp.path().join("base.ro");
+    let ours_path = temp.path().join("ours.ro");
+    let theirs_path = temp.path().join("theirs.ro");
+    let merged_path = temp.path().join("merged.ro");
+    save(&base_path, &balance_document(100.0)).unwrap();
+    save(&ours_path, &balance_document(120.0)).unwrap();
+    save(
+        &theirs_path,
+        &with_attack_interval(balance_document(100.0), 1.0),
+    )
+    .unwrap();
+    let original = b"do not overwrite";
+    fs::write(&merged_path, original).unwrap();
+
+    let output = run(&[
+        "merge",
+        base_path.to_str().unwrap(),
+        ours_path.to_str().unwrap(),
+        theirs_path.to_str().unwrap(),
+        "--output",
+        merged_path.to_str().unwrap(),
+    ]);
+
+    assert!(!output.status.success());
+    assert_eq!(fs::read(&merged_path).unwrap(), original);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("already exists"));
 }
 
 #[test]

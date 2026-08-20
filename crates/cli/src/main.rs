@@ -50,6 +50,15 @@ enum Commands {
     },
     /// Compare two document versions by semantic meaning
     Diff { before: PathBuf, after: PathBuf },
+    /// Merge semantic changes from two document versions
+    Merge {
+        base: PathBuf,
+        ours: PathBuf,
+        theirs: PathBuf,
+        /// New .ro document to create; existing files are never overwritten
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Export a calculated runtime JSON projection
     Export { input: PathBuf, output: PathBuf },
 }
@@ -101,6 +110,12 @@ fn execute(cli: Cli) -> Result<String, commands::CommandError> {
             output,
         } => commands::set_document(&input, &field, &value, &output),
         Commands::Diff { before, after } => commands::diff_documents(&before, &after),
+        Commands::Merge {
+            base,
+            ours,
+            theirs,
+            output,
+        } => commands::merge_documents(&base, &ours, &theirs, &output),
         Commands::Export { input, output } => commands::export(&input, &output),
     }
 }
