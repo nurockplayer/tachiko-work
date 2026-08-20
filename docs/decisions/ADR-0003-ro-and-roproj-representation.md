@@ -86,6 +86,8 @@ For the initial implementation, `.ro` SHOULD remain a thin, lossless package ove
 
 `.ro` MUST NOT become an MVP blocker.
 
+This does not imply that `.ro` must be deferred or treated as low priority. If a thin deterministic pack/unpack implementation is inexpensive, it MAY be implemented early. The constraint is that packaging sophistication must not delay proof of the semantic core, `.roproj`, validation, formula, diff, or CLI workflows.
+
 Early product value should be proven through the semantic core and `.roproj` workflow. Existing open formats such as OpenDocument, together with CSV, JSON, Markdown, and other appropriate standards, should be supported as first-class interoperability boundaries where useful.
 
 Tachiko Work should introduce custom format semantics only when existing standards cannot represent required Tachiko semantics without distorting the core model.
@@ -104,6 +106,7 @@ Tachiko Work should introduce custom format semantics only when existing standar
 
 - Git normally tracks `.roproj`, not generated `.ro` artifacts.
 - `.ro` may be produced by local tooling, CI, releases, or consumer save workflows.
+- A low-cost `.ro` implementation may be scheduled early even though `.ro` is not an architectural MVP dependency.
 - The exact `.ro` container, compression, manifest details, directory splitting rules, and other physical layout details remain evolvable implementation/specification decisions.
 - ODF and other existing standards remain valuable interoperability formats rather than becoming the internal semantic source of truth.
 - The project should prefer composition of established standards over format invention whenever possible.
