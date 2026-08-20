@@ -188,3 +188,44 @@ validated three-way merge instead of resolving raw JSON conflicts.
   passed; 98 tests passed across 17 suites; warning-free docs passed; first-user
   and collaboration smoke journeys passed; locked source install reported
   `tachiko 0.1.0`.
+
+## Active phase: release distribution
+
+### Goal
+
+Turn the verified semantic product into a trustworthy external distribution:
+packageable source, tested minimum Rust support, checksummed native binaries,
+and an explicit release-authorization boundary.
+
+### Reconciled authority
+
+- Product checkpoint: `0c3d2dd` (`feat: ship semantic collaboration release`).
+- Product decision: `docs/decisions/ADR-0012-release-distribution-contract.md`.
+- Design: `docs/superpowers/specs/2026-08-20-release-distribution.md`.
+- Plan: `docs/superpowers/plans/2026-08-20-release-distribution.md`.
+- The declared Rust 1.85 toolchain successfully checked the entire locked
+  workspace before this phase; Cargo source packaging failed because internal
+  path dependencies did not declare registry versions.
+- Current official upstream interfaces were reconciled on 2026-08-20: supported
+  fixed native runner labels, checkout v7, upload-artifact v7,
+  download-artifact v8, and `gh release create --verify-tag --draft`.
+
+### Locked boundaries
+
+1. Ordinary push and pull-request CI stays read-only.
+2. An existing exact `v${workspace_version}` tag authorizes artifact building.
+3. The workflow creates a draft release only; a human retains publish authority.
+4. Crate archives are validated but are not published to crates.io.
+5. Each native binary archive includes both licenses, README, and changelog plus
+   an adjacent SHA-256 checksum.
+6. Code signing, notarization, attestations, package managers, and auto-update
+   remain follow-up release capabilities.
+
+### Verification gates
+
+- Every crate packages from the workspace with versioned internal dependencies.
+- Stable quality gates and exact Rust 1.85 all-target checking both pass.
+- Every native artifact is extracted and executed on its build architecture.
+- Release workflow validation proves tag/version equality, draft-only behavior,
+  existing-tag verification, and least-privilege permissions.
+- A single local release-check script reproduces all platform-independent gates.
