@@ -13,6 +13,8 @@ Trying to make one physical representation optimize for both concerns would eith
 
 Tachiko Work also aims to minimize invention. Existing standards and mature primitives should be reused wherever they fit without distorting the semantic model.
 
+The current `.ro` and `.roproj` names originated as early working names. Their architectural roles are accepted by this ADR, but the names themselves have not been selected or validated as permanent public-standard names.
+
 ## Decision
 
 The semantic model remains the architectural source of truth.
@@ -64,6 +66,20 @@ Portable Artifact
       .ro
 ```
 
+## Naming status
+
+`.ro` and `.roproj` are provisional working extensions.
+
+They MAY be used throughout MVP development, prototypes, internal dogfooding, and experimental releases. Their continued use during this phase is a convenience, not a compatibility promise or permanent naming decision.
+
+The permanent public format name and extension MUST be decided before the first stable public format release and before Tachiko Work makes long-lived ecosystem commitments around the extension, including stable third-party SDKs, compatibility guarantees, MIME-type registration, or broad external integration contracts.
+
+A future rename of `.ro` or `.roproj` SHOULD be representational only. It MUST NOT require changing the semantic model or document meaning.
+
+Core semantic types and APIs MUST NOT depend on the provisional names. Names such as `Document`, `SemanticDocument`, `DocumentGraph`, `Node`, `PackageSerializer`, and `ProjectSerializer` are preferred for core concepts. `ro`-specific naming SHOULD be confined to format adapters, CLI/file-extension boundaries, and other representation-specific code.
+
+The implementation SHOULD isolate extension strings and format labels so that replacing the working names does not require invasive changes.
+
 ## Packaging requirements
 
 The portable artifact MUST preserve enough information to reconstruct an editable project with equivalent semantic meaning.
@@ -100,13 +116,17 @@ Tachiko Work should introduce custom format semantics only when existing standar
 - deterministic canonical serialization;
 - Git-friendly `.roproj` materialization;
 - lossless semantic pack/unpack;
-- semantic-core independence from physical storage layout.
+- semantic-core independence from physical storage layout;
+- semantic-core independence from provisional extension names.
 
 ## Consequences
 
 - Git normally tracks `.roproj`, not generated `.ro` artifacts.
 - `.ro` may be produced by local tooling, CI, releases, or consumer save workflows.
 - A low-cost `.ro` implementation may be scheduled early even though `.ro` is not an architectural MVP dependency.
+- `.ro` and `.roproj` can continue to be used as working names without blocking implementation.
+- The permanent format name remains intentionally open until the pre-stable naming freeze.
+- Renaming the working extensions must remain cheap and must not become a semantic migration.
 - The exact `.ro` container, compression, manifest details, directory splitting rules, and other physical layout details remain evolvable implementation/specification decisions.
 - ODF and other existing standards remain valuable interoperability formats rather than becoming the internal semantic source of truth.
 - The project should prefer composition of established standards over format invention whenever possible.
@@ -115,4 +135,4 @@ Tachiko Work should introduce custom format semantics only when existing standar
 
 Git is storage infrastructure, not the user interface.
 
-The semantic model is the truth, `.roproj` is its canonical editable materialization, and `.ro` is a portable artifact.
+The semantic model is the truth, `.roproj` is its canonical editable materialization, and `.ro` is a portable artifact. The current extension names are provisional until the first stable public format release.
