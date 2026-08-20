@@ -4,6 +4,21 @@ Tachiko Work is a semantic-first, computational, Git-native workspace. Keep
 changes focused on a concrete user or architecture need and follow existing
 crate boundaries before introducing new abstractions.
 
+## Public pre-alpha contribution status
+
+The repository is intentionally public, but the project is still pre-alpha and
+the long-term licensing/contributor model is being decided in GitHub issue #15.
+
+External implementation/code pull requests are temporarily not accepted while
+that decision remains open. Issue reports, architecture/product discussion,
+review findings, and documentation feedback are welcome.
+
+This avoids accidentally constraining future licensing choices before the
+project decides its CLA/DCO/copyright model. Revisions already published under
+`Apache-2.0 OR MIT` remain available under those historical grants. See
+[`docs/governance/licensing-posture.md`](docs/governance/licensing-posture.md)
+for the current provisional direction.
+
 ## Set up the toolchains
 
 Install stable Rust for development and the exact minimum version for
