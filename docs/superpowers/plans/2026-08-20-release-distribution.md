@@ -52,15 +52,15 @@
 - Create: `scripts/verify-release-archive.sh`
 - Create: `scripts/release-check.sh`
 
-- [ ] Invoke the absent archive script and record the expected red failure.
-- [ ] Implement deterministic naming, required payload checks, isolated staging,
+- [x] Invoke the absent archive script and record the expected red failure.
+- [x] Implement deterministic naming, required payload checks, isolated staging,
   `tar.gz` creation, and portable SHA-256 generation.
-- [ ] Implement archive verification: checksum, exact member payload, native
+- [x] Implement archive verification: checksum, exact member payload, native
   `tachiko --version`, and version/name agreement.
-- [ ] Add one local release-check entry point for formatting, clippy, tests,
+- [x] Add one local release-check entry point for formatting, clippy, tests,
   docs, exact MSRV, Cargo packages, both product smokes, and native archive
   smoke.
-- [ ] Run focused scripts on the current native host and commit as
+- [x] Run focused scripts on the current native host and commit as
   `build: add reproducible release artifacts`.
 
 ### Task 3: CI and tag-gated draft release

@@ -249,3 +249,21 @@ registry-publication decision.
 - Locked workspace check and all 98 tests across 17 suites passed.
 - Independent package/standards review reported zero Critical, Important, or
   Minor findings.
+
+### Task 2 evidence: reproducible native artifacts
+
+- Commits `aa8f564`, `cdc0c2b`, and `1ff6abf` add deterministic native archive
+  creation, exact safe-payload verification, portable checksums, a shared
+  release policy helper, and one complete local release gate.
+- The release check passed formatting, warnings-as-errors Clippy, 98 tests
+  across 17 suites, warning-free docs, exact Rust 1.85, all eight source
+  packages, both product smokes, and native archive execution.
+- Identical inputs produced byte-identical archives under umasks `022` and
+  `077`; tampered checksums were rejected.
+- Actual BSD tar on macOS and GNU tar 1.35 under Ubuntu 24.04 both produced the
+  normalized payload. The remaining Windows behavior is assigned to its native
+  matrix runner.
+- Review found and fixes closed GNU-tar incompatibility, umask-dependent root
+  mode, concurrent publication, both post-move and lock-acquisition signal
+  windows, and release-policy duplication. Final scoped re-review approved the
+  task with no remaining Critical or Important finding.
