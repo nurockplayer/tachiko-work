@@ -461,6 +461,193 @@ fn set_refuses_invalid_field_syntax_formula_edits_and_existing_outputs() {
 }
 
 #[test]
+fn entity_duplicate_creates_a_rebased_copy_without_changing_the_source() {
+    let temp = TempDir::new();
+    let input = temp.path().join("balance.ro");
+    let output_path = temp.path().join("with-steel-sword.ro");
+    assert!(run(&["init", input.to_str().unwrap()]).status.success());
+
+    let output = run(&[
+        "entity",
+        "duplicate",
+        input.to_str().unwrap(),
+        "iron_sword",
+        "steel_sword",
+        "--output",
+        output_path.to_str().unwrap(),
+    ]);
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(load(&input).unwrap().entities.len(), 4);
+    let copied = load(&output_path).unwrap();
+    assert_eq!(copied.entities.len(), 5);
+    assert_eq!(
+        copied.entities["steel_sword"].id,
+        EntityId::from("steel_sword")
+    );
+    assert_eq!(
+        copied.entities["steel_sword"].fields["dps"],
+        Value::Formula(Expression::Divide {
+            left: Box::new(Expression::Reference(FieldRef::new(
+                "steel_sword",
+                "damage"
+            ))),
+            right: Box::new(Expression::Reference(FieldRef::new(
+                "steel_sword",
+                "attack_interval",
+            ))),
+        })
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("steel_sword"));
+    assert!(stdout.contains("wrote"));
+    assert!(stdout.contains("tachiko show"));
+}
+
+#[test]
+fn entity_rename_rewrites_typed_relationships_and_formula_references() {
+    let temp = TempDir::new();
+    let input = temp.path().join("balance.ro");
+    let output_path = temp.path().join("renamed.ro");
+    assert!(run(&["init", input.to_str().unwrap()]).status.success());
+
+    let output = run(&[
+        "entity",
+        "rename",
+        input.to_str().unwrap(),
+        "iron_sword",
+        "moonblade",
+        "--output",
+        output_path.to_str().unwrap(),
+    ]);
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let renamed = load(&output_path).unwrap();
+    assert!(!renamed.entities.contains_key("iron_sword"));
+    assert_eq!(
+        renamed.entities["moonblade"].id,
+        EntityId::from("moonblade")
+    );
+    assert_eq!(
+        renamed.entities["alric"].fields["weapon"],
+        Value::Reference(EntityId::from("moonblade"))
+    );
+    assert_eq!(
+        renamed.entities["tempered_blade"].fields["grants_weapon"],
+        Value::Reference(EntityId::from("moonblade"))
+    );
+    assert_eq!(
+        renamed.entities["shop"].fields["matches_for_sword"],
+        Value::Formula(Expression::Divide {
+            left: Box::new(Expression::Reference(FieldRef::new("moonblade", "price"))),
+            right: Box::new(Expression::Reference(FieldRef::new(
+                "shop",
+                "gold_per_match",
+            ))),
+        })
+    );
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("iron_sword -> moonblade")
+    );
+}
+
+#[test]
+fn entity_remove_refuses_live_dependents_and_removes_an_unreferenced_entity() {
+    let temp = TempDir::new();
+    let starter = temp.path().join("starter.ro");
+    let blocked_output = temp.path().join("blocked.ro");
+    assert!(run(&["init", starter.to_str().unwrap()]).status.success());
+
+    let blocked = run(&[
+        "entity",
+        "remove",
+        starter.to_str().unwrap(),
+        "iron_sword",
+        "--output",
+        blocked_output.to_str().unwrap(),
+    ]);
+
+    assert!(!blocked.status.success());
+    let stderr = String::from_utf8(blocked.stderr).unwrap();
+    for dependent in [
+        "alric.weapon",
+        "shop.matches_for_sword",
+        "tempered_blade.grants_weapon",
+    ] {
+        assert!(stderr.contains(dependent), "missing {dependent}: {stderr}");
+    }
+    assert!(!blocked_output.exists());
+
+    let self_referencing = temp.path().join("self-referencing.ro");
+    let removed_output = temp.path().join("removed.ro");
+    save(&self_referencing, &balance_document(100.0)).unwrap();
+    let removed = run(&[
+        "entity",
+        "remove",
+        self_referencing.to_str().unwrap(),
+        "sword",
+        "--output",
+        removed_output.to_str().unwrap(),
+    ]);
+
+    assert!(
+        removed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&removed.stderr)
+    );
+    assert!(load(&removed_output).unwrap().entities.is_empty());
+    assert!(
+        String::from_utf8(removed.stdout)
+            .unwrap()
+            .contains("removed sword")
+    );
+}
+
+#[test]
+fn entity_commands_preserve_input_and_existing_output_paths() {
+    let temp = TempDir::new();
+    let input = temp.path().join("balance.ro");
+    let existing = temp.path().join("existing.ro");
+    assert!(run(&["init", input.to_str().unwrap()]).status.success());
+    fs::write(&existing, "preserve me").unwrap();
+
+    let same_path = run(&[
+        "entity",
+        "duplicate",
+        input.to_str().unwrap(),
+        "iron_sword",
+        "steel_sword",
+        "--output",
+        input.to_str().unwrap(),
+    ]);
+    assert!(!same_path.status.success());
+    assert!(String::from_utf8_lossy(&same_path.stderr).contains("same as the input"));
+    assert_eq!(load(&input).unwrap().entities.len(), 4);
+
+    let overwrite = run(&[
+        "entity",
+        "duplicate",
+        input.to_str().unwrap(),
+        "iron_sword",
+        "steel_sword",
+        "--output",
+        existing.to_str().unwrap(),
+    ]);
+    assert!(!overwrite.status.success());
+    assert_eq!(fs::read_to_string(existing).unwrap(), "preserve me");
+}
+
+#[test]
 fn merge_writes_a_merged_document_and_prints_semantic_impact() {
     let temp = TempDir::new();
     let base_path = temp.path().join("base.ro");
@@ -647,7 +834,23 @@ fn top_level_help_describes_the_complete_first_user_workflow() {
         "Browse entities and calculated values",
         "Explain a field",
         "Create a changed document",
+        "Grow, rename, or remove entities safely",
         "Compare two document versions",
+    ] {
+        assert!(text.contains(phrase), "missing help text: {phrase}\n{text}");
+    }
+}
+
+#[test]
+fn entity_help_makes_lifecycle_operations_discoverable() {
+    let output = run(&["entity", "--help"]);
+
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    for phrase in [
+        "Duplicate an entity",
+        "Rename an entity",
+        "Remove an unreferenced entity",
     ] {
         assert!(text.contains(phrase), "missing help text: {phrase}\n{text}");
     }

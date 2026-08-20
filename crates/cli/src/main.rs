@@ -48,6 +48,11 @@ enum Commands {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Grow, rename, or remove entities safely
+    Entity {
+        #[command(subcommand)]
+        command: EntityCommands,
+    },
     /// Compare two document versions by semantic meaning
     Diff { before: PathBuf, after: PathBuf },
     /// Merge semantic changes from two document versions
@@ -61,6 +66,41 @@ enum Commands {
     },
     /// Export a calculated runtime JSON projection
     Export { input: PathBuf, output: PathBuf },
+}
+
+#[derive(Debug, Subcommand)]
+enum EntityCommands {
+    /// Duplicate an entity and rebase its self-referential formulas
+    Duplicate {
+        input: PathBuf,
+        /// Existing entity identifier to copy
+        source: String,
+        /// New entity identifier to create
+        target: String,
+        /// New .ro document to create; existing files are never overwritten
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Rename an entity and rewrite all typed references
+    Rename {
+        input: PathBuf,
+        /// Existing entity identifier
+        source: String,
+        /// New entity identifier
+        target: String,
+        /// New .ro document to create; existing files are never overwritten
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Remove an unreferenced entity
+    Remove {
+        input: PathBuf,
+        /// Entity identifier to remove
+        entity: String,
+        /// New .ro document to create; existing files are never overwritten
+        #[arg(long)]
+        output: PathBuf,
+    },
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -109,6 +149,25 @@ fn execute(cli: Cli) -> Result<String, commands::CommandError> {
             value,
             output,
         } => commands::set_document(&input, &field, &value, &output),
+        Commands::Entity { command } => match command {
+            EntityCommands::Duplicate {
+                input,
+                source,
+                target,
+                output,
+            } => commands::duplicate_entity_document(&input, &source, &target, &output),
+            EntityCommands::Rename {
+                input,
+                source,
+                target,
+                output,
+            } => commands::rename_entity_document(&input, &source, &target, &output),
+            EntityCommands::Remove {
+                input,
+                entity,
+                output,
+            } => commands::remove_entity_document(&input, &entity, &output),
+        },
         Commands::Diff { before, after } => commands::diff_documents(&before, &after),
         Commands::Merge {
             base,

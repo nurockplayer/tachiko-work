@@ -14,7 +14,8 @@ use tachiko_merge_engine::{MergeConflict, MergeError, MergeOutcome, merge};
 use tachiko_semantic_core::{Document, FieldRef, Value};
 use tachiko_storage::{FormatError, load, to_canonical_string};
 use tachiko_workflow::{
-    FieldKind, StarterTemplate, WorkflowError, create_document, explain_field, overview, set_scalar,
+    EditPreview, FieldKind, StarterTemplate, WorkflowError, create_document, duplicate_entity,
+    explain_field, overview, remove_entity, rename_entity, set_scalar,
 };
 use thiserror::Error;
 
@@ -185,6 +186,62 @@ pub fn set_document(
     ))
 }
 
+pub fn duplicate_entity_document(
+    input: &Path,
+    source: &str,
+    target: &str,
+    output: &Path,
+) -> Result<String, CommandError> {
+    ensure_distinct_paths(input, output)?;
+    let document = load(input)?;
+    let preview = duplicate_entity(&document, source, target)?;
+    write_edit_preview(&preview, output)?;
+
+    Ok(format!(
+        "{}duplicated {source} as {target}\nwrote {}\n\nNext:\n  tachiko show {}\n",
+        preview.diff.render_text(),
+        output.display(),
+        output.display()
+    ))
+}
+
+pub fn rename_entity_document(
+    input: &Path,
+    source: &str,
+    target: &str,
+    output: &Path,
+) -> Result<String, CommandError> {
+    ensure_distinct_paths(input, output)?;
+    let document = load(input)?;
+    let preview = rename_entity(&document, source, target)?;
+    write_edit_preview(&preview, output)?;
+
+    Ok(format!(
+        "{}renamed {source} -> {target}\nwrote {}\n\nNext:\n  tachiko show {}\n",
+        preview.diff.render_text(),
+        output.display(),
+        output.display()
+    ))
+}
+
+pub fn remove_entity_document(
+    input: &Path,
+    entity: &str,
+    output: &Path,
+) -> Result<String, CommandError> {
+    ensure_distinct_paths(input, output)?;
+    let document = load(input)?;
+    let preview = remove_entity(&document, entity)?;
+    write_edit_preview(&preview, output)?;
+
+    Ok(format!(
+        "{}removed {entity}\nwrote {}\n\nNext:\n  tachiko show {}\n",
+        preview.diff.render_text(),
+        output.display(),
+        output.display()
+    ))
+}
+
 pub fn diff_documents(before: &Path, after: &Path) -> Result<String, CommandError> {
     let before = load(before)?;
     let after = load(after)?;
@@ -277,6 +334,20 @@ fn canonical_output(value: &impl Serialize) -> Result<String, CommandError> {
     let mut output = serde_json::to_string_pretty(value)?;
     output.push('\n');
     Ok(output)
+}
+
+fn ensure_distinct_paths(input: &Path, output: &Path) -> Result<(), CommandError> {
+    if input == output {
+        return Err(CommandError::SameInputOutput {
+            path: input.to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn write_edit_preview(preview: &EditPreview, output: &Path) -> Result<(), CommandError> {
+    let encoded = to_canonical_string(&preview.document)?;
+    write_new(output, encoded.as_bytes())
 }
 
 fn write_new(path: &Path, contents: &[u8]) -> Result<(), CommandError> {
