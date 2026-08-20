@@ -156,10 +156,35 @@ validated three-way merge instead of resolving raw JSON conflicts.
 
 ### Verification gates
 
-- Every merge rule follows a red/green test cycle.
+- Every new behavior follows a red/green test cycle; added coverage for already
+  correct merge rules is recorded honestly as characterization evidence.
 - Engine tests cover compatible, conflicting, invalid, and deterministic cases.
 - CLI process tests cover success, conflict, and overwrite safety.
 - A real collaboration smoke test creates canonical base/ours/theirs inputs,
   asserts merged damage `45`, attack interval `0.8`, and DPS `56.25`, then
   validates and reviews the semantic impact.
 - Full formatting, clippy, tests, docs, and both smoke journeys must pass.
+
+### Outcome
+
+- Added the UI-independent `tachiko-merge-engine` with recursive three-way
+  reconciliation for document metadata, schemas, entities, definitions,
+  membership, stored values, references, and formulas.
+- Independent changes merge deterministically; divergent intent returns typed,
+  path-ordered base/ours/theirs conflicts without a partial document.
+- Base, ours, theirs, and the conflict-free candidate each validate and
+  calculate before success, with errors identifying the failing stage and side.
+- Added safe `tachiko merge BASE OURS THEIRS --output MERGED.ro`; it exclusively
+  creates successful output and prints base-to-merged semantic impact.
+- Extended semantic diff with typed document and schema changes so title-only,
+  schema-only, and entity changes all produce truthful deterministic summaries.
+- Added real collaboration onboarding and CI smoke coverage for independent
+  damage/attack-interval edits merging to 56.25 DPS.
+- Final review found incomplete document/schema summaries and missing direct
+  merge-rule coverage; the fix added typed diff variants plus title/schema CLI
+  regressions and successful add/delete/membership tests across every merge
+  surface. Scoped re-review found all findings addressed with no new breakage.
+- Final gates after review fixes: formatting passed; warnings-as-errors Clippy
+  passed; 98 tests passed across 17 suites; warning-free docs passed; first-user
+  and collaboration smoke journeys passed; locked source install reported
+  `tachiko 0.1.0`.

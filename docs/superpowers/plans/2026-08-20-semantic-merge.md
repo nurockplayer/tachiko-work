@@ -266,7 +266,7 @@ Run: `rtk git commit -m "docs: add semantic collaboration workflow"`
 - Completion requires all quality gates, both real workflows, source install,
   and independent standards/spec review with no actionable findings.
 
-- [ ] **Step 1: Run full fresh verification**
+- [x] **Step 1: Run full fresh verification**
 
 Run: `cargo fmt --all -- --check`
 
@@ -278,17 +278,17 @@ Run: `RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps`
 
 Run both smoke scripts and a locked source installation in a fresh temporary root.
 
-- [ ] **Step 2: Review the complete phase diff against ADR-0011 and repository standards**
+- [x] **Step 2: Review the complete phase diff against ADR-0011 and repository standards**
 
 Review from checkpoint `393bc69`, including untracked files. Fix each actionable
 finding with a failing regression test where behavior changes.
 
-- [ ] **Step 3: Repeat all gates and update exact j-space evidence**
+- [x] **Step 3: Repeat all gates and update exact j-space evidence**
 
 Record test count, suite count, both smoke outcomes, install result, and review
 outcomes. Mark every plan checkbox complete only after evidence exists.
 
-- [ ] **Step 4: Commit the verified semantic collaboration release**
+- [x] **Step 4: Commit the verified semantic collaboration release**
 
 Run: `rtk git add -A`
 
