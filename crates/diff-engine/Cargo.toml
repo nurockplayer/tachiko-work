@@ -1,13 +1,20 @@
 [package]
 name = "tachiko-diff-engine"
+description = "Typed semantic diffs and calculated impact analysis for Tachiko Work"
 version.workspace = true
 edition.workspace = true
+authors.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-tachiko-formula-engine = { path = "../formula-engine" }
-tachiko-semantic-core = { path = "../semantic-core" }
+tachiko-formula-engine = { version = "0.1.0", path = "../formula-engine" }
+tachiko-semantic-core = { version = "0.1.0", path = "../semantic-core" }
 thiserror.workspace = true
 
 [lints]

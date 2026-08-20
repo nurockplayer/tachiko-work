@@ -1,14 +1,21 @@
 [package]
 name = "tachiko-storage"
+description = "Canonical .ro document serialization and versioning for Tachiko Work"
 version.workspace = true
 edition.workspace = true
+authors.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 rust-version.workspace = true
 
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
-tachiko-semantic-core = { path = "../semantic-core" }
+tachiko-semantic-core = { version = "0.1.0", path = "../semantic-core" }
 thiserror.workspace = true
 
 [lints]
