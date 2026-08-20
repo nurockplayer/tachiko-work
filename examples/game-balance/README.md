@@ -98,6 +98,44 @@ conflicted nor an invalid candidate, and it never overwrites an existing file.
 It operates on Tachiko's typed model rather than raw JSON text and does not
 install a Git merge driver or provide interactive resolution.
 
+## Grow and reorganize the roster
+
+Duplicate an existing entity when a new roster member should start from proven
+balance data. Formula references from the copy to its own fields are rebased;
+relationships to other entities retain their original meaning:
+
+```sh
+./target/debug/tachiko entity duplicate \
+  "$moonfall_demo/moonfall.ro" iron_sword steel_sword \
+  --output "$moonfall_demo/moonfall-with-steel.ro"
+./target/debug/tachiko set \
+  "$moonfall_demo/moonfall-with-steel.ro" steel_sword.name "Steel Sword" \
+  --output "$moonfall_demo/moonfall-steel-named.ro"
+./target/debug/tachiko set \
+  "$moonfall_demo/moonfall-steel-named.ro" steel_sword.damage 45 \
+  --output "$moonfall_demo/moonfall-steel-tuned.ro"
+./target/debug/tachiko entity rename \
+  "$moonfall_demo/moonfall-steel-tuned.ro" steel_sword moonblade \
+  --output "$moonfall_demo/moonfall-with-moonblade.ro"
+./target/debug/tachiko explain \
+  "$moonfall_demo/moonfall-with-moonblade.ro" moonblade.dps
+```
+
+The final formula is `(moonblade.damage / moonblade.attack_interval)` and
+calculates to 50 DPS. Rename also rewrites stored typed relationships and
+references from formulas owned by other entities.
+
+Removal never cascades. Trying to remove `iron_sword` reports
+`alric.weapon`, `shop.matches_for_sword`, and
+`tempered_blade.grants_weapon`, then writes nothing. An unreferenced copy can be
+removed explicitly:
+
+```sh
+./target/debug/tachiko entity remove \
+  "$moonfall_demo/moonfall-with-moonblade.ro" moonblade \
+  --output "$moonfall_demo/moonfall-pruned.ro"
+```
+
 ## Why `.ro` in Git
 
 `.ro` is canonical UTF-8 JSON: stable map ordering and formatting make

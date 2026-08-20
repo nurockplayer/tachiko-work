@@ -51,6 +51,9 @@ jobs:
       - name: Exercise the collaboration journey
         run: bash scripts/collaboration-smoke.sh
 
+      - name: Exercise the entity lifecycle journey
+        run: bash scripts/entity-lifecycle-smoke.sh
+
   minimum-rust:
     name: Minimum supported Rust 1.85.0
     runs-on: ubuntu-24.04

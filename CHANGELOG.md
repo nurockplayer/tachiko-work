@@ -14,12 +14,14 @@ All notable changes to Tachiko Work are documented in this file.
   successful merge candidates.
 - A complete game-balance CLI workflow for initializing, browsing, explaining,
   editing, validating, calculating, diffing, merging, and exporting documents.
+- Validated entity duplication, relationship-safe rename, and non-cascading
+  removal with actionable dependent field paths.
 - Evaluated runtime JSON export that preserves semantic document and entity
   identity.
 - Read-only AI-oriented structure, formula, and impact APIs plus validated,
   approval-required field-change suggestions.
-- A checked-in Moonfall game-balance example and executable first-user and
-  collaboration smoke tests.
+- A checked-in Moonfall game-balance example and executable first-user,
+  collaboration, and entity-lifecycle smoke tests.
 - Reproducible checksummed native archives for four targets, including the
   project license texts and a deterministic audited notice for every locked
   all-target CLI dependency.

@@ -21,6 +21,7 @@ The current product provides a complete, safe game-balance workflow:
 - deterministic formula calculation and dependency tracking;
 - semantic diff with derived formula impact;
 - guided starter creation, browsing, explanation, and typed edits;
+- validated entity duplication, relationship-safe rename, and protected removal;
 - CLI validation and evaluated runtime JSON export;
 - read-only AI structure/formula/impact queries and approval-required suggestions.
 
@@ -126,6 +127,33 @@ The checked-in Moonfall example and expected output are documented in
 Use `tachiko init scratch.ro --template empty` only when you intentionally want
 to author schemas and entities directly in canonical `.ro` JSON.
 
+## Grow the balance roster
+
+Entity lifecycle commands create new reviewed documents just like `set`. Copy a
+working weapon, tune the copy, and give its stable identifier a final name
+without breaking self-referential formulas:
+
+```sh
+tachiko entity duplicate balance.ro iron_sword steel_sword \
+  --output with-steel-sword.ro
+tachiko set with-steel-sword.ro steel_sword.name "Steel Sword" \
+  --output named-steel-sword.ro
+tachiko set named-steel-sword.ro steel_sword.damage 45 \
+  --output tuned-steel-sword.ro
+tachiko entity rename tuned-steel-sword.ro steel_sword moonblade \
+  --output with-moonblade.ro
+tachiko explain with-moonblade.ro moonblade.dps
+```
+
+`rename` rewrites typed entity relationships and formula references throughout
+the document. `remove` is deliberately non-cascading: it reports every
+dependent field and creates no output while another entity still references the
+target. Removing an unreferenced entity is explicit and safe:
+
+```sh
+tachiko entity remove with-moonblade.ro moonblade --output without-moonblade.ro
+```
+
 ## Combine independent balance branches
 
 Start each branch from the same canonical document and create a distinct output
@@ -152,8 +180,8 @@ producing new semantic inputs and rerunning the command.
 - `diff-engine`: entity/field changes and calculated impact
 - `merge-engine`: deterministic typed three-way semantic reconciliation
 - `ai-api`: read/explain/suggest-only semantic operations
-- `workflow`: reusable starter, overview, explanation, and safe-edit operations
-- `cli`: the complete `init` → `show` → `explain` → `set` → `diff` → `merge` workflow
+- `workflow`: reusable starter, explanation, safe-edit, and entity lifecycle operations
+- `cli`: creation, exploration, lifecycle, review, merge, validation, and export workflows
 
 For a fast contributor check after an edit, run:
 
@@ -168,7 +196,7 @@ components plus the exact minimum toolchain. Then run the complete
 release-equivalent gate from a clean local commit. The gate selects stable for
 all normal and nested commands even if the caller has another rustup override;
 it separately checks Rust 1.85 compatibility, warning-free documentation,
-deterministic dependency notices, Cargo packages, both real user journeys, and
+deterministic dependency notices, Cargo packages, all real user journeys, and
 the native release archive:
 
 ```sh

@@ -24,12 +24,12 @@ canonical `.ro` storage, Bash smoke contracts, GitHub Actions.
 - Modify: `crates/workflow/src/lib.rs`
 - Create: `crates/workflow/tests/entity_lifecycle.rs`
 
-- [ ] Add failing tests for the public identifier predicate and all duplicate,
+- [x] Add failing tests for the public identifier predicate and all duplicate,
   rename, and remove rules.
-- [ ] Implement the minimal semantic transformations, recursive reference
+- [x] Implement the minimal semantic transformations, recursive reference
   rewrite/scan, explicit errors, and shared validate/calculate/diff finalizer.
-- [ ] Run focused semantic-core and workflow tests, formatting, and Clippy.
-- [ ] Review the shared validation contract's direct consumers.
+- [x] Run focused semantic-core and workflow tests, formatting, and Clippy.
+- [x] Review the shared validation contract's direct consumers.
 
 ## Task 2: CLI authoring surface
 
@@ -39,11 +39,11 @@ canonical `.ro` storage, Bash smoke contracts, GitHub Actions.
 - Modify: `crates/cli/src/commands.rs`
 - Modify: `crates/cli/tests/cli.rs`
 
-- [ ] Add failing process tests for nested help, each successful operation,
+- [x] Add failing process tests for nested help, each successful operation,
   output protection, and dependency-error no-write behavior.
-- [ ] Add `tachiko entity duplicate|rename|remove` and one shared lifecycle
+- [x] Add `tachiko entity duplicate|rename|remove` and one shared lifecycle
   persistence adapter.
-- [ ] Run focused CLI tests, formatting, and Clippy.
+- [x] Run focused CLI tests, formatting, and Clippy.
 
 ## Task 3: First-user roster journey
 
@@ -56,11 +56,11 @@ canonical `.ro` storage, Bash smoke contracts, GitHub Actions.
 - Modify: `examples/game-balance/README.md`
 - Modify: `CHANGELOG.md`
 
-- [ ] Document a copy-tune-rename-review workflow using the canonical starter.
-- [ ] Add a real smoke script covering successful lifecycle, safe referenced
+- [x] Document a copy-tune-rename-review workflow using the canonical starter.
+- [x] Add a real smoke script covering successful lifecycle, safe referenced
   removal refusal, and successful unreferenced removal.
-- [ ] Require the smoke in ordinary CI and the local release gate.
-- [ ] Run all product smokes twice and inspect user-facing output.
+- [x] Require the smoke in ordinary CI and the local release gate.
+- [x] Run all product smokes twice and inspect user-facing output.
 
 ## Task 4: Release verification and review
 

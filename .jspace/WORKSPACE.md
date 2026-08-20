@@ -396,3 +396,39 @@ the product's no-overwrite safety boundary.
   game-balance journey in CI and the local release gate.
 - Full release verification and independent product/safety review before the
   phase checkpoint.
+
+### Task 1 evidence: semantic workflow
+
+- Commit `7eb2cf6` exposes the stable semantic identifier predicate and adds
+  immutable duplicate, rename, and remove workflow operations.
+- Formula traversal covers every current expression shape. Duplicate rebases
+  only formula self-references; rename rewrites stored and formula references;
+  remove reports unique, sorted dependent field paths and ignores references
+  owned by the removed entity.
+- Semantic-core and workflow focused suites passed 29 tests. Formatting and
+  warnings-as-errors Clippy passed, and the validation consumer scan found no
+  divergent identifier grammar.
+
+### Task 2 evidence: CLI lifecycle adapter
+
+- Commit `6f79baf` adds the discoverable nested
+  `tachiko entity duplicate|rename|remove` interface with canonical,
+  exclusive-create outputs and semantic impact previews.
+- The red process seam initially failed because `entity` was absent. The green
+  CLI suite passed all 26 tests, including rewrite semantics, blocked removal,
+  same-path refusal, and existing-output preservation; focused Clippy passed
+  with warnings denied.
+
+### Task 3 evidence: real roster journey
+
+- The new smoke contract duplicates `iron_sword`, proves repeat output is
+  byte-identical, names and tunes the copy, renames it to `moonblade`, explains
+  the rebased 50-DPS formula, validates and exports it, and rejects removal of
+  the still-referenced original with three dependent paths.
+- Removing the unreferenced `moonblade` produces a canonical document that is
+  byte-identical to the starter. All three product smokes passed twice against
+  one built CLI; Bash syntax and ShellCheck passed.
+- Ordinary CI and the local release gate now require the entity lifecycle
+  smoke. The local `actionlint` executable is unavailable on this host; the CI
+  change is a single existing-pattern shell step and remains covered by final
+  workflow review.
