@@ -249,6 +249,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tachiko-merge-engine"
+version = "0.1.0"
+dependencies = [
+ "tachiko-formula-engine",
+ "tachiko-semantic-core",
+ "thiserror",
+]
+
+[[package]]
 name = "tachiko-semantic-core"
 version = "0.1.0"
 dependencies = [
