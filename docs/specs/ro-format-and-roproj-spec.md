@@ -2,53 +2,53 @@
 
 ## Purpose
 
-Tachiko Work requires a format that works for both humans and version control systems.
+Tachiko Work requires representations that work for both ordinary file handling and Git-native collaboration.
 
-The design separates logical model from physical representation.
+ADR-0003 is Accepted and defines the target relationship:
 
-## Canonical Principle
+- `.roproj` is the canonical editable/source materialization.
+- `.ro` is the portable single-file artifact.
+- the semantic model remains authoritative over both.
 
-The semantic model is the source of truth.
+## Current v0.1 implementation
 
-Neither .ro nor .roproj should own meaning.
+The shipped CLI currently persists and operates on deterministic `.ro` files only.
 
-They are serialization forms.
+`Project.ro` is used by the current creation, authoring, validation, calculation, semantic diff/merge, and runtime export workflows.
 
-## .ro
+This implementation state does not supersede ADR-0003. `.roproj` materialization and deterministic pack/unpack are future implementation work.
 
-Portable package representation.
+## `.ro`
 
-Optimized for:
+Implemented v0.1 representation.
 
-- desktop users
-- sharing
-- backup
-- transport
-- archive
+Current uses:
 
-Example:
+- direct CLI persistence
+- sharing and transport
+- deterministic review snapshots
+- backup/archive
+- runtime export source
 
-```
-Project.ro
-```
+Users should not need to understand its internal tagged JSON structure for ordinary workflows.
 
-Users should not need to understand the internal structure.
+## `.roproj`
 
-## .roproj
+Accepted target Git working/source representation, not yet implemented.
 
-Git working representation.
+Target properties:
 
-Optimized for:
+- deterministic and canonical
+- UTF-8 where textual
+- human-readable where practical
+- diff friendly
+- merge friendly
+- branch/PR friendly
+- CI and semantic-tooling friendly
 
-- branch workflows
-- pull requests
-- reviews
-- merge operations
-- CI validation
+Illustrative layout:
 
-Example:
-
-```
+```text
 Project.roproj/
 ├── manifest.json
 ├── schema.json
@@ -60,33 +60,14 @@ Project.roproj/
 └── tests/
 ```
 
-## Requirements
+The exact physical layout remains evolvable until implementation.
 
-The Git representation should be:
+## Canonical principle
 
-- deterministic
-- canonical
-- UTF-8
-- human readable
-- diff friendly
+Neither physical format owns meaning. The semantic model is authoritative, while ADR-0003 establishes `.roproj` as the canonical editable materialization and `.ro` as the portable artifact.
 
-## Why Not Binary Only?
+## Migration and interoperability
 
-A single binary file recreates the same problems found in traditional spreadsheet files:
+Legacy formats such as DOCX and XLSX belong at adapters/system boundaries. CSV, JSON, Markdown, OpenDocument, and other existing standards should be reused where useful rather than forcing legacy behavior into the semantic core.
 
-- poor diffs
-- merge conflicts
-- opaque history
-- difficult review
-
-## Why Not Only Text Files?
-
-Pure text files are excellent for Git but less convenient for normal users.
-
-Therefore both representations are required.
-
-## Migration
-
-Legacy formats such as DOCX and XLSX should be handled by adapters.
-
-The core format should not inherit historical compatibility problems.
+The core must not inherit historical compatibility accidents.

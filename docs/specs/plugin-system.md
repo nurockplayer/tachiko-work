@@ -4,6 +4,8 @@
 
 Tachiko Work should become an extensible platform, not a closed application.
 
+Current release status: no public plugin runtime is implemented in v0.1.
+
 ## Plugin Categories
 
 Possible plugins:

@@ -1,0 +1,23 @@
+[project]
+name = "tachiko-work"
+
+[context]
+canonical_docs = "docs/"
+architecture_source = "docs/architecture/"
+adr_source = "docs/decisions/"
+
+[rules]
+prefer_adr = true
+do_not_redesign_without_adr = true
+preserve_existing_architecture = true
+
+[development]
+language = "Rust"
+package_manager = "cargo"
+
+[validation]
+commands = [
+    "cargo fmt --all -- --check",
+    "cargo test --workspace --all-targets",
+    "cargo clippy --workspace --all-targets -- -D warnings"
+]

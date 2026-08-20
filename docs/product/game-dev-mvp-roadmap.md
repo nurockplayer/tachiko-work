@@ -4,39 +4,46 @@
 
 The first product is not an Excel replacement.
 
-It is a Git-native computational data workflow for game development.
+It is a CLI-first, Git-native computational game-balance workflow.
 
-## Phase 1: Foundation
+## MVP: Semantic Game-Balance Workflow
 
-- semantic table model
-- typed schema
-- JSONL Git representation
+- semantic document model
+- versioned `.ro` foundation
+- schema validation
+- formula computation
 - deterministic serialization
-- CLI validation
-
-## Phase 2: Designer Workflow
-
-- spreadsheet-like editor
-- formulas
-- references
-- views
-- comments
-
-## Phase 3: Engineering Workflow
-
 - semantic diff
-- semantic merge
-- pull request integration
-- CI validation
+- CLI workflow
+- game balance example
+- AI semantic read/query capability
+- immutable workflow previews with explicit output paths
+- deterministic formula authoring and explainability
 
-## Phase 4: Engine Integration
+## Implemented behavior at checkpoint `8f214c3`
 
-Targets:
+- schema-based scalar edit (`set`)
+- entity lifecycle (`duplicate`, `rename`, `remove`)
+- validated formula authoring (`formula set`) with bounded parser complexity
+- typed three-way merge (`merge`)
+- CLI-first onboarding, explain, review, validate, calculate, and export flows
+- AI query/suggestion model with explicit approval-required write boundary
 
-- Unity
-- Unreal Engine
-- Godot
+## Deferred roadmap layers
+
+These capabilities are intentionally not implemented yet and remain future work:
+
+- GUI/React or spreadsheet-style designer interface
+- `.roproj` production workflow and Git-driver adapters
+- realtime/online collaboration
+- cloud-hosted project orchestration and enterprise permissions
+- Office/Excel compatibility
+- engine-level plugins (Unity, Unreal, Godot)
+- engine-specific live syncing or runtime hot-reload pipelines
+- operation logs, event sourcing, and CRDT-style sync
 
 ## Success Metric
 
-A designer can modify game data comfortably while engineers receive reviewable, testable, version-controlled changes.
+A developer or technical designer can create, calculate, validate, review,
+and merge game balance data through a version-controlled semantic workflow, with
+AI able to explain the model and impact.

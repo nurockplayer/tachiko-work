@@ -1,0 +1,304 @@
+use tachiko_diff_engine::SemanticChange;
+use tachiko_formula_engine::calculate;
+use tachiko_semantic_core::{
+    EntityId, Expression, FieldDefinition, FieldId, FieldRef, FieldType, Value, validate_document,
+};
+use tachiko_workflow::{
+    StarterTemplate, WorkflowError, create_document, duplicate_entity, remove_entity, rename_entity,
+};
+
+fn reference(entity: &str, field: &str) -> Expression {
+    Expression::Reference(FieldRef::new(entity, field))
+}
+
+fn every_expression_shape(self_entity: &str) -> Expression {
+    Expression::Maximum {
+        left: Box::new(Expression::Minimum {
+            left: Box::new(Expression::Add {
+                left: Box::new(reference(self_entity, "damage")),
+                right: Box::new(Expression::Number(1.0)),
+            }),
+            right: Box::new(Expression::Subtract {
+                left: Box::new(Expression::Multiply {
+                    left: Box::new(Expression::Divide {
+                        left: Box::new(reference(self_entity, "damage")),
+                        right: Box::new(reference(self_entity, "attack_interval")),
+                    }),
+                    right: Box::new(Expression::Number(2.0)),
+                }),
+                right: Box::new(Expression::Number(3.0)),
+            }),
+        }),
+        right: Box::new(reference("shop", "gold_per_match")),
+    }
+}
+
+fn lifecycle_document() -> tachiko_semantic_core::Document {
+    let mut document = create_document(StarterTemplate::GameBalance, "game", "Game");
+    let weapons = document.schemas.get_mut("weapons").unwrap();
+    weapons.fields.insert(
+        FieldId::from("all_ops"),
+        FieldDefinition {
+            field_type: FieldType::Number,
+            required: true,
+        },
+    );
+    weapons.fields.insert(
+        FieldId::from("peer"),
+        FieldDefinition {
+            field_type: FieldType::Reference {
+                schema: "weapons".into(),
+            },
+            required: true,
+        },
+    );
+    let sword = document.entities.get_mut("iron_sword").unwrap();
+    sword.fields.insert(
+        FieldId::from("all_ops"),
+        Value::Formula(every_expression_shape("iron_sword")),
+    );
+    sword.fields.insert(
+        FieldId::from("peer"),
+        Value::Reference(EntityId::from("iron_sword")),
+    );
+    document
+}
+
+#[test]
+fn duplicate_rebases_only_copied_self_formulas_and_returns_a_valid_preview() {
+    let document = lifecycle_document();
+
+    let preview = duplicate_entity(&document, "iron_sword", "steel_sword")
+        .expect("valid entity duplication should succeed");
+
+    assert!(validate_document(&preview.document).is_empty());
+    let duplicate = &preview.document.entities["steel_sword"];
+    assert_eq!(duplicate.id, EntityId::from("steel_sword"));
+    assert_eq!(
+        duplicate.fields["all_ops"],
+        Value::Formula(every_expression_shape("steel_sword")),
+        "every recursively nested self formula reference should be rebased"
+    );
+    assert_eq!(
+        duplicate.fields["peer"],
+        Value::Reference(EntityId::from("iron_sword")),
+        "stored relationships are copied without rebasing"
+    );
+    assert_eq!(
+        preview.document.entities["iron_sword"].fields["all_ops"],
+        Value::Formula(every_expression_shape("iron_sword")),
+        "the source document entity must remain unchanged"
+    );
+    assert_eq!(
+        preview.document.entities["alric"].fields["weapon"],
+        Value::Reference(EntityId::from("iron_sword")),
+        "relationships owned by other entities must remain unchanged"
+    );
+    let calculation = calculate(&preview.document).expect("duplicate should calculate");
+    assert_eq!(
+        calculation.value(&FieldRef::new("steel_sword", "all_ops")),
+        Some(50.0)
+    );
+    assert!(preview.diff.changes().iter().any(|change| matches!(
+        change,
+        SemanticChange::EntityAdded { entity } if entity.as_str() == "steel_sword"
+    )));
+    assert!(!document.entities.contains_key("steel_sword"));
+}
+
+#[test]
+fn duplicate_reports_missing_invalid_and_occupied_entities_explicitly() {
+    let document = lifecycle_document();
+
+    assert!(matches!(
+        duplicate_entity(&document, "missing", "steel_sword"),
+        Err(WorkflowError::MissingEntity { entity }) if entity.as_str() == "missing"
+    ));
+    assert!(matches!(
+        duplicate_entity(&document, "iron_sword", "Bad.Id"),
+        Err(WorkflowError::InvalidEntityIdentifier { entity }) if entity.as_str() == "Bad.Id"
+    ));
+    assert!(matches!(
+        duplicate_entity(&document, "iron_sword", "shop"),
+        Err(WorkflowError::EntityAlreadyExists { entity }) if entity.as_str() == "shop"
+    ));
+}
+
+#[test]
+fn rename_rewrites_all_typed_and_recursive_formula_references() {
+    let document = lifecycle_document();
+
+    let preview = rename_entity(&document, "iron_sword", "moonblade")
+        .expect("valid entity rename should succeed");
+
+    assert!(validate_document(&preview.document).is_empty());
+    assert!(!preview.document.entities.contains_key("iron_sword"));
+    assert_eq!(
+        preview.document.entities["moonblade"].id,
+        EntityId::from("moonblade")
+    );
+    assert_eq!(
+        preview.document.entities["moonblade"].fields["all_ops"],
+        Value::Formula(every_expression_shape("moonblade"))
+    );
+    assert_eq!(
+        preview.document.entities["moonblade"].fields["peer"],
+        Value::Reference(EntityId::from("moonblade"))
+    );
+    assert_eq!(
+        preview.document.entities["alric"].fields["weapon"],
+        Value::Reference(EntityId::from("moonblade"))
+    );
+    assert_eq!(
+        preview.document.entities["tempered_blade"].fields["grants_weapon"],
+        Value::Reference(EntityId::from("moonblade"))
+    );
+    assert_eq!(
+        preview.document.entities["shop"].fields["matches_for_sword"],
+        Value::Formula(Expression::Divide {
+            left: Box::new(reference("moonblade", "price")),
+            right: Box::new(reference("shop", "gold_per_match")),
+        })
+    );
+    let calculation = calculate(&preview.document).expect("renamed document should calculate");
+    assert_eq!(
+        calculation.value(&FieldRef::new("moonblade", "dps")),
+        Some(40.0)
+    );
+    assert_eq!(
+        calculation.value(&FieldRef::new("shop", "matches_for_sword")),
+        Some(2.4)
+    );
+    assert_eq!(
+        document.entities["alric"].fields["weapon"],
+        Value::Reference(EntityId::from("iron_sword")),
+        "rename must not mutate its source"
+    );
+}
+
+#[test]
+fn rename_rejects_noop_before_occupancy_and_reports_other_preconditions() {
+    let document = lifecycle_document();
+
+    assert!(matches!(
+        rename_entity(&document, "iron_sword", "iron_sword"),
+        Err(WorkflowError::NoOpEntityRename { entity }) if entity.as_str() == "iron_sword"
+    ));
+    assert!(matches!(
+        rename_entity(&document, "missing", "target"),
+        Err(WorkflowError::MissingEntity { entity }) if entity.as_str() == "missing"
+    ));
+    assert!(matches!(
+        rename_entity(&document, "iron_sword", "_target"),
+        Err(WorkflowError::InvalidEntityIdentifier { entity }) if entity.as_str() == "_target"
+    ));
+    assert!(matches!(
+        rename_entity(&document, "iron_sword", "shop"),
+        Err(WorkflowError::EntityAlreadyExists { entity }) if entity.as_str() == "shop"
+    ));
+}
+
+#[test]
+fn remove_reports_one_sorted_path_per_dependent_field_across_all_expression_shapes() {
+    let mut document = lifecycle_document();
+    document.schemas.get_mut("economy").unwrap().fields.insert(
+        FieldId::from("all_ops"),
+        FieldDefinition {
+            field_type: FieldType::Number,
+            required: true,
+        },
+    );
+    document.entities.get_mut("shop").unwrap().fields.insert(
+        FieldId::from("all_ops"),
+        Value::Formula(every_expression_shape("iron_sword")),
+    );
+
+    let error = remove_entity(&document, "iron_sword")
+        .expect_err("referenced entities must not be removed");
+    let WorkflowError::EntityReferenced { entity, dependents } = &error else {
+        panic!("expected a typed referenced-entity error, got {error:?}");
+    };
+
+    assert_eq!(entity.as_str(), "iron_sword");
+    assert_eq!(
+        dependents,
+        &[
+            FieldRef::new("alric", "weapon"),
+            FieldRef::new("shop", "all_ops"),
+            FieldRef::new("shop", "matches_for_sword"),
+            FieldRef::new("tempered_blade", "grants_weapon"),
+        ],
+        "dependent fields must be unique and sorted"
+    );
+    let message = error.to_string();
+    assert!(message.contains("iron_sword"));
+    for dependent in dependents {
+        assert!(
+            message.contains(&dependent.to_string()),
+            "error should render dependent path {dependent}"
+        );
+    }
+}
+
+#[test]
+fn remove_ignores_owned_self_references_and_returns_a_valid_diff() {
+    let mut document = lifecycle_document();
+    document.entities.remove("alric");
+    document.entities.remove("tempered_blade");
+    let shop = document.entities.get_mut("shop").unwrap();
+    shop.fields
+        .insert(FieldId::from("matches_for_sword"), Value::Number(2.4));
+    shop.fields
+        .insert(FieldId::from("upgrade_cost"), Value::Number(200.0));
+
+    let preview = remove_entity(&document, "iron_sword")
+        .expect("self formula and stored references disappear with their owner");
+
+    assert!(validate_document(&preview.document).is_empty());
+    assert!(!preview.document.entities.contains_key("iron_sword"));
+    assert!(document.entities.contains_key("iron_sword"));
+    assert!(preview.diff.changes().iter().any(|change| matches!(
+        change,
+        SemanticChange::EntityRemoved { entity } if entity.as_str() == "iron_sword"
+    )));
+    calculate(&preview.document).expect("removed document should calculate");
+}
+
+#[test]
+fn remove_requires_a_present_entity() {
+    let document = lifecycle_document();
+
+    assert!(matches!(
+        remove_entity(&document, "missing"),
+        Err(WorkflowError::MissingEntity { entity }) if entity.as_str() == "missing"
+    ));
+}
+
+#[test]
+fn lifecycle_finalizer_surfaces_validation_calculation_and_diff_failures() {
+    let invalid_document = create_document(StarterTemplate::GameBalance, "game", " ");
+    assert!(matches!(
+        duplicate_entity(&invalid_document, "iron_sword", "steel_sword"),
+        Err(WorkflowError::InvalidDocument { .. })
+    ));
+
+    let mut uncalculable = create_document(StarterTemplate::GameBalance, "game", "Game");
+    uncalculable
+        .entities
+        .get_mut("iron_sword")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("attack_interval"), Value::Number(0.0));
+    assert!(matches!(
+        duplicate_entity(&uncalculable, "iron_sword", "steel_sword"),
+        Err(WorkflowError::Calculation(_))
+    ));
+
+    uncalculable.entities.remove("alric");
+    uncalculable.entities.remove("shop");
+    uncalculable.entities.remove("tempered_blade");
+    assert!(matches!(
+        remove_entity(&uncalculable, "iron_sword"),
+        Err(WorkflowError::Diff(_))
+    ));
+}

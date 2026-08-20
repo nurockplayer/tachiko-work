@@ -1,0 +1,32 @@
+[package]
+name = "tachiko-cli"
+description = "Git-native CLI for authoring, calculating, reviewing, and merging Tachiko Work documents"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "tachiko"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tachiko-diff-engine = { version = "0.1.0", path = "../diff-engine" }
+tachiko-formula-engine = { version = "0.1.0", path = "../formula-engine" }
+tachiko-merge-engine = { version = "0.1.0", path = "../merge-engine" }
+tachiko-semantic-core = { version = "0.1.0", path = "../semantic-core" }
+tachiko-storage = { version = "0.1.0", path = "../storage" }
+tachiko-workflow = { version = "0.1.0", path = "../workflow" }
+thiserror.workspace = true
+
+[lints]
+workspace = true

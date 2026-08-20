@@ -1,0 +1,25 @@
+[package]
+name = "tachiko-workflow"
+description = "Guided semantic authoring and safe editing workflows for Tachiko Work"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+tachiko-diff-engine = { version = "0.1.0", path = "../diff-engine" }
+tachiko-formula-engine = { version = "0.1.0", path = "../formula-engine" }
+tachiko-semantic-core = { version = "0.1.0", path = "../semantic-core" }
+thiserror.workspace = true
+
+[dev-dependencies]
+tachiko-storage = { version = "0.1.0", path = "../storage" }
+
+[lints]
+workspace = true

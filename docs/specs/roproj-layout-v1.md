@@ -1,12 +1,14 @@
-# Tachiko Work .roproj Layout v1
+# Tachiko Work .roproj Layout v1 (Implementation Draft)
 
 ## Purpose
 
-`.roproj` is the Git-native working representation of a Tachiko Work project.
+ADR-0003 is Accepted and establishes `.roproj` as the canonical editable/source representation. This document is an implementation draft for that accepted direction.
 
-## Example
+`.roproj` is not part of the implemented v0.1 CLI contract yet; current v0.1 workflows persist deterministic `.ro` files.
 
-```
+## Illustrative layout
+
+```text
 project.roproj/
 ├── manifest.json
 ├── schema.json
@@ -19,16 +21,19 @@ project.roproj/
 └── assets/
 ```
 
-## Requirements
+The exact split and file naming remain subject to implementation validation.
 
-- UTF-8
+## Required properties
+
+- UTF-8 for textual materialization
 - deterministic ordering
-- human readable changes
+- human-readable changes where practical
 - stable identifiers
-- Git friendly diffs
+- Git-friendly diffs and merge
+- lossless semantic conversion to/from the portable `.ro` artifact
 
-## Design Principle
+## Design principle
 
 Git is a storage and collaboration protocol, not the user interface.
 
-Users edit through Tachiko Work. Git stores semantic history.
+Users edit through Tachiko Work semantic operations. Git stores semantic history; `.roproj` is the accepted target materialization for that history.

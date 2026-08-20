@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Rust quality and product workflows
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lint all targets
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Run all tests
+        run: cargo test --workspace --all-targets --locked
+
+      - name: Check documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --no-deps --locked
+
+      - name: Validate Cargo source packages
+        run: cargo package --workspace --locked --no-verify
+
+      - name: Exercise the first-user journey
+        run: bash scripts/first-user-smoke.sh
+
+      - name: Exercise the collaboration journey
+        run: bash scripts/collaboration-smoke.sh
+
+      - name: Exercise the entity lifecycle journey
+        run: bash scripts/entity-lifecycle-smoke.sh
+
+      - name: Exercise the formula authoring journey
+        run: bash scripts/formula-authoring-smoke.sh
+
+  minimum-rust:
+    name: Minimum supported Rust 1.85.0
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install Rust 1.85.0
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: 1.85.0
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: Check all targets with Rust 1.85.0
+        run: cargo check --workspace --all-targets --locked

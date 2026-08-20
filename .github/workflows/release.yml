@@ -1,0 +1,188 @@
+name: Draft release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release contract
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Validate tag matches workspace version
+        id: version
+        shell: bash
+        run: |
+          # shellcheck source=scripts/release-lib.sh
+          source "${GITHUB_WORKSPACE}/scripts/release-lib.sh"
+          workspace_version="$(tachiko_workspace_version "${GITHUB_WORKSPACE}")"
+          expected_tag="v${workspace_version}"
+          if [[ "${GITHUB_REF_NAME}" != "${expected_tag}" ]]; then
+            echo "Release tag '${GITHUB_REF_NAME}' must exactly match '${expected_tag}'" >&2
+            exit 1
+          fi
+          printf 'version=%s\n' "${workspace_version}" >>"${GITHUB_OUTPUT}"
+
+      - name: Install minimum supported Rust 1.85.0
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: 1.85.0
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: Run the full release check
+        run: bash scripts/release-check.sh
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - runner: macos-15
+            target: aarch64-apple-darwin
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: windows-2025
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install stable Rust target
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build native release binary
+        shell: bash
+        run: cargo build --package tachiko-cli --release --locked --target "${{ matrix.target }}"
+
+      - name: Package and verify native release archive
+        shell: bash
+        run: |
+          mkdir release-artifacts
+          bash scripts/package-binary.sh "${{ matrix.target }}" release-artifacts
+          archive="release-artifacts/tachiko-${{ needs.validate.outputs.version }}-${{ matrix.target }}.tar.gz"
+          bash scripts/verify-release-archive.sh "${{ matrix.target }}" "${archive}"
+
+      - name: Upload native release archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: tachiko-${{ matrix.target }}
+          path: |
+            release-artifacts/tachiko-${{ needs.validate.outputs.version }}-${{ matrix.target }}.tar.gz
+            release-artifacts/tachiko-${{ needs.validate.outputs.version }}-${{ matrix.target }}.tar.gz.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  release:
+    name: Create draft GitHub release
+    needs:
+      - validate
+      - build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download all native release archives
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: tachiko-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Validate complete release asset set
+        shell: bash
+        run: |
+          expected_targets=(
+            x86_64-unknown-linux-gnu
+            aarch64-apple-darwin
+            x86_64-apple-darwin
+            x86_64-pc-windows-msvc
+          )
+          version="${{ needs.validate.outputs.version }}"
+          for target in "${expected_targets[@]}"; do
+            archive="release-assets/tachiko-${version}-${target}.tar.gz"
+            test -f "${archive}"
+            test -f "${archive}.sha256"
+          done
+          file_count="$(find release-assets -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d '[:space:]')"
+          if [[ "${file_count}" -ne 8 ]]; then
+            echo "Expected exactly eight release assets, found ${file_count}" >&2
+            exit 1
+          fi
+          archive_count="$(find release-assets -mindepth 1 -maxdepth 1 -type f -name '*.tar.gz' | wc -l | tr -d '[:space:]')"
+          checksum_count="$(find release-assets -mindepth 1 -maxdepth 1 -type f -name '*.tar.gz.sha256' | wc -l | tr -d '[:space:]')"
+          if [[ "${archive_count}" -ne 4 || "${checksum_count}" -ne 4 ]]; then
+            echo "Expected four archives and four checksums, found ${archive_count} and ${checksum_count}" >&2
+            exit 1
+          fi
+          (
+            cd release-assets
+            for checksum in *.tar.gz.sha256; do
+              sha256sum --check "${checksum}"
+            done
+          )
+
+      - name: Reject an existing release for this tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          matching_release_count="$(
+            gh api --paginate \
+              --method GET \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "repos/${GITHUB_REPOSITORY}/releases?per_page=100" |
+              jq --slurp --arg tag "${GITHUB_REF_NAME}" \
+                '[.[][] | select(.tag_name == $tag)] | length'
+          )"
+          if [[ "${matching_release_count}" -ne 0 ]]; then
+            echo "Tag '${GITHUB_REF_NAME}' already has ${matching_release_count} release record(s)." >&2
+            echo "Review and deliberately remove or retain the existing release before rerunning." >&2
+            exit 1
+          fi
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "${GITHUB_REF_NAME}" release-assets/*
+          --repo "${GITHUB_REPOSITORY}"
+          --title "Tachiko Work ${{ needs.validate.outputs.version }}"
+          --verify-tag
+          --draft
+          --generate-notes

@@ -4,7 +4,7 @@
 
 The first product is not an Office replacement.
 
-It is a Git-native computational data platform for game development.
+It is a CLI-first, Git-native computational data platform for game development.
 
 ## Problem
 
@@ -28,52 +28,59 @@ Excel / Google Sheets
 
 ## MVP Goals
 
-### Typed data
+### Semantic data and computation
 
 Support:
 
 - numbers
 - strings
-- enums
+- booleans
 - references
 - formulas
-- localized text
 
-### Git workflow
+### Git-friendly developer workflow
 
 Support:
 
 - deterministic serialization
+- versioned `.ro` documents
+- schema validation
+- formula calculation
 - semantic diff
-- semantic merge
-- pull request review
-- CI validation
+- CLI operations
+- AI semantic read/query
+- three-way semantic merge
+- entity lifecycle and formula editing
 
-### Engine integration
+### Game balance proof
 
-Initial targets:
+Provide a game balance example covering:
 
-- Unity
-- Unreal Engine
-- Godot
+- characters
+- weapons
+- items
+- economy
 
-## Example future workflow
+## Deferred after the MVP
+
+GUI/React spreadsheet-style UI, realtime collaboration, cloud SaaS,
+Office/Excel compatibility, `.roproj` workflow production, engine plugins, and
+enterprise permissions remain future layers over the semantic model.
+
+## Example MVP workflow
 
 Designer changes enemy HP.
 
-RustOffice generates:
+The CLI and AI read/query interface provide:
 
 - data diff
 - balance impact report
 - validation result
-- pull request summary
+- model and formula explanation
 
 ## Success criteria
 
-The MVP succeeds if a game team can replace:
-
-"Spreadsheet + CSV export + manual review"
-
-with:
-
-"Version-controlled computational data workflow."
+The MVP succeeds if a developer or technical designer can create game balance
+data, define formulas, calculate derived values, validate the document, review
+semantic changes through Git-friendly diff, and ask AI to explain the model and
+impact.

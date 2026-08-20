@@ -4,6 +4,9 @@
 
 Connect Tachiko Work data with game engines without making the engine the source of truth.
 
+Current release status: engine integrations are defined as future strategy, not
+implemented CLI features.
+
 ## Unity
 
 Possible integration:

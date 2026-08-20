@@ -1,0 +1,19 @@
+[package]
+name = "tachiko-semantic-core"
+description = "Typed semantic document model and validation for Tachiko Work"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+
+[lints]
+workspace = true
