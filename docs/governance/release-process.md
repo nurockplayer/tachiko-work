@@ -175,19 +175,16 @@ After all eight assets, notes, and four clean-machine results are approved, use
 GitHub's release interface to publish the existing draft. Do not recreate the
 release, replace assets, move the tag, or run `cargo publish`.
 
-The repository is currently private. Publishing a release does not make the
-repository or its assets public, and this runbook does not authorize changing
-repository visibility. While it remains private, verify the published release
-from a fresh authenticated client whose access matches the intended testers.
-If repository visibility is separately authorized and changed in the future,
-also repeat the verification from a logged-out browser or unauthenticated
-client.
+The repository is intentionally public during pre-alpha development. Publishing
+a source repository and publishing a versioned binary release are separate
+authority boundaries: source visibility does not authorize a tag or release.
+After publication, verify the release from a logged-out browser or other
+unauthenticated client as well as from a normal authenticated GitHub session.
 
-At the applicable access boundary, verify the release page, tag, release notes,
-all eight downloadable assets, and checksums. Repeat one README installation on
-a clean native machine and confirm the exact `tachiko VERSION` output plus the
-minimal user journey. Check that the changelog's version link resolves to this
-release.
+Verify the release page, tag, release notes, all eight downloadable assets, and
+checksums. Repeat one README installation on a clean native machine and confirm
+the exact `tachiko VERSION` output plus the minimal user journey. Check that the
+changelog's version link resolves to this release.
 
 ## 7. Fail forward; never replace released identity
 
