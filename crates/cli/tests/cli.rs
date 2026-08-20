@@ -498,6 +498,85 @@ fn merge_writes_a_merged_document_and_prints_semantic_impact() {
 }
 
 #[test]
+fn merge_title_only_change_prints_the_semantic_impact() {
+    let temp = TempDir::new();
+    let base_path = temp.path().join("base.ro");
+    let ours_path = temp.path().join("ours.ro");
+    let theirs_path = temp.path().join("theirs.ro");
+    let merged_path = temp.path().join("merged.ro");
+    let base = balance_document(100.0);
+    let mut ours = base.clone();
+    ours.title = "Rebalanced".to_owned();
+    save(&base_path, &base).unwrap();
+    save(&ours_path, &ours).unwrap();
+    save(&theirs_path, &base).unwrap();
+
+    let output = run(&[
+        "merge",
+        base_path.to_str().unwrap(),
+        ours_path.to_str().unwrap(),
+        theirs_path.to_str().unwrap(),
+        "--output",
+        merged_path.to_str().unwrap(),
+    ]);
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(load(&merged_path).unwrap().title, "Rebalanced");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("title: \"Balance\" -> \"Rebalanced\""));
+    assert!(!stdout.contains("No semantic changes."));
+}
+
+#[test]
+fn merge_schema_definition_only_change_prints_the_semantic_impact() {
+    let temp = TempDir::new();
+    let base_path = temp.path().join("base.ro");
+    let ours_path = temp.path().join("ours.ro");
+    let theirs_path = temp.path().join("theirs.ro");
+    let merged_path = temp.path().join("merged.ro");
+    let base = balance_document(100.0);
+    let mut ours = base.clone();
+    ours.schemas.get_mut("weapon").unwrap().fields.insert(
+        FieldId::from("weight"),
+        FieldDefinition {
+            field_type: FieldType::Number,
+            required: false,
+        },
+    );
+    save(&base_path, &base).unwrap();
+    save(&ours_path, &ours).unwrap();
+    save(&theirs_path, &base).unwrap();
+
+    let output = run(&[
+        "merge",
+        base_path.to_str().unwrap(),
+        ours_path.to_str().unwrap(),
+        theirs_path.to_str().unwrap(),
+        "--output",
+        merged_path.to_str().unwrap(),
+    ]);
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        load(&merged_path).unwrap().schemas["weapon"]
+            .fields
+            .contains_key("weight")
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Schema weapon"));
+    assert!(stdout.contains("weight added: number (optional)"));
+    assert!(!stdout.contains("No semantic changes."));
+}
+
+#[test]
 fn merge_reports_typed_conflicts_without_creating_output() {
     let temp = TempDir::new();
     let base_path = temp.path().join("base.ro");

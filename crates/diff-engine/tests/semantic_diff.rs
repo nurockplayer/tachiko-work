@@ -67,6 +67,13 @@ fn text_field(required: bool) -> FieldDefinition {
     }
 }
 
+fn boolean_field(required: bool) -> FieldDefinition {
+    FieldDefinition {
+        field_type: FieldType::Boolean,
+        required,
+    }
+}
+
 fn reference(entity: &str, field: &str) -> Expression {
     Expression::Reference(FieldRef::new(entity, field))
 }
@@ -147,6 +154,119 @@ fn optional_field_addition_and_removal_are_ordered() {
 
     assert!(added.contains("rarity added: \"common\""));
     assert!(removed.contains("rarity removed: \"common\""));
+}
+
+#[test]
+fn document_identity_changes_are_typed_and_rendered() {
+    let before = balance_document(100.0);
+    let mut after = before.clone();
+    after.id = DocumentId::from("rebalanced");
+    after.title = "Rebalanced".to_owned();
+
+    let semantic_diff = diff(&before, &after).unwrap();
+
+    assert_eq!(
+        semantic_diff.changes(),
+        [
+            SemanticChange::DocumentIdChanged {
+                before: DocumentId::from("balance"),
+                after: DocumentId::from("rebalanced"),
+            },
+            SemanticChange::DocumentTitleChanged {
+                before: "Balance".to_owned(),
+                after: "Rebalanced".to_owned(),
+            },
+        ]
+    );
+    assert_eq!(
+        semantic_diff.render_text(),
+        "Document\nid: balance -> rebalanced\ntitle: \"Balance\" -> \"Rebalanced\"\n"
+    );
+}
+
+#[test]
+fn schema_addition_and_removal_preserve_typed_definitions() {
+    let before = balance_document(100.0);
+    let mut after = before.clone();
+    let armor = Schema {
+        id: SchemaId::from("armor"),
+        fields: BTreeMap::from([(
+            FieldId::from("defense"),
+            FieldDefinition {
+                field_type: FieldType::Number,
+                required: false,
+            },
+        )]),
+    };
+    after.schemas.insert(SchemaId::from("armor"), armor.clone());
+
+    let added = diff(&before, &after).unwrap();
+    let removed = diff(&after, &before).unwrap();
+
+    assert_eq!(
+        added.changes(),
+        [SemanticChange::SchemaAdded {
+            schema: SchemaId::from("armor"),
+            definition: armor.clone(),
+        }]
+    );
+    assert_eq!(added.render_text(), "Schema armor\nschema added\n");
+    assert_eq!(
+        removed.changes(),
+        [SemanticChange::SchemaRemoved {
+            schema: SchemaId::from("armor"),
+            definition: armor,
+        }]
+    );
+    assert_eq!(removed.render_text(), "Schema armor\nschema removed\n");
+}
+
+#[test]
+fn schema_field_changes_preserve_typed_definitions_and_order() {
+    let mut before = balance_document(100.0);
+    before.schemas.insert(
+        SchemaId::from("metadata"),
+        Schema {
+            id: SchemaId::from("metadata"),
+            fields: BTreeMap::from([
+                (FieldId::from("legacy"), text_field(false)),
+                (FieldId::from("mode"), text_field(false)),
+            ]),
+        },
+    );
+    let mut after = before.clone();
+    let fields = &mut after.schemas.get_mut("metadata").unwrap().fields;
+    fields.remove("legacy");
+    fields.insert(FieldId::from("mode"), boolean_field(false));
+    fields.insert(FieldId::from("weight"), number_field(false));
+
+    let semantic_diff = diff(&before, &after).unwrap();
+
+    assert_eq!(
+        semantic_diff.changes(),
+        [
+            SemanticChange::SchemaFieldRemoved {
+                schema: SchemaId::from("metadata"),
+                field: FieldId::from("legacy"),
+                definition: text_field(false),
+            },
+            SemanticChange::SchemaFieldChanged {
+                schema: SchemaId::from("metadata"),
+                field: FieldId::from("mode"),
+                before: text_field(false),
+                after: boolean_field(false),
+            },
+            SemanticChange::SchemaFieldAdded {
+                schema: SchemaId::from("metadata"),
+                field: FieldId::from("weight"),
+                definition: number_field(false),
+            },
+        ]
+    );
+    assert_eq!(
+        semantic_diff.render_text(),
+        "Schema metadata\nlegacy removed: text (optional)\nmode: text (optional) -> boolean (optional)\nweight added: number (optional)\n"
+    );
 }
 
 #[test]

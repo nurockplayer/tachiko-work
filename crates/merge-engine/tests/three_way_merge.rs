@@ -90,6 +90,25 @@ fn with_bonus(mut document: Document) -> Document {
     document
 }
 
+fn with_marker_schema(mut document: Document) -> Document {
+    document.schemas.insert(
+        SchemaId::from("marker"),
+        Schema {
+            id: SchemaId::from("marker"),
+            fields: BTreeMap::new(),
+        },
+    );
+    document
+}
+
+fn marker_entity(id: &str) -> Entity {
+    Entity {
+        id: EntityId::from(id),
+        schema: SchemaId::from("marker"),
+        fields: BTreeMap::new(),
+    }
+}
+
 #[test]
 fn independent_fields_on_the_same_entity_merge() {
     let base = balance_document(36.0, 0.9);
@@ -125,6 +144,419 @@ fn identical_two_sided_change_is_not_a_conflict() {
         merge(&base, &ours, &theirs).unwrap(),
         MergeOutcome::Merged(_)
     ));
+}
+
+#[test]
+fn independent_document_id_and_title_changes_merge() {
+    let base = balance_document(36.0, 0.9);
+    let mut ours = base.clone();
+    ours.id = DocumentId::from("rebalanced");
+    let mut theirs = base.clone();
+    theirs.title = "Rebalanced".to_owned();
+
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &theirs).unwrap() else {
+        panic!("independent document identity changes should merge");
+    };
+
+    assert_eq!(merged.id, DocumentId::from("rebalanced"));
+    assert_eq!(merged.title, "Rebalanced");
+}
+
+#[test]
+fn identical_two_sided_document_identity_change_merges() {
+    let base = balance_document(36.0, 0.9);
+    let mut changed = base.clone();
+    changed.id = DocumentId::from("rebalanced");
+    changed.title = "Rebalanced".to_owned();
+
+    let MergeOutcome::Merged(merged) = merge(&base, &changed, &changed).unwrap() else {
+        panic!("identical document identity changes should merge");
+    };
+
+    assert_eq!(merged.id, DocumentId::from("rebalanced"));
+    assert_eq!(merged.title, "Rebalanced");
+}
+
+#[test]
+fn one_sided_schema_addition_merges() {
+    let base = balance_document(36.0, 0.9);
+    let mut ours = base.clone();
+    ours.schemas.insert(
+        SchemaId::from("armor"),
+        Schema {
+            id: SchemaId::from("armor"),
+            fields: BTreeMap::new(),
+        },
+    );
+
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &base).unwrap() else {
+        panic!("a one-sided schema addition should merge");
+    };
+
+    assert_eq!(merged.schemas["armor"].id, SchemaId::from("armor"));
+}
+
+#[test]
+fn identical_two_sided_schema_addition_merges() {
+    let base = balance_document(36.0, 0.9);
+    let mut changed = base.clone();
+    changed.schemas.insert(
+        SchemaId::from("armor"),
+        Schema {
+            id: SchemaId::from("armor"),
+            fields: BTreeMap::new(),
+        },
+    );
+
+    let MergeOutcome::Merged(merged) = merge(&base, &changed, &changed).unwrap() else {
+        panic!("an identical two-sided schema addition should merge");
+    };
+
+    assert_eq!(merged.schemas["armor"].id, SchemaId::from("armor"));
+}
+
+#[test]
+fn independent_schema_additions_merge() {
+    let base = balance_document(36.0, 0.9);
+    let mut ours = base.clone();
+    ours.schemas.insert(
+        SchemaId::from("armor"),
+        Schema {
+            id: SchemaId::from("armor"),
+            fields: BTreeMap::new(),
+        },
+    );
+    let mut theirs = base.clone();
+    theirs.schemas.insert(
+        SchemaId::from("potion"),
+        Schema {
+            id: SchemaId::from("potion"),
+            fields: BTreeMap::new(),
+        },
+    );
+
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &theirs).unwrap() else {
+        panic!("independent schema additions should merge");
+    };
+
+    assert!(merged.schemas.contains_key("armor"));
+    assert!(merged.schemas.contains_key("potion"));
+}
+
+#[test]
+fn schema_deletion_merges_when_the_other_side_is_unchanged() {
+    let base = with_marker_schema(balance_document(36.0, 0.9));
+    let mut ours = base.clone();
+    ours.schemas.remove("marker");
+
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &base).unwrap() else {
+        panic!("a one-sided unused-schema deletion should merge");
+    };
+
+    assert!(!merged.schemas.contains_key("marker"));
+}
+
+#[test]
+fn one_sided_schema_field_addition_merges() {
+    let base = balance_document(36.0, 0.9);
+    let mut ours = base.clone();
+    ours.schemas
+        .get_mut("weapon")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("weight"), optional_number_field());
+
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &base).unwrap() else {
+        panic!("a one-sided schema field addition should merge");
+    };
+
+    assert_eq!(
+        merged.schemas["weapon"].fields["weight"],
+        optional_number_field()
+    );
+}
+
+#[test]
+fn identical_two_sided_schema_field_addition_merges() {
+    let base = balance_document(36.0, 0.9);
+    let mut changed = base.clone();
+    changed
+        .schemas
+        .get_mut("weapon")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("weight"), optional_number_field());
+
+    let MergeOutcome::Merged(merged) = merge(&base, &changed, &changed).unwrap() else {
+        panic!("an identical two-sided schema field addition should merge");
+    };
+
+    assert_eq!(
+        merged.schemas["weapon"].fields["weight"],
+        optional_number_field()
+    );
+}
+
+#[test]
+fn independent_schema_field_additions_merge() {
+    let base = balance_document(36.0, 0.9);
+    let mut ours = base.clone();
+    ours.schemas
+        .get_mut("weapon")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("bonus"), optional_number_field());
+    let mut theirs = base.clone();
+    theirs
+        .schemas
+        .get_mut("weapon")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("weight"), optional_number_field());
+
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &theirs).unwrap() else {
+        panic!("independent schema field additions should merge");
+    };
+
+    assert_eq!(
+        merged.schemas["weapon"].fields["bonus"],
+        optional_number_field()
+    );
+    assert_eq!(
+        merged.schemas["weapon"].fields["weight"],
+        optional_number_field()
+    );
+}
+
+#[test]
+fn independent_existing_schema_field_definition_changes_merge() {
+    let base = balance_document(36.0, 0.9);
+    let mut ours = base.clone();
+    ours.schemas
+        .get_mut("weapon")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("damage"), optional_number_field());
+    let mut theirs = base.clone();
+    theirs
+        .schemas
+        .get_mut("weapon")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("attack_interval"), optional_number_field());
+
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &theirs).unwrap() else {
+        panic!("independent schema field definition changes should merge");
+    };
+
+    assert!(!merged.schemas["weapon"].fields["damage"].required);
+    assert!(!merged.schemas["weapon"].fields["attack_interval"].required);
+}
+
+#[test]
+fn schema_field_deletion_merges_when_the_other_side_is_unchanged() {
+    let mut base = balance_document(36.0, 0.9);
+    base.schemas
+        .get_mut("weapon")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("weight"), optional_number_field());
+    let mut ours = base.clone();
+    ours.schemas
+        .get_mut("weapon")
+        .unwrap()
+        .fields
+        .remove("weight");
+
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &base).unwrap() else {
+        panic!("a one-sided unused schema field deletion should merge");
+    };
+
+    assert!(!merged.schemas["weapon"].fields.contains_key("weight"));
+}
+
+#[test]
+fn one_sided_entity_addition_merges() {
+    let base = with_marker_schema(balance_document(36.0, 0.9));
+    let mut ours = base.clone();
+    ours.entities
+        .insert(EntityId::from("rare"), marker_entity("rare"));
+
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &base).unwrap() else {
+        panic!("a one-sided entity addition should merge");
+    };
+
+    assert_eq!(merged.entities["rare"], marker_entity("rare"));
+}
+
+#[test]
+fn identical_two_sided_entity_addition_merges() {
+    let base = with_marker_schema(balance_document(36.0, 0.9));
+    let mut changed = base.clone();
+    changed
+        .entities
+        .insert(EntityId::from("rare"), marker_entity("rare"));
+
+    let MergeOutcome::Merged(merged) = merge(&base, &changed, &changed).unwrap() else {
+        panic!("an identical two-sided entity addition should merge");
+    };
+
+    assert_eq!(merged.entities["rare"], marker_entity("rare"));
+}
+
+#[test]
+fn independent_entity_additions_merge() {
+    let base = with_marker_schema(balance_document(36.0, 0.9));
+    let mut ours = base.clone();
+    ours.entities
+        .insert(EntityId::from("rare"), marker_entity("rare"));
+    let mut theirs = base.clone();
+    theirs
+        .entities
+        .insert(EntityId::from("legendary"), marker_entity("legendary"));
+
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &theirs).unwrap() else {
+        panic!("independent entity additions should merge");
+    };
+
+    assert_eq!(merged.entities["rare"], marker_entity("rare"));
+    assert_eq!(merged.entities["legendary"], marker_entity("legendary"));
+}
+
+#[test]
+fn entity_deletion_merges_when_the_other_side_is_unchanged() {
+    let base = balance_document(36.0, 0.9);
+    let mut ours = base.clone();
+    ours.entities.remove("iron_sword");
+
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &base).unwrap() else {
+        panic!("a one-sided entity deletion should merge");
+    };
+
+    assert!(!merged.entities.contains_key("iron_sword"));
+}
+
+#[test]
+fn one_sided_entity_field_addition_merges() {
+    let mut base = balance_document(36.0, 0.9);
+    base.schemas
+        .get_mut("weapon")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("bonus"), optional_number_field());
+    let mut ours = base.clone();
+    ours.entities
+        .get_mut("iron_sword")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("bonus"), Value::Number(4.0));
+
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &base).unwrap() else {
+        panic!("a one-sided entity field addition should merge");
+    };
+
+    assert_eq!(
+        merged.entities["iron_sword"].fields["bonus"],
+        Value::Number(4.0)
+    );
+}
+
+#[test]
+fn identical_two_sided_entity_field_addition_merges() {
+    let mut base = balance_document(36.0, 0.9);
+    base.schemas
+        .get_mut("weapon")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("bonus"), optional_number_field());
+    let mut changed = base.clone();
+    changed
+        .entities
+        .get_mut("iron_sword")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("bonus"), Value::Number(4.0));
+
+    let MergeOutcome::Merged(merged) = merge(&base, &changed, &changed).unwrap() else {
+        panic!("an identical two-sided entity field addition should merge");
+    };
+
+    assert_eq!(
+        merged.entities["iron_sword"].fields["bonus"],
+        Value::Number(4.0)
+    );
+}
+
+#[test]
+fn independent_entity_field_additions_merge() {
+    let mut base = balance_document(36.0, 0.9);
+    base.schemas.get_mut("weapon").unwrap().fields.extend([
+        (FieldId::from("bonus"), optional_number_field()),
+        (FieldId::from("weight"), optional_number_field()),
+    ]);
+    let mut ours = base.clone();
+    ours.entities
+        .get_mut("iron_sword")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("bonus"), Value::Number(4.0));
+    let mut theirs = base.clone();
+    theirs
+        .entities
+        .get_mut("iron_sword")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("weight"), Value::Number(8.0));
+
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &theirs).unwrap() else {
+        panic!("independent entity field additions should merge");
+    };
+
+    assert_eq!(
+        merged.entities["iron_sword"].fields["bonus"],
+        Value::Number(4.0)
+    );
+    assert_eq!(
+        merged.entities["iron_sword"].fields["weight"],
+        Value::Number(8.0)
+    );
+}
+
+#[test]
+fn entity_field_deletion_merges_when_the_other_side_is_unchanged() {
+    let base = with_bonus(balance_document(36.0, 0.9));
+    let mut ours = base.clone();
+    ours.entities
+        .get_mut("iron_sword")
+        .unwrap()
+        .fields
+        .remove("bonus");
+
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &base).unwrap() else {
+        panic!("a one-sided entity field deletion should merge");
+    };
+
+    assert!(!merged.entities["iron_sword"].fields.contains_key("bonus"));
+}
+
+#[test]
+fn entity_schema_membership_change_merges_when_the_other_side_is_unchanged() {
+    let mut base = balance_document(36.0, 0.9);
+    let mut alternate = base.schemas["weapon"].clone();
+    alternate.id = SchemaId::from("alternate_weapon");
+    base.schemas
+        .insert(SchemaId::from("alternate_weapon"), alternate);
+    let mut ours = base.clone();
+    ours.entities.get_mut("iron_sword").unwrap().schema = SchemaId::from("alternate_weapon");
+
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &base).unwrap() else {
+        panic!("a one-sided entity schema-membership change should merge");
+    };
+
+    assert_eq!(
+        merged.entities["iron_sword"].schema,
+        SchemaId::from("alternate_weapon")
+    );
 }
 
 #[test]

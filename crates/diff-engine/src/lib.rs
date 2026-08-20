@@ -3,11 +3,46 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use tachiko_formula_engine::{CalculationError, calculate};
-use tachiko_semantic_core::{Document, Entity, EntityId, Expression, FieldRef, SchemaId, Value};
+use tachiko_semantic_core::{
+    Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldRef, Schema,
+    SchemaId, Value,
+};
 use thiserror::Error;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum SemanticChange {
+    DocumentIdChanged {
+        before: DocumentId,
+        after: DocumentId,
+    },
+    DocumentTitleChanged {
+        before: String,
+        after: String,
+    },
+    SchemaAdded {
+        schema: SchemaId,
+        definition: Schema,
+    },
+    SchemaRemoved {
+        schema: SchemaId,
+        definition: Schema,
+    },
+    SchemaFieldAdded {
+        schema: SchemaId,
+        field: FieldId,
+        definition: FieldDefinition,
+    },
+    SchemaFieldRemoved {
+        schema: SchemaId,
+        field: FieldId,
+        definition: FieldDefinition,
+    },
+    SchemaFieldChanged {
+        schema: SchemaId,
+        field: FieldId,
+        before: FieldDefinition,
+        after: FieldDefinition,
+    },
     EntityAdded {
         entity: EntityId,
     },
@@ -41,15 +76,34 @@ pub enum SemanticChange {
 }
 
 impl SemanticChange {
-    fn entity(&self) -> &EntityId {
+    fn is_document_change(&self) -> bool {
+        matches!(
+            self,
+            Self::DocumentIdChanged { .. } | Self::DocumentTitleChanged { .. }
+        )
+    }
+
+    fn schema(&self) -> Option<&SchemaId> {
+        match self {
+            Self::SchemaAdded { schema, .. }
+            | Self::SchemaRemoved { schema, .. }
+            | Self::SchemaFieldAdded { schema, .. }
+            | Self::SchemaFieldRemoved { schema, .. }
+            | Self::SchemaFieldChanged { schema, .. } => Some(schema),
+            _ => None,
+        }
+    }
+
+    fn entity(&self) -> Option<&EntityId> {
         match self {
             Self::EntityAdded { entity }
             | Self::EntityRemoved { entity }
-            | Self::EntitySchemaChanged { entity, .. } => entity,
+            | Self::EntitySchemaChanged { entity, .. } => Some(entity),
             Self::FieldAdded { field, .. }
             | Self::FieldRemoved { field, .. }
             | Self::FieldChanged { field, .. }
-            | Self::FormulaImpact { field, .. } => &field.entity,
+            | Self::FormulaImpact { field, .. } => Some(&field.entity),
+            _ => None,
         }
     }
 }
@@ -72,25 +126,45 @@ impl SemanticDiff {
             return "No semantic changes.\n".to_owned();
         }
 
-        let mut grouped: BTreeMap<&EntityId, Vec<&SemanticChange>> = BTreeMap::new();
-        for change in &self.changes {
-            grouped.entry(change.entity()).or_default().push(change);
+        let mut sections = Vec::new();
+        let document_changes: Vec<_> = self
+            .changes
+            .iter()
+            .filter(|change| change.is_document_change())
+            .collect();
+        if !document_changes.is_empty() {
+            let mut lines = vec!["Document".to_owned()];
+            lines.extend(document_changes.into_iter().map(render_change));
+            sections.push(lines.join("\n"));
         }
 
-        let mut output = String::new();
-        for (group_index, (entity_id, changes)) in grouped.into_iter().enumerate() {
-            if group_index > 0 {
-                output.push('\n');
-            }
-            let descriptor = &self.descriptors[entity_id];
-            output.push_str(&descriptor.heading());
-            output.push('\n');
-            for change in changes {
-                output.push_str(&render_change(change));
-                output.push('\n');
+        let mut grouped_schemas: BTreeMap<&SchemaId, Vec<&SemanticChange>> = BTreeMap::new();
+        for change in &self.changes {
+            if let Some(schema) = change.schema() {
+                grouped_schemas.entry(schema).or_default().push(change);
             }
         }
-        output
+        for (schema, changes) in grouped_schemas {
+            let mut lines = vec![format!("Schema {schema}")];
+            lines.extend(changes.into_iter().map(render_change));
+            sections.push(lines.join("\n"));
+        }
+
+        let mut grouped: BTreeMap<&EntityId, Vec<&SemanticChange>> = BTreeMap::new();
+        for change in &self.changes {
+            if let Some(entity) = change.entity() {
+                grouped.entry(entity).or_default().push(change);
+            }
+        }
+
+        for (entity_id, changes) in grouped {
+            let descriptor = &self.descriptors[entity_id];
+            let mut lines = vec![descriptor.heading()];
+            lines.extend(changes.into_iter().map(render_change));
+            sections.push(lines.join("\n"));
+        }
+
+        format!("{}\n", sections.join("\n\n"))
     }
 }
 
@@ -125,6 +199,9 @@ pub fn diff(before: &Document, after: &Document) -> Result<SemanticDiff, DiffErr
     let mut changes = Vec::new();
     let mut changed_fields = BTreeSet::new();
     let mut descriptors = BTreeMap::new();
+
+    compare_document(before, after, &mut changes);
+    compare_schemas(before, after, &mut changes);
 
     let entity_ids: BTreeSet<_> = before
         .entities
@@ -197,6 +274,89 @@ pub fn diff(before: &Document, after: &Document) -> Result<SemanticDiff, DiffErr
         changes,
         descriptors,
     })
+}
+
+fn compare_document(before: &Document, after: &Document, changes: &mut Vec<SemanticChange>) {
+    if before.id != after.id {
+        changes.push(SemanticChange::DocumentIdChanged {
+            before: before.id.clone(),
+            after: after.id.clone(),
+        });
+    }
+    if before.title != after.title {
+        changes.push(SemanticChange::DocumentTitleChanged {
+            before: before.title.clone(),
+            after: after.title.clone(),
+        });
+    }
+}
+
+fn compare_schemas(before: &Document, after: &Document, changes: &mut Vec<SemanticChange>) {
+    let schema_ids: BTreeSet<_> = before
+        .schemas
+        .keys()
+        .chain(after.schemas.keys())
+        .cloned()
+        .collect();
+    for schema_id in schema_ids {
+        match (
+            before.schemas.get(&schema_id),
+            after.schemas.get(&schema_id),
+        ) {
+            (None, Some(schema)) => changes.push(SemanticChange::SchemaAdded {
+                schema: schema_id,
+                definition: schema.clone(),
+            }),
+            (Some(schema), None) => changes.push(SemanticChange::SchemaRemoved {
+                schema: schema_id,
+                definition: schema.clone(),
+            }),
+            (Some(before_schema), Some(after_schema)) => {
+                compare_schema(&schema_id, before_schema, after_schema, changes);
+            }
+            (None, None) => unreachable!("schema id came from the document key union"),
+        }
+    }
+}
+
+fn compare_schema(
+    schema_id: &SchemaId,
+    before: &Schema,
+    after: &Schema,
+    changes: &mut Vec<SemanticChange>,
+) {
+    let field_ids: BTreeSet<_> = before
+        .fields
+        .keys()
+        .chain(after.fields.keys())
+        .cloned()
+        .collect();
+    for field_id in field_ids {
+        match (before.fields.get(&field_id), after.fields.get(&field_id)) {
+            (None, Some(definition)) => changes.push(SemanticChange::SchemaFieldAdded {
+                schema: schema_id.clone(),
+                field: field_id,
+                definition: definition.clone(),
+            }),
+            (Some(definition), None) => changes.push(SemanticChange::SchemaFieldRemoved {
+                schema: schema_id.clone(),
+                field: field_id,
+                definition: definition.clone(),
+            }),
+            (Some(before_definition), Some(after_definition))
+                if before_definition != after_definition =>
+            {
+                changes.push(SemanticChange::SchemaFieldChanged {
+                    schema: schema_id.clone(),
+                    field: field_id,
+                    before: before_definition.clone(),
+                    after: after_definition.clone(),
+                });
+            }
+            (Some(_), Some(_)) => {}
+            (None, None) => unreachable!("field id came from the schema field key union"),
+        }
+    }
 }
 
 fn compare_entity(
@@ -284,6 +444,30 @@ fn descriptor(entity: &Entity) -> EntityDescriptor {
 
 fn render_change(change: &SemanticChange) -> String {
     match change {
+        SemanticChange::DocumentIdChanged { before, after } => {
+            format!("id: {before} -> {after}")
+        }
+        SemanticChange::DocumentTitleChanged { before, after } => {
+            format!("title: {before:?} -> {after:?}")
+        }
+        SemanticChange::SchemaAdded { .. } => "schema added".to_owned(),
+        SemanticChange::SchemaRemoved { .. } => "schema removed".to_owned(),
+        SemanticChange::SchemaFieldAdded {
+            field, definition, ..
+        } => format!("{field} added: {}", format_definition(definition)),
+        SemanticChange::SchemaFieldRemoved {
+            field, definition, ..
+        } => format!("{field} removed: {}", format_definition(definition)),
+        SemanticChange::SchemaFieldChanged {
+            field,
+            before,
+            after,
+            ..
+        } => format!(
+            "{field}: {} -> {}",
+            format_definition(before),
+            format_definition(after)
+        ),
         SemanticChange::EntityAdded { .. } => "entity added".to_owned(),
         SemanticChange::EntityRemoved { .. } => "entity removed".to_owned(),
         SemanticChange::EntitySchemaChanged { before, after, .. } => {
@@ -317,6 +501,23 @@ fn render_change(change: &SemanticChange) -> String {
             format_number(*after)
         ),
     }
+}
+
+fn format_definition(definition: &FieldDefinition) -> String {
+    let field_type = match &definition.field_type {
+        tachiko_semantic_core::FieldType::Number => "number".to_owned(),
+        tachiko_semantic_core::FieldType::Text => "text".to_owned(),
+        tachiko_semantic_core::FieldType::Boolean => "boolean".to_owned(),
+        tachiko_semantic_core::FieldType::Reference { schema } => {
+            format!("reference({schema})")
+        }
+    };
+    let presence = if definition.required {
+        "required"
+    } else {
+        "optional"
+    };
+    format!("{field_type} ({presence})")
 }
 
 fn format_value(value: &Value) -> String {

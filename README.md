@@ -91,9 +91,10 @@ producing new semantic inputs and rerunning the command.
 - `storage`: canonical `.ro` parsing, versioning, and serialization
 - `formula-engine`: deterministic expression evaluation and dependencies
 - `diff-engine`: entity/field changes and calculated impact
+- `merge-engine`: deterministic typed three-way semantic reconciliation
 - `ai-api`: read/explain/suggest-only semantic operations
 - `workflow`: reusable starter, overview, explanation, and safe-edit operations
-- `cli`: the complete `init` → `show` → `explain` → `set` → `diff` workflow
+- `cli`: the complete `init` → `show` → `explain` → `set` → `diff` → `merge` workflow
 
 Run all quality gates, including the real product journey, with:
 
