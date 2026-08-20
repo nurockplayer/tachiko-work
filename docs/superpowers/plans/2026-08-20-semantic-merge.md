@@ -169,7 +169,7 @@ Run: `rtk git commit -m "feat: report typed merge conflicts"`
 - Successful output prints semantic impact from base plus the created path.
 - Conflict output exits unsuccessfully, lists all stable paths and values, and writes nothing.
 
-- [ ] **Step 1: Write failing CLI process tests**
+- [x] **Step 1: Write failing CLI process tests**
 
 Create real `.ro` fixtures with storage `save`, invoke the binary, and assert:
 
@@ -184,20 +184,20 @@ For a conflicting damage edit assert unsuccessful status, stderr contains
 `entities.sword.fields.damage`, and the output path does not exist. Add an
 existing-output case and assert its bytes remain unchanged.
 
-- [ ] **Step 2: Run CLI tests and verify RED**
+- [x] **Step 2: Run CLI tests and verify RED**
 
 Run: `cargo test -p tachiko-cli --test cli merge_`
 
 Expected: clap rejects the absent `merge` subcommand.
 
-- [ ] **Step 3: Implement the CLI adapter**
+- [x] **Step 3: Implement the CLI adapter**
 
 Load all inputs with `tachiko_storage::load`, call `tachiko_merge_engine::merge`,
 render conflicts with a `CommandError::MergeConflicts` message, and use existing
 `write_new` plus `to_canonical_string` only for `MergeOutcome::Merged`. Generate
 the success summary with `tachiko_diff_engine::diff(base, merged)`.
 
-- [ ] **Step 4: Run CLI and workspace tests and verify GREEN**
+- [x] **Step 4: Run CLI and workspace tests and verify GREEN**
 
 Run: `cargo test -p tachiko-cli --all-targets`
 
@@ -205,7 +205,7 @@ Run: `cargo test --workspace --all-targets`
 
 Expected: merge process tests and all prior behavior pass.
 
-- [ ] **Step 5: Commit CLI merge**
+- [x] **Step 5: Commit CLI merge**
 
 Run: `rtk git add crates/cli Cargo.lock`
 
