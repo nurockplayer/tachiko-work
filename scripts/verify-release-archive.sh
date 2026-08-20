@@ -10,37 +10,6 @@ fail() {
   exit 1
 }
 
-workspace_version() {
-  awk '
-    /^\[workspace\.package\][[:space:]]*$/ {
-      inside_workspace_package = 1
-      next
-    }
-    inside_workspace_package && /^\[/ {
-      exit
-    }
-    inside_workspace_package && /^[[:space:]]*version[[:space:]]*=/ {
-      line = $0
-      sub(/^[^"]*"/, "", line)
-      sub(/".*/, "", line)
-      print line
-      exit
-    }
-  ' "${repo_root}/Cargo.toml"
-}
-
-sha256_digest() {
-  local file="$1"
-
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "${file}" | awk '{ print $1 }'
-  elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "${file}" | awk '{ print $1 }'
-  else
-    fail "no SHA-256 tool found; install sha256sum or shasum"
-  fi
-}
-
 if [[ "$#" -ne 2 ]]; then
   usage
   exit 2
@@ -49,17 +18,14 @@ fi
 target="$1"
 archive_argument="$2"
 
-case "${target}" in
-  x86_64-unknown-linux-gnu | aarch64-apple-darwin | x86_64-apple-darwin | x86_64-pc-windows-msvc) ;;
-  *)
-    fail "unsupported target '${target}'; expected a supported Tachiko release target"
-    ;;
-esac
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "${script_dir}/.." && pwd)"
+# shellcheck source=scripts/release-lib.sh
+source "${script_dir}/release-lib.sh"
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-version="$(workspace_version)"
-[[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] ||
-  fail "could not derive a valid workspace version from Cargo.toml"
+tachiko_supported_target "${target}" ||
+  fail "unsupported target '${target}'; expected a supported Tachiko release target"
+version="$(tachiko_workspace_version "${repo_root}")" || exit 1
 
 [[ -f "${archive_argument}" ]] || fail "archive not found: ${archive_argument}"
 archive_dir="$(cd "$(dirname "${archive_argument}")" && pwd)"
@@ -84,16 +50,12 @@ listed_archive="$(awk 'NR == 1 { print $2 }' "${checksum_path}")"
 [[ "${listed_archive}" == "${archive_name}" ]] ||
   fail "checksum must reference the archive basename only: ${archive_name}"
 
-actual_digest="$(sha256_digest "${archive_path}")"
+actual_digest="$(tachiko_sha256_digest "${archive_path}")" || exit 1
 actual_digest="$(printf '%s' "${actual_digest}" | tr '[:upper:]' '[:lower:]')"
 expected_digest="$(printf '%s' "${expected_digest}" | tr '[:upper:]' '[:lower:]')"
 [[ "${actual_digest}" == "${expected_digest}" ]] || fail "archive checksum mismatch"
 
-if [[ "${target}" == *-windows-* ]]; then
-  executable_name="tachiko.exe"
-else
-  executable_name="tachiko"
-fi
+executable_name="$(tachiko_executable_name "${target}")"
 
 verify_dir="$(mktemp -d "${TMPDIR:-/tmp}/tachiko-verify.XXXXXX")"
 cleanup() {
@@ -106,20 +68,23 @@ actual_members="${verify_dir}/actual-members.txt"
 expected_types="${verify_dir}/expected-types.txt"
 actual_types="${verify_dir}/actual-types.txt"
 
-printf '%s\n' \
-  "${artifact_root}/" \
-  "${artifact_root}/${executable_name}" \
-  "${artifact_root}/README.md" \
-  "${artifact_root}/CHANGELOG.md" \
-  "${artifact_root}/LICENSE-APACHE" \
-  "${artifact_root}/LICENSE-MIT" |
-  LC_ALL=C sort >"${expected_members}"
+{
+  printf '%s\n' "${artifact_root}/" "${artifact_root}/${executable_name}"
+  while IFS= read -r payload; do
+    printf '%s\n' "${artifact_root}/${payload}"
+  done <<<"$(tachiko_release_payloads)"
+} | LC_ALL=C sort >"${expected_members}"
 
 tar -tzf "${archive_path}" | LC_ALL=C sort >"${actual_members}"
 cmp -s "${expected_members}" "${actual_members}" ||
   fail "archive member set is unsafe or incomplete; expected only the executable, README, changelog, and two licenses"
 
-printf '%s\n' d - - - - - | LC_ALL=C sort >"${expected_types}"
+{
+  printf '%s\n' d -
+  while IFS= read -r _payload; do
+    printf '%s\n' -
+  done <<<"$(tachiko_release_payloads)"
+} | LC_ALL=C sort >"${expected_types}"
 tar -tvzf "${archive_path}" | awk '{ print substr($1, 1, 1) }' |
   LC_ALL=C sort >"${actual_types}"
 cmp -s "${expected_types}" "${actual_types}" ||

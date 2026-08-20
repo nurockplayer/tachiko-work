@@ -10,37 +10,6 @@ fail() {
   exit 1
 }
 
-workspace_version() {
-  awk '
-    /^\[workspace\.package\][[:space:]]*$/ {
-      inside_workspace_package = 1
-      next
-    }
-    inside_workspace_package && /^\[/ {
-      exit
-    }
-    inside_workspace_package && /^[[:space:]]*version[[:space:]]*=/ {
-      line = $0
-      sub(/^[^"]*"/, "", line)
-      sub(/".*/, "", line)
-      print line
-      exit
-    }
-  ' "${repo_root}/Cargo.toml"
-}
-
-sha256_digest() {
-  local file="$1"
-
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "${file}" | awk '{ print $1 }'
-  elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "${file}" | awk '{ print $1 }'
-  else
-    fail "no SHA-256 tool found; install sha256sum or shasum"
-  fi
-}
-
 if [[ "$#" -ne 2 ]]; then
   usage
   exit 2
@@ -49,32 +18,24 @@ fi
 target="$1"
 output_dir="$2"
 
-case "${target}" in
-  x86_64-unknown-linux-gnu | aarch64-apple-darwin | x86_64-apple-darwin | x86_64-pc-windows-msvc) ;;
-  *)
-    fail "unsupported target '${target}'; expected a supported Tachiko release target"
-    ;;
-esac
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "${script_dir}/.." && pwd)"
+# shellcheck source=scripts/release-lib.sh
+source "${script_dir}/release-lib.sh"
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-version="$(workspace_version)"
-[[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] ||
-  fail "could not derive a valid workspace version from Cargo.toml"
-
-if [[ "${target}" == *-windows-* ]]; then
-  executable_name="tachiko.exe"
-else
-  executable_name="tachiko"
-fi
+tachiko_supported_target "${target}" ||
+  fail "unsupported target '${target}'; expected a supported Tachiko release target"
+version="$(tachiko_workspace_version "${repo_root}")" || exit 1
+executable_name="$(tachiko_executable_name "${target}")"
 
 binary="${repo_root}/target/${target}/release/${executable_name}"
 [[ -f "${binary}" ]] ||
   fail "missing release binary '${binary}'; build it with cargo build --release --locked --target ${target} -p tachiko-cli"
 [[ -x "${binary}" ]] || fail "release binary is not executable: ${binary}"
 
-for payload in README.md CHANGELOG.md LICENSE-APACHE LICENSE-MIT; do
+while IFS= read -r payload; do
   [[ -f "${repo_root}/${payload}" ]] || fail "missing required payload: ${payload}"
-done
+done <<<"$(tachiko_release_payloads)"
 
 mkdir -p "${output_dir}"
 output_dir="$(cd "${output_dir}" && pwd)"
@@ -87,12 +48,17 @@ checksum_path="${archive_path}.sha256"
 [[ ! -e "${archive_path}" ]] || fail "refusing to overwrite existing archive: ${archive_path}"
 [[ ! -e "${checksum_path}" ]] || fail "refusing to overwrite existing checksum: ${checksum_path}"
 
-work_dir="$(mktemp -d "${output_dir}/.tachiko-package.XXXXXX")"
+lock_dir="${output_dir}/.${artifact_root}.lock"
+lock_owned=0
+work_dir=""
 published_archive=0
 published_checksum=0
 completed=0
 
 cleanup() {
+  local status="$?"
+  trap - EXIT HUP INT TERM
+  set +e
   if [[ "${completed}" -ne 1 ]]; then
     if [[ "${published_checksum}" -eq 1 ]]; then
       rm -f -- "${checksum_path}"
@@ -101,59 +67,107 @@ cleanup() {
       rm -f -- "${archive_path}"
     fi
   fi
-  rm -rf -- "${work_dir}"
+  if [[ -n "${work_dir}" ]]; then
+    rm -rf -- "${work_dir}"
+  fi
+  if [[ "${lock_owned}" -eq 1 ]]; then
+    rmdir -- "${lock_dir}"
+  fi
+  exit "${status}"
 }
+
+handle_signal() {
+  local status="$1"
+  trap - HUP INT TERM
+  exit "${status}"
+}
+
 trap cleanup EXIT
+trap 'handle_signal 129' HUP
+trap 'handle_signal 130' INT
+trap 'handle_signal 143' TERM
+if mkdir "${lock_dir}" 2>/dev/null; then
+  lock_owned=1
+else
+  fail "artifact is already being packaged or has a stale lock: ${lock_dir}"
+fi
+
+# Recheck within the lock so a completed concurrent publisher cannot be
+# mistaken for an artifact that is still safe to replace.
+[[ ! -e "${archive_path}" ]] || fail "refusing to overwrite existing archive: ${archive_path}"
+[[ ! -e "${checksum_path}" ]] || fail "refusing to overwrite existing checksum: ${checksum_path}"
+
+work_dir="$(mktemp -d "${output_dir}/.tachiko-package.XXXXXX")"
 
 stage_root="${work_dir}/${artifact_root}"
 mkdir "${stage_root}"
 cp "${binary}" "${stage_root}/${executable_name}"
-cp "${repo_root}/README.md" "${repo_root}/CHANGELOG.md" \
-  "${repo_root}/LICENSE-APACHE" "${repo_root}/LICENSE-MIT" "${stage_root}/"
+while IFS= read -r payload; do
+  cp "${repo_root}/${payload}" "${stage_root}/${payload}"
+done <<<"$(tachiko_release_payloads)"
+chmod 0755 "${stage_root}"
 chmod 0755 "${stage_root}/${executable_name}"
-chmod 0644 "${stage_root}/README.md" "${stage_root}/CHANGELOG.md" \
-  "${stage_root}/LICENSE-APACHE" "${stage_root}/LICENSE-MIT"
+while IFS= read -r payload; do
+  chmod 0644 "${stage_root}/${payload}"
+done <<<"$(tachiko_release_payloads)"
 
 # Fixed timestamps, ownership, order, and gzip headers make equivalent inputs
 # produce equivalent archives. COPYFILE_DISABLE prevents AppleDouble entries on
 # macOS; the exact file list avoids filesystem-dependent traversal order.
-TZ=UTC touch -t 198001010000 \
-  "${stage_root}/${executable_name}" \
-  "${stage_root}/README.md" \
-  "${stage_root}/CHANGELOG.md" \
-  "${stage_root}/LICENSE-APACHE" \
-  "${stage_root}/LICENSE-MIT" \
-  "${stage_root}"
+TZ=UTC touch -t 198001010000 "${stage_root}/${executable_name}"
+while IFS= read -r payload; do
+  TZ=UTC touch -t 198001010000 "${stage_root}/${payload}"
+done <<<"$(tachiko_release_payloads)"
+TZ=UTC touch -t 198001010000 "${stage_root}"
+
+archive_members=("${artifact_root}" "${artifact_root}/${executable_name}")
+while IFS= read -r payload; do
+  archive_members+=("${artifact_root}/${payload}")
+done <<<"$(tachiko_release_payloads)"
 
 partial_archive="${work_dir}/${archive_name}.partial"
+tar_version="$(tar --version 2>/dev/null || true)"
 (
   cd "${work_dir}"
-  COPYFILE_DISABLE=1 tar \
-    --format=ustar \
-    --uid 0 \
-    --gid 0 \
-    --uname root \
-    --gname root \
-    --no-recursion \
-    -cf - \
-    "${artifact_root}" \
-    "${artifact_root}/${executable_name}" \
-    "${artifact_root}/README.md" \
-    "${artifact_root}/CHANGELOG.md" \
-    "${artifact_root}/LICENSE-APACHE" \
-    "${artifact_root}/LICENSE-MIT"
+  if [[ "${tar_version}" == *"GNU tar"* ]]; then
+    tar \
+      --format=ustar \
+      --owner=root:0 \
+      --group=root:0 \
+      --no-recursion \
+      -cf - \
+      "${archive_members[@]}"
+  elif [[ "${tar_version}" == *"bsdtar"* ]]; then
+    COPYFILE_DISABLE=1 tar \
+      --format=ustar \
+      --uid 0 \
+      --gid 0 \
+      --uname root \
+      --gname root \
+      --no-recursion \
+      -cf - \
+      "${archive_members[@]}"
+  else
+    fail "unsupported tar implementation; install GNU tar or bsdtar"
+  fi
 ) | gzip -n >"${partial_archive}"
 
-digest="$(sha256_digest "${partial_archive}")"
+digest="$(tachiko_sha256_digest "${partial_archive}")" || exit 1
 [[ "${digest}" =~ ^[0-9a-fA-F]{64}$ ]] || fail "SHA-256 tool returned an invalid digest"
 
 partial_checksum="${work_dir}/${archive_name}.sha256.partial"
 printf '%s  %s\n' "${digest}" "${archive_name}" >"${partial_checksum}"
 
-mv "${partial_archive}" "${archive_path}"
+# Ownership is claimed before each move. If a signal lands immediately after
+# mv changes the filesystem but before Bash advances, cleanup still removes the
+# half-published pair while this invocation owns the artifact lock.
 published_archive=1
-mv "${partial_checksum}" "${checksum_path}"
+mv "${partial_archive}" "${archive_path}"
+if [[ "${TACHIKO_RELEASE_TEST_INTERRUPT_AFTER_ARCHIVE_MOVE:-0}" == "1" ]]; then
+  kill -TERM "$$"
+fi
 published_checksum=1
+mv "${partial_checksum}" "${checksum_path}"
 completed=1
 
 printf '%s\n' "${archive_path}"
