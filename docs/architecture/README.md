@@ -1,10 +1,10 @@
 # Tachiko Work architecture
 
-## High-level architecture overview
+## Detailed architecture diagram
 
-![High-level architecture overview: React/Tauri frontend, Rust semantic backend, Tachiko formats (.roproj/.ro), and external integrations.](tachiko-work-architecture-overview.png)
+![Detailed architecture diagram: React frontend, Tauri desktop shell, Rust semantic backend, formats, and integrations.](tachiko-work-architecture-detailed.png)
 
-High-level architecture overview: React/Tauri frontend, Rust semantic backend, Tachiko formats (.roproj/.ro), and external integrations.
+Detailed architecture diagram: React frontend, Tauri desktop shell, Rust semantic backend, formats, and integrations.
 This diagram shows the current product architecture direction. Internal crate boundaries and semantic model details may evolve and are documented separately.
 
 ## Detailed documentation
