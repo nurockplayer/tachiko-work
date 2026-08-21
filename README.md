@@ -275,4 +275,6 @@ publication boundary.
 - AI should manipulate semantic models, not imitate users
 
 Architecture records and specifications live under [`docs/`](docs/). Accepted
-ADRs take precedence over older exploratory roadmaps.
+ADRs take precedence over older exploratory roadmaps. Start with the
+[`docs` knowledge-base entry point](docs/README.md) for the documented reading
+order and authority model.

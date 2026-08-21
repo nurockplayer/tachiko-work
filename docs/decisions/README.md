@@ -22,6 +22,8 @@ For project-wide authority rules, read [`../governance/knowledge-authority.md`](
 | [ADR-0010](ADR-0010-first-usable-product-workflow.md) | First usable product workflow | Accepted | Current CLI-first usable workflow |
 | [ADR-0011](ADR-0011-semantic-three-way-merge.md) | Semantic three-way merge | Accepted for implemented merge contract | Broader collaboration/conflict semantics remain separate Open Questions |
 | [ADR-0012](ADR-0012-release-distribution-contract.md) | Release distribution contract | Accepted | Tag-gated release/distribution contract |
+| [ADR-0013](ADR-0013-semantic-entity-lifecycle.md) | Validated semantic entity lifecycle | Accepted | Human-friendly CLI entity lifecycle operations added; persisted operations remain immutable and preview-first |
+| [ADR-0014](ADR-0014-computational-formula-authoring.md) | Bounded computational formula authoring | Accepted | Formula authoring is bounded, deterministic, and separate from generic `set`/read-only AI paths |
 
 ## How to use ADRs
 
