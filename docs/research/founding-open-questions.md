@@ -11,10 +11,10 @@ The purpose is not to force immediate answers. It is to distinguish questions th
 ## State ledger (founding execution map)
 
 - `#21 Semantic identity` — **Researched**. UUIDv7 provisional recommendation is in place; it is awaiting ADR review and should not be re-researched.
-- `#24 + #38 Formula architecture` — **Research queued** (formula/numeric semantics + canonical encoding).
-- `#25 + #37 Storage format evolution` — **Research queued** (storage DTO + format/version evolution).
+- `#25 + #37 + #38 Storage/protocol hardening` — **Research queued** (storage DTO boundary + format/version envelope + canonical value encoding/deterministic ordering).
+- `#24 Formula semantics` — **Research queued** (AST/binding + dependency identity + deterministic numeric semantics), coordinated with #38 where numeric representation overlaps.
 - `.ro` / `.roproj` / ODF interoperability direction — **Accepted** under ADR-0003 for the source/artifact and interoperability-boundary direction; standards/primitives reuse remains implementation research.
-- Japan enterprise, migration, plugins, CRDT/conformance — **Deferred** future research (not Milestone 02 blockers).
+- Japan enterprise field validation, migration mechanics, plugin runtime/sandbox design, and CRDT/conformance — **Deferred** future research (not Milestone 02 blockers).
 
 ## Questions that require founder judgment
 
@@ -96,7 +96,7 @@ These should normally be delegated to focused ChatGPT / Deep Research sessions a
 
 Decision state: Accepted
 
-Research state: Deferred
+Research state: Open
 
 ADR-0003 already sets the accepted direction:
 
@@ -105,7 +105,7 @@ ADR-0003 already sets the accepted direction:
 - ODF and other existing formats as interoperability boundaries where useful
 - Git as storage infrastructure, not UI
 
-Research focus should remain on reuse and maturity of standards/primitives, not on re-deciding the accepted source/artifact relationship.
+Research may continue on reusable standards and implementation primitives, but must not re-open the accepted source/artifact relationship without new evidence and explicit decision work.
 
 ### B. Historical and standards research
 
