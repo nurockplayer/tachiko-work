@@ -1,6 +1,6 @@
 # Canonical Reconciliation Register
 
-Status: Accepted register when merged
+Status: Accepted register
 
 Last reconciliation: 2026-08-21
 
@@ -35,15 +35,16 @@ When this register marks a document as mixed-state, readers must respect the nar
 | ADR-0007 AI semantic interaction | Accepted | AI is a semantic client; direct mutation requires explicit approval at this stage. |
 | ADR-0008 Developer MVP completion / next phase | Superseded | ADR-0009 is the surviving authority for the completion/next-phase boundary. Retain as decision history. |
 | ADR-0009 Developer MVP validation / next phase | Accepted, historical milestone boundary | Confirms Developer MVP as a successful architectural validation point. The unified repository milestones now provide current roadmap ordering. |
-| ADR-0010 first usable product workflow | Accepted | Current CLI-first usable workflow. Stale wording about ADR-0003 being unresolved must not be treated as authority. |
+| ADR-0010 first usable product workflow | Accepted | Current CLI-first usable workflow. |
 | ADR-0011 semantic three-way merge | Accepted for implemented merge contract | Defines the current model-level merge behavior. Broader protocol/versioned conflict semantics remain Open Questions in #45/#46. |
 | ADR-0012 tag-gated release distribution | Accepted | Release/distribution contract; independent from semantic architecture. |
+| ADR-0013 stable semantic identity and typed references | Proposed | #21 research recommends UUIDv7-backed opaque surrogate identity, mutable human keys, typed stores/relationships, and runtime-only derived indexes. Becomes current authority when the ADR is accepted/merged. |
 
 ## Architecture and specification map
 
 | Artifact | Decision state | Implementation state | Open decision owner |
 | --- | --- | --- | --- |
-| `docs/architecture/document-model.md` | Accepted direction; detailed graph shape Provisional | Partially implemented | #21 |
+| `docs/architecture/document-model.md` | Accepted direction; detailed graph shape Provisional | Partially implemented | #21 / proposed ADR-0013 |
 | `docs/architecture/unified-semantic-model.md` | Accepted direction | Partially implemented | #21, #13 |
 | `docs/architecture/rust-crate-architecture.md` | Provisional implementation baseline | Implemented v0.1 | #20 |
 | `docs/architecture/ro-and-roproj-format.md` | Accepted direction | `.ro` implemented, `.roproj` not implemented | #25, #37, #38, #41, #43 |
@@ -54,7 +55,7 @@ When this register marks a document as mixed-state, readers must respect the nar
 | `docs/architecture/rendering-system.md` | Hypothesis | Not current milestone | Designer MVP future work |
 | `docs/architecture/performance-model.md` | Provisional guidance | Mixed | Evidence-driven future work |
 | `docs/specs/ro-format-and-roproj-spec.md` | Accepted direction with explicit current-state split | `.ro` implemented; `.roproj` future | ADR-0003, #25 |
-| `docs/specs/ro-format-v1.md` | Provisional public-format baseline for Core & Format Hardening | Implemented v0.1 | #21, #25, #37, #38, #40 |
+| `docs/specs/ro-format-v1.md` | Provisional public-format baseline for Core & Format Hardening | Implemented v0.1 | proposed ADR-0013, #25, #37, #38, #40 |
 | `docs/specs/roproj-format.md` | Accepted direction | Not implemented | #25, #41 |
 | `docs/specs/roproj-layout-v1.md` | Provisional | Not implemented | #41 |
 | `docs/specs/formula-engine-spec.md` | Provisional implemented contract | Implemented v0.1 | #24 |
@@ -69,22 +70,28 @@ When this register marks a document as mixed-state, readers must respect the nar
 
 ## GitHub Issue classification
 
-A GitHub Issue is never automatically an Accepted decision. The table below classifies the current open backlog by what kind of authority it carries.
+A GitHub Issue is never automatically an Accepted decision.
+
+### Reconciliation gate
+
+| Issue | Classification | Status |
+| --- | --- | --- |
+| #19 canonical docs / ADR reconciliation | Completed | Closed after PR #58 merged at `c48c6ee8f4259f1f0507ee662f3a149f80e0d337`. `knowledge-authority.md` and this register now define the repository authority model. |
 
 ### Historical Developer MVP issues
 
 | Issue | Classification | Reconciliation action |
 | --- | --- | --- |
-| #1 MVP Freeze | Superseded as active work / historical accepted scope | Close as completed after reconciliation; current roadmap is governed by unified milestones and later ADRs. |
-| #2 semantic document model MVP | Implemented historical task | Close as completed after verifying no residual task is hidden in the stale `.roproj` wording. |
-| #3 thin `.ro` portable artifact packaging | Superseded as task shape | Current v0.1 `.ro` is direct persistence; future ADR-0003 `.roproj`-derived package work is tracked by #43. Preserve history, then close/supersede. |
+| #1 MVP Freeze | Superseded as active work / historical accepted scope | Close as completed after confirming historical record. |
+| #2 semantic document model MVP | Implemented historical task | Close as completed after verifying no residual task is hidden in stale representation wording. |
+| #3 thin `.ro` portable artifact packaging | Superseded as task shape | Current v0.1 `.ro` is direct persistence; future ADR-0003 `.roproj`-derived package work is tracked by #43. |
 
 ### Decision and strategy issues
 
 | Issue | Classification | Notes |
 | --- | --- | --- |
-| #9 AI authority / canonical source of truth | Accepted direction already captured by ADR-0007; residual details moved | Approval/capability/security detail belongs to #28/#30. Candidate for closure after reconciliation. |
-| #10 Headless Semantic API | Open Question | Current Core & Format Hardening decision. |
+| #9 AI authority / canonical source of truth | Accepted direction already captured by ADR-0007; residual details moved | Approval/capability/security detail belongs to #28/#30. |
+| #10 Headless Semantic API | Open Question | Core & Format Hardening decision. |
 | #11 permissions/provenance/transactions | Open Question | Broad team/collaboration decision; Game Dev Alpha minimum is narrowed by #28. |
 | #12 mutation history / event sourcing / CRDT / Git | Open Question | Explicitly prevents event sourcing/CRDT docs from becoming accidental authority. |
 | #13 progressive typing | Open Question | Product/architecture compatibility decision. |
@@ -92,22 +99,19 @@ A GitHub Issue is never automatically an Accepted decision. The table below clas
 | #15 licensing/commercial boundary | Open Question | Founder/governance decision after research/legal review. |
 | #17 plugin ecosystem / Office migration | Mixed | Extensible-ecosystem direction is Accepted; runtime tiers, sandbox, compatibility, and migration mechanics remain Open Questions. |
 | #18 Japan enterprise / gradual Excel migration | Accepted product direction with Hypotheses | Japan as a priority research environment and gradual migration are accepted; individual pain-point claims require user evidence. |
-| #19 canonical docs / ADR reconciliation | Active reconciliation task | This register and PR #58 are part of its exit path. |
 
 ### Core & Format Hardening decisions
 
-The following are Open Questions that should be resolved by focused research and ADR/spec work rather than founder intuition:
+- #21 semantic identity, document graph, typed references: **Provisional recommendation recorded; proposed ADR-0013 under review.**
+- #25 storage DTOs, canonical serialization, migration contract: Open Question and next research gate after ADR-0013.
+- #37 format/version envelope: Open Question, research together with #25.
+- #38 canonical value encoding and deterministic ordering: Open Question, research together with #25.
+- #24 formula AST, binding, dependency graph, numeric semantics: Open Question; consume stable identity decision.
+- #23 schema declaration, validation pipeline, diagnostics: Open Question; consume stable identity decision.
+- #20 Rust crate layering and dependency direction: Open Question; finalize around accepted semantic/storage/formula responsibilities rather than speculative subsystems.
+- #26 native/WASM runtime boundary: Open Question; resolve after core ownership seams are clearer.
 
-- #20 Rust crate layering and dependency direction
-- #21 semantic identity, document graph, typed references
-- #23 schema declaration, validation pipeline, diagnostics
-- #24 formula AST, binding, dependency graph, numeric semantics
-- #25 storage DTOs, canonical serialization, migration contract
-- #26 native/WASM runtime boundary
-- #37 format/version envelope
-- #38 canonical value encoding and deterministic ordering
-
-#40 is an implementation/evidence task that should execute the accepted results of #25/#37/#38 rather than invent new format semantics.
+#40 is an implementation/evidence task that should execute accepted results rather than invent format semantics.
 
 ### Game Dev Alpha / AI-safe mutation work
 
@@ -131,27 +135,26 @@ The following are Open Questions that should be resolved by focused research and
 - #45-#55: Open Questions for later protocol, collaboration/history, conformance, security, integrity, extension, and interoperability contracts. Their existence is not authorization to implement them now.
 - #56: Accepted roadmap/administrative direction; close when milestone creation/backfill is verified complete.
 
-## Reconciliations made in this pass
+## Reconciliations made
 
-1. ADR-0002 and ADR-0005 are no longer treated as parallel Accepted authorities; ADR-0002 is historical/superseded.
-2. ADR-0008 and ADR-0009 are no longer treated as parallel next-phase authorities; ADR-0008 is historical/superseded.
-3. Stale statements that call ADR-0003 merely `proposed` are invalid after ADR-0003 became Accepted and are being corrected.
-4. Current direct `.ro` persistence is explicitly separated from the accepted longer-term `.roproj` source / `.ro` portable-artifact architecture.
-5. `.ro` v1 implementation details are not automatically permanent identity/serialization invariants; #21/#25/#37/#38 own the hardening decision.
-6. Event sourcing and a first-class persisted operation log remain Hypothesis/Open Question, not normative architecture.
+1. ADR-0002 and ADR-0005 are no longer parallel Accepted authorities; ADR-0002 is historical/superseded.
+2. ADR-0008 and ADR-0009 are no longer parallel next-phase authorities; ADR-0008 is historical/superseded.
+3. ADR-0003 is consistently Accepted rather than `proposed`.
+4. Current direct `.ro` persistence is separated from the accepted longer-term `.roproj` source / `.ro` portable-artifact architecture.
+5. `.ro` v1 implementation details are not automatically permanent identity/serialization invariants.
+6. Event sourcing and a first-class persisted operation log remain Hypothesis/Open Question.
 7. Concrete plugin runtime tiers and collaboration mechanisms remain Open Questions even though extensibility and semantic-first integration are accepted directions.
 8. Implementation evidence remains evidence. It does not silently supersede Accepted ADRs.
+9. #21 now has an explicit standards-backed surrogate-identity recommendation instead of asking the founder to choose an ID format by preference.
 
 ## Current research queue
 
-After #19 is closed, the highest-value Core & Format Hardening work is the set of expensive-to-reverse contracts, not every open Issue.
+Recommended order:
 
-Recommended research/finalization order:
-
-1. #21 semantic identity and typed-reference invariants.
+1. Review/promote ADR-0013 for #21 semantic identity and typed references.
 2. #25 + #37 + #38 storage DTO, version envelope, and canonical encoding constraints.
-3. #24 formula binding/numeric determinism and #23 schema/diagnostics, using #21 identity as input.
-4. #20 crate layering, finalized around the responsibilities established above rather than around speculative future subsystems.
+3. #24 formula binding/numeric determinism and #23 schema/diagnostics, using ADR-0013 identity as input.
+4. #20 crate layering, finalized around the responsibilities established above.
 5. #40 executable golden/negative evidence.
 6. #26 native/WASM host/runtime boundary after core ownership and dependency seams are clear.
 
