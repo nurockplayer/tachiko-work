@@ -81,3 +81,17 @@ The long-term goal is a unified platform combining:
 Legacy formats are accepted at the boundary, never inherited by the core.
 
 Git is a storage/versioning protocol, not the user interface.
+
+## Follow-up architecture rationale
+
+A 2026-08-21 follow-up discussion pressure-tested this direction against several questions:
+
+- whether Microsoft Office or LibreOffice could implement the same capabilities;
+- whether LibreOffice's Office-compatible direction is actually wrong or simply solving a different problem;
+- whether Tachiko Work should use a small-core / extension-oriented architecture;
+- how to avoid freezing the wrong Milestone 02 decisions too early;
+- whether the semantic direction was chosen first or derived from concrete product requirements.
+
+The result did not change ADR-0001. It clarified why the existing semantic-first decision follows from game-development data, Git-native review, AI-native operations, multiple projections, and progressive Office migration.
+
+The detailed derivation and explicit revisit conditions are recorded in [Why Tachiko Work Has a Semantic Core](../architecture/semantic-core-rationale.md). The corresponding architecture guardrails are summarized in [Design Principles](../vision/design-principles.md).
