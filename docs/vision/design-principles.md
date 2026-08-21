@@ -4,6 +4,8 @@ These principles translate the project's founding motivation into durable produc
 
 They are intentionally higher-level than implementation details. When a short-term feature request conflicts with them, the conflict should be made explicit rather than silently weakening the core direction.
 
+The detailed derivation behind the semantic-first direction is recorded in [Why Tachiko Work Has a Semantic Core](../architecture/semantic-core-rationale.md). That rationale is explanatory; Accepted ADRs and the Product Constitution remain the authority for concrete commitments.
+
 ## 1. User Ownership Before Application Ownership
 
 People should own their work independently of the application that created it.
@@ -20,11 +22,15 @@ Familiar Office-like workflows may be useful, especially for progressive adoptio
 
 The goal is a semantic workspace that can represent documents, spreadsheets, structured data, and computation without inheriting every historical constraint of the tools it interoperates with.
 
+Office is an interoperability target, not the ontology of the semantic core.
+
 ## 3. Semantic Core First
 
 The core model stores meaning, not historical implementation accidents.
 
 Semantic architecture is a means, not a slogan. It is justified when it enables stable identity, structured references, computation, validation, meaningful diff and merge, migration, multiple views, or AI reasoning.
+
+Presentation coordinates, storage paths, and physical serialization layout must not silently become durable semantic identity.
 
 The project should avoid inventing semantic structure where it adds no practical value.
 
@@ -75,6 +81,7 @@ Users should not need to manually edit Git representations, but the format and t
 - meaningful textual changes where practical
 - semantic diff
 - semantic merge
+- stable identity across harmless presentation changes
 - reviewable history
 - CI and automation
 
@@ -88,15 +95,23 @@ The system should make important operations addressable, permissionable, reviewa
 
 AI should benefit from the same structured meaning that supports humans, version control, validation, and automation.
 
+The same semantic behavior should be reusable by CLI, AI, native, WASM, and future graphical clients where applicable rather than being reimplemented as UI-specific logic.
+
 ## 9. Small Stable Core, Replaceable Surroundings
 
 The project should keep the set of hard-to-change invariants as small as possible.
 
 Only decisions with strong evidence and high switching cost should become stable core contracts.
 
-Editors, importers, exporters, engine integrations, AI providers, workflow features, and other application-level capabilities should remain replaceable or extensible whenever possible.
+Editors, importers, exporters, engine integrations, AI providers, workflow features, collaboration mechanisms, host technologies, and other application-level capabilities should remain replaceable or extensible whenever possible.
 
 Core hardening is not an attempt to predict every future feature. It is an attempt to make the few truly foundational contracts reliable while preserving escape hatches everywhere else.
+
+A useful review question is:
+
+> If this capability were removed or replaced, would the remaining semantic model still be Tachiko Work?
+
+If yes, it probably does not belong in the semantic kernel without stronger evidence.
 
 ## 10. Correctness and Explainability Over Hidden Magic
 
@@ -111,3 +126,11 @@ Tachiko Work should be capable of supporting extensions, adapters, integrations,
 The long-term goal is not a single giant application that owns every workflow.
 
 It is an open foundation on which many workflows can be built.
+
+## 12. Generalize From Real Pressure
+
+Do not begin with a universal ontology, type system, formula language, plugin ABI, or collaboration mechanism merely because the architecture could support one.
+
+Prefer concrete workflows first, introduce the minimum semantic abstraction they require, pressure-test it against additional domains, and generalize only when evidence demands it.
+
+If evidence invalidates an assumption, revise the model through an explicit Decision Issue/ADR/reconciliation instead of preserving an elegant abstraction by redefining its meaning.
