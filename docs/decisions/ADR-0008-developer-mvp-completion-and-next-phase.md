@@ -2,7 +2,13 @@
 
 ## Status
 
-Accepted
+Superseded by ADR-0009
+
+## Reconciliation note
+
+ADR-0009 is the surviving authority for the Developer MVP validation and next-phase boundary. It was created from the later reconciliation of a duplicate ADR number and substantially restates this decision with the clearer validation framing.
+
+This record is retained as decision history and should not be treated as a parallel current authority.
 
 ## Context
 

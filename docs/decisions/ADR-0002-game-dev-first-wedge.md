@@ -1,6 +1,12 @@
 # ADR-0002: Game development is the first vertical wedge
 
-Status: Accepted
+Status: Superseded by ADR-0005
+
+## Reconciliation note
+
+ADR-0005 restates this decision with the later commercial-wedge and target-user framing. ADR-0005 is the current authority.
+
+This record is retained because it documents the earlier reasoning and the original capability framing.
 
 ## Context
 

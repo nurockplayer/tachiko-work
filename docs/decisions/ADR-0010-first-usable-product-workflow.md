@@ -11,9 +11,9 @@ a complete first-user journey. `tachiko init` creates an empty document, CLI
 help does not explain what commands do, and users must understand the `.ro` wire
 format before they can reach calculation, semantic diff, or explanation.
 
-ADR-0008 and ADR-0009 make usability refinement the current milestone. They
-explicitly prioritize a workflow a technical designer can understand without
-learning the internal architecture.
+ADR-0008 and ADR-0009 made usability refinement the next phase at the time of
+this decision. ADR-0009 is now the surviving authority for that historical
+Developer MVP boundary.
 
 ## Alternatives considered
 
@@ -59,8 +59,13 @@ Human invocation of `set` is explicit mutation approval and therefore preserves
 ADR-0007. AI suggestions remain inert until a caller chooses an approved write
 path.
 
-The checked-in example workflow becomes a CI contract. Project-directory and
-`.roproj` decisions remain deferred until ADR-0003 is resolved.
+The checked-in example workflow becomes a CI contract.
+
+ADR-0003 already defines the accepted long-term representation relationship:
+`.roproj` is the canonical editable/source materialization and `.ro` is the
+portable artifact. The current v0.1 CLI still persists deterministic `.ro`
+documents directly; `.roproj` materialization, physical layout, and deterministic
+pack/unpack remain later format-hardening implementation work.
 
 ## Consequences
 
@@ -68,7 +73,7 @@ Positive:
 
 - A first user reaches a meaningful computed result without editing wire JSON.
 - Stable field paths make CLI, Git review, documentation, and future UI concepts
-  consistent.
+  consistent for the current workflow.
 - Mutation stays typed, validated, deterministic, and reviewable.
 - The workflow crate provides a UI-independent product boundary.
 

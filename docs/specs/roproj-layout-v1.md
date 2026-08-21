@@ -1,10 +1,16 @@
 # Tachiko Work .roproj Layout v1 (Implementation Draft)
 
+Decision state: Provisional
+
+Implementation state: Not implemented in v0.1
+
+Decision owner: #41, constrained by ADR-0003 and #21/#25/#38
+
 ## Purpose
 
-ADR-0003 is Accepted and establishes `.roproj` as the canonical editable/source representation. This document is an implementation draft for that accepted direction.
+ADR-0003 is Accepted and establishes `.roproj` as the target canonical editable/source representation. This document is an implementation draft for that accepted direction, not an Accepted physical-layout contract.
 
-`.roproj` is not part of the implemented v0.1 CLI contract yet; current v0.1 workflows persist deterministic `.ro` files.
+The current v0.1 CLI does not yet implement `.roproj`; current workflows persist deterministic `.ro` files.
 
 ## Illustrative layout
 
@@ -21,19 +27,25 @@ project.roproj/
 └── assets/
 ```
 
-The exact split and file naming remain subject to implementation validation.
+The exact split, file naming, sharding, and directory layout remain subject to implementation evidence and #41.
 
-## Required properties
+None of these paths may become semantic object identity merely because they are convenient for Git materialization.
 
-- UTF-8 for textual materialization
-- deterministic ordering
+## Required directional properties
+
+The eventual `.roproj` materialization must preserve the accepted goals of:
+
+- UTF-8 where textual
+- deterministic/canonical output
 - human-readable changes where practical
-- stable identifiers
+- stable semantic identity independent of storage paths
 - Git-friendly diffs and merge
-- lossless semantic conversion to/from the portable `.ro` artifact
+- lossless semantic relationship with the portable `.ro` artifact
+
+The exact canonical rules are being hardened in #21, #25, #37, #38, and #41.
 
 ## Design principle
 
 Git is a storage and collaboration protocol, not the user interface.
 
-Users edit through Tachiko Work semantic operations. Git stores semantic history; `.roproj` is the accepted target materialization for that history.
+Users edit through Tachiko Work semantic operations. Git stores reviewable materialization/history; `.roproj` is the accepted target representation for that workflow.
