@@ -167,3 +167,11 @@ Legacy formats are accepted at the boundary, not allowed to define the semantic 
 Git is a storage and versioning protocol, not the user interface.
 
 Semantic architecture is a means to preserve meaning and interoperability, not an end in itself.
+
+## Follow-up architecture rationale
+
+A 2026-08-21 follow-up discussion pressure-tested the semantic direction against whether Office/LibreOffice could add similar capabilities, whether a small-core/extension architecture better fits the project, how Milestone 02 should avoid freezing mechanisms prematurely, and whether `semantic` was a premise or a derived answer.
+
+The result did not replace ADR-0001. It clarified the derivation and added explicit falsification/revisit conditions so semantic-first does not become dogma.
+
+See [Why Tachiko Work Has a Semantic Core](../architecture/semantic-core-rationale.md). Its role is explanatory; current authority remains governed by the Product Constitution, Accepted ADRs/policies, and the knowledge-authority rules.
