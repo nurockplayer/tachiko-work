@@ -227,6 +227,15 @@ producing new semantic inputs and rerunning the command.
 - `workflow`: reusable starter, explanation, scalar/formula editing, and entity lifecycle operations
 - `cli`: creation, exploration, computational authoring, lifecycle, review, merge, validation, and export
 
+## Architecture overview
+
+![High-level architecture overview: React/Tauri frontend, Rust semantic backend, Tachiko formats (.roproj/.ro), and external integrations.](docs/architecture/tachiko-work-architecture-overview.png)
+
+High-level architecture overview: React/Tauri frontend, Rust semantic backend, Tachiko formats (.roproj/.ro), and external integrations.
+This diagram shows the current product architecture direction. Internal crate boundaries and semantic model details may evolve and are documented separately.
+
+For details, see the [architecture docs index](docs/architecture/README.md).
+
 For a fast contributor check after an edit, run:
 
 ```sh
