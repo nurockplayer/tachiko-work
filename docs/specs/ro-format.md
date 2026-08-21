@@ -1,53 +1,22 @@
-# .ro Format Specification
+# `.ro` Format Documentation Entry Point
 
-## Purpose
+This file is retained as a compatibility/navigation entry point for older links.
 
-`.ro` is the portable Tachiko Work document package format.
+It does **not** define an independent `.ro` contract. Use the documents below according to the question you are answering.
 
-It is not the canonical semantic model itself. It is a serialization of the semantic model designed for:
+## Current sources
 
-- sharing
-- backup
-- transport
-- archival
-- application interoperability
+- [`ro-format-and-roproj-spec.md`](ro-format-and-roproj-spec.md) — accepted representation direction under ADR-0003: `.roproj` is the target canonical editable/source materialization, `.ro` is the portable artifact, and the semantic model is authoritative over both.
+- [`ro-format-v1.md`](ro-format-v1.md) — exact deterministic `.ro` JSON behavior implemented by the v0.1 Developer MVP. This is a **Provisional implemented baseline** being hardened by #21, #25, #37, #38, and #40.
+- [`roproj-format.md`](roproj-format.md) and [`roproj-layout-v1.md`](roproj-layout-v1.md) — target/project representation material; `.roproj` is not yet implemented in v0.1.
+- [`../decisions/ADR-0003-ro-and-roproj-representation.md`](../decisions/ADR-0003-ro-and-roproj-representation.md) — Accepted architectural authority for the long-term representation relationship.
 
-## Design Principle
+## Current implementation state
 
-The semantic model is the source of truth.
+The v0.1 CLI directly persists deterministic `.ro` files for validation, calculation, semantic diff/merge, authoring, and export.
 
-`.ro` is a representation.
+That behavior is implemented, but implementation does not make every current identifier, encoding, ordering, or version-envelope choice a permanent ecosystem invariant. Those details remain subject to Core & Format Hardening where the repository classifies them as Provisional or Open Questions.
 
-For v0.1, `.ro` is the shipped storage representation used by CLI validation,
-calculation, diff, merge, and export flows.
+Do not describe the entire `.ro` v1 contract as "stable" until the relevant hardening decisions explicitly promote the durable parts of that contract.
 
-## Requirements
-
-A valid `.ro` package should provide:
-
-- deterministic serialization
-- integrity verification
-- version metadata
-- forward compatibility
-- portable assets
-- schema information
-
-## Relationship With .roproj
-
-ADR-0003 defines `.roproj` as a future dual representation.
-
-v0.1 status:
-
-- `.ro` is implemented and stable.
-- `.roproj` is not implemented in this phase.
-- Deterministic `.ro` ↔ `.roproj` round-trips are not yet available.
-
-## Future Considerations
-
-Possible implementation:
-
-- ZIP based container
-- manifest
-- checksums
-- schema registry
-- embedded assets
+For the project-wide authority model, see [`../governance/knowledge-authority.md`](../governance/knowledge-authority.md) and [`../governance/canonical-reconciliation-register.md`](../governance/canonical-reconciliation-register.md).

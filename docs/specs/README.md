@@ -1,0 +1,67 @@
+# Specifications
+
+Specifications describe implementable contracts, provisional baselines, and future design targets for Tachiko Work.
+
+A file living in `docs/specs/` is **not automatically Accepted**. Read its explicit decision state together with [`../governance/knowledge-authority.md`](../governance/knowledge-authority.md) and the [`canonical reconciliation register`](../governance/canonical-reconciliation-register.md).
+
+## Format and representation: read this first
+
+The format documents have different roles. Do not treat similarly named files as parallel normative specifications.
+
+| Document | Read it for | Current role |
+| --- | --- | --- |
+| [`ro-format-and-roproj-spec.md`](ro-format-and-roproj-spec.md) | Accepted `.roproj` source / `.ro` portable-artifact relationship and current implementation split | Accepted direction under ADR-0003 |
+| [`ro-format-v1.md`](ro-format-v1.md) | Exact deterministic `.ro` JSON behavior implemented by the v0.1 CLI | Provisional implemented hardening baseline; #21/#25/#37/#38/#40 own durable contracts |
+| [`ro-format.md`](ro-format.md) | Compatibility/navigation entry point for older links | Non-normative navigation stub; follow the two documents above |
+| [`roproj-format.md`](roproj-format.md) | Target `.roproj` representation | Accepted direction, not yet implemented |
+| [`roproj-layout-v1.md`](roproj-layout-v1.md) | Candidate physical `.roproj` layout | Provisional, not yet implemented; #41 owns layout work |
+| [`runtime-export-v1.md`](runtime-export-v1.md) | Current evaluated runtime JSON export contract | Provisional implemented contract |
+
+The semantic model owns meaning. Physical formats are representations. Current v0.1 direct `.ro` persistence is implementation state and does not supersede ADR-0003.
+
+## Semantic core, schema, validation, formulas, and diff
+
+| Document | Read it for |
+| --- | --- |
+| [`semantic-data-model.md`](semantic-data-model.md) | Semantic data-model contract and terminology |
+| [`schema-system.md`](schema-system.md) | Schema declaration behavior |
+| [`validation-engine.md`](validation-engine.md) | Validation behavior and diagnostics |
+| [`formula-engine-spec.md`](formula-engine-spec.md) | Current formula syntax/evaluation contract and hardening baseline |
+| [`semantic-diff-spec.md`](semantic-diff-spec.md) | Semantic diff behavior |
+
+Detailed semantic identity, graph shape, typed references, schema diagnostics, formula binding, and numeric determinism are still being hardened through the Core & Format Hardening decision Issues. Do not freeze incidental v0.1 identifiers or paths merely because they are implemented.
+
+## AI, security, and extensibility
+
+| Document | Read it for |
+| --- | --- |
+| [`ai-agent-api.md`](ai-agent-api.md) | Implemented read/explain/suggest AI surface under ADR-0007 |
+| [`security-model.md`](security-model.md) | Security constraints and model |
+| [`plugin-system.md`](plugin-system.md) | Accepted extensibility direction plus still-open runtime/sandbox design |
+| [`migration-framework.md`](migration-framework.md) | Progressive migration direction and future adapter framework |
+
+Concrete AI mutation, capability, provenance, plugin ABI/sandbox, and migration fidelity contracts remain narrower decision work even when the broader direction is Accepted.
+
+## Collaboration and history models
+
+| Document | Read it for | Authority caution |
+| --- | --- | --- |
+| [`collaboration-model.md`](collaboration-model.md) | Current merge behavior and broader collaboration direction | Current semantic merge is Accepted; broader collaboration remains Open Question |
+| [`conflict-resolution.md`](conflict-resolution.md) | Current conflict behavior and future conflict model | Provisional around current merge; future model remains Open Question |
+| [`operation-log-model.md`](operation-log-model.md) | Persisted operation-log proposal | Open Question; no first-class persisted log in v0.1 |
+| [`event-sourcing-model.md`](event-sourcing-model.md) | Event-sourcing hypothesis | Hypothesis, not accepted architecture |
+
+Do not infer that event sourcing, CRDTs, or a persisted operation log are selected merely because design documents exist for them.
+
+## Choosing the right source
+
+When you need an answer:
+
+1. Check the relevant Accepted ADR first.
+2. Use this index to find the specification with the right role.
+3. Read the specification's decision and implementation state.
+4. Check the reconciliation register for mixed-state or supersession notes.
+5. Use implementation/tests as evidence of current behavior, not automatic permanent authority.
+6. If the required contract is still an Open Question, follow its Decision Issue instead of inventing a durable answer in implementation code.
+
+When adding a new specification, prefer extending the most narrowly relevant existing contract over creating another similarly named parallel file.

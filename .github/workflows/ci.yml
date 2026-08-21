@@ -31,6 +31,9 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+      - name: Validate documentation consistency
+        run: bash scripts/docs-consistency-check.sh
+
       - name: Lint all targets
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
