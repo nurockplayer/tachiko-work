@@ -2,15 +2,27 @@
 
 Status: Living research map
 
+State legend: Open / Research queued / Researched / Provisional / Accepted / Deferred
+
 This document captures questions that remain after consolidating Tachiko Work's founding motivation, mission, and design principles.
 
 The purpose is not to force immediate answers. It is to distinguish questions that require founder judgment from questions that can be delegated to research and implementation work.
+
+## State ledger (founding execution map)
+
+- `#21 Semantic identity` — **Researched**. UUIDv7 provisional recommendation is in place; it is awaiting ADR review and should not be re-researched.
+- `#25 + #37 + #38 Storage/protocol hardening` — **Research queued** (storage DTO boundary + format/version envelope + canonical value encoding/deterministic ordering).
+- `#24 Formula semantics` — **Research queued** (AST/binding + dependency identity + deterministic numeric semantics), coordinated with #38 where numeric representation overlaps.
+- `.ro` / `.roproj` / ODF interoperability direction — **Accepted** under ADR-0003 for the source/artifact and interoperability-boundary direction; standards/primitives reuse remains implementation research.
+- Japan enterprise field validation, migration mechanics, plugin runtime/sandbox design, and CRDT/conformance — **Deferred** future research (not Milestone 02 blockers).
 
 ## Questions that require founder judgment
 
 These are product-identity questions. AI can research and frame tradeoffs, but should not silently decide them from implementation convenience.
 
 ### 1. How public should the anti-lock-in origin story be?
+
+State: Open
 
 The private founding motivation is intentionally direct: reduce dependence on Microsoft Office and OOXML.
 
@@ -21,6 +33,8 @@ Should public-facing project messaging explicitly frame Microsoft Office / OOXML
 This is a messaging decision, not an architecture blocker.
 
 ### 2. What does "user ownership" outrank when tradeoffs become real?
+
+State: Open
 
 The constitution treats user ownership as foundational.
 
@@ -35,6 +49,8 @@ Founder judgment is needed on whether any of these can legitimately override the
 
 ### 3. What is the long-term product boundary?
 
+State: Open
+
 Current strategy starts with game-development structured data and can later expand toward broader productivity workflows.
 
 Open question:
@@ -44,6 +60,8 @@ Is the long-term ambition truly a general foundation for digital work, including
 This does not block the current milestone, but it will eventually affect UI, ecosystem, and market strategy.
 
 ### 4. What must always remain open?
+
+State: Open
 
 The project strongly values open formats and an open ecosystem, while licensing and commercial sustainability are still being worked out.
 
@@ -59,6 +77,8 @@ This should be resolved through governance and licensing decisions rather than a
 
 ### 5. What would count as mission success?
 
+State: Open
+
 Possible interpretations include:
 
 - a game studio can stop treating Excel as the source of truth for balance data
@@ -72,32 +92,57 @@ A small set of concrete mission-level success tests would help future product de
 
 These should normally be delegated to focused ChatGPT / Deep Research sessions and converted into ADRs, specs, or implementation-ready issues when needed.
 
-### A. Historical and standards research
+### A. `.ro` / `.roproj` / ODF / standards research
+
+Decision state: Accepted
+
+Research state: Open
+
+ADR-0003 already sets the accepted direction:
+
+- `project.roproj/` as canonical editable/source representation
+- `project.ro` as portable artifact
+- ODF and other existing formats as interoperability boundaries where useful
+- Git as storage infrastructure, not UI
+
+Research may continue on reusable standards and implementation primitives, but must not re-open the accepted source/artifact relationship without new evidence and explicit decision work.
+
+### B. Historical and standards research
+
+State: Open
 
 - Recover and accurately document the relevant COSCUP 2017 Italo Vignoli talk, including the arguments that materially influenced the project.
 - Map OOXML, ODF, CSV, JSON, Markdown, Arrow/Parquet, SQLite, and other reusable standards against Tachiko Work's actual semantic requirements.
 - Identify where existing standards are sufficient and where custom Tachiko semantics are justified.
 
-### B. Migration research
+### C. Migration research
+
+State: Deferred
 
 - What real Excel/Office dependencies make progressive migration difficult?
 - Which dependencies can be statically detected and explained?
 - How should semantic conversion reports represent unsupported or behavior-changing constructs?
 - What level of round-trip fidelity is valuable before it begins to contaminate the core?
 
-### C. Japanese enterprise workflow research
+### D. Japanese enterprise workflow research
+
+State: Deferred
 
 - Which spreadsheet-driven workflows are most affected by person-dependent operations, macros, undocumented procedures, and weak change history?
 - What migration wedge creates value without requiring an Office replacement project?
 - Which audit, explainability, approval, and interoperability requirements are specific to Japanese organizations?
 
-### D. Game-development workflow research
+### E. Game-development workflow research
+
+State: Open
 
 - Which balance/configuration workflows currently justify moving the source of truth out of Excel or Google Sheets?
 - What must integrate with Unity, Unreal, Godot, build pipelines, localization, and live-ops systems?
 - Which team sizes and roles feel the pain strongly enough to adopt an early tool?
 
-### E. Core architecture research
+### F. Core architecture research
+
+State: Open
 
 Milestone 02 should focus research effort on the small set of expensive-to-reverse invariants:
 
@@ -111,7 +156,9 @@ Milestone 02 should focus research effort on the small set of expensive-to-rever
 
 The goal is not to maximize architecture. The goal is to freeze only what becomes expensive to migrate once documents, Git history, plugins, and external tools depend on it.
 
-### F. Extension architecture research
+### G. Extension architecture research
+
+State: Deferred
 
 Investigate mature small-core ecosystems such as Flask and other extensible platforms to determine:
 
@@ -121,13 +168,17 @@ Investigate mature small-core ecosystems such as Flask and other extensible plat
 - how schema/format evolution interacts with third-party extensions
 - how to avoid plugin APIs accidentally freezing internal implementation details
 
-### G. Format and naming research
+### H. Format and naming research
+
+State: Open
 
 - Keep `.ro` naming provisional until release identity is intentionally frozen.
-- Re-evaluate the `.ro` / `.roproj` physical representation strategy against implementation evidence before broad ecosystem adoption.
+- Evaluate the still-open physical layout, packaging, sharding, and canonicalization details within ADR-0003's accepted `.roproj` source / `.ro` portable-artifact relationship.
 - Determine which packaging and canonicalization details are true format invariants versus replaceable implementation decisions.
 
 ## Working rule
+
+State: Accepted
 
 When a new issue appears, first classify it:
 
