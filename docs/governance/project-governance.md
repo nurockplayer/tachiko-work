@@ -26,6 +26,25 @@ Changes affecting:
 
 require explicit design discussion.
 
+## Knowledge authority and decision state
+
+Repository artifacts do not all have the same authority.
+
+`docs/governance/knowledge-authority.md` defines the canonical authority hierarchy and the decision-state vocabulary used by human and AI contributors:
+
+- Principle
+- Accepted
+- Provisional
+- Hypothesis
+- Open Question
+- Superseded
+
+`docs/governance/canonical-reconciliation-register.md` applies that policy to the current knowledge base and records known supersession/staleness relationships.
+
+A file under `docs/specs/`, a strongly worded Issue, or an implemented code path is not automatically an Accepted long-term invariant. Implementation state and decision state are separate axes.
+
+When artifacts conflict, reconcile them explicitly. Do not let chronology, implementation convenience, or confident prose silently choose the winner.
+
 ## Decision Discussion Workflow
 
 Major unresolved architecture, product-foundation, security, format, or governance questions should begin as a dedicated GitHub **Decision Issue** before becoming an ADR.
@@ -79,7 +98,7 @@ Question Logs should preserve, as closely as practical:
 - evidence or alternatives it caused the project to investigate;
 - the current answer or status, including whether the question remains open.
 
-Questions should not be discarded merely because a current answer has been reached. A good question can outlive its present answer and may need to be revisited when standards, libraries, markets, product constraints, or implementation evidence change.
+Questions should not be discarded merely because a current answer has been reached. A good question can outlive its present answer and may need to be revisited when standards, libraries, markets, product constraints, or implementation evidence change later.
 
 The goal is not to archive every conversational sentence. Routine clarification, repetition, and chat scaffolding can be omitted. The goal is to preserve all materially important questions and problem framings without requiring future maintainers to reconstruct them from raw chat history.
 
@@ -110,9 +129,11 @@ Where practical, ADRs should reference their Decision Issue, and Decision Issues
 
 ### Implementation Issues
 
-Implementation issues should implement accepted decisions rather than silently make new architectural decisions.
+Implementation issues should implement accepted decisions or clearly scoped Provisional choices rather than silently make new architectural decisions.
 
-If implementation exposes a contradiction or a materially new architectural choice, open or reopen a Decision Issue and resolve the decision before allowing implementation details to redefine the canonical design accidentally.
+If implementation exposes a contradiction or a materially new expensive-to-reverse architectural choice, open or reopen a Decision Issue and resolve the decision before allowing implementation details to redefine the canonical design accidentally.
+
+Routine technical choices should not be escalated to the founder merely because they require expertise. Focused research should resolve them against accepted constraints unless the result changes product identity, a foundational principle, a difficult-to-reverse public ecosystem promise, or material business/governance posture.
 
 ## Principles
 
