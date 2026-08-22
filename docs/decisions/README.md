@@ -25,6 +25,7 @@ For project-wide authority rules, read [`../governance/knowledge-authority.md`](
 | [ADR-0013](ADR-0013-semantic-entity-lifecycle.md) | Validated semantic entity lifecycle | Accepted for v0.1 lifecycle contract | Preview-first mutation and relationship safety remain authoritative; ADR-0015 supersedes rename-as-identity semantics |
 | [ADR-0014](ADR-0014-computational-formula-authoring.md) | Bounded computational formula authoring | Accepted | Formula authoring is bounded, deterministic, and separate from generic `set`/read-only AI paths |
 | [ADR-0015](ADR-0015-stable-semantic-identity.md) | Stable semantic identity and mutable human keys | Accepted | Stable typed surrogate identity is durable; UUIDv7 is the preferred provisional generator, not permanent semantic meaning |
+| [ADR-0016](ADR-0016-milestone-02-rust-crate-layering.md) | Milestone 02 Rust crate layering | Proposed | Keeps eight target crates, evolves workflow into the shared workspace engine, and fixes the macro dependency direction while preserving #23–#26 seams |
 
 ## How to use ADRs
 

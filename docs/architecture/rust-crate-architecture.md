@@ -1,20 +1,23 @@
 # Rust Crate Architecture
 
-Decision state: Provisional
+Decision state: v0.1 baseline is Provisional; target is Proposed in ADR-0016
 
-Implementation state: Implemented v0.1 baseline
+Implementation state: v0.1 baseline implemented; target migration not started
 
-Hardening owner: #20
+Decision owner: #20
 
-## Goal
+## Purpose
 
-Describe the live implementation boundary for Tachiko Work while preserving room to harden crate ownership and dependency direction before public APIs become expensive to change.
+This document records the live Rust workspace evidence that motivated #20 and
+the relationship between the current implementation and the proposed decision.
 
-The system should not be organized around Office applications. It should be organized around a shared semantic core.
+[ADR-0016](../decisions/ADR-0016-milestone-02-rust-crate-layering.md)
+is the single source for the proposed Milestone 02 tree, dependency DAG,
+ownership/API boundaries, composition roots, portability rules, forbidden
+edges, Provisional seams, rejected alternatives, and migration sequence. It
+remains Proposed until reviewed and promoted.
 
-The crate graph below is strong implementation evidence, not a declaration that every current boundary is permanently frozen. #20 owns the focused architecture decision for the durable dependency DAG.
-
-## Implemented Workspace
+## Current v0.1 workspace
 
 ```text
 tachiko-work/
@@ -29,8 +32,7 @@ tachiko-work/
 │   └── cli/
 ```
 
-The workspace keeps the live direct-crate dependency direction explicit; arrows
-point from a dependent crate toward the crate it uses:
+Arrows point from a dependent crate toward the crate it uses:
 
 ```text
 storage ────────────────────────────────────────────────────→ semantic-core
@@ -43,110 +45,149 @@ cli ───────────────────────→ sto
                                formula-engine, semantic-core
 ```
 
-Schema types and validation currently live in `semantic-core` because they
-enforce document invariants together. Version compatibility and future
-migrations currently belong to `storage`. Separate crates should appear only
-when an implemented or researched need justifies an independent lifecycle or
-dependency boundary.
+The graph is acyclic. It is implementation evidence, not a declaration that
+every current boundary or public Rust type is stable.
 
-These current placements remain reviewable in #20; implementation location alone
-does not make a crate boundary constitutional.
-
-## Core Principles
+## Current responsibility evidence
 
 ### semantic-core
 
-Currently owns the implemented document graph:
+The crate currently owns the string-backed ID newtypes, document/schema/entity
+model, typed values and relationships, formula expression representation,
+semantic diagnostics, and whole-document validation. It has only `serde` as a
+non-dev dependency and no UI, filesystem, network, or other host dependency.
 
-- schemas and typed fields
-- entities
-- typed references and numeric expressions
-- deterministic semantic diagnostics
+Its domain types currently derive `serde`. That convenience, and storage's
+reuse of parts of those types in v0.1 DTOs, is migration debt under #25 rather
+than a durable wire-format promise.
 
-It has no UI, filesystem, or wire-format assumptions. Blocks, revisions, and
-operation logs remain future semantic capabilities rather than implemented
-contracts.
+### formula-engine
+
+The crate owns the current bounded expression parser/formatter, deterministic
+calculation, cycle/error behavior, and derived dependency indexes. It depends
+only on semantic-core among workspace crates. Exact source/bound AST, binding,
+numeric, error, and dependency contracts remain Provisional under #24.
+
+### diff-engine and merge-engine
+
+Diff depends on core and formula calculation to report direct semantic changes
+and derived formula impact. Its detailed behavior is an implemented Provisional
+contract, not an Accepted ADR.
+
+Merge depends on core and formula calculation to reconcile typed three-way
+candidates and reject invalid or uncalculable results. ADR-0011 governs the
+implemented merge contract; broader protocol and conflict semantics remain
+separate work.
 
 ### storage
 
-Currently handles serialization:
+Storage currently combines canonical version-1 `.ro` JSON string codecs,
+format checks, semantic validation, and native filesystem load/save APIs. This
+mix identifies a host boundary; #25/#26 own whether portable codecs and
+native/browser persistence later justify separate crates.
 
-- canonical version-1 `.ro` JSON
-- format compatibility checks
-- exclusive-create persistence
+ADR-0003 remains authoritative: `.roproj` is the target canonical editable
+materialization and `.ro` is a derived portable artifact. The v0.1 direct `.ro`
+implementation does not supersede that direction.
 
-The semantic model remains authoritative.
+### workflow
 
-ADR-0003 is Accepted and defines `.roproj` as the target canonical editable/source
-materialization with `.ro` as the portable artifact. `.roproj` materialization
-is not implemented in v0.1 and therefore does not belong to the live storage
-contract yet.
+Workflow currently provides UI-independent document starters, overview and
+explanation queries, scalar/formula edits, and entity lifecycle operations.
+Its edit path already coordinates clone/change, semantic validation, formula
+calculation, semantic diff, and immutable preview without storage or UI
+dependencies.
 
-### formula-engine, diff-engine, and merge-engine
+This is the code evidence for ADR-0016's shared application-engine decision.
+There is no separate workspace aggregate in v0.1; all current operations are
+document-local.
 
-`formula-engine` owns deterministic calculation and dependency tracking in the
-current implementation. `diff-engine` compares semantic documents and reports
-both direct changes and derived formula impact as typed values. It also provides
-a deterministic, domain-level text summary; the CLI remains responsible for
-terminal behavior.
+### ai-api
 
-`merge-engine` owns current three-way reconciliation of typed semantic documents.
-It uses the semantic core and formula engine to reject invalid merged candidates
-before persistence; the CLI performs exclusive output creation and terminal
-rendering. None of these engines owns persistence, raw-text merge behavior,
-Git-driver configuration, or interactive resolution.
-
-Formula binding/numeric invariants and broader merge protocol semantics are
-still being hardened separately; the current crate arrangement must not pre-decide
-them by accident.
-
-### ai-api and workflow
-
-`ai-api` is the implemented read, analysis, explanation, and approval-required
-suggestion boundary for AI callers.
-
-`workflow` owns reusable, opinionated product operations such as starters,
-semantic overviews, field explanations, and validated edit previews. It does
-not read files or render terminal output, so CLI and future graphical clients
-can share the same behavior.
+AI API currently exposes deterministic descriptions, formula/impact
+explanations, and inert approval-required suggestions. It directly coordinates
+core validation, formula complexity/calculation, and diff behavior, duplicating
+part of workflow's candidate-operation pipeline.
 
 ### cli
 
-`cli` is a thin adapter over storage and workflow APIs. It owns arguments,
-filesystem paths, safe exclusive output creation, and human/machine rendering.
+CLI owns arguments, OS paths, create-new output behavior, and human/machine
+rendering, but it also directly coordinates six workspace crates. Validation,
+calculation, diff, merge, export projection, and persistence sequencing are
+therefore chosen at individual command entry points rather than behind one
+complete application boundary.
 
-### adapters
+## Current cross-boundary pressure
 
-External formats belong at explicit boundaries:
+The code shows four concrete reasons for the proposed target:
 
-- DOCX
-- XLSX
-- Markdown
-- CSV
-- JSON
+1. Workflow already has the correct host-independent shape for shared
+   application behavior; adding a parallel orchestration crate would duplicate
+   ownership.
+2. CLI dependency fan-out would otherwise need to be recreated by each future
+   native, WASM, AI, or server client.
+3. AI suggestions independently clone, validate, and calculate candidates,
+   creating a second application path that can drift from workflow.
+4. Storage paths/file I/O and domain calculation have different native/WASM
+   capability requirements and should remain sibling boundaries.
 
-These are future adapter categories; only core JSON `.ro` input/output is active
-in v0.1.
+Invariant enforcement is currently entry-point-dependent: storage load validates
+but does not calculate; CLI validate adds calculation; merge validates and
+calculates; workflow edits validate and calculate; diff calculates; AI queries
+select different subsets. The proposed application boundary centralizes that
+policy without moving it into semantic-core.
 
-## Rust Responsibilities
+## Portability evidence
 
-Rust is responsible for the deterministic semantic/runtime behavior implemented
-by the core crates, including:
+At the #20 baseline, these provider-free crates contain no filesystem, process,
+network, or target-specific code and compile together for
+`wasm32-unknown-unknown`:
 
-- deterministic processing
-- memory-safe core implementation
-- computation
-- parsing
-- validation
+- semantic-core;
+- formula-engine;
+- diff-engine;
+- merge-engine;
+- workflow;
+- ai-api.
 
-Concurrency, host capabilities, native/WASM orchestration, and future plugin
-runtime boundaries should be introduced only through explicit architecture work
-rather than inferred from this v0.1 crate list.
+Storage's string codecs may be reusable on WASM, but its public path/file APIs
+make the current crate host-facing. CLI is native-only. No WASM ABI/binding
+crate exists yet; #26 owns that boundary.
 
-The UI should consume semantic APIs rather than internal storage structures.
+One implementation risk crosses #20 and #24: wire-authored expression trees can
+currently reach recursive semantic validation and calculation without the
+parser/AI complexity gate. A shared structural limit must be applied before
+untrusted native or WASM evaluation.
 
-## Hardening rule
+## Proposed target summary
 
-When #20 finalizes the dependency DAG, it should use evidence from the expensive-to-reverse semantic/storage/formula decisions rather than creating crates for every future subsystem named in roadmap documents.
+ADR-0016 proposes retaining eight target crates, evolving current `workflow` in
+place into the host-independent `workspace-engine` role, making AI and CLI thin
+adapters over that shared behavior, and keeping storage as a sibling host
+boundary. It does not add schema, validation, diagnostics, common-types,
+plugin, collaboration, or host-abstraction crates now.
 
-Prefer a small stable kernel and explicit replaceable seams over a pre-emptive monolith or inner platform.
+The ADR also makes clear that the target name does not create a `Workspace` or
+`Project` semantic aggregate. ADR-0015 keeps v1 semantic references
+document-local unless separate evidence justifies broader authority.
+
+See ADR-0016 rather than copying its target matrix or migration steps here.
+
+## Status and follow-up
+
+- #20 remains open while ADR-0016 is Proposed.
+- #23/#24 may refine schema, validation, diagnostic, and formula sub-boundaries
+  without reversing the macro dependency direction.
+- #25 owns storage DTO/codec/migration/package/host subdivision.
+- #26 owns stateful runtime, native/WASM capability, and bridge details.
+- #10 owns external Semantic API stability and versioning.
+- A separate implementation issue should own the staged crate/dependency
+  migration after ADR promotion.
+
+## Related authority
+
+- [ADR-0016](../decisions/ADR-0016-milestone-02-rust-crate-layering.md)
+- [ADR-0015](../decisions/ADR-0015-stable-semantic-identity.md)
+- [Semantic core rationale](semantic-core-rationale.md)
+- [Knowledge authority](../governance/knowledge-authority.md)
+- GitHub issues #10, #20, #23, #24, #25, #26

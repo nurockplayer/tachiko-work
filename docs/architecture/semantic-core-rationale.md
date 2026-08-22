@@ -62,7 +62,10 @@ This produces a high-confidence invariant:
 
 The same reasoning applies beyond games. A requirement, budget category, policy rule, customer record, document section, or computed field can retain meaning while its view/layout changes.
 
-Exactly how stable identity is represented is not decided here. #21 owns that hardening problem.
+ADR-0015 now fixes the durable contract: independently addressable mutable
+objects use typed, opaque, stable identity distinct from mutable human keys.
+The generator and persisted encoding remain replaceable mechanisms owned by
+their creation and storage boundaries.
 
 ## 3. Git-native work needs semantic stability, not merely text files
 
@@ -83,7 +86,10 @@ The high-confidence requirement is therefore:
 
 > Identity must survive presentation and storage-layout changes, and equivalent semantic state needs deterministic canonical persistence behavior.
 
-The exact identifier algorithm, storage DTO, directory sharding, JSON/container format, and canonical encoding rules remain separate decisions in #21/#25/#37/#38.
+ADR-0015 fixes typed opaque identity but deliberately leaves the identifier
+generation algorithm replaceable. Storage DTO, directory sharding,
+JSON/container format, and canonical encoding rules remain separate decisions
+in #25/#37/#38.
 
 ## 4. AI-native work needs a meaning-level capability boundary
 
@@ -268,7 +274,10 @@ A failed assumption should produce an explicit new Decision Issue/ADR/reconcilia
 
 ## 12. Core & Format Hardening guardrails
 
-For #21, identity and typed references should survive rename, move, view changes, and storage-layout changes without prematurely committing to collaboration machinery or a universal graph model.
+ADR-0015 requires identity and typed references to survive rename, move, view
+changes, and storage-layout changes without committing to collaboration
+machinery or a universal graph model. Its implementation migration remains
+follow-up work.
 
 For #25/#37/#38, persistence/version/canonicalization should preserve the semantic boundary without assuming current v0.1 JSON details are eternal.
 
@@ -298,6 +307,7 @@ The distinction is architectural authority: interfaces project or manipulate sem
 - [ADR-0001: semantic platform, not an Office clone](../decisions/ADR-0001-semantic-platform-not-office-clone.md)
 - [ADR-0003: `.roproj` / `.ro` representation relationship](../decisions/ADR-0003-ro-and-roproj-representation.md)
 - [ADR-0007: AI semantic interaction](../decisions/ADR-0007-ai-semantic-interaction-model.md)
+- [ADR-0015: stable semantic identity](../decisions/ADR-0015-stable-semantic-identity.md)
 - [Design Principles](../vision/design-principles.md)
 - [Knowledge Authority](../governance/knowledge-authority.md)
 - [Canonical Reconciliation Register](../governance/canonical-reconciliation-register.md)

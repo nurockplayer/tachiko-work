@@ -27,7 +27,7 @@ For implementable format contracts, continue to [`../specs/README.md`](../specs/
 
 ### Rust core and runtime boundaries
 
-- [`rust-crate-architecture.md`](rust-crate-architecture.md) — current implemented crate graph; Provisional baseline pending durable layering work in #20.
+- [`rust-crate-architecture.md`](rust-crate-architecture.md) — current implemented crate graph and the Proposed Milestone 02 target recorded by ADR-0016; #20 remains the decision owner until promotion.
 - [`frontend-backend-boundary.md`](frontend-backend-boundary.md) — accepted frontend/semantic-backend direction with detailed runtime seam still evolvable.
 - [`wasm-strategy.md`](wasm-strategy.md) — WASM strategy hypothesis/Open Question; do not treat it as a selected product-runtime contract.
 - [`performance-model.md`](performance-model.md) — provisional performance guidance that should be refined by evidence.
@@ -52,7 +52,7 @@ Use these broad cues together with the reconciliation register:
 | Semantic-first platform direction | Accepted |
 | `.roproj` source / `.ro` portable-artifact relationship | Accepted direction |
 | Current `.ro` v0.1 encoding details | Provisional implemented baseline |
-| Rust crate graph | Provisional implemented baseline |
+| Rust crate graph | Provisional implemented baseline; Proposed Milestone 02 target in ADR-0016 |
 | AI as semantic client | Accepted direction |
 | Native/WASM runtime seam | Provisional / Open Question |
 | Distributed collaboration beyond semantic merge | Hypothesis / Open Question |
