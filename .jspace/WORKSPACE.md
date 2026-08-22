@@ -594,5 +594,116 @@ quoted named `--expression` option with explicit hyphen-value handling.
     capabilities.
   - Semantic merge docs now match implemented typed three-way `.ro` merge with
     typed conflict output, deterministic path ordering, and no partial writes.
-  - AI docs now match the implemented read/explain/suggest model and explicit
-    approval gate.
+- AI docs now match the implemented read/explain/suggest model and explicit
+  approval gate.
+
+## Active phase: ADR-0017 storage hardening
+
+### Goal
+
+Freeze the shipped `legacy-direct-ro/v1` wire contract behind storage-owned
+DTOs, strict version-first decoding, and canonical emission without inventing
+the ADR-0015 persisted identity model that remains owned by #70.
+
+### Reconciled authority and baseline
+
+- Worktree: `/Users/tachikoma/Developer/tachiko-work-adr0017` on
+  `codex/adr0017-storage-hardening`, created from `origin/main` `c852840`.
+- Merged PR #75 is present in the base history at `1e422f1`.
+- Authority: ADR-0015, ADR-0016, ADR-0017,
+  `docs/specs/ro-format-v1.md`,
+  `docs/specs/storage-versioning-and-migration.md`,
+  `docs/specs/canonical-json-profile.md`, and the latest #74
+  `agent-handoff:v1`; #40 owns conformance evidence and #70 owns the later
+  stable-identity migration.
+- Clean baseline: workspace build passed; 140 tests passed across 20 suites.
+
+### Locked implementation boundaries
+
+1. Decode bytes through UTF-8, JSON/duplicate validation, lexical version
+   probing, exact v1 dispatch, storage DTO validation/conversion, then semantic
+   validation.
+2. Own the complete historical document/schema/field/entity/value/expression
+   DTO graph in storage; semantic-core Serde layouts are not wire authority.
+3. Reject recursive unknown members, mismatched map/nested IDs, and
+   unresolvable v1 schema/field relationships instead of guessing.
+4. Emit v1 with its fixed record-member order, sorted legacy-ID maps,
+   historical number spelling, deterministic escaping, preserved Unicode,
+   two-space indentation, LF, and one final LF.
+5. Preserve existing valid v1 bytes, storage APIs, checked-in examples, CLI
+   behavior, and no-overwrite behavior where practical.
+6. Leave `direct-ro/v2`, surrogate-ID encoding, UUID migration namespace/input
+   vectors, and the two-phase ID rewrite to #70 after semantic-core has the
+   required stable-ID/key model.
+7. Do not decide #24, #41, #43, #23, or #26 and do not add a crate or new
+   dependency.
+
+### Verification plan
+
+- Test-first storage conformance for strict errors, every v1 discriminator and
+  operator, recursive closed-world decoding, coherence, Unicode, canonical
+  rewriting, insertion-order independence, byte-stable round trips, and both
+  checked-in `.ro` examples.
+- Focused storage tests during implementation, then formatting, docs
+  consistency, warnings-as-errors Clippy, workspace tests/docs/packages, all
+  four product smokes, Rust 1.85 checking, release-equivalent native checks,
+  and independent standards/spec review.
+
+### Outcome
+
+- Replaced semantic-core-derived persistence with a complete storage-owned
+  legacy-direct-ro/v1 DTO graph and explicit semantic conversions. A
+  crate-private DTO seam exposes every one of the 12 frozen typed-ID
+  occurrences for #70 before semantic conversion.
+- Added the ordered byte-reader pipeline for invalid UTF-8, invalid JSON,
+  decoded-name duplicate detection at every depth, missing/malformed/future
+  version handling, exact v1 dispatch, closed-world DTO validation, and
+  semantic validation.
+- Added explicit representation validation for legacy identifier grammar,
+  schema/entity map-key coherence, schema and field relationships, recursive
+  references, and historical finite-f64 values.
+- Canonical v1 writing now follows explicit record serializers and sorted
+  legacy-ID DTO maps. The two existing .ro examples remain byte-identical,
+  while a checked-in all-shapes golden freezes all four field types, five value
+  kinds, eight expression operators, member order, numeric spelling, escaping,
+  and Unicode preservation.
+- Conformance grew from 140 tests in 20 suites to 171 tests in 22 suites; the
+  storage crate now has 38 passing tests across its unit and integration
+  suites.
+- Formatting, documentation consistency, warning-denied workspace Clippy,
+  all-target workspace tests, warning-denied Rustdoc, exact Rust 1.85 all-target
+  checking, the audited portable-crate WASM check, and all four product smoke
+  journeys passed.
+- Two independent final reviews found no remaining code/API or ADR/spec
+  findings. They specifically rechecked error-source preservation, explicit
+  null handling, the complete typed-ID migration seam, exact canonical bytes,
+  and the absence of decisions for #24, #41, #43, #23, or #26.
+- The clean implementation commit is 21a5a52. The full release check passed all
+  repeated quality gates, dependency-notice drift validation, all eight source
+  packages, native archive determinism and execution, tamper rejection,
+  interruption cleanup, and concurrent no-clobber publication.
+- Remaining #70 work is deliberately not claimed: semantic-core still needs
+  the accepted stable identity/key model before deterministic legacy-to-stable
+  mapping, namespace/input vectors, two-phase rewrite of all 12 occurrences,
+  and any future representation version can be implemented.
+
+### PR #80 P1 remediation
+
+- Inline review identified that the crate-visible migration DTO seam still
+  called Serde directly, allowing duplicate schema, entity, and field map keys
+  to collapse before DTO validation.
+- The regression was proven red first: identical schema keys, entity keys,
+  schema-field keys, entity-field keys, and escaped-equivalent schema keys were
+  all accepted by the old seam.
+- Commit d202be7 makes the byte-oriented strict reader the sole
+  migration-facing DTO decoder. Public semantic decoding consumes the same
+  function, and no crate-visible raw string-to-DTO helper remains.
+- The new migration-seam regression rejects every duplicate case specifically
+  as DuplicateMember before map collapse. Existing error precedence, canonical
+  bytes, public behavior, and ADR scope are unchanged.
+- Fresh remediation validation passed 38 storage tests and 171 workspace tests,
+  formatting, docs consistency, warning-denied Clippy and Rustdoc, exact Rust
+  1.85, all eight source packages, all four smokes, and native release/archive
+  safety checks.
+- Independent standards and spec reviews of 0ab898d...d202be7 both reported no
+  findings.

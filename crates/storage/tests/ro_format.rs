@@ -102,8 +102,9 @@ fn unsupported_version_is_explicit() {
         error,
         FormatError::UnsupportedVersion {
             found,
-            supported: FORMAT_VERSION
+            supported
         } if found == FORMAT_VERSION + 1
+            && supported == FORMAT_VERSION
     ));
 }
 
@@ -114,7 +115,7 @@ fn unknown_document_fields_are_rejected() {
 
     let error = from_str(&with_unknown).unwrap_err();
 
-    assert!(matches!(error, FormatError::Json(_)));
+    assert!(matches!(error, FormatError::InvalidRepresentation { .. }));
 }
 
 #[test]
@@ -134,6 +135,34 @@ fn invalid_semantic_content_cannot_be_serialized() {
         FormatError::InvalidDocument { ref diagnostics }
             if diagnostics.iter().any(|diagnostic| diagnostic.path == "entities.sword.fields.name")
     ));
+}
+
+#[test]
+fn invalid_v1_relationship_cannot_be_serialized() {
+    let document = Document {
+        id: DocumentId::from("doc"),
+        title: "Document".to_owned(),
+        schemas: BTreeMap::from([(
+            SchemaId::from("source"),
+            Schema {
+                id: SchemaId::from("source"),
+                fields: BTreeMap::from([(
+                    FieldId::from("target"),
+                    FieldDefinition {
+                        field_type: FieldType::Reference {
+                            schema: SchemaId::from("missing"),
+                        },
+                        required: false,
+                    },
+                )]),
+            },
+        )]),
+        entities: BTreeMap::new(),
+    };
+
+    let error = to_canonical_string(&document).unwrap_err();
+
+    assert!(matches!(error, FormatError::InvalidRepresentation { .. }));
 }
 
 #[test]
