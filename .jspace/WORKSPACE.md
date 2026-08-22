@@ -760,3 +760,30 @@ the ADR-0015 persisted identity model that remains owned by #70.
   boundaries, Unicode preservation, and legacy read-without-rewrite.
 - Final workspace/release-equivalent gates, staged commits, independent code and
   standards reviews, push, and PR creation remain before handoff.
+
+### Final review and verification
+
+- The transition is staged as four reviewable commits: `94b603b` semantic
+  contracts, `42177ab` conformance coverage, `6fb4018` representation/specification,
+  and `169db41` focused review remediation.
+- The first independent review found four code/API gaps: combined merge renames
+  could exceed canonical formula projection bounds, storage could recursively
+  convert oversized bound ASTs, incoherent map/nested IDs could panic binding,
+  and CLI help mislabeled human keys as stable identifiers. Regression-first
+  fixes now enforce typed projection failures, iterative shared 256-node/64-depth
+  bounds before recursive conversion, checked address/index lookup, and accurate
+  human-address terminology.
+- The first standards review also required executing—not merely compiling—the
+  production semantic corpus under WASM and making the migration visible in the
+  changelog. CI and the release gate now run one shared production-API corpus on
+  native and `wasm32-unknown-unknown` and compare exact normalized values,
+  failures, dependency/cycle evidence, operation order, rename projection, and
+  no-silent-retarget results.
+- Focused re-review confirmed every original finding is closed, found no new
+  P0/P1/P2 code/API or standards/spec findings, and found no Accepted ADR
+  amendment pressure. The work does not redo #74 or begin #40 or #72.
+- Final `scripts/release-check.sh` passed on clean commit `169db41`: formatting,
+  warning-denied Clippy, 200 tests across 27 suites, executed native/WASM parity,
+  warning-denied Rustdoc, exact Rust 1.85 checking, audited notices, all eight
+  Cargo packages, all four product journeys, native release/archive execution,
+  tamper rejection, interrupted cleanup, and concurrent no-clobber publication.
