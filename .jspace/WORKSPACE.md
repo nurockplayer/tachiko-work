@@ -667,8 +667,8 @@ the ADR-0015 persisted identity model that remains owned by #70.
   while a checked-in all-shapes golden freezes all four field types, five value
   kinds, eight expression operators, member order, numeric spelling, escaping,
   and Unicode preservation.
-- Conformance grew from 140 tests in 20 suites to 170 tests in 22 suites; the
-  storage crate now has 37 passing tests across its unit and integration
+- Conformance grew from 140 tests in 20 suites to 171 tests in 22 suites; the
+  storage crate now has 38 passing tests across its unit and integration
   suites.
 - Formatting, documentation consistency, warning-denied workspace Clippy,
   all-target workspace tests, warning-denied Rustdoc, exact Rust 1.85 all-target
@@ -686,3 +686,24 @@ the ADR-0015 persisted identity model that remains owned by #70.
   the accepted stable identity/key model before deterministic legacy-to-stable
   mapping, namespace/input vectors, two-phase rewrite of all 12 occurrences,
   and any future representation version can be implemented.
+
+### PR #80 P1 remediation
+
+- Inline review identified that the crate-visible migration DTO seam still
+  called Serde directly, allowing duplicate schema, entity, and field map keys
+  to collapse before DTO validation.
+- The regression was proven red first: identical schema keys, entity keys,
+  schema-field keys, entity-field keys, and escaped-equivalent schema keys were
+  all accepted by the old seam.
+- Commit d202be7 makes the byte-oriented strict reader the sole
+  migration-facing DTO decoder. Public semantic decoding consumes the same
+  function, and no crate-visible raw string-to-DTO helper remains.
+- The new migration-seam regression rejects every duplicate case specifically
+  as DuplicateMember before map collapse. Existing error precedence, canonical
+  bytes, public behavior, and ADR scope are unchanged.
+- Fresh remediation validation passed 38 storage tests and 171 workspace tests,
+  formatting, docs consistency, warning-denied Clippy and Rustdoc, exact Rust
+  1.85, all eight source packages, all four smokes, and native release/archive
+  safety checks.
+- Independent standards and spec reviews of 0ab898d...d202be7 both reported no
+  findings.
