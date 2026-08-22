@@ -22,8 +22,9 @@ For project-wide authority rules, read [`../governance/knowledge-authority.md`](
 | [ADR-0010](ADR-0010-first-usable-product-workflow.md) | First usable product workflow | Accepted | Current CLI-first usable workflow |
 | [ADR-0011](ADR-0011-semantic-three-way-merge.md) | Semantic three-way merge | Accepted for implemented merge contract | Broader collaboration/conflict semantics remain separate Open Questions |
 | [ADR-0012](ADR-0012-release-distribution-contract.md) | Release distribution contract | Accepted | Tag-gated release/distribution contract |
-| [ADR-0013](ADR-0013-semantic-entity-lifecycle.md) | Validated semantic entity lifecycle | Accepted | Human-friendly CLI entity lifecycle operations added; persisted operations remain immutable and preview-first |
+| [ADR-0013](ADR-0013-semantic-entity-lifecycle.md) | Validated semantic entity lifecycle | Accepted for v0.1 lifecycle contract | Preview-first mutation and relationship safety remain authoritative; ADR-0015 supersedes rename-as-identity semantics |
 | [ADR-0014](ADR-0014-computational-formula-authoring.md) | Bounded computational formula authoring | Accepted | Formula authoring is bounded, deterministic, and separate from generic `set`/read-only AI paths |
+| [ADR-0015](ADR-0015-stable-semantic-identity.md) | Stable semantic identity and mutable human keys | Accepted | Stable typed surrogate identity is durable; UUIDv7 is the preferred provisional generator, not permanent semantic meaning |
 
 ## How to use ADRs
 
