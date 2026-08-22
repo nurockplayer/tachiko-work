@@ -1,14 +1,96 @@
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
 language: "en-US"
+early_access: false
+
 reviews:
-  profile: "assertive"
+  profile: "chill"
   request_changes_workflow: false
   high_level_summary: true
+  high_level_summary_in_walkthrough: true
+  poem: false
   review_status: true
+  review_details: false
+  in_progress_fortune: false
+
   auto_review:
     enabled: true
     drafts: false
     auto_incremental_review: true
     auto_pause_after_reviewed_commits: 10
+    ignore_title_keywords:
+      - "WIP"
+      - "[skip review]"
+    labels:
+      - "!do-not-review"
+    ignore_usernames:
+      - "dependabot[bot]"
+      - "github-actions[bot]"
+
+  tools:
+    github-checks:
+      enabled: true
+      timeout_ms: 90000
+
+  path_instructions:
+    - path: "**/*"
+      instructions: |
+        Review primarily for correctness, semantic or architectural contract violations,
+        compatibility risks, data-loss or migration hazards, security, and missing tests.
+
+        Respect the repository's authority hierarchy. The Product Constitution and
+        foundational principles constrain all lower-level changes. Accepted ADRs and
+        accepted governance policies outrank specifications, Issues, implementation
+        convenience, and exploratory documentation.
+
+        Do not propose scope-expanding redesign unless the patch conflicts with an
+        Accepted decision or creates an expensive-to-reverse public, semantic, API,
+        or persistence contract. Distinguish blocking correctness issues from optional
+        improvements. Avoid subjective style-only, naming-only, formatting-only, or
+        speculative comments unless they materially affect correctness, maintainability,
+        or a public contract.
+
+        When a matter is genuinely unresolved, flag it as an authority or reconciliation
+        question rather than inventing a new invariant during review.
+
+    - path: "crates/storage/**"
+      instructions: |
+        Treat persisted-format behavior as high risk. Focus on semantic-model versus
+        storage-DTO boundaries, format/version envelopes, unsupported-version behavior,
+        deterministic canonical serialization, numeric encoding, duplicate-key handling,
+        Unicode/string behavior, deterministic ordering, forward compatibility, and
+        explicit migration seams.
+
+        Do not freeze a new wire or persistence invariant merely because the current Rust
+        implementation makes it convenient. Require tests for deterministic round trips,
+        error behavior, version boundaries, and migration or cross-language-sensitive
+        behavior when applicable.
+
+    - path: "crates/semantic-core/**"
+      instructions: |
+        Protect semantic identity and meaning from storage layout, presentation
+        coordinates, and compatibility-layer accidents. Flag representation-specific
+        assumptions leaking into the semantic core.
+
+    - path: "docs/**"
+      instructions: |
+        Review documentation against docs/governance/knowledge-authority.md. Preserve
+        decision-state distinctions: Principle, Accepted, Provisional, Hypothesis,
+        Open Question, and Superseded. Flag silent contradictions with higher-authority
+        records and do not treat research or discussion prose as Accepted merely because
+        it is newer. Focus on authority, technical accuracy, broken references, and
+        contradictions rather than prose preferences.
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "CONTRIBUTING.md"
+      - "SECURITY.md"
+      - "docs/vision/product-constitution.md"
+      - "docs/vision/design-principles.md"
+      - "docs/governance/knowledge-authority.md"
+      - "docs/decisions/**/*.md"
+      - "docs/specs/**/*.md"
+
 chat:
   auto_reply: true
