@@ -26,6 +26,7 @@ For project-wide authority rules, read [`../governance/knowledge-authority.md`](
 | [ADR-0014](ADR-0014-computational-formula-authoring.md) | Bounded computational formula authoring | Accepted | Formula authoring is bounded, deterministic, and separate from generic `set`/read-only AI paths |
 | [ADR-0015](ADR-0015-stable-semantic-identity.md) | Stable semantic identity and mutable human keys | Accepted | Stable typed surrogate identity is durable; UUIDv7 is the preferred provisional generator, not permanent semantic meaning |
 | [ADR-0016](ADR-0016-milestone-02-rust-crate-layering.md) | Milestone 02 Rust crate layering | Accepted | Eight-crate Milestone 02 baseline; workflow evolves into the shared workspace engine while #23–#26 may explicitly amend narrower seams when evidence requires it |
+| [ADR-0017](ADR-0017-versioned-storage-and-canonical-representation.md) | Versioned storage DTOs, explicit migration, and canonical representation | Accepted | Storage owns immutable versioned DTOs and explicit migrations; unsupported/newer semantics fail closed; canonical bytes are version-defined without inventing #24 numeric semantics |
 
 ## How to use ADRs
 
