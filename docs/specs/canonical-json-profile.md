@@ -4,7 +4,9 @@ Decision state: Mixed — Accepted deterministic/semantic-preservation rules und
 
 Implementation state: Not yet implemented as an independent canonical writer; v0.1 currently uses `serde_json::to_string_pretty` plus one trailing LF.
 
-Owner: #38
+Authority: ADR-0017
+
+Implementation and conformance: #74, #40
 
 ## Purpose
 
@@ -211,7 +213,4 @@ Numeric edge vectors remain Deferred to #24.
 
 - ADR-0017
 - ADR-0015
-- #38, #40
-- RFC 8259
-- RFC 7493
-- RFC 8785
+- #40, #74

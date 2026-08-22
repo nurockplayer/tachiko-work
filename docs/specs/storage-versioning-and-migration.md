@@ -4,7 +4,11 @@ Decision state: Mixed — Accepted invariants under ADR-0017; Milestone 02 repre
 
 Implementation state: Not yet implemented; current direct `.ro` JSON v1 remains the shipped baseline.
 
-Owners: #25, #37
+Authority: ADR-0017
+
+Implementation parent: #74
+
+Conformance and identity integration: #40, #70
 
 ## Purpose
 
@@ -174,6 +178,8 @@ Each durable version owns complete storage DTO types for the wire schema it repr
 
 A historical DTO module must not embed semantic-core serialization types such as `Schema`, `Entity`, `Value`, `Expression`, or ID newtypes in a way that lets later semantic `serde` changes alter historical decoding.
 
+The complete legacy direct-`.ro/v1` structural schema, enum tags, required members, fixed-member order, and typed-ID inventory are normative in `ro-format-v1.md`.
+
 Conversion modules may depend on both storage DTOs and semantic types to perform explicit mapping.
 
 Conceptually:
@@ -205,14 +211,48 @@ The current semantic model is not a permanent migration IR. Semantic validation 
 
 The v0.1 name-like IDs are source addresses, not the new ADR-0015 durable identities.
 
-Migration must:
+Migration is a two-phase graph conversion. It must finish the complete mapping before it rewrites any typed relationship.
 
-1. decode the full legacy DTO without inheriting current semantic serialization;
-2. build a complete deterministic legacy-address → new-stable-ID mapping before rewriting references;
-3. preserve appropriate legacy names/keys as mutable human-facing addresses;
-4. rewrite entity references and bound/formula field references through the mapping;
-5. reject ambiguous, duplicate, mismatched, or unresolvable source addresses instead of guessing;
-6. validate the complete migrated candidate before any durable commit.
+### Phase 1: decode, validate, and map
+
+1. Decode the complete frozen legacy DTO without inheriting current semantic serialization.
+2. Validate legacy map-key/nested-ID coherence, schema membership, field membership, references, and formula references.
+3. Build deterministic mappings for:
+   - the document ID;
+   - every schema ID;
+   - every field ID in its schema scope;
+   - every entity ID.
+4. Reject ambiguous, duplicate, mismatched, or unresolvable legacy addresses before producing a candidate.
+
+### Phase 2: rewrite every typed-ID occurrence
+
+The migration must rewrite all typed-ID locations defined by the frozen v1 schema, including:
+
+- `DocumentV1.id`;
+- every `DocumentV1.schemas` member name;
+- every `SchemaV1.id`;
+- every `SchemaV1.fields` member name;
+- every `FieldTypeV1.schema` target for reference fields;
+- every `DocumentV1.entities` member name;
+- every `EntityV1.id`;
+- every `EntityV1.schema` relationship;
+- every `EntityV1.fields` member name through the field mapping of that entity's schema;
+- every entity target stored by `ValueV1` with `kind: reference`;
+- every `ExpressionV1` reference `args.entity`;
+- every `ExpressionV1` reference `args.field` in the target entity's schema scope.
+
+The authoritative inventory is also recorded in `ro-format-v1.md`.
+
+The migration must then:
+
+1. preserve appropriate legacy names/keys as mutable human-facing addresses;
+2. verify that no legacy source address remains in any typed-ID slot merely because its spelling is convenient;
+3. validate the complete migrated DTO candidate;
+4. convert it explicitly to the semantic model;
+5. run the semantic validation required by the operation;
+6. canonicalize the result before any durable commit.
+
+Building the mapping but omitting one typed-ID occurrence is a migration failure. It must never be repaired by matching a new object through a human name after conversion.
 
 ### Provisional deterministic ID mechanism
 
@@ -223,6 +263,7 @@ The final migration implementation/spec must publish:
 - the fixed root namespace UUID;
 - canonical input byte construction;
 - typed prefixes/separators;
+- field-ID scoping rules;
 - golden mapping vectors.
 
 Normal object creation remains governed by ADR-0015's separate creation seam and preferred Provisional UUIDv7 generator.
@@ -263,10 +304,19 @@ The exact temporary-file/rename/fsync/browser-transaction implementation remains
 - top-level and nested duplicate members;
 - escaped-equivalent duplicate member names;
 - recursive unknown field in a supported version;
-- legacy migration with stable deterministic ID mapping;
-- legacy reference/formula-reference rewrite;
+- complete legacy v1 DTO coverage for every field/value/expression discriminator;
+- legacy map-key/nested-ID mismatch failures;
+- deterministic document/schema/field/entity ID mappings;
+- `FieldTypeV1.schema` rewrite;
+- `EntityV1.schema` rewrite;
+- `EntityV1.fields` key rewrite;
+- entity-reference target rewrite;
+- formula-reference entity and field rewrite;
+- a nonempty migrated graph proving all typed relationships validate against the new IDs;
+- a negative fixture that intentionally omits or corrupts each mapping class;
 - ambiguous migration input failure;
 - migration determinism across repeated runs;
+- no partial durable output on migration failure;
 - composed migration vs optimized migration equivalence if optimized edges exist.
 
 Numeric edge vectors remain owned by #24.
@@ -276,4 +326,5 @@ Numeric edge vectors remain owned by #24.
 - ADR-0017
 - ADR-0015
 - ADR-0016
-- #25, #37, #40, #70
+- `ro-format-v1.md`
+- #40, #70, #74
