@@ -76,12 +76,16 @@ pub enum FormatError {
 ///
 /// # Errors
 ///
-/// Returns [`FormatError::InvalidDocument`] for semantic diagnostics or a
-/// representation error if conversion/canonical encoding fails.
+/// Returns [`FormatError::InvalidDocument`] for semantic diagnostics,
+/// [`FormatError::ResourceLimit`] when the canonical v2 representation exceeds
+/// its complete-input profile, or a representation error if conversion or
+/// canonical encoding fails.
 pub fn to_canonical_string(document: &Document) -> Result<String, FormatError> {
     check_document(document)?;
     let dto = DocumentV2::from_semantic(document).map_err(map_v2_encode_error)?;
-    direct_ro::v2::encode(&dto).map_err(map_v2_encode_error)
+    let encoded = direct_ro::v2::encode(&dto).map_err(map_v2_encode_error)?;
+    enforce_v2_resource_limits(&encoded)?;
+    Ok(encoded)
 }
 
 /// Parse and validate a supported, versioned `.ro` JSON document.
