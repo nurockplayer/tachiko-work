@@ -17,6 +17,7 @@ enum Commands {
     /// Create a semantic document with a useful game-balance starter
     Init {
         path: PathBuf,
+        /// Explicit stable document identity (advanced; normally UUIDv7-generated)
         #[arg(long)]
         id: Option<String>,
         #[arg(long)]
@@ -86,7 +87,7 @@ enum EntityCommands {
         #[arg(long)]
         output: PathBuf,
     },
-    /// Rename an entity and rewrite all typed references
+    /// Rename an entity key while preserving stable identity and references
     Rename {
         input: PathBuf,
         /// Existing entity identifier

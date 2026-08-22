@@ -1,31 +1,277 @@
-//! Deterministic formula evaluation for Tachiko Work.
+//! Deterministic formula parsing, binding, projection, and evaluation.
 
 mod parser;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use tachiko_semantic_core::{Document, Expression, FieldRef, Value};
+use tachiko_semantic_core::{
+    AddressIndex, AddressIndexError, Document, Expression, FieldAddress, FieldRef, FieldType,
+    Number, Value,
+};
 use thiserror::Error;
 
 pub use parser::{
-    ExpressionComplexityError, FormulaParseError, format_expression, parse_expression,
-    validate_expression_complexity,
+    ExpressionComplexityError, FormulaParseError, UnboundExpression, format_unbound_expression,
+    parse_expression, validate_unbound_expression_structure,
 };
+
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+pub enum FormulaBindError {
+    #[error(transparent)]
+    Complexity(#[from] ExpressionComplexityError),
+    #[error("formula address index is invalid: {source}")]
+    Index {
+        #[source]
+        source: AddressIndexError,
+    },
+    #[error("formula address '{address}' cannot be resolved: {source}")]
+    Address {
+        address: FieldAddress,
+        #[source]
+        source: AddressIndexError,
+    },
+    #[error("formula address '{address}' resolves to non-numeric field '{reference}'")]
+    NonNumericTarget {
+        address: FieldAddress,
+        reference: FieldRef,
+    },
+}
+
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+pub enum CanonicalAuthoringProjectionError {
+    #[error("bound formula references cannot be projected through current human addresses")]
+    UnresolvableBoundReferences { targets: BTreeSet<FieldRef> },
+    #[error(transparent)]
+    Complexity(#[from] ExpressionComplexityError),
+}
+
+/// Bind every parsed human address to stable IDs in one document snapshot.
+///
+/// # Errors
+///
+/// Returns a typed address or numeric-target error without producing a partial
+/// bound expression.
+pub fn bind_expression(
+    document: &Document,
+    expression: &UnboundExpression,
+) -> Result<Expression, FormulaBindError> {
+    validate_unbound_expression_structure(expression)?;
+    let index =
+        AddressIndex::build(document).map_err(|source| FormulaBindError::Index { source })?;
+    bind_node(document, &index, expression)
+}
+
+fn bind_node(
+    document: &Document,
+    index: &AddressIndex,
+    expression: &UnboundExpression,
+) -> Result<Expression, FormulaBindError> {
+    Ok(match expression {
+        UnboundExpression::Number(number) => Expression::Number(*number),
+        UnboundExpression::Reference(address) => {
+            let reference = index.resolve_field(document, address).map_err(|source| {
+                FormulaBindError::Address {
+                    address: address.clone(),
+                    source,
+                }
+            })?;
+            let entity = &document.entities[&reference.entity];
+            let definition = &document.schemas[&entity.schema].fields[&reference.field];
+            if definition.field_type != FieldType::Number {
+                return Err(FormulaBindError::NonNumericTarget {
+                    address: address.clone(),
+                    reference,
+                });
+            }
+            Expression::Reference(reference)
+        }
+        UnboundExpression::Add { left, right } => Expression::Add {
+            left: Box::new(bind_node(document, index, left)?),
+            right: Box::new(bind_node(document, index, right)?),
+        },
+        UnboundExpression::Subtract { left, right } => Expression::Subtract {
+            left: Box::new(bind_node(document, index, left)?),
+            right: Box::new(bind_node(document, index, right)?),
+        },
+        UnboundExpression::Multiply { left, right } => Expression::Multiply {
+            left: Box::new(bind_node(document, index, left)?),
+            right: Box::new(bind_node(document, index, right)?),
+        },
+        UnboundExpression::Divide { left, right } => Expression::Divide {
+            left: Box::new(bind_node(document, index, left)?),
+            right: Box::new(bind_node(document, index, right)?),
+        },
+        UnboundExpression::Minimum { left, right } => Expression::Minimum {
+            left: Box::new(bind_node(document, index, left)?),
+            right: Box::new(bind_node(document, index, right)?),
+        },
+        UnboundExpression::Maximum { left, right } => Expression::Maximum {
+            left: Box::new(bind_node(document, index, left)?),
+            right: Box::new(bind_node(document, index, right)?),
+        },
+    })
+}
+
+/// Project a bound formula through the document's current human keys.
+///
+/// Every reference is round-trip checked against the same snapshot. Failure
+/// returns all unresolved stable targets and no source text.
+///
+/// # Errors
+///
+/// Returns a typed stable-target set or structural/canonical-length failure.
+pub fn project_expression(
+    document: &Document,
+    expression: &Expression,
+) -> Result<String, CanonicalAuthoringProjectionError> {
+    validate_expression_structure(expression)?;
+    let dependencies = extract_dependencies(expression);
+    let Ok(index) = AddressIndex::build(document) else {
+        return Err(
+            CanonicalAuthoringProjectionError::UnresolvableBoundReferences {
+                targets: dependencies,
+            },
+        );
+    };
+    let mut addresses = BTreeMap::new();
+    let mut unresolved = BTreeSet::new();
+    for target in dependencies {
+        match index.field_address(document, &target) {
+            Ok(address) => {
+                addresses.insert(target, address);
+            }
+            Err(_) => {
+                unresolved.insert(target);
+            }
+        }
+    }
+    if !unresolved.is_empty() {
+        return Err(
+            CanonicalAuthoringProjectionError::UnresolvableBoundReferences {
+                targets: unresolved,
+            },
+        );
+    }
+
+    let projected = render_bound(expression, &addresses);
+    if projected.len() > parser::MAX_INPUT_BYTES {
+        return Err(ExpressionComplexityError::CanonicalLengthLimit.into());
+    }
+    Ok(projected)
+}
+
+fn render_bound(expression: &Expression, addresses: &BTreeMap<FieldRef, FieldAddress>) -> String {
+    match expression {
+        Expression::Number(number) => parser::format_number(*number),
+        Expression::Reference(reference) => {
+            let address = &addresses[reference];
+            format!("[{}.{}]", address.entity, address.field)
+        }
+        Expression::Add { left, right } => render_bound_binary(left, "+", right, addresses),
+        Expression::Subtract { left, right } => render_bound_binary(left, "-", right, addresses),
+        Expression::Multiply { left, right } => render_bound_binary(left, "*", right, addresses),
+        Expression::Divide { left, right } => render_bound_binary(left, "/", right, addresses),
+        Expression::Minimum { left, right } => format!(
+            "min({}, {})",
+            render_bound(left, addresses),
+            render_bound(right, addresses)
+        ),
+        Expression::Maximum { left, right } => format!(
+            "max({}, {})",
+            render_bound(left, addresses),
+            render_bound(right, addresses)
+        ),
+    }
+}
+
+fn render_bound_binary(
+    left: &Expression,
+    operator: &str,
+    right: &Expression,
+    addresses: &BTreeMap<FieldRef, FieldAddress>,
+) -> String {
+    format!(
+        "({} {operator} {})",
+        render_bound(left, addresses),
+        render_bound(right, addresses)
+    )
+}
+
+/// Validate node and depth limits for a directly supplied bound expression.
+/// Canonical byte length is checked by [`project_expression`] because it
+/// depends on the document's current human keys.
+///
+/// # Errors
+///
+/// Returns a typed node/depth limit error.
+pub fn validate_expression_structure(
+    expression: &Expression,
+) -> Result<(), ExpressionComplexityError> {
+    let mut nodes = 0_usize;
+    let mut stack = vec![(expression, 1_usize)];
+    while let Some((node, depth)) = stack.pop() {
+        if depth > 64 {
+            return Err(ExpressionComplexityError::DepthLimit);
+        }
+        nodes += 1;
+        if nodes > 256 {
+            return Err(ExpressionComplexityError::NodeLimit);
+        }
+        match node {
+            Expression::Add { left, right }
+            | Expression::Subtract { left, right }
+            | Expression::Multiply { left, right }
+            | Expression::Divide { left, right }
+            | Expression::Minimum { left, right }
+            | Expression::Maximum { left, right } => {
+                stack.push((right, depth + 1));
+                stack.push((left, depth + 1));
+            }
+            Expression::Number(_) | Expression::Reference(_) => {}
+        }
+    }
+    Ok(())
+}
+
+/// Extract the deterministic static dependency set from a bound expression.
+#[must_use]
+pub fn extract_dependencies(expression: &Expression) -> BTreeSet<FieldRef> {
+    let mut dependencies = BTreeSet::new();
+    let mut stack = vec![expression];
+    while let Some(node) = stack.pop() {
+        match node {
+            Expression::Reference(reference) => {
+                dependencies.insert(reference.clone());
+            }
+            Expression::Add { left, right }
+            | Expression::Subtract { left, right }
+            | Expression::Multiply { left, right }
+            | Expression::Divide { left, right }
+            | Expression::Minimum { left, right }
+            | Expression::Maximum { left, right } => {
+                stack.push(right);
+                stack.push(left);
+            }
+            Expression::Number(_) => {}
+        }
+    }
+    dependencies
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Calculation {
-    values: BTreeMap<FieldRef, f64>,
+    values: BTreeMap<FieldRef, Number>,
     dependencies: BTreeMap<FieldRef, BTreeSet<FieldRef>>,
 }
 
 impl Calculation {
     #[must_use]
-    pub fn value(&self, field: &FieldRef) -> Option<f64> {
+    pub fn value(&self, field: &FieldRef) -> Option<Number> {
         self.values.get(field).copied()
     }
 
     #[must_use]
-    pub fn values(&self) -> &BTreeMap<FieldRef, f64> {
+    pub fn values(&self) -> &BTreeMap<FieldRef, Number> {
         &self.values
     }
 
@@ -76,24 +322,38 @@ pub enum CalculationError {
     Cycle { path: Vec<FieldRef> },
     #[error("calculation for '{field}' produced a non-finite result")]
     NonFiniteResult { field: FieldRef },
+    #[error("formula '{formula}' violates the bound expression contract: {message}")]
+    InvalidExpression { formula: FieldRef, message: String },
 }
 
-/// Calculate every numeric literal and formula in deterministic field order.
+/// Calculate every numeric literal and formula in deterministic stable-ID order.
 ///
 /// # Errors
 ///
-/// Returns a [`CalculationError`] for missing or non-numeric references,
-/// dependency cycles, division by zero, or non-finite results.
+/// Returns a [`CalculationError`] for invalid bound expressions, missing or
+/// non-numeric references, cycles, division by zero, or non-finite results.
 pub fn calculate(document: &Document) -> Result<Calculation, CalculationError> {
-    let mut evaluator = Evaluator::new(document);
+    let mut dependencies = BTreeMap::new();
+    for (entity_id, entity) in &document.entities {
+        for (field_id, value) in &entity.fields {
+            if let Value::Formula(expression) = value {
+                let formula = FieldRef::new(entity_id.clone(), field_id.clone());
+                validate_expression_structure(expression).map_err(|error| {
+                    CalculationError::InvalidExpression {
+                        formula: formula.clone(),
+                        message: error.to_string(),
+                    }
+                })?;
+                dependencies.insert(formula, extract_dependencies(expression));
+            }
+        }
+    }
 
+    let mut evaluator = Evaluator::new(document, dependencies);
     for (entity_id, entity) in &document.entities {
         for (field_id, value) in &entity.fields {
             if matches!(value, Value::Number(_) | Value::Formula(_)) {
-                evaluator.value_for(&FieldRef {
-                    entity: entity_id.clone(),
-                    field: field_id.clone(),
-                })?;
+                evaluator.value_for(&FieldRef::new(entity_id.clone(), field_id.clone()))?;
             }
         }
     }
@@ -112,28 +372,29 @@ enum VisitState {
 
 struct Evaluator<'document> {
     document: &'document Document,
-    values: BTreeMap<FieldRef, f64>,
+    values: BTreeMap<FieldRef, Number>,
     dependencies: BTreeMap<FieldRef, BTreeSet<FieldRef>>,
     states: BTreeMap<FieldRef, VisitState>,
     stack: Vec<FieldRef>,
 }
 
 impl<'document> Evaluator<'document> {
-    fn new(document: &'document Document) -> Self {
+    fn new(
+        document: &'document Document,
+        dependencies: BTreeMap<FieldRef, BTreeSet<FieldRef>>,
+    ) -> Self {
         Self {
             document,
             values: BTreeMap::new(),
-            dependencies: BTreeMap::new(),
+            dependencies,
             states: BTreeMap::new(),
             stack: Vec::new(),
         }
     }
 
-    fn value_for(&mut self, field: &FieldRef) -> Result<f64, CalculationError> {
+    fn value_for(&mut self, field: &FieldRef) -> Result<Number, CalculationError> {
         match self.states.get(field) {
-            Some(VisitState::Complete) => {
-                return Ok(self.values[field]);
-            }
+            Some(VisitState::Complete) => return Ok(self.values[field]),
             Some(VisitState::Visiting) => {
                 let cycle_start = self
                     .stack
@@ -152,12 +413,8 @@ impl<'document> Evaluator<'document> {
         self.stack.push(field.clone());
 
         let result = match value {
-            Value::Number(number) => Self::ensure_finite(field, number)?,
-            Value::Formula(expression) => {
-                self.dependencies.entry(field.clone()).or_default();
-                let result = self.evaluate_expression(field, &expression)?;
-                Self::ensure_finite(field, result)?
-            }
+            Value::Number(number) => number,
+            Value::Formula(expression) => self.evaluate_expression(field, &expression)?,
             Value::Text(_) | Value::Boolean(_) | Value::Reference(_) => {
                 return Err(CalculationError::NonNumericReference {
                     reference: field.clone(),
@@ -185,61 +442,51 @@ impl<'document> Evaluator<'document> {
         &mut self,
         formula: &FieldRef,
         expression: &Expression,
-    ) -> Result<f64, CalculationError> {
+    ) -> Result<Number, CalculationError> {
         match expression {
-            Expression::Number(number) => Self::ensure_finite(formula, *number),
-            Expression::Reference(reference) => {
-                self.dependencies
-                    .entry(formula.clone())
-                    .or_default()
-                    .insert(reference.clone());
-                self.value_for(reference)
-            }
+            Expression::Number(number) => Ok(*number),
+            Expression::Reference(reference) => self.value_for(reference),
             Expression::Add { left, right } => {
-                let left = self.evaluate_expression(formula, left)?;
-                let right = self.evaluate_expression(formula, right)?;
-                Self::ensure_finite(formula, left + right)
+                let left = self.evaluate_expression(formula, left)?.get();
+                let right = self.evaluate_expression(formula, right)?.get();
+                Self::number_result(formula, left + right)
             }
             Expression::Subtract { left, right } => {
-                let left = self.evaluate_expression(formula, left)?;
-                let right = self.evaluate_expression(formula, right)?;
-                Self::ensure_finite(formula, left - right)
+                let left = self.evaluate_expression(formula, left)?.get();
+                let right = self.evaluate_expression(formula, right)?.get();
+                Self::number_result(formula, left - right)
             }
             Expression::Multiply { left, right } => {
-                let left = self.evaluate_expression(formula, left)?;
-                let right = self.evaluate_expression(formula, right)?;
-                Self::ensure_finite(formula, left * right)
+                let left = self.evaluate_expression(formula, left)?.get();
+                let right = self.evaluate_expression(formula, right)?.get();
+                Self::number_result(formula, left * right)
             }
             Expression::Divide { left, right } => {
-                let left = self.evaluate_expression(formula, left)?;
-                let right = self.evaluate_expression(formula, right)?;
+                let left = self.evaluate_expression(formula, left)?.get();
+                let right = self.evaluate_expression(formula, right)?.get();
                 if right == 0.0 {
                     return Err(CalculationError::DivisionByZero {
                         formula: formula.clone(),
                     });
                 }
-                Self::ensure_finite(formula, left / right)
+                Self::number_result(formula, left / right)
             }
             Expression::Minimum { left, right } => {
                 let left = self.evaluate_expression(formula, left)?;
                 let right = self.evaluate_expression(formula, right)?;
-                Self::ensure_finite(formula, left.min(right))
+                Ok(if left <= right { left } else { right })
             }
             Expression::Maximum { left, right } => {
                 let left = self.evaluate_expression(formula, left)?;
                 let right = self.evaluate_expression(formula, right)?;
-                Self::ensure_finite(formula, left.max(right))
+                Ok(if left >= right { left } else { right })
             }
         }
     }
 
-    fn ensure_finite(field: &FieldRef, value: f64) -> Result<f64, CalculationError> {
-        if value.is_finite() {
-            Ok(value)
-        } else {
-            Err(CalculationError::NonFiniteResult {
-                field: field.clone(),
-            })
-        }
+    fn number_result(field: &FieldRef, value: f64) -> Result<Number, CalculationError> {
+        Number::new(value).map_err(|_| CalculationError::NonFiniteResult {
+            field: field.clone(),
+        })
     }
 }

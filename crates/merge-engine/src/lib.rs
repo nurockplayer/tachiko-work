@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use tachiko_formula_engine::{CalculationError, calculate};
 use tachiko_semantic_core::{
-    Diagnostic, Document, DocumentId, Entity, EntityId, FieldDefinition, FieldId, Schema, SchemaId,
-    Value, validate_document,
+    Diagnostic, Document, DocumentId, Entity, EntityId, EntityKey, FieldDefinition, FieldId,
+    FieldKey, FieldType, Schema, SchemaId, SchemaKey, Value, validate_document,
 };
 use thiserror::Error;
 
@@ -32,6 +32,12 @@ pub enum MergeValue {
     Entity(Entity),
     EntityId(EntityId),
     SchemaId(SchemaId),
+    FieldId(FieldId),
+    SchemaKey(SchemaKey),
+    EntityKey(EntityKey),
+    FieldKey(FieldKey),
+    FieldType(FieldType),
+    Required(bool),
     FieldValue(Value),
 }
 
@@ -203,9 +209,18 @@ fn merge_schema(
         conflicts,
     );
     let fields = merge_schema_fields(path, &base.fields, &ours.fields, &theirs.fields, conflicts);
+    let key = merge_scalar(
+        &format!("{path}.key"),
+        &base.key,
+        &ours.key,
+        &theirs.key,
+        |key| MergeValue::SchemaKey(key.clone()),
+        conflicts,
+    );
 
     Some(Schema {
         id: id?,
+        key: key?,
         fields: fields?,
     })
 }
@@ -228,23 +243,84 @@ fn merge_schema_fields(
 
     for field_id in field_ids {
         let path = format!("{schema_path}.fields.{field_id}");
-        match merge_optional(
-            &path,
+        match (
             base.get(&field_id),
             ours.get(&field_id),
             theirs.get(&field_id),
-            |field| MergeValue::FieldDefinition(field.clone()),
-            conflicts,
         ) {
-            OptionalChoice::Chosen(Some(field)) => {
-                fields.insert(field_id, field);
+            (Some(base), Some(ours), Some(theirs)) => {
+                if let Some(field) = merge_field_definition(&path, base, ours, theirs, conflicts) {
+                    fields.insert(field_id, field);
+                } else {
+                    complete = false;
+                }
             }
-            OptionalChoice::Chosen(None) => {}
-            OptionalChoice::Conflict => complete = false,
+            (base, ours, theirs) => match merge_optional(
+                &path,
+                base,
+                ours,
+                theirs,
+                |field| MergeValue::FieldDefinition(field.clone()),
+                conflicts,
+            ) {
+                OptionalChoice::Chosen(Some(field)) => {
+                    fields.insert(field_id, field);
+                }
+                OptionalChoice::Chosen(None) => {}
+                OptionalChoice::Conflict => complete = false,
+            },
         }
     }
 
     complete.then_some(fields)
+}
+
+fn merge_field_definition(
+    path: &str,
+    base: &FieldDefinition,
+    ours: &FieldDefinition,
+    theirs: &FieldDefinition,
+    conflicts: &mut Vec<MergeConflict>,
+) -> Option<FieldDefinition> {
+    let id = merge_scalar(
+        &format!("{path}.id"),
+        &base.id,
+        &ours.id,
+        &theirs.id,
+        |id| MergeValue::FieldId(id.clone()),
+        conflicts,
+    );
+    let key = merge_scalar(
+        &format!("{path}.key"),
+        &base.key,
+        &ours.key,
+        &theirs.key,
+        |key| MergeValue::FieldKey(key.clone()),
+        conflicts,
+    );
+    let field_type = merge_scalar(
+        &format!("{path}.field_type"),
+        &base.field_type,
+        &ours.field_type,
+        &theirs.field_type,
+        |field_type| MergeValue::FieldType(field_type.clone()),
+        conflicts,
+    );
+    let required = merge_scalar(
+        &format!("{path}.required"),
+        &base.required,
+        &ours.required,
+        &theirs.required,
+        |required| MergeValue::Required(*required),
+        conflicts,
+    );
+
+    Some(FieldDefinition {
+        id: id?,
+        key: key?,
+        field_type: field_type?,
+        required: required?,
+    })
 }
 
 fn merge_entities(
@@ -319,10 +395,19 @@ fn merge_entity(
         |schema| MergeValue::SchemaId(schema.clone()),
         conflicts,
     );
+    let key = merge_scalar(
+        &format!("{path}.key"),
+        &base.key,
+        &ours.key,
+        &theirs.key,
+        |key| MergeValue::EntityKey(key.clone()),
+        conflicts,
+    );
     let fields = merge_entity_fields(path, &base.fields, &ours.fields, &theirs.fields, conflicts);
 
     Some(Entity {
         id: id?,
+        key: key?,
         schema: schema?,
         fields: fields?,
     })

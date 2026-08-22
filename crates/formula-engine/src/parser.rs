@@ -1,9 +1,22 @@
-use tachiko_semantic_core::{Expression, FieldRef, is_valid_identifier};
+use tachiko_semantic_core::{FieldAddress, Number, is_valid_identifier};
 use thiserror::Error;
 
-const MAX_INPUT_BYTES: usize = 4_096;
+pub(crate) const MAX_INPUT_BYTES: usize = 4_096;
 const MAX_AST_NODES: usize = 256;
 const MAX_NESTING: usize = 64;
+
+/// Parsed formula structure whose references are still human addresses.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum UnboundExpression {
+    Number(Number),
+    Reference(FieldAddress),
+    Add { left: Box<Self>, right: Box<Self> },
+    Subtract { left: Box<Self>, right: Box<Self> },
+    Multiply { left: Box<Self>, right: Box<Self> },
+    Divide { left: Box<Self>, right: Box<Self> },
+    Minimum { left: Box<Self>, right: Box<Self> },
+    Maximum { left: Box<Self>, right: Box<Self> },
+}
 
 /// A deterministic formula-language failure at a UTF-8 byte position.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
@@ -38,14 +51,14 @@ impl FormulaParseError {
     }
 }
 
-/// Parse the bounded Tachiko formula language into its semantic expression AST.
+/// Parse the bounded Tachiko formula language into an unbound address AST.
 ///
 /// # Errors
 ///
-/// Returns [`FormulaParseError`] for invalid syntax, identifiers, non-finite
-/// numeric literals, trailing content, or a breached input, node, AST-depth,
+/// Returns [`FormulaParseError`] for invalid syntax, keys, non-finite numeric
+/// literals, trailing content, or a breached input, node, AST-depth,
 /// canonical-byte, or syntactic-nesting limit.
-pub fn parse_expression(input: &str) -> Result<Expression, FormulaParseError> {
+pub fn parse_expression(input: &str) -> Result<UnboundExpression, FormulaParseError> {
     if input.len() > MAX_INPUT_BYTES {
         return Err(FormulaParseError::new(
             MAX_INPUT_BYTES,
@@ -53,24 +66,18 @@ pub fn parse_expression(input: &str) -> Result<Expression, FormulaParseError> {
         ));
     }
     let expression = Parser::new(input).parse()?;
-    validate_expression_complexity(&expression)
+    validate_unbound_expression_structure(&expression)
         .map_err(|error| FormulaParseError::new(input.len(), error.to_string()))?;
     Ok(expression)
 }
 
-/// Validate resource limits on a post-desugaring expression AST.
-///
-/// Traversal is iterative, so deeply nested untrusted AST values are rejected
-/// without recursively walking them. Canonical byte length is computed from
-/// each node's formatting contribution without first allocating the rendered
-/// expression.
+/// Validate the node, depth, and canonical-byte bounds of an unbound formula.
 ///
 /// # Errors
 ///
-/// Returns a typed error when the expression exceeds 256 nodes, a depth of 64,
-/// or 4,096 bytes in canonical form.
-pub fn validate_expression_complexity(
-    expression: &Expression,
+/// Returns the first breached structural limit.
+pub fn validate_unbound_expression_structure(
+    expression: &UnboundExpression,
 ) -> Result<(), ExpressionComplexityError> {
     let mut nodes = 0_usize;
     let mut stack = vec![(expression, 1_usize)];
@@ -85,59 +92,52 @@ pub fn validate_expression_complexity(
         push_children(&mut stack, node, depth + 1);
     }
 
-    let mut canonical_bytes = 0_usize;
-    let mut stack = vec![expression];
-    while let Some(node) = stack.pop() {
-        canonical_bytes = canonical_bytes
-            .checked_add(canonical_byte_contribution(node))
-            .ok_or(ExpressionComplexityError::CanonicalLengthLimit)?;
-        if canonical_bytes > MAX_INPUT_BYTES {
-            return Err(ExpressionComplexityError::CanonicalLengthLimit);
-        }
-        push_child_nodes(&mut stack, node);
+    if format_unbound_expression(expression).len() > MAX_INPUT_BYTES {
+        return Err(ExpressionComplexityError::CanonicalLengthLimit);
     }
     Ok(())
 }
 
-/// Render an expression in deterministic, copy/paste-safe canonical syntax.
+/// Render an unbound expression in deterministic copy/paste-safe syntax.
 #[must_use]
-pub fn format_expression(expression: &Expression) -> String {
+pub fn format_unbound_expression(expression: &UnboundExpression) -> String {
     match expression {
-        Expression::Number(number) => format_number(*number),
-        Expression::Reference(reference) => {
+        UnboundExpression::Number(number) => format_number(*number),
+        UnboundExpression::Reference(reference) => {
             format!("[{}.{}]", reference.entity, reference.field)
         }
-        Expression::Add { left, right } => format_binary(left, "+", right),
-        Expression::Subtract { left, right } => format_binary(left, "-", right),
-        Expression::Multiply { left, right } => format_binary(left, "*", right),
-        Expression::Divide { left, right } => format_binary(left, "/", right),
-        Expression::Minimum { left, right } => format!(
+        UnboundExpression::Add { left, right } => format_binary(left, "+", right),
+        UnboundExpression::Subtract { left, right } => format_binary(left, "-", right),
+        UnboundExpression::Multiply { left, right } => format_binary(left, "*", right),
+        UnboundExpression::Divide { left, right } => format_binary(left, "/", right),
+        UnboundExpression::Minimum { left, right } => format!(
             "min({}, {})",
-            format_expression(left),
-            format_expression(right)
+            format_unbound_expression(left),
+            format_unbound_expression(right)
         ),
-        Expression::Maximum { left, right } => format!(
+        UnboundExpression::Maximum { left, right } => format!(
             "max({}, {})",
-            format_expression(left),
-            format_expression(right)
+            format_unbound_expression(left),
+            format_unbound_expression(right)
         ),
     }
 }
 
-fn format_binary(left: &Expression, operator: &str, right: &Expression) -> String {
+fn format_binary(left: &UnboundExpression, operator: &str, right: &UnboundExpression) -> String {
     format!(
         "({} {operator} {})",
-        format_expression(left),
-        format_expression(right)
+        format_unbound_expression(left),
+        format_unbound_expression(right)
     )
 }
 
-fn format_number(number: f64) -> String {
-    let display = number.to_string();
-    let scientific = format!("{number:e}");
-    let scientific_round_trips = scientific
-        .parse::<f64>()
-        .is_ok_and(|parsed| parsed.to_bits() == number.to_bits());
+pub(crate) fn format_number(number: Number) -> String {
+    let value = number.get();
+    let display = value.to_string();
+    let scientific = format!("{value:e}");
+    let scientific_round_trips = scientific.parse::<f64>().is_ok_and(|parsed| {
+        Number::new(parsed).is_ok_and(|parsed| parsed.to_bits() == number.to_bits())
+    });
 
     if scientific.len() < display.len() && scientific_round_trips {
         scientific
@@ -146,23 +146,9 @@ fn format_number(number: f64) -> String {
     }
 }
 
-fn canonical_byte_contribution(expression: &Expression) -> usize {
-    match expression {
-        Expression::Number(number) => format_number(*number).len(),
-        Expression::Reference(reference) => {
-            reference.entity.as_str().len() + reference.field.as_str().len() + 3
-        }
-        Expression::Add { .. }
-        | Expression::Subtract { .. }
-        | Expression::Multiply { .. }
-        | Expression::Divide { .. } => 5,
-        Expression::Minimum { .. } | Expression::Maximum { .. } => 7,
-    }
-}
-
 fn push_children<'expression>(
-    stack: &mut Vec<(&'expression Expression, usize)>,
-    expression: &'expression Expression,
+    stack: &mut Vec<(&'expression UnboundExpression, usize)>,
+    expression: &'expression UnboundExpression,
     child_depth: usize,
 ) {
     if let Some((left, right)) = binary_children(expression) {
@@ -171,25 +157,17 @@ fn push_children<'expression>(
     }
 }
 
-fn push_child_nodes<'expression>(
-    stack: &mut Vec<&'expression Expression>,
-    expression: &'expression Expression,
-) {
-    if let Some((left, right)) = binary_children(expression) {
-        stack.push(right);
-        stack.push(left);
-    }
-}
-
-fn binary_children(expression: &Expression) -> Option<(&Expression, &Expression)> {
+fn binary_children(
+    expression: &UnboundExpression,
+) -> Option<(&UnboundExpression, &UnboundExpression)> {
     match expression {
-        Expression::Add { left, right }
-        | Expression::Subtract { left, right }
-        | Expression::Multiply { left, right }
-        | Expression::Divide { left, right }
-        | Expression::Minimum { left, right }
-        | Expression::Maximum { left, right } => Some((left, right)),
-        Expression::Number(_) | Expression::Reference(_) => None,
+        UnboundExpression::Add { left, right }
+        | UnboundExpression::Subtract { left, right }
+        | UnboundExpression::Multiply { left, right }
+        | UnboundExpression::Divide { left, right }
+        | UnboundExpression::Minimum { left, right }
+        | UnboundExpression::Maximum { left, right } => Some((left, right)),
+        UnboundExpression::Number(_) | UnboundExpression::Reference(_) => None,
     }
 }
 
@@ -212,7 +190,7 @@ impl<'input> Parser<'input> {
         }
     }
 
-    fn parse(mut self) -> Result<Expression, FormulaParseError> {
+    fn parse(mut self) -> Result<UnboundExpression, FormulaParseError> {
         self.skip_whitespace();
         if self.is_finished() {
             return Err(self.error("expected expression"));
@@ -225,7 +203,7 @@ impl<'input> Parser<'input> {
         Ok(expression)
     }
 
-    fn parse_additive(&mut self) -> Result<Expression, FormulaParseError> {
+    fn parse_additive(&mut self) -> Result<UnboundExpression, FormulaParseError> {
         let mut expression = self.parse_multiplicative()?;
         loop {
             self.skip_whitespace();
@@ -237,12 +215,12 @@ impl<'input> Parser<'input> {
             self.record_node(operator_position)?;
             let right = self.parse_multiplicative()?;
             expression = if operator == b'+' {
-                Expression::Add {
+                UnboundExpression::Add {
                     left: Box::new(expression),
                     right: Box::new(right),
                 }
             } else {
-                Expression::Subtract {
+                UnboundExpression::Subtract {
                     left: Box::new(expression),
                     right: Box::new(right),
                 }
@@ -250,7 +228,7 @@ impl<'input> Parser<'input> {
         }
     }
 
-    fn parse_multiplicative(&mut self) -> Result<Expression, FormulaParseError> {
+    fn parse_multiplicative(&mut self) -> Result<UnboundExpression, FormulaParseError> {
         let mut expression = self.parse_unary()?;
         loop {
             self.skip_whitespace();
@@ -262,12 +240,12 @@ impl<'input> Parser<'input> {
             self.record_node(operator_position)?;
             let right = self.parse_unary()?;
             expression = if operator == b'*' {
-                Expression::Multiply {
+                UnboundExpression::Multiply {
                     left: Box::new(expression),
                     right: Box::new(right),
                 }
             } else {
-                Expression::Divide {
+                UnboundExpression::Divide {
                     left: Box::new(expression),
                     right: Box::new(right),
                 }
@@ -275,7 +253,7 @@ impl<'input> Parser<'input> {
         }
     }
 
-    fn parse_unary(&mut self) -> Result<Expression, FormulaParseError> {
+    fn parse_unary(&mut self) -> Result<UnboundExpression, FormulaParseError> {
         self.skip_whitespace();
         let Some(operator @ (b'+' | b'-')) = self.peek() else {
             return self.parse_primary();
@@ -286,19 +264,21 @@ impl<'input> Parser<'input> {
         if operator == b'+' {
             return Ok(operand);
         }
-        if let Expression::Number(number) = operand {
-            return Ok(Expression::Number(-number));
+        if let UnboundExpression::Number(number) = operand {
+            return Ok(UnboundExpression::Number(
+                Number::new(-number.get()).expect("negating a finite number stays finite"),
+            ));
         }
 
         self.record_node(operator_position)?;
         self.record_node(operator_position)?;
-        Ok(Expression::Subtract {
-            left: Box::new(Expression::Number(0.0)),
+        Ok(UnboundExpression::Subtract {
+            left: Box::new(UnboundExpression::Number(Number::default())),
             right: Box::new(operand),
         })
     }
 
-    fn parse_primary(&mut self) -> Result<Expression, FormulaParseError> {
+    fn parse_primary(&mut self) -> Result<UnboundExpression, FormulaParseError> {
         self.skip_whitespace();
         let Some(next) = self.peek() else {
             return Err(self.error("expected expression"));
@@ -312,7 +292,7 @@ impl<'input> Parser<'input> {
         }
     }
 
-    fn parse_number(&mut self) -> Result<Expression, FormulaParseError> {
+    fn parse_number(&mut self) -> Result<UnboundExpression, FormulaParseError> {
         let start = self.position;
         let mut has_digits = self.consume_digits();
         if self.peek() == Some(b'.') {
@@ -344,17 +324,14 @@ impl<'input> Parser<'input> {
         let number = literal
             .parse::<f64>()
             .map_err(|_| FormulaParseError::new(start, "invalid numeric literal"))?;
-        if !number.is_finite() {
-            return Err(FormulaParseError::new(
-                start,
-                "numeric literal must be finite",
-            ));
-        }
+        let number = Number::new(number).map_err(|_| {
+            FormulaParseError::new(start, "numeric literal must convert to a finite Number")
+        })?;
         self.record_node(start)?;
-        Ok(Expression::Number(number))
+        Ok(UnboundExpression::Number(number))
     }
 
-    fn parse_reference(&mut self) -> Result<Expression, FormulaParseError> {
+    fn parse_reference(&mut self) -> Result<UnboundExpression, FormulaParseError> {
         let start = self.position;
         self.position += 1;
         let inner_start = self.position;
@@ -381,19 +358,21 @@ impl<'input> Parser<'input> {
         let field = &inner[dot + 1..];
         if !is_valid_identifier(entity) {
             self.position = invalid_identifier_position(entity, inner_start);
-            return Err(self.error("invalid reference entity identifier"));
+            return Err(self.error("invalid reference entity key"));
         }
         if !is_valid_identifier(field) {
             self.position = invalid_identifier_position(field, inner_start + dot + 1);
-            return Err(self.error("invalid reference field identifier"));
+            return Err(self.error("invalid reference field key"));
         }
 
         self.position = close + 1;
         self.record_node(start)?;
-        Ok(Expression::Reference(FieldRef::new(entity, field)))
+        Ok(UnboundExpression::Reference(FieldAddress::new(
+            entity, field,
+        )))
     }
 
-    fn parse_parenthesized(&mut self) -> Result<Expression, FormulaParseError> {
+    fn parse_parenthesized(&mut self) -> Result<UnboundExpression, FormulaParseError> {
         let open = self.position;
         self.position += 1;
         self.with_nesting(open, |parser| {
@@ -403,7 +382,7 @@ impl<'input> Parser<'input> {
         })
     }
 
-    fn parse_function(&mut self) -> Result<Expression, FormulaParseError> {
+    fn parse_function(&mut self) -> Result<UnboundExpression, FormulaParseError> {
         let start = self.position;
         self.position += 1;
         while self
@@ -434,12 +413,12 @@ impl<'input> Parser<'input> {
             let right = parser.parse_additive()?;
             parser.expect(b')', "expected ')' after function arguments")?;
             if is_minimum {
-                Ok(Expression::Minimum {
+                Ok(UnboundExpression::Minimum {
                     left: Box::new(left),
                     right: Box::new(right),
                 })
             } else {
-                Ok(Expression::Maximum {
+                Ok(UnboundExpression::Maximum {
                     left: Box::new(left),
                     right: Box::new(right),
                 })

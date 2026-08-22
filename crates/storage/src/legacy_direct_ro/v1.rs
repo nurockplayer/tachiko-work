@@ -5,10 +5,6 @@ use std::collections::BTreeMap;
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer, de::Error as _, ser::SerializeStruct,
 };
-use tachiko_semantic_core::{
-    Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldRef,
-    FieldType, Schema, SchemaId, Value,
-};
 
 const FORMAT_VERSION: u32 = 1;
 
@@ -17,13 +13,6 @@ const FORMAT_VERSION: u32 = 1;
 pub(crate) enum CodecError {
     Json(serde_json::Error),
     InvalidRepresentation(String),
-}
-
-/// Encode a semantic document through the frozen storage-owned direct `.ro`
-/// v1 DTO.
-pub(crate) fn encode(document: &Document) -> Result<String, CodecError> {
-    let document = DocumentV1::from_semantic(document);
-    encode_dto(&document)
 }
 
 /// Validate and canonically encode a v1 DTO after conversion or a future
@@ -84,51 +73,6 @@ impl DocumentV1 {
 
         Ok(())
     }
-
-    pub(crate) fn into_semantic(self) -> Document {
-        Document {
-            id: DocumentId::from(self.id.0),
-            title: self.title,
-            schemas: self
-                .schemas
-                .into_iter()
-                .map(|(id, schema)| (SchemaId::from(id.0), schema.into_semantic()))
-                .collect(),
-            entities: self
-                .entities
-                .into_iter()
-                .map(|(id, entity)| (EntityId::from(id.0), entity.into_semantic()))
-                .collect(),
-        }
-    }
-
-    pub(crate) fn from_semantic(document: &Document) -> Self {
-        Self {
-            format_version: FORMAT_VERSION,
-            id: DocumentIdV1(document.id.as_str().to_owned()),
-            title: document.title.clone(),
-            schemas: document
-                .schemas
-                .iter()
-                .map(|(id, schema)| {
-                    (
-                        SchemaIdV1(id.as_str().to_owned()),
-                        SchemaV1::from_semantic(schema),
-                    )
-                })
-                .collect(),
-            entities: document
-                .entities
-                .iter()
-                .map(|(id, entity)| {
-                    (
-                        EntityIdV1(id.as_str().to_owned()),
-                        EntityV1::from_semantic(entity),
-                    )
-                })
-                .collect(),
-        }
-    }
 }
 
 impl Serialize for DocumentV1 {
@@ -173,33 +117,6 @@ impl SchemaV1 {
         }
         Ok(())
     }
-
-    fn into_semantic(self) -> Schema {
-        Schema {
-            id: SchemaId::from(self.id.0),
-            fields: self
-                .fields
-                .into_iter()
-                .map(|(id, definition)| (FieldId::from(id.0), definition.into_semantic()))
-                .collect(),
-        }
-    }
-
-    fn from_semantic(schema: &Schema) -> Self {
-        Self {
-            id: SchemaIdV1(schema.id.as_str().to_owned()),
-            fields: schema
-                .fields
-                .iter()
-                .map(|(id, definition)| {
-                    (
-                        FieldIdV1(id.as_str().to_owned()),
-                        FieldDefinitionV1::from_semantic(definition),
-                    )
-                })
-                .collect(),
-        }
-    }
 }
 
 impl Serialize for SchemaV1 {
@@ -224,20 +141,6 @@ pub(crate) struct FieldDefinitionV1 {
 impl FieldDefinitionV1 {
     fn validate(&self, schemas: &BTreeMap<SchemaIdV1, SchemaV1>) -> Result<(), CodecError> {
         self.field_type.validate(schemas)
-    }
-
-    fn into_semantic(self) -> FieldDefinition {
-        FieldDefinition {
-            field_type: self.field_type.into_semantic(),
-            required: self.required,
-        }
-    }
-
-    fn from_semantic(definition: &FieldDefinition) -> Self {
-        Self {
-            field_type: FieldTypeV1::from_semantic(&definition.field_type),
-            required: definition.required,
-        }
     }
 }
 
@@ -355,28 +258,6 @@ impl FieldTypeV1 {
         }
         Ok(())
     }
-
-    fn into_semantic(self) -> FieldType {
-        match self {
-            Self::Number => FieldType::Number,
-            Self::Text => FieldType::Text,
-            Self::Boolean => FieldType::Boolean,
-            Self::Reference { schema } => FieldType::Reference {
-                schema: SchemaId::from(schema.0),
-            },
-        }
-    }
-
-    fn from_semantic(field_type: &FieldType) -> Self {
-        match field_type {
-            FieldType::Number => Self::Number,
-            FieldType::Text => Self::Text,
-            FieldType::Boolean => Self::Boolean,
-            FieldType::Reference { schema } => Self::Reference {
-                schema: SchemaIdV1(schema.as_str().to_owned()),
-            },
-        }
-    }
 }
 
 impl Serialize for FieldTypeV1 {
@@ -449,35 +330,6 @@ impl EntityV1 {
 
         Ok(())
     }
-
-    fn into_semantic(self) -> Entity {
-        Entity {
-            id: EntityId::from(self.id.0),
-            schema: SchemaId::from(self.schema.0),
-            fields: self
-                .fields
-                .into_iter()
-                .map(|(id, value)| (FieldId::from(id.0), value.into_semantic()))
-                .collect(),
-        }
-    }
-
-    fn from_semantic(entity: &Entity) -> Self {
-        Self {
-            id: EntityIdV1(entity.id.as_str().to_owned()),
-            schema: SchemaIdV1(entity.schema.as_str().to_owned()),
-            fields: entity
-                .fields
-                .iter()
-                .map(|(id, value)| {
-                    (
-                        FieldIdV1(id.as_str().to_owned()),
-                        ValueV1::from_semantic(value),
-                    )
-                })
-                .collect(),
-        }
-    }
 }
 
 impl Serialize for EntityV1 {
@@ -543,26 +395,6 @@ impl ValueV1 {
             Self::Text(_) | Self::Boolean(_) => Ok(()),
             Self::Reference(entity) => validate_id("entity reference", &entity.0),
             Self::Formula(expression) => expression.validate(),
-        }
-    }
-
-    fn into_semantic(self) -> Value {
-        match self {
-            Self::Number(number) => Value::Number(number),
-            Self::Text(text) => Value::Text(text),
-            Self::Boolean(boolean) => Value::Boolean(boolean),
-            Self::Reference(entity) => Value::Reference(EntityId::from(entity.0)),
-            Self::Formula(expression) => Value::Formula(expression.into_semantic()),
-        }
-    }
-
-    fn from_semantic(value: &Value) -> Self {
-        match value {
-            Value::Number(number) => Self::Number(*number),
-            Value::Text(text) => Self::Text(text.clone()),
-            Value::Boolean(boolean) => Self::Boolean(*boolean),
-            Value::Reference(entity) => Self::Reference(EntityIdV1(entity.as_str().to_owned())),
-            Value::Formula(expression) => Self::Formula(ExpressionV1::from_semantic(expression)),
         }
     }
 }
@@ -667,62 +499,6 @@ impl ExpressionV1 {
             | Self::Maximum(args) => args.validate(),
         }
     }
-
-    fn into_semantic(self) -> Expression {
-        match self {
-            Self::Number(number) => Expression::Number(number),
-            Self::Reference(reference) => Expression::Reference(reference.into_semantic()),
-            Self::Add(args) => Expression::Add {
-                left: Box::new(args.left.into_semantic()),
-                right: Box::new(args.right.into_semantic()),
-            },
-            Self::Subtract(args) => Expression::Subtract {
-                left: Box::new(args.left.into_semantic()),
-                right: Box::new(args.right.into_semantic()),
-            },
-            Self::Multiply(args) => Expression::Multiply {
-                left: Box::new(args.left.into_semantic()),
-                right: Box::new(args.right.into_semantic()),
-            },
-            Self::Divide(args) => Expression::Divide {
-                left: Box::new(args.left.into_semantic()),
-                right: Box::new(args.right.into_semantic()),
-            },
-            Self::Minimum(args) => Expression::Minimum {
-                left: Box::new(args.left.into_semantic()),
-                right: Box::new(args.right.into_semantic()),
-            },
-            Self::Maximum(args) => Expression::Maximum {
-                left: Box::new(args.left.into_semantic()),
-                right: Box::new(args.right.into_semantic()),
-            },
-        }
-    }
-
-    fn from_semantic(expression: &Expression) -> Self {
-        match expression {
-            Expression::Number(number) => Self::Number(*number),
-            Expression::Reference(reference) => {
-                Self::Reference(FieldRefV1::from_semantic(reference))
-            }
-            Expression::Add { left, right } => Self::Add(BinaryArgsV1::from_semantic(left, right)),
-            Expression::Subtract { left, right } => {
-                Self::Subtract(BinaryArgsV1::from_semantic(left, right))
-            }
-            Expression::Multiply { left, right } => {
-                Self::Multiply(BinaryArgsV1::from_semantic(left, right))
-            }
-            Expression::Divide { left, right } => {
-                Self::Divide(BinaryArgsV1::from_semantic(left, right))
-            }
-            Expression::Minimum { left, right } => {
-                Self::Minimum(BinaryArgsV1::from_semantic(left, right))
-            }
-            Expression::Maximum { left, right } => {
-                Self::Maximum(BinaryArgsV1::from_semantic(left, right))
-            }
-        }
-    }
 }
 
 impl Serialize for ExpressionV1 {
@@ -775,20 +551,6 @@ impl FieldRefV1 {
         validate_id("formula reference entity", &self.entity.0)?;
         validate_id("formula reference field", &self.field.0)
     }
-
-    fn into_semantic(self) -> FieldRef {
-        FieldRef {
-            entity: EntityId::from(self.entity.0),
-            field: FieldId::from(self.field.0),
-        }
-    }
-
-    fn from_semantic(reference: &FieldRef) -> Self {
-        Self {
-            entity: EntityIdV1(reference.entity.as_str().to_owned()),
-            field: FieldIdV1(reference.field.as_str().to_owned()),
-        }
-    }
 }
 
 impl Serialize for FieldRefV1 {
@@ -814,13 +576,6 @@ impl BinaryArgsV1 {
     fn validate(&self) -> Result<(), CodecError> {
         self.left.validate()?;
         self.right.validate()
-    }
-
-    fn from_semantic(left: &Expression, right: &Expression) -> Self {
-        Self {
-            left: Box::new(ExpressionV1::from_semantic(left)),
-            right: Box::new(ExpressionV1::from_semantic(right)),
-        }
     }
 }
 
