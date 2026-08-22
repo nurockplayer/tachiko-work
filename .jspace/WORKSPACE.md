@@ -787,3 +787,30 @@ the ADR-0015 persisted identity model that remains owned by #70.
   warning-denied Rustdoc, exact Rust 1.85 checking, audited notices, all eight
   Cargo packages, all four product journeys, native release/archive execution,
   tamper rejection, interrupted cleanup, and concurrent no-clobber publication.
+
+### PR #81 writer/reader closure remediation
+
+- The latest independent ChatGPT review accepted the overall #70 architecture
+  and blocked only on one Codex P2: `to_canonical_string()` and `save()` could
+  emit direct-ro/v2 bytes larger than the reader's unchanged 8 MiB complete-input
+  profile.
+- The regression was proven red on the reviewed head: canonical serialization
+  admitted exactly 8,388,609 bytes, and `save()` created that output. The exact
+  8,388,608-byte writer boundary already round-tripped successfully.
+- Commit `f8c13b5` applies the existing v2 resource-profile validator to the
+  final canonical string before it can return or reach exclusive file creation.
+  Oversized otherwise-valid semantic documents now return the typed
+  `FormatError::ResourceLimit`; no representation limit or ADR behavior changed.
+- Exact new storage tests are
+  `v2_writer_admits_the_exact_input_boundary_and_round_trips`,
+  `v2_writer_rejects_canonical_output_one_byte_over_the_input_limit`, and
+  `save_rejects_oversized_v2_before_creating_the_destination`. Existing exact
+  reader and number-token boundary coverage is unchanged.
+- Verification on the clean code commit passed 50 storage tests, 203 workspace
+  tests across 27 suites, warning-denied Clippy and Rustdoc, Rust 1.85 all-target
+  checking, all eight Cargo packages, all four product smokes, documentation
+  consistency, exact native/WASM production parity, and the complete release
+  archive/tamper/interruption/concurrency gate.
+- PR #81 remains Draft. The existing Codex thread may be resolved only after the
+  regression is present and green; final readiness still requires an independent
+  review of the exact pushed head and green CI.
