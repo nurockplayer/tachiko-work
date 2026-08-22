@@ -353,19 +353,22 @@ fn validate_expression(
     path: &str,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    match expression {
-        Expression::Number(_) => {}
-        Expression::Reference(reference) => {
-            validate_formula_reference(document, reference, path, diagnostics);
-        }
-        Expression::Add { left, right }
-        | Expression::Subtract { left, right }
-        | Expression::Multiply { left, right }
-        | Expression::Divide { left, right }
-        | Expression::Minimum { left, right }
-        | Expression::Maximum { left, right } => {
-            validate_expression(document, left, path, diagnostics);
-            validate_expression(document, right, path, diagnostics);
+    let mut stack = vec![expression];
+    while let Some(node) = stack.pop() {
+        match node {
+            Expression::Number(_) => {}
+            Expression::Reference(reference) => {
+                validate_formula_reference(document, reference, path, diagnostics);
+            }
+            Expression::Add { left, right }
+            | Expression::Subtract { left, right }
+            | Expression::Multiply { left, right }
+            | Expression::Divide { left, right }
+            | Expression::Minimum { left, right }
+            | Expression::Maximum { left, right } => {
+                stack.push(right);
+                stack.push(left);
+            }
         }
     }
 }

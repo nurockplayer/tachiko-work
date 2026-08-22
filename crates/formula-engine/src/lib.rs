@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use tachiko_semantic_core::{
     AddressIndex, AddressIndexError, Document, Expression, FieldAddress, FieldRef, FieldType,
-    Number, Value,
+    MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, Value,
 };
 use thiserror::Error;
 
@@ -22,13 +22,13 @@ pub enum FormulaBindError {
     #[error("formula address index is invalid: {source}")]
     Index {
         #[source]
-        source: AddressIndexError,
+        source: Box<AddressIndexError>,
     },
     #[error("formula address '{address}' cannot be resolved: {source}")]
     Address {
         address: FieldAddress,
         #[source]
-        source: AddressIndexError,
+        source: Box<AddressIndexError>,
     },
     #[error("formula address '{address}' resolves to non-numeric field '{reference}'")]
     NonNumericTarget {
@@ -56,8 +56,9 @@ pub fn bind_expression(
     expression: &UnboundExpression,
 ) -> Result<Expression, FormulaBindError> {
     validate_unbound_expression_structure(expression)?;
-    let index =
-        AddressIndex::build(document).map_err(|source| FormulaBindError::Index { source })?;
+    let index = AddressIndex::build(document).map_err(|source| FormulaBindError::Index {
+        source: Box::new(source),
+    })?;
     bind_node(document, &index, expression)
 }
 
@@ -72,11 +73,35 @@ fn bind_node(
             let reference = index.resolve_field(document, address).map_err(|source| {
                 FormulaBindError::Address {
                     address: address.clone(),
-                    source,
+                    source: Box::new(source),
                 }
             })?;
-            let entity = &document.entities[&reference.entity];
-            let definition = &document.schemas[&entity.schema].fields[&reference.field];
+            let entity = document.entities.get(&reference.entity).ok_or_else(|| {
+                FormulaBindError::Index {
+                    source: Box::new(AddressIndexError::MissingBoundEntity {
+                        entity: reference.entity.clone(),
+                    }),
+                }
+            })?;
+            let schema =
+                document
+                    .schemas
+                    .get(&entity.schema)
+                    .ok_or_else(|| FormulaBindError::Index {
+                        source: Box::new(AddressIndexError::MissingBoundSchema {
+                            schema: entity.schema.clone(),
+                        }),
+                    })?;
+            let definition =
+                schema
+                    .fields
+                    .get(&reference.field)
+                    .ok_or_else(|| FormulaBindError::Index {
+                        source: Box::new(AddressIndexError::MissingBoundField {
+                            entity: reference.entity.clone(),
+                            field: reference.field.clone(),
+                        }),
+                    })?;
             if definition.field_type != FieldType::Number {
                 return Err(FormulaBindError::NonNumericTarget {
                     address: address.clone(),
@@ -210,11 +235,11 @@ pub fn validate_expression_structure(
     let mut nodes = 0_usize;
     let mut stack = vec![(expression, 1_usize)];
     while let Some((node, depth)) = stack.pop() {
-        if depth > 64 {
+        if depth > MAX_EXPRESSION_DEPTH {
             return Err(ExpressionComplexityError::DepthLimit);
         }
         nodes += 1;
-        if nodes > 256 {
+        if nodes > MAX_EXPRESSION_NODES {
             return Err(ExpressionComplexityError::NodeLimit);
         }
         match node {

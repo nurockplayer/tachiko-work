@@ -14,6 +14,19 @@ pub struct AddressIndex {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AddressIndexError {
+    SchemaStoreIdMismatch {
+        stored: SchemaId,
+        nested: SchemaId,
+    },
+    FieldStoreIdMismatch {
+        schema: SchemaId,
+        stored: FieldId,
+        nested: FieldId,
+    },
+    EntityStoreIdMismatch {
+        stored: EntityId,
+        nested: EntityId,
+    },
     DuplicateSchemaKey {
         key: SchemaKey,
         ids: Vec<SchemaId>,
@@ -64,6 +77,32 @@ impl AddressIndex {
     /// Returns the first duplicate category in deterministic schema/field/entity
     /// order, with conflicting stable IDs sorted by their opaque tokens.
     pub fn build(document: &Document) -> Result<Self, AddressIndexError> {
+        for (stored, schema) in &document.schemas {
+            if stored != &schema.id {
+                return Err(AddressIndexError::SchemaStoreIdMismatch {
+                    stored: stored.clone(),
+                    nested: schema.id.clone(),
+                });
+            }
+            for (field_stored, field) in &schema.fields {
+                if field_stored != &field.id {
+                    return Err(AddressIndexError::FieldStoreIdMismatch {
+                        schema: stored.clone(),
+                        stored: field_stored.clone(),
+                        nested: field.id.clone(),
+                    });
+                }
+            }
+        }
+        for (stored, entity) in &document.entities {
+            if stored != &entity.id {
+                return Err(AddressIndexError::EntityStoreIdMismatch {
+                    stored: stored.clone(),
+                    nested: entity.id.clone(),
+                });
+            }
+        }
+
         let schema_groups = document.schemas.values().fold(
             BTreeMap::<SchemaKey, Vec<SchemaId>>::new(),
             |mut groups, schema| {

@@ -1,6 +1,6 @@
 use std::fs;
 
-use tachiko_semantic_core::{Expression, FieldType, Number, Value};
+use tachiko_semantic_core::{Document, Expression, FieldType, Number, Value};
 use tachiko_storage::{
     FORMAT_VERSION, FormatError, V2_MAX_INPUT_BYTES, V2_MAX_NUMBER_TOKEN_BYTES, from_bytes,
     from_str, load, to_canonical_string,
@@ -47,6 +47,89 @@ fn v2_number_source(number: &str, title: &str) -> String {
     r#"{"format_version":2,"id":"doc","title":TITLE,"schemas":{"schema":{"id":"schema","key":"schema","fields":{"number":{"id":"number","key":"number","field_type":{"type":"number"},"required":true}}}},"entities":{"entity":{"id":"entity","key":"entity","schema":"schema","fields":{"number":{"kind":"number","value":NUMBER}}}}}"#
         .replace("TITLE", &title)
         .replace("NUMBER", number)
+}
+
+fn number_expression() -> Expression {
+    Expression::Number(Number::new(1.0).unwrap())
+}
+
+fn deep_expression(depth: usize) -> Expression {
+    let mut expression = number_expression();
+    for _ in 1..depth {
+        expression = Expression::Add {
+            left: Box::new(expression),
+            right: Box::new(number_expression()),
+        };
+    }
+    expression
+}
+
+fn balanced_expression(depth: usize) -> Expression {
+    if depth == 1 {
+        number_expression()
+    } else {
+        Expression::Add {
+            left: Box::new(balanced_expression(depth - 1)),
+            right: Box::new(balanced_expression(depth - 1)),
+        }
+    }
+}
+
+fn set_first_formula(document: &mut Document, expression: Expression) {
+    let formula = document
+        .entities
+        .values_mut()
+        .flat_map(|entity| entity.fields.values_mut())
+        .find(|value| matches!(value, Value::Formula(_)))
+        .unwrap();
+    *formula = Value::Formula(expression);
+}
+
+fn expression_json(expression: &Expression) -> serde_json::Value {
+    match expression {
+        Expression::Number(number) => serde_json::json!({"op": "number", "args": number.get()}),
+        Expression::Reference(reference) => serde_json::json!({
+            "op": "reference",
+            "args": {"entity": reference.entity.as_str(), "field": reference.field.as_str()}
+        }),
+        Expression::Add { left, right } => serde_json::json!({
+            "op": "add",
+            "args": {"left": expression_json(left), "right": expression_json(right)}
+        }),
+        Expression::Subtract { left, right } => serde_json::json!({
+            "op": "subtract",
+            "args": {"left": expression_json(left), "right": expression_json(right)}
+        }),
+        Expression::Multiply { left, right } => serde_json::json!({
+            "op": "multiply",
+            "args": {"left": expression_json(left), "right": expression_json(right)}
+        }),
+        Expression::Divide { left, right } => serde_json::json!({
+            "op": "divide",
+            "args": {"left": expression_json(left), "right": expression_json(right)}
+        }),
+        Expression::Minimum { left, right } => serde_json::json!({
+            "op": "minimum",
+            "args": {"left": expression_json(left), "right": expression_json(right)}
+        }),
+        Expression::Maximum { left, right } => serde_json::json!({
+            "op": "maximum",
+            "args": {"left": expression_json(left), "right": expression_json(right)}
+        }),
+    }
+}
+
+fn replace_first_formula_source(source: &str, expression: &Expression) -> String {
+    let mut root: serde_json::Value = serde_json::from_str(source).unwrap();
+    let formula = root["entities"]
+        .as_object_mut()
+        .unwrap()
+        .values_mut()
+        .flat_map(|entity| entity["fields"].as_object_mut().unwrap().values_mut())
+        .find(|value| value["kind"] == "formula")
+        .unwrap();
+    formula["value"] = expression_json(expression);
+    serde_json::to_string(&root).unwrap()
 }
 
 #[test]
@@ -290,4 +373,59 @@ fn every_legacy_identity_mapping_class_rejects_corrupt_or_unresolvable_input() {
             FormatError::MigrationFailed { .. }
         ));
     }
+}
+
+#[test]
+fn storage_enforces_bound_expression_node_and_depth_limits_before_recursive_conversion() {
+    let mut document = from_bytes(LEGACY_GRAPH.as_bytes()).unwrap();
+    set_first_formula(&mut document, balanced_expression(8));
+    assert!(
+        to_canonical_string(&document).is_ok(),
+        "255 nodes are valid"
+    );
+    set_first_formula(
+        &mut document,
+        Expression::Add {
+            left: Box::new(balanced_expression(8)),
+            right: Box::new(number_expression()),
+        },
+    );
+    assert!(matches!(
+        to_canonical_string(&document).unwrap_err(),
+        FormatError::InvalidRepresentation { .. }
+    ));
+
+    set_first_formula(&mut document, deep_expression(64));
+    assert!(to_canonical_string(&document).is_ok(), "depth 64 is valid");
+    set_first_formula(&mut document, deep_expression(65));
+    assert!(matches!(
+        to_canonical_string(&document).unwrap_err(),
+        FormatError::InvalidRepresentation { .. }
+    ));
+
+    let valid_v2 = to_canonical_string(&from_bytes(LEGACY_GRAPH.as_bytes()).unwrap()).unwrap();
+    let oversized_v2 = replace_first_formula_source(
+        &valid_v2,
+        &Expression::Add {
+            left: Box::new(balanced_expression(8)),
+            right: Box::new(number_expression()),
+        },
+    );
+    assert!(matches!(
+        from_str(&oversized_v2).unwrap_err(),
+        FormatError::InvalidRepresentation { .. }
+    ));
+
+    let oversized_v1 = replace_first_formula_source(
+        LEGACY_GRAPH,
+        &Expression::Add {
+            left: Box::new(balanced_expression(8)),
+            right: Box::new(number_expression()),
+        },
+    );
+    let error = from_str(&oversized_v1).unwrap_err();
+    assert!(
+        matches!(error, FormatError::MigrationFailed { .. }),
+        "{error:?}"
+    );
 }

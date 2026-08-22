@@ -251,12 +251,14 @@ components plus the exact minimum toolchain. Then run the complete
 release-equivalent gate from a clean local commit. The gate selects stable for
 all normal and nested commands even if the caller has another rustup override;
 it separately checks Rust 1.85 compatibility, warning-free documentation,
-deterministic dependency notices, Cargo packages, all four real user journeys, and
-the native release archive:
+deterministic dependency notices, executed native/WASM production-semantic
+conformance, Cargo packages, all four real user journeys, and the native release
+archive:
 
 ```sh
 rustup toolchain install stable --profile minimal
 rustup component add --toolchain stable rustfmt clippy
+rustup target add --toolchain stable wasm32-unknown-unknown
 rustup toolchain install 1.85.0 --profile minimal
 bash scripts/release-check.sh
 ```

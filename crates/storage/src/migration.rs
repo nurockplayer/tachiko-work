@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use tachiko_semantic_core::{MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES};
 use uuid::Uuid;
 
 use crate::{
@@ -33,8 +34,51 @@ struct IdentityMaps {
 ///
 /// Mapping is deliberately completed before any relationship is rewritten.
 pub(crate) fn legacy_v1_to_v2(document: DocumentV1) -> Result<DocumentV2, MigrationError> {
+    validate_legacy_expressions(&document)?;
     let maps = build_identity_maps(&document)?;
     rewrite_document(document, &maps)
+}
+
+fn validate_legacy_expressions(document: &DocumentV1) -> Result<(), MigrationError> {
+    for entity in document.entities.values() {
+        for value in entity.fields.values() {
+            if let ValueV1::Formula(expression) = value {
+                validate_legacy_expression(expression)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_legacy_expression(expression: &ExpressionV1) -> Result<(), MigrationError> {
+    let mut nodes = 0_usize;
+    let mut stack = vec![(expression, 1_usize)];
+    while let Some((node, depth)) = stack.pop() {
+        if depth > MAX_EXPRESSION_DEPTH {
+            return Err(MigrationError(format!(
+                "legacy formula expression exceeds {MAX_EXPRESSION_DEPTH}-depth limit"
+            )));
+        }
+        nodes += 1;
+        if nodes > MAX_EXPRESSION_NODES {
+            return Err(MigrationError(format!(
+                "legacy formula expression exceeds {MAX_EXPRESSION_NODES}-node limit"
+            )));
+        }
+        match node {
+            ExpressionV1::Add(args)
+            | ExpressionV1::Subtract(args)
+            | ExpressionV1::Multiply(args)
+            | ExpressionV1::Divide(args)
+            | ExpressionV1::Minimum(args)
+            | ExpressionV1::Maximum(args) => {
+                stack.push((&args.right, depth + 1));
+                stack.push((&args.left, depth + 1));
+            }
+            ExpressionV1::Number(_) | ExpressionV1::Reference(_) => {}
+        }
+    }
+    Ok(())
 }
 
 fn build_identity_maps(document: &DocumentV1) -> Result<IdentityMaps, MigrationError> {

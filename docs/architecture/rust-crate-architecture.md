@@ -159,6 +159,12 @@ Storage's string codecs may be reusable on WASM, but its public path/file APIs
 make the current crate host-facing. CLI is native-only. No WASM ABI/binding
 crate exists yet; #26 owns that boundary.
 
+The release gate now executes a shared production-API corpus from semantic-core
+and formula-engine on native and `wasm32-unknown-unknown`, comparing normalized
+Number bits, typed failures, dependencies/cycles, operation order, stable
+binding, rename projection, and no-silent-retarget outcomes byte-for-byte.
+This is a conformance harness, not a public WASM ABI or host/runtime decision.
+
 Parser-produced, directly supplied, projected, and calculated expressions now
 pass the shared 256-node/64-depth structural contract before recursive formula
 work. The portable crate set remains the native/WASM-overlapping behavior

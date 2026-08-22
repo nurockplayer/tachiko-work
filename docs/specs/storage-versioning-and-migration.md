@@ -347,6 +347,8 @@ The exact temporary-file/rename/fsync/browser-transaction implementation remains
 - ambiguous migration input failure;
 - migration determinism across repeated runs;
 - no partial durable output on migration failure;
+- exact 256-node/64-depth formula admission and one-over rejection before
+  recursive migration or v2 conversion;
 - composed migration vs optimized migration equivalence if optimized edges exist.
 
 The implementation-critical ADR-0018 numeric and exact resource-boundary

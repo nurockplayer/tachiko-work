@@ -233,6 +233,12 @@ pub enum Value {
     Formula(Expression),
 }
 
+/// Maximum number of nodes admitted in a semantic formula expression.
+pub const MAX_EXPRESSION_NODES: usize = 256;
+
+/// Maximum root-to-leaf node depth admitted in a semantic formula expression.
+pub const MAX_EXPRESSION_DEPTH: usize = 64;
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "op", content = "args", rename_all = "snake_case")]
 pub enum Expression {

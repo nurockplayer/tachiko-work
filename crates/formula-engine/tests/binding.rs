@@ -145,3 +145,20 @@ fn directly_supplied_unbound_expressions_are_bounded_before_recursive_binding() 
         FormulaBindError::Complexity(ExpressionComplexityError::DepthLimit)
     );
 }
+
+#[test]
+fn incoherent_field_store_returns_a_typed_binding_error_without_panicking() {
+    let mut document = document();
+    let schema = document.schemas.get_mut("schema-stable").unwrap();
+    let mut definition = schema.fields.remove("damage-stable").unwrap();
+    definition.id = FieldId::from("different-nested-id");
+    schema
+        .fields
+        .insert(FieldId::from("damage-stable"), definition);
+    let unbound = parse_expression("[iron_sword.damage]").unwrap();
+
+    let result = std::panic::catch_unwind(|| bind_expression(&document, &unbound))
+        .expect("binding malformed input must not panic");
+
+    assert!(matches!(result, Err(FormulaBindError::Index { .. })));
+}

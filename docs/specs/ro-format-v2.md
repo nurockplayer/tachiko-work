@@ -38,11 +38,18 @@ The Provisional `direct-ro/v2` profile limits are:
 | --- | ---: |
 | Complete UTF-8 input | 8 MiB (`8,388,608` bytes) |
 | One RFC 8259 number token | 256 bytes |
+| One bound formula AST | 256 nodes |
+| One bound formula root-to-leaf path | 64 nodes |
 
 After strict JSON/version inspection selects v2, both limits are applied before
 the v2 DTO converts a decimal token to semantic `Number`. Exactly-at-limit input
 is admitted; one byte more is `storage.resource_limit`, not a numeric overflow
 or underflow.
+
+Formula node/depth limits are checked iteratively after DTO decoding and before
+recursive migration, semantic conversion, validation, or writing. The exact
+limit is admitted; an over-limit v2 formula is an invalid representation and an
+over-limit legacy formula fails migration without producing a candidate.
 
 Every admitted number converts to nearest finite IEEE 754 binary64 using
 round-to-nearest, ties-to-even. Infinity is invalid, finite subnormals and

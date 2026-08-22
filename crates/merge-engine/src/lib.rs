@@ -2,10 +2,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use tachiko_formula_engine::{CalculationError, calculate};
+use tachiko_formula_engine::{
+    CalculationError, CanonicalAuthoringProjectionError, calculate, project_expression,
+};
 use tachiko_semantic_core::{
     Diagnostic, Document, DocumentId, Entity, EntityId, EntityKey, FieldDefinition, FieldId,
-    FieldKey, FieldType, Schema, SchemaId, SchemaKey, Value, validate_document,
+    FieldKey, FieldRef, FieldType, Schema, SchemaId, SchemaKey, Value, validate_document,
 };
 use thiserror::Error;
 
@@ -61,10 +63,23 @@ pub enum MergeError {
         #[source]
         source: CalculationError,
     },
+    #[error("could not project formula '{field}' in {side:?} input: {source}")]
+    InputProjection {
+        side: MergeSide,
+        field: FieldRef,
+        #[source]
+        source: CanonicalAuthoringProjectionError,
+    },
     #[error("invalid merged document: {diagnostics:?}")]
     InvalidMergedDocument { diagnostics: Vec<Diagnostic> },
     #[error("could not calculate merged document: {0}")]
     MergedCalculation(CalculationError),
+    #[error("could not project formula '{field}' in merged document: {source}")]
+    MergedProjection {
+        field: FieldRef,
+        #[source]
+        source: CanonicalAuthoringProjectionError,
+    },
 }
 
 /// Merge semantic changes from `ours` and `theirs` against their common `base`.
@@ -130,6 +145,8 @@ pub fn merge(
     if !diagnostics.is_empty() {
         return Err(MergeError::InvalidMergedDocument { diagnostics });
     }
+    preflight_formula_projections(&candidate)
+        .map_err(|(field, source)| MergeError::MergedProjection { field, source })?;
     calculate(&candidate).map_err(MergeError::MergedCalculation)?;
 
     Ok(MergeOutcome::Merged(candidate))
@@ -140,7 +157,28 @@ fn validate_and_calculate_input(side: MergeSide, document: &Document) -> Result<
     if !diagnostics.is_empty() {
         return Err(MergeError::InvalidInput { side, diagnostics });
     }
+    preflight_formula_projections(document).map_err(|(field, source)| {
+        MergeError::InputProjection {
+            side,
+            field,
+            source,
+        }
+    })?;
     calculate(document).map_err(|source| MergeError::InputCalculation { side, source })?;
+    Ok(())
+}
+
+fn preflight_formula_projections(
+    document: &Document,
+) -> Result<(), (FieldRef, CanonicalAuthoringProjectionError)> {
+    for (entity_id, entity) in &document.entities {
+        for (field_id, value) in &entity.fields {
+            if let Value::Formula(expression) = value {
+                let field = FieldRef::new(entity_id.clone(), field_id.clone());
+                project_expression(document, expression).map_err(|source| (field, source))?;
+            }
+        }
+    }
     Ok(())
 }
 

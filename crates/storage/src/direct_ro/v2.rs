@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 use tachiko_semantic_core::{
     Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldDefinition, FieldId,
-    FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
+    FieldKey, FieldRef, FieldType, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, Schema,
+    SchemaId, SchemaKey, Value,
 };
 
 pub(crate) const FORMAT_VERSION: u32 = 2;
@@ -109,8 +110,9 @@ pub(crate) struct BinaryArgsV2 {
 }
 
 impl DocumentV2 {
-    pub(crate) fn from_semantic(document: &Document) -> Self {
-        Self {
+    pub(crate) fn from_semantic(document: &Document) -> Result<Self, CodecError> {
+        validate_semantic_expressions(document)?;
+        Ok(Self {
             format_version: FORMAT_VERSION,
             id: document.id.to_string(),
             title: document.title.clone(),
@@ -124,7 +126,7 @@ impl DocumentV2 {
                 .iter()
                 .map(|(id, entity)| (id.to_string(), EntityV2::from_semantic(entity)))
                 .collect(),
-        }
+        })
     }
 
     pub(crate) fn validate(&self) -> Result<(), CodecError> {
@@ -408,19 +410,35 @@ impl ExpressionV2 {
         schemas: &BTreeMap<String, SchemaV2>,
         entities: &BTreeMap<String, EntityV2>,
     ) -> Result<(), CodecError> {
-        match self {
-            Self::Number(number) => validate_number(*number),
-            Self::Reference(reference) => reference.validate(schemas, entities),
-            Self::Add(args)
-            | Self::Subtract(args)
-            | Self::Multiply(args)
-            | Self::Divide(args)
-            | Self::Minimum(args)
-            | Self::Maximum(args) => {
-                args.left.validate(schemas, entities)?;
-                args.right.validate(schemas, entities)
+        let mut nodes = 0_usize;
+        let mut stack = vec![(self, 1_usize)];
+        while let Some((node, depth)) = stack.pop() {
+            if depth > MAX_EXPRESSION_DEPTH {
+                return invalid(format!(
+                    "formula expression exceeds {MAX_EXPRESSION_DEPTH}-depth limit"
+                ));
+            }
+            nodes += 1;
+            if nodes > MAX_EXPRESSION_NODES {
+                return invalid(format!(
+                    "formula expression exceeds {MAX_EXPRESSION_NODES}-node limit"
+                ));
+            }
+            match node {
+                Self::Number(number) => validate_number(*number)?,
+                Self::Reference(reference) => reference.validate(schemas, entities)?,
+                Self::Add(args)
+                | Self::Subtract(args)
+                | Self::Multiply(args)
+                | Self::Divide(args)
+                | Self::Minimum(args)
+                | Self::Maximum(args) => {
+                    stack.push((&args.right, depth + 1));
+                    stack.push((&args.left, depth + 1));
+                }
             }
         }
+        Ok(())
     }
 
     fn into_semantic(self) -> Result<Expression, CodecError> {
@@ -456,6 +474,48 @@ impl ExpressionV2 {
             },
         })
     }
+}
+
+fn validate_semantic_expressions(document: &Document) -> Result<(), CodecError> {
+    for entity in document.entities.values() {
+        for value in entity.fields.values() {
+            if let Value::Formula(expression) = value {
+                validate_semantic_expression(expression)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_semantic_expression(expression: &Expression) -> Result<(), CodecError> {
+    let mut nodes = 0_usize;
+    let mut stack = vec![(expression, 1_usize)];
+    while let Some((node, depth)) = stack.pop() {
+        if depth > MAX_EXPRESSION_DEPTH {
+            return invalid(format!(
+                "formula expression exceeds {MAX_EXPRESSION_DEPTH}-depth limit"
+            ));
+        }
+        nodes += 1;
+        if nodes > MAX_EXPRESSION_NODES {
+            return invalid(format!(
+                "formula expression exceeds {MAX_EXPRESSION_NODES}-node limit"
+            ));
+        }
+        match node {
+            Expression::Add { left, right }
+            | Expression::Subtract { left, right }
+            | Expression::Multiply { left, right }
+            | Expression::Divide { left, right }
+            | Expression::Minimum { left, right }
+            | Expression::Maximum { left, right } => {
+                stack.push((right, depth + 1));
+                stack.push((left, depth + 1));
+            }
+            Expression::Number(_) | Expression::Reference(_) => {}
+        }
+    }
+    Ok(())
 }
 
 impl FieldRefV2 {

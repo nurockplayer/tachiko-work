@@ -401,8 +401,11 @@ fields, severity, source locations, broader aggregation, and editing policy.
 
 The checked-in research probe executes the same 16 edge cases natively and as
 `wasm32-unknown-unknown`; the typed result records and normalized bits are
-byte-identical. This is bounded positive evidence, not a proof for every
-compiler or runtime.
+byte-identical. The release gate also compiles the production semantic/formula
+crates for both targets and executes one shared production-API corpus covering
+normalized values, failures, dependencies/cycles, operation order, stable
+binding, rename projection, and no-silent-retarget behavior. This is bounded
+positive evidence, not a proof for every compiler or runtime.
 
 Implementation and remaining ownership under Accepted ADR-0018:
 

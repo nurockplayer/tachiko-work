@@ -198,6 +198,27 @@ fn divergent_key_renames_conflict_on_the_same_stable_object() {
 }
 
 #[test]
+fn combined_key_renames_cannot_exceed_the_formula_projection_limit() {
+    let base = balance_document(36.0, 0.9);
+    let mut ours = base.clone();
+    ours.entities.get_mut("iron_sword").unwrap().key = "a".repeat(2_032).into();
+    let mut theirs = base.clone();
+    theirs
+        .schemas
+        .get_mut("weapon")
+        .unwrap()
+        .fields
+        .get_mut("damage")
+        .unwrap()
+        .key = "b".repeat(4_050).into();
+
+    assert!(matches!(
+        merge(&base, &ours, &theirs).unwrap_err(),
+        MergeError::MergedProjection { .. }
+    ));
+}
+
+#[test]
 fn identical_two_sided_change_is_not_a_conflict() {
     let base = balance_document(36.0, 0.9);
     let ours = balance_document(45.0, 0.9);

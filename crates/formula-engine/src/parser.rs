@@ -1,9 +1,9 @@
-use tachiko_semantic_core::{FieldAddress, Number, is_valid_identifier};
+use tachiko_semantic_core::{
+    FieldAddress, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, is_valid_identifier,
+};
 use thiserror::Error;
 
 pub(crate) const MAX_INPUT_BYTES: usize = 4_096;
-const MAX_AST_NODES: usize = 256;
-const MAX_NESTING: usize = 64;
 
 /// Parsed formula structure whose references are still human addresses.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -82,11 +82,11 @@ pub fn validate_unbound_expression_structure(
     let mut nodes = 0_usize;
     let mut stack = vec![(expression, 1_usize)];
     while let Some((node, depth)) = stack.pop() {
-        if depth > MAX_NESTING {
+        if depth > MAX_EXPRESSION_DEPTH {
             return Err(ExpressionComplexityError::DepthLimit);
         }
         nodes += 1;
-        if nodes > MAX_AST_NODES {
+        if nodes > MAX_EXPRESSION_NODES {
             return Err(ExpressionComplexityError::NodeLimit);
         }
         push_children(&mut stack, node, depth + 1);
@@ -449,7 +449,7 @@ impl<'input> Parser<'input> {
         position: usize,
         parse: impl FnOnce(&mut Self) -> Result<T, FormulaParseError>,
     ) -> Result<T, FormulaParseError> {
-        if self.nesting >= MAX_NESTING {
+        if self.nesting >= MAX_EXPRESSION_DEPTH {
             return Err(FormulaParseError::new(
                 position,
                 "expression exceeds 64-nesting limit",
@@ -462,7 +462,7 @@ impl<'input> Parser<'input> {
     }
 
     fn record_node(&mut self, position: usize) -> Result<(), FormulaParseError> {
-        if self.nodes >= MAX_AST_NODES {
+        if self.nodes >= MAX_EXPRESSION_NODES {
             return Err(FormulaParseError::new(
                 position,
                 "expression exceeds 256-node limit",

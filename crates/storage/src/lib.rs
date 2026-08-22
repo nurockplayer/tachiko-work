@@ -80,7 +80,7 @@ pub enum FormatError {
 /// representation error if conversion/canonical encoding fails.
 pub fn to_canonical_string(document: &Document) -> Result<String, FormatError> {
     check_document(document)?;
-    let dto = DocumentV2::from_semantic(document);
+    let dto = DocumentV2::from_semantic(document).map_err(map_v2_encode_error)?;
     direct_ro::v2::encode(&dto).map_err(map_v2_encode_error)
 }
 
