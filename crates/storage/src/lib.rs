@@ -89,6 +89,20 @@ pub fn from_str(source: &str) -> Result<Document, FormatError> {
 /// Returns a machine-distinguishable [`FormatError`] at the first failed stage
 /// of the storage reader pipeline.
 pub fn from_bytes(source: &[u8]) -> Result<Document, FormatError> {
+    let document = decode_v1_dto_for_migration(source)?.into_semantic();
+    check_document(&document)?;
+    Ok(document)
+}
+
+/// Decode and validate the immutable legacy v1 DTO without crossing into the
+/// current semantic model.
+///
+/// Future explicit migrations consume this crate-internal seam so they cannot
+/// observe a DTO until the byte stream has passed the complete strict reader
+/// pipeline and exact version dispatch.
+pub(crate) fn decode_v1_dto_for_migration(
+    source: &[u8],
+) -> Result<legacy_direct_ro::v1::DocumentV1, FormatError> {
     let source =
         std::str::from_utf8(source).map_err(|source| FormatError::InvalidUtf8 { source })?;
     let inspection = inspect(source).map_err(map_frontend_error)?;
@@ -104,12 +118,16 @@ pub fn from_bytes(source: &[u8]) -> Result<Document, FormatError> {
     }
     check_version(version)?;
 
-    let document = match version {
-        FORMAT_VERSION => legacy_direct_ro::v1::decode(source).map_err(map_v1_decode_error)?,
+    match version {
+        FORMAT_VERSION => {
+            let document: legacy_direct_ro::v1::DocumentV1 = serde_json::from_str(source)
+                .map_err(legacy_direct_ro::v1::CodecError::Json)
+                .map_err(map_v1_decode_error)?;
+            document.validate().map_err(map_v1_decode_error)?;
+            Ok(document)
+        }
         _ => unreachable!("supported versions are dispatched exhaustively"),
-    };
-    check_document(&document)?;
-    Ok(document)
+    }
 }
 
 /// Load a validated semantic document from a UTF-8 `.ro` file.

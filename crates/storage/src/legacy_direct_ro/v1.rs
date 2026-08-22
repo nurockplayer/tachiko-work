@@ -19,22 +19,6 @@ pub(crate) enum CodecError {
     InvalidRepresentation(String),
 }
 
-/// Decode the storage-owned direct `.ro` v1 DTO, then convert it explicitly
-/// into the semantic document contract.
-pub(crate) fn decode(source: &str) -> Result<Document, CodecError> {
-    let document = decode_dto(source)?;
-    Ok(document.into_semantic())
-}
-
-/// Decode and validate the immutable v1 DTO without crossing into the current
-/// semantic model. Future explicit migrations consume this seam so they can
-/// map every legacy address before rewriting any typed relationship.
-pub(crate) fn decode_dto(source: &str) -> Result<DocumentV1, CodecError> {
-    let document: DocumentV1 = serde_json::from_str(source).map_err(CodecError::Json)?;
-    document.validate()?;
-    Ok(document)
-}
-
 /// Encode a semantic document through the frozen storage-owned direct `.ro`
 /// v1 DTO.
 pub(crate) fn encode(document: &Document) -> Result<String, CodecError> {
@@ -886,9 +870,43 @@ fn invalid<T>(message: String) -> Result<T, CodecError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        EntityIdV1, ExpressionV1, FieldIdV1, FieldTypeV1, SchemaIdV1, ValueV1, decode_dto,
-    };
+    use crate::{FormatError, decode_v1_dto_for_migration};
+
+    use super::{EntityIdV1, ExpressionV1, FieldIdV1, FieldTypeV1, SchemaIdV1, ValueV1};
+
+    #[test]
+    fn migration_dto_seam_rejects_duplicate_map_keys_before_collapse() {
+        let cases = [
+            (
+                "schema map key",
+                r#"{"format_version":1,"id":"doc","title":"Document","schemas":{"s":{"id":"s","fields":{}},"s":{"id":"s","fields":{}}},"entities":{}}"#,
+            ),
+            (
+                "entity map key",
+                r#"{"format_version":1,"id":"doc","title":"Document","schemas":{"s":{"id":"s","fields":{}}},"entities":{"e":{"id":"e","schema":"s","fields":{}},"e":{"id":"e","schema":"s","fields":{}}}}"#,
+            ),
+            (
+                "schema field map key",
+                r#"{"format_version":1,"id":"doc","title":"Document","schemas":{"s":{"id":"s","fields":{"n":{"field_type":{"type":"number"},"required":false},"n":{"field_type":{"type":"number"},"required":false}}}},"entities":{}}"#,
+            ),
+            (
+                "entity field map key",
+                r#"{"format_version":1,"id":"doc","title":"Document","schemas":{"s":{"id":"s","fields":{"n":{"field_type":{"type":"number"},"required":false}}}},"entities":{"e":{"id":"e","schema":"s","fields":{"n":{"kind":"number","value":1.0},"n":{"kind":"number","value":2.0}}}}}"#,
+            ),
+            (
+                "escaped-equivalent schema map key",
+                r#"{"format_version":1,"id":"doc","title":"Document","schemas":{"s":{"id":"s","fields":{}},"\u0073":{"id":"s","fields":{}}},"entities":{}}"#,
+            ),
+        ];
+
+        for (name, source) in cases {
+            let error = decode_v1_dto_for_migration(source.as_bytes()).unwrap_err();
+            assert!(
+                matches!(error, FormatError::DuplicateMember { .. }),
+                "{name}: {error:?}"
+            );
+        }
+    }
 
     #[test]
     fn dto_seam_exposes_every_typed_id_occurrence_before_semantic_conversion() {
@@ -928,7 +946,7 @@ mod tests {
   }
 }"#;
 
-        let dto = decode_dto(source).unwrap();
+        let dto = decode_v1_dto_for_migration(source.as_bytes()).unwrap();
         assert_eq!(dto.id.0, "legacy-doc");
 
         let source_schema = dto.schemas.get(&SchemaIdV1("source".to_owned())).unwrap();
