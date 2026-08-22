@@ -12,14 +12,14 @@ The format documents have different roles. Do not treat similarly named files as
 | --- | --- | --- |
 | [`ro-format-and-roproj-spec.md`](ro-format-and-roproj-spec.md) | Accepted `.roproj` source / `.ro` portable-artifact relationship and current implementation split | Accepted direction under ADR-0003 |
 | [`storage-versioning-and-migration.md`](storage-versioning-and-migration.md) | Version namespaces, versioned DTO ownership, supported/unsupported behavior, migration architecture | Mixed: Accepted invariants under ADR-0017 plus Provisional M02 mechanics |
-| [`canonical-json-profile.md`](canonical-json-profile.md) | Deterministic JSON/Unicode/order/whitespace contract and explicit #24 numeric boundary | Mixed: Accepted invariants under ADR-0017 plus version-specific M02 profile rules |
+| [`canonical-json-profile.md`](canonical-json-profile.md) | Deterministic JSON/Unicode/order/whitespace contract and explicit numeric boundary | Mixed: Accepted invariants under ADR-0017/ADR-0018 plus version-specific M02 profile/resource-limit mechanisms |
 | [`ro-format-v1.md`](ro-format-v1.md) | Exact deterministic direct `.ro` JSON behavior implemented by the v0.1 CLI | Legacy compatibility / migration baseline; implementation remains v0.1 until storage migration lands |
 | [`ro-format.md`](ro-format.md) | Compatibility/navigation entry point for older links | Non-normative navigation stub; follow the format documents above |
 | [`roproj-format.md`](roproj-format.md) | Target `.roproj` representation | Accepted direction, not yet implemented |
 | [`roproj-layout-v1.md`](roproj-layout-v1.md) | Candidate physical `.roproj` layout | Provisional, not yet implemented; #41 owns layout work |
 | [`runtime-export-v1.md`](runtime-export-v1.md) | Current evaluated runtime JSON export contract | Provisional implemented contract |
 
-The semantic model owns meaning. Physical formats are representations. ADR-0017 now fixes the versioned storage boundary and canonical-representation invariants; physical `.roproj` layout, future `.ro` packaging, and unresolved numeric semantics remain separately owned.
+The semantic model owns meaning. Physical formats are representations. ADR-0017 fixes the versioned storage boundary and canonical-representation invariants; ADR-0018 fixes the admitted-token binary64 conversion and spelling authority. Physical `.roproj` layout and future `.ro` packaging remain separately owned.
 
 ## Semantic core, schema, validation, formulas, and diff
 
@@ -28,10 +28,10 @@ The semantic model owns meaning. Physical formats are representations. ADR-0017 
 | [`semantic-data-model.md`](semantic-data-model.md) | Semantic data-model contract and terminology |
 | [`schema-system.md`](schema-system.md) | Schema declaration behavior |
 | [`validation-engine.md`](validation-engine.md) | Validation behavior and diagnostics |
-| [`formula-engine-spec.md`](formula-engine-spec.md) | Current formula syntax/evaluation contract and hardening baseline |
+| [`formula-engine-spec.md`](formula-engine-spec.md) | Accepted bounded authoring and ADR-0018 stable-ID projection/rename, binary64, dependency, and recomputation contract |
 | [`semantic-diff-spec.md`](semantic-diff-spec.md) | Semantic diff behavior |
 
-Detailed schema diagnostics, formula binding, and numeric determinism are still being hardened through the Core & Format Hardening decision Issues. ADR-0015 already fixes durable stable identity; ADR-0017 requires storage to preserve that boundary without making serializer behavior semantic meaning.
+Detailed schema diagnostics remain under #23. Formula binding and numeric determinism are Accepted under ADR-0018. ADR-0015 fixes durable stable identity; ADR-0017 requires storage to preserve that boundary without making serializer behavior semantic meaning. Implementation remains owned by the downstream issues named in ADR-0018.
 
 ## AI, security, and extensibility
 
