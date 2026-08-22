@@ -6,11 +6,13 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+use tachiko_formula_engine::project_expression;
 use tachiko_semantic_core::{
-    Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldRef,
-    FieldType, Schema, SchemaId, Value,
+    Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
+    FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
 };
 use tachiko_storage::{load, save};
+use uuid::Uuid;
 
 static NEXT_TEMP_DIR: AtomicU64 = AtomicU64::new(0);
 
@@ -51,13 +53,19 @@ fn balance_document(damage: f64) -> Document {
             SchemaId::from("weapon"),
             Schema {
                 id: SchemaId::from("weapon"),
+                key: SchemaKey::from("weapon"),
                 fields: BTreeMap::from([
-                    (FieldId::from("damage"), number_field()),
-                    (FieldId::from("attack_interval"), number_field()),
-                    (FieldId::from("dps"), number_field()),
+                    (FieldId::from("damage"), number_field("damage")),
+                    (
+                        FieldId::from("attack_interval"),
+                        number_field("attack_interval"),
+                    ),
+                    (FieldId::from("dps"), number_field("dps")),
                     (
                         FieldId::from("name"),
                         FieldDefinition {
+                            id: FieldId::from("name"),
+                            key: FieldKey::from("name"),
                             field_type: FieldType::Text,
                             required: true,
                         },
@@ -69,10 +77,11 @@ fn balance_document(damage: f64) -> Document {
             EntityId::from("sword"),
             Entity {
                 id: EntityId::from("sword"),
+                key: "sword".into(),
                 schema: SchemaId::from("weapon"),
                 fields: BTreeMap::from([
-                    (FieldId::from("damage"), Value::Number(damage)),
-                    (FieldId::from("attack_interval"), Value::Number(1.25)),
+                    (FieldId::from("damage"), number(damage)),
+                    (FieldId::from("attack_interval"), number(1.25)),
                     (
                         FieldId::from("dps"),
                         Value::Formula(Expression::Divide {
@@ -90,18 +99,58 @@ fn balance_document(damage: f64) -> Document {
     }
 }
 
-fn number_field() -> FieldDefinition {
+fn number_field(id: &str) -> FieldDefinition {
     FieldDefinition {
+        id: FieldId::from(id),
+        key: FieldKey::from(id),
         field_type: FieldType::Number,
         required: true,
     }
 }
 
+fn number(value: f64) -> Value {
+    Value::Number(Number::new(value).unwrap())
+}
+
+fn entity_by_key<'document>(document: &'document Document, key: &str) -> &'document Entity {
+    document
+        .entities
+        .values()
+        .find(|entity| entity.key.as_str() == key)
+        .unwrap_or_else(|| panic!("missing entity key '{key}'"))
+}
+
+fn field_value_by_key<'document>(
+    document: &'document Document,
+    entity_key: &str,
+    field_key: &str,
+) -> &'document Value {
+    let entity = entity_by_key(document, entity_key);
+    let schema = &document.schemas[&entity.schema];
+    let field_id = schema
+        .fields
+        .values()
+        .find(|field| field.key.as_str() == field_key)
+        .unwrap_or_else(|| panic!("missing field key '{field_key}'"))
+        .id
+        .clone();
+    &entity.fields[&field_id]
+}
+
+fn projected_formula(document: &Document, entity_key: &str, field_key: &str) -> String {
+    let Value::Formula(expression) = field_value_by_key(document, entity_key, field_key) else {
+        panic!("{entity_key}.{field_key} is not a formula");
+    };
+    project_expression(document, expression).expect("stored formula projects through current keys")
+}
+
 fn with_attack_interval(mut document: Document, attack_interval: f64) -> Document {
-    document.entities.get_mut("sword").unwrap().fields.insert(
-        FieldId::from("attack_interval"),
-        Value::Number(attack_interval),
-    );
+    document
+        .entities
+        .get_mut("sword")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("attack_interval"), number(attack_interval));
     document
 }
 
@@ -148,7 +197,7 @@ fn init_can_explicitly_create_an_empty_document() {
 }
 
 #[test]
-fn init_derives_a_valid_identifier_from_a_human_file_name() {
+fn init_generates_a_uuid_v7_identity_and_derives_a_human_title_from_the_file_name() {
     let temp = TempDir::new();
     let path = temp.path().join("My Balance Data.ro");
 
@@ -159,7 +208,10 @@ fn init_derives_a_valid_identifier_from_a_human_file_name() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(load(path).unwrap().id, DocumentId::from("my-balance-data"));
+    let document = load(path).unwrap();
+    assert_eq!(document.title, "my-balance-data");
+    let id = Uuid::parse_str(document.id.as_str()).expect("normal creation uses a UUID");
+    assert_eq!(id.get_version_num(), 7);
 }
 
 #[test]
@@ -202,7 +254,7 @@ fn validate_rejects_formula_division_by_zero() {
         .get_mut("sword")
         .unwrap()
         .fields
-        .insert(FieldId::from("attack_interval"), Value::Number(0.0));
+        .insert(FieldId::from("attack_interval"), number(0.0));
     save(&path, &document).unwrap();
 
     let output = run(&["validate", path.to_str().unwrap()]);
@@ -290,7 +342,7 @@ fn export_materializes_formula_results_without_losing_semantic_identity() {
     );
     let exported: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(output_path).unwrap()).unwrap();
-    assert_eq!(exported["format_version"], 1);
+    assert_eq!(exported["format_version"], 2);
     assert_eq!(exported["document_id"], "balance");
     assert_eq!(exported["entities"]["sword"]["schema"], "weapon");
     assert_eq!(exported["entities"]["sword"]["fields"]["dps"], 80.0);
@@ -327,9 +379,12 @@ fn show_turns_a_document_into_a_readable_semantic_overview() {
     assert!(output.status.success());
     let text = String::from_utf8(output.stdout).unwrap();
     assert!(text.contains("balance · 4 schemas · 4 entities · 3 formulas"));
-    assert!(text.contains("weapons · Iron Sword [iron_sword]"));
-    assert!(text.contains("dps: 40 (formula)"));
-    assert!(text.contains("weapon: → iron_sword (reference → weapons)"));
+    assert!(text.contains("document id:"));
+    assert!(text.contains("weapons · Iron Sword (iron_sword) ["));
+    assert!(text.contains("dps ["));
+    assert!(text.contains(": 40 (formula)"));
+    assert!(text.contains("weapon ["));
+    assert!(text.contains(": → iron_sword (reference → weapons)"));
 }
 
 #[test]
@@ -379,13 +434,15 @@ fn set_writes_a_new_valid_document_and_prints_semantic_impact() {
     assert!(text.contains("damage: 36 -> 45"));
     assert!(text.contains("affected dps: 40 -> 50"));
     assert!(text.contains("wrote"));
+    let original = load(&input).unwrap();
+    let edited = load(&output_path).unwrap();
     assert_eq!(
-        load(&input).unwrap().entities["iron_sword"].fields["damage"],
-        Value::Number(36.0)
+        field_value_by_key(&original, "iron_sword", "damage"),
+        &number(36.0)
     );
     assert_eq!(
-        load(&output_path).unwrap().entities["iron_sword"].fields["damage"],
-        Value::Number(45.0)
+        field_value_by_key(&edited, "iron_sword", "damage"),
+        &number(45.0)
     );
 }
 
@@ -428,10 +485,7 @@ fn set_refuses_invalid_field_syntax_formula_edits_and_existing_outputs() {
         temp.path().join("broken-reference.ro").to_str().unwrap(),
     ]);
     assert!(!broken_reference.status.success());
-    assert!(
-        String::from_utf8_lossy(&broken_reference.stderr)
-            .contains("referenced entity 'missing_weapon' does not exist")
-    );
+    assert!(String::from_utf8_lossy(&broken_reference.stderr).contains("existing entity key"));
 
     let overwrite = run(&[
         "set",
@@ -454,9 +508,10 @@ fn set_refuses_invalid_field_syntax_formula_edits_and_existing_outputs() {
     ]);
     assert!(!same_path.status.success());
     assert!(String::from_utf8_lossy(&same_path.stderr).contains("same as the input"));
+    let original = load(&input).unwrap();
     assert_eq!(
-        load(&input).unwrap().entities["iron_sword"].fields["damage"],
-        Value::Number(36.0)
+        field_value_by_key(&original, "iron_sword", "damage"),
+        &number(36.0)
     );
 }
 
@@ -485,22 +540,14 @@ fn entity_duplicate_creates_a_rebased_copy_without_changing_the_source() {
     assert_eq!(load(&input).unwrap().entities.len(), 4);
     let copied = load(&output_path).unwrap();
     assert_eq!(copied.entities.len(), 5);
+    let source = entity_by_key(&copied, "iron_sword");
+    let duplicate = entity_by_key(&copied, "steel_sword");
+    assert_ne!(duplicate.id, source.id);
+    let duplicate_id = Uuid::parse_str(duplicate.id.as_str()).expect("duplicate ID is a UUID");
+    assert_eq!(duplicate_id.get_version_num(), 7);
     assert_eq!(
-        copied.entities["steel_sword"].id,
-        EntityId::from("steel_sword")
-    );
-    assert_eq!(
-        copied.entities["steel_sword"].fields["dps"],
-        Value::Formula(Expression::Divide {
-            left: Box::new(Expression::Reference(FieldRef::new(
-                "steel_sword",
-                "damage"
-            ))),
-            right: Box::new(Expression::Reference(FieldRef::new(
-                "steel_sword",
-                "attack_interval",
-            ))),
-        })
+        projected_formula(&copied, "steel_sword", "dps"),
+        "([steel_sword.damage] / [steel_sword.attack_interval])"
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("steel_sword"));
@@ -509,11 +556,15 @@ fn entity_duplicate_creates_a_rebased_copy_without_changing_the_source() {
 }
 
 #[test]
-fn entity_rename_rewrites_typed_relationships_and_formula_references() {
+fn entity_rename_changes_only_the_human_key_and_preserves_bound_relationships() {
     let temp = TempDir::new();
     let input = temp.path().join("balance.ro");
     let output_path = temp.path().join("renamed.ro");
     assert!(run(&["init", input.to_str().unwrap()]).status.success());
+
+    let original = load(&input).unwrap();
+    let stable_id = entity_by_key(&original, "iron_sword").id.clone();
+    let original_formula = field_value_by_key(&original, "shop", "matches_for_sword").clone();
 
     let output = run(&[
         "entity",
@@ -531,28 +582,28 @@ fn entity_rename_rewrites_typed_relationships_and_formula_references() {
         String::from_utf8_lossy(&output.stderr)
     );
     let renamed = load(&output_path).unwrap();
-    assert!(!renamed.entities.contains_key("iron_sword"));
+    assert!(
+        renamed
+            .entities
+            .values()
+            .all(|entity| entity.key.as_str() != "iron_sword")
+    );
+    assert_eq!(entity_by_key(&renamed, "moonblade").id, stable_id);
     assert_eq!(
-        renamed.entities["moonblade"].id,
-        EntityId::from("moonblade")
+        field_value_by_key(&renamed, "alric", "weapon"),
+        &Value::Reference(stable_id.clone())
     );
     assert_eq!(
-        renamed.entities["alric"].fields["weapon"],
-        Value::Reference(EntityId::from("moonblade"))
+        field_value_by_key(&renamed, "tempered_blade", "grants_weapon"),
+        &Value::Reference(stable_id)
     );
     assert_eq!(
-        renamed.entities["tempered_blade"].fields["grants_weapon"],
-        Value::Reference(EntityId::from("moonblade"))
+        field_value_by_key(&renamed, "shop", "matches_for_sword"),
+        &original_formula
     );
     assert_eq!(
-        renamed.entities["shop"].fields["matches_for_sword"],
-        Value::Formula(Expression::Divide {
-            left: Box::new(Expression::Reference(FieldRef::new("moonblade", "price"))),
-            right: Box::new(Expression::Reference(FieldRef::new(
-                "shop",
-                "gold_per_match",
-            ))),
-        })
+        projected_formula(&renamed, "shop", "matches_for_sword"),
+        "([moonblade.price] / [shop.gold_per_match])"
     );
     assert!(
         String::from_utf8(output.stdout)
@@ -670,23 +721,19 @@ fn formula_set_writes_a_calculated_formula_and_prints_semantic_impact() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+    let edited = load(&output_path).unwrap();
     assert!(matches!(
-        load(&output_path).unwrap().entities["iron_sword"].fields["dps"],
+        field_value_by_key(&edited, "iron_sword", "dps"),
         Value::Formula(Expression::Minimum { .. })
     ));
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("affected dps: 40 -> 45"));
     assert!(stdout.contains("wrote"));
     assert!(stdout.contains("tachiko explain"));
+    let original = load(&input).unwrap();
     assert_eq!(
-        load(&input).unwrap().entities["iron_sword"].fields["dps"],
-        Value::Formula(Expression::Divide {
-            left: Box::new(Expression::Reference(FieldRef::new("iron_sword", "damage"))),
-            right: Box::new(Expression::Reference(FieldRef::new(
-                "iron_sword",
-                "attack_interval",
-            ))),
-        })
+        projected_formula(&original, "iron_sword", "dps"),
+        "([iron_sword.damage] / [iron_sword.attack_interval])"
     );
 }
 
@@ -702,7 +749,7 @@ fn formula_set_rejects_parse_reference_cycle_and_target_errors_without_output() 
             "reference",
             "iron_sword.dps",
             "[missing.damage]",
-            "has no target entity",
+            "cannot be resolved",
         ),
         (
             "cycle",
@@ -853,7 +900,7 @@ fn merge_writes_a_merged_document_and_prints_semantic_impact() {
     );
     assert_eq!(
         load(&merged_path).unwrap().entities["sword"].fields["damage"],
-        Value::Number(120.0)
+        number(120.0)
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("wrote"));
@@ -906,6 +953,8 @@ fn merge_schema_definition_only_change_prints_the_semantic_impact() {
     ours.schemas.get_mut("weapon").unwrap().fields.insert(
         FieldId::from("weight"),
         FieldDefinition {
+            id: FieldId::from("weight"),
+            key: FieldKey::from("weight"),
             field_type: FieldType::Number,
             required: false,
         },
@@ -962,9 +1011,9 @@ fn merge_reports_typed_conflicts_without_creating_output() {
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("entities.sword.fields.damage"));
-    assert!(stderr.contains("FieldValue(Number(100.0))"));
-    assert!(stderr.contains("FieldValue(Number(120.0))"));
-    assert!(stderr.contains("FieldValue(Number(140.0))"));
+    assert!(stderr.contains("FieldValue(Number(Number(100.0)))"));
+    assert!(stderr.contains("FieldValue(Number(Number(120.0)))"));
+    assert!(stderr.contains("FieldValue(Number(Number(140.0)))"));
     assert!(!merged_path.exists());
 }
 

@@ -6,8 +6,8 @@ use std::{
 };
 
 use tachiko_semantic_core::{
-    Document, DocumentId, Entity, EntityId, FieldDefinition, FieldId, FieldType, Schema, SchemaId,
-    Value,
+    Document, DocumentId, Entity, EntityId, FieldDefinition, FieldId, FieldKey, FieldType, Number,
+    Schema, SchemaId, SchemaKey, Value,
 };
 use tachiko_storage::{FORMAT_VERSION, FormatError, from_str, load, save, to_canonical_string};
 
@@ -18,6 +18,8 @@ fn document_with_order(reverse: bool) -> Document {
         (
             FieldId::from("damage"),
             FieldDefinition {
+                id: FieldId::from("damage"),
+                key: FieldKey::from("damage"),
                 field_type: FieldType::Number,
                 required: true,
             },
@@ -25,13 +27,18 @@ fn document_with_order(reverse: bool) -> Document {
         (
             FieldId::from("name"),
             FieldDefinition {
+                id: FieldId::from("name"),
+                key: FieldKey::from("name"),
                 field_type: FieldType::Text,
                 required: true,
             },
         ),
     ];
     let value_entries = [
-        (FieldId::from("damage"), Value::Number(100.0)),
+        (
+            FieldId::from("damage"),
+            Value::Number(Number::new(100.0).unwrap()),
+        ),
         (FieldId::from("name"), Value::Text("Sword".to_owned())),
     ];
 
@@ -53,6 +60,7 @@ fn document_with_order(reverse: bool) -> Document {
             SchemaId::from("weapon"),
             Schema {
                 id: SchemaId::from("weapon"),
+                key: SchemaKey::from("weapon"),
                 fields,
             },
         )]),
@@ -60,6 +68,7 @@ fn document_with_order(reverse: bool) -> Document {
             EntityId::from("sword"),
             Entity {
                 id: EntityId::from("sword"),
+                key: "sword".into(),
                 schema: SchemaId::from("weapon"),
                 fields: values,
             },
@@ -138,7 +147,7 @@ fn invalid_semantic_content_cannot_be_serialized() {
 }
 
 #[test]
-fn invalid_v1_relationship_cannot_be_serialized() {
+fn invalid_v2_relationship_cannot_be_serialized() {
     let document = Document {
         id: DocumentId::from("doc"),
         title: "Document".to_owned(),
@@ -146,9 +155,12 @@ fn invalid_v1_relationship_cannot_be_serialized() {
             SchemaId::from("source"),
             Schema {
                 id: SchemaId::from("source"),
+                key: SchemaKey::from("source"),
                 fields: BTreeMap::from([(
                     FieldId::from("target"),
                     FieldDefinition {
+                        id: FieldId::from("target"),
+                        key: FieldKey::from("target"),
                         field_type: FieldType::Reference {
                             schema: SchemaId::from("missing"),
                         },
@@ -162,7 +174,7 @@ fn invalid_v1_relationship_cannot_be_serialized() {
 
     let error = to_canonical_string(&document).unwrap_err();
 
-    assert!(matches!(error, FormatError::InvalidRepresentation { .. }));
+    assert!(matches!(error, FormatError::InvalidDocument { .. }));
 }
 
 #[test]

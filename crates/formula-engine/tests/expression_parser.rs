@@ -1,15 +1,15 @@
 use tachiko_formula_engine::{
-    ExpressionComplexityError, FormulaParseError, format_expression, parse_expression,
-    validate_expression_complexity,
+    ExpressionComplexityError, FormulaParseError, UnboundExpression, format_unbound_expression,
+    parse_expression, validate_unbound_expression_structure,
 };
-use tachiko_semantic_core::{Expression, FieldRef};
+use tachiko_semantic_core::{FieldAddress, Number};
 
-fn number(value: f64) -> Expression {
-    Expression::Number(value)
+fn number(value: f64) -> UnboundExpression {
+    UnboundExpression::Number(Number::new(value).unwrap())
 }
 
-fn reference(entity: &str, field: &str) -> Expression {
-    Expression::Reference(FieldRef::new(entity, field))
+fn reference(entity: &str, field: &str) -> UnboundExpression {
+    UnboundExpression::Reference(FieldAddress::new(entity, field))
 }
 
 fn left_associative_sum(terms: usize) -> String {
@@ -18,10 +18,10 @@ fn left_associative_sum(terms: usize) -> String {
         .join("+")
 }
 
-fn left_associative_ast(terms: usize, value: f64) -> Expression {
+fn left_associative_ast(terms: usize, value: f64) -> UnboundExpression {
     let mut expression = number(value);
     for _ in 1..terms {
-        expression = Expression::Add {
+        expression = UnboundExpression::Add {
             left: Box::new(expression),
             right: Box::new(number(value)),
         };
@@ -46,17 +46,17 @@ fn balanced_sum_with_leaf(leaves: usize, leaf: &str) -> String {
     )
 }
 
-fn balanced_ast(leaves: usize) -> Expression {
+fn balanced_ast(leaves: usize) -> UnboundExpression {
     balanced_ast_with_leaf(leaves, &number(1.0))
 }
 
-fn balanced_ast_with_leaf(leaves: usize, leaf: &Expression) -> Expression {
+fn balanced_ast_with_leaf(leaves: usize, leaf: &UnboundExpression) -> UnboundExpression {
     if leaves == 1 {
         return leaf.clone();
     }
     let left = leaves / 2;
     let right = leaves - left;
-    Expression::Add {
+    UnboundExpression::Add {
         left: Box::new(balanced_ast_with_leaf(left, leaf)),
         right: Box::new(balanced_ast_with_leaf(right, leaf)),
     }
@@ -81,15 +81,15 @@ fn assert_parse_error(input: &str, position: usize, message: &str) {
 fn precedence_and_left_associativity_map_exactly_to_the_ast() {
     assert_eq!(
         parse_expression("1 + 2 * 3 - 4 / 2").unwrap(),
-        Expression::Subtract {
-            left: Box::new(Expression::Add {
+        UnboundExpression::Subtract {
+            left: Box::new(UnboundExpression::Add {
                 left: Box::new(number(1.0)),
-                right: Box::new(Expression::Multiply {
+                right: Box::new(UnboundExpression::Multiply {
                     left: Box::new(number(2.0)),
                     right: Box::new(number(3.0)),
                 }),
             }),
-            right: Box::new(Expression::Divide {
+            right: Box::new(UnboundExpression::Divide {
                 left: Box::new(number(4.0)),
                 right: Box::new(number(2.0)),
             }),
@@ -97,8 +97,8 @@ fn precedence_and_left_associativity_map_exactly_to_the_ast() {
     );
     assert_eq!(
         parse_expression("8 / 4 / 2").unwrap(),
-        Expression::Divide {
-            left: Box::new(Expression::Divide {
+        UnboundExpression::Divide {
+            left: Box::new(UnboundExpression::Divide {
                 left: Box::new(number(8.0)),
                 right: Box::new(number(4.0)),
             }),
@@ -113,8 +113,8 @@ fn unary_signs_bind_before_arithmetic_and_non_literals_use_zero_subtraction() {
     assert_eq!(parse_expression("+2e3").unwrap(), number(2_000.0));
     assert_eq!(
         parse_expression("-[weapon.damage] * 2").unwrap(),
-        Expression::Multiply {
-            left: Box::new(Expression::Subtract {
+        UnboundExpression::Multiply {
+            left: Box::new(UnboundExpression::Subtract {
                 left: Box::new(number(0.0)),
                 right: Box::new(reference("weapon", "damage")),
             }),
@@ -123,9 +123,9 @@ fn unary_signs_bind_before_arithmetic_and_non_literals_use_zero_subtraction() {
     );
     assert_eq!(
         parse_expression("--[weapon.damage]").unwrap(),
-        Expression::Subtract {
+        UnboundExpression::Subtract {
             left: Box::new(number(0.0)),
-            right: Box::new(Expression::Subtract {
+            right: Box::new(UnboundExpression::Subtract {
                 left: Box::new(number(0.0)),
                 right: Box::new(reference("weapon", "damage")),
             }),
@@ -140,12 +140,12 @@ fn parentheses_functions_references_and_ascii_whitespace_are_supported() {
 
     assert_eq!(
         parsed,
-        Expression::Maximum {
-            left: Box::new(Expression::Minimum {
+        UnboundExpression::Maximum {
+            left: Box::new(UnboundExpression::Minimum {
                 left: Box::new(number(1.0)),
                 right: Box::new(number(2.0)),
             }),
-            right: Box::new(Expression::Add {
+            right: Box::new(UnboundExpression::Add {
                 left: Box::new(reference("weapon-2", "damage_per-hit")),
                 right: Box::new(number(0.5)),
             }),
@@ -167,22 +167,22 @@ fn decimal_and_scientific_literals_are_finite_f64_values() {
 }
 
 #[test]
-fn canonical_numbers_preserve_extreme_subnormal_precision_and_negative_zero_bits() {
+fn canonical_numbers_preserve_precision_and_normalize_negative_zero() {
     for (input, expected) in [
         ("1e308", "1e308"),
         ("5e-324", "5e-324"),
         ("1.2345678901234567", "1.2345678901234567"),
         ("100", "100"),
-        ("-0", "-0"),
+        ("-0", "0"),
     ] {
         let expression = parse_expression(input).unwrap();
-        let canonical = format_expression(&expression);
+        let canonical = format_unbound_expression(&expression);
 
         assert_eq!(canonical, expected);
-        let Expression::Number(original) = expression else {
+        let UnboundExpression::Number(original) = expression else {
             panic!("numeric input must parse to a number")
         };
-        let Expression::Number(reparsed) = parse_expression(&canonical).unwrap() else {
+        let UnboundExpression::Number(reparsed) = parse_expression(&canonical).unwrap() else {
             panic!("canonical number must reparse to a number")
         };
         assert_eq!(reparsed.to_bits(), original.to_bits());
@@ -191,20 +191,20 @@ fn canonical_numbers_preserve_extreme_subnormal_precision_and_negative_zero_bits
 
 #[test]
 fn canonical_formatter_covers_every_ast_shape() {
-    let expression = Expression::Maximum {
-        left: Box::new(Expression::Divide {
-            left: Box::new(Expression::Add {
+    let expression = UnboundExpression::Maximum {
+        left: Box::new(UnboundExpression::Divide {
+            left: Box::new(UnboundExpression::Add {
                 left: Box::new(number(-2.0)),
                 right: Box::new(reference("weapon", "damage")),
             }),
             right: Box::new(number(3.0)),
         }),
-        right: Box::new(Expression::Minimum {
-            left: Box::new(Expression::Subtract {
+        right: Box::new(UnboundExpression::Minimum {
+            left: Box::new(UnboundExpression::Subtract {
                 left: Box::new(number(4.0)),
                 right: Box::new(number(1.0)),
             }),
-            right: Box::new(Expression::Multiply {
+            right: Box::new(UnboundExpression::Multiply {
                 left: Box::new(number(2.0)),
                 right: Box::new(number(5.0)),
             }),
@@ -212,7 +212,7 @@ fn canonical_formatter_covers_every_ast_shape() {
     };
 
     assert_eq!(
-        format_expression(&expression),
+        format_unbound_expression(&expression),
         "max(((-2 + [weapon.damage]) / 3), min((4 - 1), (2 * 5)))"
     );
 }
@@ -226,12 +226,15 @@ fn canonical_format_round_trips_and_is_deterministic() {
         "([weapon.damage])",
     ] {
         let parsed = parse_expression(input).unwrap();
-        let canonical = format_expression(&parsed);
+        let canonical = format_unbound_expression(&parsed);
         let reparsed = parse_expression(&canonical).unwrap();
 
         assert_eq!(reparsed, parsed, "round trip failed for {input}");
-        assert_eq!(format_expression(&reparsed), canonical);
-        assert_eq!(format_expression(&parsed), format_expression(&parsed));
+        assert_eq!(format_unbound_expression(&reparsed), canonical);
+        assert_eq!(
+            format_unbound_expression(&parsed),
+            format_unbound_expression(&parsed)
+        );
     }
 }
 
@@ -241,7 +244,7 @@ fn diagnostics_report_stable_byte_positions_and_messages() {
         ("", 0, "expected expression"),
         ("1 +", 3, "expected expression"),
         ("[weapon.damage", 14, "expected ']' after reference"),
-        ("[Weapon.damage]", 1, "invalid reference entity identifier"),
+        ("[Weapon.damage]", 1, "invalid reference entity key"),
         (
             "[weapon.damage.extra]",
             14,
@@ -250,7 +253,11 @@ fn diagnostics_report_stable_byte_positions_and_messages() {
         ("min(1 2)", 6, "expected ',' between function arguments"),
         ("sqrt(1)", 0, "unknown function 'sqrt'; expected min or max"),
         ("1e+", 3, "expected exponent digits"),
-        ("1e999", 0, "numeric literal must be finite"),
+        (
+            "1e999",
+            0,
+            "numeric literal must convert to a finite Number",
+        ),
         ("1 2", 2, "unexpected trailing content"),
         ("@", 0, "expected number, reference, function, or '('"),
     ] {
@@ -309,11 +316,11 @@ fn nesting_limit_allows_64_constructs_and_rejects_the_65th() {
 fn balanced_node_limit_allows_255_nodes_and_rejects_257() {
     let accepted_input = balanced_sum(128);
     let accepted = parse_expression(&accepted_input).expect("255 balanced nodes should parse");
-    assert_eq!(validate_expression_complexity(&accepted), Ok(()));
+    assert_eq!(validate_unbound_expression_structure(&accepted), Ok(()));
 
     let rejected_ast = balanced_ast(129);
     assert_eq!(
-        validate_expression_complexity(&rejected_ast),
+        validate_unbound_expression_structure(&rejected_ast),
         Err(ExpressionComplexityError::NodeLimit)
     );
     let rejected = parse_expression(&balanced_sum(129)).unwrap_err();
@@ -324,8 +331,8 @@ fn balanced_node_limit_allows_255_nodes_and_rejects_257() {
 fn post_desugaring_depth_allows_64_and_rejects_65_in_flat_chains() {
     let accepted_input = left_associative_sum(64);
     let accepted = parse_expression(&accepted_input).expect("depth 64 should parse");
-    assert_eq!(validate_expression_complexity(&accepted), Ok(()));
-    let canonical = format_expression(&accepted);
+    assert_eq!(validate_unbound_expression_structure(&accepted), Ok(()));
+    let canonical = format_unbound_expression(&accepted);
     assert_eq!(parse_expression(&canonical).unwrap(), accepted);
 
     let rejected_input = left_associative_sum(65);
@@ -335,7 +342,7 @@ fn post_desugaring_depth_allows_64_and_rejects_65_in_flat_chains() {
         "expression exceeds 64-depth limit",
     );
     assert_eq!(
-        validate_expression_complexity(&left_associative_ast(65, 1.0)),
+        validate_unbound_expression_structure(&left_associative_ast(65, 1.0)),
         Err(ExpressionComplexityError::DepthLimit)
     );
 }
@@ -344,7 +351,7 @@ fn post_desugaring_depth_allows_64_and_rejects_65_in_flat_chains() {
 fn unary_desugaring_participates_in_post_construction_depth() {
     let accepted_input = format!("{}[a.b]", "-".repeat(63));
     let accepted = parse_expression(&accepted_input).expect("desugared depth 64 should parse");
-    assert_eq!(validate_expression_complexity(&accepted), Ok(()));
+    assert_eq!(validate_unbound_expression_structure(&accepted), Ok(()));
 
     let rejected_input = format!("{}[a.b]", "-".repeat(64));
     assert_parse_error(
@@ -360,9 +367,12 @@ fn canonical_byte_limit_is_enforced_after_construction() {
     let exact_input = format!("[a.{exact_field}]");
     assert_eq!(exact_input.len(), 4_096);
     let exact = parse_expression(&exact_input).expect("4096 canonical bytes should parse");
-    assert_eq!(format_expression(&exact).len(), 4_096);
-    assert_eq!(validate_expression_complexity(&exact), Ok(()));
-    assert_eq!(parse_expression(&format_expression(&exact)).unwrap(), exact);
+    assert_eq!(format_unbound_expression(&exact).len(), 4_096);
+    assert_eq!(validate_unbound_expression_structure(&exact), Ok(()));
+    assert_eq!(
+        parse_expression(&format_unbound_expression(&exact)).unwrap(),
+        exact
+    );
 
     let field = "x".repeat(24);
     let leaf_input = format!("[a.{field}]");
@@ -374,9 +384,9 @@ fn canonical_byte_limit_is_enforced_after_construction() {
         "canonical expression exceeds 4096-byte limit",
     );
     let rejected_ast = balanced_ast_with_leaf(128, &reference("a", &field));
-    assert!(format_expression(&rejected_ast).len() > 4_096);
+    assert!(format_unbound_expression(&rejected_ast).len() > 4_096);
     assert_eq!(
-        validate_expression_complexity(&rejected_ast),
+        validate_unbound_expression_structure(&rejected_ast),
         Err(ExpressionComplexityError::CanonicalLengthLimit)
     );
 }

@@ -1,4 +1,8 @@
-use tachiko_semantic_core::{DiagnosticCode, Document, is_valid_identifier, validate_document};
+use std::collections::BTreeMap;
+
+use tachiko_semantic_core::{
+    DiagnosticCode, Document, Entity, EntityId, EntityKey, is_valid_identifier, validate_document,
+};
 
 #[test]
 fn public_identifier_predicate_accepts_exactly_the_stable_path_grammar() {
@@ -23,14 +27,23 @@ fn public_identifier_predicate_accepts_exactly_the_stable_path_grammar() {
 }
 
 #[test]
-fn public_identifier_predicate_matches_document_validation() {
+fn public_identifier_predicate_matches_human_key_validation() {
     for identifier in ["balance", "2d-balance", "", "Balance", "balance.data"] {
-        let document = Document::empty(identifier, "Balance");
+        let mut document = Document::empty("opaque stable id", "Balance");
+        document.entities.insert(
+            EntityId::from("entity stable id"),
+            Entity {
+                id: EntityId::from("entity stable id"),
+                key: EntityKey::from(identifier),
+                schema: "missing but opaque".into(),
+                fields: BTreeMap::default(),
+            },
+        );
         let has_identifier_diagnostic = validate_document(&document).iter().any(|diagnostic| {
-            diagnostic.path == "id"
+            diagnostic.path == "entities.entity stable id.key"
                 && matches!(
                     diagnostic.code,
-                    DiagnosticCode::EmptyIdentifier | DiagnosticCode::InvalidIdentifier
+                    DiagnosticCode::EmptyKey | DiagnosticCode::InvalidKey
                 )
         });
 

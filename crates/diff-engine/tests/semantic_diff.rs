@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use tachiko_diff_engine::{SemanticChange, diff};
 use tachiko_semantic_core::{
-    Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldRef,
-    FieldType, Schema, SchemaId, Value,
+    Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
+    FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
 };
 
 fn balance_document(damage: f64) -> Document {
@@ -14,13 +14,17 @@ fn balance_document(damage: f64) -> Document {
             SchemaId::from("weapon"),
             Schema {
                 id: SchemaId::from("weapon"),
+                key: SchemaKey::from("weapon"),
                 fields: BTreeMap::from([
-                    (FieldId::from("damage"), number_field(true)),
-                    (FieldId::from("attack_interval"), number_field(true)),
-                    (FieldId::from("dps"), number_field(true)),
-                    (FieldId::from("burst"), number_field(true)),
-                    (FieldId::from("rarity"), text_field(false)),
-                    (FieldId::from("name"), text_field(true)),
+                    (FieldId::from("damage"), number_field("damage", true)),
+                    (
+                        FieldId::from("attack_interval"),
+                        number_field("attack_interval", true),
+                    ),
+                    (FieldId::from("dps"), number_field("dps", true)),
+                    (FieldId::from("burst"), number_field("burst", true)),
+                    (FieldId::from("rarity"), text_field("rarity", false)),
+                    (FieldId::from("name"), text_field("name", true)),
                 ]),
             },
         )]),
@@ -28,10 +32,11 @@ fn balance_document(damage: f64) -> Document {
             EntityId::from("sword"),
             Entity {
                 id: EntityId::from("sword"),
+                key: "sword".into(),
                 schema: SchemaId::from("weapon"),
                 fields: BTreeMap::from([
-                    (FieldId::from("damage"), Value::Number(damage)),
-                    (FieldId::from("attack_interval"), Value::Number(1.25)),
+                    (FieldId::from("damage"), number(damage)),
+                    (FieldId::from("attack_interval"), number(1.25)),
                     (
                         FieldId::from("dps"),
                         Value::Formula(Expression::Divide {
@@ -43,7 +48,7 @@ fn balance_document(damage: f64) -> Document {
                         FieldId::from("burst"),
                         Value::Formula(Expression::Multiply {
                             left: Box::new(reference("sword", "dps")),
-                            right: Box::new(Expression::Number(2.0)),
+                            right: Box::new(numeric(2.0)),
                         }),
                     ),
                     (FieldId::from("name"), Value::Text("Sword".to_owned())),
@@ -53,25 +58,33 @@ fn balance_document(damage: f64) -> Document {
     }
 }
 
-fn number_field(required: bool) -> FieldDefinition {
+fn field(id: &str, field_type: FieldType, required: bool) -> FieldDefinition {
     FieldDefinition {
-        field_type: FieldType::Number,
+        id: FieldId::from(id),
+        key: FieldKey::from(id),
+        field_type,
         required,
     }
 }
 
-fn text_field(required: bool) -> FieldDefinition {
-    FieldDefinition {
-        field_type: FieldType::Text,
-        required,
-    }
+fn number_field(id: &str, required: bool) -> FieldDefinition {
+    field(id, FieldType::Number, required)
 }
 
-fn boolean_field(required: bool) -> FieldDefinition {
-    FieldDefinition {
-        field_type: FieldType::Boolean,
-        required,
-    }
+fn text_field(id: &str, required: bool) -> FieldDefinition {
+    field(id, FieldType::Text, required)
+}
+
+fn boolean_field(id: &str, required: bool) -> FieldDefinition {
+    field(id, FieldType::Boolean, required)
+}
+
+fn number(value: f64) -> Value {
+    Value::Number(Number::new(value).unwrap())
+}
+
+fn numeric(value: f64) -> Expression {
+    Expression::Number(Number::new(value).unwrap())
 }
 
 fn reference(entity: &str, field: &str) -> Expression {
@@ -94,8 +107,8 @@ fn changed_balance_value_reports_direct_and_derived_meaning() {
         change,
         SemanticChange::FieldChanged { field, before, after }
             if field == &FieldRef::new("sword", "damage")
-                && before == &Value::Number(100.0)
-                && after == &Value::Number(120.0)
+                && before == &number(100.0)
+                && after == &number(120.0)
     )));
     assert!(semantic_diff.changes().iter().any(|change| matches!(
         change,
@@ -116,7 +129,7 @@ fn formula_changes_render_in_canonical_copy_paste_syntax() {
                 left: Box::new(reference("sword", "damage")),
                 right: Box::new(reference("sword", "attack_interval")),
             }),
-            right: Box::new(Expression::Number(5.0)),
+            right: Box::new(numeric(5.0)),
         }),
     );
 
@@ -134,6 +147,7 @@ fn entity_addition_and_removal_are_semantic() {
     let mut after = before.clone();
     let mut axe = after.entities.get("sword").unwrap().clone();
     axe.id = EntityId::from("axe");
+    axe.key = "axe".into();
     axe.fields
         .insert(FieldId::from("name"), Value::Text("Axe".to_owned()));
     axe.fields.insert(
@@ -147,7 +161,7 @@ fn entity_addition_and_removal_are_semantic() {
         FieldId::from("burst"),
         Value::Formula(Expression::Multiply {
             left: Box::new(reference("axe", "dps")),
-            right: Box::new(Expression::Number(2.0)),
+            right: Box::new(numeric(2.0)),
         }),
     );
     after.entities.remove("sword");
@@ -213,13 +227,8 @@ fn schema_addition_and_removal_preserve_typed_definitions() {
     let mut after = before.clone();
     let armor = Schema {
         id: SchemaId::from("armor"),
-        fields: BTreeMap::from([(
-            FieldId::from("defense"),
-            FieldDefinition {
-                field_type: FieldType::Number,
-                required: false,
-            },
-        )]),
+        key: SchemaKey::from("armor"),
+        fields: BTreeMap::from([(FieldId::from("defense"), number_field("defense", false))]),
     };
     after.schemas.insert(SchemaId::from("armor"), armor.clone());
 
@@ -251,17 +260,18 @@ fn schema_field_changes_preserve_typed_definitions_and_order() {
         SchemaId::from("metadata"),
         Schema {
             id: SchemaId::from("metadata"),
+            key: SchemaKey::from("metadata"),
             fields: BTreeMap::from([
-                (FieldId::from("legacy"), text_field(false)),
-                (FieldId::from("mode"), text_field(false)),
+                (FieldId::from("legacy"), text_field("legacy", false)),
+                (FieldId::from("mode"), text_field("mode", false)),
             ]),
         },
     );
     let mut after = before.clone();
     let fields = &mut after.schemas.get_mut("metadata").unwrap().fields;
     fields.remove("legacy");
-    fields.insert(FieldId::from("mode"), boolean_field(false));
-    fields.insert(FieldId::from("weight"), number_field(false));
+    fields.insert(FieldId::from("mode"), boolean_field("mode", false));
+    fields.insert(FieldId::from("weight"), number_field("weight", false));
 
     let semantic_diff = diff(&before, &after).unwrap();
 
@@ -271,18 +281,18 @@ fn schema_field_changes_preserve_typed_definitions_and_order() {
             SemanticChange::SchemaFieldRemoved {
                 schema: SchemaId::from("metadata"),
                 field: FieldId::from("legacy"),
-                definition: text_field(false),
+                definition: text_field("legacy", false),
             },
             SemanticChange::SchemaFieldChanged {
                 schema: SchemaId::from("metadata"),
                 field: FieldId::from("mode"),
-                before: text_field(false),
-                after: boolean_field(false),
+                before: text_field("mode", false),
+                after: boolean_field("mode", false),
             },
             SemanticChange::SchemaFieldAdded {
                 schema: SchemaId::from("metadata"),
                 field: FieldId::from("weight"),
-                definition: number_field(false),
+                definition: number_field("weight", false),
             },
         ]
     );
