@@ -2,7 +2,8 @@
 
 Decision state: Mixed — deterministic/semantic-preservation rules under ADR-0017 and the finite-binary64 numeric primitive under ADR-0018 are Accepted; exact Milestone 02 textual/resource-limit mechanics remain version-specific and Provisional outside a version that adopts them.
 
-Implementation state: Not yet implemented as an independent canonical writer; v0.1 currently uses `serde_json::to_string_pretty` plus one trailing LF.
+Implementation state: Implemented by the dedicated `direct-ro/v2` canonical
+writer. Frozen v1 retains its historical version-scoped writer.
 
 Authority: ADR-0017
 

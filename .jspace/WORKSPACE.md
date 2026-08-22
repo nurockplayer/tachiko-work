@@ -707,3 +707,56 @@ the ADR-0015 persisted identity model that remains owned by #70.
   safety checks.
 - Independent standards and spec reviews of 0ab898d...d202be7 both reported no
   findings.
+
+## Active phase: ADR-0015 stable-identity transition (#70)
+
+### Goal and authority
+
+- Execute the latest #70 `agent-handoff:v1` as one atomic, reviewable semantic
+  transition on `codex/stable-identity-transition` from `origin/main` `a27fd11`.
+- Authority is Accepted ADR-0015 through ADR-0018 plus merged PR #80's frozen
+  legacy-v1 DTO/strict-reader seam.
+- Do not redo #74, start #40's broad corpus closure, begin #72's
+  workflow→workspace-engine migration, design `.roproj`/packaging, or self-merge.
+
+### Implemented transition
+
+1. Semantic-core now separates opaque typed `DocumentId`/`SchemaId`/`FieldId`/
+   `EntityId` from mutable schema/entity/field keys and builds deterministic
+   runtime-only address indexes with typed ambiguity/stale-target failures.
+2. Workflow owns a replaceable ID-generation seam. Normal CLI creation supplies
+   UUIDv7; pure semantic/formula/diff/merge code has no clock or randomness.
+3. Formula source parses to a bounded unbound human-address AST, binds and
+   type-checks once to stable `EntityId + FieldId`, extracts static dependencies,
+   and projects only through round-trip-proven current keys. Rename preserves
+   stable IDs/bound ASTs and atomically enforces the 4,096/4,097-byte boundary.
+4. Validation, semantic diff, merge, entity lifecycle, CLI, and AI adapter paths
+   preserve stable continuity while presenting human keys at authoring seams.
+5. Storage performs a two-phase rewrite of all 12 frozen v1 typed-ID locations
+   through deterministic UUIDv5 maps, preserving applicable legacy addresses as
+   keys and never rewriting durable v1 merely by read/open.
+6. `direct-ro/v2` owns complete storage DTOs and canonical identity-aware bytes:
+   stable-ID ordering, no Unicode normalization, ECMAScript shortest-roundtrip
+   Number tokens, 8 MiB complete-input limit, and 256-byte number-token limit.
+
+### Frozen migration mechanism
+
+- Namespace: `7a199010-e2db-5f4f-a216-07ddb708f5ef`, derived as UUIDv5(URL,
+  `https://tachiko.work/migrations/legacy-direct-ro/v1`).
+- Exact UTF-8 UUID names use NUL separators and typed prefixes:
+  `document\0doc`, `schema\0doc\0schema`,
+  `field\0doc\0schema\0field`, and `entity\0doc\0entity`.
+- Schema-scoped field mapping and document/schema/field/entity golden UUIDs are
+  frozen in code tests and `storage-versioning-and-migration.md`.
+
+### Focused evidence before final gates
+
+- CLI: 31 tests green with generated opaque IDs and human-key addressing.
+- Semantic/formula/diff/merge/workflow/storage focused suites are green,
+  including deterministic duplicate-key errors, stable rename/diff/merge,
+  reused-address projection failure, exact 4,096/4,097 rename behavior,
+  replaceable creation, all 12 migration locations, negative mapping classes,
+  byte-stable v2 round trips, ADR-0018 numeric vectors, exact resource
+  boundaries, Unicode preservation, and legacy read-without-rewrite.
+- Final workspace/release-equivalent gates, staged commits, independent code and
+  standards reviews, push, and PR creation remain before handoff.

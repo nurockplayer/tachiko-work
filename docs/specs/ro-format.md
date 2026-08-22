@@ -11,14 +11,17 @@ It does **not** define an independent `.ro` contract. Use the documents below ac
 - [`storage-versioning-and-migration.md`](storage-versioning-and-migration.md) — representation namespaces, version-envelope behavior, complete DTO ownership, and migration requirements.
 - [`canonical-json-profile.md`](canonical-json-profile.md) — deterministic JSON, Unicode, ordering, member-emission, and whitespace rules whose non-numeric portions are settled for Milestone 02.
 - [`ro-format-v1.md`](ro-format-v1.md) — immutable normative legacy compatibility/migration profile for the direct `.ro` JSON bytes shipped by the v0.1 Developer MVP.
+- [`ro-format-v2.md`](ro-format-v2.md) — normative current identity-aware direct `.ro` JSON representation.
 - [`roproj-format.md`](roproj-format.md) and [`roproj-layout-v1.md`](roproj-layout-v1.md) — target/project representation material; `.roproj` is not yet implemented and #41 owns its physical layout.
 - [`../decisions/ADR-0003-ro-and-roproj-representation.md`](../decisions/ADR-0003-ro-and-roproj-representation.md) — Accepted architectural authority for the long-term representation relationship.
 
 ## Current implementation state
 
-The v0.1 CLI still directly persists deterministic `legacy-direct-ro/v1` files for validation, calculation, semantic diff/merge, authoring, and export.
-
-ADR-0017 is Accepted, but its implementation migration has not landed yet. The current writer therefore remains v1 while the repository deliberately replaces semantic-core-coupled serialization with storage-owned historical DTOs and explicit conversion.
+The CLI reads frozen `legacy-direct-ro/v1` through storage-owned DTOs and a
+strict decoder, then migrates it deterministically in memory for the requested
+operation without rewriting the source. New or explicitly saved semantic
+documents use canonical `direct-ro/v2`, which preserves opaque stable IDs,
+mutable human keys, bound references, and ADR-0018 Number semantics losslessly.
 
 The direct `.ro` v1 profile is stable only as **legacy compatibility input**. It is not the future `.roproj` editable format, the future `.ro` package/container profile, or authority for future identity and numeric semantics.
 
@@ -28,7 +31,7 @@ The direct `.ro` v1 profile is stable only as **legacy compatibility input**. It
 - #74 is the implementation parent for ADR-0017.
 - #40 owns executable golden and negative conformance evidence.
 - #70 owns ADR-0015 stable-identity migration integration.
-- #24 retains numeric semantic ownership.
+- ADR-0018 is the Accepted numeric/formula authority; #24 is closed.
 - #41 retains `.roproj` physical-layout ownership.
 - #43 retains future `.ro` package/container/integrity ownership.
 

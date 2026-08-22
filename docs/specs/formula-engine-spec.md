@@ -4,11 +4,11 @@ Decision state: Mixed — ADR-0014 authoring syntax/limits and ADR-0018
 bound-formula, dependency, and deterministic binary64 rules are Accepted;
 implementation mechanisms remain Provisional where marked.
 
-Implementation state: The v0.1 engine implements the Accepted authoring subset,
-finite `f64` evaluation, full-document calculation, dynamic dependency
-collection, and cycle detection. Stable-ID binding, semantic-zero normalization,
-static dependency extraction, incremental recomputation, and the complete
-conformance boundary below are not yet implemented.
+Implementation state: The engine implements bounded parsing, snapshot binding
+to stable IDs, typed bound ASTs, partial round-trip-proven authoring projection,
+rename preflight, finite binary64 `Number` normalization, static dependency
+extraction, full-document calculation, and cycle detection. Incremental
+recomputation and the complete node-keyed/SCC failure oracle remain unimplemented.
 
 Authority: ADR-0014, ADR-0015, ADR-0016, ADR-0017, and ADR-0018. Decision
 record: #24.
@@ -404,20 +404,19 @@ The checked-in research probe executes the same 16 edge cases natively and as
 byte-identical. This is bounded positive evidence, not a proof for every
 compiler or runtime.
 
-Downstream implementation ownership under Accepted ADR-0018:
+Implementation and remaining ownership under Accepted ADR-0018:
 
-- #74 owns the version-specific semantic/DTO conversion and canonical Number
-  writer without rewriting legacy direct-`.ro/v1` bytes.
-- #40 owns storage decoder/writer golden RFC 8785 vectors, non-finite negative
-  fixtures, zero normalization, exact round-trip bytes, and cross-target storage
-  output where supported.
-- Formula-engine work owns native/WASM arithmetic parity and mutation-sequence
-  tests comparing incremental results with fresh full recomputation after every
-  change.
+- #70 implements the version-specific v2 semantic/DTO conversion, canonical
+  Number writer, stable-ID binding/projection, and implementation-critical
+  numeric/resource vectors without rewriting legacy direct-`.ro/v1` bytes.
+- #40 owns final broad storage golden/negative conformance closure and
+  independent corpus expansion.
+- Later formula-engine work owns the complete failure oracle, incremental
+  recomputation, and mutation-sequence equivalence tests.
 - Runtime-export JSON has an independent version contract. Existing
-  `runtime-export-v1` bytes/meaning do not change implicitly; adopting this
-  Number contract requires proof that every v1 observation is preserved or a
-  deliberate runtime-export version bump.
+  `runtime-export-v1` bytes/meaning remain frozen; the stable-identity transition
+  deliberately bumps current output to runtime-export/v2 for normalized Number
+  and opaque document identity.
 
 Required numeric coverage includes threshold neighbors around `1e-6` and
 `1e21`, smallest/largest subnormals, minimum normal, maximum finite,
@@ -438,25 +437,15 @@ stable IDs, and bound AST on rejection.
 
 ## Current implementation gaps
 
-The v0.1 implementation remains evidence, not authority, where it differs from
-the Accepted contract:
+The implementation remains evidence, not authority, where it does not yet
+cover the complete Accepted recomputation contract:
 
-- expressions and values expose raw `f64` without mandatory zero normalization;
-- references use structured but mutable string-backed identifiers rather than a
-  distinct stable-ID bound AST;
-- dependency edges are collected during evaluation rather than extracted
-  statically;
 - calculation always traverses the full document; `affected_by` reports a
   closure but is not an incremental evaluator;
 - calculation stops at the first DFS error/cycle path rather than producing the
-  complete SCC and node-failure oracle outcome;
-- Rust `f64::min` and `f64::max` currently decide equal-zero selection;
-- stored equality and calculated-impact comparison disagree about signed zero;
-  and
-- native/WASM parity is not yet a workspace conformance gate.
-
-This authority promotion does not itself begin the downstream implementation
-work.
+  complete SCC and stable-node-keyed failure oracle outcome; and
+- cross-target execution has compile/smoke evidence but not a complete
+  independent language implementation of every conformance vector.
 
 ## Deferred language features
 

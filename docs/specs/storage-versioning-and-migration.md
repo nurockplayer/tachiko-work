@@ -2,7 +2,8 @@
 
 Decision state: Mixed — Accepted invariants under ADR-0017; Milestone 02 representation mechanics are Provisional where marked.
 
-Implementation state: Not yet implemented; current direct `.ro` JSON v1 remains the shipped baseline.
+Implementation state: Implemented for frozen `legacy-direct-ro/v1`, explicit
+deterministic v1→v2 migration, and canonical identity-aware `direct-ro/v2`.
 
 Authority: ADR-0017
 
@@ -28,7 +29,10 @@ The following are distinct namespaces:
 
 The integer `1` in two different representation namespaces does not imply the same wire schema.
 
-Current v0.1 direct `.ro` JSON is the `legacy-direct-ro/v1` compatibility profile. If that same direct JSON representation evolves incompatibly before `.roproj` becomes the working source, the next version is `direct-ro/v2` within that namespace. This does not assign `.roproj` version `2`.
+The shipped v0.1 direct `.ro` JSON is frozen as the
+`legacy-direct-ro/v1` compatibility profile. Its implemented incompatible
+successor is `direct-ro/v2` within the same direct-JSON namespace. This does not
+assign `.roproj` version `2`.
 
 ## Version envelope
 
@@ -256,15 +260,41 @@ Building the mapping but omitting one typed-ID occurrence is a migration failure
 
 ### Provisional deterministic ID mechanism
 
-For the Milestone 02 legacy migration, deterministic namespace-based RFC 9562 UUIDv5 is the preferred mechanism.
+Milestone 02 legacy migration uses RFC 9562 UUIDv5 with this fixed namespace:
 
-The final migration implementation/spec must publish:
+```text
+7a199010-e2db-5f4f-a216-07ddb708f5ef
+```
 
-- the fixed root namespace UUID;
-- canonical input byte construction;
-- typed prefixes/separators;
-- field-ID scoping rules;
-- golden mapping vectors.
+That namespace is UUIDv5 in the standard URL namespace for this exact UTF-8
+name:
+
+```text
+https://tachiko.work/migrations/legacy-direct-ro/v1
+```
+
+Every UUID name is the exact concatenation below encoded as UTF-8. `NUL` means
+one `00` byte; no length prefix, Unicode normalization, case folding, or final
+separator is added.
+
+```text
+document NUL legacy_document_id
+schema   NUL legacy_document_id NUL legacy_schema_id
+field    NUL legacy_document_id NUL legacy_schema_id NUL legacy_field_id
+entity   NUL legacy_document_id NUL legacy_entity_id
+```
+
+Field identity is therefore schema-scoped. Initial frozen vectors are:
+
+| Kind | Exact name with `NUL` shown textually | UUIDv5 |
+| --- | --- | --- |
+| document | `document NUL legacy-doc` | `1213a728-1f70-5425-a330-20a8797f5e82` |
+| schema | `schema NUL legacy-doc NUL source` | `ff71fea8-d907-5234-a6be-819f6e6fdf07` |
+| field | `field NUL legacy-doc NUL source NUL calc` | `32c7bf4d-e5e4-5ea0-ab43-0d42c6878cce` |
+| entity | `entity NUL legacy-doc NUL source-entity` | `1832624c-a6ad-55fb-b96a-8617af123e7f` |
+
+The namespace and input construction are frozen compatibility mechanisms, not
+semantic identity meaning.
 
 Normal object creation remains governed by ADR-0015's separate creation seam and preferred Provisional UUIDv7 generator.
 
@@ -319,7 +349,8 @@ The exact temporary-file/rename/fsync/browser-transaction implementation remains
 - no partial durable output on migration failure;
 - composed migration vs optimized migration equivalence if optimized edges exist.
 
-Numeric edge vectors remain owned by #24.
+The implementation-critical ADR-0018 numeric and exact resource-boundary
+vectors are covered with v2 here; #40 owns final broad conformance closure.
 
 ## Related
 
