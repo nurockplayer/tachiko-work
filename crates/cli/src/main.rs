@@ -17,6 +17,7 @@ enum Commands {
     /// Create a semantic document with a useful game-balance starter
     Init {
         path: PathBuf,
+        /// Explicit stable document identity (advanced; normally UUIDv7-generated)
         #[arg(long)]
         id: Option<String>,
         #[arg(long)]
@@ -34,15 +35,15 @@ enum Commands {
     /// Explain a field, its formula, and downstream impact
     Explain {
         path: PathBuf,
-        /// Field identifier in entity.field form
+        /// Human field address in entity.field form
         field: String,
     },
     /// Create a changed document from one schema-typed field edit
     Set {
         input: PathBuf,
-        /// Field identifier in entity.field form
+        /// Human field address in entity.field form
         field: String,
-        /// New number, text, boolean, or referenced entity id
+        /// New number, text, boolean, or referenced entity key
         value: String,
         /// New .ro document to create; existing files are never overwritten
         #[arg(long)]
@@ -78,20 +79,20 @@ enum EntityCommands {
     /// Duplicate an entity and rebase its self-referential formulas
     Duplicate {
         input: PathBuf,
-        /// Existing entity identifier to copy
+        /// Existing human entity key to copy
         source: String,
-        /// New entity identifier to create
+        /// New human entity key to create
         target: String,
         /// New .ro document to create; existing files are never overwritten
         #[arg(long)]
         output: PathBuf,
     },
-    /// Rename an entity and rewrite all typed references
+    /// Rename an entity key while preserving stable identity and references
     Rename {
         input: PathBuf,
-        /// Existing entity identifier
+        /// Existing human entity key
         source: String,
-        /// New entity identifier
+        /// New human entity key
         target: String,
         /// New .ro document to create; existing files are never overwritten
         #[arg(long)]
@@ -100,7 +101,7 @@ enum EntityCommands {
     /// Remove an unreferenced entity
     Remove {
         input: PathBuf,
-        /// Entity identifier to remove
+        /// Human entity key to remove
         entity: String,
         /// New .ro document to create; existing files are never overwritten
         #[arg(long)]
@@ -113,7 +114,7 @@ enum FormulaCommands {
     /// Set a numeric field formula
     Set {
         input: PathBuf,
-        /// Field identifier in entity.field form
+        /// Human field address in entity.field form
         field: String,
         /// Formula expression; quote it in a shell
         #[arg(long, allow_hyphen_values = true)]

@@ -42,3 +42,9 @@ Typed schemas enable:
 References should be semantic relationships, not strings.
 
 A missing referenced object should be detectable before runtime.
+
+The implemented Milestone 02 schema model separates opaque `SchemaId` and
+`FieldId` identities from mutable `SchemaKey` and `FieldKey` authoring
+addresses. Reference field types store the target stable `SchemaId`; human keys
+are resolved through deterministic derived indexes and may be renamed without
+retargeting existing relationships.

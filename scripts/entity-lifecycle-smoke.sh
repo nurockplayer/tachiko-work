@@ -32,7 +32,12 @@ exported="${smoke_dir}/renamed.json"
   --output "${duplicate_repeat}" >"${smoke_dir}/duplicate-repeat.txt"
 grep -F "duplicated iron_sword as steel_sword" \
   "${smoke_dir}/duplicate.txt" >/dev/null
-cmp "${duplicated}" "${duplicate_repeat}"
+if cmp -s "${duplicated}" "${duplicate_repeat}"; then
+  echo "entity lifecycle smoke: independently created entities reused an ID" >&2
+  exit 1
+fi
+"${tachiko_bin}" validate "${duplicate_repeat}" \
+  >"${smoke_dir}/validate-duplicate-repeat.txt"
 
 "${tachiko_bin}" set "${duplicated}" steel_sword.name "Steel Sword" \
   --output "${named}" >"${smoke_dir}/set-name.txt"

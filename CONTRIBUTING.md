@@ -27,6 +27,7 @@ compatibility checks:
 ```sh
 rustup toolchain install stable --profile minimal
 rustup component add --toolchain stable rustfmt clippy
+rustup target add --toolchain stable wasm32-unknown-unknown
 rustup toolchain install 1.85.0 --profile minimal
 rustup run 1.85.0 cargo check --workspace --all-targets --locked
 ```
@@ -68,8 +69,10 @@ package inputs. The full gate selects stable for bare and nested Rust commands,
 regardless of an inherited `RUSTUP_TOOLCHAIN`, and separately checks exact Rust
 1.85 compatibility. It also checks documentation, deterministic audited
 dependency notices, Cargo packages, executable product journeys, and a native
-release archive. Do not claim a change is ready when a relevant gate is
-skipped; state the exact limitation in the pull request.
+release archive. It also executes the same production-semantic conformance
+records natively and under `wasm32-unknown-unknown`. Do not claim a change is
+ready when a relevant gate is skipped; state the exact limitation in the pull
+request.
 
 ## Preserve the product contract
 

@@ -1,5 +1,7 @@
 # Runtime Export JSON v1
 
+Implementation state: Frozen historical contract; current CLI export emits v2
+
 ## Purpose
 
 Runtime export materializes a validated Tachiko Work document into plain JSON
@@ -28,9 +30,7 @@ Runtime export versioning is independent from `.ro` storage versioning. Either
 contract may evolve without forcing the other to change. Consumers must check
 `format_version` and reject versions they do not support.
 
-The Accepted ADR-0018 Number contract does not silently amend runtime-export
-v1. Signed-zero normalization, a different formula outcome, or a different JSON
-number token is an observable v1 change. Adopting those semantics for runtime
-export therefore requires either conformance evidence that every admitted v1
-observation is preserved or a deliberate new runtime-export version. Generated
-output remains derived and is never semantic source authority.
+The Accepted ADR-0018 Number and ADR-0015 identity contracts do not silently
+amend runtime-export v1. The stable-identity transition therefore introduces
+[`runtime-export-v2`](runtime-export-v2.md) instead of reusing this version.
+Generated output remains derived and is never semantic source authority.

@@ -38,6 +38,13 @@ Attack
 - calculated impact
 - dependency tracing
 - human-readable summaries
+- continuity by stable schema/entity/field ID
+- explicit mutable-key changes rather than rename-as-delete-plus-add
+
+Bound references and formulas compare by stable IDs and normalized semantic
+values. Renaming a current human key does not rewrite the formula definition or
+create a false relationship change; rendered summaries project current keys for
+human review.
 
 ## Git Integration
 

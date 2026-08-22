@@ -1,5 +1,11 @@
 # Semantic Data Model Specification
 
+Decision state: Accepted semantic-first direction and stable identity under
+ADR-0015; broader document/block graph remains Provisional
+
+Implementation state: Milestone 02 schema/entity/field model, stable identity,
+typed references, bound formulas, validation, diff, and merge are implemented
+
 ## Purpose
 
 The semantic data model is the foundation of Tachiko Work.
@@ -24,6 +30,24 @@ A document should describe:
 Rendering is a view over the model.
 
 ## Core Objects
+
+### Current Milestone 02 aggregate
+
+The implemented aggregate is intentionally narrower than the long-term graph:
+
+```text
+Document(DocumentId, title)
+├── Schema(SchemaId, SchemaKey)
+│   └── FieldDefinition(FieldId, FieldKey, FieldType, required)
+└── Entity(EntityId, EntityKey, SchemaId)
+    └── FieldId -> typed Value
+```
+
+`DocumentId`, `SchemaId`, `FieldId`, and `EntityId` are opaque typed stable
+identities. Schema, field, and entity keys are mutable human addresses. A key
+rename leaves the stable ID unchanged. Deterministic runtime indexes resolve
+human keys before an operation stores or executes a bound relationship; those
+indexes are derived state and are not persisted.
 
 ### Document
 
@@ -70,19 +94,22 @@ Entities have:
 
 References are not plain strings.
 
-Bad:
+Bad durable relationship:
 
 ```text
-weapon_id = "sword_001"
+weapon_key = "iron_sword"
 ```
 
-Preferred:
+Implemented bound relationship:
 
 ```text
-WeaponReference("sword_001")
+EntityReference(EntityId("opaque-stable-id"))
+FormulaReference(EntityId("opaque-stable-id"), FieldId("opaque-field-id"))
 ```
 
-This enables:
+Human authoring still uses `[iron_sword.damage]`; binding resolves that address
+in one snapshot, and later projection proves the current address round-trips to
+the same stable IDs. This enables:
 
 - dependency analysis
 - safe rename

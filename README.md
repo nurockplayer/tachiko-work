@@ -22,7 +22,8 @@ truth.
 The current product provides a complete, safe CLI-first game-balance workflow:
 
 - typed schemas, entities, fields, and references;
-- canonical, versioned `.ro` serialization;
+- opaque stable semantic IDs with ergonomic mutable keys;
+- canonical identity-aware `.ro` v2 serialization plus deterministic legacy-v1 migration;
 - deterministic formula calculation and dependency tracking;
 - semantic diff with derived formula impact;
 - guided starter creation, browsing, explanation, and typed edits;
@@ -139,7 +140,7 @@ to author schemas and entities directly in canonical `.ro` JSON.
 ## Grow the balance roster
 
 Entity lifecycle commands create new reviewed documents just like `set`. Copy a
-working weapon, tune the copy, and give its stable identifier a final name
+working weapon, tune the copy, and give its mutable human key a final name
 without breaking self-referential formulas:
 
 ```sh
@@ -154,8 +155,9 @@ tachiko entity rename tuned-steel-sword.ro steel_sword moonblade \
 tachiko explain with-moonblade.ro moonblade.dps
 ```
 
-`rename` rewrites typed entity relationships and formula references throughout
-the document. `remove` is deliberately non-cascading: it reports every
+`rename` changes only the mutable key. The stable entity ID, typed entity
+relationships, and bound formula ASTs remain unchanged; formula source projects
+through the current key. `remove` is deliberately non-cascading: it reports every
 dependent field and creates no output while another entity still references the
 target. Removing an unreferenced entity is explicit and safe:
 
@@ -249,12 +251,14 @@ components plus the exact minimum toolchain. Then run the complete
 release-equivalent gate from a clean local commit. The gate selects stable for
 all normal and nested commands even if the caller has another rustup override;
 it separately checks Rust 1.85 compatibility, warning-free documentation,
-deterministic dependency notices, Cargo packages, all four real user journeys, and
-the native release archive:
+deterministic dependency notices, executed native/WASM production-semantic
+conformance, Cargo packages, all four real user journeys, and the native release
+archive:
 
 ```sh
 rustup toolchain install stable --profile minimal
 rustup component add --toolchain stable rustfmt clippy
+rustup target add --toolchain stable wasm32-unknown-unknown
 rustup toolchain install 1.85.0 --profile minimal
 bash scripts/release-check.sh
 ```

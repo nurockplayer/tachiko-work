@@ -94,29 +94,29 @@ fn malformed_versions_are_distinct_from_missing_and_unsupported_versions() {
 }
 
 #[test]
-fn unsupported_version_wins_before_v1_body_interpretation() {
+fn unsupported_version_wins_before_body_interpretation() {
     let error =
-        from_str(r#"{"format_version":2,"future_only":{"unknown_v2_member":true}}"#).unwrap_err();
+        from_str(r#"{"format_version":3,"future_only":{"unknown_v3_member":true}}"#).unwrap_err();
 
     assert!(matches!(
         error,
         FormatError::UnsupportedVersion {
-            found: 2,
+            found: 3,
             supported
-        } if supported == 1
+        } if supported == 2
     ));
 }
 
 #[test]
-fn unsupported_version_does_not_apply_v1_number_limits_to_the_future_body() {
+fn unsupported_version_does_not_apply_v2_number_limits_to_the_future_body() {
     let huge_number = format!("1{}", "0".repeat(400));
-    let source = format!(r#"{{"format_version":2,"future_only":{huge_number}}}"#);
+    let source = format!(r#"{{"format_version":3,"future_only":{huge_number}}}"#);
 
     let error = from_str(&source).unwrap_err();
 
     assert!(matches!(
         error,
-        FormatError::UnsupportedVersion { found: 2, .. }
+        FormatError::UnsupportedVersion { found: 3, .. }
     ));
 }
 
@@ -220,12 +220,12 @@ fn v1_rejects_unresolvable_schema_and_field_relationships() {
 }
 
 #[test]
-fn semantically_invalid_v1_is_distinct_from_invalid_representation() {
+fn unresolvable_v1_graph_fails_explicit_migration() {
     let source = r#"{"format_version":1,"id":"doc","title":"Document","schemas":{"s":{"id":"s","fields":{"target":{"field_type":{"type":"reference","schema":"s"},"required":true}}}},"entities":{"e":{"id":"e","schema":"s","fields":{"target":{"kind":"reference","value":"missing"}}}}}"#;
 
     let error = from_str(source).unwrap_err();
 
-    assert!(matches!(error, FormatError::InvalidDocument { .. }));
+    assert!(matches!(error, FormatError::MigrationFailed { .. }));
 }
 
 #[test]
@@ -243,5 +243,6 @@ fn supported_v1_number_outside_historical_f64_is_invalid_representation() {
 fn valid_minimal_v1_still_decodes() {
     let document = from_str(MINIMAL_V1).unwrap();
 
-    assert_eq!(document.id.as_str(), "doc");
+    assert_eq!(document.id.as_str(), "bb0a283f-57a8-5327-aab5-36c50d38a40b");
+    assert_eq!(document.title, "Document");
 }

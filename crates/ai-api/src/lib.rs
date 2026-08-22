@@ -2,11 +2,12 @@
 
 use tachiko_diff_engine::{DiffError, SemanticChange, diff};
 use tachiko_formula_engine::{
-    CalculationError, ExpressionComplexityError, calculate, validate_expression_complexity,
+    CalculationError, CanonicalAuthoringProjectionError, ExpressionComplexityError, calculate,
+    project_expression, validate_expression_structure,
 };
 use tachiko_semantic_core::{
-    Diagnostic, Document, DocumentId, Expression, FieldId, FieldRef, FieldType, SchemaId, Value,
-    validate_document,
+    Diagnostic, Document, DocumentId, EntityKey, Expression, FieldId, FieldKey, FieldRef,
+    FieldType, Number, SchemaId, SchemaKey, Value, validate_document,
 };
 use thiserror::Error;
 
@@ -23,6 +24,7 @@ pub struct DocumentDescription {
 #[derive(Clone, Debug, PartialEq)]
 pub struct SchemaDescription {
     pub id: SchemaId,
+    pub key: SchemaKey,
     pub fields: Vec<FieldDescription>,
 }
 
@@ -30,6 +32,7 @@ pub struct SchemaDescription {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FieldDescription {
     pub id: FieldId,
+    pub key: FieldKey,
     pub field_type: FieldType,
     pub required: bool,
 }
@@ -38,6 +41,7 @@ pub struct FieldDescription {
 #[derive(Clone, Debug, PartialEq)]
 pub struct EntityDescription {
     pub id: tachiko_semantic_core::EntityId,
+    pub key: EntityKey,
     pub schema: SchemaId,
     pub fields: Vec<FieldId>,
 }
@@ -47,7 +51,7 @@ pub struct EntityDescription {
 pub struct FormulaExplanation {
     pub field: FieldRef,
     pub expression: Expression,
-    pub value: f64,
+    pub value: Number,
     pub dependencies: Vec<FieldRef>,
 }
 
@@ -83,6 +87,12 @@ pub enum SuggestionError {
         #[source]
         source: ExpressionComplexityError,
     },
+    #[error("formula for '{field}' cannot be projected through current human addresses: {source}")]
+    FormulaProjection {
+        field: FieldRef,
+        #[source]
+        source: CanonicalAuthoringProjectionError,
+    },
     #[error("value for '{field}' does not match its schema type")]
     TypeMismatch { field: FieldRef },
     #[error("'{field}' already has that value")]
@@ -114,11 +124,13 @@ pub fn describe_document(document: &Document) -> DocumentDescription {
         .iter()
         .map(|(id, schema)| SchemaDescription {
             id: id.clone(),
+            key: schema.key.clone(),
             fields: schema
                 .fields
                 .iter()
                 .map(|(id, definition)| FieldDescription {
                     id: id.clone(),
+                    key: definition.key.clone(),
                     field_type: definition.field_type.clone(),
                     required: definition.required,
                 })
@@ -130,6 +142,7 @@ pub fn describe_document(document: &Document) -> DocumentDescription {
         .iter()
         .map(|(id, entity)| EntityDescription {
             id: id.clone(),
+            key: entity.key.clone(),
             schema: entity.schema.clone(),
             fields: entity.fields.keys().cloned().collect(),
         })
@@ -242,10 +255,24 @@ pub fn suggest_field_change(
         return Err(SuggestionError::TypeMismatch { field });
     }
     if let Value::Formula(expression) = &value {
-        validate_expression_complexity(expression).map_err(|source| {
+        validate_expression_structure(expression).map_err(|source| {
             SuggestionError::ExpressionComplexity {
                 field: field.clone(),
                 source,
+            }
+        })?;
+        project_expression(document, expression).map_err(|source| match source {
+            CanonicalAuthoringProjectionError::Complexity(source) => {
+                SuggestionError::ExpressionComplexity {
+                    field: field.clone(),
+                    source,
+                }
+            }
+            source @ CanonicalAuthoringProjectionError::UnresolvableBoundReferences { .. } => {
+                SuggestionError::FormulaProjection {
+                    field: field.clone(),
+                    source,
+                }
             }
         })?;
     }

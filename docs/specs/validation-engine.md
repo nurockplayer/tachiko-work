@@ -6,6 +6,15 @@ The validation engine ensures semantic documents remain correct.
 
 ## Validation Categories
 
+### Identity and Address Validation
+
+Checks:
+
+- nonempty opaque stable IDs and store-key/nested-ID coherence
+- valid mutable schema/entity/field key grammar
+- deterministic duplicate-key diagnostics separate from stable-ID failures
+- bound references resolving to the intended stable object and numeric field
+
 ### Schema Validation
 
 Checks:

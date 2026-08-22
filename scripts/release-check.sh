@@ -36,6 +36,9 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 echo "==> workspace tests"
 cargo test --workspace --all-targets --locked
 
+echo "==> executed native/WASM portable semantic conformance"
+bash scripts/portable-conformance-check.sh
+
 echo "==> warning-free documentation"
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 

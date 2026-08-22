@@ -20,11 +20,14 @@ export_two="${smoke_dir}/game-balance-repeat.json"
 "${tachiko_bin}" init "${base}" \
   --id game-balance \
   --title "Moonfall: starter balance" >"${smoke_dir}/init.txt"
-cmp "${base}" "${repo_root}/examples/game-balance/game-balance.ro"
+"${tachiko_bin}" validate "${repo_root}/examples/game-balance/game-balance.ro" \
+  >"${smoke_dir}/validate-legacy-example.txt"
 
 "${tachiko_bin}" show "${base}" >"${smoke_dir}/show.txt"
-grep -F "weapons · Iron Sword [iron_sword]" "${smoke_dir}/show.txt" >/dev/null
-grep -F "dps: 40 (formula)" "${smoke_dir}/show.txt" >/dev/null
+grep -F "Moonfall: starter balance · 4 schemas · 4 entities · 3 formulas" \
+  "${smoke_dir}/show.txt" >/dev/null
+grep -F "weapons · Iron Sword (iron_sword) [" "${smoke_dir}/show.txt" >/dev/null
+grep -F ": 40 (formula)" "${smoke_dir}/show.txt" >/dev/null
 
 "${tachiko_bin}" explain "${base}" iron_sword.dps >"${smoke_dir}/explain.txt"
 grep -F "formula: ([iron_sword.damage] / [iron_sword.attack_interval])" \

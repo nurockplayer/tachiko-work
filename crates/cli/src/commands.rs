@@ -11,13 +11,36 @@ use serde_json::{Value as JsonValue, json};
 use tachiko_diff_engine::{DiffError, diff};
 use tachiko_formula_engine::{Calculation, CalculationError, calculate};
 use tachiko_merge_engine::{MergeConflict, MergeError, MergeOutcome, merge};
-use tachiko_semantic_core::{Document, FieldRef, Value};
+use tachiko_semantic_core::{AddressIndex, Document, FieldAddress, FieldRef, Value};
 use tachiko_storage::{FormatError, load, to_canonical_string};
 use tachiko_workflow::{
-    EditPreview, FieldKind, StarterTemplate, WorkflowError, create_document, duplicate_entity,
-    explain_field, overview, remove_entity, rename_entity, set_formula, set_scalar,
+    EditPreview, FieldKind, IdGenerator, SemanticIdKind, StarterTemplate, WorkflowError,
+    create_document, duplicate_entity, explain_field, overview, remove_entity, rename_entity,
+    set_formula, set_scalar,
 };
 use thiserror::Error;
+use uuid::Uuid;
+
+struct UuidV7Generator {
+    document_override: Option<String>,
+}
+
+impl UuidV7Generator {
+    fn new(document_override: Option<String>) -> Self {
+        Self { document_override }
+    }
+}
+
+impl IdGenerator for UuidV7Generator {
+    fn generate(&mut self, kind: SemanticIdKind) -> String {
+        if kind == SemanticIdKind::Document {
+            if let Some(id) = self.document_override.take() {
+                return id;
+            }
+        }
+        Uuid::now_v7().to_string()
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum CommandError {
@@ -55,9 +78,9 @@ pub fn init(
     title: Option<String>,
     template: StarterTemplate,
 ) -> Result<String, CommandError> {
-    let id = id.unwrap_or_else(|| default_document_id(path));
-    let title = title.unwrap_or_else(|| id.clone());
-    let document = create_document(template, id, title);
+    let title = title.unwrap_or_else(|| default_document_title(path));
+    let mut generator = UuidV7Generator::new(id);
+    let document = create_document(template, title, &mut generator)?;
     let encoded = to_canonical_string(&document)?;
     write_new(path, encoded.as_bytes())?;
 
@@ -90,11 +113,17 @@ pub fn validate(path: &Path) -> Result<String, CommandError> {
 pub fn calculate_document(path: &Path) -> Result<String, CommandError> {
     let document = load(path)?;
     let calculation = calculate(&document)?;
+    let index = AddressIndex::build(&document).map_err(WorkflowError::from)?;
     let output: BTreeMap<_, _> = calculation
         .values()
         .iter()
-        .map(|(field, value)| (field.to_string(), value))
-        .collect();
+        .map(|(field, value)| {
+            index
+                .field_address(&document, field)
+                .map(|address| (address.to_string(), value))
+                .map_err(WorkflowError::from)
+        })
+        .collect::<Result<_, _>>()?;
     canonical_output(&output)
 }
 
@@ -102,15 +131,15 @@ pub fn show(path: &Path) -> Result<String, CommandError> {
     let document = load(path)?;
     let view = overview(&document)?;
     let mut output = format!(
-        "{}\n{} · {} schemas · {} entities · {} formulas\n",
-        document.title, document.id, view.schema_count, view.entity_count, view.formula_count
+        "{} · {} schemas · {} entities · {} formulas\ndocument id: {}\n",
+        document.title, view.schema_count, view.entity_count, view.formula_count, document.id
     );
 
     for entity in view.entities {
         let _ = writeln!(
             output,
-            "\n{} · {} [{}]",
-            entity.schema, entity.label, entity.id
+            "\n{} · {} ({}) [{}]",
+            entity.schema, entity.label, entity.key, entity.id
         );
         for field in entity.fields {
             let qualifier = match field.kind {
@@ -120,7 +149,11 @@ pub fn show(path: &Path) -> Result<String, CommandError> {
                 }
                 FieldKind::Formula => " (formula)".to_owned(),
             };
-            let _ = writeln!(output, "  {}: {}{qualifier}", field.id, field.display_value);
+            let _ = writeln!(
+                output,
+                "  {} [{}]: {}{qualifier}",
+                field.key, field.id, field.display_value
+            );
         }
     }
     Ok(output)
@@ -130,7 +163,8 @@ pub fn explain(path: &Path, field: &str) -> Result<String, CommandError> {
     let document = load(path)?;
     let field = parse_field_ref(field)?;
     let explanation = explain_field(&document, &field)?;
-    let mut output = format!("{} = {}\n", explanation.field, explanation.display_value);
+    let index = AddressIndex::build(&document).map_err(WorkflowError::from)?;
+    let mut output = format!("{} = {}\n", explanation.address, explanation.display_value);
 
     if let Some(expression) = &explanation.expression {
         let _ = writeln!(output, "formula: {expression}");
@@ -138,17 +172,19 @@ pub fn explain(path: &Path, field: &str) -> Result<String, CommandError> {
     if !explanation.dependencies.is_empty() {
         output.push_str("depends on:\n");
         for dependency in &explanation.dependencies {
-            let _ = writeln!(output, "  - {dependency}");
+            let address = index
+                .field_address(&document, dependency)
+                .map_err(WorkflowError::from)?;
+            let _ = writeln!(output, "  - {address}");
         }
     }
     if !explanation.affected_formulas.is_empty() {
         output.push_str("affects:\n");
         for affected in &explanation.affected_formulas {
-            let _ = writeln!(
-                output,
-                "  - {} = {}",
-                affected.field, affected.display_value
-            );
+            let address = index
+                .field_address(&document, &affected.field)
+                .map_err(WorkflowError::from)?;
+            let _ = writeln!(output, "  - {} = {}", address, affected.display_value);
         }
     }
     if explanation.expression.is_none()
@@ -194,7 +230,8 @@ pub fn duplicate_entity_document(
 ) -> Result<String, CommandError> {
     ensure_distinct_paths(input, output)?;
     let document = load(input)?;
-    let preview = duplicate_entity(&document, source, target)?;
+    let mut generator = UuidV7Generator::new(None);
+    let preview = duplicate_entity(&document, source, target, &mut generator)?;
     write_edit_preview(&preview, output)?;
 
     Ok(format!(
@@ -302,7 +339,7 @@ pub fn export(input: &Path, output: &Path) -> Result<String, CommandError> {
     Ok(format!("exported {}\n", output.display()))
 }
 
-fn default_document_id(path: &Path) -> String {
+fn default_document_title(path: &Path) -> String {
     let stem = path
         .file_stem()
         .and_then(|name| name.to_str())
@@ -337,7 +374,7 @@ fn default_document_id(path: &Path) -> String {
     }
 }
 
-fn parse_field_ref(value: &str) -> Result<FieldRef, CommandError> {
+fn parse_field_ref(value: &str) -> Result<FieldAddress, CommandError> {
     let Some((entity, field)) = value.split_once('.') else {
         return Err(CommandError::InvalidFieldReference {
             value: value.to_owned(),
@@ -348,7 +385,7 @@ fn parse_field_ref(value: &str) -> Result<FieldRef, CommandError> {
             value: value.to_owned(),
         });
     }
-    Ok(FieldRef::new(entity, field))
+    Ok(FieldAddress::new(entity, field))
 }
 
 fn canonical_output(value: &impl Serialize) -> Result<String, CommandError> {
@@ -418,6 +455,7 @@ impl ExportDocument {
     fn new(document: &Document, calculation: &Calculation) -> Result<Self, CommandError> {
         let mut entities = BTreeMap::new();
         for (entity_id, entity) in &document.entities {
+            let schema = &document.schemas[&entity.schema];
             let mut fields = BTreeMap::new();
             for (field_id, value) in &entity.fields {
                 let field_ref = FieldRef {
@@ -425,14 +463,14 @@ impl ExportDocument {
                     field: field_id.clone(),
                 };
                 fields.insert(
-                    field_id.to_string(),
-                    export_value(value, &field_ref, calculation)?,
+                    schema.fields[field_id].key.to_string(),
+                    export_value(document, value, &field_ref, calculation)?,
                 );
             }
             entities.insert(
-                entity_id.to_string(),
+                entity.key.to_string(),
                 ExportEntity {
-                    schema: entity.schema.to_string(),
+                    schema: schema.key.to_string(),
                     fields,
                 },
             );
@@ -447,7 +485,7 @@ impl ExportDocument {
     }
 }
 
-const RUNTIME_EXPORT_VERSION: u32 = 1;
+const RUNTIME_EXPORT_VERSION: u32 = 2;
 
 #[derive(Serialize)]
 struct ExportEntity {
@@ -456,6 +494,7 @@ struct ExportEntity {
 }
 
 fn export_value(
+    document: &Document,
     value: &Value,
     field: &FieldRef,
     calculation: &Calculation,
@@ -464,7 +503,9 @@ fn export_value(
         Value::Number(number) => Ok(json!(number)),
         Value::Text(text) => Ok(json!(text)),
         Value::Boolean(boolean) => Ok(json!(boolean)),
-        Value::Reference(entity) => Ok(json!({ "reference": entity.as_str() })),
+        Value::Reference(entity) => Ok(json!({
+            "reference": document.entities[entity].key.as_str()
+        })),
         Value::Formula(_) => calculation
             .value(field)
             .map(|number| json!(number))
