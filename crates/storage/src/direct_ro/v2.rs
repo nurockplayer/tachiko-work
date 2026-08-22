@@ -530,11 +530,12 @@ impl FieldRefV2 {
                 self.entity
             ))
         })?;
-        // Entity validation already proves its schema exists. Formula field
-        // membership is checked against that same complete v2 graph.
-        let schema = schemas
-            .get(&entity.schema)
-            .expect("validated schema relationship");
+        let schema = schemas.get(&entity.schema).ok_or_else(|| {
+            CodecError::InvalidRepresentation(format!(
+                "formula target entity '{}' targets missing schema '{}'",
+                self.entity, entity.schema
+            ))
+        })?;
         if schema.fields.contains_key(&self.field) {
             Ok(())
         } else {

@@ -395,6 +395,29 @@ enum VisitState {
     Complete,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum BinaryOperation {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Minimum,
+    Maximum,
+}
+
+enum EvaluationFrame<'expression> {
+    Field(FieldRef),
+    CompleteField(FieldRef),
+    Expression {
+        formula: FieldRef,
+        expression: &'expression Expression,
+    },
+    Apply {
+        formula: FieldRef,
+        operation: BinaryOperation,
+    },
+}
+
 struct Evaluator<'document> {
     document: &'document Document,
     values: BTreeMap<FieldRef, Number>,
@@ -418,42 +441,167 @@ impl<'document> Evaluator<'document> {
     }
 
     fn value_for(&mut self, field: &FieldRef) -> Result<Number, CalculationError> {
-        match self.states.get(field) {
-            Some(VisitState::Complete) => return Ok(self.values[field]),
+        let mut frames = vec![EvaluationFrame::Field(field.clone())];
+        let mut results = Vec::new();
+
+        while let Some(frame) = frames.pop() {
+            self.evaluate_frame(frame, &mut frames, &mut results)?;
+        }
+
+        if results.len() != 1 {
+            return Err(Self::invalid_evaluation_state(
+                field,
+                "evaluation did not produce exactly one result",
+            ));
+        }
+        Self::pop_result(&mut results, field)
+    }
+
+    fn evaluate_frame(
+        &mut self,
+        frame: EvaluationFrame<'document>,
+        frames: &mut Vec<EvaluationFrame<'document>>,
+        results: &mut Vec<Number>,
+    ) -> Result<(), CalculationError> {
+        match frame {
+            EvaluationFrame::Field(field) => self.evaluate_field(field, frames, results),
+            EvaluationFrame::CompleteField(field) => self.complete_field(field, results),
+            EvaluationFrame::Expression {
+                formula,
+                expression,
+            } => {
+                Self::evaluate_expression(formula, expression, frames, results);
+                Ok(())
+            }
+            EvaluationFrame::Apply { formula, operation } => {
+                let result = Self::apply_operation(&formula, operation, results)?;
+                results.push(result);
+                Ok(())
+            }
+        }
+    }
+
+    fn evaluate_field(
+        &mut self,
+        field: FieldRef,
+        frames: &mut Vec<EvaluationFrame<'document>>,
+        results: &mut Vec<Number>,
+    ) -> Result<(), CalculationError> {
+        match self.states.get(&field) {
+            Some(VisitState::Complete) => {
+                let value = self.values.get(&field).copied().ok_or_else(|| {
+                    Self::invalid_evaluation_state(&field, "completed field has no cached value")
+                })?;
+                results.push(value);
+            }
             Some(VisitState::Visiting) => {
                 let cycle_start = self
                     .stack
                     .iter()
-                    .position(|candidate| candidate == field)
+                    .position(|candidate| candidate == &field)
                     .unwrap_or(0);
                 let mut path = self.stack[cycle_start..].to_vec();
-                path.push(field.clone());
+                path.push(field);
                 return Err(CalculationError::Cycle { path });
             }
-            None => {}
+            None => match self.lookup_value(&field)? {
+                Value::Number(number) => {
+                    self.states.insert(field.clone(), VisitState::Complete);
+                    self.values.insert(field, *number);
+                    results.push(*number);
+                }
+                Value::Formula(expression) => {
+                    self.states.insert(field.clone(), VisitState::Visiting);
+                    self.stack.push(field.clone());
+                    frames.push(EvaluationFrame::CompleteField(field.clone()));
+                    frames.push(EvaluationFrame::Expression {
+                        formula: field,
+                        expression,
+                    });
+                }
+                Value::Text(_) | Value::Boolean(_) | Value::Reference(_) => {
+                    return Err(CalculationError::NonNumericReference { reference: field });
+                }
+            },
         }
-
-        let value = self.lookup_value(field)?.clone();
-        self.states.insert(field.clone(), VisitState::Visiting);
-        self.stack.push(field.clone());
-
-        let result = match value {
-            Value::Number(number) => number,
-            Value::Formula(expression) => self.evaluate_expression(field, &expression)?,
-            Value::Text(_) | Value::Boolean(_) | Value::Reference(_) => {
-                return Err(CalculationError::NonNumericReference {
-                    reference: field.clone(),
-                });
-            }
-        };
-
-        self.stack.pop();
-        self.states.insert(field.clone(), VisitState::Complete);
-        self.values.insert(field.clone(), result);
-        Ok(result)
+        Ok(())
     }
 
-    fn lookup_value(&self, field: &FieldRef) -> Result<&Value, CalculationError> {
+    fn complete_field(
+        &mut self,
+        field: FieldRef,
+        results: &mut Vec<Number>,
+    ) -> Result<(), CalculationError> {
+        let result = Self::pop_result(results, &field)?;
+        if self.stack.pop().as_ref() != Some(&field) {
+            return Err(Self::invalid_evaluation_state(
+                &field,
+                "active formula stack is inconsistent",
+            ));
+        }
+        self.states.insert(field.clone(), VisitState::Complete);
+        self.values.insert(field, result);
+        results.push(result);
+        Ok(())
+    }
+
+    fn evaluate_expression(
+        formula: FieldRef,
+        expression: &'document Expression,
+        frames: &mut Vec<EvaluationFrame<'document>>,
+        results: &mut Vec<Number>,
+    ) {
+        match expression {
+            Expression::Number(number) => results.push(*number),
+            Expression::Reference(reference) => {
+                frames.push(EvaluationFrame::Field(reference.clone()));
+            }
+            Expression::Add { left, right } => {
+                Self::push_binary(frames, formula, BinaryOperation::Add, left, right);
+            }
+            Expression::Subtract { left, right } => {
+                Self::push_binary(frames, formula, BinaryOperation::Subtract, left, right);
+            }
+            Expression::Multiply { left, right } => {
+                Self::push_binary(frames, formula, BinaryOperation::Multiply, left, right);
+            }
+            Expression::Divide { left, right } => {
+                Self::push_binary(frames, formula, BinaryOperation::Divide, left, right);
+            }
+            Expression::Minimum { left, right } => {
+                Self::push_binary(frames, formula, BinaryOperation::Minimum, left, right);
+            }
+            Expression::Maximum { left, right } => {
+                Self::push_binary(frames, formula, BinaryOperation::Maximum, left, right);
+            }
+        }
+    }
+
+    fn apply_operation(
+        formula: &FieldRef,
+        operation: BinaryOperation,
+        results: &mut Vec<Number>,
+    ) -> Result<Number, CalculationError> {
+        let right = Self::pop_result(results, formula)?;
+        let left = Self::pop_result(results, formula)?;
+        match operation {
+            BinaryOperation::Add => Self::number_result(formula, left.get() + right.get()),
+            BinaryOperation::Subtract => Self::number_result(formula, left.get() - right.get()),
+            BinaryOperation::Multiply => Self::number_result(formula, left.get() * right.get()),
+            BinaryOperation::Divide => {
+                if right.get() == 0.0 {
+                    return Err(CalculationError::DivisionByZero {
+                        formula: formula.clone(),
+                    });
+                }
+                Self::number_result(formula, left.get() / right.get())
+            }
+            BinaryOperation::Minimum => Ok(if left <= right { left } else { right }),
+            BinaryOperation::Maximum => Ok(if left >= right { left } else { right }),
+        }
+    }
+
+    fn lookup_value(&self, field: &FieldRef) -> Result<&'document Value, CalculationError> {
         self.document
             .entities
             .get(&field.entity)
@@ -463,49 +611,40 @@ impl<'document> Evaluator<'document> {
             })
     }
 
-    fn evaluate_expression(
-        &mut self,
+    fn push_binary(
+        frames: &mut Vec<EvaluationFrame<'document>>,
+        formula: FieldRef,
+        operation: BinaryOperation,
+        left: &'document Expression,
+        right: &'document Expression,
+    ) {
+        frames.push(EvaluationFrame::Apply {
+            formula: formula.clone(),
+            operation,
+        });
+        frames.push(EvaluationFrame::Expression {
+            formula: formula.clone(),
+            expression: right,
+        });
+        frames.push(EvaluationFrame::Expression {
+            formula,
+            expression: left,
+        });
+    }
+
+    fn pop_result(
+        results: &mut Vec<Number>,
         formula: &FieldRef,
-        expression: &Expression,
     ) -> Result<Number, CalculationError> {
-        match expression {
-            Expression::Number(number) => Ok(*number),
-            Expression::Reference(reference) => self.value_for(reference),
-            Expression::Add { left, right } => {
-                let left = self.evaluate_expression(formula, left)?.get();
-                let right = self.evaluate_expression(formula, right)?.get();
-                Self::number_result(formula, left + right)
-            }
-            Expression::Subtract { left, right } => {
-                let left = self.evaluate_expression(formula, left)?.get();
-                let right = self.evaluate_expression(formula, right)?.get();
-                Self::number_result(formula, left - right)
-            }
-            Expression::Multiply { left, right } => {
-                let left = self.evaluate_expression(formula, left)?.get();
-                let right = self.evaluate_expression(formula, right)?.get();
-                Self::number_result(formula, left * right)
-            }
-            Expression::Divide { left, right } => {
-                let left = self.evaluate_expression(formula, left)?.get();
-                let right = self.evaluate_expression(formula, right)?.get();
-                if right == 0.0 {
-                    return Err(CalculationError::DivisionByZero {
-                        formula: formula.clone(),
-                    });
-                }
-                Self::number_result(formula, left / right)
-            }
-            Expression::Minimum { left, right } => {
-                let left = self.evaluate_expression(formula, left)?;
-                let right = self.evaluate_expression(formula, right)?;
-                Ok(if left <= right { left } else { right })
-            }
-            Expression::Maximum { left, right } => {
-                let left = self.evaluate_expression(formula, left)?;
-                let right = self.evaluate_expression(formula, right)?;
-                Ok(if left >= right { left } else { right })
-            }
+        results.pop().ok_or_else(|| {
+            Self::invalid_evaluation_state(formula, "evaluation result stack is empty")
+        })
+    }
+
+    fn invalid_evaluation_state(field: &FieldRef, message: &str) -> CalculationError {
+        CalculationError::InvalidExpression {
+            formula: field.clone(),
+            message: message.to_owned(),
         }
     }
 

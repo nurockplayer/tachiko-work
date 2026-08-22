@@ -235,6 +235,53 @@ fn cycles_report_a_deterministic_dependency_path() {
 }
 
 #[test]
+fn long_acyclic_dependency_chains_are_stack_safe() {
+    const CHAIN_LENGTH: usize = 20_000;
+
+    let mut fields = BTreeMap::new();
+    let mut definitions = BTreeMap::new();
+    for index in 0..CHAIN_LENGTH {
+        let field_id = format!("field-{index:05}");
+        let value = if index + 1 == CHAIN_LENGTH {
+            number(1.0)
+        } else {
+            Value::Formula(reference("chain", &format!("field-{:05}", index + 1)))
+        };
+        definitions.insert(FieldId::from(field_id.as_str()), number_field(&field_id));
+        fields.insert(FieldId::from(field_id), value);
+    }
+    let document = Document {
+        id: DocumentId::from("chain"),
+        title: "Long dependency chain".to_owned(),
+        schemas: BTreeMap::from([(
+            SchemaId::from("chain"),
+            Schema {
+                id: SchemaId::from("chain"),
+                key: SchemaKey::from("chain"),
+                fields: definitions,
+            },
+        )]),
+        entities: BTreeMap::from([(
+            EntityId::from("chain"),
+            Entity {
+                id: EntityId::from("chain"),
+                key: "chain".into(),
+                schema: SchemaId::from("chain"),
+                fields,
+            },
+        )]),
+    };
+
+    let calculation = calculate(&document).unwrap();
+
+    assert_eq!(
+        calculation.value(&FieldRef::new("chain", "field-00000")),
+        Some(expected(1.0))
+    );
+    assert_eq!(calculation.values().len(), CHAIN_LENGTH);
+}
+
+#[test]
 fn arithmetic_minimum_and_maximum_are_supported() {
     let mut document = balance_document();
     document.entities.get_mut("sword").unwrap().fields.insert(

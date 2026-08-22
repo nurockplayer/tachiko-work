@@ -336,6 +336,59 @@ fn v2_preserves_unicode_scalar_sequences_without_normalization() {
 }
 
 #[test]
+fn malformed_cross_entity_formula_target_with_missing_schema_is_a_typed_error() {
+    let source = r#"{
+      "format_version": 2,
+      "id": "document",
+      "title": "Document",
+      "schemas": {
+        "source-schema": {
+          "id": "source-schema",
+          "key": "source-schema",
+          "fields": {
+            "formula": {
+              "id": "formula",
+              "key": "formula",
+              "field_type": {"type": "number"},
+              "required": true
+            }
+          }
+        }
+      },
+      "entities": {
+        "a-formula": {
+          "id": "a-formula",
+          "key": "a-formula",
+          "schema": "source-schema",
+          "fields": {
+            "formula": {
+              "kind": "formula",
+              "value": {
+                "op": "reference",
+                "args": {"entity": "z-target", "field": "value"}
+              }
+            }
+          }
+        },
+        "z-target": {
+          "id": "z-target",
+          "key": "z-target",
+          "schema": "missing-schema",
+          "fields": {}
+        }
+      }
+    }"#;
+
+    let error = from_str(source).unwrap_err();
+
+    assert!(matches!(
+        error,
+        FormatError::InvalidRepresentation { message, .. }
+            if message == "formula target entity 'z-target' targets missing schema 'missing-schema'"
+    ));
+}
+
+#[test]
 fn every_legacy_identity_mapping_class_rejects_corrupt_or_unresolvable_input() {
     let invalid_before_mapping = [
         (
