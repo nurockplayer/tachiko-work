@@ -1,5 +1,10 @@
 # Schema System Specification
 
+Decision state: Mixed. Stable identity and reference-address statements are
+Accepted under [ADR-0015](../decisions/ADR-0015-stable-semantic-identity.md);
+the remaining detailed schema behavior is an implemented Provisional baseline.
+See the [canonical reconciliation register](../governance/canonical-reconciliation-register.md).
+
 ## Principle
 
 Tachiko Work treats structured data as typed semantic objects rather than unvalidated cells.

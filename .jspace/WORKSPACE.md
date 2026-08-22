@@ -814,3 +814,29 @@ the ADR-0015 persisted identity model that remains owned by #70.
 - PR #81 remains Draft. The existing Codex thread may be resolved only after the
   regression is present and green; final readiness still requires an independent
   review of the exact pushed head and green CI.
+
+### PR #81 blocking-review stability remediation
+
+- Exact reviewed head `7f1550b` reproduced both hard blockers before production
+  changes: a cross-entity v2 formula target whose later-sorted entity names a
+  missing schema panicked in `FieldRefV2::validate`, and a forward acyclic chain
+  of 20,000 bound formulas aborted the calculation test process with `SIGABRT`.
+- Commit `bd4172e` replaces the schema-order assumption with a typed
+  representation failure and evaluates fields/expressions through explicit
+  frames. It adds no durable dependency-chain limit and preserves existing
+  left-to-right arithmetic, cycle paths, typed failures, and stable result
+  ordering.
+- The remaining scoped review actions preserve trimmed human file stems as
+  default titles with a blank-stem fallback, report the current build ceiling
+  from the legacy-v1 canonicalization helper, cover the exact nonnumeric binding
+  payload, document Node.js for the release gate, and strengthen the formula
+  smoke's missing-address diagnostic.
+- Documentation now separates Accepted ADR-0015/ADR-0017/ADR-0018 invariants
+  from Provisional direct-ro/v2 wire/resource mechanisms, describes numeric
+  persistence as ADR-0018 semantic preservation, adds explicit authority state
+  to the schema/diff/validation specifications, and distinguishes entity from
+  numeric formula references.
+- Focused storage, formula-engine, and CLI suites; warning-denied focused
+  Clippy; formatting; documentation consistency; and the formula-authoring
+  product smoke are green. Complete release-equivalent gates and fresh
+  exact-head reviews remain required before the Draft PR returns to ChatGPT.

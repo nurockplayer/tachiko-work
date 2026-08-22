@@ -23,8 +23,10 @@ project.ro
 
 It reads frozen direct JSON v1 through an explicit deterministic in-memory
 migration and writes canonical identity-aware direct JSON v2. Stable IDs,
-mutable keys, bound references, Unicode scalar sequences, and finite-binary64
-values round-trip losslessly. Merely reading a legacy file never rewrites it.
+mutable keys, bound references, Unicode scalar sequences, and ADR-0018 Number
+meaning survive canonical v2 round trips. Original numeric lexemes and the IEEE
+negative-zero bit are not separate semantic meaning. Merely reading a legacy
+file never rewrites it.
 This path is used by the current CLI, semantic diff/merge, validation, formula
 authoring, and product smoke journeys.
 

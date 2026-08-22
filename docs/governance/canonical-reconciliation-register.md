@@ -63,7 +63,7 @@ When this register marks a document as mixed-state, readers must respect the nar
 | `docs/specs/storage-versioning-and-migration.md` | Mixed: Accepted invariants under ADR-0017; M02 wire mechanics Provisional where marked | Strict v1, deterministic migration, and direct-ro/v2 implemented | ADR-0017, #40 |
 | `docs/specs/canonical-json-profile.md` | Mixed: Accepted deterministic/semantic-preservation and admitted-token binary64 rules; exact M02 profile/resource limits version-specific | Implemented independent direct-ro/v2 writer | ADR-0017, ADR-0018, #40 |
 | `docs/specs/ro-format-v1.md` | Normative legacy direct-`.ro` JSON compatibility/migration profile | Implemented immutable compatibility reader/writer and migration source | ADR-0017, #40 |
-| `docs/specs/ro-format-v2.md` | Normative current identity-aware direct-`.ro` JSON profile | Implemented current semantic writer | ADR-0015, ADR-0017, ADR-0018, #40 |
+| `docs/specs/ro-format-v2.md` | Mixed: Accepted ADR-0015/ADR-0017/ADR-0018 invariants; M02 wire/resource mechanics Provisional | Implemented current semantic writer | ADR-0015, ADR-0017, ADR-0018, #40 |
 | `docs/specs/roproj-format.md` | Accepted direction | Not implemented | ADR-0003, ADR-0017, #41 |
 | `docs/specs/roproj-layout-v1.md` | Provisional | Not implemented | #41 |
 | `docs/specs/formula-engine-spec.md` | Mixed: Accepted ADR-0014 authoring and ADR-0018 binding/projection, rename preflight, numeric, dependency, and recomputation rules; implementation mechanisms Provisional | Stable binding/projection, atomic rename preflight, normalized Number, static dependencies, and full calculation implemented; complete failure oracle/incremental evaluator pending | ADR-0018, #40 and later formula-engine work |
@@ -159,7 +159,8 @@ A GitHub Issue is never automatically an Accepted decision. The table below clas
 14. #70 implements ADR-0015 as one atomic transition: opaque IDs and mutable
    keys, UUIDv7 creation seam, stable formula binding/projection, stable-ID
    diff/merge/workflow continuity, deterministic legacy UUIDv5 migration, and
-   lossless direct-ro/v2 persistence. It does not start #40 or #72.
+   direct-ro/v2 preservation of ADR-0018 semantic meaning. It does not start
+   #40 or #72.
 
 ## Current research queue
 

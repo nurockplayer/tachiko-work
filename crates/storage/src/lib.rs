@@ -144,7 +144,7 @@ pub(crate) fn decode_v1_dto_for_migration(
     if version != LEGACY_FORMAT_VERSION {
         return Err(FormatError::UnsupportedVersion {
             found: version,
-            supported: LEGACY_FORMAT_VERSION,
+            supported: FORMAT_VERSION,
         });
     }
     let document: legacy_direct_ro::v1::DocumentV1 = serde_json::from_str(source)

@@ -199,7 +199,7 @@ fn init_can_explicitly_create_an_empty_document() {
 #[test]
 fn init_generates_a_uuid_v7_identity_and_derives_a_human_title_from_the_file_name() {
     let temp = TempDir::new();
-    let path = temp.path().join("My Balance Data.ro");
+    let path = temp.path().join("  My Balance Data  .ro");
 
     let output = run(&["init", path.to_str().unwrap(), "--template", "empty"]);
 
@@ -209,9 +209,24 @@ fn init_generates_a_uuid_v7_identity_and_derives_a_human_title_from_the_file_nam
         String::from_utf8_lossy(&output.stderr)
     );
     let document = load(path).unwrap();
-    assert_eq!(document.title, "my-balance-data");
+    assert_eq!(document.title, "My Balance Data");
     let id = Uuid::parse_str(document.id.as_str()).expect("normal creation uses a UUID");
     assert_eq!(id.get_version_num(), 7);
+}
+
+#[test]
+fn init_uses_document_as_the_default_title_when_the_file_stem_is_blank() {
+    let temp = TempDir::new();
+    let path = temp.path().join("   .ro");
+
+    let output = run(&["init", path.to_str().unwrap(), "--template", "empty"]);
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(load(path).unwrap().title, "document");
 }
 
 #[test]

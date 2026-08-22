@@ -1,4 +1,4 @@
-use tachiko_storage::{canonicalize_legacy_v1, from_str};
+use tachiko_storage::{FORMAT_VERSION, FormatError, canonicalize_legacy_v1, from_str};
 
 #[test]
 fn canonical_minimal_v1_has_exact_frozen_bytes() {
@@ -6,6 +6,17 @@ fn canonical_minimal_v1_has_exact_frozen_bytes() {
     let expected = "{\n  \"format_version\": 1,\n  \"id\": \"doc\",\n  \"title\": \"Document\",\n  \"schemas\": {},\n  \"entities\": {}\n}\n";
 
     assert_eq!(canonicalize_legacy_v1(source.as_bytes()).unwrap(), expected);
+}
+
+#[test]
+fn canonical_v1_helper_reports_the_current_build_version_ceiling() {
+    let v2 = r#"{"format_version":2,"id":"doc","title":"Document","schemas":{},"entities":{}}"#;
+
+    assert!(matches!(
+        canonicalize_legacy_v1(v2.as_bytes()).unwrap_err(),
+        FormatError::UnsupportedVersion { found: 2, supported }
+            if supported == FORMAT_VERSION
+    ));
 }
 
 #[test]

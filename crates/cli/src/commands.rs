@@ -340,38 +340,12 @@ pub fn export(input: &Path, output: &Path) -> Result<String, CommandError> {
 }
 
 fn default_document_title(path: &Path) -> String {
-    let stem = path
-        .file_stem()
+    path.file_stem()
         .and_then(|name| name.to_str())
-        .filter(|name| !name.trim().is_empty())
-        .unwrap_or("document");
-    let mut identifier = String::new();
-    let mut pending_separator = false;
-    for character in stem.chars() {
-        if character.is_ascii_alphanumeric() {
-            if pending_separator && !identifier.is_empty() {
-                identifier.push('-');
-            }
-            identifier.push(character.to_ascii_lowercase());
-            pending_separator = false;
-        } else if matches!(character, '_' | '-') {
-            if pending_separator && !identifier.is_empty() {
-                identifier.push('-');
-            }
-            identifier.push(character);
-            pending_separator = false;
-        } else {
-            pending_separator = true;
-        }
-    }
-    while identifier.ends_with(['-', '_']) {
-        identifier.pop();
-    }
-    if identifier.is_empty() {
-        "document".to_owned()
-    } else {
-        identifier
-    }
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or("document")
+        .to_owned()
 }
 
 fn parse_field_ref(value: &str) -> Result<FieldAddress, CommandError> {

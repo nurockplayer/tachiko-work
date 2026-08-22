@@ -22,7 +22,8 @@ for the current provisional direction.
 ## Set up the toolchains
 
 Install stable Rust for development and the exact minimum version for
-compatibility checks:
+compatibility checks. Install Node.js as well; the complete release gate uses
+it to execute the native/WASM semantic parity harness.
 
 ```sh
 rustup toolchain install stable --profile minimal

@@ -1,7 +1,9 @@
 # Tachiko Work direct `.ro` JSON v2
 
-Decision state: Normative current direct-`.ro` representation under ADR-0015,
-ADR-0017, and ADR-0018
+Decision state: Mixed. Stable identity, representation-boundary, canonical
+semantic-preservation, and Number invariants are Accepted under ADR-0015,
+ADR-0017, and ADR-0018. Exact direct-ro/v2 wire and resource-profile mechanics
+are Provisional Milestone 02 choices.
 
 Implementation state: Implemented by the stable-identity transition in #70
 
@@ -32,7 +34,9 @@ format version, or the future packaged `.ro` profile.
 
 ## Resource admission and Number conversion
 
-The Provisional `direct-ro/v2` profile limits are:
+The Provisional Milestone 02 `direct-ro/v2` profile uses these values. They are
+representation mechanisms subordinate to the Accepted storage and semantic
+contracts in ADR-0017 and ADR-0018:
 
 | Resource | Limit |
 | --- | ---: |

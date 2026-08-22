@@ -5,8 +5,8 @@ use tachiko_formula_engine::{
     UnboundExpression, bind_expression, extract_dependencies, parse_expression, project_expression,
 };
 use tachiko_semantic_core::{
-    Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldDefinition, FieldId,
-    FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
+    Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldAddress, FieldDefinition,
+    FieldId, FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
 };
 
 fn document() -> Document {
@@ -75,6 +75,39 @@ fn authoring_addresses_bind_once_to_stable_ids() {
         }
     );
     assert_eq!(extract_dependencies(&bound), BTreeSet::from([reference]));
+}
+
+#[test]
+fn addresses_that_resolve_to_non_numeric_fields_are_rejected_exactly() {
+    let mut document = document();
+    document
+        .schemas
+        .get_mut("schema-stable")
+        .unwrap()
+        .fields
+        .get_mut("damage-stable")
+        .unwrap()
+        .field_type = FieldType::Text;
+    document
+        .entities
+        .get_mut("entity-stable")
+        .unwrap()
+        .fields
+        .insert(
+            FieldId::from("damage-stable"),
+            Value::Text("not a number".to_owned()),
+        );
+
+    let error =
+        bind_expression(&document, &parse_expression("[iron_sword.damage]").unwrap()).unwrap_err();
+
+    assert_eq!(
+        error,
+        FormulaBindError::NonNumericTarget {
+            address: FieldAddress::new("iron_sword", "damage"),
+            reference: FieldRef::new("entity-stable", "damage-stable"),
+        }
+    );
 }
 
 #[test]
