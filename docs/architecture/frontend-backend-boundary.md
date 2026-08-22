@@ -7,10 +7,10 @@ The UI is a projection layer, not the owner of document meaning.
 ## Architecture
 
 In this document, `Rust Core` means the shared Rust semantic/application
-runtime, not the `semantic-core` crate alone. The proposed crate ownership and
+runtime, not the `semantic-core` crate alone. The Accepted crate ownership and
 dependency direction are recorded in
 [ADR-0016](../decisions/ADR-0016-milestone-02-rust-crate-layering.md); detailed
-native/WASM host binding remains owned by #26.
+resident-state, native/WASM host, and bridge behavior remains owned by #26.
 
 ```
 React / Desktop UI
