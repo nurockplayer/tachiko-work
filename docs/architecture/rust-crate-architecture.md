@@ -1,21 +1,20 @@
 # Rust Crate Architecture
 
-Decision state: v0.1 baseline is Provisional; target is Proposed in ADR-0016
+Decision state: v0.1 baseline is Provisional; Milestone 02 target is Accepted in ADR-0016
 
 Implementation state: v0.1 baseline implemented; target migration not started
 
-Decision owner: #20
+Architecture authority: ADR-0016
 
 ## Purpose
 
 This document records the live Rust workspace evidence that motivated #20 and
-the relationship between the current implementation and the proposed decision.
+the relationship between the current implementation and the Accepted decision.
 
 [ADR-0016](../decisions/ADR-0016-milestone-02-rust-crate-layering.md)
-is the single source for the proposed Milestone 02 tree, dependency DAG,
+is the single source for the Accepted Milestone 02 baseline tree, dependency DAG,
 ownership/API boundaries, composition roots, portability rules, forbidden
-edges, Provisional seams, rejected alternatives, and migration sequence. It
-remains Proposed until reviewed and promoted.
+edges, Provisional seams, rejected alternatives, and migration sequence.
 
 ## Current v0.1 workspace
 
@@ -119,7 +118,7 @@ complete application boundary.
 
 ## Current cross-boundary pressure
 
-The code shows four concrete reasons for the proposed target:
+The code shows four concrete reasons for the Accepted target:
 
 1. Workflow already has the correct host-independent shape for shared
    application behavior; adding a parallel orchestration crate would duplicate
@@ -134,7 +133,7 @@ The code shows four concrete reasons for the proposed target:
 Invariant enforcement is currently entry-point-dependent: storage load validates
 but does not calculate; CLI validate adds calculation; merge validates and
 calculates; workflow edits validate and calculate; diff calculates; AI queries
-select different subsets. The proposed application boundary centralizes that
+select different subsets. The shared application boundary centralizes that
 policy without moving it into semantic-core.
 
 ## Portability evidence
@@ -159,13 +158,18 @@ currently reach recursive semantic validation and calculation without the
 parser/AI complexity gate. A shared structural limit must be applied before
 untrusted native or WASM evaluation.
 
-## Proposed target summary
+## Accepted target summary
 
-ADR-0016 proposes retaining eight target crates, evolving current `workflow` in
-place into the host-independent `workspace-engine` role, making AI and CLI thin
-adapters over that shared behavior, and keeping storage as a sibling host
-boundary. It does not add schema, validation, diagnostics, common-types,
-plugin, collaboration, or host-abstraction crates now.
+ADR-0016 accepts eight crates as the current Milestone 02 baseline, evolving
+current `workflow` in place into the host-independent `workspace-engine` role,
+making AI and CLI thin adapters over that shared behavior, and keeping storage
+as a sibling host boundary. It does not add schema, validation, diagnostics,
+common-types, plugin, collaboration, or host-abstraction crates now.
+
+The eight-crate count is a baseline rather than a permanent cardinality
+constraint. #23/#24/#25/#26 may justify an explicit later amendment when
+concrete dependency pressure requires a split or new edge; implementation must
+not drift silently.
 
 The ADR also makes clear that the target name does not create a `Workspace` or
 `Project` semantic aggregate. ADR-0015 keeps v1 semantic references
@@ -175,14 +179,14 @@ See ADR-0016 rather than copying its target matrix or migration steps here.
 
 ## Status and follow-up
 
-- #20 remains open while ADR-0016 is Proposed.
+- #20 is resolved by ADR-0016; implementation follows in a separate issue.
 - #23/#24 may refine schema, validation, diagnostic, and formula sub-boundaries
-  without reversing the macro dependency direction.
+  without silently reversing the Accepted dependency direction.
 - #25 owns storage DTO/codec/migration/package/host subdivision.
-- #26 owns stateful runtime, native/WASM capability, and bridge details.
+- #26 owns resident-state/runtime shape, native/WASM capability, and bridge details.
 - #10 owns external Semantic API stability and versioning.
-- A separate implementation issue should own the staged crate/dependency
-  migration after ADR promotion.
+- Any narrower decision that requires a new crate or direct edge must amend
+  ADR-0016 explicitly rather than emerge through implementation drift.
 
 ## Related authority
 
