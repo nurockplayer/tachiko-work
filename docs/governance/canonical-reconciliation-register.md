@@ -2,7 +2,7 @@
 
 Status: Accepted register when merged
 
-Last reconciliation: 2026-08-21
+Last reconciliation: 2026-08-22
 
 ## Purpose
 
@@ -38,13 +38,16 @@ When this register marks a document as mixed-state, readers must respect the nar
 | ADR-0010 first usable product workflow | Accepted | Current CLI-first usable workflow. Stale wording about ADR-0003 being unresolved must not be treated as authority. |
 | ADR-0011 semantic three-way merge | Accepted for implemented merge contract | Defines the current model-level merge behavior. Broader protocol/versioned conflict semantics remain Open Questions in #45/#46. |
 | ADR-0012 tag-gated release distribution | Accepted | Release/distribution contract; independent from semantic architecture. |
+| ADR-0013 validated semantic entity lifecycle | Accepted for v0.1 lifecycle contract | Preview-first immutable mutation, typed relationship safety, and non-cascading removal remain authoritative. ADR-0015 supersedes only the parts that treat a human-facing entity identifier as durable identity. |
+| ADR-0014 bounded computational formula authoring | Accepted | Current bounded deterministic authoring workflow; deeper binding/numeric semantics remain owned by #24. |
+| ADR-0015 stable semantic identity and mutable human keys | Accepted | Durable objects use stable opaque typed surrogate IDs independent of names, paths, presentation, and content. UUIDv7 is a preferred Provisional generator, not permanent semantic meaning. |
 
 ## Architecture and specification map
 
 | Artifact | Decision state | Implementation state | Open decision owner |
 | --- | --- | --- | --- |
-| `docs/architecture/document-model.md` | Accepted direction; detailed graph shape Provisional | Partially implemented | #21 |
-| `docs/architecture/unified-semantic-model.md` | Accepted direction | Partially implemented | #21, #13 |
+| `docs/architecture/document-model.md` | Accepted direction; detailed graph shape constrained by ADR-0015 | Partially implemented / identity migration pending | ADR-0015, #23, #24 |
+| `docs/architecture/unified-semantic-model.md` | Accepted direction | Partially implemented | ADR-0015, #13 |
 | `docs/architecture/rust-crate-architecture.md` | Provisional implementation baseline | Implemented v0.1 | #20 |
 | `docs/architecture/ro-and-roproj-format.md` | Accepted direction | `.ro` implemented, `.roproj` not implemented | #25, #37, #38, #41, #43 |
 | `docs/architecture/ai-native-architecture.md` | Accepted direction | Partially implemented | #10, #27, #28, #30 |
@@ -54,7 +57,7 @@ When this register marks a document as mixed-state, readers must respect the nar
 | `docs/architecture/rendering-system.md` | Hypothesis | Not current milestone | Designer MVP future work |
 | `docs/architecture/performance-model.md` | Provisional guidance | Mixed | Evidence-driven future work |
 | `docs/specs/ro-format-and-roproj-spec.md` | Accepted direction with explicit current-state split | `.ro` implemented; `.roproj` future | ADR-0003, #25 |
-| `docs/specs/ro-format-v1.md` | Provisional public-format baseline for Core & Format Hardening | Implemented v0.1 | #21, #25, #37, #38, #40 |
+| `docs/specs/ro-format-v1.md` | Provisional public-format baseline for Core & Format Hardening | Implemented v0.1 | ADR-0015, #25, #37, #38, #40 |
 | `docs/specs/roproj-format.md` | Accepted direction | Not implemented | #25, #41 |
 | `docs/specs/roproj-layout-v1.md` | Provisional | Not implemented | #41 |
 | `docs/specs/formula-engine-spec.md` | Provisional implemented contract | Implemented v0.1 | #24 |
@@ -92,14 +95,13 @@ A GitHub Issue is never automatically an Accepted decision. The table below clas
 | #15 licensing/commercial boundary | Open Question | Founder/governance decision after research/legal review. |
 | #17 plugin ecosystem / Office migration | Mixed | Extensible-ecosystem direction is Accepted; runtime tiers, sandbox, compatibility, and migration mechanics remain Open Questions. |
 | #18 Japan enterprise / gradual Excel migration | Accepted product direction with Hypotheses | Japan as a priority research environment and gradual migration are accepted; individual pain-point claims require user evidence. |
-| #19 canonical docs / ADR reconciliation | Active reconciliation task | This register and PR #58 are part of its exit path. |
+| #19 canonical docs / ADR reconciliation | Completed reconciliation task | Closed after establishing authority precedence, ADR numbering, and canonical reconciliation rules. |
 
 ### Core & Format Hardening decisions
 
-The following are Open Questions that should be resolved by focused research and ADR/spec work rather than founder intuition:
+The following remain Open Questions that should be resolved by focused research and ADR/spec work rather than founder intuition:
 
 - #20 Rust crate layering and dependency direction
-- #21 semantic identity, document graph, typed references
 - #23 schema declaration, validation pipeline, diagnostics
 - #24 formula AST, binding, dependency graph, numeric semantics
 - #25 storage DTOs, canonical serialization, migration contract
@@ -107,7 +109,9 @@ The following are Open Questions that should be resolved by focused research and
 - #37 format/version envelope
 - #38 canonical value encoding and deterministic ordering
 
-#40 is an implementation/evidence task that should execute the accepted results of #25/#37/#38 rather than invent new format semantics.
+#21 semantic identity, document graph, and typed references is resolved at the durable identity/graph-invariant level by ADR-0015. Implementation migration and downstream format/formula/validation consequences remain work for the issues above; #21 should not be used to reopen the accepted stable-identity invariant without a superseding ADR.
+
+#40 is an implementation/evidence task that should execute the accepted results of ADR-0015 and #25/#37/#38 rather than invent new format semantics.
 
 ### Game Dev Alpha / AI-safe mutation work
 
@@ -137,25 +141,26 @@ The following are Open Questions that should be resolved by focused research and
 2. ADR-0008 and ADR-0009 are no longer treated as parallel next-phase authorities; ADR-0008 is historical/superseded.
 3. Stale statements that call ADR-0003 merely `proposed` are invalid after ADR-0003 became Accepted and are being corrected.
 4. Current direct `.ro` persistence is explicitly separated from the accepted longer-term `.roproj` source / `.ro` portable-artifact architecture.
-5. `.ro` v1 implementation details are not automatically permanent identity/serialization invariants; #21/#25/#37/#38 own the hardening decision.
+5. `.ro` v1 implementation details are not automatically permanent identity/serialization invariants; ADR-0015 and #25/#37/#38 own the hardened contracts.
 6. Event sourcing and a first-class persisted operation log remain Hypothesis/Open Question, not normative architecture.
 7. Concrete plugin runtime tiers and collaboration mechanisms remain Open Questions even though extensibility and semantic-first integration are accepted directions.
 8. Implementation evidence remains evidence. It does not silently supersede Accepted ADRs.
+9. ADR-0015 separates durable semantic identity from mutable human keys and partially supersedes ADR-0013's rename-as-ID-replacement semantics while preserving ADR-0013 as v0.1 implementation history.
+10. UUIDv7 is classified as the preferred Provisional Milestone 02 generator, not permanent semantic meaning; future generator changes must preserve the stable opaque identity contract.
 
 ## Current research queue
 
-After #19 is closed, the highest-value Core & Format Hardening work is the set of expensive-to-reverse contracts, not every open Issue.
+The highest-value remaining Core & Format Hardening work is the set of expensive-to-reverse contracts, not every open Issue.
 
-Recommended research/finalization order:
+Recommended research/finalization order after ADR-0015:
 
-1. #21 semantic identity and typed-reference invariants.
-2. #25 + #37 + #38 storage DTO, version envelope, and canonical encoding constraints.
-3. #24 formula binding/numeric determinism and #23 schema/diagnostics, using #21 identity as input.
-4. #20 crate layering, finalized around the responsibilities established above rather than around speculative future subsystems.
-5. #40 executable golden/negative evidence.
-6. #26 native/WASM host/runtime boundary after core ownership and dependency seams are clear.
+1. #25 + #37 + #38 storage DTO, version envelope, and canonical encoding constraints.
+2. #24 formula binding/numeric determinism and #23 schema/diagnostics, using ADR-0015 identity as input.
+3. #20 crate layering, finalized around the responsibilities established above rather than around speculative future subsystems.
+4. #40 executable golden/negative evidence.
+5. #26 native/WASM host/runtime boundary after core ownership and dependency seams are clear.
 
-Parallel research is allowed where it does not freeze contradictory contracts.
+A code-grounded #20 audit may run in parallel before #23/#24 are final, but it must preserve provisional seams where those decisions could change crate ownership. Parallel research is allowed where it does not freeze contradictory contracts.
 
 ## Founder escalation boundary
 
