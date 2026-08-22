@@ -1,12 +1,66 @@
 mod common;
 
 use common::{empty_document, game_balance_document};
-use tachiko_semantic_core::validate_document;
+use tachiko_semantic_core::{DiagnosticCode, Document, validate_document};
 use tachiko_storage::load;
-use tachiko_workflow::{DocumentOverview, FieldKind, overview};
+use tachiko_workflow::{DocumentOverview, FieldKind, WorkflowError, overview};
 
 type AuthoringField = (String, String, FieldKind);
 type AuthoringEntity = (String, String, String, Vec<AuthoringField>);
+type DuplicateKeyMutation = fn(&mut Document);
+
+fn duplicate_schema_key(document: &mut Document) {
+    let duplicate_key = document
+        .schemas
+        .values()
+        .next()
+        .expect("starter should contain a schema")
+        .key
+        .clone();
+    document
+        .schemas
+        .values_mut()
+        .nth(1)
+        .expect("starter should contain a second schema")
+        .key = duplicate_key;
+}
+
+fn duplicate_entity_key(document: &mut Document) {
+    let duplicate_key = document
+        .entities
+        .values()
+        .next()
+        .expect("starter should contain an entity")
+        .key
+        .clone();
+    document
+        .entities
+        .values_mut()
+        .nth(1)
+        .expect("starter should contain a second entity")
+        .key = duplicate_key;
+}
+
+fn duplicate_field_key(document: &mut Document) {
+    let schema = document
+        .schemas
+        .values_mut()
+        .find(|schema| schema.fields.len() > 1)
+        .expect("starter should contain a schema with multiple fields");
+    let duplicate_key = schema
+        .fields
+        .values()
+        .next()
+        .expect("selected schema should contain a field")
+        .key
+        .clone();
+    schema
+        .fields
+        .values_mut()
+        .nth(1)
+        .expect("selected schema should contain a second field")
+        .key = duplicate_key;
+}
 
 fn authoring_projection(view: DocumentOverview) -> Vec<AuthoringEntity> {
     view.entities
@@ -93,6 +147,34 @@ fn overview_order_is_stable_and_empty_template_remains_available() {
     assert_eq!(empty_view.entity_count, 0);
     assert_eq!(empty_view.formula_count, 0);
     assert!(empty_view.entities.is_empty());
+}
+
+#[test]
+fn overview_rejects_duplicate_human_keys_as_an_invalid_document() {
+    let cases: [(&str, DuplicateKeyMutation); 3] = [
+        ("schema keys", duplicate_schema_key),
+        ("entity keys", duplicate_entity_key),
+        ("field keys within one schema", duplicate_field_key),
+    ];
+
+    for (category, make_duplicate) in cases {
+        let mut document = game_balance_document("game", "Game");
+        make_duplicate(&mut document);
+
+        let error = overview(&document)
+            .expect_err("overview should reject directly constructed duplicate human keys");
+        let WorkflowError::InvalidDocument { diagnostics, .. } = error else {
+            panic!("{category}: expected InvalidDocument, got {error:?}");
+        };
+        assert_eq!(
+            diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code)
+                .collect::<Vec<_>>(),
+            [DiagnosticCode::DuplicateKey],
+            "{category}"
+        );
+    }
 }
 
 #[test]

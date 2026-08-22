@@ -204,6 +204,7 @@ pub fn create_document(
 ///
 /// Returns an error if semantic addresses or formulas are invalid.
 pub fn overview(document: &Document) -> Result<DocumentOverview, WorkflowError> {
+    validate_candidate(document)?;
     let calculation = calculate(document)?;
     let mut formula_count = 0;
     let mut entities = Vec::new();

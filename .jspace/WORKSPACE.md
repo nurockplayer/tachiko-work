@@ -840,3 +840,19 @@ the ADR-0015 persisted identity model that remains owned by #70.
   Clippy; formatting; documentation consistency; and the formula-authoring
   product smoke are green. Complete release-equivalent gates and fresh
   exact-head reviews remain required before the Draft PR returns to ChatGPT.
+
+### PR #81 final overview-address closure
+
+- The final ChatGPT adjudication accepted the remaining Codex P2 and narrowed
+  closure to validating directly constructed documents before `overview()`
+  creates a human-facing projection; no address or diagnostic semantics change.
+- A workflow regression was proven red on exact head `dae70fa`: `overview()`
+  admitted a directly constructed document with a duplicated schema key.
+- `overview()` now reuses `validate_candidate(document)?` before calculation.
+  The table-driven regression covers duplicate schema keys, duplicate entity
+  keys, and duplicate field keys within one schema, asserting the typed
+  `WorkflowError::InvalidDocument` result and `DiagnosticCode::DuplicateKey`.
+- The exact regression and all 24 workflow integration tests are green,
+  including the existing valid overview and deterministic ordering evidence.
+  Complete clean-head release verification and a fresh exact-head Codex review
+  remain required before final ChatGPT review.
