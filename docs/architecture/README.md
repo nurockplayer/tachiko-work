@@ -41,7 +41,7 @@ Concrete mutation, permissions, approval, provenance, and security contracts rem
 ### Collaboration and future presentation
 
 - [`distributed-collaboration.md`](distributed-collaboration.md) — future collaboration hypothesis/Open Question beyond the implemented semantic merge baseline.
-- [`rendering-system.md`](rendering-system.md) — future rendering/UI hypothesis for later Designer MVP work.
+- [`rendering-system.md`](rendering-system.md) — future rendering and semantic-projection hypothesis, including the research → Git-reviewed knowledge → presentation use case tracked in #67, for later Designer MVP work.
 
 ## Maturity map
 
@@ -56,7 +56,7 @@ Use these broad cues together with the reconciliation register:
 | AI as semantic client | Accepted direction |
 | Native/WASM runtime seam | Provisional / Open Question |
 | Distributed collaboration beyond semantic merge | Hypothesis / Open Question |
-| Rendering/UI architecture | Future hypothesis |
+| Rendering/UI and cross-view projection architecture | Future hypothesis |
 
 ## Reading rule for architecture work
 
