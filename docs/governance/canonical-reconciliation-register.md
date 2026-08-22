@@ -39,16 +39,17 @@ When this register marks a document as mixed-state, readers must respect the nar
 | ADR-0011 semantic three-way merge | Accepted for implemented merge contract | Defines the current model-level merge behavior. Broader protocol/versioned conflict semantics remain Open Questions in #45/#46. |
 | ADR-0012 tag-gated release distribution | Accepted | Release/distribution contract; independent from semantic architecture. |
 | ADR-0013 validated semantic entity lifecycle | Accepted for v0.1 lifecycle contract | Preview-first immutable mutation, typed relationship safety, and non-cascading removal remain authoritative. ADR-0015 supersedes only the parts that treat a human-facing entity identifier as durable identity. |
-| ADR-0014 bounded computational formula authoring | Accepted | Current bounded deterministic authoring workflow; deeper binding/numeric semantics remain owned by #24. |
+| ADR-0014 bounded computational formula authoring | Accepted | Current bounded deterministic authoring workflow; deeper binding/numeric semantics are defined by Accepted ADR-0018 and owned by downstream implementation work. |
 | ADR-0015 stable semantic identity and mutable human keys | Accepted | Durable objects use stable opaque typed surrogate IDs independent of names, paths, presentation, and content. UUIDv7 is a preferred Provisional generator, not permanent semantic meaning. |
 | ADR-0016 Milestone 02 Rust crate layering | Accepted | Accepts the current eight-crate Milestone 02 baseline, evolves workflow into the shared workspace engine, and fixes forbidden dependency directions. #23–#26 may explicitly amend narrower crate/runtime seams when evidence requires it. |
-| ADR-0017 versioned storage DTOs, explicit migration, and canonical representation | Accepted | Storage owns immutable version-specific DTOs and explicit migrations; version-gated readers fail closed on unsupported/newer semantics; canonical output is version-defined and cannot invent unresolved #24 numeric meaning. |
+| ADR-0017 versioned storage DTOs, explicit migration, and canonical representation | Accepted | Storage owns immutable version-specific DTOs and explicit migrations; version-gated readers fail closed on unsupported/newer semantics; canonical output is version-defined and must preserve ADR-0018's Accepted numeric meaning. |
+| ADR-0018 bound formulas and deterministic finite binary64 semantics | Accepted | Stable-ID bound ASTs and partial authoring projection, atomic rename preservation of ADR-0014's byte limit, finite binary64 with one semantic zero, representation-admitted numeric conversion, deterministic arithmetic, static dependencies, recomputation equivalence, and persisted number spelling are current authority. |
 
 ## Architecture and specification map
 
 | Artifact | Decision state | Implementation state | Open decision owner |
 | --- | --- | --- | --- |
-| `docs/architecture/document-model.md` | Accepted direction; detailed graph shape constrained by ADR-0015 | Partially implemented / identity migration pending | ADR-0015, #23, #24 |
+| `docs/architecture/document-model.md` | Accepted direction; detailed graph shape constrained by ADR-0015 and ADR-0018 | Partially implemented / identity and formula migration pending | ADR-0015, ADR-0018, #23, #70 |
 | `docs/architecture/unified-semantic-model.md` | Accepted direction | Partially implemented | ADR-0015, #13 |
 | `docs/architecture/rust-crate-architecture.md` | Provisional v0.1 baseline plus Accepted ADR-0016 target | Implemented v0.1; target migration pending | ADR-0016 |
 | `docs/architecture/ro-and-roproj-format.md` | Accepted direction constrained by ADR-0017 storage boundary | `.ro` direct JSON implemented; `.roproj` not implemented | ADR-0003, ADR-0017, #41, #43 |
@@ -60,11 +61,11 @@ When this register marks a document as mixed-state, readers must respect the nar
 | `docs/architecture/performance-model.md` | Provisional guidance | Mixed | Evidence-driven future work |
 | `docs/specs/ro-format-and-roproj-spec.md` | Accepted direction with explicit current-state split | `.ro` direct JSON implemented; `.roproj` future | ADR-0003, ADR-0017 |
 | `docs/specs/storage-versioning-and-migration.md` | Mixed: Accepted invariants under ADR-0017; M02 wire mechanics Provisional where marked | Not yet implemented | ADR-0017, #25, #37 |
-| `docs/specs/canonical-json-profile.md` | Mixed: Accepted deterministic/semantic-preservation rules; exact M02 profile mechanics version-specific | Not yet implemented as independent writer | ADR-0017, #38, #24 for numeric edge semantics |
+| `docs/specs/canonical-json-profile.md` | Mixed: Accepted deterministic/semantic-preservation and admitted-token binary64 rules; exact M02 profile/resource limits version-specific | Not yet implemented as independent writer | ADR-0017, ADR-0018, #38, #74, #40 |
 | `docs/specs/ro-format-v1.md` | Normative legacy direct-`.ro` JSON compatibility/migration profile | Implemented v0.1 and still current writer until migration | ADR-0017, #25, #40, #70 |
 | `docs/specs/roproj-format.md` | Accepted direction | Not implemented | ADR-0003, ADR-0017, #41 |
 | `docs/specs/roproj-layout-v1.md` | Provisional | Not implemented | #41 |
-| `docs/specs/formula-engine-spec.md` | Provisional implemented contract | Implemented v0.1 | #24 |
+| `docs/specs/formula-engine-spec.md` | Mixed: Accepted ADR-0014 authoring and ADR-0018 binding/projection, rename preflight, numeric, dependency, and recomputation rules; implementation mechanisms Provisional | v0.1 authoring/full calculation implemented; stable binding/projection, atomic rename preflight, zero normalization, static graph, and incremental evaluator pending | ADR-0018; downstream #70/#74/#40 and formula-engine implementation work |
 | `docs/specs/ai-agent-api.md` | Provisional implemented contract under ADR-0007 | Implemented v0.1 read/explain/suggest surface | #10, #27, #28 |
 | `docs/specs/collaboration-model.md` | Mixed: current merge Accepted, future collaboration Open Question | Merge implemented; broader collaboration future | ADR-0011, #12, #45, #46 |
 | `docs/specs/conflict-resolution.md` | Provisional around current merge; future conflict model Open Question | Partial | #46 |
@@ -107,12 +108,12 @@ A GitHub Issue is never automatically an Accepted decision. The table below clas
 - #21 semantic identity, document graph, typed references — durable identity/graph invariants resolved by ADR-0015; implementation migration remains #70.
 - #25 storage DTO / migration boundary — durable architecture resolved by ADR-0017; implementation work remains.
 - #37 format/version envelope — durable fail-closed/version-gated behavior resolved by ADR-0017 and `storage-versioning-and-migration.md`; M02 implementation remains.
-- #38 canonical value encoding/order — structural/Unicode/order invariants resolved by ADR-0017 and `canonical-json-profile.md`; exact numeric spelling remains Deferred to #24.
+- #38 canonical value encoding/order — structural/Unicode/order invariants are resolved by ADR-0017 and exact numeric spelling by Accepted ADR-0018; implementation remains downstream.
 - #23 schema declaration, validation pipeline, diagnostics — Open Question.
-- #24 formula AST, binding, dependency graph, numeric semantics — Open Question and current owner of numeric semantic edge cases.
+- #24 formula AST, binding, dependency graph, numeric semantics — resolved by Accepted ADR-0018, the reconciled formula/canonical JSON specifications, research record, and executed native/Wasm probe. Implementation is owned downstream.
 - #26 native/WASM runtime boundary — Open Question.
 
-#40 is an implementation/evidence task that consumes ADR-0015 and ADR-0017 rather than inventing format semantics. Numeric edge fixtures must wait for #24.
+#40 is an implementation/evidence task that consumes ADR-0015, ADR-0017, and Accepted ADR-0018 rather than inventing format semantics. This promotion pass does not begin that work.
 
 ### Game Dev Alpha / AI-safe mutation work
 
@@ -147,18 +148,20 @@ A GitHub Issue is never automatically an Accepted decision. The table below clas
 7. ADR-0017 separates semantic types from storage-owned version DTOs, requires explicit version-gated migration, rejects silent unknown/newer interpretation, and makes canonical bytes version-defined rather than serializer-defined.
 8. Direct `.ro` JSON v1 is now classified as an immutable legacy compatibility/migration profile. A future direct `.ro` v2 and future `.roproj` v1 occupy distinct representation namespaces.
 9. Full RFC 8785 JCS is not the editable-source canonical profile; Tachiko reuses appropriate primitives while retaining Git-friendly whitespace/order and #24 numeric authority.
-10. Exact numeric canonical spelling remains Deferred to #24 even though other #38 canonicalization invariants are Accepted.
-11. Event sourcing, public plugin runtime details, collaboration algorithms, `.roproj` sharding, `.ro` package mechanics, and host durability implementation remain outside ADR-0017.
+10. ADR-0018 accepts formula binding, deterministic finite-binary64 meaning, and exact numeric canonical spelling as current authority.
+11. Full RFC 8785/JCS remains rejected for editable-source canonicalization; only its ECMAScript-compatible number primitive is Accepted for a representation that adopts ADR-0018.
+12. ADR-0018's promotion corrections make canonical authoring projection partial, preserve ADR-0014's 4,096-byte limit atomically across rename, and place numeric-token/input resource admission in the representation/profile before semantic conversion without freezing a limit into Number meaning.
+13. Event sourcing, public plugin runtime details, collaboration algorithms, `.roproj` sharding, `.ro` package mechanics, and host durability implementation remain outside ADR-0017 and ADR-0018.
 
 ## Current research queue
 
 The next highest-value Core & Format Hardening work is now:
 
-1. #24 formula binding/numeric determinism and #23 schema/diagnostics, using ADR-0015/0016/0017 as inputs.
-2. Implement #25/#37/#38 under ADR-0017, then execute #40 golden/negative evidence and integrate #70 identity migration.
+1. Implement #25/#37/#38/#74 under ADR-0017/ADR-0018, then execute #40 golden/negative evidence and integrate #70 identity migration; this register records ownership, not authorization to begin those tasks in the promotion pass.
+2. Continue #23 schema/diagnostics independently where its contract does not overlap.
 3. #26 native/WASM host/runtime boundary after the semantic/storage/application seams are implemented enough to pressure-test.
 
-Parallel implementation is allowed where it does not freeze unresolved #23/#24/#26 semantics. If implementation discovers pressure that contradicts an Accepted ADR, return to an explicit amendment/reconciliation rather than hiding the change in code.
+Parallel implementation is allowed where it does not freeze unresolved #23/#26 semantics. If implementation discovers pressure that contradicts an Accepted ADR, return to an explicit amendment/reconciliation rather than hiding the change in code.
 
 ## Founder escalation boundary
 
