@@ -2,6 +2,18 @@
 
 All notable changes to Tachiko Work are documented in this file.
 
+## Unreleased
+
+### Changed
+
+- Hardened legacy direct `.ro` v1 persistence with storage-owned historical
+  DTOs, strict UTF-8/JSON/version handling, recursive closed-world decoding,
+  and specification-ordered canonical output while preserving valid v1 bytes.
+- `tachiko-storage::FormatError` now adds distinct UTF-8, JSON-duplicate,
+  version-envelope, and representation failures. Existing `Json`,
+  `UnsupportedVersion`, and `InvalidDocument` shapes remain available, but
+  downstream exhaustive matches must account for the new variants.
+
 ## [0.1.0] - 2026-08-20
 
 ### Added

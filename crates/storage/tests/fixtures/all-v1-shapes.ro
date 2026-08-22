@@ -1,0 +1,221 @@
+{
+  "format_version": 1,
+  "id": "all-shapes",
+  "title": "Café | Café",
+  "schemas": {
+    "node": {
+      "id": "node",
+      "fields": {
+        "add": {
+          "field_type": {
+            "type": "number"
+          },
+          "required": false
+        },
+        "boolean": {
+          "field_type": {
+            "type": "boolean"
+          },
+          "required": false
+        },
+        "divide": {
+          "field_type": {
+            "type": "number"
+          },
+          "required": false
+        },
+        "maximum": {
+          "field_type": {
+            "type": "number"
+          },
+          "required": false
+        },
+        "minimum": {
+          "field_type": {
+            "type": "number"
+          },
+          "required": false
+        },
+        "multiply": {
+          "field_type": {
+            "type": "number"
+          },
+          "required": false
+        },
+        "number": {
+          "field_type": {
+            "type": "number"
+          },
+          "required": true
+        },
+        "reference": {
+          "field_type": {
+            "type": "reference",
+            "schema": "node"
+          },
+          "required": false
+        },
+        "subtract": {
+          "field_type": {
+            "type": "number"
+          },
+          "required": false
+        },
+        "text": {
+          "field_type": {
+            "type": "text"
+          },
+          "required": false
+        }
+      }
+    }
+  },
+  "entities": {
+    "alpha": {
+      "id": "alpha",
+      "schema": "node",
+      "fields": {
+        "add": {
+          "kind": "formula",
+          "value": {
+            "op": "add",
+            "args": {
+              "left": {
+                "op": "reference",
+                "args": {
+                  "entity": "beta",
+                  "field": "number"
+                }
+              },
+              "right": {
+                "op": "number",
+                "args": 2.0
+              }
+            }
+          }
+        },
+        "boolean": {
+          "kind": "boolean",
+          "value": true
+        },
+        "divide": {
+          "kind": "formula",
+          "value": {
+            "op": "divide",
+            "args": {
+              "left": {
+                "op": "reference",
+                "args": {
+                  "entity": "beta",
+                  "field": "number"
+                }
+              },
+              "right": {
+                "op": "number",
+                "args": 2.0
+              }
+            }
+          }
+        },
+        "maximum": {
+          "kind": "formula",
+          "value": {
+            "op": "maximum",
+            "args": {
+              "left": {
+                "op": "reference",
+                "args": {
+                  "entity": "beta",
+                  "field": "number"
+                }
+              },
+              "right": {
+                "op": "number",
+                "args": 2.0
+              }
+            }
+          }
+        },
+        "minimum": {
+          "kind": "formula",
+          "value": {
+            "op": "minimum",
+            "args": {
+              "left": {
+                "op": "reference",
+                "args": {
+                  "entity": "beta",
+                  "field": "number"
+                }
+              },
+              "right": {
+                "op": "number",
+                "args": 2.0
+              }
+            }
+          }
+        },
+        "multiply": {
+          "kind": "formula",
+          "value": {
+            "op": "multiply",
+            "args": {
+              "left": {
+                "op": "reference",
+                "args": {
+                  "entity": "beta",
+                  "field": "number"
+                }
+              },
+              "right": {
+                "op": "number",
+                "args": 2.0
+              }
+            }
+          }
+        },
+        "number": {
+          "kind": "number",
+          "value": 8.0
+        },
+        "reference": {
+          "kind": "reference",
+          "value": "beta"
+        },
+        "subtract": {
+          "kind": "formula",
+          "value": {
+            "op": "subtract",
+            "args": {
+              "left": {
+                "op": "reference",
+                "args": {
+                  "entity": "beta",
+                  "field": "number"
+                }
+              },
+              "right": {
+                "op": "number",
+                "args": 2.0
+              }
+            }
+          }
+        },
+        "text": {
+          "kind": "text",
+          "value": "quote \" slash \\ tab\t line\n 日本語 😀"
+        }
+      }
+    },
+    "beta": {
+      "id": "beta",
+      "schema": "node",
+      "fields": {
+        "number": {
+          "kind": "number",
+          "value": 4.0
+        }
+      }
+    }
+  }
+}
