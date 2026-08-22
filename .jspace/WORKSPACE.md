@@ -678,6 +678,10 @@ the ADR-0015 persisted identity model that remains owned by #70.
   findings. They specifically rechecked error-source preservation, explicit
   null handling, the complete typed-ID migration seam, exact canonical bytes,
   and the absence of decisions for #24, #41, #43, #23, or #26.
+- The clean implementation commit is 21a5a52. The full release check passed all
+  repeated quality gates, dependency-notice drift validation, all eight source
+  packages, native archive determinism and execution, tamper rejection,
+  interruption cleanup, and concurrent no-clobber publication.
 - Remaining #70 work is deliberately not claimed: semantic-core still needs
   the accepted stable identity/key model before deterministic legacy-to-stable
   mapping, namespace/input vectors, two-phase rewrite of all 12 occurrences,
