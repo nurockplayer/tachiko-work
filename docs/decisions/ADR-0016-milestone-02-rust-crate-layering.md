@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted
 
 Decision issue: [#20](https://github.com/nurockplayer/tachiko-work/issues/20)
 
@@ -30,15 +30,16 @@ typed relationships in the lowest semantic layer while keeping generation and
 persisted encoding replaceable.
 
 Issues #23, #24, and #25 still own detailed schema/validation, formula, and
-storage decisions. None requires the macro dependency graph to remain open, but
-they prevent this ADR from freezing speculative sub-crates or public data
-layouts.
+storage decisions. This ADR accepts the current macro layering baseline without
+freezing speculative sub-crates or public data layouts. A later Accepted
+decision may amend the crate set when concrete dependency, testing,
+portability, lifecycle, or public-contract pressure justifies it.
 
 ## Decision
 
-### 1. Use eight target crates for Milestone 02
+### 1. Use eight crates as the current Milestone 02 baseline
 
-The minimum target workspace is:
+The current target workspace is:
 
 ```text
 crates/
@@ -64,7 +65,9 @@ separate product and dependency evidence.
 No `schema`, `validation`, `diagnostics`, foundational `types`, plugin,
 collaboration, or host-abstraction crate is added by this decision. A later
 split requires concrete dependency, testing, portability, independent-lifecycle,
-or public-contract pressure.
+or public-contract pressure and must amend this ADR explicitly rather than
+emerge through implementation drift. The number eight is therefore the Accepted
+Milestone 02 baseline, not a permanent cardinality constraint on the repository.
 
 ### 2. Adopt this direct dependency DAG
 
@@ -98,11 +101,13 @@ agree on, including:
 - intrinsic structural validation and the minimum diagnostic vocabulary needed
   to state semantic failures.
 
-A running client has one authoritative semantic aggregate. For stateful clients,
-`workspace-engine` owns the live aggregate and its derived runtime indexes; for
-single-shot clients such as the CLI, an engine operation consumes a document
-snapshot and returns a new validated snapshot. UI projections, AI descriptions,
-storage DTOs, and caches are not competing semantic state.
+A running client has one authoritative semantic aggregate. `workspace-engine`
+is the application boundary for operations over that aggregate and may own the
+derived indexes required by those operations. Whether a host retains a resident
+engine-owned aggregate across calls, uses snapshot-style operations, places the
+runtime in a Web Worker, or chooses another stateful execution shape remains
+owned by #26. UI projections, AI descriptions, storage DTOs, and caches are not
+competing semantic state.
 
 `workspace-engine` owns application behavior that coordinates multiple domain
 services:
@@ -224,7 +229,8 @@ for conversion, but semantic crates never depend on adapters.
 
 ## Deliberately Provisional seams
 
-This ADR accepts the macro DAG while leaving these narrower decisions open:
+This ADR accepts the macro layering baseline while leaving these narrower
+decisions open:
 
 - #23 may keep schema declaration and validation together in modules inside
   `semantic-core` or justify a `validation` crate that depends downward on core
@@ -239,11 +245,14 @@ This ADR accepts the macro DAG while leaving these narrower decisions open:
 - #25 owns storage DTO, codec, migration, package, and host-I/O sub-boundaries.
   `storage → semantic-core` is not Provisional; its internal crate split is.
 - #26 owns the stateful runtime, IPC/FFI, Web Worker, projection-patch, and host
-  capability details. It must build on this DAG rather than introduce a
+  capability details. It must build on this layering rather than introduce a
   client-specific semantic core.
 - #10 owns whether and how the engine surface becomes a stable external API.
 
-These issues do not block the target crate set or forbidden directions above.
+These issues do not invalidate the Accepted baseline or its forbidden dependency
+directions. If later evidence requires a new crate or direct edge that changes
+the baseline DAG, the responsible decision must amend or supersede this ADR
+explicitly rather than allowing implementation drift.
 
 ## Unresolved implementation risks
 
@@ -315,8 +324,9 @@ mandatory core dependencies.
 1. Record this decision without a broad code refactor.
 2. Complete the ADR-0015 identity migration inside the low-level semantic
    boundary while preserving the replaceable ID-generation seam.
-3. Resolve #23/#24 enough to name the validation/formula contracts without
-   changing the macro DAG.
+3. Resolve #23/#24 enough to name the validation/formula contracts. If either
+   decision produces concrete pressure for a crate split or new direct edge,
+   amend ADR-0016 explicitly before changing the baseline DAG.
 4. Rename `tachiko-workflow` to `tachiko-workspace-engine` and expand it to own
    the existing shared operations plus calculation, diff, and merge
    orchestration.
@@ -345,9 +355,8 @@ The implementation contracts remain owned by existing work:
 - #25/#37/#38: storage DTO, version, and canonical-encoding specifications;
 - #26: native/WASM host and bridge contract.
 
-After ADR promotion, a focused implementation issue should own the staged
-workflow-to-engine migration. The refactor must not be folded into this
-decision PR.
+A focused implementation issue should own the staged workflow-to-engine
+migration. The refactor must not be folded into this decision PR.
 
 ## Consequences
 
@@ -373,7 +382,7 @@ Negative:
 
 ## Verification evidence
 
-At the time of this proposal:
+At the time of acceptance:
 
 - the current eight-crate dependency graph is acyclic;
 - `semantic-core` has only `serde` as a non-dev dependency;
