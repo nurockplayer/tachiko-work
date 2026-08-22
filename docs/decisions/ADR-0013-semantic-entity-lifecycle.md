@@ -2,7 +2,13 @@
 
 ## Status
 
-Accepted
+Accepted for the v0.1 lifecycle contract.
+
+**Current authority note:** ADR-0015 supersedes only the identity semantics in
+this ADR that treat a human-facing entity identifier as durable semantic
+identity. Preview-first immutable mutation, typed relationship safety, and
+non-cascading removal remain authoritative. In the hardened identity model,
+rename changes a mutable human key/name while preserving the stable `EntityId`.
 
 ## Context
 
