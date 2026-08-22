@@ -6,6 +6,12 @@ The UI is a projection layer, not the owner of document meaning.
 
 ## Architecture
 
+In this document, `Rust Core` means the shared Rust semantic/application
+runtime, not the `semantic-core` crate alone. The Accepted crate ownership and
+dependency direction are recorded in
+[ADR-0016](../decisions/ADR-0016-milestone-02-rust-crate-layering.md); detailed
+resident-state, native/WASM host, and bridge behavior remains owned by #26.
+
 ```
 React / Desktop UI
         |
@@ -24,18 +30,18 @@ Document Model
 - user workflows
 - accessibility
 
-## Rust Core Responsibilities
+## Shared Rust Runtime Responsibilities
 
 - document state
 - calculations
 - validation
-- persistence
+- persistence transformation through an explicit storage/host boundary
 - transformations
 - AI operations
 
 ## Why
 
-A single semantic core allows:
+A single semantic authority and shared workspace engine allow:
 
 - web application
 - desktop application

@@ -267,9 +267,9 @@ Negative / migration cost:
 
 ## Required follow-up
 
-- #20: keep typed IDs/references in the lowest semantic layer while keeping ID
-  generation and storage-specific encoding from leaking through unrelated
-  crates.
+- ADR-0016: keep typed IDs/references in the lowest semantic layer while keeping
+  ID generation and storage-specific encoding behind the workspace-engine/host
+  and storage seams rather than leaking through unrelated crates.
 - #23: define structural rejection versus temporary diagnostics for dangling or
   wrong-type references.
 - #24: bind formula source addresses to stable `EntityId + FieldId` references.
