@@ -169,6 +169,6 @@ Run the root workspace gates plus the standalone spike tests and Worker differen
 
 Inspect for duplicated semantic policy, a second canonical state, host leakage, unstable DTO claims, diagnostics-contract drift, unsafe ABI lifetime bugs, and benchmark methodology errors.
 
-- [ ] **Step 3: Commit and open an unmerged focused PR**
+- [x] **Step 3: Commit and open an unmerged focused PR**
 
 Use `rtk` for every git/gh command. The PR reports exact evidence, explicit open questions, and links Issue #26 without claiming to close architectural work that remains open.
