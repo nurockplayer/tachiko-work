@@ -225,9 +225,9 @@ producing new semantic inputs and rerunning the command.
 - `formula-engine`: bounded expression parsing, canonical formatting, evaluation, and dependencies
 - `diff-engine`: entity/field changes and calculated impact
 - `merge-engine`: deterministic typed three-way semantic reconciliation
-- `ai-api`: read/explain/suggest-only semantic operations
-- `workflow`: reusable starter, explanation, scalar/formula editing, and entity lifecycle operations
-- `cli`: creation, exploration, computational authoring, lifecycle, review, merge, validation, and export
+- `workspace-engine`: the shared validation, calculation, diff, merge, mutation, starter, explanation, and export application boundary
+- `ai-api`: provider-free read/explain/suggest adapter over workspace-engine; suggestions remain inert and approval-required
+- `cli`: argument/filesystem/persistence composition and rendering over workspace-engine plus storage
 
 ## Architecture overview
 

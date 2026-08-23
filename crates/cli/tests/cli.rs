@@ -6,15 +6,18 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use tachiko_formula_engine::project_expression;
-use tachiko_semantic_core::{
-    Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
-    FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
-};
 use tachiko_storage::{load, save};
+use tachiko_workspace_engine::{
+    Document, DocumentId, DocumentOverview, Entity, EntityId, Expression, FieldAddress,
+    FieldDefinition, FieldId, FieldKey, FieldKind, FieldRef, FieldType, Number, Schema, SchemaId,
+    SchemaKey, Value, explain_field, overview,
+};
 use uuid::Uuid;
 
 static NEXT_TEMP_DIR: AtomicU64 = AtomicU64::new(0);
+
+type AuthoringField = (String, String, FieldKind);
+type AuthoringEntity = (String, String, String, Vec<AuthoringField>);
 
 struct TempDir(PathBuf);
 
@@ -138,10 +141,28 @@ fn field_value_by_key<'document>(
 }
 
 fn projected_formula(document: &Document, entity_key: &str, field_key: &str) -> String {
-    let Value::Formula(expression) = field_value_by_key(document, entity_key, field_key) else {
-        panic!("{entity_key}.{field_key} is not a formula");
-    };
-    project_expression(document, expression).expect("stored formula projects through current keys")
+    explain_field(document, &FieldAddress::new(entity_key, field_key))
+        .expect("stored formula should explain through current keys")
+        .expression
+        .unwrap_or_else(|| panic!("{entity_key}.{field_key} is not a formula"))
+}
+
+fn authoring_projection(view: DocumentOverview) -> Vec<AuthoringEntity> {
+    view.entities
+        .into_iter()
+        .map(|entity| {
+            (
+                entity.key.to_string(),
+                entity.label,
+                entity.schema.to_string(),
+                entity
+                    .fields
+                    .into_iter()
+                    .map(|field| (field.key.to_string(), field.display_value, field.kind))
+                    .collect(),
+            )
+        })
+        .collect()
 }
 
 fn with_attack_interval(mut document: Document, attack_interval: f64) -> Document {
@@ -181,6 +202,32 @@ fn init_creates_a_valid_semantic_document() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("ready to explore"));
     assert!(stdout.contains("tachiko show"));
+}
+
+#[test]
+fn init_starter_matches_the_legacy_example_at_the_authoring_boundary() {
+    let temp = TempDir::new();
+    let path = temp.path().join("starter.ro");
+    let example_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/game-balance/game-balance.ro");
+
+    let output = run(&["init", path.to_str().unwrap(), "--id", "new-game-balance"]);
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let initialized = load(path).expect("initialized starter should load");
+    let checked_in = load(example_path).expect("checked-in example should load");
+    assert_eq!(
+        authoring_projection(overview(&initialized).unwrap()),
+        authoring_projection(overview(&checked_in).unwrap())
+    );
+    assert_ne!(
+        initialized.id, checked_in.id,
+        "migration and new creation must have distinct identity"
+    );
 }
 
 #[test]

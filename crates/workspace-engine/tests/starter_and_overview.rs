@@ -2,11 +2,8 @@ mod common;
 
 use common::{empty_document, game_balance_document};
 use tachiko_semantic_core::{DiagnosticCode, Document, validate_document};
-use tachiko_storage::load;
-use tachiko_workflow::{DocumentOverview, FieldKind, WorkflowError, overview};
+use tachiko_workspace_engine::{FieldKind, WorkspaceError, overview};
 
-type AuthoringField = (String, String, FieldKind);
-type AuthoringEntity = (String, String, String, Vec<AuthoringField>);
 type DuplicateKeyMutation = fn(&mut Document);
 
 fn duplicate_schema_key(document: &mut Document) {
@@ -60,24 +57,6 @@ fn duplicate_field_key(document: &mut Document) {
         .nth(1)
         .expect("selected schema should contain a second field")
         .key = duplicate_key;
-}
-
-fn authoring_projection(view: DocumentOverview) -> Vec<AuthoringEntity> {
-    view.entities
-        .into_iter()
-        .map(|entity| {
-            (
-                entity.key.to_string(),
-                entity.label,
-                entity.schema.to_string(),
-                entity
-                    .fields
-                    .into_iter()
-                    .map(|field| (field.key.to_string(), field.display_value, field.kind))
-                    .collect(),
-            )
-        })
-        .collect()
 }
 
 #[test]
@@ -163,7 +142,7 @@ fn overview_rejects_duplicate_human_keys_as_an_invalid_document() {
 
         let error = overview(&document)
             .expect_err("overview should reject directly constructed duplicate human keys");
-        let WorkflowError::InvalidDocument { diagnostics, .. } = error else {
+        let WorkspaceError::InvalidDocument { diagnostics, .. } = error else {
             panic!("{category}: expected InvalidDocument, got {error:?}");
         };
         assert_eq!(
@@ -175,21 +154,4 @@ fn overview_rejects_duplicate_human_keys_as_an_invalid_document() {
             "{category}"
         );
     }
-}
-
-#[test]
-fn built_in_starter_matches_the_legacy_example_at_the_authoring_boundary() {
-    let example_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples/game-balance/game-balance.ro");
-    let checked_in = load(&example_path).expect("checked-in example should load");
-    let built_in = game_balance_document("game-balance", "Moonfall: starter balance");
-
-    assert_eq!(
-        authoring_projection(overview(&built_in).unwrap()),
-        authoring_projection(overview(&checked_in).unwrap())
-    );
-    assert_ne!(
-        built_in.id, checked_in.id,
-        "migration must establish new identity"
-    );
 }

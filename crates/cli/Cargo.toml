@@ -20,12 +20,8 @@ path = "src/main.rs"
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tachiko-diff-engine = { version = "0.1.0", path = "../diff-engine" }
-tachiko-formula-engine = { version = "0.1.0", path = "../formula-engine" }
-tachiko-merge-engine = { version = "0.1.0", path = "../merge-engine" }
-tachiko-semantic-core = { version = "0.1.0", path = "../semantic-core" }
 tachiko-storage = { version = "0.1.0", path = "../storage" }
-tachiko-workflow = { version = "0.1.0", path = "../workflow" }
+tachiko-workspace-engine = { version = "0.1.0", path = "../workspace-engine" }
 thiserror.workspace = true
 uuid = { workspace = true, features = ["v7"] }
 

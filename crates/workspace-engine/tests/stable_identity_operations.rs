@@ -5,8 +5,8 @@ use tachiko_semantic_core::{
     Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldDefinition, FieldId,
     FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
 };
-use tachiko_workflow::{
-    IdGenerator, SemanticIdKind, WorkflowError, duplicate_entity, rename_entity, rename_field,
+use tachiko_workspace_engine::{
+    IdGenerator, SemanticIdKind, WorkspaceError, duplicate_entity, rename_entity, rename_field,
     rename_schema,
 };
 
@@ -180,7 +180,7 @@ fn rename_projection_accepts_4096_bytes_and_rejects_4097_atomically() {
             .len(),
         4_096
     );
-    assert!(matches!(error, WorkflowError::FormulaProjection { .. }));
+    assert!(matches!(error, WorkspaceError::FormulaProjection { .. }));
     assert_eq!(
         source.entities["source-stable"].key,
         EntityKey::from("iron_sword")

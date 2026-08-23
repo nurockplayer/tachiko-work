@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use tachiko_ai_api::{explain_formula, suggest_field_change};
 use tachiko_formula_engine::{
     CalculationError, CanonicalAuthoringProjectionError, calculate, project_expression,
 };
@@ -10,8 +11,9 @@ use tachiko_semantic_core::{
     FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
 };
 use tachiko_storage::{from_str as storage_from_str, to_canonical_string};
+use tachiko_workspace_engine::calculate_fields;
 
-const CASE_COUNT: u32 = 21;
+const CASE_COUNT: u32 = 24;
 const VALUE: u32 = 0;
 const DIVISION_BY_ZERO: u32 = 1;
 const NON_FINITE: u32 = 2;
@@ -147,6 +149,60 @@ fn storage_record(input: &str, expected_bits: u64, expected_fingerprint: u64) ->
     Record::value(value, fingerprint)
 }
 
+fn workspace_calculation_record() -> Record {
+    let document = formula_document(number(42.0), input_reference());
+    let Ok(fields) = calculate_fields(&document) else {
+        return Record::failure(UNEXPECTED, 21);
+    };
+    let Some(output) = fields
+        .iter()
+        .find(|field| field.field == FieldRef::new("entity-stable", "output-stable"))
+    else {
+        return Record::failure(UNEXPECTED, 22);
+    };
+    if output.address.to_string() != "source.output-stable"
+        || output.value != number(42.0)
+        || fields.len() != 2
+    {
+        return Record::failure(UNEXPECTED, fields.len() as u64);
+    }
+    Record::value(output.value, fields.len() as u64)
+}
+
+fn ai_formula_record() -> Record {
+    let document = formula_document(number(42.0), input_reference());
+    let Ok(explanation) = explain_formula(
+        &document,
+        &FieldRef::new("entity-stable", "output-stable"),
+    ) else {
+        return Record::failure(UNEXPECTED, 23);
+    };
+    if explanation.value != number(42.0) || explanation.dependencies.len() != 1 {
+        return Record::failure(UNEXPECTED, explanation.dependencies.len() as u64);
+    }
+    Record::value(explanation.value, explanation.dependencies.len() as u64)
+}
+
+fn ai_suggestion_record() -> Record {
+    let document = formula_document(number(42.0), input_reference());
+    let original = document.clone();
+    let proposed = number(2.0);
+    let Ok(suggestion) = suggest_field_change(
+        &document,
+        FieldRef::new("entity-stable", "input-stable"),
+        Value::Number(proposed),
+    ) else {
+        return Record::failure(UNEXPECTED, 24);
+    };
+    let evidence = u64::from(suggestion.requires_approval)
+        | (u64::from(document == original) << 1)
+        | (u64::from(suggestion.value == Value::Number(proposed)) << 2);
+    if evidence != 7 {
+        return Record::failure(UNEXPECTED, evidence);
+    }
+    Record::value(proposed, evidence)
+}
+
 fn case_record(index: u32) -> Record {
     match index {
         0 => Record::value(number(-0.0), 0),
@@ -279,6 +335,9 @@ fn case_record(index: u32) -> Record {
             0x7fef_ffff_ffff_ffff,
             0x27de_67c0_448f_8d78,
         ),
+        21 => workspace_calculation_record(),
+        22 => ai_formula_record(),
+        23 => ai_suggestion_record(),
         _ => Record::failure(UNEXPECTED, 0),
     }
 }

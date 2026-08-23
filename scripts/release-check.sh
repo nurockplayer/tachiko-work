@@ -30,6 +30,9 @@ echo "==> selected release toolchain: ${selected_description}"
 echo "==> formatting"
 cargo fmt --all --check
 
+echo "==> ADR-0016 workspace dependency graph"
+node scripts/workspace-dependency-check.mjs
+
 echo "==> Clippy (warnings are errors)"
 cargo clippy --workspace --all-targets --locked -- -D warnings
 

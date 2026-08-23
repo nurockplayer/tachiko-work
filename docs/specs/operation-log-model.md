@@ -12,7 +12,9 @@ Tachiko Work has accepted the principle that meaningful changes should be expres
 
 What remains unresolved is whether a persisted operation log is authoritative history, optional audit metadata, collaboration infrastructure, or unnecessary for some workflows.
 
-Current runtime edits are made through explicit typed CLI/workflow operations that produce validated output documents. Those operations are not persisted as a first-class canonical log in v0.1.
+Current runtime edits are made through explicit typed workspace-engine
+operations composed by the CLI into validated output documents. Those
+operations are not persisted as a first-class canonical log in v0.1.
 
 ## Example vocabulary
 

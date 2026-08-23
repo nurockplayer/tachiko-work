@@ -2,7 +2,7 @@
 
 Status: Accepted register when merged
 
-Last reconciliation: 2026-08-22
+Last reconciliation: 2026-08-23
 
 ## Purpose
 
@@ -51,7 +51,7 @@ When this register marks a document as mixed-state, readers must respect the nar
 | --- | --- | --- | --- |
 | `docs/architecture/document-model.md` | Accepted direction; detailed graph shape constrained by ADR-0015 and ADR-0018 | M02 stable identity/bound formula aggregate implemented; richer graph future | ADR-0015, ADR-0018, #23 |
 | `docs/architecture/unified-semantic-model.md` | Accepted direction | Partially implemented | ADR-0015, #13 |
-| `docs/architecture/rust-crate-architecture.md` | Provisional v0.1 baseline plus Accepted ADR-0016 target | Implemented v0.1; target migration pending | ADR-0016 |
+| `docs/architecture/rust-crate-architecture.md` | Accepted ADR-0016 boundary; exact Rust API remains Provisional | Eight-crate workspace-engine target implemented by #72 | ADR-0016, #10 |
 | `docs/architecture/ro-and-roproj-format.md` | Accepted direction constrained by ADR-0017 storage boundary | `.ro` direct JSON implemented; `.roproj` not implemented | ADR-0003, ADR-0017, #41, #43 |
 | `docs/architecture/ai-native-architecture.md` | Accepted direction | Partially implemented | #10, #27, #28, #30 |
 | `docs/architecture/frontend-backend-boundary.md` | Accepted direction; detailed runtime seam Provisional | Partially implemented | #26 |
@@ -107,15 +107,17 @@ A GitHub Issue is never automatically an Accepted decision. The table below clas
 ### Core & Format Hardening decisions
 
 - #20 Rust crate layering and dependency direction — resolved by ADR-0016.
-- #21 semantic identity, document graph, typed references — durable identity/graph invariants resolved by ADR-0015; implementation migration remains #70.
-- #25 storage DTO / migration boundary — durable architecture resolved by ADR-0017; implementation work remains.
-- #37 format/version envelope — durable fail-closed/version-gated behavior resolved by ADR-0017 and `storage-versioning-and-migration.md`; M02 implementation remains.
-- #38 canonical value encoding/order — structural/Unicode/order invariants are resolved by ADR-0017 and exact numeric spelling by Accepted ADR-0018; implementation remains downstream.
+- #21 semantic identity, document graph, typed references — durable identity/graph invariants resolved by ADR-0015 and implemented by #70.
+- #25 storage DTO / migration boundary — durable architecture resolved by ADR-0017; the M02 implementation and conformance closure are complete through #40.
+- #37 format/version envelope — durable fail-closed/version-gated behavior resolved by ADR-0017 and `storage-versioning-and-migration.md`; the M02 implementation is complete through #40.
+- #38 canonical value encoding/order — structural/Unicode/order invariants are resolved by ADR-0017, exact numeric spelling by Accepted ADR-0018, and M02 implementation/conformance by #40.
 - #23 schema declaration, validation pipeline, diagnostics — Open Question.
-- #24 formula AST, binding, dependency graph, numeric semantics — resolved by Accepted ADR-0018, the reconciled formula/canonical JSON specifications, research record, and executed native/Wasm probe. Implementation is owned downstream.
+- #24 formula AST, binding, dependency graph, numeric semantics — resolved by Accepted ADR-0018, the reconciled formula/canonical JSON specifications, research record, and executed native/WASM evidence; the accepted M02 scope is implemented through #70/#40.
 - #26 native/WASM runtime boundary — Open Question.
+- #72 workflow-to-workspace-engine migration — implementation of ADR-0016 completed by the current focused change; it does not settle #10/#23/#26.
 
-#40 is an implementation/evidence task that consumes ADR-0015, ADR-0017, and Accepted ADR-0018 rather than inventing format semantics. This promotion pass does not begin that work.
+#40 is a completed implementation/evidence task that consumed ADR-0015,
+ADR-0017, and Accepted ADR-0018 without inventing format semantics.
 
 ### Game Dev Alpha / AI-safe mutation work
 
@@ -158,20 +160,20 @@ A GitHub Issue is never automatically an Accepted decision. The table below clas
 13. Event sourcing, public plugin runtime details, collaboration algorithms, `.roproj` sharding, `.ro` package mechanics, and host durability implementation remain outside ADR-0017 and ADR-0018.
 14. #70 implements ADR-0015 as one atomic transition: opaque IDs and mutable
    keys, UUIDv7 creation seam, stable formula binding/projection, stable-ID
-   diff/merge/workflow continuity, deterministic legacy UUIDv5 migration, and
-   direct-ro/v2 preservation of ADR-0018 semantic meaning. It does not start
-   #40 or #72.
+   diff/merge continuity, deterministic legacy UUIDv5 migration, and
+   direct-ro/v2 preservation of ADR-0018 semantic meaning.
+15. #40 completes the storage/canonicalization and native/WASM numeric
+   conformance closure without reopening Accepted identity or numeric meaning.
+16. #72 evolves workflow in place into the single workspace-engine application
+   boundary, reduces AI to `ai-api → workspace-engine`, reduces CLI to
+   `cli → workspace-engine, storage`, and preserves storage as a sibling.
 
 ## Current research queue
 
-The next highest-value Core & Format Hardening work after #70 review is:
-
-1. Execute #40's final independent golden/negative conformance closure without
-   reopening the implementation-critical fixtures owned by #70.
-2. Execute #72's workflow→workspace-engine migration against the stable-ID
-   contracts rather than in parallel with their transition.
-3. Continue #23 schema/diagnostics and #26 host/runtime work only within their
-   separately accepted boundaries.
+The ordered #70 → #40 → #72 Core & Format Hardening sequence is complete.
+Remaining #23 schema/diagnostics and #26 host/runtime work continues only
+within its separately accepted boundaries; this register does not pre-decide
+their contracts or introduce a new ordering.
 
 Parallel implementation is allowed where it does not freeze unresolved #23/#26 semantics. If implementation discovers pressure that contradicts an Accepted ADR, return to an explicit amendment/reconciliation rather than hiding the change in code.
 

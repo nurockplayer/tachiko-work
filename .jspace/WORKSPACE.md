@@ -856,3 +856,90 @@ the ADR-0015 persisted identity model that remains owned by #70.
   including the existing valid overview and deterministic ordering evidence.
   Complete clean-head release verification and a fresh exact-head Codex review
   remain required before final ChatGPT review.
+
+## Active phase: ADR-0016 workspace-engine boundary (#72)
+
+### Goal and authority
+
+- Evolve `tachiko-workflow` in place into the single shared,
+  capability-free `tachiko-workspace-engine` application boundary.
+- Worktree branch: `codex/issue-72-workspace-engine`, created from current
+  `origin/main` `e953877f2dfd05ae5cebc5262656c2d877c2ed9c`.
+- Authority: Issue #72's latest `agent-handoff:v1`, Accepted ADR-0015 through
+  ADR-0018, the Product Constitution and Design Principles, and the knowledge
+  authority/reconciliation policies.
+- Completed prerequisites #70 and #40 are treated as hardened identity,
+  formula, storage, canonicalization, numeric, and conformance contracts.
+
+### Audited ownership before migration
+
+- `workflow -> diff-engine, formula-engine, semantic-core` owns starters,
+  overview/explanation queries, lifecycle and field mutations, and the shared
+  validate/calculate/diff candidate finalizer.
+- `ai-api -> diff-engine, formula-engine, semantic-core` repeats formula
+  analysis, impact, typed candidate cloning, type checks, formula projection,
+  validation, and calculation.
+- `cli -> storage, workflow, diff-engine, merge-engine, formula-engine,
+  semantic-core` directly coordinates validation, calculation materialization,
+  diff, merge-plus-impact, and runtime export in addition to its legitimate
+  host parsing, filesystem, persistence, safe-write, and rendering work.
+- The clean base builds and passes 215 workspace tests across 28 suites.
+
+### Locked incremental migration plan
+
+1. Add an executable Cargo-metadata assertion for the exact ADR-0016 graph and
+   prove it fails against the pre-migration workspace.
+2. Rename/evolve the workflow directory and package in place; preserve its
+   document-local snapshot operations and host-supplied ID-generation seam.
+3. Add workspace-owned validation, calculated-value, formula-analysis,
+   semantic-impact, typed-proposal, merge, and runtime-export orchestration.
+4. Rebase provider-free AI behavior onto those operations while keeping
+   approval DTOs in the AI adapter.
+5. Reduce CLI local dependencies to workspace-engine plus storage and retain
+   only arguments, OS paths, UUIDv7 host composition, persistence, exclusive
+   writes, and rendering.
+6. Extend native/WASM production conformance through workspace-engine and AI,
+   reconcile current architecture/docs, run release-equivalent verification,
+   and independently review the final diff.
+
+### Explicit deferrals
+
+- #10 external Semantic API stability/versioning.
+- #23 general validation/diagnostic envelope and temporary-invalid policy.
+- #26 resident runtime, Web Worker, IPC/FFI, projection patches, browser/native
+  persistence composition, and host capabilities.
+- #27/#28 AI capability/approval protocol, #41 `.roproj`, and any new crate or
+  semantic/storage/formula contract.
+
+The detailed executable plan is
+`docs/superpowers/plans/2026-08-23-workspace-engine-boundary.md`.
+
+### Implemented boundary and pre-review evidence
+
+- Renamed the existing crate/package in place to
+  `tachiko-workspace-engine`; there is no second workflow or runtime aggregate.
+- Workspace-engine now owns shared validation, complete calculation and
+  human-address projection, semantic comparison, merge-plus-impact, formula
+  analysis, inert typed proposal validation, mutations, and runtime-export
+  projection.
+- Provider-free AI delegates semantic analysis/comparison/proposal policy to
+  workspace-engine while retaining the existing approval-required adapter DTO
+  and error behavior.
+- CLI local dependencies are reduced to workspace-engine plus storage. CLI
+  retains arguments, host paths, UUIDv7 generation, storage composition,
+  exclusive-create writes, and rendering.
+- `scripts/workspace-dependency-check.mjs` enforces the exact ADR-0016 graph in
+  CI and `scripts/release-check.sh`, including development dependency kinds.
+- The portable corpus now executes workspace calculation plus provider-free AI
+  formula/proposal behavior on native and `wasm32-unknown-unknown`; exact fixed
+  oracles and native/WASM records pass.
+- Pre-review verification passes: formatting, docs consistency, dependency
+  graph, warning-denied workspace Clippy, 219 tests across 29 suites,
+  warning-free Rustdoc, exact Rust 1.85, and all four product smoke journeys.
+- #10, #23, #26, #27/#28, and #41 remain explicitly deferred. No new crate,
+  semantic aggregate, storage/formula contract, host capability, or
+  target-selected semantic behavior was introduced.
+
+The clean committed tree passes `scripts/release-check.sh`, including source
+packages, notices, and native archive safety/concurrency checks. Independent
+exact-head reviews remain before PR handoff.

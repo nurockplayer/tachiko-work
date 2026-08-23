@@ -395,6 +395,30 @@ At the time of acceptance:
 - semantic-core, formula-engine, diff-engine, merge-engine, workflow, and
   provider-free ai-api compile together for `wasm32-unknown-unknown`.
 
+## Implementation status (2026-08-23)
+
+Issue #72 implements this decision without amending its Accepted semantics:
+
+- the former workflow crate has evolved in place into
+  `tachiko-workspace-engine`; no parallel workflow ownership layer remains;
+- workspace-engine depends on diff, merge, formula, and semantic core, while
+  storage remains a sibling;
+- provider-free AI depends only on workspace-engine among workspace crates;
+- CLI depends only on workspace-engine and storage among workspace crates and
+  retains host parsing, persistence composition, safe writes, and rendering;
+- exact Cargo-metadata dependency checking is part of CI and the local
+  release-equivalent gate;
+- the native/WASM corpus executes workspace-engine calculation and AI semantic
+  proposal/query behavior on both targets in addition to existing portable
+  semantic evidence.
+
+The implementation remains document-local and snapshot-style, keeps the
+host-supplied stable-ID generator seam, and introduces no storage dependency or
+host capability into the portable application set. External API stability
+(#10), general diagnostic architecture (#23), resident/IPC/FFI/runtime design
+(#26), AI capability/approval protocols (#27/#28), and `.roproj` (#41) remain
+deferred to their existing owners.
+
 ## Related
 
 - Product Constitution §§2.2, 2.3, 2.6, 2.7, 6
