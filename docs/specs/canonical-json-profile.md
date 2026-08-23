@@ -41,13 +41,19 @@ A supported-version reader may accept semantically equivalent non-canonical JSON
 
 This does not weaken strict rules for duplicate members, unknown fields, version dispatch, or semantic validity.
 
-Before ADR-0018 exact-decimal conversion, each representation/version profile
-that adopts that conversion must apply explicit resource limits to the complete
-input and to each JSON number token. A limit failure is structural
-representation failure; it is not a semantic Number result. The concrete
-limits are version/profile mechanics owned by the adopting representation and
-#74. This requirement does not retroactively change legacy direct-`.ro/v1`
-acceptance or its version-scoped reader.
+The current normal direct-JSON profile applies its shared 8 MiB complete-input
+admission before UTF-8 validation or any JSON scan for both legacy v1 and v2.
+An over-limit failure is a structural representation failure and precedes all
+latent format/version failures. For admitted v2 input, the separate 256-byte
+number-token admission remains subordinate and occurs before ADR-0018
+exact-decimal conversion.
+
+These concrete limits are representation/profile mechanics owned by the
+adopting representation and #74/#96. They are not semantic Number or product
+limits. The normal-profile rejection of legacy direct-`.ro/v1` above 8 MiB is
+an intentional admission tightening; it does not change the v1 wire meaning.
+A future explicit legacy import/migration operation may define another finite
+bounded profile, but no unbounded reader bypass is permitted.
 
 ## Encoding
 
@@ -192,13 +198,13 @@ vectors include:
 
 ### Accepted reader resource admission and conversion
 
-A representation version adopting ADR-0018 first applies its explicit
-complete-input and number-token resource limits. A token exceeding a declared
-limit is rejected as a structural representation-limit failure before
+Before representation-version selection, the normal direct-JSON profile first
+applies its shared complete-input limit. After an admitted input selects v2,
+the reader applies the v2-specific number-token limit. A token exceeding that
+declared limit is rejected as a structural representation-limit failure before
 exact-decimal conversion. It is not classified as overflow, underflow,
-non-finite conversion, or another Number semantic failure. This profile does
-not freeze the concrete limits; the adopting representation and #74 must define
-them explicitly.
+non-finite conversion, or another Number semantic failure. The concrete values
+remain replaceable profile mechanisms rather than semantic invariants.
 
 For every syntactically valid RFC 8259 JSON number token admitted by those
 limits, the reader interprets the token as an exact mathematical decimal and
@@ -298,6 +304,9 @@ At minimum:
   one-byte-over case for each; admitted tokens proceed to syntax/semantic
   conversion, while over-limit inputs fail structurally before Number
   conversion;
+- oversized direct-JSON inputs with latent UTF-8, JSON, duplicate-member, or
+  version errors proving the shared Stage-0 resource precedence, plus
+  under-limit equivalents proving the existing strict order;
 - native and Wasm storage readers/writers agree on normalized binary64 values
   and exact canonical bytes for the adopted edge corpus where both targets are
   supported;

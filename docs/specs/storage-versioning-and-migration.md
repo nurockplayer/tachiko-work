@@ -3,7 +3,8 @@
 Decision state: Mixed — Accepted invariants under ADR-0017; Milestone 02 representation mechanics are Provisional where marked.
 
 Implementation state: Implemented for frozen `legacy-direct-ro/v1`, explicit
-deterministic v1→v2 migration, and canonical identity-aware `direct-ro/v2`.
+deterministic v1→v2 migration, canonical identity-aware `direct-ro/v2`, and the
+normal direct-JSON Stage-0 admission profile.
 
 Authority: ADR-0017
 
@@ -58,12 +59,41 @@ The following are malformed for the Milestone 02 direct JSON profile:
 
 The use of `u32` is an implementation/profile mechanism, not a permanent ecosystem invariant.
 
+## Normal direct-JSON admission profile
+
+Before UTF-8 validation or any complete-input JSON scan, every current normal
+direct-JSON reader seam applies one shared complete-input byte admission.
+
+| Profile property | Milestone 02 contract |
+| --- | --- |
+| Scope | `legacy-direct-ro/v1`, `direct-ro/v2`, missing/malformed versions, and unsupported future versions entering the current direct-JSON reader |
+| Limit | Provisional 8 MiB (`8,388,608` bytes) |
+| Boundary | Exactly 8 MiB admitted; 8 MiB + 1 byte rejected |
+| Over-limit result | representation-local `FormatError::ResourceLimit` for direct-JSON input |
+| Over-limit precedence | before latent UTF-8, JSON syntax, duplicate-member, missing/malformed-version, or unsupported-version failures |
+| Admitted precedence | unchanged strict reader order |
+
+Ordinary v1 migration-in-memory and legacy canonicalization helpers use this
+same normal admission profile. The resulting rejection of otherwise-valid
+legacy v1 input above 8 MiB is an intentional Milestone 02 normal-reader
+compatibility tightening.
+
+The value is not a semantic/document/product maximum and must not be reused as
+a semantic-core, workspace-engine, `.roproj`, package/export, or UI limit. A
+future explicit legacy compatibility/import or migration operation may define
+a different finite, caller/host-owned profile if concrete evidence requires
+larger historical input. This specification does not implement that operation.
+It must remain explicit and bounded; unbounded bypasses such as `--no-limit`,
+`usize::MAX`, or equivalent are forbidden.
+
 ## Reader pipeline
 
 A reader processes input in this order:
 
 ```text
 bytes
+  ↓
+normal direct-JSON complete-input admission
   ↓
 UTF-8 validity
   ↓
@@ -96,6 +126,7 @@ Storage-domain failures should preserve at least the following machine-distingui
 storage.invalid_utf8
 storage.invalid_json
 storage.duplicate_member
+storage.resource_limit
 storage.version_missing
 storage.version_malformed
 storage.version_unsupported
@@ -106,21 +137,31 @@ storage.invalid_semantic_document
 
 Names above are the Milestone 02 recommended codes. #23 may later wrap them in a broader diagnostic envelope, but it must not erase their format/migration distinction.
 
-Error precedence is:
+For input over the normal direct-JSON envelope, error precedence is:
 
 ```text
-invalid UTF-8 / invalid JSON / duplicate member
+resource limit
 before
-missing or malformed version
-before
-unsupported version
-before
-supported-version DTO validation
-before
-migration/conversion failure
-before
-semantic validation
+invalid UTF-8 / invalid JSON / duplicate member / version errors
 ```
+
+For admitted input, error precedence remains:
+
+```text
+InvalidUtf8
+→ InvalidJson
+→ DuplicateMember
+→ VersionMissing / VersionMalformed
+→ UnsupportedVersion
+→ selected-profile subordinate ResourceLimit
+→ supported-version DTO validation
+→ migration/conversion failure
+→ semantic validation
+```
+
+`VersionMissing` and `VersionMalformed` share one classification stage and are
+mutually exclusive. For admitted v2 input, the 256-byte number-token resource
+limit is the current selected-profile subordinate limit.
 
 `storage.version_unsupported` should carry at least:
 
@@ -131,7 +172,7 @@ It must not imply that the unsupported semantic body was understood.
 
 ## Unsupported-version behavior
 
-For a syntactically valid, duplicate-free input with an unsupported `format_version`:
+For an admitted, syntactically valid, duplicate-free input with an unsupported `format_version`:
 
 - return the unsupported-version failure;
 - do not semantically decode the body;
@@ -326,6 +367,18 @@ The exact temporary-file/rename/fsync/browser-transaction implementation remains
 
 #40 should include at least:
 
+- exact normal direct-JSON 8 MiB admission and one-byte-over rejection;
+- oversized otherwise-valid legacy v1 and v2 input;
+- oversized invalid UTF-8, malformed JSON, recursive/escaped-equivalent
+  duplicates, missing/malformed version, and unsupported future version,
+  proving the Stage-0 resource failure wins;
+- under-limit equivalents proving the previous strict precedence is unchanged;
+- ordinary legacy migration and canonicalization seams using the same normal
+  profile;
+- hostile huge member names/member counts, deep nesting, and number tokens
+  without panic;
+- exact native/`wasm32-unknown-unknown` result-class parity for the normal
+  envelope corpus;
 - missing version;
 - string/fraction/exponent/zero/negative/out-of-range version;
 - unsupported future version;
@@ -360,4 +413,4 @@ vectors are covered with v2 here; #40 owns final broad conformance closure.
 - ADR-0015
 - ADR-0016
 - `ro-format-v1.md`
-- #40, #70, #74
+- #40, #70, #74, #96

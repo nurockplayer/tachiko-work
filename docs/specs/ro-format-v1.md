@@ -16,6 +16,12 @@ migration. The implementation now satisfies that boundary: v1 decoding and
 historical canonicalization never depend on current semantic-core Serde layouts.
 This is not permission for the legacy wire contract to evolve.
 
+ADR-0017 also places this profile behind the current normal direct-JSON
+Stage-0 admission. Exactly 8 MiB is admitted and one byte more is rejected
+before UTF-8/JSON inspection. This is an intentional normal-reader resource
+boundary, not a change to the v1 wire meaning or a permanent semantic/document
+maximum.
+
 ADR-0003 remains the accepted representation direction: `.roproj` is the target canonical editable/source materialization and `.ro` becomes a derived portable artifact. The current direct `.ro` JSON persistence path is an implementation stage and a distinct representation/version namespace.
 
 ## Purpose
@@ -59,6 +65,10 @@ This section is the normative structural definition of the legacy direct-`.ro/v1
 - Entity field-map member names must resolve to fields declared by the referenced schema.
 - Strings are decoded as Unicode strings and preserved without normalization.
 - Numeric values are finite historical `f64` values. Non-finite values are invalid. This legacy fact does not decide #24's future numeric semantic contract.
+- The normal reader applies the shared Provisional 8 MiB direct-JSON input
+  envelope before these structural rules. A future explicit legacy import or
+  migration profile may use another finite bound; no unbounded bypass is part
+  of this compatibility contract.
 
 ### `DocumentV1`
 
@@ -330,13 +340,17 @@ The v0.1 implementation:
 
 ADR-0017 and `storage-versioning-and-migration.md` strengthen the compatibility reader boundary with:
 
+- shared normal-profile admission before UTF-8 or JSON scanning;
 - duplicate-member detection at every depth, including escaped-equivalent names;
 - recursive version-specific DTO ownership;
 - recursive unknown-member rejection;
 - representation-local version dispatch;
 - explicit migration.
 
-Those safeguards constrain the hardened compatibility decoder. They do not assign new meaning to bytes that were valid under the frozen v1 schema.
+Those safeguards constrain the hardened compatibility decoder. They do not
+assign new meaning to bytes that were valid under the frozen v1 schema. The
+normal profile intentionally declines otherwise-valid v1 input above 8 MiB;
+that resource policy is separate from historical wire meaning.
 
 ## Compatibility and migration rule
 
@@ -349,6 +363,11 @@ The v1 wire contract is immutable compatibility input.
 - all typed-ID occurrences in the inventory above must be rewritten consistently;
 - ambiguous, duplicate, mismatched, or unresolvable legacy data must fail rather than be guessed;
 - v1 numeric behavior remains historical implementation compatibility and does not decide #24's future numeric semantic contract.
+- ordinary reading, migration-in-memory, and legacy canonicalization share the
+  finite normal direct-JSON admission profile;
+- a future larger compatibility/import operation, if accepted, must expose a
+  separate explicit finite profile rather than an unbounded or silent normal
+  reader bypass.
 
 If the direct `.ro` JSON representation evolves incompatibly before `.roproj` replaces it as the canonical working source, it must use a new version in the direct-`.ro` representation namespace. The next available value is `2`; this does not reserve `.roproj` version `2`.
 

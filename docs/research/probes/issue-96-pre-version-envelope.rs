@@ -8,7 +8,9 @@
 
 use std::{env, hint::black_box, process::ExitCode, time::Instant};
 
-use tachiko_storage::{FormatError, V2_MAX_INPUT_BYTES, V2_MAX_NUMBER_TOKEN_BYTES, from_bytes};
+use tachiko_storage::{
+    FormatError, NORMAL_DIRECT_JSON_MAX_INPUT_BYTES, V2_MAX_NUMBER_TOKEN_BYTES, from_bytes,
+};
 
 const OK: u32 = 0;
 const INVALID_UTF8: u32 = 1;
@@ -71,7 +73,7 @@ fn classify<T>(result: Result<T, FormatError>) -> u32 {
 }
 
 fn fixed_input(index: u32) -> Vec<u8> {
-    let over = V2_MAX_INPUT_BYTES + 1;
+    let over = NORMAL_DIRECT_JSON_MAX_INPUT_BYTES + 1;
     match index {
         0 => minimal_v1().into_bytes(),
         1 => minimal_v2().into_bytes(),
@@ -82,7 +84,7 @@ fn fixed_input(index: u32) -> Vec<u8> {
         6 => unsupported_version(over).into_bytes(),
         7 => invalid_utf8(over),
         8 => valid_v1(over).into_bytes(),
-        9 => valid_v2(V2_MAX_INPUT_BYTES).into_bytes(),
+        9 => valid_v2(NORMAL_DIRECT_JSON_MAX_INPUT_BYTES).into_bytes(),
         10 => valid_v2(over).into_bytes(),
         11 => v2_number(V2_MAX_NUMBER_TOKEN_BYTES + 1).into_bytes(),
         12 => unsupported_number(V2_MAX_NUMBER_TOKEN_BYTES + 1).into_bytes(),

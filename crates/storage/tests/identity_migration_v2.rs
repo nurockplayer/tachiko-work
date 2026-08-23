@@ -2,8 +2,8 @@ use std::fs;
 
 use tachiko_semantic_core::{Document, Expression, FieldType, Number, Value};
 use tachiko_storage::{
-    FORMAT_VERSION, FormatError, V2_MAX_INPUT_BYTES, V2_MAX_NUMBER_TOKEN_BYTES, from_bytes,
-    from_str, load, to_canonical_string,
+    FORMAT_VERSION, FormatError, NORMAL_DIRECT_JSON_MAX_INPUT_BYTES, V2_MAX_NUMBER_TOKEN_BYTES,
+    from_bytes, from_str, load, to_canonical_string,
 };
 
 const LEGACY_GRAPH: &str = r#"{
@@ -307,8 +307,11 @@ fn v2_resource_limits_admit_the_exact_boundary_and_reject_one_byte_more() {
     ));
 
     let base = v2_number_source("0", "Document");
-    let exact_input = format!("{base}{}", " ".repeat(V2_MAX_INPUT_BYTES - base.len()));
-    assert_eq!(exact_input.len(), V2_MAX_INPUT_BYTES);
+    let exact_input = format!(
+        "{base}{}",
+        " ".repeat(NORMAL_DIRECT_JSON_MAX_INPUT_BYTES - base.len())
+    );
+    assert_eq!(exact_input.len(), NORMAL_DIRECT_JSON_MAX_INPUT_BYTES);
     assert!(from_str(&exact_input).is_ok());
 
     let oversized_input = format!("{exact_input} ");
@@ -317,9 +320,9 @@ fn v2_resource_limits_admit_the_exact_boundary_and_reject_one_byte_more() {
         error,
         FormatError::ResourceLimit {
             resource: "input",
-            limit: V2_MAX_INPUT_BYTES,
+            limit: NORMAL_DIRECT_JSON_MAX_INPUT_BYTES,
             actual,
-        } if actual == V2_MAX_INPUT_BYTES + 1
+        } if actual == NORMAL_DIRECT_JSON_MAX_INPUT_BYTES + 1
     ));
 }
 

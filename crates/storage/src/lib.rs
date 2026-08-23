@@ -21,8 +21,8 @@ pub const LEGACY_FORMAT_VERSION: u32 = 1;
 pub const FORMAT_VERSION: u32 = 2;
 pub const SUPPORTED_FORMAT_VERSIONS: &[u32] = &[LEGACY_FORMAT_VERSION, FORMAT_VERSION];
 
-/// Complete direct-ro/v2 source-size limit, applied before DTO conversion.
-pub const V2_MAX_INPUT_BYTES: usize = 8 * 1024 * 1024;
+/// Complete-input limit for the normal direct-JSON admission profile.
+pub const NORMAL_DIRECT_JSON_MAX_INPUT_BYTES: usize = 8 * 1024 * 1024;
 /// Maximum lexical length of one RFC 8259 number token in direct-ro/v2.
 pub const V2_MAX_NUMBER_TOKEN_BYTES: usize = 256;
 
@@ -54,7 +54,7 @@ pub enum FormatError {
         #[source]
         source: Option<serde_json::Error>,
     },
-    #[error("direct-ro/v2 {resource} limit exceeded: maximum {limit} bytes, found {actual} bytes")]
+    #[error("direct-JSON {resource} limit exceeded: maximum {limit} bytes, found {actual} bytes")]
     ResourceLimit {
         resource: &'static str,
         limit: usize,
@@ -78,13 +78,15 @@ pub enum FormatError {
 ///
 /// Returns [`FormatError::InvalidDocument`] for semantic diagnostics,
 /// [`FormatError::ResourceLimit`] when the canonical v2 representation exceeds
-/// its complete-input profile, or a representation error if conversion or
-/// canonical encoding fails.
+/// the normal direct-JSON complete-input profile or its v2-specific number-token
+/// profile, or a representation error if conversion or canonical encoding
+/// fails.
 pub fn to_canonical_string(document: &Document) -> Result<String, FormatError> {
     check_document(document)?;
     let dto = DocumentV2::from_semantic(document).map_err(map_v2_encode_error)?;
     let encoded = direct_ro::v2::encode(&dto).map_err(map_v2_encode_error)?;
-    enforce_v2_resource_limits(&encoded)?;
+    enforce_normal_direct_json_input_limit(encoded.as_bytes())?;
+    enforce_v2_number_token_limit(&encoded)?;
     Ok(encoded)
 }
 
@@ -119,7 +121,7 @@ pub fn from_bytes(source: &[u8]) -> Result<Document, FormatError> {
                 .map_err(map_v2_decode_error)?
         }
         FORMAT_VERSION => {
-            enforce_v2_resource_limits(source_text)?;
+            enforce_v2_number_token_limit(source_text)?;
             let dto = decode_v2_dto(source_text)?;
             dto.validate().map_err(map_v2_decode_error)?;
             dto.into_semantic().map_err(map_v2_decode_error)?
@@ -217,6 +219,7 @@ pub fn save(path: impl AsRef<Path>, document: &Document) -> Result<(), FormatErr
 }
 
 fn inspect_envelope(source: &[u8]) -> Result<(&str, u32), FormatError> {
+    enforce_normal_direct_json_input_limit(source)?;
     let source =
         std::str::from_utf8(source).map_err(|source| FormatError::InvalidUtf8 { source })?;
     let inspection = inspect(source).map_err(map_frontend_error)?;
@@ -234,15 +237,18 @@ fn inspect_envelope(source: &[u8]) -> Result<(&str, u32), FormatError> {
     Ok((source, version))
 }
 
-fn enforce_v2_resource_limits(source: &str) -> Result<(), FormatError> {
-    if source.len() > V2_MAX_INPUT_BYTES {
+fn enforce_normal_direct_json_input_limit(source: &[u8]) -> Result<(), FormatError> {
+    if source.len() > NORMAL_DIRECT_JSON_MAX_INPUT_BYTES {
         return Err(FormatError::ResourceLimit {
             resource: "input",
-            limit: V2_MAX_INPUT_BYTES,
+            limit: NORMAL_DIRECT_JSON_MAX_INPUT_BYTES,
             actual: source.len(),
         });
     }
+    Ok(())
+}
 
+fn enforce_v2_number_token_limit(source: &str) -> Result<(), FormatError> {
     let bytes = source.as_bytes();
     let mut index = 0;
     let mut in_string = false;
