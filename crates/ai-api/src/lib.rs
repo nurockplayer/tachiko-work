@@ -3,8 +3,8 @@
 use tachiko_workspace_engine::{
     CalculationError, CanonicalAuthoringProjectionError, DiffError, Document, DocumentId, EntityId,
     EntityKey, Expression, ExpressionComplexityError, FieldId, FieldKey, FieldRef, FieldType,
-    Number, SchemaId, SchemaKey, SemanticChange, ValidationReport, Value, WorkspaceError,
-    analyze_formula as analyze_workspace_formula, compare_documents,
+    Number, SchemaId, SchemaKey, SemanticChange, ValidationReport, ValidationRole, Value,
+    WorkspaceError, analyze_formula as analyze_workspace_formula, compare_documents,
     validate_field_value_suggestion,
 };
 use thiserror::Error;
@@ -93,8 +93,11 @@ pub enum SuggestionError {
     TypeMismatch { field: FieldRef },
     #[error("'{field}' already has that value")]
     NoChange { field: FieldRef },
-    #[error("suggestion would make the document invalid: {report:?}")]
-    InvalidDocument { report: ValidationReport },
+    #[error("suggestion {role} is semantically invalid: {report:?}")]
+    InvalidDocument {
+        role: ValidationRole,
+        report: ValidationReport,
+    },
     #[error("suggestion would make calculation fail: {0}")]
     Calculation(#[from] CalculationError),
 }
@@ -108,8 +111,11 @@ pub enum FormulaExplanationError {
     NotFormula { field: FieldRef },
     #[error("formula field '{field}' has no calculated value")]
     MissingCalculation { field: FieldRef },
-    #[error("document is semantically invalid: {report:?}")]
-    InvalidDocument { report: ValidationReport },
+    #[error("{role} document is semantically invalid: {report:?}")]
+    InvalidDocument {
+        role: ValidationRole,
+        report: ValidationReport,
+    },
     #[error(transparent)]
     Calculation(#[from] CalculationError),
 }
@@ -117,8 +123,11 @@ pub enum FormulaExplanationError {
 /// A semantic comparison cannot be explained from the supplied snapshots.
 #[derive(Debug, Error)]
 pub enum ImpactExplanationError {
-    #[error("document is semantically invalid: {report:?}")]
-    InvalidDocument { report: ValidationReport },
+    #[error("{role} document is semantically invalid: {report:?}")]
+    InvalidDocument {
+        role: ValidationRole,
+        report: ValidationReport,
+    },
     #[error(transparent)]
     Diff(#[from] DiffError),
 }
@@ -178,8 +187,8 @@ pub fn explain_formula(
         WorkspaceError::MissingCalculation { field } => {
             FormulaExplanationError::MissingCalculation { field }
         }
-        WorkspaceError::InvalidDocument { report, .. } => {
-            FormulaExplanationError::InvalidDocument { report }
+        WorkspaceError::InvalidDocument { role, report, .. } => {
+            FormulaExplanationError::InvalidDocument { role, report }
         }
         WorkspaceError::Calculation(source) => FormulaExplanationError::Calculation(source),
         error => unreachable!("formula analysis returned an undocumented error: {error}"),
@@ -203,8 +212,8 @@ pub fn explain_impact(
     after: &Document,
 ) -> Result<ImpactExplanation, ImpactExplanationError> {
     let semantic_diff = compare_documents(before, after).map_err(|error| match error {
-        WorkspaceError::InvalidDocument { report, .. } => {
-            ImpactExplanationError::InvalidDocument { report }
+        WorkspaceError::InvalidDocument { role, report, .. } => {
+            ImpactExplanationError::InvalidDocument { role, report }
         }
         WorkspaceError::Diff(source) => ImpactExplanationError::Diff(source),
         error => unreachable!("semantic comparison returned an undocumented error: {error}"),
@@ -250,8 +259,8 @@ fn map_suggestion_error(error: WorkspaceError) -> SuggestionError {
         }
         WorkspaceError::TypeMismatch { field } => SuggestionError::TypeMismatch { field },
         WorkspaceError::NoChange { field } => SuggestionError::NoChange { field },
-        WorkspaceError::InvalidDocument { report, .. } => {
-            SuggestionError::InvalidDocument { report }
+        WorkspaceError::InvalidDocument { role, report, .. } => {
+            SuggestionError::InvalidDocument { role, report }
         }
         WorkspaceError::Calculation(source) => SuggestionError::Calculation(source),
         error => unreachable!("suggestion validation returned an undocumented error: {error}"),

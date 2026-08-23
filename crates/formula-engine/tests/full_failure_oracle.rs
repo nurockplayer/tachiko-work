@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use tachiko_formula_engine::{CalculationOutcome, FormulaFailure, calculate_full};
 use tachiko_semantic_core::{
@@ -71,6 +74,12 @@ fn formula(document: &mut Document, field: &str, expression: Expression) {
 
 fn field(field: &str) -> FieldRef {
     FieldRef::new("entity", field)
+}
+
+fn cycle_failure(members: BTreeSet<FieldRef>) -> FormulaFailure {
+    FormulaFailure::Cycle {
+        members: Arc::new(members),
+    }
 }
 
 fn failed(document: &Document) -> tachiko_formula_engine::CalculationFailureReport {
@@ -165,12 +174,7 @@ fn full_oracle_accumulates_failures_with_phase_precedence() {
 
     let cycle = BTreeSet::from([field("cycle-a"), field("cycle-b"), field("cycle-c")]);
     for member in &cycle {
-        assert_eq!(
-            failures.get(member),
-            Some(&FormulaFailure::Cycle {
-                members: cycle.clone()
-            })
-        );
+        assert_eq!(failures.get(member), Some(&cycle_failure(cycle.clone())));
     }
     assert_eq!(
         failures.get(&field("depends-earlier")),
@@ -194,11 +198,19 @@ fn full_oracle_accumulates_failures_with_phase_precedence() {
         report.dependencies().get(&field("structural")),
         Some(&BTreeSet::from([field("missing-structural")]))
     );
-    assert_eq!(failures.keys().cloned().collect::<Vec<_>>(), {
-        let mut keys = failures.keys().cloned().collect::<Vec<_>>();
-        keys.sort();
-        keys
-    });
+    assert_eq!(
+        failures.keys().cloned().collect::<Vec<_>>(),
+        vec![
+            field("binding"),
+            field("cycle-a"),
+            field("cycle-b"),
+            field("cycle-c"),
+            field("depends-earlier"),
+            field("depends-zero"),
+            field("structural"),
+            field("zero"),
+        ]
+    );
 }
 
 #[test]
@@ -275,4 +287,137 @@ fn missing_declared_input_is_a_local_evaluation_failure() {
             reference: field("input")
         })
     );
+}
+
+fn disjoint_cycle_document(reverse_insertion: bool) -> Document {
+    let mut document = document();
+    let mut formulas = vec![
+        ("a-cycle-1", reference("a-cycle-2")),
+        ("a-cycle-2", reference("a-cycle-1")),
+        ("b-cycle-1", reference("b-cycle-2")),
+        ("b-cycle-2", reference("b-cycle-3")),
+        ("b-cycle-3", reference("b-cycle-1")),
+        ("depends-a", reference("a-cycle-2")),
+        ("depends-b", reference("b-cycle-1")),
+        (
+            "depends-all",
+            Expression::Add {
+                left: Box::new(reference("a-cycle-1")),
+                right: Box::new(Expression::Add {
+                    left: Box::new(reference("b-cycle-2")),
+                    right: Box::new(reference("zero")),
+                }),
+            },
+        ),
+        (
+            "independent",
+            Expression::Add {
+                left: Box::new(literal(2.0)),
+                right: Box::new(literal(3.0)),
+            },
+        ),
+        (
+            "zero",
+            Expression::Divide {
+                left: Box::new(literal(1.0)),
+                right: Box::new(literal(0.0)),
+            },
+        ),
+    ];
+    if reverse_insertion {
+        formulas.reverse();
+    }
+    for (name, expression) in formulas {
+        formula(&mut document, name, expression);
+    }
+    document
+}
+
+#[test]
+fn disjoint_sccs_and_direct_failures_are_complete_and_repeatable() {
+    let forward = failed(&disjoint_cycle_document(false));
+    let reversed = failed(&disjoint_cycle_document(true));
+    assert_eq!(forward, reversed);
+    assert_eq!(forward, failed(&disjoint_cycle_document(false)));
+
+    let a_cycle = BTreeSet::from([field("a-cycle-1"), field("a-cycle-2")]);
+    let b_cycle = BTreeSet::from([field("b-cycle-1"), field("b-cycle-2"), field("b-cycle-3")]);
+    for member in &a_cycle {
+        assert_eq!(
+            forward.failure(member),
+            Some(&cycle_failure(a_cycle.clone()))
+        );
+    }
+    for member in &b_cycle {
+        assert_eq!(
+            forward.failure(member),
+            Some(&cycle_failure(b_cycle.clone()))
+        );
+    }
+    assert_eq!(
+        forward.failure(&field("depends-a")),
+        Some(&FormulaFailure::FailedDependency {
+            dependencies: BTreeSet::from([field("a-cycle-2")]),
+        })
+    );
+    assert_eq!(
+        forward.failure(&field("depends-b")),
+        Some(&FormulaFailure::FailedDependency {
+            dependencies: BTreeSet::from([field("b-cycle-1")]),
+        })
+    );
+    assert_eq!(
+        forward.failure(&field("depends-all")),
+        Some(&FormulaFailure::FailedDependency {
+            dependencies: BTreeSet::from([field("a-cycle-1"), field("b-cycle-2"), field("zero"),]),
+        })
+    );
+    assert_eq!(
+        forward.failure(&field("zero")),
+        Some(&FormulaFailure::DivisionByZero)
+    );
+    assert!(!forward.failures().contains_key(&field("independent")));
+
+    let expected_dependencies = disjoint_cycle_document(false)
+        .entities
+        .remove("entity")
+        .unwrap()
+        .fields
+        .into_iter()
+        .filter_map(|(field_id, value)| match value {
+            Value::Formula(expression) => Some((
+                FieldRef::new("entity", field_id),
+                tachiko_formula_engine::extract_dependencies(&expression),
+            )),
+            _ => None,
+        })
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(forward.dependencies(), &expected_dependencies);
+}
+
+#[test]
+fn large_scc_membership_is_shared_without_quadratic_cloning() {
+    const MEMBER_COUNT: usize = 4_096;
+
+    let mut document = document();
+    for index in 0..MEMBER_COUNT {
+        let current = format!("cycle-{index:04}");
+        let next = format!("cycle-{:04}", (index + 1) % MEMBER_COUNT);
+        formula(&mut document, &current, reference(&next));
+    }
+
+    let report = failed(&document);
+    let mut shared_members = None;
+    for failure in report.failures().values() {
+        let FormulaFailure::Cycle { members } = failure else {
+            panic!("large cycle must contain only cycle failures");
+        };
+        assert_eq!(members.len(), MEMBER_COUNT);
+        if let Some(expected) = shared_members {
+            assert!(Arc::ptr_eq(expected, members));
+        } else {
+            shared_members = Some(members);
+        }
+    }
+    assert_eq!(report.failures().len(), MEMBER_COUNT);
 }

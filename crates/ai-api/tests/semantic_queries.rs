@@ -1,12 +1,13 @@
 use std::collections::BTreeMap;
 
 use tachiko_ai_api::{
-    Suggestion, SuggestionError, describe_document, explain_formula, explain_impact,
-    suggest_field_change,
+    ImpactExplanationError, Suggestion, SuggestionError, describe_document, explain_formula,
+    explain_impact, suggest_field_change,
 };
 use tachiko_workspace_engine::{
     Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
-    FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, SemanticChange, Value,
+    FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, SemanticChange, ValidationRole,
+    Value,
 };
 
 fn balance_document(damage: f64) -> Document {
@@ -195,6 +196,34 @@ fn explain_impact_projects_direct_changes_and_derived_formula_impacts() {
                 && (after.get() - 96.0).abs() < 1e-9
                 && causes == &vec![FieldRef::new("sword", "damage")]
     )));
+}
+
+#[test]
+fn explain_impact_preserves_invalid_operand_role() {
+    let valid = balance_document(100.0);
+    let mut invalid = valid.clone();
+    invalid
+        .entities
+        .get_mut("sword")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("attack_interval"), number(0.0));
+
+    for (result, expected) in [
+        (
+            explain_impact(&invalid, &valid),
+            ValidationRole::ComparisonBefore,
+        ),
+        (
+            explain_impact(&valid, &invalid),
+            ValidationRole::ComparisonAfter,
+        ),
+    ] {
+        assert!(matches!(
+            result.unwrap_err(),
+            ImpactExplanationError::InvalidDocument { role, .. } if role == expected
+        ));
+    }
 }
 
 #[test]

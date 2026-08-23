@@ -951,8 +951,11 @@ exact-head reviews remain before PR handoff.
 - Implement the first authoritative first-party semantic ValidationReport and
   the complete ADR-0018 formula failure oracle as conformance work, not an
   architecture redesign.
-- Worktree branch: `codex/issue-89-validation-report`, created from current
-  `origin/main` `342f69f2fc252554c240650d1438cc0d6cd82e2f`.
+- Worktree branch: `codex/issue-89-validation-report`, created from
+  `origin/main` `342f69f2fc252554c240650d1438cc0d6cd82e2f` and rebased onto current
+  `origin/main` `16289f8a5acd48ca7fa36b265b7fdfe7df0e4d12` after #92 and the isolated
+  #26 spike landed. The #92 schema-authority and adversarial stack-safety
+  coverage remains intact.
 - Authority: Issue #89; Accepted ADR-0015 through ADR-0019; the validation,
   diagnostics, formula, and schema specifications; the Product Constitution
   and Design Principles; and the knowledge authority/reconciliation policies.
@@ -1037,10 +1040,14 @@ The detailed executable plan is
   rename-stable observations, multi-subject duplicates/cycles/dependencies,
   full formula precedence, all-or-nothing calculation, and
   validation/finalization agreement.
-- The focused workspace currently passes 228 tests across 32 suites with
-  warning-denied Clippy and the ADR-0016 dependency check. The portable corpus
-  now executes 28 fixed production records and matches exact stable
-  observations natively and on `wasm32-unknown-unknown`.
-- Implementation commit: `a94fb61`. Documentation reconciliation, the clean
-  release-equivalent gate, and two independent exact-head reviews remain
-  before PR handoff.
+- The post-rebase workspace passes 245 tests across 34 suites with
+  warning-denied Clippy. The portable corpus executes 31 fixed production
+  records and matches exact stable observations natively and on
+  `wasm32-unknown-unknown`.
+- Initial independent ADR-0018 and ADR-0019/#89 reviews found no P0. Their P1
+  and P2 findings are addressed by shared SCC membership storage,
+  compatibility selection that follows stable left-to-right legacy behavior,
+  prerequisite-aware cascade suppression, explicit validation operand roles,
+  complete portable dependency fingerprints, and generated/disjoint SCC
+  determinism evidence. A clean release-equivalent gate and independent
+  exact-head re-reviews remain before PR handoff.

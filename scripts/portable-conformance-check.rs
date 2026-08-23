@@ -24,7 +24,7 @@ use tachiko_workspace_engine::{
     ValidationReport, calculate_fields, diagnostic_codes, validation_report,
 };
 
-const CASE_COUNT: u32 = 45;
+const CASE_COUNT: u32 = 46;
 const VALUE: u32 = 0;
 const DIVISION_BY_ZERO: u32 = 1;
 const NON_FINITE: u32 = 2;
@@ -797,6 +797,47 @@ fn validation_accumulation_record() -> Record {
         .unwrap()
         .fields
         .insert(FieldId::from("required"), field("required"));
+    for id in [
+        "blocked-owner",
+        "required-dependent",
+        "typed-dependent",
+        "typed-input",
+    ] {
+        document
+            .schemas
+            .get_mut("schema")
+            .unwrap()
+            .fields
+            .insert(FieldId::from(id), field(id));
+    }
+    document
+        .schemas
+        .get_mut("schema")
+        .unwrap()
+        .fields
+        .get_mut("blocked-owner")
+        .unwrap()
+        .id = "different-stable-id".into();
+    let entity = document.entities.get_mut("entity").unwrap();
+    entity.fields.insert(
+        FieldId::from("required-dependent"),
+        Value::Formula(Expression::Reference(FieldRef::new("entity", "required"))),
+    );
+    entity.fields.insert(
+        FieldId::from("typed-input"),
+        Value::Text("not numeric".to_owned()),
+    );
+    entity.fields.insert(
+        FieldId::from("typed-dependent"),
+        Value::Formula(Expression::Reference(FieldRef::new("entity", "typed-input"))),
+    );
+    entity.fields.insert(
+        FieldId::from("blocked-owner"),
+        Value::Formula(Expression::Divide {
+            left: Box::new(numeric(1.0)),
+            right: Box::new(numeric(0.0)),
+        }),
+    );
     document.entities.insert(
         EntityId::from("orphan"),
         Entity {
@@ -805,7 +846,7 @@ fn validation_accumulation_record() -> Record {
             schema: "missing-schema".into(),
             fields: BTreeMap::from([(
                 FieldId::from("unknown"),
-                Value::Text("cascade".to_owned()),
+                Value::Formula(numeric(1.0)),
             )]),
         },
     );
@@ -821,6 +862,17 @@ fn validation_accumulation_record() -> Record {
         && codes.contains(&diagnostic_codes::FORMULA_CYCLE)
         && codes.contains(&diagnostic_codes::FORMULA_FAILED_DEPENDENCY)
         && codes.contains(&diagnostic_codes::FORMULA_DIVISION_BY_ZERO)
+        && !codes.contains(&diagnostic_codes::FORMULA_MISSING_INPUT)
+        && !codes.contains(&diagnostic_codes::FORMULA_NON_NUMERIC_INPUT)
+        && !report.diagnostics().iter().any(|diagnostic| {
+            diagnostic.code == diagnostic_codes::FORMULA_DIVISION_BY_ZERO
+                && diagnostic
+                    .subjects
+                    .contains(&SemanticSubject::EntityField(FieldRef::new(
+                        "entity",
+                        "blocked-owner",
+                    )))
+        })
         && !report.diagnostics().iter().any(|diagnostic| {
             diagnostic
                 .subjects
@@ -835,6 +887,100 @@ fn validation_accumulation_record() -> Record {
         class: VALIDATION_REPORT,
         bits: report.diagnostics().len() as u64,
         auxiliary: validation_fingerprint(&report),
+    }
+}
+
+fn disjoint_cycle_document(reverse_insertion: bool) -> Document {
+    let mut formulas = vec![
+        ("a-cycle-1", "a-cycle-2"),
+        ("a-cycle-2", "a-cycle-1"),
+        ("b-cycle-1", "b-cycle-2"),
+        ("b-cycle-2", "b-cycle-3"),
+        ("b-cycle-3", "b-cycle-1"),
+        ("depends-a", "a-cycle-1"),
+        ("depends-b", "b-cycle-2"),
+    ];
+    if reverse_insertion {
+        formulas.reverse();
+    }
+    let mut definitions = BTreeMap::new();
+    let mut fields = BTreeMap::new();
+    for (formula, dependency) in formulas {
+        definitions.insert(FieldId::from(formula), field(formula));
+        fields.insert(
+            FieldId::from(formula),
+            Value::Formula(Expression::Reference(FieldRef::new("entity", dependency))),
+        );
+    }
+    Document {
+        id: "disjoint-cycles".into(),
+        title: "Disjoint cycles".to_owned(),
+        schemas: BTreeMap::from([(
+            SchemaId::from("schema"),
+            Schema {
+                id: "schema".into(),
+                key: "schema".into(),
+                fields: definitions,
+            },
+        )]),
+        entities: BTreeMap::from([(
+            EntityId::from("entity"),
+            Entity {
+                id: "entity".into(),
+                key: "entity".into(),
+                schema: "schema".into(),
+                fields,
+            },
+        )]),
+    }
+}
+
+fn disjoint_cycle_record() -> Record {
+    let CalculationOutcome::Failed(forward) = calculate_full(&disjoint_cycle_document(false))
+    else {
+        return Record::failure(UNEXPECTED, 34);
+    };
+    let CalculationOutcome::Failed(reversed) = calculate_full(&disjoint_cycle_document(true))
+    else {
+        return Record::failure(UNEXPECTED, 35);
+    };
+    let repeated = calculate_full(&disjoint_cycle_document(false));
+    let field = |id| FieldRef::new("entity", id);
+    let a_cycle = BTreeSet::from([field("a-cycle-1"), field("a-cycle-2")]);
+    let b_cycle = BTreeSet::from([
+        field("b-cycle-1"),
+        field("b-cycle-2"),
+        field("b-cycle-3"),
+    ]);
+    let exact = forward == reversed
+        && repeated == CalculationOutcome::Failed(forward.clone())
+        && a_cycle.iter().all(|member| {
+            matches!(
+                forward.failure(member),
+                Some(FormulaFailure::Cycle { members }) if members.as_ref() == &a_cycle
+            )
+        })
+        && b_cycle.iter().all(|member| {
+            matches!(
+                forward.failure(member),
+                Some(FormulaFailure::Cycle { members }) if members.as_ref() == &b_cycle
+            )
+        })
+        && forward.failure(&field("depends-a"))
+            == Some(&FormulaFailure::FailedDependency {
+                dependencies: BTreeSet::from([field("a-cycle-1")]),
+            })
+        && forward.failure(&field("depends-b"))
+            == Some(&FormulaFailure::FailedDependency {
+                dependencies: BTreeSet::from([field("b-cycle-2")]),
+            });
+    if !exact {
+        return Record::failure(UNEXPECTED, forward.failures().len() as u64);
+    }
+    Record {
+        class: FORMULA_FAILURE_REPORT,
+        bits: forward.failures().len() as u64,
+        auxiliary: formula_failure_fingerprint(&forward),
     }
 }
 
@@ -1084,6 +1230,7 @@ fn case_record(index: u32) -> Record {
         42 => validation_accumulation_record(),
         43 => rename_stability_record(),
         44 => validation_cycle_record(),
+        45 => disjoint_cycle_record(),
         _ => Record::failure(UNEXPECTED, 0),
     }
 }

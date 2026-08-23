@@ -303,6 +303,46 @@ fn missing_reference_is_explicit() {
 }
 
 #[test]
+fn compatibility_projection_preserves_left_to_right_invalid_reference_selection() {
+    let mut document = balance_document();
+    document.entities.get_mut("sword").unwrap().fields.insert(
+        FieldId::from("dps"),
+        Value::Formula(Expression::Add {
+            left: Box::new(reference("sword", "name")),
+            right: Box::new(reference("sword", "missing")),
+        }),
+    );
+
+    assert!(matches!(
+        calculate(&document).unwrap_err(),
+        CalculationError::NonNumericReference { reference }
+            if reference == FieldRef::new("sword", "name")
+    ));
+}
+
+#[test]
+fn compatibility_projection_preserves_stable_outer_formula_order() {
+    let mut document = balance_document();
+    document.entities.get_mut("sword").unwrap().fields.insert(
+        FieldId::from("attack_interval"),
+        Value::Formula(Expression::Divide {
+            left: Box::new(numeric(1.0)),
+            right: Box::new(numeric(0.0)),
+        }),
+    );
+    document.entities.get_mut("sword").unwrap().fields.insert(
+        FieldId::from("burst"),
+        Value::Formula(reference("sword", "burst")),
+    );
+
+    assert!(matches!(
+        calculate(&document).unwrap_err(),
+        CalculationError::DivisionByZero { formula }
+            if formula == FieldRef::new("sword", "attack_interval")
+    ));
+}
+
+#[test]
 fn schema_declaration_is_authoritative_for_bound_reference_type() {
     let mut document = balance_document();
     document

@@ -3,8 +3,9 @@ use std::collections::BTreeMap;
 use tachiko_workspace_engine::{
     CanonicalAuthoringProjectionError, DiagnosticCode, DiagnosticProvider, DiagnosticSeverity,
     Document, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey, FieldRef,
-    FieldType, Number, Schema, SchemaId, SchemaKey, SemanticSubject, Value, WorkspaceError,
-    diagnostic_codes, merge_documents, rename_entity, rename_schema, validate, validation_report,
+    FieldType, Number, Schema, SchemaId, SchemaKey, SemanticSubject, ValidationRole, Value,
+    WorkspaceError, compare_documents, diagnostic_codes, merge_documents, rename_entity,
+    rename_schema, validate, validation_report,
 };
 
 fn document() -> Document {
@@ -220,6 +221,79 @@ fn stable_observations_survive_human_key_renames() {
 }
 
 #[test]
+fn core_invalid_formula_prerequisites_suppress_cascades_but_not_independent_failures() {
+    let mut document = document();
+    define(&mut document, "required-input", FieldType::Number, true);
+    define(&mut document, "typed-input", FieldType::Number, false);
+    set(
+        &mut document,
+        "entity",
+        "typed-input",
+        Value::Text("not numeric".to_owned()),
+    );
+    formula(
+        &mut document,
+        "missing-dependent",
+        reference("entity", "required-input"),
+    );
+    formula(
+        &mut document,
+        "typed-dependent",
+        reference("entity", "typed-input"),
+    );
+    formula(
+        &mut document,
+        "blocked-owner",
+        Expression::Divide {
+            left: Box::new(number(1.0)),
+            right: Box::new(number(0.0)),
+        },
+    );
+    document
+        .schemas
+        .get_mut("schema")
+        .unwrap()
+        .fields
+        .get_mut("blocked-owner")
+        .unwrap()
+        .id = "different-stable-id".into();
+    formula(
+        &mut document,
+        "independent-zero",
+        Expression::Divide {
+            left: Box::new(number(1.0)),
+            right: Box::new(number(0.0)),
+        },
+    );
+
+    let report = validation_report(&document);
+    let codes = report
+        .diagnostics()
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect::<Vec<_>>();
+    assert!(codes.contains(&DiagnosticCode::MISSING_REQUIRED_FIELD));
+    assert!(codes.contains(&DiagnosticCode::TYPE_MISMATCH));
+    assert!(codes.contains(&DiagnosticCode::KEY_MISMATCH));
+    assert!(!codes.contains(&diagnostic_codes::FORMULA_MISSING_INPUT));
+    assert!(!codes.contains(&diagnostic_codes::FORMULA_NON_NUMERIC_INPUT));
+
+    let division_failures = report
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| diagnostic.code == diagnostic_codes::FORMULA_DIVISION_BY_ZERO)
+        .collect::<Vec<_>>();
+    assert_eq!(division_failures.len(), 1);
+    assert_eq!(
+        division_failures[0].subjects,
+        [SemanticSubject::EntityField(FieldRef::new(
+            "entity",
+            "independent-zero",
+        ))]
+    );
+}
+
+#[test]
 fn cycle_and_failed_dependency_diagnostics_preserve_all_stable_subjects() {
     let report = validation_report(&cycle_document());
     let cycle_members = vec![
@@ -262,6 +336,7 @@ fn validation_and_finalization_share_the_same_semantic_report() {
 
     let WorkspaceError::InvalidDocument {
         report: validate_report,
+        role: validate_role,
         ..
     } = validate(&document).unwrap_err()
     else {
@@ -269,17 +344,64 @@ fn validation_and_finalization_share_the_same_semantic_report() {
     };
     let WorkspaceError::InvalidDocument {
         report: finalization_report,
+        role: finalization_role,
         ..
     } = rename_entity(&document, "entity", "renamed").unwrap_err()
     else {
         panic!("finalization must use the semantic report");
     };
 
+    assert_eq!(validate_role, ValidationRole::Current);
+    assert_eq!(finalization_role, ValidationRole::Candidate);
     assert_eq!(oracle, validate_report);
     assert_eq!(
         oracle.stable_observations(),
         finalization_report.stable_observations()
     );
+}
+
+#[test]
+fn comparison_and_merge_validation_errors_preserve_operand_roles() {
+    let valid = merge_document();
+    let invalid = cycle_document();
+
+    for (result, expected) in [
+        (
+            compare_documents(&invalid, &valid),
+            ValidationRole::ComparisonBefore,
+        ),
+        (
+            compare_documents(&valid, &invalid),
+            ValidationRole::ComparisonAfter,
+        ),
+    ] {
+        let WorkspaceError::InvalidDocument { role, report, .. } = result.unwrap_err() else {
+            panic!("comparison input must return its validation role");
+        };
+        assert_eq!(role, expected);
+        assert_eq!(report, validation_report(&invalid));
+    }
+
+    for (result, expected) in [
+        (
+            merge_documents(&invalid, &valid, &valid),
+            ValidationRole::MergeBase,
+        ),
+        (
+            merge_documents(&valid, &invalid, &valid),
+            ValidationRole::MergeOurs,
+        ),
+        (
+            merge_documents(&valid, &valid, &invalid),
+            ValidationRole::MergeTheirs,
+        ),
+    ] {
+        let WorkspaceError::InvalidDocument { role, report, .. } = result.unwrap_err() else {
+            panic!("merge input must return its validation role");
+        };
+        assert_eq!(role, expected);
+        assert_eq!(report, validation_report(&invalid));
+    }
 }
 
 #[test]
@@ -342,11 +464,12 @@ fn merge_candidate_uses_the_shared_semantic_report() {
         .fields
         .remove("bonus");
 
-    let WorkspaceError::InvalidDocument { report, .. } =
+    let WorkspaceError::InvalidDocument { role, report, .. } =
         merge_documents(&base, &ours, &theirs).unwrap_err()
     else {
         panic!("merged semantic failure must use ValidationReport");
     };
+    assert_eq!(role, ValidationRole::MergeCandidate);
     assert!(
         report
             .diagnostics()

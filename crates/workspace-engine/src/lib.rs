@@ -1,13 +1,16 @@
 //! Shared application operations over Tachiko Work semantic documents.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+};
 
 use serde::Serialize;
 use tachiko_diff_engine::diff;
 pub use tachiko_diff_engine::{DiffError, SemanticChange, SemanticDiff};
 use tachiko_formula_engine::{
-    Calculation, CalculationOutcome, FormulaBindError, FormulaFailure, FormulaParseError,
-    bind_expression, calculate_full, parse_expression, project_expression,
+    Calculation, CalculationFailureReport, CalculationOutcome, FormulaBindError, FormulaFailure,
+    FormulaParseError, bind_expression, calculate_full, parse_expression, project_expression,
     validate_expression_structure,
 };
 pub use tachiko_formula_engine::{
@@ -82,6 +85,36 @@ impl ValidationReport {
     #[must_use]
     pub fn into_diagnostics(self) -> Vec<Diagnostic> {
         self.diagnostics
+    }
+}
+
+/// Operation-local role of a snapshot whose semantic report blocked a call.
+///
+/// This context is not part of diagnostic identity or stable observations.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ValidationRole {
+    Current,
+    Candidate,
+    ComparisonBefore,
+    ComparisonAfter,
+    MergeBase,
+    MergeOurs,
+    MergeTheirs,
+    MergeCandidate,
+}
+
+impl fmt::Display for ValidationRole {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Current => "current",
+            Self::Candidate => "candidate",
+            Self::ComparisonBefore => "comparison-before",
+            Self::ComparisonAfter => "comparison-after",
+            Self::MergeBase => "merge-base",
+            Self::MergeOurs => "merge-ours",
+            Self::MergeTheirs => "merge-theirs",
+            Self::MergeCandidate => "merge-candidate",
+        })
     }
 }
 
@@ -304,8 +337,9 @@ pub enum WorkspaceError {
         input: String,
         expected: &'static str,
     },
-    #[error("edit would make the document invalid: {summary}")]
+    #[error("{role} document is semantically invalid: {summary}")]
     InvalidDocument {
+        role: ValidationRole,
         summary: String,
         report: ValidationReport,
     },
@@ -334,7 +368,7 @@ pub fn create_document(
         StarterTemplate::GameBalance => game_balance_document(document_id, title, generator)?,
         StarterTemplate::Empty => Document::empty(document_id, title),
     };
-    require_validated_calculation(&document)?;
+    require_validated_calculation_for(&document, ValidationRole::Candidate)?;
     preflight_formula_projections(&document)?;
     Ok(document)
 }
@@ -382,8 +416,8 @@ pub fn compare_documents(
     before: &Document,
     after: &Document,
 ) -> Result<SemanticDiff, WorkspaceError> {
-    require_validated_calculation(before)?;
-    require_validated_calculation(after)?;
+    require_validated_calculation_for(before, ValidationRole::ComparisonBefore)?;
+    require_validated_calculation_for(after, ValidationRole::ComparisonAfter)?;
     Ok(diff(before, after)?)
 }
 
@@ -442,7 +476,7 @@ pub fn validate_field_value_suggestion(
             return Err(error);
         }
     };
-    require_validated_calculation(&candidate)?;
+    require_validated_calculation_for(&candidate, ValidationRole::Candidate)?;
     Ok(ValidatedFieldValue { field, value })
 }
 
@@ -456,12 +490,12 @@ pub fn merge_documents(
     ours: &Document,
     theirs: &Document,
 ) -> Result<WorkspaceMergeOutcome, WorkspaceError> {
-    require_validated_calculation(base)?;
-    require_validated_calculation(ours)?;
-    require_validated_calculation(theirs)?;
+    require_validated_calculation_for(base, ValidationRole::MergeBase)?;
+    require_validated_calculation_for(ours, ValidationRole::MergeOurs)?;
+    require_validated_calculation_for(theirs, ValidationRole::MergeTheirs)?;
     match merge(base, ours, theirs) {
         MergeOutcome::Merged(document) => {
-            require_validated_calculation(&document)?;
+            require_validated_calculation_for(&document, ValidationRole::MergeCandidate)?;
             preflight_formula_projections(&document)?;
             let diff = diff(base, &document)?;
             Ok(WorkspaceMergeOutcome::Merged(Box::new(EditPreview {
@@ -1131,7 +1165,7 @@ fn value_matches_type(value: &Value, field_type: &FieldType) -> bool {
 }
 
 fn finalize_edit(document: &Document, edited: Document) -> Result<EditPreview, WorkspaceError> {
-    require_validated_calculation(&edited)?;
+    require_validated_calculation_for(&edited, ValidationRole::Candidate)?;
     preflight_formula_projections(&edited)?;
     let semantic_diff = diff(document, &edited)?;
     Ok(EditPreview {
@@ -1152,11 +1186,7 @@ fn semantic_validation(document: &Document) -> (ValidationReport, Option<Calcula
     let calculation = match calculate_full(document) {
         CalculationOutcome::Complete(calculation) => Some(calculation),
         CalculationOutcome::Failed(failures) => {
-            diagnostics.extend(formula_diagnostics(
-                document,
-                failures.failures(),
-                &core_diagnostics,
-            ));
+            diagnostics.extend(formula_diagnostics(document, &failures, &core_diagnostics));
             None
         }
     };
@@ -1169,15 +1199,23 @@ fn semantic_validation(document: &Document) -> (ValidationReport, Option<Calcula
 }
 
 fn require_validated_calculation(document: &Document) -> Result<Calculation, WorkspaceError> {
+    require_validated_calculation_for(document, ValidationRole::Current)
+}
+
+fn require_validated_calculation_for(
+    document: &Document,
+    role: ValidationRole,
+) -> Result<Calculation, WorkspaceError> {
     let (report, calculation) = semantic_validation(document);
     if !report.is_valid() {
-        return Err(invalid_document(report));
+        return Err(invalid_document(report, role));
     }
     Ok(calculation.expect("a diagnostic-free formula outcome is complete"))
 }
 
-fn invalid_document(report: ValidationReport) -> WorkspaceError {
+fn invalid_document(report: ValidationReport, role: ValidationRole) -> WorkspaceError {
     WorkspaceError::InvalidDocument {
+        role,
         summary: format_diagnostics(report.diagnostics()),
         report,
     }
@@ -1187,13 +1225,18 @@ const FORMULA_PROVIDER: DiagnosticProvider = DiagnosticProvider::new("tachiko.fo
 
 fn formula_diagnostics(
     document: &Document,
-    failures: &BTreeMap<FieldRef, FormulaFailure>,
+    report: &CalculationFailureReport,
     core_diagnostics: &[Diagnostic],
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
-    let mut emitted_cycles = BTreeSet::new();
-    for (formula, failure) in failures {
-        if !formula_prerequisites_available(formula, core_diagnostics) {
+    for (formula, failure) in report.failures() {
+        if !formula_prerequisites_available(
+            document,
+            formula,
+            failure,
+            report.dependencies(),
+            core_diagnostics,
+        ) {
             continue;
         }
         let subject = SemanticSubject::EntityField(formula.clone());
@@ -1218,7 +1261,7 @@ fn formula_diagnostics(
                 non_numeric,
             } => invalid_reference_diagnostic(formula, subject, path, missing, non_numeric),
             FormulaFailure::Cycle { members } => {
-                if !emitted_cycles.insert(members.clone()) {
+                if members.first() != Some(formula) {
                     continue;
                 }
                 formula_diagnostic(
@@ -1326,20 +1369,69 @@ fn formula_diagnostic(
         .with_presentation(path, message)
 }
 
-fn formula_prerequisites_available(formula: &FieldRef, core_diagnostics: &[Diagnostic]) -> bool {
-    let entity = SemanticSubject::Entity(formula.entity.clone());
-    let field = SemanticSubject::EntityField(formula.clone());
+fn formula_prerequisites_available(
+    document: &Document,
+    formula: &FieldRef,
+    failure: &FormulaFailure,
+    dependencies: &BTreeMap<FieldRef, BTreeSet<FieldRef>>,
+    core_diagnostics: &[Diagnostic],
+) -> bool {
+    if !field_prerequisites_available(document, formula, core_diagnostics) {
+        return false;
+    }
+    if matches!(failure, FormulaFailure::Structural { .. }) {
+        return true;
+    }
+    if let FormulaFailure::Cycle { members } = failure {
+        return members.iter().all(|member| {
+            field_prerequisites_available(document, member, core_diagnostics)
+                && dependencies[member].iter().all(|dependency| {
+                    field_prerequisites_available(document, dependency, core_diagnostics)
+                })
+        });
+    }
+    dependencies[formula]
+        .iter()
+        .all(|dependency| field_prerequisites_available(document, dependency, core_diagnostics))
+}
+
+fn field_prerequisites_available(
+    document: &Document,
+    field: &FieldRef,
+    core_diagnostics: &[Diagnostic],
+) -> bool {
+    let mut subjects = vec![
+        SemanticSubject::Entity(field.entity.clone()),
+        SemanticSubject::EntityField(field.clone()),
+    ];
+    if let Some(entity) = document.entities.get(&field.entity) {
+        subjects.push(SemanticSubject::Schema(entity.schema.clone()));
+        subjects.push(SemanticSubject::SchemaField {
+            schema: entity.schema.clone(),
+            field: field.field.clone(),
+        });
+    }
     !core_diagnostics.iter().any(|diagnostic| {
-        let blocks_entity = diagnostic.code == DiagnosticCode::MISSING_SCHEMA
-            || diagnostic.code == DiagnosticCode::EMPTY_STABLE_ID
-            || diagnostic.code == DiagnosticCode::KEY_MISMATCH;
-        let blocks_field = diagnostic.code == DiagnosticCode::UNEXPECTED_FIELD
-            || diagnostic.code == DiagnosticCode::TYPE_MISMATCH
-            || diagnostic.code == DiagnosticCode::EMPTY_STABLE_ID
-            || diagnostic.code == DiagnosticCode::KEY_MISMATCH;
-        (blocks_entity && diagnostic.subjects.contains(&entity))
-            || (blocks_field && diagnostic.subjects.contains(&field))
+        core_diagnostic_blocks_formula_prerequisite(diagnostic.code)
+            && diagnostic
+                .subjects
+                .iter()
+                .any(|subject| subjects.contains(subject))
     })
+}
+
+fn core_diagnostic_blocks_formula_prerequisite(code: DiagnosticCode) -> bool {
+    [
+        DiagnosticCode::EMPTY_STABLE_ID,
+        DiagnosticCode::KEY_MISMATCH,
+        DiagnosticCode::MISSING_SCHEMA,
+        DiagnosticCode::MISSING_REQUIRED_FIELD,
+        DiagnosticCode::UNEXPECTED_FIELD,
+        DiagnosticCode::TYPE_MISMATCH,
+        DiagnosticCode::MISSING_REFERENCE,
+        DiagnosticCode::REFERENCE_TYPE_MISMATCH,
+    ]
+    .contains(&code)
 }
 
 fn formula_path(document: &Document, formula: &FieldRef) -> String {

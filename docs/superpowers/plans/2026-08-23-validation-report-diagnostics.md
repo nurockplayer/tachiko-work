@@ -12,7 +12,7 @@
 
 ## Global constraints
 
-- Start from origin/main 342f69f2fc252554c240650d1438cc0d6cd82e2f on branch codex/issue-89-validation-report.
+- Start from origin/main 342f69f2fc252554c240650d1438cc0d6cd82e2f on branch codex/issue-89-validation-report; reconcile later mainline changes before handoff. The branch was rebased onto 16289f8a5acd48ca7fa36b265b7fdfe7df0e4d12 after #92 and the isolated #26 spike landed.
 - Keep semantic-core diagnostic primitives generic. Provider identity is opaque and internal; semantic-core must not encode formula-engine or higher-layer taxonomies.
 - Make the ADR-0018 full formula outcome authoritative. Compatibility calculate behavior must be derived from it.
 - Stable observations are diagnostic meaning, classification/severity, stable semantic subjects and related subjects/facts, provider identity, and deterministic ordering.
