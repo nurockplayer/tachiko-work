@@ -602,10 +602,27 @@ impl<'document> Evaluator<'document> {
     }
 
     fn lookup_value(&self, field: &FieldRef) -> Result<&'document Value, CalculationError> {
-        self.document
-            .entities
-            .get(&field.entity)
-            .and_then(|entity| entity.fields.get(&field.field))
+        let entity = self.document.entities.get(&field.entity).ok_or_else(|| {
+            CalculationError::MissingReference {
+                reference: field.clone(),
+            }
+        })?;
+        let definition = self
+            .document
+            .schemas
+            .get(&entity.schema)
+            .and_then(|schema| schema.fields.get(&field.field))
+            .ok_or_else(|| CalculationError::MissingReference {
+                reference: field.clone(),
+            })?;
+        if definition.field_type != FieldType::Number {
+            return Err(CalculationError::NonNumericReference {
+                reference: field.clone(),
+            });
+        }
+        entity
+            .fields
+            .get(&field.field)
             .ok_or_else(|| CalculationError::MissingReference {
                 reference: field.clone(),
             })
