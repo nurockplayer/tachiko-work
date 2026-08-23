@@ -117,6 +117,166 @@ fn merge_document() -> Document {
     document
 }
 
+fn assert_swapped_id_mismatches(
+    document: &Document,
+    expected_subjects: &[SemanticSubject],
+    first_id: &str,
+    second_id: &str,
+) {
+    let observations = validation_report(document)
+        .stable_observations()
+        .into_iter()
+        .filter(|observation| observation.code == DiagnosticCode::KEY_MISMATCH)
+        .collect::<Vec<_>>();
+
+    assert_eq!(observations.len(), 2);
+    assert!(
+        observations
+            .iter()
+            .all(|observation| observation.subjects == expected_subjects)
+    );
+    assert!(
+        observations
+            .iter()
+            .all(|observation| observation.severity == DiagnosticSeverity::Error)
+    );
+    assert!(
+        observations
+            .iter()
+            .all(|observation| observation.related_subjects.is_empty())
+    );
+    assert!(observations.iter().all(|observation| {
+        observation.provider == DiagnosticProvider::new("tachiko.semantic-core")
+    }));
+    assert_eq!(
+        observations
+            .into_iter()
+            .map(|observation| observation.facts)
+            .collect::<Vec<_>>(),
+        vec![
+            vec![
+                DiagnosticFact::new("declared_id", first_id),
+                DiagnosticFact::new("store_id", second_id),
+            ],
+            vec![
+                DiagnosticFact::new("declared_id", second_id),
+                DiagnosticFact::new("store_id", first_id),
+            ],
+        ]
+    );
+}
+
+#[test]
+fn swapped_schema_ids_preserve_both_directional_mismatches() {
+    let mut document = document();
+    document.entities.clear();
+    document.schemas = BTreeMap::from([
+        (
+            SchemaId::from("schema-a"),
+            Schema {
+                id: "schema-b".into(),
+                key: "schema-a".into(),
+                fields: BTreeMap::new(),
+            },
+        ),
+        (
+            SchemaId::from("schema-b"),
+            Schema {
+                id: "schema-a".into(),
+                key: "schema-b".into(),
+                fields: BTreeMap::new(),
+            },
+        ),
+    ]);
+
+    assert_swapped_id_mismatches(
+        &document,
+        &[
+            SemanticSubject::Schema(SchemaId::from("schema-a")),
+            SemanticSubject::Schema(SchemaId::from("schema-b")),
+        ],
+        "schema-a",
+        "schema-b",
+    );
+}
+
+#[test]
+fn swapped_entity_ids_preserve_both_directional_mismatches() {
+    let mut document = document();
+    document.entities = BTreeMap::from([
+        (
+            EntityId::from("entity-a"),
+            Entity {
+                id: "entity-b".into(),
+                key: "entity-a".into(),
+                schema: "schema".into(),
+                fields: BTreeMap::new(),
+            },
+        ),
+        (
+            EntityId::from("entity-b"),
+            Entity {
+                id: "entity-a".into(),
+                key: "entity-b".into(),
+                schema: "schema".into(),
+                fields: BTreeMap::new(),
+            },
+        ),
+    ]);
+
+    assert_swapped_id_mismatches(
+        &document,
+        &[
+            SemanticSubject::Entity(EntityId::from("entity-a")),
+            SemanticSubject::Entity(EntityId::from("entity-b")),
+        ],
+        "entity-a",
+        "entity-b",
+    );
+}
+
+#[test]
+fn swapped_schema_field_ids_preserve_both_directional_mismatches() {
+    let mut document = document();
+    document.entities.clear();
+    document.schemas.get_mut("schema").unwrap().fields = BTreeMap::from([
+        (
+            FieldId::from("field-a"),
+            FieldDefinition {
+                id: "field-b".into(),
+                key: "field-a".into(),
+                field_type: FieldType::Number,
+                required: false,
+            },
+        ),
+        (
+            FieldId::from("field-b"),
+            FieldDefinition {
+                id: "field-a".into(),
+                key: "field-b".into(),
+                field_type: FieldType::Number,
+                required: false,
+            },
+        ),
+    ]);
+
+    assert_swapped_id_mismatches(
+        &document,
+        &[
+            SemanticSubject::SchemaField {
+                schema: "schema".into(),
+                field: "field-a".into(),
+            },
+            SemanticSubject::SchemaField {
+                schema: "schema".into(),
+                field: "field-b".into(),
+            },
+        ],
+        "field-a",
+        "field-b",
+    );
+}
+
 #[test]
 fn independent_findings_accumulate_while_missing_schema_suppresses_cascades() {
     let mut document = document();

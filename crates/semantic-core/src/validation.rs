@@ -53,6 +53,18 @@ fn core_diagnostic(
         .with_presentation(path, message)
 }
 
+fn key_mismatch_diagnostic(
+    path: impl Into<String>,
+    message: impl Into<String>,
+    subjects: Vec<SemanticSubject>,
+    store_id: &str,
+    declared_id: &str,
+) -> Diagnostic {
+    core_diagnostic(path, DiagnosticCode::KEY_MISMATCH, message, subjects)
+        .with_fact(DiagnosticFact::new("store_id", store_id))
+        .with_fact(DiagnosticFact::new("declared_id", declared_id))
+}
+
 #[must_use]
 pub fn validate_document(document: &Document) -> Vec<Diagnostic> {
     validate_document_internal(document, true)
@@ -103,9 +115,8 @@ fn validate_schemas(document: &Document, diagnostics: &mut Vec<Diagnostic>) {
     for (schema_id, schema) in &document.schemas {
         let schema_path = format!("schemas.{schema_id}");
         if schema_id != &schema.id {
-            diagnostics.push(core_diagnostic(
+            diagnostics.push(key_mismatch_diagnostic(
                 format!("{schema_path}.id"),
-                DiagnosticCode::KEY_MISMATCH,
                 format!(
                     "schema store key '{schema_id}' does not match stable id '{}'",
                     schema.id
@@ -114,6 +125,8 @@ fn validate_schemas(document: &Document, diagnostics: &mut Vec<Diagnostic>) {
                     SemanticSubject::Schema(schema_id.clone()),
                     SemanticSubject::Schema(schema.id.clone()),
                 ],
+                schema_id.as_str(),
+                schema.id.as_str(),
             ));
         }
         validate_stable_id(
@@ -139,9 +152,8 @@ fn validate_schemas(document: &Document, diagnostics: &mut Vec<Diagnostic>) {
                 field: field_id.clone(),
             };
             if field_id != &definition.id {
-                diagnostics.push(core_diagnostic(
+                diagnostics.push(key_mismatch_diagnostic(
                     format!("{field_path}.id"),
-                    DiagnosticCode::KEY_MISMATCH,
                     format!(
                         "field store key '{field_id}' does not match stable id '{}'",
                         definition.id
@@ -153,6 +165,8 @@ fn validate_schemas(document: &Document, diagnostics: &mut Vec<Diagnostic>) {
                             field: definition.id.clone(),
                         },
                     ],
+                    field_id.as_str(),
+                    definition.id.as_str(),
                 ));
             }
             validate_stable_id(
@@ -195,9 +209,8 @@ fn validate_entities(
         let entity_path = format!("entities.{entity_id}");
         let entity_subject = SemanticSubject::Entity(entity_id.clone());
         if entity_id != &entity.id {
-            diagnostics.push(core_diagnostic(
+            diagnostics.push(key_mismatch_diagnostic(
                 format!("{entity_path}.id"),
-                DiagnosticCode::KEY_MISMATCH,
                 format!(
                     "entity store key '{entity_id}' does not match stable id '{}'",
                     entity.id
@@ -206,6 +219,8 @@ fn validate_entities(
                     entity_subject.clone(),
                     SemanticSubject::Entity(entity.id.clone()),
                 ],
+                entity_id.as_str(),
+                entity.id.as_str(),
             ));
         }
         validate_stable_id(
