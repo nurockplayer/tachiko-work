@@ -275,8 +275,6 @@ fn core_invalid_formula_prerequisites_suppress_cascades_but_not_independent_fail
     assert!(codes.contains(&DiagnosticCode::MISSING_REQUIRED_FIELD));
     assert!(codes.contains(&DiagnosticCode::TYPE_MISMATCH));
     assert!(codes.contains(&DiagnosticCode::KEY_MISMATCH));
-    assert!(!codes.contains(&diagnostic_codes::FORMULA_MISSING_INPUT));
-    assert!(!codes.contains(&diagnostic_codes::FORMULA_NON_NUMERIC_INPUT));
 
     let division_failures = report
         .diagnostics()
@@ -322,7 +320,7 @@ fn cascade_suppression_is_specific_to_the_authoritative_formula_failure() {
                 left: Box::new(number(1.0)),
                 right: Box::new(number(0.0)),
             }),
-            right: Box::new(reference("entity", "required-input")),
+            right: Box::new(number(1.0)),
         },
     );
     formula(
@@ -330,7 +328,7 @@ fn cascade_suppression_is_specific_to_the_authoritative_formula_failure() {
         "cycle-a",
         Expression::Add {
             left: Box::new(reference("entity", "cycle-b")),
-            right: Box::new(reference("entity", "required-input")),
+            right: Box::new(number(1.0)),
         },
     );
     formula(&mut document, "cycle-b", reference("entity", "cycle-a"));
@@ -345,7 +343,7 @@ fn cascade_suppression_is_specific_to_the_authoritative_formula_failure() {
                 ))]
     }));
     assert!(!report.diagnostics().iter().any(|diagnostic| {
-        diagnostic.code == diagnostic_codes::FORMULA_MISSING_INPUT
+        diagnostic.code == diagnostic_codes::FORMULA_INVALID_REFERENCES
             && diagnostic.subjects
                 == [SemanticSubject::EntityField(FieldRef::new(
                     "entity",

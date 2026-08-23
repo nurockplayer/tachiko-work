@@ -129,9 +129,7 @@ fn calculated_record(document: &Document) -> Record {
         }
         Err(CalculationError::DivisionByZero { .. }) => Record::failure(DIVISION_BY_ZERO, 0),
         Err(CalculationError::NonFiniteResult { .. }) => Record::failure(NON_FINITE, 0),
-        Err(CalculationError::Cycle { members }) => {
-            Record::failure(CYCLE, members.len() as u64)
-        }
+        Err(CalculationError::Cycle { path }) => Record::failure(CYCLE, path.len() as u64),
         Err(_) => Record::failure(UNEXPECTED, 0),
     }
 }
@@ -842,7 +840,7 @@ fn validation_accumulation_record() -> Record {
         FieldId::from("cycle-a"),
         Value::Formula(Expression::Add {
             left: Box::new(Expression::Reference(FieldRef::new("entity", "cycle-b"))),
-            right: Box::new(Expression::Reference(FieldRef::new("entity", "required"))),
+            right: Box::new(numeric(1.0)),
         }),
     );
     entity.fields.insert(
@@ -895,7 +893,7 @@ fn validation_accumulation_record() -> Record {
                 left: Box::new(numeric(1.0)),
                 right: Box::new(numeric(0.0)),
             }),
-            right: Box::new(Expression::Reference(FieldRef::new("entity", "required"))),
+            right: Box::new(numeric(1.0)),
         }),
     );
     document.entities.insert(
@@ -922,8 +920,6 @@ fn validation_accumulation_record() -> Record {
         && codes.contains(&diagnostic_codes::FORMULA_CYCLE)
         && codes.contains(&diagnostic_codes::FORMULA_FAILED_DEPENDENCY)
         && codes.contains(&diagnostic_codes::FORMULA_DIVISION_BY_ZERO)
-        && !codes.contains(&diagnostic_codes::FORMULA_MISSING_INPUT)
-        && !codes.contains(&diagnostic_codes::FORMULA_NON_NUMERIC_INPUT)
         && report.diagnostics().iter().any(|diagnostic| {
             diagnostic.code == DiagnosticCode::TYPE_MISMATCH
                 && diagnostic.subjects
@@ -1055,51 +1051,41 @@ fn disjoint_cycle_document(reverse_insertion: bool) -> Document {
 }
 
 fn disjoint_cycle_record() -> Record {
-    let CalculationOutcome::Failed(forward) = calculate_full(&disjoint_cycle_document(false))
-    else {
-        return Record::failure(UNEXPECTED, 34);
+    let forward = validation_report(&disjoint_cycle_document(false));
+    let reversed = validation_report(&disjoint_cycle_document(true));
+    let repeated = validation_report(&disjoint_cycle_document(false));
+    let subjects = |fields: &[&str]| {
+        fields
+            .iter()
+            .map(|field| SemanticSubject::EntityField(FieldRef::new("entity", *field)))
+            .collect::<Vec<_>>()
     };
-    let CalculationOutcome::Failed(reversed) = calculate_full(&disjoint_cycle_document(true))
-    else {
-        return Record::failure(UNEXPECTED, 35);
+    let cycles = forward
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| diagnostic.code == diagnostic_codes::FORMULA_CYCLE)
+        .collect::<Vec<_>>();
+    let dependency = |formula: &str, failed: &str| {
+        forward.diagnostics().iter().any(|diagnostic| {
+            diagnostic.code == diagnostic_codes::FORMULA_FAILED_DEPENDENCY
+                && diagnostic.subjects == subjects(&[formula])
+                && diagnostic.related_subjects == subjects(&[failed])
+        })
     };
-    let repeated = calculate_full(&disjoint_cycle_document(false));
-    let field = |id| FieldRef::new("entity", id);
-    let a_cycle = BTreeSet::from([field("a-cycle-1"), field("a-cycle-2")]);
-    let b_cycle = BTreeSet::from([
-        field("b-cycle-1"),
-        field("b-cycle-2"),
-        field("b-cycle-3"),
-    ]);
-    let exact = forward == reversed
-        && repeated == CalculationOutcome::Failed(forward.clone())
-        && a_cycle.iter().all(|member| {
-            matches!(
-                forward.failure(member),
-                Some(FormulaFailure::Cycle { members }) if members.as_ref() == &a_cycle
-            )
-        })
-        && b_cycle.iter().all(|member| {
-            matches!(
-                forward.failure(member),
-                Some(FormulaFailure::Cycle { members }) if members.as_ref() == &b_cycle
-            )
-        })
-        && forward.failure(&field("depends-a"))
-            == Some(&FormulaFailure::FailedDependency {
-                dependencies: BTreeSet::from([field("a-cycle-1")]),
-            })
-        && forward.failure(&field("depends-b"))
-            == Some(&FormulaFailure::FailedDependency {
-                dependencies: BTreeSet::from([field("b-cycle-2")]),
-            });
+    let exact = forward.stable_observations() == reversed.stable_observations()
+        && repeated == forward
+        && cycles.len() == 2
+        && cycles[0].subjects == subjects(&["a-cycle-1", "a-cycle-2"])
+        && cycles[1].subjects == subjects(&["b-cycle-1", "b-cycle-2", "b-cycle-3"])
+        && dependency("depends-a", "a-cycle-1")
+        && dependency("depends-b", "b-cycle-2");
     if !exact {
-        return Record::failure(UNEXPECTED, forward.failures().len() as u64);
+        return Record::failure(UNEXPECTED, forward.diagnostics().len() as u64);
     }
     Record {
-        class: FORMULA_FAILURE_REPORT,
-        bits: forward.failures().len() as u64,
-        auxiliary: formula_failure_fingerprint(&forward),
+        class: VALIDATION_REPORT,
+        bits: forward.diagnostics().len() as u64,
+        auxiliary: validation_fingerprint(&forward),
     }
 }
 

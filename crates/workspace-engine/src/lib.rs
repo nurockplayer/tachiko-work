@@ -9,9 +9,9 @@ use serde::Serialize;
 use tachiko_diff_engine::diff;
 pub use tachiko_diff_engine::{DiffError, SemanticChange, SemanticDiff};
 use tachiko_formula_engine::{
-    Calculation, CalculationFailureReport, CalculationOutcome, FormulaBindError, FormulaFailure,
-    FormulaParseError, bind_expression, calculate_full, parse_expression, project_expression,
-    validate_expression_structure,
+    Calculation, CalculationFailure, CalculationFailures, CalculationOutcome, FormulaBindError,
+    FormulaParseError, ReferenceFailure, bind_expression, calculate_complete, parse_expression,
+    project_expression, validate_expression_structure,
 };
 pub use tachiko_formula_engine::{
     CalculationError, CanonicalAuthoringProjectionError, ExpressionComplexityError,
@@ -42,9 +42,6 @@ pub mod diagnostic_codes {
     pub const FORMULA_CYCLE: DiagnosticCode = DiagnosticCode::new("formula.cycle");
     pub const FORMULA_FAILED_DEPENDENCY: DiagnosticCode =
         DiagnosticCode::new("formula.failed_dependency");
-    pub const FORMULA_MISSING_INPUT: DiagnosticCode = DiagnosticCode::new("formula.missing_input");
-    pub const FORMULA_NON_NUMERIC_INPUT: DiagnosticCode =
-        DiagnosticCode::new("formula.non_numeric_input");
     pub const FORMULA_DIVISION_BY_ZERO: DiagnosticCode =
         DiagnosticCode::new("formula.division_by_zero");
     pub const FORMULA_NON_FINITE_RESULT: DiagnosticCode =
@@ -1183,7 +1180,7 @@ pub fn validation_report(document: &Document) -> ValidationReport {
 fn semantic_validation(document: &Document) -> (ValidationReport, Option<Calculation>) {
     let mut diagnostics = validate_document_core(document);
     let core_diagnostics = diagnostics.clone();
-    let calculation = match calculate_full(document) {
+    let calculation = match calculate_complete(document) {
         CalculationOutcome::Complete(calculation) => Some(calculation),
         CalculationOutcome::Failed(failures) => {
             diagnostics.extend(formula_diagnostics(document, &failures, &core_diagnostics));
@@ -1225,7 +1222,7 @@ const FORMULA_PROVIDER: DiagnosticProvider = DiagnosticProvider::new("tachiko.fo
 
 fn formula_diagnostics(
     document: &Document,
-    report: &CalculationFailureReport,
+    report: &CalculationFailures,
     core_diagnostics: &[Diagnostic],
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
@@ -1241,7 +1238,7 @@ fn formula_diagnostics(
         let subject = SemanticSubject::EntityField(formula.clone());
         let path = formula_path(document, address_index.as_ref(), formula);
         let diagnostic = match failure {
-            FormulaFailure::Structural { error } => formula_diagnostic(
+            CalculationFailure::InvalidExpression { error } => formula_diagnostic(
                 diagnostic_codes::FORMULA_STRUCTURAL,
                 vec![subject],
                 path,
@@ -1255,23 +1252,15 @@ fn formula_diagnostics(
                     ExpressionComplexityError::CanonicalLengthLimit => "canonical_length_limit",
                 },
             )),
-            FormulaFailure::InvalidReferences {
-                missing,
-                non_numeric,
-            } => {
+            CalculationFailure::InvalidReferences { targets } => {
                 let Some(diagnostic) = project_invalid_reference_diagnostic(
-                    document,
-                    formula,
-                    path,
-                    missing,
-                    non_numeric,
-                    &blockers.declarations,
+                    document, formula, path, targets, &blockers,
                 ) else {
                     continue;
                 };
                 diagnostic
             }
-            FormulaFailure::Cycle { members } => formula_diagnostic(
+            CalculationFailure::Cycle { members } => formula_diagnostic(
                 diagnostic_codes::FORMULA_CYCLE,
                 members
                     .iter()
@@ -1281,7 +1270,7 @@ fn formula_diagnostics(
                 path,
                 format!("formula dependency cycle contains {} values", members.len()),
             ),
-            FormulaFailure::FailedDependency { dependencies } => {
+            CalculationFailure::FailedDependencies { dependencies } => {
                 let Some(diagnostic) = project_failed_dependency_diagnostic(
                     document,
                     formula,
@@ -1293,32 +1282,13 @@ fn formula_diagnostics(
                 };
                 diagnostic
             }
-            FormulaFailure::MissingInput { reference } => formula_diagnostic(
-                diagnostic_codes::FORMULA_MISSING_INPUT,
-                vec![subject],
-                path,
-                format!("formula '{formula}' requires a missing input"),
-            )
-            .with_related_subjects(vec![SemanticSubject::EntityField(reference.clone())]),
-            FormulaFailure::NonNumericInput { reference } => formula_diagnostic(
-                diagnostic_codes::FORMULA_NON_NUMERIC_INPUT,
-                vec![subject],
-                path,
-                format!("formula '{formula}' requires a numeric input"),
-            )
-            .with_related_subjects(vec![SemanticSubject::EntityField(reference.clone())])
-            .with_fact(DiagnosticFact::new("expected_kind", "number"))
-            .with_fact(DiagnosticFact::new(
-                "actual_kind",
-                value_kind_at(document, reference),
-            )),
-            FormulaFailure::DivisionByZero => formula_diagnostic(
+            CalculationFailure::DivisionByZero => formula_diagnostic(
                 diagnostic_codes::FORMULA_DIVISION_BY_ZERO,
                 vec![subject],
                 path,
                 format!("formula '{formula}' divided by zero"),
             ),
-            FormulaFailure::NonFiniteResult => formula_diagnostic(
+            CalculationFailure::NonFiniteResult => formula_diagnostic(
                 diagnostic_codes::FORMULA_NON_FINITE_RESULT,
                 vec![subject],
                 path,
@@ -1330,20 +1300,32 @@ fn formula_diagnostics(
     diagnostics
 }
 
-fn is_noncanonical_cycle(formula: &FieldRef, failure: &FormulaFailure) -> bool {
-    matches!(failure, FormulaFailure::Cycle { members } if members.first() != Some(formula))
+fn is_noncanonical_cycle(formula: &FieldRef, failure: &CalculationFailure) -> bool {
+    matches!(failure, CalculationFailure::Cycle { members } if members.first() != Some(formula))
 }
 
 fn project_invalid_reference_diagnostic(
     document: &Document,
     formula: &FieldRef,
     path: String,
-    missing: &BTreeSet<FieldRef>,
-    non_numeric: &BTreeSet<FieldRef>,
-    blocked_subjects: &BTreeSet<SemanticSubject>,
+    targets: &BTreeMap<FieldRef, ReferenceFailure>,
+    blockers: &FormulaPrerequisiteBlockers,
 ) -> Option<Diagnostic> {
-    let missing = available_formula_fields(document, missing, blocked_subjects);
-    let non_numeric = available_formula_fields(document, non_numeric, blocked_subjects);
+    let mut missing = BTreeSet::new();
+    let mut non_numeric = BTreeSet::new();
+    for (target, failure) in targets {
+        if !invalid_reference_prerequisites_available(document, target, *failure, blockers) {
+            continue;
+        }
+        match failure {
+            ReferenceFailure::Missing => {
+                missing.insert(target.clone());
+            }
+            ReferenceFailure::NonNumeric => {
+                non_numeric.insert(target.clone());
+            }
+        }
+    }
     if missing.is_empty() && non_numeric.is_empty() {
         return None;
     }
@@ -1430,26 +1412,45 @@ fn formula_diagnostic(
 fn formula_prerequisites_available(
     document: &Document,
     formula: &FieldRef,
-    failure: &FormulaFailure,
+    failure: &CalculationFailure,
     blockers: &FormulaPrerequisiteBlockers,
 ) -> bool {
     if !field_prerequisites_available(document, formula, &blockers.values) {
         return false;
     }
     match failure {
-        FormulaFailure::Structural { .. }
-        | FormulaFailure::InvalidReferences { .. }
-        | FormulaFailure::FailedDependency { .. }
-        | FormulaFailure::DivisionByZero
-        | FormulaFailure::NonFiniteResult => true,
-        FormulaFailure::Cycle { members } => members
+        CalculationFailure::InvalidExpression { .. }
+        | CalculationFailure::InvalidReferences { .. }
+        | CalculationFailure::FailedDependencies { .. }
+        | CalculationFailure::DivisionByZero
+        | CalculationFailure::NonFiniteResult => true,
+        CalculationFailure::Cycle { members } => members
             .iter()
             .all(|member| field_prerequisites_available(document, member, &blockers.values)),
-        FormulaFailure::MissingInput { reference }
-        | FormulaFailure::NonNumericInput { reference } => {
-            field_prerequisites_available(document, reference, &blockers.values)
-        }
     }
+}
+
+fn invalid_reference_prerequisites_available(
+    document: &Document,
+    target: &FieldRef,
+    failure: ReferenceFailure,
+    blockers: &FormulaPrerequisiteBlockers,
+) -> bool {
+    let blocked_subjects = match failure {
+        ReferenceFailure::Missing => &blockers.values,
+        ReferenceFailure::NonNumeric
+            if document
+                .entities
+                .get(&target.entity)
+                .and_then(|entity| document.schemas.get(&entity.schema))
+                .and_then(|schema| schema.fields.get(&target.field))
+                .is_some_and(|definition| definition.field_type == FieldType::Number) =>
+        {
+            &blockers.values
+        }
+        ReferenceFailure::NonNumeric => &blockers.declarations,
+    };
+    field_prerequisites_available(document, target, blocked_subjects)
 }
 
 fn field_prerequisites_available(
@@ -1552,21 +1553,6 @@ fn field_ref_fact(field: &FieldRef) -> String {
         field.field.as_str().len(),
         field.field
     )
-}
-
-fn value_kind_at(document: &Document, field: &FieldRef) -> &'static str {
-    match document
-        .entities
-        .get(&field.entity)
-        .and_then(|entity| entity.fields.get(&field.field))
-    {
-        Some(Value::Number(_)) => "number",
-        Some(Value::Text(_)) => "text",
-        Some(Value::Boolean(_)) => "boolean",
-        Some(Value::Reference(_)) => "reference",
-        Some(Value::Formula(_)) => "formula",
-        None => "missing",
-    }
 }
 
 fn preflight_formula_projections(document: &Document) -> Result<(), WorkspaceError> {

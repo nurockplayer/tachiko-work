@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (- [ ]) syntax for tracking.
 
-**Goal:** Implement Issue #89 as the first authoritative first-party semantic ValidationReport and complete ADR-0018 formula failure oracle, while preserving ADR-0016 layering and keeping operation-specific projection/output gates distinct from semantic validity.
+**Goal:** Implement Issue #89 as the first authoritative first-party semantic ValidationReport over the ADR-0018 full formula failure oracle, while preserving ADR-0016 layering and keeping operation-specific projection/output gates distinct from semantic validity.
 
-**Architecture:** semantic-core owns only generic diagnostic, location, stable-subject, fact, severity, and opaque provider primitives plus its existing core validation rules. formula-engine owns a full deterministic node-keyed calculation outcome and retains calculate only as a compatibility projection of that outcome. workspace-engine composes core semantic diagnostics and formula failures into the single authoritative ValidationReport, while finalizers apply any additional projection/output preflight as explicitly separate gates. Adapters render or transport the report without becoming semantic authorities.
+**Architecture:** semantic-core owns only generic diagnostic, location, stable-subject, fact, severity, and opaque provider primitives plus its existing core validation rules. formula-engine owns the #90-implemented deterministic node-keyed calculation outcome and retains calculate only as a compatibility projection of that outcome. workspace-engine composes core semantic diagnostics and formula failures into the single authoritative ValidationReport, while finalizers apply any additional projection/output preflight as explicitly separate gates. Adapters render or transport the report without becoming semantic authorities.
 
 **Tech Stack:** Rust 2024, Cargo workspace, Bash/Node verification scripts, Rust 1.85 MSRV, wasm32-unknown-unknown.
 
@@ -12,7 +12,7 @@
 
 ## Global constraints
 
-- Start from origin/main 342f69f2fc252554c240650d1438cc0d6cd82e2f on branch codex/issue-89-validation-report; reconcile later mainline changes before handoff. The branch was rebased onto 16289f8a5acd48ca7fa36b265b7fdfe7df0e4d12 after #92 and the isolated #26 spike landed.
+- Start from origin/main 342f69f2fc252554c240650d1438cc0d6cd82e2f on branch codex/issue-89-validation-report; reconcile later mainline changes before handoff. The branch was ultimately rebased onto 6ad364755566bc604e69800c8656868dab60a365 after #97 landed #90's ADR-0018 formula oracle.
 - Keep semantic-core diagnostic primitives generic. Provider identity is opaque and internal; semantic-core must not encode formula-engine or higher-layer taxonomies.
 - Make the ADR-0018 full formula outcome authoritative. Compatibility calculate behavior must be derived from it.
 - Stable observations are diagnostic meaning, classification/severity, stable semantic subjects and related subjects/facts, provider identity, and deterministic ordering.
@@ -22,10 +22,10 @@
 - Preserve ADR-0016 crate layering and storage/numeric behavior.
 - Do not stabilize #10 contracts, design #26 transport/runtime, solve #13 progressive typing, design #17 plugins, start #41 roproj, add a common diagnostics crate, or introduce a constraint DSL.
 
-## Audited ownership before migration
+## Initial audited ownership before migration
 
 - semantic-core owns the current fail-accumulating document validator, but its Diagnostic identity is effectively path-first and lacks severity, stable subjects, facts, and provider provenance.
-- formula-engine owns parsing, binding, dependency extraction, and evaluation, but calculate is fail-first and exposes a DFS cycle witness rather than a complete node-keyed failure oracle.
+- On the initial base, formula-engine owned parsing, binding, dependency extraction, and evaluation but calculate was fail-first. #97 landed #90's complete node-keyed oracle during implementation, so the final #89 diff consumes that upstream authority without changing formula-engine.
 - workspace-engine repeats validate-then-calculate sequencing across first-party operations and separately applies formula projection preflight in authoring/finalization paths.
 - merge-engine, AI, CLI, storage, and the portable harness consume legacy validation or calculation surfaces. Storage representation checks remain out of scope; adapters must consume the workspace report without taking ownership.
 - The clean base passes 219 workspace tests across 29 suites.
@@ -48,20 +48,18 @@
 - [x] Expose a core semantic-validation pass suitable for workspace composition while retaining the legacy validate_document compatibility behavior needed by current storage consumers.
 - [x] Run semantic-core tests and capture GREEN.
 
-### Task 2: Implement the authoritative ADR-0018 full formula outcome
+### Task 2: Consume the authoritative ADR-0018 full formula outcome
 
-**Files:**
-- Modify: crates/formula-engine/src/lib.rs
-- Create: crates/formula-engine/tests/full_failure_oracle.rs
-- Modify: crates/formula-engine/tests/calculation.rs
+**Authority read without final #89 changes:**
+- crates/formula-engine/src/lib.rs
+- crates/formula-engine/tests/complete_oracle.rs
+- crates/formula-engine/tests/calculation.rs
 
-- [x] Write failing tests for independent structural and binding failures, precedence, complete SCC membership, multi-node SCCs, directly failed dependencies, local evaluation failures, deterministic node ordering, and all-or-nothing Calculation publication.
-- [x] Run the focused formula tests and capture RED.
-- [x] Introduce a full calculation outcome with failures keyed by stable FieldRef subjects and dependencies represented as deterministic stable sets.
-- [x] Build structural/binding failures first, detect complete SCC semantic membership without exposing an algorithm or witness rule, then propagate direct failed dependencies before local evaluation.
-- [x] Publish Calculation only when every formula node succeeds.
-- [x] Reimplement calculate as a deterministic compatibility projection of the full outcome.
-- [x] Preserve stack safety and run all formula-engine tests GREEN.
+- [x] Verify #90's `calculate_complete()` exposes node-keyed failures, complete SCC membership, direct failed dependencies, static dependency sets, precedence, and no partial `Calculation`.
+- [x] Remove the superseded branch-local formula implementation and duplicate oracle suite during the rebase onto #97.
+- [x] Adapt workspace diagnostics to `CalculationFailure`, `CalculationFailures`, and `ReferenceFailure` without reinterpreting the formula authority.
+- [x] Preserve formula-engine source and tests exactly as current `origin/main`.
+- [x] Run the upstream formula tests as part of the workspace gate.
 
 ### Task 3: Compose one authoritative workspace ValidationReport
 
@@ -101,7 +99,7 @@
 - Modify as required: scripts/portable-conformance-check.sh
 
 - [x] Add stable observation records for independent diagnostics, rename-invariant subjects, complete SCC membership, direct failed dependencies, precedence, and all-or-nothing failure.
-- [x] Remove DFS-witness/path identity from portable oracles.
+- [x] Exclude compatibility cycle witnesses and human paths/messages from the new stable ValidationReport fingerprints.
 - [x] Run bash scripts/portable-conformance-check.sh and require exact native/WASM equality.
 
 ### Task 6: Reconcile implementation-state documentation
@@ -121,8 +119,8 @@
 ### Task 7: Verify, independently review, and hand off
 
 - [x] Run formatting and focused lint/tests.
-- [x] Run the complete bash scripts/release-check.sh gate from a clean committed tree.
-- [x] Dispatch two independent read-only reviews: one against ADR-0018 and one against ADR-0019 plus Issue #89.
-- [x] Fix every P0/P1/P2 finding and rerun affected focused tests plus the release-equivalent gate.
-- [x] Commit atomic implementation milestones and push codex/issue-89-validation-report.
-- [x] Open one focused unmerged PR documenting before/after ownership, stable observations, formula-oracle evidence, semantic/finalization reconciliation, native/WASM and release-gate results, explicit #10/#13/#17/#26/#41 deferrals, and Closes #89.
+- [ ] Run the complete bash scripts/release-check.sh gate from a clean committed tree after the #97 reconciliation.
+- [ ] Dispatch two exact-head independent read-only reviews: one against ADR-0018 and one against ADR-0019 plus Issue #89.
+- [ ] Fix every P0/P1/P2 finding and rerun affected focused tests plus the release-equivalent gate.
+- [ ] Commit and force-push the reconciled `codex/issue-89-validation-report` branch with lease.
+- [ ] Refresh focused unmerged PR #99 with before/after ownership, stable observations, formula-oracle evidence, semantic/finalization reconciliation, native/WASM and release-gate results, explicit #10/#13/#17/#26/#41 deferrals, and `Closes #89`.

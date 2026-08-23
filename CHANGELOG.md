@@ -36,10 +36,6 @@ All notable changes to Tachiko Work are documented in this file.
   presentation-only paths/messages. Workspace validation is shared across
   queries, mutations, and merge finalization while authoring projection remains
   an explicit operation gate.
-- Formula calculation now derives fail-first compatibility errors from the
-  authoritative ADR-0018 full outcome: node-keyed structural/binding failures,
-  complete cyclic SCC membership, direct failed dependencies, local evaluation
-  precedence, and no partial `Calculation` on failure.
 
 ### Added
 

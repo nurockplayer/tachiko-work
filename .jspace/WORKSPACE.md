@@ -948,27 +948,30 @@ exact-head reviews remain before PR handoff.
 
 ### Goal and authority
 
-- Implement the first authoritative first-party semantic ValidationReport and
-  the complete ADR-0018 formula failure oracle as conformance work, not an
+- Implement the first authoritative first-party semantic `ValidationReport`
+  over the complete ADR-0018 formula failure oracle as conformance work, not an
   architecture redesign.
 - Worktree branch: `codex/issue-89-validation-report`, created from
-  `origin/main` `342f69f2fc252554c240650d1438cc0d6cd82e2f` and rebased onto current
-  `origin/main` `16289f8a5acd48ca7fa36b265b7fdfe7df0e4d12` after #92 and the isolated
-  #26 spike landed. The #92 schema-authority and adversarial stack-safety
-  coverage remains intact.
+  `origin/main` `342f69f2fc252554c240650d1438cc0d6cd82e2f`, then rebased through #92 and
+  the isolated #26 spike. It is now rebased onto current `origin/main`
+  `6ad364755566bc604e69800c8656868dab60a365` after #97 landed the #90-owned
+  ADR-0018 full formula oracle. The upstream formula implementation and its
+  conformance suite are retained unchanged.
 - Authority: Issue #89; Accepted ADR-0015 through ADR-0019; the validation,
   diagnostics, formula, and schema specifications; the Product Constitution
   and Design Principles; and the knowledge authority/reconciliation policies.
 - The clean base passes 219 workspace tests across 29 suites.
 
-### Audited ownership before migration
+### Initial audited ownership before migration
 
 - semantic-core's accumulating validator owns current document rules, but its
   diagnostic identity is path-first and has no stable semantic subjects,
   related machine facts, severity, or provider provenance.
-- formula-engine owns structural analysis, binding, dependencies, cycle
-  detection, and evaluation, but exposes only fail-first `calculate()` errors
-  and DFS cycle witnesses rather than the Accepted ADR-0018 full oracle.
+- At the initial base, formula-engine owned structural analysis, binding,
+  dependencies, cycle detection, and evaluation but exposed only fail-first
+  `calculate()` errors. During implementation, #97 landed #90's authoritative
+  `calculate_complete()` outcome on main; #89 now consumes that authority and
+  carries no formula-engine source or test delta.
 - workspace-engine repeats validate/calculate sequencing across first-party
   operations and separately performs formula projection preflight in
   authoring/finalization paths.
@@ -981,11 +984,12 @@ exact-head reviews remain before PR handoff.
 1. Add only generic semantic-core diagnostic/location/fact primitives,
    including opaque provider identity, with no formula or higher-layer
    taxonomy.
-2. Implement an authoritative full formula outcome keyed by stable field
+2. Consume #90's authoritative full formula outcome keyed by stable field
    subjects: structural, then binding/type/stale target, complete SCC
-   membership, direct failed dependencies, and local evaluation.
-3. Derive legacy fail-first `calculate()` behavior from that outcome and
-   publish Calculation only on total success.
+   membership, direct failed dependencies, and local evaluation. Remove the
+   superseded branch-local oracle implementation rather than duplicating it.
+3. Preserve #90's compatibility `calculate()` projection and all-or-nothing
+   `Calculation` publication unchanged.
 4. Compose core and formula observations once in workspace-engine as the
    authoritative semantic ValidationReport with deterministic ordering and
    prerequisite/cascade suppression.
@@ -1017,12 +1021,12 @@ The detailed executable plan is
   severity, stable semantic subject/location/fact primitives, and opaque
   provider identity plus its own core rules. It contains no formula/workspace
   provider taxonomy or reverse dependency.
-- formula-engine's `calculate_full()` is the authoritative ADR-0018 outcome:
-  structural, binding/type/stale target, complete cyclic SCC membership, direct
-  failed dependencies, then left-to-right local evaluation. Failures are keyed
-  by stable value nodes, all static edges are retained, and failed outcomes
-  expose no partial `Calculation`. Compatibility `calculate()` is derived from
-  that outcome; the DFS evaluator and cycle-witness authority were removed.
+- formula-engine's #90-owned `calculate_complete()` is the authoritative
+  ADR-0018 outcome: structural, binding/type/stale target, complete cyclic SCC
+  membership, direct failed dependencies, then left-to-right local evaluation.
+  Failures are keyed by stable value nodes, all static edges are retained, and
+  failed outcomes expose no partial `Calculation`. Compatibility `calculate()`
+  remains a presentation-oriented projection of that outcome.
 - workspace-engine composes core rules and formula outcomes into one
   deterministic `ValidationReport`. Stable observations include symbolic
   meaning, severity, stable subjects/related facts, and opaque provenance;
@@ -1036,23 +1040,19 @@ The detailed executable plan is
   Storage representation validation remains unchanged and sibling-owned.
 - AI propagates the workspace report rather than reconstructing semantic
   diagnostics; CLI continues to render workspace errors at the adapter.
-- TDD evidence covers independent accumulation, cascade suppression,
-  rename-stable observations, multi-subject duplicates/cycles/dependencies,
-  full formula precedence, all-or-nothing calculation, and
-  validation/finalization agreement.
-- The post-rebase workspace passes 253 tests across 34 suites with
-  warning-denied Clippy. The portable corpus executes 34 fixed production
-  records and matches exact stable observations natively and on
+- TDD evidence covers independent accumulation, phase- and fact-specific
+  cascade suppression, rename-stable observations, multi-subject
+  duplicates/cycles/dependencies, and validation/finalization agreement. The
+  upstream #90 suite remains the formula precedence and all-or-nothing oracle.
+- Pre-release post-rebase evidence passes 250 tests across 41 suites with
+  warning-denied Clippy. The portable corpus executes 31 fixed production
+  records—27 upstream formula/storage/workspace/AI records plus four
+  `ValidationReport` records—and matches exact observations natively and on
   `wasm32-unknown-unknown`.
-- Independent ADR-0018 and ADR-0019/#89 review cycles found no P0. Their P1
-  and P2 findings are addressed by shared SCC membership storage,
-  compatibility selection that follows stable left-to-right legacy behavior,
-  phase- and fact-specific prerequisite filtering, explicit validation operand
-  roles, complete portable dependency fingerprints, and generated/disjoint
-  SCC determinism evidence.
-- Final exact-head ADR-0018 and ADR-0019/#89 re-reviews report no actionable
-  P0/P1/P2. The complete release-equivalent gate passes, including Clippy,
-  Rustdoc, MSRV, packaging, four workflow smokes, native archive verification,
-  and publication-safety checks.
-- Handoff is PR #99 from `codex/issue-89-validation-report`; GitHub CI and
-  CodeRabbit are green, and the PR remains open and unmerged.
+- Earlier review findings are retained in the workspace-owned adapter: complete
+  SCC projection, phase- and fact-specific prerequisite filtering, explicit
+  validation operand roles, and disjoint-SCC deterministic report evidence.
+  Exact-head post-#97 reviews and the release-equivalent gate remain pending.
+- Handoff remains PR #99 from `codex/issue-89-validation-report`; the local
+  post-#97 reconciliation is pending its final reviewed force-push. The PR stays
+  open and unmerged.
