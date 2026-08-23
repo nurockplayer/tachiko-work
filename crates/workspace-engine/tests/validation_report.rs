@@ -751,6 +751,36 @@ fn cascade_suppression_filters_each_direct_failed_dependency() {
 }
 
 #[test]
+fn failed_dependency_is_suppressed_when_its_cycle_failure_did_not_survive() {
+    let mut document = document();
+    formula(&mut document, "cycle-a", reference("entity", "cycle-b"));
+    formula(&mut document, "cycle-b", reference("entity", "cycle-a"));
+    formula(&mut document, "downstream", reference("entity", "cycle-a"));
+    document
+        .schemas
+        .get_mut("schema")
+        .unwrap()
+        .fields
+        .get_mut("cycle-b")
+        .unwrap()
+        .id = "different-stable-id".into();
+
+    let report = validation_report(&document);
+
+    assert!(report.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code == DiagnosticCode::KEY_MISMATCH
+            && diagnostic.subjects.contains(&SemanticSubject::SchemaField {
+                schema: "schema".into(),
+                field: "cycle-b".into(),
+            })
+    }));
+    assert!(!report.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code == diagnostic_codes::FORMULA_CYCLE
+            || diagnostic.code == diagnostic_codes::FORMULA_FAILED_DEPENDENCY
+    }));
+}
+
+#[test]
 fn large_scc_projects_one_complete_workspace_diagnostic() {
     const MEMBER_COUNT: usize = 4_096;
 

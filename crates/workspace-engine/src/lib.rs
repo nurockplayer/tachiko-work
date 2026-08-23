@@ -1226,6 +1226,8 @@ fn formula_diagnostics(
     core_diagnostics: &[Diagnostic],
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
+    let mut surviving_failures = BTreeSet::new();
+    let mut pending_failed_dependencies = Vec::new();
     let blockers = formula_prerequisite_blockers(core_diagnostics);
     let address_index = AddressIndex::build(document).ok();
     for (formula, failure) in report.failures() {
@@ -1235,8 +1237,12 @@ fn formula_diagnostics(
         if !formula_prerequisites_available(document, formula, failure, &blockers) {
             continue;
         }
-        let subject = SemanticSubject::EntityField(formula.clone());
         let path = formula_path(document, address_index.as_ref(), formula);
+        if let CalculationFailure::FailedDependencies { dependencies } = failure {
+            pending_failed_dependencies.push((formula, path, dependencies));
+            continue;
+        }
+        let subject = SemanticSubject::EntityField(formula.clone());
         let diagnostic = match failure {
             CalculationFailure::InvalidExpression { error } => formula_diagnostic(
                 diagnostic_codes::FORMULA_STRUCTURAL,
@@ -1270,17 +1276,8 @@ fn formula_diagnostics(
                 path,
                 format!("formula dependency cycle contains {} values", members.len()),
             ),
-            CalculationFailure::FailedDependencies { dependencies } => {
-                let Some(diagnostic) = project_failed_dependency_diagnostic(
-                    document,
-                    formula,
-                    path,
-                    dependencies,
-                    &blockers.values,
-                ) else {
-                    continue;
-                };
-                diagnostic
+            CalculationFailure::FailedDependencies { .. } => {
+                unreachable!("failed dependencies are projected after primary failures")
             }
             CalculationFailure::DivisionByZero => formula_diagnostic(
                 diagnostic_codes::FORMULA_DIVISION_BY_ZERO,
@@ -1295,7 +1292,34 @@ fn formula_diagnostics(
                 format!("formula '{formula}' produced a non-finite result"),
             ),
         };
+        if let CalculationFailure::Cycle { members } = failure {
+            surviving_failures.extend(members.iter().cloned());
+        } else {
+            surviving_failures.insert(formula.clone());
+        }
         diagnostics.push(diagnostic);
+    }
+
+    while !pending_failed_dependencies.is_empty() {
+        let pending_count = pending_failed_dependencies.len();
+        let mut deferred = Vec::new();
+        for (formula, path, dependencies) in pending_failed_dependencies {
+            let Some(diagnostic) = project_failed_dependency_diagnostic(
+                formula,
+                &path,
+                dependencies,
+                &surviving_failures,
+            ) else {
+                deferred.push((formula, path, dependencies));
+                continue;
+            };
+            surviving_failures.insert(formula.clone());
+            diagnostics.push(diagnostic);
+        }
+        if deferred.len() == pending_count {
+            break;
+        }
+        pending_failed_dependencies = deferred;
     }
     diagnostics
 }
@@ -1339,13 +1363,15 @@ fn project_invalid_reference_diagnostic(
 }
 
 fn project_failed_dependency_diagnostic(
-    document: &Document,
     formula: &FieldRef,
-    path: String,
+    path: &str,
     dependencies: &BTreeSet<FieldRef>,
-    blocked_subjects: &BTreeSet<SemanticSubject>,
+    surviving_failures: &BTreeSet<FieldRef>,
 ) -> Option<Diagnostic> {
-    let dependencies = available_formula_fields(document, dependencies, blocked_subjects);
+    let dependencies = dependencies
+        .intersection(surviving_failures)
+        .cloned()
+        .collect::<BTreeSet<_>>();
     if dependencies.is_empty() {
         return None;
     }
@@ -1353,7 +1379,7 @@ fn project_failed_dependency_diagnostic(
         formula_diagnostic(
             diagnostic_codes::FORMULA_FAILED_DEPENDENCY,
             vec![SemanticSubject::EntityField(formula.clone())],
-            path,
+            path.to_owned(),
             format!("formula '{formula}' directly depends on failed values"),
         )
         .with_related_subjects(
@@ -1472,18 +1498,6 @@ fn field_prerequisites_available(
     subjects
         .iter()
         .all(|subject| !blocked_subjects.contains(subject))
-}
-
-fn available_formula_fields(
-    document: &Document,
-    fields: &BTreeSet<FieldRef>,
-    blocked_subjects: &BTreeSet<SemanticSubject>,
-) -> BTreeSet<FieldRef> {
-    fields
-        .iter()
-        .filter(|field| field_prerequisites_available(document, field, blocked_subjects))
-        .cloned()
-        .collect()
 }
 
 struct FormulaPrerequisiteBlockers {
