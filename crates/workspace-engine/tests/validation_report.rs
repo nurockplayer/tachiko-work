@@ -297,10 +297,22 @@ fn core_invalid_formula_prerequisites_suppress_cascades_but_not_independent_fail
 fn cascade_suppression_is_specific_to_the_authoritative_formula_failure() {
     let mut document = document();
     define(&mut document, "required-input", FieldType::Number, true);
+    define(&mut document, "text-target", FieldType::Text, false);
+    set(
+        &mut document,
+        "entity",
+        "text-target",
+        Value::Number(Number::new(1.0).unwrap()),
+    );
     formula(
         &mut document,
         "cascade-only",
         reference("entity", "required-input"),
+    );
+    formula(
+        &mut document,
+        "static-type-error",
+        reference("entity", "text-target"),
     );
     formula(
         &mut document,
@@ -338,6 +350,27 @@ fn cascade_suppression_is_specific_to_the_authoritative_formula_failure() {
                 == [SemanticSubject::EntityField(FieldRef::new(
                     "entity",
                     "cascade-only",
+                ))]
+    }));
+    assert!(report.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code == DiagnosticCode::TYPE_MISMATCH
+            && diagnostic.subjects
+                == [SemanticSubject::EntityField(FieldRef::new(
+                    "entity",
+                    "text-target",
+                ))]
+    }));
+    assert!(report.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code == diagnostic_codes::FORMULA_INVALID_REFERENCES
+            && diagnostic.subjects
+                == [SemanticSubject::EntityField(FieldRef::new(
+                    "entity",
+                    "static-type-error",
+                ))]
+            && diagnostic.related_subjects
+                == [SemanticSubject::EntityField(FieldRef::new(
+                    "entity",
+                    "text-target",
                 ))]
     }));
     assert!(report.diagnostics().iter().any(|diagnostic| {

@@ -243,6 +243,47 @@ fn binding_precedes_self_cycle_and_collects_every_direct_invalid_target() {
             non_numeric: BTreeSet::from([field("text")]),
         })
     );
+    assert_eq!(
+        calculate(&document),
+        Err(CalculationError::Cycle {
+            members: BTreeSet::from([field("formula")]),
+        })
+    );
+}
+
+#[test]
+fn compatibility_projection_keeps_mutual_cycle_before_later_invalid_reference() {
+    let mut document = document();
+    formula(
+        &mut document,
+        "a",
+        Expression::Add {
+            left: Box::new(reference("b")),
+            right: Box::new(reference("missing")),
+        },
+    );
+    formula(&mut document, "b", reference("a"));
+
+    let report = failed(&document);
+    assert_eq!(
+        report.failure(&field("a")),
+        Some(&FormulaFailure::InvalidReferences {
+            missing: BTreeSet::from([field("missing")]),
+            non_numeric: BTreeSet::new(),
+        })
+    );
+    assert_eq!(
+        report.failure(&field("b")),
+        Some(&FormulaFailure::FailedDependency {
+            dependencies: BTreeSet::from([field("a")]),
+        })
+    );
+    assert_eq!(
+        calculate(&document),
+        Err(CalculationError::Cycle {
+            members: BTreeSet::from([field("a"), field("b")]),
+        })
+    );
 }
 
 #[test]

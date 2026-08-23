@@ -820,6 +820,17 @@ fn validation_accumulation_record() -> Record {
         .id = "different-stable-id".into();
     let entity = document.entities.get_mut("entity").unwrap();
     entity.fields.insert(
+        FieldId::from("text"),
+        Value::Number(number(7.0)),
+    );
+    entity.fields.insert(
+        FieldId::from("cycle-a"),
+        Value::Formula(Expression::Add {
+            left: Box::new(Expression::Reference(FieldRef::new("entity", "cycle-b"))),
+            right: Box::new(Expression::Reference(FieldRef::new("entity", "required"))),
+        }),
+    );
+    entity.fields.insert(
         FieldId::from("required-dependent"),
         Value::Formula(Expression::Reference(FieldRef::new("entity", "required"))),
     );
@@ -864,6 +875,26 @@ fn validation_accumulation_record() -> Record {
         && codes.contains(&diagnostic_codes::FORMULA_DIVISION_BY_ZERO)
         && !codes.contains(&diagnostic_codes::FORMULA_MISSING_INPUT)
         && !codes.contains(&diagnostic_codes::FORMULA_NON_NUMERIC_INPUT)
+        && report.diagnostics().iter().any(|diagnostic| {
+            diagnostic.code == DiagnosticCode::TYPE_MISMATCH
+                && diagnostic.subjects
+                    == [SemanticSubject::EntityField(FieldRef::new("entity", "text"))]
+        })
+        && report.diagnostics().iter().any(|diagnostic| {
+            diagnostic.code == diagnostic_codes::FORMULA_INVALID_REFERENCES
+                && diagnostic.subjects
+                    == [SemanticSubject::EntityField(FieldRef::new(
+                        "entity", "binding",
+                    ))]
+                && diagnostic.related_subjects
+                    == [
+                        SemanticSubject::EntityField(FieldRef::new(
+                            "entity",
+                            "missing-binding",
+                        )),
+                        SemanticSubject::EntityField(FieldRef::new("entity", "text")),
+                    ]
+        })
         && !report.diagnostics().iter().any(|diagnostic| {
             diagnostic.code == diagnostic_codes::FORMULA_DIVISION_BY_ZERO
                 && diagnostic

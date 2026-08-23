@@ -1040,14 +1040,14 @@ The detailed executable plan is
   rename-stable observations, multi-subject duplicates/cycles/dependencies,
   full formula precedence, all-or-nothing calculation, and
   validation/finalization agreement.
-- The post-rebase workspace passes 250 tests across 34 suites with
+- The post-rebase workspace passes 251 tests across 34 suites with
   warning-denied Clippy. The portable corpus executes 34 fixed production
   records and matches exact stable observations natively and on
   `wasm32-unknown-unknown`.
-- Initial independent ADR-0018 and ADR-0019/#89 reviews found no P0. Their P1
+- Independent ADR-0018 and ADR-0019/#89 review cycles found no P0. Their P1
   and P2 findings are addressed by shared SCC membership storage,
   compatibility selection that follows stable left-to-right legacy behavior,
-  prerequisite-aware cascade suppression, explicit validation operand roles,
+  phase-specific prerequisite blockers, explicit validation operand roles,
   complete portable dependency fingerprints, and generated/disjoint SCC
   determinism evidence. A clean release-equivalent gate and independent
-  exact-head re-reviews remain before PR handoff.
+  exact-head re-reviews of the last fixes remain before PR handoff.

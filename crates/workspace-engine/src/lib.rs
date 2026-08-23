@@ -1229,7 +1229,7 @@ fn formula_diagnostics(
     core_diagnostics: &[Diagnostic],
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
-    let blocked_subjects = formula_blocked_subjects(core_diagnostics);
+    let blockers = formula_prerequisite_blockers(core_diagnostics);
     let address_index = AddressIndex::build(document).ok();
     for (formula, failure) in report.failures() {
         if matches!(
@@ -1238,7 +1238,7 @@ fn formula_diagnostics(
         ) {
             continue;
         }
-        if !formula_prerequisites_available(document, formula, failure, &blocked_subjects) {
+        if !formula_prerequisites_available(document, formula, failure, &blockers) {
             continue;
         }
         let subject = SemanticSubject::EntityField(formula.clone());
@@ -1370,9 +1370,9 @@ fn formula_prerequisites_available(
     document: &Document,
     formula: &FieldRef,
     failure: &FormulaFailure,
-    blocked_subjects: &BTreeSet<SemanticSubject>,
+    blockers: &FormulaPrerequisiteBlockers,
 ) -> bool {
-    if !field_prerequisites_available(document, formula, blocked_subjects) {
+    if !field_prerequisites_available(document, formula, &blockers.values) {
         return false;
     }
     match failure {
@@ -1384,18 +1384,18 @@ fn formula_prerequisites_available(
             non_numeric,
         } => missing
             .union(non_numeric)
-            .all(|target| field_prerequisites_available(document, target, blocked_subjects)),
+            .all(|target| field_prerequisites_available(document, target, &blockers.declarations)),
         FormulaFailure::Cycle { members } => members
             .iter()
-            .all(|member| field_prerequisites_available(document, member, blocked_subjects)),
+            .all(|member| field_prerequisites_available(document, member, &blockers.values)),
         FormulaFailure::FailedDependency { dependencies } => {
             dependencies.iter().all(|dependency| {
-                field_prerequisites_available(document, dependency, blocked_subjects)
+                field_prerequisites_available(document, dependency, &blockers.values)
             })
         }
         FormulaFailure::MissingInput { reference }
         | FormulaFailure::NonNumericInput { reference } => {
-            field_prerequisites_available(document, reference, blocked_subjects)
+            field_prerequisites_available(document, reference, &blockers.values)
         }
     }
 }
@@ -1421,15 +1421,30 @@ fn field_prerequisites_available(
         .all(|subject| !blocked_subjects.contains(subject))
 }
 
-fn formula_blocked_subjects(core_diagnostics: &[Diagnostic]) -> BTreeSet<SemanticSubject> {
-    core_diagnostics
-        .iter()
-        .filter(|diagnostic| core_diagnostic_blocks_formula_prerequisite(diagnostic.code))
-        .flat_map(|diagnostic| diagnostic.subjects.iter().cloned())
-        .collect()
+struct FormulaPrerequisiteBlockers {
+    values: BTreeSet<SemanticSubject>,
+    declarations: BTreeSet<SemanticSubject>,
 }
 
-fn core_diagnostic_blocks_formula_prerequisite(code: DiagnosticCode) -> bool {
+fn formula_prerequisite_blockers(core_diagnostics: &[Diagnostic]) -> FormulaPrerequisiteBlockers {
+    let mut blockers = FormulaPrerequisiteBlockers {
+        values: BTreeSet::new(),
+        declarations: BTreeSet::new(),
+    };
+    for diagnostic in core_diagnostics {
+        if core_diagnostic_blocks_formula_value(diagnostic.code) {
+            blockers.values.extend(diagnostic.subjects.iter().cloned());
+        }
+        if core_diagnostic_blocks_formula_declaration(diagnostic.code) {
+            blockers
+                .declarations
+                .extend(diagnostic.subjects.iter().cloned());
+        }
+    }
+    blockers
+}
+
+fn core_diagnostic_blocks_formula_value(code: DiagnosticCode) -> bool {
     [
         DiagnosticCode::EMPTY_STABLE_ID,
         DiagnosticCode::KEY_MISMATCH,
@@ -1439,6 +1454,15 @@ fn core_diagnostic_blocks_formula_prerequisite(code: DiagnosticCode) -> bool {
         DiagnosticCode::TYPE_MISMATCH,
         DiagnosticCode::MISSING_REFERENCE,
         DiagnosticCode::REFERENCE_TYPE_MISMATCH,
+    ]
+    .contains(&code)
+}
+
+fn core_diagnostic_blocks_formula_declaration(code: DiagnosticCode) -> bool {
+    [
+        DiagnosticCode::EMPTY_STABLE_ID,
+        DiagnosticCode::KEY_MISMATCH,
+        DiagnosticCode::MISSING_SCHEMA,
     ]
     .contains(&code)
 }
