@@ -120,9 +120,7 @@ pub fn from_bytes(source: &[u8]) -> Result<Document, FormatError> {
         }
         FORMAT_VERSION => {
             enforce_v2_resource_limits(source_text)?;
-            let dto: DocumentV2 = serde_json::from_str(source_text)
-                .map_err(V2CodecError::Json)
-                .map_err(map_v2_decode_error)?;
+            let dto = decode_v2_dto(source_text)?;
             dto.validate().map_err(map_v2_decode_error)?;
             dto.into_semantic().map_err(map_v2_decode_error)?
         }
@@ -286,6 +284,65 @@ fn enforce_v2_resource_limits(source: &str) -> Result<(), FormatError> {
             continue;
         }
         index += 1;
+    }
+    Ok(())
+}
+
+fn decode_v2_dto(source: &str) -> Result<DocumentV2, FormatError> {
+    let mut value: serde_json::Value = serde_json::from_str(source)
+        .map_err(V2CodecError::Json)
+        .map_err(map_v2_decode_error)?;
+    normalize_v2_number_tokens(&mut value, true)?;
+    serde_json::from_value(value)
+        .map_err(V2CodecError::Json)
+        .map_err(map_v2_decode_error)
+}
+
+fn normalize_v2_number_tokens(
+    value: &mut serde_json::Value,
+    root_object: bool,
+) -> Result<(), FormatError> {
+    match value {
+        serde_json::Value::Array(values) => {
+            for value in values {
+                normalize_v2_number_tokens(value, false)?;
+            }
+        }
+        serde_json::Value::Object(members) => {
+            for (name, value) in members {
+                if root_object && name == "format_version" {
+                    continue;
+                }
+                normalize_v2_number_tokens(value, false)?;
+            }
+        }
+        serde_json::Value::Number(number) => {
+            let token = number.to_string();
+            let parsed = token
+                .parse::<f64>()
+                .map_err(|_| FormatError::InvalidRepresentation {
+                    message: format!("number token '{token}' cannot be converted to binary64"),
+                    source: None,
+                })?;
+            if !parsed.is_finite() {
+                return Err(FormatError::InvalidRepresentation {
+                    message: format!(
+                        "number token '{token}' converts to a non-finite binary64 value"
+                    ),
+                    source: None,
+                });
+            }
+            let parsed = if parsed == 0.0 { 0.0 } else { parsed };
+            *number = serde_json::Number::from_f64(parsed).ok_or_else(|| {
+                FormatError::InvalidRepresentation {
+                    message: format!(
+                        "number token '{token}' cannot be represented as finite binary64"
+                    ),
+                    source: None,
+                }
+            })?;
+        }
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::String(_) => {}
     }
     Ok(())
 }

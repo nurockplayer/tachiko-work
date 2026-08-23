@@ -1,0 +1,37 @@
+{
+  "format_version": 2,
+  "id": "numeric-golden",
+  "title": "direct-ro/v2 numeric conformance",
+  "schemas": {
+    "schema": {
+      "id": "schema",
+      "key": "schema",
+      "fields": {
+        "number": {
+          "id": "number",
+          "key": "number",
+          "field_type": {
+            "type": "number"
+
+          },
+          "required": true
+
+        }
+      }
+    }
+  },
+  "entities": {
+    "n00": {
+      "id": "n00",
+      "key": "n00",
+      "schema": "schema",
+      "fields": {
+        "number": {
+          "kind": "number",
+          "value": 1e+21
+
+        }
+      }
+    }
+  }
+}
