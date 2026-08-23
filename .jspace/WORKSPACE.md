@@ -955,12 +955,13 @@ exact-head reviews remain before PR handoff.
   `origin/main` `342f69f2fc252554c240650d1438cc0d6cd82e2f`, then rebased through #92 and
   the isolated #26 spike. It consumed #97's #90-owned ADR-0018 full formula
   oracle at `6ad364755566bc604e69800c8656868dab60a365` and is now rebased onto
-  current `origin/main` `b5b097cde26952b60580f62b28dada10044d92dd`, including the
+  current `origin/main` `c685fe72a126c6de26089461923991447c70ad8f`, including the
   independent presentation-projection documentation merge, repository
-  agent-tooling policy, and isolated #96 pre-version envelope research. The
-  upstream formula implementation and its conformance suite are retained
-  unchanged, and the repository-wide `AGENTS.md` and `CONTRIBUTING.md`
-  workflow requirements are honored.
+  agent-tooling policy, isolated #96 pre-version envelope research, and PR
+  #100's ADR-0017 Stage-0 direct-JSON envelope. The upstream formula and storage
+  implementations and their conformance suites are retained unchanged, and
+  the repository-wide `AGENTS.md` and `CONTRIBUTING.md` workflow requirements
+  are honored.
 - Authority: Issue #89; Accepted ADR-0015 through ADR-0019; the validation,
   diagnostics, formula, and schema specifications; the Product Constitution
   and Design Principles; and the knowledge authority/reconciliation policies.
@@ -1051,21 +1052,23 @@ The detailed executable plan is
   vector, and all four portable report records pin exact counts and
   fingerprints. The upstream #90 suite remains the formula precedence and
   all-or-nothing oracle.
-- Pre-release post-rebase evidence passes 250 tests across 41 suites with
-  warning-denied Clippy. The portable corpus executes 31 fixed production
-  records—27 upstream formula/storage/workspace/AI records plus four
+- Maintainer follow-up TDD covers all five scalar/structured
+  `SemanticSubject` serialization and round-trip cases without stabilizing an
+  external wire contract; directional `store_id`/`declared_id` facts preserve
+  swapped schema, entity, and schema-field mismatches; and survival-aware
+  workspace projection suppresses downstream failed-dependency noise when its
+  primary formula failure did not survive prerequisite filtering.
+- The post-#100 fast workspace gate passes 263 tests across 35 suites. The
+  portable corpus executes 46 fixed production records—42 current-main records,
+  including PR #100's 15 direct-JSON envelope cases, plus four
   `ValidationReport` records—and matches exact observations natively and on
   `wasm32-unknown-unknown`.
-- Earlier review findings are retained in the workspace-owned adapter: complete
-  SCC projection, phase- and fact-specific prerequisite filtering, explicit
-  validation operand roles, and disjoint-SCC deterministic report evidence.
-  Two independent exact-head reviews against ADR-0018 and ADR-0019 plus #89
-  report no P0/P1/P2 findings.
-- The clean-commit release-equivalent gate passes, including formatting,
-  warning-denied Clippy and rustdoc, all 250 tests across 41 suites, exact
-  native/WASM equality for 31 portable records, Rust 1.85 MSRV, package and
-  license policy, adapter smokes, archive/tamper checks, and concurrency checks.
+- Final clean-commit release verification and independent exact-head ADR-0018
+  and ADR-0019/#89 review remain handoff gates after the maintainer fixes; every
+  P0/P1/P2 finding must be fixed before the updated branch is pushed.
 - Handoff is the focused PR #99 from `codex/issue-89-validation-report`. Its
   description records the ownership migration, stable report observations,
   formula-oracle evidence, validation/finalization separation, verification,
-  explicit deferrals, and `Closes #89`; the PR stays open and unmerged.
+  explicit deferrals, and `Closes #89`. The three maintainer threads are
+  resolved only after exact-head evidence is complete, and the PR stays open
+  and unmerged.

@@ -12,7 +12,7 @@
 
 ## Global constraints
 
-- Start from origin/main 342f69f2fc252554c240650d1438cc0d6cd82e2f on branch codex/issue-89-validation-report; reconcile later mainline changes before handoff. The branch consumed #97's #90-owned ADR-0018 oracle at 6ad364755566bc604e69800c8656868dab60a365 and was ultimately rebased onto current origin/main b5b097cde26952b60580f62b28dada10044d92dd after the independent presentation-projection documentation merge, repository agent-tooling policy, and isolated #96 pre-version envelope research.
+- Start from origin/main 342f69f2fc252554c240650d1438cc0d6cd82e2f on branch codex/issue-89-validation-report; reconcile later mainline changes before handoff. The branch consumed #97's #90-owned ADR-0018 oracle at 6ad364755566bc604e69800c8656868dab60a365 and was ultimately rebased onto current origin/main c685fe72a126c6de26089461923991447c70ad8f after the independent presentation-projection documentation merge, repository agent-tooling policy, isolated #96 pre-version envelope research, and PR #100's ADR-0017 Stage-0 direct-JSON envelope.
 - Keep semantic-core diagnostic primitives generic. Provider identity is opaque and internal; semantic-core must not encode formula-engine or higher-layer taxonomies.
 - Make the ADR-0018 full formula outcome authoritative. Compatibility calculate behavior must be derived from it.
 - Stable observations are diagnostic meaning, classification/severity, stable semantic subjects and related subjects/facts, provider identity, and deterministic ordering.
@@ -124,3 +124,12 @@
 - [x] Fix every P0/P1/P2 finding and rerun affected focused tests plus the release-equivalent gate; both final reviews are clean.
 - [x] Commit and force-push the reconciled `codex/issue-89-validation-report` branch with lease.
 - [x] Refresh focused unmerged PR #99 with before/after ownership, stable observations, formula-oracle evidence, semantic/finalization reconciliation, native/WASM and release-gate results, explicit #10/#13/#17/#26/#41 deferrals, and `Closes #89`.
+
+### Task 8: Close maintainer follow-up findings
+
+- [x] Rebase onto PR #100 while retaining its ADR-0017 storage implementation and 15 portable envelope records unchanged.
+- [x] Reproduce scalar-subject serialization failure, swapped-ID diagnostic deduplication, and the suppressed-root failed-dependency cascade before changing production code.
+- [x] Add the minimal provisional subject serialization, directional mismatch facts, and survival-aware workspace projection; run each focused regression GREEN.
+- [x] Reconcile the combined 46-record native/WASM corpus and pin the changed stable-observation fingerprint.
+- [ ] Run the clean-commit release gate and fresh exact-head ADR-0018 plus ADR-0019/#89 reviews; fix every P0/P1/P2 finding.
+- [ ] Push PR #99, reply in and resolve all three maintainer threads, wait for GitHub CI, and leave the PR open and unmerged.
