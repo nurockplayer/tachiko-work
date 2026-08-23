@@ -1049,5 +1049,8 @@ The detailed executable plan is
   compatibility selection that follows stable left-to-right legacy behavior,
   phase- and fact-specific prerequisite filtering, explicit validation operand
   roles, complete portable dependency fingerprints, and generated/disjoint
-  SCC determinism evidence. A clean release-equivalent gate and independent
-  exact-head re-reviews of the last fixes remain before PR handoff.
+  SCC determinism evidence.
+- Final exact-head ADR-0018 and ADR-0019/#89 re-reviews report no actionable
+  P0/P1/P2. The complete release-equivalent gate passes, including Clippy,
+  Rustdoc, MSRV, packaging, four workflow smokes, native archive verification,
+  and publication-safety checks.
