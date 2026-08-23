@@ -955,9 +955,11 @@ exact-head reviews remain before PR handoff.
   `origin/main` `342f69f2fc252554c240650d1438cc0d6cd82e2f`, then rebased through #92 and
   the isolated #26 spike. It consumed #97's #90-owned ADR-0018 full formula
   oracle at `6ad364755566bc604e69800c8656868dab60a365` and is now rebased onto
-  current `origin/main` `77821143e9847f62e129e553522556743c5032c1` after
-  the independent presentation-projection documentation merge. The upstream
-  formula implementation and its conformance suite are retained unchanged.
+  current `origin/main` `22fc8eb9d84c5bc13a7c9c64c6cb1f235974e5ba`, including the
+  independent presentation-projection documentation merge and repository
+  agent-tooling policy. The upstream formula implementation and its
+  conformance suite are retained unchanged, and the repository-wide
+  `AGENTS.md` and `CONTRIBUTING.md` workflow requirements are honored.
 - Authority: Issue #89; Accepted ADR-0015 through ADR-0019; the validation,
   diagnostics, formula, and schema specifications; the Product Constitution
   and Design Principles; and the knowledge authority/reconciliation policies.
@@ -1016,7 +1018,7 @@ exact-head reviews remain before PR handoff.
 The detailed executable plan is
 `docs/superpowers/plans/2026-08-23-validation-report-diagnostics.md`.
 
-### Implemented ownership and pre-review evidence
+### Implemented ownership and verification evidence
 
 - semantic-core now owns only generic symbolic diagnostic codes, provisional
   severity, stable semantic subject/location/fact primitives, and opaque
@@ -1053,7 +1055,13 @@ The detailed executable plan is
 - Earlier review findings are retained in the workspace-owned adapter: complete
   SCC projection, phase- and fact-specific prerequisite filtering, explicit
   validation operand roles, and disjoint-SCC deterministic report evidence.
-  Exact-head post-#97 reviews and the release-equivalent gate remain pending.
-- Handoff remains PR #99 from `codex/issue-89-validation-report`; the local
-  post-#97 reconciliation is pending its final reviewed force-push. The PR stays
-  open and unmerged.
+  Two independent exact-head reviews against ADR-0018 and ADR-0019 plus #89
+  report no P0/P1/P2 findings.
+- The clean-commit release-equivalent gate passes, including formatting,
+  warning-denied Clippy and rustdoc, all 250 tests across 41 suites, exact
+  native/WASM equality for 31 portable records, Rust 1.85 MSRV, package and
+  license policy, adapter smokes, archive/tamper checks, and concurrency checks.
+- Handoff is the focused PR #99 from `codex/issue-89-validation-report`. Its
+  description records the ownership migration, stable report observations,
+  formula-oracle evidence, validation/finalization separation, verification,
+  explicit deferrals, and `Closes #89`; the PR stays open and unmerged.

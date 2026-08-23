@@ -12,7 +12,7 @@
 
 ## Global constraints
 
-- Start from origin/main 342f69f2fc252554c240650d1438cc0d6cd82e2f on branch codex/issue-89-validation-report; reconcile later mainline changes before handoff. The branch consumed #97's #90-owned ADR-0018 oracle at 6ad364755566bc604e69800c8656868dab60a365 and was ultimately rebased onto current origin/main 77821143e9847f62e129e553522556743c5032c1 after the independent presentation-projection documentation merge.
+- Start from origin/main 342f69f2fc252554c240650d1438cc0d6cd82e2f on branch codex/issue-89-validation-report; reconcile later mainline changes before handoff. The branch consumed #97's #90-owned ADR-0018 oracle at 6ad364755566bc604e69800c8656868dab60a365 and was ultimately rebased onto current origin/main 22fc8eb9d84c5bc13a7c9c64c6cb1f235974e5ba after the independent presentation-projection documentation merge and repository agent-tooling policy.
 - Keep semantic-core diagnostic primitives generic. Provider identity is opaque and internal; semantic-core must not encode formula-engine or higher-layer taxonomies.
 - Make the ADR-0018 full formula outcome authoritative. Compatibility calculate behavior must be derived from it.
 - Stable observations are diagnostic meaning, classification/severity, stable semantic subjects and related subjects/facts, provider identity, and deterministic ordering.
@@ -119,8 +119,8 @@
 ### Task 7: Verify, independently review, and hand off
 
 - [x] Run formatting and focused lint/tests.
-- [ ] Run the complete bash scripts/release-check.sh gate from a clean committed tree after the #97 reconciliation.
-- [ ] Dispatch two exact-head independent read-only reviews: one against ADR-0018 and one against ADR-0019 plus Issue #89.
-- [ ] Fix every P0/P1/P2 finding and rerun affected focused tests plus the release-equivalent gate.
-- [ ] Commit and force-push the reconciled `codex/issue-89-validation-report` branch with lease.
-- [ ] Refresh focused unmerged PR #99 with before/after ownership, stable observations, formula-oracle evidence, semantic/finalization reconciliation, native/WASM and release-gate results, explicit #10/#13/#17/#26/#41 deferrals, and `Closes #89`.
+- [x] Run the complete bash scripts/release-check.sh gate from a clean committed tree after the #97 reconciliation.
+- [x] Dispatch two exact-head independent read-only reviews: one against ADR-0018 and one against ADR-0019 plus Issue #89.
+- [x] Fix every P0/P1/P2 finding and rerun affected focused tests plus the release-equivalent gate; both final reviews are clean.
+- [x] Commit and force-push the reconciled `codex/issue-89-validation-report` branch with lease.
+- [x] Refresh focused unmerged PR #99 with before/after ownership, stable observations, formula-oracle evidence, semantic/finalization reconciliation, native/WASM and release-gate results, explicit #10/#13/#17/#26/#41 deferrals, and `Closes #89`.
