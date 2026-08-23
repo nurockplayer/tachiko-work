@@ -318,27 +318,31 @@ fn normalize_v2_number_tokens(
         }
         serde_json::Value::Number(number) => {
             let token = number.to_string();
-            let parsed = token.parse::<f64>().map_err(|_| FormatError::InvalidRepresentation {
-                message: format!("number token '{token}' cannot be converted to binary64"),
-                source: None,
-            })?;
+            let parsed = token
+                .parse::<f64>()
+                .map_err(|_| FormatError::InvalidRepresentation {
+                    message: format!("number token '{token}' cannot be converted to binary64"),
+                    source: None,
+                })?;
             if !parsed.is_finite() {
                 return Err(FormatError::InvalidRepresentation {
-                    message: format!("number token '{token}' converts to a non-finite binary64 value"),
+                    message: format!(
+                        "number token '{token}' converts to a non-finite binary64 value"
+                    ),
                     source: None,
                 });
             }
             let parsed = if parsed == 0.0 { 0.0 } else { parsed };
             *number = serde_json::Number::from_f64(parsed).ok_or_else(|| {
                 FormatError::InvalidRepresentation {
-                    message: format!("number token '{token}' cannot be represented as finite binary64"),
+                    message: format!(
+                        "number token '{token}' cannot be represented as finite binary64"
+                    ),
                     source: None,
                 }
             })?;
         }
-        serde_json::Value::Null
-        | serde_json::Value::Bool(_)
-        | serde_json::Value::String(_) => {}
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::String(_) => {}
     }
     Ok(())
 }
