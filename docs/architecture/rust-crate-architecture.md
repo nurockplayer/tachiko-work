@@ -59,6 +59,10 @@ diagnostics, and whole-document validation. It has no dependency on another
 workspace crate and no UI, filesystem, network, UUID-generation, or host
 capability.
 
+ADR-0019 now fixes the semantic validation/diagnostic meaning that this layer
+participates in while keeping the exact Rust diagnostic/report surface
+Provisional.
+
 Semantic types remain owned here. Workspace-engine re-exports the semantic
 types required by first-party adapters so those adapters need one application
 dependency; this does not transfer semantic ownership or make the exact Rust
@@ -70,7 +74,9 @@ Formula engine owns bounded source parsing, human-address binding, stable-ID
 bound projection, structural limits, deterministic finite-binary64
 calculation, dependency indexes, and formula failures. It depends only on
 semantic-core among workspace crates. ADR-0018 remains authoritative for
-semantic and native/WASM numeric behavior.
+semantic and native/WASM numeric behavior; ADR-0019 wraps those semantic facts
+into the shared validation/diagnostic model without changing formula
+precedence or SCC meaning.
 
 ### diff-engine and merge-engine
 
@@ -94,6 +100,10 @@ The CLI composition root performs `load → workspace operation → canonical
 encode/write`. Workspace-engine does not depend on paths, files, storage DTOs,
 or persistence. ADR-0003, ADR-0017, and the current direct-ro specifications
 remain unchanged by the application-layer migration.
+
+ADR-0019 explicitly preserves storage format/migration failures as a
+representation-local family rather than promoting `FormatError` into the
+universal semantic diagnostics model.
 
 ### workspace-engine
 
@@ -119,6 +129,11 @@ and mutation previews include semantic impact where the existing operation
 contract requires it. The `IdGenerator` trait and `SemanticIdKind` preserve
 ADR-0015's replaceable creation seam; UUIDv7 remains supplied by the native CLI
 host rather than the portable engine.
+
+ADR-0019 makes workspace-engine the first-party validation orchestration and
+normalization boundary. Current differences between lightweight validation and
+full finalization are implementation pressure to reconcile, not separate
+client semantic policies.
 
 These Rust functions and result structures are the first-party internal
 boundary. Their external stability and versioning remain Provisional under
@@ -193,19 +208,21 @@ ABI, Web Worker, resident runtime, or browser persistence mechanism.
 
 ## Explicitly deferred seams
 
-- #10 owns external Semantic API stability, versioning, batch, transaction, and
-  bypass policy.
-- #23 owns the general validation/diagnostic envelope and temporary-invalid
-  editing policy.
+- ADR-0019 owns the general validation/diagnostic semantic contract and
+  temporary-invalid candidate boundary; its exact Rust APIs remain
+  Provisional.
+- #10 owns external Semantic API stability, diagnostic wire/versioning, batch,
+  transaction, and bypass policy.
 - #26 owns resident state, Web Worker placement, IPC/FFI, projection patches,
-  host capabilities, and native/browser persistence composition.
+  diagnostic delivery, host capabilities, and native/browser persistence
+  composition.
 - #27/#28 own AI capability and approval architecture.
 - #41 owns `.roproj` layout and materialization.
 
 No new crate, semantic `Workspace`/`Project` aggregate, storage/formula
 contract, or native/WASM feature-selected semantic behavior was introduced by
-#72. Any future direct edge or crate split that changes the Accepted baseline
-must amend ADR-0016 explicitly.
+#72 or ADR-0019. Any future direct edge or crate split that changes the
+Accepted baseline must amend ADR-0016 explicitly.
 
 ## Related authority
 
@@ -213,6 +230,7 @@ must amend ADR-0016 explicitly.
 - [ADR-0016](../decisions/ADR-0016-milestone-02-rust-crate-layering.md)
 - [ADR-0017](../decisions/ADR-0017-versioned-storage-and-canonical-representation.md)
 - [ADR-0018](../decisions/ADR-0018-bound-formulas-and-deterministic-binary64.md)
+- [ADR-0019](../decisions/ADR-0019-staged-semantic-validation-and-diagnostics.md)
 - [Semantic core rationale](semantic-core-rationale.md)
 - [Knowledge authority](../governance/knowledge-authority.md)
-- GitHub issues #10, #23, #26, #27, #28, #41, #72
+- GitHub issues #10, #13, #17, #23, #26, #27, #28, #41, #72
