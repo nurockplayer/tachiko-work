@@ -279,6 +279,15 @@ fn long_acyclic_dependency_chains_are_stack_safe() {
         Some(expected(1.0))
     );
     assert_eq!(calculation.values().len(), CHAIN_LENGTH);
+    assert_eq!(
+        calculation
+            .affected_by(&FieldRef::new(
+                "chain",
+                format!("field-{:05}", CHAIN_LENGTH - 1),
+            ))
+            .len(),
+        CHAIN_LENGTH - 1
+    );
 }
 
 #[test]

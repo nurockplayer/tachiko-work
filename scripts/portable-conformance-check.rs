@@ -10,10 +10,10 @@ use tachiko_semantic_core::{
     Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldDefinition, FieldId,
     FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
 };
-use tachiko_storage::{from_str as storage_from_str, to_canonical_string};
-use tachiko_workspace_engine::calculate_fields;
+use tachiko_storage::{FormatError, from_str as storage_from_str, to_canonical_string};
+use tachiko_workspace_engine::{SemanticChange, calculate_fields, compare_documents};
 
-const CASE_COUNT: u32 = 24;
+const CASE_COUNT: u32 = 27;
 const VALUE: u32 = 0;
 const DIVISION_BY_ZERO: u32 = 1;
 const NON_FINITE: u32 = 2;
@@ -132,6 +132,17 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
     hash
 }
 
+fn deep_expression(depth: usize) -> Expression {
+    let mut expression = numeric(1.0);
+    for _ in 1..depth {
+        expression = Expression::Add {
+            left: Box::new(expression),
+            right: Box::new(numeric(1.0)),
+        };
+    }
+    expression
+}
+
 fn storage_record(input: &str, expected_bits: u64, expected_fingerprint: u64) -> Record {
     let Ok(document) = storage_from_str(&storage_number_source(input)) else {
         return Record::failure(UNEXPECTED, 1);
@@ -147,6 +158,173 @@ fn storage_record(input: &str, expected_bits: u64, expected_fingerprint: u64) ->
         return Record::failure(UNEXPECTED, fingerprint);
     }
     Record::value(value, fingerprint)
+}
+
+fn storage_depth_boundary_record() -> Record {
+    const EXPECTED_FINGERPRINT: u64 = 0xb943_9039_36d3_338d;
+
+    let document = formula_document(number(1.0), deep_expression(64));
+    let Ok(canonical) = to_canonical_string(&document) else {
+        return Record::failure(UNEXPECTED, 31);
+    };
+    let fingerprint = fnv1a64(canonical.as_bytes());
+    if fingerprint != EXPECTED_FINGERPRINT {
+        return Record::failure(UNEXPECTED, fingerprint);
+    }
+    let Ok(decoded) = storage_from_str(&canonical) else {
+        return Record::failure(UNEXPECTED, 32);
+    };
+    let Ok(reencoded) = to_canonical_string(&decoded) else {
+        return Record::failure(UNEXPECTED, 33);
+    };
+    if decoded != document || reencoded != canonical {
+        return Record::failure(UNEXPECTED, 34);
+    }
+    let Ok(calculation) = calculate(&decoded) else {
+        return Record::failure(UNEXPECTED, 35);
+    };
+    let Some(value) = calculation.value(&FieldRef::new("entity-stable", "output-stable")) else {
+        return Record::failure(UNEXPECTED, 36);
+    };
+    if value != number(64.0) {
+        return Record::failure(UNEXPECTED, value.to_bits());
+    }
+    Record::value(value, fingerprint)
+}
+
+fn formula_chain_document(field_count: usize, seed: f64) -> Document {
+    let schema_id = SchemaId::from("chain-schema");
+    let entity_id = EntityId::from("chain-entity");
+    let mut definitions = BTreeMap::new();
+    let mut values = BTreeMap::new();
+    for index in 0..field_count {
+        let id = format!("field-{index:05}");
+        definitions.insert(FieldId::from(id.as_str()), field(&id));
+        let value = if index + 1 == field_count {
+            Value::Number(number(seed))
+        } else {
+            Value::Formula(Expression::Add {
+                left: Box::new(Expression::Reference(FieldRef::new(
+                    entity_id.clone(),
+                    FieldId::from(format!("field-{:05}", index + 1)),
+                ))),
+                right: Box::new(numeric(1.0)),
+            })
+        };
+        values.insert(FieldId::from(id.as_str()), value);
+    }
+    Document {
+        id: DocumentId::from("chain-document"),
+        title: "Portable formula impact".to_owned(),
+        schemas: BTreeMap::from([(
+            schema_id.clone(),
+            Schema {
+                id: schema_id.clone(),
+                key: SchemaKey::from("chain-schema"),
+                fields: definitions,
+            },
+        )]),
+        entities: BTreeMap::from([(
+            entity_id.clone(),
+            Entity {
+                id: entity_id,
+                key: EntityKey::from("chain-entity"),
+                schema: schema_id,
+                fields: values,
+            },
+        )]),
+    }
+}
+
+fn formula_impact_record() -> Record {
+    const FIELD_COUNT: usize = 256;
+    let before = formula_chain_document(FIELD_COUNT, 1.0);
+    let after = formula_chain_document(FIELD_COUNT, 2.0);
+    let seed = FieldRef::new(
+        "chain-entity",
+        format!("field-{:05}", FIELD_COUNT - 1),
+    );
+    let Ok(semantic_diff) = compare_documents(&before, &after) else {
+        return Record::failure(UNEXPECTED, 41);
+    };
+    if semantic_diff.changes().len() != FIELD_COUNT {
+        return Record::failure(UNEXPECTED, semantic_diff.changes().len() as u64);
+    }
+    let mut formula_count = 0_usize;
+    for change in semantic_diff.changes() {
+        match change {
+            SemanticChange::FieldChanged { field, before, after }
+                if field == &seed
+                    && before == &Value::Number(number(1.0))
+                    && after == &Value::Number(number(2.0)) => {}
+            SemanticChange::FormulaImpact {
+                field,
+                before,
+                after,
+                causes,
+            } => {
+                let Some(index) = field
+                    .field
+                    .as_str()
+                    .strip_prefix("field-")
+                    .and_then(|index| index.parse::<usize>().ok())
+                else {
+                    return Record::failure(UNEXPECTED, 42);
+                };
+                let expected_before = number((FIELD_COUNT - index) as f64);
+                let expected_after = number((FIELD_COUNT - index + 1) as f64);
+                if field.entity.as_str() != "chain-entity"
+                    || index + 1 >= FIELD_COUNT
+                    || *before != expected_before
+                    || *after != expected_after
+                    || causes.as_slice() != [seed.clone()]
+                {
+                    return Record::failure(UNEXPECTED, 43);
+                }
+                formula_count += 1;
+            }
+            _ => return Record::failure(UNEXPECTED, 44),
+        }
+    }
+    if formula_count != FIELD_COUNT - 1 {
+        return Record::failure(UNEXPECTED, formula_count as u64);
+    }
+    Record::value(number(formula_count as f64), FIELD_COUNT as u64)
+}
+
+fn storage_deep_envelope_record() -> Record {
+    const DEPTH: usize = 10_000;
+    let valid = format!(
+        "{{\"format_version\":3,\"future\":{}0{}}}",
+        "[".repeat(DEPTH),
+        "]".repeat(DEPTH)
+    );
+    let duplicate = format!(
+        "{{\"format_version\":3,\"future\":{}{{\"a\":1,\"\\u0061\":2}}{}}}",
+        "[".repeat(DEPTH),
+        "]".repeat(DEPTH)
+    );
+    let malformed = format!(
+        "{{\"a\":1,\"a\":2,\"future\":{}0{}}}",
+        "[".repeat(DEPTH),
+        "]".repeat(DEPTH - 1)
+    );
+
+    let evidence = u64::from(matches!(
+        storage_from_str(&valid),
+        Err(FormatError::UnsupportedVersion { found: 3, .. })
+    )) | (u64::from(matches!(
+        storage_from_str(&duplicate),
+        Err(FormatError::DuplicateMember { ref member }) if member == "a"
+    )) << 1)
+        | (u64::from(matches!(
+            storage_from_str(&malformed),
+            Err(FormatError::InvalidJson { .. })
+        )) << 2);
+    if evidence != 7 {
+        return Record::failure(UNEXPECTED, evidence);
+    }
+    Record::value(number(1.0), evidence)
 }
 
 fn workspace_calculation_record() -> Record {
@@ -338,6 +516,9 @@ fn case_record(index: u32) -> Record {
         21 => workspace_calculation_record(),
         22 => ai_formula_record(),
         23 => ai_suggestion_record(),
+        24 => storage_depth_boundary_record(),
+        25 => storage_deep_envelope_record(),
+        26 => formula_impact_record(),
         _ => Record::failure(UNEXPECTED, 0),
     }
 }

@@ -279,6 +279,22 @@ pub fn diff(before: &Document, after: &Document) -> Result<SemanticDiff, DiffErr
         }
     }
 
+    let mut formula_causes: BTreeMap<FieldRef, Vec<FieldRef>> = BTreeMap::new();
+    for changed in &changed_fields {
+        let mut impacted = before_calculation
+            .affected_by(changed)
+            .into_iter()
+            .chain(after_calculation.affected_by(changed))
+            .collect::<BTreeSet<_>>();
+        impacted.insert(changed.clone());
+        for field in impacted {
+            formula_causes
+                .entry(field)
+                .or_default()
+                .push(changed.clone());
+        }
+    }
+
     let formula_fields = formula_fields(before)
         .union(&formula_fields(after))
         .cloned()
@@ -295,15 +311,7 @@ pub fn diff(before: &Document, after: &Document) -> Result<SemanticDiff, DiffErr
             continue;
         }
 
-        let causes = changed_fields
-            .iter()
-            .filter(|changed| {
-                *changed == &formula
-                    || before_calculation.affected_by(changed).contains(&formula)
-                    || after_calculation.affected_by(changed).contains(&formula)
-            })
-            .cloned()
-            .collect();
+        let causes = formula_causes.remove(&formula).unwrap_or_default();
         changes.push(SemanticChange::FormulaImpact {
             field: formula,
             before: before_value,

@@ -13,7 +13,7 @@ use std::{
 };
 
 use direct_ro::v2::{CodecError as V2CodecError, DocumentV2};
-use strict_json::{FrontendError, VersionToken, inspect};
+use strict_json::{FrontendError, VersionToken, deserialize, inspect};
 use tachiko_semantic_core::{Diagnostic, Document, validate_document};
 use thiserror::Error;
 
@@ -145,7 +145,7 @@ pub(crate) fn decode_v1_dto_for_migration(
             supported: FORMAT_VERSION,
         });
     }
-    let document: legacy_direct_ro::v1::DocumentV1 = serde_json::from_str(source)
+    let document: legacy_direct_ro::v1::DocumentV1 = deserialize(source)
         .map_err(legacy_direct_ro::v1::CodecError::Json)
         .map_err(map_v1_decode_error)?;
     document.validate().map_err(map_v1_decode_error)?;
@@ -289,7 +289,7 @@ fn enforce_v2_resource_limits(source: &str) -> Result<(), FormatError> {
 }
 
 fn decode_v2_dto(source: &str) -> Result<DocumentV2, FormatError> {
-    let mut value: serde_json::Value = serde_json::from_str(source)
+    let mut value: serde_json::Value = deserialize(source)
         .map_err(V2CodecError::Json)
         .map_err(map_v2_decode_error)?;
     normalize_v2_number_tokens(&mut value, true)?;

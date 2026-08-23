@@ -38,6 +38,14 @@ fn duplicate_members_are_rejected_at_every_depth_after_escape_decoding() {
             r#"{"format_version":1,"id":"doc","title":"Document","schemas":{},"entities":{},"\u0069d":"doc"}"#,
         ),
         (
+            "escaped-equivalent-version",
+            r#"{"format_version":1,"format\u005fversion":1,"id":"doc","title":"Document","schemas":{},"entities":{}}"#,
+        ),
+        (
+            "surrogate-pair-equivalent",
+            r#"{"format_version":2,"future":{"𝄞":1,"\uD834\uDD1E":2}}"#,
+        ),
+        (
             "unsupported-body",
             r#"{"format_version":2,"future":{"a":1,"\u0061":2}}"#,
         ),
@@ -105,6 +113,40 @@ fn unsupported_version_wins_before_body_interpretation() {
             supported
         } if supported == 2
     ));
+}
+
+#[test]
+fn unsupported_version_with_deep_valid_body_still_dispatches_as_unsupported() {
+    let depth = 10_000;
+    let source = format!(
+        "{{\"format_version\":3,\"future\":{}0{}}}",
+        "[".repeat(depth),
+        "]".repeat(depth)
+    );
+
+    let error = from_str(&source).unwrap_err();
+
+    assert!(
+        matches!(error, FormatError::UnsupportedVersion { found: 3, .. }),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn deep_unsupported_body_still_rejects_escaped_duplicate_before_dispatch() {
+    let depth = 10_000;
+    let source = format!(
+        "{{\"format_version\":3,\"future\":{}{{\"a\":1,\"\\u0061\":2}}{}}}",
+        "[".repeat(depth),
+        "]".repeat(depth)
+    );
+
+    let error = from_str(&source).unwrap_err();
+
+    assert!(
+        matches!(error, FormatError::DuplicateMember { ref member } if member == "a"),
+        "{error:?}"
+    );
 }
 
 #[test]
@@ -242,7 +284,12 @@ fn supported_v1_number_outside_historical_f64_is_invalid_representation() {
 #[test]
 fn valid_minimal_v1_still_decodes() {
     let document = from_str(MINIMAL_V1).unwrap();
+    let escaped_version = from_str(
+        r#"{"format\u005fversion":1,"id":"doc","title":"Document","schemas":{},"entities":{}}"#,
+    )
+    .unwrap();
 
     assert_eq!(document.id.as_str(), "bb0a283f-57a8-5327-aab5-36c50d38a40b");
     assert_eq!(document.title, "Document");
+    assert_eq!(escaped_version, document);
 }

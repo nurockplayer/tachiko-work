@@ -287,6 +287,7 @@ pub fn extract_dependencies(expression: &Expression) -> BTreeSet<FieldRef> {
 pub struct Calculation {
     values: BTreeMap<FieldRef, Number>,
     dependencies: BTreeMap<FieldRef, BTreeSet<FieldRef>>,
+    reverse_dependencies: BTreeMap<FieldRef, BTreeSet<FieldRef>>,
 }
 
 impl Calculation {
@@ -312,23 +313,18 @@ impl Calculation {
 
     #[must_use]
     pub fn affected_by(&self, changed: &FieldRef) -> Vec<FieldRef> {
-        let mut frontier = BTreeSet::from([changed.clone()]);
+        let mut frontier = vec![changed.clone()];
         let mut affected = BTreeSet::new();
 
-        loop {
-            let newly_affected: BTreeSet<_> = self
-                .dependencies
-                .iter()
-                .filter(|(formula, dependencies)| {
-                    !affected.contains(*formula) && !dependencies.is_disjoint(&frontier)
-                })
-                .map(|(formula, _)| formula.clone())
-                .collect();
-            if newly_affected.is_empty() {
-                break;
+        while let Some(field) = frontier.pop() {
+            let Some(dependents) = self.reverse_dependencies.get(&field) else {
+                continue;
+            };
+            for dependent in dependents.iter().rev() {
+                if affected.insert(dependent.clone()) {
+                    frontier.push(dependent.clone());
+                }
             }
-            frontier.clone_from(&newly_affected);
-            affected.extend(newly_affected);
         }
 
         affected.into_iter().collect()
@@ -383,10 +379,27 @@ pub fn calculate(document: &Document) -> Result<Calculation, CalculationError> {
         }
     }
 
+    let reverse_dependencies = reverse_dependencies(&evaluator.dependencies);
     Ok(Calculation {
         values: evaluator.values,
         dependencies: evaluator.dependencies,
+        reverse_dependencies,
     })
+}
+
+fn reverse_dependencies(
+    dependencies: &BTreeMap<FieldRef, BTreeSet<FieldRef>>,
+) -> BTreeMap<FieldRef, BTreeSet<FieldRef>> {
+    let mut reverse = BTreeMap::<FieldRef, BTreeSet<FieldRef>>::new();
+    for (formula, inputs) in dependencies {
+        for input in inputs {
+            reverse
+                .entry(input.clone())
+                .or_default()
+                .insert(formula.clone());
+        }
+    }
+    reverse
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

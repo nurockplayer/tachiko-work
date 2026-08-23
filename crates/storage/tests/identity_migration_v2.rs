@@ -482,3 +482,23 @@ fn storage_enforces_bound_expression_node_and_depth_limits_before_recursive_conv
         "{error:?}"
     );
 }
+
+#[test]
+fn admitted_depth_64_formula_round_trips_through_v2_reader() {
+    let mut document = from_bytes(LEGACY_GRAPH.as_bytes()).unwrap();
+    set_first_formula(&mut document, deep_expression(64));
+
+    let encoded = to_canonical_string(&document).unwrap();
+
+    assert_eq!(from_str(&encoded).unwrap(), document);
+}
+
+#[test]
+fn admitted_depth_64_formula_migrates_from_v1_and_round_trips_as_v2() {
+    let source = replace_first_formula_source(LEGACY_GRAPH, &deep_expression(64));
+
+    let document = from_str(&source).unwrap();
+    let encoded = to_canonical_string(&document).unwrap();
+
+    assert_eq!(from_str(&encoded).unwrap(), document);
+}

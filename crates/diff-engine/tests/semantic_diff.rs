@@ -119,6 +119,40 @@ fn changed_balance_value_reports_direct_and_derived_meaning() {
 }
 
 #[test]
+fn formula_impact_causes_are_deduplicated_and_sorted_across_changed_inputs() {
+    let before = balance_document(100.0);
+    let mut after = balance_document(120.0);
+    after
+        .entities
+        .get_mut("sword")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("attack_interval"), number(2.0));
+
+    let semantic_diff = diff(&before, &after).unwrap();
+    let impact = semantic_diff
+        .changes()
+        .iter()
+        .find_map(|change| match change {
+            SemanticChange::FormulaImpact { field, causes, .. }
+                if field == &FieldRef::new("sword", "burst") =>
+            {
+                Some(causes)
+            }
+            _ => None,
+        })
+        .expect("burst must have a calculated impact");
+
+    assert_eq!(
+        impact,
+        &vec![
+            FieldRef::new("sword", "attack_interval"),
+            FieldRef::new("sword", "damage"),
+        ]
+    );
+}
+
+#[test]
 fn formula_changes_render_in_canonical_copy_paste_syntax() {
     let before = balance_document(100.0);
     let mut after = before.clone();
@@ -310,4 +344,88 @@ fn unchanged_documents_have_an_explicit_empty_summary() {
 
     assert!(semantic_diff.changes().is_empty());
     assert_eq!(semantic_diff.render_text(), "No semantic changes.\n");
+}
+
+fn dependency_chain_document(length: usize, seed: f64) -> Document {
+    assert!(length > 0);
+    let mut definitions = BTreeMap::new();
+    let mut values = BTreeMap::new();
+
+    for index in 0..length {
+        let field_id = format!("field-{index:05}");
+        definitions.insert(
+            FieldId::from(field_id.as_str()),
+            number_field(&field_id, true),
+        );
+        let value = if index + 1 == length {
+            number(seed)
+        } else {
+            Value::Formula(Expression::Add {
+                left: Box::new(reference("chain", &format!("field-{:05}", index + 1))),
+                right: Box::new(numeric(1.0)),
+            })
+        };
+        values.insert(FieldId::from(field_id.as_str()), value);
+    }
+
+    Document {
+        id: DocumentId::from("chain-document"),
+        title: "Long dependency chain".to_owned(),
+        schemas: BTreeMap::from([(
+            SchemaId::from("chain-schema"),
+            Schema {
+                id: SchemaId::from("chain-schema"),
+                key: SchemaKey::from("chain-schema"),
+                fields: definitions,
+            },
+        )]),
+        entities: BTreeMap::from([(
+            EntityId::from("chain"),
+            Entity {
+                id: EntityId::from("chain"),
+                key: "chain".into(),
+                schema: SchemaId::from("chain-schema"),
+                fields: values,
+            },
+        )]),
+    }
+}
+
+#[test]
+fn long_formula_chain_diff_reuses_reverse_impact_closure() {
+    const FIELD_COUNT: usize = 4_000;
+    let before = dependency_chain_document(FIELD_COUNT, 1.0);
+    let after = dependency_chain_document(FIELD_COUNT, 2.0);
+    let seed = FieldRef::new("chain", format!("field-{:05}", FIELD_COUNT - 1));
+
+    let semantic_diff = diff(&before, &after).unwrap();
+
+    assert_eq!(semantic_diff.changes().len(), FIELD_COUNT);
+    assert!(matches!(
+        semantic_diff.changes().first(),
+        Some(SemanticChange::FieldChanged { field, before, after })
+            if field == &seed && before == &number(1.0) && after == &number(2.0)
+    ));
+    let formula_impacts = semantic_diff
+        .changes()
+        .iter()
+        .filter_map(|change| match change {
+            SemanticChange::FormulaImpact { field, causes, .. } => Some((field, causes)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(formula_impacts.len(), FIELD_COUNT - 1);
+    assert_eq!(
+        formula_impacts.first().unwrap().0,
+        &FieldRef::new("chain", "field-00000")
+    );
+    assert_eq!(
+        formula_impacts.last().unwrap().0,
+        &FieldRef::new("chain", format!("field-{:05}", FIELD_COUNT - 2))
+    );
+    assert!(
+        formula_impacts
+            .iter()
+            .all(|(_, causes)| causes.as_slice() == [seed.clone()])
+    );
 }
