@@ -1,0 +1,23 @@
+name: Issue 26 spike bootstrap
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  source-snapshot:
+    if: github.head_ref == 'research/issue-26-runtime-boundary-spike'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package checked-out source
+        run: tar --exclude=.git -czf issue-26-source-snapshot.tar.gz .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: issue-26-source-snapshot
+          path: issue-26-source-snapshot.tar.gz
+          if-no-files-found: error
+          retention-days: 1
