@@ -1083,6 +1083,6 @@ The detailed executable plan is
 - Handoff is the focused PR #99 from `codex/issue-89-validation-report`. Its
   description records the ownership migration, stable report observations,
   formula-oracle evidence, validation/finalization separation, verification,
-  explicit deferrals, and `Closes #89`. The three maintainer threads are
-  resolved only after exact-head evidence is complete, and the PR stays open
-  and unmerged.
+  explicit deferrals, and `Closes #89`. All three maintainer threads have
+  exact-head evidence replies and are resolved; GitHub quality/MSRV checks are
+  green, and the PR remains open and unmerged for maintainer approval.

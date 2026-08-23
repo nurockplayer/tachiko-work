@@ -133,4 +133,4 @@
 - [x] Reconcile the combined 46-record native/WASM corpus and pin the changed stable-observation fingerprint.
 - [x] Fix first-pass review findings with regressions for complete survivor-closure facts, linear deep-chain propagation, and duplicate-key store subjects.
 - [x] Run the clean-commit release gate and fresh exact-head ADR-0018 plus ADR-0019/#89 reviews; fix every P0/P1/P2 finding.
-- [ ] Push PR #99, reply in and resolve all three maintainer threads, wait for GitHub CI, and leave the PR open and unmerged.
+- [x] Push PR #99, reply in and resolve all three maintainer threads, wait for GitHub CI, and leave the PR open and unmerged.
