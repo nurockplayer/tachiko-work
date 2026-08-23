@@ -68,7 +68,8 @@ Consequences:
 - unsupported bodies are never semantically decoded, migrated, canonicalized,
   or rewritten, but they are structurally scanned at every depth;
 - v2 checks total input length only after the strict passes; if admitted, its
-  number-token scan is another complete byte pass before DTO allocation;
+  number-token scan traverses up to another complete byte pass before DTO
+  allocation and stops at the first over-limit token;
 - `serde_json`'s current recursion guard rejects deeply nested JSON as
   `InvalidJson`; the adversarial corpus observed no unwind, but the guard is an
   implementation mechanism rather than an explicit direct-JSON envelope
@@ -321,6 +322,7 @@ measure_issue96 many-members 500000
 for measurement_round in 1 2 3; do
   measure_issue96 valid-v1 33554432
   measure_issue96 valid-v2 33554432
+  measure_issue96 duplicate 33554432
   measure_issue96 unsupported-version 33554432
   measure_issue96 huge-member-name 33554432
   measure_issue96 many-members 500000
