@@ -28,12 +28,13 @@ The semantic model owns meaning. Physical formats are representations. ADR-0017 
 | Document | Read it for |
 | --- | --- |
 | [`semantic-data-model.md`](semantic-data-model.md) | Semantic data-model contract and terminology |
-| [`schema-system.md`](schema-system.md) | Schema declaration behavior |
-| [`validation-engine.md`](validation-engine.md) | Validation behavior and diagnostics |
+| [`schema-system.md`](schema-system.md) | Durable schema declaration behavior and the boundary from runtime validation policy |
+| [`validation-engine.md`](validation-engine.md) | ADR-0019 staged validation, candidate/finalization semantics, full-validation oracle, and operation gating |
+| [`diagnostics-contract.md`](diagnostics-contract.md) | Semantic-ID-centered machine-readable diagnostic meaning and stability boundaries |
 | [`formula-engine-spec.md`](formula-engine-spec.md) | Accepted bounded authoring and ADR-0018 stable-ID projection/rename, binary64, dependency, and recomputation contract |
 | [`semantic-diff-spec.md`](semantic-diff-spec.md) | Semantic diff behavior |
 
-Detailed schema diagnostics remain under #23. Formula binding and numeric determinism are Accepted under ADR-0018. ADR-0015 fixes durable stable identity; ADR-0017 requires storage to preserve that boundary without making serializer behavior semantic meaning. Implementation remains owned by the downstream issues named in ADR-0018.
+ADR-0019 resolves the general validation/diagnostics architecture while keeping exact Rust APIs and external transports Provisional. Formula binding, failure precedence, SCC meaning, and numeric determinism remain governed by ADR-0018; stable identity by ADR-0015; storage representation failures by ADR-0017. #10 still owns public Semantic API/wire stability and #26 owns native/WASM/IPC runtime transport.
 
 ## AI, security, and extensibility
 
@@ -44,7 +45,7 @@ Detailed schema diagnostics remain under #23. Formula binding and numeric determ
 | [`plugin-system.md`](plugin-system.md) | Accepted extensibility direction plus still-open runtime/sandbox design |
 | [`migration-framework.md`](migration-framework.md) | Progressive migration direction and future adapter framework |
 
-Concrete AI mutation, capability, provenance, plugin ABI/sandbox, and migration fidelity contracts remain narrower decision work even when the broader direction is Accepted.
+Concrete AI mutation, capability, provenance, plugin ABI/sandbox, and migration fidelity contracts remain narrower decision work even when the broader direction is Accepted. ADR-0019 allows deterministic read-only domain/extension validators to share diagnostic semantics without deciding plugin runtime mechanics.
 
 ## Collaboration and history models
 
