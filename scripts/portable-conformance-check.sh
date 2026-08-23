@@ -19,34 +19,43 @@ cleanup() {
 }
 trap cleanup EXIT
 
-cargo build --locked --package tachiko-formula-engine \
+cargo build --locked \
+  --package tachiko-formula-engine \
+  --package tachiko-storage \
   --message-format json-render-diagnostics >"${check_dir}/native-build.jsonl"
 native_formula="$(node scripts/cargo-artifact-path.mjs \
   "${check_dir}/native-build.jsonl" tachiko_formula_engine)"
 native_semantic="$(node scripts/cargo-artifact-path.mjs \
   "${check_dir}/native-build.jsonl" tachiko_semantic_core)"
+native_storage="$(node scripts/cargo-artifact-path.mjs \
+  "${check_dir}/native-build.jsonl" tachiko_storage)"
 native_deps="$(dirname "${native_semantic}")"
 rustc --edition=2024 \
   -L "dependency=${native_deps}" \
   --extern "tachiko_formula_engine=${native_formula}" \
   --extern "tachiko_semantic_core=${native_semantic}" \
+  --extern "tachiko_storage=${native_storage}" \
   scripts/portable-conformance-check.rs \
   -o "${check_dir}/portable-conformance-native"
 "${check_dir}/portable-conformance-native" >"${check_dir}/native.out"
 
 cargo build --locked --target wasm32-unknown-unknown \
   --package tachiko-formula-engine \
+  --package tachiko-storage \
   --message-format json-render-diagnostics >"${check_dir}/wasm-build.jsonl"
 wasm_formula="$(node scripts/cargo-artifact-path.mjs \
   "${check_dir}/wasm-build.jsonl" tachiko_formula_engine)"
 wasm_semantic="$(node scripts/cargo-artifact-path.mjs \
   "${check_dir}/wasm-build.jsonl" tachiko_semantic_core)"
+wasm_storage="$(node scripts/cargo-artifact-path.mjs \
+  "${check_dir}/wasm-build.jsonl" tachiko_storage)"
 wasm_deps="$(dirname "${wasm_semantic}")"
 rustc --edition=2024 --target wasm32-unknown-unknown --crate-type cdylib \
   -L "dependency=${wasm_deps}" \
   -L "dependency=${native_deps}" \
   --extern "tachiko_formula_engine=${wasm_formula}" \
   --extern "tachiko_semantic_core=${wasm_semantic}" \
+  --extern "tachiko_storage=${wasm_storage}" \
   scripts/portable-conformance-check.rs \
   -o "${check_dir}/portable-conformance.wasm"
 node scripts/portable-conformance-check.mjs \
@@ -54,4 +63,10 @@ node scripts/portable-conformance-check.mjs \
   >"${check_dir}/wasm.out"
 cmp "${check_dir}/native.out" "${check_dir}/wasm.out"
 
-echo "portable conformance check passed: production semantic records match native/WASM"
+if grep -q '|255|' "${check_dir}/native.out"; then
+  echo "portable-conformance-check: fixed oracle mismatch" >&2
+  cat "${check_dir}/native.out" >&2
+  exit 1
+fi
+
+echo "portable conformance check passed: production semantic/storage records match native/WASM and fixed oracles"
