@@ -1040,8 +1040,8 @@ The detailed executable plan is
   rename-stable observations, multi-subject duplicates/cycles/dependencies,
   full formula precedence, all-or-nothing calculation, and
   validation/finalization agreement.
-- The post-rebase workspace passes 245 tests across 34 suites with
-  warning-denied Clippy. The portable corpus executes 31 fixed production
+- The post-rebase workspace passes 250 tests across 34 suites with
+  warning-denied Clippy. The portable corpus executes 34 fixed production
   records and matches exact stable observations natively and on
   `wasm32-unknown-unknown`.
 - Initial independent ADR-0018 and ADR-0019/#89 reviews found no P0. Their P1

@@ -1229,18 +1229,20 @@ fn formula_diagnostics(
     core_diagnostics: &[Diagnostic],
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
+    let blocked_subjects = formula_blocked_subjects(core_diagnostics);
+    let address_index = AddressIndex::build(document).ok();
     for (formula, failure) in report.failures() {
-        if !formula_prerequisites_available(
-            document,
-            formula,
+        if matches!(
             failure,
-            report.dependencies(),
-            core_diagnostics,
+            FormulaFailure::Cycle { members } if members.first() != Some(formula)
         ) {
             continue;
         }
+        if !formula_prerequisites_available(document, formula, failure, &blocked_subjects) {
+            continue;
+        }
         let subject = SemanticSubject::EntityField(formula.clone());
-        let path = formula_path(document, formula);
+        let path = formula_path(document, address_index.as_ref(), formula);
         let diagnostic = match failure {
             FormulaFailure::Structural { error } => formula_diagnostic(
                 diagnostic_codes::FORMULA_STRUCTURAL,
@@ -1260,21 +1262,16 @@ fn formula_diagnostics(
                 missing,
                 non_numeric,
             } => invalid_reference_diagnostic(formula, subject, path, missing, non_numeric),
-            FormulaFailure::Cycle { members } => {
-                if members.first() != Some(formula) {
-                    continue;
-                }
-                formula_diagnostic(
-                    diagnostic_codes::FORMULA_CYCLE,
-                    members
-                        .iter()
-                        .cloned()
-                        .map(SemanticSubject::EntityField)
-                        .collect(),
-                    path,
-                    format!("formula dependency cycle contains {} values", members.len()),
-                )
-            }
+            FormulaFailure::Cycle { members } => formula_diagnostic(
+                diagnostic_codes::FORMULA_CYCLE,
+                members
+                    .iter()
+                    .cloned()
+                    .map(SemanticSubject::EntityField)
+                    .collect(),
+                path,
+                format!("formula dependency cycle contains {} values", members.len()),
+            ),
             FormulaFailure::FailedDependency { dependencies } => formula_diagnostic(
                 diagnostic_codes::FORMULA_FAILED_DEPENDENCY,
                 vec![subject],
@@ -1373,32 +1370,40 @@ fn formula_prerequisites_available(
     document: &Document,
     formula: &FieldRef,
     failure: &FormulaFailure,
-    dependencies: &BTreeMap<FieldRef, BTreeSet<FieldRef>>,
-    core_diagnostics: &[Diagnostic],
+    blocked_subjects: &BTreeSet<SemanticSubject>,
 ) -> bool {
-    if !field_prerequisites_available(document, formula, core_diagnostics) {
+    if !field_prerequisites_available(document, formula, blocked_subjects) {
         return false;
     }
-    if matches!(failure, FormulaFailure::Structural { .. }) {
-        return true;
+    match failure {
+        FormulaFailure::Structural { .. }
+        | FormulaFailure::DivisionByZero
+        | FormulaFailure::NonFiniteResult => true,
+        FormulaFailure::InvalidReferences {
+            missing,
+            non_numeric,
+        } => missing
+            .union(non_numeric)
+            .all(|target| field_prerequisites_available(document, target, blocked_subjects)),
+        FormulaFailure::Cycle { members } => members
+            .iter()
+            .all(|member| field_prerequisites_available(document, member, blocked_subjects)),
+        FormulaFailure::FailedDependency { dependencies } => {
+            dependencies.iter().all(|dependency| {
+                field_prerequisites_available(document, dependency, blocked_subjects)
+            })
+        }
+        FormulaFailure::MissingInput { reference }
+        | FormulaFailure::NonNumericInput { reference } => {
+            field_prerequisites_available(document, reference, blocked_subjects)
+        }
     }
-    if let FormulaFailure::Cycle { members } = failure {
-        return members.iter().all(|member| {
-            field_prerequisites_available(document, member, core_diagnostics)
-                && dependencies[member].iter().all(|dependency| {
-                    field_prerequisites_available(document, dependency, core_diagnostics)
-                })
-        });
-    }
-    dependencies[formula]
-        .iter()
-        .all(|dependency| field_prerequisites_available(document, dependency, core_diagnostics))
 }
 
 fn field_prerequisites_available(
     document: &Document,
     field: &FieldRef,
-    core_diagnostics: &[Diagnostic],
+    blocked_subjects: &BTreeSet<SemanticSubject>,
 ) -> bool {
     let mut subjects = vec![
         SemanticSubject::Entity(field.entity.clone()),
@@ -1411,13 +1416,17 @@ fn field_prerequisites_available(
             field: field.field.clone(),
         });
     }
-    !core_diagnostics.iter().any(|diagnostic| {
-        core_diagnostic_blocks_formula_prerequisite(diagnostic.code)
-            && diagnostic
-                .subjects
-                .iter()
-                .any(|subject| subjects.contains(subject))
-    })
+    subjects
+        .iter()
+        .all(|subject| !blocked_subjects.contains(subject))
+}
+
+fn formula_blocked_subjects(core_diagnostics: &[Diagnostic]) -> BTreeSet<SemanticSubject> {
+    core_diagnostics
+        .iter()
+        .filter(|diagnostic| core_diagnostic_blocks_formula_prerequisite(diagnostic.code))
+        .flat_map(|diagnostic| diagnostic.subjects.iter().cloned())
+        .collect()
 }
 
 fn core_diagnostic_blocks_formula_prerequisite(code: DiagnosticCode) -> bool {
@@ -1434,9 +1443,8 @@ fn core_diagnostic_blocks_formula_prerequisite(code: DiagnosticCode) -> bool {
     .contains(&code)
 }
 
-fn formula_path(document: &Document, formula: &FieldRef) -> String {
-    AddressIndex::build(document)
-        .ok()
+fn formula_path(document: &Document, index: Option<&AddressIndex>, formula: &FieldRef) -> String {
+    index
         .and_then(|index| index.field_address(document, formula).ok())
         .map_or_else(
             || format!("entities.{}.fields.{}", formula.entity, formula.field),

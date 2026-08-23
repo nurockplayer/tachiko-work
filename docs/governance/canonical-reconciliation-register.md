@@ -116,7 +116,7 @@ A GitHub Issue is never automatically an Accepted decision. The table below clas
 - #37 format/version envelope — durable fail-closed/version-gated behavior resolved by ADR-0017 and `storage-versioning-and-migration.md`; the M02 implementation is complete through #40.
 - #38 canonical value encoding/order — structural/Unicode/order invariants are resolved by ADR-0017, exact numeric spelling by Accepted ADR-0018, and M02 implementation/conformance by #40.
 - #23 schema declaration, validation pipeline, diagnostics — resolved by Accepted ADR-0019; first-party implementation/conformance is completed by #89 without stabilizing an external wire contract.
-- #24 formula AST, binding, dependency graph, numeric semantics — resolved by Accepted ADR-0018, the reconciled formula/canonical JSON specifications, research record, and executed native/WASM evidence; the accepted M02 scope, including the full failure oracle, is implemented through #70/#40/#89.
+- #24 formula AST, binding, dependency graph, numeric semantics — resolved by Accepted ADR-0018, the reconciled formula/canonical JSON specifications, research record, and executed native/WASM evidence; the accepted M02 scope is implemented through #70/#40 and the #90-owned full failure oracle.
 - #26 native/WASM runtime boundary — Open Question.
 - #72 workflow-to-workspace-engine migration — implementation of ADR-0016 completed by PR #85; it does not settle #10/#26.
 
@@ -176,17 +176,18 @@ ADR-0017, and Accepted ADR-0018 without inventing format semantics.
    diagnostics, keeping severity distinct from operation gates, preserving
    storage-local failure ownership, and finding no evidence for a new
    validation/diagnostics crate.
-18. #89 implements ADR-0019 and closes ADR-0018's full-oracle gap with generic
+18. The #90-owned formula-engine prerequisite implements ADR-0018's complete
+    node-keyed/SCC failure oracle. #89 consumes that authority with generic
     semantic-core diagnostic primitives, one workspace `ValidationReport`,
-    complete node-keyed/SCC formula failures, shared semantic finalization,
-    explicit projection/output gates, and exact native/WASM stable-observation
-    evidence.
+    shared semantic finalization, explicit projection/output gates, and exact
+    native/WASM stable-observation evidence under ADR-0019.
 
 ## Current research queue
 
-The ordered #70 → #40 → #72 → #89 Core & Format Hardening implementation
-sequence is complete. ADR-0019 conformance and ADR-0018's complete full-oracle
-gap are closed without stabilizing external transport.
+The ordered #70 → #40 → #72 Core & Format Hardening sequence is complete. The
+#90-owned formula oracle prerequisite and #89 workspace validation composition
+close the remaining ADR-0018/ADR-0019 implementation gaps without stabilizing
+external transport.
 
 #10 remains the next external-interface decision. #26 builds on #10 plus the
 Accepted crate/validation boundaries and continues to own resident runtime,

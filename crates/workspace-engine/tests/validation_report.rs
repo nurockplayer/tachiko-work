@@ -294,6 +294,92 @@ fn core_invalid_formula_prerequisites_suppress_cascades_but_not_independent_fail
 }
 
 #[test]
+fn cascade_suppression_is_specific_to_the_authoritative_formula_failure() {
+    let mut document = document();
+    define(&mut document, "required-input", FieldType::Number, true);
+    formula(
+        &mut document,
+        "cascade-only",
+        reference("entity", "required-input"),
+    );
+    formula(
+        &mut document,
+        "local-first",
+        Expression::Add {
+            left: Box::new(Expression::Divide {
+                left: Box::new(number(1.0)),
+                right: Box::new(number(0.0)),
+            }),
+            right: Box::new(reference("entity", "required-input")),
+        },
+    );
+    formula(
+        &mut document,
+        "cycle-a",
+        Expression::Add {
+            left: Box::new(reference("entity", "cycle-b")),
+            right: Box::new(reference("entity", "required-input")),
+        },
+    );
+    formula(&mut document, "cycle-b", reference("entity", "cycle-a"));
+
+    let report = validation_report(&document);
+    assert!(report.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code == DiagnosticCode::MISSING_REQUIRED_FIELD
+            && diagnostic.subjects
+                == [SemanticSubject::EntityField(FieldRef::new(
+                    "entity",
+                    "required-input",
+                ))]
+    }));
+    assert!(!report.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code == diagnostic_codes::FORMULA_MISSING_INPUT
+            && diagnostic.subjects
+                == [SemanticSubject::EntityField(FieldRef::new(
+                    "entity",
+                    "cascade-only",
+                ))]
+    }));
+    assert!(report.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code == diagnostic_codes::FORMULA_DIVISION_BY_ZERO
+            && diagnostic.subjects
+                == [SemanticSubject::EntityField(FieldRef::new(
+                    "entity",
+                    "local-first",
+                ))]
+    }));
+    assert!(report.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code == diagnostic_codes::FORMULA_CYCLE
+            && diagnostic.subjects
+                == [
+                    SemanticSubject::EntityField(FieldRef::new("entity", "cycle-a")),
+                    SemanticSubject::EntityField(FieldRef::new("entity", "cycle-b")),
+                ]
+    }));
+}
+
+#[test]
+fn large_scc_projects_one_complete_workspace_diagnostic() {
+    const MEMBER_COUNT: usize = 4_096;
+
+    let mut document = document();
+    for index in 0..MEMBER_COUNT {
+        let current = format!("cycle-{index:04}");
+        let next = format!("cycle-{:04}", (index + 1) % MEMBER_COUNT);
+        formula(&mut document, &current, reference("entity", &next));
+    }
+
+    let report = validation_report(&document);
+    let cycles = report
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| diagnostic.code == diagnostic_codes::FORMULA_CYCLE)
+        .collect::<Vec<_>>();
+    assert_eq!(cycles.len(), 1);
+    assert_eq!(cycles[0].subjects.len(), MEMBER_COUNT);
+}
+
+#[test]
 fn cycle_and_failed_dependency_diagnostics_preserve_all_stable_subjects() {
     let report = validation_report(&cycle_document());
     let cycle_members = vec![

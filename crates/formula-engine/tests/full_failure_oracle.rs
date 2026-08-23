@@ -3,7 +3,9 @@ use std::{
     sync::Arc,
 };
 
-use tachiko_formula_engine::{CalculationOutcome, FormulaFailure, calculate_full};
+use tachiko_formula_engine::{
+    CalculationError, CalculationOutcome, FormulaFailure, calculate, calculate_full,
+};
 use tachiko_semantic_core::{
     Document, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey, FieldRef,
     FieldType, Number, Schema, SchemaId, SchemaKey, Value,
@@ -289,6 +291,126 @@ fn missing_declared_input_is_a_local_evaluation_failure() {
     );
 }
 
+#[test]
+fn standalone_numeric_values_obey_schema_authority_in_full_and_compatibility_outcomes() {
+    let mut non_numeric = document();
+    insert(
+        &mut non_numeric,
+        "value",
+        FieldType::Text,
+        Value::Number(number(1.0)),
+    );
+
+    let mut undeclared = document();
+    undeclared
+        .entities
+        .get_mut("entity")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("value"), Value::Number(number(1.0)));
+
+    let mut missing_schema = document();
+    insert(
+        &mut missing_schema,
+        "value",
+        FieldType::Number,
+        Value::Number(number(1.0)),
+    );
+    missing_schema.entities.get_mut("entity").unwrap().schema = "missing-schema".into();
+
+    for (document, expected_failure, expected_compatibility) in [
+        (
+            non_numeric,
+            FormulaFailure::InvalidReferences {
+                missing: BTreeSet::new(),
+                non_numeric: BTreeSet::from([field("value")]),
+            },
+            CalculationError::NonNumericReference {
+                reference: field("value"),
+            },
+        ),
+        (
+            undeclared,
+            FormulaFailure::InvalidReferences {
+                missing: BTreeSet::from([field("value")]),
+                non_numeric: BTreeSet::new(),
+            },
+            CalculationError::MissingReference {
+                reference: field("value"),
+            },
+        ),
+        (
+            missing_schema,
+            FormulaFailure::InvalidReferences {
+                missing: BTreeSet::from([field("value")]),
+                non_numeric: BTreeSet::new(),
+            },
+            CalculationError::MissingReference {
+                reference: field("value"),
+            },
+        ),
+    ] {
+        let report = failed(&document);
+        assert_eq!(report.failure(&field("value")), Some(&expected_failure));
+        assert!(report.dependencies().is_empty());
+        assert_eq!(calculate(&document), Err(expected_compatibility));
+    }
+}
+
+#[test]
+fn compatibility_projection_keeps_earlier_legacy_failure_before_later_invalid_reference() {
+    let mut local_first = document();
+    formula(
+        &mut local_first,
+        "formula",
+        Expression::Add {
+            left: Box::new(Expression::Divide {
+                left: Box::new(literal(1.0)),
+                right: Box::new(literal(0.0)),
+            }),
+            right: Box::new(reference("missing")),
+        },
+    );
+    assert!(matches!(
+        failed(&local_first).failure(&field("formula")),
+        Some(FormulaFailure::InvalidReferences { .. })
+    ));
+    assert_eq!(
+        calculate(&local_first),
+        Err(CalculationError::DivisionByZero {
+            formula: field("formula"),
+        })
+    );
+
+    let mut dependency_first = document();
+    formula(
+        &mut dependency_first,
+        "a-formula",
+        Expression::Add {
+            left: Box::new(reference("z-failed")),
+            right: Box::new(reference("missing")),
+        },
+    );
+    formula(
+        &mut dependency_first,
+        "z-failed",
+        Expression::Divide {
+            left: Box::new(literal(1.0)),
+            right: Box::new(literal(0.0)),
+        },
+    );
+    assert!(matches!(
+        failed(&dependency_first).failure(&field("a-formula")),
+        Some(FormulaFailure::InvalidReferences { .. })
+    ));
+    assert_eq!(
+        calculate(&dependency_first),
+        Err(CalculationError::DivisionByZero {
+            formula: field("z-failed"),
+        })
+    );
+}
+
 fn disjoint_cycle_document(reverse_insertion: bool) -> Document {
     let mut document = document();
     let mut formulas = vec![
@@ -393,6 +515,105 @@ fn disjoint_sccs_and_direct_failures_are_complete_and_repeatable() {
         })
         .collect::<BTreeMap<_, _>>();
     assert_eq!(forward.dependencies(), &expected_dependencies);
+}
+
+#[test]
+fn generated_cyclic_families_repeat_exact_failures_dependencies_and_memberships() {
+    for seed in 0_u8..16 {
+        let mut document = document();
+        let component_count = 2 + (usize::from(seed) % 4);
+        let mut definitions = Vec::new();
+        let mut expected_cycles = Vec::new();
+        let mut expected_dependents = BTreeMap::new();
+        let mut expected_dependencies = BTreeMap::new();
+
+        for component in 0..component_count {
+            let member_count = 2 + ((usize::from(seed) + component * 3) % 5);
+            let members = (0..member_count)
+                .map(|member| {
+                    field(&format!(
+                        "seed-{seed:02}-cycle-{component:02}-member-{member:02}"
+                    ))
+                })
+                .collect::<BTreeSet<_>>();
+            let ordered = members.iter().cloned().collect::<Vec<_>>();
+            for (index, member) in ordered.iter().enumerate() {
+                let dependency = ordered[(index + 1) % ordered.len()].clone();
+                definitions.push((
+                    member.field.to_string(),
+                    Expression::Reference(dependency.clone()),
+                ));
+                expected_dependencies.insert(member.clone(), BTreeSet::from([dependency]));
+            }
+
+            let dependent = field(&format!("seed-{seed:02}-dependent-{component:02}"));
+            let dependency = ordered[(usize::from(seed) + component) % ordered.len()].clone();
+            definitions.push((
+                dependent.field.to_string(),
+                Expression::Reference(dependency.clone()),
+            ));
+            expected_dependencies.insert(dependent.clone(), BTreeSet::from([dependency.clone()]));
+            expected_dependents.insert(dependent, dependency);
+            expected_cycles.push(members);
+        }
+
+        let zero = field(&format!("seed-{seed:02}-zero"));
+        definitions.push((
+            zero.field.to_string(),
+            Expression::Divide {
+                left: Box::new(literal(1.0)),
+                right: Box::new(literal(0.0)),
+            },
+        ));
+        expected_dependencies.insert(zero.clone(), BTreeSet::new());
+        let success = field(&format!("seed-{seed:02}-success"));
+        definitions.push((
+            success.field.to_string(),
+            Expression::Add {
+                left: Box::new(literal(f64::from(seed))),
+                right: Box::new(literal(1.0)),
+            },
+        ));
+        expected_dependencies.insert(success.clone(), BTreeSet::new());
+
+        if seed % 2 == 1 {
+            definitions.reverse();
+        } else if definitions.len() > 3 {
+            let rotation = usize::from(seed) % definitions.len();
+            definitions.rotate_left(rotation);
+        }
+        for (name, expression) in definitions {
+            formula(&mut document, &name, expression);
+        }
+
+        let first = failed(&document);
+        assert_eq!(first, failed(&document), "seed {seed} must repeat exactly");
+        assert_eq!(first.dependencies(), &expected_dependencies);
+        for members in &expected_cycles {
+            for member in members {
+                assert_eq!(
+                    first.failure(member),
+                    Some(&cycle_failure(members.clone())),
+                    "seed {seed} member {member}"
+                );
+            }
+        }
+        for (dependent, dependency) in expected_dependents {
+            assert_eq!(
+                first.failure(&dependent),
+                Some(&FormulaFailure::FailedDependency {
+                    dependencies: BTreeSet::from([dependency]),
+                }),
+                "seed {seed} dependent {dependent}"
+            );
+        }
+        assert_eq!(first.failure(&zero), Some(&FormulaFailure::DivisionByZero));
+        assert!(!first.failures().contains_key(&success));
+        assert_eq!(
+            first.failures().len(),
+            expected_cycles.iter().map(BTreeSet::len).sum::<usize>() + component_count + 1
+        );
+    }
 }
 
 #[test]

@@ -429,8 +429,9 @@ Implementation and remaining ownership under Accepted ADR-0018:
   numeric/resource vectors without rewriting legacy direct-`.ro/v1` bytes.
 - #40 owns final broad storage golden/negative conformance closure and
   independent corpus expansion.
-- Formula-engine owns the implemented complete failure oracle; later
-  formula-engine work owns incremental recomputation and mutation-sequence
+- Formula-engine owns the complete failure oracle implemented by #90 under
+  ADR-0018; #89 consumes it in the workspace validation report under ADR-0019.
+  Later formula-engine work owns incremental recomputation and mutation-sequence
   equivalence tests against that oracle.
 - Runtime-export JSON has an independent version contract. Existing
   `runtime-export-v1` bytes/meaning remain frozen; the stable-identity transition
