@@ -2,7 +2,7 @@
 
 mod parser;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use tachiko_semantic_core::{
     AddressIndex, AddressIndexError, Document, Expression, FieldAddress, FieldRef, FieldType,
@@ -289,6 +289,200 @@ pub struct Calculation {
     dependencies: BTreeMap<FieldRef, BTreeSet<FieldRef>>,
 }
 
+/// Complete atomic result of a fresh full-document recomputation.
+///
+/// A failed outcome deliberately contains no successful values. Static
+/// dependencies remain available because they are extracted before graph and
+/// evaluation failure classification.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CalculationOutcome {
+    Complete(Calculation),
+    Failed(CalculationFailures),
+}
+
+/// Every primary semantic failure from one failed full recomputation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CalculationFailures {
+    failures: BTreeMap<FieldRef, CalculationFailure>,
+    dependencies: BTreeMap<FieldRef, BTreeSet<FieldRef>>,
+}
+
+impl CalculationFailures {
+    /// Return the stable value-node-keyed primary failure map.
+    #[must_use]
+    pub fn failures(&self) -> &BTreeMap<FieldRef, CalculationFailure> {
+        &self.failures
+    }
+
+    /// Return every statically extracted formula dependency set, including
+    /// edges incident to failed nodes.
+    #[must_use]
+    pub fn dependencies(&self) -> &BTreeMap<FieldRef, BTreeSet<FieldRef>> {
+        &self.dependencies
+    }
+
+    fn compatibility_error(&self) -> CalculationError {
+        let (mut field, mut failure) = self
+            .failures
+            .first_key_value()
+            .expect("failed calculation must contain a primary failure");
+        let mut visited = BTreeSet::new();
+        loop {
+            assert!(
+                visited.insert(field.clone()),
+                "failed-dependency outcomes form an acyclic graph"
+            );
+            match failure {
+                CalculationFailure::InvalidExpression { error } => {
+                    return CalculationError::InvalidExpression {
+                        formula: field.clone(),
+                        message: error.to_string(),
+                    };
+                }
+                CalculationFailure::InvalidReferences { targets } => {
+                    let (reference, reference_failure) = targets
+                        .first_key_value()
+                        .expect("invalid-reference failure must contain a target");
+                    return match reference_failure {
+                        ReferenceFailure::Missing => CalculationError::MissingReference {
+                            reference: reference.clone(),
+                        },
+                        ReferenceFailure::NonNumeric => CalculationError::NonNumericReference {
+                            reference: reference.clone(),
+                        },
+                    };
+                }
+                CalculationFailure::Cycle { members } => {
+                    return CalculationError::Cycle {
+                        path: self.compatibility_cycle_witness(field, members),
+                    };
+                }
+                CalculationFailure::FailedDependencies { dependencies } => {
+                    let Some((dependency, dependency_failure)) =
+                        dependencies.iter().find_map(|dependency| {
+                            self.failures
+                                .get(dependency)
+                                .map(|failure| (dependency, failure))
+                        })
+                    else {
+                        return CalculationError::MissingReference {
+                            reference: dependencies
+                                .first()
+                                .cloned()
+                                .unwrap_or_else(|| field.clone()),
+                        };
+                    };
+                    field = dependency;
+                    failure = dependency_failure;
+                }
+                CalculationFailure::DivisionByZero => {
+                    return CalculationError::DivisionByZero {
+                        formula: field.clone(),
+                    };
+                }
+                CalculationFailure::NonFiniteResult => {
+                    return CalculationError::NonFiniteResult {
+                        field: field.clone(),
+                    };
+                }
+            }
+        }
+    }
+
+    /// Derive a deterministic legacy witness from semantic SCC membership.
+    /// The witness is presentation-only; the complete member set above is the
+    /// graph-failure authority.
+    fn compatibility_cycle_witness(
+        &self,
+        selected: &FieldRef,
+        members: &BTreeSet<FieldRef>,
+    ) -> Vec<FieldRef> {
+        let start = if members.contains(selected) {
+            selected
+        } else {
+            members
+                .first()
+                .expect("cycle failure must contain an SCC member")
+        };
+        let outgoing = self
+            .dependencies
+            .get(start)
+            .into_iter()
+            .flatten()
+            .filter(|dependency| members.contains(*dependency));
+
+        for next in outgoing {
+            if next == start {
+                return vec![start.clone(), start.clone()];
+            }
+
+            let mut queue = VecDeque::from([next.clone()]);
+            let mut visited = BTreeSet::from([next.clone()]);
+            let mut parents: BTreeMap<FieldRef, FieldRef> = BTreeMap::new();
+            while let Some(node) = queue.pop_front() {
+                for dependency in self
+                    .dependencies
+                    .get(&node)
+                    .into_iter()
+                    .flatten()
+                    .filter(|dependency| members.contains(*dependency))
+                {
+                    if dependency == start {
+                        let mut reverse_path = vec![node.clone()];
+                        while reverse_path.last() != Some(next) {
+                            let parent = parents
+                                .get(reverse_path.last().expect("path is non-empty"))
+                                .expect("visited SCC node has a parent")
+                                .clone();
+                            reverse_path.push(parent);
+                        }
+                        reverse_path.reverse();
+                        let mut path = vec![start.clone()];
+                        path.extend(reverse_path);
+                        path.push(start.clone());
+                        return path;
+                    }
+                    if visited.insert(dependency.clone()) {
+                        parents.insert(dependency.clone(), node.clone());
+                        queue.push_back(dependency.clone());
+                    }
+                }
+            }
+        }
+
+        debug_assert!(false, "SCC member must have a cycle witness");
+        let mut fallback = members.iter().cloned().collect::<Vec<_>>();
+        fallback.push(start.clone());
+        fallback
+    }
+}
+
+/// One primary semantic failure for a stable value node.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CalculationFailure {
+    InvalidExpression {
+        error: ExpressionComplexityError,
+    },
+    InvalidReferences {
+        targets: BTreeMap<FieldRef, ReferenceFailure>,
+    },
+    Cycle {
+        members: BTreeSet<FieldRef>,
+    },
+    FailedDependencies {
+        dependencies: BTreeSet<FieldRef>,
+    },
+    DivisionByZero,
+    NonFiniteResult,
+}
+
+/// Binding/type classification for one directly referenced stable value node.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReferenceFailure {
+    Missing,
+    NonNumeric,
+}
+
 impl Calculation {
     #[must_use]
     pub fn value(&self, field: &FieldRef) -> Option<Number> {
@@ -353,46 +547,248 @@ pub enum CalculationError {
 
 /// Calculate every numeric literal and formula in deterministic stable-ID order.
 ///
+/// This compatibility API is a convenience projection of [`calculate_complete`].
+/// A failed complete outcome projects the first stable-node-keyed primary
+/// failure into the historical fail-first error family. In particular, a
+/// projected cycle path is not semantic authority; [`CalculationFailure::Cycle`]
+/// carries the authoritative complete SCC membership.
+///
 /// # Errors
 ///
 /// Returns a [`CalculationError`] for invalid bound expressions, missing or
 /// non-numeric references, cycles, division by zero, or non-finite results.
 pub fn calculate(document: &Document) -> Result<Calculation, CalculationError> {
+    match calculate_complete(document) {
+        CalculationOutcome::Complete(calculation) => Ok(calculation),
+        CalculationOutcome::Failed(failures) => Err(failures.compatibility_error()),
+    }
+}
+
+/// Run the ADR-0018 complete atomic full-recompute correctness oracle.
+///
+/// Every calculation node receives one deterministic value-or-primary-failure
+/// outcome. Independent failures accumulate, cycles use complete SCC member
+/// sets, and dependency failures name only directly failed dependencies. A
+/// failed outcome publishes no partial [`Calculation`].
+#[must_use]
+pub fn calculate_complete(document: &Document) -> CalculationOutcome {
+    let (nodes, formulas, dependencies) = collect_calculation_nodes(document);
+    let mut failures = pregraph_failures(document, &nodes, &formulas, &dependencies);
+    assign_cycle_failures(&formulas, &dependencies, &mut failures);
+    let mut values = initial_values(&nodes, &failures);
+    evaluate_remaining_formulas(&formulas, &dependencies, &mut failures, &mut values);
+
+    if failures.is_empty() {
+        CalculationOutcome::Complete(Calculation {
+            values,
+            dependencies,
+        })
+    } else {
+        CalculationOutcome::Failed(CalculationFailures {
+            failures,
+            dependencies,
+        })
+    }
+}
+
+type ValueNodes<'document> = BTreeMap<FieldRef, &'document Value>;
+type FormulaNodes<'document> = BTreeMap<FieldRef, &'document Expression>;
+type DependencyMap = BTreeMap<FieldRef, BTreeSet<FieldRef>>;
+type FailureMap = BTreeMap<FieldRef, CalculationFailure>;
+
+fn collect_calculation_nodes(
+    document: &Document,
+) -> (ValueNodes<'_>, FormulaNodes<'_>, DependencyMap) {
+    let mut nodes = BTreeMap::new();
+    let mut formulas = BTreeMap::new();
     let mut dependencies = BTreeMap::new();
     for (entity_id, entity) in &document.entities {
         for (field_id, value) in &entity.fields {
-            if let Value::Formula(expression) = value {
-                let formula = FieldRef::new(entity_id.clone(), field_id.clone());
-                validate_expression_structure(expression).map_err(|error| {
-                    CalculationError::InvalidExpression {
-                        formula: formula.clone(),
-                        message: error.to_string(),
-                    }
-                })?;
-                dependencies.insert(formula, extract_dependencies(expression));
-            }
-        }
-    }
-
-    let mut evaluator = Evaluator::new(document, dependencies);
-    for (entity_id, entity) in &document.entities {
-        for (field_id, value) in &entity.fields {
             if matches!(value, Value::Number(_) | Value::Formula(_)) {
-                evaluator.value_for(&FieldRef::new(entity_id.clone(), field_id.clone()))?;
+                let field = FieldRef::new(entity_id.clone(), field_id.clone());
+                nodes.insert(field.clone(), value);
+                if let Value::Formula(expression) = value {
+                    dependencies.insert(field.clone(), extract_dependencies(expression));
+                    formulas.insert(field, expression);
+                }
             }
         }
     }
-
-    Ok(Calculation {
-        values: evaluator.values,
-        dependencies: evaluator.dependencies,
-    })
+    (nodes, formulas, dependencies)
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum VisitState {
-    Visiting,
-    Complete,
+fn pregraph_failures(
+    document: &Document,
+    nodes: &ValueNodes<'_>,
+    formulas: &FormulaNodes<'_>,
+    dependencies: &DependencyMap,
+) -> FailureMap {
+    let mut failures = BTreeMap::new();
+    // Phase 1a: structural failures take precedence over every later phase.
+    for (formula, expression) in formulas {
+        if let Err(error) = validate_expression_structure(expression) {
+            failures.insert(
+                formula.clone(),
+                CalculationFailure::InvalidExpression { error },
+            );
+        }
+    }
+
+    // Phase 1b: capture every directly discovered missing/stale/type target.
+    for (field, value) in nodes {
+        if failures.contains_key(field) {
+            continue;
+        }
+        let mut invalid_targets = BTreeMap::new();
+        if let Some(failure) = reference_failure(document, field) {
+            invalid_targets.insert(field.clone(), failure);
+        }
+        if matches!(value, Value::Formula(_)) {
+            for dependency in dependencies.get(field).into_iter().flatten() {
+                if let Some(failure) = reference_failure(document, dependency) {
+                    invalid_targets.insert(dependency.clone(), failure);
+                }
+            }
+        }
+        if !invalid_targets.is_empty() {
+            failures.insert(
+                field.clone(),
+                CalculationFailure::InvalidReferences {
+                    targets: invalid_targets,
+                },
+            );
+        }
+    }
+    failures
+}
+
+fn assign_cycle_failures(
+    formulas: &FormulaNodes<'_>,
+    dependencies: &DependencyMap,
+    failures: &mut FailureMap,
+) {
+    // Phase 2: semantic cycles are complete SCCs in the graph induced by
+    // formulas without an earlier primary failure.
+    let eligible_formulas = formulas
+        .keys()
+        .filter(|formula| !failures.contains_key(*formula))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    for members in cyclic_components(&eligible_formulas, dependencies) {
+        for member in &members {
+            failures.insert(
+                member.clone(),
+                CalculationFailure::Cycle {
+                    members: members.clone(),
+                },
+            );
+        }
+    }
+}
+
+fn initial_values(nodes: &ValueNodes<'_>, failures: &FailureMap) -> BTreeMap<FieldRef, Number> {
+    // Valid stored numbers are the initial ready values. Failed stored nodes
+    // remain primary failures but never become partial published state.
+    nodes
+        .iter()
+        .filter_map(|(field, value)| match value {
+            Value::Number(number) if !failures.contains_key(field) => {
+                Some((field.clone(), *number))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn evaluate_remaining_formulas(
+    formulas: &FormulaNodes<'_>,
+    dependencies: &DependencyMap,
+    failures: &mut FailureMap,
+    values: &mut BTreeMap<FieldRef, Number>,
+) {
+    // Phases 3 and 4: process the remaining acyclic graph dependency-first.
+    // Edges to already-failed nodes are ready and become direct dependency
+    // subjects; edges to remaining formulas participate in the Kahn count.
+    let remaining_formulas = formulas
+        .keys()
+        .filter(|formula| !failures.contains_key(*formula))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let mut remaining_dependency_counts = remaining_formulas
+        .iter()
+        .map(|formula| {
+            let count = dependencies
+                .get(formula)
+                .into_iter()
+                .flatten()
+                .filter(|dependency| remaining_formulas.contains(*dependency))
+                .count();
+            (formula.clone(), count)
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut dependents: BTreeMap<FieldRef, BTreeSet<FieldRef>> = BTreeMap::new();
+    for formula in &remaining_formulas {
+        for dependency in dependencies
+            .get(formula)
+            .into_iter()
+            .flatten()
+            .filter(|dependency| remaining_formulas.contains(*dependency))
+        {
+            dependents
+                .entry(dependency.clone())
+                .or_default()
+                .insert(formula.clone());
+        }
+    }
+    let mut ready = remaining_dependency_counts
+        .iter()
+        .filter(|(_, count)| **count == 0)
+        .map(|(formula, _)| formula.clone())
+        .collect::<BTreeSet<_>>();
+
+    while let Some(formula) = ready.pop_first() {
+        remaining_dependency_counts.remove(&formula);
+        let failed_dependencies = dependencies
+            .get(&formula)
+            .into_iter()
+            .flatten()
+            .filter(|dependency| failures.contains_key(*dependency))
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        if failed_dependencies.is_empty() {
+            let expression = formulas[&formula];
+            match evaluate_bound_expression(expression, values) {
+                Ok(value) => {
+                    values.insert(formula.clone(), value);
+                }
+                Err(failure) => {
+                    failures.insert(formula.clone(), failure);
+                }
+            }
+        } else {
+            failures.insert(
+                formula.clone(),
+                CalculationFailure::FailedDependencies {
+                    dependencies: failed_dependencies,
+                },
+            );
+        }
+
+        for dependent in dependents.get(&formula).into_iter().flatten() {
+            let Some(count) = remaining_dependency_counts.get_mut(dependent) else {
+                continue;
+            };
+            *count -= 1;
+            if *count == 0 {
+                ready.insert(dependent.clone());
+            }
+        }
+    }
+
+    assert!(
+        remaining_dependency_counts.is_empty(),
+        "SCC condensation must be acyclic"
+    );
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -406,268 +802,218 @@ enum BinaryOperation {
 }
 
 enum EvaluationFrame<'expression> {
-    Field(FieldRef),
-    CompleteField(FieldRef),
-    Expression {
-        formula: FieldRef,
-        expression: &'expression Expression,
-    },
-    Apply {
-        formula: FieldRef,
-        operation: BinaryOperation,
-    },
+    Expression(&'expression Expression),
+    Apply(BinaryOperation),
 }
 
-struct Evaluator<'document> {
-    document: &'document Document,
-    values: BTreeMap<FieldRef, Number>,
-    dependencies: BTreeMap<FieldRef, BTreeSet<FieldRef>>,
-    states: BTreeMap<FieldRef, VisitState>,
-    stack: Vec<FieldRef>,
+fn reference_failure(document: &Document, field: &FieldRef) -> Option<ReferenceFailure> {
+    let Some(entity) = document.entities.get(&field.entity) else {
+        return Some(ReferenceFailure::Missing);
+    };
+    let Some(definition) = document
+        .schemas
+        .get(&entity.schema)
+        .and_then(|schema| schema.fields.get(&field.field))
+    else {
+        return Some(ReferenceFailure::Missing);
+    };
+    if definition.field_type != FieldType::Number {
+        return Some(ReferenceFailure::NonNumeric);
+    }
+    match entity.fields.get(&field.field) {
+        Some(Value::Number(_) | Value::Formula(_)) => None,
+        Some(Value::Text(_) | Value::Boolean(_) | Value::Reference(_)) => {
+            Some(ReferenceFailure::NonNumeric)
+        }
+        None => Some(ReferenceFailure::Missing),
+    }
 }
 
-impl<'document> Evaluator<'document> {
-    fn new(
-        document: &'document Document,
-        dependencies: BTreeMap<FieldRef, BTreeSet<FieldRef>>,
-    ) -> Self {
-        Self {
-            document,
-            values: BTreeMap::new(),
-            dependencies,
-            states: BTreeMap::new(),
-            stack: Vec::new(),
+fn cyclic_components(
+    eligible: &BTreeSet<FieldRef>,
+    dependencies: &BTreeMap<FieldRef, BTreeSet<FieldRef>>,
+) -> Vec<BTreeSet<FieldRef>> {
+    let mut visited = BTreeSet::new();
+    let mut finish_order = Vec::new();
+    for root in eligible {
+        if !visited.insert(root.clone()) {
+            continue;
         }
-    }
-
-    fn value_for(&mut self, field: &FieldRef) -> Result<Number, CalculationError> {
-        let mut frames = vec![EvaluationFrame::Field(field.clone())];
-        let mut results = Vec::new();
-
-        while let Some(frame) = frames.pop() {
-            self.evaluate_frame(frame, &mut frames, &mut results)?;
-        }
-
-        if results.len() != 1 {
-            return Err(Self::invalid_evaluation_state(
-                field,
-                "evaluation did not produce exactly one result",
-            ));
-        }
-        Self::pop_result(&mut results, field)
-    }
-
-    fn evaluate_frame(
-        &mut self,
-        frame: EvaluationFrame<'document>,
-        frames: &mut Vec<EvaluationFrame<'document>>,
-        results: &mut Vec<Number>,
-    ) -> Result<(), CalculationError> {
-        match frame {
-            EvaluationFrame::Field(field) => self.evaluate_field(field, frames, results),
-            EvaluationFrame::CompleteField(field) => self.complete_field(field, results),
-            EvaluationFrame::Expression {
-                formula,
-                expression,
-            } => {
-                Self::evaluate_expression(formula, expression, frames, results);
-                Ok(())
-            }
-            EvaluationFrame::Apply { formula, operation } => {
-                let result = Self::apply_operation(&formula, operation, results)?;
-                results.push(result);
-                Ok(())
-            }
-        }
-    }
-
-    fn evaluate_field(
-        &mut self,
-        field: FieldRef,
-        frames: &mut Vec<EvaluationFrame<'document>>,
-        results: &mut Vec<Number>,
-    ) -> Result<(), CalculationError> {
-        match self.states.get(&field) {
-            Some(VisitState::Complete) => {
-                let value = self.values.get(&field).copied().ok_or_else(|| {
-                    Self::invalid_evaluation_state(&field, "completed field has no cached value")
-                })?;
-                results.push(value);
-            }
-            Some(VisitState::Visiting) => {
-                let cycle_start = self
-                    .stack
-                    .iter()
-                    .position(|candidate| candidate == &field)
-                    .unwrap_or(0);
-                let mut path = self.stack[cycle_start..].to_vec();
-                path.push(field);
-                return Err(CalculationError::Cycle { path });
-            }
-            None => match self.lookup_value(&field)? {
-                Value::Number(number) => {
-                    self.states.insert(field.clone(), VisitState::Complete);
-                    self.values.insert(field, *number);
-                    results.push(*number);
+        let root_dependencies = dependencies
+            .get(root)
+            .into_iter()
+            .flatten()
+            .filter(|dependency| eligible.contains(*dependency))
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut stack = vec![(root.clone(), root_dependencies, 0_usize)];
+        while !stack.is_empty() {
+            let next_dependency = {
+                let (_, node_dependencies, next_index) =
+                    stack.last_mut().expect("DFS stack is non-empty");
+                if *next_index < node_dependencies.len() {
+                    let dependency = node_dependencies[*next_index].clone();
+                    *next_index += 1;
+                    Some(dependency)
+                } else {
+                    None
                 }
-                Value::Formula(expression) => {
-                    self.states.insert(field.clone(), VisitState::Visiting);
-                    self.stack.push(field.clone());
-                    frames.push(EvaluationFrame::CompleteField(field.clone()));
-                    frames.push(EvaluationFrame::Expression {
-                        formula: field,
-                        expression,
-                    });
+            };
+            if let Some(dependency) = next_dependency {
+                if !visited.insert(dependency.clone()) {
+                    continue;
                 }
-                Value::Text(_) | Value::Boolean(_) | Value::Reference(_) => {
-                    return Err(CalculationError::NonNumericReference { reference: field });
+                let child_dependencies = dependencies
+                    .get(&dependency)
+                    .into_iter()
+                    .flatten()
+                    .filter(|candidate| eligible.contains(*candidate))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                stack.push((dependency, child_dependencies, 0));
+            } else {
+                let (node, _, _) = stack.pop().expect("DFS stack is non-empty");
+                finish_order.push(node);
+            }
+        }
+    }
+
+    let mut reverse: BTreeMap<FieldRef, BTreeSet<FieldRef>> = eligible
+        .iter()
+        .cloned()
+        .map(|node| (node, BTreeSet::new()))
+        .collect();
+    for source in eligible {
+        for dependency in dependencies
+            .get(source)
+            .into_iter()
+            .flatten()
+            .filter(|dependency| eligible.contains(*dependency))
+        {
+            reverse
+                .get_mut(dependency)
+                .expect("eligible reverse node exists")
+                .insert(source.clone());
+        }
+    }
+
+    let mut assigned = BTreeSet::new();
+    let mut cycles = Vec::new();
+    for root in finish_order.into_iter().rev() {
+        if !assigned.insert(root.clone()) {
+            continue;
+        }
+        let mut members = BTreeSet::new();
+        let mut stack = vec![root];
+        while let Some(node) = stack.pop() {
+            members.insert(node.clone());
+            for dependent in reverse[&node].iter().rev() {
+                if assigned.insert(dependent.clone()) {
+                    stack.push(dependent.clone());
                 }
-            },
-        }
-        Ok(())
-    }
-
-    fn complete_field(
-        &mut self,
-        field: FieldRef,
-        results: &mut Vec<Number>,
-    ) -> Result<(), CalculationError> {
-        let result = Self::pop_result(results, &field)?;
-        if self.stack.pop().as_ref() != Some(&field) {
-            return Err(Self::invalid_evaluation_state(
-                &field,
-                "active formula stack is inconsistent",
-            ));
-        }
-        self.states.insert(field.clone(), VisitState::Complete);
-        self.values.insert(field, result);
-        results.push(result);
-        Ok(())
-    }
-
-    fn evaluate_expression(
-        formula: FieldRef,
-        expression: &'document Expression,
-        frames: &mut Vec<EvaluationFrame<'document>>,
-        results: &mut Vec<Number>,
-    ) {
-        match expression {
-            Expression::Number(number) => results.push(*number),
-            Expression::Reference(reference) => {
-                frames.push(EvaluationFrame::Field(reference.clone()));
-            }
-            Expression::Add { left, right } => {
-                Self::push_binary(frames, formula, BinaryOperation::Add, left, right);
-            }
-            Expression::Subtract { left, right } => {
-                Self::push_binary(frames, formula, BinaryOperation::Subtract, left, right);
-            }
-            Expression::Multiply { left, right } => {
-                Self::push_binary(frames, formula, BinaryOperation::Multiply, left, right);
-            }
-            Expression::Divide { left, right } => {
-                Self::push_binary(frames, formula, BinaryOperation::Divide, left, right);
-            }
-            Expression::Minimum { left, right } => {
-                Self::push_binary(frames, formula, BinaryOperation::Minimum, left, right);
-            }
-            Expression::Maximum { left, right } => {
-                Self::push_binary(frames, formula, BinaryOperation::Maximum, left, right);
             }
         }
-    }
-
-    fn apply_operation(
-        formula: &FieldRef,
-        operation: BinaryOperation,
-        results: &mut Vec<Number>,
-    ) -> Result<Number, CalculationError> {
-        let right = Self::pop_result(results, formula)?;
-        let left = Self::pop_result(results, formula)?;
-        match operation {
-            BinaryOperation::Add => Self::number_result(formula, left.get() + right.get()),
-            BinaryOperation::Subtract => Self::number_result(formula, left.get() - right.get()),
-            BinaryOperation::Multiply => Self::number_result(formula, left.get() * right.get()),
-            BinaryOperation::Divide => {
-                if right.get() == 0.0 {
-                    return Err(CalculationError::DivisionByZero {
-                        formula: formula.clone(),
-                    });
-                }
-                Self::number_result(formula, left.get() / right.get())
-            }
-            BinaryOperation::Minimum => Ok(if left <= right { left } else { right }),
-            BinaryOperation::Maximum => Ok(if left >= right { left } else { right }),
-        }
-    }
-
-    fn lookup_value(&self, field: &FieldRef) -> Result<&'document Value, CalculationError> {
-        let entity = self.document.entities.get(&field.entity).ok_or_else(|| {
-            CalculationError::MissingReference {
-                reference: field.clone(),
-            }
-        })?;
-        let definition = self
-            .document
-            .schemas
-            .get(&entity.schema)
-            .and_then(|schema| schema.fields.get(&field.field))
-            .ok_or_else(|| CalculationError::MissingReference {
-                reference: field.clone(),
-            })?;
-        if definition.field_type != FieldType::Number {
-            return Err(CalculationError::NonNumericReference {
-                reference: field.clone(),
+        let cyclic = members.len() > 1
+            || members.first().is_some_and(|member| {
+                dependencies
+                    .get(member)
+                    .is_some_and(|targets| targets.contains(member))
             });
-        }
-        entity
-            .fields
-            .get(&field.field)
-            .ok_or_else(|| CalculationError::MissingReference {
-                reference: field.clone(),
-            })
-    }
-
-    fn push_binary(
-        frames: &mut Vec<EvaluationFrame<'document>>,
-        formula: FieldRef,
-        operation: BinaryOperation,
-        left: &'document Expression,
-        right: &'document Expression,
-    ) {
-        frames.push(EvaluationFrame::Apply {
-            formula: formula.clone(),
-            operation,
-        });
-        frames.push(EvaluationFrame::Expression {
-            formula: formula.clone(),
-            expression: right,
-        });
-        frames.push(EvaluationFrame::Expression {
-            formula,
-            expression: left,
-        });
-    }
-
-    fn pop_result(
-        results: &mut Vec<Number>,
-        formula: &FieldRef,
-    ) -> Result<Number, CalculationError> {
-        results.pop().ok_or_else(|| {
-            Self::invalid_evaluation_state(formula, "evaluation result stack is empty")
-        })
-    }
-
-    fn invalid_evaluation_state(field: &FieldRef, message: &str) -> CalculationError {
-        CalculationError::InvalidExpression {
-            formula: field.clone(),
-            message: message.to_owned(),
+        if cyclic {
+            cycles.push(members);
         }
     }
+    cycles
+}
 
-    fn number_result(field: &FieldRef, value: f64) -> Result<Number, CalculationError> {
-        Number::new(value).map_err(|_| CalculationError::NonFiniteResult {
-            field: field.clone(),
-        })
+fn evaluate_bound_expression(
+    expression: &Expression,
+    values: &BTreeMap<FieldRef, Number>,
+) -> Result<Number, CalculationFailure> {
+    let mut frames = vec![EvaluationFrame::Expression(expression)];
+    let mut results = Vec::new();
+    while let Some(frame) = frames.pop() {
+        match frame {
+            EvaluationFrame::Expression(Expression::Number(number)) => results.push(*number),
+            EvaluationFrame::Expression(Expression::Reference(reference)) => {
+                let Some(value) = values.get(reference) else {
+                    return Err(CalculationFailure::FailedDependencies {
+                        dependencies: BTreeSet::from([reference.clone()]),
+                    });
+                };
+                results.push(*value);
+            }
+            EvaluationFrame::Expression(Expression::Add { left, right }) => {
+                push_binary(&mut frames, BinaryOperation::Add, left, right);
+            }
+            EvaluationFrame::Expression(Expression::Subtract { left, right }) => {
+                push_binary(&mut frames, BinaryOperation::Subtract, left, right);
+            }
+            EvaluationFrame::Expression(Expression::Multiply { left, right }) => {
+                push_binary(&mut frames, BinaryOperation::Multiply, left, right);
+            }
+            EvaluationFrame::Expression(Expression::Divide { left, right }) => {
+                push_binary(&mut frames, BinaryOperation::Divide, left, right);
+            }
+            EvaluationFrame::Expression(Expression::Minimum { left, right }) => {
+                push_binary(&mut frames, BinaryOperation::Minimum, left, right);
+            }
+            EvaluationFrame::Expression(Expression::Maximum { left, right }) => {
+                push_binary(&mut frames, BinaryOperation::Maximum, left, right);
+            }
+            EvaluationFrame::Apply(operation) => {
+                let right = pop_result(&mut results);
+                let left = pop_result(&mut results);
+                results.push(apply_operation(operation, left, right)?);
+            }
+        }
     }
+
+    assert_eq!(
+        results.len(),
+        1,
+        "validated expression produces exactly one result"
+    );
+    Ok(pop_result(&mut results))
+}
+
+fn push_binary<'expression>(
+    frames: &mut Vec<EvaluationFrame<'expression>>,
+    operation: BinaryOperation,
+    left: &'expression Expression,
+    right: &'expression Expression,
+) {
+    frames.push(EvaluationFrame::Apply(operation));
+    frames.push(EvaluationFrame::Expression(right));
+    frames.push(EvaluationFrame::Expression(left));
+}
+
+fn pop_result(results: &mut Vec<Number>) -> Number {
+    results
+        .pop()
+        .expect("validated expression result stack is non-empty")
+}
+
+fn apply_operation(
+    operation: BinaryOperation,
+    left: Number,
+    right: Number,
+) -> Result<Number, CalculationFailure> {
+    match operation {
+        BinaryOperation::Add => number_result(left.get() + right.get()),
+        BinaryOperation::Subtract => number_result(left.get() - right.get()),
+        BinaryOperation::Multiply => number_result(left.get() * right.get()),
+        BinaryOperation::Divide => {
+            if right.get() == 0.0 {
+                return Err(CalculationFailure::DivisionByZero);
+            }
+            number_result(left.get() / right.get())
+        }
+        BinaryOperation::Minimum => Ok(if left <= right { left } else { right }),
+        BinaryOperation::Maximum => Ok(if left >= right { left } else { right }),
+    }
+}
+
+fn number_result(value: f64) -> Result<Number, CalculationFailure> {
+    Number::new(value).map_err(|_| CalculationFailure::NonFiniteResult)
 }
