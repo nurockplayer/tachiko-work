@@ -13,13 +13,19 @@ All notable changes to Tachiko Work are documented in this file.
 - Valid legacy direct `.ro` v1 documents now migrate deterministically in
   memory to stable IDs. Explicit saves emit lossless `direct-ro/v2`; merely
   opening v1 never rewrites durable bytes.
+- The normal direct-JSON reader now applies a shared Provisional 8 MiB Stage-0
+  envelope to legacy v1, v2, and untrusted version envelopes before UTF-8/JSON
+  inspection. This intentionally rejects otherwise-valid legacy v1 input over
+  8 MiB; the value is a representation profile, not a semantic or product
+  maximum.
 - Direct `.ro` v2 adopts finite normalized binary64 semantics, ECMAScript
   shortest-roundtrip numeric spelling, stable-ID collection order, and bounded
-  input/number/formula resources. Runtime export correspondingly advances to
+  number/formula resources. Runtime export correspondingly advances to
   `runtime-export/v2`.
 - Hardened legacy direct `.ro` v1 persistence with storage-owned historical
   DTOs, strict UTF-8/JSON/version handling, recursive closed-world decoding,
-  and specification-ordered canonical output while preserving valid v1 bytes.
+  and specification-ordered canonical output while preserving admitted v1
+  wire meaning and canonical bytes.
 - `tachiko-storage::FormatError` now adds distinct UTF-8, JSON-duplicate,
   version-envelope, and representation failures. Existing `Json`,
   `UnsupportedVersion`, and `InvalidDocument` shapes remain available, but

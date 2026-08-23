@@ -1,6 +1,9 @@
 //! Native/WASM conformance corpus for portable production semantics.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::OnceLock,
+};
 
 use tachiko_ai_api::{explain_formula, suggest_field_change};
 use tachiko_formula_engine::{
@@ -756,6 +759,18 @@ fn case_record(index: u32) -> Record {
     }
 }
 
+fn conformance_records() -> &'static [Record] {
+    static RECORDS: OnceLock<Vec<Record>> = OnceLock::new();
+    RECORDS.get_or_init(|| (0..CASE_COUNT).map(case_record).collect())
+}
+
+fn cached_case_record(index: u32) -> Record {
+    conformance_records()
+        .get(index as usize)
+        .copied()
+        .unwrap_or_else(|| Record::failure(UNEXPECTED, 0))
+}
+
 /// Return the number of production-semantic conformance records.
 #[unsafe(no_mangle)]
 pub extern "C" fn tachiko_case_count() -> u32 {
@@ -765,25 +780,24 @@ pub extern "C" fn tachiko_case_count() -> u32 {
 /// Return the typed outcome class for one conformance record.
 #[unsafe(no_mangle)]
 pub extern "C" fn tachiko_case_class(index: u32) -> u32 {
-    case_record(index).class
+    cached_case_record(index).class
 }
 
 /// Return normalized Number bits for one successful conformance record.
 #[unsafe(no_mangle)]
 pub extern "C" fn tachiko_case_bits(index: u32) -> u64 {
-    case_record(index).bits
+    cached_case_record(index).bits
 }
 
 /// Return case-specific deterministic dependency/path/projection/storage evidence.
 #[unsafe(no_mangle)]
 pub extern "C" fn tachiko_case_auxiliary(index: u32) -> u64 {
-    case_record(index).auxiliary
+    cached_case_record(index).auxiliary
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
-    for index in 0..CASE_COUNT {
-        let record = case_record(index);
+    for (index, record) in conformance_records().iter().enumerate() {
         println!(
             "{index}|{}|{:016x}|{}",
             record.class, record.bits, record.auxiliary
