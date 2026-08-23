@@ -2,7 +2,9 @@
 
 Decision state: Accepted direction; detailed object model is Provisional
 
-Implementation state: Partially implemented
+Implementation state: Stable identity and the Milestone 02
+schema/entity/field/formula aggregate are implemented; richer block/view graph
+remains Provisional
 
 Hardening owner: #21, with progressive-typing implications in #13
 
@@ -10,7 +12,10 @@ Hardening owner: #21, with progressive-typing implications in #13
 
 Tachiko Work has accepted the semantic-first direction: documents, structured data, formulas, references, and future views should share meaning through the semantic model rather than letting historical file/UI representations own the truth.
 
-The exact long-term graph shape, identity policy, set of block/object types, containment rules, and reference representation are not all frozen by this document. #21 owns the expensive-to-reverse semantic identity/document-graph decision.
+The exact long-term graph shape, set of block/object types, containment rules,
+and view model are not all frozen by this document. ADR-0015 now fixes the
+implemented stable-identity/key boundary; that decision does not authorize
+universal graph IDs or IDs for future object kinds without a concrete need.
 
 Examples below illustrate the direction. A named example type is not automatically a required v1 primitive.
 
@@ -137,15 +142,20 @@ This supports:
 - dependency tracking
 - safer refactoring
 
-The durable binding/reference/numeric semantics are owned by #21 and #24 rather than fully specified here.
+The durable binding/reference/numeric semantics are Accepted in ADR-0015 and
+ADR-0018 and implemented for the current formula subset.
 
 ## References
 
 References are typed semantic relationships rather than unvalidated application strings.
 
-The project wants safe rename, dependency analysis, diagnostics, and migration. Exactly what a durable reference stores and how stable identity is generated are Open Questions in #21.
-
-Do not infer from current human-readable identifiers that display names, storage paths, or `entity.field` strings are permanent identity.
+Current durable entity references store `EntityId`; bound formula references
+store `EntityId + FieldId`. Schema, field, and entity keys are mutable human
+addresses resolved through deterministic derived indexes. Rename changes a key
+without changing an ID or rewriting a bound reference. Normal creation uses a
+replaceable UUIDv7 host seam, while deterministic legacy migration uses a
+version-scoped UUIDv5 mechanism; neither UUID family is generic semantic
+meaning.
 
 ## AI-Native Operations
 

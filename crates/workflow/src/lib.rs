@@ -4,24 +4,37 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use tachiko_diff_engine::{DiffError, SemanticDiff, diff};
 use tachiko_formula_engine::{
-    CalculationError, FormulaParseError, calculate, format_expression, parse_expression,
+    CalculationError, CanonicalAuthoringProjectionError, FormulaBindError, FormulaParseError,
+    bind_expression, calculate, parse_expression, project_expression,
 };
 use tachiko_semantic_core::{
-    Diagnostic, Document, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldRef,
-    FieldType, Schema, SchemaId, Value, is_valid_identifier, validate_document,
+    AddressIndex, AddressIndexError, Diagnostic, Document, DocumentId, Entity, EntityId, EntityKey,
+    Expression, FieldAddress, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, Number,
+    Schema, SchemaId, SchemaKey, Value, is_valid_identifier, validate_document,
 };
 use thiserror::Error;
 
 /// A useful starting point for a newly-created semantic document.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StarterTemplate {
-    /// A small, connected game-balance model with derived values.
     GameBalance,
-    /// A blank document for users who already know the file format.
     Empty,
 }
 
-/// A compact, deterministic view of a semantic document.
+/// The nominal object category requested at the replaceable creation seam.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SemanticIdKind {
+    Document,
+    Schema,
+    Field,
+    Entity,
+}
+
+/// Host-supplied stable-ID creation boundary.
+pub trait IdGenerator {
+    fn generate(&mut self, kind: SemanticIdKind) -> String;
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct DocumentOverview {
     pub schema_count: usize,
@@ -33,33 +46,31 @@ pub struct DocumentOverview {
 #[derive(Clone, Debug, PartialEq)]
 pub struct EntityOverview {
     pub id: EntityId,
+    pub key: EntityKey,
     pub label: String,
-    pub schema: SchemaId,
+    pub schema: SchemaKey,
     pub fields: Vec<FieldOverview>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct FieldOverview {
     pub id: FieldId,
+    pub key: FieldKey,
     pub display_value: String,
     pub kind: FieldKind,
 }
 
-/// How a field participates in the semantic model.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FieldKind {
-    /// A stored scalar input.
     Input,
-    /// A typed relationship to an entity in the named schema.
-    Reference { target_schema: SchemaId },
-    /// A calculated numeric expression.
+    Reference { target_schema: SchemaKey },
     Formula,
 }
 
-/// A field's current meaning and calculation relationships.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FieldExplanation {
     pub field: FieldRef,
+    pub address: FieldAddress,
     pub display_value: String,
     pub expression: Option<String>,
     pub dependencies: Vec<FieldRef>,
@@ -72,7 +83,6 @@ pub struct AffectedFormula {
     pub display_value: String,
 }
 
-/// A validated document edit together with its semantic consequences.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EditPreview {
     pub document: Document,
@@ -81,35 +91,70 @@ pub struct EditPreview {
 
 #[derive(Debug, Error)]
 pub enum WorkflowError {
-    #[error("entity '{entity}' does not exist")]
-    MissingEntity { entity: EntityId },
-    #[error("entity id '{entity}' is not a valid semantic identifier")]
-    InvalidEntityIdentifier { entity: EntityId },
-    #[error("entity '{entity}' already exists")]
-    EntityAlreadyExists { entity: EntityId },
-    #[error("cannot rename entity '{entity}' to itself")]
-    NoOpEntityRename { entity: EntityId },
+    #[error("semantic address lookup failed: {0}")]
+    Address(#[from] AddressIndexError),
+    #[error("entity key '{entity}' does not exist")]
+    MissingEntity { entity: EntityKey },
+    #[error("entity key '{entity}' is not a valid human address")]
+    InvalidEntityKey { entity: EntityKey },
+    #[error("entity key '{entity}' already exists")]
+    EntityKeyAlreadyExists { entity: EntityKey },
+    #[error("cannot rename entity key '{entity}' to itself")]
+    NoOpEntityRename { entity: EntityKey },
+    #[error("schema key '{schema}' does not exist")]
+    MissingSchemaKey { schema: SchemaKey },
+    #[error("schema key '{schema}' is not a valid human address")]
+    InvalidSchemaKey { schema: SchemaKey },
+    #[error("schema key '{schema}' already exists")]
+    SchemaKeyAlreadyExists { schema: SchemaKey },
+    #[error("cannot rename schema key '{schema}' to itself")]
+    NoOpSchemaRename { schema: SchemaKey },
+    #[error("field key '{field}' already exists in schema '{schema}'")]
+    FieldKeyAlreadyExists { schema: SchemaKey, field: FieldKey },
+    #[error("field key '{field}' does not exist in schema '{schema}'")]
+    MissingFieldKey { schema: SchemaKey, field: FieldKey },
+    #[error("field key '{field}' is not a valid human address in schema '{schema}'")]
+    InvalidFieldKey { schema: SchemaKey, field: FieldKey },
+    #[error("cannot rename field key '{field}' to itself")]
+    NoOpFieldRename { field: FieldKey },
+    #[error("generated {kind:?} stable id was empty")]
+    EmptyGeneratedId { kind: SemanticIdKind },
+    #[error("generated {kind:?} stable id '{id}' collides with an existing object")]
+    GeneratedIdCollision { kind: SemanticIdKind, id: String },
     #[error(
         "cannot remove entity '{entity}' because it is referenced by {}",
-        format_dependent_fields(.dependents)
+        format_dependent_addresses(.dependent_addresses)
     )]
     EntityReferenced {
-        entity: EntityId,
+        entity: EntityKey,
         dependents: Vec<FieldRef>,
+        dependent_addresses: Vec<FieldAddress>,
     },
     #[error("field '{field}' does not exist")]
     MissingField { field: FieldRef },
-    #[error("schema '{schema}' does not exist")]
+    #[error("schema stable id '{schema}' does not exist")]
     MissingSchema { schema: SchemaId },
     #[error("field '{field}' is a formula; edit its inputs instead")]
     FormulaEdit { field: FieldRef },
     #[error("field '{field}' is not numeric; formulas require a numeric field")]
     NonNumericFormulaField { field: FieldRef },
-    #[error("invalid formula for '{field}': {source}")]
+    #[error("invalid formula syntax for '{field}': {source}")]
     InvalidFormula {
         field: FieldRef,
         #[source]
         source: FormulaParseError,
+    },
+    #[error("formula binding failed for '{field}': {source}")]
+    FormulaBinding {
+        field: FieldRef,
+        #[source]
+        source: Box<FormulaBindError>,
+    },
+    #[error("formula projection failed for '{field}': {source}")]
+    FormulaProjection {
+        field: FieldRef,
+        #[source]
+        source: CanonicalAuthoringProjectionError,
     },
     #[error("'{input}' is not a valid {expected} value for '{field}'")]
     InvalidValue {
@@ -130,64 +175,86 @@ pub enum WorkflowError {
     Diff(#[from] DiffError),
 }
 
-/// Create a deterministic document from a first-party template.
-#[must_use]
-pub fn create_document(
-    template: StarterTemplate,
-    id: impl Into<tachiko_semantic_core::DocumentId>,
-    title: impl Into<String>,
-) -> Document {
-    let id = id.into();
-    let title = title.into();
-    match template {
-        StarterTemplate::GameBalance => game_balance_document(id, title),
-        StarterTemplate::Empty => Document::empty(id, title),
-    }
-}
-
-/// Build a stable, calculated view suitable for a CLI or future UI.
+/// Create a document through the host-supplied stable-ID boundary.
 ///
 /// # Errors
 ///
-/// Returns an error if any formula cannot be calculated.
+/// Returns an error for an empty/colliding generated ID or an invalid template
+/// candidate.
+pub fn create_document(
+    template: StarterTemplate,
+    title: impl Into<String>,
+    generator: &mut impl IdGenerator,
+) -> Result<Document, WorkflowError> {
+    let title = title.into();
+    let document_id = next_document_id(generator)?;
+    let document = match template {
+        StarterTemplate::GameBalance => game_balance_document(document_id, title, generator)?,
+        StarterTemplate::Empty => Document::empty(document_id, title),
+    };
+    validate_candidate(&document)?;
+    preflight_formula_projections(&document)?;
+    calculate(&document)?;
+    Ok(document)
+}
+
+/// Build a deterministic calculated view suitable for adapters.
+///
+/// # Errors
+///
+/// Returns an error if semantic addresses or formulas are invalid.
 pub fn overview(document: &Document) -> Result<DocumentOverview, WorkflowError> {
+    validate_candidate(document)?;
     let calculation = calculate(document)?;
     let mut formula_count = 0;
-    let entities = document
-        .entities
-        .values()
-        .map(|entity| {
-            let fields = entity
-                .fields
-                .iter()
-                .map(|(field_id, value)| {
-                    let field_ref = FieldRef::new(entity.id.clone(), field_id.clone());
-                    let kind = field_kind(document, entity, field_id, value)?;
-                    if kind == FieldKind::Formula {
-                        formula_count += 1;
-                    }
-                    let display_value = if kind == FieldKind::Formula {
-                        calculation
-                            .value(&field_ref)
-                            .map_or_else(|| "unavailable".to_owned(), format_number)
-                    } else {
-                        format_value(value)
-                    };
-                    Ok(FieldOverview {
-                        id: field_id.clone(),
-                        display_value,
-                        kind,
-                    })
-                })
-                .collect::<Result<Vec<_>, WorkflowError>>()?;
-            Ok(EntityOverview {
-                id: entity.id.clone(),
-                label: entity_label(entity),
-                schema: entity.schema.clone(),
-                fields,
-            })
-        })
-        .collect::<Result<Vec<_>, WorkflowError>>()?;
+    let mut entities = Vec::new();
+
+    for entity in document.entities.values() {
+        let schema =
+            document
+                .schemas
+                .get(&entity.schema)
+                .ok_or_else(|| WorkflowError::MissingSchema {
+                    schema: entity.schema.clone(),
+                })?;
+        let mut fields = Vec::new();
+        for (field_id, value) in &entity.fields {
+            let definition =
+                schema
+                    .fields
+                    .get(field_id)
+                    .ok_or_else(|| WorkflowError::MissingField {
+                        field: FieldRef::new(entity.id.clone(), field_id.clone()),
+                    })?;
+            let field_ref = FieldRef::new(entity.id.clone(), field_id.clone());
+            let kind = field_kind(document, value, &definition.field_type)?;
+            if kind == FieldKind::Formula {
+                formula_count += 1;
+            }
+            let display_value = if kind == FieldKind::Formula {
+                calculation
+                    .value(&field_ref)
+                    .map_or_else(|| "unavailable".to_owned(), format_number)
+            } else {
+                format_value(document, value)
+            };
+            fields.push(FieldOverview {
+                id: field_id.clone(),
+                key: definition.key.clone(),
+                display_value,
+                kind,
+            });
+        }
+        fields.sort_by(|left, right| left.key.cmp(&right.key));
+        entities.push(EntityOverview {
+            id: entity.id.clone(),
+            key: entity.key.clone(),
+            label: entity_label(document, entity),
+            schema: schema.key.clone(),
+            fields,
+        });
+    }
+    entities.sort_by(|left, right| left.key.cmp(&right.key));
 
     Ok(DocumentOverview {
         schema_count: document.schemas.len(),
@@ -199,61 +266,63 @@ pub fn overview(document: &Document) -> Result<DocumentOverview, WorkflowError> 
 
 fn field_kind(
     document: &Document,
-    entity: &Entity,
-    field_id: &FieldId,
     value: &Value,
+    field_type: &FieldType,
 ) -> Result<FieldKind, WorkflowError> {
     match value {
         Value::Formula(_) => Ok(FieldKind::Formula),
         Value::Reference(_) => {
-            let schema = document.schemas.get(&entity.schema).ok_or_else(|| {
-                WorkflowError::MissingSchema {
-                    schema: entity.schema.clone(),
-                }
-            })?;
-            let definition =
-                schema
-                    .fields
-                    .get(field_id)
-                    .ok_or_else(|| WorkflowError::MissingField {
-                        field: FieldRef::new(entity.id.clone(), field_id.clone()),
-                    })?;
-            let FieldType::Reference { schema } = &definition.field_type else {
+            let FieldType::Reference { schema } = field_type else {
                 return Ok(FieldKind::Input);
             };
+            let target =
+                document
+                    .schemas
+                    .get(schema)
+                    .ok_or_else(|| WorkflowError::MissingSchema {
+                        schema: schema.clone(),
+                    })?;
             Ok(FieldKind::Reference {
-                target_schema: schema.clone(),
+                target_schema: target.key.clone(),
             })
         }
         Value::Number(_) | Value::Text(_) | Value::Boolean(_) => Ok(FieldKind::Input),
     }
 }
 
-/// Explain a field's value, formula, dependencies, and downstream effects.
+/// Explain one human-addressed field.
 ///
 /// # Errors
 ///
-/// Returns an error when the field is missing or the document cannot be calculated.
+/// Returns an error when lookup, projection, or calculation fails.
 pub fn explain_field(
     document: &Document,
-    field: &FieldRef,
+    address: &FieldAddress,
 ) -> Result<FieldExplanation, WorkflowError> {
-    let value = field_value(document, field)?;
+    let field = document.resolve_field(address)?;
+    let value = field_value(document, &field)?;
     let calculation = calculate(document)?;
     let display_value = calculation
-        .value(field)
-        .map_or_else(|| format_value(value), format_number);
+        .value(&field)
+        .map_or_else(|| format_value(document, value), format_number);
     let expression = match value {
-        Value::Formula(expression) => Some(format_expression(expression)),
+        Value::Formula(expression) => {
+            Some(project_expression(document, expression).map_err(|source| {
+                WorkflowError::FormulaProjection {
+                    field: field.clone(),
+                    source,
+                }
+            })?)
+        }
         _ => None,
     };
     let dependencies = calculation
-        .dependencies_of(field)
+        .dependencies_of(&field)
         .map_or_else(Vec::new, |dependencies| {
             dependencies.iter().cloned().collect()
         });
     let affected_formulas = calculation
-        .affected_by(field)
+        .affected_by(&field)
         .into_iter()
         .filter_map(|affected| {
             calculation.value(&affected).map(|value| AffectedFormula {
@@ -264,7 +333,8 @@ pub fn explain_field(
         .collect();
 
     Ok(FieldExplanation {
-        field: field.clone(),
+        field,
+        address: address.clone(),
         display_value,
         expression,
         dependencies,
@@ -272,54 +342,31 @@ pub fn explain_field(
     })
 }
 
-/// Parse and apply a schema-typed scalar edit without mutating the source document.
-///
-/// The result is validated, calculated, and semantically compared before it is returned.
-/// Formula fields must be changed through their inputs.
+/// Apply a schema-typed scalar edit addressed by current human keys.
 ///
 /// # Errors
 ///
-/// Returns an error for missing fields, formula targets, invalid scalar input, validation
-/// failures, no-op edits, calculation failures, or comparison failures.
+/// Returns a typed lookup, parsing, validation, calculation, or diff error.
 pub fn set_scalar(
     document: &Document,
-    field: &FieldRef,
+    address: &FieldAddress,
     input: &str,
 ) -> Result<EditPreview, WorkflowError> {
-    let entity =
-        document
-            .entities
-            .get(&field.entity)
-            .ok_or_else(|| WorkflowError::MissingEntity {
-                entity: field.entity.clone(),
-            })?;
-    let existing = entity
-        .fields
-        .get(&field.field)
-        .ok_or_else(|| WorkflowError::MissingField {
-            field: field.clone(),
-        })?;
+    let field = document.resolve_field(address)?;
+    let entity = &document.entities[&field.entity];
+    let existing = field_value(document, &field)?;
     if matches!(existing, Value::Formula(_)) {
         return Err(WorkflowError::FormulaEdit {
             field: field.clone(),
         });
     }
-
-    let schema =
-        document
-            .schemas
-            .get(&entity.schema)
-            .ok_or_else(|| WorkflowError::MissingSchema {
-                schema: entity.schema.clone(),
-            })?;
-    let definition =
-        schema
-            .fields
-            .get(&field.field)
-            .ok_or_else(|| WorkflowError::MissingField {
-                field: field.clone(),
-            })?;
-    let value = parse_scalar(field, input, &definition.field_type)?;
+    let definition = document.schemas[&entity.schema]
+        .fields
+        .get(&field.field)
+        .ok_or_else(|| WorkflowError::MissingField {
+            field: field.clone(),
+        })?;
+    let value = parse_scalar(document, &field, input, &definition.field_type)?;
     if existing == &value {
         return Err(WorkflowError::NoChange {
             field: field.clone(),
@@ -327,52 +374,32 @@ pub fn set_scalar(
     }
 
     let mut edited = document.clone();
-    let Some(edited_entity) = edited.entities.get_mut(&field.entity) else {
-        return Err(WorkflowError::MissingEntity {
-            entity: field.entity.clone(),
-        });
-    };
-    edited_entity.fields.insert(field.field.clone(), value);
-
+    let edited_entity =
+        edited
+            .entities
+            .get_mut(&field.entity)
+            .ok_or_else(|| WorkflowError::MissingField {
+                field: field.clone(),
+            })?;
+    edited_entity.fields.insert(field.field, value);
     finalize_edit(document, edited)
 }
 
-/// Parse and apply a formula edit to a schema-numeric field without mutating
-/// the source document.
-///
-/// The candidate is validated, calculated, and semantically compared before it
-/// is returned. Stored numeric inputs may become formulas; formulas may be
-/// revised. Other schema types are never coerced.
+/// Parse, bind, and apply a formula edit addressed by current human keys.
 ///
 /// # Errors
 ///
-/// Returns an error for missing or non-numeric fields, invalid formula syntax,
-/// an unchanged formula, validation or calculation failure, or comparison
-/// failure.
+/// Returns a typed parse, binding, lookup, validation, calculation, or diff
+/// error without mutating the source document.
 pub fn set_formula(
     document: &Document,
-    field: &FieldRef,
+    address: &FieldAddress,
     input: &str,
 ) -> Result<EditPreview, WorkflowError> {
-    let entity =
-        document
-            .entities
-            .get(&field.entity)
-            .ok_or_else(|| WorkflowError::MissingEntity {
-                entity: field.entity.clone(),
-            })?;
-    let existing = entity
-        .fields
-        .get(&field.field)
-        .ok_or_else(|| WorkflowError::MissingField {
-            field: field.clone(),
-        })?;
-    let definition = document
-        .schemas
-        .get(&entity.schema)
-        .ok_or_else(|| WorkflowError::MissingSchema {
-            schema: entity.schema.clone(),
-        })?
+    let field = document.resolve_field(address)?;
+    let entity = &document.entities[&field.entity];
+    let existing = field_value(document, &field)?;
+    let definition = document.schemas[&entity.schema]
         .fields
         .get(&field.field)
         .ok_or_else(|| WorkflowError::MissingField {
@@ -384,10 +411,15 @@ pub fn set_formula(
         });
     }
 
-    let expression = parse_expression(input).map_err(|source| WorkflowError::InvalidFormula {
+    let unbound = parse_expression(input).map_err(|source| WorkflowError::InvalidFormula {
         field: field.clone(),
         source,
     })?;
+    let expression =
+        bind_expression(document, &unbound).map_err(|source| WorkflowError::FormulaBinding {
+            field: field.clone(),
+            source: Box::new(source),
+        })?;
     let value = Value::Formula(expression);
     if existing == &value {
         return Err(WorkflowError::NoChange {
@@ -396,152 +428,263 @@ pub fn set_formula(
     }
 
     let mut edited = document.clone();
-    let Some(edited_entity) = edited.entities.get_mut(&field.entity) else {
-        return Err(WorkflowError::MissingEntity {
-            entity: field.entity.clone(),
-        });
-    };
-    edited_entity.fields.insert(field.field.clone(), value);
+    let edited_entity =
+        edited
+            .entities
+            .get_mut(&field.entity)
+            .ok_or_else(|| WorkflowError::MissingField {
+                field: field.clone(),
+            })?;
+    edited_entity.fields.insert(field.field, value);
     finalize_edit(document, edited)
 }
 
-/// Duplicate an entity into a new semantic identity without mutating the source.
+/// Duplicate an entity under a new key and generated stable identity.
 ///
-/// Formula references owned by the copied entity that point back to the source
-/// are recursively rebased to the target. Stored references and references to
-/// other entities retain their existing meaning.
+/// Formula self-references rebase to the new stable ID; every other bound
+/// relationship retains its existing stable target.
 ///
 /// # Errors
 ///
-/// Returns an error when the source is absent, the target identifier is invalid
-/// or occupied, or the candidate fails validation, calculation, or semantic diff.
+/// Returns a typed key, generation, validation, calculation, or diff error.
 pub fn duplicate_entity(
     document: &Document,
     source: impl AsRef<str>,
     target: impl AsRef<str>,
+    generator: &mut impl IdGenerator,
 ) -> Result<EditPreview, WorkflowError> {
-    let source = EntityId::from(source.as_ref());
-    let target = EntityId::from(target.as_ref());
-    let source_entity =
-        document
-            .entities
-            .get(&source)
-            .ok_or_else(|| WorkflowError::MissingEntity {
-                entity: source.clone(),
-            })?;
-    require_available_target(document, &target)?;
+    let source_key = EntityKey::from(source.as_ref());
+    let target_key = EntityKey::from(target.as_ref());
+    validate_new_entity_key(document, &target_key)?;
+    let index = AddressIndex::build(document)?;
+    let source_id = index
+        .entity_id(&source_key)
+        .map_err(|_| WorkflowError::MissingEntity {
+            entity: source_key.clone(),
+        })?
+        .clone();
+    let target_id = next_entity_id(generator)?;
+    if document.entities.contains_key(&target_id) {
+        return Err(WorkflowError::GeneratedIdCollision {
+            kind: SemanticIdKind::Entity,
+            id: target_id.to_string(),
+        });
+    }
 
-    let mut duplicate = source_entity.clone();
-    duplicate.id = target.clone();
+    let mut duplicate = document.entities[&source_id].clone();
+    duplicate.id = target_id.clone();
+    duplicate.key = target_key;
     for value in duplicate.fields.values_mut() {
         if let Value::Formula(expression) = value {
-            rewrite_expression_entity(expression, &source, &target);
+            rewrite_expression_entity(expression, &source_id, &target_id);
         }
     }
 
     let mut edited = document.clone();
-    edited.entities.insert(target, duplicate);
+    edited.entities.insert(target_id, duplicate);
     finalize_edit(document, edited)
 }
 
-/// Rename an entity and every typed relationship that points to it.
+/// Rename an entity's mutable human key while preserving stable identity and
+/// every bound relationship.
 ///
 /// # Errors
 ///
-/// Returns an error for a no-op, absent source, invalid or occupied target, or
-/// when the rewritten candidate fails validation, calculation, or semantic diff.
+/// Returns a typed key, projection, validation, calculation, or diff error.
 pub fn rename_entity(
     document: &Document,
     source: impl AsRef<str>,
     target: impl AsRef<str>,
 ) -> Result<EditPreview, WorkflowError> {
-    let source = EntityId::from(source.as_ref());
-    let target = EntityId::from(target.as_ref());
+    let source = EntityKey::from(source.as_ref());
+    let target = EntityKey::from(target.as_ref());
     if source == target {
         return Err(WorkflowError::NoOpEntityRename { entity: source });
     }
-    if !document.entities.contains_key(&source) {
-        return Err(WorkflowError::MissingEntity { entity: source });
-    }
-    require_available_target(document, &target)?;
+    validate_new_entity_key(document, &target)?;
+    let entity_id = AddressIndex::build(document)?
+        .entity_id(&source)
+        .map_err(|_| WorkflowError::MissingEntity {
+            entity: source.clone(),
+        })?
+        .clone();
 
     let mut edited = document.clone();
-    let Some(mut renamed) = edited.entities.remove(&source) else {
-        return Err(WorkflowError::MissingEntity { entity: source });
-    };
-    renamed.id = target.clone();
-    edited.entities.insert(target.clone(), renamed);
-
-    for entity in edited.entities.values_mut() {
-        for value in entity.fields.values_mut() {
-            match value {
-                Value::Reference(reference) if reference == &source => {
-                    *reference = target.clone();
-                }
-                Value::Formula(expression) => {
-                    rewrite_expression_entity(expression, &source, &target);
-                }
-                Value::Number(_) | Value::Text(_) | Value::Boolean(_) | Value::Reference(_) => {}
-            }
-        }
-    }
-
+    edited
+        .entities
+        .get_mut(&entity_id)
+        .ok_or(WorkflowError::MissingEntity { entity: source })?
+        .key = target;
     finalize_edit(document, edited)
 }
 
-/// Remove an entity when no field owned by another entity refers to it.
+/// Rename a schema's mutable key while preserving its stable ID.
 ///
 /// # Errors
 ///
-/// Returns an error when the entity is absent, when sorted dependent field paths
-/// block removal, or when the candidate fails validation, calculation, or diff.
+/// Returns a typed key, validation, calculation, or diff error.
+pub fn rename_schema(
+    document: &Document,
+    source: impl AsRef<str>,
+    target: impl AsRef<str>,
+) -> Result<EditPreview, WorkflowError> {
+    let source = SchemaKey::from(source.as_ref());
+    let target = SchemaKey::from(target.as_ref());
+    if source == target {
+        return Err(WorkflowError::NoOpSchemaRename { schema: source });
+    }
+    validate_key(target.as_str()).map_err(|()| WorkflowError::InvalidSchemaKey {
+        schema: target.clone(),
+    })?;
+    let index = AddressIndex::build(document)?;
+    if index.schema_id(&target).is_ok() {
+        return Err(WorkflowError::SchemaKeyAlreadyExists { schema: target });
+    }
+    let schema_id = index
+        .schema_id(&source)
+        .map_err(|_| WorkflowError::MissingSchemaKey {
+            schema: source.clone(),
+        })?
+        .clone();
+
+    let mut edited = document.clone();
+    edited
+        .schemas
+        .get_mut(&schema_id)
+        .ok_or(WorkflowError::MissingSchemaKey { schema: source })?
+        .key = target;
+    finalize_edit(document, edited)
+}
+
+/// Rename a field's mutable key in one schema while preserving its stable ID.
+///
+/// # Errors
+///
+/// Returns a typed key, projection, validation, calculation, or diff error.
+pub fn rename_field(
+    document: &Document,
+    schema: impl AsRef<str>,
+    source: impl AsRef<str>,
+    target: impl AsRef<str>,
+) -> Result<EditPreview, WorkflowError> {
+    let schema_key = SchemaKey::from(schema.as_ref());
+    let source = FieldKey::from(source.as_ref());
+    let target = FieldKey::from(target.as_ref());
+    if source == target {
+        return Err(WorkflowError::NoOpFieldRename { field: source });
+    }
+    validate_key(target.as_str()).map_err(|()| WorkflowError::InvalidFieldKey {
+        schema: schema_key.clone(),
+        field: target.clone(),
+    })?;
+    let index = AddressIndex::build(document)?;
+    let schema_id = index
+        .schema_id(&schema_key)
+        .map_err(|_| WorkflowError::MissingSchemaKey {
+            schema: schema_key.clone(),
+        })?
+        .clone();
+    if index.schema_field_id(&schema_id, &target).is_ok() {
+        return Err(WorkflowError::FieldKeyAlreadyExists {
+            schema: schema_key.clone(),
+            field: target.clone(),
+        });
+    }
+    let field_id = index
+        .schema_field_id(&schema_id, &source)
+        .map_err(|_| WorkflowError::MissingFieldKey {
+            schema: schema_key.clone(),
+            field: source.clone(),
+        })?
+        .clone();
+
+    let mut edited = document.clone();
+    let edited_schema =
+        edited
+            .schemas
+            .get_mut(&schema_id)
+            .ok_or_else(|| WorkflowError::MissingSchemaKey {
+                schema: schema_key.clone(),
+            })?;
+    edited_schema
+        .fields
+        .get_mut(&field_id)
+        .ok_or(WorkflowError::MissingFieldKey {
+            schema: schema_key,
+            field: source,
+        })?
+        .key = target;
+    finalize_edit(document, edited)
+}
+
+/// Remove an entity only when no other stored or bound field targets its
+/// stable ID.
+///
+/// # Errors
+///
+/// Returns a typed lookup, dependency, validation, calculation, or diff error.
 pub fn remove_entity(
     document: &Document,
     target: impl AsRef<str>,
 ) -> Result<EditPreview, WorkflowError> {
-    let target = EntityId::from(target.as_ref());
-    if !document.entities.contains_key(&target) {
-        return Err(WorkflowError::MissingEntity { entity: target });
-    }
+    let target_key = EntityKey::from(target.as_ref());
+    let target_id = AddressIndex::build(document)?
+        .entity_id(&target_key)
+        .map_err(|_| WorkflowError::MissingEntity {
+            entity: target_key.clone(),
+        })?
+        .clone();
 
     let dependents = document
         .entities
         .iter()
-        .filter(|(entity_id, _)| *entity_id != &target)
+        .filter(|(entity_id, _)| *entity_id != &target_id)
         .flat_map(|(entity_id, entity)| {
             entity
                 .fields
                 .iter()
-                .filter(|(_, value)| value_references_entity(value, &target))
+                .filter(|(_, value)| value_references_entity(value, &target_id))
                 .map(|(field_id, _)| FieldRef::new(entity_id.clone(), field_id.clone()))
         })
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
     if !dependents.is_empty() {
+        let index = AddressIndex::build(document)?;
+        let mut dependent_addresses = dependents
+            .iter()
+            .map(|dependent| index.field_address(document, dependent))
+            .collect::<Result<Vec<_>, _>>()?;
+        dependent_addresses.sort();
         return Err(WorkflowError::EntityReferenced {
-            entity: target,
+            entity: target_key,
             dependents,
+            dependent_addresses,
         });
     }
 
     let mut edited = document.clone();
-    edited.entities.remove(&target);
+    edited.entities.remove(&target_id);
     finalize_edit(document, edited)
 }
 
-fn require_available_target(document: &Document, target: &EntityId) -> Result<(), WorkflowError> {
+fn validate_new_entity_key(document: &Document, target: &EntityKey) -> Result<(), WorkflowError> {
     if !is_valid_identifier(target.as_str()) {
-        return Err(WorkflowError::InvalidEntityIdentifier {
+        return Err(WorkflowError::InvalidEntityKey {
             entity: target.clone(),
         });
     }
-    if document.entities.contains_key(target) {
-        return Err(WorkflowError::EntityAlreadyExists {
+    let index = AddressIndex::build(document)?;
+    if index.entity_id(target).is_ok() {
+        return Err(WorkflowError::EntityKeyAlreadyExists {
             entity: target.clone(),
         });
     }
     Ok(())
+}
+
+fn validate_key(key: &str) -> Result<(), ()> {
+    is_valid_identifier(key).then_some(()).ok_or(())
 }
 
 fn rewrite_expression_entity(expression: &mut Expression, source: &EntityId, target: &EntityId) {
@@ -589,24 +732,46 @@ fn expression_references_entity(expression: &Expression, target: &EntityId) -> b
 }
 
 fn finalize_edit(document: &Document, edited: Document) -> Result<EditPreview, WorkflowError> {
-    let diagnostics = validate_document(&edited);
-    if !diagnostics.is_empty() {
-        let summary = format_diagnostics(&diagnostics);
-        return Err(WorkflowError::InvalidDocument {
-            summary,
-            diagnostics,
-        });
-    }
+    validate_candidate(&edited)?;
+    preflight_formula_projections(&edited)?;
     calculate(&edited)?;
     let semantic_diff = diff(document, &edited)?;
-
     Ok(EditPreview {
         document: edited,
         diff: semantic_diff,
     })
 }
 
-fn format_dependent_fields(dependents: &[FieldRef]) -> String {
+fn validate_candidate(document: &Document) -> Result<(), WorkflowError> {
+    let diagnostics = validate_document(document);
+    if diagnostics.is_empty() {
+        Ok(())
+    } else {
+        Err(WorkflowError::InvalidDocument {
+            summary: format_diagnostics(&diagnostics),
+            diagnostics,
+        })
+    }
+}
+
+fn preflight_formula_projections(document: &Document) -> Result<(), WorkflowError> {
+    for (entity_id, entity) in &document.entities {
+        for (field_id, value) in &entity.fields {
+            if let Value::Formula(expression) = value {
+                let field = FieldRef::new(entity_id.clone(), field_id.clone());
+                project_expression(document, expression).map_err(|source| {
+                    WorkflowError::FormulaProjection {
+                        field: field.clone(),
+                        source,
+                    }
+                })?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn format_dependent_addresses(dependents: &[FieldAddress]) -> String {
     dependents
         .iter()
         .map(ToString::to_string)
@@ -618,22 +783,17 @@ fn field_value<'document>(
     document: &'document Document,
     field: &FieldRef,
 ) -> Result<&'document Value, WorkflowError> {
-    let entity =
-        document
-            .entities
-            .get(&field.entity)
-            .ok_or_else(|| WorkflowError::MissingEntity {
-                entity: field.entity.clone(),
-            })?;
-    entity
-        .fields
-        .get(&field.field)
+    document
+        .entities
+        .get(&field.entity)
+        .and_then(|entity| entity.fields.get(&field.field))
         .ok_or_else(|| WorkflowError::MissingField {
             field: field.clone(),
         })
 }
 
 fn parse_scalar(
+    document: &Document,
     field: &FieldRef,
     input: &str,
     field_type: &FieldType,
@@ -644,19 +804,23 @@ fn parse_scalar(
         expected,
     };
     match field_type {
-        FieldType::Number => {
-            let value = input.parse::<f64>().map_err(|_| invalid("number"))?;
-            if !value.is_finite() {
-                return Err(invalid("finite number"));
-            }
-            Ok(Value::Number(value))
-        }
+        FieldType::Number => input
+            .parse::<f64>()
+            .map_err(|_| invalid("number"))
+            .and_then(|number| Number::new(number).map_err(|_| invalid("finite number")))
+            .map(Value::Number),
         FieldType::Text => Ok(Value::Text(input.to_owned())),
         FieldType::Boolean => input
             .parse::<bool>()
             .map(Value::Boolean)
             .map_err(|_| invalid("boolean (true or false)")),
-        FieldType::Reference { .. } => Ok(Value::Reference(input.into())),
+        FieldType::Reference { .. } => {
+            let target = AddressIndex::build(document)?
+                .entity_id(&EntityKey::from(input))
+                .map_err(|_| invalid("existing entity key"))?
+                .clone();
+            Ok(Value::Reference(target))
+        }
     }
 }
 
@@ -668,56 +832,116 @@ fn format_diagnostics(diagnostics: &[Diagnostic]) -> String {
         .join("; ")
 }
 
-fn game_balance_document(id: tachiko_semantic_core::DocumentId, title: String) -> Document {
-    Document {
-        id,
-        title,
-        schemas: game_balance_schemas(),
-        entities: game_balance_entities(),
+fn next_id(
+    generator: &mut impl IdGenerator,
+    kind: SemanticIdKind,
+) -> Result<String, WorkflowError> {
+    let id = generator.generate(kind);
+    if id.is_empty() {
+        Err(WorkflowError::EmptyGeneratedId { kind })
+    } else {
+        Ok(id)
     }
 }
 
-fn game_balance_schemas() -> BTreeMap<SchemaId, Schema> {
-    BTreeMap::from([
-        schema(
+fn next_document_id(generator: &mut impl IdGenerator) -> Result<DocumentId, WorkflowError> {
+    next_id(generator, SemanticIdKind::Document).map(DocumentId::from)
+}
+
+fn next_schema_id(generator: &mut impl IdGenerator) -> Result<SchemaId, WorkflowError> {
+    next_id(generator, SemanticIdKind::Schema).map(SchemaId::from)
+}
+
+fn next_field_id(generator: &mut impl IdGenerator) -> Result<FieldId, WorkflowError> {
+    next_id(generator, SemanticIdKind::Field).map(FieldId::from)
+}
+
+fn next_entity_id(generator: &mut impl IdGenerator) -> Result<EntityId, WorkflowError> {
+    next_id(generator, SemanticIdKind::Entity).map(EntityId::from)
+}
+
+fn game_balance_document(
+    id: DocumentId,
+    title: String,
+    generator: &mut impl IdGenerator,
+) -> Result<Document, WorkflowError> {
+    let schema_ids = game_balance_schema_ids(generator)?;
+    let (schemas, field_ids) = game_balance_schemas(generator, &schema_ids)?;
+    let entity_ids = game_balance_entity_ids(generator)?;
+    let entities = game_balance_entities(&schema_ids, &field_ids, &entity_ids);
+
+    Ok(Document {
+        id,
+        title,
+        schemas,
+        entities,
+    })
+}
+
+type NamedSchemaIds = BTreeMap<&'static str, SchemaId>;
+type NamedFieldIds = BTreeMap<(&'static str, &'static str), FieldId>;
+type NamedEntityIds = BTreeMap<&'static str, EntityId>;
+
+fn game_balance_schema_ids(
+    generator: &mut impl IdGenerator,
+) -> Result<NamedSchemaIds, WorkflowError> {
+    let mut schema_ids = BTreeMap::new();
+    for key in ["characters", "economy", "items", "weapons"] {
+        let id = next_schema_id(generator)?;
+        if schema_ids.values().any(|existing| existing == &id) {
+            return Err(WorkflowError::GeneratedIdCollision {
+                kind: SemanticIdKind::Schema,
+                id: id.to_string(),
+            });
+        }
+        schema_ids.insert(key, id);
+    }
+    Ok(schema_ids)
+}
+
+fn game_balance_schema_specs(
+    schema_ids: &NamedSchemaIds,
+) -> [(&'static str, Vec<(&'static str, FieldType)>); 4] {
+    [
+        (
             "characters",
-            [
+            vec![
                 ("level", FieldType::Number),
                 ("name", FieldType::Text),
                 (
                     "weapon",
                     FieldType::Reference {
-                        schema: "weapons".into(),
+                        schema: schema_ids["weapons"].clone(),
                     },
                 ),
             ],
         ),
-        schema(
+        (
             "economy",
-            [
+            vec![
                 ("currency", FieldType::Text),
                 ("gold_per_match", FieldType::Number),
                 ("matches_for_sword", FieldType::Number),
                 ("upgrade_cost", FieldType::Number),
             ],
         ),
-        schema(
+        (
             "items",
-            [
+            vec![
                 ("category", FieldType::Text),
                 (
                     "grants_weapon",
                     FieldType::Reference {
-                        schema: "weapons".into(),
+                        schema: schema_ids["weapons"].clone(),
                     },
                 ),
                 ("name", FieldType::Text),
                 ("price", FieldType::Number),
             ],
         ),
-        schema(
+        (
             "weapons",
-            [
+            vec![
                 ("attack_interval", FieldType::Number),
                 ("damage", FieldType::Number),
                 ("dps", FieldType::Number),
@@ -725,128 +949,246 @@ fn game_balance_schemas() -> BTreeMap<SchemaId, Schema> {
                 ("price", FieldType::Number),
             ],
         ),
-    ])
+    ]
 }
 
-fn game_balance_entities() -> BTreeMap<EntityId, Entity> {
-    BTreeMap::from([
-        entity(
-            "alric",
-            "characters",
-            [
-                ("level", Value::Number(4.0)),
-                ("name", Value::Text("Alric".to_owned())),
-                ("weapon", Value::Reference("iron_sword".into())),
-            ],
-        ),
-        entity(
-            "iron_sword",
-            "weapons",
-            [
-                ("attack_interval", Value::Number(0.9)),
-                ("damage", Value::Number(36.0)),
-                (
-                    "dps",
-                    Value::Formula(Expression::Divide {
-                        left: Box::new(reference("iron_sword", "damage")),
-                        right: Box::new(reference("iron_sword", "attack_interval")),
-                    }),
-                ),
-                ("name", Value::Text("Iron Sword".to_owned())),
-                ("price", Value::Number(120.0)),
-            ],
-        ),
-        entity(
-            "shop",
-            "economy",
-            [
-                ("currency", Value::Text("gold".to_owned())),
-                ("gold_per_match", Value::Number(50.0)),
-                (
-                    "matches_for_sword",
-                    Value::Formula(Expression::Divide {
-                        left: Box::new(reference("iron_sword", "price")),
-                        right: Box::new(reference("shop", "gold_per_match")),
-                    }),
-                ),
-                (
-                    "upgrade_cost",
-                    Value::Formula(reference("tempered_blade", "price")),
-                ),
-            ],
-        ),
-        entity(
-            "tempered_blade",
-            "items",
-            [
-                ("category", Value::Text("weapon upgrade".to_owned())),
-                ("grants_weapon", Value::Reference("iron_sword".into())),
-                ("name", Value::Text("Tempered Blade".to_owned())),
-                ("price", Value::Number(200.0)),
-            ],
-        ),
-    ])
-}
-
-fn schema<const N: usize>(id: &str, fields: [(&str, FieldType); N]) -> (SchemaId, Schema) {
-    let id = SchemaId::from(id);
-    let fields = fields
-        .into_iter()
-        .map(|(id, field_type)| {
-            (
-                FieldId::from(id),
+fn game_balance_schemas(
+    generator: &mut impl IdGenerator,
+    schema_ids: &NamedSchemaIds,
+) -> Result<(BTreeMap<SchemaId, Schema>, NamedFieldIds), WorkflowError> {
+    let mut schemas = BTreeMap::new();
+    let mut field_ids = NamedFieldIds::new();
+    for (schema_key, fields) in game_balance_schema_specs(schema_ids) {
+        let schema_id = schema_ids[schema_key].clone();
+        let mut definitions = BTreeMap::new();
+        for (field_key, field_type) in fields {
+            let field_id = next_field_id(generator)?;
+            if definitions.contains_key(&field_id) {
+                return Err(WorkflowError::GeneratedIdCollision {
+                    kind: SemanticIdKind::Field,
+                    id: field_id.to_string(),
+                });
+            }
+            field_ids.insert((schema_key, field_key), field_id.clone());
+            definitions.insert(
+                field_id.clone(),
                 FieldDefinition {
+                    id: field_id,
+                    key: FieldKey::from(field_key),
                     field_type,
                     required: true,
                 },
-            )
-        })
-        .collect();
-    (id.clone(), Schema { id, fields })
+            );
+        }
+        schemas.insert(
+            schema_id.clone(),
+            Schema {
+                id: schema_id,
+                key: SchemaKey::from(schema_key),
+                fields: definitions,
+            },
+        );
+    }
+    Ok((schemas, field_ids))
 }
 
-fn entity<const N: usize>(
-    id: &str,
-    schema: &str,
-    fields: [(&str, Value); N],
-) -> (EntityId, Entity) {
-    let id = EntityId::from(id);
-    let fields = fields
-        .into_iter()
-        .map(|(id, value)| (FieldId::from(id), value))
-        .collect();
-    (
+fn game_balance_entity_ids(
+    generator: &mut impl IdGenerator,
+) -> Result<NamedEntityIds, WorkflowError> {
+    let mut entity_ids = BTreeMap::new();
+    for key in ["alric", "iron_sword", "shop", "tempered_blade"] {
+        let id = next_entity_id(generator)?;
+        if entity_ids.values().any(|existing| existing == &id) {
+            return Err(WorkflowError::GeneratedIdCollision {
+                kind: SemanticIdKind::Entity,
+                id: id.to_string(),
+            });
+        }
+        entity_ids.insert(key, id);
+    }
+    Ok(entity_ids)
+}
+
+fn game_balance_entities(
+    schema_ids: &NamedSchemaIds,
+    field_ids: &NamedFieldIds,
+    entity_ids: &NamedEntityIds,
+) -> BTreeMap<EntityId, Entity> {
+    let mut entities = BTreeMap::new();
+    insert_entity(
+        &mut entities,
+        entity_ids,
+        "alric",
+        &schema_ids["characters"],
+        alric_fields(field_ids, entity_ids),
+    );
+    insert_entity(
+        &mut entities,
+        entity_ids,
+        "iron_sword",
+        &schema_ids["weapons"],
+        iron_sword_fields(field_ids, entity_ids),
+    );
+    insert_entity(
+        &mut entities,
+        entity_ids,
+        "shop",
+        &schema_ids["economy"],
+        shop_fields(field_ids, entity_ids),
+    );
+    insert_entity(
+        &mut entities,
+        entity_ids,
+        "tempered_blade",
+        &schema_ids["items"],
+        tempered_blade_fields(field_ids, entity_ids),
+    );
+    entities
+}
+
+fn alric_fields(field_ids: &NamedFieldIds, entity_ids: &NamedEntityIds) -> Vec<(FieldId, Value)> {
+    vec![
+        (field_ids[&("characters", "level")].clone(), number(4.0)),
+        (
+            field_ids[&("characters", "name")].clone(),
+            Value::Text("Alric".to_owned()),
+        ),
+        (
+            field_ids[&("characters", "weapon")].clone(),
+            Value::Reference(entity_ids["iron_sword"].clone()),
+        ),
+    ]
+}
+
+fn iron_sword_fields(
+    field_ids: &NamedFieldIds,
+    entity_ids: &NamedEntityIds,
+) -> Vec<(FieldId, Value)> {
+    vec![
+        (
+            field_ids[&("weapons", "attack_interval")].clone(),
+            number(0.9),
+        ),
+        (field_ids[&("weapons", "damage")].clone(), number(36.0)),
+        (
+            field_ids[&("weapons", "dps")].clone(),
+            Value::Formula(Expression::Divide {
+                left: Box::new(Expression::Reference(FieldRef::new(
+                    entity_ids["iron_sword"].clone(),
+                    field_ids[&("weapons", "damage")].clone(),
+                ))),
+                right: Box::new(Expression::Reference(FieldRef::new(
+                    entity_ids["iron_sword"].clone(),
+                    field_ids[&("weapons", "attack_interval")].clone(),
+                ))),
+            }),
+        ),
+        (
+            field_ids[&("weapons", "name")].clone(),
+            Value::Text("Iron Sword".to_owned()),
+        ),
+        (field_ids[&("weapons", "price")].clone(), number(120.0)),
+    ]
+}
+
+fn shop_fields(field_ids: &NamedFieldIds, entity_ids: &NamedEntityIds) -> Vec<(FieldId, Value)> {
+    vec![
+        (
+            field_ids[&("economy", "currency")].clone(),
+            Value::Text("gold".to_owned()),
+        ),
+        (
+            field_ids[&("economy", "gold_per_match")].clone(),
+            number(50.0),
+        ),
+        (
+            field_ids[&("economy", "matches_for_sword")].clone(),
+            Value::Formula(Expression::Divide {
+                left: Box::new(Expression::Reference(FieldRef::new(
+                    entity_ids["iron_sword"].clone(),
+                    field_ids[&("weapons", "price")].clone(),
+                ))),
+                right: Box::new(Expression::Reference(FieldRef::new(
+                    entity_ids["shop"].clone(),
+                    field_ids[&("economy", "gold_per_match")].clone(),
+                ))),
+            }),
+        ),
+        (
+            field_ids[&("economy", "upgrade_cost")].clone(),
+            Value::Formula(Expression::Reference(FieldRef::new(
+                entity_ids["tempered_blade"].clone(),
+                field_ids[&("items", "price")].clone(),
+            ))),
+        ),
+    ]
+}
+
+fn tempered_blade_fields(
+    field_ids: &NamedFieldIds,
+    entity_ids: &NamedEntityIds,
+) -> Vec<(FieldId, Value)> {
+    vec![
+        (
+            field_ids[&("items", "category")].clone(),
+            Value::Text("weapon upgrade".to_owned()),
+        ),
+        (
+            field_ids[&("items", "grants_weapon")].clone(),
+            Value::Reference(entity_ids["iron_sword"].clone()),
+        ),
+        (
+            field_ids[&("items", "name")].clone(),
+            Value::Text("Tempered Blade".to_owned()),
+        ),
+        (field_ids[&("items", "price")].clone(), number(200.0)),
+    ]
+}
+
+fn insert_entity(
+    entities: &mut BTreeMap<EntityId, Entity>,
+    ids: &BTreeMap<&str, EntityId>,
+    key: &'static str,
+    schema: &SchemaId,
+    fields: Vec<(FieldId, Value)>,
+) {
+    let id = ids[key].clone();
+    entities.insert(
         id.clone(),
         Entity {
             id,
-            schema: schema.into(),
-            fields,
+            key: EntityKey::from(key),
+            schema: schema.clone(),
+            fields: fields.into_iter().collect(),
         },
-    )
+    );
 }
 
-fn reference(entity: &str, field: &str) -> Expression {
-    Expression::Reference(FieldRef::new(entity, field))
+fn number(value: f64) -> Value {
+    Value::Number(Number::new(value).expect("starter constants are finite"))
 }
 
-fn entity_label(entity: &Entity) -> String {
-    match entity.fields.get("name") {
+fn entity_label(document: &Document, entity: &Entity) -> String {
+    let name = document.schemas.get(&entity.schema).and_then(|schema| {
+        schema
+            .fields
+            .values()
+            .find(|definition| definition.key.as_str() == "name")
+            .and_then(|definition| entity.fields.get(&definition.id))
+    });
+    match name {
         Some(Value::Text(name)) => name.clone(),
-        _ => humanize(entity.id.as_str()),
+        _ => humanize(entity.key.as_str()),
     }
 }
 
 fn humanize(value: &str) -> String {
-    let mut words = value.split('_').filter(|word| !word.is_empty());
-    let Some(first) = words.next() else {
-        return value.to_owned();
-    };
-    let mut result = capitalize(first);
-    for word in words {
-        result.push(' ');
-        result.push_str(word);
-    }
-    result
+    value
+        .split('_')
+        .filter(|word| !word.is_empty())
+        .map(capitalize)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn capitalize(value: &str) -> String {
@@ -856,17 +1198,21 @@ fn capitalize(value: &str) -> String {
     })
 }
 
-fn format_value(value: &Value) -> String {
+fn format_value(document: &Document, value: &Value) -> String {
     match value {
         Value::Number(number) => format_number(*number),
         Value::Text(text) => text.clone(),
         Value::Boolean(boolean) => boolean.to_string(),
-        Value::Reference(entity) => format!("→ {entity}"),
+        Value::Reference(entity) => document.entities.get(entity).map_or_else(
+            || format!("→ <missing:{entity}>"),
+            |entity| format!("→ {}", entity.key),
+        ),
         Value::Formula(_) => "formula".to_owned(),
     }
 }
 
-fn format_number(number: f64) -> String {
+fn format_number(number: Number) -> String {
+    let number = number.get();
     if number.fract() == 0.0 {
         format!("{number:.0}")
     } else {

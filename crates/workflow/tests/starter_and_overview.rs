@@ -1,14 +1,88 @@
-use tachiko_semantic_core::validate_document;
-use tachiko_storage::{load, to_canonical_string};
-use tachiko_workflow::{FieldKind, StarterTemplate, create_document, overview};
+mod common;
+
+use common::{empty_document, game_balance_document};
+use tachiko_semantic_core::{DiagnosticCode, Document, validate_document};
+use tachiko_storage::load;
+use tachiko_workflow::{DocumentOverview, FieldKind, WorkflowError, overview};
+
+type AuthoringField = (String, String, FieldKind);
+type AuthoringEntity = (String, String, String, Vec<AuthoringField>);
+type DuplicateKeyMutation = fn(&mut Document);
+
+fn duplicate_schema_key(document: &mut Document) {
+    let duplicate_key = document
+        .schemas
+        .values()
+        .next()
+        .expect("starter should contain a schema")
+        .key
+        .clone();
+    document
+        .schemas
+        .values_mut()
+        .nth(1)
+        .expect("starter should contain a second schema")
+        .key = duplicate_key;
+}
+
+fn duplicate_entity_key(document: &mut Document) {
+    let duplicate_key = document
+        .entities
+        .values()
+        .next()
+        .expect("starter should contain an entity")
+        .key
+        .clone();
+    document
+        .entities
+        .values_mut()
+        .nth(1)
+        .expect("starter should contain a second entity")
+        .key = duplicate_key;
+}
+
+fn duplicate_field_key(document: &mut Document) {
+    let schema = document
+        .schemas
+        .values_mut()
+        .find(|schema| schema.fields.len() > 1)
+        .expect("starter should contain a schema with multiple fields");
+    let duplicate_key = schema
+        .fields
+        .values()
+        .next()
+        .expect("selected schema should contain a field")
+        .key
+        .clone();
+    schema
+        .fields
+        .values_mut()
+        .nth(1)
+        .expect("selected schema should contain a second field")
+        .key = duplicate_key;
+}
+
+fn authoring_projection(view: DocumentOverview) -> Vec<AuthoringEntity> {
+    view.entities
+        .into_iter()
+        .map(|entity| {
+            (
+                entity.key.to_string(),
+                entity.label,
+                entity.schema.to_string(),
+                entity
+                    .fields
+                    .into_iter()
+                    .map(|field| (field.key.to_string(), field.display_value, field.kind))
+                    .collect(),
+            )
+        })
+        .collect()
+}
 
 #[test]
 fn game_balance_starter_is_immediately_meaningful() {
-    let document = create_document(
-        StarterTemplate::GameBalance,
-        "game-balance",
-        "Moonfall: starter balance",
-    );
+    let document = game_balance_document("game-balance", "Moonfall: starter balance");
 
     assert!(validate_document(&document).is_empty());
     assert_eq!(document.schemas.len(), 4);
@@ -22,7 +96,7 @@ fn game_balance_starter_is_immediately_meaningful() {
     let weapon = view
         .entities
         .iter()
-        .find(|entity| entity.id.as_str() == "iron_sword")
+        .find(|entity| entity.key.as_str() == "iron_sword")
         .expect("starter weapon should be present");
     assert_eq!(weapon.label, "Iron Sword");
     assert_eq!(weapon.schema.as_str(), "weapons");
@@ -30,7 +104,7 @@ fn game_balance_starter_is_immediately_meaningful() {
     let dps = weapon
         .fields
         .iter()
-        .find(|field| field.id.as_str() == "dps")
+        .find(|field| field.key.as_str() == "dps")
         .expect("weapon DPS should be present");
     assert_eq!(dps.kind, FieldKind::Formula);
     assert_eq!(dps.display_value, "40");
@@ -38,7 +112,7 @@ fn game_balance_starter_is_immediately_meaningful() {
     let weapon_reference = view.entities[0]
         .fields
         .iter()
-        .find(|field| field.id.as_str() == "weapon")
+        .find(|field| field.key.as_str() == "weapon")
         .expect("character weapon reference should be present");
     assert_eq!(
         weapon_reference.kind,
@@ -50,19 +124,19 @@ fn game_balance_starter_is_immediately_meaningful() {
 
 #[test]
 fn overview_order_is_stable_and_empty_template_remains_available() {
-    let starter = create_document(StarterTemplate::GameBalance, "game", "Game");
+    let starter = game_balance_document("game", "Game");
     let view = overview(&starter).expect("starter should calculate");
-    let entity_ids: Vec<_> = view
+    let entity_keys: Vec<_> = view
         .entities
         .iter()
-        .map(|entity| entity.id.as_str())
+        .map(|entity| entity.key.as_str())
         .collect();
     assert_eq!(
-        entity_ids,
+        entity_keys,
         ["alric", "iron_sword", "shop", "tempered_blade"]
     );
 
-    let empty = create_document(StarterTemplate::Empty, "scratch", "Scratch");
+    let empty = empty_document("scratch", "Scratch");
     assert_eq!(empty.id.as_str(), "scratch");
     assert_eq!(empty.title, "Scratch");
     assert!(empty.schemas.is_empty());
@@ -76,20 +150,46 @@ fn overview_order_is_stable_and_empty_template_remains_available() {
 }
 
 #[test]
-fn built_in_starter_matches_the_checked_in_example() {
+fn overview_rejects_duplicate_human_keys_as_an_invalid_document() {
+    let cases: [(&str, DuplicateKeyMutation); 3] = [
+        ("schema keys", duplicate_schema_key),
+        ("entity keys", duplicate_entity_key),
+        ("field keys within one schema", duplicate_field_key),
+    ];
+
+    for (category, make_duplicate) in cases {
+        let mut document = game_balance_document("game", "Game");
+        make_duplicate(&mut document);
+
+        let error = overview(&document)
+            .expect_err("overview should reject directly constructed duplicate human keys");
+        let WorkflowError::InvalidDocument { diagnostics, .. } = error else {
+            panic!("{category}: expected InvalidDocument, got {error:?}");
+        };
+        assert_eq!(
+            diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code)
+                .collect::<Vec<_>>(),
+            [DiagnosticCode::DuplicateKey],
+            "{category}"
+        );
+    }
+}
+
+#[test]
+fn built_in_starter_matches_the_legacy_example_at_the_authoring_boundary() {
     let example_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../examples/game-balance/game-balance.ro");
     let checked_in = load(&example_path).expect("checked-in example should load");
-    let built_in = create_document(
-        StarterTemplate::GameBalance,
-        "game-balance",
-        "Moonfall: starter balance",
-    );
+    let built_in = game_balance_document("game-balance", "Moonfall: starter balance");
 
-    assert_eq!(built_in, checked_in);
     assert_eq!(
-        to_canonical_string(&built_in).unwrap(),
-        std::fs::read_to_string(example_path).unwrap(),
-        "the generated starter and checked-in example must remain byte-identical"
+        authoring_projection(overview(&built_in).unwrap()),
+        authoring_projection(overview(&checked_in).unwrap())
+    );
+    assert_ne!(
+        built_in.id, checked_in.id,
+        "migration must establish new identity"
     );
 }

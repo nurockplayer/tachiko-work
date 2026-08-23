@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::{Document, Expression, FieldId, FieldRef, FieldType, Schema, Value};
@@ -5,8 +7,10 @@ use crate::{Document, Expression, FieldId, FieldRef, FieldType, Schema, Value};
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DiagnosticCode {
-    EmptyIdentifier,
-    InvalidIdentifier,
+    EmptyStableId,
+    EmptyKey,
+    InvalidKey,
+    DuplicateKey,
     EmptyTitle,
     KeyMismatch,
     MissingSchema,
@@ -15,7 +19,6 @@ pub enum DiagnosticCode {
     TypeMismatch,
     MissingReference,
     ReferenceTypeMismatch,
-    NonFiniteNumber,
     MissingFormulaReference,
     FormulaReferenceTypeMismatch,
 }
@@ -28,10 +31,10 @@ pub struct Diagnostic {
     pub message: String,
 }
 
-/// Return whether a value follows Tachiko's stable semantic identifier grammar.
+/// Return whether a human-facing semantic key follows the authoring grammar.
 ///
-/// Identifiers are non-empty lowercase ASCII paths. The first character must
-/// be a letter or digit; subsequent characters may also contain `_` and `-`.
+/// Keys are non-empty lowercase ASCII paths. The first character must be a
+/// letter or digit; subsequent characters may also contain `_` and `-`.
 #[must_use]
 pub fn is_valid_identifier(identifier: &str) -> bool {
     let mut characters = identifier.chars();
@@ -60,7 +63,7 @@ impl Diagnostic {
 pub fn validate_document(document: &Document) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
-    validate_identifier(document.id.as_str(), "id", "document", &mut diagnostics);
+    validate_stable_id(document.id.as_str(), "id", "document", &mut diagnostics);
     if document.title.trim().is_empty() {
         diagnostics.push(Diagnostic::new(
             "title",
@@ -69,51 +72,103 @@ pub fn validate_document(document: &Document) -> Vec<Diagnostic> {
         ));
     }
 
-    for (schema_key, schema) in &document.schemas {
-        let schema_path = format!("schemas.{schema_key}");
-        if schema_key != &schema.id {
+    validate_schema_keys(document, &mut diagnostics);
+    validate_entity_keys(document, &mut diagnostics);
+    validate_schemas(document, &mut diagnostics);
+    validate_entities(document, &mut diagnostics);
+
+    diagnostics.sort();
+    diagnostics
+}
+
+fn validate_schemas(document: &Document, diagnostics: &mut Vec<Diagnostic>) {
+    for (schema_id, schema) in &document.schemas {
+        let schema_path = format!("schemas.{schema_id}");
+        if schema_id != &schema.id {
             diagnostics.push(Diagnostic::new(
                 format!("{schema_path}.id"),
                 DiagnosticCode::KeyMismatch,
                 format!(
-                    "schema map key '{schema_key}' does not match id '{}'",
+                    "schema store key '{schema_id}' does not match stable id '{}'",
                     schema.id
                 ),
             ));
         }
-        validate_identifier(
+        validate_stable_id(
             schema.id.as_str(),
             &format!("{schema_path}.id"),
             "schema",
-            &mut diagnostics,
+            diagnostics,
         );
-        for field in schema.fields.keys() {
-            validate_identifier(
-                field.as_str(),
-                &format!("{schema_path}.fields.{field}"),
+        validate_human_key(
+            schema.key.as_str(),
+            &format!("{schema_path}.key"),
+            "schema",
+            diagnostics,
+        );
+        validate_field_keys(schema, &schema_path, diagnostics);
+
+        for (field_id, definition) in &schema.fields {
+            let field_path = format!("{schema_path}.fields.{field_id}");
+            if field_id != &definition.id {
+                diagnostics.push(Diagnostic::new(
+                    format!("{field_path}.id"),
+                    DiagnosticCode::KeyMismatch,
+                    format!(
+                        "field store key '{field_id}' does not match stable id '{}'",
+                        definition.id
+                    ),
+                ));
+            }
+            validate_stable_id(
+                definition.id.as_str(),
+                &format!("{field_path}.id"),
                 "field",
-                &mut diagnostics,
+                diagnostics,
             );
+            validate_human_key(
+                definition.key.as_str(),
+                &format!("{field_path}.key"),
+                "field",
+                diagnostics,
+            );
+            if let FieldType::Reference { schema: target } = &definition.field_type {
+                if !document.schemas.contains_key(target) {
+                    diagnostics.push(Diagnostic::new(
+                        format!("{field_path}.field_type.schema"),
+                        DiagnosticCode::MissingSchema,
+                        format!("reference target schema '{target}' does not exist"),
+                    ));
+                }
+            }
         }
     }
+}
 
-    for (entity_key, entity) in &document.entities {
-        let entity_path = format!("entities.{entity_key}");
-        if entity_key != &entity.id {
+fn validate_entities(document: &Document, diagnostics: &mut Vec<Diagnostic>) {
+    for (entity_id, entity) in &document.entities {
+        let entity_path = format!("entities.{entity_id}");
+        if entity_id != &entity.id {
             diagnostics.push(Diagnostic::new(
                 format!("{entity_path}.id"),
                 DiagnosticCode::KeyMismatch,
                 format!(
-                    "entity map key '{entity_key}' does not match id '{}'",
+                    "entity store key '{entity_id}' does not match stable id '{}'",
                     entity.id
                 ),
             ));
         }
-        validate_identifier(
+        validate_stable_id(
             entity.id.as_str(),
             &format!("{entity_path}.id"),
             "entity",
-            &mut diagnostics,
+            diagnostics,
+        );
+        validate_human_key(
+            entity.key.as_str(),
+            &format!("{entity_path}.key"),
+            "entity",
+            diagnostics,
         );
 
         let Some(schema) = document.schemas.get(&entity.schema) else {
@@ -125,7 +180,7 @@ pub fn validate_document(document: &Document) -> Vec<Diagnostic> {
             continue;
         };
 
-        validate_required_fields(schema, entity_key.as_str(), entity, &mut diagnostics);
+        validate_required_fields(schema, entity_id.as_str(), entity, diagnostics);
 
         for (field, value) in &entity.fields {
             let field_path = format!("{entity_path}.fields.{field}");
@@ -143,36 +198,86 @@ pub fn validate_document(document: &Document) -> Vec<Diagnostic> {
                 value,
                 &definition.field_type,
                 &field_path,
-                &mut diagnostics,
+                diagnostics,
             );
         }
     }
-
-    diagnostics.sort();
-    diagnostics
 }
 
-fn validate_identifier(
-    identifier: &str,
-    path: &str,
-    kind: &str,
-    diagnostics: &mut Vec<Diagnostic>,
-) {
-    if identifier.is_empty() {
-        diagnostics.push(Diagnostic::new(
-            path,
-            DiagnosticCode::EmptyIdentifier,
-            format!("{kind} id must not be empty"),
-        ));
-        return;
+fn validate_schema_keys(document: &Document, diagnostics: &mut Vec<Diagnostic>) {
+    let mut groups = BTreeMap::<_, Vec<_>>::new();
+    for schema in document.schemas.values() {
+        groups
+            .entry(schema.key.clone())
+            .or_default()
+            .push(schema.id.clone());
     }
+    for (key, ids) in groups.into_iter().filter(|(_, ids)| ids.len() > 1) {
+        diagnostics.push(Diagnostic::new(
+            format!("schema_keys.{key}"),
+            DiagnosticCode::DuplicateKey,
+            format!("schema key '{key}' is ambiguous across stable ids {ids:?}"),
+        ));
+    }
+}
 
-    if !is_valid_identifier(identifier) {
+fn validate_entity_keys(document: &Document, diagnostics: &mut Vec<Diagnostic>) {
+    let mut groups = BTreeMap::<_, Vec<_>>::new();
+    for entity in document.entities.values() {
+        groups
+            .entry(entity.key.clone())
+            .or_default()
+            .push(entity.id.clone());
+    }
+    for (key, ids) in groups.into_iter().filter(|(_, ids)| ids.len() > 1) {
+        diagnostics.push(Diagnostic::new(
+            format!("entity_keys.{key}"),
+            DiagnosticCode::DuplicateKey,
+            format!("entity key '{key}' is ambiguous across stable ids {ids:?}"),
+        ));
+    }
+}
+
+fn validate_field_keys(schema: &Schema, schema_path: &str, diagnostics: &mut Vec<Diagnostic>) {
+    let mut groups = BTreeMap::<_, Vec<_>>::new();
+    for field in schema.fields.values() {
+        groups
+            .entry(field.key.clone())
+            .or_default()
+            .push(field.id.clone());
+    }
+    for (key, ids) in groups.into_iter().filter(|(_, ids)| ids.len() > 1) {
+        diagnostics.push(Diagnostic::new(
+            format!("{schema_path}.field_keys.{key}"),
+            DiagnosticCode::DuplicateKey,
+            format!("field key '{key}' is ambiguous across stable ids {ids:?}"),
+        ));
+    }
+}
+
+fn validate_stable_id(value: &str, path: &str, kind: &str, diagnostics: &mut Vec<Diagnostic>) {
+    if value.is_empty() {
         diagnostics.push(Diagnostic::new(
             path,
-            DiagnosticCode::InvalidIdentifier,
+            DiagnosticCode::EmptyStableId,
+            format!("{kind} stable id must not be empty"),
+        ));
+    }
+}
+
+fn validate_human_key(value: &str, path: &str, kind: &str, diagnostics: &mut Vec<Diagnostic>) {
+    if value.is_empty() {
+        diagnostics.push(Diagnostic::new(
+            path,
+            DiagnosticCode::EmptyKey,
+            format!("{kind} key must not be empty"),
+        ));
+    } else if !is_valid_identifier(value) {
+        diagnostics.push(Diagnostic::new(
+            path,
+            DiagnosticCode::InvalidKey,
             format!(
-                "{kind} id '{identifier}' must be a lowercase identifier using only a-z, 0-9, '_' or '-', starting with a letter or digit"
+                "{kind} key '{value}' must use only a-z, 0-9, '_' or '-', starting with a letter or digit"
             ),
         ));
     }
@@ -180,16 +285,16 @@ fn validate_identifier(
 
 fn validate_required_fields(
     schema: &Schema,
-    entity_key: &str,
+    entity_id: &str,
     entity: &crate::Entity,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     for (field, definition) in &schema.fields {
         if definition.required && !entity.fields.contains_key(field) {
             diagnostics.push(Diagnostic::new(
-                format!("entities.{entity_key}.fields.{field}"),
+                format!("entities.{entity_id}.fields.{field}"),
                 DiagnosticCode::MissingRequiredField,
-                format!("required field '{field}' is missing"),
+                format!("required field '{}' is missing", definition.key),
             ));
         }
     }
@@ -204,19 +309,18 @@ fn validate_value(
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     match (expected, value) {
-        (FieldType::Number, Value::Number(number)) => {
-            validate_finite(*number, path, diagnostics);
-        }
+        (FieldType::Number, Value::Number(_))
+        | (FieldType::Text, Value::Text(_))
+        | (FieldType::Boolean, Value::Boolean(_)) => {}
         (FieldType::Number, Value::Formula(expression)) => {
             validate_expression(document, expression, path, diagnostics);
         }
-        (FieldType::Text, Value::Text(_)) | (FieldType::Boolean, Value::Boolean(_)) => {}
         (FieldType::Reference { schema }, Value::Reference(entity_id)) => {
             let Some(target) = document.entities.get(entity_id) else {
                 diagnostics.push(Diagnostic::new(
                     path,
                     DiagnosticCode::MissingReference,
-                    format!("referenced entity '{entity_id}' does not exist"),
+                    format!("referenced entity stable id '{entity_id}' does not exist"),
                 ));
                 return;
             };
@@ -225,7 +329,7 @@ fn validate_value(
                     path,
                     DiagnosticCode::ReferenceTypeMismatch,
                     format!(
-                        "field '{field}' expects a reference to schema '{schema}', but '{entity_id}' uses schema '{}'",
+                        "field '{field}' expects schema '{schema}', but entity '{entity_id}' uses schema '{}'",
                         target.schema
                     ),
                 ));
@@ -249,19 +353,22 @@ fn validate_expression(
     path: &str,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    match expression {
-        Expression::Number(number) => validate_finite(*number, path, diagnostics),
-        Expression::Reference(reference) => {
-            validate_formula_reference(document, reference, path, diagnostics);
-        }
-        Expression::Add { left, right }
-        | Expression::Subtract { left, right }
-        | Expression::Multiply { left, right }
-        | Expression::Divide { left, right }
-        | Expression::Minimum { left, right }
-        | Expression::Maximum { left, right } => {
-            validate_expression(document, left, path, diagnostics);
-            validate_expression(document, right, path, diagnostics);
+    let mut stack = vec![expression];
+    while let Some(node) = stack.pop() {
+        match node {
+            Expression::Number(_) => {}
+            Expression::Reference(reference) => {
+                validate_formula_reference(document, reference, path, diagnostics);
+            }
+            Expression::Add { left, right }
+            | Expression::Subtract { left, right }
+            | Expression::Multiply { left, right }
+            | Expression::Divide { left, right }
+            | Expression::Minimum { left, right }
+            | Expression::Maximum { left, right } => {
+                stack.push(right);
+                stack.push(left);
+            }
         }
     }
 }
@@ -276,7 +383,10 @@ fn validate_formula_reference(
         diagnostics.push(Diagnostic::new(
             path,
             DiagnosticCode::MissingFormulaReference,
-            format!("formula reference '{reference}' has no target entity"),
+            format!(
+                "formula target entity stable id '{}' does not exist",
+                reference.entity
+            ),
         ));
         return;
     };
@@ -284,7 +394,10 @@ fn validate_formula_reference(
         diagnostics.push(Diagnostic::new(
             path,
             DiagnosticCode::MissingFormulaReference,
-            format!("formula reference '{reference}' has no target schema"),
+            format!(
+                "formula target schema stable id '{}' does not exist",
+                entity.schema
+            ),
         ));
         return;
     };
@@ -292,7 +405,10 @@ fn validate_formula_reference(
         diagnostics.push(Diagnostic::new(
             path,
             DiagnosticCode::MissingFormulaReference,
-            format!("formula reference '{reference}' has no target field"),
+            format!(
+                "formula target field stable id '{}' does not exist",
+                reference.field
+            ),
         ));
         return;
     };
@@ -301,16 +417,6 @@ fn validate_formula_reference(
             path,
             DiagnosticCode::FormulaReferenceTypeMismatch,
             format!("formula reference '{reference}' does not target a numeric field"),
-        ));
-    }
-}
-
-fn validate_finite(number: f64, path: &str, diagnostics: &mut Vec<Diagnostic>) {
-    if !number.is_finite() {
-        diagnostics.push(Diagnostic::new(
-            path,
-            DiagnosticCode::NonFiniteNumber,
-            "numeric values must be finite",
         ));
     }
 }

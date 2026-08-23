@@ -1,11 +1,25 @@
+mod common;
+
+use common::{OneIdGenerator, game_balance_document};
 use tachiko_diff_engine::SemanticChange;
 use tachiko_formula_engine::calculate;
 use tachiko_semantic_core::{
-    EntityId, Expression, FieldDefinition, FieldId, FieldRef, FieldType, Value, validate_document,
+    EntityId, EntityKey, Expression, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType,
+    Number, Value, validate_document,
 };
-use tachiko_workflow::{
-    StarterTemplate, WorkflowError, create_document, duplicate_entity, remove_entity, rename_entity,
-};
+use tachiko_workflow::{WorkflowError, duplicate_entity, remove_entity, rename_entity};
+
+fn numeric(value: f64) -> Expression {
+    Expression::Number(Number::new(value).unwrap())
+}
+
+fn number(value: f64) -> Value {
+    Value::Number(Number::new(value).unwrap())
+}
+
+fn expected(value: f64) -> Number {
+    Number::new(value).unwrap()
+}
 
 fn reference(entity: &str, field: &str) -> Expression {
     Expression::Reference(FieldRef::new(entity, field))
@@ -16,7 +30,7 @@ fn every_expression_shape(self_entity: &str) -> Expression {
         left: Box::new(Expression::Minimum {
             left: Box::new(Expression::Add {
                 left: Box::new(reference(self_entity, "damage")),
-                right: Box::new(Expression::Number(1.0)),
+                right: Box::new(numeric(1.0)),
             }),
             right: Box::new(Expression::Subtract {
                 left: Box::new(Expression::Multiply {
@@ -24,9 +38,9 @@ fn every_expression_shape(self_entity: &str) -> Expression {
                         left: Box::new(reference(self_entity, "damage")),
                         right: Box::new(reference(self_entity, "attack_interval")),
                     }),
-                    right: Box::new(Expression::Number(2.0)),
+                    right: Box::new(numeric(2.0)),
                 }),
-                right: Box::new(Expression::Number(3.0)),
+                right: Box::new(numeric(3.0)),
             }),
         }),
         right: Box::new(reference("shop", "gold_per_match")),
@@ -34,11 +48,13 @@ fn every_expression_shape(self_entity: &str) -> Expression {
 }
 
 fn lifecycle_document() -> tachiko_semantic_core::Document {
-    let mut document = create_document(StarterTemplate::GameBalance, "game", "Game");
+    let mut document = game_balance_document("game", "Game");
     let weapons = document.schemas.get_mut("weapons").unwrap();
     weapons.fields.insert(
         FieldId::from("all_ops"),
         FieldDefinition {
+            id: FieldId::from("all_ops"),
+            key: FieldKey::from("all_ops"),
             field_type: FieldType::Number,
             required: true,
         },
@@ -46,6 +62,8 @@ fn lifecycle_document() -> tachiko_semantic_core::Document {
     weapons.fields.insert(
         FieldId::from("peer"),
         FieldDefinition {
+            id: FieldId::from("peer"),
+            key: FieldKey::from("peer"),
             field_type: FieldType::Reference {
                 schema: "weapons".into(),
             },
@@ -67,8 +85,9 @@ fn lifecycle_document() -> tachiko_semantic_core::Document {
 #[test]
 fn duplicate_rebases_only_copied_self_formulas_and_returns_a_valid_preview() {
     let document = lifecycle_document();
+    let mut generator = OneIdGenerator::new("steel_sword");
 
-    let preview = duplicate_entity(&document, "iron_sword", "steel_sword")
+    let preview = duplicate_entity(&document, "iron_sword", "steel_sword", &mut generator)
         .expect("valid entity duplication should succeed");
 
     assert!(validate_document(&preview.document).is_empty());
@@ -97,7 +116,7 @@ fn duplicate_rebases_only_copied_self_formulas_and_returns_a_valid_preview() {
     let calculation = calculate(&preview.document).expect("duplicate should calculate");
     assert_eq!(
         calculation.value(&FieldRef::new("steel_sword", "all_ops")),
-        Some(50.0)
+        Some(expected(50.0))
     );
     assert!(preview.diff.changes().iter().any(|change| matches!(
         change,
@@ -110,64 +129,67 @@ fn duplicate_rebases_only_copied_self_formulas_and_returns_a_valid_preview() {
 fn duplicate_reports_missing_invalid_and_occupied_entities_explicitly() {
     let document = lifecycle_document();
 
+    let mut missing_generator = OneIdGenerator::new("unused");
     assert!(matches!(
-        duplicate_entity(&document, "missing", "steel_sword"),
+        duplicate_entity(&document, "missing", "steel_sword", &mut missing_generator),
         Err(WorkflowError::MissingEntity { entity }) if entity.as_str() == "missing"
     ));
+    let mut invalid_generator = OneIdGenerator::new("unused");
     assert!(matches!(
-        duplicate_entity(&document, "iron_sword", "Bad.Id"),
-        Err(WorkflowError::InvalidEntityIdentifier { entity }) if entity.as_str() == "Bad.Id"
+        duplicate_entity(&document, "iron_sword", "Bad.Id", &mut invalid_generator),
+        Err(WorkflowError::InvalidEntityKey { entity }) if entity.as_str() == "Bad.Id"
     ));
+    let mut occupied_generator = OneIdGenerator::new("unused");
     assert!(matches!(
-        duplicate_entity(&document, "iron_sword", "shop"),
-        Err(WorkflowError::EntityAlreadyExists { entity }) if entity.as_str() == "shop"
+        duplicate_entity(&document, "iron_sword", "shop", &mut occupied_generator),
+        Err(WorkflowError::EntityKeyAlreadyExists { entity }) if entity.as_str() == "shop"
     ));
 }
 
 #[test]
-fn rename_rewrites_all_typed_and_recursive_formula_references() {
+fn rename_changes_only_the_human_key_and_preserves_all_stable_references() {
     let document = lifecycle_document();
 
     let preview = rename_entity(&document, "iron_sword", "moonblade")
         .expect("valid entity rename should succeed");
 
     assert!(validate_document(&preview.document).is_empty());
-    assert!(!preview.document.entities.contains_key("iron_sword"));
+    assert!(preview.document.entities.contains_key("iron_sword"));
     assert_eq!(
-        preview.document.entities["moonblade"].id,
-        EntityId::from("moonblade")
+        preview.document.entities["iron_sword"].key,
+        EntityKey::from("moonblade")
     );
     assert_eq!(
-        preview.document.entities["moonblade"].fields["all_ops"],
-        Value::Formula(every_expression_shape("moonblade"))
+        preview.document.entities["iron_sword"].fields["all_ops"],
+        Value::Formula(every_expression_shape("iron_sword"))
     );
     assert_eq!(
-        preview.document.entities["moonblade"].fields["peer"],
-        Value::Reference(EntityId::from("moonblade"))
+        preview.document.entities["iron_sword"].fields["peer"],
+        Value::Reference(EntityId::from("iron_sword"))
     );
     assert_eq!(
         preview.document.entities["alric"].fields["weapon"],
-        Value::Reference(EntityId::from("moonblade"))
+        Value::Reference(EntityId::from("iron_sword"))
     );
     assert_eq!(
         preview.document.entities["tempered_blade"].fields["grants_weapon"],
-        Value::Reference(EntityId::from("moonblade"))
+        Value::Reference(EntityId::from("iron_sword"))
     );
     assert_eq!(
         preview.document.entities["shop"].fields["matches_for_sword"],
         Value::Formula(Expression::Divide {
-            left: Box::new(reference("moonblade", "price")),
+            left: Box::new(reference("iron_sword", "price")),
             right: Box::new(reference("shop", "gold_per_match")),
         })
     );
     let calculation = calculate(&preview.document).expect("renamed document should calculate");
     assert_eq!(
-        calculation.value(&FieldRef::new("moonblade", "dps")),
-        Some(40.0)
+        calculation.value(&FieldRef::new("iron_sword", "dps")),
+        Some(expected(40.0))
     );
     assert_eq!(
         calculation.value(&FieldRef::new("shop", "matches_for_sword")),
-        Some(2.4)
+        Some(expected(2.4))
     );
     assert_eq!(
         document.entities["alric"].fields["weapon"],
@@ -190,11 +212,11 @@ fn rename_rejects_noop_before_occupancy_and_reports_other_preconditions() {
     ));
     assert!(matches!(
         rename_entity(&document, "iron_sword", "_target"),
-        Err(WorkflowError::InvalidEntityIdentifier { entity }) if entity.as_str() == "_target"
+        Err(WorkflowError::InvalidEntityKey { entity }) if entity.as_str() == "_target"
     ));
     assert!(matches!(
         rename_entity(&document, "iron_sword", "shop"),
-        Err(WorkflowError::EntityAlreadyExists { entity }) if entity.as_str() == "shop"
+        Err(WorkflowError::EntityKeyAlreadyExists { entity }) if entity.as_str() == "shop"
     ));
 }
 
@@ -204,6 +226,8 @@ fn remove_reports_one_sorted_path_per_dependent_field_across_all_expression_shap
     document.schemas.get_mut("economy").unwrap().fields.insert(
         FieldId::from("all_ops"),
         FieldDefinition {
+            id: FieldId::from("all_ops"),
+            key: FieldKey::from("all_ops"),
             field_type: FieldType::Number,
             required: true,
         },
@@ -215,7 +239,10 @@ fn remove_reports_one_sorted_path_per_dependent_field_across_all_expression_shap
 
     let error = remove_entity(&document, "iron_sword")
         .expect_err("referenced entities must not be removed");
-    let WorkflowError::EntityReferenced { entity, dependents } = &error else {
+    let WorkflowError::EntityReferenced {
+        entity, dependents, ..
+    } = &error
+    else {
         panic!("expected a typed referenced-entity error, got {error:?}");
     };
 
@@ -247,9 +274,9 @@ fn remove_ignores_owned_self_references_and_returns_a_valid_diff() {
     document.entities.remove("tempered_blade");
     let shop = document.entities.get_mut("shop").unwrap();
     shop.fields
-        .insert(FieldId::from("matches_for_sword"), Value::Number(2.4));
+        .insert(FieldId::from("matches_for_sword"), number(2.4));
     shop.fields
-        .insert(FieldId::from("upgrade_cost"), Value::Number(200.0));
+        .insert(FieldId::from("upgrade_cost"), number(200.0));
 
     let preview = remove_entity(&document, "iron_sword")
         .expect("self formula and stored references disappear with their owner");
@@ -276,21 +303,34 @@ fn remove_requires_a_present_entity() {
 
 #[test]
 fn lifecycle_finalizer_surfaces_validation_calculation_and_diff_failures() {
-    let invalid_document = create_document(StarterTemplate::GameBalance, "game", " ");
+    let mut invalid_document = game_balance_document("game", "Game");
+    invalid_document.title = " ".to_owned();
+    let mut invalid_generator = OneIdGenerator::new("steel_sword");
     assert!(matches!(
-        duplicate_entity(&invalid_document, "iron_sword", "steel_sword"),
+        duplicate_entity(
+            &invalid_document,
+            "iron_sword",
+            "steel_sword",
+            &mut invalid_generator
+        ),
         Err(WorkflowError::InvalidDocument { .. })
     ));
 
-    let mut uncalculable = create_document(StarterTemplate::GameBalance, "game", "Game");
+    let mut uncalculable = game_balance_document("game", "Game");
     uncalculable
         .entities
         .get_mut("iron_sword")
         .unwrap()
         .fields
-        .insert(FieldId::from("attack_interval"), Value::Number(0.0));
+        .insert(FieldId::from("attack_interval"), number(0.0));
+    let mut uncalculable_generator = OneIdGenerator::new("steel_sword");
     assert!(matches!(
-        duplicate_entity(&uncalculable, "iron_sword", "steel_sword"),
+        duplicate_entity(
+            &uncalculable,
+            "iron_sword",
+            "steel_sword",
+            &mut uncalculable_generator
+        ),
         Err(WorkflowError::Calculation(_))
     ));
 

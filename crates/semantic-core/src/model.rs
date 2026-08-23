@@ -1,8 +1,14 @@
-use std::{borrow::Borrow, collections::BTreeMap, fmt};
+use std::{
+    borrow::Borrow,
+    cmp::Ordering,
+    collections::BTreeMap,
+    fmt,
+    hash::{Hash, Hasher},
+};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 
-macro_rules! identifier {
+macro_rules! text_newtype {
     ($name:ident) => {
         #[derive(
             Clone, Debug, Default, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
@@ -49,10 +55,117 @@ macro_rules! identifier {
     };
 }
 
-identifier!(DocumentId);
-identifier!(SchemaId);
-identifier!(EntityId);
-identifier!(FieldId);
+// Stable IDs are nominal and opaque. Their textual representation is a storage
+// and creation-boundary mechanism, not semantic meaning.
+text_newtype!(DocumentId);
+text_newtype!(SchemaId);
+text_newtype!(EntityId);
+text_newtype!(FieldId);
+
+// Human keys are mutable authoring addresses and intentionally distinct from
+// stable identity even though both currently use textual carriers.
+text_newtype!(SchemaKey);
+text_newtype!(EntityKey);
+text_newtype!(FieldKey);
+
+/// A finite binary64 semantic number with one canonical zero.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Number(f64);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InvalidNumber;
+
+impl Number {
+    /// Construct a semantic Number, rejecting non-finite values and
+    /// normalizing either IEEE zero sign to positive zero.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvalidNumber`] for NaN or positive/negative infinity.
+    pub fn new(value: f64) -> Result<Self, InvalidNumber> {
+        if !value.is_finite() {
+            return Err(InvalidNumber);
+        }
+        Ok(Self(if value == 0.0 { 0.0 } else { value }))
+    }
+
+    #[must_use]
+    pub fn get(self) -> f64 {
+        self.0
+    }
+
+    #[must_use]
+    pub fn to_bits(self) -> u64 {
+        self.0.to_bits()
+    }
+}
+
+impl TryFrom<f64> for Number {
+    type Error = InvalidNumber;
+
+    fn try_from(value: f64) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl PartialEq for Number {
+    fn eq(&self, other: &Self) -> bool {
+        self.to_bits() == other.to_bits()
+    }
+}
+
+impl Eq for Number {}
+
+impl PartialOrd for Number {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Number {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.total_cmp(&other.0)
+    }
+}
+
+impl Hash for Number {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.to_bits().hash(state);
+    }
+}
+
+impl fmt::Display for Number {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+impl fmt::Display for InvalidNumber {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("semantic numbers must be finite")
+    }
+}
+
+impl std::error::Error for InvalidNumber {}
+
+impl Serialize for Number {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_f64(self.get())
+    }
+}
+
+impl<'de> Deserialize<'de> for Number {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = f64::deserialize(deserializer)?;
+        Self::new(value).map_err(D::Error::custom)
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -79,12 +192,15 @@ impl Document {
 #[serde(deny_unknown_fields)]
 pub struct Schema {
     pub id: SchemaId,
+    pub key: SchemaKey,
     pub fields: BTreeMap<FieldId, FieldDefinition>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FieldDefinition {
+    pub id: FieldId,
+    pub key: FieldKey,
     pub field_type: FieldType,
     pub required: bool,
 }
@@ -102,6 +218,7 @@ pub enum FieldType {
 #[serde(deny_unknown_fields)]
 pub struct Entity {
     pub id: EntityId,
+    pub key: EntityKey,
     pub schema: SchemaId,
     pub fields: BTreeMap<FieldId, Value>,
 }
@@ -109,17 +226,23 @@ pub struct Entity {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum Value {
-    Number(f64),
+    Number(Number),
     Text(String),
     Boolean(bool),
     Reference(EntityId),
     Formula(Expression),
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+/// Maximum number of nodes admitted in a semantic formula expression.
+pub const MAX_EXPRESSION_NODES: usize = 256;
+
+/// Maximum root-to-leaf node depth admitted in a semantic formula expression.
+pub const MAX_EXPRESSION_DEPTH: usize = 64;
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "op", content = "args", rename_all = "snake_case")]
 pub enum Expression {
-    Number(f64),
+    Number(Number),
     Reference(FieldRef),
     Add { left: Box<Self>, right: Box<Self> },
     Subtract { left: Box<Self>, right: Box<Self> },
@@ -147,6 +270,29 @@ impl FieldRef {
 }
 
 impl fmt::Display for FieldRef {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}.{}", self.entity, self.field)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FieldAddress {
+    pub entity: EntityKey,
+    pub field: FieldKey,
+}
+
+impl FieldAddress {
+    #[must_use]
+    pub fn new(entity: impl Into<EntityKey>, field: impl Into<FieldKey>) -> Self {
+        Self {
+            entity: entity.into(),
+            field: field.into(),
+        }
+    }
+}
+
+impl fmt::Display for FieldAddress {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{}.{}", self.entity, self.field)
     }

@@ -21,7 +21,14 @@ The current CLI implements only the single-file `.ro` persistence path:
 project.ro
 ```
 
-It provides deterministic parsing/serialization and is used by the current CLI, semantic diff/merge, validation, formula authoring, and product smoke journeys.
+It reads frozen direct JSON v1 through an explicit deterministic in-memory
+migration and writes canonical identity-aware direct JSON v2. Stable IDs,
+mutable keys, bound references, Unicode scalar sequences, and ADR-0018 Number
+meaning survive canonical v2 round trips. Original numeric lexemes and the IEEE
+negative-zero bit are not separate semantic meaning. Merely reading a legacy
+file never rewrites it.
+This path is used by the current CLI, semantic diff/merge, validation, formula
+authoring, and product smoke journeys.
 
 This is a transitional implementation state, not a reversal of ADR-0003. The canonical `.roproj` editable materialization and deterministic `.roproj` ↔ `.ro` pack/unpack path are not yet implemented.
 

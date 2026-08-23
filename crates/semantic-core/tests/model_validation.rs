@@ -2,57 +2,56 @@ use std::collections::BTreeMap;
 
 use tachiko_semantic_core::{
     DiagnosticCode, Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId,
-    FieldRef, FieldType, Schema, SchemaId, Value, validate_document,
+    FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value, validate_document,
 };
+
+fn field(id: &str, field_type: FieldType, required: bool) -> (FieldId, FieldDefinition) {
+    let key = FieldKey::from(id);
+    let id = FieldId::from(id);
+    (
+        id.clone(),
+        FieldDefinition {
+            id,
+            key,
+            field_type,
+            required,
+        },
+    )
+}
 
 fn valid_document() -> Document {
     let weapon_schema = Schema {
         id: SchemaId::from("weapon"),
+        key: SchemaKey::from("weapon"),
         fields: BTreeMap::from([
-            (
-                FieldId::from("damage"),
-                FieldDefinition {
-                    field_type: FieldType::Number,
-                    required: true,
+            field("damage", FieldType::Number, true),
+            field("name", FieldType::Text, true),
+            field(
+                "upgrade_from",
+                FieldType::Reference {
+                    schema: SchemaId::from("weapon"),
                 },
+                false,
             ),
-            (
-                FieldId::from("name"),
-                FieldDefinition {
-                    field_type: FieldType::Text,
-                    required: true,
-                },
-            ),
-            (
-                FieldId::from("upgrade_from"),
-                FieldDefinition {
-                    field_type: FieldType::Reference {
-                        schema: SchemaId::from("weapon"),
-                    },
-                    required: false,
-                },
-            ),
-            (
-                FieldId::from("dps"),
-                FieldDefinition {
-                    field_type: FieldType::Number,
-                    required: true,
-                },
-            ),
+            field("dps", FieldType::Number, true),
         ]),
     };
 
     let sword = Entity {
         id: EntityId::from("sword"),
+        key: "sword".into(),
         schema: SchemaId::from("weapon"),
         fields: BTreeMap::from([
-            (FieldId::from("damage"), Value::Number(100.0)),
+            (
+                FieldId::from("damage"),
+                Value::Number(Number::new(100.0).unwrap()),
+            ),
             (FieldId::from("name"), Value::Text("Sword".to_owned())),
             (
                 FieldId::from("dps"),
                 Value::Formula(Expression::Divide {
                     left: Box::new(Expression::Reference(FieldRef::new("sword", "damage"))),
-                    right: Box::new(Expression::Number(1.25)),
+                    right: Box::new(Expression::Number(Number::new(1.25).unwrap())),
                 }),
             ),
         ]),
@@ -130,6 +129,7 @@ fn reference_to_wrong_schema_is_rejected() {
         SchemaId::from("character"),
         Schema {
             id: SchemaId::from("character"),
+            key: SchemaKey::from("character"),
             fields: BTreeMap::new(),
         },
     );
@@ -137,6 +137,7 @@ fn reference_to_wrong_schema_is_rejected() {
         EntityId::from("hero"),
         Entity {
             id: EntityId::from("hero"),
+            key: "hero".into(),
             schema: SchemaId::from("character"),
             fields: BTreeMap::new(),
         },
@@ -167,21 +168,10 @@ fn map_key_and_semantic_id_must_match() {
 }
 
 #[test]
-fn non_finite_numbers_are_rejected() {
-    let mut document = valid_document();
-    document
-        .entities
-        .get_mut("sword")
-        .unwrap()
-        .fields
-        .insert(FieldId::from("damage"), Value::Number(f64::INFINITY));
-
-    let diagnostics = validate_document(&document);
-
-    assert!(diagnostics.iter().any(|diagnostic| {
-        diagnostic.code == DiagnosticCode::NonFiniteNumber
-            && diagnostic.path == "entities.sword.fields.damage"
-    }));
+fn non_finite_numbers_cannot_enter_the_semantic_model() {
+    assert!(Number::new(f64::INFINITY).is_err());
+    assert!(Number::new(f64::NEG_INFINITY).is_err());
+    assert!(Number::new(f64::NAN).is_err());
 }
 
 #[test]
@@ -217,22 +207,21 @@ fn diagnostics_have_deterministic_ordering() {
 }
 
 #[test]
-fn identifiers_must_be_unambiguous_stable_paths() {
+fn stable_ids_are_opaque_while_human_keys_use_the_address_grammar() {
     let mut document = valid_document();
     document.id = DocumentId::from("balance data");
     let mut sword = document.entities.remove("sword").unwrap();
     sword.id = EntityId::from("sword.damage");
+    sword.key = "Sword Damage".into();
     document
         .entities
         .insert(EntityId::from("sword.damage"), sword);
 
     let diagnostics = validate_document(&document);
 
+    assert!(!diagnostics.iter().any(|diagnostic| diagnostic.path == "id"));
     assert!(diagnostics.iter().any(|diagnostic| {
-        diagnostic.path == "id" && diagnostic.message.contains("lowercase identifier")
-    }));
-    assert!(diagnostics.iter().any(|diagnostic| {
-        diagnostic.path == "entities.sword.damage.id"
-            && diagnostic.message.contains("lowercase identifier")
+        diagnostic.path == "entities.sword.damage.key"
+            && diagnostic.code == DiagnosticCode::InvalidKey
     }));
 }

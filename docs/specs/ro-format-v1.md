@@ -2,7 +2,8 @@
 
 Decision state: Normative legacy compatibility / migration profile under ADR-0017; not the target long-term editable representation
 
-Implementation state: Implemented in the v0.1 Developer MVP and still the current direct `.ro` writer until the storage migration lands
+Implementation state: Implemented immutable compatibility reader/writer and
+migration source; the current semantic writer emits `direct-ro/v2`
 
 ## Authority note
 
@@ -10,7 +11,10 @@ This document freezes the historical direct `.ro` JSON version-1 behavior as a c
 
 Its purpose is to preserve what the v0.1 reader/writer meant so later semantic-core and storage refactors cannot silently reinterpret old files. It is not authority for future `.roproj` layout, future `.ro` package/container design, or future semantic identity/numeric choices.
 
-ADR-0017 requires complete storage-owned historical DTOs and explicit migration. The current implementation still embeds semantic-core serialization types; that is implementation debt to remove, not permission for this legacy wire contract to evolve with semantic Rust structs.
+ADR-0017 requires complete storage-owned historical DTOs and explicit
+migration. The implementation now satisfies that boundary: v1 decoding and
+historical canonicalization never depend on current semantic-core Serde layouts.
+This is not permission for the legacy wire contract to evolve.
 
 ADR-0003 remains the accepted representation direction: `.roproj` is the target canonical editable/source materialization and `.ro` becomes a derived portable artifact. The current direct `.ro` JSON persistence path is an implementation stage and a distinct representation/version namespace.
 
@@ -31,7 +35,7 @@ It is retained so existing files can be decoded and migrated deterministically. 
 
 `.ro` and `.roproj` represent the same logical semantic work under ADR-0003, but their physical/version namespaces are distinct.
 
-- current direct `.ro` v1 is a legacy/current implementation profile;
+- direct `.ro` v1 is an immutable legacy compatibility profile;
 - future `.roproj` is the canonical editable/Git-native representation;
 - future `.ro` packaging is owned by #43 and must not be inferred from this direct JSON v1 profile.
 

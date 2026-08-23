@@ -2,7 +2,9 @@
 
 Decision state: v0.1 baseline is Provisional; Milestone 02 target is Accepted in ADR-0016
 
-Implementation state: v0.1 baseline implemented; target migration not started
+Implementation state: Stable identity/formula/storage boundaries are
+implemented in the v0.1 crate graph; #72 workspace-engine migration has not
+started
 
 Architecture authority: ADR-0016
 
@@ -51,21 +53,23 @@ every current boundary or public Rust type is stable.
 
 ### semantic-core
 
-The crate currently owns the string-backed ID newtypes, document/schema/entity
-model, typed values and relationships, formula expression representation,
+The crate owns opaque typed stable-ID newtypes, distinct mutable key types,
+document/schema/entity/field models, typed values and bound relationships,
+formula expression representation, deterministic derived address indexes,
 semantic diagnostics, and whole-document validation. It has only `serde` as a
-non-dev dependency and no UI, filesystem, network, or other host dependency.
+non-dev dependency and no UI, filesystem, network, UUID, or other host
+dependency.
 
-Its domain types currently derive `serde`. That convenience, and storage's
-reuse of parts of those types in v0.1 DTOs, is migration debt under #25 rather
-than a durable wire-format promise.
+Domain types derive `serde` for internal adapters, but storage uses complete
+version-owned DTOs; semantic derives are not durable wire-format authority.
 
 ### formula-engine
 
-The crate owns the current bounded expression parser/formatter, deterministic
-calculation, cycle/error behavior, and derived dependency indexes. It depends
-only on semantic-core among workspace crates. Exact source/bound AST, binding,
-numeric, error, and dependency contracts remain Provisional under #24.
+The crate owns bounded source parsing, one-snapshot human-address binding,
+stable-ID bound projection, structural limits, deterministic finite-binary64
+calculation, cycle/error behavior, and static dependency indexes. It depends
+only on semantic-core among workspace crates. ADR-0018 is authoritative; the
+complete SCC/failure oracle and incremental recomputation remain follow-up work.
 
 ### diff-engine and merge-engine
 
@@ -80,10 +84,12 @@ separate work.
 
 ### storage
 
-Storage currently combines canonical version-1 `.ro` JSON string codecs,
-format checks, semantic validation, and native filesystem load/save APIs. This
-mix identifies a host boundary; #25/#26 own whether portable codecs and
-native/browser persistence later justify separate crates.
+Storage owns the frozen strict `legacy-direct-ro/v1` DTO/codec, two-phase
+deterministic v1→v2 identity migration, canonical identity-aware
+`direct-ro/v2` DTO/codec, semantic conversion, and native filesystem load/save
+APIs. It depends on semantic-core but never treats semantic derives as a wire
+schema. The combined portable-codec/native-path shape remains a host-boundary
+question for #26.
 
 ADR-0003 remains authoritative: `.roproj` is the target canonical editable
 materialization and `.ro` is a derived portable artifact. The v0.1 direct `.ro`
@@ -153,10 +159,16 @@ Storage's string codecs may be reusable on WASM, but its public path/file APIs
 make the current crate host-facing. CLI is native-only. No WASM ABI/binding
 crate exists yet; #26 owns that boundary.
 
-One implementation risk crosses #20 and #24: wire-authored expression trees can
-currently reach recursive semantic validation and calculation without the
-parser/AI complexity gate. A shared structural limit must be applied before
-untrusted native or WASM evaluation.
+The release gate now executes a shared production-API corpus from semantic-core
+and formula-engine on native and `wasm32-unknown-unknown`, comparing normalized
+Number bits, typed failures, dependencies/cycles, operation order, stable
+binding, rename projection, and no-silent-retarget outcomes byte-for-byte.
+This is a conformance harness, not a public WASM ABI or host/runtime decision.
+
+Parser-produced, directly supplied, projected, and calculated expressions now
+pass the shared 256-node/64-depth structural contract before recursive formula
+work. The portable crate set remains the native/WASM-overlapping behavior
+boundary.
 
 ## Accepted target summary
 

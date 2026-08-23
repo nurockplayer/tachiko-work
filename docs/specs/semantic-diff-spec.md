@@ -1,5 +1,11 @@
 # Semantic Diff Specification
 
+Decision state: Mixed. Stable-ID continuity and bound-formula comparison follow
+[ADR-0015](../decisions/ADR-0015-stable-semantic-identity.md) and
+[ADR-0018](../decisions/ADR-0018-bound-formulas-and-deterministic-binary64.md);
+the remaining detailed diff surface is an implemented Provisional baseline.
+See the [canonical reconciliation register](../governance/canonical-reconciliation-register.md).
+
 ## Problem
 
 Traditional spreadsheet diff compares files.
@@ -38,6 +44,13 @@ Attack
 - calculated impact
 - dependency tracing
 - human-readable summaries
+- continuity by stable schema/entity/field ID
+- explicit mutable-key changes rather than rename-as-delete-plus-add
+
+Bound references and formulas compare by stable IDs and normalized semantic
+values. Renaming a current human key does not rewrite the formula definition or
+create a false relationship change; rendered summaries project current keys for
+human review.
 
 ## Git Integration
 

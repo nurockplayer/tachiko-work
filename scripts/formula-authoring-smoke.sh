@@ -55,7 +55,7 @@ for failure in parse reference cycle; do
       ;;
     reference)
       failure_expression="[missing.damage]"
-      expected="has no target entity"
+      expected="formula address 'missing.damage' cannot be resolved"
       ;;
     cycle)
       failure_expression="[iron_sword.dps] + 1"

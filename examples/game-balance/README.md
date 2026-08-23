@@ -33,7 +33,7 @@ moonfall_demo=$(mktemp -d "${TMPDIR:-/tmp}/tachiko-moonfall.XXXXXX")
 ./target/debug/tachiko init "$moonfall_demo/moonfall.ro" \
   --id game-balance --title "Moonfall: starter balance"
 
-# Browse entities, stable field paths, references, and calculated values.
+# Browse entities, current field addresses, opaque IDs, references, and calculated values.
 ./target/debug/tachiko show "$moonfall_demo/moonfall.ro"
 
 # Understand where DPS comes from and which inputs it uses.
@@ -121,9 +121,11 @@ relationships to other entities retain their original meaning:
   "$moonfall_demo/moonfall-with-moonblade.ro" moonblade.dps
 ```
 
-The final formula is `([moonblade.damage] / [moonblade.attack_interval])` and
-calculates to 50 DPS. Rename also rewrites stored typed relationships and
-references from formulas owned by other entities.
+The final formula projects as
+`([moonblade.damage] / [moonblade.attack_interval])` and calculates to 50 DPS.
+Rename changes only the human key: the entity's stable ID, stored typed
+relationships, and formulas owned by other entities retain their bound IDs and
+ASTs unchanged.
 
 Removal never cascades. Trying to remove `iron_sword` reports
 `alric.weapon`, `shop.matches_for_sword`, and

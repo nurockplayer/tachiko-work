@@ -6,6 +6,17 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Changed
 
+- Semantic document, schema, field, and entity identity is now opaque and
+  stable, while mutable human keys remain the authoring address. Renames retain
+  bound references/formulas and diff/merge continuity instead of rewriting or
+  replacing the object.
+- Valid legacy direct `.ro` v1 documents now migrate deterministically in
+  memory to stable IDs. Explicit saves emit lossless `direct-ro/v2`; merely
+  opening v1 never rewrites durable bytes.
+- Direct `.ro` v2 adopts finite normalized binary64 semantics, ECMAScript
+  shortest-roundtrip numeric spelling, stable-ID collection order, and bounded
+  input/number/formula resources. Runtime export correspondingly advances to
+  `runtime-export/v2`.
 - Hardened legacy direct `.ro` v1 persistence with storage-owned historical
   DTOs, strict UTF-8/JSON/version handling, recursive closed-world decoding,
   and specification-ordered canonical output while preserving valid v1 bytes.
@@ -13,6 +24,12 @@ All notable changes to Tachiko Work are documented in this file.
   version-envelope, and representation failures. Existing `Json`,
   `UnsupportedVersion`, and `InvalidDocument` shapes remain available, but
   downstream exhaustive matches must account for the new variants.
+
+### Added
+
+- An executed production-semantic conformance corpus compares normalized
+  values, failures, dependency/cycle results, and stable formula projection
+  byte-for-byte on native and `wasm32-unknown-unknown` builds.
 
 ## [0.1.0] - 2026-08-20
 

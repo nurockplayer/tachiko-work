@@ -707,3 +707,152 @@ the ADR-0015 persisted identity model that remains owned by #70.
   safety checks.
 - Independent standards and spec reviews of 0ab898d...d202be7 both reported no
   findings.
+
+## Active phase: ADR-0015 stable-identity transition (#70)
+
+### Goal and authority
+
+- Execute the latest #70 `agent-handoff:v1` as one atomic, reviewable semantic
+  transition on `codex/stable-identity-transition` from `origin/main` `a27fd11`.
+- Authority is Accepted ADR-0015 through ADR-0018 plus merged PR #80's frozen
+  legacy-v1 DTO/strict-reader seam.
+- Do not redo #74, start #40's broad corpus closure, begin #72's
+  workflow→workspace-engine migration, design `.roproj`/packaging, or self-merge.
+
+### Implemented transition
+
+1. Semantic-core now separates opaque typed `DocumentId`/`SchemaId`/`FieldId`/
+   `EntityId` from mutable schema/entity/field keys and builds deterministic
+   runtime-only address indexes with typed ambiguity/stale-target failures.
+2. Workflow owns a replaceable ID-generation seam. Normal CLI creation supplies
+   UUIDv7; pure semantic/formula/diff/merge code has no clock or randomness.
+3. Formula source parses to a bounded unbound human-address AST, binds and
+   type-checks once to stable `EntityId + FieldId`, extracts static dependencies,
+   and projects only through round-trip-proven current keys. Rename preserves
+   stable IDs/bound ASTs and atomically enforces the 4,096/4,097-byte boundary.
+4. Validation, semantic diff, merge, entity lifecycle, CLI, and AI adapter paths
+   preserve stable continuity while presenting human keys at authoring seams.
+5. Storage performs a two-phase rewrite of all 12 frozen v1 typed-ID locations
+   through deterministic UUIDv5 maps, preserving applicable legacy addresses as
+   keys and never rewriting durable v1 merely by read/open.
+6. `direct-ro/v2` owns complete storage DTOs and canonical identity-aware bytes:
+   stable-ID ordering, no Unicode normalization, ECMAScript shortest-roundtrip
+   Number tokens, 8 MiB complete-input limit, and 256-byte number-token limit.
+
+### Frozen migration mechanism
+
+- Namespace: `7a199010-e2db-5f4f-a216-07ddb708f5ef`, derived as UUIDv5(URL,
+  `https://tachiko.work/migrations/legacy-direct-ro/v1`).
+- Exact UTF-8 UUID names use NUL separators and typed prefixes:
+  `document\0doc`, `schema\0doc\0schema`,
+  `field\0doc\0schema\0field`, and `entity\0doc\0entity`.
+- Schema-scoped field mapping and document/schema/field/entity golden UUIDs are
+  frozen in code tests and `storage-versioning-and-migration.md`.
+
+### Focused evidence before final gates
+
+- CLI: 31 tests green with generated opaque IDs and human-key addressing.
+- Semantic/formula/diff/merge/workflow/storage focused suites are green,
+  including deterministic duplicate-key errors, stable rename/diff/merge,
+  reused-address projection failure, exact 4,096/4,097 rename behavior,
+  replaceable creation, all 12 migration locations, negative mapping classes,
+  byte-stable v2 round trips, ADR-0018 numeric vectors, exact resource
+  boundaries, Unicode preservation, and legacy read-without-rewrite.
+- Final workspace/release-equivalent gates, staged commits, independent code and
+  standards reviews, push, and PR creation remain before handoff.
+
+### Final review and verification
+
+- The transition is staged as four reviewable commits: `94b603b` semantic
+  contracts, `42177ab` conformance coverage, `6fb4018` representation/specification,
+  and `169db41` focused review remediation.
+- The first independent review found four code/API gaps: combined merge renames
+  could exceed canonical formula projection bounds, storage could recursively
+  convert oversized bound ASTs, incoherent map/nested IDs could panic binding,
+  and CLI help mislabeled human keys as stable identifiers. Regression-first
+  fixes now enforce typed projection failures, iterative shared 256-node/64-depth
+  bounds before recursive conversion, checked address/index lookup, and accurate
+  human-address terminology.
+- The first standards review also required executing—not merely compiling—the
+  production semantic corpus under WASM and making the migration visible in the
+  changelog. CI and the release gate now run one shared production-API corpus on
+  native and `wasm32-unknown-unknown` and compare exact normalized values,
+  failures, dependency/cycle evidence, operation order, rename projection, and
+  no-silent-retarget results.
+- Focused re-review confirmed every original finding is closed, found no new
+  P0/P1/P2 code/API or standards/spec findings, and found no Accepted ADR
+  amendment pressure. The work does not redo #74 or begin #40 or #72.
+- Final `scripts/release-check.sh` passed on clean commit `169db41`: formatting,
+  warning-denied Clippy, 200 tests across 27 suites, executed native/WASM parity,
+  warning-denied Rustdoc, exact Rust 1.85 checking, audited notices, all eight
+  Cargo packages, all four product journeys, native release/archive execution,
+  tamper rejection, interrupted cleanup, and concurrent no-clobber publication.
+
+### PR #81 writer/reader closure remediation
+
+- The latest independent ChatGPT review accepted the overall #70 architecture
+  and blocked only on one Codex P2: `to_canonical_string()` and `save()` could
+  emit direct-ro/v2 bytes larger than the reader's unchanged 8 MiB complete-input
+  profile.
+- The regression was proven red on the reviewed head: canonical serialization
+  admitted exactly 8,388,609 bytes, and `save()` created that output. The exact
+  8,388,608-byte writer boundary already round-tripped successfully.
+- Commit `f8c13b5` applies the existing v2 resource-profile validator to the
+  final canonical string before it can return or reach exclusive file creation.
+  Oversized otherwise-valid semantic documents now return the typed
+  `FormatError::ResourceLimit`; no representation limit or ADR behavior changed.
+- Exact new storage tests are
+  `v2_writer_admits_the_exact_input_boundary_and_round_trips`,
+  `v2_writer_rejects_canonical_output_one_byte_over_the_input_limit`, and
+  `save_rejects_oversized_v2_before_creating_the_destination`. Existing exact
+  reader and number-token boundary coverage is unchanged.
+- Verification on the clean code commit passed 50 storage tests, 203 workspace
+  tests across 27 suites, warning-denied Clippy and Rustdoc, Rust 1.85 all-target
+  checking, all eight Cargo packages, all four product smokes, documentation
+  consistency, exact native/WASM production parity, and the complete release
+  archive/tamper/interruption/concurrency gate.
+- PR #81 remains Draft. The existing Codex thread may be resolved only after the
+  regression is present and green; final readiness still requires an independent
+  review of the exact pushed head and green CI.
+
+### PR #81 blocking-review stability remediation
+
+- Exact reviewed head `7f1550b` reproduced both hard blockers before production
+  changes: a cross-entity v2 formula target whose later-sorted entity names a
+  missing schema panicked in `FieldRefV2::validate`, and a forward acyclic chain
+  of 20,000 bound formulas aborted the calculation test process with `SIGABRT`.
+- Commit `bd4172e` replaces the schema-order assumption with a typed
+  representation failure and evaluates fields/expressions through explicit
+  frames. It adds no durable dependency-chain limit and preserves existing
+  left-to-right arithmetic, cycle paths, typed failures, and stable result
+  ordering.
+- The remaining scoped review actions preserve trimmed human file stems as
+  default titles with a blank-stem fallback, report the current build ceiling
+  from the legacy-v1 canonicalization helper, cover the exact nonnumeric binding
+  payload, document Node.js for the release gate, and strengthen the formula
+  smoke's missing-address diagnostic.
+- Documentation now separates Accepted ADR-0015/ADR-0017/ADR-0018 invariants
+  from Provisional direct-ro/v2 wire/resource mechanisms, describes numeric
+  persistence as ADR-0018 semantic preservation, adds explicit authority state
+  to the schema/diff/validation specifications, and distinguishes entity from
+  numeric formula references.
+- Focused storage, formula-engine, and CLI suites; warning-denied focused
+  Clippy; formatting; documentation consistency; and the formula-authoring
+  product smoke are green. Complete release-equivalent gates and fresh
+  exact-head reviews remain required before the Draft PR returns to ChatGPT.
+
+### PR #81 final overview-address closure
+
+- The final ChatGPT adjudication accepted the remaining Codex P2 and narrowed
+  closure to validating directly constructed documents before `overview()`
+  creates a human-facing projection; no address or diagnostic semantics change.
+- A workflow regression was proven red on exact head `dae70fa`: `overview()`
+  admitted a directly constructed document with a duplicated schema key.
+- `overview()` now reuses `validate_candidate(document)?` before calculation.
+  The table-driven regression covers duplicate schema keys, duplicate entity
+  keys, and duplicate field keys within one schema, asserting the typed
+  `WorkflowError::InvalidDocument` result and `DiagnosticCode::DuplicateKey`.
+- The exact regression and all 24 workflow integration tests are green,
+  including the existing valid overview and deterministic ordering evidence.
+  Complete clean-head release verification and a fresh exact-head Codex review
+  remain required before final ChatGPT review.
