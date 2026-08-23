@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 
 use tachiko_workspace_engine::{
-    CanonicalAuthoringProjectionError, DiagnosticCode, DiagnosticProvider, DiagnosticSeverity,
-    Document, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey, FieldRef,
-    FieldType, Number, Schema, SchemaId, SchemaKey, SemanticSubject, ValidationRole, Value,
-    WorkspaceError, compare_documents, diagnostic_codes, merge_documents, rename_entity,
+    CanonicalAuthoringProjectionError, DiagnosticCode, DiagnosticFact, DiagnosticProvider,
+    DiagnosticSeverity, Document, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
+    FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, SemanticSubject, ValidationRole,
+    Value, WorkspaceError, compare_documents, diagnostic_codes, merge_documents, rename_entity,
     rename_schema, validate, validation_report,
 };
 
@@ -389,6 +389,158 @@ fn cascade_suppression_is_specific_to_the_authoritative_formula_failure() {
                     SemanticSubject::EntityField(FieldRef::new("entity", "cycle-b")),
                 ]
     }));
+}
+
+#[test]
+fn cascade_suppression_filters_each_binding_fact_by_its_actual_prerequisite() {
+    let mut document = document();
+    define(
+        &mut document,
+        "reference-target",
+        FieldType::Reference {
+            schema: "missing-target-schema".into(),
+        },
+        false,
+    );
+    formula(
+        &mut document,
+        "mixed-binding",
+        Expression::Add {
+            left: Box::new(reference("orphan", "value")),
+            right: Box::new(reference("ghost", "value")),
+        },
+    );
+    formula(
+        &mut document,
+        "reference-type-error",
+        reference("entity", "reference-target"),
+    );
+    document.entities.insert(
+        EntityId::from("orphan"),
+        Entity {
+            id: "orphan".into(),
+            key: "orphan".into(),
+            schema: "missing-entity-schema".into(),
+            fields: BTreeMap::new(),
+        },
+    );
+
+    let report = validation_report(&document);
+    let mixed = report
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| {
+            diagnostic.code == diagnostic_codes::FORMULA_INVALID_REFERENCES
+                && diagnostic.subjects
+                    == [SemanticSubject::EntityField(FieldRef::new(
+                        "entity",
+                        "mixed-binding",
+                    ))]
+        })
+        .expect("the independent missing target remains diagnosable");
+    assert_eq!(
+        mixed.related_subjects,
+        [SemanticSubject::EntityField(FieldRef::new(
+            "ghost", "value"
+        ))]
+    );
+    assert_eq!(
+        mixed.facts,
+        [DiagnosticFact::new("missing_target", "5:ghost5:value")]
+    );
+
+    let non_numeric = report
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| {
+            diagnostic.code == diagnostic_codes::FORMULA_INVALID_REFERENCES
+                && diagnostic.subjects
+                    == [SemanticSubject::EntityField(FieldRef::new(
+                        "entity",
+                        "reference-type-error",
+                    ))]
+        })
+        .expect("the declared non-number kind remains diagnosable");
+    assert_eq!(
+        non_numeric.related_subjects,
+        [SemanticSubject::EntityField(FieldRef::new(
+            "entity",
+            "reference-target",
+        ))]
+    );
+    assert_eq!(
+        non_numeric.facts,
+        [DiagnosticFact::new(
+            "non_numeric_target",
+            "6:entity16:reference-target",
+        )]
+    );
+}
+
+#[test]
+fn cascade_suppression_filters_each_direct_failed_dependency() {
+    let mut document = document();
+    formula(
+        &mut document,
+        "blocked-dependency",
+        Expression::Divide {
+            left: Box::new(number(1.0)),
+            right: Box::new(number(0.0)),
+        },
+    );
+    document
+        .schemas
+        .get_mut("schema")
+        .unwrap()
+        .fields
+        .get_mut("blocked-dependency")
+        .unwrap()
+        .id = "different-stable-id".into();
+    formula(
+        &mut document,
+        "independent-zero",
+        Expression::Divide {
+            left: Box::new(number(1.0)),
+            right: Box::new(number(0.0)),
+        },
+    );
+    formula(
+        &mut document,
+        "dependent",
+        Expression::Add {
+            left: Box::new(reference("entity", "blocked-dependency")),
+            right: Box::new(reference("entity", "independent-zero")),
+        },
+    );
+
+    let report = validation_report(&document);
+    assert!(!report.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code == diagnostic_codes::FORMULA_DIVISION_BY_ZERO
+            && diagnostic.subjects
+                == [SemanticSubject::EntityField(FieldRef::new(
+                    "entity",
+                    "blocked-dependency",
+                ))]
+    }));
+    let dependent = report
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| {
+            diagnostic.code == diagnostic_codes::FORMULA_FAILED_DEPENDENCY
+                && diagnostic.subjects
+                    == [SemanticSubject::EntityField(FieldRef::new(
+                        "entity",
+                        "dependent",
+                    ))]
+        })
+        .expect("the independent direct failed dependency remains diagnosable");
+    assert_eq!(
+        dependent.related_subjects,
+        [SemanticSubject::EntityField(FieldRef::new(
+            "entity",
+            "independent-zero",
+        ))]
+    );
 }
 
 #[test]

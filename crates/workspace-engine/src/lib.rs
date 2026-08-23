@@ -1232,10 +1232,7 @@ fn formula_diagnostics(
     let blockers = formula_prerequisite_blockers(core_diagnostics);
     let address_index = AddressIndex::build(document).ok();
     for (formula, failure) in report.failures() {
-        if matches!(
-            failure,
-            FormulaFailure::Cycle { members } if members.first() != Some(formula)
-        ) {
+        if is_noncanonical_cycle(formula, failure) {
             continue;
         }
         if !formula_prerequisites_available(document, formula, failure, &blockers) {
@@ -1261,7 +1258,19 @@ fn formula_diagnostics(
             FormulaFailure::InvalidReferences {
                 missing,
                 non_numeric,
-            } => invalid_reference_diagnostic(formula, subject, path, missing, non_numeric),
+            } => {
+                let Some(diagnostic) = project_invalid_reference_diagnostic(
+                    document,
+                    formula,
+                    path,
+                    missing,
+                    non_numeric,
+                    &blockers.declarations,
+                ) else {
+                    continue;
+                };
+                diagnostic
+            }
             FormulaFailure::Cycle { members } => formula_diagnostic(
                 diagnostic_codes::FORMULA_CYCLE,
                 members
@@ -1272,19 +1281,18 @@ fn formula_diagnostics(
                 path,
                 format!("formula dependency cycle contains {} values", members.len()),
             ),
-            FormulaFailure::FailedDependency { dependencies } => formula_diagnostic(
-                diagnostic_codes::FORMULA_FAILED_DEPENDENCY,
-                vec![subject],
-                path,
-                format!("formula '{formula}' directly depends on failed values"),
-            )
-            .with_related_subjects(
-                dependencies
-                    .iter()
-                    .cloned()
-                    .map(SemanticSubject::EntityField)
-                    .collect(),
-            ),
+            FormulaFailure::FailedDependency { dependencies } => {
+                let Some(diagnostic) = project_failed_dependency_diagnostic(
+                    document,
+                    formula,
+                    path,
+                    dependencies,
+                    &blockers.values,
+                ) else {
+                    continue;
+                };
+                diagnostic
+            }
             FormulaFailure::MissingInput { reference } => formula_diagnostic(
                 diagnostic_codes::FORMULA_MISSING_INPUT,
                 vec![subject],
@@ -1320,6 +1328,59 @@ fn formula_diagnostics(
         diagnostics.push(diagnostic);
     }
     diagnostics
+}
+
+fn is_noncanonical_cycle(formula: &FieldRef, failure: &FormulaFailure) -> bool {
+    matches!(failure, FormulaFailure::Cycle { members } if members.first() != Some(formula))
+}
+
+fn project_invalid_reference_diagnostic(
+    document: &Document,
+    formula: &FieldRef,
+    path: String,
+    missing: &BTreeSet<FieldRef>,
+    non_numeric: &BTreeSet<FieldRef>,
+    blocked_subjects: &BTreeSet<SemanticSubject>,
+) -> Option<Diagnostic> {
+    let missing = available_formula_fields(document, missing, blocked_subjects);
+    let non_numeric = available_formula_fields(document, non_numeric, blocked_subjects);
+    if missing.is_empty() && non_numeric.is_empty() {
+        return None;
+    }
+    Some(invalid_reference_diagnostic(
+        formula,
+        SemanticSubject::EntityField(formula.clone()),
+        path,
+        &missing,
+        &non_numeric,
+    ))
+}
+
+fn project_failed_dependency_diagnostic(
+    document: &Document,
+    formula: &FieldRef,
+    path: String,
+    dependencies: &BTreeSet<FieldRef>,
+    blocked_subjects: &BTreeSet<SemanticSubject>,
+) -> Option<Diagnostic> {
+    let dependencies = available_formula_fields(document, dependencies, blocked_subjects);
+    if dependencies.is_empty() {
+        return None;
+    }
+    Some(
+        formula_diagnostic(
+            diagnostic_codes::FORMULA_FAILED_DEPENDENCY,
+            vec![SemanticSubject::EntityField(formula.clone())],
+            path,
+            format!("formula '{formula}' directly depends on failed values"),
+        )
+        .with_related_subjects(
+            dependencies
+                .into_iter()
+                .map(SemanticSubject::EntityField)
+                .collect(),
+        ),
+    )
 }
 
 fn invalid_reference_diagnostic(
@@ -1377,22 +1438,13 @@ fn formula_prerequisites_available(
     }
     match failure {
         FormulaFailure::Structural { .. }
+        | FormulaFailure::InvalidReferences { .. }
+        | FormulaFailure::FailedDependency { .. }
         | FormulaFailure::DivisionByZero
         | FormulaFailure::NonFiniteResult => true,
-        FormulaFailure::InvalidReferences {
-            missing,
-            non_numeric,
-        } => missing
-            .union(non_numeric)
-            .all(|target| field_prerequisites_available(document, target, &blockers.declarations)),
         FormulaFailure::Cycle { members } => members
             .iter()
             .all(|member| field_prerequisites_available(document, member, &blockers.values)),
-        FormulaFailure::FailedDependency { dependencies } => {
-            dependencies.iter().all(|dependency| {
-                field_prerequisites_available(document, dependency, &blockers.values)
-            })
-        }
         FormulaFailure::MissingInput { reference }
         | FormulaFailure::NonNumericInput { reference } => {
             field_prerequisites_available(document, reference, &blockers.values)
@@ -1421,6 +1473,18 @@ fn field_prerequisites_available(
         .all(|subject| !blocked_subjects.contains(subject))
 }
 
+fn available_formula_fields(
+    document: &Document,
+    fields: &BTreeSet<FieldRef>,
+    blocked_subjects: &BTreeSet<SemanticSubject>,
+) -> BTreeSet<FieldRef> {
+    fields
+        .iter()
+        .filter(|field| field_prerequisites_available(document, field, blocked_subjects))
+        .cloned()
+        .collect()
+}
+
 struct FormulaPrerequisiteBlockers {
     values: BTreeSet<SemanticSubject>,
     declarations: BTreeSet<SemanticSubject>,
@@ -1435,10 +1499,23 @@ fn formula_prerequisite_blockers(core_diagnostics: &[Diagnostic]) -> FormulaPrer
         if core_diagnostic_blocks_formula_value(diagnostic.code) {
             blockers.values.extend(diagnostic.subjects.iter().cloned());
         }
-        if core_diagnostic_blocks_formula_declaration(diagnostic.code) {
+        if [
+            DiagnosticCode::EMPTY_STABLE_ID,
+            DiagnosticCode::KEY_MISMATCH,
+        ]
+        .contains(&diagnostic.code)
+        {
             blockers
                 .declarations
                 .extend(diagnostic.subjects.iter().cloned());
+        } else if diagnostic.code == DiagnosticCode::MISSING_SCHEMA {
+            blockers.declarations.extend(
+                diagnostic
+                    .subjects
+                    .iter()
+                    .filter(|subject| matches!(subject, SemanticSubject::Entity(_)))
+                    .cloned(),
+            );
         }
     }
     blockers
@@ -1454,15 +1531,6 @@ fn core_diagnostic_blocks_formula_value(code: DiagnosticCode) -> bool {
         DiagnosticCode::TYPE_MISMATCH,
         DiagnosticCode::MISSING_REFERENCE,
         DiagnosticCode::REFERENCE_TYPE_MISMATCH,
-    ]
-    .contains(&code)
-}
-
-fn core_diagnostic_blocks_formula_declaration(code: DiagnosticCode) -> bool {
-    [
-        DiagnosticCode::EMPTY_STABLE_ID,
-        DiagnosticCode::KEY_MISMATCH,
-        DiagnosticCode::MISSING_SCHEMA,
     ]
     .contains(&code)
 }

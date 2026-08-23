@@ -798,7 +798,11 @@ fn validation_accumulation_record() -> Record {
         .fields
         .insert(FieldId::from("required"), field("required"));
     for id in [
+        "aggregate-dependent",
         "blocked-owner",
+        "local-first",
+        "mixed-binding",
+        "reference-type-error",
         "required-dependent",
         "typed-dependent",
         "typed-input",
@@ -810,6 +814,17 @@ fn validation_accumulation_record() -> Record {
             .fields
             .insert(FieldId::from(id), field(id));
     }
+    document.schemas.get_mut("schema").unwrap().fields.insert(
+        FieldId::from("reference-target"),
+        FieldDefinition {
+            id: "reference-target".into(),
+            key: "reference-target".into(),
+            field_type: FieldType::Reference {
+                schema: "missing-target-schema".into(),
+            },
+            required: false,
+        },
+    );
     document
         .schemas
         .get_mut("schema")
@@ -835,6 +850,20 @@ fn validation_accumulation_record() -> Record {
         Value::Formula(Expression::Reference(FieldRef::new("entity", "required"))),
     );
     entity.fields.insert(
+        FieldId::from("mixed-binding"),
+        Value::Formula(Expression::Add {
+            left: Box::new(Expression::Reference(FieldRef::new("orphan", "unknown"))),
+            right: Box::new(Expression::Reference(FieldRef::new("ghost", "value"))),
+        }),
+    );
+    entity.fields.insert(
+        FieldId::from("reference-type-error"),
+        Value::Formula(Expression::Reference(FieldRef::new(
+            "entity",
+            "reference-target",
+        ))),
+    );
+    entity.fields.insert(
         FieldId::from("typed-input"),
         Value::Text("not numeric".to_owned()),
     );
@@ -847,6 +876,26 @@ fn validation_accumulation_record() -> Record {
         Value::Formula(Expression::Divide {
             left: Box::new(numeric(1.0)),
             right: Box::new(numeric(0.0)),
+        }),
+    );
+    entity.fields.insert(
+        FieldId::from("aggregate-dependent"),
+        Value::Formula(Expression::Add {
+            left: Box::new(Expression::Reference(FieldRef::new(
+                "entity",
+                "blocked-owner",
+            ))),
+            right: Box::new(Expression::Reference(FieldRef::new("entity", "zero"))),
+        }),
+    );
+    entity.fields.insert(
+        FieldId::from("local-first"),
+        Value::Formula(Expression::Add {
+            left: Box::new(Expression::Divide {
+                left: Box::new(numeric(1.0)),
+                right: Box::new(numeric(0.0)),
+            }),
+            right: Box::new(Expression::Reference(FieldRef::new("entity", "required"))),
         }),
     );
     document.entities.insert(
@@ -894,6 +943,45 @@ fn validation_accumulation_record() -> Record {
                         )),
                         SemanticSubject::EntityField(FieldRef::new("entity", "text")),
                     ]
+        })
+        && report.diagnostics().iter().any(|diagnostic| {
+            diagnostic.code == diagnostic_codes::FORMULA_INVALID_REFERENCES
+                && diagnostic.subjects
+                    == [SemanticSubject::EntityField(FieldRef::new(
+                        "entity",
+                        "mixed-binding",
+                    ))]
+                && diagnostic.related_subjects
+                    == [SemanticSubject::EntityField(FieldRef::new("ghost", "value"))]
+                && diagnostic.facts.len() == 1
+                && diagnostic.facts[0].name == "missing_target"
+                && diagnostic.facts[0].value == "5:ghost5:value"
+        })
+        && report.diagnostics().iter().any(|diagnostic| {
+            diagnostic.code == diagnostic_codes::FORMULA_INVALID_REFERENCES
+                && diagnostic.subjects
+                    == [SemanticSubject::EntityField(FieldRef::new(
+                        "entity",
+                        "reference-type-error",
+                    ))]
+                && diagnostic.related_subjects
+                    == [SemanticSubject::EntityField(FieldRef::new(
+                        "entity",
+                        "reference-target",
+                    ))]
+                && diagnostic.facts.len() == 1
+                && diagnostic.facts[0].name == "non_numeric_target"
+                && diagnostic.facts[0].value == "6:entity16:reference-target"
+        })
+        && report.diagnostics().iter().any(|diagnostic| {
+            diagnostic.code == diagnostic_codes::FORMULA_FAILED_DEPENDENCY
+                && diagnostic.subjects
+                    == [SemanticSubject::EntityField(FieldRef::new(
+                        "entity",
+                        "aggregate-dependent",
+                    ))]
+                && diagnostic.related_subjects
+                    == [SemanticSubject::EntityField(FieldRef::new("entity", "zero"))]
         })
         && !report.diagnostics().iter().any(|diagnostic| {
             diagnostic.code == diagnostic_codes::FORMULA_DIVISION_BY_ZERO
