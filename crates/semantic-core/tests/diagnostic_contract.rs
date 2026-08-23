@@ -1,8 +1,10 @@
 use std::collections::BTreeMap;
 
+use serde_json::json;
 use tachiko_semantic_core::{
     Diagnostic, DiagnosticCode, DiagnosticFact, DiagnosticProvider, DiagnosticSeverity, Document,
-    Schema, SchemaId, SchemaKey, SemanticSubject, validate_document_core,
+    DocumentId, EntityId, FieldId, FieldRef, Schema, SchemaId, SchemaKey, SemanticSubject,
+    validate_document_core,
 };
 
 fn duplicate_schema_keys(key: &str) -> Document {
@@ -18,6 +20,65 @@ fn duplicate_schema_keys(key: &str) -> Document {
         );
     }
     document
+}
+
+#[test]
+fn scalar_and_structured_semantic_subjects_serialize() {
+    let cases = [
+        (
+            SemanticSubject::Document(DocumentId::from("document-id")),
+            json!({"kind": "document", "value": "document-id"}),
+        ),
+        (
+            SemanticSubject::Schema(SchemaId::from("schema-id")),
+            json!({"kind": "schema", "value": "schema-id"}),
+        ),
+        (
+            SemanticSubject::SchemaField {
+                schema: SchemaId::from("schema-id"),
+                field: FieldId::from("field-id"),
+            },
+            json!({
+                "kind": "schema_field",
+                "value": {"schema": "schema-id", "field": "field-id"},
+            }),
+        ),
+        (
+            SemanticSubject::Entity(EntityId::from("entity-id")),
+            json!({"kind": "entity", "value": "entity-id"}),
+        ),
+        (
+            SemanticSubject::EntityField(FieldRef::new("entity-id", "field-id")),
+            json!({
+                "kind": "entity_field",
+                "value": {"entity": "entity-id", "field": "field-id"},
+            }),
+        ),
+    ];
+
+    for (subject, expected) in cases {
+        assert_eq!(serde_json::to_value(subject).unwrap(), expected);
+    }
+}
+
+#[test]
+fn semantic_subject_serialization_round_trips_all_variants() {
+    let subjects = [
+        SemanticSubject::Document(DocumentId::from("document-id")),
+        SemanticSubject::Schema(SchemaId::from("schema-id")),
+        SemanticSubject::SchemaField {
+            schema: SchemaId::from("schema-id"),
+            field: FieldId::from("field-id"),
+        },
+        SemanticSubject::Entity(EntityId::from("entity-id")),
+        SemanticSubject::EntityField(FieldRef::new("entity-id", "field-id")),
+    ];
+
+    for subject in subjects {
+        let encoded = serde_json::to_vec(&subject).unwrap();
+        let decoded: SemanticSubject = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(decoded, subject);
+    }
 }
 
 #[test]

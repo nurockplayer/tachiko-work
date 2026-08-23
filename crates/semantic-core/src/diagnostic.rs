@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, fmt};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{DocumentId, EntityId, FieldId, FieldRef, SchemaId};
 
@@ -68,8 +68,8 @@ pub enum DiagnosticSeverity {
 /// Stable semantic identity carried by a diagnostic.
 ///
 /// Human keys and representation paths intentionally do not appear here.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum SemanticSubject {
     Document(DocumentId),
     Schema(SchemaId),
