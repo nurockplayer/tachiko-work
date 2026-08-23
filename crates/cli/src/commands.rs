@@ -7,16 +7,13 @@ use std::{
 };
 
 use serde::Serialize;
-use serde_json::{Value as JsonValue, json};
-use tachiko_diff_engine::{DiffError, diff};
-use tachiko_formula_engine::{Calculation, CalculationError, calculate};
-use tachiko_merge_engine::{MergeConflict, MergeError, MergeOutcome, merge};
-use tachiko_semantic_core::{AddressIndex, Document, FieldAddress, FieldRef, Value};
 use tachiko_storage::{FormatError, load, to_canonical_string};
-use tachiko_workflow::{
-    EditPreview, FieldKind, IdGenerator, SemanticIdKind, StarterTemplate, WorkflowError,
-    create_document, duplicate_entity, explain_field, overview, remove_entity, rename_entity,
-    set_formula, set_scalar,
+use tachiko_workspace_engine::{
+    EditPreview, FieldAddress, FieldKind, IdGenerator, MergeConflict, SemanticIdKind,
+    StarterTemplate, WorkspaceError, WorkspaceMergeOutcome, calculate_fields, compare_documents,
+    create_document, duplicate_entity, explain_field, merge_documents as merge_semantic_documents,
+    overview, remove_entity, rename_entity, runtime_export, set_formula, set_scalar,
+    validate as validate_semantics,
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -47,13 +44,7 @@ pub enum CommandError {
     #[error(transparent)]
     Format(#[from] FormatError),
     #[error(transparent)]
-    Calculation(#[from] CalculationError),
-    #[error(transparent)]
-    Diff(#[from] DiffError),
-    #[error(transparent)]
-    Workflow(#[from] WorkflowError),
-    #[error(transparent)]
-    Merge(#[from] MergeError),
+    Workspace(#[from] WorkspaceError),
     #[error("merge conflicts:\n{conflicts}")]
     MergeConflicts { conflicts: String },
     #[error("invalid field '{value}'; expected entity.field (for example, iron_sword.damage)")]
@@ -66,8 +57,6 @@ pub enum CommandError {
     Create { path: PathBuf, source: io::Error },
     #[error("failed to write '{}': {source}", path.display())]
     Write { path: PathBuf, source: io::Error },
-    #[error("calculation did not produce a value for '{field}'")]
-    MissingCalculation { field: FieldRef },
     #[error("could not encode command output: {0}")]
     Output(#[from] serde_json::Error),
 }
@@ -106,24 +95,16 @@ pub fn init(
 
 pub fn validate(path: &Path) -> Result<String, CommandError> {
     let document = load(path)?;
-    calculate(&document)?;
+    validate_semantics(&document)?;
     Ok(format!("valid {}\n", path.display()))
 }
 
 pub fn calculate_document(path: &Path) -> Result<String, CommandError> {
     let document = load(path)?;
-    let calculation = calculate(&document)?;
-    let index = AddressIndex::build(&document).map_err(WorkflowError::from)?;
-    let output: BTreeMap<_, _> = calculation
-        .values()
-        .iter()
-        .map(|(field, value)| {
-            index
-                .field_address(&document, field)
-                .map(|address| (address.to_string(), value))
-                .map_err(WorkflowError::from)
-        })
-        .collect::<Result<_, _>>()?;
+    let output: BTreeMap<_, _> = calculate_fields(&document)?
+        .into_iter()
+        .map(|field| (field.address.to_string(), field.value))
+        .collect();
     canonical_output(&output)
 }
 
@@ -163,7 +144,6 @@ pub fn explain(path: &Path, field: &str) -> Result<String, CommandError> {
     let document = load(path)?;
     let field = parse_field_ref(field)?;
     let explanation = explain_field(&document, &field)?;
-    let index = AddressIndex::build(&document).map_err(WorkflowError::from)?;
     let mut output = format!("{} = {}\n", explanation.address, explanation.display_value);
 
     if let Some(expression) = &explanation.expression {
@@ -171,20 +151,18 @@ pub fn explain(path: &Path, field: &str) -> Result<String, CommandError> {
     }
     if !explanation.dependencies.is_empty() {
         output.push_str("depends on:\n");
-        for dependency in &explanation.dependencies {
-            let address = index
-                .field_address(&document, dependency)
-                .map_err(WorkflowError::from)?;
+        for address in &explanation.dependency_addresses {
             let _ = writeln!(output, "  - {address}");
         }
     }
     if !explanation.affected_formulas.is_empty() {
         output.push_str("affects:\n");
         for affected in &explanation.affected_formulas {
-            let address = index
-                .field_address(&document, &affected.field)
-                .map_err(WorkflowError::from)?;
-            let _ = writeln!(output, "  - {} = {}", address, affected.display_value);
+            let _ = writeln!(
+                output,
+                "  - {} = {}",
+                affected.address, affected.display_value
+            );
         }
     }
     if explanation.expression.is_none()
@@ -303,7 +281,7 @@ pub fn set_formula_document(
 pub fn diff_documents(before: &Path, after: &Path) -> Result<String, CommandError> {
     let before = load(before)?;
     let after = load(after)?;
-    Ok(diff(&before, &after)?.render_text())
+    Ok(compare_documents(&before, &after)?.render_text())
 }
 
 pub fn merge_documents(
@@ -315,16 +293,16 @@ pub fn merge_documents(
     let base = load(base_path)?;
     let ours = load(ours_path)?;
     let theirs = load(theirs_path)?;
-    let merged = match merge(&base, &ours, &theirs)? {
-        MergeOutcome::Merged(document) => document,
-        MergeOutcome::Conflicted(conflicts) => {
+    let preview = match merge_semantic_documents(&base, &ours, &theirs)? {
+        WorkspaceMergeOutcome::Merged(preview) => preview,
+        WorkspaceMergeOutcome::Conflicted(conflicts) => {
             return Err(CommandError::MergeConflicts {
                 conflicts: render_merge_conflicts(&conflicts),
             });
         }
     };
-    let impact = diff(&base, &merged)?.render_text();
-    let encoded = to_canonical_string(&merged)?;
+    let impact = preview.diff.render_text();
+    let encoded = to_canonical_string(&preview.document)?;
     write_new(output, encoded.as_bytes())?;
 
     Ok(format!("{impact}wrote {}\n", output.display()))
@@ -332,8 +310,7 @@ pub fn merge_documents(
 
 pub fn export(input: &Path, output: &Path) -> Result<String, CommandError> {
     let document = load(input)?;
-    let calculation = calculate(&document)?;
-    let exported = ExportDocument::new(&document, &calculation)?;
+    let exported = runtime_export(&document)?;
     let encoded = canonical_output(&exported)?;
     write_new(output, encoded.as_bytes())?;
     Ok(format!("exported {}\n", output.display()))
@@ -415,76 +392,4 @@ fn render_merge_conflicts(conflicts: &[MergeConflict]) -> String {
         let _ = writeln!(output, "    theirs: {:?}", conflict.theirs);
     }
     output.trim_end().to_owned()
-}
-
-#[derive(Serialize)]
-struct ExportDocument {
-    format_version: u32,
-    document_id: String,
-    title: String,
-    entities: BTreeMap<String, ExportEntity>,
-}
-
-impl ExportDocument {
-    fn new(document: &Document, calculation: &Calculation) -> Result<Self, CommandError> {
-        let mut entities = BTreeMap::new();
-        for (entity_id, entity) in &document.entities {
-            let schema = &document.schemas[&entity.schema];
-            let mut fields = BTreeMap::new();
-            for (field_id, value) in &entity.fields {
-                let field_ref = FieldRef {
-                    entity: entity_id.clone(),
-                    field: field_id.clone(),
-                };
-                fields.insert(
-                    schema.fields[field_id].key.to_string(),
-                    export_value(document, value, &field_ref, calculation)?,
-                );
-            }
-            entities.insert(
-                entity.key.to_string(),
-                ExportEntity {
-                    schema: schema.key.to_string(),
-                    fields,
-                },
-            );
-        }
-
-        Ok(Self {
-            format_version: RUNTIME_EXPORT_VERSION,
-            document_id: document.id.to_string(),
-            title: document.title.clone(),
-            entities,
-        })
-    }
-}
-
-const RUNTIME_EXPORT_VERSION: u32 = 2;
-
-#[derive(Serialize)]
-struct ExportEntity {
-    schema: String,
-    fields: BTreeMap<String, JsonValue>,
-}
-
-fn export_value(
-    document: &Document,
-    value: &Value,
-    field: &FieldRef,
-    calculation: &Calculation,
-) -> Result<JsonValue, CommandError> {
-    match value {
-        Value::Number(number) => Ok(json!(number)),
-        Value::Text(text) => Ok(json!(text)),
-        Value::Boolean(boolean) => Ok(json!(boolean)),
-        Value::Reference(entity) => Ok(json!({
-            "reference": document.entities[entity].key.as_str()
-        })),
-        Value::Formula(_) => calculation
-            .value(field)
-            .map(|number| json!(number))
-            .ok_or_else(|| CommandError::MissingCalculation {
-                field: field.clone(),
-            }),
-    }
 }

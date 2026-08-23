@@ -3,7 +3,7 @@
 use std::collections::VecDeque;
 
 use tachiko_semantic_core::Document;
-use tachiko_workflow::{IdGenerator, SemanticIdKind, StarterTemplate, create_document};
+use tachiko_workspace_engine::{IdGenerator, SemanticIdKind, StarterTemplate, create_document};
 
 pub struct FixtureGenerator {
     document: VecDeque<String>,

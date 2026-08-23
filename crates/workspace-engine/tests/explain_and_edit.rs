@@ -6,7 +6,7 @@ use tachiko_semantic_core::{
     EntityId, EntityKey, Expression, FieldAddress, FieldDefinition, FieldId, FieldKey, FieldRef,
     FieldType, Number, Value,
 };
-use tachiko_workflow::{WorkflowError, explain_field, set_formula, set_scalar};
+use tachiko_workspace_engine::{WorkspaceError, explain_field, set_formula, set_scalar};
 
 fn address(entity: &str, field: &str) -> FieldAddress {
     FieldAddress::new(entity, field)
@@ -118,12 +118,12 @@ fn formula_edit_refuses_invalid_targets_syntax_semantics_and_calculation() {
         .expect_err("text fields cannot become formulas");
     assert!(matches!(
         wrong_type,
-        WorkflowError::NonNumericFormulaField { .. }
+        WorkspaceError::NonNumericFormulaField { .. }
     ));
 
     let invalid = set_formula(&document, &address("iron_sword", "dps"), "min(1,")
         .expect_err("invalid syntax must fail");
-    assert!(matches!(invalid, WorkflowError::InvalidFormula { .. }));
+    assert!(matches!(invalid, WorkspaceError::InvalidFormula { .. }));
 
     let no_change = set_formula(
         &document,
@@ -131,18 +131,18 @@ fn formula_edit_refuses_invalid_targets_syntax_semantics_and_calculation() {
         "[iron_sword.damage] / [iron_sword.attack_interval]",
     )
     .expect_err("the same formula must be refused");
-    assert!(matches!(no_change, WorkflowError::NoChange { .. }));
+    assert!(matches!(no_change, WorkspaceError::NoChange { .. }));
 
     let missing_field = set_formula(&document, &address("iron_sword", "missing"), "1")
         .expect_err("missing fields must fail");
-    assert!(matches!(missing_field, WorkflowError::Address(_)));
+    assert!(matches!(missing_field, WorkspaceError::Address(_)));
 
     let missing_reference =
         set_formula(&document, &address("iron_sword", "dps"), "[missing.damage]")
             .expect_err("missing references must fail validation");
     assert!(matches!(
         missing_reference,
-        WorkflowError::FormulaBinding { .. }
+        WorkspaceError::FormulaBinding { .. }
     ));
 
     let cycle = set_formula(
@@ -151,11 +151,11 @@ fn formula_edit_refuses_invalid_targets_syntax_semantics_and_calculation() {
         "[iron_sword.dps] + 1",
     )
     .expect_err("cycles must fail calculation");
-    assert!(matches!(cycle, WorkflowError::Calculation(_)));
+    assert!(matches!(cycle, WorkspaceError::Calculation(_)));
 
     let division_by_zero = set_formula(&document, &address("iron_sword", "dps"), "1 / 0")
         .expect_err("division by zero must fail calculation");
-    assert!(matches!(division_by_zero, WorkflowError::Calculation(_)));
+    assert!(matches!(division_by_zero, WorkspaceError::Calculation(_)));
 }
 
 #[test]
@@ -251,7 +251,7 @@ fn edit_parses_each_scalar_type_from_the_schema() {
 
     let no_change = set_scalar(&document, &address("alric", "weapon"), "iron_sword")
         .expect_err("unchanged references should be refused");
-    assert!(matches!(no_change, WorkflowError::NoChange { .. }));
+    assert!(matches!(no_change, WorkspaceError::NoChange { .. }));
 }
 
 #[test]
@@ -280,33 +280,39 @@ fn edit_refuses_formula_invalid_values_and_broken_references() {
 
     let formula = set_scalar(&document, &address("iron_sword", "dps"), "50")
         .expect_err("formulas should not be overwritten by scalar editing");
-    assert!(matches!(formula, WorkflowError::FormulaEdit { .. }));
+    assert!(matches!(formula, WorkspaceError::FormulaEdit { .. }));
 
     let invalid_number = set_scalar(&document, &address("iron_sword", "damage"), "many")
         .expect_err("invalid number should be refused");
-    assert!(matches!(invalid_number, WorkflowError::InvalidValue { .. }));
+    assert!(matches!(
+        invalid_number,
+        WorkspaceError::InvalidValue { .. }
+    ));
 
     let invalid_boolean = set_scalar(&document, &address("alric", "enabled"), "yes")
         .expect_err("invalid boolean should be refused");
     assert!(matches!(
         invalid_boolean,
-        WorkflowError::InvalidValue { .. }
+        WorkspaceError::InvalidValue { .. }
     ));
 
     let missing = set_scalar(&document, &address("iron_sword", "missing"), "1")
         .expect_err("missing fields should be refused");
-    assert!(matches!(missing, WorkflowError::Address(_)));
+    assert!(matches!(missing, WorkspaceError::Address(_)));
 
     let broken_reference = set_scalar(&document, &address("alric", "weapon"), "missing_weapon")
         .expect_err("broken reference should be refused");
     assert!(matches!(
         broken_reference,
-        WorkflowError::InvalidValue { .. }
+        WorkspaceError::InvalidValue { .. }
     ));
 
     let calculation_failure = set_scalar(&document, &address("iron_sword", "attack_interval"), "0")
         .expect_err("edits that break formulas should be refused");
-    assert!(matches!(calculation_failure, WorkflowError::Calculation(_)));
+    assert!(matches!(
+        calculation_failure,
+        WorkspaceError::Calculation(_)
+    ));
 }
 
 #[test]
@@ -314,5 +320,5 @@ fn explanation_reports_missing_fields_without_panicking() {
     let document = game_balance_document("game", "Game");
     let error = explain_field(&document, &address("iron_sword", "missing"))
         .expect_err("missing field should fail");
-    assert!(matches!(error, WorkflowError::Address(_)));
+    assert!(matches!(error, WorkspaceError::Address(_)));
 }

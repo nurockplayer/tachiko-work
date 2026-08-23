@@ -35,6 +35,9 @@ jobs:
       - name: Validate documentation consistency
         run: bash scripts/docs-consistency-check.sh
 
+      - name: Verify ADR-0016 workspace dependencies
+        run: node scripts/workspace-dependency-check.mjs
+
       - name: Lint all targets
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 

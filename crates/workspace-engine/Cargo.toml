@@ -1,6 +1,6 @@
 [package]
-name = "tachiko-workflow"
-description = "Guided semantic authoring and safe editing workflows for Tachiko Work"
+name = "tachiko-workspace-engine"
+description = "Shared semantic application orchestration for Tachiko Work"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -13,13 +13,12 @@ categories.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+serde.workspace = true
 tachiko-diff-engine = { version = "0.1.0", path = "../diff-engine" }
 tachiko-formula-engine = { version = "0.1.0", path = "../formula-engine" }
+tachiko-merge-engine = { version = "0.1.0", path = "../merge-engine" }
 tachiko-semantic-core = { version = "0.1.0", path = "../semantic-core" }
 thiserror.workspace = true
-
-[dev-dependencies]
-tachiko-storage = { version = "0.1.0", path = "../storage" }
 
 [lints]
 workspace = true

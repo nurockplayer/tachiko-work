@@ -4,10 +4,9 @@ use tachiko_ai_api::{
     Suggestion, SuggestionError, describe_document, explain_formula, explain_impact,
     suggest_field_change,
 };
-use tachiko_diff_engine::SemanticChange;
-use tachiko_semantic_core::{
+use tachiko_workspace_engine::{
     Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
-    FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
+    FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, SemanticChange, Value,
 };
 
 fn balance_document(damage: f64) -> Document {
@@ -269,8 +268,14 @@ fn typed_formula_suggestions_share_human_authoring_complexity_limits() {
         .expect_err("AI formulas must not bypass authoring resource limits");
 
         assert!(
-            matches!(error, SuggestionError::ExpressionComplexity { .. }),
+            matches!(&error, SuggestionError::ExpressionComplexity { .. }),
             "unexpected error: {error:?}"
+        );
+        assert_eq!(error.clone(), error, "adapter errors remain value types");
+        assert_eq!(
+            error.to_string().matches("formula for").count(),
+            1,
+            "workspace delegation must not duplicate the adapter context"
         );
     }
 

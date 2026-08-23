@@ -245,9 +245,7 @@ dependencies = [
 name = "tachiko-ai-api"
 version = "0.1.0"
 dependencies = [
- "tachiko-diff-engine",
- "tachiko-formula-engine",
- "tachiko-semantic-core",
+ "tachiko-workspace-engine",
  "thiserror",
 ]
 
@@ -258,12 +256,8 @@ dependencies = [
  "clap",
  "serde",
  "serde_json",
- "tachiko-diff-engine",
- "tachiko-formula-engine",
- "tachiko-merge-engine",
- "tachiko-semantic-core",
  "tachiko-storage",
- "tachiko-workflow",
+ "tachiko-workspace-engine",
  "thiserror",
  "uuid",
 ]
@@ -314,13 +308,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "tachiko-workflow"
+name = "tachiko-workspace-engine"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "tachiko-diff-engine",
  "tachiko-formula-engine",
+ "tachiko-merge-engine",
  "tachiko-semantic-core",
- "tachiko-storage",
  "thiserror",
 ]
 

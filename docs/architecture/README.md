@@ -52,7 +52,7 @@ Use these broad cues together with the reconciliation register:
 | Semantic-first platform direction | Accepted |
 | `.roproj` source / `.ro` portable-artifact relationship | Accepted direction |
 | Current `.ro` v0.1 encoding details | Provisional implemented baseline |
-| Rust crate graph | Provisional implemented v0.1 baseline; Accepted Milestone 02 target in ADR-0016 |
+| Rust crate graph | Accepted Milestone 02 boundary implemented; exact Rust API remains Provisional |
 | AI as semantic client | Accepted direction |
 | Native/WASM runtime seam | Provisional / Open Question |
 | Distributed collaboration beyond semantic merge | Hypothesis / Open Question |

@@ -3,7 +3,7 @@ mod commands;
 use std::{path::PathBuf, process::ExitCode};
 
 use clap::{Parser, Subcommand, ValueEnum};
-use tachiko_workflow::StarterTemplate;
+use tachiko_workspace_engine::StarterTemplate;
 
 #[derive(Debug, Parser)]
 #[command(name = "tachiko", version, about = "Semantic computational documents")]

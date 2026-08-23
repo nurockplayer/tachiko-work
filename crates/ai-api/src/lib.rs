@@ -1,13 +1,11 @@
 //! Read-only semantic queries for Tachiko Work.
 
-use tachiko_diff_engine::{DiffError, SemanticChange, diff};
-use tachiko_formula_engine::{
-    CalculationError, CanonicalAuthoringProjectionError, ExpressionComplexityError, calculate,
-    project_expression, validate_expression_structure,
-};
-use tachiko_semantic_core::{
-    Diagnostic, Document, DocumentId, EntityKey, Expression, FieldId, FieldKey, FieldRef,
-    FieldType, Number, SchemaId, SchemaKey, Value, validate_document,
+use tachiko_workspace_engine::{
+    CalculationError, CanonicalAuthoringProjectionError, Diagnostic, DiffError, Document,
+    DocumentId, EntityId, EntityKey, Expression, ExpressionComplexityError, FieldId, FieldKey,
+    FieldRef, FieldType, Number, SchemaId, SchemaKey, SemanticChange, Value, WorkspaceError,
+    analyze_formula as analyze_workspace_formula, compare_documents,
+    validate_field_value_suggestion,
 };
 use thiserror::Error;
 
@@ -40,7 +38,7 @@ pub struct FieldDescription {
 /// An entity and its sorted field identifiers.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EntityDescription {
-    pub id: tachiko_semantic_core::EntityId,
+    pub id: EntityId,
     pub key: EntityKey,
     pub schema: SchemaId,
     pub fields: Vec<FieldId>,
@@ -74,9 +72,7 @@ pub struct Suggestion {
 #[derive(Clone, Debug, Error, PartialEq)]
 pub enum SuggestionError {
     #[error("entity '{entity}' does not exist")]
-    MissingEntity {
-        entity: tachiko_semantic_core::EntityId,
-    },
+    MissingEntity { entity: EntityId },
     #[error("field '{field}' does not exist")]
     MissingField { field: FieldRef },
     #[error("field '{field}' is a formula; suggest a change to its inputs instead")]
@@ -165,37 +161,21 @@ pub fn explain_formula(
     document: &Document,
     field: &FieldRef,
 ) -> Result<FormulaExplanation, FormulaExplanationError> {
-    let value = document
-        .entities
-        .get(&field.entity)
-        .and_then(|entity| entity.fields.get(&field.field))
-        .ok_or_else(|| FormulaExplanationError::MissingField {
-            field: field.clone(),
-        })?;
-    let Value::Formula(expression) = value else {
-        return Err(FormulaExplanationError::NotFormula {
-            field: field.clone(),
-        });
-    };
-
-    let calculation = calculate(document)?;
-    let value =
-        calculation
-            .value(field)
-            .ok_or_else(|| FormulaExplanationError::MissingCalculation {
-                field: field.clone(),
-            })?;
-    let dependencies = calculation
-        .dependencies_of(field)
-        .map_or_else(Vec::new, |dependencies| {
-            dependencies.iter().cloned().collect()
-        });
+    let analysis = analyze_workspace_formula(document, field).map_err(|error| match error {
+        WorkspaceError::MissingField { field } => FormulaExplanationError::MissingField { field },
+        WorkspaceError::NotFormula { field } => FormulaExplanationError::NotFormula { field },
+        WorkspaceError::MissingCalculation { field } => {
+            FormulaExplanationError::MissingCalculation { field }
+        }
+        WorkspaceError::Calculation(source) => FormulaExplanationError::Calculation(source),
+        error => unreachable!("formula analysis returned an undocumented error: {error}"),
+    })?;
 
     Ok(FormulaExplanation {
-        field: field.clone(),
-        expression: expression.clone(),
-        value,
-        dependencies,
+        field: analysis.field,
+        expression: analysis.expression,
+        value: analysis.value,
+        dependencies: analysis.dependencies,
     })
 }
 
@@ -205,7 +185,10 @@ pub fn explain_formula(
 ///
 /// Returns an error when either document cannot be calculated for semantic comparison.
 pub fn explain_impact(before: &Document, after: &Document) -> Result<ImpactExplanation, DiffError> {
-    let semantic_diff = diff(before, after)?;
+    let semantic_diff = compare_documents(before, after).map_err(|error| match error {
+        WorkspaceError::Diff(source) => source,
+        error => unreachable!("semantic comparison returned an undocumented error: {error}"),
+    })?;
 
     Ok(ImpactExplanation {
         changes: semantic_diff.changes().to_vec(),
@@ -224,89 +207,33 @@ pub fn suggest_field_change(
     field: FieldRef,
     value: Value,
 ) -> Result<Suggestion, SuggestionError> {
-    let entity =
-        document
-            .entities
-            .get(&field.entity)
-            .ok_or_else(|| SuggestionError::MissingEntity {
-                entity: field.entity.clone(),
-            })?;
-    let existing =
-        entity
-            .fields
-            .get(&field.field)
-            .ok_or_else(|| SuggestionError::MissingField {
-                field: field.clone(),
-            })?;
-    if matches!(existing, Value::Formula(_)) && !matches!(value, Value::Formula(_)) {
-        return Err(SuggestionError::FormulaEdit { field });
-    }
-    if existing == &value {
-        return Err(SuggestionError::NoChange { field });
-    }
-    let definition = document
-        .schemas
-        .get(&entity.schema)
-        .and_then(|schema| schema.fields.get(&field.field))
-        .ok_or_else(|| SuggestionError::MissingField {
-            field: field.clone(),
-        })?;
-    if !value_matches_type(&value, &definition.field_type) {
-        return Err(SuggestionError::TypeMismatch { field });
-    }
-    if let Value::Formula(expression) = &value {
-        validate_expression_structure(expression).map_err(|source| {
-            SuggestionError::ExpressionComplexity {
-                field: field.clone(),
-                source,
-            }
-        })?;
-        project_expression(document, expression).map_err(|source| match source {
-            CanonicalAuthoringProjectionError::Complexity(source) => {
-                SuggestionError::ExpressionComplexity {
-                    field: field.clone(),
-                    source,
-                }
-            }
-            source @ CanonicalAuthoringProjectionError::UnresolvableBoundReferences { .. } => {
-                SuggestionError::FormulaProjection {
-                    field: field.clone(),
-                    source,
-                }
-            }
-        })?;
-    }
-
-    let mut proposed = document.clone();
-    let proposed_entity =
-        proposed
-            .entities
-            .get_mut(&field.entity)
-            .ok_or_else(|| SuggestionError::MissingEntity {
-                entity: field.entity.clone(),
-            })?;
-    proposed_entity
-        .fields
-        .insert(field.field.clone(), value.clone());
-    let diagnostics = validate_document(&proposed);
-    if !diagnostics.is_empty() {
-        return Err(SuggestionError::InvalidDocument { diagnostics });
-    }
-    calculate(&proposed)?;
+    let validated =
+        validate_field_value_suggestion(document, field, value).map_err(map_suggestion_error)?;
 
     Ok(Suggestion {
-        field,
-        value,
+        field: validated.field,
+        value: validated.value,
         requires_approval: true,
     })
 }
 
-fn value_matches_type(value: &Value, field_type: &FieldType) -> bool {
-    matches!(
-        (value, field_type),
-        (Value::Number(_) | Value::Formula(_), FieldType::Number)
-            | (Value::Text(_), FieldType::Text)
-            | (Value::Boolean(_), FieldType::Boolean)
-            | (Value::Reference(_), FieldType::Reference { .. })
-    )
+fn map_suggestion_error(error: WorkspaceError) -> SuggestionError {
+    match error {
+        WorkspaceError::MissingEntityId { entity } => SuggestionError::MissingEntity { entity },
+        WorkspaceError::MissingField { field } => SuggestionError::MissingField { field },
+        WorkspaceError::FormulaEdit { field } => SuggestionError::FormulaEdit { field },
+        WorkspaceError::ExpressionComplexity { field, source } => {
+            SuggestionError::ExpressionComplexity { field, source }
+        }
+        WorkspaceError::FormulaProjection { field, source } => {
+            SuggestionError::FormulaProjection { field, source }
+        }
+        WorkspaceError::TypeMismatch { field } => SuggestionError::TypeMismatch { field },
+        WorkspaceError::NoChange { field } => SuggestionError::NoChange { field },
+        WorkspaceError::InvalidDocument { diagnostics, .. } => {
+            SuggestionError::InvalidDocument { diagnostics }
+        }
+        WorkspaceError::Calculation(source) => SuggestionError::Calculation(source),
+        error => unreachable!("suggestion validation returned an undocumented error: {error}"),
+    }
 }

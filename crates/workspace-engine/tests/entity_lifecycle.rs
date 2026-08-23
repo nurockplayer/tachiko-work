@@ -7,7 +7,7 @@ use tachiko_semantic_core::{
     EntityId, EntityKey, Expression, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType,
     Number, Value, validate_document,
 };
-use tachiko_workflow::{WorkflowError, duplicate_entity, remove_entity, rename_entity};
+use tachiko_workspace_engine::{WorkspaceError, duplicate_entity, remove_entity, rename_entity};
 
 fn numeric(value: f64) -> Expression {
     Expression::Number(Number::new(value).unwrap())
@@ -132,17 +132,17 @@ fn duplicate_reports_missing_invalid_and_occupied_entities_explicitly() {
     let mut missing_generator = OneIdGenerator::new("unused");
     assert!(matches!(
         duplicate_entity(&document, "missing", "steel_sword", &mut missing_generator),
-        Err(WorkflowError::MissingEntity { entity }) if entity.as_str() == "missing"
+        Err(WorkspaceError::MissingEntity { entity }) if entity.as_str() == "missing"
     ));
     let mut invalid_generator = OneIdGenerator::new("unused");
     assert!(matches!(
         duplicate_entity(&document, "iron_sword", "Bad.Id", &mut invalid_generator),
-        Err(WorkflowError::InvalidEntityKey { entity }) if entity.as_str() == "Bad.Id"
+        Err(WorkspaceError::InvalidEntityKey { entity }) if entity.as_str() == "Bad.Id"
     ));
     let mut occupied_generator = OneIdGenerator::new("unused");
     assert!(matches!(
         duplicate_entity(&document, "iron_sword", "shop", &mut occupied_generator),
-        Err(WorkflowError::EntityKeyAlreadyExists { entity }) if entity.as_str() == "shop"
+        Err(WorkspaceError::EntityKeyAlreadyExists { entity }) if entity.as_str() == "shop"
     ));
 }
 
@@ -204,19 +204,19 @@ fn rename_rejects_noop_before_occupancy_and_reports_other_preconditions() {
 
     assert!(matches!(
         rename_entity(&document, "iron_sword", "iron_sword"),
-        Err(WorkflowError::NoOpEntityRename { entity }) if entity.as_str() == "iron_sword"
+        Err(WorkspaceError::NoOpEntityRename { entity }) if entity.as_str() == "iron_sword"
     ));
     assert!(matches!(
         rename_entity(&document, "missing", "target"),
-        Err(WorkflowError::MissingEntity { entity }) if entity.as_str() == "missing"
+        Err(WorkspaceError::MissingEntity { entity }) if entity.as_str() == "missing"
     ));
     assert!(matches!(
         rename_entity(&document, "iron_sword", "_target"),
-        Err(WorkflowError::InvalidEntityKey { entity }) if entity.as_str() == "_target"
+        Err(WorkspaceError::InvalidEntityKey { entity }) if entity.as_str() == "_target"
     ));
     assert!(matches!(
         rename_entity(&document, "iron_sword", "shop"),
-        Err(WorkflowError::EntityKeyAlreadyExists { entity }) if entity.as_str() == "shop"
+        Err(WorkspaceError::EntityKeyAlreadyExists { entity }) if entity.as_str() == "shop"
     ));
 }
 
@@ -239,7 +239,7 @@ fn remove_reports_one_sorted_path_per_dependent_field_across_all_expression_shap
 
     let error = remove_entity(&document, "iron_sword")
         .expect_err("referenced entities must not be removed");
-    let WorkflowError::EntityReferenced {
+    let WorkspaceError::EntityReferenced {
         entity, dependents, ..
     } = &error
     else {
@@ -297,7 +297,7 @@ fn remove_requires_a_present_entity() {
 
     assert!(matches!(
         remove_entity(&document, "missing"),
-        Err(WorkflowError::MissingEntity { entity }) if entity.as_str() == "missing"
+        Err(WorkspaceError::MissingEntity { entity }) if entity.as_str() == "missing"
     ));
 }
 
@@ -313,7 +313,7 @@ fn lifecycle_finalizer_surfaces_validation_calculation_and_diff_failures() {
             "steel_sword",
             &mut invalid_generator
         ),
-        Err(WorkflowError::InvalidDocument { .. })
+        Err(WorkspaceError::InvalidDocument { .. })
     ));
 
     let mut uncalculable = game_balance_document("game", "Game");
@@ -331,7 +331,7 @@ fn lifecycle_finalizer_surfaces_validation_calculation_and_diff_failures() {
             "steel_sword",
             &mut uncalculable_generator
         ),
-        Err(WorkflowError::Calculation(_))
+        Err(WorkspaceError::Calculation(_))
     ));
 
     uncalculable.entities.remove("alric");
@@ -339,6 +339,6 @@ fn lifecycle_finalizer_surfaces_validation_calculation_and_diff_failures() {
     uncalculable.entities.remove("tempered_blade");
     assert!(matches!(
         remove_entity(&uncalculable, "iron_sword"),
-        Err(WorkflowError::Diff(_))
+        Err(WorkspaceError::Diff(_))
     ));
 }

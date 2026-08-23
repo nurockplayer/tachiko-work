@@ -1,16 +1,26 @@
-//! User-facing workflows built on Tachiko Work's semantic engine.
+//! Shared application operations over Tachiko Work semantic documents.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use tachiko_diff_engine::{DiffError, SemanticDiff, diff};
+use serde::Serialize;
+use tachiko_diff_engine::diff;
+pub use tachiko_diff_engine::{DiffError, SemanticChange, SemanticDiff};
 use tachiko_formula_engine::{
-    CalculationError, CanonicalAuthoringProjectionError, FormulaBindError, FormulaParseError,
-    bind_expression, calculate, parse_expression, project_expression,
+    Calculation, FormulaBindError, FormulaParseError, bind_expression, calculate, parse_expression,
+    project_expression, validate_expression_structure,
 };
+pub use tachiko_formula_engine::{
+    CalculationError, CanonicalAuthoringProjectionError, ExpressionComplexityError,
+};
+pub use tachiko_merge_engine::{MergeConflict, MergeValue};
+use tachiko_merge_engine::{MergeError, MergeOutcome, merge};
 use tachiko_semantic_core::{
-    AddressIndex, AddressIndexError, Diagnostic, Document, DocumentId, Entity, EntityId, EntityKey,
-    Expression, FieldAddress, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, Number,
-    Schema, SchemaId, SchemaKey, Value, is_valid_identifier, validate_document,
+    AddressIndex, AddressIndexError, is_valid_identifier, validate_document,
+};
+pub use tachiko_semantic_core::{
+    Diagnostic, Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldAddress,
+    FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey,
+    Value,
 };
 use thiserror::Error;
 
@@ -74,12 +84,14 @@ pub struct FieldExplanation {
     pub display_value: String,
     pub expression: Option<String>,
     pub dependencies: Vec<FieldRef>,
+    pub dependency_addresses: Vec<FieldAddress>,
     pub affected_formulas: Vec<AffectedFormula>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct AffectedFormula {
     pub field: FieldRef,
+    pub address: FieldAddress,
     pub display_value: String,
 }
 
@@ -89,12 +101,69 @@ pub struct EditPreview {
     pub diff: SemanticDiff,
 }
 
+/// One calculated numeric field projected through its current human address.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CalculatedField {
+    pub field: FieldRef,
+    pub address: FieldAddress,
+    pub value: Number,
+}
+
+/// Provider-independent formula facts for a stable field reference.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FormulaAnalysis {
+    pub field: FieldRef,
+    pub expression: Expression,
+    pub value: Number,
+    pub dependencies: Vec<FieldRef>,
+}
+
+/// An inert typed field proposal that passed shared application policy.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ValidatedFieldValue {
+    pub field: FieldRef,
+    pub value: Value,
+}
+
+/// The application-level outcome of model merge plus semantic impact.
+#[derive(Clone, Debug, PartialEq)]
+pub enum WorkspaceMergeOutcome {
+    Merged(Box<EditPreview>),
+    Conflicted(Vec<MergeConflict>),
+}
+
+/// Current portable runtime export projection.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RuntimeExport {
+    pub format_version: u32,
+    pub document_id: String,
+    pub title: String,
+    pub entities: BTreeMap<String, RuntimeEntity>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RuntimeEntity {
+    pub schema: String,
+    pub fields: BTreeMap<String, RuntimeValue>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum RuntimeValue {
+    Number(Number),
+    Text(String),
+    Boolean(bool),
+    Reference { reference: String },
+}
+
 #[derive(Debug, Error)]
-pub enum WorkflowError {
+pub enum WorkspaceError {
     #[error("semantic address lookup failed: {0}")]
     Address(#[from] AddressIndexError),
     #[error("entity key '{entity}' does not exist")]
     MissingEntity { entity: EntityKey },
+    #[error("entity stable id '{entity}' does not exist")]
+    MissingEntityId { entity: EntityId },
     #[error("entity key '{entity}' is not a valid human address")]
     InvalidEntityKey { entity: EntityKey },
     #[error("entity key '{entity}' already exists")]
@@ -136,6 +205,12 @@ pub enum WorkflowError {
     MissingSchema { schema: SchemaId },
     #[error("field '{field}' is a formula; edit its inputs instead")]
     FormulaEdit { field: FieldRef },
+    #[error("field '{field}' is not a formula")]
+    NotFormula { field: FieldRef },
+    #[error("formula field '{field}' has no calculated value")]
+    MissingCalculation { field: FieldRef },
+    #[error("value for '{field}' does not match its schema type")]
+    TypeMismatch { field: FieldRef },
     #[error("field '{field}' is not numeric; formulas require a numeric field")]
     NonNumericFormulaField { field: FieldRef },
     #[error("invalid formula syntax for '{field}': {source}")]
@@ -156,6 +231,12 @@ pub enum WorkflowError {
         #[source]
         source: CanonicalAuthoringProjectionError,
     },
+    #[error("formula for '{field}' exceeds authoring complexity limits: {source}")]
+    ExpressionComplexity {
+        field: FieldRef,
+        #[source]
+        source: ExpressionComplexityError,
+    },
     #[error("'{input}' is not a valid {expected} value for '{field}'")]
     InvalidValue {
         field: FieldRef,
@@ -173,6 +254,8 @@ pub enum WorkflowError {
     Calculation(#[from] CalculationError),
     #[error("could not compare edited document: {0}")]
     Diff(#[from] DiffError),
+    #[error("could not merge documents: {0}")]
+    Merge(#[from] MergeError),
 }
 
 /// Create a document through the host-supplied stable-ID boundary.
@@ -185,7 +268,7 @@ pub fn create_document(
     template: StarterTemplate,
     title: impl Into<String>,
     generator: &mut impl IdGenerator,
-) -> Result<Document, WorkflowError> {
+) -> Result<Document, WorkspaceError> {
     let title = title.into();
     let document_id = next_document_id(generator)?;
     let document = match template {
@@ -198,12 +281,187 @@ pub fn create_document(
     Ok(document)
 }
 
+/// Validate intrinsic semantics and require a complete deterministic
+/// calculation without publishing partial results.
+///
+/// # Errors
+///
+/// Returns the shared semantic or calculation failure for this snapshot.
+pub fn validate(document: &Document) -> Result<(), WorkspaceError> {
+    validate_candidate(document)?;
+    calculate(document)?;
+    Ok(())
+}
+
+/// Calculate every numeric field and project it through current human keys.
+///
+/// # Errors
+///
+/// Returns a semantic, address-projection, or calculation failure.
+pub fn calculate_fields(document: &Document) -> Result<Vec<CalculatedField>, WorkspaceError> {
+    validate_candidate(document)?;
+    let calculation = calculate(document)?;
+    let index = AddressIndex::build(document)?;
+    let mut fields = calculation
+        .values()
+        .iter()
+        .map(|(field, value)| {
+            Ok(CalculatedField {
+                field: field.clone(),
+                address: index.field_address(document, field)?,
+                value: *value,
+            })
+        })
+        .collect::<Result<Vec<_>, WorkspaceError>>()?;
+    fields.sort_by(|left, right| left.address.cmp(&right.address));
+    Ok(fields)
+}
+
+/// Compare two semantic snapshots through the shared diff orchestration.
+///
+/// # Errors
+///
+/// Returns the diff engine's typed calculation/comparison failure.
+pub fn compare_documents(
+    before: &Document,
+    after: &Document,
+) -> Result<SemanticDiff, WorkspaceError> {
+    Ok(diff(before, after)?)
+}
+
+/// Analyze one stable formula field without provider or presentation policy.
+///
+/// # Errors
+///
+/// Returns a typed lookup, formula-kind, or calculation failure.
+pub fn analyze_formula(
+    document: &Document,
+    field: &FieldRef,
+) -> Result<FormulaAnalysis, WorkspaceError> {
+    let value = field_value(document, field)?;
+    let Value::Formula(expression) = value else {
+        return Err(WorkspaceError::NotFormula {
+            field: field.clone(),
+        });
+    };
+    let calculation = calculate(document)?;
+    let value = calculation
+        .value(field)
+        .ok_or_else(|| WorkspaceError::MissingCalculation {
+            field: field.clone(),
+        })?;
+    let dependencies = calculation
+        .dependencies_of(field)
+        .map_or_else(Vec::new, |dependencies| {
+            dependencies.iter().cloned().collect()
+        });
+
+    Ok(FormulaAnalysis {
+        field: field.clone(),
+        expression: expression.clone(),
+        value,
+        dependencies,
+    })
+}
+
+/// Validate an inert typed field proposal through shared mutation policy.
+///
+/// The candidate document is deliberately not returned or persisted; approval
+/// and write capabilities remain adapter concerns.
+///
+/// # Errors
+///
+/// Returns a typed precondition, authoring, semantic, or calculation failure.
+pub fn validate_field_value_suggestion(
+    document: &Document,
+    field: FieldRef,
+    value: Value,
+) -> Result<ValidatedFieldValue, WorkspaceError> {
+    let candidate = field_value_candidate(document, &field, value.clone())?;
+    validate_candidate(&candidate)?;
+    calculate(&candidate)?;
+    Ok(ValidatedFieldValue { field, value })
+}
+
+/// Merge three semantic snapshots and calculate base-to-merged impact.
+///
+/// # Errors
+///
+/// Returns the shared merge or semantic comparison failure.
+pub fn merge_documents(
+    base: &Document,
+    ours: &Document,
+    theirs: &Document,
+) -> Result<WorkspaceMergeOutcome, WorkspaceError> {
+    match merge(base, ours, theirs)? {
+        MergeOutcome::Merged(document) => {
+            let diff = diff(base, &document)?;
+            Ok(WorkspaceMergeOutcome::Merged(Box::new(EditPreview {
+                document,
+                diff,
+            })))
+        }
+        MergeOutcome::Conflicted(conflicts) => Ok(WorkspaceMergeOutcome::Conflicted(conflicts)),
+    }
+}
+
+/// Build the current deterministic runtime projection after shared validation
+/// and calculation.
+///
+/// # Errors
+///
+/// Returns a semantic lookup or calculation failure.
+pub fn runtime_export(document: &Document) -> Result<RuntimeExport, WorkspaceError> {
+    validate_candidate(document)?;
+    let calculation = calculate(document)?;
+    let mut entities = BTreeMap::new();
+
+    for (entity_id, entity) in &document.entities {
+        let schema =
+            document
+                .schemas
+                .get(&entity.schema)
+                .ok_or_else(|| WorkspaceError::MissingSchema {
+                    schema: entity.schema.clone(),
+                })?;
+        let mut fields = BTreeMap::new();
+        for (field_id, value) in &entity.fields {
+            let definition =
+                schema
+                    .fields
+                    .get(field_id)
+                    .ok_or_else(|| WorkspaceError::MissingField {
+                        field: FieldRef::new(entity_id.clone(), field_id.clone()),
+                    })?;
+            let field = FieldRef::new(entity_id.clone(), field_id.clone());
+            fields.insert(
+                definition.key.to_string(),
+                runtime_value(document, value, &field, &calculation)?,
+            );
+        }
+        entities.insert(
+            entity.key.to_string(),
+            RuntimeEntity {
+                schema: schema.key.to_string(),
+                fields,
+            },
+        );
+    }
+
+    Ok(RuntimeExport {
+        format_version: 2,
+        document_id: document.id.to_string(),
+        title: document.title.clone(),
+        entities,
+    })
+}
+
 /// Build a deterministic calculated view suitable for adapters.
 ///
 /// # Errors
 ///
 /// Returns an error if semantic addresses or formulas are invalid.
-pub fn overview(document: &Document) -> Result<DocumentOverview, WorkflowError> {
+pub fn overview(document: &Document) -> Result<DocumentOverview, WorkspaceError> {
     validate_candidate(document)?;
     let calculation = calculate(document)?;
     let mut formula_count = 0;
@@ -214,7 +472,7 @@ pub fn overview(document: &Document) -> Result<DocumentOverview, WorkflowError> 
             document
                 .schemas
                 .get(&entity.schema)
-                .ok_or_else(|| WorkflowError::MissingSchema {
+                .ok_or_else(|| WorkspaceError::MissingSchema {
                     schema: entity.schema.clone(),
                 })?;
         let mut fields = Vec::new();
@@ -223,7 +481,7 @@ pub fn overview(document: &Document) -> Result<DocumentOverview, WorkflowError> 
                 schema
                     .fields
                     .get(field_id)
-                    .ok_or_else(|| WorkflowError::MissingField {
+                    .ok_or_else(|| WorkspaceError::MissingField {
                         field: FieldRef::new(entity.id.clone(), field_id.clone()),
                     })?;
             let field_ref = FieldRef::new(entity.id.clone(), field_id.clone());
@@ -268,7 +526,7 @@ fn field_kind(
     document: &Document,
     value: &Value,
     field_type: &FieldType,
-) -> Result<FieldKind, WorkflowError> {
+) -> Result<FieldKind, WorkspaceError> {
     match value {
         Value::Formula(_) => Ok(FieldKind::Formula),
         Value::Reference(_) => {
@@ -279,7 +537,7 @@ fn field_kind(
                 document
                     .schemas
                     .get(schema)
-                    .ok_or_else(|| WorkflowError::MissingSchema {
+                    .ok_or_else(|| WorkspaceError::MissingSchema {
                         schema: schema.clone(),
                     })?;
             Ok(FieldKind::Reference {
@@ -298,7 +556,7 @@ fn field_kind(
 pub fn explain_field(
     document: &Document,
     address: &FieldAddress,
-) -> Result<FieldExplanation, WorkflowError> {
+) -> Result<FieldExplanation, WorkspaceError> {
     let field = document.resolve_field(address)?;
     let value = field_value(document, &field)?;
     let calculation = calculate(document)?;
@@ -308,7 +566,7 @@ pub fn explain_field(
     let expression = match value {
         Value::Formula(expression) => {
             Some(project_expression(document, expression).map_err(|source| {
-                WorkflowError::FormulaProjection {
+                WorkspaceError::FormulaProjection {
                     field: field.clone(),
                     source,
                 }
@@ -321,16 +579,21 @@ pub fn explain_field(
         .map_or_else(Vec::new, |dependencies| {
             dependencies.iter().cloned().collect()
         });
-    let affected_formulas = calculation
-        .affected_by(&field)
-        .into_iter()
-        .filter_map(|affected| {
-            calculation.value(&affected).map(|value| AffectedFormula {
+    let index = AddressIndex::build(document)?;
+    let dependency_addresses = dependencies
+        .iter()
+        .map(|dependency| index.field_address(document, dependency))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut affected_formulas = Vec::new();
+    for affected in calculation.affected_by(&field) {
+        if let Some(value) = calculation.value(&affected) {
+            affected_formulas.push(AffectedFormula {
+                address: index.field_address(document, &affected)?,
                 field: affected,
                 display_value: format_number(value),
-            })
-        })
-        .collect();
+            });
+        }
+    }
 
     Ok(FieldExplanation {
         field,
@@ -338,6 +601,7 @@ pub fn explain_field(
         display_value,
         expression,
         dependencies,
+        dependency_addresses,
         affected_formulas,
     })
 }
@@ -351,37 +615,23 @@ pub fn set_scalar(
     document: &Document,
     address: &FieldAddress,
     input: &str,
-) -> Result<EditPreview, WorkflowError> {
+) -> Result<EditPreview, WorkspaceError> {
     let field = document.resolve_field(address)?;
     let entity = &document.entities[&field.entity];
     let existing = field_value(document, &field)?;
     if matches!(existing, Value::Formula(_)) {
-        return Err(WorkflowError::FormulaEdit {
+        return Err(WorkspaceError::FormulaEdit {
             field: field.clone(),
         });
     }
     let definition = document.schemas[&entity.schema]
         .fields
         .get(&field.field)
-        .ok_or_else(|| WorkflowError::MissingField {
+        .ok_or_else(|| WorkspaceError::MissingField {
             field: field.clone(),
         })?;
     let value = parse_scalar(document, &field, input, &definition.field_type)?;
-    if existing == &value {
-        return Err(WorkflowError::NoChange {
-            field: field.clone(),
-        });
-    }
-
-    let mut edited = document.clone();
-    let edited_entity =
-        edited
-            .entities
-            .get_mut(&field.entity)
-            .ok_or_else(|| WorkflowError::MissingField {
-                field: field.clone(),
-            })?;
-    edited_entity.fields.insert(field.field, value);
+    let edited = field_value_candidate(document, &field, value)?;
     finalize_edit(document, edited)
 }
 
@@ -395,47 +645,32 @@ pub fn set_formula(
     document: &Document,
     address: &FieldAddress,
     input: &str,
-) -> Result<EditPreview, WorkflowError> {
+) -> Result<EditPreview, WorkspaceError> {
     let field = document.resolve_field(address)?;
     let entity = &document.entities[&field.entity];
-    let existing = field_value(document, &field)?;
     let definition = document.schemas[&entity.schema]
         .fields
         .get(&field.field)
-        .ok_or_else(|| WorkflowError::MissingField {
+        .ok_or_else(|| WorkspaceError::MissingField {
             field: field.clone(),
         })?;
     if definition.field_type != FieldType::Number {
-        return Err(WorkflowError::NonNumericFormulaField {
+        return Err(WorkspaceError::NonNumericFormulaField {
             field: field.clone(),
         });
     }
 
-    let unbound = parse_expression(input).map_err(|source| WorkflowError::InvalidFormula {
+    let unbound = parse_expression(input).map_err(|source| WorkspaceError::InvalidFormula {
         field: field.clone(),
         source,
     })?;
     let expression =
-        bind_expression(document, &unbound).map_err(|source| WorkflowError::FormulaBinding {
+        bind_expression(document, &unbound).map_err(|source| WorkspaceError::FormulaBinding {
             field: field.clone(),
             source: Box::new(source),
         })?;
     let value = Value::Formula(expression);
-    if existing == &value {
-        return Err(WorkflowError::NoChange {
-            field: field.clone(),
-        });
-    }
-
-    let mut edited = document.clone();
-    let edited_entity =
-        edited
-            .entities
-            .get_mut(&field.entity)
-            .ok_or_else(|| WorkflowError::MissingField {
-                field: field.clone(),
-            })?;
-    edited_entity.fields.insert(field.field, value);
+    let edited = field_value_candidate(document, &field, value)?;
     finalize_edit(document, edited)
 }
 
@@ -452,20 +687,20 @@ pub fn duplicate_entity(
     source: impl AsRef<str>,
     target: impl AsRef<str>,
     generator: &mut impl IdGenerator,
-) -> Result<EditPreview, WorkflowError> {
+) -> Result<EditPreview, WorkspaceError> {
     let source_key = EntityKey::from(source.as_ref());
     let target_key = EntityKey::from(target.as_ref());
     validate_new_entity_key(document, &target_key)?;
     let index = AddressIndex::build(document)?;
     let source_id = index
         .entity_id(&source_key)
-        .map_err(|_| WorkflowError::MissingEntity {
+        .map_err(|_| WorkspaceError::MissingEntity {
             entity: source_key.clone(),
         })?
         .clone();
     let target_id = next_entity_id(generator)?;
     if document.entities.contains_key(&target_id) {
-        return Err(WorkflowError::GeneratedIdCollision {
+        return Err(WorkspaceError::GeneratedIdCollision {
             kind: SemanticIdKind::Entity,
             id: target_id.to_string(),
         });
@@ -495,16 +730,16 @@ pub fn rename_entity(
     document: &Document,
     source: impl AsRef<str>,
     target: impl AsRef<str>,
-) -> Result<EditPreview, WorkflowError> {
+) -> Result<EditPreview, WorkspaceError> {
     let source = EntityKey::from(source.as_ref());
     let target = EntityKey::from(target.as_ref());
     if source == target {
-        return Err(WorkflowError::NoOpEntityRename { entity: source });
+        return Err(WorkspaceError::NoOpEntityRename { entity: source });
     }
     validate_new_entity_key(document, &target)?;
     let entity_id = AddressIndex::build(document)?
         .entity_id(&source)
-        .map_err(|_| WorkflowError::MissingEntity {
+        .map_err(|_| WorkspaceError::MissingEntity {
             entity: source.clone(),
         })?
         .clone();
@@ -513,7 +748,7 @@ pub fn rename_entity(
     edited
         .entities
         .get_mut(&entity_id)
-        .ok_or(WorkflowError::MissingEntity { entity: source })?
+        .ok_or(WorkspaceError::MissingEntity { entity: source })?
         .key = target;
     finalize_edit(document, edited)
 }
@@ -527,22 +762,22 @@ pub fn rename_schema(
     document: &Document,
     source: impl AsRef<str>,
     target: impl AsRef<str>,
-) -> Result<EditPreview, WorkflowError> {
+) -> Result<EditPreview, WorkspaceError> {
     let source = SchemaKey::from(source.as_ref());
     let target = SchemaKey::from(target.as_ref());
     if source == target {
-        return Err(WorkflowError::NoOpSchemaRename { schema: source });
+        return Err(WorkspaceError::NoOpSchemaRename { schema: source });
     }
-    validate_key(target.as_str()).map_err(|()| WorkflowError::InvalidSchemaKey {
+    validate_key(target.as_str()).map_err(|()| WorkspaceError::InvalidSchemaKey {
         schema: target.clone(),
     })?;
     let index = AddressIndex::build(document)?;
     if index.schema_id(&target).is_ok() {
-        return Err(WorkflowError::SchemaKeyAlreadyExists { schema: target });
+        return Err(WorkspaceError::SchemaKeyAlreadyExists { schema: target });
     }
     let schema_id = index
         .schema_id(&source)
-        .map_err(|_| WorkflowError::MissingSchemaKey {
+        .map_err(|_| WorkspaceError::MissingSchemaKey {
             schema: source.clone(),
         })?
         .clone();
@@ -551,7 +786,7 @@ pub fn rename_schema(
     edited
         .schemas
         .get_mut(&schema_id)
-        .ok_or(WorkflowError::MissingSchemaKey { schema: source })?
+        .ok_or(WorkspaceError::MissingSchemaKey { schema: source })?
         .key = target;
     finalize_edit(document, edited)
 }
@@ -566,33 +801,33 @@ pub fn rename_field(
     schema: impl AsRef<str>,
     source: impl AsRef<str>,
     target: impl AsRef<str>,
-) -> Result<EditPreview, WorkflowError> {
+) -> Result<EditPreview, WorkspaceError> {
     let schema_key = SchemaKey::from(schema.as_ref());
     let source = FieldKey::from(source.as_ref());
     let target = FieldKey::from(target.as_ref());
     if source == target {
-        return Err(WorkflowError::NoOpFieldRename { field: source });
+        return Err(WorkspaceError::NoOpFieldRename { field: source });
     }
-    validate_key(target.as_str()).map_err(|()| WorkflowError::InvalidFieldKey {
+    validate_key(target.as_str()).map_err(|()| WorkspaceError::InvalidFieldKey {
         schema: schema_key.clone(),
         field: target.clone(),
     })?;
     let index = AddressIndex::build(document)?;
     let schema_id = index
         .schema_id(&schema_key)
-        .map_err(|_| WorkflowError::MissingSchemaKey {
+        .map_err(|_| WorkspaceError::MissingSchemaKey {
             schema: schema_key.clone(),
         })?
         .clone();
     if index.schema_field_id(&schema_id, &target).is_ok() {
-        return Err(WorkflowError::FieldKeyAlreadyExists {
+        return Err(WorkspaceError::FieldKeyAlreadyExists {
             schema: schema_key.clone(),
             field: target.clone(),
         });
     }
     let field_id = index
         .schema_field_id(&schema_id, &source)
-        .map_err(|_| WorkflowError::MissingFieldKey {
+        .map_err(|_| WorkspaceError::MissingFieldKey {
             schema: schema_key.clone(),
             field: source.clone(),
         })?
@@ -603,13 +838,13 @@ pub fn rename_field(
         edited
             .schemas
             .get_mut(&schema_id)
-            .ok_or_else(|| WorkflowError::MissingSchemaKey {
+            .ok_or_else(|| WorkspaceError::MissingSchemaKey {
                 schema: schema_key.clone(),
             })?;
     edited_schema
         .fields
         .get_mut(&field_id)
-        .ok_or(WorkflowError::MissingFieldKey {
+        .ok_or(WorkspaceError::MissingFieldKey {
             schema: schema_key,
             field: source,
         })?
@@ -626,11 +861,11 @@ pub fn rename_field(
 pub fn remove_entity(
     document: &Document,
     target: impl AsRef<str>,
-) -> Result<EditPreview, WorkflowError> {
+) -> Result<EditPreview, WorkspaceError> {
     let target_key = EntityKey::from(target.as_ref());
     let target_id = AddressIndex::build(document)?
         .entity_id(&target_key)
-        .map_err(|_| WorkflowError::MissingEntity {
+        .map_err(|_| WorkspaceError::MissingEntity {
             entity: target_key.clone(),
         })?
         .clone();
@@ -656,7 +891,7 @@ pub fn remove_entity(
             .map(|dependent| index.field_address(document, dependent))
             .collect::<Result<Vec<_>, _>>()?;
         dependent_addresses.sort();
-        return Err(WorkflowError::EntityReferenced {
+        return Err(WorkspaceError::EntityReferenced {
             entity: target_key,
             dependents,
             dependent_addresses,
@@ -668,15 +903,15 @@ pub fn remove_entity(
     finalize_edit(document, edited)
 }
 
-fn validate_new_entity_key(document: &Document, target: &EntityKey) -> Result<(), WorkflowError> {
+fn validate_new_entity_key(document: &Document, target: &EntityKey) -> Result<(), WorkspaceError> {
     if !is_valid_identifier(target.as_str()) {
-        return Err(WorkflowError::InvalidEntityKey {
+        return Err(WorkspaceError::InvalidEntityKey {
             entity: target.clone(),
         });
     }
     let index = AddressIndex::build(document)?;
     if index.entity_id(target).is_ok() {
-        return Err(WorkflowError::EntityKeyAlreadyExists {
+        return Err(WorkspaceError::EntityKeyAlreadyExists {
             entity: target.clone(),
         });
     }
@@ -731,7 +966,92 @@ fn expression_references_entity(expression: &Expression, target: &EntityId) -> b
     }
 }
 
-fn finalize_edit(document: &Document, edited: Document) -> Result<EditPreview, WorkflowError> {
+fn field_value_candidate(
+    document: &Document,
+    field: &FieldRef,
+    value: Value,
+) -> Result<Document, WorkspaceError> {
+    let entity =
+        document
+            .entities
+            .get(&field.entity)
+            .ok_or_else(|| WorkspaceError::MissingEntityId {
+                entity: field.entity.clone(),
+            })?;
+    let existing = entity
+        .fields
+        .get(&field.field)
+        .ok_or_else(|| WorkspaceError::MissingField {
+            field: field.clone(),
+        })?;
+    if matches!(existing, Value::Formula(_)) && !matches!(value, Value::Formula(_)) {
+        return Err(WorkspaceError::FormulaEdit {
+            field: field.clone(),
+        });
+    }
+    if existing == &value {
+        return Err(WorkspaceError::NoChange {
+            field: field.clone(),
+        });
+    }
+    let definition = document
+        .schemas
+        .get(&entity.schema)
+        .and_then(|schema| schema.fields.get(&field.field))
+        .ok_or_else(|| WorkspaceError::MissingField {
+            field: field.clone(),
+        })?;
+    if !value_matches_type(&value, &definition.field_type) {
+        return Err(WorkspaceError::TypeMismatch {
+            field: field.clone(),
+        });
+    }
+    if let Value::Formula(expression) = &value {
+        validate_expression_structure(expression).map_err(|source| {
+            WorkspaceError::ExpressionComplexity {
+                field: field.clone(),
+                source,
+            }
+        })?;
+        project_expression(document, expression).map_err(|source| match source {
+            CanonicalAuthoringProjectionError::Complexity(source) => {
+                WorkspaceError::ExpressionComplexity {
+                    field: field.clone(),
+                    source,
+                }
+            }
+            source @ CanonicalAuthoringProjectionError::UnresolvableBoundReferences { .. } => {
+                WorkspaceError::FormulaProjection {
+                    field: field.clone(),
+                    source,
+                }
+            }
+        })?;
+    }
+
+    let mut candidate = document.clone();
+    candidate
+        .entities
+        .get_mut(&field.entity)
+        .ok_or_else(|| WorkspaceError::MissingEntityId {
+            entity: field.entity.clone(),
+        })?
+        .fields
+        .insert(field.field.clone(), value);
+    Ok(candidate)
+}
+
+fn value_matches_type(value: &Value, field_type: &FieldType) -> bool {
+    matches!(
+        (value, field_type),
+        (Value::Number(_) | Value::Formula(_), FieldType::Number)
+            | (Value::Text(_), FieldType::Text)
+            | (Value::Boolean(_), FieldType::Boolean)
+            | (Value::Reference(_), FieldType::Reference { .. })
+    )
+}
+
+fn finalize_edit(document: &Document, edited: Document) -> Result<EditPreview, WorkspaceError> {
     validate_candidate(&edited)?;
     preflight_formula_projections(&edited)?;
     calculate(&edited)?;
@@ -742,25 +1062,25 @@ fn finalize_edit(document: &Document, edited: Document) -> Result<EditPreview, W
     })
 }
 
-fn validate_candidate(document: &Document) -> Result<(), WorkflowError> {
+fn validate_candidate(document: &Document) -> Result<(), WorkspaceError> {
     let diagnostics = validate_document(document);
     if diagnostics.is_empty() {
         Ok(())
     } else {
-        Err(WorkflowError::InvalidDocument {
+        Err(WorkspaceError::InvalidDocument {
             summary: format_diagnostics(&diagnostics),
             diagnostics,
         })
     }
 }
 
-fn preflight_formula_projections(document: &Document) -> Result<(), WorkflowError> {
+fn preflight_formula_projections(document: &Document) -> Result<(), WorkspaceError> {
     for (entity_id, entity) in &document.entities {
         for (field_id, value) in &entity.fields {
             if let Value::Formula(expression) = value {
                 let field = FieldRef::new(entity_id.clone(), field_id.clone());
                 project_expression(document, expression).map_err(|source| {
-                    WorkflowError::FormulaProjection {
+                    WorkspaceError::FormulaProjection {
                         field: field.clone(),
                         source,
                     }
@@ -782,12 +1102,12 @@ fn format_dependent_addresses(dependents: &[FieldAddress]) -> String {
 fn field_value<'document>(
     document: &'document Document,
     field: &FieldRef,
-) -> Result<&'document Value, WorkflowError> {
+) -> Result<&'document Value, WorkspaceError> {
     document
         .entities
         .get(&field.entity)
         .and_then(|entity| entity.fields.get(&field.field))
-        .ok_or_else(|| WorkflowError::MissingField {
+        .ok_or_else(|| WorkspaceError::MissingField {
             field: field.clone(),
         })
 }
@@ -797,8 +1117,8 @@ fn parse_scalar(
     field: &FieldRef,
     input: &str,
     field_type: &FieldType,
-) -> Result<Value, WorkflowError> {
-    let invalid = |expected| WorkflowError::InvalidValue {
+) -> Result<Value, WorkspaceError> {
+    let invalid = |expected| WorkspaceError::InvalidValue {
         field: field.clone(),
         input: input.to_owned(),
         expected,
@@ -824,6 +1144,37 @@ fn parse_scalar(
     }
 }
 
+fn runtime_value(
+    document: &Document,
+    value: &Value,
+    field: &FieldRef,
+    calculation: &Calculation,
+) -> Result<RuntimeValue, WorkspaceError> {
+    match value {
+        Value::Number(number) => Ok(RuntimeValue::Number(*number)),
+        Value::Text(text) => Ok(RuntimeValue::Text(text.clone())),
+        Value::Boolean(boolean) => Ok(RuntimeValue::Boolean(*boolean)),
+        Value::Reference(entity) => {
+            let target =
+                document
+                    .entities
+                    .get(entity)
+                    .ok_or_else(|| WorkspaceError::MissingEntityId {
+                        entity: entity.clone(),
+                    })?;
+            Ok(RuntimeValue::Reference {
+                reference: target.key.to_string(),
+            })
+        }
+        Value::Formula(_) => calculation
+            .value(field)
+            .map(RuntimeValue::Number)
+            .ok_or_else(|| WorkspaceError::MissingCalculation {
+                field: field.clone(),
+            }),
+    }
+}
+
 fn format_diagnostics(diagnostics: &[Diagnostic]) -> String {
     diagnostics
         .iter()
@@ -835,28 +1186,28 @@ fn format_diagnostics(diagnostics: &[Diagnostic]) -> String {
 fn next_id(
     generator: &mut impl IdGenerator,
     kind: SemanticIdKind,
-) -> Result<String, WorkflowError> {
+) -> Result<String, WorkspaceError> {
     let id = generator.generate(kind);
     if id.is_empty() {
-        Err(WorkflowError::EmptyGeneratedId { kind })
+        Err(WorkspaceError::EmptyGeneratedId { kind })
     } else {
         Ok(id)
     }
 }
 
-fn next_document_id(generator: &mut impl IdGenerator) -> Result<DocumentId, WorkflowError> {
+fn next_document_id(generator: &mut impl IdGenerator) -> Result<DocumentId, WorkspaceError> {
     next_id(generator, SemanticIdKind::Document).map(DocumentId::from)
 }
 
-fn next_schema_id(generator: &mut impl IdGenerator) -> Result<SchemaId, WorkflowError> {
+fn next_schema_id(generator: &mut impl IdGenerator) -> Result<SchemaId, WorkspaceError> {
     next_id(generator, SemanticIdKind::Schema).map(SchemaId::from)
 }
 
-fn next_field_id(generator: &mut impl IdGenerator) -> Result<FieldId, WorkflowError> {
+fn next_field_id(generator: &mut impl IdGenerator) -> Result<FieldId, WorkspaceError> {
     next_id(generator, SemanticIdKind::Field).map(FieldId::from)
 }
 
-fn next_entity_id(generator: &mut impl IdGenerator) -> Result<EntityId, WorkflowError> {
+fn next_entity_id(generator: &mut impl IdGenerator) -> Result<EntityId, WorkspaceError> {
     next_id(generator, SemanticIdKind::Entity).map(EntityId::from)
 }
 
@@ -864,7 +1215,7 @@ fn game_balance_document(
     id: DocumentId,
     title: String,
     generator: &mut impl IdGenerator,
-) -> Result<Document, WorkflowError> {
+) -> Result<Document, WorkspaceError> {
     let schema_ids = game_balance_schema_ids(generator)?;
     let (schemas, field_ids) = game_balance_schemas(generator, &schema_ids)?;
     let entity_ids = game_balance_entity_ids(generator)?;
@@ -884,12 +1235,12 @@ type NamedEntityIds = BTreeMap<&'static str, EntityId>;
 
 fn game_balance_schema_ids(
     generator: &mut impl IdGenerator,
-) -> Result<NamedSchemaIds, WorkflowError> {
+) -> Result<NamedSchemaIds, WorkspaceError> {
     let mut schema_ids = BTreeMap::new();
     for key in ["characters", "economy", "items", "weapons"] {
         let id = next_schema_id(generator)?;
         if schema_ids.values().any(|existing| existing == &id) {
-            return Err(WorkflowError::GeneratedIdCollision {
+            return Err(WorkspaceError::GeneratedIdCollision {
                 kind: SemanticIdKind::Schema,
                 id: id.to_string(),
             });
@@ -955,7 +1306,7 @@ fn game_balance_schema_specs(
 fn game_balance_schemas(
     generator: &mut impl IdGenerator,
     schema_ids: &NamedSchemaIds,
-) -> Result<(BTreeMap<SchemaId, Schema>, NamedFieldIds), WorkflowError> {
+) -> Result<(BTreeMap<SchemaId, Schema>, NamedFieldIds), WorkspaceError> {
     let mut schemas = BTreeMap::new();
     let mut field_ids = NamedFieldIds::new();
     for (schema_key, fields) in game_balance_schema_specs(schema_ids) {
@@ -964,7 +1315,7 @@ fn game_balance_schemas(
         for (field_key, field_type) in fields {
             let field_id = next_field_id(generator)?;
             if definitions.contains_key(&field_id) {
-                return Err(WorkflowError::GeneratedIdCollision {
+                return Err(WorkspaceError::GeneratedIdCollision {
                     kind: SemanticIdKind::Field,
                     id: field_id.to_string(),
                 });
@@ -994,12 +1345,12 @@ fn game_balance_schemas(
 
 fn game_balance_entity_ids(
     generator: &mut impl IdGenerator,
-) -> Result<NamedEntityIds, WorkflowError> {
+) -> Result<NamedEntityIds, WorkspaceError> {
     let mut entity_ids = BTreeMap::new();
     for key in ["alric", "iron_sword", "shop", "tempered_blade"] {
         let id = next_entity_id(generator)?;
         if entity_ids.values().any(|existing| existing == &id) {
-            return Err(WorkflowError::GeneratedIdCollision {
+            return Err(WorkspaceError::GeneratedIdCollision {
                 kind: SemanticIdKind::Entity,
                 id: id.to_string(),
             });
