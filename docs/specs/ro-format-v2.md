@@ -40,15 +40,25 @@ contracts in ADR-0017 and ADR-0018:
 
 | Resource | Limit |
 | --- | ---: |
-| Complete UTF-8 input | 8 MiB (`8,388,608` bytes) |
+| Normal direct-JSON complete input | 8 MiB (`8,388,608` bytes) |
 | One RFC 8259 number token | 256 bytes |
 | One bound formula AST | 256 nodes |
 | One bound formula root-to-leaf path | 64 nodes |
 
-After strict JSON/version inspection selects v2, both limits are applied before
-the v2 DTO converts a decimal token to semantic `Number`. Exactly-at-limit input
-is admitted; one byte more is `storage.resource_limit`, not a numeric overflow
-or underflow.
+The shared complete-input limit is Stage 0: it applies before UTF-8 validation
+or any JSON/version scan and also covers legacy v1 and untrusted version
+envelopes entering the current normal direct-JSON reader. Exactly-at-limit
+input is admitted; one byte more is `storage.resource_limit` before any latent
+format/version failure.
+
+For admitted input that selects v2, the 256-byte number-token limit remains
+v2-specific and is applied before the DTO converts a decimal token to semantic
+`Number`. A token-limit failure is not numeric overflow or underflow.
+
+The 8 MiB value is a Provisional normal representation-profile mechanism, not
+a semantic document, product, `.roproj`, package/export, or UI maximum. Future
+versions or an explicit legacy import/migration capability may adopt another
+accepted finite profile; no unbounded normal-reader bypass is allowed.
 
 Formula node/depth limits are checked iteratively after DTO decoding and before
 recursive migration, semantic conversion, validation, or writing. The exact

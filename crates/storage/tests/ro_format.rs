@@ -10,8 +10,8 @@ use tachiko_semantic_core::{
     Schema, SchemaId, SchemaKey, Value,
 };
 use tachiko_storage::{
-    FORMAT_VERSION, FormatError, V2_MAX_INPUT_BYTES, from_bytes, from_str, load, save,
-    to_canonical_string,
+    FORMAT_VERSION, FormatError, NORMAL_DIRECT_JSON_MAX_INPUT_BYTES, from_bytes, from_str, load,
+    save, to_canonical_string,
 };
 
 static NEXT_TEMP_FILE: AtomicU64 = AtomicU64::new(0);
@@ -101,24 +101,24 @@ fn valid_document_round_trips() {
 
 #[test]
 fn v2_writer_admits_the_exact_input_boundary_and_round_trips() {
-    let document = document_with_canonical_size(V2_MAX_INPUT_BYTES);
+    let document = document_with_canonical_size(NORMAL_DIRECT_JSON_MAX_INPUT_BYTES);
 
     let encoded = to_canonical_string(&document).unwrap();
 
-    assert_eq!(encoded.len(), V2_MAX_INPUT_BYTES);
+    assert_eq!(encoded.len(), NORMAL_DIRECT_JSON_MAX_INPUT_BYTES);
     assert_eq!(from_bytes(encoded.as_bytes()).unwrap(), document);
 }
 
 #[test]
 fn v2_writer_rejects_canonical_output_one_byte_over_the_input_limit() {
-    let document = document_with_canonical_size(V2_MAX_INPUT_BYTES + 1);
+    let document = document_with_canonical_size(NORMAL_DIRECT_JSON_MAX_INPUT_BYTES + 1);
 
     let error = match to_canonical_string(&document) {
         Err(error) => error,
         Ok(encoded) => panic!(
             "writer admitted {} bytes, expected a {}-byte limit",
             encoded.len(),
-            V2_MAX_INPUT_BYTES
+            NORMAL_DIRECT_JSON_MAX_INPUT_BYTES
         ),
     };
 
@@ -126,16 +126,16 @@ fn v2_writer_rejects_canonical_output_one_byte_over_the_input_limit() {
         error,
         FormatError::ResourceLimit {
             resource: "input",
-            limit: V2_MAX_INPUT_BYTES,
+            limit: NORMAL_DIRECT_JSON_MAX_INPUT_BYTES,
             actual,
-        } if actual == V2_MAX_INPUT_BYTES + 1
+        } if actual == NORMAL_DIRECT_JSON_MAX_INPUT_BYTES + 1
     ));
 }
 
 #[test]
 fn save_rejects_oversized_v2_before_creating_the_destination() {
     let path = temporary_file("oversized-v2.ro");
-    let document = document_with_canonical_size(V2_MAX_INPUT_BYTES + 1);
+    let document = document_with_canonical_size(NORMAL_DIRECT_JSON_MAX_INPUT_BYTES + 1);
 
     let result = save(&path, &document);
     let destination_was_created = path.exists();
@@ -151,9 +151,9 @@ fn save_rejects_oversized_v2_before_creating_the_destination() {
         error,
         FormatError::ResourceLimit {
             resource: "input",
-            limit: V2_MAX_INPUT_BYTES,
+            limit: NORMAL_DIRECT_JSON_MAX_INPUT_BYTES,
             actual,
-        } if actual == V2_MAX_INPUT_BYTES + 1
+        } if actual == NORMAL_DIRECT_JSON_MAX_INPUT_BYTES + 1
     ));
 }
 

@@ -11,10 +11,14 @@ use tachiko_semantic_core::{
     Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldDefinition, FieldId,
     FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
 };
-use tachiko_storage::{from_str as storage_from_str, to_canonical_string};
+use tachiko_storage::{
+    FormatError as StorageFormatError, NORMAL_DIRECT_JSON_MAX_INPUT_BYTES,
+    V2_MAX_NUMBER_TOKEN_BYTES, from_bytes as storage_from_bytes, from_str as storage_from_str,
+    to_canonical_string,
+};
 use tachiko_workspace_engine::calculate_fields;
 
-const CASE_COUNT: u32 = 27;
+const CASE_COUNT: u32 = 42;
 const VALUE: u32 = 0;
 const DIVISION_BY_ZERO: u32 = 1;
 const NON_FINITE: u32 = 2;
@@ -23,6 +27,7 @@ const PROJECTION_FAILURE: u32 = 4;
 const CORPUS_DIGEST: u32 = 5;
 const NON_NUMERIC_REFERENCE: u32 = 6;
 const COMPLETE_ORACLE: u32 = 7;
+const DIRECT_JSON_ENVELOPE: u32 = 8;
 const UNEXPECTED: u32 = 255;
 
 #[derive(Clone, Copy)]
@@ -427,6 +432,133 @@ fn storage_record(input: &str, expected_bits: u64, expected_fingerprint: u64) ->
     Record::value(value, fingerprint)
 }
 
+fn padded_direct_json(prefix: &str, suffix: &str, target: usize) -> String {
+    let filler = target
+        .checked_sub(prefix.len() + suffix.len())
+        .expect("portable direct-JSON fixture framing fits its target");
+    let mut input = String::with_capacity(target);
+    input.push_str(prefix);
+    input.extend(std::iter::repeat_n('x', filler));
+    input.push_str(suffix);
+    input
+}
+
+fn direct_json_envelope_input(index: u32) -> Vec<u8> {
+    let oversized = NORMAL_DIRECT_JSON_MAX_INPUT_BYTES + 1;
+    match index {
+        0 => br#"{"format_version":1,"id":"doc","title":"x","schemas":{},"entities":{}}"#
+            .to_vec(),
+        1 => br#"{"format_version":2,"id":"doc","title":"x","schemas":{},"entities":{}}"#
+            .to_vec(),
+        2 => padded_direct_json(r#"{"format_version":2,"future":""#, "", oversized).into_bytes(),
+        3 => padded_direct_json(
+            r#"{"format_version":3,"padding":""#,
+            r#"","future":{"a":1,"\u0061":2}}"#,
+            oversized,
+        )
+        .into_bytes(),
+        4 => padded_direct_json(r#"{"future":""#, r#""}"#, oversized).into_bytes(),
+        5 => padded_direct_json(
+            r#"{"format_version":"2","future":""#,
+            r#""}"#,
+            oversized,
+        )
+        .into_bytes(),
+        6 => padded_direct_json(
+            r#"{"format_version":3,"future":""#,
+            r#""}"#,
+            oversized,
+        )
+        .into_bytes(),
+        7 => {
+            let mut input = vec![b' '; oversized];
+            input[oversized - 1] = 0xff;
+            input
+        }
+        8 => padded_direct_json(
+            r#"{"format_version":1,"id":"doc","title":""#,
+            r#"","schemas":{},"entities":{}}"#,
+            oversized,
+        )
+        .into_bytes(),
+        9 => padded_direct_json(
+            r#"{"format_version":2,"id":"doc","title":""#,
+            r#"","schemas":{},"entities":{}}"#,
+            NORMAL_DIRECT_JSON_MAX_INPUT_BYTES,
+        )
+        .into_bytes(),
+        10 => padded_direct_json(
+            r#"{"format_version":2,"id":"doc","title":""#,
+            r#"","schemas":{},"entities":{}}"#,
+            oversized,
+        )
+        .into_bytes(),
+        11 => {
+            let token = format!("1{}", "0".repeat(V2_MAX_NUMBER_TOKEN_BYTES));
+            format!(r#"{{"format_version":2,"future":{token}}}"#).into_bytes()
+        }
+        12 => {
+            let token = format!("1{}", "0".repeat(V2_MAX_NUMBER_TOKEN_BYTES));
+            format!(r#"{{"format_version":3,"future":{token}}}"#).into_bytes()
+        }
+        13 => padded_direct_json(
+            r#"{"format_version":3,"a":1,"\u0061":2,"future":""#,
+            "",
+            oversized,
+        )
+        .into_bytes(),
+        14 => format!(
+            "{{\"format_version\":3,\"future\":{}0{}}}",
+            "[".repeat(1_024),
+            "]".repeat(1_024)
+        )
+        .into_bytes(),
+        _ => Vec::new(),
+    }
+}
+
+fn direct_json_result_class(result: Result<Document, StorageFormatError>) -> u64 {
+    match result {
+        Ok(_) => 0,
+        Err(StorageFormatError::InvalidUtf8 { .. }) => 1,
+        Err(StorageFormatError::InvalidJson { .. }) => 2,
+        Err(StorageFormatError::DuplicateMember { .. }) => 3,
+        Err(StorageFormatError::VersionMissing) => 4,
+        Err(StorageFormatError::VersionMalformed) => 5,
+        Err(StorageFormatError::UnsupportedVersion { .. }) => 6,
+        Err(StorageFormatError::ResourceLimit {
+            resource: "input", ..
+        }) => 7,
+        Err(StorageFormatError::ResourceLimit {
+            resource: "number token",
+            ..
+        }) => 8,
+        Err(_) => u64::from(UNEXPECTED),
+    }
+}
+
+fn direct_json_envelope_record(index: u32) -> Record {
+    const EXPECTED: [u64; 15] = [0, 0, 7, 7, 7, 7, 7, 7, 7, 0, 7, 8, 6, 7, 2];
+
+    let input = direct_json_envelope_input(index);
+    let actual = direct_json_result_class(storage_from_bytes(&input));
+    let Some(&expected) = EXPECTED.get(index as usize) else {
+        return Record::failure(UNEXPECTED, u64::from(index));
+    };
+    if actual != expected {
+        return Record {
+            class: UNEXPECTED,
+            bits: actual,
+            auxiliary: expected,
+        };
+    }
+    Record {
+        class: DIRECT_JSON_ENVELOPE,
+        bits: expected,
+        auxiliary: input.len() as u64,
+    }
+}
+
 fn workspace_calculation_record() -> Record {
     let document = formula_document(number(42.0), input_reference());
     let Ok(fields) = calculate_fields(&document) else {
@@ -619,6 +751,7 @@ fn case_record(index: u32) -> Record {
         24 => adversarial_numeric_corpus_record(),
         25 => schema_type_change_record(),
         26 => complete_oracle_record(),
+        27..=41 => direct_json_envelope_record(index - 27),
         _ => Record::failure(UNEXPECTED, 0),
     }
 }

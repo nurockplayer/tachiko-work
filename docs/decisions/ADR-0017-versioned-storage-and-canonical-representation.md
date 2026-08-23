@@ -4,7 +4,7 @@
 
 Accepted
 
-Decision issues: #25, #37, #38
+Decision issues: #25, #37, #38, #96
 
 ## Context
 
@@ -42,11 +42,45 @@ Milestone 02 uses one representation-local `format_version` dimension unless a l
 
 Version namespaces are representation-local. The existing direct `.ro` JSON v1 compatibility profile and a future `.roproj` v1 profile are not the same protocol merely because both may use the integer `1` inside their own representation context.
 
+### 2.1. Finite direct-JSON admission precedes version inspection
+
+The current normal direct-JSON reader MUST apply a finite complete-input byte
+admission before UTF-8 validation or any complete-input JSON scan. An input
+over that profile limit fails with representation-local `ResourceLimit` before
+any latent UTF-8, JSON syntax, duplicate-member, missing-version,
+malformed-version, or unsupported-version failure can be observed.
+
+Milestone 02 sets the Provisional normal direct-JSON profile limit to exactly
+8 MiB (`8 * 1024 * 1024` bytes). Exactly 8 MiB is admitted; one byte more is
+rejected. This normal profile covers legacy direct-JSON v1, direct-JSON v2,
+missing or malformed versions, and unsupported future versions entering the
+current reader. Admitted input retains the existing strict precedence and
+version dispatch. The v2 256-byte number-token limit remains a separate,
+subordinate version-profile mechanism.
+
+```text
+InvalidUtf8
+→ InvalidJson
+→ DuplicateMember
+→ VersionMissing / VersionMalformed
+→ UnsupportedVersion
+→ selected-profile subordinate ResourceLimit
+```
+
+The 8 MiB value is not a semantic document limit, product limit, Number rule,
+identity rule, migration invariant, `.roproj` constraint, package/export
+constraint, or UI constraint. A future explicit legacy import or migration
+operation MAY define a different finite, caller/host-owned admission profile
+when concrete compatibility evidence requires it. Such an operation must be
+an explicit capability boundary and must not silently become normal open/read
+policy. An unbounded bypass such as `--no-limit`, `usize::MAX`, or equivalent
+is forbidden.
+
 ### 3. Unsupported or ambiguous representation semantics fail closed
 
 Unknown/newer required semantics MUST NOT be guessed, silently discarded, or reinterpreted.
 
-A reader may perform generic UTF-8/JSON structural checks and the minimum version-envelope inspection needed to identify an unsupported representation. It MUST NOT decode the unsupported semantic body, canonical-rewrite it, migrate it, or mutate durable state.
+After direct-JSON admission, a reader may perform generic UTF-8/JSON structural checks and the minimum version-envelope inspection needed to identify an unsupported representation. It MUST NOT decode the unsupported semantic body, canonical-rewrite it, migrate it, or mutate durable state.
 
 Missing, malformed, and unsupported versions are distinct storage failures.
 
@@ -133,6 +167,12 @@ The following are practical Milestone 02 mechanisms rather than timeless ecosyst
 - stable IDs are encoded as opaque textual tokens in the current JSON profile; the generic storage boundary does not require the token to be UUIDv7;
 - deterministic namespace UUIDs are the preferred legacy-identity migration mechanism when source identity permits;
 - exact whitespace, escaping, member order, and other textual profile mechanics are version-specific normative rules rather than cross-version semantic invariants.
+- the normal direct-JSON complete-input limit is 8 MiB, shared by legacy v1 and
+  v2 reads before UTF-8/JSON inspection; it is a replaceable profile mechanism,
+  not a semantic or product maximum;
+- a future larger legacy compatibility/import budget, if justified, is a
+  separate explicit finite profile rather than an unlimited normal-reader
+  escape hatch.
 
 ## Rejected alternatives
 
@@ -188,6 +228,9 @@ Costs:
 - the identity migration produces an intentional one-time representation diff;
 - versioned DTOs and migration fixtures create maintenance obligations;
 - numeric golden vectors remain partial until #24 is accepted.
+- ordinary Milestone 02 reading intentionally rejects legacy direct-JSON v1
+  inputs larger than 8 MiB; a future explicit compatibility/import operation
+  may admit such input only through another accepted finite profile.
 
 ## Required follow-up
 
@@ -201,13 +244,15 @@ Costs:
 - #43: define the future `.ro` portable package/profile and integrity rules.
 - #23: define the broader diagnostic envelope; storage owns only format/migration failure meaning required by its contract.
 - #26: define host-specific durability/runtime mechanisms.
+- #96: implement the normal direct-JSON Stage-0 admission profile and its
+  native/WASM conformance corpus.
 
 ## Related
 
 - ADR-0003
 - ADR-0015
 - ADR-0016
-- Issues #25, #37, #38, #40, #70
+- Issues #25, #37, #38, #40, #70, #96
 - RFC 8259 / RFC 7493
 - RFC 8785
 - RFC 9562
