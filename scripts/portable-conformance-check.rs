@@ -37,6 +37,15 @@ const DIRECT_JSON_ENVELOPE: u32 = 8;
 const VALIDATION_REPORT: u32 = 9;
 const UNEXPECTED: u32 = 255;
 
+const VALIDATION_ACCUMULATION_COUNT: usize = 16;
+const VALIDATION_ACCUMULATION_FINGERPRINT: u64 = 6_032_264_412_171_800_859;
+const VALIDATION_RENAME_COUNT: usize = 2;
+const VALIDATION_RENAME_FINGERPRINT: u64 = 17_244_910_774_212_126_556;
+const VALIDATION_CYCLE_COUNT: usize = 6;
+const VALIDATION_CYCLE_FINGERPRINT: u64 = 12_164_157_338_575_685_884;
+const VALIDATION_DISJOINT_CYCLE_COUNT: usize = 4;
+const VALIDATION_DISJOINT_CYCLE_FINGERPRINT: u64 = 18_384_632_427_777_425_720;
+
 #[derive(Clone, Copy)]
 struct Record {
     class: u32,
@@ -681,6 +690,27 @@ fn validation_fingerprint(report: &ValidationReport) -> u64 {
     fnv1a64(&bytes)
 }
 
+fn fixed_validation_record(
+    report: &ValidationReport,
+    expected_count: usize,
+    expected_fingerprint: u64,
+    failure_marker: u64,
+) -> Record {
+    let actual_count = report.diagnostics().len();
+    let actual_fingerprint = validation_fingerprint(report);
+    if actual_count != expected_count {
+        return Record::failure(UNEXPECTED, failure_marker | actual_count as u64);
+    }
+    if actual_fingerprint != expected_fingerprint {
+        return Record::failure(UNEXPECTED, actual_fingerprint);
+    }
+    Record {
+        class: VALIDATION_REPORT,
+        bits: actual_count as u64,
+        auxiliary: actual_fingerprint,
+    }
+}
+
 fn oracle_document() -> Document {
     let formula_ids = [
         "structural",
@@ -998,11 +1028,12 @@ fn validation_accumulation_record() -> Record {
     if !exact {
         return Record::failure(UNEXPECTED, 31);
     }
-    Record {
-        class: VALIDATION_REPORT,
-        bits: report.diagnostics().len() as u64,
-        auxiliary: validation_fingerprint(&report),
-    }
+    fixed_validation_record(
+        &report,
+        VALIDATION_ACCUMULATION_COUNT,
+        VALIDATION_ACCUMULATION_FINGERPRINT,
+        31_u64 << 32,
+    )
 }
 
 fn disjoint_cycle_document(reverse_insertion: bool) -> Document {
@@ -1082,11 +1113,12 @@ fn disjoint_cycle_record() -> Record {
     if !exact {
         return Record::failure(UNEXPECTED, forward.diagnostics().len() as u64);
     }
-    Record {
-        class: VALIDATION_REPORT,
-        bits: forward.diagnostics().len() as u64,
-        auxiliary: validation_fingerprint(&forward),
-    }
+    fixed_validation_record(
+        &forward,
+        VALIDATION_DISJOINT_CYCLE_COUNT,
+        VALIDATION_DISJOINT_CYCLE_FINGERPRINT,
+        34_u64 << 32,
+    )
 }
 
 fn rename_stability_record() -> Record {
@@ -1148,11 +1180,12 @@ fn rename_stability_record() -> Record {
     if !exact {
         return Record::failure(UNEXPECTED, 32);
     }
-    Record {
-        class: VALIDATION_REPORT,
-        bits: before.diagnostics().len() as u64,
-        auxiliary: validation_fingerprint(&before),
-    }
+    fixed_validation_record(
+        &before,
+        VALIDATION_RENAME_COUNT,
+        VALIDATION_RENAME_FINGERPRINT,
+        32_u64 << 32,
+    )
 }
 
 fn validation_cycle_record() -> Record {
@@ -1186,11 +1219,12 @@ fn validation_cycle_record() -> Record {
     if !exact {
         return Record::failure(UNEXPECTED, 33);
     }
-    Record {
-        class: VALIDATION_REPORT,
-        bits: report.diagnostics().len() as u64,
-        auxiliary: validation_fingerprint(&report),
-    }
+    fixed_validation_record(
+        &report,
+        VALIDATION_CYCLE_COUNT,
+        VALIDATION_CYCLE_FINGERPRINT,
+        33_u64 << 32,
+    )
 }
 
 fn case_record(index: u32) -> Record {

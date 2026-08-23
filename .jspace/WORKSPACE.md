@@ -1046,7 +1046,10 @@ The detailed executable plan is
 - TDD evidence covers independent accumulation, phase- and fact-specific
   cascade suppression, rename-stable observations, multi-subject
   duplicates/cycles/dependencies, and validation/finalization agreement. The
-  upstream #90 suite remains the formula precedence and all-or-nothing oracle.
+  primary accumulation test pins the complete ordered stable-observation
+  vector, and all four portable report records pin exact counts and
+  fingerprints. The upstream #90 suite remains the formula precedence and
+  all-or-nothing oracle.
 - Pre-release post-rebase evidence passes 250 tests across 41 suites with
   warning-denied Clippy. The portable corpus executes 31 fixed production
   records—27 upstream formula/storage/workspace/AI records plus four

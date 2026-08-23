@@ -3,9 +3,9 @@ use std::collections::BTreeMap;
 use tachiko_workspace_engine::{
     CanonicalAuthoringProjectionError, DiagnosticCode, DiagnosticFact, DiagnosticProvider,
     DiagnosticSeverity, Document, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
-    FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, SemanticSubject, ValidationRole,
-    Value, WorkspaceError, compare_documents, diagnostic_codes, merge_documents, rename_entity,
-    rename_schema, validate, validation_report,
+    FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, SemanticSubject,
+    StableDiagnosticObservation, ValidationRole, Value, WorkspaceError, compare_documents,
+    diagnostic_codes, merge_documents, rename_entity, rename_schema, validate, validation_report,
 };
 
 fn document() -> Document {
@@ -148,6 +148,55 @@ fn independent_findings_accumulate_while_missing_schema_suppresses_cascades() {
     );
 
     let report = validation_report(&document);
+    assert_eq!(
+        report.stable_observations(),
+        vec![
+            StableDiagnosticObservation {
+                code: DiagnosticCode::MISSING_REQUIRED_FIELD,
+                severity: DiagnosticSeverity::Error,
+                subjects: vec![SemanticSubject::EntityField(FieldRef::new(
+                    "entity", "required",
+                ))],
+                related_subjects: vec![],
+                facts: vec![],
+                provider: DiagnosticProvider::new("tachiko.semantic-core"),
+            },
+            StableDiagnosticObservation {
+                code: DiagnosticCode::MISSING_SCHEMA,
+                severity: DiagnosticSeverity::Error,
+                subjects: vec![SemanticSubject::Entity(EntityId::from("orphan"))],
+                related_subjects: vec![SemanticSubject::Schema(SchemaId::from("missing-schema",))],
+                facts: vec![],
+                provider: DiagnosticProvider::new("tachiko.semantic-core"),
+            },
+            StableDiagnosticObservation {
+                code: diagnostic_codes::FORMULA_DIVISION_BY_ZERO,
+                severity: DiagnosticSeverity::Error,
+                subjects: vec![SemanticSubject::EntityField(FieldRef::new(
+                    "entity", "zero",
+                ))],
+                related_subjects: vec![],
+                facts: vec![],
+                provider: DiagnosticProvider::new("tachiko.formula-engine"),
+            },
+            StableDiagnosticObservation {
+                code: diagnostic_codes::FORMULA_INVALID_REFERENCES,
+                severity: DiagnosticSeverity::Error,
+                subjects: vec![SemanticSubject::EntityField(FieldRef::new(
+                    "entity", "binding",
+                ))],
+                related_subjects: vec![SemanticSubject::EntityField(FieldRef::new(
+                    "entity",
+                    "missing-target",
+                ))],
+                facts: vec![DiagnosticFact::new(
+                    "missing_target",
+                    "6:entity14:missing-target",
+                )],
+                provider: DiagnosticProvider::new("tachiko.formula-engine"),
+            },
+        ]
+    );
     let codes = report
         .diagnostics()
         .iter()
