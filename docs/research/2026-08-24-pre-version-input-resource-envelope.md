@@ -56,7 +56,8 @@ borrowed bytes
 
 Consequences:
 
-- malformed JSON normally performs one complete JSON pass;
+- malformed JSON performs one syntax pass up to the failure; the end-truncated
+  probe below makes that pass traverse the complete input;
 - admitted missing/malformed/unsupported inputs perform two complete JSON
   passes;
 - admitted v1 performs two envelope inspections (four strict JSON passes) plus
@@ -110,7 +111,7 @@ build.
 | Oversized valid v1 | 32 MiB title string | `Ok` after migration | 68,845,568–69,074,944 peak RSS bytes across three runs; no panic |
 | Oversized valid v2 | 32 MiB valid document | `ResourceLimit(input)` | 35,192,832–35,274,752 peak RSS bytes; limit is reached only after strict inspection |
 | Oversized malformed JSON | 32 MiB, unterminated final string | `InvalidJson` | Complete syntax scan; 35,094,528 peak RSS bytes; no panic |
-| Oversized duplicate | 32 MiB, `"a"` plus `"\u0061"` | `DuplicateMember` | Recursive decoded-name rule preserved; 35,176,448 peak RSS bytes |
+| Oversized duplicate | 32 MiB, nested `"a"` plus `"\u0061"` | `DuplicateMember` | Recursive decoded-name rule preserved; 35,127,296 peak RSS bytes across three runs |
 | Duplicate plus later malformed JSON | 32 MiB | `InvalidJson` | Confirms syntax-over-duplicate precedence |
 | Oversized missing version | 32 MiB valid JSON string body | `VersionMissing` | Complete strict inspection before classification |
 | Oversized malformed version | 32 MiB with `"format_version":"2"` | `VersionMalformed` | Complete strict inspection before classification |
@@ -171,7 +172,7 @@ pre-envelope precedence.
 | Version-specific limits only | v2 DTO/numeric conversion is bounded; pre-version, v1, and future input remain unbounded | Preserves the current table | Reject: this is the demonstrated gap |
 | Pre-parse global byte admission | O(1) length rejection before any scan or allocation amplification | `ResourceLimit` must beat every other error for oversized input; v1 acceptance changes | Safe and minimal only after an Accepted precedence amendment |
 | Bounded/streaming envelope inspection | Can avoid buffering in a future host adapter, but the current `&[u8]` API already receives complete bytes | A trusted early version is impossible while member order is flexible and a later duplicate/syntax error must win; recursive duplicate proof still needs bounded key state or new structural budgets | Not sufficient by itself; host streaming belongs to #26 |
-| Representation-independent direct-JSON envelope | Bounds v1, v2, missing/malformed, and unsupported inputs in one namespace | Same precedence decision as a global limit; must explicitly constrain legacy v1 reader admission | Recommended scope |
+| Version-independent envelope within the direct-JSON representation | Bounds v1, v2, missing/malformed, and unsupported inputs in one namespace | Same precedence decision as a global limit; must explicitly constrain legacy v1 reader admission | Recommended scope |
 | Hybrid two-stage admission | Stage 0 bounds the complete direct-JSON envelope; admitted input then uses current strict pipeline and version-specific token/DTO limits | Introduces one explicit over-limit precedence while preserving all current under-limit results | Recommended contract |
 
 A streaming probe cannot safely stop after the first `format_version`: a later
@@ -183,7 +184,8 @@ about when `ResourceLimit` wins.
 
 ## Recommended contract requiring acceptance
 
-Adopt a representation-independent, two-stage direct-JSON envelope:
+Adopt a version-independent, two-stage envelope within the direct-JSON
+representation:
 
 1. Before UTF-8 validation or any complete-input scan, compare `source.len()`
    with a finite direct-JSON envelope byte limit.
@@ -289,6 +291,43 @@ target/issue-96-pre-version-envelope-native
   many-members 500000
 ```
 
+The recorded matrix used the following complete measurement set. The first
+block captured every hostile class once; the second captured the reported
+three-run ranges for the amplification-sensitive cases.
+
+```bash
+measure_issue96() {
+  /usr/bin/time -l target/issue-96-pre-version-envelope-native \
+    "$1" "$2" 2>&1 | \
+    awk '/^case=| real |maximum resident set size/'
+}
+
+measure_issue96 valid-v2 70
+measure_issue96 valid-v1 33554432
+measure_issue96 valid-v2 33554432
+measure_issue96 malformed-json 33554432
+measure_issue96 duplicate 33554432
+measure_issue96 duplicate-then-malformed 33554432
+measure_issue96 missing-version 33554432
+measure_issue96 malformed-version 33554432
+measure_issue96 unsupported-version 33554432
+measure_issue96 invalid-utf8 33554432
+measure_issue96 huge-member-name 33554432
+measure_issue96 deep 10000
+measure_issue96 v2-number 1048576
+measure_issue96 unsupported-number 1048576
+measure_issue96 many-members 500000
+
+for measurement_round in 1 2 3; do
+  measure_issue96 valid-v1 33554432
+  measure_issue96 valid-v2 33554432
+  measure_issue96 unsupported-version 33554432
+  measure_issue96 huge-member-name 33554432
+  measure_issue96 many-members 500000
+  measure_issue96 many-members 381000
+done
+```
+
 Build and execute the WASM probe, then compare it with native output:
 
 ```bash
@@ -308,3 +347,8 @@ diff -u \
   <(node docs/research/probes/issue-96-pre-version-envelope.mjs \
     target/issue-96-pre-version-envelope.wasm)
 ```
+
+The clean evidence branch also passed `bash scripts/release-check.sh`: format,
+workspace dependency policy, warning-denied Clippy, 229 tests, production
+native/WASM conformance, warning-denied rustdoc, Rust 1.85, Cargo packages, four
+product smoke journeys, and release-archive safety/concurrency checks.

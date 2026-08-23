@@ -25,6 +25,11 @@ const INVALID_DOCUMENT: u32 = 11;
 const OTHER: u32 = 255;
 
 const FIXED_CASE_COUNT: u32 = 15;
+const MIN_FRAMED_INPUT_BYTES: usize = 70;
+const MAX_INPUT_PROBE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_NUMBER_PROBE_BYTES: usize = 8 * 1024 * 1024;
+const MAX_MEMBER_PROBE_COUNT: usize = 1_000_000;
+const MAX_DEPTH_PROBE: usize = 1_000_000;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn issue96_case_count() -> u32 {
@@ -130,8 +135,8 @@ fn malformed_json(target: usize) -> String {
 
 fn duplicate_member(target: usize) -> String {
     padded(
-        r#"{"format_version":3,"future":""#,
-        r#"","a":1,"\u0061":2}"#,
+        r#"{"format_version":3,"padding":""#,
+        r#"","future":{"a":1,"\u0061":2}}"#,
         target,
         'x',
     )
@@ -198,7 +203,43 @@ fn many_members(count: usize) -> String {
     input
 }
 
-fn named_input(name: &str, magnitude: usize) -> Option<Vec<u8>> {
+fn named_input(name: &str, magnitude: usize) -> Result<Vec<u8>, String> {
+    let framed_input = matches!(
+        name,
+        "valid-v1"
+            | "valid-v2"
+            | "malformed-json"
+            | "duplicate"
+            | "duplicate-then-malformed"
+            | "missing-version"
+            | "malformed-version"
+            | "unsupported-version"
+            | "invalid-utf8"
+            | "huge-member-name"
+    );
+    if framed_input && !(MIN_FRAMED_INPUT_BYTES..=MAX_INPUT_PROBE_BYTES).contains(&magnitude) {
+        return Err(format!(
+            "{name} magnitude must be in {MIN_FRAMED_INPUT_BYTES}..={MAX_INPUT_PROBE_BYTES} bytes"
+        ));
+    }
+    if matches!(name, "v2-number" | "unsupported-number")
+        && !(1..=MAX_NUMBER_PROBE_BYTES).contains(&magnitude)
+    {
+        return Err(format!(
+            "{name} magnitude must be in 1..={MAX_NUMBER_PROBE_BYTES} token bytes"
+        ));
+    }
+    if name == "many-members" && magnitude > MAX_MEMBER_PROBE_COUNT {
+        return Err(format!(
+            "many-members magnitude must be at most {MAX_MEMBER_PROBE_COUNT} members"
+        ));
+    }
+    if name == "deep" && magnitude > MAX_DEPTH_PROBE {
+        return Err(format!(
+            "deep magnitude must be at most {MAX_DEPTH_PROBE} levels"
+        ));
+    }
+
     let input = match name {
         "valid-v1" => valid_v1(magnitude).into_bytes(),
         "valid-v2" => valid_v2(magnitude).into_bytes(),
@@ -214,9 +255,9 @@ fn named_input(name: &str, magnitude: usize) -> Option<Vec<u8>> {
         "deep" => deeply_nested(magnitude).into_bytes(),
         "v2-number" => v2_number(magnitude).into_bytes(),
         "unsupported-number" => unsupported_number(magnitude).into_bytes(),
-        _ => return None,
+        _ => return Err(format!("unknown case: {name}")),
     };
-    Some(input)
+    Ok(input)
 }
 
 fn class_name(class: u32) -> &'static str {
@@ -253,9 +294,12 @@ fn main() -> ExitCode {
         eprintln!("usage: issue-96-pre-version-envelope CASE MAGNITUDE");
         return ExitCode::FAILURE;
     };
-    let Some(input) = named_input(&name, magnitude) else {
-        eprintln!("unknown case: {name}");
-        return ExitCode::FAILURE;
+    let input = match named_input(&name, magnitude) {
+        Ok(input) => input,
+        Err(message) => {
+            eprintln!("{message}");
+            return ExitCode::FAILURE;
+        }
     };
     let started = Instant::now();
     let class = classify(from_bytes(black_box(&input)));

@@ -1,4 +1,5 @@
 // Execute the wasm32-unknown-unknown build of the Issue #96 research probe.
+// This harness is reproducible research evidence, not production runtime code.
 
 import { readFile } from "node:fs/promises";
 
