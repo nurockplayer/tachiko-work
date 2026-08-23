@@ -87,6 +87,95 @@ fn reference(entity: &str, field: &str) -> Expression {
     Expression::Reference(FieldRef::new(entity, field))
 }
 
+fn next_random(seed: &mut u64) -> u64 {
+    *seed ^= *seed << 13;
+    *seed ^= *seed >> 7;
+    *seed ^= *seed << 17;
+    *seed
+}
+
+fn generated_formula(
+    index: usize,
+    other_index: usize,
+    expected_values: &[Number],
+) -> (Expression, Number, BTreeSet<FieldRef>) {
+    let previous_id = format!("field-{:03}", index - 1);
+    let other_id = format!("field-{other_index:03}");
+    let previous = expected_values[index - 1];
+    let other = expected_values[other_index];
+    match index % 6 {
+        0 => (
+            Expression::Add {
+                left: Box::new(reference("node", &previous_id)),
+                right: Box::new(numeric(0.25)),
+            },
+            expected(previous.get() + 0.25),
+            BTreeSet::from([FieldRef::new("node", previous_id.as_str())]),
+        ),
+        1 => (
+            Expression::Subtract {
+                left: Box::new(reference("node", &previous_id)),
+                right: Box::new(numeric(0.5)),
+            },
+            expected(previous.get() - 0.5),
+            BTreeSet::from([FieldRef::new("node", previous_id.as_str())]),
+        ),
+        2 => (
+            Expression::Multiply {
+                left: Box::new(reference("node", &previous_id)),
+                right: Box::new(numeric(0.5)),
+            },
+            expected(previous.get() * 0.5),
+            BTreeSet::from([FieldRef::new("node", previous_id.as_str())]),
+        ),
+        3 => (
+            Expression::Divide {
+                left: Box::new(reference("node", &previous_id)),
+                right: Box::new(numeric(2.0)),
+            },
+            expected(previous.get() / 2.0),
+            BTreeSet::from([FieldRef::new("node", previous_id.as_str())]),
+        ),
+        4 => (
+            Expression::Minimum {
+                left: Box::new(reference("node", &previous_id)),
+                right: Box::new(reference("node", &other_id)),
+            },
+            previous.min(other),
+            BTreeSet::from([
+                FieldRef::new("node", previous_id.as_str()),
+                FieldRef::new("node", other_id.as_str()),
+            ]),
+        ),
+        _ => (
+            Expression::Maximum {
+                left: Box::new(reference("node", &previous_id)),
+                right: Box::new(reference("node", &other_id)),
+            },
+            previous.max(other),
+            BTreeSet::from([
+                FieldRef::new("node", previous_id.as_str()),
+                FieldRef::new("node", other_id.as_str()),
+            ]),
+        ),
+    }
+}
+
+fn rename_generated_keys(document: &mut Document) {
+    document.entities.get_mut("node").unwrap().key = "renamed-source".into();
+    document.schemas.get_mut("schema").unwrap().key = "renamed-numbers".into();
+    for (index, definition) in document
+        .schemas
+        .get_mut("schema")
+        .unwrap()
+        .fields
+        .values_mut()
+        .enumerate()
+    {
+        definition.key = format!("renamed-{index:03}").into();
+    }
+}
+
 #[test]
 fn formulas_resolve_numeric_and_formula_references() {
     let calculation = calculate(&balance_document()).unwrap();
@@ -210,6 +299,42 @@ fn missing_reference_is_explicit() {
         error,
         CalculationError::MissingReference { reference }
             if reference == FieldRef::new("sword", "missing")
+    ));
+}
+
+#[test]
+fn schema_declaration_is_authoritative_for_bound_reference_type() {
+    let mut document = balance_document();
+    document
+        .schemas
+        .get_mut("weapon")
+        .unwrap()
+        .fields
+        .get_mut("damage")
+        .unwrap()
+        .field_type = FieldType::Text;
+
+    assert!(matches!(
+        calculate(&document).unwrap_err(),
+        CalculationError::NonNumericReference { reference }
+            if reference == FieldRef::new("sword", "damage")
+    ));
+}
+
+#[test]
+fn stale_bound_reference_cannot_read_an_undeclared_entity_value() {
+    let mut document = balance_document();
+    document
+        .schemas
+        .get_mut("weapon")
+        .unwrap()
+        .fields
+        .remove("damage");
+
+    assert!(matches!(
+        calculate(&document).unwrap_err(),
+        CalculationError::MissingReference { reference }
+            if reference == FieldRef::new("sword", "damage")
     ));
 }
 
@@ -355,6 +480,108 @@ fn arithmetic_overflow_is_a_typed_non_finite_result() {
         CalculationError::NonFiniteResult { field }
             if field == FieldRef::new("sword", "burst")
     ));
+}
+
+#[test]
+fn generated_dags_match_an_independent_oracle_and_survive_key_renames() {
+    const GRAPH_COUNT: usize = 32;
+    const FIELD_COUNT: usize = 64;
+
+    for graph in 0..GRAPH_COUNT {
+        let mut seed = 0x94d0_49bb_1331_11eb_u64 ^ graph as u64;
+        let mut definitions = BTreeMap::new();
+        let mut values = BTreeMap::new();
+        let mut expected_values = Vec::new();
+        let mut expected_dependencies = BTreeMap::new();
+
+        for index in 0..FIELD_COUNT {
+            let field_id = format!("field-{index:03}");
+            definitions.insert(FieldId::from(field_id.as_str()), number_field(&field_id));
+
+            if index < 2 {
+                let value =
+                    f64::from(u32::try_from(next_random(&mut seed) % 2_001).unwrap()) - 1_000.0;
+                let value = expected(value);
+                expected_values.push(value);
+                values.insert(FieldId::from(field_id), Value::Number(value));
+                continue;
+            }
+
+            let modulus = u64::try_from(index).unwrap();
+            let other_index = usize::try_from(next_random(&mut seed) % modulus).unwrap();
+            let (expression, result, dependencies) =
+                generated_formula(index, other_index, &expected_values);
+            expected_values.push(result);
+            expected_dependencies.insert(FieldRef::new("node", field_id.as_str()), dependencies);
+            values.insert(FieldId::from(field_id), Value::Formula(expression));
+        }
+
+        let mut document = Document {
+            id: DocumentId::from("generated-dag"),
+            title: "Generated formula DAG".to_owned(),
+            schemas: BTreeMap::from([(
+                SchemaId::from("schema"),
+                Schema {
+                    id: SchemaId::from("schema"),
+                    key: SchemaKey::from("numbers"),
+                    fields: definitions,
+                },
+            )]),
+            entities: BTreeMap::from([(
+                EntityId::from("node"),
+                Entity {
+                    id: EntityId::from("node"),
+                    key: "source".into(),
+                    schema: SchemaId::from("schema"),
+                    fields: values,
+                },
+            )]),
+        };
+
+        let calculation = calculate(&document).unwrap();
+        for (index, value) in expected_values.iter().enumerate() {
+            assert_eq!(
+                calculation.value(&FieldRef::new("node", format!("field-{index:03}"))),
+                Some(*value),
+                "graph {graph}, field {index}"
+            );
+        }
+        assert_eq!(calculation.dependencies(), &expected_dependencies);
+        for _ in 0..2 {
+            assert_eq!(calculate(&document).unwrap(), calculation, "graph {graph}");
+        }
+
+        let mut transitive_dependencies = vec![BTreeSet::new(); FIELD_COUNT];
+        for index in 2..FIELD_COUNT {
+            let field = FieldRef::new("node", format!("field-{index:03}"));
+            for dependency in &expected_dependencies[&field] {
+                let dependency_index = dependency
+                    .field
+                    .as_str()
+                    .strip_prefix("field-")
+                    .unwrap()
+                    .parse::<usize>()
+                    .unwrap();
+                transitive_dependencies[index].insert(dependency_index);
+                let inherited = transitive_dependencies[dependency_index].clone();
+                transitive_dependencies[index].extend(inherited);
+            }
+        }
+        for root in 0..FIELD_COUNT {
+            let expected_affected = (0..FIELD_COUNT)
+                .filter(|index| transitive_dependencies[*index].contains(&root))
+                .map(|index| FieldRef::new("node", format!("field-{index:03}")))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                calculation.affected_by(&FieldRef::new("node", format!("field-{root:03}"))),
+                expected_affected,
+                "graph {graph}, dirty root {root}"
+            );
+        }
+
+        rename_generated_keys(&mut document);
+        assert_eq!(calculate(&document).unwrap(), calculation, "graph {graph}");
+    }
 }
 
 #[test]

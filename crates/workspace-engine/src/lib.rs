@@ -377,7 +377,13 @@ pub fn validate_field_value_suggestion(
     field: FieldRef,
     value: Value,
 ) -> Result<ValidatedFieldValue, WorkspaceError> {
-    let candidate = field_value_candidate(document, &field, value.clone())?;
+    let candidate = match field_value_candidate(document, &field, &value) {
+        Ok(candidate) => candidate,
+        Err(error) => {
+            drop_value_iteratively(value);
+            return Err(error);
+        }
+    };
     validate_candidate(&candidate)?;
     calculate(&candidate)?;
     Ok(ValidatedFieldValue { field, value })
@@ -631,7 +637,7 @@ pub fn set_scalar(
             field: field.clone(),
         })?;
     let value = parse_scalar(document, &field, input, &definition.field_type)?;
-    let edited = field_value_candidate(document, &field, value)?;
+    let edited = field_value_candidate(document, &field, &value)?;
     finalize_edit(document, edited)
 }
 
@@ -670,7 +676,7 @@ pub fn set_formula(
             source: Box::new(source),
         })?;
     let value = Value::Formula(expression);
-    let edited = field_value_candidate(document, &field, value)?;
+    let edited = field_value_candidate(document, &field, &value)?;
     finalize_edit(document, edited)
 }
 
@@ -705,6 +711,7 @@ pub fn duplicate_entity(
             id: target_id.to_string(),
         });
     }
+    preflight_formula_structures(document)?;
 
     let mut duplicate = document.entities[&source_id].clone();
     duplicate.id = target_id.clone();
@@ -743,6 +750,7 @@ pub fn rename_entity(
             entity: source.clone(),
         })?
         .clone();
+    preflight_formula_structures(document)?;
 
     let mut edited = document.clone();
     edited
@@ -781,6 +789,7 @@ pub fn rename_schema(
             schema: source.clone(),
         })?
         .clone();
+    preflight_formula_structures(document)?;
 
     let mut edited = document.clone();
     edited
@@ -832,6 +841,7 @@ pub fn rename_field(
             field: source.clone(),
         })?
         .clone();
+    preflight_formula_structures(document)?;
 
     let mut edited = document.clone();
     let edited_schema =
@@ -869,6 +879,7 @@ pub fn remove_entity(
             entity: target_key.clone(),
         })?
         .clone();
+    preflight_formula_structures(document)?;
 
     let dependents = document
         .entities
@@ -969,7 +980,7 @@ fn expression_references_entity(expression: &Expression, target: &EntityId) -> b
 fn field_value_candidate(
     document: &Document,
     field: &FieldRef,
-    value: Value,
+    value: &Value,
 ) -> Result<Document, WorkspaceError> {
     let entity =
         document
@@ -989,7 +1000,7 @@ fn field_value_candidate(
             field: field.clone(),
         });
     }
-    if existing == &value {
+    if !matches!(existing, Value::Formula(_)) && existing == value {
         return Err(WorkspaceError::NoChange {
             field: field.clone(),
         });
@@ -1001,18 +1012,26 @@ fn field_value_candidate(
         .ok_or_else(|| WorkspaceError::MissingField {
             field: field.clone(),
         })?;
-    if !value_matches_type(&value, &definition.field_type) {
+    if !value_matches_type(value, &definition.field_type) {
         return Err(WorkspaceError::TypeMismatch {
             field: field.clone(),
         });
     }
-    if let Value::Formula(expression) = &value {
+    preflight_formula_structures(document)?;
+    if let Value::Formula(expression) = value {
         validate_expression_structure(expression).map_err(|source| {
             WorkspaceError::ExpressionComplexity {
                 field: field.clone(),
                 source,
             }
         })?;
+    }
+    if existing == value {
+        return Err(WorkspaceError::NoChange {
+            field: field.clone(),
+        });
+    }
+    if let Value::Formula(expression) = value {
         project_expression(document, expression).map_err(|source| match source {
             CanonicalAuthoringProjectionError::Complexity(source) => {
                 WorkspaceError::ExpressionComplexity {
@@ -1037,7 +1056,7 @@ fn field_value_candidate(
             entity: field.entity.clone(),
         })?
         .fields
-        .insert(field.field.clone(), value);
+        .insert(field.field.clone(), value.clone());
     Ok(candidate)
 }
 
@@ -1089,6 +1108,47 @@ fn preflight_formula_projections(document: &Document) -> Result<(), WorkspaceErr
         }
     }
     Ok(())
+}
+
+fn preflight_formula_structures(document: &Document) -> Result<(), WorkspaceError> {
+    for (entity_id, entity) in &document.entities {
+        for (field_id, value) in &entity.fields {
+            if let Value::Formula(expression) = value {
+                validate_expression_structure(expression).map_err(|source| {
+                    WorkspaceError::ExpressionComplexity {
+                        field: FieldRef::new(entity_id.clone(), field_id.clone()),
+                        source,
+                    }
+                })?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn drop_expression_iteratively(expression: Expression) {
+    let mut stack = vec![expression];
+    while let Some(expression) = stack.pop() {
+        match expression {
+            Expression::Add { left, right }
+            | Expression::Subtract { left, right }
+            | Expression::Multiply { left, right }
+            | Expression::Divide { left, right }
+            | Expression::Minimum { left, right }
+            | Expression::Maximum { left, right } => {
+                stack.push(*right);
+                stack.push(*left);
+            }
+            Expression::Number(_) | Expression::Reference(_) => {}
+        }
+    }
+}
+
+fn drop_value_iteratively(value: Value) {
+    match value {
+        Value::Formula(expression) => drop_expression_iteratively(expression),
+        Value::Number(_) | Value::Text(_) | Value::Boolean(_) | Value::Reference(_) => {}
+    }
 }
 
 fn format_dependent_addresses(dependents: &[FieldAddress]) -> String {

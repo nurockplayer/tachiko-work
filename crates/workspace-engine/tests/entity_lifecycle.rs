@@ -1,13 +1,18 @@
 mod common;
 
+use std::{env, mem, process::Command};
+
 use common::{OneIdGenerator, game_balance_document};
 use tachiko_diff_engine::SemanticChange;
 use tachiko_formula_engine::calculate;
 use tachiko_semantic_core::{
-    EntityId, EntityKey, Expression, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType,
-    Number, Value, validate_document,
+    EntityId, EntityKey, Expression, FieldAddress, FieldDefinition, FieldId, FieldKey, FieldRef,
+    FieldType, Number, Value, validate_document,
 };
-use tachiko_workspace_engine::{WorkspaceError, duplicate_entity, remove_entity, rename_entity};
+use tachiko_workspace_engine::{
+    WorkspaceError, duplicate_entity, remove_entity, rename_entity, rename_field, rename_schema,
+    set_scalar, validate_field_value_suggestion,
+};
 
 fn numeric(value: f64) -> Expression {
     Expression::Number(Number::new(value).unwrap())
@@ -45,6 +50,17 @@ fn every_expression_shape(self_entity: &str) -> Expression {
         }),
         right: Box::new(reference("shop", "gold_per_match")),
     }
+}
+
+fn deeply_nested_expression(depth: usize) -> Expression {
+    let mut expression = numeric(1.0);
+    for _ in 0..depth {
+        expression = Expression::Add {
+            left: Box::new(expression),
+            right: Box::new(numeric(1.0)),
+        };
+    }
+    expression
 }
 
 fn lifecycle_document() -> tachiko_semantic_core::Document {
@@ -341,4 +357,76 @@ fn lifecycle_finalizer_surfaces_validation_calculation_and_diff_failures() {
         remove_entity(&uncalculable, "iron_sword"),
         Err(WorkspaceError::Diff(_))
     ));
+}
+
+#[test]
+fn over_limit_typed_formulas_are_rejected_before_recursive_workspace_work() {
+    const CHILD_ENV: &str = "TACHIKO_OVER_LIMIT_WORKSPACE_CHILD";
+
+    if env::var_os(CHILD_ENV).is_some() {
+        let proposal_document = lifecycle_document();
+        assert!(matches!(
+            validate_field_value_suggestion(
+                &proposal_document,
+                FieldRef::new("iron_sword", "all_ops"),
+                Value::Formula(deeply_nested_expression(50_000)),
+            ),
+            Err(WorkspaceError::ExpressionComplexity { field, .. })
+                if field == FieldRef::new("iron_sword", "all_ops")
+        ));
+        let missing = FieldRef::new("iron_sword", "missing");
+        assert!(matches!(
+            validate_field_value_suggestion(
+                &proposal_document,
+                missing.clone(),
+                Value::Formula(deeply_nested_expression(50_000)),
+            ),
+            Err(WorkspaceError::MissingField { field }) if field == missing
+        ));
+
+        let mut document = lifecycle_document();
+        document
+            .entities
+            .get_mut("iron_sword")
+            .unwrap()
+            .fields
+            .insert(
+                FieldId::from("all_ops"),
+                Value::Formula(deeply_nested_expression(50_000)),
+            );
+
+        let mut generator = OneIdGenerator::new("steel_sword");
+        for result in [
+            duplicate_entity(&document, "iron_sword", "steel_sword", &mut generator),
+            rename_entity(&document, "iron_sword", "steel_sword"),
+            rename_schema(&document, "weapons", "equipment"),
+            rename_field(&document, "weapons", "damage", "power"),
+            remove_entity(&document, "shop"),
+            set_scalar(&document, &FieldAddress::new("iron_sword", "damage"), "41"),
+        ] {
+            assert!(matches!(
+                result,
+                Err(WorkspaceError::ExpressionComplexity { field, .. })
+                    if field == FieldRef::new("iron_sword", "all_ops")
+            ));
+        }
+
+        // Recursive drop is deliberately outside the contract being tested.
+        mem::forget(document);
+        return;
+    }
+
+    let status = Command::new(env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "over_limit_typed_formulas_are_rejected_before_recursive_workspace_work",
+        ])
+        .env(CHILD_ENV, "1")
+        .status()
+        .unwrap();
+
+    assert!(
+        status.success(),
+        "workspace mutations must reject hostile typed formulas without aborting the process: {status}"
+    );
 }

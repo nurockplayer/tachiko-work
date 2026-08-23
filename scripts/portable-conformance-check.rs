@@ -13,12 +13,14 @@ use tachiko_semantic_core::{
 use tachiko_storage::{from_str as storage_from_str, to_canonical_string};
 use tachiko_workspace_engine::calculate_fields;
 
-const CASE_COUNT: u32 = 24;
+const CASE_COUNT: u32 = 26;
 const VALUE: u32 = 0;
 const DIVISION_BY_ZERO: u32 = 1;
 const NON_FINITE: u32 = 2;
 const CYCLE: u32 = 3;
 const PROJECTION_FAILURE: u32 = 4;
+const CORPUS_DIGEST: u32 = 5;
+const NON_NUMERIC_REFERENCE: u32 = 6;
 const UNEXPECTED: u32 = 255;
 
 #[derive(Clone, Copy)]
@@ -130,6 +132,86 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
     hash
+}
+
+fn mix_hash(hash: &mut u64, bytes: &[u8]) {
+    for byte in bytes {
+        *hash ^= u64::from(*byte);
+        *hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+}
+
+fn next_random(seed: &mut u64) -> u64 {
+    *seed ^= *seed << 13;
+    *seed ^= *seed >> 7;
+    *seed ^= *seed << 17;
+    *seed
+}
+
+fn adversarial_numeric_corpus_record() -> Record {
+    const SAMPLE_COUNT: u64 = 4_096;
+
+    let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    let mut sampled = 0;
+    while sampled < SAMPLE_COUNT {
+        let bits = next_random(&mut seed);
+        let Ok(input) = Number::new(f64::from_bits(bits)) else {
+            continue;
+        };
+        let document = formula_document(
+            input,
+            Expression::Multiply {
+                left: Box::new(input_reference()),
+                right: Box::new(numeric(0.5)),
+            },
+        );
+        let calculated = calculated_record(&document);
+        let Ok(canonical) = to_canonical_string(&document) else {
+            return Record::failure(UNEXPECTED, sampled);
+        };
+
+        mix_hash(&mut hash, &calculated.class.to_le_bytes());
+        mix_hash(&mut hash, &calculated.bits.to_le_bytes());
+        mix_hash(&mut hash, &calculated.auxiliary.to_le_bytes());
+        mix_hash(&mut hash, canonical.as_bytes());
+        sampled += 1;
+    }
+
+    Record {
+        class: CORPUS_DIGEST,
+        bits: hash,
+        auxiliary: SAMPLE_COUNT,
+    }
+}
+
+fn schema_type_change_record() -> Record {
+    let mut document = formula_document(number(42.0), input_reference());
+    let schema = document.schemas.get_mut("schema-stable").unwrap();
+    schema
+        .fields
+        .get_mut("input-stable")
+        .unwrap()
+        .field_type = FieldType::Text;
+    let mut output_definition = schema.fields.remove("output-stable").unwrap();
+    output_definition.id = FieldId::from("a-output-stable");
+    schema
+        .fields
+        .insert(output_definition.id.clone(), output_definition);
+    let entity = document.entities.get_mut("entity-stable").unwrap();
+    let output_value = entity.fields.remove("output-stable").unwrap();
+    entity
+        .fields
+        .insert(FieldId::from("a-output-stable"), output_value);
+
+    match calculate(&document) {
+        Err(CalculationError::NonNumericReference { reference })
+            if reference == FieldRef::new("entity-stable", "input-stable") =>
+        {
+            Record::failure(NON_NUMERIC_REFERENCE, 1)
+        }
+        _ => Record::failure(UNEXPECTED, 25),
+    }
 }
 
 fn storage_record(input: &str, expected_bits: u64, expected_fingerprint: u64) -> Record {
@@ -338,6 +420,8 @@ fn case_record(index: u32) -> Record {
         21 => workspace_calculation_record(),
         22 => ai_formula_record(),
         23 => ai_suggestion_record(),
+        24 => adversarial_numeric_corpus_record(),
+        25 => schema_type_change_record(),
         _ => Record::failure(UNEXPECTED, 0),
     }
 }
