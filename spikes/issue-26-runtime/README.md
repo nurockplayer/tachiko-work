@@ -44,3 +44,11 @@ These mechanisms expose the pressure on a future adapter; they must not be
 treated as a frozen external API. See
 [`docs/research/2026-08-23-native-wasm-runtime-spike.md`](../../docs/research/2026-08-23-native-wasm-runtime-spike.md)
 for the evidence and recommendation.
+
+## Integration note
+
+The recorded benchmark values come from the original spike baseline. After PR
+#92 hardened formula/workspace production boundaries, this branch was updated
+only to trigger merge-time CI against the resulting current `main`; the
+measurements remain historical topology evidence rather than a new performance
+run.
