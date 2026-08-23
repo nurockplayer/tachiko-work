@@ -1071,9 +1071,15 @@ The detailed executable plan is
   including PR #100's 15 direct-JSON envelope cases, plus four
   `ValidationReport` records—and matches exact observations natively and on
   `wasm32-unknown-unknown`.
-- Final clean-commit release verification and independent exact-head ADR-0018
-  and ADR-0019/#89 review remain handoff gates after the maintainer fixes; every
-  P0/P1/P2 finding must be fixed before the updated branch is pushed.
+- The clean-commit release gate passes after all review fixes, including
+  formatting, the ADR-0016 dependency graph, warning-denied Clippy and rustdoc,
+  all 266 tests across 35 suites, exact native/WASM equality for 46 portable
+  records, Rust 1.85 MSRV, package/license policy, four product smokes, and
+  archive/tamper/interruption/concurrency checks.
+- Independent exact-head ADR-0018 and ADR-0019/#89 re-reviews confirm the
+  worklist and final survivor closure preserve #90 authority and direct failure
+  facts, stable observations remain correct, formula/storage sources match
+  main, and no actionable P0/P1/P2 findings remain.
 - Handoff is the focused PR #99 from `codex/issue-89-validation-report`. Its
   description records the ownership migration, stable report observations,
   formula-oracle evidence, validation/finalization separation, verification,
