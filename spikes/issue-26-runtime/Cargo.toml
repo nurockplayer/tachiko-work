@@ -1,0 +1,27 @@
+[package]
+name = "tachiko-issue-26-runtime-spike"
+version = "0.1.0"
+edition = "2024"
+publish = false
+rust-version = "1.85"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tachiko-workspace-engine = { path = "../../crates/workspace-engine" }
+thiserror = "2.0"
+
+[workspace]
+
+[lints.rust]
+# Exported symbol names are unsafe attributes in Rust 2024. The spike keeps
+# this allowance outside the production workspace; its ABI functions do not
+# dereference raw pointers.
+unsafe_code = "allow"
+
+[lints.clippy]
+all = "deny"
+pedantic = "warn"
