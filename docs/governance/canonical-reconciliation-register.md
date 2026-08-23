@@ -41,15 +41,16 @@ When this register marks a document as mixed-state, readers must respect the nar
 | ADR-0013 validated semantic entity lifecycle | Accepted for v0.1 lifecycle contract | Preview-first immutable mutation, typed relationship safety, and non-cascading removal remain authoritative. ADR-0015 supersedes only the parts that treat a human-facing entity identifier as durable identity. |
 | ADR-0014 bounded computational formula authoring | Accepted | Current bounded deterministic authoring workflow; deeper binding/numeric semantics are defined by Accepted ADR-0018 and owned by downstream implementation work. |
 | ADR-0015 stable semantic identity and mutable human keys | Accepted | Durable objects use stable opaque typed surrogate IDs independent of names, paths, presentation, and content. UUIDv7 is a preferred Provisional generator, not permanent semantic meaning. |
-| ADR-0016 Milestone 02 Rust crate layering | Accepted | Accepts the current eight-crate Milestone 02 baseline, evolves workflow into the shared workspace engine, and fixes forbidden dependency directions. #23–#26 may explicitly amend narrower crate/runtime seams when evidence requires it. |
+| ADR-0016 Milestone 02 Rust crate layering | Accepted | Accepts the current eight-crate Milestone 02 baseline, evolves workflow into the shared workspace engine, and fixes forbidden dependency directions. Narrower validation/API/runtime seams may be refined only through explicit Accepted decisions. |
 | ADR-0017 versioned storage DTOs, explicit migration, and canonical representation | Accepted | Storage owns immutable version-specific DTOs and explicit migrations; version-gated readers fail closed on unsupported/newer semantics; canonical output is version-defined and must preserve ADR-0018's Accepted numeric meaning. |
 | ADR-0018 bound formulas and deterministic finite binary64 semantics | Accepted | Stable-ID bound ASTs and partial authoring projection, atomic rename preservation of ADR-0014's byte limit, finite binary64 with one semantic zero, representation-admitted numeric conversion, deterministic arithmetic, static dependencies, recomputation equivalence, and persisted number spelling are current authority. |
+| ADR-0019 staged semantic validation and diagnostics | Accepted | Separates hard admission, diagnosable semantic candidates, deterministic full validation, semantic-ID diagnostic meaning, operation gating, and deterministic extension validators without introducing a validation framework or external transport contract. |
 
 ## Architecture and specification map
 
 | Artifact | Decision state | Implementation state | Open decision owner |
 | --- | --- | --- | --- |
-| `docs/architecture/document-model.md` | Accepted direction; detailed graph shape constrained by ADR-0015 and ADR-0018 | M02 stable identity/bound formula aggregate implemented; richer graph future | ADR-0015, ADR-0018, #23 |
+| `docs/architecture/document-model.md` | Accepted direction; detailed graph shape constrained by ADR-0015, ADR-0018, and ADR-0019 | M02 stable identity/bound formula aggregate implemented; richer graph future | ADR-0015, ADR-0018, ADR-0019, #13 |
 | `docs/architecture/unified-semantic-model.md` | Accepted direction | Partially implemented | ADR-0015, #13 |
 | `docs/architecture/rust-crate-architecture.md` | Accepted ADR-0016 boundary; exact Rust API remains Provisional | Eight-crate workspace-engine target implemented by #72 | ADR-0016, #10 |
 | `docs/architecture/ro-and-roproj-format.md` | Accepted direction constrained by ADR-0017 storage boundary | `.ro` direct JSON implemented; `.roproj` not implemented | ADR-0003, ADR-0017, #41, #43 |
@@ -59,6 +60,9 @@ When this register marks a document as mixed-state, readers must respect the nar
 | `docs/architecture/distributed-collaboration.md` | Hypothesis / Open Question | Not implemented | #12, #45, #46, #48-#50 |
 | `docs/architecture/rendering-system.md` | Hypothesis | Not current milestone | Designer MVP future work |
 | `docs/architecture/performance-model.md` | Provisional guidance | Mixed | Evidence-driven future work |
+| `docs/specs/schema-system.md` | Mixed: current durable declaration boundary Accepted under ADR-0015/ADR-0019; richer constraint vocabulary future | Current M02 type/required/reference declarations implemented | ADR-0015, ADR-0019, #13 |
+| `docs/specs/validation-engine.md` | Mixed: staged validation/candidate/full-oracle semantics Accepted under ADR-0019; exact APIs/incremental mechanisms Provisional | Partial: collected semantic diagnostics and strict finalization implemented; validation/finalization symmetry and complete formula failure oracle pending | ADR-0019, ADR-0018 |
+| `docs/specs/diagnostics-contract.md` | Mixed: semantic diagnostic stability rules Accepted under ADR-0019; exact Rust/wire/code catalog Provisional or Deferred | Partial: current diagnostics expose codes/path/message but not the complete semantic envelope | ADR-0019, #10, #26 |
 | `docs/specs/ro-format-and-roproj-spec.md` | Accepted direction with explicit current-state split | `.ro` direct JSON implemented; `.roproj` future | ADR-0003, ADR-0017 |
 | `docs/specs/storage-versioning-and-migration.md` | Mixed: Accepted invariants under ADR-0017; M02 wire mechanics Provisional where marked | Strict v1, deterministic migration, and direct-ro/v2 implemented | ADR-0017, #40 |
 | `docs/specs/canonical-json-profile.md` | Mixed: Accepted deterministic/semantic-preservation and admitted-token binary64 rules; exact M02 profile/resource limits version-specific | Implemented independent direct-ro/v2 writer | ADR-0017, ADR-0018, #40 |
@@ -66,7 +70,7 @@ When this register marks a document as mixed-state, readers must respect the nar
 | `docs/specs/ro-format-v2.md` | Mixed: Accepted ADR-0015/ADR-0017/ADR-0018 invariants; M02 wire/resource mechanics Provisional | Implemented current semantic writer | ADR-0015, ADR-0017, ADR-0018, #40 |
 | `docs/specs/roproj-format.md` | Accepted direction | Not implemented | ADR-0003, ADR-0017, #41 |
 | `docs/specs/roproj-layout-v1.md` | Provisional | Not implemented | #41 |
-| `docs/specs/formula-engine-spec.md` | Mixed: Accepted ADR-0014 authoring and ADR-0018 binding/projection, rename preflight, numeric, dependency, and recomputation rules; implementation mechanisms Provisional | Stable binding/projection, atomic rename preflight, normalized Number, static dependencies, and full calculation implemented; complete failure oracle/incremental evaluator pending | ADR-0018, #40 and later formula-engine work |
+| `docs/specs/formula-engine-spec.md` | Mixed: Accepted ADR-0014 authoring and ADR-0018 binding/projection, rename preflight, numeric, dependency, and recomputation rules; implementation mechanisms Provisional | Stable binding/projection, atomic rename preflight, normalized Number, static dependencies, and full calculation implemented; complete failure oracle/incremental evaluator pending | ADR-0018 and later formula-engine work |
 | `docs/specs/ai-agent-api.md` | Provisional implemented contract under ADR-0007 | Implemented v0.1 read/explain/suggest surface | #10, #27, #28 |
 | `docs/specs/collaboration-model.md` | Mixed: current merge Accepted, future collaboration Open Question | Merge implemented; broader collaboration future | ADR-0011, #12, #45, #46 |
 | `docs/specs/conflict-resolution.md` | Provisional around current merge; future conflict model Open Question | Partial | #46 |
@@ -111,10 +115,10 @@ A GitHub Issue is never automatically an Accepted decision. The table below clas
 - #25 storage DTO / migration boundary — durable architecture resolved by ADR-0017; the M02 implementation and conformance closure are complete through #40.
 - #37 format/version envelope — durable fail-closed/version-gated behavior resolved by ADR-0017 and `storage-versioning-and-migration.md`; the M02 implementation is complete through #40.
 - #38 canonical value encoding/order — structural/Unicode/order invariants are resolved by ADR-0017, exact numeric spelling by Accepted ADR-0018, and M02 implementation/conformance by #40.
-- #23 schema declaration, validation pipeline, diagnostics — Open Question.
+- #23 schema declaration, validation pipeline, diagnostics — resolved by Accepted ADR-0019; implementation/conformance follow-up remains separate from the decision issue.
 - #24 formula AST, binding, dependency graph, numeric semantics — resolved by Accepted ADR-0018, the reconciled formula/canonical JSON specifications, research record, and executed native/WASM evidence; the accepted M02 scope is implemented through #70/#40.
 - #26 native/WASM runtime boundary — Open Question.
-- #72 workflow-to-workspace-engine migration — implementation of ADR-0016 completed by the current focused change; it does not settle #10/#23/#26.
+- #72 workflow-to-workspace-engine migration — implementation of ADR-0016 completed by PR #85; it does not settle #10/#26.
 
 #40 is a completed implementation/evidence task that consumed ADR-0015,
 ADR-0017, and Accepted ADR-0018 without inventing format semantics.
@@ -148,7 +152,7 @@ ADR-0017, and Accepted ADR-0018 without inventing format semantics.
 3. Current direct `.ro` persistence is explicitly separated from the accepted longer-term `.roproj` source / `.ro` portable-artifact architecture.
 4. ADR-0015 separates durable semantic identity from mutable human keys and partially supersedes ADR-0013's rename-as-ID-replacement semantics while preserving ADR-0013 as v0.1 implementation history.
 5. UUIDv7 is the preferred Provisional normal creation generator, not permanent semantic meaning.
-6. ADR-0016 accepts the current Milestone 02 crate layering baseline and forbidden dependency directions while leaving #23–#26 narrower seams amendable through later Accepted decisions.
+6. ADR-0016 accepts the current Milestone 02 crate layering baseline and forbidden dependency directions while leaving narrower validation/API/runtime seams to later explicit Accepted decisions.
 7. ADR-0017 separates semantic types from storage-owned version DTOs, requires explicit version-gated migration, rejects silent unknown/newer interpretation, and makes canonical bytes version-defined rather than serializer-defined.
 8. Direct `.ro` JSON v1 is an immutable legacy compatibility/migration
    profile. Identity-aware direct `.ro` v2 is implemented in that namespace;
@@ -167,15 +171,26 @@ ADR-0017, and Accepted ADR-0018 without inventing format semantics.
 16. #72 evolves workflow in place into the single workspace-engine application
    boundary, reduces AI to `ai-api → workspace-engine`, reduces CLI to
    `cli → workspace-engine, storage`, and preserves storage as a sibling.
+17. ADR-0019 resolves #23 by separating hard admission from diagnosable semantic
+   candidates, accepting one staged full-validation oracle and semantic-ID
+   diagnostics, keeping severity distinct from operation gates, preserving
+   storage-local failure ownership, and finding no evidence for a new
+   validation/diagnostics crate.
 
 ## Current research queue
 
-The ordered #70 → #40 → #72 Core & Format Hardening sequence is complete.
-Remaining #23 schema/diagnostics and #26 host/runtime work continues only
-within its separately accepted boundaries; this register does not pre-decide
-their contracts or introduce a new ordering.
+The ordered #70 → #40 → #72 Core & Format Hardening implementation sequence is
+complete, and #23's validation/diagnostics architecture is resolved by
+ADR-0019. Implementation should now close ADR-0019 conformance gaps without
+stabilizing external transport.
 
-Parallel implementation is allowed where it does not freeze unresolved #23/#26 semantics. If implementation discovers pressure that contradicts an Accepted ADR, return to an explicit amendment/reconciliation rather than hiding the change in code.
+#10 remains the next external-interface decision. #26 builds on #10 plus the
+Accepted crate/validation boundaries and continues to own resident runtime,
+Web Worker, IPC/FFI, and host capability mechanics. #13 remains separately open
+for progressive/freeform typing.
+
+If implementation discovers pressure that contradicts an Accepted ADR, return
+to an explicit amendment/reconciliation rather than hiding the change in code.
 
 ## Founder escalation boundary
 
