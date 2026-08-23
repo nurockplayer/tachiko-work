@@ -124,5 +124,5 @@
 - [x] Run the complete bash scripts/release-check.sh gate from a clean committed tree.
 - [x] Dispatch two independent read-only reviews: one against ADR-0018 and one against ADR-0019 plus Issue #89.
 - [x] Fix every P0/P1/P2 finding and rerun affected focused tests plus the release-equivalent gate.
-- [ ] Commit atomic implementation milestones and push codex/issue-89-validation-report.
-- [ ] Open one focused unmerged PR documenting before/after ownership, stable observations, formula-oracle evidence, semantic/finalization reconciliation, native/WASM and release-gate results, explicit #10/#13/#17/#26/#41 deferrals, and Closes #89.
+- [x] Commit atomic implementation milestones and push codex/issue-89-validation-report.
+- [x] Open one focused unmerged PR documenting before/after ownership, stable observations, formula-oracle evidence, semantic/finalization reconciliation, native/WASM and release-gate results, explicit #10/#13/#17/#26/#41 deferrals, and Closes #89.

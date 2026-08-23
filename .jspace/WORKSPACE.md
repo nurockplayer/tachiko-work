@@ -1054,3 +1054,5 @@ The detailed executable plan is
   P0/P1/P2. The complete release-equivalent gate passes, including Clippy,
   Rustdoc, MSRV, packaging, four workflow smokes, native archive verification,
   and publication-safety checks.
+- Handoff is PR #99 from `codex/issue-89-validation-report`; GitHub CI and
+  CodeRabbit are green, and the PR remains open and unmerged.
