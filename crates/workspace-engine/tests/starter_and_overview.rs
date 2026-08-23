@@ -142,15 +142,16 @@ fn overview_rejects_duplicate_human_keys_as_an_invalid_document() {
 
         let error = overview(&document)
             .expect_err("overview should reject directly constructed duplicate human keys");
-        let WorkspaceError::InvalidDocument { diagnostics, .. } = error else {
+        let WorkspaceError::InvalidDocument { report, .. } = error else {
             panic!("{category}: expected InvalidDocument, got {error:?}");
         };
         assert_eq!(
-            diagnostics
+            report
+                .diagnostics()
                 .iter()
                 .map(|diagnostic| diagnostic.code)
                 .collect::<Vec<_>>(),
-            [DiagnosticCode::DuplicateKey],
+            [DiagnosticCode::DUPLICATE_KEY],
             "{category}"
         );
     }

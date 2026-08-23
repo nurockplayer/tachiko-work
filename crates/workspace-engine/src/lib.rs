@@ -6,23 +6,84 @@ use serde::Serialize;
 use tachiko_diff_engine::diff;
 pub use tachiko_diff_engine::{DiffError, SemanticChange, SemanticDiff};
 use tachiko_formula_engine::{
-    Calculation, FormulaBindError, FormulaParseError, bind_expression, calculate, parse_expression,
-    project_expression, validate_expression_structure,
+    Calculation, CalculationOutcome, FormulaBindError, FormulaFailure, FormulaParseError,
+    bind_expression, calculate_full, parse_expression, project_expression,
+    validate_expression_structure,
 };
 pub use tachiko_formula_engine::{
     CalculationError, CanonicalAuthoringProjectionError, ExpressionComplexityError,
 };
 pub use tachiko_merge_engine::{MergeConflict, MergeValue};
-use tachiko_merge_engine::{MergeError, MergeOutcome, merge};
+use tachiko_merge_engine::{MergeOutcome, merge};
 use tachiko_semantic_core::{
-    AddressIndex, AddressIndexError, is_valid_identifier, validate_document,
+    AddressIndex, AddressIndexError, is_valid_identifier, validate_document_core,
 };
 pub use tachiko_semantic_core::{
-    Diagnostic, Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldAddress,
-    FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey,
-    Value,
+    Diagnostic, DiagnosticCode, DiagnosticFact, DiagnosticLocation, DiagnosticProvider,
+    DiagnosticSeverity, Document, DocumentId, Entity, EntityId, EntityKey, Expression,
+    FieldAddress, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, Number, Schema,
+    SchemaId, SchemaKey, SemanticSubject, StableDiagnosticObservation, Value,
 };
 use thiserror::Error;
+
+/// Symbolic codes emitted by workspace composition of formula-engine outcomes.
+///
+/// The catalog is internal and provisional under ADR-0019; code meanings are
+/// stable observations and do not depend on Rust enum ordinals.
+pub mod diagnostic_codes {
+    use tachiko_semantic_core::DiagnosticCode;
+
+    pub const FORMULA_STRUCTURAL: DiagnosticCode = DiagnosticCode::new("formula.invalid_structure");
+    pub const FORMULA_INVALID_REFERENCES: DiagnosticCode =
+        DiagnosticCode::new("formula.invalid_references");
+    pub const FORMULA_CYCLE: DiagnosticCode = DiagnosticCode::new("formula.cycle");
+    pub const FORMULA_FAILED_DEPENDENCY: DiagnosticCode =
+        DiagnosticCode::new("formula.failed_dependency");
+    pub const FORMULA_MISSING_INPUT: DiagnosticCode = DiagnosticCode::new("formula.missing_input");
+    pub const FORMULA_NON_NUMERIC_INPUT: DiagnosticCode =
+        DiagnosticCode::new("formula.non_numeric_input");
+    pub const FORMULA_DIVISION_BY_ZERO: DiagnosticCode =
+        DiagnosticCode::new("formula.division_by_zero");
+    pub const FORMULA_NON_FINITE_RESULT: DiagnosticCode =
+        DiagnosticCode::new("formula.non_finite_result");
+}
+
+/// Authoritative first-party semantic validation result for one snapshot.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ValidationReport {
+    diagnostics: Vec<Diagnostic>,
+}
+
+impl ValidationReport {
+    fn new(mut diagnostics: Vec<Diagnostic>) -> Self {
+        diagnostics.sort();
+        diagnostics.dedup_by(|left, right| left.stable_observation() == right.stable_observation());
+        Self { diagnostics }
+    }
+
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        self.diagnostics.is_empty()
+    }
+
+    #[must_use]
+    pub fn diagnostics(&self) -> &[Diagnostic] {
+        &self.diagnostics
+    }
+
+    #[must_use]
+    pub fn stable_observations(&self) -> Vec<StableDiagnosticObservation> {
+        self.diagnostics
+            .iter()
+            .map(Diagnostic::stable_observation)
+            .collect()
+    }
+
+    #[must_use]
+    pub fn into_diagnostics(self) -> Vec<Diagnostic> {
+        self.diagnostics
+    }
+}
 
 /// A useful starting point for a newly-created semantic document.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -246,7 +307,7 @@ pub enum WorkspaceError {
     #[error("edit would make the document invalid: {summary}")]
     InvalidDocument {
         summary: String,
-        diagnostics: Vec<Diagnostic>,
+        report: ValidationReport,
     },
     #[error("'{field}' already has that value")]
     NoChange { field: FieldRef },
@@ -254,8 +315,6 @@ pub enum WorkspaceError {
     Calculation(#[from] CalculationError),
     #[error("could not compare edited document: {0}")]
     Diff(#[from] DiffError),
-    #[error("could not merge documents: {0}")]
-    Merge(#[from] MergeError),
 }
 
 /// Create a document through the host-supplied stable-ID boundary.
@@ -275,9 +334,8 @@ pub fn create_document(
         StarterTemplate::GameBalance => game_balance_document(document_id, title, generator)?,
         StarterTemplate::Empty => Document::empty(document_id, title),
     };
-    validate_candidate(&document)?;
+    require_validated_calculation(&document)?;
     preflight_formula_projections(&document)?;
-    calculate(&document)?;
     Ok(document)
 }
 
@@ -288,8 +346,7 @@ pub fn create_document(
 ///
 /// Returns the shared semantic or calculation failure for this snapshot.
 pub fn validate(document: &Document) -> Result<(), WorkspaceError> {
-    validate_candidate(document)?;
-    calculate(document)?;
+    require_validated_calculation(document)?;
     Ok(())
 }
 
@@ -299,8 +356,7 @@ pub fn validate(document: &Document) -> Result<(), WorkspaceError> {
 ///
 /// Returns a semantic, address-projection, or calculation failure.
 pub fn calculate_fields(document: &Document) -> Result<Vec<CalculatedField>, WorkspaceError> {
-    validate_candidate(document)?;
-    let calculation = calculate(document)?;
+    let calculation = require_validated_calculation(document)?;
     let index = AddressIndex::build(document)?;
     let mut fields = calculation
         .values()
@@ -326,6 +382,8 @@ pub fn compare_documents(
     before: &Document,
     after: &Document,
 ) -> Result<SemanticDiff, WorkspaceError> {
+    require_validated_calculation(before)?;
+    require_validated_calculation(after)?;
     Ok(diff(before, after)?)
 }
 
@@ -338,13 +396,13 @@ pub fn analyze_formula(
     document: &Document,
     field: &FieldRef,
 ) -> Result<FormulaAnalysis, WorkspaceError> {
+    let calculation = require_validated_calculation(document)?;
     let value = field_value(document, field)?;
     let Value::Formula(expression) = value else {
         return Err(WorkspaceError::NotFormula {
             field: field.clone(),
         });
     };
-    let calculation = calculate(document)?;
     let value = calculation
         .value(field)
         .ok_or_else(|| WorkspaceError::MissingCalculation {
@@ -384,8 +442,7 @@ pub fn validate_field_value_suggestion(
             return Err(error);
         }
     };
-    validate_candidate(&candidate)?;
-    calculate(&candidate)?;
+    require_validated_calculation(&candidate)?;
     Ok(ValidatedFieldValue { field, value })
 }
 
@@ -399,8 +456,13 @@ pub fn merge_documents(
     ours: &Document,
     theirs: &Document,
 ) -> Result<WorkspaceMergeOutcome, WorkspaceError> {
-    match merge(base, ours, theirs)? {
+    require_validated_calculation(base)?;
+    require_validated_calculation(ours)?;
+    require_validated_calculation(theirs)?;
+    match merge(base, ours, theirs) {
         MergeOutcome::Merged(document) => {
+            require_validated_calculation(&document)?;
+            preflight_formula_projections(&document)?;
             let diff = diff(base, &document)?;
             Ok(WorkspaceMergeOutcome::Merged(Box::new(EditPreview {
                 document,
@@ -418,8 +480,7 @@ pub fn merge_documents(
 ///
 /// Returns a semantic lookup or calculation failure.
 pub fn runtime_export(document: &Document) -> Result<RuntimeExport, WorkspaceError> {
-    validate_candidate(document)?;
-    let calculation = calculate(document)?;
+    let calculation = require_validated_calculation(document)?;
     let mut entities = BTreeMap::new();
 
     for (entity_id, entity) in &document.entities {
@@ -468,8 +529,7 @@ pub fn runtime_export(document: &Document) -> Result<RuntimeExport, WorkspaceErr
 ///
 /// Returns an error if semantic addresses or formulas are invalid.
 pub fn overview(document: &Document) -> Result<DocumentOverview, WorkspaceError> {
-    validate_candidate(document)?;
-    let calculation = calculate(document)?;
+    let calculation = require_validated_calculation(document)?;
     let mut formula_count = 0;
     let mut entities = Vec::new();
 
@@ -563,9 +623,9 @@ pub fn explain_field(
     document: &Document,
     address: &FieldAddress,
 ) -> Result<FieldExplanation, WorkspaceError> {
+    let calculation = require_validated_calculation(document)?;
     let field = document.resolve_field(address)?;
     let value = field_value(document, &field)?;
-    let calculation = calculate(document)?;
     let display_value = calculation
         .value(&field)
         .map_or_else(|| format_value(document, value), format_number);
@@ -1071,9 +1131,8 @@ fn value_matches_type(value: &Value, field_type: &FieldType) -> bool {
 }
 
 fn finalize_edit(document: &Document, edited: Document) -> Result<EditPreview, WorkspaceError> {
-    validate_candidate(&edited)?;
+    require_validated_calculation(&edited)?;
     preflight_formula_projections(&edited)?;
-    calculate(&edited)?;
     let semantic_diff = diff(document, &edited)?;
     Ok(EditPreview {
         document: edited,
@@ -1081,15 +1140,240 @@ fn finalize_edit(document: &Document, edited: Document) -> Result<EditPreview, W
     })
 }
 
-fn validate_candidate(document: &Document) -> Result<(), WorkspaceError> {
-    let diagnostics = validate_document(document);
-    if diagnostics.is_empty() {
-        Ok(())
+/// Build the authoritative full semantic validation report.
+#[must_use]
+pub fn validation_report(document: &Document) -> ValidationReport {
+    semantic_validation(document).0
+}
+
+fn semantic_validation(document: &Document) -> (ValidationReport, Option<Calculation>) {
+    let mut diagnostics = validate_document_core(document);
+    let core_diagnostics = diagnostics.clone();
+    let calculation = match calculate_full(document) {
+        CalculationOutcome::Complete(calculation) => Some(calculation),
+        CalculationOutcome::Failed(failures) => {
+            diagnostics.extend(formula_diagnostics(
+                document,
+                failures.failures(),
+                &core_diagnostics,
+            ));
+            None
+        }
+    };
+    let report = ValidationReport::new(diagnostics);
+    if report.is_valid() {
+        (report, calculation)
     } else {
-        Err(WorkspaceError::InvalidDocument {
-            summary: format_diagnostics(&diagnostics),
-            diagnostics,
-        })
+        (report, None)
+    }
+}
+
+fn require_validated_calculation(document: &Document) -> Result<Calculation, WorkspaceError> {
+    let (report, calculation) = semantic_validation(document);
+    if !report.is_valid() {
+        return Err(invalid_document(report));
+    }
+    Ok(calculation.expect("a diagnostic-free formula outcome is complete"))
+}
+
+fn invalid_document(report: ValidationReport) -> WorkspaceError {
+    WorkspaceError::InvalidDocument {
+        summary: format_diagnostics(report.diagnostics()),
+        report,
+    }
+}
+
+const FORMULA_PROVIDER: DiagnosticProvider = DiagnosticProvider::new("tachiko.formula-engine");
+
+fn formula_diagnostics(
+    document: &Document,
+    failures: &BTreeMap<FieldRef, FormulaFailure>,
+    core_diagnostics: &[Diagnostic],
+) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+    let mut emitted_cycles = BTreeSet::new();
+    for (formula, failure) in failures {
+        if !formula_prerequisites_available(formula, core_diagnostics) {
+            continue;
+        }
+        let subject = SemanticSubject::EntityField(formula.clone());
+        let path = formula_path(document, formula);
+        let diagnostic = match failure {
+            FormulaFailure::Structural { error } => formula_diagnostic(
+                diagnostic_codes::FORMULA_STRUCTURAL,
+                vec![subject],
+                path,
+                format!("formula '{formula}' violates the bound expression contract"),
+            )
+            .with_fact(DiagnosticFact::new(
+                "limit",
+                match error {
+                    ExpressionComplexityError::NodeLimit => "node_limit",
+                    ExpressionComplexityError::DepthLimit => "depth_limit",
+                    ExpressionComplexityError::CanonicalLengthLimit => "canonical_length_limit",
+                },
+            )),
+            FormulaFailure::InvalidReferences {
+                missing,
+                non_numeric,
+            } => invalid_reference_diagnostic(formula, subject, path, missing, non_numeric),
+            FormulaFailure::Cycle { members } => {
+                if !emitted_cycles.insert(members.clone()) {
+                    continue;
+                }
+                formula_diagnostic(
+                    diagnostic_codes::FORMULA_CYCLE,
+                    members
+                        .iter()
+                        .cloned()
+                        .map(SemanticSubject::EntityField)
+                        .collect(),
+                    path,
+                    format!("formula dependency cycle contains {} values", members.len()),
+                )
+            }
+            FormulaFailure::FailedDependency { dependencies } => formula_diagnostic(
+                diagnostic_codes::FORMULA_FAILED_DEPENDENCY,
+                vec![subject],
+                path,
+                format!("formula '{formula}' directly depends on failed values"),
+            )
+            .with_related_subjects(
+                dependencies
+                    .iter()
+                    .cloned()
+                    .map(SemanticSubject::EntityField)
+                    .collect(),
+            ),
+            FormulaFailure::MissingInput { reference } => formula_diagnostic(
+                diagnostic_codes::FORMULA_MISSING_INPUT,
+                vec![subject],
+                path,
+                format!("formula '{formula}' requires a missing input"),
+            )
+            .with_related_subjects(vec![SemanticSubject::EntityField(reference.clone())]),
+            FormulaFailure::NonNumericInput { reference } => formula_diagnostic(
+                diagnostic_codes::FORMULA_NON_NUMERIC_INPUT,
+                vec![subject],
+                path,
+                format!("formula '{formula}' requires a numeric input"),
+            )
+            .with_related_subjects(vec![SemanticSubject::EntityField(reference.clone())])
+            .with_fact(DiagnosticFact::new("expected_kind", "number"))
+            .with_fact(DiagnosticFact::new(
+                "actual_kind",
+                value_kind_at(document, reference),
+            )),
+            FormulaFailure::DivisionByZero => formula_diagnostic(
+                diagnostic_codes::FORMULA_DIVISION_BY_ZERO,
+                vec![subject],
+                path,
+                format!("formula '{formula}' divided by zero"),
+            ),
+            FormulaFailure::NonFiniteResult => formula_diagnostic(
+                diagnostic_codes::FORMULA_NON_FINITE_RESULT,
+                vec![subject],
+                path,
+                format!("formula '{formula}' produced a non-finite result"),
+            ),
+        };
+        diagnostics.push(diagnostic);
+    }
+    diagnostics
+}
+
+fn invalid_reference_diagnostic(
+    formula: &FieldRef,
+    subject: SemanticSubject,
+    path: String,
+    missing: &BTreeSet<FieldRef>,
+    non_numeric: &BTreeSet<FieldRef>,
+) -> Diagnostic {
+    let related = missing
+        .union(non_numeric)
+        .cloned()
+        .map(SemanticSubject::EntityField)
+        .collect();
+    let mut diagnostic = formula_diagnostic(
+        diagnostic_codes::FORMULA_INVALID_REFERENCES,
+        vec![subject],
+        path,
+        format!("formula '{formula}' has invalid stable references"),
+    )
+    .with_related_subjects(related);
+    for target in missing {
+        diagnostic = diagnostic.with_fact(DiagnosticFact::new(
+            "missing_target",
+            field_ref_fact(target),
+        ));
+    }
+    for target in non_numeric {
+        diagnostic = diagnostic.with_fact(DiagnosticFact::new(
+            "non_numeric_target",
+            field_ref_fact(target),
+        ));
+    }
+    diagnostic
+}
+
+fn formula_diagnostic(
+    code: DiagnosticCode,
+    subjects: Vec<SemanticSubject>,
+    path: String,
+    message: String,
+) -> Diagnostic {
+    Diagnostic::new(code, DiagnosticSeverity::Error, subjects, FORMULA_PROVIDER)
+        .with_presentation(path, message)
+}
+
+fn formula_prerequisites_available(formula: &FieldRef, core_diagnostics: &[Diagnostic]) -> bool {
+    let entity = SemanticSubject::Entity(formula.entity.clone());
+    let field = SemanticSubject::EntityField(formula.clone());
+    !core_diagnostics.iter().any(|diagnostic| {
+        let blocks_entity = diagnostic.code == DiagnosticCode::MISSING_SCHEMA
+            || diagnostic.code == DiagnosticCode::EMPTY_STABLE_ID
+            || diagnostic.code == DiagnosticCode::KEY_MISMATCH;
+        let blocks_field = diagnostic.code == DiagnosticCode::UNEXPECTED_FIELD
+            || diagnostic.code == DiagnosticCode::TYPE_MISMATCH
+            || diagnostic.code == DiagnosticCode::EMPTY_STABLE_ID
+            || diagnostic.code == DiagnosticCode::KEY_MISMATCH;
+        (blocks_entity && diagnostic.subjects.contains(&entity))
+            || (blocks_field && diagnostic.subjects.contains(&field))
+    })
+}
+
+fn formula_path(document: &Document, formula: &FieldRef) -> String {
+    AddressIndex::build(document)
+        .ok()
+        .and_then(|index| index.field_address(document, formula).ok())
+        .map_or_else(
+            || format!("entities.{}.fields.{}", formula.entity, formula.field),
+            |address| format!("formulas.{address}"),
+        )
+}
+
+fn field_ref_fact(field: &FieldRef) -> String {
+    format!(
+        "{}:{}{}:{}",
+        field.entity.as_str().len(),
+        field.entity,
+        field.field.as_str().len(),
+        field.field
+    )
+}
+
+fn value_kind_at(document: &Document, field: &FieldRef) -> &'static str {
+    match document
+        .entities
+        .get(&field.entity)
+        .and_then(|entity| entity.fields.get(&field.field))
+    {
+        Some(Value::Number(_)) => "number",
+        Some(Value::Text(_)) => "text",
+        Some(Value::Boolean(_)) => "boolean",
+        Some(Value::Reference(_)) => "reference",
+        Some(Value::Formula(_)) => "formula",
+        None => "missing",
     }
 }
 

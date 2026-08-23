@@ -1,0 +1,128 @@
+# ADR-0019 Validation Report and Semantic Diagnostics Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (- [ ]) syntax for tracking.
+
+**Goal:** Implement Issue #89 as the first authoritative first-party semantic ValidationReport and complete ADR-0018 formula failure oracle, while preserving ADR-0016 layering and keeping operation-specific projection/output gates distinct from semantic validity.
+
+**Architecture:** semantic-core owns only generic diagnostic, location, stable-subject, fact, severity, and opaque provider primitives plus its existing core validation rules. formula-engine owns a full deterministic node-keyed calculation outcome and retains calculate only as a compatibility projection of that outcome. workspace-engine composes core semantic diagnostics and formula failures into the single authoritative ValidationReport, while finalizers apply any additional projection/output preflight as explicitly separate gates. Adapters render or transport the report without becoming semantic authorities.
+
+**Tech Stack:** Rust 2024, Cargo workspace, Bash/Node verification scripts, Rust 1.85 MSRV, wasm32-unknown-unknown.
+
+**Spec:** GitHub Issue #89; Accepted ADR-0015 through ADR-0019; docs/specs/validation-engine.md, diagnostics-contract.md, formula-engine-spec.md, and schema-system.md; docs/governance/knowledge-authority.md and canonical-reconciliation-register.md.
+
+## Global constraints
+
+- Start from origin/main 342f69f2fc252554c240650d1438cc0d6cd82e2f on branch codex/issue-89-validation-report.
+- Keep semantic-core diagnostic primitives generic. Provider identity is opaque and internal; semantic-core must not encode formula-engine or higher-layer taxonomies.
+- Make the ADR-0018 full formula outcome authoritative. Compatibility calculate behavior must be derived from it.
+- Stable observations are diagnostic meaning, classification/severity, stable semantic subjects and related subjects/facts, provider identity, and deterministic ordering.
+- Human paths, messages, spans, human keys, and cycle witnesses are presentation only.
+- Preserve all-or-nothing Calculation publication and native/WASM equality.
+- Keep shared semantic validation separate from additional authoring projection, finalization, export, and output gates.
+- Preserve ADR-0016 crate layering and storage/numeric behavior.
+- Do not stabilize #10 contracts, design #26 transport/runtime, solve #13 progressive typing, design #17 plugins, start #41 roproj, add a common diagnostics crate, or introduce a constraint DSL.
+
+## Audited ownership before migration
+
+- semantic-core owns the current fail-accumulating document validator, but its Diagnostic identity is effectively path-first and lacks severity, stable subjects, facts, and provider provenance.
+- formula-engine owns parsing, binding, dependency extraction, and evaluation, but calculate is fail-first and exposes a DFS cycle witness rather than a complete node-keyed failure oracle.
+- workspace-engine repeats validate-then-calculate sequencing across first-party operations and separately applies formula projection preflight in authoring/finalization paths.
+- merge-engine, AI, CLI, storage, and the portable harness consume legacy validation or calculation surfaces. Storage representation checks remain out of scope; adapters must consume the workspace report without taking ownership.
+- The clean base passes 219 workspace tests across 29 suites.
+
+---
+
+### Task 1: Add generic semantic diagnostic primitives
+
+**Files:**
+- Create: crates/semantic-core/src/diagnostic.rs
+- Modify: crates/semantic-core/src/lib.rs
+- Modify: crates/semantic-core/src/validation.rs
+- Create: crates/semantic-core/tests/diagnostic_contract.rs
+- Modify: crates/semantic-core/tests/validation.rs
+
+- [ ] Write compile-failing tests for severity, opaque provider identity, stable semantic subjects, related subjects/facts, presentation-independent stable observations, and deterministic diagnostic ordering.
+- [ ] Run the focused semantic-core tests and capture RED.
+- [ ] Add minimal generic primitives without any formula or workspace dependency/taxonomy.
+- [ ] Refactor core diagnostics to stable codes and subjects while preserving human path/message rendering.
+- [ ] Expose a core semantic-validation pass suitable for workspace composition while retaining the legacy validate_document compatibility behavior needed by current storage consumers.
+- [ ] Run semantic-core tests and capture GREEN.
+
+### Task 2: Implement the authoritative ADR-0018 full formula outcome
+
+**Files:**
+- Modify: crates/formula-engine/src/lib.rs
+- Create: crates/formula-engine/tests/full_failure_oracle.rs
+- Modify: crates/formula-engine/tests/calculation.rs
+
+- [ ] Write failing tests for independent structural and binding failures, precedence, complete SCC membership, multi-node SCCs, directly failed dependencies, local evaluation failures, deterministic node ordering, and all-or-nothing Calculation publication.
+- [ ] Run the focused formula tests and capture RED.
+- [ ] Introduce a full calculation outcome with failures keyed by stable FieldRef subjects and dependencies represented as deterministic stable sets.
+- [ ] Build structural/binding failures first, detect complete SCC semantic membership without exposing an algorithm or witness rule, then propagate direct failed dependencies before local evaluation.
+- [ ] Publish Calculation only when every formula node succeeds.
+- [ ] Reimplement calculate as a deterministic compatibility projection of the full outcome.
+- [ ] Preserve stack safety and run all formula-engine tests GREEN.
+
+### Task 3: Compose one authoritative workspace ValidationReport
+
+**Files:**
+- Modify: crates/workspace-engine/src/lib.rs
+- Create: crates/workspace-engine/tests/validation_report.rs
+- Modify: crates/workspace-engine/tests/application_boundary.rs
+- Modify: crates/workspace-engine/tests/workspace.rs
+
+- [ ] Write failing tests for independent accumulation, prerequisite/cascade suppression, stable subjects across human-key rename, multi-subject duplicate/cycle/dependency diagnostics, deterministic ordering, and ValidationReport stable observations.
+- [ ] Write failing reconciliation tests proving shared semantic failures agree across validate and finalization while a semantically valid but unprojectable document fails an explicitly operation-specific gate.
+- [ ] Run focused workspace tests and capture RED.
+- [ ] Add ValidationReport and a single internal semantic validation orchestration that composes core diagnostics with the full formula outcome.
+- [ ] Map formula failures into generic diagnostics with opaque formula-validator provenance owned by workspace composition, stable primary/related subjects and machine facts, and presentation-only messages/paths.
+- [ ] Apply deterministic semantic ordering and explicit cascade suppression.
+- [ ] Make first-party semantic operations consume the shared outcome and keep projection/output preflight visibly separate in authoring/finalization paths.
+- [ ] Update WorkspaceError to carry the authoritative report without duplicating diagnostic authority.
+- [ ] Run all workspace-engine tests GREEN.
+
+### Task 4: Reconcile direct consumers and adapter boundaries
+
+**Files:**
+- Modify as required: crates/merge-engine/src/lib.rs and tests
+- Modify: crates/ai-api/src/lib.rs and tests
+- Modify: crates/cli/src/main.rs and tests
+- Modify as required: crates/diff-engine tests
+
+- [ ] Add failing adapter tests that assert typed report-derived behavior rather than presentation paths or cycle witnesses.
+- [ ] Remove only duplicate semantic orchestration whose ADR-0016 ownership is unambiguous; retain pure merge/diff/formula algorithms in their owning crates.
+- [ ] Keep storage representation validation unchanged and preserve CLI/AI presentation boundaries.
+- [ ] Run focused AI, CLI, merge, and diff tests GREEN.
+
+### Task 5: Extend portable native/WASM conformance
+
+**Files:**
+- Modify: scripts/portable-conformance-check.rs
+- Modify as required: scripts/portable-conformance-check.sh
+
+- [ ] Add stable observation records for independent diagnostics, rename-invariant subjects, complete SCC membership, direct failed dependencies, precedence, and all-or-nothing failure.
+- [ ] Remove DFS-witness/path identity from portable oracles.
+- [ ] Run bash scripts/portable-conformance-check.sh and require exact native/WASM equality.
+
+### Task 6: Reconcile implementation-state documentation
+
+**Files:**
+- Modify: .jspace/WORKSPACE.md
+- Modify: docs/specs/validation-engine.md
+- Modify: docs/specs/diagnostics-contract.md
+- Modify: docs/specs/formula-engine-spec.md
+- Modify: docs/governance/canonical-reconciliation-register.md
+- Modify only if required by existing policy: CHANGELOG.md
+
+- [ ] Record before/after ownership, the implemented stable observation surface, formula oracle completion, validation/finalization separation, conformance evidence, and explicit deferrals.
+- [ ] Keep Accepted ADR text authoritative and avoid public wire/API commitments.
+- [ ] Run docs consistency checks.
+
+### Task 7: Verify, independently review, and hand off
+
+- [ ] Run formatting and focused lint/tests.
+- [ ] Run the complete bash scripts/release-check.sh gate from a clean committed tree.
+- [ ] Dispatch two independent read-only reviews: one against ADR-0018 and one against ADR-0019 plus Issue #89.
+- [ ] Fix every P0/P1/P2 finding and rerun affected focused tests plus the release-equivalent gate.
+- [ ] Commit atomic implementation milestones and push codex/issue-89-validation-report.
+- [ ] Open one focused unmerged PR documenting before/after ownership, stable observations, formula-oracle evidence, semantic/finalization reconciliation, native/WASM and release-gate results, explicit #10/#13/#17/#26/#41 deferrals, and Closes #89.

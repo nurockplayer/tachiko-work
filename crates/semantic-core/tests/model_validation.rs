@@ -83,7 +83,7 @@ fn missing_required_field_is_rejected() {
     let diagnostics = validate_document(&document);
 
     assert!(diagnostics.iter().any(|diagnostic| {
-        diagnostic.code == DiagnosticCode::MissingRequiredField
+        diagnostic.code == DiagnosticCode::MISSING_REQUIRED_FIELD
             && diagnostic.path == "entities.sword.fields.name"
     }));
 }
@@ -101,7 +101,7 @@ fn wrong_value_kind_is_rejected() {
     let diagnostics = validate_document(&document);
 
     assert!(diagnostics.iter().any(|diagnostic| {
-        diagnostic.code == DiagnosticCode::TypeMismatch
+        diagnostic.code == DiagnosticCode::TYPE_MISMATCH
             && diagnostic.path == "entities.sword.fields.damage"
     }));
 }
@@ -117,7 +117,7 @@ fn broken_typed_reference_is_rejected() {
     let diagnostics = validate_document(&document);
 
     assert!(diagnostics.iter().any(|diagnostic| {
-        diagnostic.code == DiagnosticCode::MissingReference
+        diagnostic.code == DiagnosticCode::MISSING_REFERENCE
             && diagnostic.path == "entities.sword.fields.upgrade_from"
     }));
 }
@@ -150,7 +150,7 @@ fn reference_to_wrong_schema_is_rejected() {
     let diagnostics = validate_document(&document);
 
     assert!(diagnostics.iter().any(|diagnostic| {
-        diagnostic.code == DiagnosticCode::ReferenceTypeMismatch
+        diagnostic.code == DiagnosticCode::REFERENCE_TYPE_MISMATCH
             && diagnostic.path == "entities.sword.fields.upgrade_from"
     }));
 }
@@ -163,7 +163,7 @@ fn map_key_and_semantic_id_must_match() {
     let diagnostics = validate_document(&document);
 
     assert!(diagnostics.iter().any(|diagnostic| {
-        diagnostic.code == DiagnosticCode::KeyMismatch && diagnostic.path == "entities.sword.id"
+        diagnostic.code == DiagnosticCode::KEY_MISMATCH && diagnostic.path == "entities.sword.id"
     }));
 }
 
@@ -185,7 +185,7 @@ fn formula_references_must_target_numeric_fields() {
     let diagnostics = validate_document(&document);
 
     assert!(diagnostics.iter().any(|diagnostic| {
-        diagnostic.code == DiagnosticCode::FormulaReferenceTypeMismatch
+        diagnostic.code == DiagnosticCode::FORMULA_REFERENCE_TYPE_MISMATCH
             && diagnostic.path == "entities.sword.fields.dps"
     }));
 }
@@ -222,6 +222,6 @@ fn stable_ids_are_opaque_while_human_keys_use_the_address_grammar() {
     assert!(!diagnostics.iter().any(|diagnostic| diagnostic.path == "id"));
     assert!(diagnostics.iter().any(|diagnostic| {
         diagnostic.path == "entities.sword.damage.key"
-            && diagnostic.code == DiagnosticCode::InvalidKey
+            && diagnostic.code == DiagnosticCode::INVALID_KEY
     }));
 }

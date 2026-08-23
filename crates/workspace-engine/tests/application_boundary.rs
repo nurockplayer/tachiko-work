@@ -3,8 +3,8 @@ mod common;
 use common::game_balance_document;
 use tachiko_workspace_engine::{
     FieldAddress, FieldRef, Number, RuntimeValue, SemanticChange, Value, WorkspaceError,
-    WorkspaceMergeOutcome, analyze_formula, calculate_fields, compare_documents, merge_documents,
-    runtime_export, set_scalar, validate, validate_field_value_suggestion,
+    WorkspaceMergeOutcome, analyze_formula, calculate_fields, compare_documents, diagnostic_codes,
+    merge_documents, runtime_export, set_scalar, validate, validate_field_value_suggestion,
 };
 
 fn number(value: f64) -> Value {
@@ -34,7 +34,15 @@ fn validation_and_calculation_are_shared_application_queries() {
         "0",
     )
     .expect_err("the existing edit operation proves this candidate cannot calculate");
-    assert!(matches!(broken, WorkspaceError::Calculation(_)));
+    let WorkspaceError::InvalidDocument { report, .. } = broken else {
+        panic!("calculation failure must be represented by the shared semantic report");
+    };
+    assert!(
+        report
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.code == diagnostic_codes::FORMULA_DIVISION_BY_ZERO)
+    );
 }
 
 #[test]

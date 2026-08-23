@@ -943,3 +943,67 @@ The detailed executable plan is
 The clean committed tree passes `scripts/release-check.sh`, including source
 packages, notices, and native archive safety/concurrency checks. Independent
 exact-head reviews remain before PR handoff.
+
+## Active phase: ADR-0019 validation report and semantic diagnostics (#89)
+
+### Goal and authority
+
+- Implement the first authoritative first-party semantic ValidationReport and
+  the complete ADR-0018 formula failure oracle as conformance work, not an
+  architecture redesign.
+- Worktree branch: `codex/issue-89-validation-report`, created from current
+  `origin/main` `342f69f2fc252554c240650d1438cc0d6cd82e2f`.
+- Authority: Issue #89; Accepted ADR-0015 through ADR-0019; the validation,
+  diagnostics, formula, and schema specifications; the Product Constitution
+  and Design Principles; and the knowledge authority/reconciliation policies.
+- The clean base passes 219 workspace tests across 29 suites.
+
+### Audited ownership before migration
+
+- semantic-core's accumulating validator owns current document rules, but its
+  diagnostic identity is path-first and has no stable semantic subjects,
+  related machine facts, severity, or provider provenance.
+- formula-engine owns structural analysis, binding, dependencies, cycle
+  detection, and evaluation, but exposes only fail-first `calculate()` errors
+  and DFS cycle witnesses rather than the Accepted ADR-0018 full oracle.
+- workspace-engine repeats validate/calculate sequencing across first-party
+  operations and separately performs formula projection preflight in
+  authoring/finalization paths.
+- merge-engine, AI, CLI, storage, and the portable harness consume legacy
+  surfaces. Storage representation validation remains a sibling responsibility
+  and is not part of this migration.
+
+### Locked migration plan
+
+1. Add only generic semantic-core diagnostic/location/fact primitives,
+   including opaque provider identity, with no formula or higher-layer
+   taxonomy.
+2. Implement an authoritative full formula outcome keyed by stable field
+   subjects: structural, then binding/type/stale target, complete SCC
+   membership, direct failed dependencies, and local evaluation.
+3. Derive legacy fail-first `calculate()` behavior from that outcome and
+   publish Calculation only on total success.
+4. Compose core and formula observations once in workspace-engine as the
+   authoritative semantic ValidationReport with deterministic ordering and
+   prerequisite/cascade suppression.
+5. Reuse the shared semantic outcome across first-party operations while
+   retaining projection, authoring, export, and output preflights as explicit
+   operation-specific gates rather than universal semantic validity.
+6. Reconcile adapters and only clearly owned duplicate orchestration, extend
+   native/WASM stable-observation conformance, update implementation-state
+   documentation, run the release-equivalent gate, and perform two independent
+   exact-head reviews.
+
+### Explicit deferrals
+
+- #10 public Semantic API and wire/version/transaction commitments.
+- #13 progressive typing and invalid-draft lifecycle.
+- #17 plugin runtime or ABI.
+- #26 IPC, WASM/Web Worker/resident-runtime transport.
+- #41 `.roproj`.
+- New common diagnostic/validation crates, storage/numeric changes, generic
+  constraint DSLs, and presentation paths/messages/spans/witnesses as semantic
+  authority.
+
+The detailed executable plan is
+`docs/superpowers/plans/2026-08-23-validation-report-diagnostics.md`.

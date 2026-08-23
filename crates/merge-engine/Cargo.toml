@@ -15,7 +15,6 @@ rust-version.workspace = true
 [dependencies]
 tachiko-formula-engine = { version = "0.1.0", path = "../formula-engine" }
 tachiko-semantic-core = { version = "0.1.0", path = "../semantic-core" }
-thiserror.workspace = true
 
 [lints]
 workspace = true

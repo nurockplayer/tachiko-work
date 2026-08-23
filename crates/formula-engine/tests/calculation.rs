@@ -339,7 +339,7 @@ fn stale_bound_reference_cannot_read_an_undeclared_entity_value() {
 }
 
 #[test]
-fn cycles_report_a_deterministic_dependency_path() {
+fn compatibility_cycle_error_preserves_complete_semantic_membership() {
     let mut document = balance_document();
     document.entities.get_mut("sword").unwrap().fields.insert(
         FieldId::from("dps"),
@@ -350,12 +350,11 @@ fn cycles_report_a_deterministic_dependency_path() {
 
     assert!(matches!(
         error,
-        CalculationError::Cycle { path }
-            if path == vec![
+        CalculationError::Cycle { members }
+            if members == BTreeSet::from([
                 FieldRef::new("sword", "burst"),
                 FieldRef::new("sword", "dps"),
-                FieldRef::new("sword", "burst"),
-            ]
+            ])
     ));
 }
 

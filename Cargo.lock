@@ -285,7 +285,6 @@ version = "0.1.0"
 dependencies = [
  "tachiko-formula-engine",
  "tachiko-semantic-core",
- "thiserror",
 ]
 
 [[package]]

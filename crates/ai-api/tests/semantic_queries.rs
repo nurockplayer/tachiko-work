@@ -325,7 +325,7 @@ fn typed_formula_suggestions_reject_noops_types_semantics_and_calculation() {
         }),
     )
     .expect_err("cycles must fail calculation");
-    assert!(matches!(cycle, SuggestionError::Calculation(_)));
+    assert!(matches!(cycle, SuggestionError::InvalidDocument { .. }));
 
     let division_by_zero = suggest_field_change(
         &document,
@@ -336,7 +336,10 @@ fn typed_formula_suggestions_reject_noops_types_semantics_and_calculation() {
         }),
     )
     .expect_err("division by zero must fail calculation");
-    assert!(matches!(division_by_zero, SuggestionError::Calculation(_)));
+    assert!(matches!(
+        division_by_zero,
+        SuggestionError::InvalidDocument { .. }
+    ));
 }
 
 #[test]

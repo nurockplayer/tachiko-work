@@ -11,17 +11,20 @@ use tachiko_formula_engine::{
     ReferenceFailure, calculate, calculate_complete, project_expression,
 };
 use tachiko_semantic_core::{
-    Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldDefinition, FieldId,
-    FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
+    DiagnosticCode, DiagnosticSeverity, Document, DocumentId, Entity, EntityId, EntityKey,
+    Expression, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, Number, Schema, SchemaId,
+    SchemaKey, SemanticSubject, Value,
 };
 use tachiko_storage::{
     FormatError as StorageFormatError, NORMAL_DIRECT_JSON_MAX_INPUT_BYTES,
     V2_MAX_NUMBER_TOKEN_BYTES, from_bytes as storage_from_bytes, from_str as storage_from_str,
     to_canonical_string,
 };
-use tachiko_workspace_engine::calculate_fields;
+use tachiko_workspace_engine::{
+    ValidationReport, calculate_fields, diagnostic_codes, validation_report,
+};
 
-const CASE_COUNT: u32 = 42;
+const CASE_COUNT: u32 = 45;
 const VALUE: u32 = 0;
 const DIVISION_BY_ZERO: u32 = 1;
 const NON_FINITE: u32 = 2;
@@ -31,6 +34,7 @@ const CORPUS_DIGEST: u32 = 5;
 const NON_NUMERIC_REFERENCE: u32 = 6;
 const COMPLETE_ORACLE: u32 = 7;
 const DIRECT_JSON_ENVELOPE: u32 = 8;
+const VALIDATION_REPORT: u32 = 9;
 const UNEXPECTED: u32 = 255;
 
 #[derive(Clone, Copy)]
@@ -125,7 +129,9 @@ fn calculated_record(document: &Document) -> Record {
         }
         Err(CalculationError::DivisionByZero { .. }) => Record::failure(DIVISION_BY_ZERO, 0),
         Err(CalculationError::NonFiniteResult { .. }) => Record::failure(NON_FINITE, 0),
-        Err(CalculationError::Cycle { path }) => Record::failure(CYCLE, path.len() as u64),
+        Err(CalculationError::Cycle { members }) => {
+            Record::failure(CYCLE, members.len() as u64)
+        }
         Err(_) => Record::failure(UNEXPECTED, 0),
     }
 }
@@ -616,6 +622,326 @@ fn ai_suggestion_record() -> Record {
     Record::value(proposed, evidence)
 }
 
+fn append_token(bytes: &mut Vec<u8>, token: &str) {
+    bytes.extend_from_slice(&(token.len() as u64).to_le_bytes());
+    bytes.extend_from_slice(token.as_bytes());
+}
+
+fn append_field_ref(bytes: &mut Vec<u8>, field: &FieldRef) {
+    append_token(bytes, field.entity.as_str());
+    append_token(bytes, field.field.as_str());
+}
+
+fn append_subject(bytes: &mut Vec<u8>, subject: &SemanticSubject) {
+    match subject {
+        SemanticSubject::Document(document) => {
+            bytes.push(0);
+            append_token(bytes, document.as_str());
+        }
+        SemanticSubject::Schema(schema) => {
+            bytes.push(1);
+            append_token(bytes, schema.as_str());
+        }
+        SemanticSubject::SchemaField { schema, field } => {
+            bytes.push(2);
+            append_token(bytes, schema.as_str());
+            append_token(bytes, field.as_str());
+        }
+        SemanticSubject::Entity(entity) => {
+            bytes.push(3);
+            append_token(bytes, entity.as_str());
+        }
+        SemanticSubject::EntityField(field) => {
+            bytes.push(4);
+            append_field_ref(bytes, field);
+        }
+    }
+}
+
+fn validation_fingerprint(report: &ValidationReport) -> u64 {
+    let mut bytes = Vec::new();
+    for observation in report.stable_observations() {
+        append_token(&mut bytes, observation.code.as_str());
+        bytes.push(match observation.severity {
+            DiagnosticSeverity::Error => 0,
+        });
+        bytes.extend_from_slice(&(observation.subjects.len() as u64).to_le_bytes());
+        for subject in &observation.subjects {
+            append_subject(&mut bytes, subject);
+        }
+        bytes.extend_from_slice(&(observation.related_subjects.len() as u64).to_le_bytes());
+        for subject in &observation.related_subjects {
+            append_subject(&mut bytes, subject);
+        }
+        bytes.extend_from_slice(&(observation.facts.len() as u64).to_le_bytes());
+        for fact in &observation.facts {
+            append_token(&mut bytes, fact.name);
+            append_token(&mut bytes, &fact.value);
+        }
+        append_token(&mut bytes, observation.provider.as_str());
+    }
+    fnv1a64(&bytes)
+}
+
+fn oracle_document() -> Document {
+    let formula_ids = [
+        "structural",
+        "binding",
+        "cycle-a",
+        "cycle-b",
+        "dependent",
+        "zero",
+        "depends-zero",
+        "independent",
+    ];
+    let mut definitions: BTreeMap<_, _> = formula_ids
+        .into_iter()
+        .map(|id| (FieldId::from(id), field(id)))
+        .collect();
+    definitions.insert(
+        FieldId::from("text"),
+        FieldDefinition {
+            id: "text".into(),
+            key: "text".into(),
+            field_type: FieldType::Text,
+            required: true,
+        },
+    );
+
+    let reference = |field| Expression::Reference(FieldRef::new("entity", field));
+    let mut structural = reference("missing-structural");
+    for _ in 0..65 {
+        structural = Expression::Add {
+            left: Box::new(structural),
+            right: Box::new(numeric(1.0)),
+        };
+    }
+    let fields = BTreeMap::from([
+        (FieldId::from("structural"), Value::Formula(structural)),
+        (
+            FieldId::from("binding"),
+            Value::Formula(Expression::Add {
+                left: Box::new(reference("binding")),
+                right: Box::new(Expression::Add {
+                    left: Box::new(reference("missing-binding")),
+                    right: Box::new(reference("text")),
+                }),
+            }),
+        ),
+        (
+            FieldId::from("cycle-a"),
+            Value::Formula(reference("cycle-b")),
+        ),
+        (
+            FieldId::from("cycle-b"),
+            Value::Formula(Expression::Divide {
+                left: Box::new(reference("cycle-a")),
+                right: Box::new(numeric(0.0)),
+            }),
+        ),
+        (
+            FieldId::from("dependent"),
+            Value::Formula(Expression::Add {
+                left: Box::new(reference("cycle-a")),
+                right: Box::new(reference("binding")),
+            }),
+        ),
+        (
+            FieldId::from("zero"),
+            Value::Formula(Expression::Divide {
+                left: Box::new(numeric(1.0)),
+                right: Box::new(numeric(0.0)),
+            }),
+        ),
+        (
+            FieldId::from("depends-zero"),
+            Value::Formula(reference("zero")),
+        ),
+        (
+            FieldId::from("independent"),
+            Value::Formula(Expression::Add {
+                left: Box::new(numeric(2.0)),
+                right: Box::new(numeric(3.0)),
+            }),
+        ),
+        (FieldId::from("text"), Value::Text("text".to_owned())),
+    ]);
+    Document {
+        id: "oracle-document".into(),
+        title: "Full formula oracle".to_owned(),
+        schemas: BTreeMap::from([(
+            SchemaId::from("schema"),
+            Schema {
+                id: "schema".into(),
+                key: "schema".into(),
+                fields: definitions,
+            },
+        )]),
+        entities: BTreeMap::from([(
+            EntityId::from("entity"),
+            Entity {
+                id: "entity".into(),
+                key: "entity".into(),
+                schema: "schema".into(),
+                fields,
+            },
+        )]),
+    }
+}
+
+fn validation_accumulation_record() -> Record {
+    let mut document = oracle_document();
+    document
+        .schemas
+        .get_mut("schema")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("required"), field("required"));
+    document.entities.insert(
+        EntityId::from("orphan"),
+        Entity {
+            id: "orphan".into(),
+            key: "orphan".into(),
+            schema: "missing-schema".into(),
+            fields: BTreeMap::from([(
+                FieldId::from("unknown"),
+                Value::Text("cascade".to_owned()),
+            )]),
+        },
+    );
+    let report = validation_report(&document);
+    let codes: BTreeSet<_> = report
+        .diagnostics()
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect();
+    let exact = codes.contains(&DiagnosticCode::MISSING_REQUIRED_FIELD)
+        && codes.contains(&DiagnosticCode::MISSING_SCHEMA)
+        && codes.contains(&diagnostic_codes::FORMULA_INVALID_REFERENCES)
+        && codes.contains(&diagnostic_codes::FORMULA_CYCLE)
+        && codes.contains(&diagnostic_codes::FORMULA_FAILED_DEPENDENCY)
+        && codes.contains(&diagnostic_codes::FORMULA_DIVISION_BY_ZERO)
+        && !report.diagnostics().iter().any(|diagnostic| {
+            diagnostic
+                .subjects
+                .contains(&SemanticSubject::EntityField(FieldRef::new(
+                    "orphan", "unknown",
+                )))
+        });
+    if !exact {
+        return Record::failure(UNEXPECTED, 31);
+    }
+    Record {
+        class: VALIDATION_REPORT,
+        bits: report.diagnostics().len() as u64,
+        auxiliary: validation_fingerprint(&report),
+    }
+}
+
+fn rename_stability_record() -> Record {
+    let mut before = formula_document(
+        number(1.0),
+        Expression::Reference(FieldRef::new("entity-stable", "missing-stable")),
+    );
+    before.entities.insert(
+        EntityId::from("second-stable"),
+        Entity {
+            id: "second-stable".into(),
+            key: "source".into(),
+            schema: "schema-stable".into(),
+            fields: BTreeMap::from([
+                (
+                    FieldId::from("input-stable"),
+                    Value::Number(number(2.0)),
+                ),
+                (
+                    FieldId::from("output-stable"),
+                    Value::Number(number(3.0)),
+                ),
+            ]),
+        },
+    );
+    let mut after = before.clone();
+    after.schemas.get_mut("schema-stable").unwrap().key = "renamed-schema".into();
+    for definition in after
+        .schemas
+        .get_mut("schema-stable")
+        .unwrap()
+        .fields
+        .values_mut()
+    {
+        definition.key = format!("renamed-{}", definition.key).into();
+    }
+    after.entities.get_mut("entity-stable").unwrap().key = "renamed-source".into();
+    after.entities.get_mut("second-stable").unwrap().key = "renamed-source".into();
+
+    let before = validation_report(&before);
+    let after = validation_report(&after);
+    let duplicate_subjects = vec![
+        SemanticSubject::Entity(EntityId::from("entity-stable")),
+        SemanticSubject::Entity(EntityId::from("second-stable")),
+    ];
+    let exact = before.stable_observations() == after.stable_observations()
+        && before.diagnostics().iter().any(|diagnostic| {
+            diagnostic.code == DiagnosticCode::DUPLICATE_KEY
+                && diagnostic.subjects == duplicate_subjects
+        })
+        && before.diagnostics().iter().any(|diagnostic| {
+            diagnostic.code == diagnostic_codes::FORMULA_INVALID_REFERENCES
+                && diagnostic.related_subjects
+                    == [SemanticSubject::EntityField(FieldRef::new(
+                        "entity-stable",
+                        "missing-stable",
+                    ))]
+        });
+    if !exact {
+        return Record::failure(UNEXPECTED, 32);
+    }
+    Record {
+        class: VALIDATION_REPORT,
+        bits: before.diagnostics().len() as u64,
+        auxiliary: validation_fingerprint(&before),
+    }
+}
+
+fn validation_cycle_record() -> Record {
+    let report = validation_report(&oracle_document());
+    let cycle = report
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| diagnostic.code == diagnostic_codes::FORMULA_CYCLE)
+        .collect::<Vec<_>>();
+    let dependency = report.diagnostics().iter().find(|diagnostic| {
+        diagnostic.code == diagnostic_codes::FORMULA_FAILED_DEPENDENCY
+            && diagnostic.subjects
+                == [SemanticSubject::EntityField(FieldRef::new(
+                    "entity", "dependent",
+                ))]
+    });
+    let expected_cycle = vec![
+        SemanticSubject::EntityField(FieldRef::new("entity", "cycle-a")),
+        SemanticSubject::EntityField(FieldRef::new("entity", "cycle-b")),
+    ];
+    let expected_dependencies = vec![
+        SemanticSubject::EntityField(FieldRef::new("entity", "binding")),
+        SemanticSubject::EntityField(FieldRef::new("entity", "cycle-a")),
+    ];
+    let exact = cycle.len() == 1
+        && cycle[0].subjects == expected_cycle
+        && cycle[0].provider.as_str() == "tachiko.formula-engine"
+        && dependency.is_some_and(|diagnostic| {
+            diagnostic.related_subjects == expected_dependencies
+        });
+    if !exact {
+        return Record::failure(UNEXPECTED, 33);
+    }
+    Record {
+        class: VALIDATION_REPORT,
+        bits: report.diagnostics().len() as u64,
+        auxiliary: validation_fingerprint(&report),
+    }
+}
+
 fn case_record(index: u32) -> Record {
     match index {
         0 => Record::value(number(-0.0), 0),
@@ -755,6 +1081,9 @@ fn case_record(index: u32) -> Record {
         25 => schema_type_change_record(),
         26 => complete_oracle_record(),
         27..=41 => direct_json_envelope_record(index - 27),
+        42 => validation_accumulation_record(),
+        43 => rename_stability_record(),
+        44 => validation_cycle_record(),
         _ => Record::failure(UNEXPECTED, 0),
     }
 }
@@ -789,7 +1118,7 @@ pub extern "C" fn tachiko_case_bits(index: u32) -> u64 {
     cached_case_record(index).bits
 }
 
-/// Return case-specific deterministic dependency/path/projection/storage evidence.
+/// Return case-specific deterministic semantic/projection/storage evidence.
 #[unsafe(no_mangle)]
 pub extern "C" fn tachiko_case_auxiliary(index: u32) -> u64 {
     cached_case_record(index).auxiliary

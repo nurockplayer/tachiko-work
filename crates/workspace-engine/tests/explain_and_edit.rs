@@ -151,11 +151,14 @@ fn formula_edit_refuses_invalid_targets_syntax_semantics_and_calculation() {
         "[iron_sword.dps] + 1",
     )
     .expect_err("cycles must fail calculation");
-    assert!(matches!(cycle, WorkspaceError::Calculation(_)));
+    assert!(matches!(cycle, WorkspaceError::InvalidDocument { .. }));
 
     let division_by_zero = set_formula(&document, &address("iron_sword", "dps"), "1 / 0")
         .expect_err("division by zero must fail calculation");
-    assert!(matches!(division_by_zero, WorkspaceError::Calculation(_)));
+    assert!(matches!(
+        division_by_zero,
+        WorkspaceError::InvalidDocument { .. }
+    ));
 }
 
 #[test]
@@ -311,7 +314,7 @@ fn edit_refuses_formula_invalid_values_and_broken_references() {
         .expect_err("edits that break formulas should be refused");
     assert!(matches!(
         calculation_failure,
-        WorkspaceError::Calculation(_)
+        WorkspaceError::InvalidDocument { .. }
     ));
 }
 
