@@ -2,7 +2,8 @@
 
 Decision state: Milestone 02 layering is Accepted in ADR-0016
 
-Implementation state: Implemented by the Issue #72 workspace-engine migration
+Implementation state: ADR-0016 boundary implemented by Issue #72; authoritative
+validation/report composition implemented by Issue #89
 
 Architecture authority: ADR-0016
 
@@ -115,7 +116,7 @@ resident-runtime decision.
 The engine owns real application behavior:
 
 - host-supplied stable-ID creation and built-in starters;
-- intrinsic validation plus complete calculation orchestration;
+- authoritative `ValidationReport` plus complete calculation orchestration;
 - calculated values projected through current human addresses;
 - overview, human-addressed field explanation, and stable formula analysis;
 - scalar/formula edits and entity lifecycle candidate transitions;
@@ -131,9 +132,10 @@ ADR-0015's replaceable creation seam; UUIDv7 remains supplied by the native CLI
 host rather than the portable engine.
 
 ADR-0019 makes workspace-engine the first-party validation orchestration and
-normalization boundary. Current differences between lightweight validation and
-full finalization are implementation pressure to reconcile, not separate
-client semantic policies.
+normalization boundary. Shared semantic validation is now reused by queries,
+mutations, and merge finalization; canonical authoring projection and
+output-specific preflights remain explicit operation gates rather than alternate
+definitions of semantic validity.
 
 These Rust functions and result structures are the first-party internal
 boundary. Their external stability and versioning remain Provisional under

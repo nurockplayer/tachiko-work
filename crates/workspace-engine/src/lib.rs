@@ -1,28 +1,119 @@
 //! Shared application operations over Tachiko Work semantic documents.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet, VecDeque},
+    fmt,
+};
 
 use serde::Serialize;
 use tachiko_diff_engine::diff;
 pub use tachiko_diff_engine::{DiffError, SemanticChange, SemanticDiff};
 use tachiko_formula_engine::{
-    Calculation, FormulaBindError, FormulaParseError, bind_expression, calculate, parse_expression,
+    Calculation, CalculationFailure, CalculationFailures, CalculationOutcome, FormulaBindError,
+    FormulaParseError, ReferenceFailure, bind_expression, calculate_complete, parse_expression,
     project_expression, validate_expression_structure,
 };
 pub use tachiko_formula_engine::{
     CalculationError, CanonicalAuthoringProjectionError, ExpressionComplexityError,
 };
 pub use tachiko_merge_engine::{MergeConflict, MergeValue};
-use tachiko_merge_engine::{MergeError, MergeOutcome, merge};
+use tachiko_merge_engine::{MergeOutcome, merge};
 use tachiko_semantic_core::{
-    AddressIndex, AddressIndexError, is_valid_identifier, validate_document,
+    AddressIndex, AddressIndexError, is_valid_identifier, validate_document_core,
 };
 pub use tachiko_semantic_core::{
-    Diagnostic, Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldAddress,
-    FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey,
-    Value,
+    Diagnostic, DiagnosticCode, DiagnosticFact, DiagnosticLocation, DiagnosticProvider,
+    DiagnosticSeverity, Document, DocumentId, Entity, EntityId, EntityKey, Expression,
+    FieldAddress, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, Number, Schema,
+    SchemaId, SchemaKey, SemanticSubject, StableDiagnosticObservation, Value,
 };
 use thiserror::Error;
+
+/// Symbolic codes emitted by workspace composition of formula-engine outcomes.
+///
+/// The catalog is internal and provisional under ADR-0019; code meanings are
+/// stable observations and do not depend on Rust enum ordinals.
+pub mod diagnostic_codes {
+    use tachiko_semantic_core::DiagnosticCode;
+
+    pub const FORMULA_STRUCTURAL: DiagnosticCode = DiagnosticCode::new("formula.invalid_structure");
+    pub const FORMULA_INVALID_REFERENCES: DiagnosticCode =
+        DiagnosticCode::new("formula.invalid_references");
+    pub const FORMULA_CYCLE: DiagnosticCode = DiagnosticCode::new("formula.cycle");
+    pub const FORMULA_FAILED_DEPENDENCY: DiagnosticCode =
+        DiagnosticCode::new("formula.failed_dependency");
+    pub const FORMULA_DIVISION_BY_ZERO: DiagnosticCode =
+        DiagnosticCode::new("formula.division_by_zero");
+    pub const FORMULA_NON_FINITE_RESULT: DiagnosticCode =
+        DiagnosticCode::new("formula.non_finite_result");
+}
+
+/// Authoritative first-party semantic validation result for one snapshot.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ValidationReport {
+    diagnostics: Vec<Diagnostic>,
+}
+
+impl ValidationReport {
+    fn new(mut diagnostics: Vec<Diagnostic>) -> Self {
+        diagnostics.sort();
+        diagnostics.dedup_by(|left, right| left.stable_observation() == right.stable_observation());
+        Self { diagnostics }
+    }
+
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        self.diagnostics.is_empty()
+    }
+
+    #[must_use]
+    pub fn diagnostics(&self) -> &[Diagnostic] {
+        &self.diagnostics
+    }
+
+    #[must_use]
+    pub fn stable_observations(&self) -> Vec<StableDiagnosticObservation> {
+        self.diagnostics
+            .iter()
+            .map(Diagnostic::stable_observation)
+            .collect()
+    }
+
+    #[must_use]
+    pub fn into_diagnostics(self) -> Vec<Diagnostic> {
+        self.diagnostics
+    }
+}
+
+/// Operation-local role of a snapshot whose semantic report blocked a call.
+///
+/// This context is not part of diagnostic identity or stable observations.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ValidationRole {
+    Current,
+    Candidate,
+    ComparisonBefore,
+    ComparisonAfter,
+    MergeBase,
+    MergeOurs,
+    MergeTheirs,
+    MergeCandidate,
+}
+
+impl fmt::Display for ValidationRole {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Current => "current",
+            Self::Candidate => "candidate",
+            Self::ComparisonBefore => "comparison-before",
+            Self::ComparisonAfter => "comparison-after",
+            Self::MergeBase => "merge-base",
+            Self::MergeOurs => "merge-ours",
+            Self::MergeTheirs => "merge-theirs",
+            Self::MergeCandidate => "merge-candidate",
+        })
+    }
+}
 
 /// A useful starting point for a newly-created semantic document.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -243,10 +334,11 @@ pub enum WorkspaceError {
         input: String,
         expected: &'static str,
     },
-    #[error("edit would make the document invalid: {summary}")]
+    #[error("{role} document is semantically invalid: {summary}")]
     InvalidDocument {
+        role: ValidationRole,
         summary: String,
-        diagnostics: Vec<Diagnostic>,
+        report: ValidationReport,
     },
     #[error("'{field}' already has that value")]
     NoChange { field: FieldRef },
@@ -254,8 +346,6 @@ pub enum WorkspaceError {
     Calculation(#[from] CalculationError),
     #[error("could not compare edited document: {0}")]
     Diff(#[from] DiffError),
-    #[error("could not merge documents: {0}")]
-    Merge(#[from] MergeError),
 }
 
 /// Create a document through the host-supplied stable-ID boundary.
@@ -275,9 +365,8 @@ pub fn create_document(
         StarterTemplate::GameBalance => game_balance_document(document_id, title, generator)?,
         StarterTemplate::Empty => Document::empty(document_id, title),
     };
-    validate_candidate(&document)?;
+    require_validated_calculation_for(&document, ValidationRole::Candidate)?;
     preflight_formula_projections(&document)?;
-    calculate(&document)?;
     Ok(document)
 }
 
@@ -288,8 +377,7 @@ pub fn create_document(
 ///
 /// Returns the shared semantic or calculation failure for this snapshot.
 pub fn validate(document: &Document) -> Result<(), WorkspaceError> {
-    validate_candidate(document)?;
-    calculate(document)?;
+    require_validated_calculation(document)?;
     Ok(())
 }
 
@@ -299,8 +387,7 @@ pub fn validate(document: &Document) -> Result<(), WorkspaceError> {
 ///
 /// Returns a semantic, address-projection, or calculation failure.
 pub fn calculate_fields(document: &Document) -> Result<Vec<CalculatedField>, WorkspaceError> {
-    validate_candidate(document)?;
-    let calculation = calculate(document)?;
+    let calculation = require_validated_calculation(document)?;
     let index = AddressIndex::build(document)?;
     let mut fields = calculation
         .values()
@@ -326,6 +413,8 @@ pub fn compare_documents(
     before: &Document,
     after: &Document,
 ) -> Result<SemanticDiff, WorkspaceError> {
+    require_validated_calculation_for(before, ValidationRole::ComparisonBefore)?;
+    require_validated_calculation_for(after, ValidationRole::ComparisonAfter)?;
     Ok(diff(before, after)?)
 }
 
@@ -338,13 +427,13 @@ pub fn analyze_formula(
     document: &Document,
     field: &FieldRef,
 ) -> Result<FormulaAnalysis, WorkspaceError> {
+    let calculation = require_validated_calculation(document)?;
     let value = field_value(document, field)?;
     let Value::Formula(expression) = value else {
         return Err(WorkspaceError::NotFormula {
             field: field.clone(),
         });
     };
-    let calculation = calculate(document)?;
     let value = calculation
         .value(field)
         .ok_or_else(|| WorkspaceError::MissingCalculation {
@@ -384,8 +473,7 @@ pub fn validate_field_value_suggestion(
             return Err(error);
         }
     };
-    validate_candidate(&candidate)?;
-    calculate(&candidate)?;
+    require_validated_calculation_for(&candidate, ValidationRole::Candidate)?;
     Ok(ValidatedFieldValue { field, value })
 }
 
@@ -399,8 +487,13 @@ pub fn merge_documents(
     ours: &Document,
     theirs: &Document,
 ) -> Result<WorkspaceMergeOutcome, WorkspaceError> {
-    match merge(base, ours, theirs)? {
+    require_validated_calculation_for(base, ValidationRole::MergeBase)?;
+    require_validated_calculation_for(ours, ValidationRole::MergeOurs)?;
+    require_validated_calculation_for(theirs, ValidationRole::MergeTheirs)?;
+    match merge(base, ours, theirs) {
         MergeOutcome::Merged(document) => {
+            require_validated_calculation_for(&document, ValidationRole::MergeCandidate)?;
+            preflight_formula_projections(&document)?;
             let diff = diff(base, &document)?;
             Ok(WorkspaceMergeOutcome::Merged(Box::new(EditPreview {
                 document,
@@ -418,8 +511,7 @@ pub fn merge_documents(
 ///
 /// Returns a semantic lookup or calculation failure.
 pub fn runtime_export(document: &Document) -> Result<RuntimeExport, WorkspaceError> {
-    validate_candidate(document)?;
-    let calculation = calculate(document)?;
+    let calculation = require_validated_calculation(document)?;
     let mut entities = BTreeMap::new();
 
     for (entity_id, entity) in &document.entities {
@@ -468,8 +560,7 @@ pub fn runtime_export(document: &Document) -> Result<RuntimeExport, WorkspaceErr
 ///
 /// Returns an error if semantic addresses or formulas are invalid.
 pub fn overview(document: &Document) -> Result<DocumentOverview, WorkspaceError> {
-    validate_candidate(document)?;
-    let calculation = calculate(document)?;
+    let calculation = require_validated_calculation(document)?;
     let mut formula_count = 0;
     let mut entities = Vec::new();
 
@@ -563,9 +654,9 @@ pub fn explain_field(
     document: &Document,
     address: &FieldAddress,
 ) -> Result<FieldExplanation, WorkspaceError> {
+    let calculation = require_validated_calculation(document)?;
     let field = document.resolve_field(address)?;
     let value = field_value(document, &field)?;
-    let calculation = calculate(document)?;
     let display_value = calculation
         .value(&field)
         .map_or_else(|| format_value(document, value), format_number);
@@ -1071,9 +1162,8 @@ fn value_matches_type(value: &Value, field_type: &FieldType) -> bool {
 }
 
 fn finalize_edit(document: &Document, edited: Document) -> Result<EditPreview, WorkspaceError> {
-    validate_candidate(&edited)?;
+    require_validated_calculation_for(&edited, ValidationRole::Candidate)?;
     preflight_formula_projections(&edited)?;
-    calculate(&edited)?;
     let semantic_diff = diff(document, &edited)?;
     Ok(EditPreview {
         document: edited,
@@ -1081,16 +1171,416 @@ fn finalize_edit(document: &Document, edited: Document) -> Result<EditPreview, W
     })
 }
 
-fn validate_candidate(document: &Document) -> Result<(), WorkspaceError> {
-    let diagnostics = validate_document(document);
-    if diagnostics.is_empty() {
-        Ok(())
+/// Build the authoritative full semantic validation report.
+#[must_use]
+pub fn validation_report(document: &Document) -> ValidationReport {
+    semantic_validation(document).0
+}
+
+fn semantic_validation(document: &Document) -> (ValidationReport, Option<Calculation>) {
+    let mut diagnostics = validate_document_core(document);
+    let core_diagnostics = diagnostics.clone();
+    let calculation = match calculate_complete(document) {
+        CalculationOutcome::Complete(calculation) => Some(calculation),
+        CalculationOutcome::Failed(failures) => {
+            diagnostics.extend(formula_diagnostics(document, &failures, &core_diagnostics));
+            None
+        }
+    };
+    let report = ValidationReport::new(diagnostics);
+    if report.is_valid() {
+        (report, calculation)
     } else {
-        Err(WorkspaceError::InvalidDocument {
-            summary: format_diagnostics(&diagnostics),
-            diagnostics,
-        })
+        (report, None)
     }
+}
+
+fn require_validated_calculation(document: &Document) -> Result<Calculation, WorkspaceError> {
+    require_validated_calculation_for(document, ValidationRole::Current)
+}
+
+fn require_validated_calculation_for(
+    document: &Document,
+    role: ValidationRole,
+) -> Result<Calculation, WorkspaceError> {
+    let (report, calculation) = semantic_validation(document);
+    if !report.is_valid() {
+        return Err(invalid_document(report, role));
+    }
+    Ok(calculation.expect("a diagnostic-free formula outcome is complete"))
+}
+
+fn invalid_document(report: ValidationReport, role: ValidationRole) -> WorkspaceError {
+    WorkspaceError::InvalidDocument {
+        role,
+        summary: format_diagnostics(report.diagnostics()),
+        report,
+    }
+}
+
+const FORMULA_PROVIDER: DiagnosticProvider = DiagnosticProvider::new("tachiko.formula-engine");
+
+fn formula_diagnostics(
+    document: &Document,
+    report: &CalculationFailures,
+    core_diagnostics: &[Diagnostic],
+) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+    let mut surviving_failures = BTreeSet::new();
+    let mut pending_failed_dependencies = Vec::new();
+    let blockers = formula_prerequisite_blockers(core_diagnostics);
+    let address_index = AddressIndex::build(document).ok();
+    for (formula, failure) in report.failures() {
+        if is_noncanonical_cycle(formula, failure) {
+            continue;
+        }
+        if !formula_prerequisites_available(document, formula, failure, &blockers) {
+            continue;
+        }
+        let path = formula_path(document, address_index.as_ref(), formula);
+        if let CalculationFailure::FailedDependencies { dependencies } = failure {
+            pending_failed_dependencies.push((formula, path, dependencies));
+            continue;
+        }
+        let subject = SemanticSubject::EntityField(formula.clone());
+        let diagnostic = match failure {
+            CalculationFailure::InvalidExpression { error } => formula_diagnostic(
+                diagnostic_codes::FORMULA_STRUCTURAL,
+                vec![subject],
+                path,
+                format!("formula '{formula}' violates the bound expression contract"),
+            )
+            .with_fact(DiagnosticFact::new(
+                "limit",
+                match error {
+                    ExpressionComplexityError::NodeLimit => "node_limit",
+                    ExpressionComplexityError::DepthLimit => "depth_limit",
+                    ExpressionComplexityError::CanonicalLengthLimit => "canonical_length_limit",
+                },
+            )),
+            CalculationFailure::InvalidReferences { targets } => {
+                let Some(diagnostic) = project_invalid_reference_diagnostic(
+                    document, formula, path, targets, &blockers,
+                ) else {
+                    continue;
+                };
+                diagnostic
+            }
+            CalculationFailure::Cycle { members } => formula_diagnostic(
+                diagnostic_codes::FORMULA_CYCLE,
+                members
+                    .iter()
+                    .cloned()
+                    .map(SemanticSubject::EntityField)
+                    .collect(),
+                path,
+                format!("formula dependency cycle contains {} values", members.len()),
+            ),
+            CalculationFailure::FailedDependencies { .. } => {
+                unreachable!("failed dependencies are projected after primary failures")
+            }
+            CalculationFailure::DivisionByZero => formula_diagnostic(
+                diagnostic_codes::FORMULA_DIVISION_BY_ZERO,
+                vec![subject],
+                path,
+                format!("formula '{formula}' divided by zero"),
+            ),
+            CalculationFailure::NonFiniteResult => formula_diagnostic(
+                diagnostic_codes::FORMULA_NON_FINITE_RESULT,
+                vec![subject],
+                path,
+                format!("formula '{formula}' produced a non-finite result"),
+            ),
+        };
+        if let CalculationFailure::Cycle { members } = failure {
+            surviving_failures.extend(members.iter().cloned());
+        } else {
+            surviving_failures.insert(formula.clone());
+        }
+        diagnostics.push(diagnostic);
+    }
+
+    propagate_surviving_failed_dependencies(&pending_failed_dependencies, &mut surviving_failures);
+    for (formula, path, dependencies) in pending_failed_dependencies {
+        if let Some(diagnostic) =
+            project_failed_dependency_diagnostic(formula, &path, dependencies, &surviving_failures)
+        {
+            diagnostics.push(diagnostic);
+        }
+    }
+    diagnostics
+}
+
+fn propagate_surviving_failed_dependencies(
+    pending: &[(&FieldRef, String, &BTreeSet<FieldRef>)],
+    surviving_failures: &mut BTreeSet<FieldRef>,
+) {
+    let mut dependents_by_failure: BTreeMap<&FieldRef, Vec<&FieldRef>> = BTreeMap::new();
+    for (formula, _, dependencies) in pending {
+        for dependency in *dependencies {
+            dependents_by_failure
+                .entry(dependency)
+                .or_default()
+                .push(formula);
+        }
+    }
+
+    let mut queue = surviving_failures.iter().cloned().collect::<VecDeque<_>>();
+    while let Some(failure) = queue.pop_front() {
+        let Some(dependents) = dependents_by_failure.get(&failure) else {
+            continue;
+        };
+        for dependent in dependents {
+            if surviving_failures.insert((*dependent).clone()) {
+                queue.push_back((*dependent).clone());
+            }
+        }
+    }
+}
+
+fn is_noncanonical_cycle(formula: &FieldRef, failure: &CalculationFailure) -> bool {
+    matches!(failure, CalculationFailure::Cycle { members } if members.first() != Some(formula))
+}
+
+fn project_invalid_reference_diagnostic(
+    document: &Document,
+    formula: &FieldRef,
+    path: String,
+    targets: &BTreeMap<FieldRef, ReferenceFailure>,
+    blockers: &FormulaPrerequisiteBlockers,
+) -> Option<Diagnostic> {
+    let mut missing = BTreeSet::new();
+    let mut non_numeric = BTreeSet::new();
+    for (target, failure) in targets {
+        if !invalid_reference_prerequisites_available(document, target, *failure, blockers) {
+            continue;
+        }
+        match failure {
+            ReferenceFailure::Missing => {
+                missing.insert(target.clone());
+            }
+            ReferenceFailure::NonNumeric => {
+                non_numeric.insert(target.clone());
+            }
+        }
+    }
+    if missing.is_empty() && non_numeric.is_empty() {
+        return None;
+    }
+    Some(invalid_reference_diagnostic(
+        formula,
+        SemanticSubject::EntityField(formula.clone()),
+        path,
+        &missing,
+        &non_numeric,
+    ))
+}
+
+fn project_failed_dependency_diagnostic(
+    formula: &FieldRef,
+    path: &str,
+    dependencies: &BTreeSet<FieldRef>,
+    surviving_failures: &BTreeSet<FieldRef>,
+) -> Option<Diagnostic> {
+    let dependencies = dependencies
+        .intersection(surviving_failures)
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    if dependencies.is_empty() {
+        return None;
+    }
+    Some(
+        formula_diagnostic(
+            diagnostic_codes::FORMULA_FAILED_DEPENDENCY,
+            vec![SemanticSubject::EntityField(formula.clone())],
+            path.to_owned(),
+            format!("formula '{formula}' directly depends on failed values"),
+        )
+        .with_related_subjects(
+            dependencies
+                .into_iter()
+                .map(SemanticSubject::EntityField)
+                .collect(),
+        ),
+    )
+}
+
+fn invalid_reference_diagnostic(
+    formula: &FieldRef,
+    subject: SemanticSubject,
+    path: String,
+    missing: &BTreeSet<FieldRef>,
+    non_numeric: &BTreeSet<FieldRef>,
+) -> Diagnostic {
+    let related = missing
+        .union(non_numeric)
+        .cloned()
+        .map(SemanticSubject::EntityField)
+        .collect();
+    let mut diagnostic = formula_diagnostic(
+        diagnostic_codes::FORMULA_INVALID_REFERENCES,
+        vec![subject],
+        path,
+        format!("formula '{formula}' has invalid stable references"),
+    )
+    .with_related_subjects(related);
+    for target in missing {
+        diagnostic = diagnostic.with_fact(DiagnosticFact::new(
+            "missing_target",
+            field_ref_fact(target),
+        ));
+    }
+    for target in non_numeric {
+        diagnostic = diagnostic.with_fact(DiagnosticFact::new(
+            "non_numeric_target",
+            field_ref_fact(target),
+        ));
+    }
+    diagnostic
+}
+
+fn formula_diagnostic(
+    code: DiagnosticCode,
+    subjects: Vec<SemanticSubject>,
+    path: String,
+    message: String,
+) -> Diagnostic {
+    Diagnostic::new(code, DiagnosticSeverity::Error, subjects, FORMULA_PROVIDER)
+        .with_presentation(path, message)
+}
+
+fn formula_prerequisites_available(
+    document: &Document,
+    formula: &FieldRef,
+    failure: &CalculationFailure,
+    blockers: &FormulaPrerequisiteBlockers,
+) -> bool {
+    if !field_prerequisites_available(document, formula, &blockers.values) {
+        return false;
+    }
+    match failure {
+        CalculationFailure::InvalidExpression { .. }
+        | CalculationFailure::InvalidReferences { .. }
+        | CalculationFailure::FailedDependencies { .. }
+        | CalculationFailure::DivisionByZero
+        | CalculationFailure::NonFiniteResult => true,
+        CalculationFailure::Cycle { members } => members
+            .iter()
+            .all(|member| field_prerequisites_available(document, member, &blockers.values)),
+    }
+}
+
+fn invalid_reference_prerequisites_available(
+    document: &Document,
+    target: &FieldRef,
+    failure: ReferenceFailure,
+    blockers: &FormulaPrerequisiteBlockers,
+) -> bool {
+    let blocked_subjects = match failure {
+        ReferenceFailure::Missing => &blockers.values,
+        ReferenceFailure::NonNumeric
+            if document
+                .entities
+                .get(&target.entity)
+                .and_then(|entity| document.schemas.get(&entity.schema))
+                .and_then(|schema| schema.fields.get(&target.field))
+                .is_some_and(|definition| definition.field_type == FieldType::Number) =>
+        {
+            &blockers.values
+        }
+        ReferenceFailure::NonNumeric => &blockers.declarations,
+    };
+    field_prerequisites_available(document, target, blocked_subjects)
+}
+
+fn field_prerequisites_available(
+    document: &Document,
+    field: &FieldRef,
+    blocked_subjects: &BTreeSet<SemanticSubject>,
+) -> bool {
+    let mut subjects = vec![
+        SemanticSubject::Entity(field.entity.clone()),
+        SemanticSubject::EntityField(field.clone()),
+    ];
+    if let Some(entity) = document.entities.get(&field.entity) {
+        subjects.push(SemanticSubject::Schema(entity.schema.clone()));
+        subjects.push(SemanticSubject::SchemaField {
+            schema: entity.schema.clone(),
+            field: field.field.clone(),
+        });
+    }
+    subjects
+        .iter()
+        .all(|subject| !blocked_subjects.contains(subject))
+}
+
+struct FormulaPrerequisiteBlockers {
+    values: BTreeSet<SemanticSubject>,
+    declarations: BTreeSet<SemanticSubject>,
+}
+
+fn formula_prerequisite_blockers(core_diagnostics: &[Diagnostic]) -> FormulaPrerequisiteBlockers {
+    let mut blockers = FormulaPrerequisiteBlockers {
+        values: BTreeSet::new(),
+        declarations: BTreeSet::new(),
+    };
+    for diagnostic in core_diagnostics {
+        if core_diagnostic_blocks_formula_value(diagnostic.code) {
+            blockers.values.extend(diagnostic.subjects.iter().cloned());
+        }
+        if [
+            DiagnosticCode::EMPTY_STABLE_ID,
+            DiagnosticCode::KEY_MISMATCH,
+        ]
+        .contains(&diagnostic.code)
+        {
+            blockers
+                .declarations
+                .extend(diagnostic.subjects.iter().cloned());
+        } else if diagnostic.code == DiagnosticCode::MISSING_SCHEMA {
+            blockers.declarations.extend(
+                diagnostic
+                    .subjects
+                    .iter()
+                    .filter(|subject| matches!(subject, SemanticSubject::Entity(_)))
+                    .cloned(),
+            );
+        }
+    }
+    blockers
+}
+
+fn core_diagnostic_blocks_formula_value(code: DiagnosticCode) -> bool {
+    [
+        DiagnosticCode::EMPTY_STABLE_ID,
+        DiagnosticCode::KEY_MISMATCH,
+        DiagnosticCode::MISSING_SCHEMA,
+        DiagnosticCode::MISSING_REQUIRED_FIELD,
+        DiagnosticCode::UNEXPECTED_FIELD,
+        DiagnosticCode::TYPE_MISMATCH,
+        DiagnosticCode::MISSING_REFERENCE,
+        DiagnosticCode::REFERENCE_TYPE_MISMATCH,
+    ]
+    .contains(&code)
+}
+
+fn formula_path(document: &Document, index: Option<&AddressIndex>, formula: &FieldRef) -> String {
+    index
+        .and_then(|index| index.field_address(document, formula).ok())
+        .map_or_else(
+            || format!("entities.{}.fields.{}", formula.entity, formula.field),
+            |address| format!("formulas.{address}"),
+        )
+}
+
+fn field_ref_fact(field: &FieldRef) -> String {
+    format!(
+        "{}:{}{}:{}",
+        field.entity.as_str().len(),
+        field.entity,
+        field.field.as_str().len(),
+        field.field
+    )
 }
 
 fn preflight_formula_projections(document: &Document) -> Result<(), WorkspaceError> {

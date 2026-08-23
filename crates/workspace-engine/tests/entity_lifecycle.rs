@@ -347,7 +347,7 @@ fn lifecycle_finalizer_surfaces_validation_calculation_and_diff_failures() {
             "steel_sword",
             &mut uncalculable_generator
         ),
-        Err(WorkspaceError::Calculation(_))
+        Err(WorkspaceError::InvalidDocument { .. })
     ));
 
     uncalculable.entities.remove("alric");

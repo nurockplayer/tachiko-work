@@ -2,14 +2,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use tachiko_formula_engine::{
-    CalculationError, CanonicalAuthoringProjectionError, calculate, project_expression,
-};
 use tachiko_semantic_core::{
-    Diagnostic, Document, DocumentId, Entity, EntityId, EntityKey, FieldDefinition, FieldId,
-    FieldKey, FieldRef, FieldType, Schema, SchemaId, SchemaKey, Value, validate_document,
+    Document, DocumentId, Entity, EntityId, EntityKey, FieldDefinition, FieldId, FieldKey,
+    FieldType, Schema, SchemaId, SchemaKey, Value,
 };
-use thiserror::Error;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum MergeOutcome {
@@ -43,59 +39,12 @@ pub enum MergeValue {
     FieldValue(Value),
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum MergeSide {
-    Base,
-    Ours,
-    Theirs,
-}
-
-#[derive(Debug, Error)]
-pub enum MergeError {
-    #[error("invalid {side:?} input: {diagnostics:?}")]
-    InvalidInput {
-        side: MergeSide,
-        diagnostics: Vec<Diagnostic>,
-    },
-    #[error("could not calculate {side:?} input: {source}")]
-    InputCalculation {
-        side: MergeSide,
-        #[source]
-        source: CalculationError,
-    },
-    #[error("could not project formula '{field}' in {side:?} input: {source}")]
-    InputProjection {
-        side: MergeSide,
-        field: FieldRef,
-        #[source]
-        source: CanonicalAuthoringProjectionError,
-    },
-    #[error("invalid merged document: {diagnostics:?}")]
-    InvalidMergedDocument { diagnostics: Vec<Diagnostic> },
-    #[error("could not calculate merged document: {0}")]
-    MergedCalculation(CalculationError),
-    #[error("could not project formula '{field}' in merged document: {source}")]
-    MergedProjection {
-        field: FieldRef,
-        #[source]
-        source: CanonicalAuthoringProjectionError,
-    },
-}
-
 /// Merge semantic changes from `ours` and `theirs` against their common `base`.
 ///
-/// # Errors
-///
-/// Returns [`MergeError`] when an input or conflict-free candidate is unsafe.
-pub fn merge(
-    base: &Document,
-    ours: &Document,
-    theirs: &Document,
-) -> Result<MergeOutcome, MergeError> {
-    validate_and_calculate_input(MergeSide::Base, base)?;
-    validate_and_calculate_input(MergeSide::Ours, ours)?;
-    validate_and_calculate_input(MergeSide::Theirs, theirs)?;
-
+/// This engine owns model-level reconciliation only. Workspace-engine applies
+/// semantic validation and operation-specific gates to inputs and candidates.
+#[must_use]
+pub fn merge(base: &Document, ours: &Document, theirs: &Document) -> MergeOutcome {
     let mut conflicts = Vec::new();
     let id = merge_scalar(
         "id",
@@ -128,58 +77,19 @@ pub fn merge(
 
     if !conflicts.is_empty() {
         conflicts.sort_by(|left, right| left.path.cmp(&right.path));
-        return Ok(MergeOutcome::Conflicted(conflicts));
+        return MergeOutcome::Conflicted(conflicts);
     }
 
     let (Some(id), Some(title), Some(schemas), Some(entities)) = (id, title, schemas, entities)
     else {
         unreachable!("missing merge selection must have produced a conflict")
     };
-    let candidate = Document {
+    MergeOutcome::Merged(Document {
         id,
         title,
         schemas,
         entities,
-    };
-    let diagnostics = validate_document(&candidate);
-    if !diagnostics.is_empty() {
-        return Err(MergeError::InvalidMergedDocument { diagnostics });
-    }
-    preflight_formula_projections(&candidate)
-        .map_err(|(field, source)| MergeError::MergedProjection { field, source })?;
-    calculate(&candidate).map_err(MergeError::MergedCalculation)?;
-
-    Ok(MergeOutcome::Merged(candidate))
-}
-
-fn validate_and_calculate_input(side: MergeSide, document: &Document) -> Result<(), MergeError> {
-    let diagnostics = validate_document(document);
-    if !diagnostics.is_empty() {
-        return Err(MergeError::InvalidInput { side, diagnostics });
-    }
-    preflight_formula_projections(document).map_err(|(field, source)| {
-        MergeError::InputProjection {
-            side,
-            field,
-            source,
-        }
-    })?;
-    calculate(document).map_err(|source| MergeError::InputCalculation { side, source })?;
-    Ok(())
-}
-
-fn preflight_formula_projections(
-    document: &Document,
-) -> Result<(), (FieldRef, CanonicalAuthoringProjectionError)> {
-    for (entity_id, entity) in &document.entities {
-        for (field_id, value) in &entity.fields {
-            if let Value::Formula(expression) = value {
-                let field = FieldRef::new(entity_id.clone(), field_id.clone());
-                project_expression(document, expression).map_err(|source| (field, source))?;
-            }
-        }
-    }
-    Ok(())
+    })
 }
 
 fn merge_schemas(

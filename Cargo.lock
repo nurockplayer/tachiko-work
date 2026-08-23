@@ -285,7 +285,6 @@ version = "0.1.0"
 dependencies = [
  "tachiko-formula-engine",
  "tachiko-semantic-core",
- "thiserror",
 ]
 
 [[package]]
@@ -293,6 +292,7 @@ name = "tachiko-semantic-core"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -43,7 +43,7 @@ fn public_identifier_predicate_matches_human_key_validation() {
             diagnostic.path == "entities.entity stable id.key"
                 && matches!(
                     diagnostic.code,
-                    DiagnosticCode::EmptyKey | DiagnosticCode::InvalidKey
+                    DiagnosticCode::EMPTY_KEY | DiagnosticCode::INVALID_KEY
                 )
         });
 

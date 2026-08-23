@@ -1,12 +1,13 @@
 use std::collections::BTreeMap;
 
 use tachiko_ai_api::{
-    Suggestion, SuggestionError, describe_document, explain_formula, explain_impact,
-    suggest_field_change,
+    ImpactExplanationError, Suggestion, SuggestionError, describe_document, explain_formula,
+    explain_impact, suggest_field_change,
 };
 use tachiko_workspace_engine::{
     Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
-    FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, SemanticChange, Value,
+    FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, SemanticChange, ValidationRole,
+    Value,
 };
 
 fn balance_document(damage: f64) -> Document {
@@ -198,6 +199,34 @@ fn explain_impact_projects_direct_changes_and_derived_formula_impacts() {
 }
 
 #[test]
+fn explain_impact_preserves_invalid_operand_role() {
+    let valid = balance_document(100.0);
+    let mut invalid = valid.clone();
+    invalid
+        .entities
+        .get_mut("sword")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("attack_interval"), number(0.0));
+
+    for (result, expected) in [
+        (
+            explain_impact(&invalid, &valid),
+            ValidationRole::ComparisonBefore,
+        ),
+        (
+            explain_impact(&valid, &invalid),
+            ValidationRole::ComparisonAfter,
+        ),
+    ] {
+        assert!(matches!(
+            result.unwrap_err(),
+            ImpactExplanationError::InvalidDocument { role, .. } if role == expected
+        ));
+    }
+}
+
+#[test]
 fn suggest_field_change_is_inert_and_requires_approval() {
     let document = balance_document(100.0);
     let original = document.clone();
@@ -325,7 +354,7 @@ fn typed_formula_suggestions_reject_noops_types_semantics_and_calculation() {
         }),
     )
     .expect_err("cycles must fail calculation");
-    assert!(matches!(cycle, SuggestionError::Calculation(_)));
+    assert!(matches!(cycle, SuggestionError::InvalidDocument { .. }));
 
     let division_by_zero = suggest_field_change(
         &document,
@@ -336,7 +365,10 @@ fn typed_formula_suggestions_reject_noops_types_semantics_and_calculation() {
         }),
     )
     .expect_err("division by zero must fail calculation");
-    assert!(matches!(division_by_zero, SuggestionError::Calculation(_)));
+    assert!(matches!(
+        division_by_zero,
+        SuggestionError::InvalidDocument { .. }
+    ));
 }
 
 #[test]

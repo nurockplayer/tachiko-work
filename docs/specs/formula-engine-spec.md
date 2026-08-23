@@ -8,7 +8,10 @@ Implementation state: The engine implements bounded parsing, snapshot binding
 to stable IDs, typed bound ASTs, partial round-trip-proven authoring projection,
 rename preflight, finite binary64 `Number` normalization, static dependency
 extraction, and the complete atomic node-keyed full-recompute oracle with SCC
-and failed-dependency outcomes. Incremental recomputation remains unimplemented.
+membership, direct failed-dependency sets, phase precedence, and all-or-nothing
+full-document calculation. Incremental recomputation remains unimplemented; the
+full outcome is the correctness oracle and legacy fail-first calculation is
+only its compatibility projection.
 
 Authority: ADR-0014, ADR-0015, ADR-0016, ADR-0017, and ADR-0018. Decision
 record: #24.
@@ -426,8 +429,9 @@ Implementation and remaining ownership under Accepted ADR-0018:
   numeric/resource vectors without rewriting legacy direct-`.ro/v1` bytes.
 - #40 owns final broad storage golden/negative conformance closure and
   independent corpus expansion.
-- Formula-engine owns the implemented complete failure oracle; later
-  formula-engine work owns incremental recomputation and mutation-sequence
+- Formula-engine owns the complete failure oracle implemented by #90 under
+  ADR-0018; #89 consumes it in the workspace validation report under ADR-0019.
+  Later formula-engine work owns incremental recomputation and mutation-sequence
   equivalence tests against that oracle.
 - Runtime-export JSON has an independent version contract. Existing
   `runtime-export-v1` bytes/meaning remain frozen; the stable-identity transition
@@ -451,15 +455,16 @@ IDs and emits no copyable formula. Rename coverage includes the exact 4,096-byte
 and 4,097-byte cases above and proves atomic preservation of the old human key,
 stable IDs, and bound AST on rejection.
 
-## Current implementation gaps
+## Current implementation limits
 
-The implementation remains evidence, not authority, where it does not yet
-cover the complete Accepted recomputation contract:
-
-- calculation always traverses the full document; `affected_by` reports a
-  closure but is not an incremental evaluator;
-- cross-target execution has compile/smoke evidence but not a complete
-  independent language implementation of every conformance vector.
+- Calculation intentionally traverses the full document; `affected_by` reports
+  a closure but is not an incremental evaluator.
+- The full outcome implements the Accepted structural → binding/type/stale
+  target → cycle → failed dependency → local evaluation precedence. A failed
+  outcome publishes no partial `Calculation`.
+- The portable conformance corpus executes the same production implementation
+  natively and as `wasm32-unknown-unknown` and compares complete stable formula
+  observations. It is not an independent second-language implementation.
 
 ## Deferred language features
 

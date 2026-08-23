@@ -943,3 +943,146 @@ The detailed executable plan is
 The clean committed tree passes `scripts/release-check.sh`, including source
 packages, notices, and native archive safety/concurrency checks. Independent
 exact-head reviews remain before PR handoff.
+
+## Active phase: ADR-0019 validation report and semantic diagnostics (#89)
+
+### Goal and authority
+
+- Implement the first authoritative first-party semantic `ValidationReport`
+  over the complete ADR-0018 formula failure oracle as conformance work, not an
+  architecture redesign.
+- Worktree branch: `codex/issue-89-validation-report`, created from
+  `origin/main` `342f69f2fc252554c240650d1438cc0d6cd82e2f`, then rebased through #92 and
+  the isolated #26 spike. It consumed #97's #90-owned ADR-0018 full formula
+  oracle at `6ad364755566bc604e69800c8656868dab60a365` and is now rebased onto
+  current `origin/main` `c685fe72a126c6de26089461923991447c70ad8f`, including the
+  independent presentation-projection documentation merge, repository
+  agent-tooling policy, isolated #96 pre-version envelope research, and PR
+  #100's ADR-0017 Stage-0 direct-JSON envelope. The upstream formula and storage
+  implementations and their conformance suites are retained unchanged, and
+  the repository-wide `AGENTS.md` and `CONTRIBUTING.md` workflow requirements
+  are honored.
+- Authority: Issue #89; Accepted ADR-0015 through ADR-0019; the validation,
+  diagnostics, formula, and schema specifications; the Product Constitution
+  and Design Principles; and the knowledge authority/reconciliation policies.
+- The clean base passes 219 workspace tests across 29 suites.
+
+### Initial audited ownership before migration
+
+- semantic-core's accumulating validator owns current document rules, but its
+  diagnostic identity is path-first and has no stable semantic subjects,
+  related machine facts, severity, or provider provenance.
+- At the initial base, formula-engine owned structural analysis, binding,
+  dependencies, cycle detection, and evaluation but exposed only fail-first
+  `calculate()` errors. During implementation, #97 landed #90's authoritative
+  `calculate_complete()` outcome on main; #89 now consumes that authority and
+  carries no formula-engine source or test delta.
+- workspace-engine repeats validate/calculate sequencing across first-party
+  operations and separately performs formula projection preflight in
+  authoring/finalization paths.
+- merge-engine, AI, CLI, storage, and the portable harness consume legacy
+  surfaces. Storage representation validation remains a sibling responsibility
+  and is not part of this migration.
+
+### Locked migration plan
+
+1. Add only generic semantic-core diagnostic/location/fact primitives,
+   including opaque provider identity, with no formula or higher-layer
+   taxonomy.
+2. Consume #90's authoritative full formula outcome keyed by stable field
+   subjects: structural, then binding/type/stale target, complete SCC
+   membership, direct failed dependencies, and local evaluation. Remove the
+   superseded branch-local oracle implementation rather than duplicating it.
+3. Preserve #90's compatibility `calculate()` projection and all-or-nothing
+   `Calculation` publication unchanged.
+4. Compose core and formula observations once in workspace-engine as the
+   authoritative semantic ValidationReport with deterministic ordering and
+   prerequisite/cascade suppression.
+5. Reuse the shared semantic outcome across first-party operations while
+   retaining projection, authoring, export, and output preflights as explicit
+   operation-specific gates rather than universal semantic validity.
+6. Reconcile adapters and only clearly owned duplicate orchestration, extend
+   native/WASM stable-observation conformance, update implementation-state
+   documentation, run the release-equivalent gate, and perform two independent
+   exact-head reviews.
+
+### Explicit deferrals
+
+- #10 public Semantic API and wire/version/transaction commitments.
+- #13 progressive typing and invalid-draft lifecycle.
+- #17 plugin runtime or ABI.
+- #26 IPC, WASM/Web Worker/resident-runtime transport.
+- #41 `.roproj`.
+- New common diagnostic/validation crates, storage/numeric changes, generic
+  constraint DSLs, and presentation paths/messages/spans/witnesses as semantic
+  authority.
+
+The detailed executable plan is
+`docs/superpowers/plans/2026-08-23-validation-report-diagnostics.md`.
+
+### Implemented ownership and verification evidence
+
+- semantic-core now owns only generic symbolic diagnostic codes, provisional
+  severity, stable semantic subject/location/fact primitives, and opaque
+  provider identity plus its own core rules. It contains no formula/workspace
+  provider taxonomy or reverse dependency.
+- formula-engine's #90-owned `calculate_complete()` is the authoritative
+  ADR-0018 outcome: structural, binding/type/stale target, complete cyclic SCC
+  membership, direct failed dependencies, then left-to-right local evaluation.
+  Failures are keyed by stable value nodes, all static edges are retained, and
+  failed outcomes expose no partial `Calculation`. Compatibility `calculate()`
+  remains a presentation-oriented projection of that outcome.
+- workspace-engine composes core rules and formula outcomes into one
+  deterministic `ValidationReport`. Stable observations include symbolic
+  meaning, severity, stable subjects/related facts, and opaque provenance;
+  human paths/messages and selected cycle presentation are excluded.
+- Shared semantic validation is reused by validation, calculation, queries,
+  proposals, mutations, comparison, and merge finalization. Canonical formula
+  projection remains an explicit authoring/output gate after semantic
+  validation, including merged-candidate preflight.
+- merge-engine now owns model-level three-way reconciliation only. Workspace
+  owns input/candidate semantic validation, projection gates, and impact.
+  Storage representation validation remains unchanged and sibling-owned.
+- AI propagates the workspace report rather than reconstructing semantic
+  diagnostics; CLI continues to render workspace errors at the adapter.
+- TDD evidence covers independent accumulation, phase- and fact-specific
+  cascade suppression, rename-stable observations, multi-subject
+  duplicates/cycles/dependencies, and validation/finalization agreement. The
+  primary accumulation test pins the complete ordered stable-observation
+  vector, and all four portable report records pin exact counts and
+  fingerprints. The upstream #90 suite remains the formula precedence and
+  all-or-nothing oracle.
+- Maintainer follow-up TDD covers all five scalar/structured
+  `SemanticSubject` serialization and round-trip cases without stabilizing an
+  external wire contract; directional `store_id`/`declared_id` facts preserve
+  swapped schema, entity, and schema-field mismatches; and survival-aware
+  workspace projection suppresses downstream failed-dependency noise when its
+  primary formula failure did not survive prerequisite filtering.
+- The first fresh review pass additionally found that failed-dependency
+  projection rescanned deep chains quadratically and could emit related
+  subjects before the complete survivor closure was known, while duplicate-key
+  findings could collapse distinct malformed store entries that shared a
+  declared ID. Regression-first fixes now use a deterministic reverse
+  dependency worklist, project only after the final survivor closure, cover a
+  20,000-node chain, and identify duplicate schema/entity/field keys by their
+  typed store IDs. Formula-engine remains unchanged and authoritative.
+- The post-#100 fast workspace gate passes 266 tests across 35 suites. The
+  portable corpus executes 46 fixed production records—42 current-main records,
+  including PR #100's 15 direct-JSON envelope cases, plus four
+  `ValidationReport` records—and matches exact observations natively and on
+  `wasm32-unknown-unknown`.
+- The clean-commit release gate passes after all review fixes, including
+  formatting, the ADR-0016 dependency graph, warning-denied Clippy and rustdoc,
+  all 266 tests across 35 suites, exact native/WASM equality for 46 portable
+  records, Rust 1.85 MSRV, package/license policy, four product smokes, and
+  archive/tamper/interruption/concurrency checks.
+- Independent exact-head ADR-0018 and ADR-0019/#89 re-reviews confirm the
+  worklist and final survivor closure preserve #90 authority and direct failure
+  facts, stable observations remain correct, formula/storage sources match
+  main, and no actionable P0/P1/P2 findings remain.
+- Handoff is the focused PR #99 from `codex/issue-89-validation-report`. Its
+  description records the ownership migration, stable report observations,
+  formula-oracle evidence, validation/finalization separation, verification,
+  explicit deferrals, and `Closes #89`. All three maintainer threads have
+  exact-head evidence replies and are resolved; GitHub quality/MSRV checks are
+  green, and the PR remains open and unmerged for maintainer approval.

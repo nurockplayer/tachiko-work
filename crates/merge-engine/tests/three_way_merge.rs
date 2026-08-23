@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 
-use tachiko_formula_engine::{CalculationError, calculate};
-use tachiko_merge_engine::{MergeError, MergeOutcome, MergeSide, MergeValue, merge};
+use tachiko_formula_engine::calculate;
+use tachiko_merge_engine::{MergeOutcome, MergeValue, merge};
 use tachiko_semantic_core::{
-    DiagnosticCode, Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId,
-    FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
+    Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
+    FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
 };
 
 fn balance_document(damage: f64, attack_interval: f64) -> Document {
@@ -126,7 +126,7 @@ fn independent_fields_on_the_same_entity_merge() {
     let ours = balance_document(45.0, 0.9);
     let theirs = balance_document(36.0, 0.8);
 
-    let MergeOutcome::Merged(merged) = merge(&base, &ours, &theirs).unwrap() else {
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &theirs) else {
         panic!("independent edits should merge");
     };
     assert_eq!(merged.entities["iron_sword"].fields["damage"], number(45.0));
@@ -155,7 +155,7 @@ fn key_rename_and_value_edit_merge_by_stable_identity() {
         .fields
         .insert(FieldId::from("damage"), number(45.0));
 
-    let MergeOutcome::Merged(merged) = merge(&base, &ours, &theirs).unwrap() else {
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &theirs) else {
         panic!("a key rename and independent value edit should merge")
     };
 
@@ -177,7 +177,7 @@ fn divergent_key_renames_conflict_on_the_same_stable_object() {
     let mut theirs = base.clone();
     theirs.entities.get_mut("iron_sword").unwrap().key = "sunblade".into();
 
-    let MergeOutcome::Conflicted(conflicts) = merge(&base, &ours, &theirs).unwrap() else {
+    let MergeOutcome::Conflicted(conflicts) = merge(&base, &ours, &theirs) else {
         panic!("divergent key renames should conflict")
     };
 
@@ -198,34 +198,13 @@ fn divergent_key_renames_conflict_on_the_same_stable_object() {
 }
 
 #[test]
-fn combined_key_renames_cannot_exceed_the_formula_projection_limit() {
-    let base = balance_document(36.0, 0.9);
-    let mut ours = base.clone();
-    ours.entities.get_mut("iron_sword").unwrap().key = "a".repeat(2_032).into();
-    let mut theirs = base.clone();
-    theirs
-        .schemas
-        .get_mut("weapon")
-        .unwrap()
-        .fields
-        .get_mut("damage")
-        .unwrap()
-        .key = "b".repeat(4_050).into();
-
-    assert!(matches!(
-        merge(&base, &ours, &theirs).unwrap_err(),
-        MergeError::MergedProjection { .. }
-    ));
-}
-
-#[test]
 fn identical_two_sided_change_is_not_a_conflict() {
     let base = balance_document(36.0, 0.9);
     let ours = balance_document(45.0, 0.9);
     let theirs = ours.clone();
 
     assert!(matches!(
-        merge(&base, &ours, &theirs).unwrap(),
+        merge(&base, &ours, &theirs),
         MergeOutcome::Merged(_)
     ));
 }
@@ -238,7 +217,7 @@ fn independent_document_id_and_title_changes_merge() {
     let mut theirs = base.clone();
     theirs.title = "Rebalanced".to_owned();
 
-    let MergeOutcome::Merged(merged) = merge(&base, &ours, &theirs).unwrap() else {
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &theirs) else {
         panic!("independent document identity changes should merge");
     };
 
@@ -253,7 +232,7 @@ fn identical_two_sided_document_identity_change_merges() {
     changed.id = DocumentId::from("rebalanced");
     changed.title = "Rebalanced".to_owned();
 
-    let MergeOutcome::Merged(merged) = merge(&base, &changed, &changed).unwrap() else {
+    let MergeOutcome::Merged(merged) = merge(&base, &changed, &changed) else {
         panic!("identical document identity changes should merge");
     };
 
@@ -274,7 +253,7 @@ fn one_sided_schema_addition_merges() {
         },
     );
 
-    let MergeOutcome::Merged(merged) = merge(&base, &ours, &base).unwrap() else {
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &base) else {
         panic!("a one-sided schema addition should merge");
     };
 
@@ -294,7 +273,7 @@ fn identical_two_sided_schema_addition_merges() {
         },
     );
 
-    let MergeOutcome::Merged(merged) = merge(&base, &changed, &changed).unwrap() else {
+    let MergeOutcome::Merged(merged) = merge(&base, &changed, &changed) else {
         panic!("an identical two-sided schema addition should merge");
     };
 
@@ -323,7 +302,7 @@ fn independent_schema_additions_merge() {
         },
     );
 
-    let MergeOutcome::Merged(merged) = merge(&base, &ours, &theirs).unwrap() else {
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &theirs) else {
         panic!("independent schema additions should merge");
     };
 
@@ -337,7 +316,7 @@ fn schema_deletion_merges_when_the_other_side_is_unchanged() {
     let mut ours = base.clone();
     ours.schemas.remove("marker");
 
-    let MergeOutcome::Merged(merged) = merge(&base, &ours, &base).unwrap() else {
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &base) else {
         panic!("a one-sided unused-schema deletion should merge");
     };
 
@@ -354,7 +333,7 @@ fn one_sided_schema_field_addition_merges() {
         .fields
         .insert(FieldId::from("weight"), optional_number_field("weight"));
 
-    let MergeOutcome::Merged(merged) = merge(&base, &ours, &base).unwrap() else {
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &base) else {
         panic!("a one-sided schema field addition should merge");
     };
 
@@ -375,7 +354,7 @@ fn identical_two_sided_schema_field_addition_merges() {
         .fields
         .insert(FieldId::from("weight"), optional_number_field("weight"));
 
-    let MergeOutcome::Merged(merged) = merge(&base, &changed, &changed).unwrap() else {
+    let MergeOutcome::Merged(merged) = merge(&base, &changed, &changed) else {
         panic!("an identical two-sided schema field addition should merge");
     };
 
@@ -402,7 +381,7 @@ fn independent_schema_field_additions_merge() {
         .fields
         .insert(FieldId::from("weight"), optional_number_field("weight"));
 
-    let MergeOutcome::Merged(merged) = merge(&base, &ours, &theirs).unwrap() else {
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &theirs) else {
         panic!("independent schema field additions should merge");
     };
 
@@ -431,7 +410,7 @@ fn independent_existing_schema_field_definition_changes_merge() {
         optional_number_field("attack_interval"),
     );
 
-    let MergeOutcome::Merged(merged) = merge(&base, &ours, &theirs).unwrap() else {
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &theirs) else {
         panic!("independent schema field definition changes should merge");
     };
 
@@ -454,7 +433,7 @@ fn schema_field_deletion_merges_when_the_other_side_is_unchanged() {
         .fields
         .remove("weight");
 
-    let MergeOutcome::Merged(merged) = merge(&base, &ours, &base).unwrap() else {
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &base) else {
         panic!("a one-sided unused schema field deletion should merge");
     };
 
@@ -468,7 +447,7 @@ fn one_sided_entity_addition_merges() {
     ours.entities
         .insert(EntityId::from("rare"), marker_entity("rare"));
 
-    let MergeOutcome::Merged(merged) = merge(&base, &ours, &base).unwrap() else {
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &base) else {
         panic!("a one-sided entity addition should merge");
     };
 
@@ -483,7 +462,7 @@ fn identical_two_sided_entity_addition_merges() {
         .entities
         .insert(EntityId::from("rare"), marker_entity("rare"));
 
-    let MergeOutcome::Merged(merged) = merge(&base, &changed, &changed).unwrap() else {
+    let MergeOutcome::Merged(merged) = merge(&base, &changed, &changed) else {
         panic!("an identical two-sided entity addition should merge");
     };
 
@@ -501,7 +480,7 @@ fn independent_entity_additions_merge() {
         .entities
         .insert(EntityId::from("legendary"), marker_entity("legendary"));
 
-    let MergeOutcome::Merged(merged) = merge(&base, &ours, &theirs).unwrap() else {
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &theirs) else {
         panic!("independent entity additions should merge");
     };
 
@@ -515,7 +494,7 @@ fn entity_deletion_merges_when_the_other_side_is_unchanged() {
     let mut ours = base.clone();
     ours.entities.remove("iron_sword");
 
-    let MergeOutcome::Merged(merged) = merge(&base, &ours, &base).unwrap() else {
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &base) else {
         panic!("a one-sided entity deletion should merge");
     };
 
@@ -537,7 +516,7 @@ fn one_sided_entity_field_addition_merges() {
         .fields
         .insert(FieldId::from("bonus"), number(4.0));
 
-    let MergeOutcome::Merged(merged) = merge(&base, &ours, &base).unwrap() else {
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &base) else {
         panic!("a one-sided entity field addition should merge");
     };
 
@@ -560,7 +539,7 @@ fn identical_two_sided_entity_field_addition_merges() {
         .fields
         .insert(FieldId::from("bonus"), number(4.0));
 
-    let MergeOutcome::Merged(merged) = merge(&base, &changed, &changed).unwrap() else {
+    let MergeOutcome::Merged(merged) = merge(&base, &changed, &changed) else {
         panic!("an identical two-sided entity field addition should merge");
     };
 
@@ -588,7 +567,7 @@ fn independent_entity_field_additions_merge() {
         .fields
         .insert(FieldId::from("weight"), number(8.0));
 
-    let MergeOutcome::Merged(merged) = merge(&base, &ours, &theirs).unwrap() else {
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &theirs) else {
         panic!("independent entity field additions should merge");
     };
 
@@ -606,7 +585,7 @@ fn entity_field_deletion_merges_when_the_other_side_is_unchanged() {
         .fields
         .remove("bonus");
 
-    let MergeOutcome::Merged(merged) = merge(&base, &ours, &base).unwrap() else {
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &base) else {
         panic!("a one-sided entity field deletion should merge");
     };
 
@@ -624,7 +603,7 @@ fn entity_schema_membership_change_merges_when_the_other_side_is_unchanged() {
     let mut ours = base.clone();
     ours.entities.get_mut("iron_sword").unwrap().schema = SchemaId::from("alternate_weapon");
 
-    let MergeOutcome::Merged(merged) = merge(&base, &ours, &base).unwrap() else {
+    let MergeOutcome::Merged(merged) = merge(&base, &ours, &base) else {
         panic!("a one-sided entity schema-membership change should merge");
     };
 
@@ -640,7 +619,7 @@ fn same_field_divergence_returns_the_typed_conflict_payload() {
     let ours = balance_document(45.0, 0.9);
     let theirs = balance_document(50.0, 0.9);
 
-    let MergeOutcome::Conflicted(conflicts) = merge(&base, &ours, &theirs).unwrap() else {
+    let MergeOutcome::Conflicted(conflicts) = merge(&base, &ours, &theirs) else {
         panic!("different edits to the same field should conflict");
     };
 
@@ -677,7 +656,7 @@ fn delete_versus_modify_returns_the_optional_entry_conflict_payload() {
         .fields
         .insert(FieldId::from("bonus"), number(8.0));
 
-    let MergeOutcome::Conflicted(conflicts) = merge(&base, &ours, &theirs).unwrap() else {
+    let MergeOutcome::Conflicted(conflicts) = merge(&base, &ours, &theirs) else {
         panic!("a deletion and an edit to the same field should conflict");
     };
 
@@ -708,7 +687,7 @@ fn different_concurrent_field_additions_return_the_typed_conflict_payload() {
         .fields
         .insert(FieldId::from("weight"), text_field("weight"));
 
-    let MergeOutcome::Conflicted(conflicts) = merge(&base, &ours, &theirs).unwrap() else {
+    let MergeOutcome::Conflicted(conflicts) = merge(&base, &ours, &theirs) else {
         panic!("different concurrent additions should conflict");
     };
 
@@ -731,7 +710,7 @@ fn conflicts_are_returned_in_lexical_path_order() {
     let ours = balance_document(45.0, 0.8);
     let theirs = balance_document(50.0, 0.7);
 
-    let MergeOutcome::Conflicted(conflicts) = merge(&base, &ours, &theirs).unwrap() else {
+    let MergeOutcome::Conflicted(conflicts) = merge(&base, &ours, &theirs) else {
         panic!("two divergent fields should conflict");
     };
 
@@ -745,116 +724,4 @@ fn conflicts_are_returned_in_lexical_path_order() {
             "entities.iron_sword.fields.damage",
         ]
     );
-}
-
-#[test]
-fn invalid_input_reports_the_side_and_validation_diagnostics() {
-    let base = balance_document(36.0, 0.9);
-    let mut ours = base.clone();
-    ours.entities.get_mut("iron_sword").unwrap().fields.insert(
-        FieldId::from("damage"),
-        Value::Text("forty-five".to_owned()),
-    );
-
-    let error = merge(&base, &ours, &base).unwrap_err();
-
-    let MergeError::InvalidInput { side, diagnostics } = error else {
-        panic!("invalid input should report validation diagnostics");
-    };
-    assert_eq!(side, MergeSide::Ours);
-    assert!(diagnostics.iter().any(|diagnostic| {
-        diagnostic.path == "entities.iron_sword.fields.damage"
-            && diagnostic.code == DiagnosticCode::TypeMismatch
-    }));
-}
-
-#[test]
-fn uncalculable_input_reports_the_side() {
-    let base = balance_document(36.0, 0.9);
-    let mut ours = base.clone();
-    ours.entities
-        .get_mut("iron_sword")
-        .unwrap()
-        .fields
-        .insert(FieldId::from("attack_interval"), number(0.0));
-
-    let error = merge(&base, &ours, &base).unwrap_err();
-
-    assert!(matches!(
-        error,
-        MergeError::InputCalculation {
-            side: MergeSide::Ours,
-            source: CalculationError::DivisionByZero { .. },
-        }
-    ));
-}
-
-#[test]
-fn combined_broken_reference_is_rejected_as_an_invalid_merged_document() {
-    let base = with_bonus(balance_document(36.0, 0.9));
-    let mut ours = base.clone();
-    ours.entities.get_mut("iron_sword").unwrap().fields.insert(
-        FieldId::from("dps"),
-        Value::Formula(Expression::Reference(FieldRef::new("iron_sword", "bonus"))),
-    );
-    let mut theirs = base.clone();
-    theirs
-        .schemas
-        .get_mut("weapon")
-        .unwrap()
-        .fields
-        .remove("bonus");
-    theirs
-        .entities
-        .get_mut("iron_sword")
-        .unwrap()
-        .fields
-        .remove("bonus");
-
-    let error = merge(&base, &ours, &theirs).unwrap_err();
-
-    let MergeError::InvalidMergedDocument { diagnostics } = error else {
-        panic!("a broken combined reference should reject the candidate");
-    };
-    assert!(diagnostics.iter().any(|diagnostic| {
-        diagnostic.path == "entities.iron_sword.fields.dps"
-            && diagnostic.code == DiagnosticCode::MissingFormulaReference
-    }));
-}
-
-#[test]
-fn combined_division_by_zero_is_rejected_as_a_merged_calculation_error() {
-    let mut base = balance_document(36.0, 0.9);
-    base.entities.get_mut("iron_sword").unwrap().fields.insert(
-        FieldId::from("dps"),
-        Value::Formula(Expression::Divide {
-            left: Box::new(Expression::Reference(FieldRef::new("iron_sword", "damage"))),
-            right: Box::new(Expression::Reference(FieldRef::new("iron_sword", "damage"))),
-        }),
-    );
-    let mut ours = base.clone();
-    ours.entities.get_mut("iron_sword").unwrap().fields.insert(
-        FieldId::from("dps"),
-        Value::Formula(Expression::Divide {
-            left: Box::new(Expression::Reference(FieldRef::new("iron_sword", "damage"))),
-            right: Box::new(Expression::Reference(FieldRef::new(
-                "iron_sword",
-                "attack_interval",
-            ))),
-        }),
-    );
-    let mut theirs = base.clone();
-    theirs
-        .entities
-        .get_mut("iron_sword")
-        .unwrap()
-        .fields
-        .insert(FieldId::from("attack_interval"), number(0.0));
-
-    let error = merge(&base, &ours, &theirs).unwrap_err();
-
-    assert!(matches!(
-        error,
-        MergeError::MergedCalculation(CalculationError::DivisionByZero { .. })
-    ));
 }
