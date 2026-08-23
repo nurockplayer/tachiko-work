@@ -781,6 +781,89 @@ fn failed_dependency_is_suppressed_when_its_cycle_failure_did_not_survive() {
 }
 
 #[test]
+fn failed_dependency_projection_uses_the_complete_survivor_closure() {
+    let mut document = document();
+    formula(
+        &mut document,
+        "m-root",
+        Expression::Divide {
+            left: Box::new(number(1.0)),
+            right: Box::new(number(0.0)),
+        },
+    );
+    formula(&mut document, "z-chain", reference("entity", "m-root"));
+    formula(
+        &mut document,
+        "a-aggregate",
+        Expression::Add {
+            left: Box::new(reference("entity", "m-root")),
+            right: Box::new(reference("entity", "z-chain")),
+        },
+    );
+
+    let report = validation_report(&document);
+    let aggregate = report
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| {
+            diagnostic.code == diagnostic_codes::FORMULA_FAILED_DEPENDENCY
+                && diagnostic.subjects
+                    == [SemanticSubject::EntityField(FieldRef::new(
+                        "entity",
+                        "a-aggregate",
+                    ))]
+        })
+        .expect("aggregate failed-dependency diagnostic");
+
+    assert_eq!(
+        aggregate.related_subjects,
+        [
+            SemanticSubject::EntityField(FieldRef::new("entity", "m-root")),
+            SemanticSubject::EntityField(FieldRef::new("entity", "z-chain")),
+        ]
+    );
+}
+
+#[test]
+fn long_failed_dependency_chain_projects_without_repeated_full_rescans() {
+    const CHAIN_LENGTH: usize = 20_000;
+
+    let mut document = document();
+    for index in 0..CHAIN_LENGTH {
+        let field = format!("chain-{index:05}");
+        let expression = if index + 1 == CHAIN_LENGTH {
+            Expression::Divide {
+                left: Box::new(number(1.0)),
+                right: Box::new(number(0.0)),
+            }
+        } else {
+            reference("entity", &format!("chain-{:05}", index + 1))
+        };
+        formula(&mut document, &field, expression);
+    }
+
+    let report = validation_report(&document);
+
+    assert_eq!(report.diagnostics().len(), CHAIN_LENGTH);
+    assert_eq!(
+        report
+            .diagnostics()
+            .iter()
+            .filter(|diagnostic| { diagnostic.code == diagnostic_codes::FORMULA_FAILED_DEPENDENCY })
+            .count(),
+        CHAIN_LENGTH - 1
+    );
+    assert!(report.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code == diagnostic_codes::FORMULA_DIVISION_BY_ZERO
+            && diagnostic.subjects
+                == [SemanticSubject::EntityField(FieldRef::new(
+                    "entity",
+                    "chain-19999",
+                ))]
+    }));
+}
+
+#[test]
 fn large_scc_projects_one_complete_workspace_diagnostic() {
     const MEMBER_COUNT: usize = 4_096;
 

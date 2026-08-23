@@ -1058,7 +1058,15 @@ The detailed executable plan is
   swapped schema, entity, and schema-field mismatches; and survival-aware
   workspace projection suppresses downstream failed-dependency noise when its
   primary formula failure did not survive prerequisite filtering.
-- The post-#100 fast workspace gate passes 263 tests across 35 suites. The
+- The first fresh review pass additionally found that failed-dependency
+  projection rescanned deep chains quadratically and could emit related
+  subjects before the complete survivor closure was known, while duplicate-key
+  findings could collapse distinct malformed store entries that shared a
+  declared ID. Regression-first fixes now use a deterministic reverse
+  dependency worklist, project only after the final survivor closure, cover a
+  20,000-node chain, and identify duplicate schema/entity/field keys by their
+  typed store IDs. Formula-engine remains unchanged and authoritative.
+- The post-#100 fast workspace gate passes 266 tests across 35 suites. The
   portable corpus executes 46 fixed production records—42 current-main records,
   including PR #100's 15 direct-JSON envelope cases, plus four
   `ValidationReport` records—and matches exact observations natively and on

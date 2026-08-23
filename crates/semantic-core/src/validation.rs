@@ -288,11 +288,11 @@ fn validate_entities(
 
 fn validate_schema_keys(document: &Document, diagnostics: &mut Vec<Diagnostic>) {
     let mut groups = BTreeMap::<_, Vec<_>>::new();
-    for schema in document.schemas.values() {
+    for (schema_id, schema) in &document.schemas {
         groups
             .entry(schema.key.clone())
             .or_default()
-            .push(schema.id.clone());
+            .push(schema_id.clone());
     }
     for (key, ids) in groups.into_iter().filter(|(_, ids)| ids.len() > 1) {
         diagnostics.push(core_diagnostic(
@@ -306,11 +306,11 @@ fn validate_schema_keys(document: &Document, diagnostics: &mut Vec<Diagnostic>) 
 
 fn validate_entity_keys(document: &Document, diagnostics: &mut Vec<Diagnostic>) {
     let mut groups = BTreeMap::<_, Vec<_>>::new();
-    for entity in document.entities.values() {
+    for (entity_id, entity) in &document.entities {
         groups
             .entry(entity.key.clone())
             .or_default()
-            .push(entity.id.clone());
+            .push(entity_id.clone());
     }
     for (key, ids) in groups.into_iter().filter(|(_, ids)| ids.len() > 1) {
         diagnostics.push(core_diagnostic(
@@ -329,11 +329,11 @@ fn validate_field_keys(
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     let mut groups = BTreeMap::<_, Vec<_>>::new();
-    for field in schema.fields.values() {
+    for (field_id, field) in &schema.fields {
         groups
             .entry(field.key.clone())
             .or_default()
-            .push(field.id.clone());
+            .push(field_id.clone());
     }
     for (key, ids) in groups.into_iter().filter(|(_, ids)| ids.len() > 1) {
         diagnostics.push(core_diagnostic(

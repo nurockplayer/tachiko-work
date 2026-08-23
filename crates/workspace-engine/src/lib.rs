@@ -1,7 +1,7 @@
 //! Shared application operations over Tachiko Work semantic documents.
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     fmt,
 };
 
@@ -1300,28 +1300,42 @@ fn formula_diagnostics(
         diagnostics.push(diagnostic);
     }
 
-    while !pending_failed_dependencies.is_empty() {
-        let pending_count = pending_failed_dependencies.len();
-        let mut deferred = Vec::new();
-        for (formula, path, dependencies) in pending_failed_dependencies {
-            let Some(diagnostic) = project_failed_dependency_diagnostic(
-                formula,
-                &path,
-                dependencies,
-                &surviving_failures,
-            ) else {
-                deferred.push((formula, path, dependencies));
-                continue;
-            };
-            surviving_failures.insert(formula.clone());
+    propagate_surviving_failed_dependencies(&pending_failed_dependencies, &mut surviving_failures);
+    for (formula, path, dependencies) in pending_failed_dependencies {
+        if let Some(diagnostic) =
+            project_failed_dependency_diagnostic(formula, &path, dependencies, &surviving_failures)
+        {
             diagnostics.push(diagnostic);
         }
-        if deferred.len() == pending_count {
-            break;
-        }
-        pending_failed_dependencies = deferred;
     }
     diagnostics
+}
+
+fn propagate_surviving_failed_dependencies(
+    pending: &[(&FieldRef, String, &BTreeSet<FieldRef>)],
+    surviving_failures: &mut BTreeSet<FieldRef>,
+) {
+    let mut dependents_by_failure: BTreeMap<&FieldRef, Vec<&FieldRef>> = BTreeMap::new();
+    for (formula, _, dependencies) in pending {
+        for dependency in *dependencies {
+            dependents_by_failure
+                .entry(dependency)
+                .or_default()
+                .push(formula);
+        }
+    }
+
+    let mut queue = surviving_failures.iter().cloned().collect::<VecDeque<_>>();
+    while let Some(failure) = queue.pop_front() {
+        let Some(dependents) = dependents_by_failure.get(&failure) else {
+            continue;
+        };
+        for dependent in dependents {
+            if surviving_failures.insert((*dependent).clone()) {
+                queue.push_back((*dependent).clone());
+            }
+        }
+    }
 }
 
 fn is_noncanonical_cycle(formula: &FieldRef, failure: &CalculationFailure) -> bool {

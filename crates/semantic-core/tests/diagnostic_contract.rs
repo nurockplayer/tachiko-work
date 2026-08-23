@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use serde_json::json;
 use tachiko_semantic_core::{
     Diagnostic, DiagnosticCode, DiagnosticFact, DiagnosticProvider, DiagnosticSeverity, Document,
-    DocumentId, EntityId, FieldId, FieldRef, Schema, SchemaId, SchemaKey, SemanticSubject,
-    validate_document_core,
+    DocumentId, Entity, EntityId, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, Schema,
+    SchemaId, SchemaKey, SemanticSubject, validate_document_core,
 };
 
 fn duplicate_schema_keys(key: &str) -> Document {
@@ -125,6 +125,99 @@ fn multi_subject_duplicate_is_stable_across_human_key_rename() {
     );
     assert_eq!(before.stable_observation(), after.stable_observation());
     assert_ne!(before.path, after.path);
+}
+
+#[test]
+fn duplicate_keys_identify_distinct_store_entries_when_declared_ids_match() {
+    let duplicate_fields = BTreeMap::from([
+        (
+            FieldId::from("field-a"),
+            FieldDefinition {
+                id: "declared-field".into(),
+                key: FieldKey::from("duplicate-field"),
+                field_type: FieldType::Number,
+                required: false,
+            },
+        ),
+        (
+            FieldId::from("field-b"),
+            FieldDefinition {
+                id: "declared-field".into(),
+                key: FieldKey::from("duplicate-field"),
+                field_type: FieldType::Number,
+                required: false,
+            },
+        ),
+    ]);
+    let mut document = Document::empty("document-id", "Diagnostics");
+    document.schemas = BTreeMap::from([
+        (
+            SchemaId::from("schema-a"),
+            Schema {
+                id: "declared-schema".into(),
+                key: SchemaKey::from("duplicate-schema"),
+                fields: duplicate_fields,
+            },
+        ),
+        (
+            SchemaId::from("schema-b"),
+            Schema {
+                id: "declared-schema".into(),
+                key: SchemaKey::from("duplicate-schema"),
+                fields: BTreeMap::new(),
+            },
+        ),
+    ]);
+    document.entities = BTreeMap::from([
+        (
+            EntityId::from("entity-a"),
+            Entity {
+                id: "declared-entity".into(),
+                key: "duplicate-entity".into(),
+                schema: "schema-a".into(),
+                fields: BTreeMap::new(),
+            },
+        ),
+        (
+            EntityId::from("entity-b"),
+            Entity {
+                id: "declared-entity".into(),
+                key: "duplicate-entity".into(),
+                schema: "schema-a".into(),
+                fields: BTreeMap::new(),
+            },
+        ),
+    ]);
+
+    let duplicates = validate_document_core(&document)
+        .into_iter()
+        .filter(|diagnostic| diagnostic.code == DiagnosticCode::DUPLICATE_KEY)
+        .map(|diagnostic| diagnostic.subjects)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        duplicates,
+        vec![
+            vec![
+                SemanticSubject::Schema(SchemaId::from("schema-a")),
+                SemanticSubject::Schema(SchemaId::from("schema-b")),
+            ],
+            vec![
+                SemanticSubject::SchemaField {
+                    schema: "schema-a".into(),
+                    field: "field-a".into(),
+                },
+                SemanticSubject::SchemaField {
+                    schema: "schema-a".into(),
+                    field: "field-b".into(),
+                },
+            ],
+            vec![
+                SemanticSubject::Entity(EntityId::from("entity-a")),
+                SemanticSubject::Entity(EntityId::from("entity-b")),
+            ],
+        ]
+    );
 }
 
 #[test]
