@@ -47,13 +47,50 @@ test("TypeScript client reaches workspace-engine through a resident Worker/WASM 
       throw new Error("expected mutation result");
     }
     assert.equal(mutation.result.change_count, 2);
-    assert.match(mutation.result.diff_text, /computed/);
     assert.equal(
-      mutation.result.calculated.find(
-        (field) => field.address === "entity_0000.computed",
-      )?.value,
-      22,
+      mutation.result.diff_text,
+      "Synthetic Records Entity 0000\nbase: 1 -> 11\naffected computed: 2 -> 22\n",
     );
+    assert.deepEqual(mutation.result.patches, [
+      {
+        field: {
+          entity: "synthetic-entity-000000",
+          field: "synthetic-base-field-id",
+        },
+        value: { type: "number", value: 11 },
+      },
+      {
+        field: {
+          entity: "synthetic-entity-000000",
+          field: "synthetic-computed-field-id",
+        },
+        value: { type: "number", value: 22 },
+      },
+    ]);
+
+    const textMutation = await client.execute({
+      type: "set_scalar",
+      address: { entity: "entity_0000", field: "label" },
+      input: "Renamed",
+    });
+    assert.deepEqual(textMutation, {
+      revision: 2,
+      result: {
+        type: "mutation",
+        change_count: 1,
+        diff_text:
+          'Synthetic Records Entity 0000\nlabel: "Record 0" -> "Renamed"\n',
+        patches: [
+          {
+            field: {
+              entity: "synthetic-entity-000000",
+              field: "synthetic-label-field-id",
+            },
+            value: { type: "text", value: "Renamed" },
+          },
+        ],
+      },
+    });
 
     const snapshot = await client.snapshot();
     assert.equal(snapshot.entities["synthetic-entity-000000"].key, "entity_0000");

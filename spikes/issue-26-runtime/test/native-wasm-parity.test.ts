@@ -59,7 +59,7 @@ class NativeDriver {
   }
 }
 
-test("native and Worker/WASM return byte-identical deterministic operation records", async () => {
+test("native and Worker/WASM return identical deterministic semantic values", async () => {
   const fixture = JSON.parse(
     await readFile(path.join(spikeRoot, "fixtures/parity-commands.json"), "utf8"),
   ) as Fixture;
@@ -119,6 +119,40 @@ test("native and Worker/WASM return byte-identical deterministic operation recor
     }
     assert.equal(merged.response.result.merged, true);
     assert.equal(merged.response.result.change_count, 4);
+    assert.equal(
+      merged.response.result.diff_text,
+      "Synthetic Records Entity 0000\nbase: 1 -> 10\naffected computed: 2 -> 20\n\nSynthetic Records Entity 0001\nmultiplier: 2 -> 3\naffected computed: 4 -> 6\n",
+    );
+    assert.deepEqual(merged.response.result.patches, [
+      {
+        field: {
+          entity: "synthetic-entity-000000",
+          field: "synthetic-base-field-id",
+        },
+        value: { type: "number", value: 10 },
+      },
+      {
+        field: {
+          entity: "synthetic-entity-000000",
+          field: "synthetic-computed-field-id",
+        },
+        value: { type: "number", value: 20 },
+      },
+      {
+        field: {
+          entity: "synthetic-entity-000001",
+          field: "synthetic-computed-field-id",
+        },
+        value: { type: "number", value: 6 },
+      },
+      {
+        field: {
+          entity: "synthetic-entity-000001",
+          field: "synthetic-multiplier-field-id",
+        },
+        value: { type: "number", value: 3 },
+      },
+    ]);
     await compare({ type: "execute", command: { type: "calculate" } });
   } finally {
     await Promise.all([native.close(), wasm.close()]);

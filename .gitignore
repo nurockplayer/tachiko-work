@@ -1,3 +1,4 @@
 /target/
 /spikes/issue-26-runtime/target/
+/spikes/issue-26-runtime/node_modules/
 .DS_Store

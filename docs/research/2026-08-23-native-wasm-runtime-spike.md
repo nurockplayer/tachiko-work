@@ -10,16 +10,17 @@ Date: 2026-08-23
 
 ADR-0016's portable application set and the current
 `tachiko-workspace-engine` can support one native/WASM semantic implementation.
-A Worker-hosted WASM runtime can retain the authoritative Rust `Document`,
-accept semantic commands/queries, and return revisioned projections without a
-React or JavaScript document mirror.
+An executed Node Worker-hosted WASM runtime can retain the authoritative Rust
+`Document`, accept semantic commands/queries, and return revisioned projections
+without a React or JavaScript document mirror.
 
 Resident runtime is therefore architecturally viable, but the current
 snapshot-style engine is not yet performance-complete for an interactive UI.
 It avoids full-document JS/WASM transfer while retaining full Rust-side
 candidate cloning, validation, calculation, and diff work. At 1000 synthetic
-entities, boundary bytes became effectively constant for a one-field edit, but
-the resident mutation still took about 300 ms median in release WASM.
+entities, estimated boundary JSON payload size became effectively constant for
+a one-field edit, but the resident mutation still took about 260 ms median in
+release WASM.
 
 No production crate or Accepted semantic contract was changed by this spike.
 The standalone adapter's JSON/ABI is deliberately not a public SDK.
@@ -32,8 +33,8 @@ The standalone adapter's JSON/ABI is deliberately not a public SDK.
 - `spikes/issue-26-runtime/worker/`: TypeScript Worker transport and client.
 - `spikes/issue-26-runtime/src/bin/native-driver.rs`: native JSONL driver over
   the same Rust request handler.
-- `spikes/issue-26-runtime/test/`: real Worker/WASM integration and exact
-  native/WASM differential tests.
+- `spikes/issue-26-runtime/test/`: real Node Worker/WASM integration and exact
+  decoded semantic-value native/WASM differential tests.
 - `scripts/issue-26-portability-audit.sh`: target compilation, source leakage,
   and dependency-tree checks.
 - `spikes/issue-26-runtime/benchmark/runtime-benchmark.ts`: full-snapshot versus
@@ -70,6 +71,13 @@ a native resident owner when residency is useful. A native host does not need
 to emulate the Web Worker transport. WASM remains an execution target rather
 than the semantic foundation.
 
+The diagram is the recommended browser topology, not a claim that a browser
+engine was executed. The spike executes Node's Worker plus WebAssembly runtime.
+Its protocol and WASM loader use browser-standard message, `WebAssembly`,
+`TextEncoder`, and `TextDecoder` primitives, while worker creation and module
+loading remain Node-specific. Browser Web Worker loading, lifecycle, memory,
+and engine conformance therefore remain open implementation evidence.
+
 ## State ownership
 
 | State | Owner | Examples |
@@ -92,13 +100,17 @@ operation gate succeeds.
 The evidenced useful shape is:
 
 - open/load a complete semantic snapshot once;
-- send small typed semantic commands with an expected/current revision;
+- send small typed semantic commands and return the current revision;
 - return a new revision plus affected projection patches and semantic results;
 - issue selective queries for views that are not already cached;
 - request a complete snapshot only for explicit persistence, export, recovery,
   debugging, or branch exchange;
 - serialize commands per resident runtime until a transaction/concurrency model
   is explicitly accepted.
+
+An expected-revision precondition is recommended for a production command
+boundary, but was not implemented by this spike and is not an evidenced
+capability of the current workspace-engine.
 
 The spike uses direct Serde JSON and a four-function raw memory ABI because
 they are cheap executable probes. They are not suitable contract authority:
@@ -138,8 +150,9 @@ for `wasm32-unknown-unknown`:
 - provider-free `tachiko-ai-api`
 
 The audit found no production-source use of filesystem/path, clock, ambient
-randomness, threads, environment, sockets, or network clients in that set. Its
-WASM normal-dependency tree contains no audited native/ambient runtime package.
+randomness, locale, threads, environment, sockets, or network clients in that
+set. Its WASM normal-dependency tree contains no audited native/ambient runtime
+package, and its native and WASM normal-dependency package sets are identical.
 
 Leakage is correctly outside the portable set:
 
@@ -160,11 +173,13 @@ The differential test drives the same Rust command handler through:
 1. the native release JSONL driver; and
 2. TypeScript `RuntimeClient` → Node Worker → real WASM module.
 
-It compares exact JSON records for deterministic synthetic generation, open,
-overview, full calculation, scalar mutation, semantic diff/formula impact,
-snapshot, stateless snapshot mutation, independent branch construction,
-three-way merge, and post-merge calculation. Every record matched byte for
-byte.
+It compares decoded `WireResult` semantic values, including stable ordering,
+for deterministic synthetic generation, open, overview, full calculation,
+scalar mutation, semantic diff/formula impact, snapshot, stateless snapshot
+mutation, independent branch construction, three-way merge, and post-merge
+calculation. Every semantic value matched exactly. The test does not claim
+byte-identical transport envelopes because the native JSONL and Worker
+envelopes differ.
 
 This supplements the existing release corpus, which already executes 24
 production semantic/storage/workspace/AI records natively and in WASM. No
@@ -173,23 +188,26 @@ needed.
 
 ## Performance evidence
 
-Environment: Node `v24.15.0`, macOS arm64, release WASM (998,314 bytes), two
+Environment: Node `v24.15.0`, macOS arm64, release WASM (1,008,723 bytes), two
 independent Worker/WASM instances per scale, 20 sequential alternating scalar
-mutations. Each entity has two stored Number fields and one independent bound
-formula. Times are within-run medians and are evidence for topology, not a
-browser/device performance promise.
+mutations. Each entity has two stored Number fields, one stored Text field, and
+one independent bound formula. Times are within-run medians and are evidence
+for topology, not a browser/device performance promise. Byte counts below are
+`JSON.stringify` payload-size estimates for requests and decoded results; they
+do not instrument Worker structured-clone traffic or include the full WASM and
+Worker reply envelopes.
 
-| Entities / formulas | Snapshot bytes | Main-thread JSON stringify | Whole-snapshot mutation median | Resident mutation median | Request byte reduction | Response byte reduction | Full calculation result |
+| Entities / formulas | Snapshot bytes | Node main-thread JSON stringify | Whole-snapshot mutation median | Resident mutation median | Request JSON estimate reduction | Response JSON estimate reduction | Full calculation result estimate |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 10 / 10 | 5,903 | 0.008 ms | 0.719 ms | 0.480 ms | 53.4× | 14.3× | 3,901 B |
-| 100 / 100 | 54,055 | 0.069 ms | 7.558 ms | 5.080 ms | 479.6× | 122.1× | 38,333 B |
-| 1000 / 1000 | 536,457 | 1.225 ms | 346.238 ms | 299.645 ms | 4,748.6× | 1,202.7× | 384,435 B |
+| 10 / 10 | 6,643 | 0.009 ms | 0.555 ms | 0.409 ms | 60.0× | 16.4× | 3,901 B |
+| 100 / 100 | 60,465 | 0.068 ms | 6.231 ms | 4.152 ms | 536.3× | 140.6× | 38,333 B |
+| 1000 / 1000 | 600,467 | 0.953 ms | 292.733 ms | 260.055 ms | 5,315.1× | 1,386.4× | 384,435 B |
 
-For 1000 entities, 20 whole-snapshot mutations transferred 10,731,839 request
-bytes and 10,738,538 response bytes. The resident path transferred 2,260
-request bytes and 8,929 response bytes. The affected mutation result stayed
-roughly constant because it contained only the directly changed field and its
-formula impact.
+For 1000 entities, 20 whole-snapshot mutations encoded an estimated 12,012,039
+request JSON bytes and 12,018,478 decoded-result JSON bytes. The resident path
+encoded an estimated 2,260 request bytes and 8,669 decoded-result bytes. The
+affected mutation result stayed roughly constant because it contained only the
+directly changed field and its formula impact.
 
 The main finding is a separation of costs:
 
@@ -210,9 +228,10 @@ queries.
 1. Mutation functions accept `&Document`, clone a complete candidate, and
    return `EditPreview { document, diff }`. A resident wrapper can adopt the
    returned document but cannot avoid the clone.
-2. Finalization and diff perform repeated full calculation. Producing a compact
-   calculated projection patch through current public queries adds another full
-   calculation because there is no direct application-level patch result.
+2. Finalization and diff perform repeated full calculation. `SemanticDiff`
+   exposes enough internal values for this adapter to derive typed scalar and
+   formula-impact patches without another calculation, but there is no
+   intentional application-level patch DTO.
 3. `calculate_fields` returns every calculated field. It is suitable as a
    correctness query but not a large-view incremental transport.
 4. `SemanticDiff`, most workspace result structures, and `WorkspaceError` are
@@ -239,8 +258,9 @@ concerns into semantic-core.
 - Keep one authoritative semantic aggregate in Rust.
 - Use a resident runtime for interactive Web/WASM rather than snapshot
   roundtrips per edit.
-- Place the Web WASM runtime in a Worker by default to isolate expensive
-  semantic work from React rendering/input.
+- Keep interactive WASM semantic work off the React rendering/input path. A Web
+  Worker is the recommended browser topology, but actual browser execution is
+  still an open conformance item; only Node Worker execution is evidenced here.
 - Treat React state as revisioned projection/cache plus ephemeral UI state.
 - Keep filesystem/browser storage/Tauri/Git outside workspace-engine and
   compose persistence explicitly at the host.

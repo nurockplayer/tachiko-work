@@ -147,30 +147,32 @@ async function measureScale(entityCount: number) {
       snapshot_bytes: snapshotBytes,
       main_thread_json_stringify_median_ms: round(serializationMedian(initial)),
       resident_initial_open_ms: round(opened.duration),
-      resident_initial_open_request_bytes: encodedBytes(openRequest),
+      resident_initial_open_request_json_bytes_estimate: encodedBytes(openRequest),
       repeated_mutations: {
         iterations: mutationIterations,
         whole_snapshot: {
           total_ms: round(statelessTotal),
           median_ms: round(median(statelessDurations)),
-          request_bytes_total: statelessRequestBytes,
-          response_bytes_total: statelessResponseBytes,
+          request_json_bytes_estimate_total: statelessRequestBytes,
+          response_json_bytes_estimate_total: statelessResponseBytes,
         },
         resident_commands: {
           total_ms: round(residentTotal),
           median_ms: round(median(residentDurations)),
-          request_bytes_total: residentRequestBytes,
-          response_bytes_total: residentResponseBytes,
+          request_json_bytes_estimate_total: residentRequestBytes,
+          response_json_bytes_estimate_total: residentResponseBytes,
         },
         elapsed_speedup: round(statelessTotal / residentTotal),
-        request_byte_reduction: round(statelessRequestBytes / residentRequestBytes),
-        response_byte_reduction: round(
+        request_json_size_estimate_reduction: round(
+          statelessRequestBytes / residentRequestBytes,
+        ),
+        response_json_size_estimate_reduction: round(
           statelessResponseBytes / residentResponseBytes,
         ),
       },
       full_calculation_query: {
         median_ms: round(median(calculationDurations)),
-        result_bytes: calculationResultBytes,
+        result_json_bytes_estimate: calculationResultBytes,
       },
     };
   } finally {

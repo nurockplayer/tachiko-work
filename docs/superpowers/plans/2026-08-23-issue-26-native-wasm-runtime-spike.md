@@ -73,7 +73,7 @@ The test loads the real `.wasm`, opens a synthetic project, runs overview, calcu
 
 - [x] **Step 2: Run the integration test and verify RED**
 
-Run: `node --test spikes/issue-26-runtime/test/worker-runtime.test.ts`
+Run: `pnpm --dir spikes/issue-26-runtime exec node --test test/worker-runtime.test.ts`
 
 Expected: module/build failure because the worker/WASM artifacts do not exist.
 
@@ -85,7 +85,7 @@ Keep one copied output buffer valid until the next call. Decode/encode only at t
 
 Run: `bash scripts/issue-26-runtime-build.sh`
 
-Run: `node --test spikes/issue-26-runtime/test/worker-runtime.test.ts`
+Run: `pnpm --dir spikes/issue-26-runtime exec node --test test/worker-runtime.test.ts`
 
 Expected: the real Worker → WASM → workspace-engine path passes.
 
@@ -97,7 +97,7 @@ Expected: the real Worker → WASM → workspace-engine path passes.
 
 **Interfaces:**
 - Consumes: one deterministic command corpus.
-- Produces: exact native and WASM JSONL records for overview, formula calculation, mutation/diff, snapshot execution, and merge probe where the existing snapshot API remains usable.
+- Produces: exact decoded native and WASM semantic values for overview, formula calculation, mutation/diff, snapshot execution, and a merge probe where the existing snapshot API remains usable.
 
 - [x] **Step 1: Write the failing differential test**
 
@@ -105,7 +105,7 @@ Execute the corpus with the native driver and Worker/WASM runtime, normalize onl
 
 - [x] **Step 2: Run and verify RED**
 
-Run: `node --test spikes/issue-26-runtime/test/native-wasm-parity.test.ts`
+Run: `pnpm --dir spikes/issue-26-runtime exec node --test test/native-wasm-parity.test.ts`
 
 Expected: failure until both drivers implement the shared corpus protocol.
 
@@ -115,9 +115,10 @@ Use the same Rust `Command`/`Response` implementation for both targets. Keep mer
 
 - [x] **Step 4: Run and verify GREEN**
 
-Run: `node --test spikes/issue-26-runtime/test/native-wasm-parity.test.ts`
+Run: `pnpm --dir spikes/issue-26-runtime exec node --test test/native-wasm-parity.test.ts`
 
-Expected: byte-identical native/WASM records.
+Expected: identical decoded deterministic semantic values from native and WASM
+records. Transport envelope bytes are not part of the comparison.
 
 ### Task 4: Portability Audit and Performance Evidence
 
@@ -144,7 +145,7 @@ Measure initial snapshot bytes/time, repeated stateless whole-document mutation 
 
 Run: `bash scripts/issue-26-portability-audit.sh`
 
-Run: `node spikes/issue-26-runtime/benchmark/runtime-benchmark.ts`
+Run: `pnpm --dir spikes/issue-26-runtime exec node benchmark/runtime-benchmark.ts`
 
 Expected: machine-readable measurements for all scales and a zero-exit portability audit.
 
@@ -160,11 +161,11 @@ Document recommended topology, resident ownership, JS/WASM messages, frontend pr
 **Interfaces:**
 - Produces: a reviewed focused branch with reproducible evidence and no production semantic changes.
 
-- [ ] **Step 1: Run formatting, lint, tests, portability, parity, and benchmarks fresh**
+- [x] **Step 1: Run formatting, lint, tests, portability, parity, and benchmarks fresh**
 
 Run the root workspace gates plus the standalone spike tests and Worker differential suite.
 
-- [ ] **Step 2: Review `origin/main...HEAD`**
+- [x] **Step 2: Review `origin/main...HEAD`**
 
 Inspect for duplicated semantic policy, a second canonical state, host leakage, unstable DTO claims, diagnostics-contract drift, unsafe ABI lifetime bugs, and benchmark methodology errors.
 

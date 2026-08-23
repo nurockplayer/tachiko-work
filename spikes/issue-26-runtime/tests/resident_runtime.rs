@@ -1,7 +1,8 @@
 use tachiko_issue_26_runtime_spike::{
-    Command, CommandResult, ResidentRuntime, execute_snapshot, synthetic_document,
+    Command, CommandResult, ProjectionPatch, ProjectionValue, ResidentRuntime, execute_snapshot,
+    synthetic_document,
 };
-use tachiko_workspace_engine::{Document, FieldAddress, calculate_fields};
+use tachiko_workspace_engine::{Document, FieldAddress, FieldRef, calculate_fields};
 
 #[test]
 fn resident_runtime_keeps_the_document_in_rust_and_returns_projection_results() {
@@ -32,26 +33,28 @@ fn resident_runtime_keeps_the_document_in_rust_and_returns_projection_results() 
     let CommandResult::Mutation {
         change_count,
         diff_text,
-        calculated,
+        patches,
     } = mutation.result
     else {
         panic!("expected mutation result");
     };
     assert_eq!(change_count, 2);
-    assert!(diff_text.contains("base"));
-    assert!(diff_text.contains("computed"));
-    assert_eq!(calculated.len(), 2);
-    assert!(
-        calculated
-            .iter()
-            .all(|field| field.address.starts_with("entity_0000."))
+    assert_eq!(
+        diff_text,
+        "Synthetic Records Entity 0000\nbase: 1 -> 11\naffected computed: 2 -> 22\n"
     );
     assert_eq!(
-        calculated
-            .iter()
-            .find(|field| field.address == "entity_0000.computed")
-            .map(|field| field.value),
-        Some(22.0)
+        patches,
+        vec![
+            ProjectionPatch {
+                field: FieldRef::new("synthetic-entity-000000", "synthetic-base-field-id",),
+                value: Some(ProjectionValue::Number { value: 11.0 }),
+            },
+            ProjectionPatch {
+                field: FieldRef::new("synthetic-entity-000000", "synthetic-computed-field-id",),
+                value: Some(ProjectionValue::Number { value: 22.0 }),
+            },
+        ]
     );
 
     let current_snapshot = runtime.snapshot().expect("resident state should serialize");
@@ -59,6 +62,36 @@ fn resident_runtime_keeps_the_document_in_rust_and_returns_projection_results() 
         serde_json::from_slice(&current_snapshot).expect("resident snapshot should decode");
     let calculated = calculate_fields(&current).expect("resident snapshot should remain valid");
     assert_eq!(calculated.len(), 6);
+}
+
+#[test]
+fn resident_mutation_returns_a_typed_non_numeric_projection_patch() {
+    let initial = synthetic_document(1).expect("synthetic fixture should be valid");
+    let snapshot = serde_json::to_vec(&initial).expect("fixture should serialize");
+    let mut runtime = ResidentRuntime::open(&snapshot).expect("snapshot should open");
+
+    let mutation = runtime
+        .execute(Command::SetScalar {
+            address: FieldAddress::new("entity_0000", "label"),
+            input: "Renamed".to_owned(),
+        })
+        .expect("text mutation should succeed");
+
+    assert_eq!(mutation.revision, 1);
+    assert_eq!(
+        mutation.result,
+        CommandResult::Mutation {
+            change_count: 1,
+            diff_text: "Synthetic Records Entity 0000\nlabel: \"Record 0\" -> \"Renamed\"\n"
+                .to_owned(),
+            patches: vec![ProjectionPatch {
+                field: FieldRef::new("synthetic-entity-000000", "synthetic-label-field-id",),
+                value: Some(ProjectionValue::Text {
+                    value: "Renamed".to_owned(),
+                }),
+            }],
+        }
+    );
 }
 
 #[test]
@@ -119,8 +152,8 @@ fn merge_uses_explicit_branch_snapshots_without_moving_resident_ours_state() {
         merged,
         conflict_count,
         change_count,
-        calculated,
-        ..
+        diff_text,
+        patches,
     } = merged.result
     else {
         panic!("expected merge result");
@@ -128,19 +161,29 @@ fn merge_uses_explicit_branch_snapshots_without_moving_resident_ours_state() {
     assert!(merged);
     assert_eq!(conflict_count, 0);
     assert_eq!(change_count, 4);
-    assert_eq!(calculated.len(), 4);
     assert_eq!(
-        calculated
-            .iter()
-            .find(|field| field.address == "entity_0000.computed")
-            .map(|field| field.value),
-        Some(20.0)
+        diff_text,
+        "Synthetic Records Entity 0000\nbase: 1 -> 10\naffected computed: 2 -> 20\n\nSynthetic Records Entity 0001\nmultiplier: 2 -> 3\naffected computed: 4 -> 6\n"
     );
     assert_eq!(
-        calculated
-            .iter()
-            .find(|field| field.address == "entity_0001.computed")
-            .map(|field| field.value),
-        Some(6.0)
+        patches,
+        vec![
+            ProjectionPatch {
+                field: FieldRef::new("synthetic-entity-000000", "synthetic-base-field-id",),
+                value: Some(ProjectionValue::Number { value: 10.0 }),
+            },
+            ProjectionPatch {
+                field: FieldRef::new("synthetic-entity-000000", "synthetic-computed-field-id",),
+                value: Some(ProjectionValue::Number { value: 20.0 }),
+            },
+            ProjectionPatch {
+                field: FieldRef::new("synthetic-entity-000001", "synthetic-computed-field-id",),
+                value: Some(ProjectionValue::Number { value: 6.0 }),
+            },
+            ProjectionPatch {
+                field: FieldRef::new("synthetic-entity-000001", "synthetic-multiplier-field-id",),
+                value: Some(ProjectionValue::Number { value: 3.0 }),
+            },
+        ]
     );
 }

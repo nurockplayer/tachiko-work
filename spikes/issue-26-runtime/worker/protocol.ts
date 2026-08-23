@@ -34,6 +34,18 @@ export type CalculatedProjection = {
   value: number;
 };
 
+export type ProjectionValue =
+  | { type: "number"; value: number }
+  | { type: "text"; value: string }
+  | { type: "boolean"; value: boolean }
+  | { type: "reference"; entity: string }
+  | { type: "formula"; expression: unknown };
+
+export type ProjectionPatch = {
+  field: { entity: string; field: string };
+  value: ProjectionValue | null;
+};
+
 export type CommandResult =
   | {
       type: "overview";
@@ -46,7 +58,7 @@ export type CommandResult =
       type: "mutation";
       change_count: number;
       diff_text: string;
-      calculated: CalculatedProjection[];
+      patches: ProjectionPatch[];
     }
   | {
       type: "merge";
@@ -54,7 +66,7 @@ export type CommandResult =
       conflict_count: number;
       change_count: number;
       diff_text: string;
-      calculated: CalculatedProjection[];
+      patches: ProjectionPatch[];
     };
 
 export type CommandResponse = {

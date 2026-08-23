@@ -3,7 +3,7 @@
 //! This crate is deliberately outside the production Cargo workspace. Its JSON
 //! types and snapshot encoding are spike evidence, not a stable SDK contract.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use tachiko_workspace_engine::{
@@ -41,6 +41,24 @@ pub struct CalculatedProjection {
     pub value: f64,
 }
 
+/// One current semantic value suitable for a revision-keyed frontend cache.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ProjectionValue {
+    Number { value: f64 },
+    Text { value: String },
+    Boolean { value: bool },
+    Reference { entity: EntityId },
+    Formula { expression: Expression },
+}
+
+/// A stable-subject patch. `None` removes the field from a frontend cache.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ProjectionPatch {
+    pub field: FieldRef,
+    pub value: Option<ProjectionValue>,
+}
+
 /// Provisional result payloads. None of these types are a public SDK promise.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -56,14 +74,14 @@ pub enum CommandResult {
     Mutation {
         change_count: usize,
         diff_text: String,
-        calculated: Vec<CalculatedProjection>,
+        patches: Vec<ProjectionPatch>,
     },
     Merge {
         merged: bool,
         conflict_count: usize,
         change_count: usize,
         diff_text: String,
-        calculated: Vec<CalculatedProjection>,
+        patches: Vec<ProjectionPatch>,
     },
 }
 
@@ -205,11 +223,11 @@ impl ResidentRuntime {
             },
             Command::SetScalar { address, input } => {
                 let preview = set_scalar(&self.document, &address, &input)?;
-                let calculated = projection_patch(&preview.document, &preview.diff)?;
+                let patches = projection_patch(&preview.diff);
                 let result = CommandResult::Mutation {
                     change_count: preview.diff.changes().len(),
                     diff_text: preview.diff.render_text(),
-                    calculated,
+                    patches,
                 };
                 self.document = preview.document;
                 self.revision += 1;
@@ -218,13 +236,13 @@ impl ResidentRuntime {
             Command::Merge { base, theirs } => {
                 match merge_documents(&base, &self.document, &theirs)? {
                     WorkspaceMergeOutcome::Merged(preview) => {
-                        let calculated = projection_patch(&preview.document, &preview.diff)?;
+                        let patches = projection_patch(&preview.diff);
                         let result = CommandResult::Merge {
                             merged: true,
                             conflict_count: 0,
                             change_count: preview.diff.changes().len(),
                             diff_text: preview.diff.render_text(),
-                            calculated,
+                            patches,
                         };
                         self.document = preview.document;
                         self.revision += 1;
@@ -235,7 +253,7 @@ impl ResidentRuntime {
                         conflict_count: conflicts.len(),
                         change_count: 0,
                         diff_text: String::new(),
-                        calculated: Vec::new(),
+                        patches: Vec::new(),
                     },
                 }
             }
@@ -362,24 +380,48 @@ fn calculated_projection(document: &Document) -> Result<Vec<CalculatedProjection
     )
 }
 
-fn projection_patch(
-    document: &Document,
-    diff: &SemanticDiff,
-) -> Result<Vec<CalculatedProjection>, SpikeError> {
-    let affected = diff
-        .changes()
-        .iter()
-        .filter_map(|change| match change {
-            SemanticChange::FieldAdded { field, .. }
-            | SemanticChange::FieldRemoved { field, .. }
-            | SemanticChange::FieldChanged { field, .. }
-            | SemanticChange::FormulaImpact { field, .. } => Some(field.clone()),
-            _ => None,
-        })
-        .collect::<BTreeSet<_>>();
-    let mut calculated = calculated_projection(document)?;
-    calculated.retain(|field| affected.contains(&field.field));
-    Ok(calculated)
+fn projection_patch(diff: &SemanticDiff) -> Vec<ProjectionPatch> {
+    let mut patches = BTreeMap::new();
+    for change in diff.changes() {
+        match change {
+            SemanticChange::FieldAdded { field, value } => {
+                patches.insert(field.clone(), Some(projection_value(value)));
+            }
+            SemanticChange::FieldRemoved { field, .. } => {
+                patches.insert(field.clone(), None);
+            }
+            SemanticChange::FieldChanged { field, after, .. } => {
+                patches.insert(field.clone(), Some(projection_value(after)));
+            }
+            SemanticChange::FormulaImpact { field, after, .. } => {
+                patches.insert(
+                    field.clone(),
+                    Some(ProjectionValue::Number { value: after.get() }),
+                );
+            }
+            _ => {}
+        }
+    }
+    patches
+        .into_iter()
+        .map(|(field, value)| ProjectionPatch { field, value })
+        .collect()
+}
+
+fn projection_value(value: &Value) -> ProjectionValue {
+    match value {
+        Value::Number(value) => ProjectionValue::Number { value: value.get() },
+        Value::Text(value) => ProjectionValue::Text {
+            value: value.clone(),
+        },
+        Value::Boolean(value) => ProjectionValue::Boolean { value: *value },
+        Value::Reference(entity) => ProjectionValue::Reference {
+            entity: entity.clone(),
+        },
+        Value::Formula(expression) => ProjectionValue::Formula {
+            expression: expression.clone(),
+        },
+    }
 }
 
 /// Build a deterministic project with one independent formula per entity.
@@ -400,35 +442,13 @@ pub fn synthetic_document(entity_count: usize) -> Result<Document, SpikeError> {
     let base_field = FieldId::from("synthetic-base-field-id");
     let multiplier_field = FieldId::from("synthetic-multiplier-field-id");
     let computed_field = FieldId::from("synthetic-computed-field-id");
-    let fields = BTreeMap::from([
-        (
-            base_field.clone(),
-            FieldDefinition {
-                id: base_field.clone(),
-                key: FieldKey::from("base"),
-                field_type: FieldType::Number,
-                required: true,
-            },
-        ),
-        (
-            multiplier_field.clone(),
-            FieldDefinition {
-                id: multiplier_field.clone(),
-                key: FieldKey::from("multiplier"),
-                field_type: FieldType::Number,
-                required: true,
-            },
-        ),
-        (
-            computed_field.clone(),
-            FieldDefinition {
-                id: computed_field.clone(),
-                key: FieldKey::from("computed"),
-                field_type: FieldType::Number,
-                required: true,
-            },
-        ),
-    ]);
+    let label_field = FieldId::from("synthetic-label-field-id");
+    let fields = synthetic_fields(
+        &base_field,
+        &multiplier_field,
+        &computed_field,
+        &label_field,
+    );
     let schemas = BTreeMap::from([(
         schema_id.clone(),
         Schema {
@@ -469,6 +489,7 @@ pub fn synthetic_document(entity_count: usize) -> Result<Document, SpikeError> {
                     ))),
                 }),
             ),
+            (label_field.clone(), Value::Text(format!("Record {index}"))),
         ]);
         entities.insert(
             id.clone(),
@@ -489,4 +510,50 @@ pub fn synthetic_document(entity_count: usize) -> Result<Document, SpikeError> {
     };
     validate(&document)?;
     Ok(document)
+}
+
+fn synthetic_fields(
+    base_field: &FieldId,
+    multiplier_field: &FieldId,
+    computed_field: &FieldId,
+    label_field: &FieldId,
+) -> BTreeMap<FieldId, FieldDefinition> {
+    BTreeMap::from([
+        (
+            base_field.clone(),
+            FieldDefinition {
+                id: base_field.clone(),
+                key: FieldKey::from("base"),
+                field_type: FieldType::Number,
+                required: true,
+            },
+        ),
+        (
+            multiplier_field.clone(),
+            FieldDefinition {
+                id: multiplier_field.clone(),
+                key: FieldKey::from("multiplier"),
+                field_type: FieldType::Number,
+                required: true,
+            },
+        ),
+        (
+            computed_field.clone(),
+            FieldDefinition {
+                id: computed_field.clone(),
+                key: FieldKey::from("computed"),
+                field_type: FieldType::Number,
+                required: true,
+            },
+        ),
+        (
+            label_field.clone(),
+            FieldDefinition {
+                id: label_field.clone(),
+                key: FieldKey::from("label"),
+                field_type: FieldType::Text,
+                required: true,
+            },
+        ),
+    ])
 }
