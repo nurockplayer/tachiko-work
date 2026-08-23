@@ -955,11 +955,12 @@ exact-head reviews remain before PR handoff.
   `origin/main` `342f69f2fc252554c240650d1438cc0d6cd82e2f`, then rebased through #92 and
   the isolated #26 spike. It consumed #97's #90-owned ADR-0018 full formula
   oracle at `6ad364755566bc604e69800c8656868dab60a365` and is now rebased onto
-  current `origin/main` `22fc8eb9d84c5bc13a7c9c64c6cb1f235974e5ba`, including the
-  independent presentation-projection documentation merge and repository
-  agent-tooling policy. The upstream formula implementation and its
-  conformance suite are retained unchanged, and the repository-wide
-  `AGENTS.md` and `CONTRIBUTING.md` workflow requirements are honored.
+  current `origin/main` `b5b097cde26952b60580f62b28dada10044d92dd`, including the
+  independent presentation-projection documentation merge, repository
+  agent-tooling policy, and isolated #96 pre-version envelope research. The
+  upstream formula implementation and its conformance suite are retained
+  unchanged, and the repository-wide `AGENTS.md` and `CONTRIBUTING.md`
+  workflow requirements are honored.
 - Authority: Issue #89; Accepted ADR-0015 through ADR-0019; the validation,
   diagnostics, formula, and schema specifications; the Product Constitution
   and Design Principles; and the knowledge authority/reconciliation policies.
