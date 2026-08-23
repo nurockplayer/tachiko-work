@@ -7,8 +7,8 @@ implementation mechanisms remain Provisional where marked.
 Implementation state: The engine implements bounded parsing, snapshot binding
 to stable IDs, typed bound ASTs, partial round-trip-proven authoring projection,
 rename preflight, finite binary64 `Number` normalization, static dependency
-extraction, full-document calculation, and cycle detection. Incremental
-recomputation and the complete node-keyed/SCC failure oracle remain unimplemented.
+extraction, and the complete atomic node-keyed full-recompute oracle with SCC
+and failed-dependency outcomes. Incremental recomputation remains unimplemented.
 
 Authority: ADR-0014, ADR-0015, ADR-0016, ADR-0017, and ADR-0018. Decision
 record: #24.
@@ -336,6 +336,18 @@ discovered failing targets for that phase. Local expression evaluation selects
 the first failure in left-to-right AST order. #23 may present additional
 non-primary evidence but cannot change the primary semantic outcome.
 
+The current Provisional Rust API exposes this authority as
+`calculate_complete(&Document) -> CalculationOutcome`:
+
+- `CalculationOutcome::Complete(Calculation)` contains the complete normalized
+  value map and static dependency map;
+- `CalculationOutcome::Failed(CalculationFailures)` contains the complete
+  stable-value-node-keyed primary failure map and every statically extracted
+  dependency set, but no successful value map; and
+- `calculate()` remains a compatibility convenience that projects the first
+  stable-node-keyed primary failure into the historical `CalculationError`
+  family. Its derived cycle witness is presentation evidence, not SCC authority.
+
 Incremental recomputation is allowed only when observationally equivalent to
 that oracle. A dirty root is every value node whose definition, existence,
 declared type, bound-expression validity, normalized value, or local failure
@@ -414,8 +426,9 @@ Implementation and remaining ownership under Accepted ADR-0018:
   numeric/resource vectors without rewriting legacy direct-`.ro/v1` bytes.
 - #40 owns final broad storage golden/negative conformance closure and
   independent corpus expansion.
-- Later formula-engine work owns the complete failure oracle, incremental
-  recomputation, and mutation-sequence equivalence tests.
+- Formula-engine owns the implemented complete failure oracle; later
+  formula-engine work owns incremental recomputation and mutation-sequence
+  equivalence tests against that oracle.
 - Runtime-export JSON has an independent version contract. Existing
   `runtime-export-v1` bytes/meaning remain frozen; the stable-identity transition
   deliberately bumps current output to runtime-export/v2 for normalized Number
@@ -445,8 +458,6 @@ cover the complete Accepted recomputation contract:
 
 - calculation always traverses the full document; `affected_by` reports a
   closure but is not an incremental evaluator;
-- calculation stops at the first DFS error/cycle path rather than producing the
-  complete SCC and stable-node-keyed failure oracle outcome; and
 - cross-target execution has compile/smoke evidence but not a complete
   independent language implementation of every conformance vector.
 

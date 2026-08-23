@@ -10,9 +10,9 @@ Exact Rust APIs and incremental mechanisms remain Provisional.
 
 Implementation state: partially implemented. `semantic-core` already accumulates
 and deterministically orders several semantic diagnostics and
-`workspace-engine` already performs strict candidate finalization, but current
-validation/finalization entry points are not yet fully symmetric and the
-complete ADR-0018 formula failure oracle remains implementation work.
+`workspace-engine` already performs strict candidate finalization, while
+`formula-engine` exposes the complete ADR-0018 atomic failure oracle. Current
+validation/finalization entry points are not yet fully symmetric.
 
 See the [diagnostics contract](diagnostics-contract.md) and the
 [canonical reconciliation register](../governance/canonical-reconciliation-register.md).
@@ -127,8 +127,9 @@ failed dependency
 
 The accepted full-recompute oracle, node-keyed failures, direct failed
 dependency sets, and no-partial-`CalculationState` publication remain formula
-authority. Current fail-first `CalculationError` behavior is implementation
-evidence, not a new validation contract.
+authority. `calculate_complete()` exposes that authority; the fail-first
+`CalculationError` family remains only a compatibility projection and is not a
+new validation contract.
 
 ### Stage 6: Domain validation
 
@@ -246,8 +247,6 @@ resolve without treating them as Accepted behavior:
 
 - some `workspace-engine` validation surfaces are weaker than finalization
   because formula projection preflight is not uniformly included;
-- formula evaluation exposes fail-first errors while ADR-0018 accepts a richer
-  full failure oracle;
 - some identity/type/preflight checks have more than one implementation path;
 - current diagnostics use a string path that is useful presentation evidence but
   is not stable semantic location authority; and

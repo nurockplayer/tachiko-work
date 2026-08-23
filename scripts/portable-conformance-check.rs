@@ -1,10 +1,11 @@
 //! Native/WASM conformance corpus for portable production semantics.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use tachiko_ai_api::{explain_formula, suggest_field_change};
 use tachiko_formula_engine::{
-    CalculationError, CanonicalAuthoringProjectionError, calculate, project_expression,
+    CalculationError, CalculationFailure, CalculationOutcome, CanonicalAuthoringProjectionError,
+    ReferenceFailure, calculate, calculate_complete, project_expression,
 };
 use tachiko_semantic_core::{
     Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldDefinition, FieldId,
@@ -13,7 +14,7 @@ use tachiko_semantic_core::{
 use tachiko_storage::{from_str as storage_from_str, to_canonical_string};
 use tachiko_workspace_engine::calculate_fields;
 
-const CASE_COUNT: u32 = 26;
+const CASE_COUNT: u32 = 27;
 const VALUE: u32 = 0;
 const DIVISION_BY_ZERO: u32 = 1;
 const NON_FINITE: u32 = 2;
@@ -21,6 +22,7 @@ const CYCLE: u32 = 3;
 const PROJECTION_FAILURE: u32 = 4;
 const CORPUS_DIGEST: u32 = 5;
 const NON_NUMERIC_REFERENCE: u32 = 6;
+const COMPLETE_ORACLE: u32 = 7;
 const UNEXPECTED: u32 = 255;
 
 #[derive(Clone, Copy)]
@@ -141,6 +143,46 @@ fn mix_hash(hash: &mut u64, bytes: &[u8]) {
     }
 }
 
+fn mix_field_ref(hash: &mut u64, field: &FieldRef) {
+    mix_hash(hash, field.entity.as_str().as_bytes());
+    mix_hash(hash, &[0]);
+    mix_hash(hash, field.field.as_str().as_bytes());
+    mix_hash(hash, &[0xff]);
+}
+
+fn mix_calculation_failure(hash: &mut u64, failure: &CalculationFailure) {
+    match failure {
+        CalculationFailure::InvalidExpression { .. } => mix_hash(hash, &[0]),
+        CalculationFailure::InvalidReferences { targets } => {
+            mix_hash(hash, &[1]);
+            for (target, failure) in targets {
+                mix_field_ref(hash, target);
+                mix_hash(
+                    hash,
+                    &[match failure {
+                        ReferenceFailure::Missing => 0,
+                        ReferenceFailure::NonNumeric => 1,
+                    }],
+                );
+            }
+        }
+        CalculationFailure::Cycle { members } => {
+            mix_hash(hash, &[2]);
+            for member in members {
+                mix_field_ref(hash, member);
+            }
+        }
+        CalculationFailure::FailedDependencies { dependencies } => {
+            mix_hash(hash, &[3]);
+            for dependency in dependencies {
+                mix_field_ref(hash, dependency);
+            }
+        }
+        CalculationFailure::DivisionByZero => mix_hash(hash, &[4]),
+        CalculationFailure::NonFiniteResult => mix_hash(hash, &[5]),
+    }
+}
+
 fn next_random(seed: &mut u64) -> u64 {
     *seed ^= *seed << 13;
     *seed ^= *seed >> 7;
@@ -211,6 +253,160 @@ fn schema_type_change_record() -> Record {
             Record::failure(NON_NUMERIC_REFERENCE, 1)
         }
         _ => Record::failure(UNEXPECTED, 25),
+    }
+}
+
+fn complete_oracle_record() -> Record {
+    let schema_id = SchemaId::from("oracle-schema-stable");
+    let entity_id = EntityId::from("oracle-entity-stable");
+    let formula = |expression| Value::Formula(expression);
+    let reference = |field| {
+        Expression::Reference(FieldRef::new("oracle-entity-stable", field))
+    };
+    let fields = [
+        "cycle-a",
+        "cycle-b",
+        "missing-failure",
+        "type-failure",
+        "evaluation-failure",
+        "downstream-failure",
+        "successful-independent",
+    ];
+    let mut definitions = fields
+        .into_iter()
+        .map(|field_id| (FieldId::from(field_id), field(field_id)))
+        .collect::<BTreeMap<_, _>>();
+    definitions.insert(
+        FieldId::from("text-target"),
+        FieldDefinition {
+            id: FieldId::from("text-target"),
+            key: FieldKey::from("text-target"),
+            field_type: FieldType::Text,
+            required: true,
+        },
+    );
+    let values = BTreeMap::from([
+        (FieldId::from("cycle-a"), formula(reference("cycle-b"))),
+        (FieldId::from("cycle-b"), formula(reference("cycle-a"))),
+        (
+            FieldId::from("missing-failure"),
+            formula(reference("missing-target")),
+        ),
+        (
+            FieldId::from("type-failure"),
+            formula(reference("text-target")),
+        ),
+        (
+            FieldId::from("evaluation-failure"),
+            formula(Expression::Divide {
+                left: Box::new(numeric(1.0)),
+                right: Box::new(numeric(0.0)),
+            }),
+        ),
+        (
+            FieldId::from("downstream-failure"),
+            formula(Expression::Add {
+                left: Box::new(reference("cycle-a")),
+                right: Box::new(reference("evaluation-failure")),
+            }),
+        ),
+        (
+            FieldId::from("successful-independent"),
+            formula(numeric(2.0)),
+        ),
+        (
+            FieldId::from("text-target"),
+            Value::Text("not numeric".to_owned()),
+        ),
+    ]);
+    let document = Document {
+        id: DocumentId::from("oracle-document-stable"),
+        title: "Complete oracle parity".to_owned(),
+        schemas: BTreeMap::from([(
+            schema_id.clone(),
+            Schema {
+                id: schema_id.clone(),
+                key: SchemaKey::from("oracle-schema"),
+                fields: definitions,
+            },
+        )]),
+        entities: BTreeMap::from([(
+            entity_id.clone(),
+            Entity {
+                id: entity_id,
+                key: EntityKey::from("oracle-entity"),
+                schema: schema_id,
+                fields: values,
+            },
+        )]),
+    };
+    let node = |field| FieldRef::new("oracle-entity-stable", field);
+    let cycle = BTreeSet::from([node("cycle-a"), node("cycle-b")]);
+    let expected_failures = BTreeMap::from([
+        (
+            node("cycle-a"),
+            CalculationFailure::Cycle {
+                members: cycle.clone(),
+            },
+        ),
+        (
+            node("cycle-b"),
+            CalculationFailure::Cycle { members: cycle },
+        ),
+        (
+            node("downstream-failure"),
+            CalculationFailure::FailedDependencies {
+                dependencies: BTreeSet::from([
+                    node("cycle-a"),
+                    node("evaluation-failure"),
+                ]),
+            },
+        ),
+        (
+            node("evaluation-failure"),
+            CalculationFailure::DivisionByZero,
+        ),
+        (
+            node("missing-failure"),
+            CalculationFailure::InvalidReferences {
+                targets: BTreeMap::from([(
+                    node("missing-target"),
+                    ReferenceFailure::Missing,
+                )]),
+            },
+        ),
+        (
+            node("type-failure"),
+            CalculationFailure::InvalidReferences {
+                targets: BTreeMap::from([(
+                    node("text-target"),
+                    ReferenceFailure::NonNumeric,
+                )]),
+            },
+        ),
+    ]);
+    let CalculationOutcome::Failed(failures) = calculate_complete(&document) else {
+        return Record::failure(UNEXPECTED, 26);
+    };
+    if failures.failures() != &expected_failures || failures.dependencies().len() != fields.len() {
+        return Record::failure(UNEXPECTED, failures.failures().len() as u64);
+    }
+
+    let mut fingerprint = 0xcbf2_9ce4_8422_2325_u64;
+    for (subject, failure) in failures.failures() {
+        mix_field_ref(&mut fingerprint, subject);
+        mix_calculation_failure(&mut fingerprint, failure);
+    }
+    for (subject, targets) in failures.dependencies() {
+        mix_field_ref(&mut fingerprint, subject);
+        for target in targets {
+            mix_field_ref(&mut fingerprint, target);
+        }
+    }
+    Record {
+        class: COMPLETE_ORACLE,
+        bits: fingerprint,
+        auxiliary: failures.failures().len() as u64,
     }
 }
 
@@ -422,6 +618,7 @@ fn case_record(index: u32) -> Record {
         23 => ai_suggestion_record(),
         24 => adversarial_numeric_corpus_record(),
         25 => schema_type_change_record(),
+        26 => complete_oracle_record(),
         _ => Record::failure(UNEXPECTED, 0),
     }
 }
