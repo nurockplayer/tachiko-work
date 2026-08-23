@@ -1,0 +1,19 @@
+{
+  "entity_count": 3,
+  "resident_mutation": {
+    "type": "set_scalar",
+    "address": { "entity": "entity_0000", "field": "base" },
+    "input": "11"
+  },
+  "ours_mutation": {
+    "type": "set_scalar",
+    "address": { "entity": "entity_0000", "field": "base" },
+    "input": "10"
+  },
+  "theirs_mutation": {
+    "type": "set_scalar",
+    "address": { "entity": "entity_0001", "field": "multiplier" },
+    "input": "3"
+  }
+}
+
