@@ -30,12 +30,23 @@ All notable changes to Tachiko Work are documented in this file.
   version-envelope, and representation failures. Existing `Json`,
   `UnsupportedVersion`, and `InvalidDocument` shapes remain available, but
   downstream exhaustive matches must account for the new variants.
+- First-party semantic validation now returns one deterministic
+  `ValidationReport` with symbolic meaning, machine severity, stable-ID
+  subjects and related facts, opaque validator provenance, and
+  presentation-only paths/messages. Workspace validation is shared across
+  queries, mutations, and merge finalization while authoring projection remains
+  an explicit operation gate.
+- Formula calculation now derives fail-first compatibility errors from the
+  authoritative ADR-0018 full outcome: node-keyed structural/binding failures,
+  complete cyclic SCC membership, direct failed dependencies, local evaluation
+  precedence, and no partial `Calculation` on failure.
 
 ### Added
 
 - An executed production-semantic conformance corpus compares normalized
-  values, failures, dependency/cycle results, and stable formula projection
-  byte-for-byte on native and `wasm32-unknown-unknown` builds.
+  values, complete formula failures, stable diagnostic observations,
+  dependency/SCC results, and stable formula projection byte-for-byte on native
+  and `wasm32-unknown-unknown` builds.
 
 ## [0.1.0] - 2026-08-20
 

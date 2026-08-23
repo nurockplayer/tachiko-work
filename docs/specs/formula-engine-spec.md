@@ -8,7 +8,10 @@ Implementation state: The engine implements bounded parsing, snapshot binding
 to stable IDs, typed bound ASTs, partial round-trip-proven authoring projection,
 rename preflight, finite binary64 `Number` normalization, static dependency
 extraction, and the complete atomic node-keyed full-recompute oracle with SCC
-and failed-dependency outcomes. Incremental recomputation remains unimplemented.
+membership, direct failed-dependency sets, phase precedence, and all-or-nothing
+full-document calculation. Incremental recomputation remains unimplemented; the
+full outcome is the correctness oracle and legacy fail-first calculation is
+only its compatibility projection.
 
 Authority: ADR-0014, ADR-0015, ADR-0016, ADR-0017, and ADR-0018. Decision
 record: #24.
@@ -451,15 +454,16 @@ IDs and emits no copyable formula. Rename coverage includes the exact 4,096-byte
 and 4,097-byte cases above and proves atomic preservation of the old human key,
 stable IDs, and bound AST on rejection.
 
-## Current implementation gaps
+## Current implementation limits
 
-The implementation remains evidence, not authority, where it does not yet
-cover the complete Accepted recomputation contract:
-
-- calculation always traverses the full document; `affected_by` reports a
-  closure but is not an incremental evaluator;
-- cross-target execution has compile/smoke evidence but not a complete
-  independent language implementation of every conformance vector.
+- Calculation intentionally traverses the full document; `affected_by` reports
+  a closure but is not an incremental evaluator.
+- The full outcome implements the Accepted structural → binding/type/stale
+  target → cycle → failed dependency → local evaluation precedence. A failed
+  outcome publishes no partial `Calculation`.
+- The portable conformance corpus executes the same production implementation
+  natively and as `wasm32-unknown-unknown` and compares complete stable formula
+  observations. It is not an independent second-language implementation.
 
 ## Deferred language features
 

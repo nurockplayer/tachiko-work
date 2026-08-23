@@ -2,7 +2,7 @@
 
 Status: Accepted register when merged
 
-Last reconciliation: 2026-08-23
+Last reconciliation: 2026-08-24
 
 ## Purpose
 
@@ -52,7 +52,7 @@ When this register marks a document as mixed-state, readers must respect the nar
 | --- | --- | --- | --- |
 | `docs/architecture/document-model.md` | Accepted direction; detailed graph shape constrained by ADR-0015, ADR-0018, and ADR-0019 | M02 stable identity/bound formula aggregate implemented; richer graph future | ADR-0015, ADR-0018, ADR-0019, #13 |
 | `docs/architecture/unified-semantic-model.md` | Accepted direction | Partially implemented | ADR-0015, #13 |
-| `docs/architecture/rust-crate-architecture.md` | Accepted ADR-0016 boundary; exact Rust API remains Provisional | Eight-crate workspace-engine target implemented by #72 | ADR-0016, #10 |
+| `docs/architecture/rust-crate-architecture.md` | Accepted ADR-0016 boundary; exact Rust API remains Provisional | Eight-crate workspace-engine target implemented by #72; authoritative validation composition implemented by #89 | ADR-0016, ADR-0019, #10 |
 | `docs/architecture/ro-and-roproj-format.md` | Accepted direction constrained by ADR-0017 storage boundary | `.ro` direct JSON implemented; `.roproj` not implemented | ADR-0003, ADR-0017, #41, #43 |
 | `docs/architecture/ai-native-architecture.md` | Accepted direction | Partially implemented | #10, #27, #28, #30 |
 | `docs/architecture/frontend-backend-boundary.md` | Accepted direction; detailed runtime seam Provisional | Partially implemented | #26 |
@@ -61,8 +61,8 @@ When this register marks a document as mixed-state, readers must respect the nar
 | `docs/architecture/rendering-system.md` | Hypothesis | Not current milestone | Designer MVP future work |
 | `docs/architecture/performance-model.md` | Provisional guidance | Mixed | Evidence-driven future work |
 | `docs/specs/schema-system.md` | Mixed: current durable declaration boundary Accepted under ADR-0015/ADR-0019; richer constraint vocabulary future | Current M02 type/required/reference declarations implemented | ADR-0015, ADR-0019, #13 |
-| `docs/specs/validation-engine.md` | Mixed: staged validation/candidate/full-oracle semantics Accepted under ADR-0019; exact APIs/incremental mechanisms Provisional | Partial: collected semantic diagnostics, strict finalization, and the complete formula failure oracle implemented; validation/finalization symmetry pending | ADR-0019, ADR-0018 |
-| `docs/specs/diagnostics-contract.md` | Mixed: semantic diagnostic stability rules Accepted under ADR-0019; exact Rust/wire/code catalog Provisional or Deferred | Partial: current diagnostics expose codes/path/message but not the complete semantic envelope | ADR-0019, #10, #26 |
+| `docs/specs/validation-engine.md` | Mixed: staged validation/candidate/full-oracle semantics Accepted under ADR-0019; exact APIs/incremental mechanisms Provisional | M02 full oracle implemented by #89: one first-party report, cascade suppression, deterministic stable observations, and explicit operation gates | ADR-0019, ADR-0018 |
+| `docs/specs/diagnostics-contract.md` | Mixed: semantic diagnostic stability rules Accepted under ADR-0019; exact Rust/wire/code catalog Provisional or Deferred | Internal semantic-first envelope and workspace report implemented by #89; external wire/version remains deferred | ADR-0019, #10, #26 |
 | `docs/specs/ro-format-and-roproj-spec.md` | Accepted direction with explicit current-state split | `.ro` direct JSON implemented; `.roproj` future | ADR-0003, ADR-0017 |
 | `docs/specs/storage-versioning-and-migration.md` | Mixed: Accepted invariants under ADR-0017; M02 wire mechanics Provisional where marked | Strict v1, deterministic migration, and direct-ro/v2 implemented | ADR-0017, #40 |
 | `docs/specs/canonical-json-profile.md` | Mixed: Accepted deterministic/semantic-preservation and admitted-token binary64 rules; exact M02 profile/resource limits version-specific | Implemented independent direct-ro/v2 writer | ADR-0017, ADR-0018, #40 |
@@ -115,8 +115,8 @@ A GitHub Issue is never automatically an Accepted decision. The table below clas
 - #25 storage DTO / migration boundary — durable architecture resolved by ADR-0017; the M02 implementation and conformance closure are complete through #40.
 - #37 format/version envelope — durable fail-closed/version-gated behavior resolved by ADR-0017 and `storage-versioning-and-migration.md`; the M02 implementation is complete through #40.
 - #38 canonical value encoding/order — structural/Unicode/order invariants are resolved by ADR-0017, exact numeric spelling by Accepted ADR-0018, and M02 implementation/conformance by #40.
-- #23 schema declaration, validation pipeline, diagnostics — resolved by Accepted ADR-0019; implementation/conformance follow-up remains separate from the decision issue.
-- #24 formula AST, binding, dependency graph, numeric semantics — resolved by Accepted ADR-0018, the reconciled formula/canonical JSON specifications, research record, and executed native/WASM evidence; the accepted M02 scope is implemented through #70/#40.
+- #23 schema declaration, validation pipeline, diagnostics — resolved by Accepted ADR-0019; first-party implementation/conformance is completed by #89 without stabilizing an external wire contract.
+- #24 formula AST, binding, dependency graph, numeric semantics — resolved by Accepted ADR-0018, the reconciled formula/canonical JSON specifications, research record, and executed native/WASM evidence; the accepted M02 scope, including the full failure oracle, is implemented through #70/#40/#89.
 - #26 native/WASM runtime boundary — Open Question.
 - #72 workflow-to-workspace-engine migration — implementation of ADR-0016 completed by PR #85; it does not settle #10/#26.
 
@@ -176,13 +176,17 @@ ADR-0017, and Accepted ADR-0018 without inventing format semantics.
    diagnostics, keeping severity distinct from operation gates, preserving
    storage-local failure ownership, and finding no evidence for a new
    validation/diagnostics crate.
+18. #89 implements ADR-0019 and closes ADR-0018's full-oracle gap with generic
+    semantic-core diagnostic primitives, one workspace `ValidationReport`,
+    complete node-keyed/SCC formula failures, shared semantic finalization,
+    explicit projection/output gates, and exact native/WASM stable-observation
+    evidence.
 
 ## Current research queue
 
-The ordered #70 → #40 → #72 Core & Format Hardening implementation sequence is
-complete, and #23's validation/diagnostics architecture is resolved by
-ADR-0019. Implementation should now close ADR-0019 conformance gaps without
-stabilizing external transport.
+The ordered #70 → #40 → #72 → #89 Core & Format Hardening implementation
+sequence is complete. ADR-0019 conformance and ADR-0018's complete full-oracle
+gap are closed without stabilizing external transport.
 
 #10 remains the next external-interface decision. #26 builds on #10 plus the
 Accepted crate/validation boundaries and continues to own resident runtime,

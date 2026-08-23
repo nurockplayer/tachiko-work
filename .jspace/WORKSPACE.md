@@ -1007,3 +1007,40 @@ exact-head reviews remain before PR handoff.
 
 The detailed executable plan is
 `docs/superpowers/plans/2026-08-23-validation-report-diagnostics.md`.
+
+### Implemented ownership and pre-review evidence
+
+- semantic-core now owns only generic symbolic diagnostic codes, provisional
+  severity, stable semantic subject/location/fact primitives, and opaque
+  provider identity plus its own core rules. It contains no formula/workspace
+  provider taxonomy or reverse dependency.
+- formula-engine's `calculate_full()` is the authoritative ADR-0018 outcome:
+  structural, binding/type/stale target, complete cyclic SCC membership, direct
+  failed dependencies, then left-to-right local evaluation. Failures are keyed
+  by stable value nodes, all static edges are retained, and failed outcomes
+  expose no partial `Calculation`. Compatibility `calculate()` is derived from
+  that outcome; the DFS evaluator and cycle-witness authority were removed.
+- workspace-engine composes core rules and formula outcomes into one
+  deterministic `ValidationReport`. Stable observations include symbolic
+  meaning, severity, stable subjects/related facts, and opaque provenance;
+  human paths/messages and selected cycle presentation are excluded.
+- Shared semantic validation is reused by validation, calculation, queries,
+  proposals, mutations, comparison, and merge finalization. Canonical formula
+  projection remains an explicit authoring/output gate after semantic
+  validation, including merged-candidate preflight.
+- merge-engine now owns model-level three-way reconciliation only. Workspace
+  owns input/candidate semantic validation, projection gates, and impact.
+  Storage representation validation remains unchanged and sibling-owned.
+- AI propagates the workspace report rather than reconstructing semantic
+  diagnostics; CLI continues to render workspace errors at the adapter.
+- TDD evidence covers independent accumulation, cascade suppression,
+  rename-stable observations, multi-subject duplicates/cycles/dependencies,
+  full formula precedence, all-or-nothing calculation, and
+  validation/finalization agreement.
+- The focused workspace currently passes 228 tests across 32 suites with
+  warning-denied Clippy and the ADR-0016 dependency check. The portable corpus
+  now executes 28 fixed production records and matches exact stable
+  observations natively and on `wasm32-unknown-unknown`.
+- Implementation commit: `a94fb61`. Documentation reconciliation, the clean
+  release-equivalent gate, and two independent exact-head reviews remain
+  before PR handoff.

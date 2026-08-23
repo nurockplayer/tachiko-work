@@ -5,6 +5,14 @@ Accepted under [ADR-0019](../decisions/ADR-0019-staged-semantic-validation-and-d
 Exact Rust data structures, code catalog, external wire format, transport, and
 presentation adapters remain Provisional or Deferred as noted below.
 
+Implementation state: the Milestone 02 internal envelope is implemented in
+`semantic-core` with symbolic codes, machine severity, stable semantic subject
+sets, related subjects/facts, opaque provider identity, and explicitly
+presentation-only location/message fields. `workspace-engine` owns the
+authoritative first-party `ValidationReport` and stable-observation ordering.
+The exact Rust representation, severity vocabulary, external namespace/wire,
+and transport remain Provisional or Deferred.
+
 ## Purpose
 
 Define the smallest shared machine-readable diagnostic contract that can be
@@ -50,8 +58,9 @@ Requirements:
 - code spelling must not embed mutable human keys, source paths, severity, or
   localized prose.
 
-The exact namespace and initial code catalog remain Provisional until the
-existing diagnostic families are audited during implementation.
+The implemented internal code families have been audited for this milestone.
+Their exact external namespace, versioned catalog, and wire representation
+remain Provisional under #10.
 
 ## Classification and severity
 

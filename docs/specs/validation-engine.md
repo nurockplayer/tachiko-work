@@ -8,11 +8,13 @@ Stable identity and formula semantics remain governed by
 [ADR-0018](../decisions/ADR-0018-bound-formulas-and-deterministic-binary64.md).
 Exact Rust APIs and incremental mechanisms remain Provisional.
 
-Implementation state: partially implemented. `semantic-core` already accumulates
-and deterministically orders several semantic diagnostics and
-`workspace-engine` already performs strict candidate finalization, while
-`formula-engine` exposes the complete ADR-0018 atomic failure oracle. Current
-validation/finalization entry points are not yet fully symmetric.
+Implementation state: implemented for the Milestone 02 first-party boundary.
+`semantic-core` emits generic semantic-first diagnostic primitives and core
+rules; `formula-engine` exposes the complete ADR-0018 node-keyed failure oracle;
+and `workspace-engine` composes one authoritative deterministic
+`ValidationReport` for validation, queries, mutations, and merge finalization.
+Incremental validation, external wire stability, and future extension
+registration remain Provisional or Deferred.
 
 See the [diagnostics contract](diagnostics-contract.md) and the
 [canonical reconciliation register](../governance/canonical-reconciliation-register.md).
@@ -240,20 +242,24 @@ Clients must not define semantic validity by parsing human error strings.
 Presentation and transport adapters may render/project the same semantic
 finding differently.
 
-## Current implementation pressure
+## Current implementation boundary
 
-The current codebase contains several gaps that implementation work should
-resolve without treating them as Accepted behavior:
+The Milestone 02 implementation now:
 
-- some `workspace-engine` validation surfaces are weaker than finalization
-  because formula projection preflight is not uniformly included;
-- some identity/type/preflight checks have more than one implementation path;
-- current diagnostics use a string path that is useful presentation evidence but
-  is not stable semantic location authority; and
-- current CLI/AI adapters still flatten some structured failures into prose.
+- uses one `workspace-engine::ValidationReport` for first-party semantic
+  validation and formula outcomes;
+- accumulates independent findings while suppressing checks whose subject
+  prerequisites are unavailable;
+- orders stable machine observations deterministically and treats human paths,
+  messages, and cycle witnesses as presentation;
+- derives formula diagnostics from the complete ADR-0018 outcome; and
+- keeps canonical authoring projection and other output/finalization preflights
+  as explicit operation-specific gates layered after shared semantic
+  validation.
 
-Those are implementation tasks after the decision, not reasons to expand this
-specification into #10 or #26.
+Incremental scheduling/caching, external API or wire stability, invalid-draft
+lifecycle, extension registration, and resident-runtime delivery remain owned
+by their existing deferred decisions rather than this implementation.
 
 ## Explicitly not defined here
 
