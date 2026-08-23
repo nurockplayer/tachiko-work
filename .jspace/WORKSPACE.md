@@ -953,10 +953,11 @@ exact-head reviews remain before PR handoff.
   architecture redesign.
 - Worktree branch: `codex/issue-89-validation-report`, created from
   `origin/main` `342f69f2fc252554c240650d1438cc0d6cd82e2f`, then rebased through #92 and
-  the isolated #26 spike. It is now rebased onto current `origin/main`
-  `6ad364755566bc604e69800c8656868dab60a365` after #97 landed the #90-owned
-  ADR-0018 full formula oracle. The upstream formula implementation and its
-  conformance suite are retained unchanged.
+  the isolated #26 spike. It consumed #97's #90-owned ADR-0018 full formula
+  oracle at `6ad364755566bc604e69800c8656868dab60a365` and is now rebased onto
+  current `origin/main` `77821143e9847f62e129e553522556743c5032c1` after
+  the independent presentation-projection documentation merge. The upstream
+  formula implementation and its conformance suite are retained unchanged.
 - Authority: Issue #89; Accepted ADR-0015 through ADR-0019; the validation,
   diagnostics, formula, and schema specifications; the Product Constitution
   and Design Principles; and the knowledge authority/reconciliation policies.

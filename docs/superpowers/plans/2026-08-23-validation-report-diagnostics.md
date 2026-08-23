@@ -12,7 +12,7 @@
 
 ## Global constraints
 
-- Start from origin/main 342f69f2fc252554c240650d1438cc0d6cd82e2f on branch codex/issue-89-validation-report; reconcile later mainline changes before handoff. The branch was ultimately rebased onto 6ad364755566bc604e69800c8656868dab60a365 after #97 landed #90's ADR-0018 formula oracle.
+- Start from origin/main 342f69f2fc252554c240650d1438cc0d6cd82e2f on branch codex/issue-89-validation-report; reconcile later mainline changes before handoff. The branch consumed #97's #90-owned ADR-0018 oracle at 6ad364755566bc604e69800c8656868dab60a365 and was ultimately rebased onto current origin/main 77821143e9847f62e129e553522556743c5032c1 after the independent presentation-projection documentation merge.
 - Keep semantic-core diagnostic primitives generic. Provider identity is opaque and internal; semantic-core must not encode formula-engine or higher-layer taxonomies.
 - Make the ADR-0018 full formula outcome authoritative. Compatibility calculate behavior must be derived from it.
 - Stable observations are diagnostic meaning, classification/severity, stable semantic subjects and related subjects/facts, provider identity, and deterministic ordering.
