@@ -1,15 +1,20 @@
 # Rust Crate Architecture
 
-Decision state: Milestone 02 layering is Accepted in ADR-0016. ADR-0020 now
-accepts the transport-neutral Headless Semantic API as the first-class product
-boundary implemented by the shared application layer; it does not stabilize the
-current Rust source surface.
+Decision state: Milestone 02 layering is Accepted in ADR-0016. ADR-0020 accepts
+the transport-neutral Headless Semantic API as the first-class product boundary
+implemented by the shared application layer; it does not stabilize the current
+Rust source surface. ADR-0022 accepts the resident shared Rust
+semantic/application runtime and host-separation direction without stabilizing
+current session/transport mechanisms.
 
 Implementation state: ADR-0016 boundary implemented by Issue #72; authoritative
-validation/report composition implemented by Issue #89.
+validation/report composition implemented by Issue #89. Current workspace-engine
+operations remain substantially snapshot-style; resident runtime implementation
+is deferred to #93–#95.
 
 Architecture authority: ADR-0016 for crate ownership; ADR-0020 for the
-first-class Semantic API product boundary.
+first-class Semantic API product boundary; ADR-0022 for runtime ownership,
+resident topology, native/WASM parity, and host separation.
 
 ## Purpose
 
@@ -17,11 +22,13 @@ This document records the live Rust workspace and implementation evidence for
 the crate ownership accepted by
 [ADR-0016](../decisions/ADR-0016-milestone-02-rust-crate-layering.md).
 The first-class client contract is specified separately in
-[`semantic-api.md`](../specs/semantic-api.md).
+[`semantic-api.md`](../specs/semantic-api.md), and the runtime/host topology is
+Accepted in
+[ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md).
 
 The ADRs remain authority for dependency direction, forbidden edges,
-portability, semantic-client rules, public-vs-internal stability, and future
-amendments.
+portability, semantic-client rules, runtime ownership, public-vs-internal
+stability, and future amendments.
 
 ## Live workspace
 
@@ -57,6 +64,8 @@ release-equivalent gate execute that check. It includes development dependency
 kinds, so a test-only workspace-engine-to-storage edge cannot silently weaken
 the sibling boundary.
 
+ADR-0022 does not change this DAG or add a runtime/host abstraction crate.
+
 ## Product contract versus Rust source boundary
 
 ADR-0020 adds an explicit firewall:
@@ -64,6 +73,11 @@ ADR-0020 adds an explicit firewall:
 > `workspace-engine` implements the first-class Semantic API contract, but its
 > current Rust `pub` items, re-exports, modules, errors, result structs, and
 > serde shapes are not automatically the public Semantic API.
+
+ADR-0022 applies the same discipline to runtime mechanics: the resident Rust
+runtime is the Accepted interactive topology, but a session handle, revision
+type, Worker DTO, IPC/FFI request, WASM ABI, persistence adapter, or runtime
+state-installation mechanism is not automatically a stable product contract.
 
 A Rust surface becomes a stable downstream SDK only if a future explicit API
 specification/version classifies it as such. A serialized Rust type becomes a
@@ -74,7 +88,7 @@ without turning current source-level convenience into permanent ecosystem
 compatibility debt.
 
 Future native/WASM/IPC/network adapters are expected to conform to the semantic
-contract, not to source-level Rust type equality.
+and runtime-ownership contracts, not to source-level Rust type equality.
 
 ## Responsibility evidence
 
@@ -133,17 +147,22 @@ semantic-core and remains a sibling of workspace-engine.
 The CLI composition root performs `load → semantic operation → canonical
 encode/write`. Workspace-engine does not depend on paths, files, storage DTOs,
 or persistence. ADR-0003, ADR-0017, and the direct-ro specifications remain
-unchanged by the first-class Semantic API decision.
+unchanged by the first-class Semantic API and resident-runtime decisions.
 
-Storage format/migration failures remain a representation-local family rather
-than becoming universal semantic diagnostics.
+ADR-0019 explicitly preserves storage format/migration failures as a
+representation-local family rather than promoting them into universal semantic
+diagnostics.
+
+ADR-0022 keeps durable persistence outside workspace-engine. Storage/host layers
+may materialize an authorized semantic result, but they do not redefine
+semantic meaning or semantic authorization. Browser/native persistence,
+recovery, and concrete durable commit mechanisms remain host concerns.
 
 ### workspace-engine
 
 `tachiko-workspace-engine` evolved in place from the former workflow crate; no
 parallel orchestration crate or semantic workspace aggregate exists. Current
-operations remain document-local and snapshot-style, preserving #26's
-resident-runtime decision.
+operations remain document-local and substantially snapshot-style.
 
 The engine owns real application behavior:
 
@@ -158,7 +177,7 @@ The engine owns real application behavior:
   terminal rendering.
 
 All candidate operations are immutable. They validate/calculate before success,
-and mutation previews include semantic impact where the current operation
+and mutation previews include semantic impact where the existing operation
 contract requires it. The `IdGenerator` trait and `SemanticIdKind` preserve
 ADR-0015's replaceable creation seam; UUIDv7 remains supplied by the native CLI
 host rather than the portable engine.
@@ -174,6 +193,21 @@ contract: Query/Command, Propose/Execute, operation gates, semantic atomicity,
 capability-addressability, and compatibility laws. The complete operation
 catalogue and exact current Rust functions/results remain Provisional.
 
+ADR-0022 now accepts a resident shared Rust semantic/application runtime as the
+preferred interactive topology. For an open interactive document, authoritative
+in-memory semantic state belongs to that runtime rather than to a frontend
+mirror. Normal interactive clients should use Semantic API intent/results
+without repeatedly reconstructing the complete document across the
+client/runtime boundary.
+
+The current snapshot-style surface is implementation state, not competing
+architecture authority. #93–#95 own later resident-session, selective-query/
+projection-invalidation, and retained-incremental implementation.
+
+ADR-0022 requires one authoritative runtime state and ADR-0020 semantic
+atomicity, but does not define an exact runtime commit/swap/locking/cloning
+algorithm, revision token, cancellation policy, or concurrency model.
+
 ### ai-api
 
 Provider-free AI code depends only on workspace-engine among workspace crates.
@@ -182,9 +216,10 @@ It retains AI-facing descriptions, explanations, inert suggestions, and the
 candidate cloning, schema checks, formula complexity/projection checks,
 validation, and calculation delegate to workspace-engine.
 
-Under ADR-0020 the AI crate is an adapter/projection over the same first-class
-Semantic API behavior as other clients. `requires_approval` remains current v0.1
-safety behavior, not the #27/#28 capability/approval/provenance protocol.
+Under ADR-0007/ADR-0020 the AI crate is an adapter/projection over the same
+first-class Semantic API behavior as other clients. `requires_approval` remains
+current v0.1 safety behavior, not the #27/#28 capability/approval/provenance
+protocol.
 
 No current AI operation persists or mutates the supplied document.
 
@@ -205,21 +240,56 @@ mutation rules, and runtime-export semantic projection are not implemented in
 CLI command handlers.
 
 ADR-0020 means future CLI semantic operations must continue to map the shared
-Semantic API rather than grow independent semantic rules.
+Semantic API rather than grow independent semantic rules. ADR-0022 does not
+require one-shot CLI invocations to become long-lived resident UI sessions.
+
+## Resident runtime ownership
+
+For interactive native/Tauri/Web/WASM clients, ADR-0022 accepts this topology:
+
+```text
+frontend / shell
+      |
+      | Semantic API intent/results
+      v
+resident shared Rust semantic/application runtime
+      |
+      v
+workspace-engine + focused semantic engines
+
+host/storage beside the runtime:
+filesystem / IndexedDB / dialogs / credentials / Git / process / network
+```
+
+The frontend may own revision-keyed semantic projections/query caches,
+selection/viewport/panels/focus, pending-command/review state, and raw/unbound
+authoring buffers before semantic admission. These states are not a competing
+semantic source of truth.
+
+Full semantic snapshots remain explicit boundaries for load/open, durable
+materialization/save, import/export, recovery/debug capture, or explicit
+branch/document exchange. They are not the preferred ordinary per-edit
+client/runtime protocol.
+
+This topology does not prohibit whole-document clones, snapshots, or full
+validation inside Rust as implementation mechanisms.
 
 ## Before/after ownership
 
-| Concern | Before #72 | Current authority |
+| Concern | Before #72/#26 | Current authority |
 | --- | --- | --- |
 | Candidate mutation policy | Workflow plus duplicated AI path | Workspace-engine / Semantic API implementation |
 | Validation/calculation orchestration | Workflow, AI, CLI, command-specific paths | Workspace-engine for first-party clients |
 | Semantic comparison | Direct CLI and AI calls | Workspace-engine |
 | Merge plus base-to-result impact | CLI over merge and diff engines | Workspace-engine |
 | Runtime export semantic projection | CLI | Workspace-engine |
-| Host persistence and safe writes | CLI/storage | CLI/storage, unchanged |
-| AI approval DTO | AI API | AI adapter, #27/#28 future authority |
+| Host persistence and safe writes | CLI/storage | CLI/storage/host composition, unchanged |
+| AI approval DTO | AI API | AI adapter; ADR-0007 + #27/#28 future authority |
 | ID generation mechanism | CLI through workflow seam | CLI through workspace-engine seam |
 | Product-semantic client contract | Provisional/internal | First-class transport-neutral Semantic API under ADR-0020 |
+| Interactive authoritative state ownership | Open under #26 | Shared Rust semantic/application runtime under ADR-0022 |
+| Resident interactive topology | PR #91 spike evidence | Accepted under ADR-0022; implementation pending #93–#95 |
+| Concrete session/revision/transport mechanics | Open under #26 | Deferred; not frozen by ADR-0022 |
 
 Low-level diff and merge algorithms still validate or calculate where their own
 pure correctness contracts require it. That is algorithm ownership below the
@@ -234,13 +304,13 @@ Allowed internal paths include:
 
 - workspace-engine calling semantic-core/formula/diff/merge under this DAG;
 - storage codecs/migrations operating at the representation boundary;
-- host composition depending on workspace-engine plus storage;
+- host composition depending on workspace-engine/runtime plus storage;
 - focused tests directly invoking their owner contract; and
 - deterministic validators participating through ADR-0019.
 
 Forbidden product paths include GUI/CLI/AI/native/WASM adapters implementing a
-second semantic mutation, validation, formula, or gate policy simply because
-they are in the same process or repository.
+second semantic mutation, validation, formula, gate, identity, diff/merge, or
+atomicity policy simply because they are in the same process or repository.
 
 ## Portability evidence
 
@@ -264,19 +334,43 @@ Storage is also present in existing conformance coverage for portable codec
 behavior, but the crate remains host-facing because it exposes native path/file
 APIs. CLI is native-only.
 
-This evidence supports semantic portability; it does not define a public WASM
-ABI, Web Worker, resident runtime, browser persistence mechanism, or wire DTO.
+PR #91 adds executable topology evidence that a TypeScript → Node Worker → WASM
+→ workspace-engine path can retain one Rust-owned authoritative semantic
+`Document`, preserve equivalent exercised native/WASM semantic outcomes, and
+avoid repeated whole-document request/result traffic.
 
-## #26 mapping rule
+This evidence supports semantic portability and ADR-0022 runtime ownership. It
+does not define a public WASM ABI, Web Worker lifecycle, resident session type,
+browser persistence mechanism, wire DTO, memory budget, or browser/device
+latency SLA.
 
-#26 owns runtime/session state placement, revision/concurrency, Web Worker,
-IPC/FFI, projection delivery, host capabilities, native/browser persistence, and
-concrete serialization/ABI.
+## Native/WASM semantic parity
 
-It must map the Accepted Semantic API rather than create a client-specific
-semantic implementation. Runtime topology may host/cache/serialize/deliver the
-contract but cannot redefine Query/Command/Propose/Execute meaning, validation
-gates, stable diagnostics/formula facts, or semantic atomicity.
+WASM is an execution target, not a second semantic implementation.
+
+Where native and WASM expose the same semantic capability over the same relevant
+semantic base/context and deterministic configuration, they must preserve
+equivalent Stable semantic meaning, including applicable Semantic API operation
+outcomes, gate decisions, diagnostic/formula facts, and semantic atomicity.
+
+Transport bytes, memory layout, request batching, Worker placement, and host
+error wrappers may differ when they preserve the contract.
+
+A runtime/transport may host, retain, cache, serialize, batch-deliver, or project
+the Semantic API. It may not redefine it.
+
+## Host capability boundary
+
+Filesystem, IndexedDB/browser persistence, dialogs, credentials, Git/process
+integration, network access, Tauri host commands, and durable replacement/
+recovery remain outside workspace-engine.
+
+A composition root may combine runtime, storage, and host adapters. This
+mechanical composition is not alternate semantic logic.
+
+Semantic publication, durable persistence, and external publication remain
+distinct effects under ADR-0007/ADR-0022. Semantic Execute authority does not
+implicitly grant filesystem/network/Git/deployment authority.
 
 ## Explicitly deferred seams
 
@@ -284,9 +378,14 @@ gates, stable diagnostics/formula facts, or semantic atomicity.
   boundaries; exact Rust APIs remain Provisional.
 - ADR-0020 owns external Semantic API semantic laws and compatibility; complete
   operation catalogue and exact Rust/wire shapes remain Provisional.
-- #26 owns resident state, Web Worker placement, IPC/FFI, projection patches,
-  diagnostic delivery, host capabilities, persistence composition, and
-  concrete transport mappings.
+- ADR-0022 owns resident runtime/state and host-separation laws, while session
+  handle shape, revision/concurrency, cancellation, state commit/swap/locking/
+  cloning mechanics, Web Worker lifecycle, IPC/FFI/network mapping, projection
+  delivery, and persistence/recovery implementations remain Deferred.
+- #93 owns later resident workspace session and revision-safe command
+  implementation.
+- #94 owns later selective semantic queries and projection invalidation.
+- #95 owns later retained incremental engine state with full-oracle equivalence.
 - #27/#28 own AI capability IDs, principals, grants, approval, provenance, and
   execution authorization.
 - #41 owns `.roproj` layout and materialization.
@@ -295,18 +394,21 @@ gates, stable diagnostics/formula facts, or semantic atomicity.
 
 No new crate, semantic `Workspace`/`Project` aggregate, storage/formula
 contract, or native/WASM feature-selected semantic behavior is introduced by
-ADR-0020. Any future direct edge or crate split that changes the Accepted
+ADR-0022. Any future direct edge or crate split that changes the Accepted
 ADR-0016 baseline must amend that ADR explicitly.
 
 ## Related authority
 
+- [ADR-0007](../decisions/ADR-0007-ai-semantic-interaction-model.md)
 - [ADR-0015](../decisions/ADR-0015-stable-semantic-identity.md)
 - [ADR-0016](../decisions/ADR-0016-milestone-02-rust-crate-layering.md)
 - [ADR-0017](../decisions/ADR-0017-versioned-storage-and-canonical-representation.md)
 - [ADR-0018](../decisions/ADR-0018-bound-formulas-and-deterministic-binary64.md)
 - [ADR-0019](../decisions/ADR-0019-staged-semantic-validation-and-diagnostics.md)
 - [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md)
+- [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md)
 - [Semantic API specification](../specs/semantic-api.md)
 - [Semantic core rationale](semantic-core-rationale.md)
 - [Knowledge authority](../governance/knowledge-authority.md)
-- GitHub issues #10, #13, #17, #23, #26, #27, #28, #41, #72, #104
+- GitHub issues #26, #27, #28, #41, #93, #94, #95
+- PR #91

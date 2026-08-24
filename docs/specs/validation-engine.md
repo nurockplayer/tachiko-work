@@ -11,7 +11,10 @@ Semantic API result contract without changing these validation stages.
 [ADR-0021](../decisions/ADR-0021-progressive-semantic-strengthening.md)
 accepts mixed-strength semantic content and makes validation applicability follow
 the semantic facts actually declared by a subject; it does not add or reorder
-validation stages. Exact Rust APIs and incremental mechanisms remain Provisional.
+validation stages. ADR-0022 fixes runtime ownership and native/WASM semantic
+parity without changing validation meaning. Exact Rust APIs, incremental
+mechanisms, and concrete runtime/transport delivery remain Provisional or
+Deferred.
 
 Implementation state: implemented for the Milestone 02 first-party boundary.
 `semantic-core` emits generic semantic-first diagnostic primitives and core
@@ -81,7 +84,8 @@ publication.
 Resident editor state, recovery/autosave, and invalid-draft persistence are not
 defined here. ADR-0021 does not implicitly authorize retaining or persisting an
 invalid interactive candidate; that requires a separately accepted operation/
-runtime contract.
+runtime contract. ADR-0022 accepts where authoritative interactive semantic
+state lives but does not create an invalid-draft retention/autosave policy.
 
 ## Authoritative stages
 
@@ -237,6 +241,10 @@ criteria.
 Specific dependency indexes, dirty-set algorithms, caches, or schedulers remain
 Provisional.
 
+ADR-0022 additionally requires native and WASM to preserve equivalent Stable
+semantic observations where they expose the same validation capability. Exact
+runtime delivery/cache mechanics do not alter this oracle.
+
 ## Operation gating
 
 A validation report describes semantic findings. A gate decides whether a
@@ -292,8 +300,10 @@ but ADR-0021 does not freeze the command catalogue, source selectors, or
 temporary-object reference mechanism.
 
 The batch contract does not define resident transaction sessions, concurrency,
-revision conflict resolution, or persistence rollback; those remain #26 and
-host/representation concerns.
+revision conflict resolution, persistence rollback, or the runtime state
+commit/swap algorithm. ADR-0022 keeps these concrete mechanics Deferred; #93
+owns the later resident-session/revision-safe command implementation and
+persistence remains a host/representation concern.
 
 ## Deterministic domain/extension validator boundary
 
@@ -331,8 +341,10 @@ Presentation and transport adapters may render/project the same semantic
 finding differently.
 
 ADR-0020 makes the stable diagnostic observations and gate relationship part of
-the transport-neutral Semantic API result meaning while leaving the concrete
-wire mapping to #26.
+the transport-neutral Semantic API result meaning. ADR-0022 requires
+runtime/transport mappings to preserve those semantics and native/WASM Stable
+observations while leaving the concrete wire/delivery mechanism Deferred to
+future runtime/transport implementation.
 
 ## Current implementation boundary
 
@@ -355,10 +367,14 @@ The current implementation has no general freeform/progressive-strengthening
 runtime surface. ADR-0021 is architecture non-exclusion and does not create an
 implementation gap that blocks the strongly typed Game Development MVP.
 
+The current runtime/API surface also remains substantially snapshot-style.
+ADR-0022 accepts resident runtime ownership while #93–#95 retain later session,
+selective-query/invalidation, and retained-incremental implementation.
+
 Incremental scheduling/caching, concrete external wire mapping, invalid-draft
 lifecycle, extension registration, mixed-content runtime, and resident-runtime
-delivery remain owned by their existing deferred decisions rather than this
-implementation.
+delivery remain owned by their existing Deferred classifications rather than
+this implementation.
 
 ## Explicitly not defined here
 
@@ -367,8 +383,10 @@ implementation.
 - concrete freeform block/simple-table object model;
 - source-selector or promotion-command representation;
 - schema-inference implementation;
-- exact Semantic API Rust/wire representation (`semantic-api.md` / #26);
-- native/WASM/IPC delivery protocol or resident runtime (#26);
+- exact Semantic API Rust/wire representation (`semantic-api.md`);
+- exact native/WASM/IPC transport, session, revision, or delivery protocol
+  (ADR-0022; later runtime/transport implementation);
+- runtime state commit/swap/locking/cloning mechanics;
 - plugin ABI/runtime/sandbox (#17);
 - `.roproj` invalid-draft persistence (#41);
 - diagnostic suppression, baselines, fingerprints, or fix-it protocol; and

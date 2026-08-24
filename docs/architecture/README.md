@@ -15,12 +15,12 @@ The diagrams show product architecture direction. Internal crate boundaries, run
 ### Semantic core and Semantic API
 
 - [`semantic-core-rationale.md`](semantic-core-rationale.md) — why the project is semantic-first; explanatory rationale, not a replacement for ADR authority.
-- [`document-model.md`](document-model.md) — accepted semantic-document direction; detailed graph mechanics remain subject to Core & Format Hardening.
+- [`document-model.md`](document-model.md) — accepted semantic-document direction under ADR-0021 progressive strengthening; concrete future mixed-content graph mechanics remain Deferred.
 - [`unified-semantic-model.md`](unified-semantic-model.md) — accepted unified-semantic direction across structured data, formulas, views, and AI operations.
-- [`rust-crate-architecture.md`](rust-crate-architecture.md) — current implemented crate graph, ADR-0016 ownership, and ADR-0020 mapping from workspace-engine to the first-class Semantic API without stabilizing the current Rust source surface.
-- [`frontend-backend-boundary.md`](frontend-backend-boundary.md) — GUI/Web/mobile as projection layers and mandatory first-party Semantic API clients under ADR-0020.
+- [`rust-crate-architecture.md`](rust-crate-architecture.md) — current implemented crate graph, ADR-0016 ownership, ADR-0020 first-class Semantic API mapping, and ADR-0022 runtime-host ownership without stabilizing the current Rust source surface.
+- [`frontend-backend-boundary.md`](frontend-backend-boundary.md) — GUI/Web/mobile as projection layers over the mandatory Semantic API and resident shared Rust runtime.
 
-For the implementable transport-neutral client contract, read [`../specs/semantic-api.md`](../specs/semantic-api.md). ADR-0020 is the decision authority; the spec defines Query/Command, Propose/Execute, validation/gates, semantic atomicity, capability-addressability, and compatibility while leaving concrete transports to #26.
+For the implementable transport-neutral client contract, read [`../specs/semantic-api.md`](../specs/semantic-api.md). ADR-0020 is semantic contract authority. ADR-0022 defines runtime ownership/host separation while concrete session, revision, and transport mechanisms remain replaceable.
 
 ### Storage, formats, and Git
 
@@ -31,16 +31,17 @@ For implementable format contracts, continue to [`../specs/README.md`](../specs/
 
 ### Runtime and host boundaries
 
-- [`wasm-strategy.md`](wasm-strategy.md) — WASM strategy hypothesis/Open Question; #26 must map ADR-0020's Accepted semantic contract rather than define a second semantic implementation.
+- [`wasm-strategy.md`](wasm-strategy.md) — Accepted ADR-0022 direction: WASM is an execution target for the same resident Rust semantic/application runtime and Semantic API, not a second semantic implementation.
+- [`frontend-backend-boundary.md`](frontend-backend-boundary.md) — frontend projection/workflow state, shared runtime authority, explicit snapshot boundaries, and host composition.
 - [`performance-model.md`](performance-model.md) — provisional performance guidance that should be refined by evidence.
 
-Resident state, revision/concurrency, Web Worker placement, IPC/FFI, host capabilities, persistence composition, and concrete serialization/ABI remain #26.
+ADR-0022 accepts resident Rust runtime ownership, the no-second-canonical-client-model rule, host separation, explicit snapshot boundaries, and native/WASM semantic parity. Exact session handles, revision/concurrency, Worker lifecycle, IPC/FFI/network mapping, projection invalidation, persistence/recovery, and serialization/ABI remain Deferred to #93–#95 and related host work.
 
 ### AI
 
 - [`ai-native-architecture.md`](ai-native-architecture.md) — accepted direction that AI acts on the semantic model rather than imitating UI actions.
 
-AI is a first-party semantic client under ADR-0007/ADR-0020. Concrete capability identifiers, principals, grants, approval tokens, provenance, and security remain narrower #27/#28 work.
+AI is a first-party semantic client under ADR-0007/ADR-0020. Concrete capability identifiers, principals, grants, approval tokens, provenance, and security remain narrower #27/#28/#30 work.
 
 ### Collaboration and future presentation
 
@@ -55,11 +56,12 @@ Use these broad cues together with the reconciliation register:
 | --- | --- |
 | Semantic-first platform direction | Accepted |
 | First-class Headless Semantic API boundary | Accepted under ADR-0020; exact Rust API and transports remain Provisional/Deferred |
+| Progressive semantic strengthening | Accepted under ADR-0021; concrete freeform object/runtime/UI mechanics Deferred |
 | `.roproj` source / `.ro` portable-artifact relationship | Accepted direction |
 | Current `.ro` v0.1 encoding details | Provisional implemented baseline |
 | Rust crate graph | Accepted Milestone 02 boundary implemented; exact Rust API remains Provisional |
-| AI as semantic client | Accepted direction; shared Semantic API behavior Accepted |
-| Native/WASM runtime/transport seam | Open Question under #26, constrained by ADR-0020 |
+| AI as delegated semantic client | Accepted under amended ADR-0007; capability/approval protocol Deferred |
+| Resident Native/WASM runtime and host separation | Accepted under ADR-0022; current snapshot-style implementation may lag; concrete session/transport/persistence mechanics Deferred |
 | Distributed collaboration beyond semantic merge | Hypothesis / Open Question |
 | Rendering/UI and cross-view projection architecture | Future hypothesis |
 
@@ -69,7 +71,7 @@ Use these broad cues together with the reconciliation register:
 2. Read relevant Accepted ADRs.
 3. Use this index to locate the architecture explanation.
 4. Read the corresponding specification when an implementable contract matters.
-5. Check the target Decision Issue for unresolved details.
+5. Check the target Decision/implementation issue for unresolved details.
 6. Check code/tests only when current shipped behavior matters.
 
 If architecture prose conflicts with a higher-authority Accepted decision, reconcile the contradiction explicitly rather than choosing whichever file is newer.

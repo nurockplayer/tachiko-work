@@ -2,14 +2,18 @@
 
 Decision state: Mixed. The first-class boundary and semantic laws are Accepted
 under [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md).
+Runtime ownership, resident interactive topology, host separation, explicit
+snapshot boundaries, and native/WASM semantic parity are Accepted under
+[ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md).
 Exact Rust APIs, complete operation catalogue, wire schemas, transports,
-runtime/session mechanics, and several result/projection shapes remain
+session/revision mechanics, and several result/projection shapes remain
 Provisional or Deferred as marked below.
 
 Implementation state: partially implemented through `workspace-engine` as the
 shared first-party application authority. Current Rust functions and result
 structures are implementation evidence, not the versioned public product
-contract.
+contract. Current operations remain substantially snapshot-style; the resident
+runtime/session implementation is later work under #93–#95.
 
 Decision issue: [#10](https://github.com/nurockplayer/tachiko-work/issues/10)
 
@@ -18,9 +22,10 @@ Decision issue: [#10](https://github.com/nurockplayer/tachiko-work/issues/10)
 Define the smallest transport-neutral semantic command/query/result contract
 that GUI, CLI, AI, automation, and future first-party clients must share.
 
-This specification answers **what semantic operations mean**. It does not define
-how a host retains state or how requests/results are serialized over native,
-WASM, IPC, FFI, or network transports.
+This specification answers **what semantic operations mean**. ADR-0022 answers
+the durable runtime/host ownership rules. Neither specification freezes how
+requests/results are serialized over native, WASM, IPC, FFI, or network
+transports or the concrete session/revision protocol.
 
 ## Contract boundary
 
@@ -61,6 +66,11 @@ storage / filesystem / IndexedDB / Git / IPC / WASM bridge
 ADR-0016. The diagram does not make its source-level Rust API the external
 contract.
 
+For interactive clients, ADR-0022 places authoritative in-memory semantic state
+in the shared Rust semantic/application runtime and forbids a second
+independently authoritative frontend document model. Host/storage capabilities
+remain beside that runtime rather than becoming semantic authority.
+
 ## Mandatory first-party client rule
 
 A first-party client MUST use the Semantic API contract when it:
@@ -84,8 +94,11 @@ ADRs.
 
 This specification does not freeze a new public `Workspace`, `Project`, session,
 or revision type. Milestone 02 semantic references remain document-local where
-ADR-0015 says they are document-local. #26 owns resident state and runtime
-session/revision mechanics.
+ADR-0015 says they are document-local. ADR-0022 accepts a resident shared Rust
+runtime as the preferred interactive topology while the exact session handle,
+revision/precondition representation, concurrency/conflict policy, cancellation,
+and runtime state-installation mechanics remain Deferred to #93 and related
+runtime work.
 
 ## Stable targeting
 
@@ -182,8 +195,10 @@ Execute MUST evaluate the authoritative preconditions/gates for the semantic
 state it actually acts on. A client MUST NOT convert an earlier gate decision
 into ambient authority for a later changed state.
 
-Proposal IDs, stale proposal handling, revision tokens, approval tokens,
-resident state, and commit/session mechanics are outside the Stable contract.
+Proposal IDs, stale proposal handling, revision tokens, approval tokens, and
+concrete session/commit mechanics are outside the Stable contract. ADR-0022
+accepts the resident runtime/state ownership law without freezing those
+mechanisms.
 
 ## Semantic atomicity
 
@@ -230,6 +245,9 @@ Atomic batch does not by itself define:
 - undo/redo history;
 - proposal tokens; or
 - intra-batch temporary-object handle syntax.
+
+ADR-0022 likewise does not turn semantic atomicity into a specific runtime
+commit/swap/locking/cloning algorithm.
 
 ## Result contract
 
@@ -437,6 +455,10 @@ policy.
 | --- | --- |
 | Headless Semantic API as mandatory first-party semantic boundary | Accepted |
 | `workspace-engine` as current Rust implementation/application authority | Accepted under ADR-0016/ADR-0020 |
+| Resident shared Rust runtime as preferred interactive topology | Accepted under ADR-0022 |
+| Frontend projection/cache/authoring state is non-authoritative | Accepted under ADR-0022 |
+| Host persistence/capabilities remain outside workspace-engine | Accepted under ADR-0016/ADR-0022 |
+| Native/WASM equivalent Stable semantic observations where capabilities overlap | Accepted under ADR-0022 |
 | Current workspace-engine Rust surface as external API | Internal / Provisional |
 | Query does not publish semantic state | Accepted |
 | Command is typed semantic intent rather than representation CRUD | Accepted |
@@ -458,11 +480,11 @@ policy.
 | Complete externally Stable operation catalogue | Provisional, promote operation-by-operation |
 | Exact semantic result tagged union / field spelling | Provisional |
 | Exact effect/diff projection shape | Provisional |
-| Revision/concurrency/precondition token | #26 / Provisional |
-| Proposal identity/token | #26/#28 / Provisional |
+| Revision/concurrency/precondition token | #93 / Provisional |
+| Proposal identity/token | #28 and future patch/runtime protocol / Provisional |
 | Intra-batch temporary-object handle syntax | Provisional |
 | Public embedded Rust SDK / dedicated API crate | Deferred |
-| Native/WASM/IPC/FFI/network serialization | #26 / Deferred |
+| Native/WASM/IPC/FFI/network serialization | ADR-0022-constrained future transport work / Deferred |
 
 ## Internal bypass policy
 
@@ -479,14 +501,21 @@ alternate first-party client policy paths:
 A first-party semantic client may not bypass the contract merely because it is
 in the same process, language, or repository.
 
-## #26 transport/runtime mapping rule
+## ADR-0022 runtime/transport mapping rule
 
-#26 may define resident state, sessions, revisions, concurrency, worker
-placement, host capabilities, persistence composition, projection delivery,
-serialization, and ABI/protocol mappings.
+ADR-0022 fixes runtime ownership and host-separation laws: interactive
+authoritative semantic state belongs to the shared Rust semantic/application
+runtime; resident topology is preferred; frontends do not own a second semantic
+authority; full snapshots are explicit boundaries; and native/WASM preserve
+equivalent Stable semantic meaning where capabilities overlap.
 
-Every such mapping MUST preserve the Semantic API stable laws and outcomes.
-Runtime or transport topology is not semantic authority.
+Concrete resident session handles, revision/concurrency mechanics, Worker
+lifecycle, projection delivery, IPC/FFI/network serialization/ABI, and
+persistence/recovery remain Deferred to #93–#95 and future host/transport
+implementation as applicable.
+
+Every mapping MUST preserve the Semantic API Stable laws and outcomes. Runtime
+or transport topology is not independent semantic authority.
 
 ## #104 reference pressure
 
@@ -499,9 +528,13 @@ to semantic core by virtue of using the API.
 
 - JSON/Protobuf/MessagePack or any other wire encoding;
 - JSON-RPC, HTTP, IPC, FFI, or WASM ABI;
-- resident runtime state placement;
+- exact resident session/handle representation;
 - revision/concurrency/conflict protocol;
+- exact runtime commit/swap/locking/cloning mechanism;
+- Worker lifecycle/loading/startup/memory behavior;
 - proposal/approval token format;
+- projection patch/delivery/invalidation protocol;
+- native/browser persistence/recovery implementation;
 - plugin ABI/runtime/sandbox;
 - `.roproj` physical layout;
 - generic CRUD/JSON Patch;
@@ -520,6 +553,7 @@ to semantic core by virtue of using the API.
 - [ADR-0018](../decisions/ADR-0018-bound-formulas-and-deterministic-binary64.md)
 - [ADR-0019](../decisions/ADR-0019-staged-semantic-validation-and-diagnostics.md)
 - [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md)
+- [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md)
 - [Diagnostics contract](diagnostics-contract.md)
 - [Validation engine](validation-engine.md)
-- Issues #10, #17, #26, #27, #28, #104
+- Issues #10, #17, #27, #28, #93, #94, #95, #104
