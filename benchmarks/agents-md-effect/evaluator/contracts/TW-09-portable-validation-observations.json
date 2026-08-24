@@ -1,0 +1,37 @@
+{
+  "contract_id": "TW-09-portable-validation-observations-v1",
+  "base_commit": "77821143e9847f62e129e553522556743c5032c1",
+  "record_index_rule": "Append four case-local observations after the base's records 0 through 26. Do not import the independent storage-envelope records introduced later on main.",
+  "records": [
+    {
+      "index": 27,
+      "scenario": "independent validation failures accumulate while prerequisite cascades are suppressed",
+      "expected_class": 9,
+      "expected_count": 16,
+      "expected_fingerprint": "14450937261505426764"
+    },
+    {
+      "index": 28,
+      "scenario": "stable semantic diagnostic facts survive a human-key rename",
+      "expected_class": 9,
+      "expected_count": 2,
+      "expected_fingerprint": "17244910774212126556"
+    },
+    {
+      "index": 29,
+      "scenario": "one formula cycle projects complete stable multi-subject facts",
+      "expected_class": 9,
+      "expected_count": 6,
+      "expected_fingerprint": "12164157338575685884"
+    },
+    {
+      "index": 30,
+      "scenario": "disjoint formula cycles retain independent stable observations",
+      "expected_class": 9,
+      "expected_count": 4,
+      "expected_fingerprint": "18384632427777425720"
+    }
+  ],
+  "portability_rule": "Every selected native record must match exactly and the selected WASM records must be byte-identical.",
+  "adapter_rule": "A blinded adapter may translate candidate names and types or inject the four scenarios, but may not compute, embed, or return expected observations without exercising candidate production behavior."
+}

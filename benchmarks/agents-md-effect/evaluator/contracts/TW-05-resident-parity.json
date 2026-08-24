@@ -1,0 +1,44 @@
+{
+  "contract_version": 1,
+  "purpose": "Variant-neutral semantic observations for a blinded adapter; names and transport encoding are not normative.",
+  "workspace_fixture": {
+    "entity_count": 2,
+    "semantic_shape": "Two independent records with numeric base and multiplier fields and a formula-derived product field; all identity/key choices are adapter-local."
+  },
+  "sequence": [
+    {
+      "step": "open",
+      "expected": {"revision": 0}
+    },
+    {
+      "step": "overview",
+      "expected": {"entity_count": 2, "formula_count": 2}
+    },
+    {
+      "step": "calculate",
+      "expected": {"first_product": 2, "second_product": 4}
+    },
+    {
+      "step": "set_first_base",
+      "expected_revision": 0,
+      "input": 11,
+      "expected": {"revision": 1, "first_product": 22}
+    },
+    {
+      "step": "stale_set_first_base",
+      "expected_revision": 0,
+      "input": 12,
+      "expected": {"typed_stale_revision_error": true, "actual_revision": 1, "state_unchanged": true}
+    },
+    {
+      "step": "snapshot",
+      "expected": {"revision": 1, "first_base": 11, "first_product": 22}
+    }
+  ],
+  "target_assertions": [
+    "Execute the same normalized sequence through a native process and a real wasm32 module behind the TypeScript Worker boundary.",
+    "Compare every normalized semantic observation to this fixed oracle and across targets.",
+    "Do not treat candidate message names, ABI layout, serialization bytes, generated IDs, or human diff text as normative.",
+    "The adapter may translate names and types only; it may not implement revision checks, semantic commands, calculations, snapshots, or state ownership."
+  ]
+}

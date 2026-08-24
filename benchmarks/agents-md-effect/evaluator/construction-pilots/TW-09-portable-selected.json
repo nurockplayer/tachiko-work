@@ -1,0 +1,26 @@
+{
+  "protocol_id": "tachiko-agents-effect-v1",
+  "classification": "construction_pilot_only",
+  "formal_result_eligible": false,
+  "case_id": "TW-09",
+  "pilot_subject_commit": "fdf1963c54254f62f03f46dc936d60baf178b0f8",
+  "pilot_subject_tree": "82854a472bd6aca1cab70b750fdcae864675ce5c",
+  "full_observation_artifact_sha256": "28c5f6d75cd6245ae7c9fcc1afe519c41d1fcc832d923c3da099b40f12d8d6d3",
+  "full_observation_artifact_bytes": 7302,
+  "selected_indexes": [27, 28, 29, 30],
+  "native": [
+    {"index": 27, "class": 9, "bits": "0000000000000010", "auxiliary": "14450937261505426764"},
+    {"index": 28, "class": 9, "bits": "0000000000000002", "auxiliary": "17244910774212126556"},
+    {"index": 29, "class": 9, "bits": "0000000000000006", "auxiliary": "12164157338575685884"},
+    {"index": 30, "class": 9, "bits": "0000000000000004", "auxiliary": "18384632427777425720"}
+  ],
+  "wasm": [
+    {"index": 27, "class": 9, "bits": "0000000000000010", "auxiliary": "14450937261505426764"},
+    {"index": 28, "class": 9, "bits": "0000000000000002", "auxiliary": "17244910774212126556"},
+    {"index": 29, "class": 9, "bits": "0000000000000006", "auxiliary": "12164157338575685884"},
+    {"index": 30, "class": 9, "bits": "0000000000000004", "auxiliary": "18384632427777425720"}
+  ],
+  "native_wasm_byte_equal": true,
+  "matches_case_local_contract": true,
+  "note": "Selected from the full construction artifact before temporary pilot cleanup. The full artifact hash is retained for provenance; this receipt is not a formal benchmark result."
+}

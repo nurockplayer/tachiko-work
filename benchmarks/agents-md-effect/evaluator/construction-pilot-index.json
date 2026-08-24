@@ -1,0 +1,132 @@
+{
+  "protocol_id": "tachiko-agents-effect-v1",
+  "classification": "construction_pilot_only",
+  "formal_result_eligible": false,
+  "receipts": [
+    {
+      "case_id": "TW-01",
+      "path": "evaluator/construction-pilots/base-controls/TW-01.json",
+      "sha256": "4d5394ef1e7e4e9a8c54d5a1d8bc7208a52b5e015a350a92bb5029d2347b9d1e",
+      "bytes": 1757,
+      "scope": "historical base: ordered deduplicated base/core union; 1 command passed",
+      "not_claimed": ["same-wave formal base-control receipt", "production controller or account isolation qualification", "Baseline A, Variant B, controlled A/B, or Ultra result"]
+    },
+    {
+      "case_id": "TW-02",
+      "path": "evaluator/construction-pilots/base-controls/TW-02.json",
+      "sha256": "d582760eb8952646a258c36c0588d6026fe6b603e646ab4410774c186688c143",
+      "bytes": 1758,
+      "scope": "historical base: ordered deduplicated base/core union; 1 command passed",
+      "not_claimed": ["same-wave formal base-control receipt", "production controller or account isolation qualification", "Baseline A, Variant B, controlled A/B, or Ultra result"]
+    },
+    {
+      "case_id": "TW-03",
+      "path": "evaluator/construction-pilots/base-controls/TW-03.json",
+      "sha256": "8df8f8517d41e7fecabd0fe191be343d2e2448bb2bc7343ba8bda462469f4a1b",
+      "bytes": 41363,
+      "scope": "historical base: ordered deduplicated base/core union; 3 commands passed",
+      "not_claimed": ["same-wave formal base-control receipt", "production controller or account isolation qualification", "Baseline A, Variant B, controlled A/B, or Ultra result"]
+    },
+    {
+      "case_id": "TW-04",
+      "path": "evaluator/construction-pilots/base-controls/TW-04.json",
+      "sha256": "b3a9cd72268b2a8e1d00aa0fee71f6b1b841ebb0521ef1315c05cc1e63d6a6d5",
+      "bytes": 287937,
+      "scope": "historical base: ordered deduplicated base/core union; 5 commands passed",
+      "not_claimed": ["same-wave formal base-control receipt", "production controller or account isolation qualification", "Baseline A, Variant B, controlled A/B, or Ultra result"]
+    },
+    {
+      "case_id": "TW-05",
+      "path": "evaluator/construction-pilots/base-controls/TW-05.json",
+      "sha256": "416aebead6172f628d0d897fedca857dcf6a9d1ef267a491f184888b8fbfc2c1",
+      "bytes": 62482,
+      "scope": "historical base: ordered deduplicated base/core union; 3 commands passed",
+      "not_claimed": ["same-wave formal base-control receipt", "production controller or account isolation qualification", "Baseline A, Variant B, controlled A/B, or Ultra result"]
+    },
+    {
+      "case_id": "TW-06",
+      "path": "evaluator/construction-pilots/base-controls/TW-06.json",
+      "sha256": "57d8fe38bb53afb16735f865686b8c4db07b3455793e3a77434230d13b2b103e",
+      "bytes": 40751,
+      "scope": "historical base: ordered deduplicated base/core union; 3 commands passed",
+      "not_claimed": ["same-wave formal base-control receipt", "production controller or account isolation qualification", "Baseline A, Variant B, controlled A/B, or Ultra result"]
+    },
+    {
+      "case_id": "TW-07",
+      "path": "evaluator/construction-pilots/base-controls/TW-07.json",
+      "sha256": "4dc77a1adf19ae5b90ffb3ba7bc92365398834d6dab42aabc1fbd1c1fd04e3de",
+      "bytes": 44384,
+      "scope": "historical base: ordered deduplicated base/core union; 4 commands passed",
+      "not_claimed": ["same-wave formal base-control receipt", "production controller or account isolation qualification", "Baseline A, Variant B, controlled A/B, or Ultra result"]
+    },
+    {
+      "case_id": "TW-08",
+      "path": "evaluator/construction-pilots/base-controls/TW-08.json",
+      "sha256": "a63bfb1033c98789ed275a47f4f074a5d63afd0096af802861ec87f3fbdf0710",
+      "bytes": 42152,
+      "scope": "historical base: ordered deduplicated base/core union; 3 commands passed",
+      "not_claimed": ["same-wave formal base-control receipt", "production controller or account isolation qualification", "Baseline A, Variant B, controlled A/B, or Ultra result"]
+    },
+    {
+      "case_id": "TW-09",
+      "path": "evaluator/construction-pilots/base-controls/TW-09.json",
+      "sha256": "0c9a28d16be1cd0584337e97cae40fbadb563c658ba52ff540fee1b4bf0da53f",
+      "bytes": 47901,
+      "scope": "historical base: ordered deduplicated base/core union; 4 commands passed",
+      "not_claimed": ["same-wave formal base-control receipt", "production controller or account isolation qualification", "Baseline A, Variant B, controlled A/B, or Ultra result"]
+    },
+    {
+      "case_id": "TW-06",
+      "path": "evaluator/construction-pilots/TW-06.json",
+      "sha256": "3a48d21a370fd12738abb6d5342065286082e33d71e5f862e855494705d4e3c0",
+      "bytes": 17410,
+      "scope": "historical target: 140 workspace/all-target tests plus positive structural/link validator",
+      "not_claimed": ["persistently recaptured release-check output"]
+    },
+    {
+      "case_id": "TW-08",
+      "path": "evaluator/construction-pilots/TW-08.json",
+      "sha256": "64142f7f138765a5d9f2e0f3eb75f8f2660ef5784e4865d4f0d031df9419f7f0",
+      "bytes": 5406,
+      "scope": "historical target: all 38 tachiko-storage tests",
+      "not_claimed": ["workspace/all-target gate", "release-check"]
+    },
+    {
+      "case_id": "TW-09",
+      "path": "evaluator/construction-pilots/TW-09.json",
+      "sha256": "e793220d3d4e746f7fa40cc4efbc56f3afe9b2c6d63511a6fb84502760c5fe7c",
+      "bytes": 6764,
+      "scope": "rebased synthetic behavior on 7782114: 6 diagnostic tests, 19 validation-report tests, and native/WASM portable gate",
+      "not_claimed": ["release-check", "formal adapter qualification"]
+    },
+    {
+      "case_id": "TW-09",
+      "path": "evaluator/construction-pilots/TW-09-portable-selected.json",
+      "sha256": "92de4ae2f6e81a8f88f64dbc12242ec8a0c436ea7c748cc27706d6c455d9c346",
+      "bytes": 1542,
+      "scope": "exact case-local native/WASM records 27-30",
+      "not_claimed": ["formal A/B observation"]
+    },
+    {
+      "case_id": "TW-09",
+      "path": "evaluator/construction-pilots/TW-09-rebased.patch",
+      "sha256": "5bb0d435a779710434b04f8225741a533a2ac79335420d451bffc79aa6fd81cb",
+      "bytes": 205888,
+      "scope": "reconstructible construction-only patch from base 7782114 to pilot tree 82854a4",
+      "not_claimed": ["historical implementation identity", "formal candidate patch"]
+    }
+  ],
+  "validator_negative_controls": [
+    {
+      "contract_id": "TW-06-structural-scope-v1",
+      "validator_sha256": "5eebe519059a7f12ea11a1665f4542e2625c17a686dcac1d0af6bdbc6ac0082e",
+      "mutation": "historical target plus Cargo.toml modification and missing repository-relative README link",
+      "expected_exit_code": 1,
+      "observed_exit_code": 1,
+      "stdout_sha256": "7282f74f2f9c6026907cf89de2cea64c38171ccee389a2b1dc7f46b86957c7ea",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "observed_facts": ["Cargo.toml classified as package metadata scope", "missing Markdown target classified as absent"]
+    }
+  ],
+  "exclusion_rule": "No receipt, output, timing, or synthetic patch in this index may populate Baseline A, Variant B, controlled A/B, or Ultra scores."
+}

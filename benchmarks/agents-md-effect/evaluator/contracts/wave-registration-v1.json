@@ -1,0 +1,43 @@
+{
+  "protocol_id": "tachiko-agents-effect-v1",
+  "contract_id": "wave-registration-v1",
+  "contract_version": 1,
+  "freeze_rule": "Freeze and content-address the immutable pre-run wave registration and an empty attempt-ledger genesis before the first observation; append terminal attempt entries during the wave without changing the pre-run registration.",
+  "wave_registry_required_content": [
+    "opaque wave_id used identically as result experiment_id, plus experiment phase",
+    "controller, schema, benchmark, rubric, authority, oracle, production-command, projection, environment, model, tool, prompt-wrapper, provider, reviewer-pool, and timeout locks",
+    "case registrations binding every case ID to historical base commit/tree, task hash/bytes, and time/order allocation",
+    "a sealed variant-set document binding the eligible variant byte hashes and provenance receipts, stored separately from its public commitment",
+    "a sealed arm-key document binding anonymous labels to registered variants, stored separately from its pre-run commitment",
+    "planned case and arm order commitment",
+    "arm-key-blind reviewer/custodian/integrity/tooling-adjudicator allocator contract, role pools, workload cap, independent seed-custodian attestation, entropy receipt, and seed commitment with timestamps",
+    "intrinsic-neutrality and arm-label-blind comparison-audit receipts",
+    "Variant B firewall receipt for controlled A/B"
+  ],
+  "attempt_entry_required_content": [
+    "opaque attempt_id, run_id, blinded_candidate_id, pair_id when controlled A/B, case ID, attempt number, and initial/replacement role",
+    "previous attempt-entry hash and replacement target when applicable",
+    "wave, case-registration, planned-order, sealed-variant-set, and arm-key commitments",
+    "anonymous-ID generation receipt and exact identity equality with the later result/review packet",
+    "start registration timestamp before process launch",
+    "terminal disposition and immutable result-record hash or explicit not-started infrastructure disposition"
+  ],
+  "attempt_ledger_rules": [
+    "Append entries through a hash chain; never delete, reorder, relabel, or overwrite an attempt.",
+    "Register an attempt before provider contact, workspace exposure, or task launch.",
+    "A controlled pair shares one opaque pair_id and one pair-attempt number.",
+    "Task-quality failures and timeouts are accepted scored observations and never retried.",
+    "A fresh agent replacement with attempt_number=2 is permitted only when the first attempt failed before any model output, agent filesystem mutation, or candidate-dependent signal was observable; a second pre-output failure cancels the case.",
+    "After model output or candidate mutation exists, never launch a replacement agent. A post-output validator/reviewer infrastructure failure may re-execute that failed stage once against the identical immutable captured candidate when no protected content was exposed; otherwise cancel the case.",
+    "Any protected-content exposure, untrustworthy capture, or candidate-dependent invalidation that prevents same-candidate evaluation cancels the case/pair rather than resampling the model.",
+    "If either controlled arm is cancelled or invalidated after output, append terminal discarded entries for both sides and retain neither; never selectively retain or replace the other arm.",
+    "A replacement entry cites every discarded attempt it replaces and uses fresh workspace, process, cache, Codex home, anonymous label, and provider request.",
+    "Publish the immutable pre-run registration, full append-only ledger, all invalid/not-started records, final chain head, allocator seed opening, and arm-key opening after the wave freezes."
+  ],
+  "commitment_canonicalization": {
+    "id": "sorted-json-node-v1",
+    "runtime": "Node.js 24.15.0",
+    "serialization": "recursively sort object keys by ECMAScript default Array.prototype.sort, JSON.stringify with no whitespace, append one LF, encode UTF-8",
+    "digest": "SHA-256"
+  }
+}

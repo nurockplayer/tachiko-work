@@ -1,0 +1,366 @@
+{
+  "protocol_id": "tachiko-agents-effect-v1",
+  "lock_version": 1,
+  "construction_reference_date": "2026-08-25",
+  "controlled_agent": {
+    "provider": "OpenAI Codex CLI",
+    "model_id": "gpt-5.6-sol",
+    "reasoning_effort": "high",
+    "reasoning_mode": "standard",
+    "service_tier": "default",
+    "multi_agent": false,
+    "replicated_threads": false,
+    "codex_cli_version": "0.149.0",
+    "codex_binary_path": "/opt/homebrew/Caskroom/codex/0.149.0/bin/codex",
+    "codex_binary_sha256": "f4a74117b8142cda581c95ff753abf4508b5636d89682c1ed77e4a9249af8963",
+    "code_mode_host_path": "/opt/homebrew/Caskroom/codex/0.149.0/bin/codex-code-mode-host",
+    "code_mode_host_sha256": "3eca39bb7f93315fab6b0dec2334381c0f50a2ccda113ec482fb815f16072a5c",
+    "bundled_model_catalog": {
+      "capture_command": "/opt/homebrew/Caskroom/codex/0.149.0/bin/codex debug models --bundled",
+      "raw_sha256": "8aafe33104f3d423769bdfc1df737e126bc230cb994650e07f237f74eba0a1c4",
+      "bytes": 315716,
+      "canonicalization": "jq -cS compatible recursive key sort with one trailing newline",
+      "canonical_catalog_sha256": "dc80df90cec2080fa18c923f07be1e980b99f6c2a50a6cc2710836a333478f19",
+      "model_record_sha256": "8544119e89b6fbea70db81c86a9667351ca8580f12c087f6bf11ac6aa6d1552f",
+      "base_instructions_sha256": "35d8b5d513fff3b55344d5f9f3169305cc276aee053f5be140a77708e0926e7c",
+      "base_instructions_bytes": 17767,
+      "controlled_stage_path": "/opt/isolated-runtime/model-catalog/models-0.149.0.json"
+    },
+    "model_catalog_rule": "Materialize the exact bundled catalog once per wave with scripts/materialize-model-catalog.mjs, hash it, and stage identical read-only bytes at the neutral controlled_stage_path passed through model_catalog_json in every arm. The controller source path is never agent-visible. A/B catalog and model-record receipts must match. The provider exposes no immutable dated backend snapshot for gpt-5.6-sol; until a deployment attestation is available, this remains a readiness blocker rather than being papered over by close timing.",
+    "approval_policy": "never",
+    "sandbox_mode": "workspace-write",
+    "shell_network_access": false,
+    "ephemeral_session": true,
+    "resume_or_steering": false,
+    "enabled_capabilities": [
+      "functions.exec",
+      "functions.wait",
+      "exec_command",
+      "write_stdin",
+      "apply_patch"
+    ],
+    "feature_list_sha256": "3ee1728480bd8371db3bb68b095f711de9c38e4690b29260233e1824bb1095f5",
+    "enabled_features": [
+      "code_mode_host",
+      "enable_request_compression",
+      "shell_tool",
+      "unified_exec"
+    ],
+    "disabled_capabilities": [
+      "multi_agent",
+      "multi_agent_v2",
+      "web_search",
+      "mcp",
+      "apps",
+      "plugins",
+      "browser_use",
+      "browser_use_external",
+      "browser_use_full_cdp_access",
+      "computer_use",
+      "memories",
+      "image_generation",
+      "workspace_dependencies",
+      "auth_elicitation",
+      "goals",
+      "hooks",
+      "skill_search",
+      "tool_suggest",
+      "view_image",
+      "secret_auth_storage",
+      "update_plan",
+      "request_user_input"
+    ],
+    "instruction_surfaces": {
+      "bundled_skills": false,
+      "skill_instructions": false,
+      "app_instructions": false,
+      "collaboration_mode_instructions": false,
+      "environment_context": false
+    },
+    "mcp_servers": [],
+    "construction_control_smoke": {
+      "status": "pass",
+      "classification": "construction_pilot_only",
+      "prompt": "Return exactly CONTROL_OK. Do not use tools.",
+      "final_message": "CONTROL_OK",
+      "tool_calls": 0,
+      "feature_list_sha256": "3ee1728480bd8371db3bb68b095f711de9c38e4690b29260233e1824bb1095f5",
+      "mcp_list": [],
+      "note": "This was a configuration-only smoke in an empty neutral directory, not a benchmark case and not a Baseline A/B result."
+    },
+    "provider_deployment_attestation": {
+      "status": "unavailable",
+      "blocking": true,
+      "reason": "The model ID and client-side catalog/base instructions are locked, but Codex exposes neither a dated immutable gpt-5.6-sol backend snapshot nor a deployment fingerprint in run events."
+    },
+    "provider_authentication": {
+      "status": "not_provisioned_blocking",
+      "required": "sealed per-run brokered authentication unavailable to the agent shell/filesystem",
+      "identity_locks": [
+        "provider account identity SHA-256",
+        "provider project identity SHA-256",
+        "organization/region/entitlement and rate-limit context receipt"
+      ],
+      "pair_rule": "Both arms use the same provider account, project, entitlement, rate-limit bucket, region, and credential-delivery mechanism; secrets never enter task-visible environment variables or files.",
+      "reason": "The exact invocation uses a fresh CODEX_HOME and disables auth elicitation/secret storage, but no sealed credential delivery or account/project identity receipt is currently provisioned."
+    }
+  },
+  "baseline_a_agents": {
+    "source_repository_commit": "30c001c42ee10c1d460ce0a690245107eedc4ac5",
+    "git_blob": "ee3eb018062129f5df8f7e990fef2721cf84f69a",
+    "sha256": "2179753f8e015f5c96e534ac633a3cdb2d10ffa7f98c3f608e351e929ade84d8",
+    "bytes": 2657,
+    "path": "AGENTS.md"
+  },
+  "variant_b_agents": {
+    "status": "not_supplied_by_construction",
+    "registration_rule": "A future experiment owner records immutable provenance, byte count, and SHA-256 without changing this case set or evaluator after observing B behavior.",
+    "benchmark_firewall": "B must be a pre-existing independently motivated immutable revision or be authored by people with signed no-access attestations for evaluator cases/tasks/oracles/hidden modes/rubric/pilots/Baseline results; freeze B before unsealing benchmark internals."
+  },
+  "toolchain": {
+    "rust_primary": {
+      "rustc": "1.97.1 (8bab26f4f 2026-07-14)",
+      "cargo": "1.97.1 (c980f4866 2026-06-30)",
+      "toolchain_name": "1.97.1-aarch64-apple-darwin",
+      "components": ["rustfmt", "clippy"],
+      "targets": ["aarch64-apple-darwin", "wasm32-unknown-unknown"]
+    },
+    "rust_compatibility": {
+      "rustc": "1.85.0 (4d91de4e4 2025-02-17)",
+      "cargo": "1.85.0 (d73d2caf9 2024-12-31)",
+      "toolchain_name": "1.85.0-aarch64-apple-darwin"
+    },
+    "node": {
+      "version": "24.15.0",
+      "path": "/opt/isolated-runtime/node-24.15.0/bin/node",
+      "construction_source_path": "/Users/tachikoma/.local/share/fnm/node-versions/v24.15.0/installation/bin/node",
+      "binary_sha256": "3200fbd9f7fd4410426dd541e10d1ab829d3472f270d743c7fabd1696c03fe32"
+    },
+    "pnpm": {
+      "version": "11.13.0",
+      "path": "/opt/isolated-runtime/pnpm-11.13.0/pnpm",
+      "construction_source_path": "/Users/tachikoma/.codex/benchmark-runtime/tachiko-agents-effect-v1/tools/pnpm-11.13.0/pnpm",
+      "binary_sha256": "65cb7439d9b023b95d0e19d843adf14e0654426ef85ad4ecd33d58849315f669",
+      "tree_digest_kind": "paths-types-content-v1",
+      "tree_sha256": "7de3fbab991e5effdc106bb1bbe5bf82dc402c526a5703a2038a9b84d22ed2d9",
+      "tree_entries": 549,
+      "tree_file_bytes": 207190495
+    },
+    "rtk": {
+      "version": "0.34.3",
+      "path": "/opt/homebrew/Cellar/rtk/0.34.3/bin/rtk",
+      "binary_sha256": "5fa862ea95a9fb6fad025783453fe7d3e7a500fe206eb00ca5c2676840721c96"
+    },
+    "git": {
+      "version": "2.55.0",
+      "path": "/opt/homebrew/Cellar/git/2.55.0/bin/git",
+      "invoked_through": "/opt/homebrew/Cellar/rtk/0.34.3/bin/rtk proxy git",
+      "binary_sha256": "80045299a1ae4309b716fd02f076c677d74c5dac2d5f065ca6d6364afab198ad",
+      "trusted_environment": {
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_ATTR_NOSYSTEM": "1",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES": "unset"
+      },
+      "trusted_cli_config": [
+        "core.hooksPath=/dev/null",
+        "core.attributesFile=/dev/null",
+        "core.autocrlf=false"
+      ],
+      "capture_rule": "Raw candidate capture must use hash-object --no-filters in a separate trusted object database and temporary index; no candidate repository configuration is consulted."
+    },
+    "bash": {
+      "version": "GNU bash 5.3.15(1)-release (aarch64-apple-darwin24.6.0)",
+      "path": "/opt/homebrew/bin/bash",
+      "binary_sha256": "516ec65282a1c209fc4f6b2c7ec0b5ccf9e82010cf105c9ba227a3a67538b201"
+    }
+  },
+  "construction_reference_host": {
+    "os": "macOS 15.7.4",
+    "build": "24G517",
+    "kernel": "Darwin 24.6.0",
+    "architecture": "arm64",
+    "locale": "C.UTF-8",
+    "timezone": "UTC",
+    "container_runtime": "unavailable",
+    "note": "Construction pilots established a native-host validator lock. Every experiment wave records the same host/tool hashes or declares the wave invalid; A/B arms must match exactly."
+  },
+  "controlled_runner": {
+    "host_or_image_id": "macos-15.7.4-24G517-arm64-worker-v1",
+    "execution_kind": "exclusive native host",
+    "logical_cpu_allocation": 12,
+    "memory_allocation_bytes": 17179869184,
+    "concurrent_agent_processes": 1,
+    "concurrent_validator_processes": 1,
+    "minimum_free_bytes_before_each_run": 10737418240,
+    "required_os_account": "codex-worker",
+    "required_validator_os_account": "build-worker",
+    "required_probe_builder_os_account": "probe-builder",
+    "required_probe_execution_os_account": "probe-runner",
+    "required_controller_os_account": "job-controller",
+    "account_provisioning_status": "not_provisioned_or_verified",
+    "runtime_staging_status": "neutral_paths_not_provisioned_or_verified_blocking",
+    "runtime_staging_rule": "Before a wave, the controller copies the hash-locked Node, pnpm, Rust toolchains, and dependency caches from evaluator-only construction sources into the fixed neutral /opt/isolated-runtime paths. Source paths are never mounted or readable by the agent; pre/post hashes must equal the locks, and both arms see byte-identical neutral environment values.",
+    "path": "/opt/isolated-runtime/node-24.15.0/bin:/opt/isolated-runtime/pnpm-11.13.0:/opt/isolated-runtime/rust/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+    "environment": {
+      "HOME": "<opaque-run-root>/home",
+      "LANG": "C.UTF-8",
+      "LC_ALL": "C.UTF-8",
+      "TZ": "UTC",
+      "CARGO_INCREMENTAL": "0",
+      "CARGO_NET_OFFLINE": "true",
+      "CARGO_HOME": "<opaque-run-root>/cargo-home cloned from the sealed template",
+      "RUSTUP_HOME": "/opt/isolated-runtime/rustup",
+      "PNPM_HOME": "/opt/isolated-runtime/pnpm-11.13.0",
+      "GIT_CONFIG_NOSYSTEM": "1",
+      "GIT_CONFIG_GLOBAL": "/dev/null",
+      "GIT_ATTR_NOSYSTEM": "1",
+      "CARGO_TARGET_DIR": "unset; use the clone-local target directory"
+    },
+    "agent_visible_identity_negative_controls": [
+      "id/whoami, hostname, pwd, env, and command-path output contains no benchmark/protocol, case, arm, or variant identifier",
+      "construction_source_path and dependency template paths are unreadable and absent from mounts, environment, process arguments, and error output",
+      "opaque workspace/HOME/CODEX_HOME/TMPDIR names have no semantic label and equal path-shape distributions across arms",
+      "HOME is a newly created empty supervisor-owned read-only directory for each attempt, has a frozen prelaunch empty-tree receipt, cannot be written/replaced by the agent, and is never reused"
+    ],
+    "bash_invocation": "/opt/homebrew/bin/bash",
+    "network_during_agent": false,
+    "network_during_validation": false,
+    "filesystem_rule": "Fresh ancestor-only clone per observation; clone-local target directory; delete the run workspace only after all immutable result artifacts are stored.",
+    "validator_confinement_rule": "Candidate-controlled build scripts and tests run as build-worker in a disposable candidate-only workspace with no oracle bytes mounted. Candidate artifacts then freeze read-only. A separate probe-builder compiles trusted probes by direct locked invocations against only the minimum prebuilt artifact/API surface, with candidate hooks/config/build scripts/wrappers/proc macros/tests disabled; probe-runner runs the hash-locked binary after probe source and expected values are unmounted. Stage accounts cannot read the full controller/source repository/arm key/other runs/trusted receipts or other-stage confidential material and can emit evidence only through pre-opened controller-owned channels.",
+    "oracle_isolation_status": "unprovisioned_blocking",
+    "oracle_isolation_negative_controls": [
+      "hostile build.rs oracle read or mutation",
+      "hostile .cargo/config rustc-wrapper oracle read or mutation",
+      "hostile proc-macro oracle read or mutation",
+      "hostile candidate test oracle read or mutation",
+      "candidate artifact or probe binary mutation",
+      "expected-value access during candidate-linked execution"
+    ],
+    "construction_pilot_findings": [
+      "macOS /bin/bash 3.2 cannot execute the associative-array documentation checker",
+      "release and spike smoke scripts require their clone-local target directory",
+      "low disk space can cause linker failures unrelated to candidate quality"
+    ]
+  },
+  "offline_dependency_cache": {
+    "template_path": "/Users/tachikoma/.codex/benchmark-runtime/tachiko-agents-effect-v1/cargo-home-template-v1",
+    "template_mutability": "sealed read-only; make a per-run copy-on-write clone before use",
+    "digest_kind": "paths-types-content-v1",
+    "tree_sha256": "8e5e5fa5c51e0513b8567c12133cc3d2cca1e54f78ab74ea2d63bbe9f6c4b174",
+    "tree_entries": 20179,
+    "tree_file_bytes": 346358296,
+    "cargo_net_offline": true,
+    "locked_cargo_lock_sha256": [
+      "c66cb88c3e272d3c7c3bd1a3b93dde52f90cde0a3e097c462ce179b80fdb4db3",
+      "39c9a5c0d7a41a0879c90c4064fe9e059029de6b5646850778528d1590625d35",
+      "a19db3e82c791332e16a411a22fcf912e7f1aaec8d6ac10b1968e1188e8e4484",
+      "b102dfadfc503109d2f29a35eee44eb3c3931e1d89a32e5548282372ac2c8abc",
+      "d67c8378f75c88e734c58f06deaf993652c8a543094107508b5a9684bf47dd16"
+    ],
+    "construction_offline_fetch_pilot": {
+      "status": "pass",
+      "network": false,
+      "targets": ["aarch64-apple-darwin", "wasm32-unknown-unknown"],
+      "note": "All five distinct root/spike Cargo.lock byte sets resolved with cargo 1.97.1 --locked --offline from a copy-on-write clone of this template. This is construction evidence only."
+    }
+  },
+  "workspace_isolation": {
+    "history": "ancestor-only Git bundle",
+    "target_commit_must_be_absent": true,
+    "historical_root_agents_in_base_ancestry": false,
+    "historical_root_agents_policy": "Reject a case if the base tree or any reachable ancestor contains a root AGENTS.md path; tracked-blob substitution, skip-worktree, and object quarantine are forbidden.",
+    "github_remote": false,
+    "network": false,
+    "agent_can_read_evaluator": false,
+    "agent_can_read_other_runs": false,
+    "agents_overlay_location": "checkout root/AGENTS.md",
+    "agents_overlay_mode": "untracked root file hidden only by .git/info/exclude; identical mechanism in both arms",
+    "agents_overlay_hash_checked_before_and_after": true,
+    "agents_overlay_immutability": {
+      "status": "unprovisioned_blocking",
+      "required": "supervisor-owned regular file plus OS/sandbox deny-write/delete/replace policy",
+      "pre_post_identity": ["path", "device", "inode", "regular_file_type", "owner", "mode", "flags_or_policy_receipt", "byte_count", "sha256"],
+      "negative_controls": ["write", "truncate", "rename", "unlink", "symlink_swap"]
+    }
+  },
+  "result_recording": {
+    "pre_unblind_projection_contract": {
+      "id": "pre-unblind-score-projection-v1",
+      "path": "evaluator/contracts/pre-unblind-score-projection-v1.json",
+      "sha256": "be3a0a78c72bb8f0f2ba9dec0ed60791d1dd59ef65cbbc1984e8dfc4f4aa9b33",
+      "bytes": 2296,
+      "status": "contract_frozen_controller_not_implemented_blocking"
+    },
+    "semantic_result_projection_contract": {
+      "id": "semantic-result-projection-v1",
+      "path": "evaluator/contracts/semantic-result-projection-v1.json",
+      "sha256": "ffc261477af1b649f0973c911aa4bfc33a0fc01e84de0bdead4684db0ca2fb49",
+      "bytes": 1652,
+      "status": "contract_frozen_controller_not_implemented_blocking"
+    },
+    "wave_registration_contract": {
+      "id": "wave-registration-v1",
+      "path": "evaluator/contracts/wave-registration-v1.json",
+      "sha256": "1c504f45b4b5ec53bf2f41812d35f2f852662d85365508f53c6d669ad044a6de",
+      "bytes": 4046,
+      "status": "contract_frozen_controller_not_implemented_blocking"
+    },
+    "reviewer_allocation_contract": {
+      "id": "reviewer-allocation-v1",
+      "path": "evaluator/contracts/reviewer-allocation-v1.json",
+      "sha256": "d5394bb49b1d99d6fa41f2db6c8351fc1bb611b66dc58a638ae08e0c1257ffd6",
+      "bytes": 4088,
+      "status": "contract_frozen_controller_not_implemented_blocking"
+    },
+    "review_packet_blinding_contract": {
+      "id": "review-packet-blinding-v1",
+      "path": "evaluator/contracts/review-packet-blinding-v1.json",
+      "sha256": "959b59e7a844d6b6f8dbad8b51092c1cc8663fc02664b70f93edce9a4a78659e",
+      "bytes": 4713,
+      "status": "contract_frozen_controller_not_implemented_blocking"
+    },
+    "denied_access_attribution_contract": {
+      "id": "denied-access-attribution-v1",
+      "path": "evaluator/contracts/denied-access-attribution-v1.json",
+      "sha256": "09f921f6104c1a4a5015657da649a1487fb209102a5c5bacfdf342a9e0ddd50d",
+      "bytes": 2311,
+      "status": "contract_frozen_controller_not_implemented_blocking"
+    }
+  },
+  "timeouts": {
+    "agent_limit_rule": "cases.json time_limit_minutes multiplied exactly by 60",
+    "agent_termination": {
+      "first_signal": "SIGTERM to the isolated process group at the deadline",
+      "grace_seconds": 10,
+      "final_signal": "SIGKILL to the entire process group",
+      "remaining_processes_rule": "any surviving descendant is an infrastructure invalidation"
+    },
+    "validation_command_limit_seconds": 1800,
+    "validation_termination_grace_seconds": 10,
+    "partial_candidate_rule": "After all agent processes are confirmed dead, a timed-out workspace is captured and scored as submitted; timeout is not retried. Capture/termination failure is invalid_run.",
+    "classification_rule": "A base-control timeout invalidates the pair. A candidate-controlled validation timeout is a failed candidate check/assertion unless the supervisor or host violated its lock."
+  },
+  "candidate_capture": {
+    "status": "unqualified_blocking",
+    "required_source": "raw filesystem after agent access is revoked",
+    "forbidden_trust": [
+      "candidate Git index flags",
+      "candidate ignore rules",
+      "candidate attributes and filters",
+      "candidate hooks",
+      "candidate local or inherited Git configuration"
+    ],
+    "required_construction": "separate trusted object database and temporary index using raw path/type/mode/content plus git hash-object --no-filters",
+    "required_negative_controls": [
+      "assume-unchanged tracked modification",
+      "skip-worktree tracked modification",
+      "ignored untracked source",
+      "hostile .gitattributes clean filter",
+      "configured clean filter or hook",
+      "binary file",
+      "symlink",
+      "executable-bit change"
+    ]
+  }
+}

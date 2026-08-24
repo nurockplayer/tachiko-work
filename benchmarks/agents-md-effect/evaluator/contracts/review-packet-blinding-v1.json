@@ -1,0 +1,41 @@
+{
+  "protocol_id": "tachiko-agents-effect-v1",
+  "contract_id": "review-packet-blinding-v1",
+  "contract_version": 1,
+  "scope": "Every path and byte sequence visible to a quality reviewer or adjudicator, including task/authority text, candidate checkout and diff, candidate-authored tests/docs/comments, validation excerpts, and final message.",
+  "variant_input_rule": "The blinding custodian receives the registered eligible variant byte set without arm labels or candidate mapping. Quality reviewers never receive these bytes or scan internals.",
+  "text_normalization": {
+    "line_endings": "Split original bytes into lines at CRLF, LF, or CR. Matching never crosses a line boundary; rendering preserves each original line terminator byte-for-byte.",
+    "unicode": "NFC",
+    "case": "preserve for exact-byte matching; Unicode lowercase for token and line matching",
+    "tokens": "maximal Unicode letter-or-number code-point sequences within one normalized line",
+    "levenshtein": "Unit-cost insertion, deletion, and substitution over Unicode code points after NFC and lowercase; divide edit distance by the larger code-point length of the two nonempty lines. Match when the ratio is at most 0.15 and both lines independently have at least 32 code points and eight tokens."
+  },
+  "machine_match_rules": [
+    "R1: any case-insensitive explicit instruction/arm identifier within a line: AGENTS.md, Baseline A, Variant B, experiment arm, system instruction, developer instruction, or instruction variant",
+    "R2: any exact 32-or-more-byte substring within one NFC-normalized line copied from one registered-variant normalized line",
+    "R3: any exact contiguous eight-token sequence within one normalized line shared with one registered-variant normalized line",
+    "R4: any artifact line and registered-variant line satisfying the frozen normalized Levenshtein rule"
+  ],
+  "match_precedence": "Evaluate R1 through R4 independently and emit at most one receipt event per original line and rule, regardless of how many variants or variant lines match. If any rule matches an original line, replace that complete original line content exactly once; overlapping matches never change rendering. Order receipt events by unsigned UTF-8 artifact-path bytes, one-based original line number, then rule ID.",
+  "rendering_rule": "Create a detached review-only rendering. For each matched original line, replace all content bytes excluding its terminator with the UTF-8 bytes [instruction-reference redacted] and preserve the original terminator. Never modify the immutable captured candidate or scoring evidence. Decode every reviewer-visible path as strict UTF-8 and treat it as one line; a matching path is displayed as redacted-path- followed by the full lowercase SHA-256 of its original path bytes, with a private alias map. Invalid UTF-8 text/path or undecodable binary content fails closed unless an independently frozen deterministic renderer handles that media type. Preserve a content-addressed private match map containing only original artifact hash, opaque path alias, one-based original line number, rule ID, and pre/post hashes, never matched plaintext or normalized offsets.",
+  "release_rule": "Re-scan the complete rendered packet and require zero matches before release. If an artifact cannot be deterministically rendered or the re-scan is nonzero, append invalid/discarded terminal records and cancel the pair/case slot without launching a replacement agent.",
+  "quality_evidence_rule": "A placeholder remains visible, so reviewers can assess candidate-authored instruction copying as irrelevant churn or maintainability evidence without learning which registered variant matched.",
+  "receipt_required_content": [
+    "contract hash and registered variant-set commitment",
+    "sorted manifest of every reviewer-visible artifact/path with pre-render hashes",
+    "match counts by artifact/path and rule ID without matched plaintext",
+    "private match-map hash and rendered packet hash",
+    "post-render zero-match scan result",
+    "custodian identity/eligibility and frozen timestamp",
+    "safe_to_release=true"
+  ],
+  "qualification_fixtures": [
+    "exact copied variant sentence in candidate documentation is redacted",
+    "case/whitespace-only rewrite and one-edit near-copy are redacted",
+    "explicit arm or instruction identifier in source, path, validation excerpt, and final message is redacted",
+    "ordinary task-domain text with no match remains byte-identical",
+    "binary or undecodable reviewer-visible content fails closed unless an independently frozen deterministic renderer handles it",
+    "review packet containing residual matched text is rejected"
+  ]
+}

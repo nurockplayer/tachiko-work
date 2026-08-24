@@ -1,0 +1,770 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nurockplayer/tachiko-work/benchmarks/agents-md-effect/result-record.schema.json",
+  "title": "Tachiko AGENTS.md Effect Benchmark Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "protocol_id",
+    "experiment_id",
+    "experiment_phase",
+    "run_id",
+    "case_id",
+    "registration",
+    "arm",
+    "blinded_candidate_id",
+    "valid_run",
+    "invalid_reason",
+    "outcome",
+    "run_stage",
+    "invalidation",
+    "configuration",
+    "inputs",
+    "environment",
+    "timing",
+    "stage_reexecution",
+    "usage",
+    "agent_process",
+    "patch",
+    "validation",
+    "scoring",
+    "blinded_review",
+    "contamination_checks",
+    "provenance",
+    "record_validation_receipt_sha256"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.1.0"},
+    "protocol_id": {"const": "tachiko-agents-effect-v1"},
+    "experiment_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "experiment_phase": {"enum": ["construction_pilot", "baseline_a", "controlled_ab", "ultra_optional"]},
+    "run_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "case_id": {"type": "string", "pattern": "^TW-0[1-9]$"},
+    "registration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["wave_registration_contract_sha256", "wave_id", "wave_registration_sha256", "case_registration_sha256", "attempt_id", "attempt_number", "attempt_role", "previous_attempt_entry_sha256", "replacement_for_attempt_id", "replacement_reason", "pair_id", "attempt_registration_sha256", "planned_order_commitment_sha256", "arm_key_commitment_sha256", "registered_variant_set_commitment_sha256", "variant_firewall_receipt_sha256", "anonymous_id_generation_receipt_sha256", "reviewer_allocator_contract_sha256", "reviewer_allocation_seed_commitment_sha256", "review_packet_blinding_contract_sha256", "denied_access_contract_sha256", "controller_version", "controller_manifest_sha256", "manifest_sha256", "rubric_sha256", "environment_lock_sha256", "oracle_lock_sha256", "production_oracle_command_manifest_sha256", "core_score_lock_sha256", "authority_lock_sha256", "authority_snapshots_sha256", "history_snapshots_sha256", "result_schema_sha256", "review_score_schema_sha256", "intrinsic_neutrality_audit_sha256", "variant_comparison_audit_sha256", "pre_unblind_projection_contract_sha256", "semantic_result_projection_contract_sha256"],
+      "properties": {
+        "wave_registration_contract_sha256": {"const": "1c504f45b4b5ec53bf2f41812d35f2f852662d85365508f53c6d669ad044a6de"},
+        "wave_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+        "wave_registration_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "case_registration_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "attempt_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+        "attempt_number": {"type": "integer", "minimum": 1, "maximum": 2},
+        "attempt_role": {"enum": ["initial", "replacement"]},
+        "previous_attempt_entry_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "replacement_for_attempt_id": {"type": ["string", "null"], "pattern": "^[0-9a-f]{32}$"},
+        "replacement_reason": {"type": ["string", "null"], "enum": ["pre_output_infrastructure", null]},
+        "pair_id": {"type": ["string", "null"], "pattern": "^[0-9a-f]{32}$"},
+        "attempt_registration_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "planned_order_commitment_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "arm_key_commitment_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "registered_variant_set_commitment_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "variant_firewall_receipt_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "anonymous_id_generation_receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "reviewer_allocator_contract_sha256": {"const": "d5394bb49b1d99d6fa41f2db6c8351fc1bb611b66dc58a638ae08e0c1257ffd6"},
+        "reviewer_allocation_seed_commitment_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "review_packet_blinding_contract_sha256": {"const": "959b59e7a844d6b6f8dbad8b51092c1cc8663fc02664b70f93edce9a4a78659e"},
+        "denied_access_contract_sha256": {"const": "09f921f6104c1a4a5015657da649a1487fb209102a5c5bacfdf342a9e0ddd50d"},
+        "controller_version": {"type": "string", "minLength": 1},
+        "controller_manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "rubric_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "environment_lock_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "oracle_lock_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "production_oracle_command_manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "core_score_lock_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "authority_lock_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "authority_snapshots_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "history_snapshots_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "result_schema_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "review_score_schema_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "intrinsic_neutrality_audit_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "variant_comparison_audit_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "pre_unblind_projection_contract_sha256": {"const": "be3a0a78c72bb8f0f2ba9dec0ed60791d1dd59ef65cbbc1984e8dfc4f4aa9b33"},
+        "semantic_result_projection_contract_sha256": {"const": "ffc261477af1b649f0973c911aa4bfc33a0fc01e84de0bdead4684db0ca2fb49"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"attempt_role": {"const": "initial"}}, "required": ["attempt_role"]},
+          "then": {
+            "properties": {
+              "attempt_number": {"const": 1},
+              "replacement_for_attempt_id": {"type": "null"},
+              "replacement_reason": {"type": "null"}
+            }
+          },
+          "else": {
+            "properties": {
+              "attempt_number": {"const": 2},
+              "replacement_for_attempt_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+              "replacement_reason": {"const": "pre_output_infrastructure"}
+            }
+          }
+        }
+      ]
+    },
+    "arm": {"enum": ["construction", "A", "B", "Ultra"]},
+    "blinded_candidate_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "valid_run": {"type": "boolean"},
+    "invalid_reason": {"type": ["string", "null"]},
+    "outcome": {"enum": ["hard_failure", "major_regression", "acceptable", "strong", "invalid_run"]},
+    "run_stage": {"enum": ["preflight", "base_control", "preparation", "agent_execution", "capture", "candidate_validation", "oracle", "review", "unblinding", "complete"]},
+    "invalidation": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["stage", "reason", "attribution", "protected_content_exposed", "candidate_quality_scored", "pair_discard_required", "pair_discarded", "available_receipts"],
+      "properties": {
+        "stage": {"enum": ["preflight", "base_control", "preparation", "agent_execution", "capture", "candidate_validation", "oracle", "review", "unblinding"]},
+        "reason": {"type": "string", "minLength": 1},
+        "attribution": {"enum": ["provider", "controller", "host", "sandbox", "agent", "validator", "review", "unknown"]},
+        "protected_content_exposed": {"type": "boolean"},
+        "candidate_quality_scored": {"const": false},
+        "pair_discard_required": {"type": "boolean"},
+        "pair_discarded": {"type": "boolean"},
+        "available_receipts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "sha256"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+            }
+          }
+        }
+      }
+    },
+    "configuration": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["model_id", "reasoning_effort", "reasoning_mode", "codex_cli_version", "codex_binary_sha256", "code_mode_host_sha256", "model_catalog_sha256", "model_record_sha256", "base_instructions_sha256", "feature_list_sha256", "provider_deployment_attestation_sha256", "provider_account_identity_sha256", "provider_project_identity_sha256", "provider_entitlement_receipt_sha256", "credential_exposed_to_agent", "tools", "features", "approval_policy", "sandbox_mode", "network_access", "multi_agent"],
+      "properties": {
+        "model_id": {"type": "string"},
+        "reasoning_effort": {"type": "string"},
+        "reasoning_mode": {"type": "string"},
+        "service_tier": {"type": ["string", "null"]},
+        "codex_cli_version": {"type": "string"},
+        "codex_binary_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "code_mode_host_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "model_catalog_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "model_record_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "base_instructions_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "feature_list_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "provider_deployment_attestation_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "provider_account_identity_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "provider_project_identity_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "provider_entitlement_receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "credential_exposed_to_agent": {"const": false},
+        "tools": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "features": {"type": "object", "additionalProperties": {"type": "boolean"}},
+        "approval_policy": {"const": "never"},
+        "sandbox_mode": {"const": "workspace-write"},
+        "network_access": {"const": false},
+        "multi_agent": {"type": "boolean"}
+      }
+    },
+    "inputs": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["historical_base_commit", "historical_base_tree", "head_before", "task_sha256", "task_bytes", "agents_sha256_before", "agents_bytes", "agents_overlay_mode", "agents_overlay_identity_before", "agents_overlay_identity_after", "agents_overlay_policy_receipt_sha256", "agents_overlay_mutation_qualification_sha256", "historical_root_agents_absent", "target_commit_absent"],
+      "properties": {
+        "historical_base_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "historical_base_tree": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "head_before": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "task_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "task_bytes": {"type": "integer", "minimum": 1},
+        "agents_sha256_before": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "agents_bytes": {"type": "integer", "minimum": 1},
+        "agents_overlay_mode": {"const": "untracked_root_info_exclude"},
+        "agents_overlay_identity_before": {"$ref": "#/$defs/overlayIdentity"},
+        "agents_overlay_identity_after": {"$ref": "#/$defs/overlayIdentity"},
+        "agents_overlay_policy_receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "agents_overlay_mutation_qualification_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "historical_root_agents_absent": {"const": true},
+        "target_commit_absent": {"const": true}
+      }
+    },
+    "environment": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["host_or_image_id", "runner_account", "validator_account", "probe_builder_account", "probe_execution_account", "controller_account", "agent_visible_identity_receipt_sha256", "home_isolation_receipt_sha256", "validator_confinement_receipt_sha256", "validator_oracle_isolation_receipt_sha256", "hostile_oracle_probe_qualification_sha256", "architecture", "rust_primary", "rust_compatibility", "node", "pnpm", "rtk", "git", "cargo_home_content_sha256", "locale", "timezone", "cpu_limit", "memory_limit_bytes"],
+      "properties": {
+        "host_or_image_id": {"const": "macos-15.7.4-24G517-arm64-worker-v1"},
+        "runner_account": {"const": "codex-worker"},
+        "validator_account": {"const": "build-worker"},
+        "probe_builder_account": {"const": "probe-builder"},
+        "probe_execution_account": {"const": "probe-runner"},
+        "controller_account": {"const": "job-controller"},
+        "agent_visible_identity_receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "home_isolation_receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "validator_confinement_receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "validator_oracle_isolation_receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "hostile_oracle_probe_qualification_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "architecture": {"type": "string"},
+        "rust_primary": {"type": "string"},
+        "rust_compatibility": {"type": "string"},
+        "node": {"type": "string"},
+        "pnpm": {"type": "string"},
+        "rtk": {"type": "string"},
+        "git": {"const": "2.55.0"},
+        "cargo_home_content_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "locale": {"const": "C.UTF-8"},
+        "timezone": {"const": "UTC"},
+        "cpu_limit": {"type": "number", "exclusiveMinimum": 0},
+        "memory_limit_bytes": {"type": "integer", "minimum": 1}
+      }
+    },
+    "timing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["started_at", "ended_at", "wall_seconds", "time_limit_seconds", "timed_out", "sigterm_sent_at", "sigkill_sent_at", "termination_grace_seconds", "process_group_extinct", "partial_candidate_captured"],
+      "properties": {
+        "started_at": {"type": "string", "format": "date-time"},
+        "ended_at": {"type": "string", "format": "date-time"},
+        "wall_seconds": {"type": "number", "minimum": 0},
+        "time_limit_seconds": {"type": "integer", "minimum": 1},
+        "timed_out": {"type": "boolean"},
+        "sigterm_sent_at": {"type": ["string", "null"], "format": "date-time"},
+        "sigkill_sent_at": {"type": ["string", "null"], "format": "date-time"},
+        "termination_grace_seconds": {"const": 10},
+        "process_group_extinct": {"type": "boolean"},
+        "partial_candidate_captured": {"type": "boolean"}
+      }
+    },
+    "stage_reexecution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count", "stage", "trigger_receipt_sha256", "candidate_tree", "result_receipt_sha256"],
+      "properties": {
+        "count": {"type": "integer", "minimum": 0, "maximum": 1},
+        "stage": {"type": ["string", "null"], "enum": ["candidate_validation", "oracle", "review", null]},
+        "trigger_receipt_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "candidate_tree": {"type": ["string", "null"], "pattern": "^[0-9a-f]{40}$"},
+        "result_receipt_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"count": {"const": 0}}, "required": ["count"]},
+          "then": {
+            "properties": {
+              "stage": {"type": "null"},
+              "trigger_receipt_sha256": {"type": "null"},
+              "candidate_tree": {"type": "null"},
+              "result_receipt_sha256": {"type": "null"}
+            }
+          },
+          "else": {
+            "properties": {
+              "stage": {"type": "string"},
+              "trigger_receipt_sha256": {"type": "string"},
+              "candidate_tree": {"type": "string"},
+              "result_receipt_sha256": {"type": "string"}
+            }
+          }
+        }
+      ]
+    },
+    "usage": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "input_tokens": {"type": "integer", "minimum": 0},
+        "cached_input_tokens": {"type": "integer", "minimum": 0},
+        "output_tokens": {"type": "integer", "minimum": 0},
+        "reasoning_output_tokens": {"type": "integer", "minimum": 0},
+        "estimated_cost_usd": {"type": ["number", "null"], "minimum": 0}
+      }
+    },
+    "agent_process": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["exit_code", "harness_failure", "retry_count", "stdout_jsonl_sha256", "stderr_sha256", "final_message_sha256"],
+      "properties": {
+        "exit_code": {"type": ["integer", "null"]},
+        "harness_failure": {"type": "boolean"},
+        "retry_count": {"const": 0},
+        "stdout_jsonl_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "stderr_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "final_message_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "patch": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["candidate_head_after", "candidate_tree", "commits_ahead", "agents_sha256_after", "agents_unchanged", "diff_sha256", "diff_bytes", "changed_files", "insertions", "deletions", "forbidden_paths_changed", "capture_receipt_sha256", "trusted_raw_capture", "raw_tree_digest_sha256", "capture_exclusion_list_sha256", "round_trip_digest_sha256"],
+      "properties": {
+        "candidate_head_after": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "candidate_tree": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "commits_ahead": {"type": "integer", "minimum": 0},
+        "agents_sha256_after": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "agents_unchanged": {"type": "boolean"},
+        "diff_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "diff_bytes": {"type": "integer", "minimum": 0},
+        "changed_files": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "insertions": {"type": "integer", "minimum": 0},
+        "deletions": {"type": "integer", "minimum": 0},
+        "forbidden_paths_changed": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "capture_receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "trusted_raw_capture": {"const": true},
+        "raw_tree_digest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "capture_exclusion_list_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "round_trip_digest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "validation": {
+      "type": ["array", "null"],
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["command_id", "layer", "command", "exit_code", "duration_seconds", "deadline_seconds", "timed_out", "termination_receipt_sha256", "stdout_sha256", "stderr_sha256", "status", "mandatory"],
+        "properties": {
+          "command_id": {"type": "string", "minLength": 1},
+          "layer": {"enum": ["base_control", "candidate_core", "hidden_oracle", "repository_gate", "static_scope", "adapter", "construction"]},
+          "command": {"type": "string"},
+          "exit_code": {"type": ["integer", "null"]},
+          "duration_seconds": {"type": "number", "minimum": 0},
+          "deadline_seconds": {"const": 1800},
+          "timed_out": {"type": "boolean"},
+          "termination_receipt_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+          "stdout_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "stderr_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "status": {"enum": ["pass", "fail", "not_run", "infrastructure_error", "oracle_adapter_required"]},
+          "mandatory": {"type": "boolean"},
+          "note": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "scoring": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["machine_points_available", "review_points_available", "machine_points", "review_points", "core_checks", "contract_groups", "dimensions", "total", "outcome", "caps_applied", "hard_failure_reasons", "major_regression_reasons"],
+      "properties": {
+        "machine_points_available": {"type": "number", "minimum": 0, "maximum": 100},
+        "review_points_available": {"type": "number", "minimum": 0, "maximum": 100},
+        "machine_points": {"type": "number", "minimum": 0, "maximum": 100},
+        "review_points": {"type": "number", "minimum": 0, "maximum": 100},
+        "core_checks": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "dimension", "points_available", "points_awarded", "status", "evidence"],
+            "properties": {
+              "id": {"type": "string", "pattern": "^core\\."},
+              "dimension": {"enum": ["validation_tests", "tooling_workflow", "completion"]},
+              "points_available": {"type": "number", "exclusiveMinimum": 0, "maximum": 10},
+              "points_awarded": {"type": "number", "minimum": 0, "maximum": 10},
+              "status": {"enum": ["pass", "fail", "infrastructure_error"]},
+              "evidence": {"type": "array", "minItems": 1, "items": {"type": "string"}}
+            }
+          }
+        },
+        "contract_groups": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "assessment", "mandatory", "points_available", "points_awarded", "status", "check_results", "evidence"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "assessment": {"enum": ["machine_oracle", "machine_with_blinded_adapter", "blinded_semantic_review"]},
+              "mandatory": {"const": true},
+              "points_available": {"type": "number", "minimum": 1, "maximum": 24},
+              "points_awarded": {"type": "number", "minimum": 0, "maximum": 24},
+              "status": {"enum": ["pass", "partial", "fail", "infrastructure_error", "oracle_adapter_required"]},
+              "check_results": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["id", "command_id", "status", "points_available", "points_awarded", "selector_kind", "evidence_sha256", "matching_tests"],
+                  "properties": {
+                    "id": {"type": "string", "minLength": 1},
+                    "command_id": {"type": "string", "minLength": 1},
+                    "status": {"enum": ["pass", "fail", "infrastructure_error", "not_applicable"]},
+                    "points_available": {"type": "number", "minimum": 0, "maximum": 24},
+                    "points_awarded": {"type": "number", "minimum": 0, "maximum": 24},
+                    "selector_kind": {"enum": ["rust_test_exact", "json_pointer", "portable_record_set", "blinded_semantic_review"]},
+                    "evidence_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                    "matching_tests": {"type": ["integer", "null"], "minimum": 0}
+                  }
+                }
+              },
+              "evidence": {"type": "array", "minItems": 1, "items": {"type": "string"}}
+            }
+          }
+        },
+        "dimensions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["functional_correctness", "validation_tests", "architecture_authority", "scope_discipline", "tooling_workflow", "maintainability", "unnecessary_churn", "completion"],
+          "properties": {
+            "functional_correctness": {"type": "number", "minimum": 0, "maximum": 30},
+            "validation_tests": {"type": "number", "minimum": 0, "maximum": 15},
+            "architecture_authority": {"type": "number", "minimum": 0, "maximum": 15},
+            "scope_discipline": {"type": "number", "minimum": 0, "maximum": 10},
+            "tooling_workflow": {"type": "number", "minimum": 0, "maximum": 8},
+            "maintainability": {"type": "number", "minimum": 0, "maximum": 10},
+            "unnecessary_churn": {"type": "number", "minimum": 0, "maximum": 7},
+            "completion": {"type": "number", "minimum": 0, "maximum": 5}
+          }
+        },
+        "total": {"type": "number", "minimum": 0, "maximum": 100},
+        "outcome": {"enum": ["hard_failure", "major_regression", "acceptable", "strong", "invalid_run"]},
+        "caps_applied": {"type": "array", "items": {"type": "string"}},
+        "hard_failure_reasons": {"type": "array", "items": {"type": "string"}},
+        "major_regression_reasons": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "blinded_review": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["reviewer_ids", "individual_review_points", "review_score_sheet_sha256", "reviewer_eligibility_attestation_sha256", "reviewer_environment_receipt_sha256", "review_panel_registry_sha256", "blinding_role_registry_sha256", "reviewer_allocation_receipt_sha256", "reviewer_allocator_replay_receipt_sha256", "review_packet_blinding_receipt_sha256", "review_packet_safe_to_release", "pair_panel_disjoint", "pair_custodian_roles_disjoint", "paired_candidate_unseen", "review_order", "review_random_seed_sha256", "adjudication_required", "adjudication", "frozen_before_unblinding", "evidence_sha256", "final_message_redaction", "oracle_custodian_id", "oracle_adapter"],
+      "properties": {
+        "reviewer_ids": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "string"}, "uniqueItems": true},
+        "individual_review_points": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "number", "minimum": 0, "maximum": 100}},
+        "review_score_sheet_sha256": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+        "reviewer_eligibility_attestation_sha256": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+        "reviewer_environment_receipt_sha256": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+        "review_panel_registry_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "blinding_role_registry_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "reviewer_allocation_receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "reviewer_allocator_replay_receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "review_packet_blinding_receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "review_packet_safe_to_release": {"const": true},
+        "pair_panel_disjoint": {"const": true},
+        "pair_custodian_roles_disjoint": {"const": true},
+        "paired_candidate_unseen": {"const": true},
+        "review_order": {"type": "integer", "minimum": 1},
+        "review_random_seed_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "adjudication_required": {"type": "boolean"},
+        "adjudication": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["trigger", "adjudicator_id", "review_points", "score_sheet_sha256", "eligibility_attestation_sha256", "reviewer_environment_receipt_sha256", "allocation_receipt_sha256", "frozen_before_unblinding"],
+          "properties": {
+            "trigger": {"enum": ["point_difference", "mandatory_group_status", "outcome_class", "hard_failure"]},
+            "adjudicator_id": {"type": "string", "minLength": 1},
+            "review_points": {"type": "number", "minimum": 0, "maximum": 100},
+            "score_sheet_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "eligibility_attestation_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "reviewer_environment_receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "allocation_receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "frozen_before_unblinding": {"const": true}
+          }
+        },
+        "frozen_before_unblinding": {"type": "boolean"},
+        "evidence_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "final_message_redaction": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["rule_version", "raw_sha256", "redacted_sha256", "redacted_line_count"],
+          "properties": {
+            "rule_version": {"const": "instruction-reference-redaction-v1"},
+            "raw_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "redacted_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "redacted_line_count": {"type": "integer", "minimum": 0}
+          }
+        },
+        "oracle_custodian_id": {"type": ["string", "null"]},
+        "oracle_adapter": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "required": {"type": "boolean"},
+            "adapter_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "source_artifact_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "evaluator_diff_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+            "custodian_id": {"type": "string", "minLength": 1},
+            "integrity_reviewer_id": {"type": "string", "minLength": 1},
+            "integrity_review_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "ground_truth_qualification_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "negative_control_qualification_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "behavior_implemented_by_adapter": {"const": false},
+            "contract_unchanged": {"const": true},
+            "note": {"type": "string"}
+          },
+          "required": ["required", "adapter_sha256", "source_artifact_sha256", "evaluator_diff_sha256", "custodian_id", "integrity_reviewer_id", "integrity_review_sha256", "ground_truth_qualification_sha256", "negative_control_qualification_sha256", "behavior_implemented_by_adapter", "contract_unchanged", "note"]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"adjudication_required": {"const": true}},
+            "required": ["adjudication_required"]
+          },
+          "then": {"properties": {"adjudication": {"type": "object"}}},
+          "else": {"properties": {"adjudication": {"type": "null"}}}
+        }
+      ]
+    },
+    "contamination_checks": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["target_commit_absent", "historical_root_agents_absent", "network_denied", "github_remote_absent", "evaluator_unreadable", "other_runs_unreadable", "agents_overlay_unchanged", "trusted_raw_capture_verified", "violation_detected", "protected_content_exposed", "attribution", "pair_discarded", "ordinary_denied_lookup_count", "machine_hard_failure_event_count", "tooling_adjudication_required", "tooling_adjudicator_id", "tooling_adjudicator_eligibility_sha256", "tooling_adjudication_decision", "tooling_adjudication_receipt_sha256"],
+      "properties": {
+        "target_commit_absent": {"type": "boolean"},
+        "historical_root_agents_absent": {"const": true},
+        "network_denied": {"type": "boolean"},
+        "github_remote_absent": {"type": "boolean"},
+        "evaluator_unreadable": {"type": "boolean"},
+        "other_runs_unreadable": {"type": "boolean"},
+        "agents_overlay_unchanged": {"const": true},
+        "trusted_raw_capture_verified": {"const": true},
+        "violation_detected": {"type": "boolean"},
+        "protected_content_exposed": {"type": "boolean"},
+        "attribution": {"enum": ["none", "agent_denied_attempt", "agent_exposure", "infrastructure_exposure"]},
+        "pair_discarded": {"type": "boolean"},
+        "ordinary_denied_lookup_count": {"type": "integer", "minimum": 0},
+        "machine_hard_failure_event_count": {"type": "integer", "minimum": 0},
+        "tooling_adjudication_required": {"type": "boolean"},
+        "tooling_adjudicator_id": {"type": ["string", "null"]},
+        "tooling_adjudicator_eligibility_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "tooling_adjudication_decision": {"type": ["string", "null"], "enum": ["ordinary_denied_lookup", "machine_hard_failure", "actual_exposure_invalidation", null]},
+        "tooling_adjudication_receipt_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "note": {"type": ["string", "null"]}
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"tooling_adjudication_required": {"const": true}},
+            "required": ["tooling_adjudication_required"]
+          },
+          "then": {
+            "properties": {
+              "tooling_adjudicator_id": {"type": "string", "minLength": 1},
+              "tooling_adjudicator_eligibility_sha256": {"type": "string"},
+              "tooling_adjudication_decision": {"type": "string"},
+              "tooling_adjudication_receipt_sha256": {"type": "string"}
+            }
+          },
+          "else": {
+            "properties": {
+              "tooling_adjudicator_id": {"type": "null"},
+              "tooling_adjudicator_eligibility_sha256": {"type": "null"},
+              "tooling_adjudication_decision": {"type": "null"},
+              "tooling_adjudication_receipt_sha256": {"type": "null"}
+            }
+          }
+        }
+      ]
+    },
+    "provenance": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["constructed_contracts", "base_control_receipt_sha256", "validation_preparation_receipt_sha256", "oracle_capsule_preparation_receipt_sha256", "environment_verification_receipt_sha256", "pre_unblind_score_payload_sha256", "pre_unblind_score_payload_frozen_at", "created_at", "unblinded_at"],
+      "properties": {
+        "constructed_contracts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "sha256"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+            }
+          }
+        },
+        "base_control_receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "validation_preparation_receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "oracle_capsule_preparation_receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "environment_verification_receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "pre_unblind_score_payload_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "pre_unblind_score_payload_frozen_at": {"type": "string", "format": "date-time"},
+        "created_at": {"type": "string", "format": "date-time"},
+        "unblinded_at": {"type": ["string", "null"], "format": "date-time"}
+      }
+    },
+    "record_validation_receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "$defs": {
+    "overlayIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "device", "inode", "type", "owner_uid", "mode", "flags", "bytes", "sha256"],
+      "properties": {
+        "path": {"const": "AGENTS.md"},
+        "device": {"type": "integer", "minimum": 0},
+        "inode": {"type": "integer", "minimum": 1},
+        "type": {"const": "regular_file"},
+        "owner_uid": {"type": "integer", "minimum": 0},
+        "mode": {"type": "string", "pattern": "^[0-7]{4}$"},
+        "flags": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "bytes": {"type": "integer", "minimum": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"experiment_phase": {"const": "construction_pilot"}}},
+      "then": {"properties": {"arm": {"const": "construction"}}}
+    },
+    {
+      "if": {"properties": {"experiment_phase": {"const": "baseline_a"}}},
+      "then": {
+        "properties": {
+          "arm": {"const": "A"},
+          "configuration": {
+            "type": ["object", "null"],
+            "properties": {"multi_agent": {"const": false}}
+          },
+          "registration": {
+            "properties": {
+              "pair_id": {"type": "null"},
+              "variant_firewall_receipt_sha256": {"type": "null"}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"experiment_phase": {"const": "controlled_ab"}}},
+      "then": {
+        "properties": {
+          "arm": {"enum": ["A", "B"]},
+          "configuration": {
+            "type": ["object", "null"],
+            "properties": {"multi_agent": {"const": false}}
+          },
+          "registration": {
+            "properties": {
+              "pair_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+              "variant_firewall_receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"experiment_phase": {"const": "ultra_optional"}}},
+      "then": {"properties": {"arm": {"const": "Ultra"}}}
+    },
+    {
+      "if": {"properties": {"valid_run": {"const": true}}, "required": ["valid_run"]},
+      "then": {
+        "properties": {
+          "blinded_candidate_id": {"type": "string", "minLength": 8},
+          "invalid_reason": {"type": "null"},
+          "invalidation": {"type": "null"},
+          "outcome": {"enum": ["hard_failure", "major_regression", "acceptable", "strong"]},
+          "run_stage": {"const": "complete"},
+          "timing": {
+            "type": "object",
+            "properties": {"process_group_extinct": {"const": true}}
+          },
+          "configuration": {"type": "object"},
+          "inputs": {"type": "object"},
+          "environment": {"type": "object"},
+          "agent_process": {"type": "object"},
+          "patch": {
+            "type": "object",
+            "properties": {"agents_unchanged": {"const": true}}
+          },
+          "validation": {
+            "type": "array",
+            "not": {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "enum": ["infrastructure_error", "oracle_adapter_required"]
+                  }
+                },
+                "required": ["status"]
+              }
+            }
+          },
+          "scoring": {
+            "type": "object",
+            "properties": {
+              "outcome": {"enum": ["hard_failure", "major_regression", "acceptable", "strong"]},
+              "core_checks": {
+                "type": "array",
+                "not": {
+                  "contains": {
+                    "type": "object",
+                    "properties": {"status": {"const": "infrastructure_error"}},
+                    "required": ["status"]
+                  }
+                }
+              },
+              "contract_groups": {
+                "type": "array",
+                "not": {
+                  "contains": {
+                    "type": "object",
+                    "anyOf": [
+                      {
+                        "properties": {
+                          "status": {
+                            "enum": ["infrastructure_error", "oracle_adapter_required"]
+                          }
+                        },
+                        "required": ["status"]
+                      },
+                      {
+                        "properties": {
+                          "check_results": {
+                            "type": "array",
+                            "contains": {
+                              "type": "object",
+                              "properties": {
+                                "status": {"const": "infrastructure_error"}
+                              },
+                              "required": ["status"]
+                            }
+                          }
+                        },
+                        "required": ["check_results"]
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "blinded_review": {
+            "type": "object",
+            "properties": {"frozen_before_unblinding": {"const": true}}
+          },
+          "contamination_checks": {
+            "type": "object",
+            "properties": {
+              "protected_content_exposed": {"const": false},
+              "pair_discarded": {"const": false}
+            }
+          },
+          "provenance": {
+            "type": "object",
+            "properties": {
+              "unblinded_at": {"type": "string", "format": "date-time"}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"valid_run": {"const": false}}, "required": ["valid_run"]},
+      "then": {
+        "properties": {
+          "invalid_reason": {"type": "string", "minLength": 1},
+          "invalidation": {"type": "object"},
+          "outcome": {"const": "invalid_run"},
+          "run_stage": {"enum": ["preflight", "base_control", "preparation", "agent_execution", "capture", "candidate_validation", "oracle", "review", "unblinding"]},
+          "scoring": {"type": "null"},
+          "blinded_review": {"type": "null"}
+        }
+      }
+    }
+  ]
+}

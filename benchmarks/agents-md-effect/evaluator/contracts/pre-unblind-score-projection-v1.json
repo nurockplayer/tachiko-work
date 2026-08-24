@@ -1,0 +1,41 @@
+{
+  "protocol_id": "tachiko-agents-effect-v1",
+  "contract_id": "pre-unblind-score-projection-v1",
+  "contract_version": 1,
+  "result_schema_version": "1.1.0",
+  "payload_shape": {
+    "projection_contract": "pre-unblind-score-projection-v1",
+    "record": "the final result record with exactly the registered JSON pointers removed"
+  },
+  "removed_json_pointers": [
+    "/experiment_phase",
+    "/arm",
+    "/inputs/agents_sha256_before",
+    "/inputs/agents_bytes",
+    "/inputs/agents_overlay_identity_before",
+    "/inputs/agents_overlay_identity_after",
+    "/patch/agents_sha256_after",
+    "/provenance/pre_unblind_score_payload_sha256",
+    "/provenance/pre_unblind_score_payload_frozen_at",
+    "/record_validation_receipt_sha256",
+    "/provenance/unblinded_at"
+  ],
+  "canonicalization": {
+    "id": "sorted-json-node-v1",
+    "runtime": "Node.js 24.15.0",
+    "object_keys": "recursively sort by ECMAScript default Array.prototype.sort UTF-16 code-unit order",
+    "arrays": "preserve registered order",
+    "serialization": "JSON.stringify with no replacer and no whitespace, then append exactly one LF",
+    "encoding": "UTF-8",
+    "numbers": "finite JSON numbers only; reject negative zero and non-finite values before serialization",
+    "digest": "SHA-256 of the serialized UTF-8 bytes"
+  },
+  "rules": [
+    "Before unblinding, every non-removed field required by the result schema is present and immutable; every removed field is absent.",
+    "experiment_id, run_id, and blinded_candidate_id are opaque random identifiers with no case-arm or variant mnemonic.",
+    "The payload hash and freeze timestamp live in a separate controller-owned receipt and are not fields inside the hashed payload; record_validation_receipt_sha256 is also populated only after the final detached validation.",
+    "After the arm-key join, populate every removed field required by the final schema without changing any retained field.",
+    "Reconstruct the anonymous payload from the final record by removing exactly these pointers, wrapping it in payload_shape, canonicalizing it, and requiring byte-for-byte and SHA-256 equality with the frozen payload.",
+    "Reject a record containing any schema-unknown field or any additional field whose treatment is not defined by this contract."
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "repository": "nurockplayer/tachiko-work",
+  "captured_at": "2026-08-24T17:08:05.871Z",
+  "capture_command": "rtk gh api repos/nurockplayer/tachiko-work/pulls/{73,80}/comments --paginate (construction captures; exact resources frozen below)",
+  "resources": [
+    {
+      "kind": "pull_request_review_comment",
+      "pull_request": 73,
+      "node_id": "PRRC_kwDOT-Sx7c7klWTv",
+      "database_id": 3834995951,
+      "created_at": "2026-08-22T03:48:18Z",
+      "updated_at": "2026-08-22T03:48:18Z",
+      "html_url": "https://github.com/nurockplayer/tachiko-work/pull/73#discussion_r3834995951",
+      "body_sha256": "a182b5174ec1b8d42d47e135ae5c7a2f950ecb64dc9d8ca8ffd1c4c69a8c29aa",
+      "body": "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Rewrite every typed ID link during legacy migration**\n\nWhen migrating any nonempty v1 document, this rewrite step omits several relationships that use IDs being replaced: `Entity.schema`, `FieldType::Reference.schema`, and the `Entity.fields` keys that refer to schema field definitions. Building the mapping in step 2 is insufficient unless these uses are also rewritten; otherwise the migrated candidate retains legacy schema/field addresses and fails validation or binds to the wrong definitions. Require every typed ID occurrence to be rewritten and covered by migration fixtures.\n\nUseful? React with 👍 / 👎."
+    },
+    {
+      "kind": "pull_request_review_comment",
+      "pull_request": 73,
+      "node_id": "PRRC_kwDOT-Sx7c7klWT1",
+      "database_id": 3834995957,
+      "created_at": "2026-08-22T03:48:18Z",
+      "updated_at": "2026-08-22T03:48:18Z",
+      "html_url": "https://github.com/nurockplayer/tachiko-work/pull/73#discussion_r3834995957",
+      "body_sha256": "b54b16488b4aaa030af5ac1d8fe46ea4d42f554622c677e6e6e78a65167955da",
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Freeze the complete nested v1 wire schema**\n\nWhen semantic-core Serde layouts change—the exact compatibility scenario addressed here—the new storage-owned decoder cannot be reconstructed from this normative profile: it specifies only top-level members and map ordering, but not the nested `Schema`, `FieldDefinition`, `FieldType`, `Entity`, `Value`, and `Expression` shapes, enum tags, required fields, or nested member order. Consequently, incompatible decoders could both claim compliance with the newly immutable v1 contract. Freeze the complete historical DTO shape or bind it to normative fixtures before relying on this guarantee.\n\nUseful? React with 👍 / 👎."
+    },
+    {
+      "kind": "pull_request_review_comment",
+      "pull_request": 73,
+      "node_id": "PRRC_kwDOT-Sx7c7klWT6",
+      "database_id": 3834995962,
+      "created_at": "2026-08-22T03:48:18Z",
+      "updated_at": "2026-08-22T03:48:18Z",
+      "html_url": "https://github.com/nurockplayer/tachiko-work/pull/73#discussion_r3834995962",
+      "body_sha256": "c7a35541aff2f849ccf424e4bd8566bcd1de4a06e28ecb85cc60543150c456fa",
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Update the compatibility entry point for ADR-0017**\n\nFor readers arriving through the older-link entry point—the stated purpose of `ro-format.md`—this row still directs them to a page that calls v1 a provisional baseline owned by #21/#25/#37/#38 and warns that the contract has not been promoted. That now directly contradicts this commit's ADR-0017 acceptance and immutable legacy-profile classification, so the navigation path presents two different authority states. Update the compatibility stub as part of this reconciliation.\n\nUseful? React with 👍 / 👎."
+    },
+    {
+      "kind": "pull_request_review_comment",
+      "pull_request": 80,
+      "node_id": "PRRC_kwDOT-Sx7c7kmiFB",
+      "database_id": 3835306305,
+      "created_at": "2026-08-22T05:46:59Z",
+      "updated_at": "2026-08-22T05:46:59Z",
+      "html_url": "https://github.com/nurockplayer/tachiko-work/pull/80#discussion_r3835306305",
+      "body": "**P1: Make the migration DTO seam duplicate-safe.** `decode_dto` is `pub(crate)` and explicitly documented as the entry point future migrations will consume, but it calls `serde_json::from_str` directly. Duplicate members in map-shaped stores such as `schemas`, `entities`, or `fields` can therefore collapse before `DocumentV1::validate` sees them. The current public `from_bytes` path runs `strict_json::inspect` first, but #70 cannot obtain the raw `DocumentV1` through that safe path. Expose a version-dispatched DTO decode that requires or runs the strict UTF-8, duplicate, and version gate, then keep this raw deserializer private to that validated path, or require a validated-input marker. Add a regression using duplicate schema/entity/field map keys through the migration-facing API.",
+      "body_sha256": "e2763b9dfcdd053788e1bd98206ded743a2f59aaaa8b5713faee59b41e53016e"
+    },
+    {
+      "kind": "pull_request_review_comment",
+      "pull_request": 80,
+      "node_id": "PRRC_kwDOT-Sx7c7km1sH",
+      "database_id": 3835386631,
+      "created_at": "2026-08-22T06:30:46Z",
+      "updated_at": "2026-08-22T06:30:46Z",
+      "html_url": "https://github.com/nurockplayer/tachiko-work/pull/80#discussion_r3835386631",
+      "body": "Fixed in d202be7. The crate-visible raw decode_dto(&str) seam is removed. decode_v1_dto_for_migration(&[u8]) is now the sole DTO-returning path and performs UTF-8 validation, strict JSON and recursive duplicate inspection, format-version probe/dispatch, v1 Serde decoding, and DTO validation. from_bytes consumes the same seam, so parser logic is not duplicated.\n\nThe regression was observed red before the fix: duplicate schema keys, entity keys, schema-field keys, entity-field keys, and escaped-equivalent schema keys all collapsed last-wins. The migration-facing test now requires DuplicateMember for every case. Fresh results: 38 storage tests, 171 workspace tests, warning-denied Clippy, and the full release check passed. Focused standards/spec re-reviews reported no findings.",
+      "body_sha256": "c12f0653c5d9389790f6f087064278cafcee75ddf66e15bcaf072c685469624b"
+    }
+  ]
+}

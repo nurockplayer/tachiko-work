@@ -1,0 +1,41 @@
+{
+  "contract_version": 1,
+  "purpose": "Variant-neutral observations for stable internal diagnostic facts. Candidate type names, enum representation, Serde shape, and wire encoding are not normative.",
+  "fixtures": {
+    "presentation_pair": "Two diagnostics with identical machine facts and different human path/message presentation.",
+    "complete_fact": "One internal error diagnostic with semantic classification, test.validator provenance, schema-id primary subject, related-id related subject, and expected_kind=number code-specific fact.",
+    "renamed_duplicate_pair": "Two otherwise equivalent documents whose duplicate schema human key changes while stable schema IDs remain schema-a and schema-b.",
+    "ordering_pair": "Two diagnostics whose stable machine codes sort opposite to their presentation paths."
+  },
+  "expected_observations": {
+    "machine_fact": {
+      "code": "test.rule",
+      "classification": "semantic",
+      "severity": "error",
+      "provider": "test.validator",
+      "subjects": [{"kind": "schema", "stable_id": "schema-id"}],
+      "related_subjects": [{"kind": "schema", "stable_id": "related-id"}],
+      "facts": [{"name": "expected_kind", "value": "number"}]
+    },
+    "presentation_invariance": {
+      "stable_facts_equal": true,
+      "presentation_differs": true
+    },
+    "renamed_duplicate": {
+      "stable_facts_equal": true,
+      "subjects": [
+        {"kind": "schema", "stable_id": "schema-a"},
+        {"kind": "schema", "stable_id": "schema-b"}
+      ]
+    },
+    "stable_order": {
+      "machine_codes": ["test.a", "test.z"]
+    }
+  },
+  "adapter_rules": [
+    "Exercise candidate-owned production validation/diagnostic behavior; do not synthesize the expected facts in the adapter.",
+    "Translate candidate names and internal types only into the normalized observations above.",
+    "Do not require or score candidate-owned JSON/Serde serialization, enum tagging, public DTOs, or wire compatibility.",
+    "Record the adapter bytes and assert that it implements no validation, ordering, subject selection, or presentation-exclusion behavior."
+  ]
+}

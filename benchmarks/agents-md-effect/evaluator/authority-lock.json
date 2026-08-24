@@ -1,0 +1,594 @@
+{
+  "protocol_id": "tachiko-agents-effect-v1",
+  "lock_version": 1,
+  "rule": "Only allowlisted exact sources may justify the frozen assignment or blinded authority score. A timestamp cutoff alone never authorizes all earlier history. Outcome-only and excluded sources are evaluator provenance, never task authority.",
+  "cases": [
+    {
+      "id": "TW-01",
+      "base_commit": "47ce31aeaeb63a9bb21282691b918e8751cb5a21",
+      "assignment_cutoff": "2026-08-22T02:07:18Z",
+      "task_authority": [
+        {
+          "id": "tw01.issue21.body",
+          "snapshot": "history",
+          "resource": "issue#21",
+          "kind": "body",
+          "effective_at": "2026-08-20T20:25:09Z",
+          "text_sha256": "dd0293c698b7849f11a5a856d91403ee06cd4de7c2e79b1f8b718b39b90d72f5",
+          "temporal_integrity": "exact_unedited"
+        },
+        {
+          "id": "tw01.issue21.research",
+          "snapshot": "history",
+          "resource": "issue#21",
+          "kind": "comment",
+          "node_id": "IC_kwDOT-Sx7c8AAAABP_bIHg",
+          "effective_at": "2026-08-21T09:30:01Z",
+          "text_sha256": "de159464c112488df8f2b623b26b40ed68ec535ef6c18a94c6a93a772dbcc37a",
+          "temporal_integrity": "exact_unedited"
+        },
+        {
+          "id": "tw01.issue21.review",
+          "snapshot": "history",
+          "resource": "issue#21",
+          "kind": "comment",
+          "node_id": "IC_kwDOT-Sx7c8AAAABQIK4bQ",
+          "effective_at": "2026-08-22T02:07:18Z",
+          "text_sha256": "9f491cd003486fdec03d5a5b3146682df08a0dcf4ad6628e89ca9a7ff6eaa03d",
+          "temporal_integrity": "exact_unedited"
+        }
+      ],
+      "claims": [
+        {
+          "id": "identity_invariant",
+          "contract_group_ids": [
+            "identity_invariant"
+          ],
+          "authority_source_ids": [
+            "tw01.issue21.body",
+            "tw01.issue21.review"
+          ]
+        },
+        {
+          "id": "mechanism_boundary",
+          "contract_group_ids": [
+            "mechanism_boundary"
+          ],
+          "authority_source_ids": [
+            "tw01.issue21.research",
+            "tw01.issue21.review"
+          ]
+        },
+        {
+          "id": "typed_graph_boundary",
+          "contract_group_ids": [
+            "typed_graph_boundary"
+          ],
+          "authority_source_ids": [
+            "tw01.issue21.body",
+            "tw01.issue21.research"
+          ]
+        },
+        {
+          "id": "authority_reconciliation",
+          "contract_group_ids": [
+            "authority_reconciliation"
+          ],
+          "authority_source_ids": [
+            "tw01.issue21.review"
+          ]
+        },
+        {
+          "id": "scope_and_exclusions",
+          "contract_group_ids": [],
+          "authority_source_ids": [
+            "tw01.issue21.body",
+            "tw01.issue21.review"
+          ]
+        }
+      ],
+      "outcome_only": [
+        "git:b2d9c7fb8c11236a0564faa37eca1cf32b76faf8",
+        "https://github.com/nurockplayer/tachiko-work/pull/69"
+      ]
+    },
+    {
+      "id": "TW-02",
+      "base_commit": "b6178e48a5e9f1078a9150038fb19352d0d55325",
+      "assignment_cutoff": "2026-08-22T03:48:18Z",
+      "task_authority": [
+        {
+          "id": "tw02.review.ids",
+          "snapshot": "authority",
+          "resource": "pr#73",
+          "kind": "review_comment",
+          "node_id": "PRRC_kwDOT-Sx7c7klWTv",
+          "effective_at": "2026-08-22T03:48:18Z",
+          "text_sha256": "a182b5174ec1b8d42d47e135ae5c7a2f950ecb64dc9d8ca8ffd1c4c69a8c29aa",
+          "temporal_integrity": "exact_unedited"
+        },
+        {
+          "id": "tw02.review.schema",
+          "snapshot": "authority",
+          "resource": "pr#73",
+          "kind": "review_comment",
+          "node_id": "PRRC_kwDOT-Sx7c7klWT1",
+          "effective_at": "2026-08-22T03:48:18Z",
+          "text_sha256": "b54b16488b4aaa030af5ac1d8fe46ea4d42f554622c677e6e6e78a65167955da",
+          "temporal_integrity": "exact_unedited"
+        },
+        {
+          "id": "tw02.review.navigation",
+          "snapshot": "authority",
+          "resource": "pr#73",
+          "kind": "review_comment",
+          "node_id": "PRRC_kwDOT-Sx7c7klWT6",
+          "effective_at": "2026-08-22T03:48:18Z",
+          "text_sha256": "c7a35541aff2f849ccf424e4bd8566bcd1de4a06e28ecb85cc60543150c456fa",
+          "temporal_integrity": "exact_unedited"
+        }
+      ],
+      "claims": [
+        {
+          "id": "recursive_wire_schema",
+          "contract_group_ids": [
+            "recursive_wire_schema"
+          ],
+          "authority_source_ids": [
+            "tw02.review.schema"
+          ]
+        },
+        {
+          "id": "typed_id_inventory",
+          "contract_group_ids": [
+            "typed_id_inventory"
+          ],
+          "authority_source_ids": [
+            "tw02.review.ids"
+          ]
+        },
+        {
+          "id": "atomic_migration",
+          "contract_group_ids": [
+            "atomic_migration"
+          ],
+          "authority_source_ids": [
+            "tw02.review.ids"
+          ]
+        },
+        {
+          "id": "authority_navigation",
+          "contract_group_ids": [
+            "authority_navigation"
+          ],
+          "authority_source_ids": [
+            "tw02.review.navigation"
+          ]
+        },
+        {
+          "id": "scope_and_exclusions",
+          "contract_group_ids": [],
+          "authority_source_ids": [
+            "tw02.review.ids",
+            "tw02.review.schema",
+            "tw02.review.navigation"
+          ]
+        }
+      ],
+      "outcome_only": [
+        "git:1e422f1c3d152a342abee57aaad8b44aa04e11cf",
+        "https://github.com/nurockplayer/tachiko-work/pull/75"
+      ]
+    },
+    {
+      "id": "TW-03",
+      "base_commit": "0d7baaa069ec1c673037278cc76c956eed2347e2",
+      "assignment_cutoff": "2026-08-23T04:13:41Z",
+      "task_authority": [
+        {
+          "id": "tw03.issue40.handoff",
+          "snapshot": "history",
+          "resource": "issue#40",
+          "kind": "comment",
+          "node_id": "IC_kwDOT-Sx7c8AAAABQKKvkQ",
+          "effective_at": "2026-08-22T08:41:06Z",
+          "text_sha256": "3bfdd3a97861d802911d72cabcbc6636503da3d62180c8cc70f4fb4c364c0438",
+          "temporal_integrity": "exact_unedited"
+        }
+      ],
+      "claims": [
+        {
+          "id": "numeric_contract",
+          "contract_group_ids": [
+            "exact_decimal_rounding",
+            "edge_classification",
+            "canonical_bytes",
+            "compatibility_parity"
+          ],
+          "authority_source_ids": [
+            "tw03.issue40.handoff"
+          ]
+        },
+        {
+          "id": "scope_and_exclusions",
+          "contract_group_ids": [],
+          "authority_source_ids": [
+            "tw03.issue40.handoff"
+          ]
+        }
+      ],
+      "outcome_only": [
+        "git:e953877f2dfd05ae5cebc5262656c2d877c2ed9c",
+        "https://github.com/nurockplayer/tachiko-work/pull/83"
+      ]
+    },
+    {
+      "id": "TW-04",
+      "base_commit": "e953877f2dfd05ae5cebc5262656c2d877c2ed9c",
+      "assignment_cutoff": "2026-08-23T05:05:47Z",
+      "task_authority": [
+        {
+          "id": "tw04.issue72.body",
+          "snapshot": "history",
+          "resource": "issue#72",
+          "kind": "body",
+          "effective_at": "2026-08-22T02:59:20Z",
+          "text_sha256": "a6baa65b81785a725ba6d41b9446fe8fddcfcedf4d5b237a9ce18746fef35c5b",
+          "temporal_integrity": "exact_unedited"
+        },
+        {
+          "id": "tw04.issue72.handoff",
+          "snapshot": "history",
+          "resource": "issue#72",
+          "kind": "comment",
+          "node_id": "IC_kwDOT-Sx7c8AAAABQO53qA",
+          "effective_at": "2026-08-23T05:05:47Z",
+          "text_sha256": "d9bf9c869d00c3b4bd2e22c5b7b3bc00c7b2719df2c4401b3c06c28d446e4b40",
+          "temporal_integrity": "exact_unedited"
+        }
+      ],
+      "claims": [
+        {
+          "id": "workspace_boundary",
+          "contract_group_ids": [
+            "single_boundary",
+            "dependency_dag",
+            "behavior_preservation",
+            "portable_boundary"
+          ],
+          "authority_source_ids": [
+            "tw04.issue72.body",
+            "tw04.issue72.handoff"
+          ]
+        },
+        {
+          "id": "scope_and_exclusions",
+          "contract_group_ids": [],
+          "authority_source_ids": [
+            "tw04.issue72.body",
+            "tw04.issue72.handoff"
+          ]
+        }
+      ],
+      "outcome_only": [
+        "git:515b81b955a3c21ab306f24e940ea90d46efdace",
+        "https://github.com/nurockplayer/tachiko-work/pull/85"
+      ]
+    },
+    {
+      "id": "TW-05",
+      "base_commit": "2ecb7d06115af6eb5f392504dce7610af765518a",
+      "assignment_cutoff": "2026-08-23T14:25:14Z",
+      "task_authority": [
+        {
+          "id": "tw05.issue26.original",
+          "snapshot": "history",
+          "resource": "issue#26",
+          "kind": "body_version",
+          "node_id": "UCE_lAHOT-Sx7c8AAAABNmVE387gzBr1",
+          "effective_at": "2026-08-20T20:26:35Z",
+          "text_sha256": "4909a8a9eade611fec4291e6445eb08ce8b9a3b384beebd829d87d7884435138",
+          "temporal_integrity": "exact_versioned"
+        },
+        {
+          "id": "tw05.pr87.body",
+          "snapshot": "history",
+          "resource": "pr#87",
+          "kind": "body",
+          "effective_at": "2026-08-23T11:54:06Z",
+          "text_sha256": "e2528e31ea9a14c5c5a3efc3afc179d136a7dad67904dab51949681ff85b7eb5",
+          "temporal_integrity": "exact_unedited"
+        }
+      ],
+      "claims": [
+        {
+          "id": "resident_parity",
+          "contract_group_ids": [
+            "resident_revision_safety",
+            "native_wasm_parity",
+            "worker_single_truth",
+            "methodology_boundary"
+          ],
+          "authority_source_ids": [
+            "tw05.issue26.original",
+            "tw05.pr87.body"
+          ]
+        },
+        {
+          "id": "scope_and_exclusions",
+          "contract_group_ids": [],
+          "authority_source_ids": [
+            "tw05.issue26.original",
+            "tw05.pr87.body"
+          ]
+        }
+      ],
+      "outcome_only": [
+        "git:16289f8a5acd48ca7fa36b265b7fdfe7df0e4d12",
+        "https://github.com/nurockplayer/tachiko-work/pull/91"
+      ],
+      "excluded": [
+        {
+          "source": "issue#26 current body and later comments",
+          "reason": "post-outcome promotion text"
+        }
+      ]
+    },
+    {
+      "id": "TW-06",
+      "base_commit": "caf81e116c8f48c265fec40d7d12bd23a1fa4be0",
+      "assignment_cutoff": "2026-08-20T20:23:23Z",
+      "task_authority": [
+        {
+          "id": "tw06.issue15.body",
+          "snapshot": "history",
+          "resource": "issue#15",
+          "kind": "body",
+          "effective_at": "2026-08-20T18:32:54Z",
+          "text_sha256": "8090038ee696416a01c6898fb2c19b37578a47da5e06e1d28940bc5731ca10d8",
+          "temporal_integrity": "exact_unedited"
+        },
+        {
+          "id": "tw06.issue15.implementation_evidence",
+          "snapshot": "history",
+          "resource": "issue#15",
+          "kind": "comment",
+          "node_id": "IC_kwDOT-Sx7c8AAAABP4YjEQ",
+          "effective_at": "2026-08-20T19:31:49Z",
+          "text_sha256": "4304143a8bd7a85458816865c85bf3a11034d7c5c3e0107e7a69235f927114ee",
+          "temporal_integrity": "exact_unedited"
+        },
+        {
+          "id": "tw06.issue15.founder_direction",
+          "snapshot": "history",
+          "resource": "issue#15",
+          "kind": "comment",
+          "node_id": "IC_kwDOT-Sx7c8AAAABP44UqA",
+          "effective_at": "2026-08-20T20:23:23Z",
+          "text_sha256": "f430b4e96b2b2ad8d5bbb778d8ba85ed571b48e58851f607e7b82527fd9f08a5",
+          "temporal_integrity": "exact_unedited"
+        }
+      ],
+      "claims": [
+        {
+          "id": "public_and_licensing_posture",
+          "contract_group_ids": [
+            "public_prealpha_consistency",
+            "licensing_authority",
+            "contribution_boundary",
+            "governance_coherence"
+          ],
+          "authority_source_ids": [
+            "tw06.issue15.body",
+            "tw06.issue15.implementation_evidence",
+            "tw06.issue15.founder_direction"
+          ]
+        },
+        {
+          "id": "scope_and_exclusions",
+          "contract_group_ids": [],
+          "authority_source_ids": [
+            "tw06.issue15.body",
+            "tw06.issue15.founder_direction"
+          ]
+        }
+      ],
+      "outcome_only": [
+        "git:64410d6198296a4359053c5d2bb0912401b08056",
+        "https://github.com/nurockplayer/tachiko-work/pull/22"
+      ],
+      "excluded": [
+        {
+          "source": "PR #22 body/diff/files/commits/comments and CodeRabbit configuration outcome",
+          "reason": "created during or after implementation; not task authority and not exposed to the agent"
+        }
+      ]
+    },
+    {
+      "id": "TW-07",
+      "base_commit": "16289f8a5acd48ca7fa36b265b7fdfe7df0e4d12",
+      "assignment_cutoff": "2026-08-23T15:21:16Z",
+      "task_authority": [
+        {
+          "id": "tw07.issue90.version",
+          "snapshot": "history",
+          "resource": "issue#90",
+          "kind": "body_version",
+          "node_id": "UCE_lAHOT-Sx7c8AAAABN5Ehac7gy58B",
+          "effective_at": "2026-08-23T14:26:01Z",
+          "text_sha256": "eab06852d06a84e550cae71bf448d059075850ebd9b77fa12b113b9c61657af9",
+          "temporal_integrity": "exact_versioned"
+        },
+        {
+          "id": "tw07.issue90.handoff",
+          "snapshot": "history",
+          "resource": "issue#90",
+          "kind": "comment",
+          "node_id": "IC_kwDOT-Sx7c8AAAABQRNjSg",
+          "effective_at": "2026-08-23T15:21:16Z",
+          "text_sha256": "a2eae8e4d18c1e4a6d0d32a14626a355e62420c50d41fa02edf25b1b904791c4",
+          "temporal_integrity": "exact_unedited"
+        }
+      ],
+      "claims": [
+        {
+          "id": "formula_oracle",
+          "contract_group_ids": [
+            "complete_outcome",
+            "scc_precedence",
+            "dependency_atomicity",
+            "deterministic_portability"
+          ],
+          "authority_source_ids": [
+            "tw07.issue90.version",
+            "tw07.issue90.handoff"
+          ]
+        },
+        {
+          "id": "scope_and_exclusions",
+          "contract_group_ids": [],
+          "authority_source_ids": [
+            "tw07.issue90.version"
+          ]
+        }
+      ],
+      "outcome_only": [
+        "git:6ad364755566bc604e69800c8656868dab60a365",
+        "https://github.com/nurockplayer/tachiko-work/pull/97"
+      ],
+      "excluded": [
+        {
+          "source": "issue#90 current body and later comments",
+          "reason": "post-assignment edits or outcome status; only the frozen body version and allowlisted handoff are task authority"
+        }
+      ]
+    },
+    {
+      "id": "TW-08",
+      "base_commit": "c8528409dd327a9854ac030247ecbd8fcf765db7",
+      "assignment_cutoff": "2026-08-22T05:34:23Z",
+      "task_authority": [
+        {
+          "id": "tw08.issue74.body",
+          "snapshot": "history",
+          "resource": "issue#74",
+          "kind": "body",
+          "effective_at": "2026-08-22T03:44:56Z",
+          "text_sha256": "ebc40d420b6e360a146879a2d03c42c9ebca17b316aff3ffe8efedf8670d8ce8",
+          "temporal_integrity": "exact_unedited"
+        },
+        {
+          "id": "tw08.issue74.handoff",
+          "snapshot": "history",
+          "resource": "issue#74",
+          "kind": "comment",
+          "node_id": "IC_kwDOT-Sx7c8AAAABQIl0Kg",
+          "effective_at": "2026-08-22T03:53:02Z",
+          "text_sha256": "c43e1439ba689423fb16f61b00476d7fd354ab745c76d90836420e5a0f8dbb73",
+          "temporal_integrity": "exact_unedited"
+        }
+      ],
+      "claims": [
+        {
+          "id": "legacy_v1_storage_boundary",
+          "contract_group_ids": [
+            "strict_frontend_dispatch",
+            "closed_world_conversion",
+            "canonical_compatibility",
+            "migration_seam_and_scope"
+          ],
+          "authority_source_ids": [
+            "tw08.issue74.body",
+            "tw08.issue74.handoff"
+          ]
+        },
+        {
+          "id": "scope_and_exclusions",
+          "contract_group_ids": [],
+          "authority_source_ids": [
+            "tw08.issue74.body",
+            "tw08.issue74.handoff"
+          ]
+        }
+      ],
+      "outcome_only": [
+        "git:1929dd758ed580f0ccd2bc70be11560f3e88b0da",
+        "https://github.com/nurockplayer/tachiko-work/pull/80",
+        "authority-review:PRRC_kwDOT-Sx7c7kmiFB",
+        "authority-review:PRRC_kwDOT-Sx7c7km1sH"
+      ],
+      "excluded": [
+        {
+          "source": "PR #80 body, diff, review, resolution, and completion comments",
+          "reason": "historical outcome and evaluator-only evidence created after implementation began"
+        }
+      ]
+    },
+    {
+      "id": "TW-09",
+      "base_commit": "77821143e9847f62e129e553522556743c5032c1",
+      "assignment_cutoff": "2026-08-23T18:02:36Z",
+      "task_authority": [
+        {
+          "id": "tw09.issue89.version",
+          "snapshot": "history",
+          "resource": "issue#89",
+          "kind": "body_version",
+          "node_id": "UCE_lAHOT-Sx7c8AAAABN44pSs7gy6MV",
+          "effective_at": "2026-08-23T14:26:19Z",
+          "text_sha256": "0d306e76a954de3823bfd7751f62a3b7580b7933767380cedaf67952362baba5",
+          "temporal_integrity": "exact_versioned"
+        },
+        {
+          "id": "tw09.issue89.handoff",
+          "snapshot": "history",
+          "resource": "issue#89",
+          "kind": "comment",
+          "node_id": "IC_kwDOT-Sx7c8AAAABQRrWnw",
+          "effective_at": "2026-08-23T17:08:42Z",
+          "text_sha256": "3265f29db110b3c6df9bae7c558efbc10ed4faccaaddb260573a3871e404dbd4",
+          "temporal_integrity": "exact_unedited"
+        }
+      ],
+      "claims": [
+        {
+          "id": "validation_report",
+          "contract_group_ids": [
+            "stable_diagnostic_facts",
+            "formula_authority",
+            "suppression_directionality",
+            "agreement_portability"
+          ],
+          "authority_source_ids": [
+            "tw09.issue89.version",
+            "tw09.issue89.handoff"
+          ]
+        },
+        {
+          "id": "scope_and_exclusions",
+          "contract_group_ids": [],
+          "authority_source_ids": [
+            "tw09.issue89.version"
+          ]
+        }
+      ],
+      "outcome_only": [
+        "git:156565a3d2dc7664088a24b7f6e38d02ad4e04fe",
+        "https://github.com/nurockplayer/tachiko-work/pull/99",
+        "git:22fc8eb9d84c5bc13a7c9c64c6cb1f235974e5ba",
+        "git:b5b097cde26952b60580f62b28dada10044d92dd",
+        "git:c685fe72a126c6de26089461923991447c70ad8f"
+      ],
+      "excluded": [
+        {
+          "source": "issue#89 current body and later comments",
+          "reason": "post-assignment edits or outcome status; only the frozen body version and allowlisted handoff are task authority"
+        },
+        {
+          "source": "intervening commits 22fc8eb, b5b097c, and c685fe7",
+          "reason": "integration history after the replay base; independent AGENTS/storage work is evaluator-only and absent from the agent checkout"
+        }
+      ]
+    }
+  ]
+}

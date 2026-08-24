@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TW-05 normalized resident-runtime observations",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_sha256", "adapter", "native", "wasm"],
+  "properties": {
+    "contract_sha256": {"const": "053c95696dbc1e017fa7849c04c7a67bc87a1bfe3a5e705202cdc1a3cce663d8"},
+    "adapter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "behavior_implemented_by_adapter"],
+      "properties": {
+        "sha256": {"pattern": "^[0-9a-f]{64}$"},
+        "behavior_implemented_by_adapter": {"const": false}
+      }
+    },
+    "native": {"$ref": "#/$defs/nativeTarget"},
+    "wasm": {"$ref": "#/$defs/wasmTarget"}
+  },
+  "$defs": {
+    "observations": {
+      "const": [
+        {"step": "open", "revision": 0},
+        {"step": "overview", "entity_count": 2, "formula_count": 2},
+        {"step": "calculate", "first_product": 2, "second_product": 4},
+        {"step": "set_first_base", "revision": 1, "first_product": 22},
+        {"step": "stale_set_first_base", "typed_stale_revision_error": true, "actual_revision": 1, "state_unchanged": true},
+        {"step": "snapshot", "revision": 1, "first_base": 11, "first_product": 22}
+      ]
+    },
+    "nativeTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["execution", "observations"],
+      "properties": {
+        "execution": {"const": "native_process"},
+        "observations": {"$ref": "#/$defs/observations"}
+      }
+    },
+    "wasmTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["execution", "worker_boundary", "observations"],
+      "properties": {
+        "execution": {"const": "real_wasm32"},
+        "worker_boundary": {"const": "typescript_worker"},
+        "observations": {"$ref": "#/$defs/observations"}
+      }
+    }
+  }
+}

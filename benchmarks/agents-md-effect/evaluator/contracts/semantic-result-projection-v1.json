@@ -1,0 +1,29 @@
+{
+  "protocol_id": "tachiko-agents-effect-v1",
+  "contract_id": "semantic-result-projection-v1",
+  "contract_version": 1,
+  "result_schema_version": "1.1.0",
+  "payload_shape": {
+    "projection_contract": "semantic-result-projection-v1",
+    "record": "the final result record with record_validation_receipt_sha256 removed"
+  },
+  "removed_json_pointers": [
+    "/record_validation_receipt_sha256"
+  ],
+  "canonicalization": {
+    "id": "sorted-json-node-v1",
+    "runtime": "Node.js 24.15.0",
+    "object_keys": "recursively sort by ECMAScript default Array.prototype.sort UTF-16 code-unit order",
+    "arrays": "preserve registered order",
+    "serialization": "JSON.stringify with no replacer and no whitespace, then append exactly one LF",
+    "encoding": "UTF-8",
+    "numbers": "finite JSON numbers only; reject negative zero and non-finite values before serialization",
+    "digest": "SHA-256 of the serialized UTF-8 bytes"
+  },
+  "rules": [
+    "All final record fields except the one removed pointer are populated and immutable before semantic validation.",
+    "The semantic validator validates and hashes this detached projection, then emits a controller-owned receipt containing the projection digest and every recomputed invariant; the receipt content never contains its own artifact hash.",
+    "The controller separately hashes the completed receipt artifact and inserts that hash into record_validation_receipt_sha256; reconstructing this projection from the stored final record must remain byte-for-byte identical.",
+    "Reject any schema-unknown field or any additional field whose treatment is not defined by this contract."
+  ]
+}

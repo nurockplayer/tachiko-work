@@ -1,0 +1,262 @@
+{
+  "protocol_id": "tachiko-agents-effect-v1",
+  "lock_version": 1,
+  "machine_points": 19,
+  "application_rule": "Apply these checks before variant labels are revealed. Points are all-or-nothing per check. An infrastructure error invalidates the run rather than awarding zero.",
+  "global_checks": [
+    {
+      "id": "core.tooling.package_workflow",
+      "dimension": "tooling_workflow",
+      "points": 2,
+      "selector": "candidate_tree_static",
+      "pass_rule": "If the candidate introduces or changes package-managed JavaScript, exactly one package-manager ecosystem is used, package.json declares an explicit packageManager version, and the matching lockfile is present; conflicting lockfiles or an implicit/unlocked manager fail. Existing base files and the specific manager choice are not scored.",
+      "evidence": [
+        "capture receipt changed_files",
+        "candidate tree package manifests, packageManager declarations, and lockfiles"
+      ]
+    },
+    {
+      "id": "core.tooling.reproducible_dependencies",
+      "dimension": "tooling_workflow",
+      "points": 2,
+      "selector": "registered_command_policy_and_environment_receipts",
+      "pass_rule": "The registered validation command set uses network-denied execution with CARGO_NET_OFFLINE=true; every dependency-resolving Cargo command contains --locked; any JavaScript dependency installation uses the frozen/clean-install mode appropriate to its single declared lockfile. Candidate-caused command exit status is scored only by its validation or functional assertion and does not affect this tooling check; an infrastructure or dependency-cache failure is handled by attribution under the invalid-run policy.",
+      "evidence": [
+        "environment verification receipt",
+        "registered validation command IDs and exact command policy receipts"
+      ]
+    },
+    {
+      "id": "core.completion.reviewable_artifact",
+      "dimension": "completion",
+      "points": 3,
+      "selector": "capture_receipt",
+      "pass_rule": "The capture receipt records empty_patch=false, diff_bytes>0, an applyable raw binary Git patch, unchanged AGENTS.md bytes, and a candidate tree descended from the fixed base.",
+      "evidence": [
+        "capture receipt",
+        "candidate.patch SHA-256",
+        "capture-to-apply tree equality receipt"
+      ]
+    },
+    {
+      "id": "core.completion.final_report",
+      "dimension": "completion",
+      "points": 2,
+      "selector": "final_message_receipt",
+      "pass_rule": "The Codex process produced a non-empty final-message artifact whose bytes match the recorded SHA-256. Truthfulness and limitation quality are reviewed, not machine-scored.",
+      "evidence": [
+        "final-message byte count and SHA-256"
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "id": "TW-01",
+      "validation_checks": [
+        {
+          "id": "core.tw01.docs",
+          "dimension": "validation_tests",
+          "points": 10,
+          "command": "bash scripts/docs-consistency-check.sh"
+        }
+      ]
+    },
+    {
+      "id": "TW-02",
+      "validation_checks": [
+        {
+          "id": "core.tw02.docs",
+          "dimension": "validation_tests",
+          "points": 10,
+          "command": "bash scripts/docs-consistency-check.sh"
+        }
+      ]
+    },
+    {
+      "id": "TW-03",
+      "validation_checks": [
+        {
+          "id": "core.tw03.storage",
+          "dimension": "validation_tests",
+          "points": 3,
+          "command": "cargo test -p tachiko-storage --locked"
+        },
+        {
+          "id": "core.tw03.portable",
+          "dimension": "validation_tests",
+          "points": 3,
+          "command": "bash scripts/portable-conformance-check.sh"
+        },
+        {
+          "id": "core.tw03.release",
+          "dimension": "validation_tests",
+          "points": 4,
+          "command": "bash scripts/release-check.sh"
+        }
+      ]
+    },
+    {
+      "id": "TW-04",
+      "validation_checks": [
+        {
+          "id": "core.tw04.metadata",
+          "dimension": "validation_tests",
+          "points": 1,
+          "command": "cargo metadata --locked --format-version 1"
+        },
+        {
+          "id": "core.tw04.workspace",
+          "dimension": "validation_tests",
+          "points": 3,
+          "command": "cargo test --workspace --all-targets --locked"
+        },
+        {
+          "id": "core.tw04.portable",
+          "dimension": "validation_tests",
+          "points": 2,
+          "command": "bash scripts/portable-conformance-check.sh"
+        },
+        {
+          "id": "core.tw04.docs",
+          "dimension": "validation_tests",
+          "points": 1,
+          "command": "bash scripts/docs-consistency-check.sh"
+        },
+        {
+          "id": "core.tw04.release",
+          "dimension": "validation_tests",
+          "points": 3,
+          "command": "bash scripts/release-check.sh"
+        }
+      ]
+    },
+    {
+      "id": "TW-05",
+      "validation_checks": [
+        {
+          "id": "core.tw05.workspace",
+          "dimension": "validation_tests",
+          "points": 3,
+          "command": "cargo test --workspace --all-targets --locked"
+        },
+        {
+          "id": "core.tw05.docs",
+          "dimension": "validation_tests",
+          "points": 2,
+          "command": "bash scripts/docs-consistency-check.sh"
+        },
+        {
+          "id": "core.tw05.release",
+          "dimension": "validation_tests",
+          "points": 5,
+          "command": "bash scripts/release-check.sh"
+        }
+      ]
+    },
+    {
+      "id": "TW-06",
+      "validation_checks": [
+        {
+          "id": "core.tw06.fmt",
+          "dimension": "validation_tests",
+          "points": 3,
+          "command": "cargo fmt --all -- --check"
+        },
+        {
+          "id": "core.tw06.workspace",
+          "dimension": "validation_tests",
+          "points": 4,
+          "command": "cargo test --workspace --all-targets --locked"
+        },
+        {
+          "id": "core.tw06.release",
+          "dimension": "validation_tests",
+          "points": 3,
+          "command": "bash scripts/release-check.sh"
+        }
+      ]
+    },
+    {
+      "id": "TW-07",
+      "validation_checks": [
+        {
+          "id": "core.tw07.formula",
+          "dimension": "validation_tests",
+          "points": 4,
+          "command": "cargo test -p tachiko-formula-engine --locked"
+        },
+        {
+          "id": "core.tw07.portable",
+          "dimension": "validation_tests",
+          "points": 2,
+          "command": "bash scripts/portable-conformance-check.sh"
+        },
+        {
+          "id": "core.tw07.docs",
+          "dimension": "validation_tests",
+          "points": 1,
+          "command": "bash scripts/docs-consistency-check.sh"
+        },
+        {
+          "id": "core.tw07.release",
+          "dimension": "validation_tests",
+          "points": 3,
+          "command": "bash scripts/release-check.sh"
+        }
+      ]
+    },
+    {
+      "id": "TW-08",
+      "validation_checks": [
+        {
+          "id": "core.tw08.storage",
+          "dimension": "validation_tests",
+          "points": 4,
+          "command": "cargo test -p tachiko-storage --locked"
+        },
+        {
+          "id": "core.tw08.workspace",
+          "dimension": "validation_tests",
+          "points": 2,
+          "command": "cargo test --workspace --all-targets --locked"
+        },
+        {
+          "id": "core.tw08.release",
+          "dimension": "validation_tests",
+          "points": 4,
+          "command": "bash scripts/release-check.sh"
+        }
+      ]
+    },
+    {
+      "id": "TW-09",
+      "validation_checks": [
+        {
+          "id": "core.tw09.semantic",
+          "dimension": "validation_tests",
+          "points": 2,
+          "command": "cargo test -p tachiko-semantic-core --locked"
+        },
+        {
+          "id": "core.tw09.workspace",
+          "dimension": "validation_tests",
+          "points": 2,
+          "command": "cargo test -p tachiko-workspace-engine --locked"
+        },
+        {
+          "id": "core.tw09.portable",
+          "dimension": "validation_tests",
+          "points": 2,
+          "command": "bash scripts/portable-conformance-check.sh"
+        },
+        {
+          "id": "core.tw09.release",
+          "dimension": "validation_tests",
+          "points": 4,
+          "command": "bash scripts/release-check.sh"
+        }
+      ]
+    }
+  ],
+  "validation_pass_rule": "Exit 0 awards the check's points; nonzero exit awards zero; infrastructure error invalidates the run. Commands are exact strings and run in the candidate tree before evaluator oracle files are overlaid."
+}

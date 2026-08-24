@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nurockplayer/tachiko-work/benchmarks/agents-md-effect/blinded-review-score.schema.json",
+  "title": "Tachiko AGENTS.md Effect Blinded Review Score Sheet",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "protocol_id",
+    "experiment_id",
+    "blinded_candidate_id",
+    "case_id",
+    "reviewer_id",
+    "review_role",
+    "review_order",
+    "eligibility",
+    "reviewer_environment_receipt_sha256",
+    "review_points_available",
+    "inputs",
+    "functional_group_reviews",
+    "dimension_reviews",
+    "points_awarded",
+    "material_findings",
+    "hard_failure_recommendation",
+    "major_regression_recommendation",
+    "frozen_at"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.1.0"},
+    "protocol_id": {"const": "tachiko-agents-effect-v1"},
+    "experiment_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "blinded_candidate_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "case_id": {"type": "string", "pattern": "^TW-0[1-9]$"},
+    "reviewer_id": {"type": "string", "minLength": 1},
+    "review_role": {"enum": ["primary", "adjudicator"]},
+    "review_order": {"type": "integer", "minimum": 1},
+    "reviewer_environment_receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "eligibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attestation_version", "attestation_sha256", "case_specific", "benchmark_constructor", "historical_case_participant", "oracle_or_adapter_role", "experiment_operator", "implementation_specific_prior_knowledge", "variant_or_arm_known", "paired_candidate_seen", "eligible"],
+      "properties": {
+        "attestation_version": {"const": "reviewer-eligibility-v1"},
+        "attestation_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "case_specific": {"const": true},
+        "benchmark_constructor": {"const": false},
+        "historical_case_participant": {"const": false},
+        "oracle_or_adapter_role": {"const": false},
+        "experiment_operator": {"const": false},
+        "implementation_specific_prior_knowledge": {"const": false},
+        "variant_or_arm_known": {"const": false},
+        "paired_candidate_seen": {"const": false},
+        "eligible": {"const": true}
+      }
+    },
+    "review_points_available": {"enum": [57, 63, 69, 81]},
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["base_commit", "task_sha256", "candidate_patch_sha256", "candidate_tree", "redacted_final_message_sha256", "authority_lock_sha256", "variant_label_absent", "historical_outcome_absent", "machine_score_absent"],
+      "properties": {
+        "base_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "task_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "candidate_patch_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "candidate_tree": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "redacted_final_message_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "authority_lock_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "variant_label_absent": {"const": true},
+        "historical_outcome_absent": {"const": true},
+        "machine_score_absent": {"const": true}
+      }
+    },
+    "functional_group_reviews": {
+      "type": "array",
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["group_id", "points_available", "points_awarded", "anchor", "evidence"],
+        "properties": {
+          "group_id": {"type": "string", "minLength": 1},
+          "points_available": {"const": 6},
+          "points_awarded": {"type": "number", "minimum": 0, "maximum": 6},
+          "anchor": {"enum": ["hard_failure", "major_deficiency", "acceptable", "strong", "between_anchors"]},
+          "evidence": {"type": "array", "minItems": 1, "items": {"type": "string"}}
+        }
+      }
+    },
+    "dimension_reviews": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cross_group_functional", "validation_test_quality", "architecture_authority", "scope_discipline", "tooling_workflow_judgment", "maintainability", "unnecessary_churn"],
+      "properties": {
+        "cross_group_functional": {"$ref": "#/$defs/review6"},
+        "validation_test_quality": {"$ref": "#/$defs/review5"},
+        "architecture_authority": {"$ref": "#/$defs/review15"},
+        "scope_discipline": {"$ref": "#/$defs/review10"},
+        "tooling_workflow_judgment": {"$ref": "#/$defs/review4"},
+        "maintainability": {"$ref": "#/$defs/review10"},
+        "unnecessary_churn": {"$ref": "#/$defs/review7"}
+      }
+    },
+    "points_awarded": {"type": "number", "minimum": 0, "maximum": 81},
+    "material_findings": {"type": "array", "items": {"type": "string"}},
+    "hard_failure_recommendation": {"type": "boolean"},
+    "major_regression_recommendation": {"type": "boolean"},
+    "frozen_at": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {
+    "review4": {"allOf": [{"$ref": "#/$defs/review"}, {"properties": {"points_awarded": {"maximum": 4}}}]},
+    "review5": {"allOf": [{"$ref": "#/$defs/review"}, {"properties": {"points_awarded": {"maximum": 5}}}]},
+    "review6": {"allOf": [{"$ref": "#/$defs/review"}, {"properties": {"points_awarded": {"maximum": 6}}}]},
+    "review7": {"allOf": [{"$ref": "#/$defs/review"}, {"properties": {"points_awarded": {"maximum": 7}}}]},
+    "review10": {"allOf": [{"$ref": "#/$defs/review"}, {"properties": {"points_awarded": {"maximum": 10}}}]},
+    "review15": {"allOf": [{"$ref": "#/$defs/review"}, {"properties": {"points_awarded": {"maximum": 15}}}]},
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["points_awarded", "anchor", "evidence"],
+      "properties": {
+        "points_awarded": {"type": "number", "minimum": 0},
+        "anchor": {"enum": ["hard_failure", "major_deficiency", "acceptable", "strong", "between_anchors"]},
+        "evidence": {"type": "array", "minItems": 1, "items": {"type": "string"}}
+      }
+    }
+  }
+}

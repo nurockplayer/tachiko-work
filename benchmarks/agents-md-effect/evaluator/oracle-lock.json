@@ -1,0 +1,2335 @@
+{
+  "protocol_id": "tachiko-agents-effect-v1",
+  "oracle_lock_version": 2,
+  "physical_command_status": "construction_only_unqualified_for_controlled_run",
+  "application_rule": "The assertion IDs, scenarios, selectors, expected observations, points, source hashes, and adapter policy are frozen semantic contracts. Existing commands/command_specs record construction and historical-ground-truth invocations only; they are not authorized controlled-run physical commands because several execute candidate Cargo machinery beside oracle source. Before any controlled run, a separate immutable production command manifest must map every machine assertion to candidate-only artifact build, isolated trusted probe build, and expectation-free execution stages, pass confidentiality/mutation controls, and preserve these semantic contracts unchanged. A naming/type-only adapter is allowed only where selector.adapter_allowed=true and must be blinded, hashed, and reviewed; it may not implement behavior.",
+  "cases": [
+    {
+      "id": "TW-01",
+      "source_commit": "b2d9c7fb8c11236a0564faa37eca1cf32b76faf8",
+      "mode": "structural_machine_checks_plus_blinded_semantic_review",
+      "files": [],
+      "commands": [
+        "bash scripts/docs-consistency-check.sh"
+      ],
+      "group_mappings": [
+        {
+          "id": "identity_invariant",
+          "assessment": "blinded_semantic_review",
+          "assertion_ids": [],
+          "review_anchors": [
+            "base ADR/spec authority"
+          ],
+          "note": "Do not keyword-score prose."
+        },
+        {
+          "id": "mechanism_boundary",
+          "assessment": "blinded_semantic_review",
+          "assertion_ids": [],
+          "review_anchors": [
+            "base ADR/spec authority"
+          ]
+        },
+        {
+          "id": "typed_graph_boundary",
+          "assessment": "blinded_semantic_review",
+          "assertion_ids": [],
+          "review_anchors": [
+            "base ADR/spec authority"
+          ]
+        },
+        {
+          "id": "authority_reconciliation",
+          "assessment": "blinded_semantic_review",
+          "assertion_ids": [],
+          "review_anchors": [
+            "docs consistency output",
+            "cross-document authority review"
+          ]
+        }
+      ],
+      "note": "Do not keyword-score the ADR. File scope/index integrity is machine-scored; durable semantic meaning is blinded-review evidence.",
+      "command_specs": [
+        {
+          "id": "tw01.docs",
+          "run": "bash scripts/docs-consistency-check.sh"
+        }
+      ],
+      "assertions": [],
+      "integrity_gates": [],
+      "unscored_gates": [
+        "tw01.docs"
+      ]
+    },
+    {
+      "id": "TW-02",
+      "source_commit": "1e422f1c3d152a342abee57aaad8b44aa04e11cf",
+      "mode": "structural_machine_checks_plus_blinded_semantic_review",
+      "files": [],
+      "commands": [
+        "bash scripts/docs-consistency-check.sh"
+      ],
+      "group_mappings": [
+        {
+          "id": "recursive_wire_schema",
+          "assessment": "blinded_semantic_review",
+          "assertion_ids": [],
+          "review_anchors": [
+            "closed-world schema completeness"
+          ]
+        },
+        {
+          "id": "typed_id_inventory",
+          "assessment": "blinded_semantic_review",
+          "assertion_ids": [],
+          "review_anchors": [
+            "persisted-reference inventory"
+          ]
+        },
+        {
+          "id": "atomic_migration",
+          "assessment": "blinded_semantic_review",
+          "assertion_ids": [],
+          "review_anchors": [
+            "migration ordering and fail-closed behavior"
+          ]
+        },
+        {
+          "id": "authority_navigation",
+          "assessment": "blinded_semantic_review",
+          "assertion_ids": [],
+          "review_anchors": [
+            "docs consistency output",
+            "navigation and ownership"
+          ]
+        }
+      ],
+      "note": "Do not keyword-score the storage prose. File scope/link integrity is machine-scored; schema and migration completeness are blinded-review evidence.",
+      "command_specs": [
+        {
+          "id": "tw02.docs",
+          "run": "bash scripts/docs-consistency-check.sh"
+        }
+      ],
+      "assertions": [],
+      "integrity_gates": [],
+      "unscored_gates": [
+        "tw02.docs"
+      ]
+    },
+    {
+      "id": "TW-03",
+      "source_commit": "e953877f2dfd05ae5cebc5262656c2d877c2ed9c",
+      "mode": "historical_black_box_oracle",
+      "files": [
+        {
+          "path": "crates/storage/tests/canonical_v2_numeric.rs",
+          "sha256": "593b041f866592dc29bdc63ad554d9f16dc13b3df82581379b50f7b72b3519f6"
+        },
+        {
+          "path": "crates/storage/tests/fixtures/direct-ro-v2-numeric-golden.ro",
+          "sha256": "c1b2e02bffa82530866610fd0029bf13350a30af8f31821a9006a78cb9cbc432"
+        },
+        {
+          "path": "scripts/portable-conformance-check.rs",
+          "sha256": "1fa2cd3bb7fb6cf8686f7183f6c364b3ffcddde1ab1e8517fc0536706dfa9e3f"
+        },
+        {
+          "path": "scripts/cargo-artifact-path.mjs",
+          "sha256": "f7954eca0b558f28ad86d67260cdfebf0c7da815e9467e68bbba8b3f34414aba"
+        }
+      ],
+      "commands": [
+        "cargo test -p tachiko-storage --test canonical_v2_numeric --locked direct_ro_v2_covers_all_finite_rfc8785_appendix_b_vectors -- --exact",
+        "cargo test -p tachiko-storage --test canonical_v2_numeric --locked direct_ro_v2_covers_adr0018_threshold_subnormal_underflow_and_tie_vectors -- --exact",
+        "cargo test -p tachiko-storage --test canonical_v2_numeric --locked direct_ro_v2_rejects_positive_and_negative_overflow_to_infinity -- --exact",
+        "cargo test -p tachiko-storage --test canonical_v2_numeric --locked direct_ro_v2_numeric_golden_is_byte_stable -- --exact",
+        "cargo test -p tachiko-storage --test canonical_v2_numeric --locked direct_ro_v2_numeric_golden_detects_noncanonical_byte_drift -- --exact",
+        "cargo test -p tachiko-storage --test canonical_v2_numeric --locked direct_ro_v2_canonicalizes_alternate_legal_number_spellings -- --exact",
+        "bash <benchmark>/scripts/run-portable-observations.sh --candidate-root <validation-workspace> --crate-set core --output <trusted-portable-observations-file>"
+      ],
+      "group_mappings": [
+        {
+          "id": "exact_decimal_rounding",
+          "assessment": "machine_oracle",
+          "assertion_ids": [
+            "tw-03.rfc8785"
+          ]
+        },
+        {
+          "id": "edge_classification",
+          "assessment": "machine_oracle",
+          "assertion_ids": [
+            "tw-03.thresholds",
+            "tw-03.overflow"
+          ]
+        },
+        {
+          "id": "canonical_bytes",
+          "assessment": "machine_oracle",
+          "assertion_ids": [
+            "tw-03.golden_stable",
+            "tw-03.golden_drift",
+            "tw-03.alternate"
+          ]
+        },
+        {
+          "id": "compatibility_parity",
+          "assessment": "machine_oracle",
+          "assertion_ids": [
+            "tw-03.portable.records-10-20"
+          ]
+        }
+      ],
+      "command_specs": [
+        {
+          "id": "tw03.rfc8785",
+          "run": "cargo test -p tachiko-storage --test canonical_v2_numeric --locked direct_ro_v2_covers_all_finite_rfc8785_appendix_b_vectors -- --exact"
+        },
+        {
+          "id": "tw03.thresholds",
+          "run": "cargo test -p tachiko-storage --test canonical_v2_numeric --locked direct_ro_v2_covers_adr0018_threshold_subnormal_underflow_and_tie_vectors -- --exact"
+        },
+        {
+          "id": "tw03.overflow",
+          "run": "cargo test -p tachiko-storage --test canonical_v2_numeric --locked direct_ro_v2_rejects_positive_and_negative_overflow_to_infinity -- --exact"
+        },
+        {
+          "id": "tw03.golden_stable",
+          "run": "cargo test -p tachiko-storage --test canonical_v2_numeric --locked direct_ro_v2_numeric_golden_is_byte_stable -- --exact"
+        },
+        {
+          "id": "tw03.golden_drift",
+          "run": "cargo test -p tachiko-storage --test canonical_v2_numeric --locked direct_ro_v2_numeric_golden_detects_noncanonical_byte_drift -- --exact"
+        },
+        {
+          "id": "tw03.alternate",
+          "run": "cargo test -p tachiko-storage --test canonical_v2_numeric --locked direct_ro_v2_canonicalizes_alternate_legal_number_spellings -- --exact"
+        },
+        {
+          "id": "tw03.portable",
+          "run": "bash <benchmark>/scripts/run-portable-observations.sh --candidate-root <validation-workspace> --crate-set core --output <trusted-portable-observations-file>"
+        }
+      ],
+      "assertions": [
+        {
+          "id": "tw-03.rfc8785",
+          "command_id": "tw03.rfc8785",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "direct_ro_v2_covers_all_finite_rfc8785_appendix_b_vectors",
+            "required_matching_tests": 1,
+            "adapter_allowed": false
+          },
+          "points": 6,
+          "mandatory": true,
+          "contract_group_ids": [
+            "exact_decimal_rounding"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-03.thresholds",
+          "command_id": "tw03.thresholds",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "direct_ro_v2_covers_adr0018_threshold_subnormal_underflow_and_tie_vectors",
+            "required_matching_tests": 1,
+            "adapter_allowed": false
+          },
+          "points": 4,
+          "mandatory": true,
+          "contract_group_ids": [
+            "edge_classification"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-03.overflow",
+          "command_id": "tw03.overflow",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "direct_ro_v2_rejects_positive_and_negative_overflow_to_infinity",
+            "required_matching_tests": 1,
+            "adapter_allowed": false
+          },
+          "points": 2,
+          "mandatory": true,
+          "contract_group_ids": [
+            "edge_classification"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-03.golden_stable",
+          "command_id": "tw03.golden_stable",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "direct_ro_v2_numeric_golden_is_byte_stable",
+            "required_matching_tests": 1,
+            "adapter_allowed": false
+          },
+          "points": 3,
+          "mandatory": true,
+          "contract_group_ids": [
+            "canonical_bytes"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-03.golden_drift",
+          "command_id": "tw03.golden_drift",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "direct_ro_v2_numeric_golden_detects_noncanonical_byte_drift",
+            "required_matching_tests": 1,
+            "adapter_allowed": false
+          },
+          "points": 2,
+          "mandatory": true,
+          "contract_group_ids": [
+            "canonical_bytes"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-03.alternate",
+          "command_id": "tw03.alternate",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "direct_ro_v2_canonicalizes_alternate_legal_number_spellings",
+            "required_matching_tests": 1,
+            "adapter_allowed": false
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "canonical_bytes"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-03.portable.records-10-20",
+          "command_id": "tw03.portable",
+          "selector": {
+            "kind": "portable_record_set",
+            "indexes": [
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20
+            ],
+            "expected_records": [
+              {
+                "index": 10,
+                "class": 0,
+                "bits": "0000000000000000",
+                "auxiliary": "14239182549479522547"
+              },
+              {
+                "index": 11,
+                "class": 0,
+                "bits": "0000000000000001",
+                "auxiliary": "16610490775308085987"
+              },
+              {
+                "index": 12,
+                "class": 0,
+                "bits": "000fffffffffffff",
+                "auxiliary": "9368354395628329633"
+              },
+              {
+                "index": 13,
+                "class": 0,
+                "bits": "0010000000000000",
+                "auxiliary": "9426313750031828647"
+              },
+              {
+                "index": 14,
+                "class": 0,
+                "bits": "3eb0c6f7a0b5ed8c",
+                "auxiliary": "9604512524500068106"
+              },
+              {
+                "index": 15,
+                "class": 0,
+                "bits": "3eb0c6f7a0b5ed8d",
+                "auxiliary": "7334280488875651334"
+              },
+              {
+                "index": 16,
+                "class": 0,
+                "bits": "444b1ae4d6e2ef4f",
+                "auxiliary": "9603619838578031043"
+              },
+              {
+                "index": 17,
+                "class": 0,
+                "bits": "444b1ae4d6e2ef50",
+                "auxiliary": "17280126655741090205"
+              },
+              {
+                "index": 18,
+                "class": 0,
+                "bits": "4340000000000000",
+                "auxiliary": "13372474696309062920"
+              },
+              {
+                "index": 19,
+                "class": 0,
+                "bits": "4340000000000002",
+                "auxiliary": "6599216309365612988"
+              },
+              {
+                "index": 20,
+                "class": 0,
+                "bits": "7fefffffffffffff",
+                "auxiliary": "2872847687790595448"
+              }
+            ],
+            "require_selected_native_wasm_equal": true,
+            "reject_class": 255,
+            "crate_set": "core",
+            "adapter_allowed": false
+          },
+          "points": 6,
+          "mandatory": true,
+          "contract_group_ids": [
+            "compatibility_parity"
+          ],
+          "pass_rule": "every selected native record exactly matches the lock, the selected WASM records are byte-identical, and no selected class is 255; otherwise zero; infrastructure error invalidates the run"
+        }
+      ],
+      "integrity_gates": [],
+      "unscored_gates": [],
+      "constructed_contracts": [
+        {
+          "id": "portable-observation-runner-v1",
+          "path": "scripts/run-portable-observations.sh",
+          "sha256": "35c5ed9f95a7ca09e121a913b306b4aa399c695bcfa79b6defb20d0a1bde9ddd"
+        },
+        {
+          "id": "portable-observation-collector-v1",
+          "path": "scripts/collect-portable-observations.mjs",
+          "sha256": "bb3def3624239ae4d6e5d1c5a482239704afbe6b8aaac470b5b5067216cda18c"
+        },
+        {
+          "id": "portable-wasm-record-reader-v1",
+          "path": "scripts/portable-wasm-records.mjs",
+          "sha256": "96d01ad2aae6ba8acc64d29e59ca17fee6b8fcba44ec3efaefe3dd347ef3877d"
+        },
+        {
+          "id": "portable-assertion-validator-v1",
+          "path": "scripts/validate-portable-assertion.mjs",
+          "sha256": "940588f25e70b61bad58566624e1bc5602c4a2eecf6528d6fb6b787391224019"
+        }
+      ]
+    },
+    {
+      "id": "TW-04",
+      "source_commit": "515b81b955a3c21ab306f24e940ea90d46efdace",
+      "mode": "historical_black_box_oracle",
+      "files": [
+        {
+          "path": "crates/workspace-engine/tests/application_boundary.rs",
+          "sha256": "10e6096049c1de31402d056d2c7250551f4d4230068759d3ad716942776bf671"
+        },
+        {
+          "path": "crates/workspace-engine/tests/common/mod.rs",
+          "sha256": "2fe6d9208af324ce3a7a56d1b1993fe8c92ddde81f97cc901c58560adcdbc67d"
+        },
+        {
+          "path": "scripts/portable-conformance-check.rs",
+          "sha256": "26ba3740c44c276d717664cf20808d41ee3970147358cd6b6c2328317661c02b"
+        },
+        {
+          "path": "scripts/cargo-artifact-path.mjs",
+          "sha256": "f7954eca0b558f28ad86d67260cdfebf0c7da815e9467e68bbba8b3f34414aba"
+        }
+      ],
+      "commands": [
+        "node <benchmark>/scripts/inspect-workspace-metadata.mjs --candidate-root <validation-workspace> --output <trusted-metadata-observations-file>",
+        "cargo test -p tachiko-workspace-engine --test application_boundary --locked validation_and_calculation_are_shared_application_queries -- --exact",
+        "cargo test -p tachiko-workspace-engine --test application_boundary --locked comparison_and_merge_are_workspace_owned_orchestration -- --exact",
+        "cargo test -p tachiko-workspace-engine --test application_boundary --locked formula_analysis_and_typed_suggestions_share_engine_policy -- --exact",
+        "cargo test -p tachiko-workspace-engine --test application_boundary --locked runtime_export_is_a_portable_engine_projection -- --exact",
+        "bash <benchmark>/scripts/run-portable-observations.sh --candidate-root <validation-workspace> --crate-set full --output <trusted-portable-observations-file>"
+      ],
+      "group_mappings": [
+        {
+          "id": "single_boundary",
+          "assessment": "machine_oracle",
+          "assertion_ids": [
+            "tw-04.workspace-present",
+            "tw-04.workflow-absent",
+            "tw-04.workspace-deps"
+          ]
+        },
+        {
+          "id": "dependency_dag",
+          "assessment": "machine_oracle",
+          "assertion_ids": [
+            "tw-04.semantic-deps",
+            "tw-04.formula-deps",
+            "tw-04.diff-merge-deps",
+            "tw-04.storage-deps",
+            "tw-04.ai-deps",
+            "tw-04.cli-deps"
+          ]
+        },
+        {
+          "id": "behavior_preservation",
+          "assessment": "machine_with_blinded_adapter",
+          "assertion_ids": [
+            "tw-04.shared-queries",
+            "tw-04.workspace-orchestration",
+            "tw-04.engine-policy",
+            "tw-04.runtime-export"
+          ]
+        },
+        {
+          "id": "portable_boundary",
+          "assessment": "machine_with_blinded_adapter",
+          "assertion_ids": [
+            "tw-04.portable.records-21-23"
+          ]
+        }
+      ],
+      "command_specs": [
+        {
+          "id": "tw04.metadata",
+          "run": "node <benchmark>/scripts/inspect-workspace-metadata.mjs --candidate-root <validation-workspace> --output <trusted-metadata-observations-file>"
+        },
+        {
+          "id": "tw04.validation_and_calculation_are_shared_application_queries",
+          "run": "cargo test -p tachiko-workspace-engine --test application_boundary --locked validation_and_calculation_are_shared_application_queries -- --exact"
+        },
+        {
+          "id": "tw04.comparison_and_merge_are_workspace_owned_orchestration",
+          "run": "cargo test -p tachiko-workspace-engine --test application_boundary --locked comparison_and_merge_are_workspace_owned_orchestration -- --exact"
+        },
+        {
+          "id": "tw04.formula_analysis_and_typed_suggestions_share_engine_policy",
+          "run": "cargo test -p tachiko-workspace-engine --test application_boundary --locked formula_analysis_and_typed_suggestions_share_engine_policy -- --exact"
+        },
+        {
+          "id": "tw04.runtime_export_is_a_portable_engine_projection",
+          "run": "cargo test -p tachiko-workspace-engine --test application_boundary --locked runtime_export_is_a_portable_engine_projection -- --exact"
+        },
+        {
+          "id": "tw04.portable",
+          "run": "bash <benchmark>/scripts/run-portable-observations.sh --candidate-root <validation-workspace> --crate-set full --output <trusted-portable-observations-file>"
+        }
+      ],
+      "assertions": [
+        {
+          "id": "tw-04.workspace-present",
+          "command_id": "tw04.metadata",
+          "selector": {
+            "kind": "json_pointer",
+            "json_pointer": "/assertions/workspace_engine_present",
+            "expected": true,
+            "adapter_allowed": false
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "single_boundary"
+          ],
+          "pass_rule": "validator exit 0 and the locked JSON pointer is exactly true awards full points; false or absent awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-04.workflow-absent",
+          "command_id": "tw04.metadata",
+          "selector": {
+            "kind": "json_pointer",
+            "json_pointer": "/assertions/workflow_absent",
+            "expected": true,
+            "adapter_allowed": false
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "single_boundary"
+          ],
+          "pass_rule": "validator exit 0 and the locked JSON pointer is exactly true awards full points; false or absent awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-04.workspace-deps",
+          "command_id": "tw04.metadata",
+          "selector": {
+            "kind": "json_pointer",
+            "json_pointer": "/assertions/workspace_engine_dependencies",
+            "expected": true,
+            "adapter_allowed": false
+          },
+          "points": 4,
+          "mandatory": true,
+          "contract_group_ids": [
+            "single_boundary"
+          ],
+          "pass_rule": "validator exit 0 and the locked JSON pointer is exactly true awards full points; false or absent awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-04.semantic-deps",
+          "command_id": "tw04.metadata",
+          "selector": {
+            "kind": "json_pointer",
+            "json_pointer": "/assertions/semantic_has_no_local_dependencies",
+            "expected": true,
+            "adapter_allowed": false
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "dependency_dag"
+          ],
+          "pass_rule": "validator exit 0 and the locked JSON pointer is exactly true awards full points; false or absent awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-04.formula-deps",
+          "command_id": "tw04.metadata",
+          "selector": {
+            "kind": "json_pointer",
+            "json_pointer": "/assertions/formula_depends_on_semantic",
+            "expected": true,
+            "adapter_allowed": false
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "dependency_dag"
+          ],
+          "pass_rule": "validator exit 0 and the locked JSON pointer is exactly true awards full points; false or absent awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-04.diff-merge-deps",
+          "command_id": "tw04.metadata",
+          "selector": {
+            "kind": "json_pointer",
+            "json_pointer": "/assertions/diff_and_merge_depend_on_formula_and_semantic",
+            "expected": true,
+            "adapter_allowed": false
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "dependency_dag"
+          ],
+          "pass_rule": "validator exit 0 and the locked JSON pointer is exactly true awards full points; false or absent awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-04.storage-deps",
+          "command_id": "tw04.metadata",
+          "selector": {
+            "kind": "json_pointer",
+            "json_pointer": "/assertions/storage_depends_on_semantic",
+            "expected": true,
+            "adapter_allowed": false
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "dependency_dag"
+          ],
+          "pass_rule": "validator exit 0 and the locked JSON pointer is exactly true awards full points; false or absent awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-04.ai-deps",
+          "command_id": "tw04.metadata",
+          "selector": {
+            "kind": "json_pointer",
+            "json_pointer": "/assertions/ai_depends_on_workspace",
+            "expected": true,
+            "adapter_allowed": false
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "dependency_dag"
+          ],
+          "pass_rule": "validator exit 0 and the locked JSON pointer is exactly true awards full points; false or absent awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-04.cli-deps",
+          "command_id": "tw04.metadata",
+          "selector": {
+            "kind": "json_pointer",
+            "json_pointer": "/assertions/cli_depends_on_storage_and_workspace",
+            "expected": true,
+            "adapter_allowed": false
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "dependency_dag"
+          ],
+          "pass_rule": "validator exit 0 and the locked JSON pointer is exactly true awards full points; false or absent awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-04.shared-queries",
+          "command_id": "tw04.validation_and_calculation_are_shared_application_queries",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "validation_and_calculation_are_shared_application_queries",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 2,
+          "mandatory": true,
+          "contract_group_ids": [
+            "behavior_preservation"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-04.workspace-orchestration",
+          "command_id": "tw04.comparison_and_merge_are_workspace_owned_orchestration",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "comparison_and_merge_are_workspace_owned_orchestration",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 2,
+          "mandatory": true,
+          "contract_group_ids": [
+            "behavior_preservation"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-04.engine-policy",
+          "command_id": "tw04.formula_analysis_and_typed_suggestions_share_engine_policy",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "formula_analysis_and_typed_suggestions_share_engine_policy",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "behavior_preservation"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-04.runtime-export",
+          "command_id": "tw04.runtime_export_is_a_portable_engine_projection",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "runtime_export_is_a_portable_engine_projection",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "behavior_preservation"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-04.portable.records-21-23",
+          "command_id": "tw04.portable",
+          "selector": {
+            "kind": "portable_record_set",
+            "indexes": [
+              21,
+              22,
+              23
+            ],
+            "expected_records": [
+              {
+                "index": 21,
+                "class": 0,
+                "bits": "4045000000000000",
+                "auxiliary": "2"
+              },
+              {
+                "index": 22,
+                "class": 0,
+                "bits": "4045000000000000",
+                "auxiliary": "1"
+              },
+              {
+                "index": 23,
+                "class": 0,
+                "bits": "4000000000000000",
+                "auxiliary": "7"
+              }
+            ],
+            "require_selected_native_wasm_equal": true,
+            "reject_class": 255,
+            "crate_set": "full",
+            "adapter_allowed": true
+          },
+          "points": 6,
+          "mandatory": true,
+          "contract_group_ids": [
+            "portable_boundary"
+          ],
+          "pass_rule": "every selected native record exactly matches the lock, the selected WASM records are byte-identical, and no selected class is 255; otherwise zero; infrastructure error invalidates the run"
+        }
+      ],
+      "integrity_gates": [],
+      "unscored_gates": [],
+      "constructed_contracts": [
+        {
+          "id": "TW-04-workspace-metadata-inspector-v1",
+          "path": "scripts/inspect-workspace-metadata.mjs",
+          "sha256": "923982b2578de670787248e0b55a3e5ff26965eba127db230d40a2e7b74ef6c3"
+        },
+        {
+          "id": "portable-observation-runner-v1",
+          "path": "scripts/run-portable-observations.sh",
+          "sha256": "35c5ed9f95a7ca09e121a913b306b4aa399c695bcfa79b6defb20d0a1bde9ddd"
+        },
+        {
+          "id": "portable-observation-collector-v1",
+          "path": "scripts/collect-portable-observations.mjs",
+          "sha256": "bb3def3624239ae4d6e5d1c5a482239704afbe6b8aaac470b5b5067216cda18c"
+        },
+        {
+          "id": "portable-wasm-record-reader-v1",
+          "path": "scripts/portable-wasm-records.mjs",
+          "sha256": "96d01ad2aae6ba8acc64d29e59ca17fee6b8fcba44ec3efaefe3dd347ef3877d"
+        },
+        {
+          "id": "portable-assertion-validator-v1",
+          "path": "scripts/validate-portable-assertion.mjs",
+          "sha256": "940588f25e70b61bad58566624e1bc5602c4a2eecf6528d6fb6b787391224019"
+        }
+      ]
+    },
+    {
+      "id": "TW-05",
+      "source_commit": "16289f8a5acd48ca7fa36b265b7fdfe7df0e4d12",
+      "mode": "candidate_interface_plus_blinded_methodology_review",
+      "files": [],
+      "commands": [
+        "node <trusted-adapter-file> --candidate-root <validation-workspace> --contract <trusted-contract-file> --output <trusted-observations-file>",
+        "node <benchmark>/scripts/validate-tw05-observations.mjs --contract <trusted-contract-file> --observations <trusted-observations-file> --adapter-file <trusted-adapter-file>"
+      ],
+      "group_mappings": [
+        {
+          "id": "resident_revision_safety",
+          "assessment": "machine_with_blinded_adapter",
+          "assertion_ids": [
+            "tw-05.native-step-0",
+            "tw-05.native-step-1",
+            "tw-05.native-step-2",
+            "tw-05.native-step-3",
+            "tw-05.native-step-4",
+            "tw-05.native-step-5"
+          ]
+        },
+        {
+          "id": "native_wasm_parity",
+          "assessment": "machine_with_blinded_adapter",
+          "assertion_ids": [
+            "tw-05.native-execution",
+            "tw-05.wasm-execution",
+            "tw-05.worker-boundary",
+            "tw-05.observation-parity"
+          ]
+        },
+        {
+          "id": "worker_single_truth",
+          "assessment": "blinded_semantic_review",
+          "assertion_ids": [],
+          "review_anchors": [
+            "Node Worker execution",
+            "state-ownership inspection"
+          ]
+        },
+        {
+          "id": "methodology_boundary",
+          "assessment": "blinded_semantic_review",
+          "assertion_ids": [],
+          "review_anchors": [
+            "benchmark and report methodology"
+          ]
+        }
+      ],
+      "note": "The spike interface is intentionally provisional. Reviewers may add a naming/type-only adapter to execute one fixed revision/parity command corpus, but may not copy the historical implementation or fill missing behavior.",
+      "constructed_contracts": [
+        {
+          "id": "TW-05-resident-parity-v1",
+          "path": "evaluator/contracts/TW-05-resident-parity.json",
+          "sha256": "053c95696dbc1e017fa7849c04c7a67bc87a1bfe3a5e705202cdc1a3cce663d8"
+        },
+        {
+          "id": "TW-05-observations-schema-v1",
+          "path": "evaluator/contracts/TW-05-observations.schema.json",
+          "sha256": "05887eebf3252492ef6744b2e3478b9805a17011b8615500f8322f4e5a153e38"
+        },
+        {
+          "id": "TW-05-observation-validator-v1",
+          "path": "scripts/validate-tw05-observations.mjs",
+          "sha256": "16dc2803ae324f9e9686c3b15be0b268473ce523af04834731d8bc9e63157634"
+        }
+      ],
+      "command_specs": [
+        {
+          "id": "tw05.adapter",
+          "run": "node <trusted-adapter-file> --candidate-root <validation-workspace> --contract <trusted-contract-file> --output <trusted-observations-file>"
+        },
+        {
+          "id": "tw05.validate",
+          "run": "node <benchmark>/scripts/validate-tw05-observations.mjs --contract <trusted-contract-file> --observations <trusted-observations-file> --adapter-file <trusted-adapter-file>"
+        }
+      ],
+      "assertions": [
+        {
+          "id": "tw-05.native-step-0",
+          "command_id": "tw05.validate",
+          "selector": {
+            "kind": "json_pointer",
+            "json_pointer": "/assertions/native_step_0",
+            "expected": true,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "resident_revision_safety"
+          ],
+          "pass_rule": "validator exit 0 and the locked JSON pointer is exactly true awards full points; false or absent awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-05.native-step-1",
+          "command_id": "tw05.validate",
+          "selector": {
+            "kind": "json_pointer",
+            "json_pointer": "/assertions/native_step_1",
+            "expected": true,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "resident_revision_safety"
+          ],
+          "pass_rule": "validator exit 0 and the locked JSON pointer is exactly true awards full points; false or absent awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-05.native-step-2",
+          "command_id": "tw05.validate",
+          "selector": {
+            "kind": "json_pointer",
+            "json_pointer": "/assertions/native_step_2",
+            "expected": true,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "resident_revision_safety"
+          ],
+          "pass_rule": "validator exit 0 and the locked JSON pointer is exactly true awards full points; false or absent awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-05.native-step-3",
+          "command_id": "tw05.validate",
+          "selector": {
+            "kind": "json_pointer",
+            "json_pointer": "/assertions/native_step_3",
+            "expected": true,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "resident_revision_safety"
+          ],
+          "pass_rule": "validator exit 0 and the locked JSON pointer is exactly true awards full points; false or absent awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-05.native-step-4",
+          "command_id": "tw05.validate",
+          "selector": {
+            "kind": "json_pointer",
+            "json_pointer": "/assertions/native_step_4",
+            "expected": true,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "resident_revision_safety"
+          ],
+          "pass_rule": "validator exit 0 and the locked JSON pointer is exactly true awards full points; false or absent awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-05.native-step-5",
+          "command_id": "tw05.validate",
+          "selector": {
+            "kind": "json_pointer",
+            "json_pointer": "/assertions/native_step_5",
+            "expected": true,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "resident_revision_safety"
+          ],
+          "pass_rule": "validator exit 0 and the locked JSON pointer is exactly true awards full points; false or absent awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-05.native-execution",
+          "command_id": "tw05.validate",
+          "selector": {
+            "kind": "json_pointer",
+            "json_pointer": "/assertions/native_execution",
+            "expected": true,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "native_wasm_parity"
+          ],
+          "pass_rule": "validator exit 0 and the locked JSON pointer is exactly true awards full points; false or absent awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-05.wasm-execution",
+          "command_id": "tw05.validate",
+          "selector": {
+            "kind": "json_pointer",
+            "json_pointer": "/assertions/wasm_execution",
+            "expected": true,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "native_wasm_parity"
+          ],
+          "pass_rule": "validator exit 0 and the locked JSON pointer is exactly true awards full points; false or absent awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-05.worker-boundary",
+          "command_id": "tw05.validate",
+          "selector": {
+            "kind": "json_pointer",
+            "json_pointer": "/assertions/worker_boundary",
+            "expected": true,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "native_wasm_parity"
+          ],
+          "pass_rule": "validator exit 0 and the locked JSON pointer is exactly true awards full points; false or absent awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-05.observation-parity",
+          "command_id": "tw05.validate",
+          "selector": {
+            "kind": "json_pointer",
+            "json_pointer": "/assertions/native_wasm_observations_equal",
+            "expected": true,
+            "adapter_allowed": true
+          },
+          "points": 3,
+          "mandatory": true,
+          "contract_group_ids": [
+            "native_wasm_parity"
+          ],
+          "pass_rule": "validator exit 0 and the locked JSON pointer is exactly true awards full points; false or absent awards zero; infrastructure error invalidates the run"
+        }
+      ],
+      "integrity_gates": [
+        "contract hash",
+        "adapter byte hash",
+        "adapter behavior_implemented_by_adapter=false"
+      ],
+      "unscored_gates": []
+    },
+    {
+      "id": "TW-06",
+      "source_commit": "64410d6198296a4359053c5d2bb0912401b08056",
+      "mode": "blinded_authority_and_scope_review",
+      "files": [],
+      "constructed_contracts": [
+        {
+          "id": "TW-06-structural-scope-v1",
+          "path": "scripts/validate-tw06-structural.mjs",
+          "sha256": "5eebe519059a7f12ea11a1665f4542e2625c17a686dcac1d0af6bdbc6ac0082e"
+        }
+      ],
+      "commands": [
+        "cargo fmt --all -- --check",
+        "cargo test --workspace --all-targets --locked",
+        "bash scripts/release-check.sh",
+        "node <controller>/scripts/validate-tw06-structural.mjs --candidate-root <validation-workspace> --base caf81e116c8f48c265fec40d7d12bd23a1fa4be0 --candidate <candidate-commit>"
+      ],
+      "group_mappings": [
+        {
+          "id": "public_prealpha_consistency",
+          "assessment": "blinded_semantic_review",
+          "assertion_ids": [],
+          "review_anchors": [
+            "public/pre-alpha/release-state consistency",
+            "pre-work Issue #15 authority"
+          ]
+        },
+        {
+          "id": "licensing_authority",
+          "assessment": "blinded_semantic_review",
+          "assertion_ids": [],
+          "review_anchors": [
+            "provisional versus final licensing authority",
+            "pre-work Issue #15 authority"
+          ]
+        },
+        {
+          "id": "contribution_boundary",
+          "assessment": "blinded_semantic_review",
+          "assertion_ids": [],
+          "review_anchors": [
+            "code versus non-code contribution boundary",
+            "pre-work Issue #15 authority"
+          ]
+        },
+        {
+          "id": "governance_coherence",
+          "assessment": "blinded_semantic_review",
+          "assertion_ids": [],
+          "review_anchors": [
+            "cross-document coherence and discoverability",
+            "pre-work Issue #15 authority"
+          ]
+        }
+      ],
+      "note": "Do not keyword-score governance prose or require the historical file topology. The target PR body and implementation remain outcome-only. tw06.structural_scope is zero-point candidate scope/link evidence; a nonzero exit is not an infrastructure invalidation.",
+      "command_specs": [
+        {
+          "id": "tw06.fmt",
+          "run": "cargo fmt --all -- --check"
+        },
+        {
+          "id": "tw06.workspace",
+          "run": "cargo test --workspace --all-targets --locked"
+        },
+        {
+          "id": "tw06.release",
+          "run": "bash scripts/release-check.sh"
+        },
+        {
+          "id": "tw06.structural_scope",
+          "run": "node <controller>/scripts/validate-tw06-structural.mjs --candidate-root <validation-workspace> --base caf81e116c8f48c265fec40d7d12bd23a1fa4be0 --candidate <candidate-commit>"
+        }
+      ],
+      "assertions": [],
+      "integrity_gates": [
+        "TW-06 structural contract byte hash"
+      ],
+      "unscored_gates": [
+        "tw06.fmt",
+        "tw06.workspace",
+        "tw06.release",
+        "tw06.structural_scope"
+      ]
+    },
+    {
+      "id": "TW-07",
+      "source_commit": "6ad364755566bc604e69800c8656868dab60a365",
+      "mode": "historical_black_box_oracle",
+      "files": [
+        {
+          "path": "crates/formula-engine/tests/complete_oracle.rs",
+          "sha256": "e39352482d3e3a5ca2a4e711b68ee90dfc0aa2a0d1cd7eec5c1f46099ff4aebd"
+        },
+        {
+          "path": "scripts/portable-conformance-check.rs",
+          "sha256": "c0113da7afd6f6325362d2ba4674bf4e29f126c0d5cce479b8b3666f8b9b76e1"
+        },
+        {
+          "path": "scripts/cargo-artifact-path.mjs",
+          "sha256": "f7954eca0b558f28ad86d67260cdfebf0c7da815e9467e68bbba8b3f34414aba"
+        }
+      ],
+      "commands": [
+        "cargo test -p tachiko-formula-engine --test complete_oracle --locked complete_oracle_preserves_disjoint_sccs_and_an_independent_evaluation_failure -- --exact",
+        "cargo test -p tachiko-formula-engine --test complete_oracle --locked binding_failures_accumulate_all_direct_stable_targets_before_cycle_and_evaluation -- --exact",
+        "cargo test -p tachiko-formula-engine --test complete_oracle --locked primary_failure_precedence_excludes_earlier_failed_nodes_from_cycle_authority -- --exact",
+        "cargo test -p tachiko-formula-engine --test complete_oracle --locked branching_dag_with_a_shared_child_is_not_a_false_positive_scc -- --exact",
+        "cargo test -p tachiko-formula-engine --test complete_oracle --locked failed_dependency_subjects_are_direct_and_take_precedence_over_local_evaluation -- --exact",
+        "cargo test -p tachiko-formula-engine --test complete_oracle --locked failed_outcome_is_stably_ordered_deterministic_and_contains_no_partial_calculation -- --exact",
+        "cargo test -p tachiko-formula-engine --test complete_oracle --locked local_evaluation_failure_selection_remains_left_to_right -- --exact",
+        "cargo test -p tachiko-formula-engine --test complete_oracle --locked generated_acyclic_and_cyclic_graphs_match_an_independent_reachability_oracle -- --exact",
+        "cargo test -p tachiko-formula-engine --test complete_oracle --locked compatibility_projection_of_a_long_failed_chain_is_stack_safe -- --exact",
+        "bash <benchmark>/scripts/run-portable-observations.sh --candidate-root <validation-workspace> --crate-set full --output <trusted-portable-observations-file>"
+      ],
+      "group_mappings": [
+        {
+          "id": "complete_outcome",
+          "assessment": "machine_with_blinded_adapter",
+          "assertion_ids": [
+            "tw-07.complete-outcome"
+          ]
+        },
+        {
+          "id": "scc_precedence",
+          "assessment": "machine_with_blinded_adapter",
+          "assertion_ids": [
+            "tw-07.binding-precedence",
+            "tw-07.primary-precedence",
+            "tw-07.no-false-scc"
+          ]
+        },
+        {
+          "id": "dependency_atomicity",
+          "assessment": "machine_with_blinded_adapter",
+          "assertion_ids": [
+            "tw-07.direct-dependencies",
+            "tw-07.no-partial-state"
+          ]
+        },
+        {
+          "id": "deterministic_portability",
+          "assessment": "machine_with_blinded_adapter",
+          "assertion_ids": [
+            "tw-07.local-order",
+            "tw-07.generated-oracle",
+            "tw-07.stack-safety",
+            "tw-07.portable.record-26"
+          ]
+        }
+      ],
+      "command_specs": [
+        {
+          "id": "tw07.complete_oracle_preserves_disjoint_sccs_and_an_independent_evaluation_failure",
+          "run": "cargo test -p tachiko-formula-engine --test complete_oracle --locked complete_oracle_preserves_disjoint_sccs_and_an_independent_evaluation_failure -- --exact"
+        },
+        {
+          "id": "tw07.binding_failures_accumulate_all_direct_stable_targets_before_cycle_and_evaluation",
+          "run": "cargo test -p tachiko-formula-engine --test complete_oracle --locked binding_failures_accumulate_all_direct_stable_targets_before_cycle_and_evaluation -- --exact"
+        },
+        {
+          "id": "tw07.primary_failure_precedence_excludes_earlier_failed_nodes_from_cycle_authority",
+          "run": "cargo test -p tachiko-formula-engine --test complete_oracle --locked primary_failure_precedence_excludes_earlier_failed_nodes_from_cycle_authority -- --exact"
+        },
+        {
+          "id": "tw07.branching_dag_with_a_shared_child_is_not_a_false_positive_scc",
+          "run": "cargo test -p tachiko-formula-engine --test complete_oracle --locked branching_dag_with_a_shared_child_is_not_a_false_positive_scc -- --exact"
+        },
+        {
+          "id": "tw07.failed_dependency_subjects_are_direct_and_take_precedence_over_local_evaluation",
+          "run": "cargo test -p tachiko-formula-engine --test complete_oracle --locked failed_dependency_subjects_are_direct_and_take_precedence_over_local_evaluation -- --exact"
+        },
+        {
+          "id": "tw07.failed_outcome_is_stably_ordered_deterministic_and_contains_no_partial_calculation",
+          "run": "cargo test -p tachiko-formula-engine --test complete_oracle --locked failed_outcome_is_stably_ordered_deterministic_and_contains_no_partial_calculation -- --exact"
+        },
+        {
+          "id": "tw07.local_evaluation_failure_selection_remains_left_to_right",
+          "run": "cargo test -p tachiko-formula-engine --test complete_oracle --locked local_evaluation_failure_selection_remains_left_to_right -- --exact"
+        },
+        {
+          "id": "tw07.generated_acyclic_and_cyclic_graphs_match_an_independent_reachability_oracle",
+          "run": "cargo test -p tachiko-formula-engine --test complete_oracle --locked generated_acyclic_and_cyclic_graphs_match_an_independent_reachability_oracle -- --exact"
+        },
+        {
+          "id": "tw07.compatibility_projection_of_a_long_failed_chain_is_stack_safe",
+          "run": "cargo test -p tachiko-formula-engine --test complete_oracle --locked compatibility_projection_of_a_long_failed_chain_is_stack_safe -- --exact"
+        },
+        {
+          "id": "tw07.portable",
+          "run": "bash <benchmark>/scripts/run-portable-observations.sh --candidate-root <validation-workspace> --crate-set full --output <trusted-portable-observations-file>"
+        }
+      ],
+      "assertions": [
+        {
+          "id": "tw-07.complete-outcome",
+          "command_id": "tw07.complete_oracle_preserves_disjoint_sccs_and_an_independent_evaluation_failure",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "complete_oracle_preserves_disjoint_sccs_and_an_independent_evaluation_failure",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 6,
+          "mandatory": true,
+          "contract_group_ids": [
+            "complete_outcome"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-07.binding-precedence",
+          "command_id": "tw07.binding_failures_accumulate_all_direct_stable_targets_before_cycle_and_evaluation",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "binding_failures_accumulate_all_direct_stable_targets_before_cycle_and_evaluation",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 2,
+          "mandatory": true,
+          "contract_group_ids": [
+            "scc_precedence"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-07.primary-precedence",
+          "command_id": "tw07.primary_failure_precedence_excludes_earlier_failed_nodes_from_cycle_authority",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "primary_failure_precedence_excludes_earlier_failed_nodes_from_cycle_authority",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 2,
+          "mandatory": true,
+          "contract_group_ids": [
+            "scc_precedence"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-07.no-false-scc",
+          "command_id": "tw07.branching_dag_with_a_shared_child_is_not_a_false_positive_scc",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "branching_dag_with_a_shared_child_is_not_a_false_positive_scc",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 2,
+          "mandatory": true,
+          "contract_group_ids": [
+            "scc_precedence"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-07.direct-dependencies",
+          "command_id": "tw07.failed_dependency_subjects_are_direct_and_take_precedence_over_local_evaluation",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "failed_dependency_subjects_are_direct_and_take_precedence_over_local_evaluation",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 3,
+          "mandatory": true,
+          "contract_group_ids": [
+            "dependency_atomicity"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-07.no-partial-state",
+          "command_id": "tw07.failed_outcome_is_stably_ordered_deterministic_and_contains_no_partial_calculation",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "failed_outcome_is_stably_ordered_deterministic_and_contains_no_partial_calculation",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 3,
+          "mandatory": true,
+          "contract_group_ids": [
+            "dependency_atomicity"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-07.local-order",
+          "command_id": "tw07.local_evaluation_failure_selection_remains_left_to_right",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "local_evaluation_failure_selection_remains_left_to_right",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "deterministic_portability"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-07.generated-oracle",
+          "command_id": "tw07.generated_acyclic_and_cyclic_graphs_match_an_independent_reachability_oracle",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "generated_acyclic_and_cyclic_graphs_match_an_independent_reachability_oracle",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "deterministic_portability"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-07.stack-safety",
+          "command_id": "tw07.compatibility_projection_of_a_long_failed_chain_is_stack_safe",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "compatibility_projection_of_a_long_failed_chain_is_stack_safe",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "deterministic_portability"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-07.portable.record-26",
+          "command_id": "tw07.portable",
+          "selector": {
+            "kind": "portable_record_set",
+            "indexes": [
+              26
+            ],
+            "expected_records": [
+              {
+                "index": 26,
+                "class": 7,
+                "bits": "f6cc06402839c814",
+                "auxiliary": "6"
+              }
+            ],
+            "require_selected_native_wasm_equal": true,
+            "reject_class": 255,
+            "crate_set": "full",
+            "adapter_allowed": true
+          },
+          "points": 3,
+          "mandatory": true,
+          "contract_group_ids": [
+            "deterministic_portability"
+          ],
+          "pass_rule": "every selected native record exactly matches the lock, the selected WASM records are byte-identical, and no selected class is 255; otherwise zero; infrastructure error invalidates the run"
+        }
+      ],
+      "integrity_gates": [],
+      "unscored_gates": [],
+      "constructed_contracts": [
+        {
+          "id": "portable-observation-runner-v1",
+          "path": "scripts/run-portable-observations.sh",
+          "sha256": "35c5ed9f95a7ca09e121a913b306b4aa399c695bcfa79b6defb20d0a1bde9ddd"
+        },
+        {
+          "id": "portable-observation-collector-v1",
+          "path": "scripts/collect-portable-observations.mjs",
+          "sha256": "bb3def3624239ae4d6e5d1c5a482239704afbe6b8aaac470b5b5067216cda18c"
+        },
+        {
+          "id": "portable-wasm-record-reader-v1",
+          "path": "scripts/portable-wasm-records.mjs",
+          "sha256": "96d01ad2aae6ba8acc64d29e59ca17fee6b8fcba44ec3efaefe3dd347ef3877d"
+        },
+        {
+          "id": "portable-assertion-validator-v1",
+          "path": "scripts/validate-portable-assertion.mjs",
+          "sha256": "940588f25e70b61bad58566624e1bc5602c4a2eecf6528d6fb6b787391224019"
+        }
+      ]
+    },
+    {
+      "id": "TW-08",
+      "source_commit": "1929dd758ed580f0ccd2bc70be11560f3e88b0da",
+      "mode": "historical_black_box_oracle_plus_normalized_blinded_adapter",
+      "files": [
+        {
+          "path": "crates/storage/tests/strict_decoding.rs",
+          "sha256": "b4891a1fcb0fcce2ae87d7e74aaef968797cdc02b7ee661868c54248a843ceca"
+        },
+        {
+          "path": "crates/storage/tests/canonical_v1.rs",
+          "sha256": "54ce3cb907c2ab0432d0700b50dfa2ef61d6af78a68da753598856701a4b52d0"
+        },
+        {
+          "path": "crates/storage/tests/fixtures/all-v1-shapes.ro",
+          "sha256": "ac0341df9df614f44d62f207baa029a0d01203bc966b0bcf08066d2ade1aadc1"
+        }
+      ],
+      "commands": [
+        "cargo test -p tachiko-storage --test strict_decoding --locked invalid_utf8_is_distinct_from_invalid_json -- --exact",
+        "cargo test -p tachiko-storage --test strict_decoding --locked invalid_json_is_reported_before_version_dispatch -- --exact",
+        "cargo test -p tachiko-storage --test strict_decoding --locked duplicate_members_are_rejected_at_every_depth_after_escape_decoding -- --exact",
+        "cargo test -p tachiko-storage --test strict_decoding --locked missing_version_is_distinct -- --exact",
+        "cargo test -p tachiko-storage --test strict_decoding --locked malformed_versions_are_distinct_from_missing_and_unsupported_versions -- --exact",
+        "cargo test -p tachiko-storage --test strict_decoding --locked unsupported_version_wins_before_v1_body_interpretation -- --exact",
+        "cargo test -p tachiko-storage --test strict_decoding --locked unsupported_version_does_not_apply_v1_number_limits_to_the_future_body -- --exact",
+        "cargo test -p tachiko-storage --test strict_decoding --locked supported_v1_rejects_unknown_members_recursively -- --exact",
+        "cargo test -p tachiko-storage --test strict_decoding --locked v1_basic_field_types_reject_a_present_null_schema_member -- --exact",
+        "cargo test -p tachiko-storage --test strict_decoding --locked v1_rejects_schema_and_entity_map_key_id_mismatches -- --exact",
+        "cargo test -p tachiko-storage --test strict_decoding --locked v1_rejects_unresolvable_schema_and_field_relationships -- --exact",
+        "cargo test -p tachiko-storage --test canonical_v1 --locked canonical_minimal_v1_has_exact_specified_bytes -- --exact",
+        "cargo test -p tachiko-storage --test canonical_v1 --locked every_v1_field_value_and_expression_discriminator_round_trips -- --exact",
+        "cargo test -p tachiko-storage --test canonical_v1 --locked every_v1_shape_has_exact_canonical_bytes -- --exact",
+        "cargo test -p tachiko-storage --test canonical_v1 --locked canonical_v1_preserves_unicode_scalar_sequences_without_normalization -- --exact",
+        "cargo test -p tachiko-storage --test canonical_v1 --locked every_legacy_id_map_uses_ascii_lexicographic_order -- --exact",
+        "cargo test -p tachiko-storage --test canonical_v1 --locked checked_in_ro_examples_are_canonical_and_byte_stable -- --exact"
+      ],
+      "group_mappings": [
+        {
+          "id": "strict_frontend_dispatch",
+          "assessment": "machine_with_blinded_adapter",
+          "assertion_ids": [
+            "tw-08.invalid-utf8",
+            "tw-08.invalid-json",
+            "tw-08.duplicates",
+            "tw-08.missing-version",
+            "tw-08.malformed-version"
+          ]
+        },
+        {
+          "id": "closed_world_conversion",
+          "assessment": "machine_with_blinded_adapter",
+          "assertion_ids": [
+            "tw-08.unsupported-precedence",
+            "tw-08.future-number",
+            "tw-08.unknown-recursive",
+            "tw-08.null-schema",
+            "tw-08.map-id",
+            "tw-08.relationships"
+          ]
+        },
+        {
+          "id": "canonical_compatibility",
+          "assessment": "machine_with_blinded_adapter",
+          "assertion_ids": [
+            "tw-08.minimal-bytes",
+            "tw-08.shapes-roundtrip",
+            "tw-08.shapes-bytes",
+            "tw-08.unicode",
+            "tw-08.map-order",
+            "tw-08.examples"
+          ]
+        },
+        {
+          "id": "migration_seam_and_scope",
+          "assessment": "blinded_semantic_review",
+          "assertion_ids": [],
+          "review_anchors": [
+            "one strict migration-facing DTO seam",
+            "storage-owned durable boundary",
+            "forbidden-scope preservation"
+          ]
+        }
+      ],
+      "command_specs": [
+        {
+          "id": "tw08.invalid_utf8",
+          "run": "cargo test -p tachiko-storage --test strict_decoding --locked invalid_utf8_is_distinct_from_invalid_json -- --exact"
+        },
+        {
+          "id": "tw08.invalid_json",
+          "run": "cargo test -p tachiko-storage --test strict_decoding --locked invalid_json_is_reported_before_version_dispatch -- --exact"
+        },
+        {
+          "id": "tw08.duplicates",
+          "run": "cargo test -p tachiko-storage --test strict_decoding --locked duplicate_members_are_rejected_at_every_depth_after_escape_decoding -- --exact"
+        },
+        {
+          "id": "tw08.missing_version",
+          "run": "cargo test -p tachiko-storage --test strict_decoding --locked missing_version_is_distinct -- --exact"
+        },
+        {
+          "id": "tw08.malformed_versions",
+          "run": "cargo test -p tachiko-storage --test strict_decoding --locked malformed_versions_are_distinct_from_missing_and_unsupported_versions -- --exact"
+        },
+        {
+          "id": "tw08.unsupported_precedence",
+          "run": "cargo test -p tachiko-storage --test strict_decoding --locked unsupported_version_wins_before_v1_body_interpretation -- --exact"
+        },
+        {
+          "id": "tw08.future_number",
+          "run": "cargo test -p tachiko-storage --test strict_decoding --locked unsupported_version_does_not_apply_v1_number_limits_to_the_future_body -- --exact"
+        },
+        {
+          "id": "tw08.unknown_recursive",
+          "run": "cargo test -p tachiko-storage --test strict_decoding --locked supported_v1_rejects_unknown_members_recursively -- --exact"
+        },
+        {
+          "id": "tw08.null_schema",
+          "run": "cargo test -p tachiko-storage --test strict_decoding --locked v1_basic_field_types_reject_a_present_null_schema_member -- --exact"
+        },
+        {
+          "id": "tw08.map_id",
+          "run": "cargo test -p tachiko-storage --test strict_decoding --locked v1_rejects_schema_and_entity_map_key_id_mismatches -- --exact"
+        },
+        {
+          "id": "tw08.relationships",
+          "run": "cargo test -p tachiko-storage --test strict_decoding --locked v1_rejects_unresolvable_schema_and_field_relationships -- --exact"
+        },
+        {
+          "id": "tw08.minimal_bytes",
+          "run": "cargo test -p tachiko-storage --test canonical_v1 --locked canonical_minimal_v1_has_exact_specified_bytes -- --exact"
+        },
+        {
+          "id": "tw08.shapes_roundtrip",
+          "run": "cargo test -p tachiko-storage --test canonical_v1 --locked every_v1_field_value_and_expression_discriminator_round_trips -- --exact"
+        },
+        {
+          "id": "tw08.shapes_bytes",
+          "run": "cargo test -p tachiko-storage --test canonical_v1 --locked every_v1_shape_has_exact_canonical_bytes -- --exact"
+        },
+        {
+          "id": "tw08.unicode",
+          "run": "cargo test -p tachiko-storage --test canonical_v1 --locked canonical_v1_preserves_unicode_scalar_sequences_without_normalization -- --exact"
+        },
+        {
+          "id": "tw08.map_order",
+          "run": "cargo test -p tachiko-storage --test canonical_v1 --locked every_legacy_id_map_uses_ascii_lexicographic_order -- --exact"
+        },
+        {
+          "id": "tw08.examples",
+          "run": "cargo test -p tachiko-storage --test canonical_v1 --locked checked_in_ro_examples_are_canonical_and_byte_stable -- --exact"
+        }
+      ],
+      "assertions": [
+        {
+          "id": "tw-08.invalid-utf8",
+          "command_id": "tw08.invalid_utf8",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "invalid_utf8_is_distinct_from_invalid_json",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "strict_frontend_dispatch"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-08.invalid-json",
+          "command_id": "tw08.invalid_json",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "invalid_json_is_reported_before_version_dispatch",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "strict_frontend_dispatch"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-08.duplicates",
+          "command_id": "tw08.duplicates",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "duplicate_members_are_rejected_at_every_depth_after_escape_decoding",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 2,
+          "mandatory": true,
+          "contract_group_ids": [
+            "strict_frontend_dispatch"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-08.missing-version",
+          "command_id": "tw08.missing_version",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "missing_version_is_distinct",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "strict_frontend_dispatch"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-08.malformed-version",
+          "command_id": "tw08.malformed_versions",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "malformed_versions_are_distinct_from_missing_and_unsupported_versions",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "strict_frontend_dispatch"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-08.unsupported-precedence",
+          "command_id": "tw08.unsupported_precedence",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "unsupported_version_wins_before_v1_body_interpretation",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "closed_world_conversion"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-08.future-number",
+          "command_id": "tw08.future_number",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "unsupported_version_does_not_apply_v1_number_limits_to_the_future_body",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "closed_world_conversion"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-08.unknown-recursive",
+          "command_id": "tw08.unknown_recursive",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "supported_v1_rejects_unknown_members_recursively",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "closed_world_conversion"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-08.null-schema",
+          "command_id": "tw08.null_schema",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "v1_basic_field_types_reject_a_present_null_schema_member",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "closed_world_conversion"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-08.map-id",
+          "command_id": "tw08.map_id",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "v1_rejects_schema_and_entity_map_key_id_mismatches",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "closed_world_conversion"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-08.relationships",
+          "command_id": "tw08.relationships",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "v1_rejects_unresolvable_schema_and_field_relationships",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "closed_world_conversion"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-08.minimal-bytes",
+          "command_id": "tw08.minimal_bytes",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "canonical_minimal_v1_has_exact_specified_bytes",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "canonical_compatibility"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-08.shapes-roundtrip",
+          "command_id": "tw08.shapes_roundtrip",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "every_v1_field_value_and_expression_discriminator_round_trips",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "canonical_compatibility"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-08.shapes-bytes",
+          "command_id": "tw08.shapes_bytes",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "every_v1_shape_has_exact_canonical_bytes",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "canonical_compatibility"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-08.unicode",
+          "command_id": "tw08.unicode",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "canonical_v1_preserves_unicode_scalar_sequences_without_normalization",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "canonical_compatibility"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-08.map-order",
+          "command_id": "tw08.map_order",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "every_legacy_id_map_uses_ascii_lexicographic_order",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "canonical_compatibility"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-08.examples",
+          "command_id": "tw08.examples",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "checked_in_ro_examples_are_canonical_and_byte_stable",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "canonical_compatibility"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        }
+      ],
+      "integrity_gates": [
+        "historical oracle hashes",
+        "adapter behavior_implemented_by_adapter=false"
+      ],
+      "unscored_gates": []
+    },
+    {
+      "id": "TW-09",
+      "source_commit": "156565a3d2dc7664088a24b7f6e38d02ad4e04fe",
+      "mode": "rebased_behavioral_oracle_plus_case_local_portable_contract",
+      "files": [
+        {
+          "path": "crates/workspace-engine/tests/validation_report.rs",
+          "sha256": "a3a2259eb456850119651eb198222215eb12f93f191d92ca252efef416f95ac5"
+        }
+      ],
+      "constructed_contracts": [
+        {
+          "id": "TW-09-stable-diagnostic-facts-v1",
+          "path": "evaluator/contracts/TW-09-stable-diagnostic-facts.json",
+          "sha256": "38a0a4922c7c9d43c50d0690f5ccca7751ab2a70859a542f6beae99540ab8f98"
+        },
+        {
+          "id": "TW-09-stable-diagnostic-validator-v1",
+          "path": "scripts/validate-tw09-stable-facts.mjs",
+          "sha256": "a078ac7dfe0c83aca53fe6b210437c92fe0b7c5366edabae4d4fe83f711eb46d"
+        },
+        {
+          "id": "portable-observation-runner-v1",
+          "path": "scripts/run-portable-observations.sh",
+          "sha256": "35c5ed9f95a7ca09e121a913b306b4aa399c695bcfa79b6defb20d0a1bde9ddd"
+        },
+        {
+          "id": "portable-observation-collector-v1",
+          "path": "scripts/collect-portable-observations.mjs",
+          "sha256": "bb3def3624239ae4d6e5d1c5a482239704afbe6b8aaac470b5b5067216cda18c"
+        },
+        {
+          "id": "portable-wasm-record-reader-v1",
+          "path": "scripts/portable-wasm-records.mjs",
+          "sha256": "96d01ad2aae6ba8acc64d29e59ca17fee6b8fcba44ec3efaefe3dd347ef3877d"
+        },
+        {
+          "id": "portable-assertion-validator-v1",
+          "path": "scripts/validate-portable-assertion.mjs",
+          "sha256": "940588f25e70b61bad58566624e1bc5602c4a2eecf6528d6fb6b787391224019"
+        },
+        {
+          "id": "TW-09-portable-validation-observations-v1",
+          "path": "evaluator/contracts/TW-09-portable-validation-observations.json",
+          "sha256": "7c7e4f461f31290ba9c9580dfaca6d114b90b4a1ade1560cfa4a20e9a6f39ccf"
+        }
+      ],
+      "commands": [
+        "node <trusted-adapter-file> --candidate-root <validation-workspace> --contract <trusted-contract-file> --output <trusted-observations-file>",
+        "node <benchmark>/scripts/validate-tw09-stable-facts.mjs --contract <trusted-contract-file> --observations <trusted-observations-file> --adapter-file <trusted-adapter-file>",
+        "cargo test -p tachiko-workspace-engine --test validation_report --locked swapped_schema_ids_preserve_both_directional_mismatches -- --exact",
+        "cargo test -p tachiko-workspace-engine --test validation_report --locked swapped_entity_ids_preserve_both_directional_mismatches -- --exact",
+        "cargo test -p tachiko-workspace-engine --test validation_report --locked swapped_schema_field_ids_preserve_both_directional_mismatches -- --exact",
+        "cargo test -p tachiko-workspace-engine --test validation_report --locked independent_findings_accumulate_while_missing_schema_suppresses_cascades -- --exact",
+        "cargo test -p tachiko-workspace-engine --test validation_report --locked cascade_suppression_filters_each_binding_fact_by_its_actual_prerequisite -- --exact",
+        "cargo test -p tachiko-workspace-engine --test validation_report --locked cascade_suppression_filters_each_direct_failed_dependency -- --exact",
+        "cargo test -p tachiko-workspace-engine --test validation_report --locked validation_and_finalization_share_the_same_semantic_report -- --exact",
+        "bash <benchmark>/scripts/run-portable-observations.sh --candidate-root <validation-workspace> --crate-set full --output <trusted-portable-observations-file>"
+      ],
+      "group_mappings": [
+        {
+          "id": "stable_diagnostic_facts",
+          "assessment": "machine_with_blinded_adapter",
+          "assertion_ids": [
+            "tw-09.machine-code",
+            "tw-09.classification-severity-provider",
+            "tw-09.subjects",
+            "tw-09.related-subjects",
+            "tw-09.facts",
+            "tw-09.stable-order"
+          ]
+        },
+        {
+          "id": "formula_authority",
+          "assessment": "blinded_semantic_review",
+          "assertion_ids": [],
+          "review_anchors": [
+            "complete formula outcome projection",
+            "no workspace SCC/dependency rediscovery",
+            "lower-crate pure-check ownership"
+          ]
+        },
+        {
+          "id": "suppression_directionality",
+          "assessment": "machine_with_blinded_adapter",
+          "assertion_ids": [
+            "tw-09.suppression-1",
+            "tw-09.suppression-2",
+            "tw-09.suppression-3",
+            "tw-09.suppression-4",
+            "tw-09.suppression-5",
+            "tw-09.suppression-6"
+          ]
+        },
+        {
+          "id": "agreement_portability",
+          "assessment": "machine_with_blinded_adapter",
+          "assertion_ids": [
+            "tw-09.presentation-invariance",
+            "tw-09.rename-stability",
+            "tw-09.validation-finalization-agreement",
+            "tw-09.portable.records-27-30"
+          ]
+        }
+      ],
+      "command_specs": [
+        {
+          "id": "tw09.adapter",
+          "run": "node <trusted-adapter-file> --candidate-root <validation-workspace> --contract <trusted-contract-file> --output <trusted-observations-file>"
+        },
+        {
+          "id": "tw09.validate",
+          "run": "node <benchmark>/scripts/validate-tw09-stable-facts.mjs --contract <trusted-contract-file> --observations <trusted-observations-file> --adapter-file <trusted-adapter-file>"
+        },
+        {
+          "id": "tw09.swapped_schema_ids_preserve_both_directional_mismatches",
+          "run": "cargo test -p tachiko-workspace-engine --test validation_report --locked swapped_schema_ids_preserve_both_directional_mismatches -- --exact"
+        },
+        {
+          "id": "tw09.swapped_entity_ids_preserve_both_directional_mismatches",
+          "run": "cargo test -p tachiko-workspace-engine --test validation_report --locked swapped_entity_ids_preserve_both_directional_mismatches -- --exact"
+        },
+        {
+          "id": "tw09.swapped_schema_field_ids_preserve_both_directional_mismatches",
+          "run": "cargo test -p tachiko-workspace-engine --test validation_report --locked swapped_schema_field_ids_preserve_both_directional_mismatches -- --exact"
+        },
+        {
+          "id": "tw09.independent_findings_accumulate_while_missing_schema_suppresses_cascades",
+          "run": "cargo test -p tachiko-workspace-engine --test validation_report --locked independent_findings_accumulate_while_missing_schema_suppresses_cascades -- --exact"
+        },
+        {
+          "id": "tw09.cascade_suppression_filters_each_binding_fact_by_its_actual_prerequisite",
+          "run": "cargo test -p tachiko-workspace-engine --test validation_report --locked cascade_suppression_filters_each_binding_fact_by_its_actual_prerequisite -- --exact"
+        },
+        {
+          "id": "tw09.cascade_suppression_filters_each_direct_failed_dependency",
+          "run": "cargo test -p tachiko-workspace-engine --test validation_report --locked cascade_suppression_filters_each_direct_failed_dependency -- --exact"
+        },
+        {
+          "id": "tw09.validation_and_finalization_share_the_same_semantic_report",
+          "run": "cargo test -p tachiko-workspace-engine --test validation_report --locked validation_and_finalization_share_the_same_semantic_report -- --exact"
+        },
+        {
+          "id": "tw09.portable",
+          "run": "bash <benchmark>/scripts/run-portable-observations.sh --candidate-root <validation-workspace> --crate-set full --output <trusted-portable-observations-file>"
+        }
+      ],
+      "assertions": [
+        {
+          "id": "tw-09.machine-code",
+          "command_id": "tw09.validate",
+          "selector": {
+            "kind": "json_pointer",
+            "json_pointer": "/assertions/machine_code",
+            "expected": true,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "stable_diagnostic_facts"
+          ],
+          "pass_rule": "validator exit 0 and the locked JSON pointer is exactly true awards full points; false or absent awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-09.classification-severity-provider",
+          "command_id": "tw09.validate",
+          "selector": {
+            "kind": "json_pointer",
+            "json_pointer": "/assertions/machine_classification_severity_provider",
+            "expected": true,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "stable_diagnostic_facts"
+          ],
+          "pass_rule": "validator exit 0 and the locked JSON pointer is exactly true awards full points; false or absent awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-09.subjects",
+          "command_id": "tw09.validate",
+          "selector": {
+            "kind": "json_pointer",
+            "json_pointer": "/assertions/machine_subjects",
+            "expected": true,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "stable_diagnostic_facts"
+          ],
+          "pass_rule": "validator exit 0 and the locked JSON pointer is exactly true awards full points; false or absent awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-09.related-subjects",
+          "command_id": "tw09.validate",
+          "selector": {
+            "kind": "json_pointer",
+            "json_pointer": "/assertions/machine_related_subjects",
+            "expected": true,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "stable_diagnostic_facts"
+          ],
+          "pass_rule": "validator exit 0 and the locked JSON pointer is exactly true awards full points; false or absent awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-09.facts",
+          "command_id": "tw09.validate",
+          "selector": {
+            "kind": "json_pointer",
+            "json_pointer": "/assertions/machine_facts",
+            "expected": true,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "stable_diagnostic_facts"
+          ],
+          "pass_rule": "validator exit 0 and the locked JSON pointer is exactly true awards full points; false or absent awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-09.stable-order",
+          "command_id": "tw09.validate",
+          "selector": {
+            "kind": "json_pointer",
+            "json_pointer": "/assertions/stable_machine_code_order",
+            "expected": true,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "stable_diagnostic_facts"
+          ],
+          "pass_rule": "validator exit 0 and the locked JSON pointer is exactly true awards full points; false or absent awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-09.suppression-1",
+          "command_id": "tw09.swapped_schema_ids_preserve_both_directional_mismatches",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "swapped_schema_ids_preserve_both_directional_mismatches",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "suppression_directionality"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-09.suppression-2",
+          "command_id": "tw09.swapped_entity_ids_preserve_both_directional_mismatches",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "swapped_entity_ids_preserve_both_directional_mismatches",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "suppression_directionality"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-09.suppression-3",
+          "command_id": "tw09.swapped_schema_field_ids_preserve_both_directional_mismatches",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "swapped_schema_field_ids_preserve_both_directional_mismatches",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "suppression_directionality"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-09.suppression-4",
+          "command_id": "tw09.independent_findings_accumulate_while_missing_schema_suppresses_cascades",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "independent_findings_accumulate_while_missing_schema_suppresses_cascades",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "suppression_directionality"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-09.suppression-5",
+          "command_id": "tw09.cascade_suppression_filters_each_binding_fact_by_its_actual_prerequisite",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "cascade_suppression_filters_each_binding_fact_by_its_actual_prerequisite",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "suppression_directionality"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-09.suppression-6",
+          "command_id": "tw09.cascade_suppression_filters_each_direct_failed_dependency",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "cascade_suppression_filters_each_direct_failed_dependency",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "suppression_directionality"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-09.presentation-invariance",
+          "command_id": "tw09.validate",
+          "selector": {
+            "kind": "json_pointer",
+            "json_pointer": "/assertions/presentation_invariance",
+            "expected": true,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "agreement_portability"
+          ],
+          "pass_rule": "validator exit 0 and the locked JSON pointer is exactly true awards full points; false or absent awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-09.rename-stability",
+          "command_id": "tw09.validate",
+          "selector": {
+            "kind": "json_pointer",
+            "json_pointer": "/assertions/renamed_duplicate",
+            "expected": true,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "agreement_portability"
+          ],
+          "pass_rule": "validator exit 0 and the locked JSON pointer is exactly true awards full points; false or absent awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-09.validation-finalization-agreement",
+          "command_id": "tw09.validation_and_finalization_share_the_same_semantic_report",
+          "selector": {
+            "kind": "rust_test_exact",
+            "test_name": "validation_and_finalization_share_the_same_semantic_report",
+            "required_matching_tests": 1,
+            "adapter_allowed": true
+          },
+          "points": 1,
+          "mandatory": true,
+          "contract_group_ids": [
+            "agreement_portability"
+          ],
+          "pass_rule": "exit 0 and exactly one locked test executes and passes; zero matches or nonzero exit awards zero; infrastructure error invalidates the run"
+        },
+        {
+          "id": "tw-09.portable.records-27-30",
+          "command_id": "tw09.portable",
+          "selector": {
+            "kind": "portable_record_set",
+            "indexes": [
+              27,
+              28,
+              29,
+              30
+            ],
+            "expected_records": [
+              {
+                "index": 27,
+                "class": 9,
+                "bits": "0000000000000010",
+                "auxiliary": "14450937261505426764"
+              },
+              {
+                "index": 28,
+                "class": 9,
+                "bits": "0000000000000002",
+                "auxiliary": "17244910774212126556"
+              },
+              {
+                "index": 29,
+                "class": 9,
+                "bits": "0000000000000006",
+                "auxiliary": "12164157338575685884"
+              },
+              {
+                "index": 30,
+                "class": 9,
+                "bits": "0000000000000004",
+                "auxiliary": "18384632427777425720"
+              }
+            ],
+            "require_selected_native_wasm_equal": true,
+            "reject_class": 255,
+            "crate_set": "full",
+            "adapter_allowed": true
+          },
+          "points": 3,
+          "mandatory": true,
+          "contract_group_ids": [
+            "agreement_portability"
+          ],
+          "pass_rule": "every selected native record exactly matches the lock, the selected WASM records are byte-identical, and no selected class is 255; otherwise zero; infrastructure error invalidates the run"
+        }
+      ],
+      "integrity_gates": [
+        "contract hash",
+        "adapter byte hash",
+        "adapter behavior_implemented_by_adapter=false",
+        "TW-09 case-local portable contract excludes independent intervening storage records"
+      ],
+      "unscored_gates": []
+    }
+  ],
+  "scoring_rule": "Each point-bearing assertion belongs to exactly one contract group. No command-level result may be reused for a second assertion unless the selector exposes disjoint machine-readable facts. Infrastructure errors invalidate the run rather than awarding zero."
+}

@@ -1,0 +1,1362 @@
+{
+  "protocol_id": "tachiko-agents-effect-v1",
+  "repository": "nurockplayer/tachiko-work",
+  "case_count": 9,
+  "cases": [
+    {
+      "id": "TW-01",
+      "title": "Accept the stable semantic identity contract",
+      "capabilities": [
+        "adr",
+        "repository_authority",
+        "scope_control",
+        "documentation"
+      ],
+      "historical_base_commit": "47ce31aeaeb63a9bb21282691b918e8751cb5a21",
+      "historical_base_tree": "627c7301d9dade779e66d5027181c8d7bda54462",
+      "ground_truth_commit": "b2d9c7fb8c11236a0564faa37eca1cf32b76faf8",
+      "references": [
+        "https://github.com/nurockplayer/tachiko-work/issues/21",
+        "https://github.com/nurockplayer/tachiko-work/pull/69"
+      ],
+      "task_file": "tasks/TW-01.md",
+      "task_sha256": "4d23ab33d1a78ad606edae974918296c49325c8c75886d3048e1e025eae46a06",
+      "task_bytes": 1583,
+      "expected_scope": [
+        "Create and accept the next ADR for stable semantic identity",
+        "Reconcile ADR-0013, the decisions index, and canonical reconciliation register",
+        "Separate durable identity invariants from provisional UUIDv7 generation",
+        "Keep the change documentation-only"
+      ],
+      "forbidden_scope": [
+        "Rust implementation or dependency changes",
+        "Persistence DTO or migration implementation",
+        "Formula/numeric, roproj layout, UI, CRDT, event-sourcing, or plugin decisions",
+        "Promotion of UUIDv7 timestamp or generator behavior into semantic authority"
+      ],
+      "validation": {
+        "base": [
+          "bash scripts/docs-consistency-check.sh"
+        ],
+        "candidate": [
+          "bash scripts/docs-consistency-check.sh"
+        ],
+        "ground_truth": [
+          "bash scripts/docs-consistency-check.sh"
+        ],
+        "machine_contract_groups": [
+          {
+            "id": "identity_invariant",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "blinded_semantic_review",
+            "criterion": "Identity is opaque/stable and keys, paths, presentation, layout, and content are non-identity."
+          },
+          {
+            "id": "mechanism_boundary",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "blinded_semantic_review",
+            "criterion": "UUIDv7 is explicitly provisional/replaceable and timestamp bits have no semantic meaning."
+          },
+          {
+            "id": "typed_graph_boundary",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "blinded_semantic_review",
+            "criterion": "Typed stores/relationships and runtime-only derived indexes are consistently specified."
+          },
+          {
+            "id": "authority_reconciliation",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "blinded_semantic_review",
+            "criterion": "ADR/index/register/ADR-0013 agree without unresolved contradiction."
+          }
+        ]
+      },
+      "blinded_review_criteria": [
+        "The accepted invariant is stronger than the chosen generator mechanism.",
+        "Object scope is justified and avoids premature ProjectId/FormulaId expansion.",
+        "Existing decision history is preserved and contradictions are explicitly reconciled."
+      ],
+      "evidence_visibility": {
+        "agent_visible": [
+          "Historical base checkout",
+          "tasks/TW-01.md",
+          "selected AGENTS.md overlay"
+        ],
+        "evaluator_only": [
+          "Issue/PR links and comments",
+          "ground-truth commit/diff",
+          "review correction about invariant versus UUIDv7",
+          "machine/review rubric",
+          "hidden failure modes"
+        ]
+      },
+      "historical_patch": {
+        "changed_files": 4,
+        "additions": 323,
+        "deletions": 21,
+        "similarity_scored": false
+      },
+      "difficulty": "medium",
+      "time_limit_minutes": 90,
+      "estimated_active_runtime_minutes": [
+        30,
+        70
+      ],
+      "oracle_mode": "semantic_static_plus_blinded_review",
+      "score_allocation": {
+        "machine": 19,
+        "blinded_review": 81
+      },
+      "known_failure_modes": [
+        {
+          "description": "Making UUIDv7 itself or its timestamp durable semantic meaning",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        },
+        {
+          "description": "Leaving ADR-0013 rename-as-ID-replacement language authoritative",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        },
+        {
+          "description": "Treating names, storage paths, or UI coordinates as identity",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        },
+        {
+          "description": "Persisting derived indexes as competing truth",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        },
+        {
+          "description": "Expanding into storage implementation or collaboration design",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        }
+      ],
+      "replay_relation": "direct_parent"
+    },
+    {
+      "id": "TW-02",
+      "title": "Close the accepted storage-contract review gaps",
+      "capabilities": [
+        "review_remediation",
+        "repository_authority",
+        "scope_control",
+        "documentation"
+      ],
+      "historical_base_commit": "b6178e48a5e9f1078a9150038fb19352d0d55325",
+      "historical_base_tree": "65a458678a0ba4c7c7cbf2c6414e4f1ad0d0f73d",
+      "ground_truth_commit": "1e422f1c3d152a342abee57aaad8b44aa04e11cf",
+      "references": [
+        "https://github.com/nurockplayer/tachiko-work/issues/25",
+        "https://github.com/nurockplayer/tachiko-work/issues/37",
+        "https://github.com/nurockplayer/tachiko-work/issues/38",
+        "https://github.com/nurockplayer/tachiko-work/pull/73",
+        "https://github.com/nurockplayer/tachiko-work/pull/75"
+      ],
+      "task_file": "tasks/TW-02.md",
+      "task_sha256": "cc85015b09d2143335657d186732143ccb04b81b8a17db2dd43d1bb1597b5986",
+      "task_bytes": 1357,
+      "expected_scope": [
+        "Complete the recursive direct-ro/v1 wire schema and closed-world rules",
+        "Inventory all persisted typed-ID rewrite sites",
+        "Specify deterministic all-or-nothing map-then-rewrite migration",
+        "Repair stale storage navigation/ownership wording"
+      ],
+      "forbidden_scope": [
+        "Rust code or tests",
+        "A v2 representation implementation",
+        "New numeric, roproj, package, diagnostics, runtime, or host-durability decisions",
+        "Changing accepted ADR-0017 direction rather than clarifying it"
+      ],
+      "validation": {
+        "base": [
+          "bash scripts/docs-consistency-check.sh"
+        ],
+        "candidate": [
+          "bash scripts/docs-consistency-check.sh"
+        ],
+        "ground_truth": [
+          "bash scripts/docs-consistency-check.sh"
+        ],
+        "machine_contract_groups": [
+          {
+            "id": "recursive_wire_schema",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "blinded_semantic_review",
+            "criterion": "Every nested v1 object/member and unknown-member rule is implementable from the docs."
+          },
+          {
+            "id": "typed_id_inventory",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "blinded_semantic_review",
+            "criterion": "Every persisted typed-ID key/value/reference occurrence is covered without ambiguous catch-all wording."
+          },
+          {
+            "id": "atomic_migration",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "blinded_semantic_review",
+            "criterion": "Full map validation precedes complete rewrite; ambiguity/corruption fails without partial output."
+          },
+          {
+            "id": "authority_navigation",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "blinded_semantic_review",
+            "criterion": "Readers reach the correct accepted profile and ownership pages with no stale normative entry point."
+          }
+        ]
+      },
+      "blinded_review_criteria": [
+        "Clarifications are sufficient to implement but do not invent a successor representation.",
+        "Migration rules cover nested keys and values, not only top-level IDs.",
+        "The patch stays within the reviewed documentation gap."
+      ],
+      "evidence_visibility": {
+        "agent_visible": [
+          "Historical base checkout",
+          "tasks/TW-02.md",
+          "selected AGENTS.md overlay"
+        ],
+        "evaluator_only": [
+          "PR #73/#75 review history",
+          "ground-truth diff",
+          "later review findings",
+          "rubric",
+          "hidden failure modes"
+        ]
+      },
+      "historical_patch": {
+        "changed_files": 4,
+        "additions": 366,
+        "deletions": 43,
+        "similarity_scored": false
+      },
+      "difficulty": "medium",
+      "time_limit_minutes": 90,
+      "estimated_active_runtime_minutes": [
+        35,
+        75
+      ],
+      "oracle_mode": "semantic_static_plus_blinded_review",
+      "score_allocation": {
+        "machine": 19,
+        "blinded_review": 81
+      },
+      "known_failure_modes": [
+        {
+          "description": "Last-wins or one-pass migration caused by mapping while rewriting",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        },
+        {
+          "description": "Missing nested formula/reference/schema ID occurrences",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        },
+        {
+          "description": "Unknown nested members not covered by closed-world rules",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        },
+        {
+          "description": "Stale generic ro-format page still appears normative",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        },
+        {
+          "description": "Documentation silently decides v2/numeric behavior",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        }
+      ],
+      "replay_relation": "direct_parent"
+    },
+    {
+      "id": "TW-03",
+      "title": "Close the direct-ro/v2 numeric conformance gap",
+      "capabilities": [
+        "bugfix",
+        "numeric_regression",
+        "storage",
+        "native_wasm",
+        "scope_control"
+      ],
+      "historical_base_commit": "0d7baaa069ec1c673037278cc76c956eed2347e2",
+      "historical_base_tree": "f490790a4f95a6f40eb5d7af9023334ee9b51a89",
+      "ground_truth_commit": "e953877f2dfd05ae5cebc5262656c2d877c2ed9c",
+      "references": [
+        "https://github.com/nurockplayer/tachiko-work/issues/40",
+        "https://github.com/nurockplayer/tachiko-work/pull/83"
+      ],
+      "task_file": "tasks/TW-03.md",
+      "task_sha256": "992e34341ae45f1fd3f14079bc6bbd9968b1be8de7ba5f9cf52cd45e05017ba9",
+      "task_bytes": 1453,
+      "expected_scope": [
+        "Audit and close only missing direct-ro/v2 numeric conformance",
+        "Correct exact-decimal binary64 ingress if required",
+        "Add byte-stable golden and boundary/vector coverage",
+        "Execute fixed storage observations natively and under WASM"
+      ],
+      "forbidden_scope": [
+        "Legacy direct-ro/v1 behavior or bytes",
+        "v2 DTO/wire-shape or canonical-writer semantic changes",
+        "Treating format_version as semantic Number",
+        "Full JCS claim, roproj, runtime, diagnostics, or workspace migration"
+      ],
+      "validation": {
+        "base": [
+          "cargo test -p tachiko-storage --locked",
+          "bash scripts/portable-conformance-check.sh"
+        ],
+        "candidate": [
+          "cargo test -p tachiko-storage --locked",
+          "bash scripts/portable-conformance-check.sh",
+          "bash scripts/release-check.sh"
+        ],
+        "ground_truth": [
+          "cargo test -p tachiko-storage --test canonical_v2_numeric --locked",
+          "bash scripts/portable-conformance-check.sh",
+          "bash scripts/release-check.sh"
+        ],
+        "historical_oracle_files": [
+          "crates/storage/tests/canonical_v2_numeric.rs",
+          "crates/storage/tests/fixtures/direct-ro-v2-numeric-golden.ro"
+        ],
+        "machine_contract_groups": [
+          {
+            "id": "exact_decimal_rounding",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "machine_oracle",
+            "criterion": "Admitted legal decimal tokens round to the required nearest binary64, ties to even."
+          },
+          {
+            "id": "edge_classification",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "machine_oracle",
+            "criterion": "Zeros, subnormals, underflow, and overflow follow accepted classes and normalization."
+          },
+          {
+            "id": "canonical_bytes",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "machine_oracle",
+            "criterion": "Equivalent spellings and encode/decode/encode yield fixed canonical v2 bytes."
+          },
+          {
+            "id": "compatibility_parity",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "machine_oracle",
+            "criterion": "Legacy v1 is unchanged and fixed native/WASM observations match expected values."
+          }
+        ]
+      },
+      "blinded_review_criteria": [
+        "The correction occurs at the narrow owning ingress boundary.",
+        "Tests distinguish expected-oracle correctness from mere native/WASM agreement.",
+        "No serializer dependency behavior is mistaken for normative authority."
+      ],
+      "evidence_visibility": {
+        "agent_visible": [
+          "Historical base checkout",
+          "tasks/TW-03.md",
+          "selected AGENTS.md overlay"
+        ],
+        "evaluator_only": [
+          "PR body/root cause",
+          "ground-truth diff",
+          "post-base numeric tests/golden",
+          "CI run evidence",
+          "rubric",
+          "hidden failure modes"
+        ]
+      },
+      "historical_patch": {
+        "changed_files": 5,
+        "additions": 421,
+        "deletions": 7,
+        "similarity_scored": false
+      },
+      "difficulty": "hard",
+      "time_limit_minutes": 180,
+      "estimated_active_runtime_minutes": [
+        75,
+        150
+      ],
+      "oracle_mode": "public_api_historical_probe",
+      "score_allocation": {
+        "machine": 43,
+        "blinded_review": 57
+      },
+      "known_failure_modes": [
+        {
+          "description": "Direct JSON-to-f64 materialization misrounds exact edge decimals",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        },
+        {
+          "description": "Special parsing accidentally applies to root format_version",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        },
+        {
+          "description": "Negative zero or underflow is emitted non-canonically",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        },
+        {
+          "description": "Overflow reaches semantic values as infinity",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        },
+        {
+          "description": "A parity-only harness makes both targets agree on the same wrong value",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        },
+        {
+          "description": "Legacy v1 bytes change",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        }
+      ],
+      "replay_relation": "direct_parent"
+    },
+    {
+      "id": "TW-04",
+      "title": "Migrate workflow into the workspace-engine boundary",
+      "capabilities": [
+        "architecture_refactor",
+        "dependency_dag",
+        "behavior_preservation",
+        "native_wasm"
+      ],
+      "historical_base_commit": "e953877f2dfd05ae5cebc5262656c2d877c2ed9c",
+      "historical_base_tree": "f2aae2e7f2632be107f8ce6a381fd7b9bad9e204",
+      "ground_truth_commit": "515b81b955a3c21ab306f24e940ea90d46efdace",
+      "references": [
+        "https://github.com/nurockplayer/tachiko-work/issues/72",
+        "https://github.com/nurockplayer/tachiko-work/pull/85"
+      ],
+      "task_file": "tasks/TW-04.md",
+      "task_sha256": "f5e18f6e8e0c489fa42113ed58a20b2f6c240fc0b5112a08c12eb356c393f55b",
+      "task_bytes": 1481,
+      "expected_scope": [
+        "Rename/evolve workflow in place to one workspace-engine application boundary",
+        "Update CLI/AI dependencies and keep storage a sibling adapter",
+        "Add deterministic dependency-DAG validation",
+        "Preserve application behavior and native/WASM execution"
+      ],
+      "forbidden_scope": [
+        "A second orchestration crate or new semantic aggregate",
+        "Storage ownership by workspace-engine or storage-to-engine dependency",
+        "Formula/storage/identity semantic changes",
+        "External API, AI authorization, diagnostics, resident runtime, or roproj decisions"
+      ],
+      "validation": {
+        "base": [
+          "cargo test --workspace --all-targets --locked",
+          "bash scripts/portable-conformance-check.sh"
+        ],
+        "candidate": [
+          "cargo metadata --locked --format-version 1",
+          "cargo test --workspace --all-targets --locked",
+          "bash scripts/portable-conformance-check.sh",
+          "bash scripts/docs-consistency-check.sh",
+          "bash scripts/release-check.sh"
+        ],
+        "ground_truth": [
+          "node scripts/workspace-dependency-check.mjs",
+          "cargo test -p tachiko-workspace-engine --locked",
+          "bash scripts/portable-conformance-check.sh",
+          "bash scripts/release-check.sh"
+        ],
+        "historical_oracle_files": [
+          "scripts/workspace-dependency-check.mjs",
+          "crates/workspace-engine/tests/application_boundary.rs"
+        ],
+        "machine_contract_groups": [
+          {
+            "id": "single_boundary",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "machine_oracle",
+            "criterion": "The old workflow crate is gone and exactly one workspace-engine boundary owns orchestration."
+          },
+          {
+            "id": "dependency_dag",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "machine_oracle",
+            "criterion": "AI and CLI consume allowed edges; storage remains a sibling; lower pure crates do not depend upward."
+          },
+          {
+            "id": "behavior_preservation",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "machine_with_blinded_adapter",
+            "criterion": "Existing product journeys and affected crate tests retain behavior."
+          },
+          {
+            "id": "portable_boundary",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "machine_with_blinded_adapter",
+            "criterion": "The production workspace boundary executes with fixed observations natively and under WASM."
+          }
+        ]
+      },
+      "blinded_review_criteria": [
+        "The refactor clarifies ownership rather than centralizing pure algorithms aesthetically.",
+        "Dependency checks inspect Cargo metadata and cannot pass by string matching alone.",
+        "Documentation and code describe the same current layering."
+      ],
+      "evidence_visibility": {
+        "agent_visible": [
+          "Historical base checkout",
+          "tasks/TW-04.md",
+          "selected AGENTS.md overlay"
+        ],
+        "evaluator_only": [
+          "Issue completion comments",
+          "PR body/diff",
+          "post-base DAG script/tests",
+          "review evidence",
+          "rubric",
+          "hidden failure modes"
+        ]
+      },
+      "historical_patch": {
+        "changed_files": 31,
+        "additions": 1515,
+        "deletions": 635,
+        "similarity_scored": false
+      },
+      "difficulty": "hard",
+      "time_limit_minutes": 240,
+      "estimated_active_runtime_minutes": [
+        120,
+        210
+      ],
+      "oracle_mode": "metadata_and_behavioral",
+      "score_allocation": {
+        "machine": 43,
+        "blinded_review": 57
+      },
+      "known_failure_modes": [
+        {
+          "description": "Rename-only change leaves CLI/AI assembling lower algorithms directly",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        },
+        {
+          "description": "Storage acquires an upward dependency or becomes engine-owned",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        },
+        {
+          "description": "A second orchestration crate survives beside workspace-engine",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        },
+        {
+          "description": "Portable harness compiles but no longer executes the workspace boundary",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        },
+        {
+          "description": "Behavior disappears from thin adapters during code movement",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        }
+      ],
+      "replay_relation": "direct_parent"
+    },
+    {
+      "id": "TW-05",
+      "title": "Spike a resident Native/WASM workspace runtime",
+      "capabilities": [
+        "diagnosis",
+        "research_spike",
+        "tooling_workflow",
+        "native_wasm",
+        "scope_control"
+      ],
+      "historical_base_commit": "2ecb7d06115af6eb5f392504dce7610af765518a",
+      "historical_base_tree": "500f8a534592758a77aec6007cfc60db6d1e76a0",
+      "ground_truth_commit": "16289f8a5acd48ca7fa36b265b7fdfe7df0e4d12",
+      "references": [
+        "https://github.com/nurockplayer/tachiko-work/issues/26",
+        "https://github.com/nurockplayer/tachiko-work/pull/87",
+        "https://github.com/nurockplayer/tachiko-work/pull/91"
+      ],
+      "task_file": "tasks/TW-05.md",
+      "task_sha256": "feee92fe37118ea1db50b1e7c35880b0fbab9c7a7037b3bd79866049e7b2a0c2",
+      "task_bytes": 2157,
+      "expected_scope": [
+        "Standalone resident-session spike outside the production workspace",
+        "Real native and wasm32 execution behind a TypeScript Worker client",
+        "Revision-safe command/parity evidence and boundary benchmark",
+        "One explicit, locked, non-overlapping Node package-manager workflow",
+        "Research report with explicit provisional/throwaway boundaries"
+      ],
+      "forbidden_scope": [
+        "Production promotion or a second semantic engine/state mirror",
+        "Public SDK, ABI, Worker/IPC, or serialization compatibility promise",
+        "Browser-performance claims from Node Worker evidence",
+        "Multiple lockfile ecosystems or an implicit/unlocked package manager",
+        "A required historical outcome directory or script name"
+      ],
+      "validation": {
+        "base": [
+          "cargo test --workspace --all-targets --locked",
+          "bash scripts/release-check.sh"
+        ],
+        "candidate": [
+          "cargo test --workspace --all-targets --locked",
+          "bash scripts/docs-consistency-check.sh",
+          "bash scripts/release-check.sh"
+        ],
+        "ground_truth": [
+          "bash scripts/issue-26-runtime-build.sh",
+          "cargo test --manifest-path spikes/issue-26-runtime/Cargo.toml --all-targets --locked",
+          "pnpm --dir spikes/issue-26-runtime exec node --test test/worker-runtime.test.ts test/native-wasm-parity.test.ts",
+          "bash scripts/issue-26-portability-audit.sh",
+          "pnpm --dir spikes/issue-26-runtime exec node benchmark/runtime-benchmark.ts"
+        ],
+        "historical_oracle_files": [
+          "spikes/issue-26-runtime/fixtures/parity-commands.json"
+        ],
+        "machine_contract_groups": [
+          {
+            "id": "resident_revision_safety",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "machine_with_blinded_adapter",
+            "criterion": "One Rust-owned session rejects stale revisions and returns typed compact mutation/query evidence."
+          },
+          {
+            "id": "native_wasm_parity",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "machine_with_blinded_adapter",
+            "criterion": "The same production engine and command corpus execute natively and as real wasm32 with fixed observations."
+          },
+          {
+            "id": "worker_single_truth",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "blinded_semantic_review",
+            "criterion": "The Worker client retains no competing document mirror and normal traffic avoids whole snapshots."
+          },
+          {
+            "id": "methodology_boundary",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "blinded_semantic_review",
+            "criterion": "Benchmark method is reproducible and conclusions distinguish measured evidence from throwaway/provisional mechanisms."
+          }
+        ]
+      },
+      "blinded_review_criteria": [
+        "The benchmark compares equivalent work, reports medians/payload definitions, and avoids microbenchmark overclaiming.",
+        "The spike imports production semantics rather than duplicating policy.",
+        "The recommendation clearly separates demonstrated pressure from unaccepted API design."
+      ],
+      "evidence_visibility": {
+        "agent_visible": [
+          "Historical base checkout",
+          "tasks/TW-05.md",
+          "selected AGENTS.md overlay"
+        ],
+        "evaluator_only": [
+          "PR code/layout and recorded measurements",
+          "parity fixture added after base",
+          "review threads",
+          "rubric",
+          "hidden failure modes"
+        ]
+      },
+      "historical_patch": {
+        "changed_files": 22,
+        "additions": 2460,
+        "deletions": 0,
+        "similarity_scored": false
+      },
+      "difficulty": "hard",
+      "time_limit_minutes": 300,
+      "estimated_active_runtime_minutes": [
+        180,
+        270
+      ],
+      "oracle_mode": "executable_spike_plus_blinded_methodology",
+      "score_allocation": {
+        "machine": 31,
+        "blinded_review": 69
+      },
+      "known_failure_modes": [
+        {
+          "description": "TypeScript or Worker retains a second canonical document mirror",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        },
+        {
+          "description": "WASM path is mocked or only compiled, not executed",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        },
+        {
+          "description": "Parity has no fixed expected oracle",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        },
+        {
+          "description": "Revision check occurs after mutation or permits stale command publication",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        },
+        {
+          "description": "Benchmark compares unequal setup/work or reports one-shot values",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        },
+        {
+          "description": "Raw ABI/internal serde format is presented as durable public contract",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        }
+      ],
+      "replay_relation": "direct_parent"
+    },
+    {
+      "id": "TW-06",
+      "title": "Align the public pre-alpha governance posture",
+      "capabilities": [
+        "governance",
+        "repository_authority",
+        "scope_control",
+        "documentation"
+      ],
+      "historical_base_commit": "caf81e116c8f48c265fec40d7d12bd23a1fa4be0",
+      "historical_base_tree": "ff697610b5c34d96162e5736b143d47f2494503c",
+      "ground_truth_commit": "64410d6198296a4359053c5d2bb0912401b08056",
+      "replay_relation": "direct_parent",
+      "references": [
+        "https://github.com/nurockplayer/tachiko-work/issues/15",
+        "https://github.com/nurockplayer/tachiko-work/pull/22"
+      ],
+      "task_file": "tasks/TW-06.md",
+      "task_sha256": "eadec2433ba65f43a75ca5f29426aa06048e601cf1741634aa25beafcc7e4873",
+      "task_bytes": 2092,
+      "expected_scope": [
+        "Consistent public pre-alpha status and release-access guidance",
+        "Accurate provisional licensing direction with historical grants preserved",
+        "Temporary external-code contribution boundary with non-code participation open",
+        "Discoverable cross-document governance without closing the licensing decision"
+      ],
+      "forbidden_scope": [
+        "Relicensing or changes to package/license metadata and license texts",
+        "Runtime, format, release automation, or publication-state changes",
+        "Presenting MPL-2.0 or any contributor/commercial model as final",
+        "Closing unrelated governance questions or excluding non-code participation"
+      ],
+      "validation": {
+        "base": [
+          "cargo fmt --all -- --check",
+          "cargo test --workspace --all-targets --locked"
+        ],
+        "candidate": [
+          "cargo fmt --all -- --check",
+          "cargo test --workspace --all-targets --locked",
+          "bash scripts/release-check.sh"
+        ],
+        "ground_truth": [
+          "cargo fmt --all -- --check",
+          "cargo test --workspace --all-targets --locked",
+          "bash scripts/release-check.sh"
+        ],
+        "historical_oracle_files": [],
+        "machine_contract_groups": [
+          {
+            "id": "public_prealpha_consistency",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "blinded_semantic_review",
+            "criterion": "Public development, pre-alpha instability, and release authorization remain distinct and consistent."
+          },
+          {
+            "id": "licensing_authority",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "blinded_semantic_review",
+            "criterion": "Historical grants and the provisional protective-first direction are accurate without performing or implying a final relicense."
+          },
+          {
+            "id": "contribution_boundary",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "blinded_semantic_review",
+            "criterion": "The temporary code-contribution pause is explained while issues, discussion, review, and documentation participation remain open."
+          },
+          {
+            "id": "governance_coherence",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "blinded_semantic_review",
+            "criterion": "Active public, contributor, and release guidance agrees and keeps unresolved policy dimensions visibly open."
+          }
+        ]
+      },
+      "blinded_review_criteria": [
+        "Provisional direction is kept distinct from a legal or relicensing decision.",
+        "Public visibility, contribution eligibility, and release authority are not conflated.",
+        "The change is discoverable and consistent without duplicating policy or expanding scope."
+      ],
+      "evidence_visibility": {
+        "agent_visible": [
+          "Historical base repository",
+          "tasks/TW-06.md",
+          "selected AGENTS.md overlay"
+        ],
+        "evaluator_only": [
+          "Issue and PR snapshots/URLs",
+          "PR #22 diff and solution topology",
+          "historical target and CI evidence",
+          "rubric and known failure modes"
+        ]
+      },
+      "historical_patch": {
+        "changed_files": 5,
+        "additions": 93,
+        "deletions": 20,
+        "similarity_scored": false
+      },
+      "difficulty": "medium",
+      "time_limit_minutes": 90,
+      "estimated_active_runtime_minutes": [
+        30,
+        70
+      ],
+      "oracle_mode": "blinded_authority_and_scope_review",
+      "score_allocation": {
+        "machine": 19,
+        "blinded_review": 81
+      },
+      "known_failure_modes": [
+        {
+          "description": "A future license candidate is presented as a completed relicense",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of the frozen task and pre-work founder direction"
+        },
+        {
+          "description": "Previously published Apache/MIT grants are described as revocable",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of the frozen task and pre-work founder direction"
+        },
+        {
+          "description": "Stale private-repository or stable-release guidance remains active",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of the frozen task requirement"
+        },
+        {
+          "description": "The temporary code-contribution pause is broadened to non-code participation",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of the frozen task requirement"
+        },
+        {
+          "description": "Runtime, license files, package metadata, or release automation changes",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of the frozen forbidden scope"
+        }
+      ]
+    },
+    {
+      "id": "TW-07",
+      "title": "Implement the complete formula failure oracle",
+      "capabilities": [
+        "feature",
+        "graph_algorithm",
+        "determinism",
+        "semantic_authority",
+        "native_wasm"
+      ],
+      "historical_base_commit": "16289f8a5acd48ca7fa36b265b7fdfe7df0e4d12",
+      "historical_base_tree": "459a02f1ec6c9c0b862dbc71d57a73f560c1ea64",
+      "ground_truth_commit": "6ad364755566bc604e69800c8656868dab60a365",
+      "references": [
+        "https://github.com/nurockplayer/tachiko-work/issues/90",
+        "https://github.com/nurockplayer/tachiko-work/pull/97"
+      ],
+      "task_file": "tasks/TW-07.md",
+      "task_sha256": "c502f0270d2047ed4f5b745cd99f632c9167c1ff68ab83e80a9711d9191de498",
+      "task_bytes": 1775,
+      "expected_scope": [
+        "Complete atomic stable-node-keyed formula outcome",
+        "Complete eligible SCC membership and phase precedence",
+        "Direct failed-dependency subjects without cascade noise",
+        "Compatibility projection for existing calculate and fixed native/WASM observations"
+      ],
+      "forbidden_scope": [
+        "Incremental cache/runtime residency or persisted graph",
+        "Public diagnostic/wire/API stabilization or second validation engine",
+        "Formula language, number, identity, storage, or authoring changes",
+        "Partial successful calculation publication"
+      ],
+      "validation": {
+        "base": [
+          "cargo test -p tachiko-formula-engine --locked",
+          "bash scripts/portable-conformance-check.sh"
+        ],
+        "candidate": [
+          "cargo test -p tachiko-formula-engine --locked",
+          "bash scripts/portable-conformance-check.sh",
+          "bash scripts/docs-consistency-check.sh",
+          "bash scripts/release-check.sh"
+        ],
+        "ground_truth": [
+          "cargo test -p tachiko-formula-engine --test complete_oracle --locked",
+          "cargo test -p tachiko-formula-engine --test calculation --locked",
+          "bash scripts/portable-conformance-check.sh",
+          "bash scripts/release-check.sh"
+        ],
+        "historical_oracle_files": [
+          "crates/formula-engine/tests/complete_oracle.rs"
+        ],
+        "machine_contract_groups": [
+          {
+            "id": "complete_outcome",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "machine_with_blinded_adapter",
+            "criterion": "All independent formula nodes receive deterministic value or primary-failure outcomes."
+          },
+          {
+            "id": "scc_precedence",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "machine_with_blinded_adapter",
+            "criterion": "Eligible complete SCC membership and earlier structural/binding precedence are correct."
+          },
+          {
+            "id": "dependency_atomicity",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "machine_with_blinded_adapter",
+            "criterion": "Only direct failed dependencies are reported and no partial CalculationState is published."
+          },
+          {
+            "id": "deterministic_portability",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "machine_with_blinded_adapter",
+            "criterion": "Generated/repeated graph outcomes and fixed native/WASM observations are exact and stable."
+          }
+        ]
+      },
+      "blinded_review_criteria": [
+        "Graph processing cannot misclassify nodes already failed in an earlier phase.",
+        "The compatibility API projects from one authority rather than running a second oracle.",
+        "Alternative internal API design receives full credit when semantic outcomes are complete and maintainable."
+      ],
+      "evidence_visibility": {
+        "agent_visible": [
+          "Historical base checkout",
+          "tasks/TW-07.md",
+          "selected AGENTS.md overlay"
+        ],
+        "evaluator_only": [
+          "PR implementation/API names",
+          "ground-truth tests",
+          "handoff/review details",
+          "rubric",
+          "hidden failure modes"
+        ]
+      },
+      "historical_patch": {
+        "changed_files": 6,
+        "additions": 1504,
+        "deletions": 271,
+        "similarity_scored": false
+      },
+      "difficulty": "very_hard",
+      "time_limit_minutes": 300,
+      "estimated_active_runtime_minutes": [
+        180,
+        270
+      ],
+      "oracle_mode": "semantic_behavior_with_optional_blinded_adapter",
+      "score_allocation": {
+        "machine": 43,
+        "blinded_review": 57
+      },
+      "known_failure_modes": [
+        {
+          "description": "Recursive DFS overflows on adversarial chains",
+          "visibility": "evaluator_hidden",
+          "provenance": "merged review/regression evidence that post-dates the frozen assignment"
+        },
+        {
+          "description": "Cycle classification includes formulas already structurally/binding failed",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        },
+        {
+          "description": "Only one SCC or traversal-first failure is retained",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        },
+        {
+          "description": "Transitive cascade subjects replace direct dependency subjects",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        },
+        {
+          "description": "A partial success map leaks when any node fails",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        },
+        {
+          "description": "Sorted results are deterministic but incomplete",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        }
+      ],
+      "replay_relation": "direct_parent"
+    },
+    {
+      "id": "TW-08",
+      "title": "Implement the accepted legacy direct-RO v1 persistence boundary",
+      "capabilities": [
+        "feature",
+        "storage",
+        "compatibility",
+        "canonicalization",
+        "architecture_authority"
+      ],
+      "historical_base_commit": "c8528409dd327a9854ac030247ecbd8fcf765db7",
+      "historical_base_tree": "51f2d77c5200ace592f9a9fea50d0f33bb6c4fa8",
+      "ground_truth_commit": "1929dd758ed580f0ccd2bc70be11560f3e88b0da",
+      "replay_relation": "direct_parent",
+      "references": [
+        "https://github.com/nurockplayer/tachiko-work/issues/74",
+        "https://github.com/nurockplayer/tachiko-work/pull/80"
+      ],
+      "task_file": "tasks/TW-08.md",
+      "task_sha256": "ad638c9564df847389857d0132446b94fff7d465e071da69ef9624d192ca2941",
+      "task_bytes": 2049,
+      "expected_scope": [
+        "Storage-owned complete legacy direct-RO/v1 DTO boundary",
+        "Strict UTF-8, JSON, duplicate-member, and version-first reader pipeline",
+        "Closed-world v1 conversion and exact historical canonical bytes",
+        "Duplicate-safe migration-facing v1 seam and focused conformance evidence"
+      ],
+      "forbidden_scope": [
+        "A new representation version, permanent migration IR, or semantic model",
+        "Numeric-policy changes or a claim of broad JCS compliance",
+        "Automatic upgrade on read or interpretation of unsupported future bodies",
+        ".roproj, package/container, diagnostics, runtime, plugin, collaboration, or cloud decisions"
+      ],
+      "validation": {
+        "base": [
+          "cargo test -p tachiko-storage --locked",
+          "cargo test --workspace --all-targets --locked"
+        ],
+        "candidate": [
+          "cargo test -p tachiko-storage --locked",
+          "cargo test --workspace --all-targets --locked",
+          "bash scripts/release-check.sh"
+        ],
+        "ground_truth": [
+          "cargo test -p tachiko-storage --test strict_decoding --locked",
+          "cargo test -p tachiko-storage --test canonical_v1 --locked",
+          "cargo test -p tachiko-storage --locked",
+          "cargo test --workspace --all-targets --locked",
+          "bash scripts/release-check.sh"
+        ],
+        "historical_oracle_files": [
+          "crates/storage/tests/strict_decoding.rs",
+          "crates/storage/tests/canonical_v1.rs",
+          "crates/storage/tests/fixtures/all-v1-shapes.ro"
+        ],
+        "machine_contract_groups": [
+          {
+            "id": "strict_frontend_dispatch",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "machine_with_blinded_adapter",
+            "criterion": "The byte reader distinguishes UTF-8/JSON failures, rejects decoded-name duplicates recursively, and classifies the version envelope before body decoding."
+          },
+          {
+            "id": "closed_world_conversion",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "machine_with_blinded_adapter",
+            "criterion": "Unsupported bodies remain uninterpreted and recognized v1 rejects recursive unknowns and incoherent representation relationships before semantic publication."
+          },
+          {
+            "id": "canonical_compatibility",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "machine_with_blinded_adapter",
+            "criterion": "Legacy v1 canonical bytes, discriminator coverage, ordering, escaping, Unicode preservation, and checked-in compatibility remain exact."
+          },
+          {
+            "id": "migration_seam_and_scope",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "blinded_semantic_review",
+            "criterion": "The migration-facing storage-owned seam shares the strict pipeline without duplicating semantic truth or deciding excluded representations/policies."
+          }
+        ]
+      },
+      "blinded_review_criteria": [
+        "Durable v1 types are storage-owned rather than inherited from semantic Serde layout.",
+        "One strict byte/version gate owns both public reading and migration-facing DTO access.",
+        "The implementation freezes compatibility without importing unresolved or later contracts."
+      ],
+      "evidence_visibility": {
+        "agent_visible": [
+          "Historical base with accepted ADR-0017 and storage specifications",
+          "tasks/TW-08.md",
+          "selected AGENTS.md overlay"
+        ],
+        "evaluator_only": [
+          "Issue completion material",
+          "PR #80 implementation/diff and post-implementation review",
+          "historical oracle tests and fixture",
+          "rubric and hidden failure modes"
+        ]
+      },
+      "historical_patch": {
+        "changed_files": 11,
+        "additions": 2398,
+        "deletions": 79,
+        "similarity_scored": false
+      },
+      "difficulty": "very_hard",
+      "time_limit_minutes": 300,
+      "estimated_active_runtime_minutes": [
+        180,
+        280
+      ],
+      "oracle_mode": "historical_black_box_oracle_plus_blinded_semantic_review",
+      "score_allocation": {
+        "machine": 37,
+        "blinded_review": 63
+      },
+      "known_failure_modes": [
+        {
+          "description": "The migration-facing DTO seam bypasses strict duplicate inspection",
+          "visibility": "evaluator_hidden",
+          "provenance": "post-implementation PR review and red-before-fix regression"
+        },
+        {
+          "description": "Nested or escaped-equivalent duplicate members collapse last-wins",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of the frozen task requirement"
+        },
+        {
+          "description": "Unsupported future bodies are decoded using v1 semantics",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of the frozen task requirement"
+        },
+        {
+          "description": "Semantic-core serialization types define the durable v1 decoder",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of the frozen task requirement"
+        },
+        {
+          "description": "Canonical output depends on insertion or mutable-name order",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of the frozen task requirement"
+        },
+        {
+          "description": "Later numeric or representation policy is retrofitted into legacy v1",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of the frozen task and forbidden scope"
+        }
+      ]
+    },
+    {
+      "id": "TW-09",
+      "title": "Implement the staged semantic validation report",
+      "capabilities": [
+        "feature",
+        "architecture_authority",
+        "diagnostics",
+        "integration",
+        "native_wasm"
+      ],
+      "historical_base_commit": "77821143e9847f62e129e553522556743c5032c1",
+      "historical_base_tree": "db03a53542043581ab26e7f7dba8ba29f7194649",
+      "ground_truth_commit": "156565a3d2dc7664088a24b7f6e38d02ad4e04fe",
+      "references": [
+        "https://github.com/nurockplayer/tachiko-work/issues/89",
+        "https://github.com/nurockplayer/tachiko-work/issues/90",
+        "https://github.com/nurockplayer/tachiko-work/pull/97",
+        "https://github.com/nurockplayer/tachiko-work/pull/99"
+      ],
+      "task_file": "tasks/TW-09.md",
+      "task_sha256": "840a8e7f60460e415527503eb0eafb3d0f4fded271d2a8cac5c26fda2a091e3e",
+      "task_bytes": 1975,
+      "expected_scope": [
+        "One internal workspace full-validation report",
+        "Stable diagnostic facts, subjects, classification, severity, and provenance",
+        "Direct consumption of the formula complete oracle with cascade suppression",
+        "Validation/finalization agreement and fixed native/WASM observations"
+      ],
+      "forbidden_scope": [
+        "New validation/diagnostics crate or second SCC/dependency oracle",
+        "Public diagnostic/API/CLI/IPC/WASM wire stabilization",
+        "Storage, identity, formula, roproj, runtime, cache, plugin, or progressive-typing changes",
+        "Treating path/message/cycle witness as semantic identity"
+      ],
+      "validation": {
+        "base": [
+          "cargo test -p tachiko-semantic-core --locked",
+          "cargo test -p tachiko-workspace-engine --locked",
+          "bash scripts/portable-conformance-check.sh"
+        ],
+        "candidate": [
+          "cargo test -p tachiko-semantic-core --locked",
+          "cargo test -p tachiko-workspace-engine --locked",
+          "bash scripts/portable-conformance-check.sh",
+          "bash scripts/release-check.sh"
+        ],
+        "ground_truth": [
+          "cargo test -p tachiko-semantic-core --test diagnostic_contract --locked",
+          "cargo test -p tachiko-workspace-engine --test validation_report --locked",
+          "bash scripts/portable-conformance-check.sh",
+          "bash scripts/release-check.sh"
+        ],
+        "historical_oracle_files": [
+          "crates/semantic-core/tests/diagnostic_contract.rs",
+          "crates/workspace-engine/tests/validation_report.rs"
+        ],
+        "machine_contract_groups": [
+          {
+            "id": "stable_diagnostic_facts",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "machine_with_blinded_adapter",
+            "criterion": "Diagnostic facts serialize/compare deterministically with stable subjects, classification, severity, and provenance."
+          },
+          {
+            "id": "formula_authority",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "blinded_semantic_review",
+            "criterion": "Formula SCC/dependency/evaluation facts are projected from the complete formula oracle, not rediscovered."
+          },
+          {
+            "id": "suppression_directionality",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "machine_with_blinded_adapter",
+            "criterion": "Prerequisite cascades are suppressed without collapsing directional ID mismatch or independent failures."
+          },
+          {
+            "id": "agreement_portability",
+            "points": 6,
+            "mandatory": true,
+            "assessment": "machine_with_blinded_adapter",
+            "criterion": "Validation/finalization agree and stable observations are exact across rename and native/WASM."
+          }
+        ]
+      },
+      "blinded_review_criteria": [
+        "The report owns orchestration while lower crates retain pure correctness authority.",
+        "Machine subjects/facts remain distinct from rendered paths, messages, and witnesses.",
+        "Alternative internal representations receive full credit if they preserve complete stable facts and ownership."
+      ],
+      "evidence_visibility": {
+        "agent_visible": [
+          "Historical base including the completed formula prerequisite; the independent later storage work is absent",
+          "tasks/TW-09.md",
+          "selected AGENTS.md overlay"
+        ],
+        "evaluator_only": [
+          "PR implementation/API names",
+          "three post-green review defects",
+          "ground-truth tests/diff",
+          "rubric",
+          "hidden failure modes"
+        ]
+      },
+      "historical_patch": {
+        "changed_files": 28,
+        "additions": 3527,
+        "deletions": 528,
+        "basis": "implementation_parent_commit_to_ground_truth_commit",
+        "similarity_scored": false
+      },
+      "replay_base_to_ground_truth_diff": {
+        "changed_files": 41,
+        "additions": 4883,
+        "deletions": 600,
+        "similarity_scored": false
+      },
+      "difficulty": "very_hard",
+      "time_limit_minutes": 360,
+      "estimated_active_runtime_minutes": [
+        210,
+        330
+      ],
+      "oracle_mode": "rebased_behavioral_oracle_with_case_local_portable_contract",
+      "score_allocation": {
+        "machine": 37,
+        "blinded_review": 63
+      },
+      "known_failure_modes": [
+        {
+          "description": "Internally tagged scalar enum subjects cannot serialize/round-trip",
+          "visibility": "evaluator_hidden",
+          "provenance": "merged review/regression evidence that post-dates the frozen assignment"
+        },
+        {
+          "description": "Deduplication collapses store-ID versus declared-ID mismatch direction",
+          "visibility": "evaluator_hidden",
+          "provenance": "merged review/regression evidence that post-dates the frozen assignment"
+        },
+        {
+          "description": "Suppressed prerequisite roots still produce downstream dependency noise",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        },
+        {
+          "description": "Workspace reimplements SCC/dependency discovery and drifts from formula-engine",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        },
+        {
+          "description": "Rename changes semantic diagnostic identity",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        },
+        {
+          "description": "Green tests cover parity but not fixed expected observations",
+          "visibility": "prompt_explicit",
+          "provenance": "direct inverse of a frozen task requirement; not treated as a hidden trap"
+        }
+      ],
+      "replay_relation": "ancestor_with_independent_intervening_changes",
+      "implementation_parent_commit": "c685fe72a126c6de26089461923991447c70ad8f",
+      "intervening_outcome_only_commits": [
+        "22fc8eb9d84c5bc13a7c9c64c6cb1f235974e5ba",
+        "b5b097cde26952b60580f62b28dada10044d92dd",
+        "c685fe72a126c6de26089461923991447c70ad8f"
+      ]
+    }
+  ]
+}

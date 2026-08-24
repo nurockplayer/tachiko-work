@@ -1,0 +1,38 @@
+{
+  "protocol_id": "tachiko-agents-effect-v1",
+  "classification": "construction_pilot_only",
+  "formal_result_eligible": false,
+  "case_id": "TW-01",
+  "mode": "historical_base_control_union",
+  "historical_base_commit": "47ce31aeaeb63a9bb21282691b918e8751cb5a21",
+  "historical_base_tree": "627c7301d9dade779e66d5027181c8d7bda54462",
+  "ground_truth_commit": "b2d9c7fb8c11236a0564faa37eca1cf32b76faf8",
+  "clean_workspace_before_commands": true,
+  "root_agents_absent_from_base_ancestry": true,
+  "network_policy": "shell denied by construction host; Cargo additionally offline",
+  "cargo_net_offline": true,
+  "command_union_rule": "ordered deduplicated cases.validation.base then core-score validation commands",
+  "command_list_sha256": "262c6cd64f592a575a53b6f46a049774b64c0a0dc78d09dde116eab715096ba1",
+  "commands": [
+    {
+      "command_id": "base.tw01.1",
+      "command": "bash scripts/docs-consistency-check.sh",
+      "started_at": "2026-08-24T18:08:16.045Z",
+      "duration_seconds": 0.16676325,
+      "deadline_seconds": 1800,
+      "exit_code": 0,
+      "timed_out": false,
+      "stdout_sha256": "341150012770bb599f90813a8c945cc90b1b79c6ea15e84a61a0decf9d87f82c",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "PASS decisions has complete file coverage.\nPASS specs has complete file coverage.\nPASS architecture has complete file coverage.\ndocs consistency check passed\n",
+      "stderr": ""
+    }
+  ],
+  "all_commands_passed": true,
+  "recorded_at": "2026-08-24T18:08:16.214Z",
+  "not_claimed": [
+    "same-wave formal base-control receipt",
+    "production controller or account isolation qualification",
+    "Baseline A, Variant B, controlled A/B, or Ultra result"
+  ]
+}

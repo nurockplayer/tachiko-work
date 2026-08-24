@@ -1,0 +1,58 @@
+{
+  "protocol_id": "tachiko-agents-effect-v1",
+  "classification": "construction_pilot_only",
+  "formal_result_eligible": false,
+  "case_id": "TW-09",
+  "mode": "rebased_behavioral_pilot_without_intervening_storage",
+  "historical_base_commit": "77821143e9847f62e129e553522556743c5032c1",
+  "ground_truth_commit": "156565a3d2dc7664088a24b7f6e38d02ad4e04fe",
+  "pilot_subject_commit": "fdf1963c54254f62f03f46dc936d60baf178b0f8",
+  "pilot_subject_tree": "82854a472bd6aca1cab70b750fdcae864675ce5c",
+  "pilot_patch": {
+    "path": "evaluator/construction-pilots/TW-09-rebased.patch",
+    "sha256": "5bb0d435a779710434b04f8225741a533a2ac79335420d451bffc79aa6fd81cb",
+    "bytes": 205888,
+    "apply_to": "77821143e9847f62e129e553522556743c5032c1",
+    "expected_tree": "82854a472bd6aca1cab70b750fdcae864675ce5c"
+  },
+  "pilot_parent_is_replay_base": true,
+  "clean_workspace": true,
+  "root_agents_absent_from_base_tree": true,
+  "commands": [
+    {
+      "command": "cargo test -p tachiko-semantic-core --test diagnostic_contract --locked",
+      "started_at": "2026-08-24T17:43:54.606Z",
+      "duration_seconds": 2.543833875,
+      "exit_code": 0,
+      "timed_out": false,
+      "stdout_sha256": "9124368db2ce677c748ab00f747fbc63aaf9cb5594f7df6df58a0aa9fa15b195",
+      "stderr_sha256": "07433dba106285756185561ce99ce3a53016be033ce714dd4025118662969b62",
+      "stdout": "\nrunning 6 tests\ntest deterministic_order_uses_stable_observations_before_presentation ... ok\ntest stable_observation_excludes_presentation ... ok\ntest semantic_subject_serialization_round_trips_all_variants ... ok\ntest scalar_and_structured_semantic_subjects_serialize ... ok\ntest multi_subject_duplicate_is_stable_across_human_key_rename ... ok\ntest duplicate_keys_identify_distinct_store_entries_when_declared_ids_match ... ok\n\ntest result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+      "stderr": "   Compiling tachiko-semantic-core v0.1.0 (/private/tmp/tachiko-construction-pilot.gKBv6o/y3/crates/semantic-core)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.03s\n     Running tests/diagnostic_contract.rs (target/debug/deps/diagnostic_contract-e357b0acca43a35b)\n"
+    },
+    {
+      "command": "cargo test -p tachiko-workspace-engine --test validation_report --locked",
+      "started_at": "2026-08-24T17:43:57.177Z",
+      "duration_seconds": 6.325311417,
+      "exit_code": 0,
+      "timed_out": false,
+      "stdout_sha256": "85f4642eb70325182e2e0e52d6613cf3ddc3365cd308d839a8779706e9f2c374",
+      "stderr_sha256": "ce60762a824873a410c277e03921497d16058203486a2dbdc5609ebbb96155c9",
+      "stdout": "\nrunning 19 tests\ntest independent_findings_accumulate_while_missing_schema_suppresses_cascades ... ok\ntest failed_dependency_is_suppressed_when_its_cycle_failure_did_not_survive ... ok\ntest cascade_suppression_filters_each_binding_fact_by_its_actual_prerequisite ... ok\ntest authoring_projection_remains_an_explicit_operation_gate ... ok\ntest cascade_suppression_filters_each_direct_failed_dependency ... ok\ntest cascade_suppression_is_specific_to_the_authoritative_formula_failure ... ok\ntest core_invalid_formula_prerequisites_suppress_cascades_but_not_independent_failures ... ok\ntest cycle_and_failed_dependency_diagnostics_preserve_all_stable_subjects ... ok\ntest failed_dependency_projection_uses_the_complete_survivor_closure ... ok\ntest swapped_entity_ids_preserve_both_directional_mismatches ... ok\ntest swapped_schema_field_ids_preserve_both_directional_mismatches ... ok\ntest stable_observations_survive_human_key_renames ... ok\ntest swapped_schema_ids_preserve_both_directional_mismatches ... ok\ntest merge_candidate_uses_the_shared_semantic_report ... ok\ntest merge_projection_preflight_is_a_workspace_operation_gate ... ok\ntest validation_and_finalization_share_the_same_semantic_report ... ok\ntest comparison_and_merge_validation_errors_preserve_operand_roles ... ok\ntest long_failed_dependency_chain_projects_without_repeated_full_rescans ... ok\ntest large_scc_projects_one_complete_workspace_diagnostic ... ok\n\ntest result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.55s\n\n",
+      "stderr": "   Compiling tachiko-semantic-core v0.1.0 (/private/tmp/tachiko-construction-pilot.gKBv6o/y3/crates/semantic-core)\n   Compiling tachiko-formula-engine v0.1.0 (/private/tmp/tachiko-construction-pilot.gKBv6o/y3/crates/formula-engine)\n   Compiling tachiko-diff-engine v0.1.0 (/private/tmp/tachiko-construction-pilot.gKBv6o/y3/crates/diff-engine)\n   Compiling tachiko-merge-engine v0.1.0 (/private/tmp/tachiko-construction-pilot.gKBv6o/y3/crates/merge-engine)\n   Compiling tachiko-workspace-engine v0.1.0 (/private/tmp/tachiko-construction-pilot.gKBv6o/y3/crates/workspace-engine)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.50s\n     Running tests/validation_report.rs (target/debug/deps/validation_report-cbee22cd3428af35)\n"
+    },
+    {
+      "command": "bash scripts/portable-conformance-check.sh",
+      "started_at": "2026-08-24T17:44:03.503Z",
+      "duration_seconds": 6.039763833,
+      "exit_code": 0,
+      "timed_out": false,
+      "stdout_sha256": "671bafab23773a818e873d09b76ea06bef4fa3a4fed60cca4d5c294b151ff1c9",
+      "stderr_sha256": "a48a20e57c172f92347da4451d856ad99dc8fef1e125ac5108c77a016924845e",
+      "stdout": "portable conformance check passed: production semantic/storage/workspace/AI records match native/WASM and fixed oracles\n",
+      "stderr": "   Compiling tachiko-storage v0.1.0 (/private/tmp/tachiko-construction-pilot.gKBv6o/y3/crates/storage)\n   Compiling tachiko-ai-api v0.1.0 (/private/tmp/tachiko-construction-pilot.gKBv6o/y3/crates/ai-api)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.01s\n   Compiling tachiko-semantic-core v0.1.0 (/private/tmp/tachiko-construction-pilot.gKBv6o/y3/crates/semantic-core)\n   Compiling tachiko-formula-engine v0.1.0 (/private/tmp/tachiko-construction-pilot.gKBv6o/y3/crates/formula-engine)\n   Compiling tachiko-storage v0.1.0 (/private/tmp/tachiko-construction-pilot.gKBv6o/y3/crates/storage)\n   Compiling tachiko-diff-engine v0.1.0 (/private/tmp/tachiko-construction-pilot.gKBv6o/y3/crates/diff-engine)\n   Compiling tachiko-merge-engine v0.1.0 (/private/tmp/tachiko-construction-pilot.gKBv6o/y3/crates/merge-engine)\n   Compiling tachiko-workspace-engine v0.1.0 (/private/tmp/tachiko-construction-pilot.gKBv6o/y3/crates/workspace-engine)\n   Compiling tachiko-ai-api v0.1.0 (/private/tmp/tachiko-construction-pilot.gKBv6o/y3/crates/ai-api)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.50s\n"
+    }
+  ],
+  "all_commands_passed": true,
+  "recorded_at": "2026-08-24T17:44:09.543Z"
+}

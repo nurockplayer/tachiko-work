@@ -1,0 +1,44 @@
+{
+  "protocol_id": "tachiko-agents-effect-v1",
+  "contract_id": "reviewer-allocation-v1",
+  "contract_version": 1,
+  "inputs_frozen_before_first_candidate": [
+    "case-specific eligible reviewer and adjudicator IDs normalized to NFC, rejecting NUL, and sorted by unsigned UTF-8 bytes",
+    "reviewer eligibility-packet hashes",
+    "32-byte CSPRNG seed commitment",
+    "opaque 128-bit candidate IDs and opaque pair IDs",
+    "required primary panel size of two and paired-arm disjointness"
+  ],
+  "seed_rule": "A role-separated independent seed custodian who cannot read the arm key, variant mapping, candidates, or reviewer quality history draws exactly 32 raw OS-CSPRNG bytes and publishes SHA-256(raw_seed) before attempt IDs are mapped to variants. No seed search, rejection, replacement, or operator-provided entropy is allowed; timestamps, custodian attestation, and OS entropy receipt are registered.",
+  "binary_grammar": {
+    "integers": "unsigned big-endian",
+    "text": "NFC UTF-8, reject NUL, prefix each text field with its uint32 byte length",
+    "opaque_ids": "decode each exactly 32-character lowercase hexadecimal ID to 16 raw bytes",
+    "pair": "one tag byte: 0x00 for no pair, or 0x01 followed by the 16 raw pair-ID bytes",
+    "ranking_frame": "ASCII tachiko-reviewer-allocation-v1 followed by NUL, 32 raw seed bytes, length-prefixed role text, length-prefixed case_id text, pair field, 16 raw candidate-ID bytes, and length-prefixed reviewer-ID text",
+    "packet_frame": "ASCII tachiko-review-packet-order-v1 followed by NUL, 32 raw seed bytes, pair field, and 16 raw candidate-ID bytes"
+  },
+  "ranking": "SHA-256 the exact ranking_frame; rank ascending by unsigned digest bytes, then by unsigned NFC UTF-8 reviewer-ID bytes.",
+  "primary_allocation": [
+    "Process cases in manifest order and candidates within a pair by opaque candidate ID, never by arm.",
+    "Assign the first two eligible ranked reviewers who have not been assigned to the paired candidate and satisfy the pre-registered workload cap.",
+    "If fewer than two exist, block the wave; an operator may not substitute a reviewer after seeing candidate or arm data."
+  ],
+  "adjudicator_allocation": [
+    "When a frozen trigger fires, choose the first eligible adjudicator under the same ranking who is not a primary reviewer/custodian/integrity actor for that candidate and is not assigned anywhere on the paired arm.",
+    "If none exists, invalidate review readiness rather than hand-selecting an adjudicator."
+  ],
+  "other_role_allocation": "Use the same arm-key-blind ranking and pair-disjoint rule for oracle custodians, adapter-integrity reviewers, and denied-access tooling adjudicators; role eligibility pools are frozen separately.",
+  "packet_order": "Rank candidates by SHA-256(packet_frame), then unsigned raw candidate-ID bytes. Repeatedly find the leftmost adjacent equal non-null pair IDs, remove the second member, and scan insertion positions strictly to its right from left to right; insert at the first position whose immediate predecessor and successor (when present) have different pair IDs. Restart the scan at the beginning after each move. Stop at the first fixed point with no adjacent pair, or block if a removed member has no valid later insertion position.",
+  "qualification_fixtures": [
+    "reference vectors cover raw seed bytes, lowercase-hex ID decoding, NFC text, none and non-none pair tags, digest ties, and UTF-8 byte tie-breaks",
+    "packet vectors cover multiple adjacent pairs, leftmost repair, end insertion, fixed-point restart, and impossible-order blocking",
+    "independent implementations must produce byte-identical frames, digests, allocations, and packet order"
+  ],
+  "receipts": [
+    "independent seed-custodian eligibility/entropy receipt, seed commitment before variant mapping, and seed opening only after all reviews freeze",
+    "eligible-pool and workload-cap hash",
+    "complete deterministic allocation and packet-order output",
+    "semantic replay receipt proving no arm label or operator choice entered allocation"
+  ]
+}

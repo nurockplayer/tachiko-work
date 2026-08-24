@@ -1,0 +1,29 @@
+{
+  "protocol_id": "tachiko-agents-effect-v1",
+  "classification": "construction_pilot_only",
+  "formal_result_eligible": false,
+  "case_id": "TW-08",
+  "mode": "historical_target_focused",
+  "historical_base_commit": "c8528409dd327a9854ac030247ecbd8fcf765db7",
+  "ground_truth_commit": "1929dd758ed580f0ccd2bc70be11560f3e88b0da",
+  "pilot_subject_commit": "1929dd758ed580f0ccd2bc70be11560f3e88b0da",
+  "pilot_subject_tree": "27f59b08b6807cdd259abdc7c9be1b0316dfbd15",
+  "pilot_parent_is_replay_base": true,
+  "clean_workspace": true,
+  "root_agents_absent_from_base_tree": true,
+  "commands": [
+    {
+      "command": "cargo test -p tachiko-storage --locked",
+      "started_at": "2026-08-24T17:44:24.815Z",
+      "duration_seconds": 7.043233708,
+      "exit_code": 0,
+      "timed_out": false,
+      "stdout_sha256": "f622f3306067c33dd15945c6d607b3094c2d31c325ad1d65f3016489ec5e26a2",
+      "stderr_sha256": "7537096c694559706a12b1a83a5f38176f6cac5465d9a6a1a9fb2a7a11960cd1",
+      "stdout": "\nrunning 7 tests\ntest strict_json::tests::invalid_json_wins_over_an_earlier_duplicate ... ok\ntest strict_json::tests::distinguishes_unsigned_versions_from_other_json_representations ... ok\ntest strict_json::tests::ignores_versions_outside_the_root_object_and_accepts_only_one_value ... ok\ntest strict_json::tests::records_a_root_unsigned_format_version ... ok\ntest legacy_direct_ro::v1::tests::migration_dto_seam_rejects_duplicate_map_keys_before_collapse ... ok\ntest strict_json::tests::reports_duplicates_after_decoding_escapes_at_any_depth ... ok\ntest legacy_direct_ro::v1::tests::dto_seam_exposes_every_typed_id_occurrence_before_semantic_conversion ... ok\n\ntest result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 8 tests\ntest canonical_minimal_v1_has_exact_specified_bytes ... ok\ntest alternative_legal_string_escapes_have_one_canonical_spelling ... ok\ntest every_legacy_id_map_uses_ascii_lexicographic_order ... ok\ntest noncanonical_json_reencodes_to_the_unique_v1_layout ... ok\ntest every_v1_shape_has_exact_canonical_bytes ... ok\ntest canonical_v1_preserves_unicode_scalar_sequences_without_normalization ... ok\ntest every_v1_field_value_and_expression_discriminator_round_trips ... ok\ntest checked_in_ro_examples_are_canonical_and_byte_stable ... ok\n\ntest result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n\n\nrunning 8 tests\ntest invalid_semantic_content_cannot_be_serialized ... ok\ntest invalid_v1_relationship_cannot_be_serialized ... ok\ntest unknown_document_fields_are_rejected ... ok\ntest equivalent_documents_have_identical_canonical_bytes ... ok\ntest unsupported_version_is_explicit ... ok\ntest valid_document_round_trips ... ok\ntest save_refuses_to_overwrite_an_existing_file ... ok\ntest path_helpers_preserve_the_canonical_document ... ok\n\ntest result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 15 tests\ntest invalid_utf8_is_distinct_from_invalid_json ... ok\ntest missing_version_is_distinct ... ok\ntest duplicate_members_are_rejected_at_every_depth_after_escape_decoding ... ok\ntest malformed_version_wins_before_v1_body_interpretation ... ok\ntest invalid_json_is_reported_before_version_dispatch ... ok\ntest malformed_versions_are_distinct_from_missing_and_unsupported_versions ... ok\ntest supported_v1_number_outside_historical_f64_is_invalid_representation ... ok\ntest unsupported_version_does_not_apply_v1_number_limits_to_the_future_body ... ok\ntest unsupported_version_wins_before_v1_body_interpretation ... ok\ntest semantically_invalid_v1_is_distinct_from_invalid_representation ... ok\ntest v1_basic_field_types_reject_a_present_null_schema_member ... ok\ntest v1_rejects_schema_and_entity_map_key_id_mismatches ... ok\ntest supported_v1_rejects_unknown_members_recursively ... ok\ntest valid_minimal_v1_still_decodes ... ok\ntest v1_rejects_unresolvable_schema_and_field_relationships ... ok\n\ntest result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+      "stderr": "   Compiling proc-macro2 v1.0.107\n   Compiling quote v1.0.47\n   Compiling unicode-ident v1.0.24\n   Compiling serde_core v1.0.229\n   Compiling serde v1.0.229\n   Compiling zmij v1.0.23\n   Compiling serde_json v1.0.151\n   Compiling thiserror v2.0.20\n   Compiling itoa v1.0.18\n   Compiling memchr v2.8.3\n   Compiling syn v3.0.3\n   Compiling serde_derive v1.0.229\n   Compiling thiserror-impl v2.0.20\n   Compiling tachiko-semantic-core v0.1.0 (/private/tmp/tachiko-construction-pilot.gKBv6o/y2/crates/semantic-core)\n   Compiling tachiko-storage v0.1.0 (/private/tmp/tachiko-construction-pilot.gKBv6o/y2/crates/storage)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.93s\n     Running unittests src/lib.rs (target/debug/deps/tachiko_storage-f261ad10fd9f866f)\n     Running tests/canonical_v1.rs (target/debug/deps/canonical_v1-7086e2ed52f01220)\n     Running tests/ro_format.rs (target/debug/deps/ro_format-546ba38393084e29)\n     Running tests/strict_decoding.rs (target/debug/deps/strict_decoding-698e2916ca003887)\n   Doc-tests tachiko_storage\n"
+    }
+  ],
+  "all_commands_passed": true,
+  "recorded_at": "2026-08-24T17:44:31.860Z"
+}
