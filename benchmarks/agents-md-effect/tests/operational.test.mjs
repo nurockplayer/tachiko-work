@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import {
+  chmod,
+  copyFile,
   cp,
+  lstat,
   mkdir,
   mkdtemp,
+  readlink,
   readFile,
   realpath,
   rm,
@@ -20,6 +25,8 @@ import { fileURLToPath } from "node:url";
 const testDir = dirname(fileURLToPath(import.meta.url));
 const benchmarkDir = resolve(testDir, "..");
 const preflightScript = resolve(benchmarkDir, "scripts/preflight-run.mjs");
+const captureCandidateScript = resolve(benchmarkDir, "scripts/capture-candidate.mjs");
+const prepareValidationScript = resolve(benchmarkDir, "scripts/prepare-validation.mjs");
 const CONTROL_ARTIFACTS = [
   "environment-lock.json",
   "evaluator/cases.json",
@@ -35,6 +42,16 @@ async function readJson(path) {
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function git(args, cwd, options = {}) {
+  return spawnSync("rtk", ["proxy", "git", ...args], {
+    cwd,
+    encoding: options.encoding ?? "utf8",
+    env: options.env ?? process.env,
+    input: options.input,
+    maxBuffer: 128 * 1024 * 1024,
+  });
 }
 
 async function controlSha256(artifactDir) {
@@ -505,4 +522,303 @@ test("preflight rejects a receipt path that escapes trusted artifacts through a 
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /receipt must remain inside the trusted artifact directory/i);
   });
+});
+
+test("trusted capture preserves adversarial raw workspace state byte-for-byte", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-raw-capture-"));
+  const sourceRepo = await realpath(resolve(benchmarkDir, "../.."));
+  const workspace = resolve(fixtureRoot, "candidate-workspace");
+  const captureDir = resolve(fixtureRoot, "capture");
+  const validationWorkspace = resolve(fixtureRoot, "validation-workspace");
+  const validationDir = resolve(fixtureRoot, "validation");
+  const exclusionsFile = resolve(fixtureRoot, "capture-exclusions.json");
+  const cases = await readJson(resolve(benchmarkDir, "evaluator/cases.json"));
+  const caseEntry = cases.cases.find((entry) => entry.id === "TW-01");
+
+  try {
+    let result = git(["clone", "--no-local", sourceRepo, workspace], fixtureRoot);
+    assert.equal(result.status, 0, result.stderr);
+    result = git(["checkout", "--detach", caseEntry.historical_base_commit], workspace);
+    assert.equal(result.status, 0, result.stderr);
+
+    const overlayBytes = Buffer.from("trusted task overlay\n", "utf8");
+    const assumeBytes = Buffer.from("assume-unchanged raw bytes\n", "utf8");
+    const skipBytes = Buffer.from("skip-worktree raw bytes\n", "utf8");
+    const ignoredBytes = Buffer.from([0x69, 0x67, 0x6e, 0x6f, 0x72, 0x65, 0x64, 0x00, 0xff]);
+    const untrackedBytes = Buffer.from("ordinary untracked bytes\n", "utf8");
+    const stagedBytes = Buffer.from("staged raw bytes\n", "utf8");
+    const hostileBytes = Buffer.from("raw hostile-filter bytes\r\n", "utf8");
+    const hostileEolBytes = Buffer.from("must remain LF\n", "utf8");
+    const binaryBytes = Buffer.from([0x00, 0xff, 0x80, 0x0a, 0x0d, 0x41]);
+    const symlinkTarget = "../raw-target-without-resolution";
+    const filterMarker = resolve(fixtureRoot, "clean-filter-ran");
+    const hookMarker = resolve(fixtureRoot, "candidate-hook-ran");
+    const filterScript = resolve(workspace, ".git", "evil-clean.sh");
+    const hookScript = resolve(workspace, ".git", "hooks", "pre-commit");
+
+    await Promise.all([
+      writeFile(resolve(workspace, "AGENTS.md"), overlayBytes),
+      writeFile(resolve(workspace, "README.md"), assumeBytes),
+      writeFile(resolve(workspace, "CONTRIBUTING.md"), skipBytes),
+      writeFile(resolve(workspace, "ignored-only.bin"), ignoredBytes),
+      writeFile(resolve(workspace, "ordinary-untracked.txt"), untrackedBytes),
+      writeFile(resolve(workspace, "staged-change.txt"), stagedBytes),
+      writeFile(
+        resolve(workspace, ".gitattributes"),
+        "*.hostile filter=evil\n*.crlf text eol=crlf\n",
+      ),
+      writeFile(resolve(workspace, "payload.hostile"), hostileBytes),
+      writeFile(resolve(workspace, "line-endings.crlf"), hostileEolBytes),
+      writeFile(resolve(workspace, "binary.dat"), binaryBytes),
+      writeFile(exclusionsFile, '["target"]\n'),
+      mkdir(resolve(workspace, "target")),
+    ]);
+    await Promise.all([
+      writeFile(resolve(workspace, "target", "excluded.cache"), "excluded\n"),
+      symlink(symlinkTarget, resolve(workspace, "raw-link")),
+      chmod(resolve(workspace, "LICENSE-MIT"), 0o755),
+      writeFile(
+        filterScript,
+        `#!/bin/sh\nprintf invoked > ${JSON.stringify(filterMarker)}\nsed 's/raw/FILTERED/g'\n`,
+        { mode: 0o755 },
+      ),
+      writeFile(
+        hookScript,
+        `#!/bin/sh\nprintf invoked > ${JSON.stringify(hookMarker)}\n`,
+        { mode: 0o755 },
+      ),
+    ]);
+    result = git(["add", "staged-change.txt"], workspace);
+    assert.equal(result.status, 0, result.stderr);
+    for (const command of [
+      ["update-index", "--assume-unchanged", "README.md"],
+      ["update-index", "--skip-worktree", "CONTRIBUTING.md"],
+      ["config", "filter.evil.clean", filterScript],
+      ["config", "filter.evil.required", "true"],
+    ]) {
+      result = git(command, workspace);
+      assert.equal(result.status, 0, result.stderr);
+    }
+    await writeFile(resolve(workspace, ".git", "info", "exclude"), "ignored-only.bin\n");
+
+    const legacyIndex = resolve(fixtureRoot, "legacy.index");
+    await copyFile(resolve(workspace, ".git", "index"), legacyIndex);
+    const legacyEnvironment = { ...process.env, GIT_INDEX_FILE: legacyIndex };
+    result = git(["add", "-A"], workspace, { env: legacyEnvironment });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal((await readFile(filterMarker, "utf8")).trim(), "invoked");
+    result = git(["ls-files", "--error-unmatch", "ignored-only.bin"], workspace, {
+      env: legacyEnvironment,
+    });
+    assert.notEqual(result.status, 0, "the legacy index capture must miss ignored files");
+    result = git(["write-tree"], workspace, { env: legacyEnvironment });
+    assert.equal(result.status, 0, result.stderr);
+    const legacyTree = result.stdout.trim();
+    result = git(["show", `${legacyTree}:payload.hostile`], workspace, {
+      env: legacyEnvironment,
+      encoding: null,
+    });
+    assert.equal(result.status, 0, Buffer.from(result.stderr ?? []).toString("utf8"));
+    assert.deepEqual(Buffer.from(result.stdout), Buffer.from("FILTERED hostile-filter bytes\r\n"));
+    await rm(filterMarker);
+
+    result = spawnSync(
+      process.execPath,
+      [
+        captureCandidateScript,
+        "--case",
+        "TW-01",
+        "--workspace",
+        workspace,
+        "--source-repo",
+        sourceRepo,
+        "--exclusions-file",
+        exclusionsFile,
+        "--trusted-dir",
+        captureDir,
+        "--expected-agents-sha256",
+        sha256(overlayBytes),
+      ],
+      { encoding: "utf8", maxBuffer: 128 * 1024 * 1024 },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(existsSync(filterMarker), false, "capture must not run candidate clean filters");
+    assert.equal(existsSync(hookMarker), false, "capture must not run candidate hooks");
+
+    const captureReceiptPath = resolve(captureDir, "capture-receipt.json");
+    const captureReceipt = await readJson(captureReceiptPath);
+    assert.equal(captureReceipt.trusted_raw_capture, true);
+    assert.equal(captureReceipt.source_repo.path, sourceRepo);
+    assert.equal(captureReceipt.overlay.type, "regular");
+    assert.equal(captureReceipt.overlay.sha256, sha256(overlayBytes));
+    assert.equal(captureReceipt.exclusions.file_sha256, sha256(Buffer.from('["target"]\n')));
+    assert.deepEqual(captureReceipt.exclusions.paths, ["target"]);
+    assert.match(captureReceipt.raw_tree_digest_sha256, /^[0-9a-f]{64}$/);
+    assert.equal(captureReceipt.round_trip.equal, true);
+    assert.equal(
+      captureReceipt.round_trip.digest_sha256,
+      captureReceipt.raw_tree_digest_sha256,
+    );
+    assert.match(captureReceipt.trusted_index.sha256, /^[0-9a-f]{64}$/);
+    assert.match(captureReceipt.candidate_commit, /^[0-9a-f]{40}$/);
+    assert.match(captureReceipt.candidate_tree, /^[0-9a-f]{40}$/);
+    for (const path of [
+      "README.md",
+      "CONTRIBUTING.md",
+      "ignored-only.bin",
+      "ordinary-untracked.txt",
+      "staged-change.txt",
+      ".gitattributes",
+      "payload.hostile",
+      "line-endings.crlf",
+      "binary.dat",
+      "raw-link",
+      "LICENSE-MIT",
+    ]) {
+      assert.ok(captureReceipt.changed_files.includes(path), `${path} must be captured`);
+    }
+    assert.equal(captureReceipt.changed_files.includes("AGENTS.md"), false);
+    assert.equal(captureReceipt.changed_files.some((path) => path.startsWith("target/")), false);
+
+    result = spawnSync(
+      process.execPath,
+      [
+        prepareValidationScript,
+        "--case",
+        "TW-01",
+        "--source-repo",
+        sourceRepo,
+        "--patch-file",
+        resolve(captureDir, "candidate.patch"),
+        "--capture-receipt",
+        captureReceiptPath,
+        "--workspace",
+        validationWorkspace,
+        "--trusted-dir",
+        validationDir,
+      ],
+      { encoding: "utf8", maxBuffer: 128 * 1024 * 1024 },
+    );
+    assert.equal(result.status, 0, result.stderr);
+
+    assert.deepEqual(await readFile(resolve(validationWorkspace, "README.md")), assumeBytes);
+    assert.deepEqual(
+      await readFile(resolve(validationWorkspace, "CONTRIBUTING.md")),
+      skipBytes,
+    );
+    assert.deepEqual(
+      await readFile(resolve(validationWorkspace, "ignored-only.bin")),
+      ignoredBytes,
+    );
+    assert.deepEqual(
+      await readFile(resolve(validationWorkspace, "ordinary-untracked.txt")),
+      untrackedBytes,
+    );
+    assert.deepEqual(
+      await readFile(resolve(validationWorkspace, "staged-change.txt")),
+      stagedBytes,
+    );
+    assert.deepEqual(await readFile(resolve(validationWorkspace, "payload.hostile")), hostileBytes);
+    assert.deepEqual(
+      await readFile(resolve(validationWorkspace, "line-endings.crlf")),
+      hostileEolBytes,
+    );
+    assert.deepEqual(await readFile(resolve(validationWorkspace, "binary.dat")), binaryBytes);
+    assert.equal(await readlink(resolve(validationWorkspace, "raw-link")), symlinkTarget);
+    assert.notEqual((await lstat(resolve(validationWorkspace, "LICENSE-MIT"))).mode & 0o111, 0);
+    assert.equal(existsSync(resolve(validationWorkspace, "AGENTS.md")), false);
+    assert.equal(existsSync(resolve(validationWorkspace, "target")), false);
+
+    const validationReceipt = await readJson(
+      resolve(validationDir, "validation-preparation-receipt.json"),
+    );
+    assert.equal(validationReceipt.capture_receipt_verified, true);
+    assert.equal(validationReceipt.capture_to_apply_tree_equal, true);
+    assert.equal(
+      validationReceipt.raw_tree_digest_sha256,
+      captureReceipt.raw_tree_digest_sha256,
+    );
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("trusted capture rejects unsupported filesystem nodes", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-raw-node-"));
+  const sourceRepo = await realpath(resolve(benchmarkDir, "../.."));
+  const workspace = resolve(fixtureRoot, "workspace");
+  const exclusionsFile = resolve(fixtureRoot, "exclusions.json");
+  const overlayBytes = Buffer.from("trusted task overlay\n", "utf8");
+  try {
+    await mkdir(workspace);
+    await Promise.all([
+      writeFile(resolve(workspace, "AGENTS.md"), overlayBytes),
+      writeFile(exclusionsFile, "[]\n"),
+    ]);
+    const fifo = spawnSync(executablePath("mkfifo"), [resolve(workspace, "candidate.fifo")], {
+      encoding: "utf8",
+    });
+    assert.equal(fifo.status, 0, fifo.stderr);
+    const result = spawnSync(
+      process.execPath,
+      [
+        captureCandidateScript,
+        "--case",
+        "TW-01",
+        "--workspace",
+        workspace,
+        "--source-repo",
+        sourceRepo,
+        "--exclusions-file",
+        exclusionsFile,
+        "--trusted-dir",
+        resolve(fixtureRoot, "capture"),
+        "--expected-agents-sha256",
+        sha256(overlayBytes),
+      ],
+      { encoding: "utf8" },
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /unsupported filesystem node/i);
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("trusted capture rejects escaping exclusion paths", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-raw-exclusion-"));
+  const sourceRepo = await realpath(resolve(benchmarkDir, "../.."));
+  const workspace = resolve(fixtureRoot, "workspace");
+  const exclusionsFile = resolve(fixtureRoot, "exclusions.json");
+  const overlayBytes = Buffer.from("trusted task overlay\n", "utf8");
+  try {
+    await mkdir(workspace);
+    await Promise.all([
+      writeFile(resolve(workspace, "AGENTS.md"), overlayBytes),
+      writeFile(exclusionsFile, '["../escape"]\n'),
+    ]);
+    const result = spawnSync(
+      process.execPath,
+      [
+        captureCandidateScript,
+        "--case",
+        "TW-01",
+        "--workspace",
+        workspace,
+        "--source-repo",
+        sourceRepo,
+        "--exclusions-file",
+        exclusionsFile,
+        "--trusted-dir",
+        resolve(fixtureRoot, "capture"),
+        "--expected-agents-sha256",
+        sha256(overlayBytes),
+      ],
+      { encoding: "utf8" },
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /invalid non-normalized exclusion path/i);
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
 });
