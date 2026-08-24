@@ -45,6 +45,12 @@ A file under `docs/specs/`, a strongly worded Issue, or an implemented code path
 
 When artifacts conflict, reconcile them explicitly. Do not let chronology, implementation convenience, or confident prose silently choose the winner.
 
+## Decision traceability
+
+`docs/governance/decision-traceability.md` defines the minimum cross-linking protocol between research/discussion, Decision Issues, ADRs/policies/specifications, implementation issues, pull requests, and executable evidence.
+
+The project follows a one-hop traceability rule for material decisions: a contributor should not need repository-wide archaeology merely to discover the next relevant authority or evidence link. This traceability records provenance and relationships; it does not alter the authority hierarchy above.
+
 ## Decision Discussion Workflow
 
 Major unresolved architecture, product-foundation, security, format, or governance questions should begin as a dedicated GitHub **Decision Issue** before becoming an ADR.

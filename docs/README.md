@@ -11,10 +11,11 @@ Read these first when you need to understand or change the project:
 1. [`vision/product-constitution.md`](vision/product-constitution.md) — highest-level product constraints.
 2. [`vision/design-principles.md`](vision/design-principles.md) and [`vision/mission.md`](vision/mission.md) — durable product principles and mission.
 3. [`governance/knowledge-authority.md`](governance/knowledge-authority.md) — how Principle, Accepted, Provisional, Hypothesis, Open Question, and Superseded states work.
-4. [`governance/canonical-reconciliation-register.md`](governance/canonical-reconciliation-register.md) — current authority and supersession map across ADRs, architecture, specifications, and Issues.
-5. [`decisions/README.md`](decisions/README.md) — ADR index and current decision status.
-6. [`architecture/README.md`](architecture/README.md) — architecture map by subsystem and maturity.
-7. [`specs/README.md`](specs/README.md) — specification map and which contract to read for each topic.
+4. [`governance/decision-traceability.md`](governance/decision-traceability.md) — how research, decisions, specs, implementation, PRs, and evidence cross-link without changing their authority.
+5. [`governance/canonical-reconciliation-register.md`](governance/canonical-reconciliation-register.md) — current authority and supersession map across ADRs, architecture, specifications, and Issues.
+6. [`decisions/README.md`](decisions/README.md) — ADR index and current decision status.
+7. [`architecture/README.md`](architecture/README.md) — architecture map by subsystem and maturity.
+8. [`specs/README.md`](specs/README.md) — specification map and which contract to read for each topic.
 
 The current repository planning horizon is `02 · Core & Format Hardening`. GitHub Issues own unresolved decisions and implementation work; their existence does not by itself make a direction Accepted.
 
@@ -41,7 +42,7 @@ Implementation state and decision state are separate. An implemented behavior ma
 | How the system is structured | [`architecture/`](architecture/) | Current and target architecture |
 | What an implementable contract says | [`specs/`](specs/) | Format, API, formula, collaboration, migration, and runtime contracts |
 | What the product should do | [`product/`](product/) | Product strategy, wedge, user stories, and roadmap material |
-| How decisions, releases, licensing, and contribution work | [`governance/`](governance/) | Authority, governance, release, licensing |
+| How decisions, releases, licensing, and contribution work | [`governance/`](governance/) | Authority, traceability, governance, release, licensing |
 | Engineering practices and implementation guidance | [`engineering/`](engineering/) | Engineering workflow and technical guidance |
 | Security model and security work | [`security/`](security/) | Security policy and design material |
 | Market, competitor, standards, and technical evidence | [`research/`](research/) | Evidence and hypotheses, not automatic authority |
@@ -65,6 +66,7 @@ Agents must not silently promote an Open Question or Provisional implementation 
 ## Documentation maintenance rules
 
 - Preserve decision history. Superseded records stay available and point to their replacement when possible.
+- Preserve one-hop traceability for material decisions according to [`governance/decision-traceability.md`](governance/decision-traceability.md).
 - Prefer indexes and explicit authority notes over duplicating the same contract in multiple documents.
 - A file under `specs/` is not automatically Accepted.
 - A README describes current behavior but does not silently supersede an Accepted ADR.
