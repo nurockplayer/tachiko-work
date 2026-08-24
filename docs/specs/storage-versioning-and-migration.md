@@ -16,7 +16,7 @@ Conformance and identity integration: #40, #70
 
 Define how Tachiko Work selects persisted representation versions, separates versioned storage DTOs from semantic-core, handles unsupported or malformed versions, and performs explicit migration without silently changing durable state.
 
-This specification does not define `.roproj` filenames/sharding (#41), the future `.ro` package/container profile (#43), numeric semantics (#24), the cross-client diagnostic envelope (#23), or host-specific filesystem/browser transaction mechanisms (#26).
+This specification does not define `.roproj` filenames/sharding (#41), the future `.ro` package/container profile (#43), numeric semantics (#24), the cross-client diagnostic envelope (#23), or host-specific filesystem/browser transaction mechanisms (constrained by ADR-0022 and Deferred to future host/storage implementation).
 
 ## Representation namespaces
 
@@ -361,7 +361,7 @@ decode
 → prepare durable result
 ```
 
-The exact temporary-file/rename/fsync/browser-transaction implementation remains #26.
+ADR-0022 keeps durable persistence/recovery as host/storage responsibility outside `workspace-engine`. The exact temporary-file/rename/fsync/browser-transaction implementation remains Deferred to future host/storage implementation rather than this semantic/runtime decision.
 
 ## Conformance requirements
 
@@ -412,5 +412,6 @@ vectors are covered with v2 here; #40 owns final broad conformance closure.
 - ADR-0017
 - ADR-0015
 - ADR-0016
+- ADR-0022
 - `ro-format-v1.md`
 - #40, #70, #74, #96
