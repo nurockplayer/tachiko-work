@@ -1,6 +1,6 @@
 ---
 name: Implementation
-description: Implement an Accepted or explicitly Provisional contract without silently redesigning it
+about: Implement an Accepted or explicitly Provisional contract without silently redesigning it
 title: ""
 labels: ""
 assignees: ""
