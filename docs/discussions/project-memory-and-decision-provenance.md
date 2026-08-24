@@ -2,6 +2,14 @@
 
 Status: Discussion / Hypothesis
 
+Origin: Project discussion preserved by PR #103 on 2026-08-24
+
+Tracking issue: [#104 — Project Memory and semantic decision provenance dogfood](https://github.com/nurockplayer/tachiko-work/issues/104)
+
+Related: [#10 — Headless Semantic API as a first-class interface](https://github.com/nurockplayer/tachiko-work/issues/10)
+
+Authority: None for the Project Memory hypothesis. `docs/governance/knowledge-authority.md` and `docs/governance/decision-traceability.md` govern only how this record is classified and traced.
+
 This document preserves a product and architecture discussion about using Tachiko Work itself to capture the semantic lineage of project decisions, evidence, implementation, and supersession history. It is historical context and a product hypothesis, not an Accepted ADR, normative specification, or implementation commitment.
 
 ## Context
