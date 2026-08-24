@@ -14,7 +14,7 @@ assignees: ""
 
 - Origin: <!-- discussion / user evidence / decision issue / implementation finding -->
 - Related: <!-- neighboring issues / docs -->
-- Existing authority: <!-- constraints this research cannot override -->
+- Authority: <!-- constraints this research cannot override -->
 
 ## Hypothesis / questions
 
