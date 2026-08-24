@@ -1,0 +1,401 @@
+{
+  "payload_sha256": "4dd390df26f48844b34fdbfbb19f91adb356bc22f1ee100c666638c6bd767e4c",
+  "payload": {
+    "schema": "tachiko-oracle-qualification-v1",
+    "protocol_id": "tachiko-agents-effect-v1",
+    "classification": "construction_pilot_only",
+    "formal_result_eligible": false,
+    "execution_standard": "practical_internal_v1",
+    "no_codex_launched": true,
+    "controls": [
+      {
+        "path": "evaluator/cases.json",
+        "bytes": 55741,
+        "sha256": "3dfeaf108967b3f47ba201b94b5fbf4b9592972daf42200f2222107aa30e854b"
+      },
+      {
+        "path": "evaluator/oracle-lock.json",
+        "bytes": 98100,
+        "sha256": "0fbd2091c19cacd6bd91dbed55bd2c056573ddfed879da0ff85830bf63ca9fbf"
+      },
+      {
+        "path": "evaluator/production-oracles.json",
+        "bytes": 50999,
+        "sha256": "7cd25981b9edd28066530d2dc60f631b5d00edbe8b435e2c57264010b8799109"
+      },
+      {
+        "path": "evaluator/contracts/TW-05-resident-parity.json",
+        "bytes": 1663,
+        "sha256": "053c95696dbc1e017fa7849c04c7a67bc87a1bfe3a5e705202cdc1a3cce663d8"
+      },
+      {
+        "path": "evaluator/contracts/TW-09-stable-diagnostic-facts.json",
+        "bytes": 2117,
+        "sha256": "38a0a4922c7c9d43c50d0690f5ccca7751ab2a70859a542f6beae99540ab8f98"
+      },
+      {
+        "path": "scripts/qualify-oracles.mjs",
+        "bytes": 24561,
+        "sha256": "4df03748171f00204524ee5ad2c5a328d283efc7b34f77ea563bd1ad596e2171"
+      },
+      {
+        "path": "scripts/run-oracles.mjs",
+        "bytes": 15550,
+        "sha256": "2b3ba86072a8d131a62865669538eae3f4fe7b56874fc51bdbd1a36f9884648a"
+      },
+      {
+        "path": "scripts/run-tw05-offline.mjs",
+        "bytes": 5607,
+        "sha256": "5de036fb144a1921f61cee0b09db16171f1c46032bc7dfba0980a4928c3feb30"
+      },
+      {
+        "path": "scripts/validate-tw05-observations.mjs",
+        "bytes": 3623,
+        "sha256": "16dc2803ae324f9e9686c3b15be0b268473ce523af04834731d8bc9e63157634"
+      },
+      {
+        "path": "scripts/validate-tw09-stable-facts.mjs",
+        "bytes": 3599,
+        "sha256": "a078ac7dfe0c83aca53fe6b210437c92fe0b7c5366edabae4d4fe83f711eb46d"
+      }
+    ],
+    "frozen_manifest_sha256": "7cd25981b9edd28066530d2dc60f631b5d00edbe8b435e2c57264010b8799109",
+    "frozen_oracle_lock_sha256": "0fbd2091c19cacd6bd91dbed55bd2c056573ddfed879da0ff85830bf63ca9fbf",
+    "families": [
+      {
+        "id": "rust_test_exact",
+        "fixture_sha256": "4168808940d32324a33b2f33a90a6014be39c133fefacd63b14e8d35fbe5c2a5",
+        "positive": {
+          "accepted": true,
+          "runner_status": "passed",
+          "command_exit_code": 0,
+          "assertion_pass": true
+        },
+        "negative": {
+          "discriminated": true,
+          "runner_status": "failed",
+          "command_exit_code": 0,
+          "assertion_pass": false
+        }
+      },
+      {
+        "id": "json_pointer",
+        "fixture_sha256": "faf5021c9e968da7dca3406f1168fe4f20503fac3060c4307fd3cb3548879d08",
+        "positive": {
+          "accepted": true,
+          "runner_status": "passed",
+          "command_exit_code": 0,
+          "assertion_pass": true
+        },
+        "negative": {
+          "discriminated": true,
+          "runner_status": "failed",
+          "command_exit_code": 0,
+          "assertion_pass": false
+        }
+      },
+      {
+        "id": "portable_record_set",
+        "fixture_sha256": "cf872639dce062956090362e89df35862e3b458afb0ec6af48d72132764687a0",
+        "positive": {
+          "accepted": true,
+          "runner_status": "passed",
+          "command_exit_code": 0,
+          "assertion_pass": true
+        },
+        "negative": {
+          "discriminated": true,
+          "runner_status": "failed",
+          "command_exit_code": 0,
+          "assertion_pass": false
+        }
+      },
+      {
+        "id": "subjective_packet_gate",
+        "fixture_sha256": "518036a9821bbcbf5ac78d76717e8068d3a9111997187297605d398ab1ac8f3b",
+        "positive": {
+          "accepted": true,
+          "runner_status": "packet_gate_ready",
+          "command_exit_code": 0,
+          "assertion_pass": null
+        },
+        "negative": {
+          "discriminated": true,
+          "runner_status": "packet_gate_failed",
+          "command_exit_code": 3,
+          "assertion_pass": null
+        }
+      },
+      {
+        "id": "tw05_normalized_contract",
+        "fixture_sha256": "569a822d04138e2422ec3e46240705f254ad901ed6085b9cfbbc9eee73a20106",
+        "positive": {
+          "accepted": true,
+          "runner_status": "passed",
+          "assertion_pass_count": 10
+        },
+        "negative": {
+          "discriminated": true,
+          "runner_status": "failed",
+          "failed_assertion_ids": [
+            "tw-05.native-step-4",
+            "tw-05.native-step-5"
+          ]
+        }
+      },
+      {
+        "id": "tw05_offline_direct_execution",
+        "fixture_sha256": "60d105ef7beac5703c591e25118ea0533917a125b3a07ddc1c09d4f51ea4f09b",
+        "positive": {
+          "accepted": true,
+          "direct_executables": [
+            "cargo",
+            "node",
+            "node"
+          ],
+          "offline": true
+        },
+        "negative": {
+          "discriminated": true,
+          "failing_purpose": "rust_tests"
+        }
+      },
+      {
+        "id": "tw09_normalized_contract",
+        "fixture_sha256": "a0b89d645626b3072b88117ffefdb62c8fcf1d7c6895a38ed2675134c74bcfdb",
+        "positive": {
+          "accepted": true,
+          "runner_status": "passed",
+          "assertion_pass_count": 8
+        },
+        "negative": {
+          "discriminated": true,
+          "runner_status": "failed",
+          "failed_assertion_ids": [
+            "tw-09.machine-code"
+          ]
+        }
+      }
+    ],
+    "cases": [
+      {
+        "case_id": "TW-01",
+        "historical_target": {
+          "commit": "b2d9c7fb8c11236a0564faa37eca1cf32b76faf8",
+          "tree": "ed4a7b2868d4a949307ba3329ead533bf23783d7"
+        },
+        "historical_base": {
+          "commit": "47ce31aeaeb63a9bb21282691b918e8751cb5a21",
+          "tree": "627c7301d9dade779e66d5027181c8d7bda54462"
+        },
+        "qualified_families": [
+          "subjective_packet_gate"
+        ],
+        "positive": {
+          "accepted": true,
+          "source": "controlled_reference_and_frozen_target_identity"
+        },
+        "negative": {
+          "discriminated": true,
+          "source": "behavior_missing_reference_and_frozen_base_identity"
+        }
+      },
+      {
+        "case_id": "TW-02",
+        "historical_target": {
+          "commit": "1e422f1c3d152a342abee57aaad8b44aa04e11cf",
+          "tree": "0b196a81269565cadd4a6ebc65fbb68ed57a8ede"
+        },
+        "historical_base": {
+          "commit": "b6178e48a5e9f1078a9150038fb19352d0d55325",
+          "tree": "65a458678a0ba4c7c7cbf2c6414e4f1ad0d0f73d"
+        },
+        "qualified_families": [
+          "subjective_packet_gate"
+        ],
+        "positive": {
+          "accepted": true,
+          "source": "controlled_reference_and_frozen_target_identity"
+        },
+        "negative": {
+          "discriminated": true,
+          "source": "behavior_missing_reference_and_frozen_base_identity"
+        }
+      },
+      {
+        "case_id": "TW-03",
+        "historical_target": {
+          "commit": "e953877f2dfd05ae5cebc5262656c2d877c2ed9c",
+          "tree": "f2aae2e7f2632be107f8ce6a381fd7b9bad9e204"
+        },
+        "historical_base": {
+          "commit": "0d7baaa069ec1c673037278cc76c956eed2347e2",
+          "tree": "f490790a4f95a6f40eb5d7af9023334ee9b51a89"
+        },
+        "qualified_families": [
+          "rust_test_exact",
+          "portable_record_set"
+        ],
+        "positive": {
+          "accepted": true,
+          "source": "controlled_reference_and_frozen_target_identity"
+        },
+        "negative": {
+          "discriminated": true,
+          "source": "behavior_missing_reference_and_frozen_base_identity"
+        }
+      },
+      {
+        "case_id": "TW-04",
+        "historical_target": {
+          "commit": "515b81b955a3c21ab306f24e940ea90d46efdace",
+          "tree": "e0f1ec07d23838f2deb2158cde9359543acff521"
+        },
+        "historical_base": {
+          "commit": "e953877f2dfd05ae5cebc5262656c2d877c2ed9c",
+          "tree": "f2aae2e7f2632be107f8ce6a381fd7b9bad9e204"
+        },
+        "qualified_families": [
+          "rust_test_exact",
+          "json_pointer",
+          "portable_record_set"
+        ],
+        "positive": {
+          "accepted": true,
+          "source": "controlled_reference_and_frozen_target_identity"
+        },
+        "negative": {
+          "discriminated": true,
+          "source": "behavior_missing_reference_and_frozen_base_identity"
+        }
+      },
+      {
+        "case_id": "TW-05",
+        "historical_target": {
+          "commit": "16289f8a5acd48ca7fa36b265b7fdfe7df0e4d12",
+          "tree": "459a02f1ec6c9c0b862dbc71d57a73f560c1ea64"
+        },
+        "historical_base": {
+          "commit": "2ecb7d06115af6eb5f392504dce7610af765518a",
+          "tree": "500f8a534592758a77aec6007cfc60db6d1e76a0"
+        },
+        "qualified_families": [
+          "tw05_normalized_contract",
+          "tw05_offline_direct_execution"
+        ],
+        "positive": {
+          "accepted": true,
+          "source": "controlled_reference_and_frozen_target_identity"
+        },
+        "negative": {
+          "discriminated": true,
+          "source": "behavior_missing_reference_and_frozen_base_identity"
+        },
+        "historical_target_calibration": {
+          "outcome": "expected_contract_miss",
+          "stale_revision_rejection_present": false,
+          "required_behavior_preserved": true,
+          "qualification_positive_source": "controlled_reference_positive",
+          "limitation": "the frozen historical target predates the required expected-revision input and is not claimed as a contract-positive"
+        }
+      },
+      {
+        "case_id": "TW-06",
+        "historical_target": {
+          "commit": "64410d6198296a4359053c5d2bb0912401b08056",
+          "tree": "e0278b5790e9accad31c5125605c5a3226ea1927"
+        },
+        "historical_base": {
+          "commit": "caf81e116c8f48c265fec40d7d12bd23a1fa4be0",
+          "tree": "ff697610b5c34d96162e5736b143d47f2494503c"
+        },
+        "qualified_families": [
+          "subjective_packet_gate"
+        ],
+        "positive": {
+          "accepted": true,
+          "source": "controlled_reference_and_frozen_target_identity"
+        },
+        "negative": {
+          "discriminated": true,
+          "source": "behavior_missing_reference_and_frozen_base_identity"
+        }
+      },
+      {
+        "case_id": "TW-07",
+        "historical_target": {
+          "commit": "6ad364755566bc604e69800c8656868dab60a365",
+          "tree": "62b4d59f00878aebe9633895e9bb7ffaa79cbe4c"
+        },
+        "historical_base": {
+          "commit": "16289f8a5acd48ca7fa36b265b7fdfe7df0e4d12",
+          "tree": "459a02f1ec6c9c0b862dbc71d57a73f560c1ea64"
+        },
+        "qualified_families": [
+          "rust_test_exact",
+          "portable_record_set"
+        ],
+        "positive": {
+          "accepted": true,
+          "source": "controlled_reference_and_frozen_target_identity"
+        },
+        "negative": {
+          "discriminated": true,
+          "source": "behavior_missing_reference_and_frozen_base_identity"
+        }
+      },
+      {
+        "case_id": "TW-08",
+        "historical_target": {
+          "commit": "1929dd758ed580f0ccd2bc70be11560f3e88b0da",
+          "tree": "27f59b08b6807cdd259abdc7c9be1b0316dfbd15"
+        },
+        "historical_base": {
+          "commit": "c8528409dd327a9854ac030247ecbd8fcf765db7",
+          "tree": "51f2d77c5200ace592f9a9fea50d0f33bb6c4fa8"
+        },
+        "qualified_families": [
+          "rust_test_exact"
+        ],
+        "positive": {
+          "accepted": true,
+          "source": "controlled_reference_and_frozen_target_identity"
+        },
+        "negative": {
+          "discriminated": true,
+          "source": "behavior_missing_reference_and_frozen_base_identity"
+        }
+      },
+      {
+        "case_id": "TW-09",
+        "historical_target": {
+          "commit": "156565a3d2dc7664088a24b7f6e38d02ad4e04fe",
+          "tree": "8bce5aa9e39ff023399d7eb32589bcebe7f3a670"
+        },
+        "historical_base": {
+          "commit": "77821143e9847f62e129e553522556743c5032c1",
+          "tree": "db03a53542043581ab26e7f7dba8ba29f7194649"
+        },
+        "qualified_families": [
+          "rust_test_exact",
+          "json_pointer",
+          "portable_record_set",
+          "tw09_normalized_contract"
+        ],
+        "positive": {
+          "accepted": true,
+          "source": "controlled_reference_and_frozen_target_identity"
+        },
+        "negative": {
+          "discriminated": true,
+          "source": "behavior_missing_reference_and_frozen_base_identity"
+        }
+      }
+    ],
+    "limitations": [
+      "Controlled references qualify selector, validator, packet-gate, and offline-execution families; historical target identity is bound but historical targets are not all recompiled in this compact qualification.",
+      "TW-05 historical target 16289f8 lacks stale-revision rejection, so its expected miss is calibration evidence and the controlled reference-positive qualifies the frozen requirement.",
+      "Subjective criteria are qualified as deterministic packet gates; no machine score or reviewer judgment is fabricated."
+    ]
+  }
+}

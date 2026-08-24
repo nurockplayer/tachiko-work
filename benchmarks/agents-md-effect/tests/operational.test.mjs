@@ -28,6 +28,9 @@ const benchmarkDir = resolve(testDir, "..");
 const preflightScript = resolve(benchmarkDir, "scripts/preflight-run.mjs");
 const captureCandidateScript = resolve(benchmarkDir, "scripts/capture-candidate.mjs");
 const prepareValidationScript = resolve(benchmarkDir, "scripts/prepare-validation.mjs");
+const runOraclesScript = resolve(benchmarkDir, "scripts/run-oracles.mjs");
+const runTw05OfflineScript = resolve(benchmarkDir, "scripts/run-tw05-offline.mjs");
+const qualifyOraclesScript = resolve(benchmarkDir, "scripts/qualify-oracles.mjs");
 const CONTROL_ARTIFACTS = [
   "environment-lock.json",
   "evaluator/cases.json",
@@ -1060,5 +1063,272 @@ test("trusted capture rejects a trusted output redirected into the workspace", a
     assert.match(result.stderr, /trusted-dir and workspace must be disjoint/i);
   } finally {
     await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+async function createOracleRunnerFixture({command, selector, subjectiveGroups = []}) {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-oracle-runner-"));
+  const candidateRoot = resolve(fixtureRoot, "candidate");
+  const trustedDir = resolve(fixtureRoot, "trusted");
+  const manifestPath = resolve(fixtureRoot, "manifest.json");
+  const oracleLockPath = resolve(fixtureRoot, "oracle-lock.json");
+  await mkdir(candidateRoot);
+  const assertion = selector === null ? [] : [{
+    id: "fixture.assertion",
+    command_id: "fixture.command",
+    selector,
+  }];
+  await Promise.all([
+    writeFile(
+      manifestPath,
+      `${JSON.stringify({
+        protocol_id: "fixture-v1",
+        classification: "construction_pilot_only",
+        formal_result_eligible: false,
+        cases: [{
+          id: "TW-XX",
+          oracle_commands: [{
+            id: "fixture.command",
+            command_template: command,
+            assertion_ids: assertion.map((entry) => entry.id),
+          }],
+          assertions: assertion.map(({id, command_id}) => ({
+            id,
+            command_id,
+            stage: "expectation_free_execution",
+          })),
+          subjective_groups: subjectiveGroups,
+        }],
+      }, null, 2)}\n`,
+    ),
+    writeFile(
+      oracleLockPath,
+      `${JSON.stringify({
+        protocol_id: "fixture-v1",
+        cases: [{id: "TW-XX", assertions: assertion}],
+      }, null, 2)}\n`,
+    ),
+  ]);
+  return {fixtureRoot, candidateRoot, trustedDir, manifestPath, oracleLockPath};
+}
+
+function runOracleFixture(fixture, extra = []) {
+  return spawnSync(
+    process.execPath,
+    [
+      runOraclesScript,
+      "--case",
+      "TW-XX",
+      "--candidate-root",
+      fixture.candidateRoot,
+      "--trusted-dir",
+      fixture.trustedDir,
+      "--manifest",
+      fixture.manifestPath,
+      "--oracle-lock",
+      fixture.oracleLockPath,
+      ...extra,
+    ],
+    {encoding: "utf8"},
+  );
+}
+
+test("oracle runner requires exactly one matching Rust test", async () => {
+  for (const [lines, expectedStatus] of [
+    ["test locked_name ... ok", 0],
+    ["running 0 tests", 1],
+    ["test locked_name ... ok\\ntest locked_name ... ok", 1],
+    ["test locked_name ... ignored", 1],
+  ]) {
+    const fixture = await createOracleRunnerFixture({
+      command: `printf '%b\\n' '${lines}'`,
+      selector: {
+        kind: "rust_test_exact",
+        test_name: "locked_name",
+        required_matching_tests: 1,
+      },
+    });
+    try {
+      const result = runOracleFixture(fixture);
+      assert.equal(result.status, expectedStatus, result.stderr);
+      const receipt = await readJson(resolve(fixture.trustedDir, "oracle-run.json"));
+      assert.equal(receipt.assertions[0].matching_tests, lines.includes("running 0") ? 0 : lines.split("\\n").length);
+      assert.equal(receipt.assertions[0].pass, expectedStatus === 0);
+    } finally {
+      await rm(fixture.fixtureRoot, {recursive: true, force: true});
+    }
+  }
+});
+
+test("oracle runner records nonzero commands and JSON-pointer mismatches fail closed", async () => {
+  for (const [command, expectedReason] of [
+    ["printf '{\"assertions\":{\"ready\":true}}\\n'; exit 7", /command exited 7/i],
+    ["printf '{\"assertions\":{\"ready\":false}}\\n'", /JSON pointer value mismatch/i],
+  ]) {
+    const fixture = await createOracleRunnerFixture({
+      command,
+      selector: {
+        kind: "json_pointer",
+        json_pointer: "/assertions/ready",
+        expected: true,
+      },
+    });
+    try {
+      const result = runOracleFixture(fixture);
+      assert.equal(result.status, 1, result.stderr);
+      const receipt = await readJson(resolve(fixture.trustedDir, "oracle-run.json"));
+      assert.equal(receipt.commands[0].exit_code, command.includes("exit 7") ? 7 : 0);
+      assert.equal(receipt.assertions[0].pass, false);
+      assert.match(receipt.assertions[0].reasons.join(" "), expectedReason);
+    } finally {
+      await rm(fixture.fixtureRoot, {recursive: true, force: true});
+    }
+  }
+});
+
+test("oracle runner selects locked portable records and rejects a mismatch", async () => {
+  const fixture = await createOracleRunnerFixture({
+    command: "printf '{\"contract_id\":\"tachiko-portable-observations-v1\",\"native\":[{\"index\":3,\"class\":0,\"bits\":\"bad\",\"auxiliary\":\"9\"}],\"wasm\":[{\"index\":3,\"class\":0,\"bits\":\"good\",\"auxiliary\":\"9\"}]}\\n' > <trusted-portable-observations-file>",
+    selector: {
+      kind: "portable_record_set",
+      indexes: [3],
+      expected_records: [{index: 3, class: 0, bits: "good", auxiliary: "9"}],
+      require_selected_native_wasm_equal: true,
+      reject_class: 255,
+    },
+  });
+  try {
+    const result = runOracleFixture(fixture);
+    assert.equal(result.status, 1, result.stderr);
+    const receipt = await readJson(resolve(fixture.trustedDir, "oracle-run.json"));
+    assert.equal(receipt.assertions[0].pass, false);
+    assert.deepEqual(receipt.assertions[0].selected_native, [
+      {index: 3, class: 0, bits: "bad", auxiliary: "9"},
+    ]);
+    assert.match(receipt.assertions[0].reasons.join(" "), /differ/i);
+  } finally {
+    await rm(fixture.fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("oracle runner classifies subjective-only cases as packet gates", async () => {
+  const fixture = await createOracleRunnerFixture({
+    command: "true",
+    selector: null,
+    subjectiveGroups: [{id: "semantic", stage: "blinded_review_packet"}],
+  });
+  try {
+    const result = runOracleFixture(fixture);
+    assert.equal(result.status, 0, result.stderr);
+    const receipt = await readJson(resolve(fixture.trustedDir, "oracle-run.json"));
+    assert.equal(receipt.assessment_mode, "subjective_only_packet_gate");
+    assert.equal(receipt.overall_status, "packet_gate_ready");
+    assert.equal(receipt.machine_score_claimed, false);
+  } finally {
+    await rm(fixture.fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("oracle runner rejects a candidate-controlled trusted adapter", async () => {
+  const fixture = await createOracleRunnerFixture({
+    command: "node <trusted-adapter-file>",
+    selector: null,
+  });
+  try {
+    const adapter = resolve(fixture.candidateRoot, "adapter.mjs");
+    await writeFile(adapter, "process.exit(0);\n");
+    const result = runOracleFixture(fixture, ["--adapter-file", adapter]);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /adapter-file.*candidate-root.*disjoint/i);
+  } finally {
+    await rm(fixture.fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("TW-05 offline runner never invokes a package manager", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-tw05-offline-"));
+  const binDir = resolve(fixtureRoot, "bin");
+  const candidateRoot = resolve(fixtureRoot, "candidate");
+  const output = resolve(fixtureRoot, "receipt.json");
+  const marker = resolve(fixtureRoot, "package-manager-invoked");
+  try {
+    await Promise.all([mkdir(binDir), mkdir(candidateRoot)]);
+    for (const executable of ["cargo", "node", "rustup"]) {
+      const body = executable === "rustup"
+        ? "#!/bin/sh\n[ \"$1 $2 $3\" = \"target list --installed\" ] && printf 'wasm32-unknown-unknown\\n'\n"
+        : "#!/bin/sh\nexit 0\n";
+      await writeFile(resolve(binDir, executable), body, {mode: 0o755});
+    }
+    for (const executable of ["npm", "pnpm", "yarn"]) {
+      await writeFile(
+        resolve(binDir, executable),
+        `#!/bin/sh\nprintf invoked > '${marker}'\nexit 99\n`,
+        {mode: 0o755},
+      );
+    }
+    const result = spawnSync(
+      executablePath("node"),
+      [
+        runTw05OfflineScript,
+        "--candidate-root",
+        candidateRoot,
+        "--output",
+        output,
+        "--cargo-command",
+        "cargo test --locked",
+        "--node-test-file",
+        "worker.test.mjs",
+        "--node-benchmark-file",
+        "bench.mjs",
+      ],
+      {encoding: "utf8", env: {...process.env, PATH: `${binDir}:/usr/bin:/bin`}},
+    );
+    assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+    assert.equal(existsSync(marker), false);
+    const receipt = await readJson(output);
+    assert.equal(receipt.offline, true);
+    assert.deepEqual(receipt.executables.map((entry) => entry.name), ["cargo", "node", "node"]);
+    assert.ok(receipt.executions.every((entry) => entry.exit_code === 0));
+  } finally {
+    await rm(fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("oracle qualification is reproducible and covers every case and adapter family", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-oracle-qualification-"));
+  const output = resolve(fixtureRoot, "oracles.json");
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [
+        qualifyOraclesScript,
+        "--source-repo",
+        resolve(benchmarkDir, "../.."),
+        "--output",
+        output,
+      ],
+      {encoding: "utf8", maxBuffer: 128 * 1024 * 1024},
+    );
+    assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+    const [actualBytes, checkedInBytes] = await Promise.all([
+      readFile(output),
+      readFile(resolve(benchmarkDir, "evaluator/qualifications/oracles.json")),
+    ]);
+    assert.deepEqual(actualBytes, checkedInBytes);
+    const receipt = JSON.parse(actualBytes.toString("utf8"));
+    assert.equal(receipt.payload_sha256, sha256(`${JSON.stringify(receipt.payload)}\n`));
+    assert.equal(receipt.payload.cases.length, 9);
+    assert.deepEqual(receipt.payload.cases.map((entry) => entry.case_id), [
+      "TW-01", "TW-02", "TW-03", "TW-04", "TW-05", "TW-06", "TW-07", "TW-08", "TW-09",
+    ]);
+    assert.ok(receipt.payload.families.every((entry) =>
+      entry.positive.accepted === true && entry.negative.discriminated === true));
+    assert.ok(receipt.payload.families.some((entry) => entry.id === "tw09_normalized_contract"));
+    const tw05 = receipt.payload.cases.find((entry) => entry.case_id === "TW-05");
+    assert.equal(tw05.historical_target_calibration.outcome, "expected_contract_miss");
+    assert.equal(tw05.historical_target_calibration.stale_revision_rejection_present, false);
+    assert.equal(receipt.payload.no_codex_launched, true);
+  } finally {
+    await rm(fixtureRoot, {recursive: true, force: true});
   }
 });
