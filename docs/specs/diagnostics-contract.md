@@ -4,7 +4,9 @@ Decision state: Mixed. The semantic diagnostic meaning and stability rules are
 Accepted under [ADR-0019](../decisions/ADR-0019-staged-semantic-validation-and-diagnostics.md).
 ADR-0020 additionally makes those stable semantic observations and operation-gate
 relationships part of the first-class Semantic API result meaning where
-applicable. Exact Rust data structures, complete code catalog, external wire
+applicable. ADR-0022 fixes runtime ownership, host separation, and native/WASM
+semantic parity while leaving exact diagnostic delivery/wire mechanisms
+Deferred. Exact Rust data structures, complete code catalog, external wire
 encoding, transport, severity vocabulary, and presentation adapters remain
 Provisional or Deferred as noted below.
 
@@ -226,8 +228,12 @@ understand a failure and must not infer execute authority from a report alone.
 ### Native/WASM/IPC
 
 The semantic diagnostic observations and gate relationship follow ADR-0019 and
-ADR-0020. Transport serialization, version negotiation, resident delivery,
-push/pull updates, and projection patches remain #26.
+ADR-0020. ADR-0022 requires equivalent Stable semantic diagnostic observations
+where native and WASM expose the same semantic capability, and places
+interactive authoritative state in the shared Rust runtime. Exact transport
+serialization/version negotiation, resident session delivery, push/pull
+updates, and projection patches remain Deferred to #93–#95 and future
+host/transport implementation as applicable.
 
 ## Storage failures
 
@@ -247,6 +253,7 @@ semantic diagnostics or erase their version-specific failure meaning.
 | Validator/provider provenance concept | Accepted |
 | Separation of machine severity from operation gate | Accepted |
 | Authoritative GateOutcome, not severity/report emptiness, controls semantic publication | Accepted under ADR-0020 |
+| Native/WASM equivalent Stable diagnostic observations where capabilities overlap | Accepted under ADR-0022 |
 | Human message/help wording | Presentation / unstable |
 | Human-key path and source span | Projection / unstable |
 | Exact code namespace/catalog spelling | Provisional; published meanings stable |
@@ -254,8 +261,8 @@ semantic diagnostics or erase their version-specific failure meaning.
 | Exact semantic-location Rust type | Provisional |
 | Exact facts/related encoding | Provisional |
 | Exact sort tuple | Provisional |
-| External JSON/API wire format | Deferred to #26 mapping of `semantic-api.md` |
-| IPC/WASM transport | Deferred to #26 |
+| External JSON/API wire format | Deferred; must preserve ADR-0019/ADR-0020/ADR-0022 laws |
+| IPC/WASM transport and resident diagnostic delivery mechanics | Deferred to future runtime/transport implementation |
 | Diagnostic fingerprint/GUID/baseline | Deferred |
 | Suppression/fix-it protocol | Deferred |
 
@@ -265,6 +272,7 @@ semantic diagnostics or erase their version-specific failure meaning.
 - ADR-0018
 - ADR-0019
 - ADR-0020
+- ADR-0022
 - `semantic-api.md`
 - `validation-engine.md`
-- Issues #10, #17, #23, #26, #27, #28
+- Issues #10, #17, #23, #27, #28, #93, #94, #95
