@@ -1,6 +1,6 @@
 ---
 name: Research
-description: Investigate an open product or architecture hypothesis without pre-deciding implementation
+about: Investigate an open product or architecture hypothesis without pre-deciding implementation
 title: "[Research] "
 labels: ""
 assignees: ""
