@@ -23,10 +23,11 @@ The format documents have different roles. Do not treat similarly named files as
 
 The semantic model owns meaning. Physical formats are representations. ADR-0017 fixes the versioned storage boundary and canonical-representation invariants; ADR-0018 fixes the admitted-token binary64 conversion and spelling authority. Physical `.roproj` layout and future `.ro` packaging remain separately owned.
 
-## Semantic core, schema, validation, formulas, and diff
+## Semantic API, core, schema, validation, formulas, and diff
 
 | Document | Read it for |
 | --- | --- |
+| [`semantic-api.md`](semantic-api.md) | ADR-0020 first-class transport-neutral Semantic API: client rule, queries/commands, Propose/Execute, gates/results, atomic batch, capability-addressability, and compatibility |
 | [`semantic-data-model.md`](semantic-data-model.md) | Semantic data-model contract and terminology |
 | [`schema-system.md`](schema-system.md) | Durable schema declaration behavior and the boundary from runtime validation policy |
 | [`validation-engine.md`](validation-engine.md) | ADR-0019 staged validation, candidate/finalization semantics, full-validation oracle, and operation gating |
@@ -34,18 +35,18 @@ The semantic model owns meaning. Physical formats are representations. ADR-0017 
 | [`formula-engine-spec.md`](formula-engine-spec.md) | Accepted bounded authoring and ADR-0018 stable-ID projection/rename, binary64, dependency, and recomputation contract |
 | [`semantic-diff-spec.md`](semantic-diff-spec.md) | Semantic diff behavior |
 
-ADR-0019 resolves the general validation/diagnostics architecture while keeping exact Rust APIs and external transports Provisional. Formula binding, failure precedence, SCC meaning, and numeric determinism remain governed by ADR-0018; stable identity by ADR-0015; storage representation failures by ADR-0017. #10 still owns public Semantic API/wire stability and #26 owns native/WASM/IPC runtime transport.
+ADR-0020 makes the Headless Semantic API the mandatory first-party semantic product boundary while keeping current Rust APIs, serde shapes, complete operation catalogue, and transport/runtime mechanisms replaceable. ADR-0019 resolves the validation/diagnostics architecture; formula binding/failure/numeric semantics remain governed by ADR-0018; stable identity by ADR-0015; storage representation by ADR-0017. #26 now owns native/WASM/IPC/runtime mapping of the Accepted Semantic API rather than its semantic meaning.
 
 ## AI, security, and extensibility
 
 | Document | Read it for |
 | --- | --- |
-| [`ai-agent-api.md`](ai-agent-api.md) | Implemented read/explain/suggest AI surface under ADR-0007 |
+| [`ai-agent-api.md`](ai-agent-api.md) | Implemented AI-facing read/explain/suggest adapter over the first-class Semantic API direction under ADR-0007/ADR-0020 |
 | [`security-model.md`](security-model.md) | Security constraints and model |
 | [`plugin-system.md`](plugin-system.md) | Accepted extensibility direction plus still-open runtime/sandbox design |
 | [`migration-framework.md`](migration-framework.md) | Progressive migration direction and future adapter framework |
 
-Concrete AI mutation, capability, provenance, plugin ABI/sandbox, and migration fidelity contracts remain narrower decision work even when the broader direction is Accepted. ADR-0019 allows deterministic read-only domain/extension validators to share diagnostic semantics without deciding plugin runtime mechanics.
+Concrete AI mutation, capability identifiers, grants, approval/provenance protocol, plugin ABI/sandbox, and migration fidelity contracts remain narrower decision work. ADR-0020 requires semantic operations to be capability-addressable but leaves the exact authorization protocol to #27/#28. ADR-0019 allows deterministic read-only domain/extension validators to share diagnostic semantics without deciding plugin runtime mechanics.
 
 ## Collaboration and history models
 
