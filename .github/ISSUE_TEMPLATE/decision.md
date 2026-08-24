@@ -14,7 +14,7 @@ assignees: ""
 
 - Origin: <!-- discussion / research / incident / prior issue -->
 - Related: <!-- neighboring issues / docs -->
-- Existing authority: <!-- governing Constitution / ADR / policy / spec -->
+- Authority: <!-- governing Constitution / ADR / policy / spec -->
 
 ## Canonical constraints
 
