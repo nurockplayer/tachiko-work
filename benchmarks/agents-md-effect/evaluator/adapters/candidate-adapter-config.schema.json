@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Candidate-specific trusted oracle probe configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "case_id", "probe"],
+  "properties": {
+    "schema": {"const": "tachiko-candidate-adapter-v1"},
+    "case_id": {"enum": ["TW-05", "TW-09"]},
+    "probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["executable", "sha256", "arguments"],
+      "properties": {
+        "executable": {"type": "string", "pattern": "^/"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "arguments": {
+          "type": "array",
+          "items": {"type": "string"},
+          "minItems": 1
+        }
+      }
+    }
+  }
+}

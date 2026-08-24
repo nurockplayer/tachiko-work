@@ -9,12 +9,24 @@ import {fileURLToPath} from "node:url";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const defaultBenchmarkDir = resolve(scriptDir, "..");
+const frozenManifestSha256 = "7cd25981b9edd28066530d2dc60f631b5d00edbe8b435e2c57264010b8799109";
+const frozenOracleLockSha256 = "0fbd2091c19cacd6bd91dbed55bd2c056573ddfed879da0ff85830bf63ca9fbf";
+const frozenControlArtifacts = [
+  "environment-lock.json",
+  "evaluator/cases.json",
+  "evaluator/oracle-lock.json",
+  "evaluator/core-score-lock.json",
+  "evaluator/authority-lock.json",
+  "evaluator/production-oracles.json",
+];
 
 function usage() {
   console.error(
     "usage: node run-oracles.mjs --case TW-03 --candidate-root /abs/validation " +
-      "--trusted-dir /abs/trusted [--manifest /abs/production-oracles.json] " +
-      "[--oracle-lock /abs/oracle-lock.json] [--adapter-file /abs/adapter.mjs] " +
+      "--trusted-dir /abs/trusted --expected-control-sha256 <sha256> " +
+      "[--manifest /abs/production-oracles.json --expected-manifest-sha256 <sha256>] " +
+      "[--oracle-lock /abs/oracle-lock.json --expected-oracle-lock-sha256 <sha256>] " +
+      "[--adapter-file /abs/adapter.mjs] " +
       "[--contract-file /abs/contract.json] [--candidate-commit <sha>]",
   );
   process.exit(2);
@@ -84,10 +96,23 @@ function safeId(value) {
   return value.replaceAll(/[^A-Za-z0-9_.-]/g, "_");
 }
 
-function exactRustOutcomes(output, testName) {
-  const escaped = testName.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const expression = new RegExp(`^test ${escaped} \\.\\.\\. (ok|FAILED|ignored)$`, "gm");
-  return [...output.matchAll(expression)].map((match) => match[1]);
+function libtestEvidence(output, testName) {
+  const events = [];
+  for (const line of output.split(/\r?\n/)) {
+    try {
+      const event = JSON.parse(line);
+      if (event && typeof event === "object" && ["test", "suite"].includes(event.type)) {
+        events.push(event);
+      }
+    } catch {
+      // Cargo diagnostics are separate from the trusted libtest JSON events.
+    }
+  }
+  const matching = events.filter((event) => event.type === "test" && event.name === testName);
+  const started = matching.filter((event) => event.event === "started");
+  const terminal = matching.filter((event) => ["ok", "failed", "ignored"].includes(event.event));
+  const suites = events.filter((event) => event.type === "suite");
+  return {started, terminal, suites};
 }
 
 function parseJsonStdout(stdout) {
@@ -145,8 +170,11 @@ function portableResult(observations, selector) {
 }
 
 const args = parseArgs(process.argv.slice(2));
-for (const key of ["case", "candidate-root", "trusted-dir"]) {
+for (const key of ["case", "candidate-root", "trusted-dir", "expected-control-sha256"]) {
   if (!args.has(key)) usage();
+}
+if (!/^[0-9a-f]{64}$/.test(args.get("expected-control-sha256"))) {
+  fail("expected-control-sha256 must be lowercase SHA-256");
 }
 
 const caseId = args.get("case");
@@ -161,19 +189,57 @@ if (inside(trustedDir, candidateRoot) || inside(candidateRoot, trustedDir)) {
   fail("trusted-dir and candidate-root must be disjoint");
 }
 
-const benchmarkDir = args.has("benchmark-dir")
-  ? await realpath(resolve(args.get("benchmark-dir")))
-  : defaultBenchmarkDir;
+if (args.has("benchmark-dir")) fail("benchmark-dir override is not permitted");
+const benchmarkDir = defaultBenchmarkDir;
 const manifestPath = resolve(
   args.get("manifest") ?? resolve(benchmarkDir, "evaluator/production-oracles.json"),
 );
 const oracleLockPath = resolve(
   args.get("oracle-lock") ?? resolve(benchmarkDir, "evaluator/oracle-lock.json"),
 );
-const [manifestBytes, lockBytes] = await Promise.all([
-  readFile(manifestPath),
-  readFile(oracleLockPath),
+const [manifestInput, lockInput] = await Promise.all([
+  trustedRegularFile(manifestPath, "manifest", candidateRoot),
+  trustedRegularFile(oracleLockPath, "oracle-lock", candidateRoot),
 ]);
+const [manifestBytes, lockBytes] = await Promise.all([
+  readFile(manifestInput.path),
+  readFile(lockInput.path),
+]);
+const expectedManifestSha256 = args.has("manifest")
+  ? args.get("expected-manifest-sha256")
+  : frozenManifestSha256;
+const expectedOracleLockSha256 = args.has("oracle-lock")
+  ? args.get("expected-oracle-lock-sha256")
+  : frozenOracleLockSha256;
+if (!/^[0-9a-f]{64}$/.test(expectedManifestSha256 ?? "")) {
+  fail("manifest override requires expected-manifest-sha256");
+}
+if (!/^[0-9a-f]{64}$/.test(expectedOracleLockSha256 ?? "")) {
+  fail("oracle-lock override requires expected-oracle-lock-sha256");
+}
+if (sha256(manifestBytes) !== expectedManifestSha256) fail("manifest SHA-256 mismatch");
+if (sha256(lockBytes) !== expectedOracleLockSha256) fail("oracle-lock SHA-256 mismatch");
+const usingFrozenControls = !args.has("manifest") && !args.has("oracle-lock");
+const frozenControlInputs = [];
+if (usingFrozenControls) {
+  for (const path of frozenControlArtifacts) {
+    const input = await trustedRegularFile(resolve(benchmarkDir, path), path, candidateRoot);
+    frozenControlInputs.push({control_path: path, ...input});
+  }
+  const observedControlSha256 = sha256(`${JSON.stringify(
+    frozenControlInputs.map(({control_path, bytes, sha256: hash}) => ({
+      path: control_path,
+      bytes,
+      sha256: hash,
+    })),
+  )}\n`);
+  if (observedControlSha256 !== args.get("expected-control-sha256")) {
+    fail(
+      `control SHA-256 mismatch: expected ${args.get("expected-control-sha256")}, ` +
+        `got ${observedControlSha256}`,
+    );
+  }
+}
 const manifest = JSON.parse(manifestBytes.toString("utf8"));
 const lock = JSON.parse(lockBytes.toString("utf8"));
 if (manifest.protocol_id !== lock.protocol_id) fail("manifest/oracle protocol mismatch");
@@ -183,11 +249,14 @@ if (!manifestCase || !lockCase) fail(`unknown case ${caseId}`);
 const lockedAssertions = new Map((lockCase.assertions ?? []).map((entry) => [entry.id, entry]));
 const mappedAssertions = new Map((manifestCase.assertions ?? []).map((entry) => [entry.id, entry]));
 if (lockedAssertions.size !== (lockCase.assertions ?? []).length) fail("duplicate locked assertion ID");
+if (mappedAssertions.size !== (manifestCase.assertions ?? []).length) fail("duplicate mapped assertion ID");
 if (mappedAssertions.size !== lockedAssertions.size) fail("manifest assertion coverage mismatch");
 for (const [id, assertion] of lockedAssertions) {
   const mapping = mappedAssertions.get(id);
   if (!mapping || mapping.command_id !== assertion.command_id) fail(`assertion mapping mismatch: ${id}`);
 }
+const commandIds = manifestCase.oracle_commands.map((entry) => entry.id);
+if (new Set(commandIds).size !== commandIds.length) fail("duplicate command ID");
 
 await mkdir(trustedDirInput, {mode: 0o700});
 const outputPaths = {
@@ -204,13 +273,33 @@ const adapterRequested = manifestCase.oracle_commands.some((entry) =>
 const contractRequested = manifestCase.oracle_commands.some((entry) =>
   entry.command_template.includes("<trusted-contract-file>"));
 let adapterFile;
+let adapterConfig;
 let contractFile;
-const trustedInputs = [];
+const trustedInputs = [
+  {kind: "manifest", ...manifestInput},
+  {kind: "oracle_lock", ...lockInput},
+  ...frozenControlInputs.map(({control_path: controlPath, bytes, sha256: hash}) => ({
+    kind: "frozen_control",
+    control_path: controlPath,
+    bytes,
+    sha256: hash,
+  })),
+];
 if (adapterRequested) {
   if (!args.has("adapter-file")) fail(`${caseId} requires --adapter-file`);
   const trusted = await trustedRegularFile(args.get("adapter-file"), "adapter-file", candidateRoot);
   trustedInputs.push({kind: "adapter", ...trusted});
   adapterFile = trusted.path;
+}
+if (args.has("adapter-config")) {
+  if (!adapterRequested) fail("adapter-config supplied for a case without an adapter");
+  const trusted = await trustedRegularFile(
+    args.get("adapter-config"),
+    "adapter-config",
+    candidateRoot,
+  );
+  trustedInputs.push({kind: "adapter_config", ...trusted});
+  adapterConfig = trusted.path;
 }
 if (contractRequested) {
   const requestedContract = args.get("contract-file") ?? defaultContracts[caseId];
@@ -247,6 +336,12 @@ for (const [commandIndex, command] of manifestCase.oracle_commands.entries()) {
   }
   if (resolvedCommand.includes("<trusted-adapter-file>")) {
     resolvedCommand = replaceToken(resolvedCommand, "trusted-adapter-file", adapterFile);
+    if (
+      adapterConfig &&
+      command.command_template.includes("<trusted-observations-file>")
+    ) {
+      resolvedCommand += ` --config ${shellQuote(adapterConfig)}`;
+    }
   }
   if (resolvedCommand.includes("<trusted-contract-file>")) {
     resolvedCommand = replaceToken(resolvedCommand, "trusted-contract-file", contractFile);
@@ -259,10 +354,25 @@ for (const [commandIndex, command] of manifestCase.oracle_commands.entries()) {
   }
   if (/<[^>]+>/.test(resolvedCommand)) fail(`unresolved command placeholder: ${command.id}`);
 
+  const rustAssertions = (command.assertion_ids ?? [])
+    .map((id) => lockedAssertions.get(id))
+    .filter((entry) => entry?.selector?.kind === "rust_test_exact");
+  if (rustAssertions.length > 0) {
+    if (
+      rustAssertions.length !== 1 ||
+      !/^cargo test -p [a-z0-9-]+ --test [A-Za-z0-9_-]+ --locked [A-Za-z0-9_:.-]+ -- --exact$/.test(
+        resolvedCommand,
+      )
+    ) {
+      fail(`${command.id} Rust assertion is not a locked exact cargo test command`);
+    }
+    resolvedCommand += " -Z unstable-options --format json";
+  }
+
   const result = spawnSync("/bin/bash", ["--noprofile", "--norc", "-c", resolvedCommand], {
     cwd: candidateRoot,
     encoding: "utf8",
-    env: process.env,
+    env: rustAssertions.length > 0 ? {...process.env, RUSTC_BOOTSTRAP: "1"} : process.env,
     maxBuffer: 128 * 1024 * 1024,
     timeout: Number(args.get("timeout-ms") ?? 1_800_000),
   });
@@ -293,19 +403,34 @@ for (const [commandIndex, command] of manifestCase.oracle_commands.entries()) {
     if (result.error) reasons.push(`command spawn failed: ${result.error.message}`);
     if (result.status !== 0) reasons.push(`command exited ${result.status ?? "without status"}`);
     if (locked.selector.kind === "rust_test_exact") {
-      const outcomes = exactRustOutcomes(`${stdout}\n${stderr}`, locked.selector.test_name);
+      const evidence = libtestEvidence(stdout, locked.selector.test_name);
+      const suite = evidence.suites.at(-1);
       detail = {
-        matching_tests: outcomes.length,
-        matching_test_outcomes: outcomes,
+        evidence_mode: "libtest_json_v0.1_bootstrap",
+        matching_tests: evidence.started.length,
+        matching_test_outcomes: evidence.terminal.map((entry) => entry.event),
         required_matching_tests: locked.selector.required_matching_tests,
+        suite_summary: suite ?? null,
       };
-      if (outcomes.length !== locked.selector.required_matching_tests) {
+      if (evidence.started.length !== locked.selector.required_matching_tests) {
         reasons.push(
-          `matching Rust tests ${outcomes.length}, required ${locked.selector.required_matching_tests}`,
+          `matching Rust tests ${evidence.started.length}, required ${locked.selector.required_matching_tests}`,
         );
       }
-      if (outcomes.some((outcome) => outcome !== "ok")) {
-        reasons.push("matching Rust test did not pass");
+      if (
+        evidence.terminal.length !== locked.selector.required_matching_tests ||
+        evidence.terminal.some((entry) => entry.event !== "ok")
+      ) {
+        reasons.push("matching Rust test lacks one passing libtest JSON event");
+      }
+      if (
+        !suite ||
+        suite.event !== "ok" ||
+        suite.passed !== locked.selector.required_matching_tests ||
+        suite.failed !== 0 ||
+        suite.ignored !== 0
+      ) {
+        reasons.push("libtest JSON suite summary does not prove one passing test");
       }
     } else if (locked.selector.kind === "json_pointer") {
       const document = parseJsonStdout(stdout);
@@ -360,6 +485,7 @@ const receipt = {
   formal_result_eligible: false,
   manifest_sha256: sha256(manifestBytes),
   oracle_lock_sha256: sha256(lockBytes),
+  expected_control_sha256: args.get("expected-control-sha256"),
   trusted_inputs: trustedInputs,
   candidate_root: candidateRoot,
   assessment_mode: assessmentMode,

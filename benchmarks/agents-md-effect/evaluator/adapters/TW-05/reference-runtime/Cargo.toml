@@ -1,0 +1,14 @@
+[workspace]
+
+[package]
+name = "tachiko-tw05-reference-runtime"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "tachiko-tw05-reference-native"
+path = "src/main.rs"

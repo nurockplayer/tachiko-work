@@ -5,6 +5,9 @@ import {readFile, realpath, writeFile} from "node:fs/promises";
 import {spawnSync} from "node:child_process";
 import {isAbsolute, resolve} from "node:path";
 
+const sandboxExecutable = "/usr/bin/sandbox-exec";
+const sandboxProfile = "(version 1)\n(allow default)\n(deny network*)\n";
+
 function usage() {
   console.error(
     "usage: node run-tw05-offline.mjs --candidate-root /abs/repo --output /abs/receipt.json " +
@@ -60,6 +63,9 @@ if (!isAbsolute(args.get("candidate-root")) || !isAbsolute(args.get("output"))) 
 }
 const candidateRoot = await realpath(resolve(args.get("candidate-root")));
 const output = resolve(args.get("output"));
+const sandboxBytes = await readFile(sandboxExecutable).catch(() => {
+  throw new Error("/usr/bin/sandbox-exec is required for kernel network denial");
+});
 const environment = {
   ...process.env,
   CARGO_NET_OFFLINE: "true",
@@ -118,6 +124,25 @@ if (args.has("node-benchmark-file")) {
     args: ["spikes/issue-26-runtime/benchmark/runtime-benchmark.ts"],
     purpose: "benchmark",
   });
+  commands.push({
+    name: "bash",
+    args: ["scripts/issue-26-portability-audit.sh"],
+    purpose: "portability_audit",
+  });
+}
+
+const networkProbePath = resolve(
+  new URL("probe-network-denial.mjs", import.meta.url).pathname,
+);
+const networkProbe = spawnSync(
+  sandboxExecutable,
+  ["-p", sandboxProfile, process.execPath, networkProbePath],
+  {cwd: candidateRoot, encoding: "utf8", env: environment, timeout: 10_000},
+);
+if (networkProbe.status !== 0 || !/^network-denied:(?:EPERM|EACCES)\s*$/.test(networkProbe.stdout)) {
+  throw new Error(
+    `kernel network denial probe failed: ${networkProbe.stderr || networkProbe.stdout}`,
+  );
 }
 
 const executableCache = new Map();
@@ -128,7 +153,7 @@ for (const command of commands) {
     executable = resolveExecutable(command.name, environment);
     executableCache.set(command.name, executable);
   }
-  const result = spawnSync(executable, command.args, {
+  const result = spawnSync(sandboxExecutable, ["-p", sandboxProfile, executable, ...command.args], {
     cwd: candidateRoot,
     encoding: "utf8",
     env: environment,
@@ -170,6 +195,19 @@ const receipt = {
     NO_PROXY: environment.NO_PROXY,
   },
   package_manager_dependency: false,
+  network_enforcement: {
+    mode: "darwin_sandbox_deny_network",
+    sandbox_executable: sandboxExecutable,
+    sandbox_executable_sha256: sha256(sandboxBytes),
+    profile_sha256: sha256(sandboxProfile),
+    profile: sandboxProfile,
+    probe_executable: process.execPath,
+    probe_executable_sha256: sha256(await readFile(process.execPath)),
+    probe_script_sha256: sha256(await readFile(networkProbePath)),
+    probe_denied: true,
+    probe_stdout_sha256: sha256(networkProbe.stdout),
+    probe_stderr_sha256: sha256(networkProbe.stderr),
+  },
   executables,
   executions,
   pass: executions.every((entry) => entry.exit_code === 0 && entry.spawn_error === null),

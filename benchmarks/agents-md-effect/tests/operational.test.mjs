@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import {
   chmod,
   copyFile,
@@ -1112,7 +1112,7 @@ async function createOracleRunnerFixture({command, selector, subjectiveGroups = 
   return {fixtureRoot, candidateRoot, trustedDir, manifestPath, oracleLockPath};
 }
 
-function runOracleFixture(fixture, extra = []) {
+function runOracleFixture(fixture, extra = [], environment = {}) {
   return spawnSync(
     process.execPath,
     [
@@ -1127,21 +1127,53 @@ function runOracleFixture(fixture, extra = []) {
       fixture.manifestPath,
       "--oracle-lock",
       fixture.oracleLockPath,
+      "--expected-manifest-sha256",
+      sha256(readFileSync(fixture.manifestPath)),
+      "--expected-oracle-lock-sha256",
+      sha256(readFileSync(fixture.oracleLockPath)),
+      "--expected-control-sha256",
+      "0".repeat(64),
       ...extra,
     ],
-    {encoding: "utf8"},
+    {encoding: "utf8", env: {...process.env, ...environment}},
   );
 }
 
 test("oracle runner requires exactly one matching Rust test", async () => {
-  for (const [lines, expectedStatus] of [
-    ["test locked_name ... ok", 0],
-    ["running 0 tests", 1],
-    ["test locked_name ... ok\\ntest locked_name ... ok", 1],
-    ["test locked_name ... ignored", 1],
+  for (const [events, expectedStatus, expectedMatches] of [
+    [
+      [
+        {type: "test", event: "started", name: "locked_name"},
+        {type: "test", event: "ok", name: "locked_name"},
+        {type: "suite", event: "ok", passed: 1, failed: 0, ignored: 0},
+      ],
+      0,
+      1,
+    ],
+    [[{type: "suite", event: "ok", passed: 0, failed: 0, ignored: 0}], 1, 0],
+    [
+      [
+        {type: "test", event: "started", name: "locked_name"},
+        {type: "test", event: "ok", name: "locked_name"},
+        {type: "test", event: "started", name: "locked_name"},
+        {type: "test", event: "ok", name: "locked_name"},
+        {type: "suite", event: "ok", passed: 2, failed: 0, ignored: 0},
+      ],
+      1,
+      2,
+    ],
+    [
+      [
+        {type: "test", event: "started", name: "locked_name"},
+        {type: "test", event: "ignored", name: "locked_name"},
+        {type: "suite", event: "ok", passed: 0, failed: 0, ignored: 1},
+      ],
+      1,
+      1,
+    ],
   ]) {
     const fixture = await createOracleRunnerFixture({
-      command: `printf '%b\\n' '${lines}'`,
+      command: "cargo test -p fixture --test fixture --locked locked_name -- --exact",
       selector: {
         kind: "rust_test_exact",
         test_name: "locked_name",
@@ -1149,14 +1181,54 @@ test("oracle runner requires exactly one matching Rust test", async () => {
       },
     });
     try {
-      const result = runOracleFixture(fixture);
+      const cargo = resolve(fixture.candidateRoot, "cargo");
+      await writeFile(
+        cargo,
+        `#!/bin/sh\nprintf '%s\\n' '${events.map((entry) => JSON.stringify(entry)).join("' '")}'\n`,
+        {mode: 0o755},
+      );
+      const result = runOracleFixture(
+        fixture,
+        [],
+        {PATH: `${fixture.candidateRoot}:${process.env.PATH}`},
+      );
       assert.equal(result.status, expectedStatus, result.stderr);
       const receipt = await readJson(resolve(fixture.trustedDir, "oracle-run.json"));
-      assert.equal(receipt.assertions[0].matching_tests, lines.includes("running 0") ? 0 : lines.split("\\n").length);
+      assert.equal(receipt.assertions[0].matching_tests, expectedMatches);
       assert.equal(receipt.assertions[0].pass, expectedStatus === 0);
+      assert.equal(receipt.assertions[0].evidence_mode, "libtest_json_v0.1_bootstrap");
     } finally {
       await rm(fixture.fixtureRoot, {recursive: true, force: true});
     }
+  }
+});
+
+test("oracle runner rejects spoofed human-readable Rust test output", async () => {
+  const fixture = await createOracleRunnerFixture({
+    command: "cargo test -p fixture --test fixture --locked locked_name -- --exact",
+    selector: {
+      kind: "rust_test_exact",
+      test_name: "locked_name",
+      required_matching_tests: 1,
+    },
+  });
+  try {
+    await writeFile(
+      resolve(fixture.candidateRoot, "cargo"),
+      "#!/bin/sh\nprintf 'test locked_name ... ok\\n'\n",
+      {mode: 0o755},
+    );
+    const result = runOracleFixture(
+      fixture,
+      [],
+      {PATH: `${fixture.candidateRoot}:${process.env.PATH}`},
+    );
+    assert.equal(result.status, 1, result.stderr);
+    const receipt = await readJson(resolve(fixture.trustedDir, "oracle-run.json"));
+    assert.equal(receipt.assertions[0].pass, false);
+    assert.match(receipt.assertions[0].reasons.join(" "), /libtest JSON/i);
+  } finally {
+    await rm(fixture.fixtureRoot, {recursive: true, force: true});
   }
 });
 
@@ -1245,6 +1317,100 @@ test("oracle runner rejects a candidate-controlled trusted adapter", async () =>
   }
 });
 
+test("oracle runner rejects candidate-controlled control files and duplicate command IDs", async () => {
+  const candidateControls = await createOracleRunnerFixture({
+    command: "true",
+    selector: null,
+  });
+  try {
+    const manifest = resolve(candidateControls.candidateRoot, "manifest.json");
+    const lock = resolve(candidateControls.candidateRoot, "lock.json");
+    await Promise.all([
+      copyFile(candidateControls.manifestPath, manifest),
+      copyFile(candidateControls.oracleLockPath, lock),
+    ]);
+    candidateControls.manifestPath = manifest;
+    candidateControls.oracleLockPath = lock;
+    const result = runOracleFixture(candidateControls);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /manifest.*candidate-root.*disjoint/i);
+  } finally {
+    await rm(candidateControls.fixtureRoot, {recursive: true, force: true});
+  }
+
+  const duplicate = await createOracleRunnerFixture({command: "true", selector: null});
+  try {
+    const manifest = await readJson(duplicate.manifestPath);
+    manifest.cases[0].oracle_commands.push({...manifest.cases[0].oracle_commands[0]});
+    await writeFile(duplicate.manifestPath, `${JSON.stringify(manifest)}\n`);
+    const result = runOracleFixture(duplicate);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /duplicate command ID/i);
+  } finally {
+    await rm(duplicate.fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("production oracle runner rejects an unbound control digest", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-oracle-control-digest-"));
+  const candidateRoot = resolve(fixtureRoot, "candidate");
+  const trustedDir = resolve(fixtureRoot, "trusted");
+  await mkdir(candidateRoot);
+  try {
+    const result = spawnSync(process.execPath, [
+      runOraclesScript,
+      "--case", "TW-01",
+      "--candidate-root", candidateRoot,
+      "--trusted-dir", trustedDir,
+      "--expected-control-sha256", "0".repeat(64),
+    ], {encoding: "utf8"});
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /control SHA-256 mismatch/i);
+    assert.equal(existsSync(trustedDir), false);
+  } finally {
+    await rm(fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("candidate adapter scaffold fails closed on an untrusted probe hash", async () => {
+  const fixture = await createOracleRunnerFixture({
+    command: "node <trusted-adapter-file> --candidate-root <validation-workspace> --contract <trusted-contract-file> --output <trusted-observations-file>",
+    selector: null,
+  });
+  const adapter = resolve(benchmarkDir, "evaluator/adapters/candidate-adapter.mjs");
+  const contract = resolve(fixture.fixtureRoot, "contract.json");
+  const probe = resolve(fixture.fixtureRoot, "probe.mjs");
+  const config = resolve(fixture.fixtureRoot, "adapter-config.json");
+  try {
+    await writeFile(contract, "{}\n");
+    await writeFile(probe, "#!/usr/bin/env node\nconsole.log('{}');\n", {mode: 0o755});
+    await writeFile(config, `${JSON.stringify({
+      schema: "tachiko-candidate-adapter-v1",
+      case_id: "TW-05",
+      probe: {
+        executable: probe,
+        sha256: "f".repeat(64),
+        arguments: ["<candidate-root>"],
+      },
+    })}\n`);
+    const result = runOracleFixture(fixture, [
+      "--adapter-file", adapter,
+      "--adapter-config", config,
+      "--contract-file", contract,
+    ]);
+    assert.equal(result.status, 1, result.stderr);
+    const receipt = await readJson(resolve(fixture.trustedDir, "oracle-run.json"));
+    assert.equal(receipt.commands[0].exit_code, 1);
+    const adapterStderr = await readFile(
+      resolve(fixture.trustedDir, receipt.commands[0].stderr.path),
+      "utf8",
+    );
+    assert.match(adapterStderr, /probe SHA-256 mismatch/i);
+  } finally {
+    await rm(fixture.fixtureRoot, {recursive: true, force: true});
+  }
+});
+
 test("TW-05 offline runner never invokes a package manager", async () => {
   const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-tw05-offline-"));
   const binDir = resolve(fixtureRoot, "bin");
@@ -1287,6 +1453,9 @@ test("TW-05 offline runner never invokes a package manager", async () => {
     assert.equal(existsSync(marker), false);
     const receipt = await readJson(output);
     assert.equal(receipt.offline, true);
+    assert.equal(receipt.network_enforcement.mode, "darwin_sandbox_deny_network");
+    assert.equal(receipt.network_enforcement.probe_denied, true);
+    assert.match(receipt.network_enforcement.profile_sha256, /^[0-9a-f]{64}$/);
     assert.deepEqual(receipt.executables.map((entry) => entry.name), ["cargo", "node", "node"]);
     assert.ok(receipt.executions.every((entry) => entry.exit_code === 0));
   } finally {
@@ -1294,41 +1463,73 @@ test("TW-05 offline runner never invokes a package manager", async () => {
   }
 });
 
-test("oracle qualification is reproducible and covers every case and adapter family", async () => {
-  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-oracle-qualification-"));
-  const output = resolve(fixtureRoot, "oracles.json");
-  try {
-    const result = spawnSync(
-      process.execPath,
-      [
-        qualifyOraclesScript,
-        "--source-repo",
-        resolve(benchmarkDir, "../.."),
-        "--output",
-        output,
-      ],
-      {encoding: "utf8", maxBuffer: 128 * 1024 * 1024},
+test("oracle qualification records executed target/base evidence for all frozen mappings", async () => {
+  const [receipt, manifest] = await Promise.all([
+    readJson(resolve(benchmarkDir, "evaluator/qualifications/oracles.json")),
+    readJson(resolve(benchmarkDir, "evaluator/production-oracles.json")),
+  ]);
+  assert.equal(receipt.payload_sha256, sha256(`${JSON.stringify(receipt.payload)}\n`));
+  assert.equal(receipt.payload.schema, "tachiko-oracle-qualification-v2");
+  assert.equal(receipt.payload.no_codex_launched, true);
+  assert.equal(receipt.payload.cases.length, 9);
+  assert.deepEqual(receipt.payload.cases.map((entry) => entry.case_id), [
+    "TW-01", "TW-02", "TW-03", "TW-04", "TW-05", "TW-06", "TW-07", "TW-08", "TW-09",
+  ]);
+
+  for (const caseEntry of receipt.payload.cases) {
+    const frozen = manifest.cases.find((entry) => entry.id === caseEntry.case_id);
+    assert.ok(caseEntry.materialization.target.executed);
+    assert.ok(caseEntry.materialization.negative.executed);
+    assert.ok(caseEntry.materialization.target.files.every((entry) =>
+      /^[0-9a-f]{64}$/.test(entry.source_sha256)));
+    assert.deepEqual(
+      caseEntry.target.core.commands.map((entry) => entry.id),
+      frozen.core_commands.map((entry) => entry.id),
     );
-    assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
-    const [actualBytes, checkedInBytes] = await Promise.all([
-      readFile(output),
-      readFile(resolve(benchmarkDir, "evaluator/qualifications/oracles.json")),
-    ]);
-    assert.deepEqual(actualBytes, checkedInBytes);
-    const receipt = JSON.parse(actualBytes.toString("utf8"));
-    assert.equal(receipt.payload_sha256, sha256(`${JSON.stringify(receipt.payload)}\n`));
-    assert.equal(receipt.payload.cases.length, 9);
-    assert.deepEqual(receipt.payload.cases.map((entry) => entry.case_id), [
-      "TW-01", "TW-02", "TW-03", "TW-04", "TW-05", "TW-06", "TW-07", "TW-08", "TW-09",
-    ]);
-    assert.ok(receipt.payload.families.every((entry) =>
-      entry.positive.accepted === true && entry.negative.discriminated === true));
-    assert.ok(receipt.payload.families.some((entry) => entry.id === "tw09_normalized_contract"));
-    const tw05 = receipt.payload.cases.find((entry) => entry.case_id === "TW-05");
-    assert.equal(tw05.historical_target_calibration.outcome, "expected_contract_miss");
-    assert.equal(tw05.historical_target_calibration.stale_revision_rejection_present, false);
-    assert.equal(receipt.payload.no_codex_launched, true);
-  } finally {
-    await rm(fixtureRoot, {recursive: true, force: true});
+    assert.deepEqual(
+      caseEntry.target.oracle.commands.map((entry) => entry.id),
+      frozen.oracle_commands.map((entry) => entry.id),
+    );
+    assert.deepEqual(
+      caseEntry.negative.core.commands.map((entry) => entry.id),
+      frozen.core_commands.map((entry) => entry.id),
+    );
+    assert.deepEqual(
+      caseEntry.negative.oracle.commands.map((entry) => entry.id),
+      frozen.oracle_commands.map((entry) => entry.id),
+    );
+    assert.equal(caseEntry.target.core.evidence, "executed");
+    assert.equal(caseEntry.target.oracle.evidence, "executed");
+    assert.equal(caseEntry.negative.core.evidence, "executed");
+    assert.equal(caseEntry.negative.oracle.evidence, "executed");
   }
+
+  for (const id of ["TW-01", "TW-02", "TW-06"]) {
+    const entry = receipt.payload.cases.find((candidate) => candidate.case_id === id);
+    assert.equal(entry.qualification, "packet_gate_only");
+    assert.equal(entry.machine_semantic_discrimination_qualified, false);
+  }
+  for (const id of ["TW-03", "TW-04", "TW-07", "TW-08", "TW-09"]) {
+    const entry = receipt.payload.cases.find((candidate) => candidate.case_id === id);
+    assert.equal(entry.target.accepted, true);
+    assert.equal(entry.negative.discriminated, true);
+  }
+  const tw05 = receipt.payload.cases.find((entry) => entry.case_id === "TW-05");
+  assert.equal(tw05.target.accepted, false);
+  assert.equal(tw05.target.expected_contract_miss, true);
+  assert.equal(tw05.reference_positive.accepted, true);
+  assert.equal(tw05.negative.discriminated, true);
+  assert.deepEqual(
+    tw05.target.oracle.assertions.filter((entry) => !entry.pass).map((entry) => entry.id),
+    ["tw-05.native-step-4", "tw-05.native-step-5"],
+  );
+  assert.equal(tw05.target.adapter_execution.command_exit_code, 0);
+  assert.equal(tw05.offline_historical_target.network_enforcement.probe_denied, true);
+  assert.equal(tw05.offline_historical_target.package_manager_dependency, false);
+
+  const tw09 = receipt.payload.cases.find((entry) => entry.case_id === "TW-09");
+  assert.equal(tw09.materialization.target.kind, "trusted_rebased_replay_positive");
+  assert.equal(tw09.materialization.target.tree, "82854a472bd6aca1cab70b750fdcae864675ce5c");
+  assert.equal(tw09.target.adapter_execution.kind, "production_probe");
+  assert.ok(receipt.payload.families.every((entry) => entry.evidence === "executed"));
 });
