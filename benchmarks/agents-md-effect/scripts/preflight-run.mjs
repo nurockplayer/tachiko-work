@@ -6,14 +6,14 @@ import { constants } from "node:fs";
 import {
   access,
   lstat,
-  mkdir,
   readFile,
+  readlink,
   readdir,
   realpath,
   statfs,
   writeFile,
 } from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 
 const CONTROL_ARTIFACTS = [
   "environment-lock.json",
@@ -24,12 +24,13 @@ const CONTROL_ARTIFACTS = [
   "evaluator/production-oracles.json",
 ];
 const INSTRUCTION_FILES = new Set(["AGENTS.md", "CLAUDE.md", "GEMINI.md"]);
-const RUN_ROOT_LABEL = /(?:benchmark|protocol|baseline|variant|control|oracle|case|tw-0[1-9]|arm[-_.]?[ab])/i;
+const RUN_ROOT_LABEL = /(?:^|[-_.])(?:benchmarks?|protocol|baseline|variant|control|oracle|case|tw-0[1-9]|arm[-_.]?[ab])(?:$|[-_.])/i;
 
 function usage() {
   console.error(
     "usage: node preflight-run.mjs --workspace /abs/workspace --home /abs/home " +
-      "--codex-home /abs/codex-home --artifact-dir /abs/artifacts --receipt /abs/receipt.json",
+      "--codex-home /abs/codex-home --artifact-dir /abs/artifacts --receipt /abs/receipt.json " +
+      "--expected-agents-sha256 <sha256> --expected-control-sha256 <sha256>",
   );
   process.exit(2);
 }
@@ -95,27 +96,48 @@ async function scanTree(root) {
   return entries;
 }
 
-async function scanWorkspaceInstructions(workspace) {
-  const exposures = [];
-  let directory = workspace;
-  let isWorkspace = true;
-  while (true) {
+async function scanWorkspaceInstructions(workspace, expectedAgentsSha256) {
+  const rootAgents = resolve(workspace, "AGENTS.md");
+  const rootInfo = await lstat(rootAgents).catch((error) => {
+    if (error?.code === "ENOENT") fail("workspace root AGENTS.md is required");
+    throw error;
+  });
+  if (!rootInfo.isFile() || rootInfo.isSymbolicLink()) {
+    fail("root AGENTS.md must be a regular non-symlink file");
+  }
+  const rootBytes = await readFile(rootAgents);
+  const rootSha256 = sha256(rootBytes);
+  if (rootSha256 !== expectedAgentsSha256) {
+    fail(`AGENTS.md SHA-256 mismatch: expected ${expectedAgentsSha256}, got ${rootSha256}`);
+  }
+
+  const exposures = [{ path: rootAgents, name: "AGENTS.md", type: "file", sha256: rootSha256 }];
+  async function walk(directory) {
+    const children = await readdir(directory);
+    children.sort();
+    for (const child of children) {
+      const candidate = resolve(directory, child);
+      const info = await lstat(candidate);
+      if (INSTRUCTION_FILES.has(child) && candidate !== rootAgents) {
+        fail(`nested workspace instruction exposure: ${candidate}`);
+      }
+      if (info.isDirectory()) await walk(candidate);
+    }
+  }
+  await walk(workspace);
+
+  for (let directory = dirname(workspace); ; directory = dirname(directory)) {
     for (const name of [...INSTRUCTION_FILES].sort()) {
       const candidate = resolve(directory, name);
       try {
         const info = await lstat(candidate);
         exposures.push({ path: candidate, name, type: info.isFile() ? "file" : "other" });
-        if (!isWorkspace || name !== "AGENTS.md") {
-          fail(`workspace ancestor instruction exposure: ${candidate}`);
-        }
+        fail(`workspace ancestor instruction exposure: ${candidate}`);
       } catch (error) {
         if (error?.code !== "ENOENT") throw error;
       }
     }
-    const parent = dirname(directory);
-    if (parent === directory) break;
-    directory = parent;
-    isWorkspace = false;
+    if (dirname(directory) === directory) break;
   }
   return exposures;
 }
@@ -146,8 +168,56 @@ async function observeExecutable(name, path, argumentsForVersion) {
   }
   return {
     path: resolved,
+    bytes: bytes.length,
     sha256: sha256(bytes),
     version: result.stdout.trim(),
+  };
+}
+
+function command(executable, args) {
+  const result = spawnSync(executable, args, { encoding: "utf8", env: process.env });
+  if (result.error || result.status !== 0) {
+    fail(`required executable probe failed: ${executable} ${args.join(" ")}`);
+  }
+  return result.stdout.trim();
+}
+
+async function rustupWhich(rustupPath, executable) {
+  const path = command(rustupPath, ["which", executable]);
+  if (!path) fail(`rustup could not locate required executable: ${executable}`);
+  return realpath(path);
+}
+
+async function hashTree(root) {
+  const entries = [];
+  let fileBytes = 0;
+  async function walk(directory) {
+    const children = await readdir(directory);
+    children.sort();
+    for (const child of children) {
+      const absolute = resolve(directory, child);
+      const info = await lstat(absolute);
+      const path = relative(root, absolute);
+      if (info.isDirectory()) {
+        entries.push({ path, type: "directory" });
+        await walk(absolute);
+      } else if (info.isFile()) {
+        const bytes = await readFile(absolute);
+        fileBytes += bytes.length;
+        entries.push({ path, type: "file", bytes: bytes.length, sha256: sha256(bytes) });
+      } else if (info.isSymbolicLink()) {
+        entries.push({ path, type: "symlink", target: await readlink(absolute) });
+      } else {
+        fail(`unsupported Rust target artifact: ${absolute}`);
+      }
+    }
+  }
+  await walk(root);
+  return {
+    path: root,
+    entries: entries.length,
+    file_bytes: fileBytes,
+    sha256: sha256(Buffer.from(`${JSON.stringify(entries)}\n`, "utf8")),
   };
 }
 
@@ -181,12 +251,23 @@ async function controlObservations(artifactDir) {
 }
 
 async function writeReceipt(path, receipt) {
-  await mkdir(dirname(path), { recursive: true });
   await writeFile(path, `${JSON.stringify(receipt, null, 2)}\n`, {
     encoding: "utf8",
     mode: 0o600,
     flag: "wx",
   });
+}
+
+async function validateReceiptPath(receipt, artifactDir, runRoot) {
+  const receiptName = basename(receipt);
+  if (!receiptName || receiptName === "." || receiptName === "..") {
+    fail("receipt must name a new file inside the trusted artifact directory");
+  }
+  const parent = await realpath(dirname(receipt));
+  if (!relativePath(artifactDir, parent) || relativePath(runRoot, parent)) {
+    fail("receipt must remain inside the trusted artifact directory and outside the agent run root");
+  }
+  return resolve(parent, receiptName);
 }
 
 let receiptPath;
@@ -196,8 +277,17 @@ try {
     if (!args.has(key)) usage();
     if (!isAbsolute(args.get(key))) fail(`${key} must be an absolute path`);
   }
-
-  receiptPath = resolve(args.get("--receipt"));
+  for (const key of ["--expected-agents-sha256", "--expected-control-sha256"]) {
+    if (!args.has(key)) fail(`${key} is required`);
+  }
+  const expectedAgentsSha256 = args.get("--expected-agents-sha256");
+  const expectedControlSha256 = args.get("--expected-control-sha256");
+  for (const [key, value] of [
+    ["--expected-agents-sha256", expectedAgentsSha256],
+    ["--expected-control-sha256", expectedControlSha256],
+  ]) {
+    if (!/^[0-9a-f]{64}$/.test(value)) fail(`${key} must be 64 lowercase hexadecimal characters`);
+  }
   const [workspace, home, codexHome, artifactDir] = await Promise.all([
     realpath(args.get("--workspace")),
     realpath(args.get("--home")),
@@ -208,10 +298,9 @@ try {
   if (dirname(home) !== runRoot || dirname(codexHome) !== runRoot) {
     fail("workspace, HOME, and CODEX_HOME must be direct children of one run root");
   }
-  if (RUN_ROOT_LABEL.test(runRoot)) fail("run root must use an opaque neutral name");
-  if (relativePath(runRoot, artifactDir) || relativePath(runRoot, receiptPath)) {
-    fail("controller artifacts and receipts must be outside the agent run root");
-  }
+  if (RUN_ROOT_LABEL.test(basename(runRoot))) fail("run root must use an opaque neutral name");
+  if (relativePath(runRoot, artifactDir)) fail("controller artifacts must be outside the agent run root");
+  receiptPath = await validateReceiptPath(resolve(args.get("--receipt")), artifactDir, runRoot);
   const [environmentHome, environmentCodexHome] = await Promise.all([
     process.env.HOME ? realpath(process.env.HOME) : Promise.resolve(undefined),
     process.env.CODEX_HOME ? realpath(process.env.CODEX_HOME) : Promise.resolve(undefined),
@@ -239,22 +328,39 @@ try {
   if (homeEntries.length !== 0) fail("neutral HOME must be empty");
   if (codexHomeEntries.length !== 0) fail("neutral CODEX_HOME must be empty");
 
-  const [instructions, controls, bashPath, gitPath, filesystem] = await Promise.all([
-    scanWorkspaceInstructions(workspace),
+  const [instructions, controls, bashPath, gitPath, rtkPath, rustupPath, filesystem] = await Promise.all([
+    scanWorkspaceInstructions(workspace, expectedAgentsSha256),
     controlObservations(artifactDir),
     resolveExecutable("bash"),
     resolveExecutable("git"),
+    resolveExecutable("rtk"),
+    resolveExecutable("rustup"),
     statfs(workspace),
   ]);
-  const expectedControlSha256 = process.env.PREFLIGHT_CONTROL_SHA256;
-  if (expectedControlSha256 !== undefined && expectedControlSha256 !== controls.sha256) {
+  if (expectedControlSha256 !== controls.sha256) {
     fail(`control SHA-256 mismatch: expected ${expectedControlSha256}, got ${controls.sha256}`);
   }
-  const [node, bash, git] = await Promise.all([
+  const [cargoPath, rustcPath, rustfmtPath, clippyPath] = await Promise.all([
+    rustupWhich(rustupPath, "cargo"),
+    rustupWhich(rustupPath, "rustc"),
+    rustupWhich(rustupPath, "rustfmt"),
+    rustupWhich(rustupPath, "cargo-clippy"),
+  ]);
+  const [node, bash, git, rtk, rustup, cargo, rustc, rustfmt, clippy] = await Promise.all([
     observeExecutable("node", process.execPath, ["--version"]),
     observeExecutable("bash", bashPath, ["--version"]),
     observeExecutable("git", gitPath, ["--version"]),
+    observeExecutable("rtk", rtkPath, ["--version"]),
+    observeExecutable("rustup", rustupPath, ["--version"]),
+    observeExecutable("cargo", cargoPath, ["--version"]),
+    observeExecutable("rustc", rustcPath, ["--version"]),
+    observeExecutable("rustfmt", rustfmtPath, ["--version"]),
+    observeExecutable("clippy", clippyPath, ["--version"]),
   ]);
+  const rustTargetPath = await realpath(
+    command(rustc.path, ["--print", "target-libdir", "--target", "wasm32-unknown-unknown"]),
+  );
+  const rustTarget = { target: "wasm32-unknown-unknown", ...(await hashTree(rustTargetPath)) };
   const receipt = {
     protocol_id: controls.protocol_id,
     valid: true,
@@ -266,7 +372,8 @@ try {
       LANG: process.env.LANG ?? null,
       LC_ALL: process.env.LC_ALL ?? null,
       TZ: process.env.TZ ?? null,
-      PREFLIGHT_CONTROL_SHA256: expectedControlSha256 ?? null,
+      expected_agents_sha256: expectedAgentsSha256,
+      expected_control_sha256: expectedControlSha256,
     },
     filesystem: { workspace: workspaceIdentity, home: homeIdentity, codex_home: codexHomeIdentity },
     scans: {
@@ -274,7 +381,8 @@ try {
       home: { entries: homeEntries },
       codex_home: { entries: codexHomeEntries },
     },
-    binaries: { node, bash, git },
+    binaries: { node, bash, git, rtk, rustup, cargo, rustc, rustfmt, clippy },
+    rust_target: rustTarget,
     free_space: { bytes: Number(filesystem.bavail * filesystem.bsize) },
     controls,
   };

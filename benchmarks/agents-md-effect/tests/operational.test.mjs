@@ -1,6 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -9,9 +20,30 @@ import { fileURLToPath } from "node:url";
 const testDir = dirname(fileURLToPath(import.meta.url));
 const benchmarkDir = resolve(testDir, "..");
 const preflightScript = resolve(benchmarkDir, "scripts/preflight-run.mjs");
+const CONTROL_ARTIFACTS = [
+  "environment-lock.json",
+  "evaluator/cases.json",
+  "evaluator/oracle-lock.json",
+  "evaluator/core-score-lock.json",
+  "evaluator/authority-lock.json",
+  "evaluator/production-oracles.json",
+];
 
 async function readJson(path) {
   return JSON.parse(await readFile(path, "utf8"));
+}
+
+function sha256(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+async function controlSha256(artifactDir) {
+  const artifacts = [];
+  for (const path of CONTROL_ARTIFACTS) {
+    const bytes = await readFile(resolve(artifactDir, path));
+    artifacts.push({ path, bytes: bytes.length, sha256: sha256(bytes) });
+  }
+  return sha256(Buffer.from(`${JSON.stringify(artifacts)}\n`, "utf8"));
 }
 
 function exactlyOnce(values, label) {
@@ -142,9 +174,9 @@ test("production oracle manifest covers every frozen operational input exactly o
   }
 });
 
-async function createPreflightFixture({ runRoot = "opaque-run" } = {}) {
+async function createPreflightFixture({ runRoot = "opaque-run", parentName } = {}) {
   const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-preflight-"));
-  const root = resolve(fixtureRoot, runRoot);
+  const root = resolve(fixtureRoot, parentName ?? "", runRoot);
   const workspace = resolve(root, "workspace");
   const home = resolve(root, "home");
   const codexHome = resolve(root, "codex-home");
@@ -155,38 +187,54 @@ async function createPreflightFixture({ runRoot = "opaque-run" } = {}) {
     mkdir(codexHome, { recursive: true }),
     cp(benchmarkDir, artifactDir, { recursive: true }),
   ]);
+  const agents = resolve(workspace, "AGENTS.md");
+  await writeFile(agents, "workspace instruction\n");
+  await mkdir(resolve(artifactDir, "receipts"));
   return {
     fixtureRoot,
     workspace,
     home,
     codexHome,
     artifactDir,
-    receipt: resolve(fixtureRoot, "receipt.json"),
+    receipt: resolve(artifactDir, "receipts", "receipt.json"),
+    expectedAgentsSha256: sha256(await readFile(agents)),
+    expectedControlSha256: await controlSha256(artifactDir),
   };
 }
 
-function runPreflight(fixture, environment = {}) {
+function runPreflight(
+  fixture,
+  { environment = {}, includeExpectedAgents = true, includeExpectedControl = true, receipt } = {},
+) {
+  const argumentsForPreflight = [
+    preflightScript,
+    "--workspace",
+    fixture.workspace,
+    "--home",
+    fixture.home,
+    "--codex-home",
+    fixture.codexHome,
+    "--artifact-dir",
+    fixture.artifactDir,
+    "--receipt",
+    receipt ?? fixture.receipt,
+  ];
+  if (includeExpectedAgents) {
+    argumentsForPreflight.push("--expected-agents-sha256", fixture.expectedAgentsSha256);
+  }
+  if (includeExpectedControl) {
+    argumentsForPreflight.push("--expected-control-sha256", fixture.expectedControlSha256);
+  }
   return spawnSync(
     process.execPath,
-    [
-      preflightScript,
-      "--workspace",
-      fixture.workspace,
-      "--home",
-      fixture.home,
-      "--codex-home",
-      fixture.codexHome,
-      "--artifact-dir",
-      fixture.artifactDir,
-      "--receipt",
-      fixture.receipt,
-    ],
+    argumentsForPreflight,
     {
       encoding: "utf8",
       env: {
         ...process.env,
         HOME: fixture.home,
         CODEX_HOME: fixture.codexHome,
+        RUSTUP_HOME: process.env.RUSTUP_HOME ?? resolve(process.env.HOME, ".rustup"),
         ...environment,
       },
     },
@@ -204,7 +252,6 @@ async function withPreflightFixture(options, body) {
 
 test("preflight accepts an empty neutral HOME and CODEX_HOME and records real observations", async () => {
   await withPreflightFixture({}, async (fixture) => {
-    await writeFile(resolve(fixture.workspace, "AGENTS.md"), "workspace instruction\n");
     const result = runPreflight(fixture);
     assert.equal(result.status, 0, result.stderr);
 
@@ -214,6 +261,25 @@ test("preflight accepts an empty neutral HOME and CODEX_HOME and records real ob
     assert.deepEqual(receipt.scans.home.entries, []);
     assert.deepEqual(receipt.scans.codex_home.entries, []);
     assert.ok(receipt.binaries.node.sha256);
+    for (const name of [
+      "node",
+      "bash",
+      "git",
+      "rtk",
+      "rustup",
+      "cargo",
+      "rustc",
+      "rustfmt",
+      "clippy",
+    ]) {
+      assert.match(receipt.binaries[name].path, /^\//);
+      assert.match(receipt.binaries[name].sha256, /^[0-9a-f]{64}$/);
+      assert.ok(receipt.binaries[name].bytes > 0);
+      assert.notEqual(receipt.binaries[name].version, "");
+    }
+    assert.equal(receipt.rust_target.target, "wasm32-unknown-unknown");
+    assert.match(receipt.rust_target.sha256, /^[0-9a-f]{64}$/);
+    assert.ok(receipt.rust_target.file_bytes > 0);
     assert.ok(receipt.free_space.bytes > 0);
     assert.ok(receipt.controls.artifacts.some((entry) => entry.path === "environment-lock.json"));
     assert.ok(
@@ -230,6 +296,43 @@ test("preflight rejects an instruction file in a workspace ancestor", async () =
     const result = runPreflight(fixture);
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /workspace ancestor instruction exposure/i);
+  });
+});
+
+test("preflight rejects a root AGENTS.md whose bytes differ from the controller hash", async () => {
+  await withPreflightFixture({}, async (fixture) => {
+    await writeFile(resolve(fixture.workspace, "AGENTS.md"), "altered instruction\n");
+    const result = runPreflight(fixture);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /AGENTS.md SHA-256 mismatch/i);
+  });
+});
+
+test("preflight rejects a symlinked root AGENTS.md", async () => {
+  await withPreflightFixture({}, async (fixture) => {
+    const agents = resolve(fixture.workspace, "AGENTS.md");
+    const replacement = resolve(fixture.fixtureRoot, "replacement-agents.md");
+    await writeFile(replacement, "workspace instruction\n");
+    await unlink(agents);
+    await symlink(replacement, agents);
+    const result = runPreflight(fixture);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /root AGENTS.md must be a regular non-symlink file/i);
+  });
+});
+
+test("preflight rejects nested instruction files", async () => {
+  await withPreflightFixture({}, async (fixture) => {
+    const nested = resolve(fixture.workspace, "nested");
+    await mkdir(nested);
+    await Promise.all(
+      ["AGENTS.md", "CLAUDE.md", "GEMINI.md"].map((name) =>
+        writeFile(resolve(nested, name), "leaked instruction\n"),
+      ),
+    );
+    const result = runPreflight(fixture);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /nested workspace instruction exposure/i);
   });
 });
 
@@ -259,19 +362,43 @@ test("preflight rejects semantic labels in the derived run root", async () => {
   });
 });
 
+test("preflight ignores semantic-looking names in run-root ancestors", async () => {
+  await withPreflightFixture({ parentName: "benchmark-archive" }, async (fixture) => {
+    const result = runPreflight(fixture);
+    assert.equal(result.status, 0, result.stderr);
+  });
+});
+
+test("preflight requires the controller control digest", async () => {
+  await withPreflightFixture({}, async (fixture) => {
+    const result = runPreflight(fixture, { includeExpectedControl: false });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /--expected-control-sha256 is required/i);
+  });
+});
+
 test("preflight fails closed when a registered control digest changes", async () => {
   await withPreflightFixture({}, async (fixture) => {
-    const first = runPreflight(fixture);
-    assert.equal(first.status, 0, first.stderr);
-    const firstReceipt = await readJson(fixture.receipt);
-
     const environmentLock = resolve(fixture.artifactDir, "environment-lock.json");
     await writeFile(environmentLock, `${await readFile(environmentLock, "utf8")} `);
-    fixture.receipt = resolve(fixture.fixtureRoot, "mutated-receipt.json");
-    const second = runPreflight(fixture, {
-      PREFLIGHT_CONTROL_SHA256: firstReceipt.controls.sha256,
+    const result = runPreflight(fixture, {
+      receipt: resolve(fixture.artifactDir, "receipts", "mutated-receipt.json"),
     });
-    assert.notEqual(second.status, 0);
-    assert.match(second.stderr, /control SHA-256 mismatch/i);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /control SHA-256 mismatch/i);
+  });
+});
+
+test("preflight rejects a receipt path that escapes trusted artifacts through a symlink", async () => {
+  await withPreflightFixture({}, async (fixture) => {
+    const outside = resolve(fixture.fixtureRoot, "outside");
+    const escapedParent = resolve(fixture.artifactDir, "receipts", "escape");
+    await mkdir(outside);
+    await symlink(outside, escapedParent);
+    const result = runPreflight(fixture, {
+      receipt: resolve(escapedParent, "receipt.json"),
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /receipt must remain inside the trusted artifact directory/i);
   });
 });
