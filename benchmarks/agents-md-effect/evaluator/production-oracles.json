@@ -1,0 +1,1433 @@
+{
+  "protocol_id": "tachiko-agents-effect-v1",
+  "manifest_version": 1,
+  "execution_standard": "practical_internal_v1",
+  "qualification_requirement": "construction_pilot_only_qualification_required",
+  "node_test_entry_point": "node --test benchmarks/agents-md-effect/tests/operational.test.mjs",
+  "cases": [
+    {
+      "id": "TW-01",
+      "core_commands": [
+        {
+          "id": "core.tw01.docs",
+          "command_template": "bash scripts/docs-consistency-check.sh",
+          "stage": "candidate_core_validation"
+        }
+      ],
+      "oracle_commands": [
+        {
+          "id": "tw01.docs",
+          "command_template": "bash scripts/docs-consistency-check.sh",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": []
+        }
+      ],
+      "assertions": [],
+      "subjective_groups": [
+        {
+          "id": "identity_invariant",
+          "stage": "blinded_review_packet"
+        },
+        {
+          "id": "mechanism_boundary",
+          "stage": "blinded_review_packet"
+        },
+        {
+          "id": "typed_graph_boundary",
+          "stage": "blinded_review_packet"
+        },
+        {
+          "id": "authority_reconciliation",
+          "stage": "blinded_review_packet"
+        }
+      ]
+    },
+    {
+      "id": "TW-02",
+      "core_commands": [
+        {
+          "id": "core.tw02.docs",
+          "command_template": "bash scripts/docs-consistency-check.sh",
+          "stage": "candidate_core_validation"
+        }
+      ],
+      "oracle_commands": [
+        {
+          "id": "tw02.docs",
+          "command_template": "bash scripts/docs-consistency-check.sh",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": []
+        }
+      ],
+      "assertions": [],
+      "subjective_groups": [
+        {
+          "id": "recursive_wire_schema",
+          "stage": "blinded_review_packet"
+        },
+        {
+          "id": "typed_id_inventory",
+          "stage": "blinded_review_packet"
+        },
+        {
+          "id": "atomic_migration",
+          "stage": "blinded_review_packet"
+        },
+        {
+          "id": "authority_navigation",
+          "stage": "blinded_review_packet"
+        }
+      ]
+    },
+    {
+      "id": "TW-03",
+      "core_commands": [
+        {
+          "id": "core.tw03.storage",
+          "command_template": "cargo test -p tachiko-storage --locked",
+          "stage": "candidate_core_validation"
+        },
+        {
+          "id": "core.tw03.portable",
+          "command_template": "bash scripts/portable-conformance-check.sh",
+          "stage": "candidate_core_validation"
+        },
+        {
+          "id": "core.tw03.release",
+          "command_template": "bash scripts/release-check.sh",
+          "stage": "candidate_core_validation"
+        }
+      ],
+      "oracle_commands": [
+        {
+          "id": "tw03.rfc8785",
+          "command_template": "cargo test -p tachiko-storage --test canonical_v2_numeric --locked direct_ro_v2_covers_all_finite_rfc8785_appendix_b_vectors -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-03.rfc8785"
+          ]
+        },
+        {
+          "id": "tw03.thresholds",
+          "command_template": "cargo test -p tachiko-storage --test canonical_v2_numeric --locked direct_ro_v2_covers_adr0018_threshold_subnormal_underflow_and_tie_vectors -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-03.thresholds"
+          ]
+        },
+        {
+          "id": "tw03.overflow",
+          "command_template": "cargo test -p tachiko-storage --test canonical_v2_numeric --locked direct_ro_v2_rejects_positive_and_negative_overflow_to_infinity -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-03.overflow"
+          ]
+        },
+        {
+          "id": "tw03.golden_stable",
+          "command_template": "cargo test -p tachiko-storage --test canonical_v2_numeric --locked direct_ro_v2_numeric_golden_is_byte_stable -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-03.golden_stable"
+          ]
+        },
+        {
+          "id": "tw03.golden_drift",
+          "command_template": "cargo test -p tachiko-storage --test canonical_v2_numeric --locked direct_ro_v2_numeric_golden_detects_noncanonical_byte_drift -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-03.golden_drift"
+          ]
+        },
+        {
+          "id": "tw03.alternate",
+          "command_template": "cargo test -p tachiko-storage --test canonical_v2_numeric --locked direct_ro_v2_canonicalizes_alternate_legal_number_spellings -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-03.alternate"
+          ]
+        },
+        {
+          "id": "tw03.portable",
+          "command_template": "bash <benchmark>/scripts/run-portable-observations.sh --candidate-root <validation-workspace> --crate-set core --output <trusted-portable-observations-file>",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-03.portable.records-10-20"
+          ]
+        }
+      ],
+      "assertions": [
+        {
+          "id": "tw-03.rfc8785",
+          "command_id": "tw03.rfc8785",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-03.thresholds",
+          "command_id": "tw03.thresholds",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-03.overflow",
+          "command_id": "tw03.overflow",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-03.golden_stable",
+          "command_id": "tw03.golden_stable",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-03.golden_drift",
+          "command_id": "tw03.golden_drift",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-03.alternate",
+          "command_id": "tw03.alternate",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-03.portable.records-10-20",
+          "command_id": "tw03.portable",
+          "stage": "expectation_free_execution"
+        }
+      ],
+      "subjective_groups": []
+    },
+    {
+      "id": "TW-04",
+      "core_commands": [
+        {
+          "id": "core.tw04.metadata",
+          "command_template": "cargo metadata --locked --format-version 1",
+          "stage": "candidate_core_validation"
+        },
+        {
+          "id": "core.tw04.workspace",
+          "command_template": "cargo test --workspace --all-targets --locked",
+          "stage": "candidate_core_validation"
+        },
+        {
+          "id": "core.tw04.portable",
+          "command_template": "bash scripts/portable-conformance-check.sh",
+          "stage": "candidate_core_validation"
+        },
+        {
+          "id": "core.tw04.docs",
+          "command_template": "bash scripts/docs-consistency-check.sh",
+          "stage": "candidate_core_validation"
+        },
+        {
+          "id": "core.tw04.release",
+          "command_template": "bash scripts/release-check.sh",
+          "stage": "candidate_core_validation"
+        }
+      ],
+      "oracle_commands": [
+        {
+          "id": "tw04.metadata",
+          "command_template": "node <benchmark>/scripts/inspect-workspace-metadata.mjs --candidate-root <validation-workspace> --output <trusted-metadata-observations-file>",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-04.workspace-present",
+            "tw-04.workflow-absent",
+            "tw-04.workspace-deps",
+            "tw-04.semantic-deps",
+            "tw-04.formula-deps",
+            "tw-04.diff-merge-deps",
+            "tw-04.storage-deps",
+            "tw-04.ai-deps",
+            "tw-04.cli-deps"
+          ]
+        },
+        {
+          "id": "tw04.validation_and_calculation_are_shared_application_queries",
+          "command_template": "cargo test -p tachiko-workspace-engine --test application_boundary --locked validation_and_calculation_are_shared_application_queries -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-04.shared-queries"
+          ]
+        },
+        {
+          "id": "tw04.comparison_and_merge_are_workspace_owned_orchestration",
+          "command_template": "cargo test -p tachiko-workspace-engine --test application_boundary --locked comparison_and_merge_are_workspace_owned_orchestration -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-04.workspace-orchestration"
+          ]
+        },
+        {
+          "id": "tw04.formula_analysis_and_typed_suggestions_share_engine_policy",
+          "command_template": "cargo test -p tachiko-workspace-engine --test application_boundary --locked formula_analysis_and_typed_suggestions_share_engine_policy -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-04.engine-policy"
+          ]
+        },
+        {
+          "id": "tw04.runtime_export_is_a_portable_engine_projection",
+          "command_template": "cargo test -p tachiko-workspace-engine --test application_boundary --locked runtime_export_is_a_portable_engine_projection -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-04.runtime-export"
+          ]
+        },
+        {
+          "id": "tw04.portable",
+          "command_template": "bash <benchmark>/scripts/run-portable-observations.sh --candidate-root <validation-workspace> --crate-set full --output <trusted-portable-observations-file>",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-04.portable.records-21-23"
+          ]
+        }
+      ],
+      "assertions": [
+        {
+          "id": "tw-04.workspace-present",
+          "command_id": "tw04.metadata",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-04.workflow-absent",
+          "command_id": "tw04.metadata",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-04.workspace-deps",
+          "command_id": "tw04.metadata",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-04.semantic-deps",
+          "command_id": "tw04.metadata",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-04.formula-deps",
+          "command_id": "tw04.metadata",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-04.diff-merge-deps",
+          "command_id": "tw04.metadata",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-04.storage-deps",
+          "command_id": "tw04.metadata",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-04.ai-deps",
+          "command_id": "tw04.metadata",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-04.cli-deps",
+          "command_id": "tw04.metadata",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-04.shared-queries",
+          "command_id": "tw04.validation_and_calculation_are_shared_application_queries",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-04.workspace-orchestration",
+          "command_id": "tw04.comparison_and_merge_are_workspace_owned_orchestration",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-04.engine-policy",
+          "command_id": "tw04.formula_analysis_and_typed_suggestions_share_engine_policy",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-04.runtime-export",
+          "command_id": "tw04.runtime_export_is_a_portable_engine_projection",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-04.portable.records-21-23",
+          "command_id": "tw04.portable",
+          "stage": "expectation_free_execution"
+        }
+      ],
+      "subjective_groups": []
+    },
+    {
+      "id": "TW-05",
+      "core_commands": [
+        {
+          "id": "core.tw05.workspace",
+          "command_template": "cargo test --workspace --all-targets --locked",
+          "stage": "candidate_core_validation"
+        },
+        {
+          "id": "core.tw05.docs",
+          "command_template": "bash scripts/docs-consistency-check.sh",
+          "stage": "candidate_core_validation"
+        },
+        {
+          "id": "core.tw05.release",
+          "command_template": "bash scripts/release-check.sh",
+          "stage": "candidate_core_validation"
+        }
+      ],
+      "oracle_commands": [
+        {
+          "id": "tw05.adapter",
+          "command_template": "node <trusted-adapter-file> --candidate-root <validation-workspace> --contract <trusted-contract-file> --output <trusted-observations-file>",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": []
+        },
+        {
+          "id": "tw05.validate",
+          "command_template": "node <benchmark>/scripts/validate-tw05-observations.mjs --contract <trusted-contract-file> --observations <trusted-observations-file> --adapter-file <trusted-adapter-file>",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-05.native-step-0",
+            "tw-05.native-step-1",
+            "tw-05.native-step-2",
+            "tw-05.native-step-3",
+            "tw-05.native-step-4",
+            "tw-05.native-step-5",
+            "tw-05.native-execution",
+            "tw-05.wasm-execution",
+            "tw-05.worker-boundary",
+            "tw-05.observation-parity"
+          ]
+        }
+      ],
+      "assertions": [
+        {
+          "id": "tw-05.native-step-0",
+          "command_id": "tw05.validate",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-05.native-step-1",
+          "command_id": "tw05.validate",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-05.native-step-2",
+          "command_id": "tw05.validate",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-05.native-step-3",
+          "command_id": "tw05.validate",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-05.native-step-4",
+          "command_id": "tw05.validate",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-05.native-step-5",
+          "command_id": "tw05.validate",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-05.native-execution",
+          "command_id": "tw05.validate",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-05.wasm-execution",
+          "command_id": "tw05.validate",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-05.worker-boundary",
+          "command_id": "tw05.validate",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-05.observation-parity",
+          "command_id": "tw05.validate",
+          "stage": "expectation_free_execution"
+        }
+      ],
+      "subjective_groups": [
+        {
+          "id": "worker_single_truth",
+          "stage": "blinded_review_packet"
+        },
+        {
+          "id": "methodology_boundary",
+          "stage": "blinded_review_packet"
+        }
+      ]
+    },
+    {
+      "id": "TW-06",
+      "core_commands": [
+        {
+          "id": "core.tw06.fmt",
+          "command_template": "cargo fmt --all -- --check",
+          "stage": "candidate_core_validation"
+        },
+        {
+          "id": "core.tw06.workspace",
+          "command_template": "cargo test --workspace --all-targets --locked",
+          "stage": "candidate_core_validation"
+        },
+        {
+          "id": "core.tw06.release",
+          "command_template": "bash scripts/release-check.sh",
+          "stage": "candidate_core_validation"
+        }
+      ],
+      "oracle_commands": [
+        {
+          "id": "tw06.fmt",
+          "command_template": "cargo fmt --all -- --check",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": []
+        },
+        {
+          "id": "tw06.workspace",
+          "command_template": "cargo test --workspace --all-targets --locked",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": []
+        },
+        {
+          "id": "tw06.release",
+          "command_template": "bash scripts/release-check.sh",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": []
+        },
+        {
+          "id": "tw06.structural_scope",
+          "command_template": "node <controller>/scripts/validate-tw06-structural.mjs --candidate-root <validation-workspace> --base caf81e116c8f48c265fec40d7d12bd23a1fa4be0 --candidate <candidate-commit>",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": []
+        }
+      ],
+      "assertions": [],
+      "subjective_groups": [
+        {
+          "id": "public_prealpha_consistency",
+          "stage": "blinded_review_packet"
+        },
+        {
+          "id": "licensing_authority",
+          "stage": "blinded_review_packet"
+        },
+        {
+          "id": "contribution_boundary",
+          "stage": "blinded_review_packet"
+        },
+        {
+          "id": "governance_coherence",
+          "stage": "blinded_review_packet"
+        }
+      ]
+    },
+    {
+      "id": "TW-07",
+      "core_commands": [
+        {
+          "id": "core.tw07.formula",
+          "command_template": "cargo test -p tachiko-formula-engine --locked",
+          "stage": "candidate_core_validation"
+        },
+        {
+          "id": "core.tw07.portable",
+          "command_template": "bash scripts/portable-conformance-check.sh",
+          "stage": "candidate_core_validation"
+        },
+        {
+          "id": "core.tw07.docs",
+          "command_template": "bash scripts/docs-consistency-check.sh",
+          "stage": "candidate_core_validation"
+        },
+        {
+          "id": "core.tw07.release",
+          "command_template": "bash scripts/release-check.sh",
+          "stage": "candidate_core_validation"
+        }
+      ],
+      "oracle_commands": [
+        {
+          "id": "tw07.complete_oracle_preserves_disjoint_sccs_and_an_independent_evaluation_failure",
+          "command_template": "cargo test -p tachiko-formula-engine --test complete_oracle --locked complete_oracle_preserves_disjoint_sccs_and_an_independent_evaluation_failure -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-07.complete-outcome"
+          ]
+        },
+        {
+          "id": "tw07.binding_failures_accumulate_all_direct_stable_targets_before_cycle_and_evaluation",
+          "command_template": "cargo test -p tachiko-formula-engine --test complete_oracle --locked binding_failures_accumulate_all_direct_stable_targets_before_cycle_and_evaluation -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-07.binding-precedence"
+          ]
+        },
+        {
+          "id": "tw07.primary_failure_precedence_excludes_earlier_failed_nodes_from_cycle_authority",
+          "command_template": "cargo test -p tachiko-formula-engine --test complete_oracle --locked primary_failure_precedence_excludes_earlier_failed_nodes_from_cycle_authority -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-07.primary-precedence"
+          ]
+        },
+        {
+          "id": "tw07.branching_dag_with_a_shared_child_is_not_a_false_positive_scc",
+          "command_template": "cargo test -p tachiko-formula-engine --test complete_oracle --locked branching_dag_with_a_shared_child_is_not_a_false_positive_scc -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-07.no-false-scc"
+          ]
+        },
+        {
+          "id": "tw07.failed_dependency_subjects_are_direct_and_take_precedence_over_local_evaluation",
+          "command_template": "cargo test -p tachiko-formula-engine --test complete_oracle --locked failed_dependency_subjects_are_direct_and_take_precedence_over_local_evaluation -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-07.direct-dependencies"
+          ]
+        },
+        {
+          "id": "tw07.failed_outcome_is_stably_ordered_deterministic_and_contains_no_partial_calculation",
+          "command_template": "cargo test -p tachiko-formula-engine --test complete_oracle --locked failed_outcome_is_stably_ordered_deterministic_and_contains_no_partial_calculation -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-07.no-partial-state"
+          ]
+        },
+        {
+          "id": "tw07.local_evaluation_failure_selection_remains_left_to_right",
+          "command_template": "cargo test -p tachiko-formula-engine --test complete_oracle --locked local_evaluation_failure_selection_remains_left_to_right -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-07.local-order"
+          ]
+        },
+        {
+          "id": "tw07.generated_acyclic_and_cyclic_graphs_match_an_independent_reachability_oracle",
+          "command_template": "cargo test -p tachiko-formula-engine --test complete_oracle --locked generated_acyclic_and_cyclic_graphs_match_an_independent_reachability_oracle -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-07.generated-oracle"
+          ]
+        },
+        {
+          "id": "tw07.compatibility_projection_of_a_long_failed_chain_is_stack_safe",
+          "command_template": "cargo test -p tachiko-formula-engine --test complete_oracle --locked compatibility_projection_of_a_long_failed_chain_is_stack_safe -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-07.stack-safety"
+          ]
+        },
+        {
+          "id": "tw07.portable",
+          "command_template": "bash <benchmark>/scripts/run-portable-observations.sh --candidate-root <validation-workspace> --crate-set full --output <trusted-portable-observations-file>",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-07.portable.record-26"
+          ]
+        }
+      ],
+      "assertions": [
+        {
+          "id": "tw-07.complete-outcome",
+          "command_id": "tw07.complete_oracle_preserves_disjoint_sccs_and_an_independent_evaluation_failure",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-07.binding-precedence",
+          "command_id": "tw07.binding_failures_accumulate_all_direct_stable_targets_before_cycle_and_evaluation",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-07.primary-precedence",
+          "command_id": "tw07.primary_failure_precedence_excludes_earlier_failed_nodes_from_cycle_authority",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-07.no-false-scc",
+          "command_id": "tw07.branching_dag_with_a_shared_child_is_not_a_false_positive_scc",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-07.direct-dependencies",
+          "command_id": "tw07.failed_dependency_subjects_are_direct_and_take_precedence_over_local_evaluation",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-07.no-partial-state",
+          "command_id": "tw07.failed_outcome_is_stably_ordered_deterministic_and_contains_no_partial_calculation",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-07.local-order",
+          "command_id": "tw07.local_evaluation_failure_selection_remains_left_to_right",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-07.generated-oracle",
+          "command_id": "tw07.generated_acyclic_and_cyclic_graphs_match_an_independent_reachability_oracle",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-07.stack-safety",
+          "command_id": "tw07.compatibility_projection_of_a_long_failed_chain_is_stack_safe",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-07.portable.record-26",
+          "command_id": "tw07.portable",
+          "stage": "expectation_free_execution"
+        }
+      ],
+      "subjective_groups": []
+    },
+    {
+      "id": "TW-08",
+      "core_commands": [
+        {
+          "id": "core.tw08.storage",
+          "command_template": "cargo test -p tachiko-storage --locked",
+          "stage": "candidate_core_validation"
+        },
+        {
+          "id": "core.tw08.workspace",
+          "command_template": "cargo test --workspace --all-targets --locked",
+          "stage": "candidate_core_validation"
+        },
+        {
+          "id": "core.tw08.release",
+          "command_template": "bash scripts/release-check.sh",
+          "stage": "candidate_core_validation"
+        }
+      ],
+      "oracle_commands": [
+        {
+          "id": "tw08.invalid_utf8",
+          "command_template": "cargo test -p tachiko-storage --test strict_decoding --locked invalid_utf8_is_distinct_from_invalid_json -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-08.invalid-utf8"
+          ]
+        },
+        {
+          "id": "tw08.invalid_json",
+          "command_template": "cargo test -p tachiko-storage --test strict_decoding --locked invalid_json_is_reported_before_version_dispatch -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-08.invalid-json"
+          ]
+        },
+        {
+          "id": "tw08.duplicates",
+          "command_template": "cargo test -p tachiko-storage --test strict_decoding --locked duplicate_members_are_rejected_at_every_depth_after_escape_decoding -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-08.duplicates"
+          ]
+        },
+        {
+          "id": "tw08.missing_version",
+          "command_template": "cargo test -p tachiko-storage --test strict_decoding --locked missing_version_is_distinct -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-08.missing-version"
+          ]
+        },
+        {
+          "id": "tw08.malformed_versions",
+          "command_template": "cargo test -p tachiko-storage --test strict_decoding --locked malformed_versions_are_distinct_from_missing_and_unsupported_versions -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-08.malformed-version"
+          ]
+        },
+        {
+          "id": "tw08.unsupported_precedence",
+          "command_template": "cargo test -p tachiko-storage --test strict_decoding --locked unsupported_version_wins_before_v1_body_interpretation -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-08.unsupported-precedence"
+          ]
+        },
+        {
+          "id": "tw08.future_number",
+          "command_template": "cargo test -p tachiko-storage --test strict_decoding --locked unsupported_version_does_not_apply_v1_number_limits_to_the_future_body -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-08.future-number"
+          ]
+        },
+        {
+          "id": "tw08.unknown_recursive",
+          "command_template": "cargo test -p tachiko-storage --test strict_decoding --locked supported_v1_rejects_unknown_members_recursively -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-08.unknown-recursive"
+          ]
+        },
+        {
+          "id": "tw08.null_schema",
+          "command_template": "cargo test -p tachiko-storage --test strict_decoding --locked v1_basic_field_types_reject_a_present_null_schema_member -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-08.null-schema"
+          ]
+        },
+        {
+          "id": "tw08.map_id",
+          "command_template": "cargo test -p tachiko-storage --test strict_decoding --locked v1_rejects_schema_and_entity_map_key_id_mismatches -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-08.map-id"
+          ]
+        },
+        {
+          "id": "tw08.relationships",
+          "command_template": "cargo test -p tachiko-storage --test strict_decoding --locked v1_rejects_unresolvable_schema_and_field_relationships -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-08.relationships"
+          ]
+        },
+        {
+          "id": "tw08.minimal_bytes",
+          "command_template": "cargo test -p tachiko-storage --test canonical_v1 --locked canonical_minimal_v1_has_exact_specified_bytes -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-08.minimal-bytes"
+          ]
+        },
+        {
+          "id": "tw08.shapes_roundtrip",
+          "command_template": "cargo test -p tachiko-storage --test canonical_v1 --locked every_v1_field_value_and_expression_discriminator_round_trips -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-08.shapes-roundtrip"
+          ]
+        },
+        {
+          "id": "tw08.shapes_bytes",
+          "command_template": "cargo test -p tachiko-storage --test canonical_v1 --locked every_v1_shape_has_exact_canonical_bytes -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-08.shapes-bytes"
+          ]
+        },
+        {
+          "id": "tw08.unicode",
+          "command_template": "cargo test -p tachiko-storage --test canonical_v1 --locked canonical_v1_preserves_unicode_scalar_sequences_without_normalization -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-08.unicode"
+          ]
+        },
+        {
+          "id": "tw08.map_order",
+          "command_template": "cargo test -p tachiko-storage --test canonical_v1 --locked every_legacy_id_map_uses_ascii_lexicographic_order -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-08.map-order"
+          ]
+        },
+        {
+          "id": "tw08.examples",
+          "command_template": "cargo test -p tachiko-storage --test canonical_v1 --locked checked_in_ro_examples_are_canonical_and_byte_stable -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-08.examples"
+          ]
+        }
+      ],
+      "assertions": [
+        {
+          "id": "tw-08.invalid-utf8",
+          "command_id": "tw08.invalid_utf8",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-08.invalid-json",
+          "command_id": "tw08.invalid_json",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-08.duplicates",
+          "command_id": "tw08.duplicates",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-08.missing-version",
+          "command_id": "tw08.missing_version",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-08.malformed-version",
+          "command_id": "tw08.malformed_versions",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-08.unsupported-precedence",
+          "command_id": "tw08.unsupported_precedence",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-08.future-number",
+          "command_id": "tw08.future_number",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-08.unknown-recursive",
+          "command_id": "tw08.unknown_recursive",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-08.null-schema",
+          "command_id": "tw08.null_schema",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-08.map-id",
+          "command_id": "tw08.map_id",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-08.relationships",
+          "command_id": "tw08.relationships",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-08.minimal-bytes",
+          "command_id": "tw08.minimal_bytes",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-08.shapes-roundtrip",
+          "command_id": "tw08.shapes_roundtrip",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-08.shapes-bytes",
+          "command_id": "tw08.shapes_bytes",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-08.unicode",
+          "command_id": "tw08.unicode",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-08.map-order",
+          "command_id": "tw08.map_order",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-08.examples",
+          "command_id": "tw08.examples",
+          "stage": "expectation_free_execution"
+        }
+      ],
+      "subjective_groups": [
+        {
+          "id": "migration_seam_and_scope",
+          "stage": "blinded_review_packet"
+        }
+      ]
+    },
+    {
+      "id": "TW-09",
+      "core_commands": [
+        {
+          "id": "core.tw09.semantic",
+          "command_template": "cargo test -p tachiko-semantic-core --locked",
+          "stage": "candidate_core_validation"
+        },
+        {
+          "id": "core.tw09.workspace",
+          "command_template": "cargo test -p tachiko-workspace-engine --locked",
+          "stage": "candidate_core_validation"
+        },
+        {
+          "id": "core.tw09.portable",
+          "command_template": "bash scripts/portable-conformance-check.sh",
+          "stage": "candidate_core_validation"
+        },
+        {
+          "id": "core.tw09.release",
+          "command_template": "bash scripts/release-check.sh",
+          "stage": "candidate_core_validation"
+        }
+      ],
+      "oracle_commands": [
+        {
+          "id": "tw09.adapter",
+          "command_template": "node <trusted-adapter-file> --candidate-root <validation-workspace> --contract <trusted-contract-file> --output <trusted-observations-file>",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": []
+        },
+        {
+          "id": "tw09.validate",
+          "command_template": "node <benchmark>/scripts/validate-tw09-stable-facts.mjs --contract <trusted-contract-file> --observations <trusted-observations-file> --adapter-file <trusted-adapter-file>",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-09.machine-code",
+            "tw-09.classification-severity-provider",
+            "tw-09.subjects",
+            "tw-09.related-subjects",
+            "tw-09.facts",
+            "tw-09.stable-order",
+            "tw-09.presentation-invariance",
+            "tw-09.rename-stability"
+          ]
+        },
+        {
+          "id": "tw09.swapped_schema_ids_preserve_both_directional_mismatches",
+          "command_template": "cargo test -p tachiko-workspace-engine --test validation_report --locked swapped_schema_ids_preserve_both_directional_mismatches -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-09.suppression-1"
+          ]
+        },
+        {
+          "id": "tw09.swapped_entity_ids_preserve_both_directional_mismatches",
+          "command_template": "cargo test -p tachiko-workspace-engine --test validation_report --locked swapped_entity_ids_preserve_both_directional_mismatches -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-09.suppression-2"
+          ]
+        },
+        {
+          "id": "tw09.swapped_schema_field_ids_preserve_both_directional_mismatches",
+          "command_template": "cargo test -p tachiko-workspace-engine --test validation_report --locked swapped_schema_field_ids_preserve_both_directional_mismatches -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-09.suppression-3"
+          ]
+        },
+        {
+          "id": "tw09.independent_findings_accumulate_while_missing_schema_suppresses_cascades",
+          "command_template": "cargo test -p tachiko-workspace-engine --test validation_report --locked independent_findings_accumulate_while_missing_schema_suppresses_cascades -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-09.suppression-4"
+          ]
+        },
+        {
+          "id": "tw09.cascade_suppression_filters_each_binding_fact_by_its_actual_prerequisite",
+          "command_template": "cargo test -p tachiko-workspace-engine --test validation_report --locked cascade_suppression_filters_each_binding_fact_by_its_actual_prerequisite -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-09.suppression-5"
+          ]
+        },
+        {
+          "id": "tw09.cascade_suppression_filters_each_direct_failed_dependency",
+          "command_template": "cargo test -p tachiko-workspace-engine --test validation_report --locked cascade_suppression_filters_each_direct_failed_dependency -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-09.suppression-6"
+          ]
+        },
+        {
+          "id": "tw09.validation_and_finalization_share_the_same_semantic_report",
+          "command_template": "cargo test -p tachiko-workspace-engine --test validation_report --locked validation_and_finalization_share_the_same_semantic_report -- --exact",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-09.validation-finalization-agreement"
+          ]
+        },
+        {
+          "id": "tw09.portable",
+          "command_template": "bash <benchmark>/scripts/run-portable-observations.sh --candidate-root <validation-workspace> --crate-set full --output <trusted-portable-observations-file>",
+          "stage": "isolated_oracle_pipeline",
+          "stages": [
+            "candidate_artifact_build",
+            "trusted_probe_build",
+            "expectation_free_execution"
+          ],
+          "assertion_ids": [
+            "tw-09.portable.records-27-30"
+          ]
+        }
+      ],
+      "assertions": [
+        {
+          "id": "tw-09.machine-code",
+          "command_id": "tw09.validate",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-09.classification-severity-provider",
+          "command_id": "tw09.validate",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-09.subjects",
+          "command_id": "tw09.validate",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-09.related-subjects",
+          "command_id": "tw09.validate",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-09.facts",
+          "command_id": "tw09.validate",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-09.stable-order",
+          "command_id": "tw09.validate",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-09.suppression-1",
+          "command_id": "tw09.swapped_schema_ids_preserve_both_directional_mismatches",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-09.suppression-2",
+          "command_id": "tw09.swapped_entity_ids_preserve_both_directional_mismatches",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-09.suppression-3",
+          "command_id": "tw09.swapped_schema_field_ids_preserve_both_directional_mismatches",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-09.suppression-4",
+          "command_id": "tw09.independent_findings_accumulate_while_missing_schema_suppresses_cascades",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-09.suppression-5",
+          "command_id": "tw09.cascade_suppression_filters_each_binding_fact_by_its_actual_prerequisite",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-09.suppression-6",
+          "command_id": "tw09.cascade_suppression_filters_each_direct_failed_dependency",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-09.presentation-invariance",
+          "command_id": "tw09.validate",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-09.rename-stability",
+          "command_id": "tw09.validate",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-09.validation-finalization-agreement",
+          "command_id": "tw09.validation_and_finalization_share_the_same_semantic_report",
+          "stage": "expectation_free_execution"
+        },
+        {
+          "id": "tw-09.portable.records-27-30",
+          "command_id": "tw09.portable",
+          "stage": "expectation_free_execution"
+        }
+      ],
+      "subjective_groups": [
+        {
+          "id": "formula_authority",
+          "stage": "blinded_review_packet"
+        }
+      ]
+    }
+  ]
+}

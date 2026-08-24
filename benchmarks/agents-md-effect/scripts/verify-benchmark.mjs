@@ -47,6 +47,10 @@ function sha256(bytes) {
 const casesPath = resolve(benchmarkDir, "evaluator/cases.json");
 const oraclePath = resolve(benchmarkDir, "evaluator/oracle-lock.json");
 const coreScorePath = resolve(benchmarkDir, "evaluator/core-score-lock.json");
+const productionOraclePath = resolve(
+  benchmarkDir,
+  "evaluator/production-oracles.json",
+);
 const authorityPath = resolve(benchmarkDir, "evaluator/authority-lock.json");
 const authoritySnapshotsPath = resolve(
   benchmarkDir,
@@ -70,6 +74,8 @@ const oracleBytes = await readFile(oraclePath);
 const oracleLock = JSON.parse(oracleBytes.toString("utf8"));
 const coreScoreBytes = await readFile(coreScorePath);
 const coreScoreLock = JSON.parse(coreScoreBytes.toString("utf8"));
+const productionOracleBytes = await readFile(productionOraclePath);
+const productionOracles = JSON.parse(productionOracleBytes.toString("utf8"));
 const authorityBytes = await readFile(authorityPath);
 const authorityLock = JSON.parse(authorityBytes.toString("utf8"));
 const authoritySnapshotBytes = await readFile(authoritySnapshotsPath);
@@ -756,6 +762,136 @@ const allAssertionIds = oracleLock.cases.flatMap((entry) =>
 );
 if (new Set(allAssertionIds).size !== allAssertionIds.length) {
   fail("oracle assertion IDs must be globally unique");
+}
+
+function productionIds(entries, label) {
+  if (!Array.isArray(entries)) fail(`${label} must be an array`);
+  const values = entries.map((entry) => entry.id);
+  if (values.some((id) => typeof id !== "string") || new Set(values).size !== values.length) {
+    fail(`${label} IDs must be unique strings`);
+  }
+  return values.sort();
+}
+
+function sameProductionIds(actual, expected, label) {
+  if (JSON.stringify(productionIds(actual, label)) !== JSON.stringify([...expected].sort())) {
+    fail(`${label} does not represent the frozen IDs exactly once`);
+  }
+}
+
+function rejectFrozenScoringCopies(value, path = "production-oracles.json") {
+  if (!value || typeof value !== "object") return;
+  if (Object.hasOwn(value, "points") || Object.hasOwn(value, "selector")) {
+    fail(`${path} must reference frozen points and selectors instead of copying them`);
+  }
+  for (const [key, child] of Object.entries(value)) {
+    rejectFrozenScoringCopies(child, `${path}.${key}`);
+  }
+}
+
+if (
+  productionOracles.protocol_id !== casesDocument.protocol_id ||
+  productionOracles.manifest_version !== 1 ||
+  productionOracles.execution_standard !== "practical_internal_v1" ||
+  productionOracles.qualification_requirement !==
+    "construction_pilot_only_qualification_required" ||
+  productionOracles.node_test_entry_point !==
+    "node --test benchmarks/agents-md-effect/tests/operational.test.mjs"
+) {
+  fail("production oracle manifest has an invalid operational contract");
+}
+sameProductionIds(
+  productionOracles.cases,
+  casesDocument.cases.map((entry) => entry.id),
+  "production oracle cases",
+);
+rejectFrozenScoringCopies(productionOracles);
+
+for (const caseEntry of casesDocument.cases) {
+  const productionCase = productionOracles.cases.find(
+    (entry) => entry.id === caseEntry.id,
+  );
+  const oracleCase = oracleLock.cases.find((entry) => entry.id === caseEntry.id);
+  const coreScoreCase = coreScoreLock.cases.find((entry) => entry.id === caseEntry.id);
+  if (!productionCase || !oracleCase || !coreScoreCase) {
+    fail(`${caseEntry.id} lacks a production oracle input`);
+  }
+
+  sameProductionIds(
+    productionCase.core_commands,
+    coreScoreCase.validation_checks.map((entry) => entry.id),
+    `${caseEntry.id} production core commands`,
+  );
+  for (const command of productionCase.core_commands) {
+    const lockedCommand = coreScoreCase.validation_checks.find(
+      (entry) => entry.id === command.id,
+    );
+    if (
+      command.command_template !== lockedCommand.command ||
+      command.stage !== "candidate_core_validation"
+    ) {
+      fail(`${caseEntry.id} core command ${command.id} has an invalid production mapping`);
+    }
+  }
+
+  sameProductionIds(
+    productionCase.oracle_commands,
+    oracleCase.command_specs.map((entry) => entry.id),
+    `${caseEntry.id} production oracle commands`,
+  );
+  for (const command of productionCase.oracle_commands) {
+    const lockedCommand = oracleCase.command_specs.find(
+      (entry) => entry.id === command.id,
+    );
+    const expectedAssertionIds = oracleCase.assertions
+      .filter((assertion) => assertion.command_id === command.id)
+      .map((assertion) => assertion.id)
+      .sort();
+    if (
+      command.command_template !== lockedCommand.run ||
+      command.stage !== "isolated_oracle_pipeline" ||
+      JSON.stringify(command.stages) !==
+        JSON.stringify([
+          "candidate_artifact_build",
+          "trusted_probe_build",
+          "expectation_free_execution",
+        ]) ||
+      JSON.stringify([...command.assertion_ids].sort()) !== JSON.stringify(expectedAssertionIds)
+    ) {
+      fail(`${caseEntry.id} oracle command ${command.id} has an invalid production mapping`);
+    }
+  }
+
+  sameProductionIds(
+    productionCase.assertions,
+    oracleCase.assertions.map((entry) => entry.id),
+    `${caseEntry.id} production assertions`,
+  );
+  for (const assertion of productionCase.assertions) {
+    const lockedAssertion = oracleCase.assertions.find((entry) => entry.id === assertion.id);
+    if (
+      assertion.command_id !== lockedAssertion.command_id ||
+      assertion.stage !== "expectation_free_execution"
+    ) {
+      fail(`${caseEntry.id} assertion ${assertion.id} has an invalid production mapping`);
+    }
+  }
+
+  const subjectiveGroupIds = caseEntry.validation.machine_contract_groups
+    .filter((group) => group.assessment === "blinded_semantic_review")
+    .map((group) => group.id);
+  sameProductionIds(
+    productionCase.subjective_groups,
+    subjectiveGroupIds,
+    `${caseEntry.id} production subjective groups`,
+  );
+  if (
+    !productionCase.subjective_groups.every(
+      (group) => group.stage === "blinded_review_packet",
+    )
+  ) {
+    fail(`${caseEntry.id} subjective groups do not enter blinded review`);
+  }
 }
 
 if (environment.controlled_agent.multi_agent !== false) {
