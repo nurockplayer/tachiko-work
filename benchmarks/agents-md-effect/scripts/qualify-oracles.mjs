@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import {createHash} from "node:crypto";
-import {mkdir, mkdtemp, readFile, realpath, rm, writeFile} from "node:fs/promises";
+import {lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile} from "node:fs/promises";
 import {spawnSync} from "node:child_process";
 import {dirname, isAbsolute, resolve} from "node:path";
 import {tmpdir} from "node:os";
@@ -16,10 +16,11 @@ const sandboxExecutable = "/usr/bin/sandbox-exec";
 const sandboxProfile = "(version 1)\n(allow default)\n(deny network*)\n";
 const commandTimeoutMs = 1_800_000;
 let expectedControlSha256;
+let trustedCargo;
 
 function usage() {
   console.error(
-    "usage: node qualify-oracles.mjs --source-repo /abs/repo --output /abs/oracles.json",
+    "usage: node qualify-oracles.mjs --source-repo /abs/repo --output /abs/oracles.json [--mode full|fixture-fast]",
   );
   process.exit(2);
 }
@@ -100,9 +101,15 @@ function compactCommand(entry) {
   return {
     id: entry.id,
     command_template: entry.command_template,
+    command_template_sha256: entry.command_template_sha256,
+    resolved_command_sha256: entry.resolved_command_sha256,
+    execution_mode: entry.execution_mode ?? "shell",
     exit_code: entry.exit_code,
     signal: entry.signal,
     spawn_error: entry.spawn_error,
+    stdout: {bytes: entry.stdout.bytes, sha256: entry.stdout.sha256},
+    stderr: {bytes: entry.stderr.bytes, sha256: entry.stderr.sha256},
+    ...(entry.rust_build ? {rust_build: entry.rust_build, toolchain: entry.toolchain} : {}),
   };
 }
 
@@ -113,10 +120,20 @@ async function compactOracle(receipt, processStatus, trustedDir, adapterCase) {
     const stdout = adapterCommand
       ? await readFile(resolve(trustedDir, adapterCommand.stdout.path), "utf8")
       : "";
+    const observationBytes = await readFile(resolve(trustedDir, "observations.json")).catch(() => null);
     adapterExecution = {
       kind: "production_probe",
       command_exit_code: adapterCommand?.exit_code ?? null,
       observation: lastJsonLine(stdout),
+      stdout: adapterCommand
+        ? {bytes: adapterCommand.stdout.bytes, sha256: adapterCommand.stdout.sha256}
+        : null,
+      stderr: adapterCommand
+        ? {bytes: adapterCommand.stderr.bytes, sha256: adapterCommand.stderr.sha256}
+        : null,
+      observation_artifact: observationBytes === null
+        ? null
+        : {bytes: observationBytes.length, sha256: sha256(observationBytes)},
       trusted_inputs: receipt.trusted_inputs
         .filter((entry) => ["adapter", "contract"].includes(entry.kind))
         .map(({kind, bytes, sha256: hash}) => ({kind, bytes, sha256: hash})),
@@ -130,19 +147,7 @@ async function compactOracle(receipt, processStatus, trustedDir, adapterCase) {
     commands_pass: receipt.commands_pass,
     assertions_pass: receipt.assertions_pass,
     commands: receipt.commands.map(compactCommand),
-    assertions: receipt.assertions.map((entry) => ({
-      id: entry.id,
-      command_id: entry.command_id,
-      selector_kind: entry.selector_kind,
-      pass: entry.pass,
-      reasons: entry.reasons,
-      ...(entry.matching_tests === undefined ? {} : {
-        evidence_mode: entry.evidence_mode,
-        matching_tests: entry.matching_tests,
-        matching_test_outcomes: entry.matching_test_outcomes,
-        suite_summary: entry.suite_summary,
-      }),
-    })),
+    assertions: receipt.assertions,
     adapter_execution: adapterExecution,
   };
 }
@@ -191,9 +196,19 @@ function runCore(caseManifest, workspace) {
     commands.push({
       id: command.id,
       command_template: command.command_template,
+      command_template_sha256: sha256(command.command_template),
+      resolved_command_sha256: sha256(command.command_template),
       exit_code: result.status,
       signal: result.signal,
       spawn_error: result.error?.message ?? null,
+      stdout: {
+        bytes: Buffer.byteLength(result.stdout ?? ""),
+        sha256: sha256(result.stdout ?? ""),
+      },
+      stderr: {
+        bytes: Buffer.byteLength(result.stderr ?? ""),
+        sha256: sha256(result.stderr ?? ""),
+      },
     });
   }
   return {
@@ -211,6 +226,8 @@ async function runOracleCase({caseId, workspace, trustedDir, candidateCommit, ad
     "--trusted-dir", trustedDir,
     "--expected-control-sha256", expectedControlSha256,
     "--candidate-commit", candidateCommit,
+    "--trusted-cargo", trustedCargo.path,
+    "--expected-cargo-sha256", trustedCargo.sha256,
   ];
   if (adapterFile) command.push("--adapter-file", adapterFile);
   const result = execute(process.execPath, command, {env: offlineEnvironment()});
@@ -267,7 +284,31 @@ async function executeSelectorFamily({root, id, command, selector, positiveConfi
       writeFile(resolve(directory, "fixture.json"), bytes),
     ]);
     if (config.kind === "rust") {
-      await writeFile(resolve(directory, "cargo"), "#!/bin/sh\nexec node fixture-command.mjs\n", {mode: 0o755});
+      await mkdir(resolve(directory, "tests"));
+      await Promise.all([
+        writeFile(resolve(directory, "Cargo.toml"), `[package]
+name = "fixture"
+version = "0.0.0"
+edition = "2024"
+
+[[test]]
+name = "fixture"
+path = "tests/fixture.rs"
+`),
+        writeFile(resolve(directory, "Cargo.lock"), `# This file is automatically @generated by Cargo.
+version = 4
+
+[[package]]
+name = "fixture"
+version = "0.0.0"
+`),
+        writeFile(
+          resolve(directory, "tests/fixture.rs"),
+          config.matches === 1
+            ? `#[test]\nfn ${config.name}() {}\n`
+            : "#[test]\nfn behavior_missing() {}\n",
+        ),
+      ]);
     }
   }
   const assertion = [{id: `${id}.assertion`, command_id: `${id}.command`, selector}];
@@ -294,6 +335,8 @@ async function executeSelectorFamily({root, id, command, selector, positiveConfi
     "--expected-manifest-sha256", sha256(controls.manifestBytes),
     "--expected-oracle-lock-sha256", sha256(controls.lockBytes),
     "--expected-control-sha256", expectedControlSha256,
+    "--trusted-cargo", trustedCargo.path,
+    "--expected-cargo-sha256", trustedCargo.sha256,
   ], {env: offlineEnvironment({PATH: `${candidate}:${process.env.PATH}`})});
   const positiveTrusted = resolve(familyRoot, "positive-receipt");
   const negativeTrusted = resolve(familyRoot, "negative-receipt");
@@ -353,6 +396,8 @@ async function qualifyPacketGate(root) {
     "--expected-manifest-sha256", sha256(controls.manifestBytes),
     "--expected-oracle-lock-sha256", sha256(controls.lockBytes),
     "--expected-control-sha256", expectedControlSha256,
+    "--trusted-cargo", trustedCargo.path,
+    "--expected-cargo-sha256", trustedCargo.sha256,
   ], {env: offlineEnvironment()});
   const receipt = JSON.parse(await readFile(resolve(trusted, "oracle-run.json"), "utf8"));
   if (result.status !== 0 || receipt.overall_status !== "packet_gate_ready") {
@@ -562,6 +607,185 @@ async function runTw05OfflineQualification(workspace, output) {
   };
 }
 
+function deterministicCommand(command) {
+  return {
+    id: command.id,
+    command_template_sha256: command.command_template_sha256,
+    resolved_command_bound_in_run_receipt: Boolean(command.resolved_command_sha256),
+    execution_mode: command.execution_mode ?? "shell",
+    exit_code: command.exit_code,
+    signal: command.signal,
+    spawn_error: command.spawn_error,
+    ...(command.rust_build ? {
+      toolchain: {
+        cargo_sha256: command.toolchain.cargo.sha256,
+        cargo_bytes: command.toolchain.cargo.bytes,
+        rustc_sha256: command.toolchain.rustc.sha256,
+        rustc_bytes: command.toolchain.rustc.bytes,
+      },
+      rust_build: {
+        package: command.rust_build.package ? {
+          name: command.rust_build.package.name,
+          manifest_sha256: command.rust_build.package.manifest_sha256,
+          target_name: command.rust_build.package.target_name,
+          target_source_sha256: command.rust_build.package.target_source_sha256,
+        } : null,
+        artifact_message_present: Boolean(command.rust_build.artifact?.message_sha256),
+        executable_present: Boolean(command.rust_build.artifact?.executable_sha256),
+      },
+    } : {}),
+  };
+}
+
+function reasonClass(reason) {
+  const classes = [
+    "command exited",
+    "matching Rust tests",
+    "matching Rust test lacks",
+    "libtest JSON",
+    "JSON pointer",
+    "native selected",
+    "WASM selected",
+    "native/WASM selected",
+    "portable observations unavailable",
+    "selected native records",
+    "selected WASM records",
+  ];
+  return classes.find((prefix) => reason.startsWith(prefix)) ?? "other_selector_failure";
+}
+
+function deterministicAssertion(assertion) {
+  return Object.fromEntries(Object.entries({
+    id: assertion.id,
+    command_id: assertion.command_id,
+    selector_kind: assertion.selector_kind,
+    pass: assertion.pass,
+    reason_classes: [...new Set(assertion.reasons.map(reasonClass))],
+    evidence_mode: assertion.evidence_mode,
+    matching_tests: assertion.matching_tests,
+    matching_test_outcomes: assertion.matching_test_outcomes,
+    required_matching_tests: assertion.required_matching_tests,
+    suite_summary: assertion.suite_summary,
+    normalized_events_sha256: assertion.normalized_events_sha256,
+    normalized_suite_sha256: assertion.normalized_suite_sha256,
+    json_pointer: assertion.json_pointer,
+    found: assertion.found,
+    actual_canonical_sha256: assertion.actual_canonical_sha256,
+    selected_native_sha256: assertion.selected_native_sha256,
+    selected_wasm_sha256: assertion.selected_wasm_sha256,
+  }).filter(([, value]) => value !== undefined));
+}
+
+function deterministicAdapter(adapter) {
+  if (!adapter) return null;
+  const stableObservation = adapter.observation === null
+    ? null
+    : Object.fromEntries(Object.entries(adapter.observation).filter(
+      ([key]) => !["cargo_stdout_sha256", "cargo_stderr_sha256"].includes(key),
+    ));
+  return {
+    kind: adapter.kind,
+    command_exit_code: adapter.command_exit_code,
+    observation: stableObservation,
+    trusted_inputs: adapter.trusted_inputs,
+    observation_artifact_present: adapter.observation_artifact !== null,
+  };
+}
+
+function deterministicOracle(oracle) {
+  return {
+    evidence: oracle.evidence,
+    process_exit_code: oracle.process_exit_code,
+    assessment_mode: oracle.assessment_mode,
+    overall_status: oracle.overall_status,
+    commands_pass: oracle.commands_pass,
+    assertions_pass: oracle.assertions_pass,
+    commands: oracle.commands.map(deterministicCommand),
+    assertions: oracle.assertions.map(deterministicAssertion),
+    adapter_execution: deterministicAdapter(oracle.adapter_execution),
+  };
+}
+
+function deterministicCore(core) {
+  return {
+    evidence: core.evidence,
+    all_passed: core.all_passed,
+    commands: core.commands.map(deterministicCommand),
+  };
+}
+
+function deterministicOffline(offline) {
+  if (!offline) return undefined;
+  return {
+    evidence: offline.evidence,
+    process_exit_code: offline.process_exit_code,
+    pass: offline.pass,
+    offline: offline.offline,
+    package_manager_dependency: offline.package_manager_dependency,
+    network_enforcement: offline.network_enforcement,
+    executables: offline.executables,
+    executions: offline.executions.map(({purpose, name, args, exit_code, signal, spawn_error}) => ({
+      purpose, name, args, exit_code, signal, spawn_error,
+    })),
+  };
+}
+
+function deterministicCase(entry) {
+  return {
+    case_id: entry.case_id,
+    materialization: entry.materialization,
+    qualification: entry.qualification,
+    machine_semantic_discrimination_qualified: entry.machine_semantic_discrimination_qualified,
+    target: {
+      accepted: entry.target.accepted,
+      expected_contract_miss: entry.target.expected_contract_miss,
+      calibration: entry.target.calibration,
+      core: deterministicCore(entry.target.core),
+      oracle: deterministicOracle(entry.target.oracle),
+    },
+    negative: {
+      discriminated: entry.negative.discriminated,
+      core: deterministicCore(entry.negative.core),
+      oracle: deterministicOracle(entry.negative.oracle),
+    },
+    ...(entry.offline_historical_target ? {
+      offline_historical_target: deterministicOffline(entry.offline_historical_target),
+      offline_behavior_missing_negative: deterministicOffline(entry.offline_behavior_missing_negative),
+    } : {}),
+    ...(entry.reference_positive ? {
+      reference_positive: {
+        accepted: entry.reference_positive.accepted,
+        label: entry.reference_positive.label,
+        oracle: deterministicOracle(entry.reference_positive.oracle),
+      },
+    } : {}),
+  };
+}
+
+function deterministicPayload(runReceipt) {
+  return {
+    schema: "tachiko-oracle-qualification-summary-v3",
+    protocol_id: runReceipt.protocol_id,
+    classification: runReceipt.classification,
+    formal_result_eligible: runReceipt.formal_result_eligible,
+    execution_standard: runReceipt.execution_standard,
+    mode: runReceipt.mode,
+    no_codex_launched: runReceipt.no_codex_launched,
+    trusted_cargo: {
+      bytes: runReceipt.trusted_cargo.bytes,
+      sha256: runReceipt.trusted_cargo.sha256,
+    },
+    expected_control_sha256: runReceipt.expected_control_sha256,
+    controls: runReceipt.controls,
+    frozen_manifest_sha256: runReceipt.frozen_manifest_sha256,
+    frozen_oracle_lock_sha256: runReceipt.frozen_oracle_lock_sha256,
+    network_enforcement: runReceipt.network_enforcement,
+    families: runReceipt.families,
+    cases: runReceipt.cases.map(deterministicCase),
+    limitations: runReceipt.limitations,
+  };
+}
+
 const args = parseArgs(process.argv.slice(2));
 for (const key of ["source-repo", "output"]) {
   if (!args.has(key)) usage();
@@ -569,8 +793,23 @@ for (const key of ["source-repo", "output"]) {
 if (!isAbsolute(args.get("source-repo")) || !isAbsolute(args.get("output"))) {
   fail("source-repo and output must be absolute");
 }
+const mode = args.get("mode") ?? "full";
+if (!["full", "fixture-fast"].includes(mode)) fail("mode must be full or fixture-fast");
 const sourceRepo = await realpath(resolve(args.get("source-repo")));
 const output = resolve(args.get("output"));
+const rustupCargo = execute("rustup", ["which", "cargo"]);
+if (rustupCargo.status !== 0 || !rustupCargo.stdout.trim()) fail("trusted Cargo is unavailable");
+const trustedCargoPath = await realpath(rustupCargo.stdout.trim());
+const trustedCargoMetadata = await lstat(trustedCargoPath);
+if (trustedCargoMetadata.isSymbolicLink() || !trustedCargoMetadata.isFile()) {
+  fail("trusted Cargo must be a non-symlink regular file");
+}
+const trustedCargoBytes = await readFile(trustedCargoPath);
+trustedCargo = {
+  path: trustedCargoPath,
+  bytes: trustedCargoBytes.length,
+  sha256: sha256(trustedCargoBytes),
+};
 const controlArtifacts = [
   "environment-lock.json",
   "evaluator/cases.json",
@@ -585,7 +824,9 @@ for (const path of controlArtifacts) {
   controlObservations.push({path, bytes: bytes.length, sha256: sha256(bytes)});
 }
 expectedControlSha256 = sha256(`${JSON.stringify(controlObservations)}\n`);
-const qualificationRoot = await mkdtemp(resolve(tmpdir(), "tachiko-oracle-qualification-"));
+const qualificationRoot = await realpath(
+  await mkdtemp(resolve(tmpdir(), "tachiko-oracle-qualification-")),
+);
 
 try {
   const sandboxBytes = await readFile(sandboxExecutable).catch(() => {
@@ -650,46 +891,47 @@ try {
   families.push(await qualifyPacketGate(qualificationRoot));
 
   const caseQualifications = [];
-  for (const caseEntry of casesDocument.cases) {
-    console.error(`qualifying ${caseEntry.id}: materialize target/base and execute frozen mappings`);
-    const caseManifest = manifest.cases.find((entry) => entry.id === caseEntry.id);
-    if (!caseManifest) fail(`production manifest omits ${caseEntry.id}`);
-    const qualified = await qualifyCase({
-      caseEntry,
-      caseManifest,
-      root: resolve(qualificationRoot, "cases"),
-      sourceRepo,
+  if (mode === "full") {
+    for (const caseEntry of casesDocument.cases) {
+      console.error(`qualifying ${caseEntry.id}: materialize target/base and execute frozen mappings`);
+      const caseManifest = manifest.cases.find((entry) => entry.id === caseEntry.id);
+      if (!caseManifest) fail(`production manifest omits ${caseEntry.id}`);
+      const qualified = await qualifyCase({
+        caseEntry,
+        caseManifest,
+        root: resolve(qualificationRoot, "cases"),
+        sourceRepo,
+      });
+      caseQualifications.push(qualified.entry);
+      await rm(qualified.workspaces.caseRoot, {recursive: true, force: true});
+    }
+
+    const tw05 = caseQualifications.find((entry) => entry.case_id === "TW-05");
+    tw05.reference_positive = await qualifyTw05Reference(qualificationRoot);
+    const tw09 = caseQualifications.find((entry) => entry.case_id === "TW-09");
+    families.push({
+      id: "tw05_normalized_contract",
+      evidence: "executed",
+      positive: {accepted: tw05.reference_positive.accepted, source: "controlled_reference_runtime"},
+      negative: {discriminated: tw05.negative.discriminated, source: "historical_behavior_missing_base"},
+      historical_target_calibration: {
+        accepted: tw05.target.accepted,
+        expected_contract_miss: tw05.target.expected_contract_miss,
+      },
     });
-    caseQualifications.push(qualified.entry);
-    await rm(qualified.workspaces.caseRoot, {recursive: true, force: true});
+    families.push({
+      id: "tw05_offline_direct_execution",
+      evidence: "executed",
+      positive: {accepted: tw05.offline_historical_target.pass},
+      negative: {discriminated: !tw05.offline_behavior_missing_negative.pass},
+    });
+    families.push({
+      id: "tw09_normalized_contract",
+      evidence: "executed",
+      positive: {accepted: tw09.target.accepted, source: "trusted_rebased_replay_positive"},
+      negative: {discriminated: tw09.negative.discriminated, source: "historical_behavior_missing_base"},
+    });
   }
-
-  const tw05 = caseQualifications.find((entry) => entry.case_id === "TW-05");
-  tw05.reference_positive = await qualifyTw05Reference(qualificationRoot);
-
-  const tw09 = caseQualifications.find((entry) => entry.case_id === "TW-09");
-  families.push({
-    id: "tw05_normalized_contract",
-    evidence: "executed",
-    positive: {accepted: tw05.reference_positive.accepted, source: "controlled_reference_runtime"},
-    negative: {discriminated: tw05.negative.discriminated, source: "historical_behavior_missing_base"},
-    historical_target_calibration: {
-      accepted: tw05.target.accepted,
-      expected_contract_miss: tw05.target.expected_contract_miss,
-    },
-  });
-  families.push({
-    id: "tw05_offline_direct_execution",
-    evidence: "executed",
-    positive: {accepted: tw05.offline_historical_target.pass},
-    negative: {discriminated: !tw05.offline_behavior_missing_negative.pass},
-  });
-  families.push({
-    id: "tw09_normalized_contract",
-    evidence: "executed",
-    positive: {accepted: tw09.target.accepted, source: "trusted_rebased_replay_positive"},
-    negative: {discriminated: tw09.negative.discriminated, source: "historical_behavior_missing_base"},
-  });
 
   const controlPaths = [
     "evaluator/cases.json",
@@ -697,6 +939,9 @@ try {
     "evaluator/production-oracles.json",
     "evaluator/contracts/TW-05-resident-parity.json",
     "evaluator/contracts/TW-09-stable-diagnostic-facts.json",
+    "evaluator/adapters/candidate-adapter.mjs",
+    "evaluator/adapters/candidate-adapter-config.schema.json",
+    "evaluator/adapters/README.md",
     "evaluator/adapters/TW-05/historical-target-adapter.mjs",
     "evaluator/adapters/TW-05/reference-adapter.mjs",
     "evaluator/adapters/TW-05/reference-runtime/Cargo.lock",
@@ -720,13 +965,15 @@ try {
     const bytes = await readFile(resolve(benchmarkDir, path));
     controls.push({path, bytes: bytes.length, sha256: sha256(bytes)});
   }
-  const payload = {
-    schema: "tachiko-oracle-qualification-v2",
+  const runReceipt = {
+    schema: "tachiko-oracle-qualification-run-v3",
     protocol_id: casesDocument.protocol_id,
     classification: "construction_pilot_only",
     formal_result_eligible: false,
     execution_standard: "practical_internal_v1",
+    mode,
     no_codex_launched: true,
+    trusted_cargo: trustedCargo,
     expected_control_sha256: expectedControlSha256,
     controls,
     frozen_manifest_sha256: sha256(manifestBytes),
@@ -747,7 +994,13 @@ try {
       "Provider-internal immutable deployment identity and additional independent reviewer panels remain outside this construction qualification.",
     ],
   };
-  const receipt = {payload_sha256: sha256(`${JSON.stringify(payload)}\n`), payload};
+  const payload = deterministicPayload(runReceipt);
+  const receipt = {
+    payload_sha256: sha256(`${JSON.stringify(payload)}\n`),
+    payload,
+    run_receipt_sha256: sha256(`${JSON.stringify(runReceipt)}\n`),
+    run_receipt: runReceipt,
+  };
   await mkdir(dirname(output), {recursive: true});
   await writeFile(output, `${JSON.stringify(receipt, null, 2)}\n`, {mode: 0o600});
   console.log(JSON.stringify({output, payload_sha256: receipt.payload_sha256}));

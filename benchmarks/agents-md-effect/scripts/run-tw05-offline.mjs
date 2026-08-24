@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
 import {createHash} from "node:crypto";
-import {readFile, realpath, writeFile} from "node:fs/promises";
+import {constants, existsSync} from "node:fs";
+import {lstat, mkdir, open, readFile, realpath} from "node:fs/promises";
 import {spawnSync} from "node:child_process";
-import {isAbsolute, resolve} from "node:path";
+import {basename, dirname, isAbsolute, relative, resolve} from "node:path";
 
 const sandboxExecutable = "/usr/bin/sandbox-exec";
 const sandboxProfile = "(version 1)\n(allow default)\n(deny network*)\n";
@@ -32,6 +33,73 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function inside(candidate, parent) {
+  const path = relative(parent, candidate);
+  return path === "" || (!path.startsWith("..") && !isAbsolute(path));
+}
+
+async function reserveTrustedOutput(outputInput, candidateRoot) {
+  if (!isAbsolute(outputInput)) throw new Error("output must be absolute");
+  const requested = resolve(outputInput);
+  try {
+    await lstat(requested);
+    throw new Error("output must not already exist (including symlink or special files)");
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  const parentComponents = [];
+  for (let component = dirname(requested); dirname(component) !== component; component = dirname(component)) {
+    parentComponents.unshift(component);
+  }
+  for (const component of parentComponents) {
+    let metadata;
+    try {
+      metadata = await lstat(component);
+    } catch (error) {
+      if (error.code === "ENOENT") break;
+      throw error;
+    }
+    if (metadata.isSymbolicLink()) throw new Error("output parent must not contain a symlink");
+    if (!metadata.isDirectory()) throw new Error("output ancestor must be a directory");
+  }
+  let cursor = dirname(requested);
+  const suffix = [];
+  while (!existsSync(cursor)) {
+    const parent = dirname(cursor);
+    if (parent === cursor) throw new Error("output has no existing ancestor");
+    suffix.unshift(basename(cursor));
+    cursor = parent;
+  }
+  const ancestorMetadata = await lstat(cursor);
+  if (ancestorMetadata.isSymbolicLink()) throw new Error("output parent must not be a symlink");
+  if (!ancestorMetadata.isDirectory()) throw new Error("output ancestor must be a directory");
+  let canonicalParent = await realpath(cursor);
+  for (const component of suffix) {
+    canonicalParent = resolve(canonicalParent, component);
+    await mkdir(canonicalParent, {mode: 0o700});
+    const metadata = await lstat(canonicalParent);
+    if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+      throw new Error("output parent creation was redirected");
+    }
+  }
+  const output = resolve(canonicalParent, basename(requested));
+  if (inside(output, candidateRoot) || inside(candidateRoot, output)) {
+    throw new Error("output and candidate-root must be disjoint");
+  }
+  if (existsSync(output)) throw new Error("output must not already exist");
+  const handle = await open(
+    output,
+    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0),
+    0o600,
+  );
+  const metadata = await lstat(output);
+  if (metadata.isSymbolicLink() || !metadata.isFile()) {
+    await handle.close();
+    throw new Error("reserved output is not a regular file");
+  }
+  return {handle, output};
+}
+
 function splitTrustedCommand(command) {
   const parts = command.trim().split(/\s+/).filter(Boolean);
   if (parts[0] !== "cargo" || parts.length < 2) {
@@ -58,11 +126,9 @@ const args = parseArgs(process.argv.slice(2));
 for (const key of ["candidate-root", "output"]) {
   if (!args.has(key)) usage();
 }
-if (!isAbsolute(args.get("candidate-root")) || !isAbsolute(args.get("output"))) {
-  throw new Error("candidate-root and output must be absolute");
-}
+if (!isAbsolute(args.get("candidate-root"))) throw new Error("candidate-root must be absolute");
 const candidateRoot = await realpath(resolve(args.get("candidate-root")));
-const output = resolve(args.get("output"));
+const {handle: outputHandle, output} = await reserveTrustedOutput(args.get("output"), candidateRoot);
 const sandboxBytes = await readFile(sandboxExecutable).catch(() => {
   throw new Error("/usr/bin/sandbox-exec is required for kernel network denial");
 });
@@ -212,6 +278,8 @@ const receipt = {
   executions,
   pass: executions.every((entry) => entry.exit_code === 0 && entry.spawn_error === null),
 };
-await writeFile(output, `${JSON.stringify(receipt, null, 2)}\n`, {mode: 0o600});
+await outputHandle.writeFile(`${JSON.stringify(receipt, null, 2)}\n`);
+await outputHandle.sync();
+await outputHandle.close();
 console.log(JSON.stringify(receipt));
 if (!receipt.pass) process.exitCode = 1;

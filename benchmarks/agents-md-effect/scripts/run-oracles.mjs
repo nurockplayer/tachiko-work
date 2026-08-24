@@ -26,6 +26,7 @@ function usage() {
       "--trusted-dir /abs/trusted --expected-control-sha256 <sha256> " +
       "[--manifest /abs/production-oracles.json --expected-manifest-sha256 <sha256>] " +
       "[--oracle-lock /abs/oracle-lock.json --expected-oracle-lock-sha256 <sha256>] " +
+      "[--trusted-cargo /abs/cargo --expected-cargo-sha256 <sha256>] " +
       "[--adapter-file /abs/adapter.mjs] " +
       "[--contract-file /abs/contract.json] [--candidate-commit <sha>]",
   );
@@ -49,6 +50,20 @@ function fail(message) {
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function canonicalValue(value) {
+  if (Array.isArray(value)) return value.map(canonicalValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value).sort().map((key) => [key, canonicalValue(value[key])]),
+    );
+  }
+  return value;
+}
+
+function canonicalSha256(value) {
+  return sha256(JSON.stringify(canonicalValue(value)));
 }
 
 function inside(candidate, parent) {
@@ -96,6 +111,238 @@ function safeId(value) {
   return value.replaceAll(/[^A-Za-z0-9_.-]/g, "_");
 }
 
+function parseRustTestCommand(command) {
+  const match = command.match(
+    /^cargo test -p ([a-z0-9-]+) --test ([A-Za-z0-9_-]+) --locked ([A-Za-z0-9_:.-]+) -- --exact$/,
+  );
+  if (!match) return null;
+  return {packageName: match[1], targetName: match[2], testName: match[3]};
+}
+
+function rustEnvironment(candidateRoot, targetDirectory, rustcInput) {
+  const forbidden = Object.keys(process.env).filter((key) =>
+    key === "CARGO_BUILD_TARGET" ||
+    key === "RUSTC" ||
+    key === "RUSTDOC" ||
+    key === "RUSTC_WRAPPER" ||
+    key === "RUSTC_WORKSPACE_WRAPPER" ||
+    /^CARGO_TARGET_.+_RUNNER$/.test(key));
+  if (forbidden.length > 0) {
+    fail(`runner environment override is not permitted: ${forbidden.sort().join(", ")}`);
+  }
+  for (const name of ["config", "config.toml"]) {
+    if (existsSync(resolve(candidateRoot, ".cargo", name))) {
+      fail(`candidate Cargo config is not permitted: .cargo/${name}`);
+    }
+  }
+  return {
+    ...process.env,
+    CARGO_TARGET_DIR: targetDirectory,
+    RUSTC: rustcInput.path,
+    RUSTC_BOOTSTRAP: "1",
+  };
+}
+
+function commandOutputEvidence(path, output) {
+  return {path, bytes: Buffer.byteLength(output), sha256: sha256(output)};
+}
+
+async function executeTrustedRustTest({
+  cargoInput,
+  rustcInput,
+  candidateRoot,
+  commandSpec,
+  logPrefix,
+  trustedDir,
+  timeout,
+}) {
+  const targetDirectory = resolve(trustedDir, "rust-target");
+  const environment = rustEnvironment(candidateRoot, targetDirectory, rustcInput);
+  const metadataArgs = ["metadata", "--locked", "--format-version", "1", "--no-deps"];
+  const metadataStdoutPath = `${logPrefix}.metadata.stdout`;
+  const metadataStderrPath = `${logPrefix}.metadata.stderr`;
+  const buildStdoutPath = `${logPrefix}.build.stdout`;
+  const buildStderrPath = `${logPrefix}.build.stderr`;
+  const metadataResult = spawnSync(cargoInput.path, metadataArgs, {
+    cwd: candidateRoot,
+    encoding: "utf8",
+    env: environment,
+    maxBuffer: 128 * 1024 * 1024,
+    timeout,
+  });
+  if (metadataResult.status !== 0) {
+    await Promise.all([
+      writeFile(resolve(trustedDir, metadataStdoutPath), metadataResult.stdout ?? ""),
+      writeFile(resolve(trustedDir, metadataStderrPath), metadataResult.stderr ?? ""),
+    ]);
+    return {
+      result: metadataResult,
+      resolvedCommand: `${cargoInput.path} ${metadataArgs.map(shellQuote).join(" ")}`,
+      receipt: {
+        execution_mode: "trusted_cargo_metadata_failed",
+        toolchain: {cargo: cargoInput, rustc: rustcInput},
+        rust_build: {
+          metadata_command_sha256: sha256(JSON.stringify([cargoInput.path, ...metadataArgs])),
+          metadata_stdout: commandOutputEvidence(metadataStdoutPath, metadataResult.stdout ?? ""),
+          metadata_stderr: commandOutputEvidence(metadataStderrPath, metadataResult.stderr ?? ""),
+          command_sha256: null,
+          stdout: null,
+          stderr: null,
+          package: null,
+          artifact: null,
+        },
+      },
+    };
+  }
+  const metadata = JSON.parse(metadataResult.stdout);
+  const packages = metadata.packages.filter((entry) => entry.name === commandSpec.packageName);
+  if (packages.length !== 1) {
+    fail(`trusted Cargo metadata package mismatch: ${commandSpec.packageName}`);
+  }
+  const packageEntry = packages[0];
+  const targets = packageEntry.targets.filter((entry) => entry.name === commandSpec.targetName);
+  if (targets.length !== 1) fail(`trusted Cargo metadata test target mismatch: ${commandSpec.targetName}`);
+  const target = targets[0];
+  if (
+    JSON.stringify(target.kind) !== JSON.stringify(["test"]) ||
+    JSON.stringify(target.crate_types) !== JSON.stringify(["bin"]) ||
+    target.test !== true
+  ) {
+    fail(`custom test executable is not permitted: ${commandSpec.targetName}`);
+  }
+  const manifestPath = await realpath(packageEntry.manifest_path);
+  const sourcePath = await realpath(target.src_path);
+  if (!inside(manifestPath, candidateRoot) || !inside(sourcePath, candidateRoot)) {
+    fail("Rust test manifest and source must be inside candidate-root");
+  }
+  for (const [path, label] of [[manifestPath, "package manifest"], [sourcePath, "test source"]]) {
+    const metadata = await lstat(path);
+    if (metadata.isSymbolicLink() || !metadata.isFile()) fail(`${label} must be a regular file`);
+  }
+  const manifestBytes = await readFile(manifestPath);
+  if (/(?:^|\n)\s*["']?harness["']?\s*=\s*false(?:\s|$)/m.test(manifestBytes.toString("utf8"))) {
+    fail("harness = false is not permitted for exact Rust oracle tests");
+  }
+  const packageReceipt = {
+    id_sha256: sha256(packageEntry.id),
+    name: packageEntry.name,
+    manifest_sha256: sha256(manifestBytes),
+    target_name: target.name,
+    target_source_sha256: sha256(await readFile(sourcePath)),
+  };
+
+  const buildArgs = [
+    "test", "-p", commandSpec.packageName,
+    "--test", commandSpec.targetName,
+    "--locked", "--no-run", "--message-format=json",
+  ];
+  const buildResult = spawnSync(cargoInput.path, buildArgs, {
+    cwd: candidateRoot,
+    encoding: "utf8",
+    env: environment,
+    maxBuffer: 128 * 1024 * 1024,
+    timeout,
+  });
+  const artifactMessages = [];
+  for (const line of (buildResult.stdout ?? "").split(/\r?\n/).filter(Boolean)) {
+    try {
+      const message = JSON.parse(line);
+      if (
+        message.reason === "compiler-artifact" &&
+        message.package_id === packageEntry.id &&
+        message.target?.name === commandSpec.targetName &&
+        JSON.stringify(message.target?.kind) === JSON.stringify(["test"]) &&
+        message.profile?.test === true &&
+        typeof message.executable === "string"
+      ) {
+        artifactMessages.push({message, line});
+      }
+    } catch {
+      // Cargo may emit non-JSON diagnostics on stderr, never as artifact identity.
+    }
+  }
+  if (buildResult.status !== 0) {
+    await Promise.all([
+      writeFile(resolve(trustedDir, metadataStdoutPath), metadataResult.stdout ?? ""),
+      writeFile(resolve(trustedDir, metadataStderrPath), metadataResult.stderr ?? ""),
+      writeFile(resolve(trustedDir, buildStdoutPath), buildResult.stdout ?? ""),
+      writeFile(resolve(trustedDir, buildStderrPath), buildResult.stderr ?? ""),
+    ]);
+    return {
+      result: buildResult,
+      resolvedCommand: `${cargoInput.path} ${buildArgs.map(shellQuote).join(" ")}`,
+      receipt: {
+        execution_mode: "trusted_cargo_build_failed",
+        toolchain: {cargo: cargoInput, rustc: rustcInput},
+        rust_build: {
+          metadata_command_sha256: sha256(JSON.stringify([cargoInput.path, ...metadataArgs])),
+          metadata_stdout: commandOutputEvidence(metadataStdoutPath, metadataResult.stdout ?? ""),
+          metadata_stderr: commandOutputEvidence(metadataStderrPath, metadataResult.stderr ?? ""),
+          command_sha256: sha256(JSON.stringify([cargoInput.path, ...buildArgs])),
+          stdout: commandOutputEvidence(buildStdoutPath, buildResult.stdout ?? ""),
+          stderr: commandOutputEvidence(buildStderrPath, buildResult.stderr ?? ""),
+          package: packageReceipt,
+          artifact: null,
+        },
+      },
+    };
+  }
+  if (artifactMessages.length !== 1) {
+    fail(
+      `trusted Cargo --no-run did not emit exactly one test artifact for ` +
+        `${commandSpec.targetName}: status=${buildResult.status}, artifacts=${artifactMessages.length}; ` +
+        `stderr=${buildResult.stderr ?? ""}`,
+    );
+  }
+  const artifactMessage = artifactMessages[0];
+  const executableInput = resolve(artifactMessage.message.executable);
+  const executableMetadata = await lstat(executableInput);
+  if (executableMetadata.isSymbolicLink() || !executableMetadata.isFile()) {
+    fail("Cargo test artifact must be a non-symlink regular file");
+  }
+  const executable = await realpath(executableInput);
+  const canonicalTargetDirectory = await realpath(targetDirectory);
+  if (!inside(executable, canonicalTargetDirectory)) fail("Cargo test artifact escaped trusted target dir");
+  const executableBytes = await readFile(executable);
+  const testArgs = [commandSpec.testName, "--exact", "-Z", "unstable-options", "--format", "json"];
+  const testResult = spawnSync(executable, testArgs, {
+    cwd: candidateRoot,
+    encoding: "utf8",
+    env: environment,
+    maxBuffer: 128 * 1024 * 1024,
+    timeout,
+  });
+  await Promise.all([
+    writeFile(resolve(trustedDir, metadataStdoutPath), metadataResult.stdout ?? ""),
+    writeFile(resolve(trustedDir, metadataStderrPath), metadataResult.stderr ?? ""),
+    writeFile(resolve(trustedDir, buildStdoutPath), buildResult.stdout ?? ""),
+    writeFile(resolve(trustedDir, buildStderrPath), buildResult.stderr ?? ""),
+  ]);
+  return {
+    result: testResult,
+    resolvedCommand: `${executable} ${testArgs.map(shellQuote).join(" ")}`,
+    receipt: {
+      execution_mode: "trusted_cargo_direct_libtest",
+      toolchain: {cargo: cargoInput, rustc: rustcInput},
+      rust_build: {
+        metadata_command_sha256: sha256(JSON.stringify([cargoInput.path, ...metadataArgs])),
+        metadata_stdout: commandOutputEvidence(metadataStdoutPath, metadataResult.stdout ?? ""),
+        metadata_stderr: commandOutputEvidence(metadataStderrPath, metadataResult.stderr ?? ""),
+        command_sha256: sha256(JSON.stringify([cargoInput.path, ...buildArgs])),
+        stdout: commandOutputEvidence(buildStdoutPath, buildResult.stdout ?? ""),
+        stderr: commandOutputEvidence(buildStderrPath, buildResult.stderr ?? ""),
+        package: packageReceipt,
+        artifact: {
+          path: executable,
+          executable_sha256: sha256(executableBytes),
+          bytes: executableBytes.length,
+          message_sha256: sha256(artifactMessage.line),
+        },
+      },
+    },
+  };
+}
+
 function libtestEvidence(output, testName) {
   const events = [];
   for (const line of output.split(/\r?\n/)) {
@@ -112,7 +359,13 @@ function libtestEvidence(output, testName) {
   const started = matching.filter((event) => event.event === "started");
   const terminal = matching.filter((event) => ["ok", "failed", "ignored"].includes(event.event));
   const suites = events.filter((event) => event.type === "suite");
-  return {started, terminal, suites};
+  const normalizedEvents = matching.map(({type, event, name}) => ({type, event, name}));
+  const normalizedSuites = suites.map((event) => Object.fromEntries(
+    ["type", "event", "passed", "failed", "ignored", "measured", "filtered_out"]
+      .filter((key) => event[key] !== undefined)
+      .map((key) => [key, event[key]]),
+  ));
+  return {started, terminal, suites, normalizedEvents, normalizedSuites};
 }
 
 function parseJsonStdout(stdout) {
@@ -257,6 +510,25 @@ for (const [id, assertion] of lockedAssertions) {
 }
 const commandIds = manifestCase.oracle_commands.map((entry) => entry.id);
 if (new Set(commandIds).size !== commandIds.length) fail("duplicate command ID");
+const rustAssertionRequested = [...lockedAssertions.values()].some(
+  (entry) => entry.selector?.kind === "rust_test_exact",
+);
+let cargoInput;
+let rustcInput;
+if (rustAssertionRequested) {
+  if (!args.has("trusted-cargo") || !args.has("expected-cargo-sha256")) {
+    fail("Rust exact tests require --trusted-cargo and --expected-cargo-sha256");
+  }
+  cargoInput = await trustedRegularFile(args.get("trusted-cargo"), "trusted-cargo", candidateRoot);
+  if (cargoInput.sha256 !== args.get("expected-cargo-sha256")) {
+    fail("trusted Cargo SHA-256 mismatch");
+  }
+  rustcInput = await trustedRegularFile(
+    resolve(dirname(cargoInput.path), "rustc"),
+    "trusted Rust compiler",
+    candidateRoot,
+  );
+}
 
 await mkdir(trustedDirInput, {mode: 0o700});
 const outputPaths = {
@@ -284,6 +556,10 @@ const trustedInputs = [
     bytes,
     sha256: hash,
   })),
+  ...(cargoInput ? [
+    {kind: "trusted_cargo", ...cargoInput},
+    {kind: "trusted_rustc", ...rustcInput},
+  ] : []),
 ];
 if (adapterRequested) {
   if (!args.has("adapter-file")) fail(`${caseId} requires --adapter-file`);
@@ -358,33 +634,48 @@ for (const [commandIndex, command] of manifestCase.oracle_commands.entries()) {
     .map((id) => lockedAssertions.get(id))
     .filter((entry) => entry?.selector?.kind === "rust_test_exact");
   if (rustAssertions.length > 0) {
-    if (
-      rustAssertions.length !== 1 ||
-      !/^cargo test -p [a-z0-9-]+ --test [A-Za-z0-9_-]+ --locked [A-Za-z0-9_:.-]+ -- --exact$/.test(
-        resolvedCommand,
-      )
-    ) {
+    if (rustAssertions.length !== 1) {
       fail(`${command.id} Rust assertion is not a locked exact cargo test command`);
     }
-    resolvedCommand += " -Z unstable-options --format json";
   }
-
-  const result = spawnSync("/bin/bash", ["--noprofile", "--norc", "-c", resolvedCommand], {
-    cwd: candidateRoot,
-    encoding: "utf8",
-    env: rustAssertions.length > 0 ? {...process.env, RUSTC_BOOTSTRAP: "1"} : process.env,
-    maxBuffer: 128 * 1024 * 1024,
-    timeout: Number(args.get("timeout-ms") ?? 1_800_000),
-  });
+  const logPrefix = `${String(commandIndex).padStart(2, "0")}-${safeId(command.id)}`;
+  let result;
+  let executionReceipt = {};
+  if (rustAssertions.length > 0) {
+    const commandSpec = parseRustTestCommand(resolvedCommand);
+    if (!commandSpec || commandSpec.testName !== rustAssertions[0].selector.test_name) {
+      fail(`${command.id} Rust assertion is not a locked exact cargo test command`);
+    }
+    const execution = await executeTrustedRustTest({
+      cargoInput,
+      rustcInput,
+      candidateRoot,
+      commandSpec,
+      logPrefix,
+      trustedDir: trustedDirInput,
+      timeout: Number(args.get("timeout-ms") ?? 1_800_000),
+    });
+    result = execution.result;
+    resolvedCommand = execution.resolvedCommand;
+    executionReceipt = execution.receipt;
+  } else {
+    result = spawnSync("/bin/bash", ["--noprofile", "--norc", "-c", resolvedCommand], {
+      cwd: candidateRoot,
+      encoding: "utf8",
+      env: process.env,
+      maxBuffer: 128 * 1024 * 1024,
+      timeout: Number(args.get("timeout-ms") ?? 1_800_000),
+    });
+  }
   const stdout = result.stdout ?? "";
   const stderr = result.stderr ?? "";
-  const logPrefix = `${String(commandIndex).padStart(2, "0")}-${safeId(command.id)}`;
   const stdoutPath = resolve(trustedDirInput, `${logPrefix}.stdout`);
   const stderrPath = resolve(trustedDirInput, `${logPrefix}.stderr`);
   await Promise.all([writeFile(stdoutPath, stdout), writeFile(stderrPath, stderr)]);
   const commandReceipt = {
     id: command.id,
     command_template: command.command_template,
+    command_template_sha256: sha256(command.command_template),
     resolved_command: resolvedCommand,
     resolved_command_sha256: sha256(resolvedCommand),
     exit_code: result.status,
@@ -392,6 +683,7 @@ for (const [commandIndex, command] of manifestCase.oracle_commands.entries()) {
     spawn_error: result.error?.message ?? null,
     stdout: {path: `${logPrefix}.stdout`, bytes: Buffer.byteLength(stdout), sha256: sha256(stdout)},
     stderr: {path: `${logPrefix}.stderr`, bytes: Buffer.byteLength(stderr), sha256: sha256(stderr)},
+    ...executionReceipt,
   };
   commands.push(commandReceipt);
 
@@ -406,11 +698,15 @@ for (const [commandIndex, command] of manifestCase.oracle_commands.entries()) {
       const evidence = libtestEvidence(stdout, locked.selector.test_name);
       const suite = evidence.suites.at(-1);
       detail = {
-        evidence_mode: "libtest_json_v0.1_bootstrap",
+        evidence_mode: commandReceipt.execution_mode === "trusted_cargo_direct_libtest"
+          ? "trusted_cargo_direct_libtest_json_v0.1"
+          : "trusted_cargo_preflight_failure",
         matching_tests: evidence.started.length,
         matching_test_outcomes: evidence.terminal.map((entry) => entry.event),
         required_matching_tests: locked.selector.required_matching_tests,
-        suite_summary: suite ?? null,
+        suite_summary: evidence.normalizedSuites.at(-1) ?? null,
+        normalized_events_sha256: canonicalSha256(evidence.normalizedEvents),
+        normalized_suite_sha256: canonicalSha256(evidence.normalizedSuites),
       };
       if (evidence.started.length !== locked.selector.required_matching_tests) {
         reasons.push(
@@ -435,7 +731,12 @@ for (const [commandIndex, command] of manifestCase.oracle_commands.entries()) {
     } else if (locked.selector.kind === "json_pointer") {
       const document = parseJsonStdout(stdout);
       const selected = jsonPointer(document, locked.selector.json_pointer);
-      detail = {json_pointer: locked.selector.json_pointer, found: selected.found, actual: selected.value};
+      detail = {
+        json_pointer: locked.selector.json_pointer,
+        found: selected.found,
+        actual: selected.value,
+        actual_canonical_sha256: selected.found ? canonicalSha256(selected.value) : null,
+      };
       if (!selected.found) reasons.push("JSON pointer is absent");
       else if (JSON.stringify(selected.value) !== JSON.stringify(locked.selector.expected)) {
         reasons.push("JSON pointer value mismatch");
@@ -452,6 +753,8 @@ for (const [commandIndex, command] of manifestCase.oracle_commands.entries()) {
       }
       reasons.push(...selected.reasons);
       detail = Object.fromEntries(Object.entries(selected).filter(([key]) => key !== "pass" && key !== "reasons"));
+      detail.selected_native_sha256 = canonicalSha256(detail.selected_native ?? []);
+      detail.selected_wasm_sha256 = canonicalSha256(detail.selected_wasm ?? []);
     } else {
       fail(`unsupported selector kind ${locked.selector.kind}`);
     }
