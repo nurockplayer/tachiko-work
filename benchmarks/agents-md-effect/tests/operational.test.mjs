@@ -19,6 +19,15 @@ function ids(entries) {
   return entries.map((entry) => entry.id).sort();
 }
 
+function assertNoFrozenScoringCopies(value, path = "production-oracles.json") {
+  if (!value || typeof value !== "object") return;
+  assert.equal(Object.hasOwn(value, "points"), false, `${path} must not copy points`);
+  assert.equal(Object.hasOwn(value, "selector"), false, `${path} must not copy selectors`);
+  for (const [key, child] of Object.entries(value)) {
+    assertNoFrozenScoringCopies(child, `${path}.${key}`);
+  }
+}
+
 test("production oracle manifest covers every frozen operational input exactly once", async () => {
   const [cases, oracleLock, coreScoreLock, productionOracles] = await Promise.all([
     readJson(resolve(benchmarkDir, "evaluator/cases.json")),
@@ -28,6 +37,8 @@ test("production oracle manifest covers every frozen operational input exactly o
   ]);
 
   assert.equal(productionOracles.protocol_id, cases.protocol_id);
+  assert.equal(productionOracles.classification, "construction_pilot_only");
+  assert.equal(productionOracles.formal_result_eligible, false);
   assert.equal(productionOracles.execution_standard, "practical_internal_v1");
   assert.equal(
     productionOracles.qualification_requirement,
@@ -40,6 +51,7 @@ test("production oracle manifest covers every frozen operational input exactly o
   assert.equal(productionOracles.cases.length, 9);
   exactlyOnce(ids(productionOracles.cases), "production case IDs");
   assert.deepEqual(ids(productionOracles.cases), ids(cases.cases));
+  assertNoFrozenScoringCopies(productionOracles);
 
   for (const caseEntry of cases.cases) {
     const oracleCase = oracleLock.cases.find((entry) => entry.id === caseEntry.id);
@@ -107,8 +119,6 @@ test("production oracle manifest covers every frozen operational input exactly o
       const mapping = productionCase.assertions.find((entry) => entry.id === assertion.id);
       assert.equal(mapping.command_id, assertion.command_id);
       assert.equal(mapping.stage, "expectation_free_execution");
-      assert.equal(Object.hasOwn(mapping, "points"), false);
-      assert.equal(Object.hasOwn(mapping, "selector"), false);
     }
 
     const subjectiveGroupIds = caseEntry.validation.machine_contract_groups

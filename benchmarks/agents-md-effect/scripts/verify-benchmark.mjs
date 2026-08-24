@@ -792,6 +792,8 @@ function rejectFrozenScoringCopies(value, path = "production-oracles.json") {
 if (
   productionOracles.protocol_id !== casesDocument.protocol_id ||
   productionOracles.manifest_version !== 1 ||
+  productionOracles.classification !== "construction_pilot_only" ||
+  productionOracles.formal_result_eligible !== false ||
   productionOracles.execution_standard !== "practical_internal_v1" ||
   productionOracles.qualification_requirement !==
     "construction_pilot_only_qualification_required" ||

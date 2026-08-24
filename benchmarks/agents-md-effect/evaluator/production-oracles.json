@@ -1,6 +1,8 @@
 {
   "protocol_id": "tachiko-agents-effect-v1",
   "manifest_version": 1,
+  "classification": "construction_pilot_only",
+  "formal_result_eligible": false,
   "execution_standard": "practical_internal_v1",
   "qualification_requirement": "construction_pilot_only_qualification_required",
   "node_test_entry_point": "node --test benchmarks/agents-md-effect/tests/operational.test.mjs",
