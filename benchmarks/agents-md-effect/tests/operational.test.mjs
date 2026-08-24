@@ -12,6 +12,7 @@ import {
   readlink,
   readFile,
   realpath,
+  rename,
   rm,
   symlink,
   unlink,
@@ -42,6 +43,29 @@ async function readJson(path) {
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+async function writeOverlayIdentity(workspace, identityFile) {
+  const overlayPath = resolve(workspace, "AGENTS.md");
+  const [metadata, overlayBytes] = await Promise.all([
+    lstat(overlayPath, { bigint: true }),
+    readFile(overlayPath),
+  ]);
+  const identity = {
+    schema: "tachiko-agents-overlay-identity-v1",
+    path: "AGENTS.md",
+    type: "regular",
+    device: metadata.dev.toString(),
+    inode: metadata.ino.toString(),
+    uid: metadata.uid.toString(),
+    gid: metadata.gid.toString(),
+    mode: Number(metadata.mode & 0o7777n),
+    bytes: overlayBytes.length,
+    sha256: sha256(overlayBytes),
+  };
+  const identityBytes = Buffer.from(`${JSON.stringify(identity, null, 2)}\n`, "utf8");
+  await writeFile(identityFile, identityBytes);
+  return { identity, identityBytes };
 }
 
 function git(args, cwd, options = {}) {
@@ -532,6 +556,7 @@ test("trusted capture preserves adversarial raw workspace state byte-for-byte", 
   const validationWorkspace = resolve(fixtureRoot, "validation-workspace");
   const validationDir = resolve(fixtureRoot, "validation");
   const exclusionsFile = resolve(fixtureRoot, "capture-exclusions.json");
+  const overlayIdentityFile = resolve(fixtureRoot, "overlay-identity.json");
   const cases = await readJson(resolve(benchmarkDir, "evaluator/cases.json"));
   const caseEntry = cases.cases.find((entry) => entry.id === "TW-01");
 
@@ -570,9 +595,10 @@ test("trusted capture preserves adversarial raw workspace state byte-for-byte", 
       writeFile(resolve(workspace, "payload.hostile"), hostileBytes),
       writeFile(resolve(workspace, "line-endings.crlf"), hostileEolBytes),
       writeFile(resolve(workspace, "binary.dat"), binaryBytes),
-      writeFile(exclusionsFile, '["target"]\n'),
+      writeFile(exclusionsFile, '["target/"]\n'),
       mkdir(resolve(workspace, "target")),
     ]);
+    const overlayIdentity = await writeOverlayIdentity(workspace, overlayIdentityFile);
     await Promise.all([
       writeFile(resolve(workspace, "target", "excluded.cache"), "excluded\n"),
       symlink(symlinkTarget, resolve(workspace, "raw-link")),
@@ -634,6 +660,8 @@ test("trusted capture preserves adversarial raw workspace state byte-for-byte", 
         sourceRepo,
         "--exclusions-file",
         exclusionsFile,
+        "--expected-agents-identity-file",
+        overlayIdentityFile,
         "--trusted-dir",
         captureDir,
         "--expected-agents-sha256",
@@ -651,7 +679,13 @@ test("trusted capture preserves adversarial raw workspace state byte-for-byte", 
     assert.equal(captureReceipt.source_repo.path, sourceRepo);
     assert.equal(captureReceipt.overlay.type, "regular");
     assert.equal(captureReceipt.overlay.sha256, sha256(overlayBytes));
-    assert.equal(captureReceipt.exclusions.file_sha256, sha256(Buffer.from('["target"]\n')));
+    assert.equal(captureReceipt.overlay_identity_equal, true);
+    assert.deepEqual(captureReceipt.overlay_pre_run.expected, overlayIdentity.identity);
+    assert.equal(
+      captureReceipt.overlay_pre_run.file_sha256,
+      sha256(overlayIdentity.identityBytes),
+    );
+    assert.equal(captureReceipt.exclusions.file_sha256, sha256(Buffer.from('["target/"]\n')));
     assert.deepEqual(captureReceipt.exclusions.paths, ["target"]);
     assert.match(captureReceipt.raw_tree_digest_sha256, /^[0-9a-f]{64}$/);
     assert.equal(captureReceipt.round_trip.equal, true);
@@ -700,6 +734,16 @@ test("trusted capture preserves adversarial raw workspace state byte-for-byte", 
       { encoding: "utf8", maxBuffer: 128 * 1024 * 1024 },
     );
     assert.equal(result.status, 0, result.stderr);
+    assert.equal(
+      existsSync(filterMarker),
+      false,
+      "validation preparation must not run candidate clean filters",
+    );
+    assert.equal(
+      existsSync(hookMarker),
+      false,
+      "validation preparation must not run candidate hooks",
+    );
 
     assert.deepEqual(await readFile(resolve(validationWorkspace, "README.md")), assumeBytes);
     assert.deepEqual(
@@ -738,6 +782,52 @@ test("trusted capture preserves adversarial raw workspace state byte-for-byte", 
       validationReceipt.raw_tree_digest_sha256,
       captureReceipt.raw_tree_digest_sha256,
     );
+
+    const captureRedirect = resolve(fixtureRoot, "capture-redirect");
+    await symlink(captureDir, captureRedirect);
+    result = spawnSync(
+      process.execPath,
+      [
+        prepareValidationScript,
+        "--case",
+        "TW-01",
+        "--source-repo",
+        sourceRepo,
+        "--patch-file",
+        resolve(captureDir, "candidate.patch"),
+        "--capture-receipt",
+        captureReceiptPath,
+        "--workspace",
+        resolve(captureRedirect, "redirected-validation"),
+        "--trusted-dir",
+        resolve(fixtureRoot, "redirected-validation-trusted"),
+      ],
+      { encoding: "utf8", maxBuffer: 128 * 1024 * 1024 },
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /capture artifacts|disjoint/i);
+
+    result = spawnSync(
+      process.execPath,
+      [
+        prepareValidationScript,
+        "--case",
+        "TW-01",
+        "--source-repo",
+        sourceRepo,
+        "--patch-file",
+        resolve(captureDir, "candidate.patch"),
+        "--capture-receipt",
+        captureReceiptPath,
+        "--workspace",
+        resolve(fixtureRoot, "unused-validation-workspace"),
+        "--trusted-dir",
+        resolve(captureRedirect, "redirected-trusted-output"),
+      ],
+      { encoding: "utf8", maxBuffer: 128 * 1024 * 1024 },
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /capture artifacts|disjoint/i);
   } finally {
     await rm(fixtureRoot, { recursive: true, force: true });
   }
@@ -748,6 +838,7 @@ test("trusted capture rejects unsupported filesystem nodes", async () => {
   const sourceRepo = await realpath(resolve(benchmarkDir, "../.."));
   const workspace = resolve(fixtureRoot, "workspace");
   const exclusionsFile = resolve(fixtureRoot, "exclusions.json");
+  const overlayIdentityFile = resolve(fixtureRoot, "overlay-identity.json");
   const overlayBytes = Buffer.from("trusted task overlay\n", "utf8");
   try {
     await mkdir(workspace);
@@ -755,6 +846,7 @@ test("trusted capture rejects unsupported filesystem nodes", async () => {
       writeFile(resolve(workspace, "AGENTS.md"), overlayBytes),
       writeFile(exclusionsFile, "[]\n"),
     ]);
+    await writeOverlayIdentity(workspace, overlayIdentityFile);
     const fifo = spawnSync(executablePath("mkfifo"), [resolve(workspace, "candidate.fifo")], {
       encoding: "utf8",
     });
@@ -771,6 +863,8 @@ test("trusted capture rejects unsupported filesystem nodes", async () => {
         sourceRepo,
         "--exclusions-file",
         exclusionsFile,
+        "--expected-agents-identity-file",
+        overlayIdentityFile,
         "--trusted-dir",
         resolve(fixtureRoot, "capture"),
         "--expected-agents-sha256",
@@ -790,6 +884,7 @@ test("trusted capture rejects escaping exclusion paths", async () => {
   const sourceRepo = await realpath(resolve(benchmarkDir, "../.."));
   const workspace = resolve(fixtureRoot, "workspace");
   const exclusionsFile = resolve(fixtureRoot, "exclusions.json");
+  const overlayIdentityFile = resolve(fixtureRoot, "overlay-identity.json");
   const overlayBytes = Buffer.from("trusted task overlay\n", "utf8");
   try {
     await mkdir(workspace);
@@ -797,6 +892,7 @@ test("trusted capture rejects escaping exclusion paths", async () => {
       writeFile(resolve(workspace, "AGENTS.md"), overlayBytes),
       writeFile(exclusionsFile, '["../escape"]\n'),
     ]);
+    await writeOverlayIdentity(workspace, overlayIdentityFile);
     const result = spawnSync(
       process.execPath,
       [
@@ -809,6 +905,8 @@ test("trusted capture rejects escaping exclusion paths", async () => {
         sourceRepo,
         "--exclusions-file",
         exclusionsFile,
+        "--expected-agents-identity-file",
+        overlayIdentityFile,
         "--trusted-dir",
         resolve(fixtureRoot, "capture"),
         "--expected-agents-sha256",
@@ -818,6 +916,148 @@ test("trusted capture rejects escaping exclusion paths", async () => {
     );
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /invalid non-normalized exclusion path/i);
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("trusted capture rejects unsafe exclusion spellings consistently", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-invalid-exclusions-"));
+  const sourceRepo = await realpath(resolve(benchmarkDir, "../.."));
+  const workspace = resolve(fixtureRoot, "workspace");
+  const exclusionsFile = resolve(fixtureRoot, "exclusions.json");
+  const overlayIdentityFile = resolve(fixtureRoot, "overlay-identity.json");
+  const overlayBytes = Buffer.from("trusted task overlay\n", "utf8");
+  const invalidLists = [
+    [""],
+    ["/"],
+    ["."],
+    ["/absolute"],
+    ["target/../escape"],
+    ["target\\ambiguous"],
+    ["target/", "./target"],
+  ];
+  try {
+    await mkdir(workspace);
+    await writeFile(resolve(workspace, "AGENTS.md"), overlayBytes);
+    await writeOverlayIdentity(workspace, overlayIdentityFile);
+    for (const [index, exclusions] of invalidLists.entries()) {
+      await writeFile(exclusionsFile, `${JSON.stringify(exclusions)}\n`);
+      const result = spawnSync(
+        process.execPath,
+        [
+          captureCandidateScript,
+          "--case",
+          "TW-01",
+          "--workspace",
+          workspace,
+          "--source-repo",
+          sourceRepo,
+          "--exclusions-file",
+          exclusionsFile,
+          "--expected-agents-identity-file",
+          overlayIdentityFile,
+          "--trusted-dir",
+          resolve(fixtureRoot, `capture-${index}`),
+          "--expected-agents-sha256",
+          sha256(overlayBytes),
+        ],
+        { encoding: "utf8" },
+      );
+      assert.notEqual(result.status, 0, JSON.stringify(exclusions));
+      assert.match(result.stderr, /invalid non-normalized|duplicate capture exclusion/i);
+    }
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("trusted capture rejects a same-byte root overlay inode replacement", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-overlay-identity-"));
+  const sourceRepo = await realpath(resolve(benchmarkDir, "../.."));
+  const workspace = resolve(fixtureRoot, "workspace");
+  const exclusionsFile = resolve(fixtureRoot, "exclusions.json");
+  const overlayIdentityFile = resolve(fixtureRoot, "overlay-identity.json");
+  const overlayBytes = Buffer.from("trusted task overlay\n", "utf8");
+  try {
+    await mkdir(workspace);
+    await Promise.all([
+      writeFile(resolve(workspace, "AGENTS.md"), overlayBytes),
+      writeFile(exclusionsFile, "[]\n"),
+    ]);
+    const preRun = await writeOverlayIdentity(workspace, overlayIdentityFile);
+    await rename(resolve(workspace, "AGENTS.md"), resolve(workspace, "AGENTS.before"));
+    await writeFile(resolve(workspace, "AGENTS.md"), overlayBytes);
+    const replacement = await lstat(resolve(workspace, "AGENTS.md"), { bigint: true });
+    assert.notEqual(replacement.ino.toString(), preRun.identity.inode);
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        captureCandidateScript,
+        "--case",
+        "TW-01",
+        "--workspace",
+        workspace,
+        "--source-repo",
+        sourceRepo,
+        "--exclusions-file",
+        exclusionsFile,
+        "--expected-agents-identity-file",
+        overlayIdentityFile,
+        "--trusted-dir",
+        resolve(fixtureRoot, "capture"),
+        "--expected-agents-sha256",
+        sha256(overlayBytes),
+      ],
+      { encoding: "utf8" },
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /AGENTS\.md overlay identity changed/i);
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("trusted capture rejects a trusted output redirected into the workspace", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-capture-redirect-"));
+  const sourceRepo = await realpath(resolve(benchmarkDir, "../.."));
+  const workspace = resolve(fixtureRoot, "workspace");
+  const exclusionsFile = resolve(fixtureRoot, "exclusions.json");
+  const overlayIdentityFile = resolve(fixtureRoot, "overlay-identity.json");
+  const redirectedParent = resolve(fixtureRoot, "redirected-parent");
+  const overlayBytes = Buffer.from("trusted task overlay\n", "utf8");
+  try {
+    await mkdir(workspace);
+    await Promise.all([
+      writeFile(resolve(workspace, "AGENTS.md"), overlayBytes),
+      writeFile(exclusionsFile, "[]\n"),
+    ]);
+    await writeOverlayIdentity(workspace, overlayIdentityFile);
+    await symlink(workspace, redirectedParent);
+    const result = spawnSync(
+      process.execPath,
+      [
+        captureCandidateScript,
+        "--case",
+        "TW-01",
+        "--workspace",
+        workspace,
+        "--source-repo",
+        sourceRepo,
+        "--exclusions-file",
+        exclusionsFile,
+        "--expected-agents-identity-file",
+        overlayIdentityFile,
+        "--trusted-dir",
+        resolve(redirectedParent, "capture"),
+        "--expected-agents-sha256",
+        sha256(overlayBytes),
+      ],
+      { encoding: "utf8", maxBuffer: 128 * 1024 * 1024 },
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /trusted-dir and workspace must be disjoint/i);
   } finally {
     await rm(fixtureRoot, { recursive: true, force: true });
   }

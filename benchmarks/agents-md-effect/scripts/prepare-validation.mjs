@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { lstat, mkdir, readFile, readdir, readlink, realpath, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
-import { dirname, isAbsolute, posix, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, posix, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -67,6 +67,32 @@ function isInside(candidate, parent) {
     pathFromParent === "" ||
     (!pathFromParent.startsWith("..") && !isAbsolute(pathFromParent))
   );
+}
+
+async function canonicalizeProspectivePath(path, label) {
+  let existingAncestor = path;
+  const suffix = [];
+  for (;;) {
+    try {
+      await lstat(existingAncestor);
+      break;
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      const parent = dirname(existingAncestor);
+      if (parent === existingAncestor) fail(`${label} has no existing ancestor`);
+      suffix.unshift(basename(existingAncestor));
+      existingAncestor = parent;
+    }
+  }
+  let canonicalAncestor;
+  try {
+    canonicalAncestor = await realpath(existingAncestor);
+  } catch {
+    fail(`${label} has an invalid or broken symlink ancestor`);
+  }
+  const ancestorStat = await lstat(canonicalAncestor);
+  if (!ancestorStat.isDirectory()) fail(`${label} ancestor must be a directory`);
+  return resolve(canonicalAncestor, ...suffix);
 }
 
 function isolatedGitEnvironment(overrides = {}) {
@@ -152,8 +178,49 @@ function sameIdentity(actual, expected) {
   );
 }
 
+function validateExpectedOverlayIdentity(value, bytes) {
+  const keys = [
+    "schema",
+    "path",
+    "type",
+    "device",
+    "inode",
+    "uid",
+    "gid",
+    "mode",
+    "bytes",
+    "sha256",
+  ];
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    JSON.stringify(Object.keys(value)) !== JSON.stringify(keys) ||
+    value.schema !== "tachiko-agents-overlay-identity-v1" ||
+    value.path !== "AGENTS.md" ||
+    value.type !== "regular" ||
+    ![value.device, value.inode, value.uid, value.gid].every(
+      (entry) => typeof entry === "string" && /^\d+$/.test(entry),
+    ) ||
+    !Number.isInteger(value.mode) ||
+    value.mode < 0 ||
+    value.mode > 0o7777 ||
+    !Number.isSafeInteger(value.bytes) ||
+    value.bytes < 0 ||
+    !/^[0-9a-f]{64}$/.test(value.sha256)
+  ) {
+    fail("capture receipt has an invalid pre-run overlay identity contract");
+  }
+  const canonicalBytes = Buffer.from(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+  if (!canonicalBytes.equals(bytes)) {
+    fail("pre-run overlay identity file is not canonical JSON");
+  }
+  return value;
+}
+
 function validateExclusions(value) {
   if (!Array.isArray(value)) fail("capture receipt exclusions must be an array");
+  const normalizedPaths = [];
   const seen = new Set();
   for (const path of value) {
     if (
@@ -161,21 +228,32 @@ function validateExclusions(value) {
       path === "" ||
       path.includes("\\") ||
       path.includes("\0") ||
-      posix.isAbsolute(path) ||
-      posix.normalize(path) !== path ||
-      path === "." ||
-      path === ".." ||
-      path.startsWith("../") ||
-      path === ".git" ||
-      path.startsWith(".git/") ||
-      path === "AGENTS.md" ||
-      seen.has(path)
+      posix.isAbsolute(path)
     ) {
       fail(`capture receipt contains invalid exclusion path: ${JSON.stringify(path)}`);
     }
-    seen.add(path);
+    const segments = [];
+    for (const segment of path.split("/")) {
+      if (segment === "" || segment === ".") continue;
+      if (segment === "..") {
+        fail(`capture receipt contains invalid exclusion path: ${JSON.stringify(path)}`);
+      }
+      segments.push(segment);
+    }
+    const normalized = segments.join("/");
+    if (
+      normalized === "" ||
+      normalized === ".git" ||
+      normalized.startsWith(".git/") ||
+      normalized === "AGENTS.md" ||
+      seen.has(normalized)
+    ) {
+      fail(`capture receipt contains invalid exclusion path: ${JSON.stringify(path)}`);
+    }
+    seen.add(normalized);
+    normalizedPaths.push(normalized);
   }
-  return value;
+  return normalizedPaths;
 }
 
 function pathIsExcluded(path, exclusions) {
@@ -265,8 +343,11 @@ const sourceRepo = await realpath(args.get("source-repo"));
 const patchFile = await realpath(args.get("patch-file"));
 const captureReceiptPath = await realpath(args.get("capture-receipt"));
 const captureDir = dirname(captureReceiptPath);
-const workspace = resolve(args.get("workspace"));
-const trustedDir = resolve(args.get("trusted-dir"));
+const workspace = await canonicalizeProspectivePath(resolve(args.get("workspace")), "workspace");
+const trustedDir = await canonicalizeProspectivePath(
+  resolve(args.get("trusted-dir")),
+  "trusted-dir",
+);
 for (const candidate of [workspace, trustedDir]) {
   if (existsSync(candidate)) fail("workspace and trusted-dir must not exist");
 }
@@ -274,6 +355,8 @@ for (const [leftName, left, rightName, right] of [
   ["workspace", workspace, "trusted-dir", trustedDir],
   ["workspace", workspace, "source-repo", sourceRepo],
   ["trusted-dir", trustedDir, "source-repo", sourceRepo],
+  ["workspace", workspace, "capture artifacts", captureDir],
+  ["trusted-dir", trustedDir, "capture artifacts", captureDir],
 ]) {
   if (isInside(left, right) || isInside(right, left)) {
     fail(`${leftName} and ${rightName} must be disjoint`);
@@ -315,13 +398,46 @@ if (!sourceStat.isDirectory() || !sameIdentity(sourceStat, captureReceipt.source
 }
 
 if (
+  !captureReceipt.overlay_pre_run ||
   !captureReceipt.overlay ||
+  captureReceipt.overlay_identity_equal !== true ||
+  captureReceipt.overlay.schema !== "tachiko-agents-overlay-identity-v1" ||
   captureReceipt.overlay.path !== "AGENTS.md" ||
   captureReceipt.overlay.type !== "regular" ||
   captureReceipt.agents_sha256_after !== captureReceipt.overlay.sha256 ||
   captureReceipt.agents_unchanged !== true
 ) {
   fail("capture receipt does not bind the root AGENTS.md overlay");
+}
+if (
+  typeof captureReceipt.overlay_pre_run.file_path !== "string" ||
+  !isAbsolute(captureReceipt.overlay_pre_run.file_path)
+) {
+  fail("capture receipt pre-run overlay identity path is invalid");
+}
+const overlayIdentityInputStat = await lstat(captureReceipt.overlay_pre_run.file_path, {
+  bigint: true,
+});
+if (!overlayIdentityInputStat.isFile() || overlayIdentityInputStat.isSymbolicLink()) {
+  fail("pre-run overlay identity must remain a regular non-symlink file");
+}
+const overlayIdentityPath = await realpath(captureReceipt.overlay_pre_run.file_path);
+const overlayIdentityStat = await lstat(overlayIdentityPath, { bigint: true });
+const overlayIdentityBytes = await readFile(overlayIdentityPath);
+const expectedOverlayIdentity = validateExpectedOverlayIdentity(
+  JSON.parse(overlayIdentityBytes.toString("utf8")),
+  overlayIdentityBytes,
+);
+if (
+  !overlayIdentityStat.isFile() ||
+  overlayIdentityStat.isSymbolicLink() ||
+  captureReceipt.overlay_pre_run.file_sha256 !== sha256(overlayIdentityBytes) ||
+  captureReceipt.overlay_pre_run.file_bytes !== overlayIdentityBytes.length ||
+  JSON.stringify(captureReceipt.overlay_pre_run.expected) !==
+    JSON.stringify(expectedOverlayIdentity) ||
+  JSON.stringify(captureReceipt.overlay) !== JSON.stringify(expectedOverlayIdentity)
+) {
+  fail("capture receipt pre-run and post-run overlay identities do not match");
 }
 const capturedWorkspace = await realpath(captureReceipt.workspace);
 const overlayPath = resolve(capturedWorkspace, "AGENTS.md");
@@ -338,6 +454,16 @@ if (
 }
 
 if (!captureReceipt.exclusions) fail("capture receipt is missing exclusions");
+if (
+  typeof captureReceipt.exclusions.file_path !== "string" ||
+  !isAbsolute(captureReceipt.exclusions.file_path)
+) {
+  fail("capture receipt exclusion-list path is invalid");
+}
+const exclusionsInputStat = await lstat(captureReceipt.exclusions.file_path, { bigint: true });
+if (!exclusionsInputStat.isFile() || exclusionsInputStat.isSymbolicLink()) {
+  fail("capture exclusion list must remain a regular non-symlink file");
+}
 const exclusionsPath = await realpath(captureReceipt.exclusions.file_path);
 const exclusionsStat = await lstat(exclusionsPath, { bigint: true });
 const exclusionsBytes = await readFile(exclusionsPath);
