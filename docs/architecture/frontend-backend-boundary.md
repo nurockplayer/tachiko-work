@@ -1,101 +1,131 @@
 # Frontend and Backend Boundary
 
-Decision state: Accepted direction. ADR-0020 now makes the Headless Semantic API
-the mandatory first-party semantic product boundary. Detailed runtime/state and
-transport mechanics remain #26.
+Decision state: Accepted direction. ADR-0020 makes the Headless Semantic API the mandatory first-party semantic product boundary. ADR-0022 accepts the resident shared Rust semantic/application runtime and host separation as the preferred interactive topology. Concrete session/revision/transport mechanics remain Deferred to later runtime work.
 
 ## Principle
 
 The UI is a projection layer, not the owner of document meaning.
 
-A frontend may own selection, viewport, interaction state, draft authoring
-buffers, presentation caches, and user workflow state. It must not create a
-second canonical semantic model or reimplement semantic validation/formula/
-mutation policy.
+A frontend may own selection, viewport, interaction state, draft authoring buffers, presentation caches, and user workflow state. It must not create a second canonical semantic model or reimplement semantic validation/formula/mutation policy.
+
+For an open interactive document, authoritative in-memory semantic state belongs to the shared Rust semantic/application runtime under ADR-0022. This does not replace ADR-0003/ADR-0017 durable representation authority; `.roproj` remains the canonical durable editable materialization when that representation is implemented.
 
 ## Architecture
 
-In this document, `Rust Core` means the shared Rust semantic/application
-runtime, not the `semantic-core` crate alone. The Accepted crate ownership and
-dependency direction are recorded in
-[ADR-0016](../decisions/ADR-0016-milestone-02-rust-crate-layering.md).
-The first-class client contract is defined by
-[ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md) and
-[`semantic-api.md`](../specs/semantic-api.md).
-Detailed resident-state, native/WASM host, revision/concurrency, and bridge
-behavior remains owned by #26.
+In this document, `Rust Runtime` means the shared Rust semantic/application runtime built around `workspace-engine` and the lower semantic engines, not the `semantic-core` crate alone.
+
+The Accepted crate ownership and dependency direction are recorded in [ADR-0016](../decisions/ADR-0016-milestone-02-rust-crate-layering.md). The first-class client contract is defined by [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md) and [`semantic-api.md`](../specs/semantic-api.md). Runtime ownership and host separation are defined by [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md).
 
 ```text
 React / Desktop / Web / future Mobile UI
         |
-        | first-party semantic client
+        | first-party Semantic API client
         v
 First-class Semantic API
         |
         v
-Shared Rust semantic/application runtime
+Resident shared Rust semantic/application runtime
         |
         v
 Semantic model + focused engines
+
+Host / composition boundary beside the runtime:
+filesystem / IndexedDB / dialogs / credentials / Git / process / network / persistence
 ```
 
-The same rule applies even when the physical call is an in-process Rust call, a
-WASM invocation, IPC, FFI, or a future network request. Transport does not grant
-permission to bypass semantic behavior.
+The same semantic rule applies whether the physical call is an in-process Rust call, WASM invocation, IPC, FFI, or future network request. Transport does not grant permission to bypass semantic behavior.
 
 ## Frontend Responsibilities
 
-- rendering;
-- interaction and accessibility;
-- selection, focus, viewport, drag/drop, and other presentation state;
-- raw/draft authoring buffers where incomplete input is not yet semantic state;
-- user workflows and review presentation;
-- projecting stable semantic identities into current human-readable labels,
-  paths, ranges, or widgets; and
-- mapping Semantic API results into UI state without redefining their semantic
-  meaning.
+A frontend may own:
 
-## Shared Semantic/Application Responsibilities
+- rendering and accessibility;
+- selection, focus, viewport, panels, drag/drop, and other presentation state;
+- revision-keyed semantic projections and query caches;
+- pending-command, preview, and review UI state;
+- raw/draft authoring buffers where incomplete input is not yet semantic state under ADR-0019;
+- presentation-local optimistic state that cannot redefine the authoritative semantic outcome; and
+- projecting stable semantic identities into current human-readable labels, paths, ranges, or widgets.
 
-- authoritative semantic document state;
+Projection caches and optimistic UI state are disposable/derived from the standpoint of semantic authority. They do not become canonical merely because they render ahead of a confirmed runtime result.
+
+## Shared Rust Runtime Responsibilities
+
+The shared semantic/application runtime owns:
+
+- authoritative interactive semantic document state;
 - stable semantic identity and typed relationships;
 - calculations and formula meaning;
 - semantic validation and authoritative operation gates;
-- typed semantic commands and queries;
-- Propose/Execute behavior;
+- ADR-0020 typed semantic Commands and Queries;
+- Propose/Execute semantic behavior;
 - semantic comparison/merge orchestration;
 - all-or-nothing semantic publication for commands/batches; and
 - presentation-neutral semantic results/diagnostics.
 
-Persistence transformation remains composed through explicit storage/host
-boundaries rather than being owned by the UI or workspace-engine.
+ADR-0022 prefers retaining this runtime across ordinary interactive operations instead of serializing/reconstructing the complete semantic document for each edit/query.
+
+The exact resident session handle, revision/precondition type, concurrency algorithm, cancellation behavior, state commit/swap mechanism, and projection-delivery protocol remain Deferred to #93/#94 and related runtime work.
+
+## Snapshot boundaries
+
+Full semantic snapshots are appropriate at explicit boundaries such as load/open, durable save/materialization, import/export, recovery/debug capture, and explicit branch/document exchange.
+
+They are not the preferred normal per-edit client/runtime transport.
+
+This does not prohibit internal cloning, full validation, or other whole-document implementation work inside Rust when required for correctness.
+
+## Host Responsibilities
+
+Persistence transformation and host effects remain composed outside `workspace-engine`.
+
+Host/composition layers may own:
+
+- filesystem and path access;
+- IndexedDB/browser persistence;
+- dialogs and OS/browser integration;
+- credentials and authorization adapters;
+- Git/process/network integration;
+- Tauri host commands; and
+- durable write/recovery mechanics.
+
+Semantic publication, durable persistence, and external publication are distinct effects under ADR-0007/ADR-0022. Host authority does not redefine semantic meaning, and semantic edit authority does not implicitly grant filesystem/network/Git/deployment authority.
 
 ## Client rule
 
-GUI/Web/mobile clients MUST use the Semantic API for product-semantic reads,
-validation/explanation, proposals, and execution.
+GUI/Web/mobile clients MUST use the Semantic API for product-semantic reads, validation/explanation, proposals, and execution.
 
 A frontend MUST NOT:
 
-- mutate internal `Document` fields as its durable edit protocol;
-- target storage paths, JSON pointers, row/cell coordinates, or Rust field layout
-  as semantic identity;
-- derive operation permission from diagnostic severity/message rather than the
-  authoritative gate; or
-- implement a host-specific version of formula, validation, mutation, diff, or
-  merge semantics.
+- maintain an independently authoritative semantic `Document` as its edit model;
+- mutate internal Rust `Document` fields as its durable edit protocol;
+- target storage paths, JSON pointers, row/cell coordinates, or Rust field layout as semantic identity;
+- derive operation permission from diagnostic severity/message rather than the authoritative gate/authorization boundary; or
+- implement a host-specific version of formula, validation, mutation, diff, merge, or atomicity semantics.
+
+## Native/WASM parity
+
+Native and Web/WASM clients may use different host/transport implementations, but where capabilities overlap they must preserve the same Stable Semantic API meaning, operation gate decisions, diagnostics/formula facts, and atomicity for the same relevant semantic base/context and deterministic configuration.
+
+A Worker, bridge, or transport may host, retain, cache, serialize, batch-deliver, or project Semantic API behavior. It may not redefine that behavior.
+
+## Implementation status
+
+The current workspace-engine operation surface remains substantially snapshot-style. ADR-0022 makes the resident topology an Accepted target while allowing implementation to lag until #93–#95.
+
+No Web UI, resident session API, projection patch protocol, or browser persistence mechanism is introduced by this documentation decision.
 
 ## Why
 
-A single semantic authority and first-class Semantic API allow:
+A single semantic authority, first-class Semantic API, and resident shared runtime allow web, desktop, mobile, AI, CLI/automation, and future integrations to share one meaning while using different presentation and host mechanisms.
 
-- web application;
-- desktop application;
-- mobile clients;
-- AI agents;
-- CLI/automation; and
-- future integrations
+This avoids both expensive whole-document client/runtime traffic as the default topology and the more serious architectural failure of letting a client-side mirror become a second semantic source of truth.
 
-to share the same meaning while using different presentations and transports.
+## Related
 
-This is the boundary #26 must host/map rather than redesign.
+- ADR-0016
+- ADR-0019
+- ADR-0020
+- ADR-0022
+- Issues #26, #93, #94, #95
+- PR #91
