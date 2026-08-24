@@ -1,6 +1,6 @@
 ---
 name: Decision
-description: Resolve an expensive-to-reverse architecture, product-foundation, format, security, or governance question
+about: Resolve an expensive-to-reverse architecture, product-foundation, format, security, or governance question
 title: "[Decision] "
 labels: ""
 assignees: ""
