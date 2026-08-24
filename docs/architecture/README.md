@@ -12,11 +12,15 @@ The diagrams show product architecture direction. Internal crate boundaries, run
 
 ## Read by subsystem
 
-### Semantic core
+### Semantic core and Semantic API
 
 - [`semantic-core-rationale.md`](semantic-core-rationale.md) — why the project is semantic-first; explanatory rationale, not a replacement for ADR authority.
 - [`document-model.md`](document-model.md) — accepted semantic-document direction; detailed graph mechanics remain subject to Core & Format Hardening.
 - [`unified-semantic-model.md`](unified-semantic-model.md) — accepted unified-semantic direction across structured data, formulas, views, and AI operations.
+- [`rust-crate-architecture.md`](rust-crate-architecture.md) — current implemented crate graph, ADR-0016 ownership, and ADR-0020 mapping from workspace-engine to the first-class Semantic API without stabilizing the current Rust source surface.
+- [`frontend-backend-boundary.md`](frontend-backend-boundary.md) — GUI/Web/mobile as projection layers and mandatory first-party Semantic API clients under ADR-0020.
+
+For the implementable transport-neutral client contract, read [`../specs/semantic-api.md`](../specs/semantic-api.md). ADR-0020 is the decision authority; the spec defines Query/Command, Propose/Execute, validation/gates, semantic atomicity, capability-addressability, and compatibility while leaving concrete transports to #26.
 
 ### Storage, formats, and Git
 
@@ -25,18 +29,18 @@ The diagrams show product architecture direction. Internal crate boundaries, run
 
 For implementable format contracts, continue to [`../specs/README.md`](../specs/README.md); architecture prose must not silently override the normative/provisional specification state.
 
-### Rust core and runtime boundaries
+### Runtime and host boundaries
 
-- [`rust-crate-architecture.md`](rust-crate-architecture.md) — current implemented crate graph plus the Accepted Milestone 02 layering baseline recorded by ADR-0016.
-- [`frontend-backend-boundary.md`](frontend-backend-boundary.md) — accepted frontend/semantic-backend direction with detailed runtime seam still evolvable.
-- [`wasm-strategy.md`](wasm-strategy.md) — WASM strategy hypothesis/Open Question; do not treat it as a selected product-runtime contract.
+- [`wasm-strategy.md`](wasm-strategy.md) — WASM strategy hypothesis/Open Question; #26 must map ADR-0020's Accepted semantic contract rather than define a second semantic implementation.
 - [`performance-model.md`](performance-model.md) — provisional performance guidance that should be refined by evidence.
+
+Resident state, revision/concurrency, Web Worker placement, IPC/FFI, host capabilities, persistence composition, and concrete serialization/ABI remain #26.
 
 ### AI
 
 - [`ai-native-architecture.md`](ai-native-architecture.md) — accepted direction that AI acts on the semantic model rather than imitating UI actions.
 
-Concrete mutation, permissions, approval, provenance, and security contracts remain narrower protocol/security work.
+AI is a first-party semantic client under ADR-0007/ADR-0020. Concrete capability identifiers, principals, grants, approval tokens, provenance, and security remain narrower #27/#28 work.
 
 ### Collaboration and future presentation
 
@@ -50,11 +54,12 @@ Use these broad cues together with the reconciliation register:
 | Area | Current authority/maturity |
 | --- | --- |
 | Semantic-first platform direction | Accepted |
+| First-class Headless Semantic API boundary | Accepted under ADR-0020; exact Rust API and transports remain Provisional/Deferred |
 | `.roproj` source / `.ro` portable-artifact relationship | Accepted direction |
 | Current `.ro` v0.1 encoding details | Provisional implemented baseline |
 | Rust crate graph | Accepted Milestone 02 boundary implemented; exact Rust API remains Provisional |
-| AI as semantic client | Accepted direction |
-| Native/WASM runtime seam | Provisional / Open Question |
+| AI as semantic client | Accepted direction; shared Semantic API behavior Accepted |
+| Native/WASM runtime/transport seam | Open Question under #26, constrained by ADR-0020 |
 | Distributed collaboration beyond semantic merge | Hypothesis / Open Question |
 | Rendering/UI and cross-view projection architecture | Future hypothesis |
 

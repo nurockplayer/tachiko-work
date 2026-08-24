@@ -6,17 +6,20 @@ meaning follow [ADR-0019](../decisions/ADR-0019-staged-semantic-validation-and-d
 Stable identity and formula semantics remain governed by
 [ADR-0015](../decisions/ADR-0015-stable-semantic-identity.md) and
 [ADR-0018](../decisions/ADR-0018-bound-formulas-and-deterministic-binary64.md).
-Exact Rust APIs and incremental mechanisms remain Provisional.
+ADR-0020 makes authoritative validation/gate meaning part of the first-class
+Semantic API result contract without changing these validation stages. Exact
+Rust APIs and incremental mechanisms remain Provisional.
 
 Implementation state: implemented for the Milestone 02 first-party boundary.
 `semantic-core` emits generic semantic-first diagnostic primitives and core
 rules; `formula-engine` exposes the complete ADR-0018 node-keyed failure oracle;
 and `workspace-engine` composes one authoritative deterministic
 `ValidationReport` for validation, queries, mutations, and merge finalization.
-Incremental validation, external wire stability, and future extension
+Incremental validation, external wire encoding, and future extension
 registration remain Provisional or Deferred.
 
-See the [diagnostics contract](diagnostics-contract.md) and the
+See the [diagnostics contract](diagnostics-contract.md), the
+[Semantic API specification](semantic-api.md), and the
 [canonical reconciliation register](../governance/canonical-reconciliation-register.md).
 
 ## Purpose
@@ -54,6 +57,13 @@ A structurally admissible candidate may contain higher-level semantic failures
 that are useful to diagnose during an interactive workflow. Existing strict
 workspace commands may still reject such candidates atomically.
 
+ADR-0020's Atomic Command Batch may use a structurally admissible working
+candidate across ordered internal command steps without applying the final
+operation gate after every step. Intermediate higher-level invalidity is allowed
+only when intrinsic admission/representability invariants remain satisfied and
+the final batch candidate passes the authoritative gate required for
+publication.
+
 Resident editor state, recovery/autosave, and invalid-draft persistence are not
 defined here.
 
@@ -70,6 +80,10 @@ and Accepted primitive construction limits.
 Failure may occur before a semantic candidate exists. Storage preserves its
 ADR-0017 representation-local error precedence and does not become the
 universal diagnostics model.
+
+For the Semantic API, a newly authored command that fails these prerequisites
+is a pre-candidate admission/command failure rather than a `ValidationReport`
+claim that an admissible candidate exists.
 
 ### Stage 1: Intrinsic semantic declaration invariants
 
@@ -131,7 +145,7 @@ The accepted full-recompute oracle, node-keyed failures, direct failed
 dependency sets, and no-partial-`CalculationState` publication remain formula
 authority. `calculate_complete()` exposes that authority; the fail-first
 `CalculationError` family remains only a compatibility projection and is not a
-new validation contract.
+new validation or Semantic API failure contract.
 
 ### Stage 6: Domain validation
 
@@ -174,7 +188,7 @@ cannot be classified safely, the implementation falls back to full validation.
 The following are part of stable equivalence where applicable:
 
 - diagnostic code meaning;
-- machine-readable classification/severity;
+- machine-readable classification concept;
 - semantic subjects;
 - semantically relevant related subjects/facts;
 - validator provenance; and
@@ -203,6 +217,15 @@ These concepts are distinct:
 - CI/workflow policy may impose stricter treatment of advisory findings without
   changing diagnostic identity.
 
+Under ADR-0020, the Semantic API exposes the authoritative gate outcome wherever
+client control flow needs to know whether a proposed/executed semantic operation
+may publish. The client must not re-derive that decision from severity, report
+emptiness, localized messages, or a duplicated validation policy.
+
+`Propose` and `Execute` share the same semantic command and gate meaning. Execute
+must evaluate the authoritative gate for the state it actually acts on rather
+than trusting a stale earlier client-side gate result.
+
 This specification does not make physical Git commit rejection a semantic
 invariant.
 
@@ -210,6 +233,21 @@ It also does not declare that every diagnostic Error automatically blocks every
 storage save API. ADR-0017 requires semantic validation as required by the
 operation; representation-specific save behavior and future invalid-draft
 persistence remain separately owned.
+
+## Atomic batch finalization
+
+ADR-0020 defines an Atomic Command Batch as one candidate transition with
+all-or-nothing semantic publication.
+
+Validation/finalization therefore applies to the final candidate according to
+the operation's authoritative gate. A conforming implementation may evaluate
+validation during intermediate steps for diagnostics or optimization, but that
+must not turn a temporary higher-level invalid working candidate into partial
+published semantic state.
+
+The batch contract does not define resident transaction sessions, concurrency,
+revision conflict resolution, or persistence rollback; those remain #26 and
+host/representation concerns.
 
 ## Deterministic domain/extension validator boundary
 
@@ -242,6 +280,10 @@ Clients must not define semantic validity by parsing human error strings.
 Presentation and transport adapters may render/project the same semantic
 finding differently.
 
+ADR-0020 makes the stable diagnostic observations and gate relationship part of
+the transport-neutral Semantic API result meaning while leaving the concrete
+wire mapping to #26.
+
 ## Current implementation boundary
 
 The Milestone 02 implementation now:
@@ -254,10 +296,12 @@ The Milestone 02 implementation now:
   messages, and cycle witnesses as presentation;
 - derives formula diagnostics from the complete ADR-0018 outcome; and
 - keeps canonical authoring projection and other output/finalization preflights
-  as explicit operation-specific gates layered after shared semantic
-  validation.
+  as explicit operation gates layered after shared semantic validation.
 
-Incremental scheduling/caching, external API or wire stability, invalid-draft
+This is strong implementation evidence for ADR-0020 but does not make the exact
+Rust report, `WorkspaceError`, or current function signatures the public API.
+
+Incremental scheduling/caching, concrete external wire mapping, invalid-draft
 lifecycle, extension registration, and resident-runtime delivery remain owned
 by their existing deferred decisions rather than this implementation.
 
@@ -266,7 +310,7 @@ by their existing deferred decisions rather than this implementation.
 - generic schema validation-rule DSL;
 - generic enum/range/pattern/default semantics;
 - progressive/freeform typing (#13);
-- public validation/API wire format (#10);
+- exact Semantic API Rust/wire representation (`semantic-api.md` / #26);
 - native/WASM/IPC delivery protocol or resident runtime (#26);
 - plugin ABI/runtime/sandbox (#17);
 - `.roproj` invalid-draft persistence (#41);
@@ -277,4 +321,4 @@ by their existing deferred decisions rather than this implementation.
 
 Keep semantic truth strong while allowing future editing workflows to diagnose
 and repair temporarily invalid candidates through one deterministic validation
-model.
+model and one first-class semantic operation boundary.

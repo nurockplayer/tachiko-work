@@ -45,6 +45,7 @@ When this register marks a document as mixed-state, readers must respect the nar
 | ADR-0017 versioned storage DTOs, explicit migration, and canonical representation | Accepted | Storage owns immutable version-specific DTOs and explicit migrations; version-gated readers fail closed on unsupported/newer semantics; canonical output is version-defined and must preserve ADR-0018's Accepted numeric meaning. |
 | ADR-0018 bound formulas and deterministic finite binary64 semantics | Accepted | Stable-ID bound ASTs and partial authoring projection, atomic rename preservation of ADR-0014's byte limit, finite binary64 with one semantic zero, representation-admitted numeric conversion, deterministic arithmetic, static dependencies, recomputation equivalence, and persisted number spelling are current authority. |
 | ADR-0019 staged semantic validation and diagnostics | Accepted | Separates hard admission, diagnosable semantic candidates, deterministic full validation, semantic-ID diagnostic meaning, operation gating, and deterministic extension validators without introducing a validation framework or external transport contract. |
+| ADR-0020 first-class Headless Semantic API boundary | Accepted | Makes one transport-neutral Semantic API mandatory for first-party semantic clients; accepts query/command, Propose/Execute, gate/result, atomic publication/batch, capability-addressability, and compatibility laws while explicitly keeping current Rust/serde/transport/runtime shapes replaceable. |
 
 ## Architecture and specification map
 
@@ -52,17 +53,18 @@ When this register marks a document as mixed-state, readers must respect the nar
 | --- | --- | --- | --- |
 | `docs/architecture/document-model.md` | Accepted direction; detailed graph shape constrained by ADR-0015, ADR-0018, and ADR-0019 | M02 stable identity/bound formula aggregate implemented; richer graph future | ADR-0015, ADR-0018, ADR-0019, #13 |
 | `docs/architecture/unified-semantic-model.md` | Accepted direction | Partially implemented | ADR-0015, #13 |
-| `docs/architecture/rust-crate-architecture.md` | Accepted ADR-0016 boundary; exact Rust API remains Provisional | Eight-crate workspace-engine target implemented by #72; authoritative validation composition implemented by #89 | ADR-0016, ADR-0019, #10 |
+| `docs/architecture/rust-crate-architecture.md` | Accepted ADR-0016 crate boundary plus ADR-0020 product-boundary mapping; exact Rust API remains Provisional | Eight-crate workspace-engine target implemented by #72; authoritative validation composition implemented by #89 | ADR-0016, ADR-0019, ADR-0020; #26 for runtime/transport |
 | `docs/architecture/ro-and-roproj-format.md` | Accepted direction constrained by ADR-0017 storage boundary | `.ro` direct JSON implemented; `.roproj` not implemented | ADR-0003, ADR-0017, #41, #43 |
-| `docs/architecture/ai-native-architecture.md` | Accepted direction | Partially implemented | #10, #27, #28, #30 |
-| `docs/architecture/frontend-backend-boundary.md` | Accepted direction; detailed runtime seam Provisional | Partially implemented | #26 |
+| `docs/architecture/ai-native-architecture.md` | Accepted direction constrained by ADR-0007/ADR-0020 | Partially implemented | ADR-0007, ADR-0020, #27, #28, #30 |
+| `docs/architecture/frontend-backend-boundary.md` | Accepted first-party Semantic API client boundary under ADR-0020; detailed runtime seam Provisional | Partially implemented | ADR-0020; #26 for runtime/transport |
 | `docs/architecture/wasm-strategy.md` | Hypothesis / Open Question | Not implemented as product runtime | #26 |
 | `docs/architecture/distributed-collaboration.md` | Hypothesis / Open Question | Not implemented | #12, #45, #46, #48-#50 |
 | `docs/architecture/rendering-system.md` | Hypothesis | Not current milestone | Designer MVP future work |
 | `docs/architecture/performance-model.md` | Provisional guidance | Mixed | Evidence-driven future work |
+| `docs/specs/semantic-api.md` | Mixed: ADR-0020 first-class boundary and semantic laws Accepted; exact Rust API, complete operation catalogue, result shapes, runtime/session, and wire mappings Provisional/Deferred | Partially implemented by workspace-engine first-party operations; atomic batch and deliberate external catalogue remain implementation gaps | ADR-0020; #26 runtime/transport; #27/#28 capability authorization |
 | `docs/specs/schema-system.md` | Mixed: current durable declaration boundary Accepted under ADR-0015/ADR-0019; richer constraint vocabulary future | Current M02 type/required/reference declarations implemented | ADR-0015, ADR-0019, #13 |
-| `docs/specs/validation-engine.md` | Mixed: staged validation/candidate/full-oracle semantics Accepted under ADR-0019; exact APIs/incremental mechanisms Provisional | M02 validation oracle implemented by #89 over #90's formula oracle: one first-party report, cascade suppression, deterministic stable observations, and explicit operation gates | ADR-0019, ADR-0018 |
-| `docs/specs/diagnostics-contract.md` | Mixed: semantic diagnostic stability rules Accepted under ADR-0019; exact Rust/wire/code catalog Provisional or Deferred | Internal semantic-first envelope and workspace report implemented by #89; external wire/version remains deferred | ADR-0019, #10, #26 |
+| `docs/specs/validation-engine.md` | Mixed: staged validation/candidate/full-oracle semantics Accepted under ADR-0019; ADR-0020 maps report/gate meaning into the Semantic API; exact APIs/incremental mechanisms Provisional | M02 validation oracle implemented by #89 over #90's formula oracle: one first-party report, cascade suppression, deterministic stable observations, and explicit operation gates | ADR-0019, ADR-0018, ADR-0020 |
+| `docs/specs/diagnostics-contract.md` | Mixed: semantic diagnostic stability rules Accepted under ADR-0019; ADR-0020 adds unknown-code and authoritative-gate client compatibility laws; exact Rust/wire/catalog Provisional/Deferred | Internal semantic-first envelope and workspace report implemented by #89; concrete external transport mapping deferred | ADR-0019, ADR-0020; #26 transport |
 | `docs/specs/ro-format-and-roproj-spec.md` | Accepted direction with explicit current-state split | `.ro` direct JSON implemented; `.roproj` future | ADR-0003, ADR-0017 |
 | `docs/specs/storage-versioning-and-migration.md` | Mixed: Accepted invariants under ADR-0017; M02 wire mechanics Provisional where marked | Strict v1, deterministic migration, and direct-ro/v2 implemented | ADR-0017, #40 |
 | `docs/specs/canonical-json-profile.md` | Mixed: Accepted deterministic/semantic-preservation and admitted-token binary64 rules; exact M02 profile/resource limits version-specific | Implemented independent direct-ro/v2 writer | ADR-0017, ADR-0018, #40 |
@@ -71,7 +73,7 @@ When this register marks a document as mixed-state, readers must respect the nar
 | `docs/specs/roproj-format.md` | Accepted direction | Not implemented | ADR-0003, ADR-0017, #41 |
 | `docs/specs/roproj-layout-v1.md` | Provisional | Not implemented | #41 |
 | `docs/specs/formula-engine-spec.md` | Mixed: Accepted ADR-0014 authoring and ADR-0018 binding/projection, rename preflight, numeric, dependency, and recomputation rules; implementation mechanisms Provisional | Stable binding/projection, atomic rename preflight, normalized Number, static dependencies, and complete atomic full-recompute oracle implemented; incremental evaluator pending | ADR-0018 and later formula-engine work |
-| `docs/specs/ai-agent-api.md` | Provisional implemented contract under ADR-0007 | Implemented v0.1 read/explain/suggest surface | #10, #27, #28 |
+| `docs/specs/ai-agent-api.md` | Mixed: AI semantic-client direction Accepted under ADR-0007/ADR-0020; current v0.1 adapter DTOs Provisional | Implemented v0.1 read/explain/suggest adapter over workspace-engine | ADR-0007, ADR-0020, #27, #28 |
 | `docs/specs/collaboration-model.md` | Mixed: current merge Accepted, future collaboration Open Question | Merge implemented; broader collaboration future | ADR-0011, #12, #45, #46 |
 | `docs/specs/conflict-resolution.md` | Provisional around current merge; future conflict model Open Question | Partial | #46 |
 | `docs/specs/operation-log-model.md` | Open Question | No first-class persisted log in v0.1 | #12, #48 |
@@ -98,7 +100,7 @@ A GitHub Issue is never automatically an Accepted decision. The table below clas
 | Issue | Classification | Notes |
 | --- | --- | --- |
 | #9 AI authority / canonical source of truth | Accepted direction already captured by ADR-0007; residual details moved | Approval/capability/security detail belongs to #28/#30. |
-| #10 Headless Semantic API | Open Question | Current Core & Format Hardening decision. |
+| #10 Headless Semantic API | Resolved by ADR-0020 | First-class transport-neutral semantic boundary is Accepted; complete operation catalogue, concrete wire/runtime mapping, and authorization protocol remain separately owned. |
 | #11 permissions/provenance/transactions | Open Question | Broad team/collaboration decision; Game Dev Alpha minimum is narrowed by #28. |
 | #12 mutation history / event sourcing / CRDT / Git | Open Question | Event sourcing/CRDT docs remain non-authoritative hypotheses until promoted. |
 | #13 progressive typing | Open Question | Product/architecture compatibility decision. |
@@ -115,28 +117,29 @@ A GitHub Issue is never automatically an Accepted decision. The table below clas
 - #25 storage DTO / migration boundary — durable architecture resolved by ADR-0017; the M02 implementation and conformance closure are complete through #40.
 - #37 format/version envelope — durable fail-closed/version-gated behavior resolved by ADR-0017 and `storage-versioning-and-migration.md`; the M02 implementation is complete through #40.
 - #38 canonical value encoding/order — structural/Unicode/order invariants are resolved by ADR-0017, exact numeric spelling by Accepted ADR-0018, and M02 implementation/conformance by #40.
-- #23 schema declaration, validation pipeline, diagnostics — resolved by Accepted ADR-0019; first-party implementation/conformance is completed by #89 without stabilizing an external wire contract.
+- #23 schema declaration, validation pipeline, diagnostics — resolved by Accepted ADR-0019; first-party implementation/conformance is completed by #89.
 - #24 formula AST, binding, dependency graph, numeric semantics — resolved by Accepted ADR-0018, the reconciled formula/canonical JSON specifications, research record, and executed native/WASM evidence; the accepted M02 scope is implemented through #70/#40 and the #90-owned full failure oracle.
-- #26 native/WASM runtime boundary — Open Question.
-- #72 workflow-to-workspace-engine migration — implementation of ADR-0016 completed by PR #85; it does not settle #10/#26.
+- #10 Headless Semantic API — resolved by Accepted ADR-0020 and `semantic-api.md`; it stabilizes semantic laws and ownership, not current Rust/serde/transport shapes.
+- #26 native/WASM runtime boundary — Open Question, now constrained to host/runtime/session/transport mapping of ADR-0020 rather than semantic API meaning.
+- #72 workflow-to-workspace-engine migration — implementation of ADR-0016 completed by PR #85; it provides implementation evidence for ADR-0020 without defining the external product contract.
 
 #40 is a completed implementation/evidence task that consumed ADR-0015,
 ADR-0017, and Accepted ADR-0018 without inventing format semantics.
 
 ### Game Dev Alpha / AI-safe mutation work
 
-- #27 SemanticPatch: Open Question / protocol design.
-- #28 capability, approval, provenance: Open Question / narrow safety contract.
+- #27 SemanticPatch: Open Question / protocol design constrained by ADR-0020 semantic commands and capability-addressability.
+- #28 capability, approval, provenance: Open Question / narrow safety contract constrained by ADR-0007/ADR-0020.
 - #29 patch lifecycle: Implementation task after #27/#28.
 - #30 AI security boundary: Implementation/security contract constrained by accepted security principles.
-- #31 Semantic Analyst: Implementation/evidence task; deterministic semantic facts remain core authority.
+- #31 Semantic Analyst: Implementation/evidence task; deterministic semantic facts remain core authority and queries use ADR-0020's boundary.
 - #41 `.roproj` layout: Open Question / Provisional design target.
 - #43 `.ro` package profile: Open Question / protocol design.
 - #44 Git/CI integration: Implementation task after representation contracts stabilize.
 
 ### Later reasoning, migration, collaboration, and standardization
 
-- #32, #33: Open Questions for later reasoning/query APIs.
+- #32, #33: Open Questions for later reasoning/query APIs; any resulting first-party semantic operations must fit ADR-0020.
 - #34: Hypothesis/Open Question for post-MVP migration assistant.
 - #35: Epic/index only; not decision authority.
 - #36: Hypothesis/Open Question for collaboration assistant.
@@ -144,6 +147,7 @@ ADR-0017, and Accepted ADR-0018 without inventing format semantics.
 - #42: Epic/index only; not decision authority.
 - #45-#55: Open Questions for later protocol, collaboration/history, conformance, security, integrity, extension, and interoperability contracts. Their existence is not authorization to implement them now.
 - #56: Accepted roadmap/administrative direction; close when milestone creation/backfill is verified complete.
+- #104 Project Memory / semantic decision provenance: Research/Hypothesis; may pressure-test ADR-0020 as a domain/reference application but may not promote Project Memory vocabulary into semantic core without separate evidence/decision work.
 
 ## Reconciliations made in this pass
 
@@ -154,45 +158,31 @@ ADR-0017, and Accepted ADR-0018 without inventing format semantics.
 5. UUIDv7 is the preferred Provisional normal creation generator, not permanent semantic meaning.
 6. ADR-0016 accepts the current Milestone 02 crate layering baseline and forbidden dependency directions while leaving narrower validation/API/runtime seams to later explicit Accepted decisions.
 7. ADR-0017 separates semantic types from storage-owned version DTOs, requires explicit version-gated migration, rejects silent unknown/newer interpretation, and makes canonical bytes version-defined rather than serializer-defined.
-8. Direct `.ro` JSON v1 is an immutable legacy compatibility/migration
-   profile. Identity-aware direct `.ro` v2 is implemented in that namespace;
-   future `.roproj` v1 remains a separate representation namespace.
+8. Direct `.ro` JSON v1 is an immutable legacy compatibility/migration profile. Identity-aware direct `.ro` v2 is implemented in that namespace; future `.roproj` v1 remains a separate representation namespace.
 9. Full RFC 8785 JCS is not the editable-source canonical profile; Tachiko reuses appropriate primitives while retaining Git-friendly whitespace/order and #24 numeric authority.
 10. ADR-0018 accepts formula binding, deterministic finite-binary64 meaning, and exact numeric canonical spelling as current authority.
 11. Full RFC 8785/JCS remains rejected for editable-source canonicalization; only its ECMAScript-compatible number primitive is Accepted for a representation that adopts ADR-0018.
 12. ADR-0018's promotion corrections make canonical authoring projection partial, preserve ADR-0014's 4,096-byte limit atomically across rename, and place numeric-token/input resource admission in the representation/profile before semantic conversion without freezing a limit into Number meaning.
 13. Event sourcing, public plugin runtime details, collaboration algorithms, `.roproj` sharding, `.ro` package mechanics, and host durability implementation remain outside ADR-0017 and ADR-0018.
-14. #70 implements ADR-0015 as one atomic transition: opaque IDs and mutable
-   keys, UUIDv7 creation seam, stable formula binding/projection, stable-ID
-   diff/merge continuity, deterministic legacy UUIDv5 migration, and
-   direct-ro/v2 preservation of ADR-0018 semantic meaning.
-15. #40 completes the storage/canonicalization and native/WASM numeric
-   conformance closure without reopening Accepted identity or numeric meaning.
-16. #72 evolves workflow in place into the single workspace-engine application
-   boundary, reduces AI to `ai-api → workspace-engine`, reduces CLI to
-   `cli → workspace-engine, storage`, and preserves storage as a sibling.
-17. ADR-0019 resolves #23 by separating hard admission from diagnosable semantic
-   candidates, accepting one staged full-validation oracle and semantic-ID
-   diagnostics, keeping severity distinct from operation gates, preserving
-   storage-local failure ownership, and finding no evidence for a new
-   validation/diagnostics crate.
-18. The #90-owned formula-engine prerequisite implements ADR-0018's complete
-    node-keyed/SCC failure oracle. #89 consumes that authority with generic
-    semantic-core diagnostic primitives, one workspace `ValidationReport`,
-    shared semantic finalization, explicit projection/output gates, and exact
-    native/WASM stable-observation evidence under ADR-0019.
+14. #70 implements ADR-0015 as one atomic transition: opaque IDs and mutable keys, UUIDv7 creation seam, stable formula binding/projection, stable-ID diff/merge continuity, deterministic legacy UUIDv5 migration, and direct-ro/v2 preservation of ADR-0018 semantic meaning.
+15. #40 completes the storage/canonicalization and native/WASM numeric conformance closure without reopening Accepted identity or numeric meaning.
+16. #72 evolves workflow in place into the single workspace-engine application boundary, reduces AI to `ai-api → workspace-engine`, reduces CLI to `cli → workspace-engine, storage`, and preserves storage as a sibling.
+17. ADR-0019 resolves #23 by separating hard admission from diagnosable semantic candidates, accepting one staged full-validation oracle and semantic-ID diagnostics, keeping severity distinct from operation gates, preserving storage-local failure ownership, and finding no evidence for a new validation/diagnostics crate.
+18. The #90-owned formula-engine prerequisite implements ADR-0018's complete node-keyed/SCC failure oracle. #89 consumes that authority with generic semantic-core diagnostic primitives, one workspace `ValidationReport`, shared semantic finalization, explicit projection/output gates, and exact native/WASM stable-observation evidence under ADR-0019.
+19. ADR-0020 resolves #10 by promoting a transport-neutral Semantic API product boundary, not the current workspace-engine Rust surface: first-party semantic clients share Query/Command, Propose/Execute, authoritative gates/results, single/batch atomic publication, capability-addressability, and semantic compatibility laws; #26 retains runtime/transport ownership and #27/#28 retain authorization/provenance mechanics.
 
 ## Current research queue
 
 The ordered #70 → #40 → #72 Core & Format Hardening sequence is complete. The
 #90-owned formula oracle prerequisite and #89 workspace validation composition
-close the remaining ADR-0018/ADR-0019 implementation gaps without stabilizing
-external transport.
+close the ADR-0018/ADR-0019 implementation gaps.
 
-#10 remains the next external-interface decision. #26 builds on #10 plus the
-Accepted crate/validation boundaries and continues to own resident runtime,
-Web Worker, IPC/FFI, and host capability mechanics. #13 remains separately open
-for progressive/freeform typing.
+#10 is now resolved by ADR-0020. #26 is unblocked to design resident runtime,
+Web Worker, IPC/FFI, revision/concurrency, host capability, and concrete
+transport mappings against the Accepted Semantic API without redefining its
+meaning. #13 remains separately open for progressive/freeform typing. #41
+continues to own `.roproj` physical layout. #104 remains a later read-only-first
+Project Memory reference/dogfood research track rather than current core scope.
 
 If implementation discovers pressure that contradicts an Accepted ADR, return
 to an explicit amendment/reconciliation rather than hiding the change in code.

@@ -2,8 +2,11 @@
 
 Decision state: Mixed. The semantic diagnostic meaning and stability rules are
 Accepted under [ADR-0019](../decisions/ADR-0019-staged-semantic-validation-and-diagnostics.md).
-Exact Rust data structures, code catalog, external wire format, transport, and
-presentation adapters remain Provisional or Deferred as noted below.
+ADR-0020 additionally makes those stable semantic observations and operation-gate
+relationships part of the first-class Semantic API result meaning where
+applicable. Exact Rust data structures, complete code catalog, external wire
+encoding, transport, severity vocabulary, and presentation adapters remain
+Provisional or Deferred as noted below.
 
 Implementation state: the Milestone 02 internal envelope is implemented in
 `semantic-core` with symbolic codes, machine severity, stable semantic subject
@@ -13,14 +16,16 @@ authoritative first-party `ValidationReport` and stable-observation ordering.
 The exact Rust representation, severity vocabulary, external namespace/wire,
 and transport remain Provisional or Deferred.
 
+Specified with: [Semantic API](semantic-api.md)
+
 ## Purpose
 
 Define the smallest shared machine-readable diagnostic contract that can be
 consumed consistently by CLI, CI, AI, and future graphical clients without
 making human prose, storage layout, or source spans semantic authority.
 
-This is not an LSP or SARIF wire specification. Those formats may be used by
-future adapters.
+This is not an LSP, SARIF, JSON, or IPC wire specification. Those formats may be
+used by future adapters.
 
 ## Semantic diagnostic model
 
@@ -59,8 +64,23 @@ Requirements:
   localized prose.
 
 The implemented internal code families have been audited for this milestone.
-Their exact external namespace, versioned catalog, and wire representation
-remain Provisional under #10.
+Their exact external namespace, complete versioned catalog, and wire
+representation remain Provisional.
+
+### Unknown-code compatibility
+
+A conforming Semantic API client must be able to preserve/represent an unknown
+published diagnostic code as an opaque machine finding according to the active
+transport mapping.
+
+A client must not require an exhaustive known-code switch to derive whether an
+operation is allowed. Operation eligibility is carried by the authoritative
+gate outcome, not reconstructed from a locally known diagnostic catalog.
+
+Adding a new code is not automatically a harmless additive semantic change. If
+the new code represents a newly blocking semantic rule that changes Accepted
+gate behavior rather than implementing an already Accepted rule, the semantic
+behavior change follows ADR-0020's decision/version process.
 
 ## Classification and severity
 
@@ -72,8 +92,19 @@ blocking semantic finding while a strict export operation rejects the same
 candidate. The diagnostic does not change identity merely because the consumer
 uses a different gate.
 
-The exact severity vocabulary is Provisional. External versioning belongs to
-#10.
+The exact severity vocabulary is Provisional.
+
+### Gate control-flow rule
+
+A client must use the authoritative operation gate outcome when deciding whether
+a semantic operation may publish. It must not infer universal allow/deny from:
+
+- a severity ordinal;
+- localized message wording;
+- a report being empty/non-empty; or
+- a client-maintained copy of validation rules.
+
+This rule is part of ADR-0020's first-class Semantic API contract.
 
 ## Semantic subjects and locations
 
@@ -133,6 +164,9 @@ provider-version representation is Provisional.
 Core, formula, domain, and future extension diagnostics may share the envelope
 without sharing one giant enum or making extension rules part of semantic-core.
 
+This validator provenance is not the broader user/agent decision provenance
+protocol owned by #27/#28/#104.
+
 ## Presentation-only fields
 
 The following are not stable machine meaning:
@@ -187,12 +221,13 @@ adapter data. LSP `Range` is not Tachiko's canonical diagnostic location.
 
 AI consumers should receive stable codes, semantic subjects, related evidence,
 and machine facts. They must not need to parse localized human messages to
-understand a failure.
+understand a failure and must not infer execute authority from a report alone.
 
 ### Native/WASM/IPC
 
-Transport serialization, version negotiation, resident delivery, push/pull
-updates, and projection patches remain #26 and #10.
+The semantic diagnostic observations and gate relationship follow ADR-0019 and
+ADR-0020. Transport serialization, version negotiation, resident delivery,
+push/pull updates, and projection patches remain #26.
 
 ## Storage failures
 
@@ -206,18 +241,20 @@ semantic diagnostics or erase their version-specific failure meaning.
 | Element | State |
 | --- | --- |
 | Stable symbolic code identity and meaning | Accepted |
+| Unknown code remains representable; code meaning not silently reused | Accepted under ADR-0019/ADR-0020 |
 | Semantic stable-ID subject authority | Accepted |
 | Preservation of semantically relevant related subjects/facts | Accepted |
 | Validator/provider provenance concept | Accepted |
 | Separation of machine severity from operation gate | Accepted |
+| Authoritative GateOutcome, not severity/report emptiness, controls semantic publication | Accepted under ADR-0020 |
 | Human message/help wording | Presentation / unstable |
 | Human-key path and source span | Projection / unstable |
-| Exact code namespace/catalog | Provisional |
+| Exact code namespace/catalog spelling | Provisional; published meanings stable |
 | Exact severity enum | Provisional |
 | Exact semantic-location Rust type | Provisional |
 | Exact facts/related encoding | Provisional |
 | Exact sort tuple | Provisional |
-| External JSON/API wire format | Deferred to #10 |
+| External JSON/API wire format | Deferred to #26 mapping of `semantic-api.md` |
 | IPC/WASM transport | Deferred to #26 |
 | Diagnostic fingerprint/GUID/baseline | Deferred |
 | Suppression/fix-it protocol | Deferred |
@@ -227,5 +264,7 @@ semantic diagnostics or erase their version-specific failure meaning.
 - ADR-0015
 - ADR-0018
 - ADR-0019
+- ADR-0020
+- `semantic-api.md`
 - `validation-engine.md`
-- Issues #10, #17, #23, #26
+- Issues #10, #17, #23, #26, #27, #28

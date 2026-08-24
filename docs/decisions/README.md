@@ -29,6 +29,7 @@ For project-wide authority rules, read [`../governance/knowledge-authority.md`](
 | [ADR-0017](ADR-0017-versioned-storage-and-canonical-representation.md) | Versioned storage DTOs, explicit migration, and canonical representation | Accepted | Storage owns immutable versioned DTOs and explicit migrations; unsupported/newer semantics fail closed; canonical bytes are version-defined without inventing #24 numeric semantics |
 | [ADR-0018](ADR-0018-bound-formulas-and-deterministic-binary64.md) | Bound formulas and deterministic finite binary64 semantics | Accepted | Stable-ID projection can fail without source, rename preserves the 4,096-byte authoring limit atomically, and numeric conversion follows representation resource admission |
 | [ADR-0019](ADR-0019-staged-semantic-validation-and-diagnostics.md) | Staged semantic validation and diagnostics contract | Accepted | Separates hard admission, diagnosable semantic candidates, deterministic full validation, semantic-ID diagnostics, and operation gating without adding a validation framework or transport contract |
+| [ADR-0020](ADR-0020-first-class-headless-semantic-api.md) | First-class Headless Semantic API boundary | Accepted | All first-party semantic clients share transport-neutral query/command/propose/execute, gating, atomicity, capability-addressability, and compatibility laws; current Rust/serde/transport shapes remain non-authoritative |
 
 ## How to use ADRs
 
