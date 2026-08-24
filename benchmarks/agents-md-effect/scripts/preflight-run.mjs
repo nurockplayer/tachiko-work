@@ -10,6 +10,7 @@ import {
   readlink,
   readdir,
   realpath,
+  stat,
   statfs,
   writeFile,
 } from "node:fs/promises";
@@ -24,7 +25,7 @@ const CONTROL_ARTIFACTS = [
   "evaluator/production-oracles.json",
 ];
 const INSTRUCTION_FILES = new Set(["AGENTS.md", "CLAUDE.md", "GEMINI.md"]);
-const RUN_ROOT_LABEL = /(?:^|[-_.])(?:benchmarks?|protocol|baseline|variant|control|oracle|case|tw-0[1-9]|arm[-_.]?[ab])(?:$|[-_.])/i;
+const RUN_ROOT_NAME = /^r-[0-9a-f]{32}$/;
 
 function usage() {
   console.error(
@@ -121,6 +122,14 @@ async function scanWorkspaceInstructions(workspace, expectedAgentsSha256) {
       if (INSTRUCTION_FILES.has(child) && candidate !== rootAgents) {
         fail(`nested workspace instruction exposure: ${candidate}`);
       }
+      if (info.isSymbolicLink()) {
+        const target = await stat(candidate).catch(() => {
+          fail(`workspace contains an unresolved symlink: ${candidate}`);
+        });
+        if (target.isDirectory()) {
+          fail(`workspace contains a symlinked directory: ${candidate}`);
+        }
+      }
       if (info.isDirectory()) await walk(candidate);
     }
   }
@@ -191,6 +200,7 @@ async function rustupWhich(rustupPath, executable) {
 async function hashTree(root) {
   const entries = [];
   let fileBytes = 0;
+  let regularFiles = 0;
   async function walk(directory) {
     const children = await readdir(directory);
     children.sort();
@@ -203,6 +213,7 @@ async function hashTree(root) {
         await walk(absolute);
       } else if (info.isFile()) {
         const bytes = await readFile(absolute);
+        regularFiles += 1;
         fileBytes += bytes.length;
         entries.push({ path, type: "file", bytes: bytes.length, sha256: sha256(bytes) });
       } else if (info.isSymbolicLink()) {
@@ -216,6 +227,7 @@ async function hashTree(root) {
   return {
     path: root,
     entries: entries.length,
+    regular_files: regularFiles,
     file_bytes: fileBytes,
     sha256: sha256(Buffer.from(`${JSON.stringify(entries)}\n`, "utf8")),
   };
@@ -270,6 +282,16 @@ async function validateReceiptPath(receipt, artifactDir, runRoot) {
   return resolve(parent, receiptName);
 }
 
+async function resolveRunDirectory(name, runRoot) {
+  const value = process.env[name];
+  if (!value) fail(`${name} must be set`);
+  const resolved = await realpath(value);
+  const info = await lstat(resolved);
+  if (!info.isDirectory()) fail(`${name} must name a directory`);
+  if (!relativePath(runRoot, resolved)) fail(`${name} must remain within the opaque run root`);
+  return resolved;
+}
+
 let receiptPath;
 try {
   const args = parseArgs(process.argv.slice(2));
@@ -298,13 +320,37 @@ try {
   if (dirname(home) !== runRoot || dirname(codexHome) !== runRoot) {
     fail("workspace, HOME, and CODEX_HOME must be direct children of one run root");
   }
-  if (RUN_ROOT_LABEL.test(basename(runRoot))) fail("run root must use an opaque neutral name");
+  if (!RUN_ROOT_NAME.test(basename(runRoot))) {
+    fail("run root must use the opaque r-<32-lowercase-hex> name grammar");
+  }
   if (relativePath(runRoot, artifactDir)) fail("controller artifacts must be outside the agent run root");
   receiptPath = await validateReceiptPath(resolve(args.get("--receipt")), artifactDir, runRoot);
-  const [environmentHome, environmentCodexHome] = await Promise.all([
-    process.env.HOME ? realpath(process.env.HOME) : Promise.resolve(undefined),
-    process.env.CODEX_HOME ? realpath(process.env.CODEX_HOME) : Promise.resolve(undefined),
-  ]);
+  if (!process.env.PATH) fail("PATH must be set");
+  for (const [name, expected] of Object.entries({
+    LANG: "C.UTF-8",
+    LC_ALL: "C.UTF-8",
+    TZ: "UTC",
+    CARGO_INCREMENTAL: "0",
+    CARGO_NET_OFFLINE: "true",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_ATTR_NOSYSTEM: "1",
+  })) {
+    if (process.env[name] !== expected) fail(`${name} must equal ${expected}`);
+  }
+  for (const name of ["RUSTUP_HOME", "PNPM_HOME"]) {
+    if (!process.env[name]) fail(`${name} must be set`);
+  }
+  if (process.env.CARGO_TARGET_DIR !== undefined) {
+    fail("CARGO_TARGET_DIR must be absent so clone-local target directories are used");
+  }
+  const [environmentHome, environmentCodexHome, environmentTmpdir, environmentCargoHome] =
+    await Promise.all([
+      resolveRunDirectory("HOME", runRoot),
+      resolveRunDirectory("CODEX_HOME", runRoot),
+      resolveRunDirectory("TMPDIR", runRoot),
+      resolveRunDirectory("CARGO_HOME", runRoot),
+    ]);
   if (environmentHome !== home) fail("HOME must equal the supplied neutral HOME");
   if (environmentCodexHome !== codexHome) {
     fail("CODEX_HOME must equal the supplied neutral CODEX_HOME");
@@ -361,6 +407,9 @@ try {
     command(rustc.path, ["--print", "target-libdir", "--target", "wasm32-unknown-unknown"]),
   );
   const rustTarget = { target: "wasm32-unknown-unknown", ...(await hashTree(rustTargetPath)) };
+  if (rustTarget.regular_files === 0 || rustTarget.file_bytes === 0) {
+    fail("wasm32-unknown-unknown target has no regular artifacts");
+  }
   const receipt = {
     protocol_id: controls.protocol_id,
     valid: true,
@@ -368,14 +417,29 @@ try {
     environment: {
       HOME: process.env.HOME,
       CODEX_HOME: process.env.CODEX_HOME,
+      TMPDIR: process.env.TMPDIR,
       PATH: process.env.PATH ?? "",
       LANG: process.env.LANG ?? null,
       LC_ALL: process.env.LC_ALL ?? null,
       TZ: process.env.TZ ?? null,
+      CARGO_INCREMENTAL: process.env.CARGO_INCREMENTAL,
+      CARGO_NET_OFFLINE: process.env.CARGO_NET_OFFLINE,
+      CARGO_HOME: process.env.CARGO_HOME,
+      RUSTUP_HOME: process.env.RUSTUP_HOME,
+      PNPM_HOME: process.env.PNPM_HOME,
+      GIT_CONFIG_NOSYSTEM: process.env.GIT_CONFIG_NOSYSTEM,
+      GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL,
+      GIT_ATTR_NOSYSTEM: process.env.GIT_ATTR_NOSYSTEM,
       expected_agents_sha256: expectedAgentsSha256,
       expected_control_sha256: expectedControlSha256,
     },
-    filesystem: { workspace: workspaceIdentity, home: homeIdentity, codex_home: codexHomeIdentity },
+    filesystem: {
+      workspace: workspaceIdentity,
+      home: homeIdentity,
+      codex_home: codexHomeIdentity,
+      tmpdir: await filesystemIdentity(environmentTmpdir),
+      cargo_home: await filesystemIdentity(environmentCargoHome),
+    },
     scans: {
       workspace_instructions: instructions,
       home: { entries: homeEntries },

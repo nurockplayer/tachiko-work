@@ -174,17 +174,23 @@ test("production oracle manifest covers every frozen operational input exactly o
   }
 });
 
-async function createPreflightFixture({ runRoot = "opaque-run", parentName } = {}) {
+async function createPreflightFixture(
+  { runRoot = "r-0123456789abcdef0123456789abcdef", parentName } = {},
+) {
   const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-preflight-"));
   const root = resolve(fixtureRoot, parentName ?? "", runRoot);
   const workspace = resolve(root, "workspace");
   const home = resolve(root, "home");
   const codexHome = resolve(root, "codex-home");
+  const tmpDir = resolve(root, "tmp");
+  const cargoHome = resolve(root, "cargo-home");
   const artifactDir = resolve(fixtureRoot, "controls");
   await Promise.all([
     mkdir(workspace, { recursive: true }),
     mkdir(home, { recursive: true }),
     mkdir(codexHome, { recursive: true }),
+    mkdir(tmpDir, { recursive: true }),
+    mkdir(cargoHome, { recursive: true }),
     cp(benchmarkDir, artifactDir, { recursive: true }),
   ]);
   const agents = resolve(workspace, "AGENTS.md");
@@ -195,6 +201,8 @@ async function createPreflightFixture({ runRoot = "opaque-run", parentName } = {
     workspace,
     home,
     codexHome,
+    tmpDir,
+    cargoHome,
     artifactDir,
     receipt: resolve(artifactDir, "receipts", "receipt.json"),
     expectedAgentsSha256: sha256(await readFile(agents)),
@@ -225,20 +233,66 @@ function runPreflight(
   if (includeExpectedControl) {
     argumentsForPreflight.push("--expected-control-sha256", fixture.expectedControlSha256);
   }
+  const childEnvironment = {
+    ...process.env,
+    HOME: fixture.home,
+    CODEX_HOME: fixture.codexHome,
+    TMPDIR: fixture.tmpDir,
+    LANG: "C.UTF-8",
+    LC_ALL: "C.UTF-8",
+    TZ: "UTC",
+    CARGO_INCREMENTAL: "0",
+    CARGO_NET_OFFLINE: "true",
+    CARGO_HOME: fixture.cargoHome,
+    RUSTUP_HOME: process.env.RUSTUP_HOME ?? resolve(process.env.HOME, ".rustup"),
+    PNPM_HOME: process.env.PNPM_HOME ?? dirname(process.execPath),
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_ATTR_NOSYSTEM: "1",
+    ...environment,
+  };
+  delete childEnvironment.CARGO_TARGET_DIR;
   return spawnSync(
     process.execPath,
     argumentsForPreflight,
     {
       encoding: "utf8",
-      env: {
-        ...process.env,
-        HOME: fixture.home,
-        CODEX_HOME: fixture.codexHome,
-        RUSTUP_HOME: process.env.RUSTUP_HOME ?? resolve(process.env.HOME, ".rustup"),
-        ...environment,
-      },
+      env: childEnvironment,
     },
   );
+}
+
+function executablePath(name) {
+  const result = spawnSync("/usr/bin/which", [name], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout.trim();
+}
+
+async function installEmptyWasmTargetFixture(fixture) {
+  const toolDir = resolve(fixture.fixtureRoot, "tool-bin");
+  const emptyTarget = resolve(fixture.fixtureRoot, "empty-wasm-target");
+  const actualRustup = executablePath("rustup");
+  const actualRustc = spawnSync(actualRustup, ["which", "rustc"], { encoding: "utf8" });
+  assert.equal(actualRustc.status, 0, actualRustc.stderr);
+  const fakeRustc = resolve(toolDir, "rustc");
+  const fakeRustup = resolve(toolDir, "rustup");
+  await Promise.all([mkdir(toolDir), mkdir(emptyTarget)]);
+  await writeFile(
+    fakeRustc,
+    `#!/bin/sh\nif [ "$1" = "--print" ] && [ "$2" = "target-libdir" ] && ` +
+      `[ "$3" = "--target" ] && [ "$4" = "wasm32-unknown-unknown" ]; then\n` +
+      `  printf '%s\\n' ${JSON.stringify(emptyTarget)}\n  exit 0\nfi\n` +
+      `exec ${JSON.stringify(actualRustc.stdout.trim())} "$@"\n`,
+    { mode: 0o755 },
+  );
+  await writeFile(
+    fakeRustup,
+    `#!/bin/sh\nif [ "$1" = "which" ] && [ "$2" = "rustc" ]; then\n` +
+      `  printf '%s\\n' ${JSON.stringify(fakeRustc)}\n  exit 0\nfi\n` +
+      `exec ${JSON.stringify(actualRustup)} "$@"\n`,
+    { mode: 0o755 },
+  );
+  return { PATH: `${toolDir}:${process.env.PATH}` };
 }
 
 async function withPreflightFixture(options, body) {
@@ -280,6 +334,26 @@ test("preflight accepts an empty neutral HOME and CODEX_HOME and records real ob
     assert.equal(receipt.rust_target.target, "wasm32-unknown-unknown");
     assert.match(receipt.rust_target.sha256, /^[0-9a-f]{64}$/);
     assert.ok(receipt.rust_target.file_bytes > 0);
+    assert.ok(receipt.rust_target.regular_files > 0);
+    assert.deepEqual(receipt.environment, {
+      HOME: fixture.home,
+      CODEX_HOME: fixture.codexHome,
+      TMPDIR: fixture.tmpDir,
+      PATH: process.env.PATH,
+      LANG: "C.UTF-8",
+      LC_ALL: "C.UTF-8",
+      TZ: "UTC",
+      CARGO_INCREMENTAL: "0",
+      CARGO_NET_OFFLINE: "true",
+      CARGO_HOME: fixture.cargoHome,
+      RUSTUP_HOME: process.env.RUSTUP_HOME ?? resolve(process.env.HOME, ".rustup"),
+      PNPM_HOME: process.env.PNPM_HOME ?? dirname(process.execPath),
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_ATTR_NOSYSTEM: "1",
+      expected_agents_sha256: fixture.expectedAgentsSha256,
+      expected_control_sha256: fixture.expectedControlSha256,
+    });
     assert.ok(receipt.free_space.bytes > 0);
     assert.ok(receipt.controls.artifacts.some((entry) => entry.path === "environment-lock.json"));
     assert.ok(
@@ -336,6 +410,18 @@ test("preflight rejects nested instruction files", async () => {
   });
 });
 
+test("preflight rejects a workspace symlinked directory that hides instructions", async () => {
+  await withPreflightFixture({}, async (fixture) => {
+    const outside = resolve(fixture.fixtureRoot, "outside-instructions");
+    await mkdir(outside);
+    await writeFile(resolve(outside, "AGENTS.md"), "hidden instruction\n");
+    await symlink(outside, resolve(fixture.workspace, "benign-directory"));
+    const result = runPreflight(fixture);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /workspace contains a symlinked directory/i);
+  });
+});
+
 test("preflight rejects skills exposed through neutral HOME", async () => {
   await withPreflightFixture({}, async (fixture) => {
     await mkdir(resolve(fixture.home, ".codex", "skills"), { recursive: true });
@@ -354,11 +440,29 @@ test("preflight rejects unexpected neutral HOME content", async () => {
   });
 });
 
-test("preflight rejects semantic labels in the derived run root", async () => {
-  await withPreflightFixture({ runRoot: "baseline-a" }, async (fixture) => {
+test("preflight rejects semantic-label bypasses in the run-root basename", async () => {
+  await withPreflightFixture({ runRoot: "variantb" }, async (fixture) => {
     const result = runPreflight(fixture);
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /run root must use an opaque neutral name/i);
+    assert.match(result.stderr, /run root must use the opaque r-<32-lowercase-hex> name grammar/i);
+  });
+});
+
+test("preflight rejects an empty WASM target artifact directory", async () => {
+  await withPreflightFixture({}, async (fixture) => {
+    const result = runPreflight(fixture, {
+      environment: await installEmptyWasmTargetFixture(fixture),
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /wasm32-unknown-unknown target has no regular artifacts/i);
+  });
+});
+
+test("preflight rejects a controlled environment mismatch", async () => {
+  await withPreflightFixture({}, async (fixture) => {
+    const result = runPreflight(fixture, { environment: { CARGO_NET_OFFLINE: "false" } });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /CARGO_NET_OFFLINE must equal true/i);
   });
 });
 
