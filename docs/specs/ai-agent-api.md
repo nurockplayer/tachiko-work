@@ -1,8 +1,8 @@
 # AI Agent API Specification
 
-Decision state: Mixed. ADR-0007 establishes AI as a delegated semantic client with no intrinsic authority, keeps every AI-originated canonical mutation approval-gated at the current MVP stage, and separates semantic validity from authorization. ADR-0020 establishes the first-class Headless Semantic API as the semantic behavior boundary shared by AI and other first-party clients. Exact capability identifiers, principals, grants, approval tokens, execution authorization, provenance, stale/replay mechanics, and runtime placement remain #27/#28/#26 as applicable.
+Decision state: Mixed. ADR-0007 establishes AI as a delegated semantic client with no intrinsic authority, keeps every AI-originated canonical mutation approval-gated at the current MVP stage, and separates semantic validity from authorization. ADR-0020 establishes the first-class Headless Semantic API as the semantic behavior boundary shared by AI and other first-party clients. ADR-0021 permits AI-assisted progressive semantic strengthening while keeping inference advisory rather than authoritative. Exact capability identifiers, principals, grants, approval tokens, execution authorization, provenance, stale/replay mechanics, runtime placement, and promotion DTOs remain Deferred as owned elsewhere.
 
-Implementation state: the provider-free `tachiko-ai-api` crate implements a v0.1 AI-facing read/explain/suggest adapter over `tachiko-workspace-engine`. The current Rust DTOs are not the public Semantic API contract.
+Implementation state: the provider-free `tachiko-ai-api` crate implements a v0.1 AI-facing read/explain/suggest adapter over `tachiko-workspace-engine`. The current Rust DTOs are not the public Semantic API contract. No general schema-inference or freeform-promotion pipeline is implemented.
 
 ## Principle
 
@@ -26,6 +26,8 @@ AI must not simulate mouse/keyboard usage as the primary architecture and must n
 - compatibility/versioning laws.
 
 ADR-0007 adds the AI-authority constraint: a first-party AI Execute path must use the same shared semantic transition/gating behavior and must cross trusted authorization/approval enforcement. That enforcement is mandatory as an architecture invariant, but its concrete principal model, grant protocol, approval representation, provenance shape, and runtime placement are not defined here.
+
+ADR-0021 adds a content-strengthening constraint: AI may analyze weak/freeform semantic content and propose stronger structure, but probabilistic inference is advisory evidence. Only an explicitly accepted typed semantic transition may change canonical semantic meaning.
 
 The AI layer owns provider/agent-facing projections and review presentation. It does not become a parallel semantic API and must not be the sole enforcement point for canonical mutation authority.
 
@@ -80,20 +82,50 @@ A semantic edit capability must not imply filesystem, network, process, Git push
 
 Storage and host adapters may materialize or externally publish an authorized semantic result under their own authority; they do not redefine semantic meaning or grant semantic permission.
 
+## Progressive semantic strengthening
+
+ADR-0021 allows AI to assist a future weak-to-strong semantic transition, but it does not grant AI structure-authority.
+
+AI may propose, for example:
+
+- candidate entity/schema boundaries;
+- candidate field types;
+- relation targets;
+- normalization/mapping plans;
+- exact/lossy/unresolved conversion classifications;
+- schema names or descriptions; and
+- explanations of likely transition effects.
+
+Those outputs are advisory proposal evidence. Probabilistic AI inference MUST NOT be represented as an authoritative Query fact merely because it is emitted in structured form.
+
+AI MUST NOT:
+
+- silently commit an inferred schema/type/relationship;
+- decide ambiguous identity continuity without explicit semantic rules;
+- retarget durable references by human label/name guessing;
+- coerce weak values into stronger typed claims without exposing loss/ambiguity;
+- weaken formula/reference semantics to accommodate untyped coordinates or labels;
+- treat schema-valid model output as proof that the source-world interpretation is correct; or
+- bypass the ADR-0020 Propose/Execute and ADR-0007 authorization/approval boundary.
+
+Where a future strengthening operation is exposed, AI may use `Propose(Command | AtomicBatch)` to obtain reviewable mappings, diagnostics, semantic impact, and conversion evidence. Only an authorized `Execute` may request semantic publication. Current MVP AI-originated strengthening therefore remains explicitly approval-gated.
+
+A source fragment that has not become a first-class stable-identity semantic object may be used as proposal/migration evidence but is not a durable reference or formula target. Exact source-selection and mapping mechanics remain Provisional.
+
 ## Safety
 
 AI operations should be:
 
-- typed;
+- typed where they claim typed semantic intent;
 - validated;
 - reviewable;
 - capability-bounded;
 - approval-gated where mutation authority requires it;
 - provider-neutral in semantic and authorization meaning;
-- deterministic in semantic evaluation; and
+- deterministic in authoritative semantic evaluation; and
 - non-persistent unless an explicitly authorized Execute path performs the same shared semantic operation used by other first-party clients and the relevant host/persistence authority also permits the side effect.
 
-Machine-generated statements such as `validated=true`, `approved=true`, or high confidence never substitute for deterministic Tachiko validation or trusted authorization/approval evidence.
+Machine-generated statements such as `validated=true`, `approved=true`, high confidence, or inferred schema conformance never substitute for deterministic Tachiko validation or trusted authorization/approval evidence.
 
 ## Formula suggestions
 
@@ -105,7 +137,7 @@ Implemented formula suggestions:
 - require a separate approved host execution before semantic publication; and
 - never replace formulas with scalars automatically (formula-to-scalar suggestions are rejected).
 
-These behaviors are current implementation evidence constrained by the Accepted formula/validation contracts. The exact proposal DTO is not stabilized by ADR-0007 or ADR-0020.
+These behaviors are current implementation evidence constrained by the Accepted formula/validation contracts. The exact proposal DTO is not stabilized by ADR-0007, ADR-0020, or ADR-0021.
 
 ## Project Memory
 
@@ -113,4 +145,4 @@ Issue #104 may later consume read/query/propose capabilities as a dogfood case. 
 
 ## Goal
 
-AI is a native, capability-bounded semantic participant that uses the same meaning and operation authority as human-facing clients while exercising only explicitly delegated authority. Provider-specific interaction remains replaceable, and approval/security mechanisms remain enforced by trusted product boundaries rather than by model claims or adapter convention.
+AI is a native, capability-bounded semantic participant that uses the same meaning and operation authority as human-facing clients while exercising only explicitly delegated authority. It may help discover and propose stronger structure, but inference remains advisory until an accepted semantic transition changes meaning. Provider-specific interaction remains replaceable, and approval/security mechanisms remain enforced by trusted product boundaries rather than by model claims or adapter convention.
