@@ -16,12 +16,12 @@ The format documents have different roles. Do not treat similarly named files as
 | [`ro-format-v1.md`](ro-format-v1.md) | Exact deterministic direct `.ro` JSON behavior shipped by the v0.1 CLI | Immutable legacy compatibility / migration source |
 | [`ro-format-v2.md`](ro-format-v2.md) | Current identity-aware direct `.ro` JSON DTO, canonical writer, Number/resource profile, and bound references | Mixed: Accepted ADR-0015/ADR-0017/ADR-0018 invariants plus Provisional M02 wire/resource mechanics |
 | [`ro-format.md`](ro-format.md) | Compatibility/navigation entry point for older links | Non-normative navigation stub; follow the format documents above |
-| [`roproj-format.md`](roproj-format.md) | Target `.roproj` representation | Accepted direction, not yet implemented |
-| [`roproj-layout-v1.md`](roproj-layout-v1.md) | Candidate physical `.roproj` layout | Provisional, not yet implemented; #41 owns layout work |
+| [`roproj-format.md`](roproj-format.md) | Complete version-owned `.roproj/v1` DTO and wire contract | Accepted under ADR-0023; production codec not implemented |
+| [`roproj-layout-v1.md`](roproj-layout-v1.md) | Exact `.roproj/v1` canonical tree, sharding, path, and canonicalization contract | Accepted under ADR-0023; production materialization not implemented |
 | [`runtime-export-v1.md`](runtime-export-v1.md) | Historical evaluated runtime JSON export contract | Frozen historical contract |
 | [`runtime-export-v2.md`](runtime-export-v2.md) | Current stable-identity/normalized-Number evaluated runtime JSON export | Provisional implemented contract |
 
-The semantic model owns meaning. Physical formats are representations. ADR-0017 fixes the versioned storage boundary and canonical-representation invariants; ADR-0018 fixes the admitted-token binary64 conversion and spelling authority. Physical `.roproj` layout and future `.ro` packaging remain separately owned.
+The semantic model owns meaning. Physical formats are representations. ADR-0017 fixes the versioned storage boundary and canonical-representation invariants; ADR-0018 fixes the admitted-token binary64 conversion and spelling authority; ADR-0023 fixes the `.roproj/v1` physical and wire contract without making layout semantic identity. Future `.ro` packaging remains separately owned by #43.
 
 ## Semantic API, core, schema, validation, formulas, and diff
 

@@ -388,7 +388,9 @@ implicitly grant filesystem/network/Git/deployment authority.
 - #95 owns later retained incremental engine state with full-oracle equivalence.
 - #27/#28 own AI capability IDs, principals, grants, approval, provenance, and
   execution authorization.
-- #41 owns `.roproj` layout and materialization.
+- ADR-0023 and the `.roproj/v1` specifications own the Accepted layout and
+  version-owned wire contract; production materialization remains later
+  storage/host implementation work.
 - A dedicated stable public Rust SDK/facade crate is Deferred until downstream
   pressure justifies it.
 
@@ -407,6 +409,7 @@ ADR-0016 baseline must amend that ADR explicitly.
 - [ADR-0019](../decisions/ADR-0019-staged-semantic-validation-and-diagnostics.md)
 - [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md)
 - [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md)
+- [ADR-0023](../decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md)
 - [Semantic API specification](../specs/semantic-api.md)
 - [Semantic core rationale](semantic-core-rationale.md)
 - [Knowledge authority](../governance/knowledge-authority.md)

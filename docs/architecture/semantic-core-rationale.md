@@ -213,7 +213,8 @@ Mechanisms that should remain replaceable until evidence is stronger include:
 
 - the stable-ID generation algorithm;
 - the final `.ro` encoding or public format name;
-- detailed `.roproj` physical layout;
+- the production `.roproj` codec and host-persistence mechanisms, plus
+  physical layouts for versions after the separately Accepted `.roproj/v1`;
 - a complete formula language/standard library;
 - a public plugin ABI;
 - a realtime/CRDT collaboration algorithm;

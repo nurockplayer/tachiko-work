@@ -30,27 +30,35 @@ file never rewrites it.
 This path is used by the current CLI, semantic diff/merge, validation, formula
 authoring, and product smoke journeys.
 
-This is a transitional implementation state, not a reversal of ADR-0003. The canonical `.roproj` editable materialization and deterministic `.roproj` ↔ `.ro` pack/unpack path are not yet implemented.
+This is a transitional implementation state, not a reversal of ADR-0003.
+ADR-0023 fixes the `.roproj/v1` durable representation contract, but its
+production materializer and the deterministic `.roproj` ↔ `.ro` pack/unpack
+path are not yet implemented.
 
 ## Target Git working representation
 
 ```text
 project.roproj/
 ├── manifest.json
-├── schema.json
-├── data/
-│   ├── enemies.jsonl
-│   └── weapons.jsonl
-├── formulas/
-├── views/
-└── tests/
+├── schemas.json
+└── entities/
+    ├── 0.jsonl
+    ├── ...
+    └── f.jsonl
 ```
 
-The exact physical layout remains evolvable until implementation, but it must satisfy ADR-0003 requirements for deterministic, Git-friendly semantic materialization.
+The 16 entity shards are fixed and always present. Their names and record
+placement are version-scoped materialization, never semantic identity. Bound
+formulas remain inline; assets, shared views, semantic tests, caches, and
+generated `.ro` remain outside the v1 canonical tree. The exact normative
+layout and DTO contracts live in
+[`roproj-layout-v1.md`](../specs/roproj-layout-v1.md) and
+[`roproj-format.md`](../specs/roproj-format.md).
 
 ## Rule
 
 - Current product behavior must document `.ro` as the implemented v0.1 persistence format.
 - Architecture documents must document `.roproj` as the Accepted canonical editable target under ADR-0003.
+- `.roproj/v1` documents must follow ADR-0023's Accepted physical and wire contract without treating paths, shard names, or line numbers as semantic identity.
 - `.ro` packaging sophistication must not block semantic-core or user-workflow validation.
 - The system does not yet provide deterministic `.ro` ↔ `.roproj` conversion.
