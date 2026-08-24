@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { dirname, join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const benchmarkDir = resolve(testDir, "..");
+const preflightScript = resolve(benchmarkDir, "scripts/preflight-run.mjs");
 
 async function readJson(path) {
   return JSON.parse(await readFile(path, "utf8"));
@@ -137,4 +140,138 @@ test("production oracle manifest covers every frozen operational input exactly o
       `${caseEntry.id} subjective groups must enter blinded review`,
     );
   }
+});
+
+async function createPreflightFixture({ runRoot = "opaque-run" } = {}) {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-preflight-"));
+  const root = resolve(fixtureRoot, runRoot);
+  const workspace = resolve(root, "workspace");
+  const home = resolve(root, "home");
+  const codexHome = resolve(root, "codex-home");
+  const artifactDir = resolve(fixtureRoot, "controls");
+  await Promise.all([
+    mkdir(workspace, { recursive: true }),
+    mkdir(home, { recursive: true }),
+    mkdir(codexHome, { recursive: true }),
+    cp(benchmarkDir, artifactDir, { recursive: true }),
+  ]);
+  return {
+    fixtureRoot,
+    workspace,
+    home,
+    codexHome,
+    artifactDir,
+    receipt: resolve(fixtureRoot, "receipt.json"),
+  };
+}
+
+function runPreflight(fixture, environment = {}) {
+  return spawnSync(
+    process.execPath,
+    [
+      preflightScript,
+      "--workspace",
+      fixture.workspace,
+      "--home",
+      fixture.home,
+      "--codex-home",
+      fixture.codexHome,
+      "--artifact-dir",
+      fixture.artifactDir,
+      "--receipt",
+      fixture.receipt,
+    ],
+    {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        HOME: fixture.home,
+        CODEX_HOME: fixture.codexHome,
+        ...environment,
+      },
+    },
+  );
+}
+
+async function withPreflightFixture(options, body) {
+  const fixture = await createPreflightFixture(options);
+  try {
+    await body(fixture);
+  } finally {
+    await rm(fixture.fixtureRoot, { recursive: true, force: true });
+  }
+}
+
+test("preflight accepts an empty neutral HOME and CODEX_HOME and records real observations", async () => {
+  await withPreflightFixture({}, async (fixture) => {
+    await writeFile(resolve(fixture.workspace, "AGENTS.md"), "workspace instruction\n");
+    const result = runPreflight(fixture);
+    assert.equal(result.status, 0, result.stderr);
+
+    const receipt = await readJson(fixture.receipt);
+    assert.equal(receipt.valid, true);
+    assert.equal(receipt.paths.workspace, await realpath(fixture.workspace));
+    assert.deepEqual(receipt.scans.home.entries, []);
+    assert.deepEqual(receipt.scans.codex_home.entries, []);
+    assert.ok(receipt.binaries.node.sha256);
+    assert.ok(receipt.free_space.bytes > 0);
+    assert.ok(receipt.controls.artifacts.some((entry) => entry.path === "environment-lock.json"));
+    assert.ok(
+      receipt.controls.artifacts.some(
+        (entry) => entry.path === "evaluator/production-oracles.json",
+      ),
+    );
+  });
+});
+
+test("preflight rejects an instruction file in a workspace ancestor", async () => {
+  await withPreflightFixture({}, async (fixture) => {
+    await writeFile(resolve(dirname(fixture.workspace), "AGENTS.md"), "leaked instruction\n");
+    const result = runPreflight(fixture);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /workspace ancestor instruction exposure/i);
+  });
+});
+
+test("preflight rejects skills exposed through neutral HOME", async () => {
+  await withPreflightFixture({}, async (fixture) => {
+    await mkdir(resolve(fixture.home, ".codex", "skills"), { recursive: true });
+    const result = runPreflight(fixture);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /neutral HOME must be empty/i);
+  });
+});
+
+test("preflight rejects unexpected neutral HOME content", async () => {
+  await withPreflightFixture({}, async (fixture) => {
+    await writeFile(resolve(fixture.home, ".profile"), "unexpected\n");
+    const result = runPreflight(fixture);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /neutral HOME must be empty/i);
+  });
+});
+
+test("preflight rejects semantic labels in the derived run root", async () => {
+  await withPreflightFixture({ runRoot: "baseline-a" }, async (fixture) => {
+    const result = runPreflight(fixture);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /run root must use an opaque neutral name/i);
+  });
+});
+
+test("preflight fails closed when a registered control digest changes", async () => {
+  await withPreflightFixture({}, async (fixture) => {
+    const first = runPreflight(fixture);
+    assert.equal(first.status, 0, first.stderr);
+    const firstReceipt = await readJson(fixture.receipt);
+
+    const environmentLock = resolve(fixture.artifactDir, "environment-lock.json");
+    await writeFile(environmentLock, `${await readFile(environmentLock, "utf8")} `);
+    fixture.receipt = resolve(fixture.fixtureRoot, "mutated-receipt.json");
+    const second = runPreflight(fixture, {
+      PREFLIGHT_CONTROL_SHA256: firstReceipt.controls.sha256,
+    });
+    assert.notEqual(second.status, 0);
+    assert.match(second.stderr, /control SHA-256 mismatch/i);
+  });
 });
