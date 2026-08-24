@@ -40,7 +40,9 @@ integrity, Git integration, semantic delta, or merge protocol.
 ### 1. `.roproj/v1` has one closed canonical tree
 
 Every canonical `.roproj/v1` materialization contains exactly these 18 regular
-files and no other children:
+files at the shown paths. Its root contains only `manifest.json`,
+`schemas.json`, and the required `entities/` directory; that directory
+contains exactly the 16 files shown and no subdirectories:
 
 ```text
 project.roproj/
@@ -149,25 +151,37 @@ semantics; they prevent this layout decision from inventing them.
 
 The canonicalizer accepts only this bounded input family:
 
-- `manifest.json` and `schemas.json` occur at their exact required locations;
+- `manifest.json`, `schemas.json`, and the ordinary `entities/` directory occur
+  at their exact required locations;
+- after manifest-first v1 selection, the two JSON files may use non-canonical
+  structural whitespace, object-member order, legal string/token spelling,
+  and schema/field stable-ID order;
 - regular `*.jsonl` files below `entities/` may have non-canonical names,
-  nesting, placement, record order, in-record JSON whitespace, or other legal
-  JSON spelling, while blank records remain invalid;
+  nesting, placement, record order, object-member order, legal string/token
+  spelling, or non-LF JSON whitespace within a physical record;
+- every nonempty JSONL input is a sequence of exactly-one-object records, each
+  terminated by one LF; a physical LF cannot occur inside a record, and blank
+  records or other inter-record bytes are invalid;
 - missing canonical empty shards and extra empty JSONL inputs are admissible;
   and
 - no path component supplies semantic identity or relationship meaning.
 
-It rejects symlinks, non-regular files, unknown top-level children, and
-non-JSONL files below `entities/` rather than following or silently dropping
-them. It also fails closed on duplicate JSON members, blank JSONL records,
-unknown DTO members, duplicate entity IDs across all accepted input files, and
-invalid DTO or semantic content.
+Ordinary directories below `entities/` are admissible only as traversal
+ancestors of at least one accepted regular `*.jsonl` file. Empty directories
+and directories without such a descendant are rejected. The canonicalizer
+also rejects symlinks, non-regular non-directory entries, unknown top-level
+children, and non-JSONL files below `entities/` rather than following or
+silently dropping them. It fails closed on duplicate JSON members, blank JSONL
+records, unknown DTO members, duplicate schema IDs, duplicate field IDs within
+an owning schema, duplicate entity IDs across all accepted entity inputs, and
+invalid DTO or semantic content. Lexically equal IDs of different declared
+types are not duplicates merely because their string spellings match.
 
 The processing order is manifest-first dispatch, strict version-owned DTO
-decode, cross-file stable-ID uniqueness proof, conversion to the semantic
-aggregate, the operation's Accepted validation gate, and fresh canonical
-materialization. Reading or inspecting non-canonical input does not authorize
-an implicit durable rewrite.
+decode, uniqueness proof at each DTO collection's declared ID scope,
+conversion to the semantic aggregate, the operation's Accepted validation
+gate, and fresh canonical materialization. Reading or inspecting non-canonical
+input does not authorize an implicit durable rewrite.
 
 ## Compatibility and preserved authority
 

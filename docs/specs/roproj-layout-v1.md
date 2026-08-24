@@ -22,8 +22,10 @@ separate derived portable artifact.
 
 ## Canonical tree
 
-Every canonical `.roproj/v1` tree contains exactly these 18 regular files and
-no other children:
+Every canonical `.roproj/v1` tree contains exactly these 18 regular files at
+the shown paths. Its root contains only `manifest.json`, `schemas.json`, and
+the required `entities/` directory; that directory contains exactly the 16
+files shown and no subdirectories:
 
 ```text
 project.roproj/
@@ -121,25 +123,41 @@ not duplicate or replace that version-owned boundary.
 A `.roproj/v1` canonicalizer accepts a bounded non-canonical input family, not
 arbitrary directory discovery:
 
-1. `manifest.json` and `schemas.json` are required at their exact locations.
-2. Regular `*.jsonl` files beneath `entities/` may have non-canonical names,
-   nesting, shard placement, record order, in-record JSON whitespace, or other
-   legal JSON spellings. Blank records and inter-record whitespace remain
-   invalid.
-3. Missing canonical empty shards and extra empty JSONL input files are
+1. `manifest.json`, `schemas.json`, and an ordinary `entities/` directory are
+   required at their exact locations.
+2. After manifest-first v1 selection, `manifest.json` and `schemas.json` may
+   use non-canonical structural whitespace, object-member order, legal
+   string/token spelling, and schema/field stable-ID order. Required members,
+   the lexical version token, duplicates, unknown members, and DTO meaning
+   remain strict.
+3. Regular `*.jsonl` files beneath `entities/` may have non-canonical names,
+   nesting, shard placement, record order, object-member order, legal
+   string/token spelling, or RFC 8259 JSON whitespace other than LF within a
+   physical record. Each record is exactly one JSON object terminated by one
+   LF. A physical LF cannot occur within the record; blank records, multiple
+   values on one record, and every other inter-record byte are invalid.
+4. Missing canonical empty shards and extra empty JSONL input files are
    admissible.
-4. Symlinks, non-regular files, unknown top-level children, and non-JSONL
-   files below `entities/` are rejected rather than followed or ignored.
-5. Duplicate JSON members, blank records, unknown DTO members, duplicate
-   entity IDs across all entity inputs, and invalid DTO or semantic content
-   fail closed.
+5. Ordinary directories below `entities/` are admitted only as ancestors of
+   at least one accepted regular `*.jsonl` file. Empty directories and
+   directories without such a descendant are rejected.
+6. Symlinks, non-regular non-directory entries, unknown top-level children,
+   and non-JSONL files below `entities/` are rejected rather than followed or
+   ignored.
+7. Duplicate JSON members, blank records, unknown DTO members, duplicate
+   schema IDs, duplicate field IDs within an owning schema, duplicate entity
+   IDs across all entity inputs, and invalid DTO or semantic content fail
+   closed. Equal strings used for different declared ID types are not a
+   cross-type duplicate.
 
 Canonicalization proceeds in this order:
 
 ```text
 manifest-first version dispatch
   -> strict version-owned DTO decode
-  -> cross-file stable-ID uniqueness proof
+  -> SchemaId uniqueness across schemas
+  -> FieldId uniqueness within each owning schema
+  -> EntityId uniqueness across all entity inputs
   -> semantic aggregate conversion
   -> applicable Accepted validation gate
   -> fresh canonical v1 tree

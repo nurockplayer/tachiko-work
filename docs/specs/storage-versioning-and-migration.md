@@ -1,12 +1,16 @@
 # Storage Versioning and Migration Contract
 
-Decision state: Mixed — Accepted invariants under ADR-0017; Milestone 02 representation mechanics are Provisional where marked.
+Decision state: Mixed — Accepted invariants under ADR-0017 and Accepted
+`.roproj/v1` namespace, DTO, dispatch, and canonicalization rules under
+ADR-0023; direct-JSON Milestone 02 representation mechanics are Provisional
+where marked.
 
 Implementation state: Implemented for frozen `legacy-direct-ro/v1`, explicit
 deterministic v1→v2 migration, canonical identity-aware `direct-ro/v2`, and the
-normal direct-JSON Stage-0 admission profile.
+normal direct-JSON Stage-0 admission profile. The Accepted `.roproj/v1`
+contract is not yet implemented by a production codec.
 
-Authority: ADR-0017
+Authority: ADR-0017; ADR-0023 for `.roproj/v1`
 
 Implementation parent: #74
 
@@ -164,22 +168,33 @@ The Accepted `.roproj/v1` canonical tree is the exact eighteen-file tree in
 `entities/f.jsonl`. It has no tree digest or other integrity/inventory field.
 Canonical paths and file bodies are compared exactly, not through a digest.
 
-An explicit canonicalization operation has a deliberately bounded
-non-canonical input family. It requires `manifest.json` and `schemas.json` at
-their exact root locations. Beneath `entities/`, it may admit regular
-`*.jsonl` files at non-canonical names or nesting, non-canonical record order
-or shard placement, alternate legal JSON spelling within a record, missing
-canonical empty buckets, and extra empty JSONL inputs. It does not follow
-symlinks, accept non-regular files, admit unknown top-level children, or admit
-non-JSONL files below `entities/`. JSONL still rejects blank records and every
-inter-record whitespace other than its one LF delimiter.
+An explicit canonicalization operation has the deliberately bounded
+non-canonical input family in
+[`roproj-layout-v1.md`](roproj-layout-v1.md). It requires `manifest.json`,
+`schemas.json`, and an ordinary `entities/` directory at their exact root
+locations. The two JSON files may use the admitted non-canonical JSON spelling
+and stable-ID collection order after manifest-first dispatch. Beneath
+`entities/`, regular `*.jsonl` files may have non-canonical names or nesting,
+record order or shard placement, object-member order, legal token spelling, or
+non-LF JSON whitespace inside a physical record. Each record is exactly one
+JSON object terminated by LF; blank records and all other inter-record bytes
+are rejected.
+
+Ordinary directories below `entities/` are admitted only as ancestors of at
+least one accepted regular `*.jsonl` file; unrelated empty directories are
+rejected. Missing canonical empty buckets and extra empty JSONL inputs are
+admissible. The operation does not follow symlinks, accept non-regular
+non-directory entries, admit unknown top-level children, or admit non-JSONL
+files below `entities/`.
 
 For that bounded family, the required order is:
 
 ```text
 select `.roproj` version from the exact manifest envelope
 → strictly decode all selected version-owned DTOs
-→ prove stable-ID uniqueness across every schema/entity file and record
+→ prove SchemaId uniqueness across schemas
+→ prove FieldId uniqueness within each owning schema
+→ prove EntityId uniqueness across every entity input
 → convert to the semantic aggregate
 → apply the operation's Accepted validation gate
 → emit a fresh exact canonical `.roproj/v1` tree

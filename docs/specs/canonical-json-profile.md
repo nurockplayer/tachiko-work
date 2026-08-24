@@ -3,7 +3,8 @@
 Decision state: Mixed — deterministic/semantic-preservation rules under ADR-0017 and the finite-binary64 numeric primitive under ADR-0018 are Accepted. The `.roproj/v1` rules adopted below are Accepted for that representation; direct-JSON textual/resource-limit mechanics remain version-specific and Provisional outside a version that adopts them.
 
 Implementation state: Implemented by the dedicated `direct-ro/v2` canonical
-writer. Frozen v1 retains its historical version-scoped writer.
+writer. Frozen v1 retains its historical version-scoped writer. The Accepted
+`.roproj/v1` profile is not yet implemented by a production codec.
 
 Authority: ADR-0017
 
@@ -85,7 +86,8 @@ or a future `.ro` package profile.
 ### Exact canonical tree
 
 Every canonical `.roproj/v1` materialization contains exactly these eighteen
-regular UTF-8 text files, relative to the `.roproj` root, and no other path:
+regular UTF-8 text files at the listed paths. The required `entities/`
+directory is the only directory below the root; no other entry exists:
 
 ```text
 manifest.json
@@ -130,6 +132,28 @@ BOM, LF line endings, two ASCII spaces per nesting level, no trailing spaces
 or tabs, and exactly one final LF. They use this profile's deterministic
 escaping, duplicate-member rejection, Unicode preservation, and Number rules.
 
+Their pretty renderer is defined recursively. Let `render(value, depth)` use
+the canonical primitive token, string escaping, and object-member order for
+`value`, where one indentation level is two ASCII spaces:
+
+- a primitive token and an empty object or array render on the current line as
+  that token, `{}`, or `[]`;
+- a nonempty array renders `[` followed by LF, then each element on its own
+  line as `depth + 1` indentation levels followed by
+  `render(element, depth + 1)`, a comma after every element except the last,
+  and LF; it then renders `depth` indentation levels followed by `]`;
+- a nonempty object follows the same line and comma rules with `{` and `}`;
+  each member line is `depth + 1` indentation levels, the canonical JSON
+  string token for the member name, the two bytes `: `, and
+  `render(member_value, depth + 1)`; and
+- no other structural whitespace or blank line is emitted.
+
+The file body is `render(root, 0)` followed by exactly one LF. Thus a nested
+nonempty container's opening delimiter remains on its member or element line,
+while its children and closing delimiter use the recursive indentation above.
+This algorithm, rather than a dependency library's pretty-printer defaults,
+defines punctuation, spacing, and line breaks for arbitrary v1 schema trees.
+
 An entity record is one compact canonical JSON object on exactly one JSONL
 line. A JSONL record has no leading/trailing whitespace and has no whitespace
 between its JSON tokens. The only separator between records is one LF byte;
@@ -137,6 +161,11 @@ blank lines and every other inter-record whitespace are invalid, including a
 second trailing LF. A nonempty shard therefore ends in exactly one LF, while a
 canonical empty shard is exactly zero bytes. A line is not an entity-record
 boundary if it contains only JSON whitespace.
+
+The compact renderer uses the same canonical tokens and declared member and
+collection order, writes `:` and `,` without adjacent structural whitespace,
+and emits no structural whitespace inside the record. The following LF is the
+JSONL record delimiter, not part of the JSON value.
 
 Each record's member order is the `.roproj/v1` DTO's declared order. It carries
 the opaque stable `EntityId`, mutable key, stable schema target, and field
@@ -426,6 +455,8 @@ The direct-JSON conformance work in #40 includes at minimum:
 A future production `.roproj/v1` codec must add representation-owned fixtures
 for:
 
+- recursive pretty-render punctuation and line breaks over nested nonempty and
+  empty objects/arrays, independently of a serializer's default formatter;
 - `.roproj/v1` exact eighteen-path canonical tree, including every empty
   zero-byte shard and every nonempty shard's one final LF;
 - `.roproj/v1` compact one-object JSONL records, rejection of blank lines and
