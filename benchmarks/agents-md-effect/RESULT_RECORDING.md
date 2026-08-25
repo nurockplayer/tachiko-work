@@ -74,6 +74,16 @@ through those surfaces. A separate home-isolation receipt proves the per-attempt
 `HOME` began empty, remained supervisor-owned/read-only and path-identical, and
 was not reused from another observation.
 
+Formal validation/review evidence additionally binds one immutable controller
+context containing phase, wave/run/attempt/candidate IDs, candidate-capture hash,
+and external-authorization hash. Base, core, and oracle receipts bind the active
+kernel network-denial probe. A formal TW-05/TW-09 adapter record binds the sealed
+scaffold lock, disjoint config/probe, eligible independent integrity approval,
+fresh adapter-only TMP, sandbox profile, pre/post candidate and trusted-input
+identities, process-group extinction, and controller-owned post-extinction output
+materialization. A packet or scanner receipt produced without formal context is
+construction-only and cannot satisfy the formal evidence linkage.
+
 For machine assertions the record also binds the qualified production oracle
 command-manifest hash. The historical/construction `commands` in
 `oracle-lock.json` do not satisfy this field; the production manifest must map

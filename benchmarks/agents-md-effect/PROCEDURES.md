@@ -104,7 +104,11 @@ omits them. Freeze the exact command-list hash, base commit/tree, and one receip
 per command. Any failure invalidates that case for the wave; it is not attributed
 to a candidate. For controlled A/B, run this health control immediately before
 the pair and use the same receipt for both arms. The base-control clone is never
-an agent workspace and contributes no score.
+an agent workspace and contributes no score. The controller first actively
+probes the Darwin kernel network-denial profile, then runs every base command
+inside that profile and binds the sandbox executable, profile, probe, and
+process-group supervision receipts. Candidate-core and oracle execution use the
+same deny-network boundary.
 
 The controller entry point is:
 
@@ -356,8 +360,11 @@ node <controller>/scripts/prepare-validation.mjs \
 Require capture-to-apply tree equality and a passing same-wave base-control
 receipt, then run only the case's ten-point
 `core-score-lock.json` commands in this clean candidate commit. Store one command
-receipt per exact command. The following overlay command is a construction
-helper only and is not part of a formal attempt:
+receipt per exact command. A zero-byte/no-op patch is a valid captured candidate:
+reconstruct the historical base, preserve the empty-patch identity in the
+receipt, and continue through core, oracle, review, and score processing. The
+following overlay command is a construction helper only and is not part of a
+formal attempt:
 
 ```sh
 node <controller>/scripts/prepare-oracle-overlay.mjs \
@@ -392,22 +399,39 @@ node <controller>/scripts/run-oracles.mjs \
 TW-05 and TW-09 may additionally provide the content-addressed adapter and
 contract files. If a correct candidate uses a different public seam, the
 controller terminalizes as `awaiting_trusted_adapter`; the custodian may attach
-only a hash-bound name/type adapter and resume validation against the identical
-captured patch. The agent is never relaunched.
+only the operationally locked `candidate-adapter.mjs` scaffold, a disjoint
+reviewer-authored config/probe pair, and a hash-bound eligible independent
+adapter-integrity approval, then resume validation against the identical
+captured patch. An arbitrary caller-supplied adapter is never formal-result
+eligible. The agent is never relaunched.
 
 ```sh
 node <controller>/scripts/run-controller.mjs \
   --resume-artifact-dir <trusted-attempt-artifacts> \
-  --adapter-file <trusted-adapter.mjs> \
-  --expected-adapter-sha256 <registered-adapter-sha256> \
+  --adapter-file <controller>/evaluator/adapters/candidate-adapter.mjs \
+  --expected-adapter-sha256 <sealed-scaffold-sha256> \
+  --adapter-config <external-reviewed-config.json> \
+  --expected-adapter-config-sha256 <registered-config-sha256> \
+  --adapter-integrity-receipt <external-integrity-review.json> \
+  --expected-adapter-integrity-sha256 <registered-review-sha256> \
   --custodian-id <opaque-custodian-id>
 ```
 
-If an adapter config is needed, also supply `--adapter-config` and its expected
-SHA-256. Resume rehashes the sealed controller bundle, registry entry, prior
-stage chain, frozen controls, process/capture/validation artifacts, variant/task,
-and source repository identity, then reconstructs a fresh validation workspace
-from the captured patch before oracle execution.
+Resume rehashes the sealed controller bundle, registry entry, prior stage chain,
+frozen controls, process/capture/validation artifacts, variant/task, and source
+repository identity, then reconstructs a fresh validation workspace from the
+captured patch before oracle execution.
+
+Formal adapter execution has one outer kernel sandbox. It denies network,
+expected/control reads, and writes to the candidate, artifact/source/original
+workspace, scaffold/config/probe/runtime, and other trusted roots. Only the
+candidate subtree and exact trusted executable/config/probe inputs are readable;
+only a newly created, initially empty adapter-specific TMP is writable. The
+controller records pre/post candidate-tree and trusted-input bytes/types/modes,
+requires process-group extinction, validates the scaffold's single stdout
+receipt, and only then creates the normalized output with an exclusive trusted
+write. The scaffold never receives expected values or the output path and may
+not implement candidate behavior.
 
 Candidate production work and trusted evaluator work are separated by fresh
 copies and complete input/output identities. Exact Rust checks authenticate the
@@ -447,8 +471,9 @@ and records the frozen historical target's two misses without weakening the
 contract.
 
 Where `adapter_allowed=true`, a variant-blind oracle custodian may adapt names
-and types only. Save the complete adapter source/diff and hashes and record any
-available independent adapter-integrity review. A compile failure is
+and types only. Save the complete config/probe source/diff and hashes and require
+an eligible independent adapter-integrity review bound to the phase, attempt,
+candidate capture, scaffold, config, and probe. A compile failure is
 `oracle_adapter_required`,
 not zero, until that process completes. An adapter that implements behavior or
 emits expected values without exercising candidate production code invalidates
@@ -487,10 +512,14 @@ node <controller>/scripts/build-review-packet.mjs \
 ```
 
 Register every frozen variant with a repeated `--variant`. The builder writes a
-private match map outside the packet and a public manifest inside it. Independently
-run `scan-review-packet.mjs --packet-dir ... --contract ... --variant ...
---receipt ...`; release only when its external terminal receipt is `qualified`
-with zero matches. Machine point totals, arm, model transcript, runtime, the
+private match map outside the packet and a public manifest inside it. For a
+formal attempt the controller supplies the same immutable
+`--controller-context` and expected context hash to the builder and to a separate
+`scan-review-packet.mjs` process, then binds the standalone scanner receipt into
+its review-stage receipt. Direct builder/scanner invocations without that
+context are labeled `construction_pilot_only` and cannot become formal evidence.
+Release only when the external terminal scan receipt is `qualified` with zero
+matches. Machine point totals, arm, model transcript, runtime, the
 paired candidate, target history, and oracle implementation remain hidden.
 Before packet release, obtain case-specific conflict/prior-exposure attestations
 and reject constructors, historical case participants, oracle/adapter actors,

@@ -131,5 +131,5 @@
 
 - [x] Update procedures to name the operational commands and construction qualification evidence without changing the frozen experiment contract.
 - [x] Record provider deployment identity, unavailable independent panels/audits, and same-user host hardening as limitations where outside local control.
-- [ ] Run `node --test benchmarks/agents-md-effect/tests/operational.test.mjs`, `node benchmarks/agents-md-effect/scripts/verify-benchmark.mjs`, benchmark construction qualifications, and the repository fast gate relevant to changed executable files.
+- [x] Run `node --test benchmarks/agents-md-effect/tests/operational.test.mjs`, `node benchmarks/agents-md-effect/scripts/verify-benchmark.mjs`, benchmark construction qualifications, and the repository fast gate relevant to changed executable files.
 - [ ] Review the complete diff against the user requirements and repository standards, fix Critical/Important findings, commit the focused change, and state exactly `READY for Baseline A` or `NOT READY for Baseline A` with only genuine blockers.

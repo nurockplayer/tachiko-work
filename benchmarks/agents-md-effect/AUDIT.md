@@ -83,9 +83,19 @@ from formal results:
 - one-shot controller smokes used local fake agents only. They qualified stage
   ordering, same-wave base controls before candidate exposure, no retry after
   failure or timeout, process-group extinction, raw output/final-message
-  capture, adapter pause/resume within the same attempt, external slot
-  uniqueness, and append-only terminalization. No frozen benchmark task was
-  sent to Codex.
+  capture, empty-patch scoring, adapter pause/resume within the same attempt,
+  external slot uniqueness, and append-only terminalization. No frozen benchmark
+  task was sent to Codex;
+- adversarial formal-adapter fixtures rejected caller-chosen scaffolds,
+  expectation tokens and reads, config/probe overlap, candidate/trusted-input
+  writes, reuse of an earlier agent TMP, and pre-extinction output. The qualified
+  path uses the sealed scaffold, disjoint probe/config and independent approval,
+  one outer network/read/write sandbox, a fresh empty adapter TMP, pre/post tree
+  identities, and controller materialization after process-group extinction;
+- same-wave base, candidate-core, and oracle stages actively proved kernel
+  network denial, and formal review-builder/scanner fixtures proved immutable
+  phase/attempt/candidate context binding. Standalone review helpers remain
+  construction-only when that context is absent.
 
 The replacement/rebase receipts, command stdout/stderr, hashes, selected
 observations, and reconstructible TW-09 patch are frozen under
@@ -97,11 +107,11 @@ artifact from formal scores.
 Temporary pilot roots were deleted after receipts were recorded. Construction
 never invoked Codex on a frozen benchmark task. The compact oracle qualification
 summary has payload SHA-256
-`47cad14a2d985e2edd7dcd8dbcaf4cfa1fd4537531960bf339dd29e509869e2d`
+`a2613a91bb4907df2706e84088130727aefd2fa1f240a3b7c93f9013769da53a`
 and run-receipt SHA-256
-`d8663f74cf5d4c5710889769e813d5b6fe39c52a1b8a3cd3dd4e6cdb7f8cee51`,
+`f1a569c7c2cc2fd9d1a71fe15d670bf6f5d0babca58e178d06867c94e09b6fa7`,
 and evidence commitment SHA-256
-`a0dc816cc3373176f2be31a2f268174669353a99488ad8a96cc9ef147659b956`.
+`e527df8c8edad212078976ed9b0dc27a4126ae42d6d2f11b4e5b2628c07382ac`.
 
 ## Known cluster and carry-forward effects
 
@@ -137,11 +147,21 @@ readiness defects:
    process group, captures immutable output and candidate state only after group
    extinction, and commits one hash-chained terminal disposition. Adapter work
    can resume only the identical captured attempt; it cannot launch another
-   agent.
+   agent. Empty patches remain valid scoreable candidates.
 6. `build-review-packet.mjs` creates deterministic path-aliased packets from a
    hash-complete role manifest. The independent scanner validates the frozen
    R1–R4 contract, registered variants, public packet manifest, and zero residual
-   matches before a terminal `qualified` release receipt.
+   matches before a terminal `qualified` release receipt. Formal receipts bind
+   the controller phase/IDs/capture context, and the controller separately
+   invokes and binds the standalone scanner receipt.
+7. Formal adapters are restricted to the operationally locked scaffold plus
+   disjoint candidate-exercising inputs and an independently approved integrity
+   receipt. Kernel read/write/network confinement, fresh adapter-only TMP,
+   pre/post candidate/input hashes, group extinction, and trusted output
+   materialization prevent an adapter from manufacturing candidate behavior.
+8. Base controls, candidate-core commands, and oracle commands execute only
+   after an active kernel network-denial probe and bind the sandbox identity and
+   supervision receipt.
 
 An individual Baseline attempt remains fail-closed: missing external
 authorization, catalog/tool/hash drift, insufficient disk, base-control failure,

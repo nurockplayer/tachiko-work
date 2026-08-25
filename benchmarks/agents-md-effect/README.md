@@ -64,12 +64,18 @@ result. This benchmark does not propose or optimize an `AGENTS.md` variant.
   [`scripts/run-tw05-offline.mjs`](scripts/run-tw05-offline.mjs) — production
   oracle execution, retained positive/negative qualification, and
   package-manager-neutral TW-05 execution.
+- [`evaluator/adapters/candidate-adapter-lock.json`](evaluator/adapters/candidate-adapter-lock.json)
+  and [`scripts/adapter-integrity.mjs`](scripts/adapter-integrity.mjs) — sealed
+  formal-adapter scaffold and external integrity/context enforcement.
+- [`scripts/network-sandbox.mjs`](scripts/network-sandbox.mjs) — actively probed
+  kernel network denial shared by base, core, oracle, and adapter execution.
 - [`scripts/process-group-supervisor.mjs`](scripts/process-group-supervisor.mjs)
   — shared fixed-deadline TERM/KILL/extinction supervision for agent and
   validation command groups.
 - [`scripts/build-review-packet.mjs`](scripts/build-review-packet.mjs) and
   [`scripts/scan-review-packet.mjs`](scripts/scan-review-packet.mjs) —
-  deterministic blinded packet construction and standalone release scanning.
+  deterministic blinded packet construction and standalone, formal-context-
+  bound release scanning.
 
 The current practical internal-experiment verdict is **READY for Baseline A**.
 Every formal attempt still requires the controller's external authorization and

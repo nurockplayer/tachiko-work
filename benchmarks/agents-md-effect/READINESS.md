@@ -2,9 +2,9 @@
 
 The frozen nine-case benchmark is operationally ready for a standalone Baseline
 A wave under the practical internal-experiment standard. No Baseline A or
-Variant B task was executed while establishing readiness; every execution
-receipt referenced here is `construction_pilot_only` and ineligible for a formal
-score.
+Variant B task was executed while establishing readiness; every construction
+execution receipt referenced here is `construction_pilot_only` and ineligible
+for a formal score.
 
 Readiness is not launch authorization. Each formal attempt must still pass the
 controller's external authorization, unique-slot registration, and per-run
@@ -17,19 +17,20 @@ preflight before candidate exposure or model contact.
 | Neutral runner and HOME | `preflight-run.mjs` requires an opaque `r-<128-bit-hex>` root, fresh empty HOME and CODEX_HOME, a closed environment, and recursive ancestor/tree scans for `AGENTS.md`, other agent instructions, skills, and symlink exposure. It records the exact root overlay identity and fails on semantic path labels or unexpected content. |
 | Production commands for all cases | `evaluator/production-oracles.json` maps all 9 cases, 27 core commands, 58 oracle commands, 74 machine assertions, and 16 subjective groups one-to-one to the frozen locks. |
 | Positive and negative oracle qualification | `evaluator/qualifications/oracles.json` records an executed all-nine construction qualification. Machine cases pass a qualified positive and discriminate a behavior-missing/base negative; TW-01, TW-02, and TW-06 use deterministic subjective packet gates. Selector-family fixtures independently qualify exact Rust-test matching, JSON pointers, and portable record sets. |
-| One-shot controller and no resampling | `run-controller.mjs` atomically reserves each wave/case/phase slot, records a hash-chained attempt ledger, launches at most one agent process group, never retries candidate quality/failure/timeout, proves descendant extinction before capture, and emits one terminal disposition. A trusted adapter may resume only the same immutable captured attempt and cannot relaunch the agent. |
+| One-shot controller and no resampling | `run-controller.mjs` atomically reserves each wave/case/phase slot, records a hash-chained attempt ledger, launches at most one agent process group, never retries candidate quality/failure/timeout, proves descendant extinction before capture, and emits one terminal disposition. A trusted adapter may resume only the same immutable captured attempt and cannot relaunch the agent. An empty candidate patch reconstructs the base and continues through scoring rather than becoming an infrastructure failure. |
 | Per-run preflight and recording | The controller seals its executable/control bundle and records exact environment values, agent/argument/variant/catalog identities, locally controlled Node, pnpm, Rust/Cargo/rustc/rustfmt/clippy, Git/rtk/Bash, Codex and code-mode-host binaries, WASM target artifacts, disk availability, process timing, raw JSONL/stdout/stderr, and stage input/output hashes. Formal authorization binds the effective invocation and runtime identity. |
 | Trusted candidate result/diff capture | `capture-candidate.mjs` walks raw filesystem bytes and modes, includes ignored/untracked/index-hidden changes, rejects special nodes, bypasses candidate hooks/configuration/attributes/filters, writes a separate trusted object database/index, and proves patch/tree round-trip equality before validation. |
 | TW-05 package-manager neutrality | `run-tw05-offline.mjs` directly executes the Rust, Node test, Worker/parity, benchmark, and portability paths under offline Cargo plus an independently probed OS network denial. Qualification fails if npm, pnpm, or yarn is invoked. |
-| Deterministic blinded review | `build-review-packet.mjs` requires a hash-complete six-role input manifest, deterministic aliases/redactions, and the exact frozen R1–R4 contract. `scan-review-packet.mjs` independently verifies the public manifest and zero residual matches before a terminal release receipt. Repeat and adversarial fixtures cover near copies, paths, binary/symlink/UTF-8 failures, and tampering. |
-| Same-wave base controls | Before agent exposure, the controller prepares an ancestor-only clean base and runs the exact ordered, deduplicated union of base and candidate-core commands under the same recorded validation environment. A failure terminates the slot before launch. |
+| Trusted adapter boundary | Formal TW-05/TW-09 adaptation uses only the hash-locked evaluator scaffold, a disjoint candidate-exercising probe/config pair, and an external hash-bound eligible independent integrity approval. A single kernel sandbox denies network and expected/control reads, protects the candidate and all trusted inputs from writes, exposes only a fresh empty adapter TMP, and binds pre/post identities. The scaffold emits one receipt on stdout; the controller materializes normalized output only after process-group extinction. |
+| Deterministic blinded review | `build-review-packet.mjs` requires a hash-complete six-role input manifest, deterministic aliases/redactions, and the exact frozen R1–R4 contract. Formal builder and standalone-scanner receipts bind the immutable controller evidence context; absent context is construction-only. `scan-review-packet.mjs` independently verifies the public manifest and zero residual matches before a terminal release receipt. Repeat and adversarial fixtures cover near copies, paths, binary/symlink/UTF-8 failures, and tampering. |
+| Same-wave base controls | Before agent exposure, the controller prepares an ancestor-only clean base and runs the exact ordered, deduplicated union of base and candidate-core commands under the same recorded validation environment and actively probed kernel network denial. Candidate-core and oracle commands use the same denial boundary. A base failure terminates the slot before launch. |
 
 The compact oracle qualification has payload SHA-256
-`47cad14a2d985e2edd7dcd8dbcaf4cfa1fd4537531960bf339dd29e509869e2d`
+`a2613a91bb4907df2706e84088130727aefd2fa1f240a3b7c93f9013769da53a`
 and run-receipt SHA-256
-`d8663f74cf5d4c5710889769e813d5b6fe39c52a1b8a3cd3dd4e6cdb7f8cee51`,
+`f1a569c7c2cc2fd9d1a71fe15d670bf6f5d0babca58e178d06867c94e09b6fa7`,
 and evidence commitment SHA-256
-`a0dc816cc3373176f2be31a2f268174669353a99488ad8a96cc9ef147659b956`.
+`e527df8c8edad212078976ed9b0dc27a4126ae42d6d2f11b4e5b2628c07382ac`.
 `verify-oracle-qualification.mjs` recomputes its semantic binding; construction
 smokes and the operational test suite exercise the controller without supplying
 a formal authorization or frozen benchmark task to Codex.
@@ -51,6 +52,9 @@ unresolved readiness defects:
 - a formal result is invalid if the process group cannot be extinguished,
   candidate capture cannot be trusted, an immutable input drifts, or the final
   blinded packet cannot obtain a zero-match scanner receipt.
+- formal adapter use additionally requires the sealed scaffold lock, disjoint
+  config/probe, independent integrity receipt, unchanged candidate/trusted input
+  identities, and post-extinction controller materialization.
 
 No failure after agent launch permits resampling that wave/case/phase slot.
 
