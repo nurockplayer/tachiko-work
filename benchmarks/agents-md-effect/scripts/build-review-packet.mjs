@@ -9,6 +9,7 @@ import {
   canonicalBytes,
   compileMatcher,
   loadBlindingInputs,
+  makeScanReceipt,
   scanPacketTree,
   sha256,
   splitLines,
@@ -267,21 +268,7 @@ await writeFile(resolve(outputDir, "private-match-map.json"), privateMapBytes, {
 });
 
 const scan = await scanPacketTree(packetDir, blinding);
-const scanReceipt = {
-  schema: "tachiko-review-packet-scan-v1",
-  classification: "construction_pilot_only",
-  formal_result_eligible: false,
-  contract: blinding.contractIdentity,
-  variant_set: blinding.variantSet,
-  packet_tree_sha256: scan.tree_sha256,
-  scanned_file_count: scan.file_count,
-  match_count: scan.match_count,
-  match_counts_by_rule: scan.match_counts_by_rule,
-  safe_to_release: scan.safe_to_release,
-  terminal_classification: scan.safe_to_release ? "qualified" : "invalid_discarded",
-  semantic_scoring_performed: false,
-  qualification: "subjective_packet_transport_only",
-};
+const scanReceipt = makeScanReceipt(scan, blinding);
 const scanReceiptBytes = canonicalBytes(scanReceipt);
 await writeFile(resolve(outputDir, "scan-receipt.json"), scanReceiptBytes, {
   mode: 0o600,

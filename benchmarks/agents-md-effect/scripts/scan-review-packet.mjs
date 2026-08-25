@@ -276,6 +276,24 @@ export async function scanPacketTree(packetDir, blinding) {
   };
 }
 
+export function makeScanReceipt(scan, blinding) {
+  return {
+    schema: "tachiko-review-packet-scan-v1",
+    classification: "construction_pilot_only",
+    formal_result_eligible: false,
+    contract: blinding.contractIdentity,
+    variant_set: blinding.variantSet,
+    packet_tree_sha256: scan.tree_sha256,
+    scanned_file_count: scan.file_count,
+    match_count: scan.match_count,
+    match_counts_by_rule: scan.match_counts_by_rule,
+    safe_to_release: scan.safe_to_release,
+    terminal_classification: scan.safe_to_release ? "qualified" : "invalid_discarded",
+    semantic_scoring_performed: false,
+    qualification: "subjective_packet_transport_only",
+  };
+}
+
 function parseArgs(argv) {
   const values = new Map();
   const variants = [];
@@ -334,21 +352,7 @@ async function runCli() {
     variantPaths,
   );
   const scan = await scanPacketTree(packetDir, blinding);
-  const receipt = {
-    schema: "tachiko-review-packet-scan-v1",
-    classification: "construction_pilot_only",
-    formal_result_eligible: false,
-    contract: blinding.contractIdentity,
-    variant_set: blinding.variantSet,
-    packet_tree_sha256: scan.tree_sha256,
-    scanned_file_count: scan.file_count,
-    match_count: scan.match_count,
-    match_counts_by_rule: scan.match_counts_by_rule,
-    safe_to_release: scan.safe_to_release,
-    terminal_classification: scan.safe_to_release ? "qualified" : "invalid_discarded",
-    semantic_scoring_performed: false,
-    qualification: "subjective_packet_transport_only",
-  };
+  const receipt = makeScanReceipt(scan, blinding);
   await mkdir(dirname(receiptPath), {recursive: true});
   await writeFile(receiptPath, canonicalBytes(receipt), {mode: 0o600, flag: "wx"});
   console.log(JSON.stringify(receipt));
