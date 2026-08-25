@@ -167,7 +167,8 @@ Core, formula, domain, and future extension diagnostics may share the envelope
 without sharing one giant enum or making extension rules part of semantic-core.
 
 This validator provenance is not the broader user/agent decision provenance
-protocol owned by #27/#28/#104.
+protocol owned by #28/#104. ADR-0024 exact proposal/base binding likewise does
+not turn validator provenance into command meaning or approval authority.
 
 ## Presentation-only fields
 

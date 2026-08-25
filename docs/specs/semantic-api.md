@@ -2,25 +2,32 @@
 
 Decision state: Mixed. The first-class boundary and semantic laws are Accepted
 under [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md).
+The immutable, revision-pinned SemanticPatch proposal contract and exact-change
+binding law are Accepted under
+[ADR-0024](../decisions/ADR-0024-revision-pinned-semantic-patch.md).
 Runtime ownership, resident interactive topology, host separation, explicit
 snapshot boundaries, and native/WASM semantic parity are Accepted under
 [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md).
 Exact Rust APIs, complete operation catalogue, wire schemas, transports,
-session/revision mechanics, and several result/projection shapes remain
-Provisional or Deferred as marked below.
+proposal/revision encodings, session mechanics, and several result/projection
+shapes remain Provisional or Deferred as marked below.
 
 Implementation state: partially implemented through `workspace-engine` as the
 shared first-party application authority. Current Rust functions and result
 structures are implementation evidence, not the versioned public product
 contract. Current operations remain substantially snapshot-style; the resident
-runtime/session implementation is later work under #93–#95.
+runtime/session implementation is later work under #93–#95. No current Rust
+type implements the general SemanticPatch envelope or AtomicBatch contract.
 
-Decision issue: [#10](https://github.com/nurockplayer/tachiko-work/issues/10)
+Decision issues: [#10](https://github.com/nurockplayer/tachiko-work/issues/10),
+[#27](https://github.com/nurockplayer/tachiko-work/issues/27)
 
 ## Purpose
 
 Define the smallest transport-neutral semantic command/query/result contract
-that GUI, CLI, AI, automation, and future first-party clients must share.
+that GUI, CLI, AI, automation, and future first-party clients must share,
+including the representation-neutral proposal contract that binds review to one
+exact semantic change and semantic base.
 
 This specification answers **what semantic operations mean**. ADR-0022 answers
 the durable runtime/host ownership rules. Neither specification freezes how
@@ -45,6 +52,7 @@ future first-party plugin host
 | Queries                           |
 | Semantic Commands                 |
 | Propose / Execute                 |
+| Revision-pinned SemanticPatch     |
 | Atomic Command Batch              |
 | ValidationReport + Gate Outcome   |
 | Stable machine outcomes           |
@@ -94,11 +102,12 @@ ADRs.
 
 This specification does not freeze a new public `Workspace`, `Project`, session,
 or revision type. Milestone 02 semantic references remain document-local where
-ADR-0015 says they are document-local. ADR-0022 accepts a resident shared Rust
-runtime as the preferred interactive topology while the exact session handle,
-revision/precondition representation, concurrency/conflict policy, cancellation,
-and runtime state-installation mechanics remain Deferred to #93 and related
-runtime work.
+ADR-0015 says they are document-local. ADR-0024 requires every reviewable
+proposal to bind one exact semantic context revision, while ADR-0022 accepts a
+resident shared Rust runtime as the preferred interactive topology. The exact
+session handle, revision/precondition representation, concurrency/conflict
+policy, cancellation, and runtime state-installation mechanics remain Deferred
+to #93 and related runtime work.
 
 ## Stable targeting
 
@@ -180,6 +189,166 @@ Execute(Command | AtomicBatch)
 `Propose` and `Execute` MUST share the same command meaning, validation authority,
 and gate semantics. Propose is not a weaker alternate validation path.
 
+### SemanticPatch proposal envelope
+
+The reviewable output/input contract around Propose is conceptually:
+
+```text
+SemanticPatch
+- proposal occurrence identity
+- Semantic API compatibility contract
+- semantic base reference
+- change: Command | AtomicBatch
+```
+
+These are logical contract elements, not frozen source or wire field names.
+
+A SemanticPatch:
+
+- belongs to the same Semantic API/application boundary as Query, Command,
+  Propose, and Execute;
+- contains exactly one typed Command or one ordered AtomicBatch;
+- does not itself become a Command;
+- introduces no patch-operation vocabulary or independent patch version;
+- publishes no semantic state;
+- grants no authorization or approval; and
+- performs no `.roproj`, filesystem, Git, network, or other host write.
+
+The exact API call sequence and result container used to issue a proposal are
+Provisional. A conforming mapping MUST preserve the logical envelope and the
+laws below whether it models proposal construction and evaluation as one call
+or as admission followed by evaluation.
+
+### Proposal occurrence identity and immutability
+
+Every reviewable proposal MUST have an opaque proposal occurrence identity.
+The same identity MUST NOT refer to different proposal contents. Once issued,
+the complete proposal record is immutable.
+
+Changing any of the following requires a new proposal identity:
+
+- Semantic API compatibility contract;
+- semantic base;
+- single-command versus AtomicBatch body;
+- command content or batch order;
+- stable targets or typed values;
+- bound formulas;
+- generated semantic IDs; or
+- an immutable annotation stored inside the proposal record.
+
+Two proposal occurrences MAY have identical semantic contents and different
+identities. Proposal identity is not semantic object identity under ADR-0015,
+not proof of content integrity, and not a content-equivalence or idempotency
+claim.
+
+Proposal-ID spelling, generation, issuer, namespace, collision handling, and
+transport encoding remain Provisional.
+
+### Exact-change binding
+
+For proposal `P`, exact semantic review binds this logical value:
+
+```text
+ExactChangeBinding(P) =
+    Semantic API compatibility contract
+  + semantic base reference
+  + body kind
+  + complete typed command semantics
+  + command order for AtomicBatch
+```
+
+Complete typed command semantics include every semantic input that can affect
+candidate construction, including stable targets, typed operands,
+command-owned semantic preconditions, bound formulas, and generated semantic
+IDs.
+
+Generated IDs required by the change MUST be fixed before proposal identity is
+issued. A formula update MUST bind its accepted typed formula meaning and stable
+references before the exact reviewable change is fixed. A later execution
+cannot generate different IDs or rebind formula source while claiming to
+execute the same proposal.
+
+`ExactChangeBinding` is representation-neutral. It does not depend on Rust
+layout, Serde shape, transport bytes, JSON formatting, UI coordinates,
+provider metadata, rendered diff prose, storage paths, `.roproj` bytes, or Git
+objects.
+
+This specification selects no canonical proposal bytes, hash, digest,
+signature, or MAC. Approval/integrity binding remains #28. Proposal identity by
+itself MUST NOT be treated as cryptographic proof of the expected binding.
+
+### Semantic API compatibility binding
+
+Every durable or transported proposal MUST carry or unambiguously derive the
+Semantic API compatibility contract used to interpret its body.
+
+A consumer that does not support that contract MUST reject before semantic
+candidate construction. It MUST NOT reinterpret unknown command semantics or
+fall back to representation CRUD.
+
+SemanticPatch introduces no independent patch-operation version axis. An
+explicit translation to another Semantic API compatibility contract forms a
+new proposal and receives a new proposal identity, even when an adapter judges
+the result equivalent.
+
+The compatibility identifier and negotiation/encoding mechanism remain
+Provisional under ADR-0020. Representation, transport, crate/package,
+diagnostic-provider, and runtime revision versions remain separate axes.
+
+### Semantic base and stale behavior
+
+Every proposal binds one exact semantic base reference. The reference MUST be
+sufficient under the owning context/runtime contract to distinguish the
+semantic context and revision against which Propose was evaluated.
+
+Base equality is a semantic optimistic-concurrency precondition. It is not
+defined by `.roproj` bytes, paths, timestamps, UI state, provider metadata, or
+Git objects.
+
+Before an existing proposal is re-evaluated, authorized, or executed against a
+current semantic context, the trusted application/runtime boundary MUST compare
+that context with the proposal base. A mismatch is `Stale` and MUST:
+
+- fail before constructing or publishing a candidate against the changed base;
+- publish no semantic state;
+- perform no implicit rebase, merge, retarget, or best-effort replay; and
+- leave the immutable proposal unchanged.
+
+Re-proposing against a newer base re-runs command construction/binding and
+authoritative Propose evaluation and receives a new proposal identity. Exact
+revision-token types, equality mechanics, session scope, persistence,
+concurrency algorithms, and stale-result DTOs remain #93/#29 work.
+
+### Preconditions
+
+SemanticPatch defines no generic `preconditions[]` language.
+
+The semantic base is the envelope-level concurrency precondition. Any
+additional semantic precondition belongs to the typed Command whose meaning
+requires it and is included in `ExactChangeBinding`.
+
+Authorization, approval, expiry, replay/revocation policy, durable-write
+availability, and external-effect permission remain separate enforcement
+conditions. JSON Pointer predicates, storage checks, UI-coordinate tests,
+provider claims, and arbitrary scripts do not become semantic preconditions.
+
+### Proposal evidence
+
+Propose may return a candidate, semantic diff, validation report, gate outcome,
+calculated impact, or other operation-specific review evidence. These are
+derived observations over the bound base and exact typed change.
+
+Derived evidence does not replace `ExactChangeBinding`, grant authorization,
+or become a mutation program. Rendered diff prose is presentation. A semantic
+diff explains base-to-candidate meaning. Validation success does not grant
+permission. A malformed request may fail before a reviewable proposal exists;
+an invalid or gate-rejected candidate publishes nothing.
+
+Once proposal identity is issued, validation, review, rejection, or stale
+outcomes do not mutate the proposal record. A later execution must perform the
+authoritative base, authorization, and gate checks required for the state it
+actually acts on rather than trust stale client-rendered evidence.
+
 ### Preview
 
 A Preview is a client/product projection of proposal facts for review. It is not
@@ -195,10 +364,10 @@ Execute MUST evaluate the authoritative preconditions/gates for the semantic
 state it actually acts on. A client MUST NOT convert an earlier gate decision
 into ambient authority for a later changed state.
 
-Proposal IDs, stale proposal handling, revision tokens, approval tokens, and
-concrete session/commit mechanics are outside the Stable contract. ADR-0022
-accepts the resident runtime/state ownership law without freezing those
-mechanisms.
+ADR-0024 fixes proposal occurrence immutability, exact-change binding, Semantic
+API contract binding, semantic-base pinning, and fail-closed stale meaning.
+Proposal-ID/revision encoding, approval tokens, lifecycle DTOs, and concrete
+session/commit mechanics remain Provisional or Deferred to #28/#29/#93.
 
 ## Semantic atomicity
 
@@ -243,7 +412,7 @@ Atomic batch does not by itself define:
 - runtime concurrency or revision-conflict algorithms;
 - event sourcing or operation logs;
 - undo/redo history;
-- proposal tokens; or
+- durable proposal-store or approval lifecycle mechanics; or
 - intra-batch temporary-object handle syntax.
 
 ADR-0022 likewise does not turn semantic atomicity into a specific runtime
@@ -258,10 +427,13 @@ A conforming client must be able to distinguish, where applicable:
 
 1. completed semantic operation results;
 2. failure before a new admissible semantic candidate exists;
-3. semantic precondition/inapplicability failure;
-4. rejection by the authoritative operation gate, including relevant validation
+3. unsupported Semantic API compatibility or proposal identity/content
+   mismatch;
+4. stale semantic base;
+5. semantic precondition/inapplicability failure;
+6. rejection by the authoritative operation gate, including relevant validation
    and gate facts; and
-5. typed operation-specific outcomes such as merge conflict/reconciliation
+7. typed operation-specific outcomes such as merge conflict/reconciliation
    results.
 
 Exact public enum names, generic type constructors, tagged-union representation,
@@ -280,6 +452,22 @@ parse/bind/type construction or other Accepted intrinsic representability
 barriers.
 
 Exact API error encoding remains Provisional.
+
+### Proposal contract failure
+
+A durable/transported proposal whose Semantic API compatibility contract is not
+supported fails before candidate construction. Reuse of one proposal identity
+with different contents is rejected rather than treated as a replacement.
+
+Exact error codes, integrity verification, digest, and transport behavior remain
+Provisional or #28 work.
+
+### Stale base
+
+An otherwise supported immutable proposal whose semantic base does not equal
+the current context revision is stale. It fails before candidate construction
+against the changed base and publishes nothing. Stale is distinct from semantic
+command inapplicability and gate rejection.
 
 ### Semantic precondition failure
 
@@ -386,7 +574,8 @@ policy says so.
 
 This specification does not define capability identifier syntax, principal
 identity, grant format, approval token, provenance record, or security protocol.
-Those remain #27/#28.
+Those remain #28. ADR-0024 supplies the exact proposal/base binding that the
+authorization protocol must consume without selecting its digest or token.
 
 ## Compatibility and versioning
 
@@ -449,6 +638,28 @@ code as an opaque machine finding according to the relevant transport mapping.
 It MUST NOT require an exhaustive known-code switch to derive operation gate
 policy.
 
+## SemanticPatch conformance scenarios
+
+Future implementation and transport mappings MUST preserve these logical
+fixtures without requiring common bytes or Rust types:
+
+1. one stable-ID-targeted typed field update remains inert under Propose and
+   changes identity if its target or value changes;
+2. one ordered multi-entity AtomicBatch forms one candidate and publishes no
+   prefix, while reordering creates a different proposal;
+3. a formula update binds its complete typed bound AST and stable references,
+   not only source spelling or rendered addresses;
+4. a proposal created against revision `R` fails stale against any current base
+   other than `R`, before candidate construction and without implicit rebase;
+5. an invalid typed command produces no published semantic state; and
+6. two formula updates that are individually valid against the base but create
+   a cycle together fail the final batch gate with no partial publication.
+
+Conformance also covers unsupported Semantic API compatibility, reuse of one
+proposal identity with different content, generated-ID binding, and equivalent
+Stable native/WASM outcomes where the same capability is exposed. Concrete
+fixtures and implementation belong to #29/#93.
+
 ## Stability classification
 
 | Concept | State |
@@ -464,6 +675,13 @@ policy.
 | Command is typed semantic intent rather than representation CRUD | Accepted |
 | Stable semantic-ID targeting authority | Accepted under ADR-0015 |
 | Propose is non-publishing and shares command semantics/gates with Execute | Accepted |
+| SemanticPatch as immutable envelope around `Propose(Command | AtomicBatch)` | Accepted under ADR-0024 |
+| Opaque proposal occurrence identity and complete-record immutability | Accepted under ADR-0024 |
+| Representation-neutral `ExactChangeBinding` law | Accepted under ADR-0024 |
+| Semantic API compatibility binding with no independent patch-operation version | Accepted under ADR-0024 |
+| Exact semantic-base pinning and fail-closed stale behavior | Accepted under ADR-0024 |
+| Proposal-ID, revision-token, and transport encoding | Provisional / #93 |
+| Hash/digest/signature/MAC/canonical proposal bytes | #28 / Deferred |
 | Preview is proposal projection, not independent canonical state | Accepted |
 | Finalization is operation-gate meaning, not mandatory stateful two-phase protocol | Accepted |
 | Single-command semantic atomicity | Accepted |
@@ -474,14 +692,13 @@ policy.
 | Gate outcome distinct from diagnostic severity | Accepted |
 | Formula Stage 4/5 facts remain ADR-0018/ADR-0019 authority | Accepted |
 | Capability-addressability of operation/family | Accepted principle |
-| Capability IDs/grants/approval/provenance | #27/#28 / Deferred |
+| Capability IDs/grants/approval/provenance | #28 / Deferred |
 | Semantic API version independent from storage/crate/transport versions | Accepted |
 | Published diagnostic code meaning not silently reusable | Accepted |
 | Complete externally Stable operation catalogue | Provisional, promote operation-by-operation |
 | Exact semantic result tagged union / field spelling | Provisional |
 | Exact effect/diff projection shape | Provisional |
 | Revision/concurrency/precondition token | #93 / Provisional |
-| Proposal identity/token | #28 and future patch/runtime protocol / Provisional |
 | Intra-batch temporary-object handle syntax | Provisional |
 | Public embedded Rust SDK / dedicated API crate | Deferred |
 | Native/WASM/IPC/FFI/network serialization | ADR-0022-constrained future transport work / Deferred |
@@ -515,7 +732,10 @@ persistence/recovery remain Deferred to #93–#95 and future host/transport
 implementation as applicable.
 
 Every mapping MUST preserve the Semantic API Stable laws and outcomes. Runtime
-or transport topology is not independent semantic authority.
+or transport topology is not independent semantic authority. A mapping of
+SemanticPatch also preserves ADR-0024 occurrence immutability, exact-change and
+compatibility binding, base equality, and stale failure without making its
+transport bytes the semantic proposal.
 
 ## #104 reference pressure
 
@@ -532,7 +752,10 @@ to semantic core by virtue of using the API.
 - revision/concurrency/conflict protocol;
 - exact runtime commit/swap/locking/cloning mechanism;
 - Worker lifecycle/loading/startup/memory behavior;
-- proposal/approval token format;
+- proposal-ID/revision-token field encoding;
+- canonical proposal bytes, hash, digest, signature, or MAC;
+- approval token, capability, grant, provenance, expiry, replay, or revocation
+  format;
 - projection patch/delivery/invalidation protocol;
 - native/browser persistence/recovery implementation;
 - plugin ABI/runtime/sandbox;
@@ -554,6 +777,7 @@ to semantic core by virtue of using the API.
 - [ADR-0019](../decisions/ADR-0019-staged-semantic-validation-and-diagnostics.md)
 - [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md)
 - [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md)
+- [ADR-0024](../decisions/ADR-0024-revision-pinned-semantic-patch.md)
 - [Diagnostics contract](diagnostics-contract.md)
 - [Validation engine](validation-engine.md)
-- Issues #10, #17, #27, #28, #93, #94, #95, #104
+- Issues #10, #17, #27, #28, #29, #93, #94, #95, #104

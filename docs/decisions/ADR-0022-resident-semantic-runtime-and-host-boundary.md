@@ -155,7 +155,8 @@ This ADR does not freeze:
 - IndexedDB schema;
 - multi-document/project/branch/history residency;
 - host credential/Git/process APIs;
-- concrete capability/approval protocol (#27/#28);
+- proposal-ID/revision transport mechanisms constrained by ADR-0024;
+- concrete capability/approval/digest/provenance protocol (#28);
 - operation log/event sourcing/undo history; or
 - a stable embedded Rust SDK.
 
@@ -231,5 +232,6 @@ Costs:
 - ADR-0018
 - ADR-0019
 - ADR-0020
+- ADR-0024
 - Issues #26, #27, #28, #41, #93, #94, #95
 - PR #91

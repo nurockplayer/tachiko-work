@@ -30,7 +30,7 @@ A canonical semantic mutation requires all of the following independently:
 
 Semantic validity does not grant authorization. Authorization cannot override semantic failure.
 
-First-party AI Execute paths must cross a trusted authorization/approval enforcement boundary and the same shared semantic transition/gating path used by equivalent non-AI first-party operations. The concrete placement, principal model, capability identifiers, grants, approval representation, provenance fields, and stale/replay mechanics remain owned by #27/#28 and runtime/host work where applicable.
+First-party AI Execute paths must cross a trusted authorization/approval enforcement boundary and the same shared semantic transition/gating path used by equivalent non-AI first-party operations. ADR-0024 owns the immutable revision-pinned proposal and exact-change binding laws. The concrete enforcement placement, principal model, capability identifiers, grants, approval representation, provenance fields, digest/integrity, and authorization replay mechanics remain owned by #28 and runtime/host work where applicable.
 
 ### MVP permissions
 
@@ -42,7 +42,7 @@ During the current MVP stage:
 - suggestions / Propose: allowed;
 - direct canonical mutation / Execute: requires explicit approval.
 
-Approval applies to the proposed semantic transition in its relevant authorization context. It must not silently carry over when the approved transition or relevant context has materially changed. Exact digest, revision, lifetime, replay, revocation, and token mechanics remain #28.
+Approval applies to the proposed semantic transition in its relevant authorization context. It must not silently carry over when the approved transition or relevant context has materially changed. ADR-0024 defines the representation-neutral exact proposal/base binding; digest, lifetime, replay, revocation, token, and concrete revision mechanics remain #28/#93.
 
 ### Effect separation
 
@@ -64,4 +64,4 @@ AI-generated content and operations remain untrusted inputs until admitted throu
 
 The current `requires_approval` behavior is an MVP safety posture, not a permanent public approval protocol.
 
-Autonomous agents, capability/grant vocabulary, approval/provenance mechanics, raw-host security boundaries, and unrestricted editing remain deferred to their narrower owning issues rather than being frozen here.
+Autonomous agents, capability/grant vocabulary, approval/provenance and digest mechanics, raw-host security boundaries, and unrestricted editing remain deferred to their narrower owning issues rather than being frozen here. ADR-0024's proposal contract does not grant any of those authorities.

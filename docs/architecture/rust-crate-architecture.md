@@ -3,18 +3,23 @@
 Decision state: Milestone 02 layering is Accepted in ADR-0016. ADR-0020 accepts
 the transport-neutral Headless Semantic API as the first-class product boundary
 implemented by the shared application layer; it does not stabilize the current
-Rust source surface. ADR-0022 accepts the resident shared Rust
+Rust source surface. ADR-0024 accepts the immutable revision-pinned
+SemanticPatch and representation-neutral exact-change/base-binding laws without
+stabilizing a Rust or wire DTO. ADR-0022 accepts the resident shared Rust
 semantic/application runtime and host-separation direction without stabilizing
 current session/transport mechanisms.
 
 Implementation state: ADR-0016 boundary implemented by Issue #72; authoritative
 validation/report composition implemented by Issue #89. Current workspace-engine
 operations remain substantially snapshot-style; resident runtime implementation
-is deferred to #93–#95.
+is deferred to #93–#95. Current one-field inert proposal validation does not
+implement ADR-0024 proposal occurrence identity, base/compatibility binding, or
+AtomicBatch.
 
 Architecture authority: ADR-0016 for crate ownership; ADR-0020 for the
-first-class Semantic API product boundary; ADR-0022 for runtime ownership,
-resident topology, native/WASM parity, and host separation.
+first-class Semantic API product boundary; ADR-0024 for SemanticPatch proposal
+meaning; ADR-0022 for runtime ownership, resident topology, native/WASM parity,
+and host separation.
 
 ## Purpose
 
@@ -193,6 +198,14 @@ contract: Query/Command, Propose/Execute, operation gates, semantic atomicity,
 capability-addressability, and compatibility laws. The complete operation
 catalogue and exact current Rust functions/results remain Provisional.
 
+ADR-0024 adds the **proposal envelope law** at that same application boundary:
+one immutable proposal occurrence binds a Semantic API compatibility contract,
+one exact semantic base, and exactly one typed Command or ordered AtomicBatch.
+It does not add another engine, crate, mutation primitive, operation vocabulary,
+or storage dependency. Exact proposal/revision Rust types, ID generation,
+transport, digest, and lifecycle mechanics remain Provisional or owned by
+#28/#29/#93.
+
 ADR-0022 now accepts a resident shared Rust semantic/application runtime as the
 preferred interactive topology. For an open interactive document, authoritative
 in-memory semantic state belongs to that runtime rather than to a frontend
@@ -216,10 +229,14 @@ It retains AI-facing descriptions, explanations, inert suggestions, and the
 candidate cloning, schema checks, formula complexity/projection checks,
 validation, and calculation delegate to workspace-engine.
 
-Under ADR-0007/ADR-0020 the AI crate is an adapter/projection over the same
-first-class Semantic API behavior as other clients. `requires_approval` remains
-current v0.1 safety behavior, not the #27/#28 capability/approval/provenance
-protocol.
+Under ADR-0007/ADR-0020/ADR-0024 the AI crate is an adapter/projection over the
+same first-class Semantic API behavior and immutable revision-bound proposal
+contract as other clients. Its current
+`Suggestion { field, value, requires_approval }` has no proposal occurrence ID,
+Semantic API compatibility contract, semantic base, general Command, or
+AtomicBatch. It is implementation evidence only, not the SemanticPatch wire or
+source contract. `requires_approval` remains current v0.1 safety behavior, not
+the #28 capability/approval/provenance/digest protocol.
 
 No current AI operation persists or mutates the supplied document.
 
@@ -284,7 +301,8 @@ validation inside Rust as implementation mechanisms.
 | Merge plus base-to-result impact | CLI over merge and diff engines | Workspace-engine |
 | Runtime export semantic projection | CLI | Workspace-engine |
 | Host persistence and safe writes | CLI/storage | CLI/storage/host composition, unchanged |
-| AI approval DTO | AI API | AI adapter; ADR-0007 + #27/#28 future authority |
+| AI proposal envelope | One-field inert `Suggestion` only | ADR-0024 SemanticPatch accepted at the Semantic API boundary; implementation pending #29/#93 |
+| AI approval DTO | AI API | AI adapter; ADR-0007 + #28 future authority |
 | ID generation mechanism | CLI through workflow seam | CLI through workspace-engine seam |
 | Product-semantic client contract | Provisional/internal | First-class transport-neutral Semantic API under ADR-0020 |
 | Interactive authoritative state ownership | Open under #26 | Shared Rust semantic/application runtime under ADR-0022 |
@@ -378,6 +396,9 @@ implicitly grant filesystem/network/Git/deployment authority.
   boundaries; exact Rust APIs remain Provisional.
 - ADR-0020 owns external Semantic API semantic laws and compatibility; complete
   operation catalogue and exact Rust/wire shapes remain Provisional.
+- ADR-0024 owns proposal occurrence immutability, exact-change and Semantic API
+  compatibility binding, semantic-base pinning, and stale meaning; Rust/wire
+  encodings and implementation remain Provisional/#29/#93.
 - ADR-0022 owns resident runtime/state and host-separation laws, while session
   handle shape, revision/concurrency, cancellation, state commit/swap/locking/
   cloning mechanics, Web Worker lifecycle, IPC/FFI/network mapping, projection
@@ -386,8 +407,8 @@ implicitly grant filesystem/network/Git/deployment authority.
   implementation.
 - #94 owns later selective semantic queries and projection invalidation.
 - #95 owns later retained incremental engine state with full-oracle equivalence.
-- #27/#28 own AI capability IDs, principals, grants, approval, provenance, and
-  execution authorization.
+- #28 owns AI capability IDs, principals, grants, approval, provenance,
+  digest/integrity, and execution authorization.
 - ADR-0023 and the `.roproj/v1` specifications own the Accepted layout and
   version-owned wire contract; production materialization remains later
   storage/host implementation work.
@@ -410,8 +431,9 @@ ADR-0016 baseline must amend that ADR explicitly.
 - [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md)
 - [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md)
 - [ADR-0023](../decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md)
+- [ADR-0024](../decisions/ADR-0024-revision-pinned-semantic-patch.md)
 - [Semantic API specification](../specs/semantic-api.md)
 - [Semantic core rationale](semantic-core-rationale.md)
 - [Knowledge authority](../governance/knowledge-authority.md)
-- GitHub issues #26, #27, #28, #41, #93, #94, #95
+- GitHub issues #26, #27, #28, #29, #41, #93, #94, #95
 - PR #91
