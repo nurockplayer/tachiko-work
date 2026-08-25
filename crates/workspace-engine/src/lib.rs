@@ -209,6 +209,92 @@ pub struct FormulaAnalysis {
     pub dependencies: Vec<FieldRef>,
 }
 
+/// Caller-owned evidence identifying the semantic snapshot used by a query.
+///
+/// `source_label` is an opaque host projection such as a path, commit, branch,
+/// or test-fixture name. It is not semantic identity, a revision token, or a
+/// concurrency protocol.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct SourceStateEvidence {
+    pub document_id: DocumentId,
+    pub source_label: String,
+}
+
+impl SourceStateEvidence {
+    #[must_use]
+    pub fn new(document: &Document, source_label: impl Into<String>) -> Self {
+        Self {
+            document_id: document.id.clone(),
+            source_label: source_label.into(),
+        }
+    }
+}
+
+/// Deterministic document/schema/entity inspection for semantic clients.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct DocumentInspection {
+    pub source: SourceStateEvidence,
+    pub title: String,
+    pub schemas: Vec<SchemaInspection>,
+    pub entities: Vec<EntityInspection>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct SchemaInspection {
+    pub id: SchemaId,
+    pub key: SchemaKey,
+    pub fields: Vec<FieldDefinition>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct EntityInspection {
+    pub id: EntityId,
+    pub key: EntityKey,
+    pub schema: SchemaId,
+    pub fields: Vec<FieldId>,
+}
+
+/// One downstream formula affected by a queried field.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct DownstreamImpact {
+    pub field: FieldRef,
+    pub address: FieldAddress,
+    pub value: Number,
+}
+
+/// Provider-independent facts for one stable field in one identified snapshot.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct FieldAnalysis {
+    pub source: SourceStateEvidence,
+    pub field: FieldRef,
+    pub address: FieldAddress,
+    pub stored_value: Value,
+    pub calculated_value: Option<Number>,
+    pub formula_source: Option<String>,
+    pub direct_dependencies: Vec<FieldRef>,
+    pub upstream_dependencies: Vec<FieldRef>,
+    pub downstream_impacts: Vec<DownstreamImpact>,
+}
+
+/// Semantic comparison plus deterministic stable-ID affected-area projection.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChangeAnalysis {
+    pub before: SourceStateEvidence,
+    pub after: SourceStateEvidence,
+    pub changes: Vec<SemanticChange>,
+    pub affected_schemas: Vec<SchemaId>,
+    pub affected_entities: Vec<EntityId>,
+    pub affected_fields: Vec<FieldRef>,
+}
+
+/// Full semantic validation findings for one identified snapshot.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ValidationAnalysis {
+    pub source: SourceStateEvidence,
+    pub is_valid: bool,
+    pub diagnostics: Vec<Diagnostic>,
+}
+
 /// An inert typed field proposal that passed shared application policy.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ValidatedFieldValue {
@@ -451,6 +537,233 @@ pub fn analyze_formula(
         value,
         dependencies,
     })
+}
+
+/// Inspect document structure without adding calculation or validation policy.
+#[must_use]
+pub fn inspect_document(
+    document: &Document,
+    source_label: impl Into<String>,
+) -> DocumentInspection {
+    let schemas = document
+        .schemas
+        .values()
+        .map(|schema| SchemaInspection {
+            id: schema.id.clone(),
+            key: schema.key.clone(),
+            fields: schema.fields.values().cloned().collect(),
+        })
+        .collect();
+    let entities = document
+        .entities
+        .values()
+        .map(|entity| EntityInspection {
+            id: entity.id.clone(),
+            key: entity.key.clone(),
+            schema: entity.schema.clone(),
+            fields: entity.fields.keys().cloned().collect(),
+        })
+        .collect();
+
+    DocumentInspection {
+        source: SourceStateEvidence::new(document, source_label),
+        title: document.title.clone(),
+        schemas,
+        entities,
+    }
+}
+
+/// Analyze one stable field through the shared formula/dependency authority.
+///
+/// # Errors
+///
+/// Returns an explicit missing-target, semantic validation, formula projection,
+/// address projection, or calculation failure.
+pub fn analyze_field(
+    document: &Document,
+    source_label: impl Into<String>,
+    field: &FieldRef,
+) -> Result<FieldAnalysis, WorkspaceError> {
+    let stored_value = field_value(document, field)?.clone();
+    let calculation = require_validated_calculation(document)?;
+    let index = AddressIndex::build(document)?;
+    let address = index.field_address(document, field)?;
+    let formula_source = match &stored_value {
+        Value::Formula(expression) => {
+            Some(project_expression(document, expression).map_err(|source| {
+                WorkspaceError::FormulaProjection {
+                    field: field.clone(),
+                    source,
+                }
+            })?)
+        }
+        Value::Number(_) | Value::Text(_) | Value::Boolean(_) | Value::Reference(_) => None,
+    };
+    let direct_dependencies = calculation
+        .dependencies_of(field)
+        .map_or_else(Vec::new, |dependencies| {
+            dependencies.iter().cloned().collect()
+        });
+    let upstream_dependencies = transitive_dependencies(&calculation, field);
+    let downstream_impacts = calculation
+        .affected_by(field)
+        .into_iter()
+        .filter_map(|affected| calculation.value(&affected).map(|value| (affected, value)))
+        .map(|(affected, value)| {
+            Ok(DownstreamImpact {
+                address: index.field_address(document, &affected)?,
+                field: affected,
+                value,
+            })
+        })
+        .collect::<Result<Vec<_>, WorkspaceError>>()?;
+
+    Ok(FieldAnalysis {
+        source: SourceStateEvidence::new(document, source_label),
+        field: field.clone(),
+        address,
+        stored_value,
+        calculated_value: calculation.value(field),
+        formula_source,
+        direct_dependencies,
+        upstream_dependencies,
+        downstream_impacts,
+    })
+}
+
+/// Compare two identified snapshots and project the stable semantic areas
+/// touched by the existing deterministic diff.
+///
+/// # Errors
+///
+/// Returns the shared comparison validation or diff failure.
+pub fn analyze_changes(
+    before: &Document,
+    before_source_label: impl Into<String>,
+    after: &Document,
+    after_source_label: impl Into<String>,
+) -> Result<ChangeAnalysis, WorkspaceError> {
+    let semantic_diff = compare_documents(before, after)?;
+    let changes = semantic_diff.changes().to_vec();
+    let (affected_schemas, affected_entities, affected_fields) =
+        affected_areas(before, after, &changes);
+
+    Ok(ChangeAnalysis {
+        before: SourceStateEvidence::new(before, before_source_label),
+        after: SourceStateEvidence::new(after, after_source_label),
+        changes,
+        affected_schemas,
+        affected_entities,
+        affected_fields,
+    })
+}
+
+/// Explain every current validation failure without requiring the snapshot to
+/// calculate successfully.
+#[must_use]
+pub fn analyze_validation(
+    document: &Document,
+    source_label: impl Into<String>,
+) -> ValidationAnalysis {
+    let report = validation_report(document);
+    ValidationAnalysis {
+        source: SourceStateEvidence::new(document, source_label),
+        is_valid: report.is_valid(),
+        diagnostics: report.into_diagnostics(),
+    }
+}
+
+fn transitive_dependencies(calculation: &Calculation, field: &FieldRef) -> Vec<FieldRef> {
+    let mut pending = calculation
+        .dependencies_of(field)
+        .cloned()
+        .unwrap_or_default();
+    let mut dependencies = BTreeSet::new();
+    while let Some(dependency) = pending.pop_first() {
+        if !dependencies.insert(dependency.clone()) {
+            continue;
+        }
+        if let Some(nested) = calculation.dependencies_of(&dependency) {
+            pending.extend(
+                nested
+                    .iter()
+                    .filter(|candidate| !dependencies.contains(*candidate))
+                    .cloned(),
+            );
+        }
+    }
+    dependencies.into_iter().collect()
+}
+
+fn affected_areas(
+    before: &Document,
+    after: &Document,
+    changes: &[SemanticChange],
+) -> (Vec<SchemaId>, Vec<EntityId>, Vec<FieldRef>) {
+    let mut schemas = BTreeSet::new();
+    let mut entities = BTreeSet::new();
+    let mut fields = BTreeSet::new();
+
+    for change in changes {
+        match change {
+            SemanticChange::DocumentIdChanged { .. }
+            | SemanticChange::DocumentTitleChanged { .. } => {}
+            SemanticChange::SchemaAdded { schema, .. }
+            | SemanticChange::SchemaRemoved { schema, .. }
+            | SemanticChange::SchemaKeyChanged { schema, .. }
+            | SemanticChange::SchemaFieldAdded { schema, .. }
+            | SemanticChange::SchemaFieldRemoved { schema, .. }
+            | SemanticChange::SchemaFieldChanged { schema, .. }
+            | SemanticChange::FieldKeyChanged { schema, .. } => {
+                schemas.insert(schema.clone());
+            }
+            SemanticChange::EntityAdded { entity }
+            | SemanticChange::EntityRemoved { entity }
+            | SemanticChange::EntityKeyChanged { entity, .. } => {
+                insert_entity_area(before, after, entity, &mut schemas, &mut entities);
+            }
+            SemanticChange::EntitySchemaChanged {
+                entity,
+                before,
+                after,
+            } => {
+                entities.insert(entity.clone());
+                schemas.insert(before.clone());
+                schemas.insert(after.clone());
+            }
+            SemanticChange::FieldAdded { field, .. }
+            | SemanticChange::FieldRemoved { field, .. }
+            | SemanticChange::FieldChanged { field, .. }
+            | SemanticChange::FormulaImpact { field, .. } => {
+                fields.insert(field.clone());
+                insert_entity_area(before, after, &field.entity, &mut schemas, &mut entities);
+            }
+        }
+    }
+
+    (
+        schemas.into_iter().collect(),
+        entities.into_iter().collect(),
+        fields.into_iter().collect(),
+    )
+}
+
+fn insert_entity_area(
+    before: &Document,
+    after: &Document,
+    entity: &EntityId,
+    schemas: &mut BTreeSet<SchemaId>,
+    entities: &mut BTreeSet<EntityId>,
+) {
+    entities.insert(entity.clone());
+    if let Some(schema) = after
+        .entities
+        .get(entity)
+        .or_else(|| before.entities.get(entity))
+        .map(|entity| entity.schema.clone())
+    {
+        schemas.insert(schema);
+    }
 }
 
 /// Validate an inert typed field proposal through shared mutation policy.

@@ -42,6 +42,10 @@ moonfall_demo=$(mktemp -d "${TMPDIR:-/tmp}/tachiko-moonfall.XXXXXX")
 # Understand what changing damage would affect.
 ./target/debug/tachiko explain "$moonfall_demo/moonfall.ro" iron_sword.damage
 
+# Get the same formula, upstream, and downstream facts as structured JSON.
+./target/debug/tachiko analyze field \
+  "$moonfall_demo/moonfall.ro" iron_sword.dps --source-state starter
+
 # Create a reviewed variant; the source and existing files are never overwritten.
 ./target/debug/tachiko set "$moonfall_demo/moonfall.ro" iron_sword.damage 45 \
   --output "$moonfall_demo/moonfall-buffed.ro"
@@ -56,6 +60,11 @@ moonfall_demo=$(mktemp -d "${TMPDIR:-/tmp}/tachiko-moonfall.XXXXXX")
 # Review the input change and its derived formula impact.
 ./target/debug/tachiko diff \
   "$moonfall_demo/moonfall.ro" "$moonfall_demo/moonfall-buffed.ro"
+
+# Get structured semantic changes and affected stable-ID areas.
+./target/debug/tachiko analyze changes \
+  "$moonfall_demo/moonfall.ro" "$moonfall_demo/moonfall-buffed.ro" \
+  --before-state starter --after-state buffed
 
 # Produce evaluated entity data for downstream tooling.
 ./target/debug/tachiko export \

@@ -32,7 +32,9 @@ The current product provides a complete, safe CLI-first game-balance workflow:
   `finite literal`, `+ - * /`, unary signs, parentheses,
   `[entity.field]` references, and `min`/`max`;
 - CLI validation and evaluated runtime JSON export;
-- read-only AI structure/formula/impact queries and approval-required suggestions.
+- provider-free read-only Semantic Analyst queries for structure, formulas,
+  upstream dependencies, downstream impact, changes, affected areas, and
+  validation findings, plus approval-required suggestions.
 
 It deliberately does not include a spreadsheet UI, Office compatibility,
 realtime collaboration, cloud infrastructure, or game-engine plugins.
@@ -118,6 +120,8 @@ tachiko_demo=$(mktemp -d "${TMPDIR:-/tmp}/tachiko-demo.XXXXXX")
 tachiko init "$tachiko_demo/balance.ro" --title "My Game Balance"
 tachiko show "$tachiko_demo/balance.ro"
 tachiko explain "$tachiko_demo/balance.ro" iron_sword.dps
+tachiko analyze field "$tachiko_demo/balance.ro" iron_sword.dps \
+  --source-state working-copy
 ```
 
 Make a safe balance change. Tachiko creates a new document, checks it, and
@@ -129,7 +133,15 @@ tachiko set "$tachiko_demo/balance.ro" iron_sword.damage 45 \
 tachiko diff "$tachiko_demo/balance.ro" "$tachiko_demo/buffed.ro"
 tachiko validate "$tachiko_demo/buffed.ro"
 tachiko export "$tachiko_demo/buffed.ro" "$tachiko_demo/buffed.json"
+tachiko analyze changes \
+  "$tachiko_demo/balance.ro" "$tachiko_demo/buffed.ro" \
+  --before-state base --after-state buffed
 ```
+
+`tachiko analyze document|field|changes|validation` emits deterministic JSON
+without an LLM provider. Optional state labels are opaque caller-owned evidence
+(for example a path, commit, or fixture name); they are not revision tokens or
+mutation authority.
 
 The checked-in Moonfall example and expected output are documented in
 [`examples/game-balance/README.md`](examples/game-balance/README.md).

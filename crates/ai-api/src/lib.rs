@@ -7,6 +7,11 @@ use tachiko_workspace_engine::{
     WorkspaceError, analyze_formula as analyze_workspace_formula, compare_documents,
     validate_field_value_suggestion,
 };
+pub use tachiko_workspace_engine::{
+    ChangeAnalysis, DocumentInspection, DownstreamImpact, EntityInspection, FieldAnalysis,
+    SchemaInspection, SourceStateEvidence, ValidationAnalysis, analyze_changes, analyze_field,
+    analyze_validation, inspect_document,
+};
 use thiserror::Error;
 
 /// A deterministic projection of a document's semantic structure.

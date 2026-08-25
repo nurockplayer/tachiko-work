@@ -38,6 +38,11 @@ enum Commands {
         /// Human field address in entity.field form
         field: String,
     },
+    /// Run provider-free read-only semantic analysis and emit JSON
+    Analyze {
+        #[command(subcommand)]
+        command: AnalyzeCommands,
+    },
     /// Create a changed document from one schema-typed field edit
     Set {
         input: PathBuf,
@@ -125,6 +130,44 @@ enum FormulaCommands {
     },
 }
 
+#[derive(Debug, Subcommand)]
+enum AnalyzeCommands {
+    /// Inspect document, schema, field, and entity structure
+    Document {
+        path: PathBuf,
+        /// Opaque caller-owned label identifying this source state
+        #[arg(long)]
+        source_state: Option<String>,
+    },
+    /// Explain one field, its formula, upstream dependencies, and downstream impact
+    Field {
+        path: PathBuf,
+        /// Human field address in entity.field form
+        field: String,
+        /// Opaque caller-owned label identifying this source state
+        #[arg(long)]
+        source_state: Option<String>,
+    },
+    /// Compare semantic changes and affected areas between two source states
+    Changes {
+        before: PathBuf,
+        after: PathBuf,
+        /// Opaque caller-owned label identifying the original source state
+        #[arg(long)]
+        before_state: Option<String>,
+        /// Opaque caller-owned label identifying the changed source state
+        #[arg(long)]
+        after_state: Option<String>,
+    },
+    /// Explain current deterministic validation findings
+    Validation {
+        path: PathBuf,
+        /// Opaque caller-owned label identifying this source state
+        #[arg(long)]
+        source_state: Option<String>,
+    },
+}
+
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum TemplateName {
     GameBalance,
@@ -165,6 +208,25 @@ fn execute(cli: Cli) -> Result<String, commands::CommandError> {
         Commands::Calculate { path } => commands::calculate_document(&path),
         Commands::Show { path } => commands::show(&path),
         Commands::Explain { path, field } => commands::explain(&path, &field),
+        Commands::Analyze { command } => match command {
+            AnalyzeCommands::Document { path, source_state } => {
+                commands::analyze_document(&path, source_state)
+            }
+            AnalyzeCommands::Field {
+                path,
+                field,
+                source_state,
+            } => commands::analyze_field(&path, &field, source_state),
+            AnalyzeCommands::Changes {
+                before,
+                after,
+                before_state,
+                after_state,
+            } => commands::analyze_changes(&before, &after, before_state, after_state),
+            AnalyzeCommands::Validation { path, source_state } => {
+                commands::analyze_validation(&path, source_state)
+            }
+        },
         Commands::Set {
             input,
             field,

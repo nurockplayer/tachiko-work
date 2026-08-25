@@ -39,6 +39,11 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- A provider-free, read-only Semantic Analyst slice now exposes deterministic
+  document inspection, formula and dependency analysis, semantic change and
+  affected-area analysis, and validation findings through shared Rust queries
+  and structured CLI JSON. Results carry caller-owned source-state labels and
+  document identity without introducing mutation or revision semantics.
 - An executed production-semantic conformance corpus compares normalized
   values, complete formula failures, stable diagnostic observations,
   dependency/SCC results, and stable formula projection byte-for-byte on native

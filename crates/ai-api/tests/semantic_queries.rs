@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 
 use tachiko_ai_api::{
-    ImpactExplanationError, Suggestion, SuggestionError, describe_document, explain_formula,
-    explain_impact, suggest_field_change,
+    ImpactExplanationError, Suggestion, SuggestionError, analyze_changes, analyze_field,
+    analyze_validation, describe_document, explain_formula, explain_impact, inspect_document,
+    suggest_field_change,
 };
 use tachiko_workspace_engine::{
     Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
@@ -395,4 +396,40 @@ fn suggestions_validate_fields_types_and_formula_permissions() {
         suggest_field_change(&document, FieldRef::new("sword", "damage"), number(100.0))
             .expect_err("no-op suggestions should not be presented for approval");
     assert!(matches!(no_change, SuggestionError::NoChange { .. }));
+}
+
+#[test]
+fn provider_free_semantic_analyst_uses_shared_structured_results() {
+    let before = balance_document(100.0);
+    let after = balance_document(120.0);
+
+    let inspection = inspect_document(&before, "main@base");
+    let field = analyze_field(&before, "main@base", &FieldRef::new("sword", "dps"))
+        .expect("formula should be analyzable without a provider");
+    let changes = analyze_changes(&before, "main@base", &after, "main@buffed")
+        .expect("snapshots should compare without a provider");
+
+    assert_eq!(inspection.source.source_label, "main@base");
+    assert_eq!(field.source, inspection.source);
+    assert_eq!(field.calculated_value, Some(Number::new(80.0).unwrap()));
+    assert_eq!(
+        field.direct_dependencies,
+        [
+            FieldRef::new("sword", "attack_interval"),
+            FieldRef::new("sword", "damage"),
+        ]
+    );
+    assert_eq!(changes.before.source_label, "main@base");
+    assert_eq!(changes.after.source_label, "main@buffed");
+
+    let mut invalid = before;
+    invalid
+        .entities
+        .get_mut("sword")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("attack_interval"), number(0.0));
+    let validation = analyze_validation(&invalid, "working-tree");
+    assert!(!validation.is_valid);
+    assert_eq!(validation.diagnostics.len(), 1);
 }

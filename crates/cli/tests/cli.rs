@@ -933,6 +933,134 @@ fn formula_expression_option_transports_canonical_spaced_and_hyphen_values() {
 }
 
 #[test]
+fn semantic_analyst_cli_emits_structured_inspection_formula_and_dependency_results() {
+    let temp = TempDir::new();
+    let path = temp.path().join("balance.ro");
+    save(&path, &balance_document(100.0)).unwrap();
+
+    let inspection = run(&[
+        "analyze",
+        "document",
+        path.to_str().unwrap(),
+        "--source-state",
+        "main@base",
+    ]);
+    assert!(inspection.status.success());
+    let inspection: serde_json::Value = serde_json::from_slice(&inspection.stdout).unwrap();
+    assert_eq!(inspection["source"]["document_id"], "balance");
+    assert_eq!(inspection["source"]["source_label"], "main@base");
+    assert_eq!(inspection["schemas"][0]["id"], "weapon");
+    assert_eq!(inspection["entities"][0]["id"], "sword");
+
+    let formula = run(&[
+        "analyze",
+        "field",
+        path.to_str().unwrap(),
+        "sword.dps",
+        "--source-state",
+        "main@base",
+    ]);
+    assert!(formula.status.success());
+    let formula: serde_json::Value = serde_json::from_slice(&formula.stdout).unwrap();
+    assert_eq!(formula["source"]["source_label"], "main@base");
+    assert_eq!(formula["calculated_value"], 80.0);
+    assert_eq!(
+        formula["formula_source"],
+        "([sword.damage] / [sword.attack_interval])"
+    );
+    assert_eq!(
+        formula["direct_dependencies"][0]["field"],
+        "attack_interval"
+    );
+    assert_eq!(formula["direct_dependencies"][1]["field"], "damage");
+
+    let input = run(&["analyze", "field", path.to_str().unwrap(), "sword.damage"]);
+    assert!(input.status.success());
+    let input: serde_json::Value = serde_json::from_slice(&input.stdout).unwrap();
+    assert_eq!(input["downstream_impacts"][0]["field"]["field"], "dps");
+    assert_eq!(input["downstream_impacts"][0]["value"], 80.0);
+}
+
+#[test]
+fn semantic_analyst_cli_emits_structured_changes_affected_areas_and_validation_failures() {
+    let temp = TempDir::new();
+    let before_path = temp.path().join("before.ro");
+    let after_path = temp.path().join("after.ro");
+    let invalid_path = temp.path().join("invalid.ro");
+    let before = balance_document(100.0);
+    let after = balance_document(120.0);
+    let mut invalid = before.clone();
+    invalid
+        .entities
+        .get_mut("sword")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("attack_interval"), number(0.0));
+    save(&before_path, &before).unwrap();
+    save(&after_path, &after).unwrap();
+    save(&invalid_path, &invalid).unwrap();
+
+    let changes = run(&[
+        "analyze",
+        "changes",
+        before_path.to_str().unwrap(),
+        after_path.to_str().unwrap(),
+        "--before-state",
+        "main@base",
+        "--after-state",
+        "main@buffed",
+    ]);
+    assert!(changes.status.success());
+    let changes: serde_json::Value = serde_json::from_slice(&changes.stdout).unwrap();
+    assert_eq!(changes["before"]["source_label"], "main@base");
+    assert_eq!(changes["after"]["source_label"], "main@buffed");
+    assert!(changes["changes"].as_array().unwrap().iter().any(|change| {
+        change["kind"] == "field_changed" && change["field"]["field"] == "damage"
+    }));
+    assert!(changes["changes"].as_array().unwrap().iter().any(|change| {
+        change["kind"] == "formula_impact"
+            && change["field"]["field"] == "dps"
+            && change["before"] == 80.0
+            && change["after"] == 96.0
+    }));
+    assert_eq!(changes["affected_fields"][0]["field"], "damage");
+    assert_eq!(changes["affected_fields"][1]["field"], "dps");
+    assert_eq!(changes["affected_entities"][0], "sword");
+    assert_eq!(changes["affected_schemas"][0], "weapon");
+
+    let validation = run(&[
+        "analyze",
+        "validation",
+        invalid_path.to_str().unwrap(),
+        "--source-state",
+        "working-tree",
+    ]);
+    assert!(validation.status.success());
+    let validation: serde_json::Value = serde_json::from_slice(&validation.stdout).unwrap();
+    assert_eq!(validation["source"]["source_label"], "working-tree");
+    assert_eq!(validation["is_valid"], false);
+    assert_eq!(
+        validation["diagnostics"][0]["code"],
+        "formula.division_by_zero"
+    );
+}
+
+#[test]
+fn semantic_analyst_cli_reports_unknown_targets_explicitly() {
+    let temp = TempDir::new();
+    let path = temp.path().join("balance.ro");
+    save(&path, &balance_document(100.0)).unwrap();
+
+    let output = run(&["analyze", "field", path.to_str().unwrap(), "missing.damage"]);
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("analysis target 'missing.damage' does not exist")
+    );
+}
+
+#[test]
 fn merge_writes_a_merged_document_and_prints_semantic_impact() {
     let temp = TempDir::new();
     let base_path = temp.path().join("base.ro");
