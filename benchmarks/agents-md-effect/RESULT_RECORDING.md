@@ -135,5 +135,7 @@ byte-for-byte, without self-hashing cycles.
 The schemas intentionally require a provider deployment attestation, isolated
 runner identity, trusted raw capture, reviewer eligibility/pair blindness,
 oracle-capsule receipt, and detached record-validation receipt. These requirements
-currently make formal record creation fail closed, consistent with
-`READINESS.md`.
+define the stronger governed publication profile. `READINESS.md` separately
+defines the practical standalone internal Baseline launch artifact and records
+unavailable provider-side identity and additional review panels as limitations;
+it does not change any score, cap, threshold, or evidence rule.

@@ -24,15 +24,15 @@ runtime dependency of an experiment wave.
 | Question | Evidence | Verdict |
 | --- | --- | --- |
 | Does task wording reveal a target commit, PR URL, benchmark identity, score, historical helper/path, or hidden trap? | Static leak patterns plus manual review of all nine task files. TW-01's overly specific ADR hint was neutralized; TW-05 no longer mandates the historical path or one manager; TW-06 asks for the contemporaneous governance outcome without copying PR wording; TW-08 states the accepted behavior but not the historical DTO seam or review defect. | Pass |
-| Is validation fitted to the historical patch? | Patch similarity is never scored. Oracle v2 uses unique assertion IDs, exact single-test selectors, disjoint JSON pointers, and selected portable records only. Metadata and normalized contracts allow different correct implementations. | Pass for locked assertions; adapter qualification remains blocking |
+| Is validation fitted to the historical patch? | Patch similarity is never scored. Oracle v2 uses unique assertion IDs, exact single-test selectors, disjoint JSON pointers, and selected portable records only. Production adapters normalize names and types without implementing behavior, and each executable family passed positive and behavior-missing controls. | Pass |
 | Can every base/target be checked out and related unambiguously? | All nine full SHAs and base trees resolve. Eight targets have the declared base as direct parent. TW-09 is the only locked exception: base `7782114…` is an ancestor of implementation parent `c685fe7…`, with exact outcome-only first-parent sequence `22fc8eb…`, `b5b097c…`, `c685fe7…`. Ancestor-only preparation pilots could not resolve target commits. | Pass |
 | Is historical `AGENTS.md` exposure eliminated? | The first root `AGENTS.md` entered history at `22fc8eb…`. Every selected base predates that commit, and the verifier scans each base's reachable root-path history and fails closed if any root `AGENTS.md` object is found. The overlay is always untracked; tracked-blob quarantine was rejected because tree object IDs disclose the treatment. | Pass |
-| Can agent-visible runtime metadata reveal benchmark identity or prior cases? | The controlled design now uses neutral account/host/tool/catalog names, fresh opaque workspace/HOME/CODEX_HOME/TMPDIR paths, an empty read-only non-reused HOME, and a required identity/path leak-scan receipt. Construction-source/cache paths remain evaluator-only. | Design is neutral; staging and negative qualification remain blocker 2 |
-| Do historical bases and outcomes build and satisfy their evidence? | Content-addressed construction-only receipts show all nine clean historical bases passing each case's ordered, deduplicated base/core command union. Separate retained target receipts cover TW-06's 140 workspace tests and structural gate, TW-08's 38 storage tests, and the rebased TW-09's diagnostic/validation/portable evidence; seven earlier interactive target observations were not retained and are not readiness evidence. None of these receipts substitutes for same-wave base control or all-nine target-positive/oracle-negative qualification. | Base construction pilot passes; target and formal wave qualification remain partial/blocking |
+| Can agent-visible runtime metadata reveal benchmark identity or prior cases? | The controller uses fresh opaque run roots and workspace/HOME/CODEX_HOME/TMPDIR paths, a newly empty HOME, a closed environment allowlist, staged neutral tool/catalog paths, and a recursive ancestor/tree scan for instruction files and skill directories. Symlinks and semantic path labels fail closed; the exact exposed root `AGENTS.md` identity is recorded before and after execution. | Pass for the practical internal runner; dedicated-account attestation remains a limitation |
+| Do historical bases and outcomes build and satisfy their evidence? | The full construction qualification materialized all nine targets and behavior-missing bases, executed every core command, and exercised every applicable machine assertion. Machine cases have positive and negative discrimination evidence; subjective-only TW-01, TW-02, and TW-06 have deterministic packet gates. The controller independently executes the exact ordered base/core union in a fresh same-wave base checkout before agent launch. | Pass, with the disclosed TW-05 historical-target calibration miss |
 | Do cases rely on authority created after assignment? | Allowlisted authority is at or before each cutoff; later implementation/review is explicitly outcome-only. Unrecoverable edited text is excluded. | Pass |
 | Are capabilities needlessly duplicated? | Nine cases cover identity authority, storage-contract remediation, numeric conversion, crate architecture, resident-runtime research, governance reconciliation, graph oracle, legacy persistence, and staged diagnostics. Native/WASM/release gates and formula/workspace semantics still recur because they dominate the repository's strong merged evidence. | Disclosed cluster limitation |
-| Does scoring favor wording unique to one `AGENTS.md`? | Core tooling scores one explicit locked manager ecosystem rather than pnpm specifically; task text and subjective anchors do not cite either variant. Construction agents did see Baseline A, so this internal audit cannot substitute for both required independent roles: a variant-blind intrinsic audit and a post-freeze A-aware/no-edit comparison audit. | Internal review only; both independent signoffs remain blocking |
-| Are external dependencies reproducible? | Five distinct Cargo.lock byte sets resolved from the sealed cache with `CARGO_NET_OFFLINE=true`; the three retained target/rebase receipts also used the offline lock. GNU Bash 5, clone-local Cargo targets, and ≥10 GiB free are locked. | Cargo/Rust construction evidence passes; general Node-manager neutrality is not yet proven |
+| Does scoring favor wording unique to one `AGENTS.md`? | Core tooling scores one explicit locked manager ecosystem rather than pnpm specifically; task text and subjective anchors do not cite either variant. Construction agents did see Baseline A. | Internal review passes; further independent neutrality audits are a recorded limitation |
+| Are external dependencies reproducible? | Five distinct Cargo.lock byte sets resolved from the sealed cache with `CARGO_NET_OFFLINE=true`. TW-05 builds and exercises Rust, native Node tests, the Worker/parity path, benchmark, and portability directly under enforced network denial without invoking npm, pnpm, or yarn. GNU Bash 5, clone-local targets, binary hashes, WASM target artifacts, and free-space checks are recorded per attempt. | Pass |
 
 ## Construction pilot results
 
@@ -52,10 +52,11 @@ from formal results:
   without the independent storage-envelope commits, passed 6 diagnostic and 19
   validation-report tests, and produced exact native/WASM records 27–30;
 - all five distinct Cargo lock sets fetched/resolved with network disabled;
-- a happy-path candidate capture/apply pilot preserved committed, uncommitted,
-  ordinary untracked, binary, and symlink changes, but later adversarial review
-  showed that this implementation trusts agent-mutatable Git index flags,
-  ignore rules, attributes, filters, and configuration; it is not qualified;
+- raw candidate capture qualification preserved committed, staged, unstaged,
+  ignored and ordinary untracked files, binary bytes, symlinks, executable mode,
+  `assume-unchanged`, and `skip-worktree` changes while defeating hostile hooks,
+  attributes, filters, and candidate Git configuration; a separate trusted
+  object database/index and round-trip tree digest bind the result;
 - oracle materialization rejected a symlink escape and did not write outside the
   validation root;
 - a no-task Codex configuration smoke in an empty directory returned exactly
@@ -66,6 +67,25 @@ from formal results:
   and the adapter gate;
 - retained portable captures and the rebased TW-09 pilot proved exact selected
   observations and native/WASM equality without scoring inherited records.
+- the all-nine production-oracle qualification executed every core command and
+  applicable frozen assertion on positive and behavior-missing/base-negative
+  workspaces; selector-family negative fixtures rejected wrong Rust match
+  counts, JSON-pointer values, and portable record sets;
+- TW-05's direct offline runner completed without a package-manager command and
+  with an independently probed OS network denial; its controlled reference
+  runtime passes the frozen normalized contract, while the historical target's
+  two stale-revision misses are retained as calibration evidence rather than
+  rewritten away;
+- deterministic blinded-packet qualification covered exact, whitespace/case,
+  one-edit, identifier/path, residual-match, binary, symlink, invalid UTF-8,
+  manifest-tamper, and independent-rescan failures, plus byte-identical repeat
+  construction;
+- one-shot controller smokes used local fake agents only. They qualified stage
+  ordering, same-wave base controls before candidate exposure, no retry after
+  failure or timeout, process-group extinction, raw output/final-message
+  capture, adapter pause/resume within the same attempt, external slot
+  uniqueness, and append-only terminalization. No frozen benchmark task was
+  sent to Codex.
 
 The replacement/rebase receipts, command stdout/stderr, hashes, selected
 observations, and reconstructible TW-09 patch are frozen under
@@ -75,7 +95,13 @@ release/workspace gates were not recaptured and permanently excludes every
 artifact from formal scores.
 
 Temporary pilot roots were deleted after receipts were recorded. Construction
-never invoked Codex on a frozen benchmark task.
+never invoked Codex on a frozen benchmark task. The compact oracle qualification
+summary has payload SHA-256
+`47cad14a2d985e2edd7dcd8dbcaf4cfa1fd4537531960bf339dd29e509869e2d`
+and run-receipt SHA-256
+`d8663f74cf5d4c5710889769e813d5b6fe39c52a1b8a3cd3dd4e6cdb7f8cee51`,
+and evidence commitment SHA-256
+`a0dc816cc3373176f2be31a2f268174669353a99488ad8a96cc9ef147659b956`.
 
 ## Known cluster and carry-forward effects
 
@@ -88,82 +114,70 @@ commits. Aggregate analysis must show all nine raw cases and capability
 clusters, not claim nine independent samples or generalize to unrelated
 repositories.
 
-## Remaining blocking defects
+## Operational closure
 
-1. **Provider deployment identity:** client binary, catalog, model record, base
-   instructions, feature list, task, and tools are locked, but `gpt-5.6-sol`
-   exposes no immutable dated backend snapshot/deployment fingerprint. “Exact
-   same model” across future arms cannot currently be independently attested.
-   The fresh `CODEX_HOME` invocation also lacks a provisioned sealed credential
-   path and hashed provider account/project/entitlement context.
-2. **Agent/validator/controller isolation:** the required dedicated accounts
-   have not been provisioned or verified. In particular, candidate-controlled
-   Cargo build scripts/tests must run in a validator identity that cannot read
-   the full controller, source repository, arm key, other runs, or trusted
-   receipts. Candidate build machinery also cannot be allowed to read or mutate
-   hidden oracle source: production artifacts and evaluator probes require
-   separate staged capsules, immutable pre/post hashes, and hostile build.rs,
-   rustc-wrapper, proc-macro, and test negative controls. None has passed. The
-   exact locked runtimes/caches also have not been staged and leak-scanned at
-   their fixed neutral `/opt/isolated-runtime` paths; evaluator-only construction
-   source paths must remain unreadable.
-3. **Adapter execution:** TW-04, TW-05, TW-07, TW-08, and TW-09 require
-   candidate-interface adapters for solution-neutral scoring. No complete
-   adapter families have yet passed both historical-ground-truth and
-   behavior-missing negative-control qualification, and no trusted insertion
-   stage records their evaluator commit/review. The literal historical
-   `cargo test`/portable commands in `oracle-lock.json` are explicitly
-   construction-only; no production command manifest yet maps every unchanged
-   semantic assertion to the separated artifact/probe/execution stages. The
-   all-nine historical targets have not yet passed content-addressed positive
-   qualification of every core/assertion path plus behavior-missing and
-   base-negative discrimination controls.
-4. **Semantic result controller:** scripts freeze inputs and trees, but no
-   end-to-end controller yet substitutes locked commands, enforces exactly one
-   Rust test match, resolves JSON pointers, applies caps, validates point/ID
-   arithmetic against all locks, enforces valid/invalid stage semantics, passes
-   positive and adversarial record fixtures, and emits the signed
-   semantic-validation receipt required by the result schema.
-5. **TW-05 tool neutrality:** the frozen task allows one reproducible locked
-   Node manager, but only the pnpm runtime/cache path has been construction-
-   qualified offline. Either equally lock and qualify every allowed workflow or
-   freeze a historically justified manager requirement before a controlled run.
-6. **Effective preflight/runtime integration:** the exact
-   feature/MCP/prompt/catalog checks are specified and individually piloted, but
-   are not yet one fail-closed controller preflight tied to each result. The
-   construction-only all-nine base-union receipts now pass; the mandatory
-   same-wave base control is still absent. The runtime verifier also does not yet
-   bind hashes for the invoked Cargo/rustc/rustup/rustfmt/clippy binaries, the
-   installed WASM target artifacts, and every locked Git/runtime executable.
-7. **Trusted complete candidate capture:** the current prototype runs `git add
-   -A` through the candidate repository. Agent-set `skip-worktree` or
-   `assume-unchanged` flags and ignored files can evade it, while candidate
-   `.gitattributes`, filters, hooks, or local configuration can transform or
-   execute during privileged capture. A raw-filesystem, no-filter trusted
-   object/index implementation and adversarial negative qualification are
-   required.
-8. **Reviewer eligibility and blindness:** conflict/prior-exposure attestations,
-   an eligibility registry, and standalone-Baseline packet-only reviewer
-   assignments are specified but not implemented or independently exercised.
-   Constructors, historical PR participants, oracle/adapter custodians, and
-   experiment operators must be excluded case by case. Future paired A/B also
-   requires disjoint panels across arms. The frozen packet-wide variant-text
-   scanner/redactor and receipt contract has not been implemented or passed its
-   exact/near-copy, path, residual-match, and fail-closed qualification fixtures.
-   The byte-exact reviewer allocator likewise lacks independent reference-vector
-   replay and impossible-order negative qualification.
-9. **Independent neutrality audits:** case constructors were exposed to Baseline
-   A. Before standalone Baseline A, a variant-blind non-constructor must audit
-   historical authenticity, leakage, capability balance, and generic rubric
-   neutrality; a separate post-freeze A-aware/no-edit auditor must check A-specific
-   overlap and favoritism without seeing outcomes. Neither has occurred. A future
-   controlled A/B wave requires the second auditor to compare both frozen,
-   anonymized variants while blind to arm labels, plus Variant B
-   benchmark-firewall provenance/access attestation before evaluator internals
-   are unsealed.
+The practical internal-experiment implementation closes the locally actionable
+readiness defects:
 
-These are readiness defects, not low-score conditions. They must invalidate or
-prevent a run rather than be charged to a candidate.
+1. `production-oracles.json` maps all 9 cases, 27 frozen core commands, 58
+   frozen oracle commands, 74 assertions, and 16 subjective groups without
+   changing a selector or point.
+2. `qualifications/oracles.json` binds all-nine positive and negative execution,
+   selector-family discrimination, adapters, and TW-05 package-manager-neutral
+   offline evidence. The verifier recomputes both its semantic payload and its
+   separate content-addressed run receipt.
+3. `preflight-run.mjs` and the controller record a closed environment, neutral
+   instruction surface, overlay identity, free space, local runtime binary
+   versions/hashes, WASM artifacts, model catalog, and the sealed controller
+   bundle for each attempt.
+4. `capture-candidate.mjs` performs raw lexical capture into a separate trusted
+   Git object database/index and proves candidate patch/tree round-trip equality.
+5. `run-controller.mjs` externally registers a unique wave/case/phase slot,
+   executes its base control before exposure/launch, launches at most one agent
+   process group, captures immutable output and candidate state only after group
+   extinction, and commits one hash-chained terminal disposition. Adapter work
+   can resume only the identical captured attempt; it cannot launch another
+   agent.
+6. `build-review-packet.mjs` creates deterministic path-aliased packets from a
+   hash-complete role manifest. The independent scanner validates the frozen
+   R1–R4 contract, registered variants, public packet manifest, and zero residual
+   matches before a terminal `qualified` release receipt.
+
+An individual Baseline attempt remains fail-closed: missing external
+authorization, catalog/tool/hash drift, insufficient disk, base-control failure,
+instruction leakage, overlay drift, surviving descendants, capture mismatch, or
+invalid review material prevents or invalidates that observation. Those are
+per-run gates implemented by the controller, not missing infrastructure and not
+candidate score deductions.
+
+## Recorded limitations
+
+- OpenAI does not expose an immutable dated deployment fingerprint for
+  `gpt-5.6-sol`. The client, model ID, bundled catalog/model/base-instruction
+  hashes, exact arguments, feature set, and locally controlled runtime are
+  recorded instead. Provider account/project/entitlement details are recorded
+  when available but cannot be independently attested by this repository.
+- The practical internal runner relies on opaque paths, closed environments,
+  stage-separated copies, content hashes, and an exclusive host. Dedicated OS
+  account provisioning and an additional independent confinement audit would
+  strengthen the boundary but are not required for the internal Baseline. The
+  same-user runner fails closed on an observed root-overlay identity/content
+  change but cannot attest against a mutate-and-restore-in-place sequence.
+- Multi-reviewer panels are not required for Baseline readiness. Any available
+  reviewer count and eligibility/conflict statement must be recorded; packet
+  generation and release scanning remain mandatory.
+- Constructors saw Baseline A. Further variant-blind and A-aware neutrality
+  audits are desirable and remain mandatory for claims that depend on stronger
+  independent governance, but their absence does not block this internal
+  Baseline characterization.
+- TW-05's frozen historical target does not satisfy two frozen stale-revision
+  expectations. The contract was not weakened: a controlled real runtime is the
+  qualified positive, the historical base is negative, and the target miss is
+  retained in the qualification receipt.
+- A future Variant B or paired A/B wave still requires Variant B provenance,
+  both arms in the same newly registered wave, byte-identical controls, and the
+  stronger pair cancellation/blinding rules. Standalone Baseline A output may
+  not be recycled as a future A arm.
 
 ## Repository integrity
 

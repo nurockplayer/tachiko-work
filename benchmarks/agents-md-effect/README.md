@@ -26,12 +26,18 @@ result. This benchmark does not propose or optimize an `AGENTS.md` variant.
   Ultra procedures.
 - [`BLINDED_REVIEW.md`](BLINDED_REVIEW.md) — reviewer blinding and adjudication.
 - [`AUDIT.md`](AUDIT.md) — contamination and reproducibility audit.
-- [`READINESS.md`](READINESS.md) — normative go/no-go verdict and blockers.
+- [`READINESS.md`](READINESS.md) — normative go/no-go verdict, launch gates,
+  and recorded limitations.
 - [`environment-lock.json`](environment-lock.json) — pinned execution and
   validation controls.
-- [`evaluator/oracle-lock.json`](evaluator/oracle-lock.json) — independent
-  semantic assertion/evidence lock; its historical command strings are
-  construction-only until a qualified staged production manifest exists.
+- [`evaluator/oracle-lock.json`](evaluator/oracle-lock.json) — frozen independent
+  semantic assertion/evidence lock.
+- [`evaluator/production-oracles.json`](evaluator/production-oracles.json) —
+  production-stage mapping for all nine cases and every frozen machine or
+  subjective assertion.
+- [`evaluator/qualifications/oracles.json`](evaluator/qualifications/oracles.json)
+  — content-addressed construction qualification for positive, behavior-missing,
+  and base-negative oracle controls.
 - [`evaluator/core-score-lock.json`](evaluator/core-score-lock.json) — fixed
   19-point candidate-tree machine core.
 - [`evaluator/authority-lock.json`](evaluator/authority-lock.json) — assignment
@@ -46,9 +52,30 @@ result. This benchmark does not propose or optimize an `AGENTS.md` variant.
   — content-addressed, permanently excluded construction evidence.
 - [`scripts/verify-benchmark.mjs`](scripts/verify-benchmark.mjs) — construction
   integrity checks. It never runs a benchmark agent.
+- [`scripts/run-controller.mjs`](scripts/run-controller.mjs) — one-shot run
+  controller with neutral preflight, same-wave base control, trusted capture,
+  validation, and blinded-packet stages.
+- [`scripts/preflight-run.mjs`](scripts/preflight-run.mjs) — fail-closed
+  per-attempt environment, tool, artifact, and instruction-surface preflight.
+- [`scripts/capture-candidate.mjs`](scripts/capture-candidate.mjs) — trusted
+  raw-filesystem candidate/diff capture with no-filter round-trip proof.
+- [`scripts/run-oracles.mjs`](scripts/run-oracles.mjs),
+  [`scripts/qualify-oracles.mjs`](scripts/qualify-oracles.mjs), and
+  [`scripts/run-tw05-offline.mjs`](scripts/run-tw05-offline.mjs) — production
+  oracle execution, retained positive/negative qualification, and
+  package-manager-neutral TW-05 execution.
+- [`scripts/process-group-supervisor.mjs`](scripts/process-group-supervisor.mjs)
+  — shared fixed-deadline TERM/KILL/extinction supervision for agent and
+  validation command groups.
+- [`scripts/build-review-packet.mjs`](scripts/build-review-packet.mjs) and
+  [`scripts/scan-review-packet.mjs`](scripts/scan-review-packet.mjs) —
+  deterministic blinded packet construction and standalone release scanning.
 
-The current verdict is **NOT READY for Baseline A**. Static integrity passing is
-necessary but does not override the blockers in `READINESS.md`.
+The current practical internal-experiment verdict is **READY for Baseline A**.
+Every formal attempt still requires the controller's external authorization and
+per-run preflight; readiness is not authorization and no formal Baseline A or
+Variant B task has been executed during construction. See `READINESS.md` for the
+remaining recorded limitations.
 
 ## Visibility boundary
 

@@ -1,18 +1,29 @@
 # Controlled Execution Procedures
 
-Protocol: `tachiko-agents-effect-v1`. These procedures are frozen construction
-output; they are not authorization to start an arm. A controlled run must not
-begin while any blocking item in `READINESS.md` remains open.
+Protocol: `tachiko-agents-effect-v1`. These procedures do not authorize an arm.
+The frozen task, case, historical-base, oracle-selector, and scoring contracts
+remain unchanged. The operational profile below implements them for a practical
+internal Baseline A; stronger provider/account/panel attestations described in
+the original design are recorded limitations unless `READINESS.md` identifies a
+locally actionable blocker.
+
+Formal phases are fail-closed and require a separate external authorization
+file. Construction smokes may exercise the controller with a local fake agent,
+but may not supply a frozen task to Codex or be imported into a formal result.
 
 ## Wave registration and common preflight
 
-Before an experiment wave, freeze one read-only controller bundle containing
-the benchmark, schemas, validators, model catalog, environment lock, adapter
-policy, and result validator. Record every byte hash in the wave registry.
-Baseline and Variant workspaces must not be able to read this bundle.
+Before an experiment wave, freeze one controller bundle containing the
+benchmark, schemas, validators, environment lock, adapter policy, and result
+validator. `run-controller.mjs` copies and hashes the complete executable bundle
+before exposure, records its tree digest in every stage receipt, and invokes
+helpers and contracts only from that copy. Agent workspaces are disjoint from
+the artifact directory and receive none of its paths or bytes.
 
 Create the immutable pre-run registry and append-only ledger genesis exactly as
-`wave-registration-v1.json` specifies. Generate `experiment_id`, `wave_id`,
+`wave-registration-v1.json` specifies. The external controller registry reserves
+the unique `(wave_id, case_id, phase)` slot atomically; a different attempt ID
+cannot resample an occupied slot. Generate `experiment_id`, `wave_id`,
 `run_id`, `attempt_id`, `pair_id` where applicable, and
 `blinded_candidate_id` as independent lowercase 128-bit CSPRNG hex values; IDs
 may not encode case or arm and the generation receipt is registered. Commit the
@@ -23,36 +34,39 @@ record binds only its earlier attempt-registration hash.
 
 For every observation:
 
-1. Create a new opaque run root on the locked host and a copy-on-write clone of
-   the sealed Cargo cache. Use the neutral `codex-worker` account for the agent,
-   `build-worker` for all candidate-controlled builds and tests, `probe-builder`
-   for trusted probe compilation, `probe-runner` for candidate-linked probe
-   execution, and `job-controller` for sealed inputs/receipts. Account names,
-   home/tool paths, hostnames, and workspace paths visible to the agent must not
-   contain benchmark/protocol, arm, variant, or case identifiers.
+1. Create a new opaque run root on an exclusive host and a copy-on-write clone
+   of the sealed Cargo cache. The implementation uses disjoint neutral
+   workspaces and stage-specific immutable copies/receipts. Dedicated
+   `codex-worker`, `build-worker`, `probe-builder`, `probe-runner`, and
+   `job-controller` accounts are additional deployment hardening, not an
+   internal Baseline readiness prerequisite. Account names, home/tool paths,
+   hostnames, and workspace paths visible to the agent must not contain
+   benchmark/protocol, arm, variant, or case identifiers.
 2. Require at least 10 GiB free; no other agent or validator process may run.
-3. Materialize the model catalog once per wave:
+3. Materialize the model catalog once per wave outside the repository:
 
    ```sh
    node <controller>/scripts/materialize-model-catalog.mjs \
      --output <sealed-wave>/models-0.149.0.json
    ```
 
-   Verify its locked hash, then copy those exact read-only bytes to
-   `/opt/isolated-runtime/model-catalog/models-0.149.0.json`; only that neutral
-   path is passed to Codex and visible in its process arguments.
+   The controller revalidates its raw, canonical catalog, model-record, and
+   base-instruction hashes, then copies those exact read-only bytes to
+   `<opaque-run-root>/runtime/model-catalog.json`. Only that neutral per-attempt
+   path is substituted into the externally authorized Codex arguments. Both
+   arms of a future paired wave must bind identical catalog bytes.
 
 4. Launch the environment verifier with only the locked environment:
 
    ```sh
    /usr/bin/env -i \
      HOME=<opaque-run-root>/home \
-     PATH=<environment-lock.controlled_runner.path> \
+     PATH=<opaque-run-root>/tool-bin:/usr/bin:/bin:/usr/sbin:/sbin \
      LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC \
      CARGO_INCREMENTAL=0 CARGO_NET_OFFLINE=true \
      CARGO_HOME=<opaque-run-root>/cargo-home \
-     RUSTUP_HOME=/opt/isolated-runtime/rustup \
-     PNPM_HOME=/opt/isolated-runtime/pnpm-11.13.0 \
+     RUSTUP_HOME=<opaque-run-root>/rustup-home \
+     PNPM_HOME=<opaque-run-root>/pnpm-home \
      GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_ATTR_NOSYSTEM=1 \
      <locked-node> <controller>/scripts/verify-environment.mjs
    ```
@@ -67,21 +81,19 @@ For every observation:
    command paths, mounts, process arguments, and representative denied-path
    errors; fail if any reveals benchmark/protocol, case, arm, or variant labels
    or an evaluator-only construction source path.
-6. Provision a sealed per-run provider credential through a supervisor broker
-   or equivalent channel that the agent shell/filesystem cannot read. Freeze
-   hashed provider account and project identities plus organization, region,
-   entitlement, and rate-limit context; both arms must match exactly. Fresh
-   `CODEX_HOME`, disabled auth elicitation, and disabled secret storage do not
-   themselves provide authentication and may not be bypassed with a task-visible
-   token.
-7. Abort as `invalid_run` on any mismatch. A task-quality failure or timeout is
-   never retried. Permit one fresh `attempt_number=2` only if failure occurred
-   before any model output, filesystem mutation, or candidate-dependent signal.
-   Once output exists, never launch another agent: at most once re-execute only
-   the failed validator/review stage against the identical immutable captured
-   candidate when no protected content was exposed. Otherwise cancel the case;
-   controlled A/B discards both sides. The matrix is automatic and cannot depend
-   on candidate quality or operator preference.
+6. Use the operator's authenticated provider context without placing credential
+   bytes in the agent task, workspace, or recorded environment. Record the
+   provider account/project/organization/region/entitlement context that the
+   client exposes. A sealed supervisor broker and provider-signed identity
+   receipt are stronger future controls but are not available repository-side.
+7. Abort as `invalid_run` on any mismatch. The externally reserved
+   `(wave_id, case_id, phase)` slot is never resampled, including failures before
+   model output. Once launch is attempted, never launch another agent. At most
+   once re-execute only the failed validator/review stage against the identical
+   immutable captured candidate when no protected content was exposed; adapter
+   pause/resume follows the same rule. Otherwise cancel the case; controlled A/B
+   discards both sides. The matrix is automatic and cannot depend on candidate
+   quality or operator preference.
 
 Before exposing a case to Codex, create a separate ancestor-only clean-base
 clone and execute the ordered de-duplicated union of every command in
@@ -93,6 +105,40 @@ per command. Any failure invalidates that case for the wave; it is not attribute
 to a candidate. For controlled A/B, run this health control immediately before
 the pair and use the same receipt for both arms. The base-control clone is never
 an agent workspace and contributes no score.
+
+The controller entry point is:
+
+```sh
+node <controller>/scripts/run-controller.mjs \
+  --case <TW-ID> \
+  --source-repo <source-repository> \
+  --variant-file <registered-variant> \
+  --expected-variant-sha256 <registered-variant-sha256> \
+  --phase baseline_a \
+  --run-root <neutral-parent>/r-<128-bit-hex> \
+  --artifact-dir <trusted-artifact-parent>/<new-opaque-id> \
+  --attempt-registry-dir <trusted-external-registry> \
+  --agent-executable <locked-codex> \
+  --agent-args-file <registered-argument-template.json> \
+  --model-catalog-file <sealed-wave>/models-0.149.0.json \
+  --timeout-seconds <case-time-limit-minutes-times-60> \
+  --wave-id <128-bit-hex> \
+  --run-id <128-bit-hex> \
+  --attempt-id <128-bit-hex> \
+  --candidate-id <128-bit-hex> \
+  --cargo-home-template <sealed-cargo-home-template> \
+  --rustup-home-template <sealed-rustup-home-template> \
+  --custodian-id <opaque-custodian-id> \
+  --authorization-file <external-formal-authorization.json>
+```
+
+The registered argument template contains literal `<workspace>` and
+`<model-catalog>` placeholders. For a formal attempt, the controller requires
+the frozen case timeout, substitutes only the opaque per-run workspace and
+staged catalog paths, and verifies authorization commitments for the exact
+effective arguments and complete local runtime identity before reserving the
+slot. The external registry and artifact directory must be disjoint from both
+the source repository and run root.
 
 ## Timeout and termination policy
 
@@ -133,17 +179,15 @@ arm label. The script creates an ancestor-only bundle, removes remotes/reflogs
 and alternates, verifies the exact base tree and absence of the target commit,
 rejects the case if a root `AGENTS.md` is present anywhere in the base's
 reachable history, and writes the registered root file as an ignored untracked
-overlay without changing `HEAD`. The supervisor must then make that exact node
-controller-owned and immutable to the agent through a qualified OS/sandbox
-deny-write policy; merely setting mode `0444` is insufficient because a writable
-parent permits replacement. Index flags or tracked-blob substitution are
-forbidden. Record pre-launch `lstat` device/inode/type/owner/mode/flags, policy
-receipt, bytes, and hash; require identical post-run identity and content. Raw
+overlay without changing `HEAD`. Index flags or tracked-blob substitution are
+forbidden. Record pre-launch `lstat` device/inode/type/owner/mode, bytes, and
+hash; require identical post-run identity and content before capture. Raw
 capture excludes that exact verified node only. No parent/user instruction files
-are readable. The frozen task bytes stay outside the workspace and are streamed
-to stdin. The current preparation script does not provision this protection and
-is therefore construction-only until the runner supplies and negatively
-qualifies it.
+are injected, and the frozen task bytes stay outside the workspace and are
+streamed to stdin. Under the practical same-user profile, an attempted
+replacement invalidates the occupied slot and cannot be resampled. A separately
+qualified OS deny-write policy and dedicated controller ownership would prevent
+replacement rather than detect it and remain additional deployment hardening.
 
 If any post-run overlay identity/content field differs or the node is missing,
 do not capture or score candidate quality. Preserve available pre/post evidence
@@ -161,14 +205,14 @@ A and B.
 ```sh
 /usr/bin/env -i \
   HOME=<opaque-run-root>/home \
-  PATH=<environment-lock.controlled_runner.path> \
+  PATH=<opaque-run-root>/tool-bin:/usr/bin:/bin:/usr/sbin:/sbin \
   CODEX_HOME=<opaque-run-root>/codex-home \
   TMPDIR=<opaque-run-root>/tmp \
   LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC \
   CARGO_INCREMENTAL=0 CARGO_NET_OFFLINE=true \
   CARGO_HOME=<opaque-run-root>/cargo-home \
-  RUSTUP_HOME=/opt/isolated-runtime/rustup \
-  PNPM_HOME=/opt/isolated-runtime/pnpm-11.13.0 \
+  RUSTUP_HOME=<opaque-run-root>/rustup-home \
+  PNPM_HOME=<opaque-run-root>/pnpm-home \
   GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_ATTR_NOSYSTEM=1 \
   /opt/homebrew/Caskroom/codex/0.149.0/bin/codex exec \
   --cd <agent-workspace> \
@@ -231,7 +275,7 @@ A and B.
   -c 'include_environment_context=false' \
   -c 'orchestrator.skills.enabled=false' \
   -c 'orchestrator.mcp.enabled=false' \
-  -c 'model_catalog_json="/opt/isolated-runtime/model-catalog/models-0.149.0.json"' \
+  -c 'model_catalog_json="<opaque-run-root>/runtime/model-catalog.json"' \
   -c 'approval_policy="never"' \
   -c 'sandbox_workspace_write.network_access=false' \
   -c 'shell_environment_policy.inherit="all"' \
@@ -241,55 +285,60 @@ A and B.
   -
 ```
 
-The privileged supervisor writes the exact frozen task bytes to the child's
-stdin through a one-way pipe; no controller path is mounted or readable by the
-agent account. It captures stdout/stderr through pre-opened controller-owned
-pipes and extracts the final response from immutable stdout JSONL; no
+The controller writes the exact frozen task bytes to the child's stdin through
+a one-way pipe; no controller path is passed to the task or placed in the agent
+workspace. It captures stdout/stderr through controller-owned pipes and extracts
+the final response from the captured stdout JSONL; no
 agent-writable `--output-last-message` path is used. The controller records exit
 code, start/end timestamps, timeout reason, usage, task hash, all effective
 locks, and the raw final-message hash. No resume, fork, steering, user reply,
 retry for task quality, or sub-agent is allowed.
 
-`HOME` is a newly created empty supervisor-owned read-only directory inside the
-opaque run root. Freeze its empty-tree/path/owner/mode receipt before launch,
-deny agent write/replace, recheck after exit, and delete it with the run; it is
-never reused across attempts. `CODEX_HOME` and `TMPDIR` are likewise fresh per
-attempt but writable only to the extent required by the locked client/sandbox.
+`HOME` is a newly created empty directory inside the opaque run root. Freeze its
+empty-tree/path/owner/mode receipt before launch and delete it with the run; it
+is never reused across attempts. `CODEX_HOME` and `TMPDIR` are likewise fresh
+per attempt and disjoint from every pre-existing user or construction home. A
+dedicated supervisor-owned read-only HOME is stronger deployment hardening for
+a future multi-account runner, not a practical internal Baseline prerequisite.
 
 ## Candidate capture and validation order
 
-After Codex exits, revoke the agent account and verify the `AGENTS.md` hash.
-Capture must then read the raw filesystem, not trust the candidate repository's
-index, ignore rules, attributes, hooks, filters, or local Git configuration.
+After Codex exits and its process group is proven extinct, verify the
+`AGENTS.md` identity and hash. Capture must then read the raw filesystem, not
+trust the candidate repository's index, ignore rules, attributes, hooks,
+filters, or local Git configuration.
 It must include committed, staged, unstaged, ignored-untracked, ordinary
 untracked, binary, executable-bit, and symlink changes while excluding only the
 pre-registered root overlay, `.git`, and pre-registered reproducible cache/build
 roots. Unsupported filesystem node types invalidate the run.
 
-The current command is a construction prototype only:
+The production capture command is:
 
 ```sh
 node <controller>/scripts/capture-candidate.mjs \
   --case <TW-ID> \
   --workspace <agent-workspace> \
+  --source-repo <unreadable-source-repository> \
+  --exclusions-file <trusted-output>/capture-exclusions.json \
+  --expected-agents-identity-file <trusted-output>/preparation/overlay-identity.json \
   --trusted-dir <trusted-output>/capture \
   --expected-agents-sha256 <registered-variant-sha256>
 ```
 
-It is not authorized for a controlled run because it stages through the
-agent-mutatable index/configuration. The production replacement must construct
-the candidate in a separate trusted object database and temporary index using
-raw path/type/mode/content observations and `hash-object --no-filters`; it must
-disable hooks, attributes-driven filters, global/system configuration,
-autocrlf conversion, and alternates. Every trusted Git subprocess uses the
+It constructs the candidate in a separate trusted object database and temporary
+index using raw path/type/mode/content observations and
+`hash-object --no-filters`. It disables hooks, attributes-driven filters,
+global/system configuration, autocrlf conversion, and alternates. Every trusted
+Git subprocess uses the
 locked Git binary through locked `rtk`, `GIT_CONFIG_NOSYSTEM=1`,
 `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_ATTR_NOSYSTEM=1`, no alternates, and explicit
 `core.hooksPath=/dev/null`, `core.attributesFile=/dev/null`, and
-`core.autocrlf=false`. Qualification must prove that assume-unchanged, skip-worktree,
-ignored files, hostile `.gitattributes`, configured clean filters, binary files,
-symlinks, and executable-bit changes are captured byte-for-byte. A trusted
-raw-tree digest, exclusion-list hash, generated candidate commit/tree, and
-round-trip digest are required receipts.
+`core.autocrlf=false`. Qualification proves that assume-unchanged,
+skip-worktree, ignored files, hostile `.gitattributes`, configured clean filters,
+binary files, symlinks, and executable-bit changes are captured byte-for-byte.
+The receipt binds the source repository, expected overlay identity, normalized
+exclusion list, raw-tree digest, generated candidate commit/tree, no-filter
+patch, and round-trip digest.
 
 After a qualified capture, prepare a clean candidate copy without evaluator
 files:
@@ -308,8 +357,7 @@ Require capture-to-apply tree equality and a passing same-wave base-control
 receipt, then run only the case's ten-point
 `core-score-lock.json` commands in this clean candidate commit. Store one command
 receipt per exact command. The following overlay command is a construction
-prototype only; it is not authorized for a controlled run because it places
-confidential evaluator source beside candidate-controlled build machinery:
+helper only and is not part of a formal attempt:
 
 ```sh
 node <controller>/scripts/prepare-oracle-overlay.mjs \
@@ -320,29 +368,56 @@ node <controller>/scripts/prepare-oracle-overlay.mjs \
   --trusted-dir <trusted-output>/oracle-overlay
 ```
 
-The production replacement uses two stages. First, build candidate production
-artifacts with no oracle, adapter, expected-value, controller, or receipt bytes
-mounted and with candidate Cargo configuration policy frozen. Freeze the
-candidate source and artifacts read-only and hash them. Second, compile each
-trusted evaluator probe in a separate read-only capsule through direct,
-controller-selected tool invocations against only the minimal prebuilt candidate
-artifact/API surface; candidate hooks, wrappers, build scripts, proc macros, and
-tests may not execute during probe compilation. Unmount probe source and
-expected-value material before executing any candidate-linked binary. Pre/post
-hashes must prove that candidate artifacts, probe binaries, and evaluator inputs
-were not changed. If a contract cannot be evaluated through that separation,
-the adapter family is unqualified and the observation cannot run.
+`evaluator/production-oracles.json` is the production mapping for every frozen
+command and assertion. The controller invokes its sealed copy through:
 
-The existing `oracle-lock.json` `commands` and `command_specs` are
-construction/historical-ground-truth invocations, not controlled-run physical
-commands: literal `cargo test` and the portable construction runner cannot meet
-the confidentiality model above. Before a wave, freeze a production oracle
-command manifest mapping every unchanged assertion ID to its candidate-only
-artifact build receipt, trusted probe-build command/binary hash, and
-expectation-free execution/validator command. The manifest and every adapter
-family must pass positive ground truth, behavior-missing, oracle-read, and
-oracle-mutation controls without changing any scenario, selector, expected
-observation, or point.
+```sh
+node <controller>/scripts/run-oracles.mjs \
+  --case <TW-ID> \
+  --candidate-root <validation-workspace> \
+  --trusted-dir <trusted-output>/oracles \
+  --expected-control-sha256 <registered-control-sha256> \
+  --manifest <controller>/evaluator/production-oracles.json \
+  --expected-manifest-sha256 <registered-manifest-sha256> \
+  --oracle-lock <controller>/evaluator/oracle-lock.json \
+  --expected-oracle-lock-sha256 <registered-oracle-lock-sha256> \
+  --trusted-cargo <locked-cargo> \
+  --expected-cargo-sha256 <registered-cargo-sha256> \
+  --trusted-rustc <locked-rustc> \
+  --expected-rustc-sha256 <registered-rustc-sha256> \
+  --trusted-shell <locked-bash> \
+  --expected-shell-sha256 <registered-bash-sha256>
+```
+
+TW-05 and TW-09 may additionally provide the content-addressed adapter and
+contract files. If a correct candidate uses a different public seam, the
+controller terminalizes as `awaiting_trusted_adapter`; the custodian may attach
+only a hash-bound name/type adapter and resume validation against the identical
+captured patch. The agent is never relaunched.
+
+```sh
+node <controller>/scripts/run-controller.mjs \
+  --resume-artifact-dir <trusted-attempt-artifacts> \
+  --adapter-file <trusted-adapter.mjs> \
+  --expected-adapter-sha256 <registered-adapter-sha256> \
+  --custodian-id <opaque-custodian-id>
+```
+
+If an adapter config is needed, also supply `--adapter-config` and its expected
+SHA-256. Resume rehashes the sealed controller bundle, registry entry, prior
+stage chain, frozen controls, process/capture/validation artifacts, variant/task,
+and source repository identity, then reconstructs a fresh validation workspace
+from the captured patch before oracle execution.
+
+Candidate production work and trusted evaluator work are separated by fresh
+copies and complete input/output identities. Exact Rust checks authenticate the
+locked Cargo and rustc, every relevant Cargo/config/source input, the one built
+test artifact, and direct libtest JSON execution. Candidate runners, wrappers,
+hooks, filters, and harness substitutions are rejected. Portable and normalized
+contract adapters record their trusted inputs and candidate-linked output hash.
+Qualification covers positive ground truth, behavior-missing/base-negative, and
+tamper controls without changing any scenario, selector, expected observation,
+or point.
 
 Only then execute each `oracle-lock.json` assertion independently in that
 qualified capsule. Exact Rust selectors must show exactly one matched passing
@@ -351,48 +426,82 @@ JSON-pointer selectors consume the hash-locked validator's JSON output. Portable
 selectors consume only selected record indexes from the qualified staged
 runner. Never reuse an assertion ID or award points from an unselected record.
 
+The construction qualification is reproduced without Codex by:
+
+```sh
+node <controller>/scripts/qualify-oracles.mjs \
+  --source-repo <source-repository> \
+  --output <new-qualification-summary.json> \
+  --mode full
+
+node <controller>/scripts/verify-oracle-qualification.mjs \
+  --receipt <new-qualification-summary.json>
+```
+
+For TW-05, `run-tw05-offline.mjs` invokes Cargo and Node entry points directly
+under `CARGO_NET_OFFLINE=true` and an OS network-denial profile whose denial is
+actively probed. npm, pnpm, and yarn are never part of the candidate execution
+path. The full retained qualification uses a controlled runtime as the positive
+for the frozen stale-revision contract, keeps the historical base as a negative,
+and records the frozen historical target's two misses without weakening the
+contract.
+
 Where `adapter_allowed=true`, a variant-blind oracle custodian may adapt names
-and types only. Save the complete adapter source/diff and hashes, obtain a
-second independent adapter-integrity review, and apply it as a new evaluator
-commit after the locked overlay. A compile failure is `oracle_adapter_required`,
+and types only. Save the complete adapter source/diff and hashes and record any
+available independent adapter-integrity review. A compile failure is
+`oracle_adapter_required`,
 not zero, until that process completes. An adapter that implements behavior or
 emits expected values without exercising candidate production code invalidates
 the observation.
 
 Candidate core commands and candidate Cargo build scripts/tests execute as the
-confined validator account in a disposable candidate-only copy. A distinct
-probe-builder account creates the evaluator binaries without candidate-controlled
-configuration or executables; a still-confined execution account runs those
-binaries after probe source is unmounted. These identities can access only the
-stage-specific workspace, copied dependency cache, temporary directory, and
-explicit read-only inputs. None can access the full controller, source
-repository, arm key, other runs, trusted receipt store, or an earlier/later
-stage's confidential material; stdout/stderr and machine results leave through
-pre-opened controller-owned channels. The controller never executes
-candidate-controlled hooks, filters, build scripts, tests, proc macros, wrappers,
-or binaries. Before a wave, hostile build.rs, `.cargo/config` rustc-wrapper,
-proc-macro, and test controls must fail to read oracle/expected-value and
-sentinel controller/source/other-run files, fail to modify evaluator inputs,
-probe binaries, candidate artifacts, or trusted receipts, and fail to reach the
-network, while an ordinary validation command still succeeds. Record the
-stage-isolation and hostile-control receipt hashes in every result.
+in a disposable candidate-only copy. Trusted probe construction and execution
+use separate workspaces, explicit inputs, no candidate Git configuration, and
+pre/post hashes. On a host with dedicated validator/probe accounts those stages
+should use them; the practical internal profile permits the exclusive controller
+account while preserving the same filesystem separation and receipts. Stdout,
+stderr, and machine results enter the artifact store through controller-owned
+paths. Hostile build/test/config controls, runtime binary substitution, network
+access, and trusted-input mutation are construction-qualified and fail closed.
 
 ## Blinding, scoring, and record freeze
 
-Run `redact-final-message.mjs`, use the attempt's pre-provider committed opaque
-candidate label, and use the
-precommitted arm-key-blind `reviewer-allocation-v1.json` algorithm for panels,
-custodian/integrity roles, adjudicator priority, and non-adjacent review order.
-Build the review packet specified in
-`BLINDED_REVIEW.md`. Machine point totals, arm, model transcript, runtime, the
+Use the attempt's pre-provider committed opaque candidate label. The controller
+constructs a six-role hash-complete input manifest (`task`, `authority`,
+`candidate_checkout`, `candidate_diff`, `candidate_validation`, and
+`final_message`) and invokes:
+
+```sh
+node <controller>/scripts/build-review-packet.mjs \
+  --case-id <TW-ID> \
+  --candidate-id <opaque-candidate-id> \
+  --input-root <trusted-packet-input-root> \
+  --input-manifest <trusted-packet-input-manifest> \
+  --variant <registered-variant-a> \
+  --contract <controller>/evaluator/contracts/review-packet-blinding-v1.json \
+  --output-dir <new-packet-directory> \
+  --terminal-receipt <new-external-terminal-receipt> \
+  --custodian-id <opaque-custodian-id> \
+  --custodian-eligible true \
+  --frozen-at <registered-rfc3339-time>
+```
+
+Register every frozen variant with a repeated `--variant`. The builder writes a
+private match map outside the packet and a public manifest inside it. Independently
+run `scan-review-packet.mjs --packet-dir ... --contract ... --variant ...
+--receipt ...`; release only when its external terminal receipt is `qualified`
+with zero matches. Machine point totals, arm, model transcript, runtime, the
 paired candidate, target history, and oracle implementation remain hidden.
 Before packet release, obtain case-specific conflict/prior-exposure attestations
 and reject constructors, historical case participants, oracle/adapter actors,
 experiment operators, or anyone with implementation-specific prior knowledge.
-Two reviewers score independently; controlled A/B arms use disjoint panels and
-disjoint adjudicators, so no reviewer sees both candidates in a pair before all
-pair reviews freeze. Adjudicate under the locked disagreement rules. A semantic
-result validator must bind every ID, point, status, command, tree, receipt,
+For standalone internal Baseline A, one or more eligible packet-only reviewers
+may score; record the actual reviewer count and eligibility/conflict statement.
+If multiple reviewers are used, apply the locked independent/adjudication rules.
+A future controlled A/B requires disjoint panels and adjudicators across each
+pair, so no reviewer sees both candidates before pair reviews freeze. A semantic
+result validator for the original fully governed publication profile must bind
+every ID, point, status, command, tree, receipt,
 review-panel assignment, attestation, and total to the three locks and both JSON
 schemas. Before unblinding, freeze a canonical anonymous score payload that
 uses the exact wrapper, pointer removal list, unknown-field rule, and canonical
@@ -403,6 +512,14 @@ external receipt, insert it as `record_validation_receipt_sha256`, and prove bot
 projections reconstruct byte-for-byte with no score/evidence change or
 self-hashing cycle.
 
+For the practical standalone internal Baseline, the controller terminates a
+successful construction at a hash-bound `awaiting_score_freeze` result skeleton
+and blinded packet. Apply the frozen rubric to the available eligible review
+sheet or sheets, record the actual reviewer count, and preserve those artifacts
+with the skeleton. Missing provider-signed deployment identity or a second
+independent panel is a disclosed publication-profile limitation, not permission
+to alter points, caps, thresholds, or evidence.
+
 ## Baseline A procedure
 
 1. Register exactly the current Baseline A bytes: source commit
@@ -410,14 +527,17 @@ self-hashing cycle.
    `ee3eb018062129f5df8f7e990fef2721cf84f69a`, SHA-256
    `2179753f8e015f5c96e534ac633a3cdb2d10ffa7f98c3f608e351e929ade84d8`,
    2657 bytes.
-2. After all readiness blockers are closed, run `TW-01` through `TW-09` as nine
-   fresh, serialized single-agent processes in manifest order.
+2. After the wave is externally authorized and each slot passes preflight, run
+   `TW-01` through `TW-09` as nine fresh, serialized single-agent processes in
+   manifest order.
 3. Apply all common capture, candidate-only validation, hidden evaluation,
    blinding, review, and record-freeze steps above.
 4. Set `experiment_phase="baseline_a"` and `arm="A"` only after the anonymous
-   score payload is frozen. Emit and publish all nine schema-valid final records,
-   each bound to its pre-unblind payload; do not import any construction pilot or
-   Ultra output.
+   score payload is frozen. Preserve each controller result skeleton, blinded
+   packet, review sheet, and score-freeze receipt; do not import any construction
+   pilot or Ultra output. A publication claiming the stronger governed profile
+   must additionally satisfy the full result schema and detached semantic
+   validation contract.
 5. These results are a standalone characterization. They may not be reused as
    the A side of a later B wave unless the full provider deployment and every
    other lock can be proven identical—which currently cannot be done.
@@ -447,12 +567,11 @@ For the actual controlled comparison:
    quality reviewers, adjudicators, oracle custodians, and adapter-integrity
    reviewers are disjoint across the two arms of a case. Only the root
    `AGENTS.md` bytes differ.
-5. If a provider, host, tool, cache, controller, evaluator, or review lock differs
-   before any model output, use only the pre-registered `attempt_number=2` path.
-   If output already exists, append the invalid/discarded terminal records and
-   cancel both sides of the pair/case slot; never resample an agent or repair only
-   one arm. The sole post-output recovery is the one permitted re-execution of a
-   failed validator/review stage against the identical immutable candidate.
+5. If a provider, host, tool, cache, controller, evaluator, or review lock
+   differs, append the invalid/discarded terminal record and cancel the pair/case
+   slot; never resample an agent or repair only one arm. The sole post-launch
+   recovery is the one permitted re-execution of a failed validator/review stage
+   against the identical immutable candidate.
 6. Freeze both anonymous results and all reviews before joining the arm key.
 7. Bind the eligible independent variant provenance/access attestation, the
    variant-blind intrinsic benchmark audit, and the arm-label-blind comparison
