@@ -2,7 +2,7 @@
 
 Decision state: Mixed. ADR-0007 establishes AI as a delegated semantic client with no intrinsic authority, keeps every AI-originated canonical mutation approval-gated at the current MVP stage, and separates semantic validity from authorization. ADR-0020 establishes the first-class Headless Semantic API as the semantic behavior boundary shared by AI and other first-party clients. ADR-0021 permits AI-assisted progressive semantic strengthening while keeping inference advisory rather than authoritative. Exact capability identifiers, principals, grants, approval tokens, execution authorization, provenance, stale/replay mechanics, runtime placement, and promotion DTOs remain Deferred as owned elsewhere.
 
-Implementation state: the provider-free `tachiko-ai-api` crate implements a v0.1 AI-facing read/explain/suggest adapter over `tachiko-workspace-engine`. The current Rust DTOs are not the public Semantic API contract. No general schema-inference or freeform-promotion pipeline is implemented.
+Implementation state: the provider-free `tachiko-ai-api` crate implements a v0.1 AI-facing read/explain/suggest adapter over `tachiko-workspace-engine`, including structured read-only Semantic Analyst queries. The current Rust DTOs are not the public Semantic API contract. No general schema-inference or freeform-promotion pipeline is implemented.
 
 ## Principle
 
@@ -41,6 +41,10 @@ Implemented v0.1 operations are read, explain, and suggest-only:
 describe_document(document)
 explain_formula(document, field_ref)
 explain_impact(before, after)
+inspect_document(document, source_label)
+analyze_field(document, source_label, field_ref)
+analyze_changes(before, before_source_label, after, after_source_label)
+analyze_validation(document, source_label)
 suggest_field_change(document, field_ref, value)
 ```
 
@@ -49,6 +53,13 @@ No current AI API writes the document directly.
 Suggestions are inert proposal objects. Formula analysis, semantic comparison, typed proposal construction, validation, and calculation delegate to the shared workspace-engine application authority.
 
 `describe_document` currently builds an AI-facing projection from internal semantic structures. That is acceptable implementation evidence for the provider-free adapter, but it is not a precedent that future external AI clients may depend on Rust `Document` field layout. Stable long-lived AI consumers should use intentional Semantic API query projections as those operations are promoted.
+
+The Semantic Analyst operations return deterministic workspace-engine facts:
+document structure, formula source and value, transitive upstream dependencies,
+transitive downstream impact, semantic changes, affected stable-ID areas, and
+the current validation report. Their source labels are opaque caller-owned
+evidence paired with semantic document identity; they do not define resident
+revision, concurrency, authorization, provenance, or patch-lifecycle semantics.
 
 ## Proposal, authorization, and execution boundary
 

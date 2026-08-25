@@ -7,13 +7,16 @@ use std::{
 };
 
 use serde::Serialize;
+use serde_json::json;
 use tachiko_storage::{FormatError, load, to_canonical_string};
 use tachiko_workspace_engine::{
-    EditPreview, FieldAddress, FieldKind, IdGenerator, MergeConflict, SemanticIdKind,
-    StarterTemplate, WorkspaceError, WorkspaceMergeOutcome, calculate_fields, compare_documents,
-    create_document, duplicate_entity, explain_field, merge_documents as merge_semantic_documents,
-    overview, remove_entity, rename_entity, runtime_export, set_formula, set_scalar,
-    validate as validate_semantics,
+    EditPreview, FieldAddress, FieldKind, IdGenerator, MergeConflict, SemanticChange,
+    SemanticIdKind, StarterTemplate, WorkspaceError, WorkspaceMergeOutcome,
+    analyze_changes as analyze_semantic_changes, analyze_field as analyze_semantic_field,
+    analyze_validation as analyze_semantic_validation, calculate_fields, compare_documents,
+    create_document, duplicate_entity, explain_field, inspect_document,
+    merge_documents as merge_semantic_documents, overview, remove_entity, rename_entity,
+    runtime_export, set_formula, set_scalar, validate as validate_semantics,
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -49,6 +52,8 @@ pub enum CommandError {
     MergeConflicts { conflicts: String },
     #[error("invalid field '{value}'; expected entity.field (for example, iron_sword.damage)")]
     InvalidFieldReference { value: String },
+    #[error("analysis target '{value}' does not exist")]
+    MissingAnalysisTarget { value: String },
     #[error("output '{}' is the same as the input; choose a new path", path.display())]
     SameInputOutput { path: PathBuf },
     #[error("'{}' already exists; refusing to overwrite it", path.display())]
@@ -172,6 +177,74 @@ pub fn explain(path: &Path, field: &str) -> Result<String, CommandError> {
         output.push_str("stored input; no formulas depend on this field\n");
     }
     Ok(output)
+}
+
+pub fn analyze_document(path: &Path, source_state: Option<String>) -> Result<String, CommandError> {
+    let document = load(path)?;
+    canonical_output(&inspect_document(
+        &document,
+        analysis_source_label(path, source_state),
+    ))
+}
+
+pub fn analyze_field(
+    path: &Path,
+    field: &str,
+    source_state: Option<String>,
+) -> Result<String, CommandError> {
+    let document = load(path)?;
+    let address = parse_field_ref(field)?;
+    let target =
+        document
+            .resolve_field(&address)
+            .map_err(|_| CommandError::MissingAnalysisTarget {
+                value: field.to_owned(),
+            })?;
+    canonical_output(&analyze_semantic_field(
+        &document,
+        analysis_source_label(path, source_state),
+        &target,
+    )?)
+}
+
+pub fn analyze_changes(
+    before_path: &Path,
+    after_path: &Path,
+    before_state: Option<String>,
+    after_state: Option<String>,
+) -> Result<String, CommandError> {
+    let before = load(before_path)?;
+    let after = load(after_path)?;
+    let analysis = analyze_semantic_changes(
+        &before,
+        analysis_source_label(before_path, before_state),
+        &after,
+        analysis_source_label(after_path, after_state),
+    )?;
+    let changes = analysis
+        .changes
+        .iter()
+        .map(semantic_change_output)
+        .collect::<Vec<_>>();
+    canonical_output(&json!({
+        "before": analysis.before,
+        "after": analysis.after,
+        "changes": changes,
+        "affected_schemas": analysis.affected_schemas,
+        "affected_entities": analysis.affected_entities,
+        "affected_fields": analysis.affected_fields,
+    }))
+}
+
+pub fn analyze_validation(
+    path: &Path,
+    source_state: Option<String>,
+) -> Result<String, CommandError> {
+    let document = load(path)?;
+    canonical_output(&analyze_semantic_validation(
+        &document,
+        analysis_source_label(path, source_state),
+    ))
 }
 
 pub fn set_document(
@@ -323,6 +396,158 @@ fn default_document_title(path: &Path) -> String {
         .filter(|name| !name.is_empty())
         .unwrap_or("document")
         .to_owned()
+}
+
+fn analysis_source_label(path: &Path, source_state: Option<String>) -> String {
+    source_state.unwrap_or_else(|| path.display().to_string())
+}
+
+fn semantic_change_output(change: &SemanticChange) -> serde_json::Value {
+    match change {
+        SemanticChange::DocumentIdChanged { before, after } => {
+            json!({ "kind": "document_id_changed", "before": before, "after": after })
+        }
+        SemanticChange::DocumentTitleChanged { before, after } => {
+            json!({ "kind": "document_title_changed", "before": before, "after": after })
+        }
+        SemanticChange::SchemaAdded { .. }
+        | SemanticChange::SchemaRemoved { .. }
+        | SemanticChange::SchemaKeyChanged { .. }
+        | SemanticChange::SchemaFieldAdded { .. }
+        | SemanticChange::SchemaFieldRemoved { .. }
+        | SemanticChange::SchemaFieldChanged { .. }
+        | SemanticChange::FieldKeyChanged { .. } => schema_change_output(change),
+        SemanticChange::EntityAdded { entity } => {
+            json!({ "kind": "entity_added", "entity": entity })
+        }
+        SemanticChange::EntityRemoved { entity } => {
+            json!({ "kind": "entity_removed", "entity": entity })
+        }
+        SemanticChange::EntityKeyChanged {
+            entity,
+            before,
+            after,
+        } => json!({
+            "kind": "entity_key_changed",
+            "entity": entity,
+            "before": before,
+            "after": after,
+        }),
+        SemanticChange::EntitySchemaChanged {
+            entity,
+            before,
+            after,
+        } => json!({
+            "kind": "entity_schema_changed",
+            "entity": entity,
+            "before": before,
+            "after": after,
+        }),
+        SemanticChange::FieldAdded { .. }
+        | SemanticChange::FieldRemoved { .. }
+        | SemanticChange::FieldChanged { .. }
+        | SemanticChange::FormulaImpact { .. } => field_change_output(change),
+    }
+}
+
+fn schema_change_output(change: &SemanticChange) -> serde_json::Value {
+    match change {
+        SemanticChange::SchemaAdded { schema, definition } => {
+            json!({ "kind": "schema_added", "schema": schema, "definition": definition })
+        }
+        SemanticChange::SchemaRemoved { schema, definition } => {
+            json!({ "kind": "schema_removed", "schema": schema, "definition": definition })
+        }
+        SemanticChange::SchemaKeyChanged {
+            schema,
+            before,
+            after,
+        } => json!({
+            "kind": "schema_key_changed",
+            "schema": schema,
+            "before": before,
+            "after": after,
+        }),
+        SemanticChange::SchemaFieldAdded {
+            schema,
+            field,
+            definition,
+        } => json!({
+            "kind": "schema_field_added",
+            "schema": schema,
+            "field": field,
+            "definition": definition,
+        }),
+        SemanticChange::SchemaFieldRemoved {
+            schema,
+            field,
+            definition,
+        } => json!({
+            "kind": "schema_field_removed",
+            "schema": schema,
+            "field": field,
+            "definition": definition,
+        }),
+        SemanticChange::SchemaFieldChanged {
+            schema,
+            field,
+            before,
+            after,
+        } => json!({
+            "kind": "schema_field_changed",
+            "schema": schema,
+            "field": field,
+            "before": before,
+            "after": after,
+        }),
+        SemanticChange::FieldKeyChanged {
+            schema,
+            field,
+            before,
+            after,
+        } => json!({
+            "kind": "field_key_changed",
+            "schema": schema,
+            "field": field,
+            "before": before,
+            "after": after,
+        }),
+        _ => unreachable!("schema change adapter called for non-schema change"),
+    }
+}
+
+fn field_change_output(change: &SemanticChange) -> serde_json::Value {
+    match change {
+        SemanticChange::FieldAdded { field, value } => {
+            json!({ "kind": "field_added", "field": field, "value": value })
+        }
+        SemanticChange::FieldRemoved { field, value } => {
+            json!({ "kind": "field_removed", "field": field, "value": value })
+        }
+        SemanticChange::FieldChanged {
+            field,
+            before,
+            after,
+        } => json!({
+            "kind": "field_changed",
+            "field": field,
+            "before": before,
+            "after": after,
+        }),
+        SemanticChange::FormulaImpact {
+            field,
+            before,
+            after,
+            causes,
+        } => json!({
+            "kind": "formula_impact",
+            "field": field,
+            "before": before,
+            "after": after,
+            "causes": causes,
+        }),
+        _ => unreachable!("field change adapter called for non-field change"),
+    }
 }
 
 fn parse_field_ref(value: &str) -> Result<FieldAddress, CommandError> {
