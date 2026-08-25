@@ -21,7 +21,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -41,6 +41,11 @@ const verifyOracleQualificationScript = resolve(
 const buildReviewPacketScript = resolve(benchmarkDir, "scripts/build-review-packet.mjs");
 const scanReviewPacketScript = resolve(benchmarkDir, "scripts/scan-review-packet.mjs");
 const runControllerScript = resolve(benchmarkDir, "scripts/run-controller.mjs");
+const captureBaseControlScript = resolve(
+  benchmarkDir,
+  "scripts/capture-base-control-evidence.mjs",
+);
+const networkProbeScript = resolve(benchmarkDir, "scripts/probe-network-denial.mjs");
 const processGroupSupervisorScript = resolve(
   benchmarkDir,
   "scripts/process-group-supervisor.mjs",
@@ -151,6 +156,88 @@ test("shared validator supervisor extinguishes a surviving descendant on one dea
     assert.equal(result.descendant_cleanup_required, true);
     assert.equal(result.process_group_extinct_before_capture, true);
     assert.throws(() => process.kill(descendantPid, 0), /ESRCH/);
+  } finally {
+    await rm(fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("same-wave base command execution denies a real socket attempt in the kernel sandbox", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-base-network-"));
+  const workspace = resolve(fixtureRoot, "base-workspace");
+  try {
+    const frozenCase = (await readJson(resolve(benchmarkDir, "evaluator/cases.json"))).cases
+      .find((entry) => entry.id === "TW-01");
+    const {prepareBaseWorkspace} = await import(pathToFileURL(runControllerScript));
+    await prepareBaseWorkspace(
+      await realpath(repositoryRoot), frozenCase.historical_base_commit,
+      frozenCase.historical_base_tree, frozenCase.ground_truth_commit, workspace,
+      resolve(fixtureRoot, "base-preparation"), process.env,
+    );
+    const binDir = resolve(fixtureRoot, "bin");
+    await mkdir(binDir);
+    await writeFile(
+      resolve(binDir, "bash"),
+      `#!/bin/bash\n${JSON.stringify(process.execPath)} ${JSON.stringify(networkProbeScript)}\n` +
+        `exec /bin/bash "$@"\n`,
+      {mode: 0o755},
+    );
+    const fakeBash = resolve(binDir, "bash");
+    const fakeBashBytes = await readFile(fakeBash);
+    const environmentReceipt = resolve(fixtureRoot, "environment.json");
+    await writeFile(environmentReceipt, `${JSON.stringify({
+      case_id: "TW-01", control_sha256: "a".repeat(64),
+      wave_id: "1".repeat(32), run_id: "2".repeat(32), attempt_id: "3".repeat(32),
+      candidate_id: "4".repeat(32), environment_identity_sha256: "b".repeat(64),
+      tools: [{name: "bash", path: fakeBash, bytes: fakeBashBytes.length,
+        sha256: sha256(fakeBashBytes)}],
+    })}\n`);
+    const receiptPath = resolve(fixtureRoot, "base-receipt.json");
+    const result = spawnSync(process.execPath, [
+      captureBaseControlScript, "--case", "TW-01", "--workspace", workspace,
+      "--receipt", receiptPath, "--log-dir", resolve(fixtureRoot, "logs"),
+      "--controller-bound", "true", "--phase", "construction_pilot_only",
+      "--wave-id", "1".repeat(32), "--run-id", "2".repeat(32),
+      "--attempt-id", "3".repeat(32), "--candidate-id", "4".repeat(32),
+      "--control-sha256", "a".repeat(64), "--environment-receipt", environmentReceipt,
+      "--trusted-shell", fakeBash, "--expected-shell-sha256", sha256(fakeBashBytes),
+    ], {
+      encoding: "utf8", timeout: 120_000, maxBuffer: 128 * 1024 * 1024,
+      env: {...process.env, PATH: `${binDir}:${process.env.PATH}`},
+    });
+    const receipt = await readJson(receiptPath);
+    assert.equal(result.status, 1, `${result.stderr}\n${result.stdout}\n${JSON.stringify(receipt)}`);
+    assert.equal(receipt.classification, "same_wave_construction_control");
+    assert.equal(receipt.network_enforcement.probe_denied, true);
+    assert.equal(receipt.commands[0].network_sandbox.mode, "darwin_sandbox_deny_network");
+    assert.match(
+      await readFile(receipt.commands[0].stdout.path, "utf8"),
+      /network-denied:(?:EPERM|EACCES)/,
+    );
+  } finally {
+    await rm(fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("candidate core validation denies a real socket attempt in the kernel sandbox", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-core-network-"));
+  try {
+    const controllerRoot = resolve(fixtureRoot, "controller");
+    const candidateRoot = resolve(fixtureRoot, "candidate");
+    await Promise.all([mkdir(resolve(controllerRoot, "evaluator"), {recursive: true}), mkdir(candidateRoot)]);
+    await writeFile(resolve(controllerRoot, "evaluator/core-score-lock.json"), `${JSON.stringify({
+      cases: [{id: "TW-XX", validation_checks: [{
+        id: "core.network", command: `${JSON.stringify(process.execPath)} ${JSON.stringify(networkProbeScript)}`,
+      }]}],
+    })}\n`);
+    const {runCoreValidation} = await import(pathToFileURL(runControllerScript));
+    const result = await runCoreValidation(
+      "TW-XX", candidateRoot, resolve(fixtureRoot, "output"), process.env,
+      false, {}, controllerRoot, "/bin/bash",
+    );
+    assert.equal(result.receipt.all_commands_passed, true);
+    assert.equal(result.receipt.network_enforcement.probe_denied, true);
+    assert.equal(result.receipt.commands[0].network_sandbox.mode, "darwin_sandbox_deny_network");
+    assert.match(await readFile(result.receipt.commands[0].stdout.path, "utf8"), /network-denied/);
   } finally {
     await rm(fixtureRoot, {recursive: true, force: true});
   }
@@ -1134,7 +1221,7 @@ test("trusted capture rejects a trusted output redirected into the workspace", a
   }
 });
 
-async function createOracleRunnerFixture({command, selector, subjectiveGroups = []}) {
+async function createOracleRunnerFixture({command, selector, subjectiveGroups = [], caseId = "TW-XX"}) {
   const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-oracle-runner-"));
   const candidateRoot = resolve(fixtureRoot, "candidate");
   const trustedDir = resolve(fixtureRoot, "trusted");
@@ -1154,7 +1241,7 @@ async function createOracleRunnerFixture({command, selector, subjectiveGroups = 
         classification: "construction_pilot_only",
         formal_result_eligible: false,
         cases: [{
-          id: "TW-XX",
+          id: caseId,
           oracle_commands: [{
             id: "fixture.command",
             command_template: command,
@@ -1173,11 +1260,11 @@ async function createOracleRunnerFixture({command, selector, subjectiveGroups = 
       oracleLockPath,
       `${JSON.stringify({
         protocol_id: "fixture-v1",
-        cases: [{id: "TW-XX", files: [], assertions: assertion}],
+        cases: [{id: caseId, files: [], assertions: assertion}],
       }, null, 2)}\n`,
     ),
   ]);
-  return {fixtureRoot, candidateRoot, trustedDir, manifestPath, oracleLockPath};
+  return {fixtureRoot, candidateRoot, trustedDir, manifestPath, oracleLockPath, caseId};
 }
 
 function runOracleFixture(
@@ -1197,7 +1284,7 @@ function runOracleFixture(
     [
       runOraclesScript,
       "--case",
-      "TW-XX",
+      fixture.caseId,
       "--candidate-root",
       fixture.candidateRoot,
       "--trusted-dir",
@@ -1262,6 +1349,11 @@ test("oracle runner binds and supervises its trusted shell", async () => {
     assert.equal(receipt.commands[0].process_supervision.deadline_seconds, 1800);
     assert.equal(receipt.commands[0].process_supervision.termination_grace_seconds, 10);
     assert.equal(receipt.commands[0].process_supervision.process_group_extinct_before_capture, true);
+    assert.equal(receipt.trusted_inputs_postchecked_unchanged, true);
+    assert.deepEqual(
+      receipt.trusted_input_boundary_checks.map((entry) => entry.unchanged),
+      [true],
+    );
   } finally {
     await rm(fixture.fixtureRoot, {recursive: true, force: true});
   }
@@ -1700,6 +1792,175 @@ test("oracle runner classifies subjective-only cases as packet gates", async () 
   }
 });
 
+test("production oracle runner rejects missing or tampered required controller context", async () => {
+  const missingFixture = await createOracleRunnerFixture({command: "true", selector: null});
+  try {
+    const missing = runOracleFixture(missingFixture, ["--require-formal-context", "true"]);
+    assert.notEqual(missing.status, 0);
+    assert.match(missing.stderr, /controller context is required/i);
+  } finally {
+    await rm(missingFixture.fixtureRoot, {recursive: true, force: true});
+  }
+  const tamperedFixture = await createOracleRunnerFixture({command: "true", selector: null});
+  try {
+    const context = await writeFormalControllerContext(resolve(tamperedFixture.fixtureRoot, "context.json"));
+    const tampered = runOracleFixture(tamperedFixture, [
+      "--controller-context", context.path,
+      "--expected-controller-context-sha256", "f".repeat(64),
+      "--require-formal-context", "true",
+    ]);
+    assert.notEqual(tampered.status, 0);
+    assert.match(tampered.stderr, /controller context SHA-256 mismatch/i);
+  } finally {
+    await rm(tamperedFixture.fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("formal oracle adapter output is materialized only after sandboxed group extinction", async () => {
+  const fixture = await createOracleRunnerFixture({
+    caseId: "TW-05",
+    command: "node <trusted-adapter-file> --candidate-root <validation-workspace> " +
+      "--contract <trusted-contract-file> --output <trusted-observations-file>",
+    selector: null,
+  });
+  const externalRoot = await mkdtemp(join(tmpdir(), "tachiko-formal-oracle-adapter-"));
+  const runRoot = resolve(fixture.fixtureRoot, "neutral-run");
+  const runTmp = resolve(runRoot, "adapter-tmp-fixture");
+  try {
+    await mkdir(runTmp, {recursive: true});
+    const scaffold = resolve(benchmarkDir, "evaluator/adapters/candidate-adapter.mjs");
+    const probe = resolve(externalRoot, "probe.mjs");
+    const config = resolve(externalRoot, "config.json");
+    const integrity = resolve(externalRoot, "integrity.json");
+    const observations = [
+      {step: "open", revision: 0},
+      {step: "overview", entity_count: 2, formula_count: 2},
+      {step: "calculate", first_product: 2, second_product: 4},
+      {step: "set_first_base", revision: 1, first_product: 22},
+      {step: "stale_set_first_base", typed_stale_revision_error: true,
+        actual_revision: 1, state_unchanged: true},
+      {step: "snapshot", revision: 1, first_base: 11, first_product: 22},
+    ];
+    const behavior = {
+      native: {execution: "native_process", observations},
+      wasm: {execution: "real_wasm32", worker_boundary: "typescript_worker", observations},
+    };
+    await writeFile(resolve(fixture.candidateRoot, "adapter-behavior.json"),
+      `${JSON.stringify(behavior)}\n`, {mode: 0o400});
+    await writeFile(
+      probe,
+      "#!/usr/bin/env node\nimport {readFileSync,writeFileSync} from 'node:fs';\n" +
+        "import {resolve} from 'node:path';\n" +
+        "writeFileSync(resolve(process.env.TMPDIR,'adapter.tmp'),'temporary\\n');\n" +
+        "console.log(readFileSync(resolve(process.argv[2],'adapter-behavior.json'),'utf8').trim());\n",
+      {mode: 0o755},
+    );
+    const configBytes = Buffer.from(`${JSON.stringify({
+      schema: "tachiko-candidate-adapter-v1", case_id: "TW-05",
+      probe: {executable: probe, sha256: sha256(await readFile(probe)),
+        arguments: ["<candidate-root>"]},
+    })}\n`);
+    await writeFile(config, configBytes);
+    const context = await writeFormalControllerContext(resolve(fixture.fixtureRoot, "context.json"), {
+      protocol_id: "tachiko-agents-effect-v1",
+      case_id: "TW-05",
+      adapter_forbidden_roots: [await realpath(fixture.fixtureRoot)],
+      adapter_write_forbidden_roots: [await realpath(runRoot)],
+      adapter_write_allowed_roots: [await realpath(runTmp)],
+      adapter_tmp_initial_sha256: sha256("[]\n"),
+    });
+    const integrityBytes = Buffer.from(`${JSON.stringify({
+      schema: "tachiko-adapter-integrity-review-v1",
+      protocol_id: context.context.protocol_id,
+      phase: context.context.phase,
+      wave_id: context.context.wave_id,
+      run_id: context.context.run_id,
+      attempt_id: context.context.attempt_id,
+      candidate_id: context.context.candidate_id,
+      case_id: context.context.case_id,
+      capture_receipt_sha256: context.context.capture_receipt_sha256,
+      scaffold_sha256: sha256(await readFile(scaffold)),
+      config_sha256: sha256(configBytes),
+      probe_sha256: sha256(await readFile(probe)),
+      reviewer_id: "construction-fixture-reviewer", reviewer_eligible: true,
+      reviewer_independent: true, no_expected_values: true,
+      no_behavior_implementation: true, actual_candidate_exercise: true, approved: true,
+    })}\n`);
+    await writeFile(integrity, integrityBytes, {mode: 0o400});
+    const controlPaths = [
+      "environment-lock.json", "evaluator/cases.json", "evaluator/oracle-lock.json",
+      "evaluator/core-score-lock.json", "evaluator/authority-lock.json",
+      "evaluator/production-oracles.json",
+    ];
+    const controlIdentities = [];
+    for (const path of controlPaths) {
+      const bytes = await readFile(resolve(benchmarkDir, path));
+      controlIdentities.push({path, bytes: bytes.length, sha256: sha256(bytes)});
+    }
+    const expectedControlSha256 = sha256(`${JSON.stringify(controlIdentities)}\n`);
+    const result = spawnSync(process.execPath, [
+      runOraclesScript,
+      "--case", "TW-05",
+      "--candidate-root", fixture.candidateRoot,
+      "--trusted-dir", fixture.trustedDir,
+      "--expected-control-sha256", expectedControlSha256,
+      "--trusted-shell", trustedShellPath,
+      "--expected-shell-sha256", trustedShellSha256,
+      "--adapter-file", scaffold,
+      "--adapter-config", config,
+      "--adapter-integrity-receipt", integrity,
+      "--expected-adapter-integrity-sha256", sha256(integrityBytes),
+      "--controller-context", context.path,
+      "--expected-controller-context-sha256", context.sha256,
+      "--require-formal-context", "true",
+    ], {encoding: "utf8", env: {...process.env, TMPDIR: runTmp}});
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const receipt = await readJson(resolve(fixture.trustedDir, "oracle-run.json"));
+    const materialization = receipt.commands[0].trusted_adapter_materialization;
+    assert.equal(materialization.materialized_after_process_group_extinction, true);
+    assert.equal(receipt.commands[0].process_supervision.process_group_extinct_before_capture, true);
+    assert.equal(receipt.commands[0].candidate_input_immutability.unchanged, true);
+    assert.equal(receipt.commands[0].adapter_temporary_root.initial_entries, 0);
+    assert.equal(receipt.commands[0].adapter_temporary_root.path, await realpath(runTmp));
+    assert.match(receipt.commands[0].candidate_input_immutability.before_sha256, /^[0-9a-f]{64}$/);
+    assert.equal(
+      receipt.commands[0].candidate_input_immutability.before_sha256,
+      receipt.commands[0].candidate_input_immutability.after_sha256,
+    );
+    assert.equal(materialization.source_stdout_sha256, receipt.commands[0].stdout.sha256);
+    assert.equal(await readFile(resolve(runTmp, "adapter.tmp"), "utf8"), "temporary\n");
+    assert.equal(
+      materialization.sha256,
+      sha256(await readFile(resolve(fixture.trustedDir, "observations.json"))),
+    );
+  } finally {
+    await rm(fixture.fixtureRoot, {recursive: true, force: true});
+    await rm(externalRoot, {recursive: true, force: true});
+  }
+});
+
+test("production oracle commands deny a real socket attempt in the kernel sandbox", async () => {
+  const fixture = await createOracleRunnerFixture({
+    command: `${JSON.stringify(process.execPath)} ${JSON.stringify(networkProbeScript)}`,
+    selector: null,
+    subjectiveGroups: [{id: "semantic", stage: "blinded_review_packet"}],
+  });
+  try {
+    const result = runOracleFixture(fixture);
+    assert.equal(result.status, 0, result.stderr);
+    const receipt = await readJson(resolve(fixture.trustedDir, "oracle-run.json"));
+    assert.equal(receipt.network_enforcement.probe_denied, true);
+    assert.equal(receipt.commands[0].process_supervision.network_sandbox.mode,
+      "darwin_sandbox_deny_network");
+    assert.match(
+      await readFile(resolve(fixture.trustedDir, receipt.commands[0].stdout.path), "utf8"),
+      /network-denied:(?:EPERM|EACCES)/,
+    );
+  } finally {
+    await rm(fixture.fixtureRoot, {recursive: true, force: true});
+  }
+});
+
 test("oracle runner rejects a candidate-controlled trusted adapter", async () => {
   const fixture = await createOracleRunnerFixture({
     command: "node <trusted-adapter-file>",
@@ -1732,7 +1993,7 @@ test("oracle runner rejects candidate-controlled control files and duplicate com
     candidateControls.oracleLockPath = lock;
     const result = runOracleFixture(candidateControls);
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /manifest.*candidate-root.*disjoint/i);
+    assert.match(result.stderr, /(?:manifest|oracle-lock).*candidate-root.*disjoint/i);
   } finally {
     await rm(candidateControls.fixtureRoot, {recursive: true, force: true});
   }
@@ -2266,7 +2527,28 @@ async function writeReviewInputManifest(inputRoot, manifestPath, roleByPath) {
   );
 }
 
-function runReviewPacketBuilder({ inputRoot, inputManifest, outputDir, terminalReceipt, variants }) {
+async function writeFormalControllerContext(path, overrides = {}) {
+  const context = {
+    schema: "tachiko-controller-evidence-context-v1",
+    protocol_id: "tachiko-agents-effect-v1",
+    phase: "baseline_a",
+    classification: "formal_authorized_attempt",
+    formal_result_eligible: true,
+    wave_id: "1".repeat(32), run_id: "2".repeat(32), attempt_id: "3".repeat(32),
+    candidate_id: "0123456789abcdef0123456789abcdef", case_id: "TW-05",
+    capture_receipt_sha256: "4".repeat(64), formal_authorization_sha256: "5".repeat(64),
+    adapter_forbidden_roots: [],
+    ...overrides,
+  };
+  const bytes = Buffer.from(`${JSON.stringify(context, null, 2)}\n`);
+  await writeFile(path, bytes);
+  return {path, sha256: sha256(bytes), context, bytes};
+}
+
+function runReviewPacketBuilder({
+  inputRoot, inputManifest, outputDir, terminalReceipt, variants, controllerContext,
+  requireFormalContext = false,
+}) {
   const argumentsForBuilder = [
     buildReviewPacketScript,
     "--case-id", "TW-05",
@@ -2280,6 +2562,11 @@ function runReviewPacketBuilder({ inputRoot, inputManifest, outputDir, terminalR
     "--custodian-eligible", "true",
     "--frozen-at", "2026-08-25T00:00:00.000Z",
   ];
+  if (controllerContext) argumentsForBuilder.push(
+    "--controller-context", controllerContext.path,
+    "--expected-controller-context-sha256", controllerContext.sha256,
+  );
+  if (requireFormalContext) argumentsForBuilder.push("--require-formal-context", "true");
   for (const variant of variants) argumentsForBuilder.push("--variant", variant);
   return spawnSync(process.execPath, argumentsForBuilder, { encoding: "utf8" });
 }
@@ -2342,6 +2629,77 @@ async function writeStandaloneReviewPacket(packetDir, variantPath, overrides = {
     `${JSON.stringify(manifest, null, 2)}\n`,
   );
 }
+
+test("formal review builder and standalone scanner require the same immutable controller context", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-formal-review-context-"));
+  try {
+    const inputRoot = resolve(fixtureRoot, "input");
+    const inputManifest = resolve(fixtureRoot, "input-manifest.json");
+    const variant = resolve(fixtureRoot, "variant");
+    const context = await writeFormalControllerContext(resolve(fixtureRoot, "context.json"));
+    await mkdir(inputRoot);
+    const roleByPath = {};
+    for (const role of [
+      "task", "authority", "candidate_checkout", "candidate_diff",
+      "candidate_validation", "final_message",
+    ]) {
+      const path = `${role}.txt`;
+      roleByPath[path] = role;
+      await writeFile(resolve(inputRoot, path), `${role} evidence\n`);
+    }
+    await writeFile(variant, "sealed formal variant text\n");
+    await writeReviewInputManifest(inputRoot, inputManifest, roleByPath);
+
+    const missing = runReviewPacketBuilder({
+      inputRoot, inputManifest, outputDir: resolve(fixtureRoot, "missing-output"),
+      terminalReceipt: resolve(fixtureRoot, "missing-terminal.json"), variants: [variant],
+      requireFormalContext: true,
+    });
+    assert.notEqual(missing.status, 0);
+    assert.match(missing.stderr, /controller context is required/i);
+
+    const tampered = runReviewPacketBuilder({
+      inputRoot, inputManifest, outputDir: resolve(fixtureRoot, "tampered-output"),
+      terminalReceipt: resolve(fixtureRoot, "tampered-terminal.json"), variants: [variant],
+      controllerContext: {...context, sha256: "f".repeat(64)}, requireFormalContext: true,
+    });
+    assert.notEqual(tampered.status, 0);
+    assert.match(tampered.stderr, /controller context SHA-256 mismatch/i);
+
+    const outputDir = resolve(fixtureRoot, "formal-output");
+    const terminalPath = resolve(fixtureRoot, "formal-terminal.json");
+    const built = runReviewPacketBuilder({
+      inputRoot, inputManifest, outputDir, terminalReceipt: terminalPath, variants: [variant],
+      controllerContext: context, requireFormalContext: true,
+    });
+    assert.equal(built.status, 0, built.stderr);
+    const buildReceipt = await readJson(resolve(outputDir, "receipt.json"));
+    const terminal = await readJson(terminalPath);
+    for (const receipt of [buildReceipt, terminal]) {
+      assert.equal(receipt.classification, "formal_authorized_attempt");
+      assert.equal(receipt.formal_result_eligible, true);
+      assert.equal(receipt.controller_context_sha256, context.sha256);
+      assert.equal(receipt.attempt_id, context.context.attempt_id);
+    }
+
+    const scanReceiptPath = resolve(fixtureRoot, "formal-scan.json");
+    const scanned = spawnSync(process.execPath, [
+      scanReviewPacketScript, "--packet-dir", resolve(outputDir, "packet"),
+      "--contract", resolve(benchmarkDir, "evaluator/contracts/review-packet-blinding-v1.json"),
+      "--variant", variant, "--receipt", scanReceiptPath,
+      "--controller-context", context.path,
+      "--expected-controller-context-sha256", context.sha256,
+      "--require-formal-context", "true",
+    ], {encoding: "utf8"});
+    assert.equal(scanned.status, 0, scanned.stderr);
+    const scanReceipt = await readJson(scanReceiptPath);
+    assert.equal(scanReceipt.classification, "formal_authorized_attempt");
+    assert.equal(scanReceipt.formal_result_eligible, true);
+    assert.equal(scanReceipt.controller_context_sha256, context.sha256);
+  } finally {
+    await rm(fixtureRoot, {recursive: true, force: true});
+  }
+});
 
 test("review packet deterministically applies frozen R1-R4 while preserving domain text", async () => {
   const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-review-packet-"));
@@ -2800,7 +3158,10 @@ async function createControllerSmokeFixture(mode, caseId = "TW-01") {
       `import {appendFileSync, writeFileSync} from "node:fs";\n` +
       `import {spawn} from "node:child_process";\n` +
       `const mode = process.argv[2];\n` +
-      `appendFileSync(".fake-agent-launches", "1\\n");\n` +
+      `const launchPath = mode === "noop" || mode === "timeout_no_changes" ` +
+      `? process.argv[3] : ".fake-agent-launches";\n` +
+      `appendFileSync(launchPath, "1\\n");\n` +
+      `if (mode !== "noop" && mode !== "timeout_no_changes") ` +
       `writeFileSync("controller-smoke.txt", "candidate mutation\\n");\n` +
       `if (mode === "descendant" || mode === "timeout_descendant") {\n` +
       `  const childCode = mode === "timeout_descendant" ` +
@@ -2812,10 +3173,11 @@ async function createControllerSmokeFixture(mode, caseId = "TW-01") {
       `}\n` +
       `console.log(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:"construction smoke complete"}}));\n` +
       `if (mode === "failure") process.exit(7);\n` +
-      `if (mode === "timeout" || mode === "timeout_descendant") setInterval(() => {}, 1000);\n`,
+      `if (mode === "timeout" || mode === "timeout_descendant" || mode === "timeout_no_changes") ` +
+      `setInterval(() => {}, 1000);\n`,
     {mode: 0o755},
   );
-  await writeFile(agentArgs, `${JSON.stringify([mode])}\n`);
+  await writeFile(agentArgs, `${JSON.stringify([mode, resolve(fixtureRoot, "no-change-launches")])}\n`);
   return {
     fixtureRoot,
     runRoot,
@@ -2841,6 +3203,62 @@ async function createControllerSmokeFixture(mode, caseId = "TW-01") {
     ],
   };
 }
+
+for (const [mode, expectedDisposition, expectedStatus] of [
+  ["noop", "awaiting_review", 0],
+  ["timeout_no_changes", "agent_timeout", 1],
+]) {
+  test(`controller scores ${mode} as a task outcome with explicit empty-patch evidence`, async () => {
+    const fixture = await createControllerSmokeFixture(mode);
+    try {
+      const result = spawnSync(process.execPath, fixture.arguments, {
+        encoding: "utf8", timeout: 120_000, maxBuffer: 128 * 1024 * 1024,
+      });
+      assert.equal(result.status, expectedStatus, result.stderr);
+      const validation = await readJson(resolve(
+        fixture.artifactDir,
+        "validation-preparation/validation-preparation-receipt.json",
+      ));
+      assert.equal(validation.empty_patch, true);
+      assert.equal(validation.candidate_patch_bytes, 0);
+      assert.equal(existsSync(resolve(fixture.artifactDir, "result-skeleton.json")), true);
+      const terminal = await readJson(resolve(fixture.artifactDir, "terminal.json"));
+      assert.equal(terminal.disposition, expectedDisposition);
+      assert.equal(terminal.launch_count, 1);
+    } finally {
+      await rm(fixture.fixtureRoot, {recursive: true, force: true});
+    }
+  });
+}
+
+test("validation preparation directly reconstructs an empty trusted patch", async () => {
+  const fixture = await createControllerSmokeFixture("noop");
+  try {
+    const controller = spawnSync(process.execPath, fixture.arguments, {
+      encoding: "utf8", timeout: 120_000, maxBuffer: 128 * 1024 * 1024,
+    });
+    assert.equal(controller.status, 0, controller.stderr);
+    const captureDir = resolve(fixture.artifactDir, "candidate-capture");
+    const directWorkspace = resolve(fixture.fixtureRoot, "direct-validation-workspace");
+    const directTrusted = resolve(fixture.fixtureRoot, "direct-validation-trusted");
+    const result = spawnSync(process.execPath, [
+      prepareValidationScript, "--case", "TW-01", "--source-repo", repositoryRoot,
+      "--patch-file", resolve(captureDir, "candidate.patch"),
+      "--capture-receipt", resolve(captureDir, "capture-receipt.json"),
+      "--workspace", directWorkspace, "--trusted-dir", directTrusted,
+    ], {encoding: "utf8", timeout: 120_000, maxBuffer: 128 * 1024 * 1024});
+    assert.equal(result.status, 0, result.stderr);
+    const receipt = await readJson(resolve(directTrusted, "validation-preparation-receipt.json"));
+    assert.equal(receipt.empty_patch, true);
+    assert.equal(receipt.candidate_patch_bytes, 0);
+    assert.equal(receipt.capture_to_apply_tree_equal, true);
+    const frozenCase = (await readJson(resolve(benchmarkDir, "evaluator/cases.json"))).cases
+      .find((entry) => entry.id === "TW-01");
+    assert.equal(receipt.candidate_tree, frozenCase.historical_base_tree);
+  } finally {
+    await rm(fixture.fixtureRoot, {recursive: true, force: true});
+  }
+});
 
 test("one-shot controller orders same-wave controls, captures one successful launch, and chains every stage", async () => {
   const fixture = await createControllerSmokeFixture("success");
@@ -2903,6 +3321,19 @@ test("one-shot controller orders same-wave controls, captures one successful lau
       await readFile(resolve(fixture.artifactDir, "process", "final-message.txt"), "utf8"),
       "construction smoke complete\n",
     );
+    const evidenceContext = await readJson(
+      resolve(fixture.artifactDir, "controller-evidence-context.json"),
+    );
+    const canonicalRunRoot = await realpath(fixture.runRoot);
+    assert.equal(evidenceContext.adapter_forbidden_roots.includes(canonicalRunRoot), false);
+    assert.ok(evidenceContext.adapter_forbidden_roots.includes(resolve(canonicalRunRoot, "workspace")));
+    assert.ok(evidenceContext.adapter_forbidden_roots.includes(resolve(canonicalRunRoot, "control")));
+    assert.ok(evidenceContext.adapter_forbidden_roots.includes(resolve(canonicalRunRoot, "tmp")));
+    assert.deepEqual(evidenceContext.adapter_write_forbidden_roots, [canonicalRunRoot]);
+    assert.equal(evidenceContext.adapter_write_allowed_roots.length, 1);
+    assert.match(evidenceContext.adapter_write_allowed_roots[0], /\/adapter-tmp-[^/]+$/);
+    assert.deepEqual(await readdir(evidenceContext.adapter_write_allowed_roots[0]), []);
+    assert.equal(evidenceContext.adapter_tmp_initial_sha256, sha256("[]\n"));
     const duplicateRunRoot = resolve(fixture.fixtureRoot, "r-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     const duplicateArtifactDir = resolve(fixture.fixtureRoot, "duplicate-artifacts");
     const duplicateArguments = [...fixture.arguments];
@@ -3191,6 +3622,7 @@ test("formal authorization commitments bind every effective local runtime identi
     rustup_home_template_sha256: "8".repeat(64),
     cargo_home_template_sha256: "9".repeat(64),
     pnpm_home_template_sha256: "a".repeat(64),
+    sandbox_executable_sha256: "b".repeat(64),
   };
   assert.doesNotThrow(() => requireFormalAuthorizationCommitments({...commitments}, commitments));
   for (const field of Object.keys(commitments)) {
@@ -3226,6 +3658,23 @@ test("formal authorization commitments bind every effective local runtime identi
     /insufficient free space/i,
   );
   assert.equal(requireFormalFreeSpace({free_space: {bytes: 1}}, lock, false).enforced, false);
+});
+
+test("formal controller propagates one sealed adapter package to non-smoke oracles", async () => {
+  const {formalAdapterOracleArguments} = await import(pathToFileURL(runControllerScript));
+  const packageIdentity = {
+    scaffold: {path: "/external/sealed-adapter.mjs"},
+    config: {path: "/external/config.json"},
+    integrity_receipt: {path: "/external/integrity.json", sha256: "a".repeat(64)},
+  };
+  const argumentsForOracle = formalAdapterOracleArguments(packageIdentity);
+  assert.deepEqual(argumentsForOracle, [
+    "--adapter-file", packageIdentity.scaffold.path,
+    "--adapter-config", packageIdentity.config.path,
+    "--adapter-integrity-receipt", packageIdentity.integrity_receipt.path,
+    "--expected-adapter-integrity-sha256", packageIdentity.integrity_receipt.sha256,
+  ]);
+  assert.equal(argumentsForOracle.filter((entry) => entry === "--adapter-config").length, 1);
 });
 
 test("authorized formal result skeleton remains eligible while score freeze is pending", async () => {
@@ -3334,5 +3783,540 @@ test("trusted adapter resumes the same captured attempt without launching the ag
     assert.ok(stages.indexOf("awaiting_trusted_adapter") < stages.indexOf("production_oracles"));
   } finally {
     await rm(fixture.fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("formal adapter validation accepts only the sealed qualified scaffold", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-formal-adapter-"));
+  try {
+    const arbitraryAdapter = resolve(fixtureRoot, "arbitrary-adapter.mjs");
+    await writeFile(arbitraryAdapter, "console.log('{}');\n");
+    const {validateFormalAdapterPackage} = await import(pathToFileURL(runControllerScript));
+    await assert.rejects(
+      validateFormalAdapterPackage({
+        adapterPath: arbitraryAdapter,
+        benchmarkRoot: benchmarkDir,
+        forbiddenRoots: [repositoryRoot, fixtureRoot],
+      }),
+      /sealed qualified candidate adapter scaffold/i,
+    );
+  } finally {
+    await rm(fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("formal adapter config and probe cannot originate in candidate or controller roots", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-formal-adapter-roots-"));
+  const candidateRoot = resolve(fixtureRoot, "candidate");
+  try {
+    await mkdir(candidateRoot);
+    const probe = resolve(candidateRoot, "probe.mjs");
+    const config = resolve(candidateRoot, "adapter-config.json");
+    await writeFile(probe, "#!/usr/bin/env node\nconsole.log('{}');\n", {mode: 0o755});
+    await writeFile(config, `${JSON.stringify({
+      schema: "tachiko-candidate-adapter-v1",
+      case_id: "TW-05",
+      probe: {executable: probe, sha256: sha256(await readFile(probe)), arguments: ["<candidate-root>"]},
+    })}\n`);
+    const {validateFormalAdapterPackage} = await import(pathToFileURL(runControllerScript));
+    await assert.rejects(
+      validateFormalAdapterPackage({
+        adapterPath: resolve(benchmarkDir, "evaluator/adapters/candidate-adapter.mjs"),
+        configPath: config,
+        benchmarkRoot: benchmarkDir,
+        forbiddenRoots: [candidateRoot, benchmarkDir],
+        context: {case_id: "TW-05"},
+      }),
+      /adapter config.*forbidden|adapter config.*disjoint/i,
+    );
+  } finally {
+    await rm(fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("formal adapter validation requires an external hash-bound integrity approval", async () => {
+  const externalRoot = await mkdtemp(join(tmpdir(), "tachiko-formal-adapter-external-"));
+  try {
+    const probe = resolve(externalRoot, "probe.mjs");
+    const config = resolve(externalRoot, "adapter-config.json");
+    await writeFile(probe, "#!/usr/bin/env node\nconsole.log('{}');\n", {mode: 0o755});
+    await writeFile(config, `${JSON.stringify({
+      schema: "tachiko-candidate-adapter-v1",
+      case_id: "TW-05",
+      probe: {executable: probe, sha256: sha256(await readFile(probe)), arguments: ["<candidate-root>"]},
+    })}\n`);
+    const {validateFormalAdapterPackage} = await import(pathToFileURL(runControllerScript));
+    await assert.rejects(
+      validateFormalAdapterPackage({
+        adapterPath: resolve(benchmarkDir, "evaluator/adapters/candidate-adapter.mjs"),
+        configPath: config,
+        benchmarkRoot: benchmarkDir,
+        forbiddenRoots: [repositoryRoot],
+        context: {
+          protocol_id: "tachiko-agents-effect-v1",
+          phase: "baseline_a",
+          wave_id: "1".repeat(32), run_id: "2".repeat(32), attempt_id: "3".repeat(32),
+          candidate_id: "4".repeat(32), case_id: "TW-05",
+          capture_receipt_sha256: "5".repeat(64),
+        },
+      }),
+      /adapter integrity receipt is required/i,
+    );
+  } finally {
+    await rm(externalRoot, {recursive: true, force: true});
+  }
+});
+
+test("formal adapter integrity approval is bound to the capture and exact adapter package", async () => {
+  const externalRoot = await mkdtemp(join(tmpdir(), "tachiko-formal-adapter-approved-"));
+  try {
+    const scaffold = resolve(benchmarkDir, "evaluator/adapters/candidate-adapter.mjs");
+    const probe = resolve(externalRoot, "probe.mjs");
+    const config = resolve(externalRoot, "adapter-config.json");
+    const integrity = resolve(externalRoot, "adapter-integrity.json");
+    await writeFile(probe, "#!/usr/bin/env node\nconsole.log('{}');\n", {mode: 0o755});
+    const configBytes = Buffer.from(`${JSON.stringify({
+      schema: "tachiko-candidate-adapter-v1",
+      case_id: "TW-05",
+      probe: {executable: probe, sha256: sha256(await readFile(probe)), arguments: ["<candidate-root>"]},
+    })}\n`);
+    await writeFile(config, configBytes);
+    const context = {
+      protocol_id: "tachiko-agents-effect-v1", phase: "baseline_a",
+      wave_id: "1".repeat(32), run_id: "2".repeat(32), attempt_id: "3".repeat(32),
+      candidate_id: "4".repeat(32), case_id: "TW-05",
+      capture_receipt_sha256: "5".repeat(64),
+    };
+    const integrityBytes = Buffer.from(`${JSON.stringify({
+      schema: "tachiko-adapter-integrity-review-v1", ...context,
+      scaffold_sha256: sha256(await readFile(scaffold)),
+      config_sha256: sha256(configBytes), probe_sha256: sha256(await readFile(probe)),
+      reviewer_id: "independent-reviewer", reviewer_eligible: true,
+      reviewer_independent: true, no_expected_values: true,
+      no_behavior_implementation: true, actual_candidate_exercise: true, approved: true,
+    })}\n`);
+    await writeFile(integrity, integrityBytes);
+    const {validateFormalAdapterPackage} = await import(pathToFileURL(runControllerScript));
+    const validated = await validateFormalAdapterPackage({
+      adapterPath: scaffold, configPath: config, integrityReceiptPath: integrity,
+      expectedIntegrityReceiptSha256: sha256(integrityBytes), benchmarkRoot: benchmarkDir,
+      forbiddenRoots: [repositoryRoot], context,
+    });
+    assert.equal(validated.integrity_receipt.sha256, sha256(integrityBytes));
+    await assert.rejects(
+      validateFormalAdapterPackage({
+        adapterPath: scaffold, configPath: config, integrityReceiptPath: integrity,
+        expectedIntegrityReceiptSha256: sha256(integrityBytes), benchmarkRoot: benchmarkDir,
+        forbiddenRoots: [repositoryRoot],
+        context: {...context, capture_receipt_sha256: "6".repeat(64)},
+      }),
+      /capture_receipt_sha256 mismatch/i,
+    );
+  } finally {
+    await rm(externalRoot, {recursive: true, force: true});
+  }
+});
+
+test("formal adapter probes cannot receive contract or expected-value path tokens", async () => {
+  const externalRoot = await mkdtemp(join(tmpdir(), "tachiko-formal-adapter-token-"));
+  try {
+    const probe = resolve(externalRoot, "probe.mjs");
+    const config = resolve(externalRoot, "adapter-config.json");
+    await writeFile(probe, "#!/usr/bin/env node\nconsole.log('{}');\n", {mode: 0o755});
+    await writeFile(config, `${JSON.stringify({
+      schema: "tachiko-candidate-adapter-v1", case_id: "TW-05",
+      probe: {executable: probe, sha256: sha256(await readFile(probe)), arguments: ["<contract>"]},
+    })}\n`);
+    const {validateFormalAdapterPackage} = await import(pathToFileURL(runControllerScript));
+    await assert.rejects(
+      validateFormalAdapterPackage({
+        adapterPath: resolve(benchmarkDir, "evaluator/adapters/candidate-adapter.mjs"),
+        configPath: config, benchmarkRoot: benchmarkDir, forbiddenRoots: [repositoryRoot],
+      }),
+      /contract|expected-value|probe token/i,
+    );
+  } finally {
+    await rm(externalRoot, {recursive: true, force: true});
+  }
+});
+
+test("sealed candidate adapter never expands the trusted contract into probe arguments", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-adapter-contract-token-"));
+  const candidateRoot = resolve(fixtureRoot, "candidate");
+  try {
+    await mkdir(candidateRoot);
+    const probe = resolve(fixtureRoot, "probe.mjs");
+    const config = resolve(fixtureRoot, "config.json");
+    const contract = resolve(fixtureRoot, "contract.json");
+    const output = resolve(fixtureRoot, "output.json");
+    await writeFile(probe, "#!/usr/bin/env node\nconsole.log('{}');\n", {mode: 0o755});
+    await writeFile(contract, "{}\n");
+    await writeFile(config, `${JSON.stringify({
+      schema: "tachiko-candidate-adapter-v1", case_id: "TW-05",
+      probe: {executable: probe, sha256: sha256(await readFile(probe)), arguments: ["<contract>"]},
+    })}\n`);
+    const result = spawnSync(process.execPath, [
+      resolve(benchmarkDir, "evaluator/adapters/candidate-adapter.mjs"),
+      "--candidate-root", candidateRoot, "--contract", contract,
+      "--output", output, "--config", config,
+    ], {encoding: "utf8"});
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /contract.*probe|forbidden.*token|unresolved.*contract/i);
+    assert.equal(existsSync(output), false);
+  } finally {
+    await rm(fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("sealed candidate adapter inherits one outer combined sandbox without nesting", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-adapter-outer-sandbox-"));
+  const runRoot = resolve(fixtureRoot, "neutral-run");
+  const stagedBin = resolve(runRoot, "tool-bin");
+  const stagedNode = resolve(stagedBin, "node");
+  const priorTmp = resolve(runRoot, "tmp");
+  const runTmp = resolve(runRoot, "adapter-tmp-fixture");
+  const protectedHome = resolve(runRoot, "home");
+  const artifactRoot = resolve(fixtureRoot, "controller-artifacts");
+  const candidateRoot = resolve(artifactRoot, "validation-workspace");
+  const expectedRoot = resolve(artifactRoot, "controller-expected-values");
+  const trustedRoot = resolve(artifactRoot, "trusted-output");
+  const externalRoot = resolve(fixtureRoot, "external-adapter");
+  try {
+    await Promise.all([
+      mkdir(candidateRoot, {recursive: true}), mkdir(expectedRoot, {recursive: true}),
+      mkdir(trustedRoot, {recursive: true}), mkdir(externalRoot, {recursive: true}),
+      mkdir(stagedBin, {recursive: true}), mkdir(runTmp, {recursive: true}),
+      mkdir(priorTmp, {recursive: true}), mkdir(protectedHome, {recursive: true}),
+    ]);
+    await copyFile(process.execPath, stagedNode);
+    await chmod(stagedNode, 0o755);
+    const probe = resolve(externalRoot, "probe.mjs");
+    const config = resolve(externalRoot, "config.json");
+    const contract = resolve(expectedRoot, "contract.json");
+    const output = resolve(trustedRoot, "trusted-observations.json");
+    await writeFile(resolve(candidateRoot, "behavior.txt"), "captured candidate behavior\n");
+    const protectedPath = resolve(protectedHome, "sealed.txt");
+    const tmpOutput = resolve(runTmp, "probe.tmp");
+    const priorTmpSecret = resolve(priorTmp, "candidate-residue.txt");
+    await writeFile(protectedPath, "sealed\n", {mode: 0o400});
+    await writeFile(priorTmpSecret, "candidate-controlled residue\n");
+    await writeFile(
+      probe,
+      "#!/usr/bin/env node\nimport {readFileSync,writeFileSync} from 'node:fs';\n" +
+        "import {resolve} from 'node:path';\n" +
+        "const behavior=readFileSync(resolve(process.argv[2],'behavior.txt'),'utf8').trim();\n" +
+        "writeFileSync(process.argv[3],'allowed tmp output\\n');\n" +
+        "let protected_write_denied=false;try{writeFileSync(process.argv[4],'tampered\\n')}" +
+        "catch(e){protected_write_denied=e.code==='EPERM'||e.code==='EACCES'}\n" +
+        `let prior_tmp_read_denied=false;try{readFileSync(${JSON.stringify(priorTmpSecret)})}` +
+        "catch(e){prior_tmp_read_denied=e.code==='EPERM'||e.code==='EACCES'}\n" +
+        "console.log(JSON.stringify({observations:{behavior,tmp_written:true," +
+        "protected_write_denied,prior_tmp_read_denied}}));\n",
+      {mode: 0o755},
+    );
+    await writeFile(contract, "{}\n");
+    await writeFile(config, `${JSON.stringify({
+      schema: "tachiko-candidate-adapter-v1", case_id: "TW-09",
+      probe: {executable: probe, sha256: sha256(await readFile(probe)),
+        arguments: ["<candidate-root>", tmpOutput, protectedPath]},
+    })}\n`);
+    const adapter = resolve(benchmarkDir, "evaluator/adapters/candidate-adapter.mjs");
+    const {denyReadProfile} = await import(
+      pathToFileURL(resolve(benchmarkDir, "scripts/network-sandbox.mjs"))
+    );
+    const artifactRootReal = await realpath(artifactRoot);
+    const candidateRootReal = await realpath(candidateRoot);
+    const benchmarkRootReal = await realpath(benchmarkDir);
+    const configReal = await realpath(config);
+    const probeReal = await realpath(probe);
+    const profile = denyReadProfile(
+      [artifactRootReal, benchmarkRootReal, await realpath(priorTmp)],
+      {
+        allowReadPaths: [adapter], allowReadRoots: [candidateRootReal],
+        denyWriteRoots: [candidateRootReal, await realpath(runRoot)],
+        denyWritePaths: [adapter, configReal, probeReal, stagedNode],
+        allowWriteRoots: [await realpath(runTmp)],
+      },
+    );
+    const result = spawnSync("/usr/bin/sandbox-exec", [
+      "-p", profile, stagedNode,
+      adapter,
+      "--candidate-root", candidateRoot, "--contract", contract,
+      "--output", output, "--config", config,
+      "--deny-read-root", artifactRootReal, "--deny-read-root", benchmarkRootReal,
+      "--deny-read-root", await realpath(priorTmp),
+      "--deny-write-path", stagedNode,
+      "--deny-write-root", await realpath(runRoot),
+      "--allow-write-root", await realpath(runTmp),
+      "--expected-sandbox-profile-sha256", sha256(profile),
+      "--contract-sha256", sha256(await readFile(contract)),
+    ], {encoding: "utf8", env: {...process.env, PATH: stagedBin}});
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(existsSync(output), false, "sandboxed adapter must not materialize trusted output");
+    const adapterReceipt = JSON.parse(result.stdout.trim());
+    assert.deepEqual(adapterReceipt.envelope.observations, {
+      behavior: "captured candidate behavior",
+      tmp_written: true,
+      protected_write_denied: true,
+      prior_tmp_read_denied: true,
+    });
+    assert.equal(await readFile(tmpOutput, "utf8"), "allowed tmp output\n");
+    assert.equal(await readFile(protectedPath, "utf8"), "sealed\n");
+    const {materializeFormalAdapterEnvelope} = await import(
+      pathToFileURL(resolve(benchmarkDir, "scripts/adapter-integrity.mjs"))
+    );
+    const materialized = await materializeFormalAdapterEnvelope({
+      stdout: result.stdout,
+      outputPath: output,
+      caseId: "TW-09",
+      contractSha256: sha256(await readFile(contract)),
+      sandboxProfileSha256: sha256(profile),
+      processGroupExtinct: true,
+      adapterPackage: {
+        scaffold: {path: adapter, sha256: sha256(await readFile(adapter))},
+        config: {path: configReal, sha256: sha256(await readFile(configReal))},
+        probe: {path: probeReal, sha256: sha256(await readFile(probeReal))},
+      },
+    });
+    assert.equal(materialized.materialized_after_process_group_extinction, true);
+    assert.equal(materialized.sha256, sha256(await readFile(output)));
+  } finally {
+    await rm(fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("sealed candidate adapter kernel sandbox denies probe reads of expected-value roots", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-adapter-read-denial-"));
+  const candidateRoot = resolve(fixtureRoot, "candidate");
+  const expectedRoot = resolve(fixtureRoot, "expected-values");
+  try {
+    await Promise.all([mkdir(candidateRoot), mkdir(expectedRoot)]);
+    const expected = resolve(expectedRoot, "contract-copy.json");
+    const probe = resolve(fixtureRoot, "probe.mjs");
+    const config = resolve(fixtureRoot, "config.json");
+    const contract = resolve(fixtureRoot, "contract.json");
+    const output = resolve(fixtureRoot, "output.json");
+    await writeFile(expected, '{"expected":"secret"}\n');
+    await writeFile(
+      probe,
+      `#!/usr/bin/env node\nimport {readFileSync} from "node:fs";\n` +
+        `readFileSync(${JSON.stringify(expected)});\nconsole.log('{}');\n`,
+      {mode: 0o755},
+    );
+    await writeFile(contract, "{}\n");
+    await writeFile(config, `${JSON.stringify({
+      schema: "tachiko-candidate-adapter-v1", case_id: "TW-09",
+      probe: {executable: probe, sha256: sha256(await readFile(probe)), arguments: ["<candidate-root>"]},
+    })}\n`);
+    const adapter = resolve(benchmarkDir, "evaluator/adapters/candidate-adapter.mjs");
+    const {denyReadProfile} = await import(
+      pathToFileURL(resolve(benchmarkDir, "scripts/network-sandbox.mjs"))
+    );
+    const expectedRootReal = await realpath(expectedRoot);
+    const candidateRootReal = await realpath(candidateRoot);
+    const configReal = await realpath(config);
+    const probeReal = await realpath(probe);
+    const profile = denyReadProfile(
+      [expectedRootReal],
+      {
+        allowReadPaths: [adapter], allowReadRoots: [candidateRootReal],
+        denyWriteRoots: [candidateRootReal], denyWritePaths: [adapter, configReal, probeReal],
+      },
+    );
+    const result = spawnSync("/usr/bin/sandbox-exec", [
+      "-p", profile, process.execPath,
+      adapter,
+      "--candidate-root", candidateRoot, "--contract", contract,
+      "--output", output, "--config", config, "--deny-read-root", expectedRootReal,
+      "--expected-sandbox-profile-sha256", sha256(profile),
+      "--contract-sha256", sha256(await readFile(contract)),
+    ], {encoding: "utf8"});
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /operation not permitted|EPERM|candidate-specific probe failed/i);
+    assert.equal(existsSync(output), false);
+  } finally {
+    await rm(fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("sealed candidate adapter kernel sandbox denies expected-root overwrite and metadata mutation", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-adapter-write-denial-"));
+  const candidateRoot = resolve(fixtureRoot, "candidate");
+  const expectedRoot = resolve(fixtureRoot, "expected-values");
+  try {
+    await Promise.all([mkdir(candidateRoot), mkdir(expectedRoot)]);
+    const expected = resolve(expectedRoot, "contract.json");
+    const probe = resolve(fixtureRoot, "probe.mjs");
+    const config = resolve(fixtureRoot, "config.json");
+    const output = resolve(fixtureRoot, "output.json");
+    const original = Buffer.from('{"expected":"sealed"}\n');
+    await writeFile(expected, original, {mode: 0o400});
+    await writeFile(
+      probe,
+      "#!/usr/bin/env node\nimport {chmodSync,writeFileSync} from 'node:fs';\n" +
+        `chmodSync(${JSON.stringify(expected)}, 0o600);\n` +
+        `writeFileSync(${JSON.stringify(expected)}, 'tampered\\n');\n` +
+        "console.log(JSON.stringify({observations:{ready:true}}));\n",
+      {mode: 0o755},
+    );
+    const probeBytes = await readFile(probe);
+    await writeFile(config, `${JSON.stringify({
+      schema: "tachiko-candidate-adapter-v1", case_id: "TW-09",
+      probe: {executable: probe, sha256: sha256(probeBytes), arguments: ["<candidate-root>"]},
+    })}\n`);
+    const adapter = resolve(benchmarkDir, "evaluator/adapters/candidate-adapter.mjs");
+    const {denyReadProfile} = await import(
+      pathToFileURL(resolve(benchmarkDir, "scripts/network-sandbox.mjs"))
+    );
+    const expectedRootReal = await realpath(expectedRoot);
+    const candidateRootReal = await realpath(candidateRoot);
+    const configReal = await realpath(config);
+    const probeReal = await realpath(probe);
+    const profile = denyReadProfile(
+      [expectedRootReal],
+      {
+        allowReadPaths: [adapter], allowReadRoots: [candidateRootReal],
+        denyWriteRoots: [candidateRootReal], denyWritePaths: [adapter, configReal, probeReal],
+      },
+    );
+    const result = spawnSync("/usr/bin/sandbox-exec", [
+      "-p", profile, process.execPath, adapter,
+      "--candidate-root", candidateRoot, "--contract", expected,
+      "--output", output, "--config", config, "--deny-read-root", expectedRootReal,
+      "--expected-sandbox-profile-sha256", sha256(profile),
+      "--contract-sha256", sha256(original),
+    ], {encoding: "utf8"});
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /operation not permitted|EPERM|candidate-specific probe failed/i);
+    assert.deepEqual(await readFile(expected), original);
+    assert.equal((await stat(expected)).mode & 0o777, 0o400);
+  } finally {
+    await rm(fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("sealed candidate adapter kernel sandbox preserves reconstructed candidate bytes", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-adapter-candidate-write-denial-"));
+  const candidateRoot = resolve(fixtureRoot, "candidate");
+  const expectedRoot = resolve(fixtureRoot, "expected-values");
+  try {
+    await Promise.all([mkdir(candidateRoot), mkdir(expectedRoot)]);
+    const behavior = resolve(candidateRoot, "behavior.txt");
+    const contract = resolve(expectedRoot, "contract.json");
+    const probe = resolve(fixtureRoot, "probe.mjs");
+    const config = resolve(fixtureRoot, "config.json");
+    const output = resolve(fixtureRoot, "output.json");
+    const original = Buffer.from("captured candidate behavior\n");
+    await writeFile(behavior, original, {mode: 0o400});
+    await writeFile(contract, "{}\n");
+    await writeFile(
+      probe,
+      "#!/usr/bin/env node\nimport {chmodSync,writeFileSync} from 'node:fs';\n" +
+        `chmodSync(${JSON.stringify(behavior)}, 0o600);\n` +
+        `writeFileSync(${JSON.stringify(behavior)}, 'patched behavior\\n');\n` +
+        "console.log(JSON.stringify({observations:{ready:true}}));\n",
+      {mode: 0o755},
+    );
+    await writeFile(config, `${JSON.stringify({
+      schema: "tachiko-candidate-adapter-v1", case_id: "TW-09",
+      probe: {executable: probe, sha256: sha256(await readFile(probe)), arguments: ["<candidate-root>"]},
+    })}\n`);
+    const adapter = resolve(benchmarkDir, "evaluator/adapters/candidate-adapter.mjs");
+    const {denyReadProfile} = await import(
+      pathToFileURL(resolve(benchmarkDir, "scripts/network-sandbox.mjs"))
+    );
+    const expectedRootReal = await realpath(expectedRoot);
+    const candidateRootReal = await realpath(candidateRoot);
+    const configReal = await realpath(config);
+    const probeReal = await realpath(probe);
+    const profile = denyReadProfile([expectedRootReal], {
+      allowReadPaths: [adapter], allowReadRoots: [candidateRootReal],
+      denyWriteRoots: [candidateRootReal], denyWritePaths: [adapter, configReal, probeReal],
+    });
+    const result = spawnSync("/usr/bin/sandbox-exec", [
+      "-p", profile, process.execPath, adapter,
+      "--candidate-root", candidateRoot, "--contract", contract,
+      "--output", output, "--config", config, "--deny-read-root", expectedRootReal,
+      "--expected-sandbox-profile-sha256", sha256(profile),
+      "--contract-sha256", sha256(await readFile(contract)),
+    ], {encoding: "utf8"});
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /operation not permitted|EPERM|candidate-specific probe failed/i);
+    assert.deepEqual(await readFile(behavior), original);
+    assert.equal((await stat(behavior)).mode & 0o777, 0o400);
+  } finally {
+    await rm(fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("combined adapter profile protects sibling controls while allowing nested candidate reads", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-adapter-sibling-controls-"));
+  const artifactRoot = resolve(fixtureRoot, "artifacts");
+  const candidateRoot = resolve(artifactRoot, "validation-workspace");
+  const expectedRoot = resolve(artifactRoot, "controller-expected-values");
+  const trustedRoot = resolve(artifactRoot, "trusted-output");
+  const externalRoot = resolve(fixtureRoot, "external-adapter");
+  try {
+    await Promise.all([
+      mkdir(candidateRoot, {recursive: true}), mkdir(expectedRoot, {recursive: true}),
+      mkdir(trustedRoot, {recursive: true}), mkdir(externalRoot, {recursive: true}),
+    ]);
+    const behavior = resolve(candidateRoot, "behavior.txt");
+    const expected = resolve(expectedRoot, "contract.json");
+    const probe = resolve(externalRoot, "probe.mjs");
+    const config = resolve(externalRoot, "config.json");
+    const output = resolve(trustedRoot, "observations.json");
+    const expectedBytes = Buffer.from('{"expected":"sealed"}\n');
+    await writeFile(behavior, "captured behavior\n", {mode: 0o400});
+    await writeFile(expected, expectedBytes, {mode: 0o400});
+    await writeFile(
+      probe,
+      "#!/usr/bin/env node\nimport {chmodSync,readFileSync,writeFileSync} from 'node:fs';\n" +
+        "import {resolve} from 'node:path';\n" +
+        "const behavior=readFileSync(resolve(process.argv[2],'behavior.txt'),'utf8').trim();\n" +
+        `let readDenied=false;try{readFileSync(${JSON.stringify(expected)})}catch(e){readDenied=e.code==='EPERM'||e.code==='EACCES'}\n` +
+        `let writeDenied=false;try{chmodSync(${JSON.stringify(expected)},0o600);writeFileSync(${JSON.stringify(expected)},'tampered\\n')}catch(e){writeDenied=e.code==='EPERM'||e.code==='EACCES'}\n` +
+        `let selfWriteDenied=false;try{chmodSync(${JSON.stringify(probe)},0o600);writeFileSync(${JSON.stringify(probe)},'tampered\\n')}catch(e){selfWriteDenied=e.code==='EPERM'||e.code==='EACCES'}\n` +
+        "console.log(JSON.stringify({observations:{behavior,read_denied:readDenied," +
+        "write_denied:writeDenied,self_write_denied:selfWriteDenied}}));\n",
+      {mode: 0o755},
+    );
+    const probeBytes = await readFile(probe);
+    await writeFile(config, `${JSON.stringify({
+      schema: "tachiko-candidate-adapter-v1", case_id: "TW-09",
+      probe: {executable: probe, sha256: sha256(probeBytes), arguments: ["<candidate-root>"]},
+    })}\n`);
+    const adapter = resolve(benchmarkDir, "evaluator/adapters/candidate-adapter.mjs");
+    const {denyReadProfile} = await import(
+      pathToFileURL(resolve(benchmarkDir, "scripts/network-sandbox.mjs"))
+    );
+    const artifactRootReal = await realpath(artifactRoot);
+    const candidateRootReal = await realpath(candidateRoot);
+    const configReal = await realpath(config);
+    const probeReal = await realpath(probe);
+    const profile = denyReadProfile([artifactRootReal], {
+      allowReadPaths: [adapter], allowReadRoots: [candidateRootReal],
+      denyWriteRoots: [candidateRootReal], denyWritePaths: [adapter, configReal, probeReal],
+    });
+    const result = spawnSync("/usr/bin/sandbox-exec", [
+      "-p", profile, process.execPath, adapter,
+      "--candidate-root", candidateRoot, "--contract", expected,
+      "--output", output, "--config", config, "--deny-read-root", artifactRootReal,
+      "--expected-sandbox-profile-sha256", sha256(profile),
+      "--contract-sha256", sha256(expectedBytes),
+    ], {encoding: "utf8"});
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(existsSync(output), false);
+    const adapterReceipt = JSON.parse(result.stdout.trim());
+    assert.deepEqual(adapterReceipt.envelope.observations, {
+      behavior: "captured behavior", read_denied: true, write_denied: true,
+      self_write_denied: true,
+    });
+    assert.deepEqual(await readFile(expected), expectedBytes);
+    assert.equal((await stat(expected)).mode & 0o777, 0o400);
+    assert.deepEqual(await readFile(probe), probeBytes);
+    assert.equal((await stat(probe)).mode & 0o777, 0o755);
+  } finally {
+    await rm(fixtureRoot, {recursive: true, force: true});
   }
 });

@@ -369,7 +369,7 @@ const manifest = JSON.parse(
 const caseEntry = manifest.cases.find((candidate) => candidate.id === caseId);
 if (!caseEntry) fail(`unknown case ${caseId}`);
 const patchBytes = await readFile(patchFile);
-if (patchBytes.length === 0) fail("empty candidate patch is a hard failure, not a validation input");
+const emptyPatch = patchBytes.length === 0;
 const captureReceiptBytes = await readFile(captureReceiptPath);
 const captureReceipt = JSON.parse(captureReceiptBytes.toString("utf8"));
 
@@ -595,7 +595,7 @@ const targetLookup = git(
   { allowFailure: true },
 );
 if (targetLookup.status === 0) fail("ground-truth target leaked into validation workspace");
-git(["apply", "--index", "--binary", patchFile], workspace);
+if (!emptyPatch) git(["apply", "--index", "--binary", patchFile], workspace);
 const appliedTree = outputText(git(["write-tree"], workspace));
 if (appliedTree !== captureReceipt.candidate_tree) {
   fail(`captured candidate tree mismatch after apply: expected ${captureReceipt.candidate_tree}, got ${appliedTree}`);
@@ -625,7 +625,7 @@ const commitEnvironment = {
   GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z",
   GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z",
 };
-git(["commit", "--no-verify", "--no-gpg-sign", "-m", "trusted raw candidate"], workspace, {
+git(["commit", "--allow-empty", "--no-verify", "--no-gpg-sign", "-m", "trusted raw candidate"], workspace, {
   env: commitEnvironment,
 });
 const candidateCommit = outputText(git(["rev-parse", "HEAD"], workspace));
@@ -645,6 +645,9 @@ const receipt = {
   historical_base_commit: caseEntry.historical_base_commit,
   ground_truth_commit_absent_before_overlay: true,
   candidate_patch_sha256: sha256(patchBytes),
+  candidate_patch_bytes: patchBytes.length,
+  empty_patch: emptyPatch,
+  empty_patch_retained_as_task_outcome: emptyPatch,
   capture_receipt_sha256: sha256(captureReceiptBytes),
   capture_receipt_verified: true,
   trusted_raw_capture: true,

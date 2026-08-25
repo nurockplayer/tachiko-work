@@ -16,6 +16,7 @@ import {
   strictText,
   validateRequiredReviewRoles,
 } from "./scan-review-packet.mjs";
+import {constructionEvidenceContext, loadControllerContext} from "./controller-context.mjs";
 
 function usage() {
   console.error(
@@ -153,9 +154,28 @@ async function bindInputManifest(manifestPath, inputFiles) {
 
 let terminalReceiptPath;
 let terminalContext = {};
+let evidenceContext = constructionEvidenceContext();
+
+function evidenceBindings() {
+  return evidenceContext.context ? {
+    phase: evidenceContext.context.phase,
+    wave_id: evidenceContext.context.wave_id,
+    run_id: evidenceContext.context.run_id,
+    attempt_id: evidenceContext.context.attempt_id,
+    controller_context_sha256: evidenceContext.context_sha256,
+  } : {controller_context_sha256: null};
+}
 
 async function run() {
 const {values, variants: variantArguments} = parseArgs(process.argv.slice(2));
+evidenceContext = await loadControllerContext({
+  path: values.get("controller-context"),
+  expectedSha256: values.get("expected-controller-context-sha256"),
+  required: values.get("require-formal-context") === "true",
+});
+if (values.has("require-formal-context") && values.get("require-formal-context") !== "true") {
+  throw new Error("require-formal-context only accepts true");
+}
 for (const key of [
   "case-id",
   "candidate-id",
@@ -180,6 +200,11 @@ if (!/^TW-0[1-9]$/.test(values.get("case-id"))) throw new Error("invalid --case-
 if (!/^[0-9a-f]{32}$/.test(values.get("candidate-id"))) {
   throw new Error("--candidate-id must be opaque lowercase 128-bit hex");
 }
+if (evidenceContext.context &&
+    (evidenceContext.context.case_id !== values.get("case-id") ||
+      evidenceContext.context.candidate_id !== values.get("candidate-id"))) {
+  throw new Error("controller context does not bind this review case and candidate");
+}
 if (!/^[A-Za-z0-9_.-]{1,64}$/.test(values.get("custodian-id"))) {
   throw new Error("invalid --custodian-id");
 }
@@ -195,6 +220,9 @@ const proposedTerminalReceiptPath = await canonicalNewPath(
   "terminal receipt",
 );
 terminalContext = {
+  classification: evidenceContext.classification,
+  formal_result_eligible: evidenceContext.formal_result_eligible,
+  ...evidenceBindings(),
   case_id: values.get("case-id"),
   candidate_id: values.get("candidate-id"),
   frozen_at: values.get("frozen-at"),
@@ -355,7 +383,7 @@ await writeFile(resolve(outputDir, "private-match-map.json"), privateMapBytes, {
 });
 
 const scan = await scanPacketTree(packetDir, blinding);
-const scanReceipt = makeScanReceipt(scan, blinding);
+const scanReceipt = makeScanReceipt(scan, blinding, evidenceContext);
 const scanReceiptBytes = canonicalBytes(scanReceipt);
 await writeFile(resolve(outputDir, "scan-receipt.json"), scanReceiptBytes, {
   mode: 0o600,
@@ -366,8 +394,9 @@ const finalMessage = rendered.find((entry) => entry.roles.includes("final_messag
 
 const receipt = {
   schema: "tachiko-review-packet-receipt-v1",
-  classification: "construction_pilot_only",
-  formal_result_eligible: false,
+  classification: evidenceContext.classification,
+  formal_result_eligible: evidenceContext.formal_result_eligible,
+  ...evidenceBindings(),
   protocol_id: blinding.contract.protocol_id,
   case_id: values.get("case-id"),
   candidate_id: values.get("candidate-id"),
@@ -414,8 +443,6 @@ try {
   const result = await run();
   const terminal = {
     schema: "tachiko-review-packet-terminal-v1",
-    classification: "construction_pilot_only",
-    formal_result_eligible: false,
     ...terminalContext,
     output_receipt_sha256: sha256(result.receiptBytes),
     rendered_packet_sha256: result.receipt.rendered_packet_sha256,
@@ -430,8 +457,6 @@ try {
   if (terminalReceiptPath && !existsSync(terminalReceiptPath)) {
     const terminal = {
       schema: "tachiko-review-packet-terminal-v1",
-      classification: "construction_pilot_only",
-      formal_result_eligible: false,
       ...terminalContext,
       safe_to_release: false,
       terminal_classification: "invalid_discarded",

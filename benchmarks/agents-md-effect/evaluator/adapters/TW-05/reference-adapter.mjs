@@ -44,7 +44,6 @@ const contractBytes = await readFile(resolve(args.get("--contract")));
 const adapterBytes = await readFile(fileURLToPath(import.meta.url));
 const manifest = resolve(candidateRoot, "Cargo.toml");
 const cargo = spawnSync("/usr/bin/which", ["cargo"], {encoding: "utf8"}).stdout.trim();
-const profile = "(version 1)\n(allow default)\n(deny network*)\n";
 const environment = {...process.env, CARGO_NET_OFFLINE: "true"};
 for (const buildArgs of [
   ["build", "--manifest-path", manifest, "--release", "--locked"],
@@ -58,7 +57,7 @@ for (const buildArgs of [
     "--locked",
   ],
 ]) {
-  const result = spawnSync("/usr/bin/sandbox-exec", ["-p", profile, cargo, ...buildArgs], {
+  const result = spawnSync(cargo, buildArgs, {
     cwd: candidateRoot,
     encoding: "utf8",
     env: environment,
@@ -68,8 +67,8 @@ for (const buildArgs of [
   if (result.status !== 0) throw new Error(result.stderr || "reference build failed");
 }
 const native = spawnSync(
-  "/usr/bin/sandbox-exec",
-  ["-p", profile, resolve(candidateRoot, "target/release/tachiko-tw05-reference-native")],
+  resolve(candidateRoot, "target/release/tachiko-tw05-reference-native"),
+  [],
   {cwd: candidateRoot, encoding: "utf8", env: environment},
 );
 if (native.status !== 0) throw new Error(native.stderr || "reference native execution failed");

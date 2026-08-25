@@ -10,7 +10,7 @@ import {existsSync} from "node:fs";
 import {lstat, mkdir, readFile, realpath, writeFile} from "node:fs/promises";
 import {basename, dirname, isAbsolute, relative, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
-import {runProcessGroupOnce} from "./process-group-supervisor.mjs";
+import {probeNetworkSandbox, runNetworkSandboxed} from "./network-sandbox.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const benchmarkDir = resolve(scriptDir, "..");
@@ -254,6 +254,10 @@ const commands = [
 ].filter((command, index, all) => all.indexOf(command) === index);
 if (commands.length === 0) fail(`${caseId} has an empty base-control union`);
 
+const networkEnforcement = constructionSmoke
+  ? {mode: "construction_smoke_not_executed", probe_denied: null}
+  : await probeNetworkSandbox({nodeExecutable: process.execPath});
+
 await mkdir(logDir, {mode: 0o700});
 const commandReceipts = [];
 let allPassed = true;
@@ -274,7 +278,7 @@ for (let index = 0; index < commands.length; index += 1) {
   const shellArguments = controllerBound
     ? ["--noprofile", "--norc", "-c", command]
     : ["-f", "-c", command];
-  const result = await runProcessGroupOnce({
+  const result = await runNetworkSandboxed({
     executable: trustedShell,
     args: shellArguments,
     cwd: workspace,
@@ -308,6 +312,7 @@ for (let index = 0; index < commands.length; index += 1) {
     signal_actions: result.signal_actions,
     descendant_cleanup_required: result.descendant_cleanup_required,
     process_group_extinct_before_integrity_check: result.process_group_extinct_before_capture,
+    network_sandbox: result.network_sandbox,
     stdout: await writeContentAddressed(logDir, "stdout", stdout),
     stderr: await writeContentAddressed(logDir, "stderr", stderr),
   });
@@ -339,7 +344,8 @@ const receipt = {
   root_agents_absent_from_base_ancestry: true,
   root_agents_absent_from_workspace: true,
   candidate_instruction_bytes_exposed: false,
-  network_policy: "controller environment; Cargo forced offline",
+  network_policy: "kernel-enforced darwin sandbox deny-network plus Cargo offline",
+  network_enforcement: networkEnforcement,
   cargo_net_offline: process.env.CARGO_NET_OFFLINE === "true",
   environment: Object.fromEntries([
     "HOME", "CODEX_HOME", "TMPDIR", "PATH", "LANG", "LC_ALL", "TZ", "CARGO_INCREMENTAL",

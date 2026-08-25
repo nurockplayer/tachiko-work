@@ -5,6 +5,7 @@ import {existsSync} from "node:fs";
 import {lstat, mkdir, readFile, readdir, realpath, writeFile} from "node:fs/promises";
 import {basename, dirname, isAbsolute, relative, resolve} from "node:path";
 import {pathToFileURL} from "node:url";
+import {constructionEvidenceContext, loadControllerContext} from "./controller-context.mjs";
 
 const RULE_IDS = ["R1", "R2", "R3", "R4"];
 const REDACTION = "[instruction-reference redacted]";
@@ -376,11 +377,24 @@ export async function scanPacketTree(packetDir, blinding) {
   };
 }
 
-export function makeScanReceipt(scan, blinding) {
+function contextBindings(evidenceContext) {
+  return evidenceContext.context ? {
+    phase: evidenceContext.context.phase,
+    wave_id: evidenceContext.context.wave_id,
+    run_id: evidenceContext.context.run_id,
+    attempt_id: evidenceContext.context.attempt_id,
+    candidate_id: evidenceContext.context.candidate_id,
+    case_id: evidenceContext.context.case_id,
+    controller_context_sha256: evidenceContext.context_sha256,
+  } : {controller_context_sha256: null};
+}
+
+export function makeScanReceipt(scan, blinding, evidenceContext = constructionEvidenceContext()) {
   return {
     schema: "tachiko-review-packet-scan-v1",
-    classification: "construction_pilot_only",
-    formal_result_eligible: false,
+    classification: evidenceContext.classification,
+    formal_result_eligible: evidenceContext.formal_result_eligible,
+    ...contextBindings(evidenceContext),
     contract: blinding.contractIdentity,
     variant_set: blinding.variantSet,
     packet_tree_sha256: scan.tree_sha256,
@@ -415,9 +429,19 @@ function isWithin(parent, child) {
 }
 
 let failureReceiptPath;
+let failureEvidenceContext = constructionEvidenceContext();
 
 async function runCli() {
   const {values, variants} = parseArgs(process.argv.slice(2));
+  const evidenceContext = await loadControllerContext({
+    path: values.get("controller-context"),
+    expectedSha256: values.get("expected-controller-context-sha256"),
+    required: values.get("require-formal-context") === "true",
+  });
+  if (values.has("require-formal-context") && values.get("require-formal-context") !== "true") {
+    throw new Error("require-formal-context only accepts true");
+  }
+  failureEvidenceContext = evidenceContext;
   for (const key of ["packet-dir", "contract", "receipt"]) {
     if (!values.has(key) || !isAbsolute(values.get(key))) {
       throw new Error(`--${key} must be an absolute path`);
@@ -431,6 +455,16 @@ async function runCli() {
     throw new Error("packet directory must be a non-symlink directory");
   }
   const packetDir = await realpath(values.get("packet-dir"));
+  if (evidenceContext.context) {
+    const packetManifest = JSON.parse(await readFile(
+      resolve(packetDir, "packet-manifest.json"),
+      "utf8",
+    ));
+    if (packetManifest.case_id !== evidenceContext.context.case_id ||
+        packetManifest.candidate_id !== evidenceContext.context.candidate_id) {
+      throw new Error("controller context does not bind this packet case and candidate");
+    }
+  }
   const receiptPath = resolve(values.get("receipt"));
   if (existsSync(receiptPath)) throw new Error("scan receipt must not already exist");
   const receiptParent = await realpath(dirname(receiptPath));
@@ -456,7 +490,7 @@ async function runCli() {
     variantPaths,
   );
   const scan = await scanPacketTree(packetDir, blinding);
-  const receipt = makeScanReceipt(scan, blinding);
+  const receipt = makeScanReceipt(scan, blinding, evidenceContext);
   await mkdir(dirname(receiptPath), {recursive: true});
   await writeFile(receiptPath, canonicalBytes(receipt), {mode: 0o600, flag: "wx"});
   console.log(JSON.stringify(receipt));
@@ -470,8 +504,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     if (failureReceiptPath && !existsSync(failureReceiptPath)) {
       const receipt = {
         schema: "tachiko-review-packet-scan-v1",
-        classification: "construction_pilot_only",
-        formal_result_eligible: false,
+        classification: failureEvidenceContext.classification,
+        formal_result_eligible: failureEvidenceContext.formal_result_eligible,
+        ...contextBindings(failureEvidenceContext),
         safe_to_release: false,
         terminal_classification: "invalid_discarded",
         failure: "scan_failed",

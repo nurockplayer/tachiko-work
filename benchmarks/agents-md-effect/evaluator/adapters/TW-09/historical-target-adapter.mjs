@@ -42,18 +42,14 @@ await writeFile(manifestPath, manifest, {mode: 0o600});
 
 const cargoLookup = spawnSync("/usr/bin/which", ["cargo"], {encoding: "utf8"});
 if (cargoLookup.status !== 0) throw new Error("cargo unavailable for TW-09 probe");
-const profile = "(version 1)\n(allow default)\n(deny network*)\n";
 const cargoEnvironment = {
   ...process.env,
   CARGO_NET_OFFLINE: "true",
   CARGO_TARGET_DIR: resolve(buildRoot, "target"),
 };
 const lockResult = spawnSync(
-  "/usr/bin/sandbox-exec",
+  cargoLookup.stdout.trim(),
   [
-    "-p",
-    profile,
-    cargoLookup.stdout.trim(),
     "generate-lockfile",
     "--manifest-path",
     manifestPath,
@@ -65,11 +61,8 @@ if (lockResult.status !== 0) {
   throw new Error(`TW-09 probe lock generation failed: ${lockResult.stderr || lockResult.stdout}`);
 }
 const result = spawnSync(
-  "/usr/bin/sandbox-exec",
+  cargoLookup.stdout.trim(),
   [
-    "-p",
-    profile,
-    cargoLookup.stdout.trim(),
     "run",
     "--manifest-path",
     manifestPath,

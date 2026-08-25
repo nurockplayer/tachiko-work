@@ -1,0 +1,6 @@
+{
+  "schema": "tachiko-candidate-adapter-lock-v1",
+  "path": "evaluator/adapters/candidate-adapter.mjs",
+  "bytes": 9137,
+  "sha256": "33cc795cdb1bb0393036a4cd225139d3d38bcbbd2ab29018b53363266fe64d78"
+}

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import {createHash} from "node:crypto";
+import {existsSync} from "node:fs";
 import {lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile} from "node:fs/promises";
 import {spawnSync} from "node:child_process";
 import {dirname, isAbsolute, resolve} from "node:path";
@@ -208,6 +209,7 @@ async function compactOracle(receipt, processStatus, trustedDir, adapterCase, ru
     evidence: "executed",
     process_exit_code: processStatus,
     runner_process_supervision: runnerProcessSupervision,
+    network_enforcement: receipt.network_enforcement,
     assessment_mode: receipt.assessment_mode,
     overall_status: receipt.overall_status,
     commands_pass: receipt.commands_pass,
@@ -663,7 +665,13 @@ async function qualifyCase({caseEntry, caseManifest, root, sourceRepo}) {
       fail("TW-05 calibration did not preserve the required stale-revision miss");
     }
   } else if (!entry.target.accepted || !entry.negative.discriminated) {
-    fail(`${caseEntry.id} did not accept the executed positive and discriminate the executed negative`);
+    fail(
+      `${caseEntry.id} did not accept the executed positive and discriminate the executed negative: ` +
+        `target_status=${targetOracle.overall_status}, ` +
+        `target_assertions=${JSON.stringify(targetOracle.assertions)}, ` +
+        `negative_status=${negativeOracle.overall_status}, ` +
+        `negative_assertions=${JSON.stringify(negativeOracle.assertions)}`,
+    );
   }
   return {entry, workspaces};
 }
@@ -692,6 +700,13 @@ async function runTw05OfflineQualification(workspace, output) {
     "--candidate-root", workspace,
     "--output", output,
   ], {env: offlineEnvironment(), timeout: tw05OfflineOuterTimeoutMs});
+  if (!existsSync(output)) {
+    fail(
+      `TW-05 offline qualification produced no receipt: exit=${result.status}, ` +
+        `signal=${result.signal}, error=${result.error?.message ?? "none"}, ` +
+        `stderr=${result.stderr}, stdout=${result.stdout}`,
+    );
+  }
   const receipt = JSON.parse(await readFile(output, "utf8"));
   return {
     evidence: "executed",
@@ -1040,6 +1055,7 @@ try {
     "evaluator/contracts/TW-05-resident-parity.json",
     "evaluator/contracts/TW-09-stable-diagnostic-facts.json",
     "evaluator/adapters/candidate-adapter.mjs",
+    "evaluator/adapters/candidate-adapter-lock.json",
     "evaluator/adapters/candidate-adapter-config.schema.json",
     "evaluator/adapters/README.md",
     "evaluator/adapters/TW-05/historical-target-adapter.mjs",
@@ -1053,6 +1069,9 @@ try {
     "evaluator/adapters/TW-09/historical-target-probe.rs",
     "evaluator/construction-pilots/TW-09-rebased.patch",
     "scripts/materialize-oracles.mjs",
+    "scripts/adapter-integrity.mjs",
+    "scripts/controller-context.mjs",
+    "scripts/network-sandbox.mjs",
     "scripts/oracle-qualification-normalization.mjs",
     "scripts/process-group-supervisor.mjs",
     "scripts/qualify-oracles.mjs",

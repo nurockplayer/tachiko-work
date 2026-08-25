@@ -2,10 +2,15 @@
 
 import {createHash} from "node:crypto";
 import {existsSync} from "node:fs";
-import {lstat, mkdir, readFile, realpath, writeFile} from "node:fs/promises";
+import {lstat, mkdir, readdir, readFile, readlink, realpath, writeFile} from "node:fs/promises";
 import {dirname, isAbsolute, relative, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
-import {runProcessGroupOnce} from "./process-group-supervisor.mjs";
+import {
+  materializeFormalAdapterEnvelope,
+  validateFormalAdapterPackage,
+} from "./adapter-integrity.mjs";
+import {loadControllerContext} from "./controller-context.mjs";
+import {denyReadProfile, probeNetworkSandbox, runNetworkSandboxed} from "./network-sandbox.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const defaultBenchmarkDir = resolve(scriptDir, "..");
@@ -31,6 +36,9 @@ function usage() {
       "[--trusted-rustc /abs/rustc --expected-rustc-sha256 <sha256>] " +
       "--trusted-shell /abs/bash --expected-shell-sha256 <sha256> " +
       "[--adapter-file /abs/adapter.mjs] " +
+      "[--adapter-config /abs/config.json --adapter-integrity-receipt /abs/review.json " +
+      "--expected-adapter-integrity-sha256 <sha256>] " +
+      "[--controller-context /abs/context.json --expected-controller-context-sha256 <sha256>] " +
       "[--contract-file /abs/contract.json] [--candidate-commit <sha>]",
   );
   process.exit(2);
@@ -74,17 +82,19 @@ function processSupervision(execution) {
     signal_actions: execution.signal_actions,
     descendant_cleanup_required: execution.descendant_cleanup_required,
     process_group_extinct_before_capture: execution.process_group_extinct_before_capture,
+    network_sandbox: execution.network_sandbox,
   };
 }
 
-async function supervisedCommand(executable, commandArgs, {cwd, env, timeout}) {
-  const execution = await runProcessGroupOnce({
+async function supervisedCommand(executable, commandArgs, {cwd, env, timeout, profile}) {
+  const execution = await runNetworkSandboxed({
     executable,
     args: commandArgs,
     cwd,
     environment: env,
     timeoutMilliseconds: timeout,
     terminationGraceMilliseconds: 10_000,
+    ...(profile ? {profile} : {}),
   });
   execution.deadline_seconds = timeout / 1000;
   let error;
@@ -131,6 +141,33 @@ async function prospectiveRealpath(path) {
   let resolved = await realpath(cursor);
   for (const component of suffix) resolved = resolve(resolved, component);
   return resolved;
+}
+
+async function candidateTreeIdentity(root) {
+  const entries = [];
+  async function walk(directory, prefix = "") {
+    const children = await readdir(directory, {withFileTypes: true});
+    children.sort((left, right) => Buffer.from(left.name).compare(Buffer.from(right.name)));
+    for (const child of children) {
+      const relativePath = prefix ? `${prefix}/${child.name}` : child.name;
+      const path = resolve(directory, child.name);
+      const metadata = await lstat(path);
+      const mode = metadata.mode & 0o7777;
+      if (metadata.isDirectory()) {
+        entries.push({path: relativePath, type: "directory", mode});
+        await walk(path, relativePath);
+      } else if (metadata.isFile()) {
+        const bytes = await readFile(path);
+        entries.push({path: relativePath, type: "file", mode, bytes: bytes.length, sha256: sha256(bytes)});
+      } else if (metadata.isSymbolicLink()) {
+        entries.push({path: relativePath, type: "symlink", mode, target: await readlink(path)});
+      } else {
+        fail(`unsupported candidate input type: ${relativePath}`);
+      }
+    }
+  }
+  await walk(root);
+  return {entries: entries.length, sha256: sha256(`${JSON.stringify(entries)}\n`)};
 }
 
 async function trustedRegularFile(path, label, candidateRoot) {
@@ -581,6 +618,17 @@ if (!/^[0-9a-f]{64}$/.test(args.get("expected-control-sha256"))) {
 
 const caseId = args.get("case");
 const candidateRoot = await realpath(resolve(args.get("candidate-root")));
+const evidenceContext = await loadControllerContext({
+  path: args.get("controller-context"),
+  expectedSha256: args.get("expected-controller-context-sha256"),
+  required: args.get("require-formal-context") === "true",
+});
+if (args.has("require-formal-context") && args.get("require-formal-context") !== "true") {
+  fail("require-formal-context only accepts true");
+}
+if (evidenceContext.context && evidenceContext.context.case_id !== caseId) {
+  fail("controller context case binding mismatch");
+}
 const trustedDirInput = resolve(args.get("trusted-dir"));
 const trustedDir = await prospectiveRealpath(trustedDirInput);
 if (!isAbsolute(args.get("candidate-root")) || !isAbsolute(args.get("trusted-dir"))) {
@@ -603,8 +651,12 @@ if ((trustedShellMetadata.mode & 0o111) === 0) fail("trusted shell must be execu
 if (trustedShellInput.sha256 !== args.get("expected-shell-sha256")) {
   fail("trusted shell SHA-256 mismatch");
 }
+const networkEnforcement = await probeNetworkSandbox({nodeExecutable: process.execPath});
 
 if (args.has("benchmark-dir")) fail("benchmark-dir override is not permitted");
+if (evidenceContext.formal_result_eligible && (args.has("manifest") || args.has("oracle-lock"))) {
+  fail("formal oracle execution may not override frozen manifests or locks");
+}
 const benchmarkDir = defaultBenchmarkDir;
 const manifestPath = resolve(
   args.get("manifest") ?? resolve(benchmarkDir, "evaluator/production-oracles.json"),
@@ -706,11 +758,11 @@ if (rustAssertionRequested) {
   }
 }
 
-await mkdir(trustedDirInput, {mode: 0o700});
+await mkdir(trustedDir, {mode: 0o700});
 const outputPaths = {
-  portable: resolve(trustedDirInput, "portable-observations.json"),
-  metadata: resolve(trustedDirInput, "metadata-observations.json"),
-  observations: resolve(trustedDirInput, "observations.json"),
+  portable: resolve(trustedDir, "portable-observations.json"),
+  metadata: resolve(trustedDir, "metadata-observations.json"),
+  observations: resolve(trustedDir, "observations.json"),
 };
 const defaultContracts = {
   "TW-05": resolve(benchmarkDir, "evaluator/contracts/TW-05-resident-parity.json"),
@@ -722,14 +774,16 @@ const contractRequested = manifestCase.oracle_commands.some((entry) =>
   entry.command_template.includes("<trusted-contract-file>"));
 let adapterFile;
 let adapterConfig;
+let formalAdapterPackage;
 let contractFile;
 const trustedInputs = [
   {kind: "manifest", ...manifestInput},
   {kind: "oracle_lock", ...lockInput},
   {kind: "trusted_shell", ...trustedShellInput},
-  ...frozenControlInputs.map(({control_path: controlPath, bytes, sha256: hash}) => ({
+  ...frozenControlInputs.map(({control_path: controlPath, path, bytes, sha256: hash}) => ({
     kind: "frozen_control",
     control_path: controlPath,
+    path,
     bytes,
     sha256: hash,
   })),
@@ -740,11 +794,32 @@ const trustedInputs = [
 ];
 if (adapterRequested) {
   if (!args.has("adapter-file")) fail(`${caseId} requires --adapter-file`);
-  const trusted = await trustedRegularFile(args.get("adapter-file"), "adapter-file", candidateRoot);
-  trustedInputs.push({kind: "adapter", ...trusted});
-  adapterFile = trusted.path;
+  if (evidenceContext.formal_result_eligible) {
+    formalAdapterPackage = await validateFormalAdapterPackage({
+      adapterPath: args.get("adapter-file"),
+      configPath: args.get("adapter-config"),
+      integrityReceiptPath: args.get("adapter-integrity-receipt"),
+      expectedIntegrityReceiptSha256: args.get("expected-adapter-integrity-sha256"),
+      benchmarkRoot: benchmarkDir,
+      forbiddenRoots: [
+        candidateRoot,
+        benchmarkDir,
+        ...(evidenceContext.context.adapter_forbidden_roots ?? []),
+      ],
+      context: evidenceContext.context,
+    });
+    adapterFile = formalAdapterPackage.scaffold.path;
+    adapterConfig = formalAdapterPackage.config.path;
+    for (const [kind, input] of Object.entries(formalAdapterPackage)) {
+      if (kind !== "approval") trustedInputs.push({kind: `formal_adapter_${kind}`, ...input});
+    }
+  } else {
+    const trusted = await trustedRegularFile(args.get("adapter-file"), "adapter-file", candidateRoot);
+    trustedInputs.push({kind: "adapter", ...trusted});
+    adapterFile = trusted.path;
+  }
 }
-if (args.has("adapter-config")) {
+if (args.has("adapter-config") && !evidenceContext.formal_result_eligible) {
   if (!adapterRequested) fail("adapter-config supplied for a case without an adapter");
   const trusted = await trustedRegularFile(
     args.get("adapter-config"),
@@ -762,9 +837,24 @@ if (contractRequested) {
   contractFile = trusted.path;
 }
 
+async function verifyTrustedInputsUnchanged(boundary) {
+  const identities = [];
+  for (const input of trustedInputs) {
+    if (!input.path) fail(`trusted input ${input.kind} lacks an absolute path binding`);
+    const current = await trustedRegularFile(input.path, `trusted input ${input.kind}`, candidateRoot);
+    if (current.bytes !== input.bytes || current.sha256 !== input.sha256) {
+      fail(`trusted input ${input.kind} changed ${boundary}`);
+    }
+    identities.push({kind: input.kind, path: current.path, bytes: current.bytes, sha256: current.sha256});
+  }
+  return sha256(`${JSON.stringify(identities)}\n`);
+}
+
 const commands = [];
 const assertions = [];
+const trustedInputBoundaryChecks = [];
 for (const [commandIndex, command] of manifestCase.oracle_commands.entries()) {
+  const trustedInputsBeforeSha256 = await verifyTrustedInputsUnchanged(`before ${command.id}`);
   const expectedIds = lockedAssertions.size === 0
     ? []
     : [...lockedAssertions.values()]
@@ -776,6 +866,10 @@ for (const [commandIndex, command] of manifestCase.oracle_commands.entries()) {
   }
 
   let resolvedCommand = command.command_template;
+  let commandSandboxProfile;
+  let adapterTemporaryRoot = null;
+  const adapterExecutionCommand = command.command_template.trimStart()
+    .startsWith("node <trusted-adapter-file> ");
   const replacements = {
     benchmark: benchmarkDir,
     controller: benchmarkDir,
@@ -789,11 +883,72 @@ for (const [commandIndex, command] of manifestCase.oracle_commands.entries()) {
   }
   if (resolvedCommand.includes("<trusted-adapter-file>")) {
     resolvedCommand = replaceToken(resolvedCommand, "trusted-adapter-file", adapterFile);
-    if (
-      adapterConfig &&
-      command.command_template.includes("<trusted-observations-file>")
-    ) {
+    if (adapterConfig && adapterExecutionCommand) {
       resolvedCommand += ` --config ${shellQuote(adapterConfig)}`;
+    }
+    if (formalAdapterPackage && adapterExecutionCommand) {
+      const deniedReadRootInputs = [benchmarkDir, ...(evidenceContext.context.adapter_forbidden_roots ?? [])]
+        .filter((root, index, all) => all.indexOf(root) === index);
+      const deniedWriteRootInputs = evidenceContext.context.adapter_write_forbidden_roots;
+      const allowedWriteRootInputs = evidenceContext.context.adapter_write_allowed_roots;
+      if (!Array.isArray(deniedWriteRootInputs) || deniedWriteRootInputs.length === 0 ||
+          !Array.isArray(allowedWriteRootInputs) || allowedWriteRootInputs.length !== 1) {
+        fail("formal adapter context requires write confinement with one trusted temporary root");
+      }
+      const deniedReadRoots = [];
+      for (const root of deniedReadRootInputs) deniedReadRoots.push(await realpath(resolve(root)));
+      const deniedWriteRoots = [];
+      for (const root of deniedWriteRootInputs) deniedWriteRoots.push(await realpath(resolve(root)));
+      const allowedWriteRoots = [];
+      for (const root of allowedWriteRootInputs) {
+        const canonical = await realpath(resolve(root));
+        if (!deniedWriteRoots.some((denied) => inside(canonical, denied))) {
+          fail("formal adapter temporary write root is not nested in a denied write root");
+        }
+        allowedWriteRoots.push(canonical);
+      }
+      if (evidenceContext.context.adapter_tmp_initial_sha256 !== sha256("[]\n") ||
+          (await readdir(allowedWriteRoots[0])).length !== 0) {
+        fail("formal adapter temporary root is not freshly empty");
+      }
+      adapterTemporaryRoot = {
+        path: allowedWriteRoots[0],
+        initial_entries: 0,
+        initial_sha256: sha256("[]\n"),
+        created_after_candidate_core_extinction: true,
+      };
+      for (const root of deniedReadRoots) {
+        resolvedCommand += ` --deny-read-root ${shellQuote(root)}`;
+      }
+      for (const root of deniedWriteRoots) {
+        resolvedCommand += ` --deny-write-root ${shellQuote(root)}`;
+      }
+      for (const root of allowedWriteRoots) {
+        resolvedCommand += ` --allow-write-root ${shellQuote(root)}`;
+      }
+      const deniedWritePaths = [
+        adapterFile,
+        formalAdapterPackage.config.path,
+        formalAdapterPackage.probe.path,
+        formalAdapterPackage.integrity_receipt.path,
+        formalAdapterPackage.scaffold_lock.path,
+        trustedShellInput.path,
+        process.execPath,
+        ...(cargoInput ? [cargoInput.path, rustcInput.path] : []),
+      ].filter((path, index, all) => all.indexOf(path) === index);
+      for (const path of deniedWritePaths) {
+        resolvedCommand += ` --deny-write-path ${shellQuote(path)}`;
+      }
+      commandSandboxProfile = denyReadProfile(deniedReadRoots, {
+        allowReadPaths: [adapterFile],
+        allowReadRoots: [candidateRoot],
+        denyWriteRoots: [candidateRoot, ...deniedWriteRoots],
+        denyWritePaths: deniedWritePaths,
+        allowWriteRoots: allowedWriteRoots,
+      });
+      resolvedCommand +=
+        ` --expected-sandbox-profile-sha256 ${sha256(commandSandboxProfile)}` +
+        ` --contract-sha256 ${sha256(await readFile(contractFile))}`;
     }
   }
   if (resolvedCommand.includes("<trusted-contract-file>")) {
@@ -818,6 +973,11 @@ for (const [commandIndex, command] of manifestCase.oracle_commands.entries()) {
   const logPrefix = `${String(commandIndex).padStart(2, "0")}-${safeId(command.id)}`;
   let result;
   let executionReceipt = {};
+  let adapterMaterialization = null;
+  let candidateInputImmutability = null;
+  const candidateInputBefore = formalAdapterPackage && adapterExecutionCommand
+    ? await candidateTreeIdentity(candidateRoot)
+    : null;
   if (rustAssertions.length > 0) {
     const commandSpec = parseRustTestCommand(resolvedCommand);
     if (!commandSpec || commandSpec.testName !== rustAssertions[0].selector.test_name) {
@@ -831,7 +991,7 @@ for (const [commandIndex, command] of manifestCase.oracle_commands.entries()) {
       commandSpec,
       lockedFiles: lockedFilesBefore,
       logPrefix,
-      trustedDir: trustedDirInput,
+      trustedDir,
       timeout: ORACLE_COMMAND_TIMEOUT_MS,
     });
     result = execution.result;
@@ -850,14 +1010,53 @@ for (const [commandIndex, command] of manifestCase.oracle_commands.entries()) {
       cwd: candidateRoot,
       env: process.env,
       timeout: ORACLE_COMMAND_TIMEOUT_MS,
+      profile: commandSandboxProfile,
       },
     );
     executionReceipt = {process_supervision: result.process_supervision};
+    if (candidateInputBefore) {
+      const candidateInputAfter = await candidateTreeIdentity(candidateRoot);
+      candidateInputImmutability = {
+        entries: candidateInputAfter.entries,
+        before_sha256: candidateInputBefore.sha256,
+        after_sha256: candidateInputAfter.sha256,
+        unchanged: candidateInputBefore.sha256 === candidateInputAfter.sha256,
+        checked_after_process_group_extinction:
+          result.process_supervision.process_group_extinct_before_capture,
+      };
+      if (!candidateInputImmutability.unchanged ||
+          !candidateInputImmutability.checked_after_process_group_extinction) {
+        fail("formal adapter changed reconstructed candidate inputs");
+      }
+    }
+    if (
+      formalAdapterPackage &&
+      adapterExecutionCommand &&
+      result.status === 0 && !result.error
+    ) {
+      adapterMaterialization = await materializeFormalAdapterEnvelope({
+        stdout: result.stdout,
+        outputPath: outputPaths.observations,
+        caseId,
+        contractSha256: sha256(await readFile(contractFile)),
+        sandboxProfileSha256: sha256(commandSandboxProfile),
+        processGroupExtinct:
+          result.process_supervision.process_group_extinct_before_capture,
+        adapterPackage: formalAdapterPackage,
+      });
+    }
   }
+  const trustedInputsAfterSha256 = await verifyTrustedInputsUnchanged(`after ${command.id}`);
+  trustedInputBoundaryChecks.push({
+    command_id: command.id,
+    before_sha256: trustedInputsBeforeSha256,
+    after_sha256: trustedInputsAfterSha256,
+    unchanged: trustedInputsBeforeSha256 === trustedInputsAfterSha256,
+  });
   const stdout = result.stdout ?? "";
   const stderr = result.stderr ?? "";
-  const stdoutPath = resolve(trustedDirInput, `${logPrefix}.stdout`);
-  const stderrPath = resolve(trustedDirInput, `${logPrefix}.stderr`);
+  const stdoutPath = resolve(trustedDir, `${logPrefix}.stdout`);
+  const stderrPath = resolve(trustedDir, `${logPrefix}.stderr`);
   await Promise.all([writeFile(stdoutPath, stdout), writeFile(stderrPath, stderr)]);
   const commandReceipt = {
     id: command.id,
@@ -870,6 +1069,9 @@ for (const [commandIndex, command] of manifestCase.oracle_commands.entries()) {
     spawn_error: result.error?.message ?? null,
     stdout: {path: `${logPrefix}.stdout`, bytes: Buffer.byteLength(stdout), sha256: sha256(stdout)},
     stderr: {path: `${logPrefix}.stderr`, bytes: Buffer.byteLength(stderr), sha256: sha256(stderr)},
+    trusted_adapter_materialization: adapterMaterialization,
+    adapter_temporary_root: adapterTemporaryRoot,
+    candidate_input_immutability: candidateInputImmutability,
     ...executionReceipt,
   };
   commands.push(commandReceipt);
@@ -971,12 +1173,16 @@ const overallStatus = subjectiveOnly
 const receipt = {
   protocol_id: manifest.protocol_id,
   case_id: caseId,
-  classification: "construction_pilot_only",
-  formal_result_eligible: false,
+  classification: evidenceContext.classification,
+  formal_result_eligible: evidenceContext.formal_result_eligible,
+  controller_context_sha256: evidenceContext.context_sha256,
+  network_enforcement: networkEnforcement,
   manifest_sha256: sha256(manifestBytes),
   oracle_lock_sha256: sha256(lockBytes),
   expected_control_sha256: args.get("expected-control-sha256"),
   trusted_inputs: trustedInputs,
+  trusted_inputs_postchecked_unchanged: trustedInputBoundaryChecks.every((entry) => entry.unchanged),
+  trusted_input_boundary_checks: trustedInputBoundaryChecks,
   candidate_root: candidateRoot,
   assessment_mode: assessmentMode,
   machine_score_claimed: false,
@@ -988,7 +1194,7 @@ const receipt = {
   overall_status: overallStatus,
 };
 await writeFile(
-  resolve(trustedDirInput, "oracle-run.json"),
+  resolve(trustedDir, "oracle-run.json"),
   `${JSON.stringify(receipt, null, 2)}\n`,
   {mode: 0o600},
 );

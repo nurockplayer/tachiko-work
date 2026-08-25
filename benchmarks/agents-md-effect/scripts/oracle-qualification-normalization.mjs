@@ -175,6 +175,22 @@ function deterministicOracle(oracle) {
     commands: oracle.commands.map(deterministicCommand),
     assertions: oracle.assertions.map(deterministicAssertion),
     adapter_execution: deterministicAdapter(oracle.adapter_execution),
+    network_enforcement: oracle.network_enforcement ? {
+      mode: oracle.network_enforcement.mode,
+      sandbox_executable: oracle.network_enforcement.sandbox_executable ? {
+        bytes: oracle.network_enforcement.sandbox_executable.bytes,
+        sha256: oracle.network_enforcement.sandbox_executable.sha256,
+      } : null,
+      profile: oracle.network_enforcement.profile,
+      probe_script: oracle.network_enforcement.probe_script ? {
+        bytes: oracle.network_enforcement.probe_script.bytes,
+        sha256: oracle.network_enforcement.probe_script.sha256,
+      } : null,
+      probe_denied: oracle.network_enforcement.probe_denied,
+      process_supervision: deterministicSupervision(
+        oracle.network_enforcement.process_supervision,
+      ),
+    } : null,
   };
 }
 
