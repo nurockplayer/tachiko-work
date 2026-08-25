@@ -617,18 +617,6 @@ function parsePortableManifest(bytes) {
     CODES.invalidManifest,
     `duplicate package.json member ${memberScan.duplicate}`,
   );
-  const expectedKeys = [
-    'format',
-    'format_version',
-    'payload_format',
-    'payload_format_version',
-    'payload_root_sha256',
-  ];
-  ensure(
-    sameMultiset(Object.keys(value), expectedKeys),
-    CODES.invalidManifest,
-    'package.json members are missing or unknown',
-  );
   ensure(
     value.format === 'tachiko.portable-package',
     CODES.invalidManifest,
@@ -646,6 +634,18 @@ function parsePortableManifest(bytes) {
       `unsupported ${PACKAGE_PROFILE.split('/')[0]} version ${formatVersion}`,
     );
   }
+  const expectedKeys = [
+    'format',
+    'format_version',
+    'payload_format',
+    'payload_format_version',
+    'payload_root_sha256',
+  ];
+  ensure(
+    sameMultiset(Object.keys(value), expectedKeys),
+    CODES.invalidManifest,
+    'package.json members are missing or unknown',
+  );
   ensure(
     value.payload_format === 'tachiko.roproj' &&
       memberScan.members.get('payload_format_version') === '1',
@@ -1198,6 +1198,18 @@ async function runPressureTests(work, fixtureTree, canonicalBytes) {
   rejections.unsupportedVersion = await expectUnpackRejection(
     buildCanonicalZip32(unsupportedEntries),
     join(work, 'reject-unsupported.roproj'),
+    CODES.unsupportedPackageVersion,
+  );
+  const unsupportedFutureManifest = {
+    format: 'tachiko.portable-package',
+    format_version: 2,
+    future_manifest_member: true,
+  };
+  rejections.unsupportedFutureManifestShape = await expectUnpackRejection(
+    buildCanonicalZip32(
+      replacePackageManifest(entries, prettyJsonBytes(unsupportedFutureManifest)),
+    ),
+    join(work, 'reject-unsupported-future-manifest.roproj'),
     CODES.unsupportedPackageVersion,
   );
   const unsupportedWithInvalidLaterName = unsupportedEntries.map((entry) =>

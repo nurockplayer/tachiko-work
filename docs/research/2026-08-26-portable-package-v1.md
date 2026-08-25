@@ -11,7 +11,10 @@ Decision issue: [#43](https://github.com/nurockplayer/tachiko-work/issues/43)
 Tracking issue: [#3](https://github.com/nurockplayer/tachiko-work/issues/3)
 for production implementation
 
-Repository baseline: `main@6b53565d6a2e61a629b02ac8173993424543b260`
+Initial repository baseline: `main@6b53565d6a2e61a629b02ac8173993424543b260`
+
+Final authority reconciliation baseline:
+`main@a064c0f002a16553249505c9a9868759513ca38f`
 
 ## Question and boundary
 
@@ -25,12 +28,14 @@ It does not implement production `.roproj` or packaged-`.ro` codecs, add CLI
 pack/unpack, change either direct-JSON profile, close #3, or alter #27,
 Semantic API, AI, capability, approval, revision, delta, or merge authority.
 
-Before the decision was drafted, live `main`, Issue #43 and its comments, the
-open PR set, repository instructions, and the relevant Accepted authority were
-checked. Open PR #114 had already reserved ADR-0024 for unrelated
+At initial authority verification, live `main`, Issue #43 and its comments,
+the open PR set, repository instructions, and the relevant Accepted authority
+were checked. Open PR #114 had already reserved ADR-0024 for unrelated
 SemanticPatch work, so this independent decision uses ADR-0025. Open PR #115
-was also unrelated. No live Accepted authority contradicted the Issue #43
-contract.
+was also unrelated. Before final validation, both PRs merged; their resulting
+ADR-0024/#27 and Semantic Analyst authority was inspected and preserved during
+the rebase to the final baseline above. The refreshed open-PR set was empty.
+No live Accepted authority contradicted the Issue #43 contract.
 
 ## Authority consumed
 
@@ -155,7 +160,7 @@ authority.
 | Corrupt one payload byte | `portable_package.crc_mismatch`; no destination |
 | Recompute CRC but retain stale root | `portable_package.integrity_mismatch`; no destination |
 | Missing, malformed, or duplicate package metadata | Explicit invalid-manifest failure |
-| Unsupported package version | Unsupported-version failure before payload decoding |
+| Unsupported package version, including a future-owned manifest shape | Unsupported-version failure before v1-only manifest or payload decoding |
 | Unsupported version plus a later malformed entry name | Unsupported version still wins before entry decoding |
 | Unknown package metadata | Explicit invalid-manifest failure |
 | Missing, unknown, duplicate, or aliased entry | Entry-set mismatch |

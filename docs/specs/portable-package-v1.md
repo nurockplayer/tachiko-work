@@ -477,17 +477,20 @@ This order fixes dependencies and security boundaries, not a total precedence
 among independent failures discovered within one stage.
 
 Before package-version selection, a reader may parse only enough ordinary ZIP
-structure and the unique stored `package.json` entry to dispatch. Missing,
-malformed, duplicate, or invalid package metadata fails explicitly. A
+structure and the unique stored `package.json` entry to dispatch. The
+version-independent manifest probe requires a JSON object with no duplicate
+top-level members, exact decoded `format: "tachiko.portable-package"`, and a
+lexical positive-integer `format_version`. A malformed probe fails explicitly,
+but it MUST NOT require the remaining v1-owned member set before dispatch. A
 syntactically valid `tachiko.portable-package` version other than `1` produces
-`portable_package.unsupported_version` before payload CRC, integrity,
-`.roproj` DTO, or semantic decoding. Unsupported payload bytes MUST NOT be
-interpreted, canonicalized, migrated, or published.
+`portable_package.unsupported_version` before v1-only manifest validation,
+payload CRC, integrity, `.roproj` DTO, or semantic decoding. Unsupported
+payload bytes MUST NOT be interpreted, canonicalized, migrated, or published.
 
-For selected v1, unpack then requires the exact canonical ZIP and entry
-profile. It rejects unknown, missing, duplicate, aliased, reordered, or
-metadata-bearing entries. It checks local/central agreement and recomputes
-every CRC before calculating the payload root.
+For selected v1, unpack then requires the exact closed five-member manifest,
+canonical ZIP, and entry profile. It rejects unknown, missing, duplicate,
+aliased, reordered, or metadata-bearing entries. It checks local/central
+agreement and recomputes every CRC before calculating the payload root.
 
 After the root matches, unpack verifies that `payload/manifest.json` selects
 the exact payload representation claimed by `package.json`. It then validates
@@ -670,7 +673,8 @@ A production implementation must cover at least:
 4. corruption with recomputed CRC but stale SHA-256 root fails integrity and
    publishes nothing;
 5. missing, duplicate, unknown, or malformed package metadata fails closed;
-6. an unsupported package version wins before payload semantic decoding;
+6. an unsupported package version, including one with a future-owned manifest
+   shape, wins before v1-only manifest or payload semantic decoding;
 7. unknown, missing, duplicate, extra, or aliased entries fail closed;
 8. a disagreeing tracked `.roproj` produces source mismatch without mutation;
 9. noncanonical ZIP metadata and noncanonical entry order fail closed;
