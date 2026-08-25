@@ -90,7 +90,7 @@ Execute(Command | AtomicBatch)
 
 Finalization is an authoritative operation-gate concept over a candidate/purpose; it is not a requirement for a client-visible stateful two-phase commit protocol. Execute MUST evaluate authoritative preconditions/gates for the state it actually acts on and MUST NOT trust a stale earlier client-side allow/deny calculation as authority.
 
-Proposal IDs, stale-proposal handling, resident state, revision tokens, approval tokens, and commit/session mechanics remain outside this ADR.
+Proposal IDs, stale-proposal handling, resident state, revision tokens, approval tokens, and commit/session mechanics remain outside this ADR. Subsequent ADR-0024 accepts the representation-neutral proposal occurrence, exact-change, compatibility-binding, semantic-base, and stale laws without changing the Command/Propose/Execute meaning accepted here; concrete revision, approval, and transport mechanisms remain separately owned.
 
 ### 6. Semantic publication is atomic
 
@@ -145,7 +145,7 @@ Every semantic operation or operation family MUST be independently addressable f
 
 Granting query/read/propose authority MUST NOT implicitly grant execute or arbitrary mutation authority.
 
-This ADR accepts capability-addressability only. Capability identifiers, principals, grants, approval tokens, provenance records, and security protocol remain #27/#28.
+This ADR accepts capability-addressability only. ADR-0024 defines the exact proposal/base binding consumed by later authorization. Capability identifiers, principals, grants, approval tokens, provenance records, digest/integrity, and security protocol remain #28.
 
 ### 10. Semantic API versioning is independent from representation and transport versioning
 
@@ -224,10 +224,11 @@ The following remain intentionally replaceable or unresolved:
 - full externally Stable operation catalogue;
 - exact result field/tagged-union representation;
 - semantic effect/diff projection shape;
-- revision/precondition tokens (#26);
-- proposal identity/token (#26/#28);
+- concrete revision/precondition token representation (#93);
+- proposal-ID encoding/generation and transport shape (Provisional under ADR-0024);
+- canonical proposal bytes, digest, signature, MAC, and approval binding (#28);
 - intra-batch created-object reference syntax;
-- capability ID/grant/approval/provenance format (#27/#28);
+- capability ID/grant/approval/provenance format (#28);
 - embedded Rust SDK or new public API crate;
 - native/WASM/IPC/FFI/network serialization (#26); and
 - stable API deprecation-support window beyond the compatibility laws above.
@@ -297,7 +298,8 @@ Costs:
 - Reconcile `diagnostics-contract.md`, `validation-engine.md`, `ai-agent-api.md`, `rust-crate-architecture.md`, `frontend-backend-boundary.md`, and the canonical reconciliation register.
 - Close #10 with a Decision Capsule pointing to this ADR/spec.
 - #26 may now proceed against the Accepted Semantic API boundary.
-- #27/#28 continue to own capability/approval/provenance protocol.
+- ADR-0024 resolves #27's revision-pinned immutable proposal contract without adding another operation vocabulary.
+- #28 continues to own capability/approval/provenance and digest/integrity protocol.
 - #104 remains a later read-only-first reference/dogfood pressure test.
 
 ## Related
@@ -309,4 +311,5 @@ Costs:
 - ADR-0017
 - ADR-0018
 - ADR-0019
+- ADR-0024
 - Issues #10, #17, #26, #27, #28, #104

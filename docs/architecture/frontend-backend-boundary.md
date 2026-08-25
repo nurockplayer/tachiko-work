@@ -1,6 +1,6 @@
 # Frontend and Backend Boundary
 
-Decision state: Accepted direction. ADR-0020 makes the Headless Semantic API the mandatory first-party semantic product boundary. ADR-0022 accepts the resident shared Rust semantic/application runtime and host separation as the preferred interactive topology. Concrete session/revision/transport mechanics remain Deferred to later runtime work.
+Decision state: Accepted direction. ADR-0020 makes the Headless Semantic API the mandatory first-party semantic product boundary. ADR-0024 defines immutable revision-pinned SemanticPatch proposal meaning. ADR-0022 accepts the resident shared Rust semantic/application runtime and host separation as the preferred interactive topology. Concrete proposal/revision/session/transport mechanics remain Deferred to later runtime work.
 
 ## Principle
 
@@ -14,7 +14,7 @@ For an open interactive document, authoritative in-memory semantic state belongs
 
 In this document, `Rust Runtime` means the shared Rust semantic/application runtime built around `workspace-engine` and the lower semantic engines, not the `semantic-core` crate alone.
 
-The Accepted crate ownership and dependency direction are recorded in [ADR-0016](../decisions/ADR-0016-milestone-02-rust-crate-layering.md). The first-class client contract is defined by [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md) and [`semantic-api.md`](../specs/semantic-api.md). Runtime ownership and host separation are defined by [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md).
+The Accepted crate ownership and dependency direction are recorded in [ADR-0016](../decisions/ADR-0016-milestone-02-rust-crate-layering.md). The first-class client contract is defined by [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md), the revision-pinned proposal contract by [ADR-0024](../decisions/ADR-0024-revision-pinned-semantic-patch.md), and both are specified by [`semantic-api.md`](../specs/semantic-api.md). Runtime ownership and host separation are defined by [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md).
 
 ```text
 React / Desktop / Web / future Mobile UI
@@ -42,7 +42,7 @@ A frontend may own:
 - rendering and accessibility;
 - selection, focus, viewport, panels, drag/drop, and other presentation state;
 - revision-keyed semantic projections and query caches;
-- pending-command, preview, and review UI state;
+- pending-command, immutable proposal projection, preview, and review UI state;
 - raw/draft authoring buffers where incomplete input is not yet semantic state under ADR-0019;
 - presentation-local optimistic state that cannot redefine the authoritative semantic outcome; and
 - projecting stable semantic identities into current human-readable labels, paths, ranges, or widgets.
@@ -58,14 +58,18 @@ The shared semantic/application runtime owns:
 - calculations and formula meaning;
 - semantic validation and authoritative operation gates;
 - ADR-0020 typed semantic Commands and Queries;
-- Propose/Execute semantic behavior;
+- Propose/Execute semantic behavior and ADR-0024 SemanticPatch binding;
 - semantic comparison/merge orchestration;
 - all-or-nothing semantic publication for commands/batches; and
 - presentation-neutral semantic results/diagnostics.
 
 ADR-0022 prefers retaining this runtime across ordinary interactive operations instead of serializing/reconstructing the complete semantic document for each edit/query.
 
-The exact resident session handle, revision/precondition type, concurrency algorithm, cancellation behavior, state commit/swap mechanism, and projection-delivery protocol remain Deferred to #93/#94 and related runtime work.
+When SemanticPatch is implemented, the trusted runtime boundary MUST enforce
+base equality and same-ID immutability. The exact proposal-ID and
+revision/precondition types, resident session handle, concurrency algorithm,
+cancellation behavior, state commit/swap mechanism, and projection-delivery
+protocol remain Deferred to #29/#93/#94 and related runtime work.
 
 ## Snapshot boundaries
 
@@ -100,6 +104,8 @@ A frontend MUST NOT:
 - maintain an independently authoritative semantic `Document` as its edit model;
 - mutate internal Rust `Document` fields as its durable edit protocol;
 - target storage paths, JSON pointers, row/cell coordinates, or Rust field layout as semantic identity;
+- mutate proposal contents under the same proposal identity or silently rebase
+  a stale proposal;
 - derive operation permission from diagnostic severity/message rather than the authoritative gate/authorization boundary; or
 - implement a host-specific version of formula, validation, mutation, diff, merge, or atomicity semantics.
 
@@ -111,7 +117,10 @@ A Worker, bridge, or transport may host, retain, cache, serialize, batch-deliver
 
 ## Implementation status
 
-The current workspace-engine operation surface remains substantially snapshot-style. ADR-0022 makes the resident topology an Accepted target while allowing implementation to lag until #93–#95.
+The current workspace-engine operation surface remains substantially
+snapshot-style and has no general SemanticPatch or AtomicBatch implementation.
+ADR-0022/ADR-0024 make the resident and proposal laws Accepted targets while
+allowing implementation to lag until #29/#93–#95.
 
 No Web UI, resident session API, projection patch protocol, or browser persistence mechanism is introduced by this documentation decision.
 
@@ -127,5 +136,6 @@ This avoids both expensive whole-document client/runtime traffic as the default 
 - ADR-0019
 - ADR-0020
 - ADR-0022
-- Issues #26, #93, #94, #95
+- ADR-0024
+- Issues #26, #28, #29, #93, #94, #95
 - PR #91

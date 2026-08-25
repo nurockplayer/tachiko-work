@@ -161,8 +161,10 @@ Rust `pub` visibility does not by itself promise a stable downstream API.
 - The semantic invariants accepted by existing ADRs are stable; the exact Rust
   field layout, constructors, module layout, and `serde` representation are
   workspace-internal until deliberately versioned.
-- `workspace-engine` command/query concepts are the target client boundary but
-  remain Provisional as an external API pending #10, #23, #24, and #27/#28.
+- `workspace-engine` command/query concepts are the target client boundary. The
+  transport-neutral semantic laws were subsequently Accepted by ADR-0020 and
+  the proposal envelope laws by ADR-0024, while the exact Rust external API and
+  capability/approval mapping remain Provisional/#28.
 - formula, diff, and merge engine Rust APIs are workspace-internal. Where an
   Accepted ADR governs behavior, it remains authoritative; otherwise current
   detailed behavior remains an implemented Provisional contract.
@@ -414,10 +416,12 @@ Issue #72 implements this decision without amending its Accepted semantics:
 
 The implementation remains document-local and snapshot-style, keeps the
 host-supplied stable-ID generator seam, and introduces no storage dependency or
-host capability into the portable application set. External API stability
-(#10), general diagnostic architecture (#23), resident/IPC/FFI/runtime design
-(#26), AI capability/approval protocols (#27/#28), and `.roproj` (#41) remain
-deferred to their existing owners.
+host capability into the portable application set. Subsequent ADR-0019,
+ADR-0020, ADR-0022, ADR-0023, and ADR-0024 accept the validation, Semantic API,
+runtime, `.roproj/v1`, and proposal laws without making the current Rust/wire
+surfaces stable. Capability/approval/digest protocol remains #28, proposal
+lifecycle implementation #29, and resident revision/session implementation
+#93.
 
 ## Related
 
