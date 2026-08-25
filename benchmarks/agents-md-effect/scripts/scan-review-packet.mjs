@@ -28,6 +28,20 @@ const IDENTIFIERS = [
 ];
 const UTF8_DECODER = new TextDecoder("utf-8", {fatal: true, ignoreBOM: true});
 
+function validateRequiredReviewRoles(roles, label) {
+  const counts = Object.fromEntries(REQUIRED_REVIEW_ROLES.map((role) => [role, 0]));
+  for (const role of roles) {
+    if (!Object.hasOwn(counts, role)) throw new Error(`unknown ${label} role`);
+    counts[role] += 1;
+  }
+  for (const role of REQUIRED_REVIEW_ROLES) {
+    if (counts[role] === 0) throw new Error(`missing required ${label} role: ${role}`);
+  }
+  for (const role of ["task", "candidate_diff", "final_message"]) {
+    if (counts[role] !== 1) throw new Error(`${label} role must occur exactly once: ${role}`);
+  }
+}
+
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
@@ -279,12 +293,12 @@ async function validatePublicManifest(files, blinding) {
   ) {
     throw new Error("packet manifest must bind every and only reviewer-visible artifact");
   }
-  const roleCounts = Object.fromEntries(REQUIRED_REVIEW_ROLES.map((role) => [role, 0]));
+  const reviewRoles = [];
   for (const [index, artifact] of artifacts.entries()) {
     if (
       typeof artifact.display_path !== "string" ||
       typeof artifact.path_redacted !== "boolean" ||
-      !Object.hasOwn(roleCounts, artifact.review_role) ||
+      typeof artifact.review_role !== "string" ||
       !/^[0-9a-f]{64}$/.test(artifact.original_path_sha256) ||
       !Number.isSafeInteger(artifact.pre_render_bytes) ||
       artifact.pre_render_bytes < 0 ||
@@ -305,7 +319,7 @@ async function validatePublicManifest(files, blinding) {
     ) {
       throw new Error("packet manifest path commitment is invalid");
     }
-    roleCounts[artifact.review_role] += 1;
+    reviewRoles.push(artifact.review_role);
     const file = visibleFiles[index];
     file.bytes = await readFile(file.absolutePath);
     if (
@@ -315,12 +329,7 @@ async function validatePublicManifest(files, blinding) {
       throw new Error("reviewer-visible artifact differs from the packet manifest");
     }
   }
-  for (const role of REQUIRED_REVIEW_ROLES) {
-    if (roleCounts[role] === 0) throw new Error(`packet is missing required review role: ${role}`);
-  }
-  for (const role of ["task", "candidate_diff", "final_message"]) {
-    if (roleCounts[role] !== 1) throw new Error(`packet review role must occur exactly once: ${role}`);
-  }
+  validateRequiredReviewRoles(reviewRoles, "packet review");
   return manifest;
 }
 
@@ -484,4 +493,5 @@ export {
   sha256,
   splitLines,
   strictText,
+  validateRequiredReviewRoles,
 };

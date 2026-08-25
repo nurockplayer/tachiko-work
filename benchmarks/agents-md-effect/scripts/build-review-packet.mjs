@@ -5,7 +5,6 @@ import {lstat, mkdir, readFile, readdir, realpath, writeFile} from "node:fs/prom
 import {basename, dirname, isAbsolute, relative, resolve} from "node:path";
 import {
   REDACTION,
-  REQUIRED_REVIEW_ROLES,
   RULE_IDS,
   canonicalBytes,
   compileMatcher,
@@ -15,6 +14,7 @@ import {
   sha256,
   splitLines,
   strictText,
+  validateRequiredReviewRoles,
 } from "./scan-review-packet.mjs";
 
 function usage() {
@@ -122,7 +122,7 @@ async function bindInputManifest(manifestPath, inputFiles) {
   if (JSON.stringify(entries.map((entry) => entry.path)) !== JSON.stringify(actualPaths)) {
     throw new Error("review input manifest must bind every and only reviewer-visible artifact");
   }
-  const roleCounts = Object.fromEntries(REQUIRED_REVIEW_ROLES.map((role) => [role, 0]));
+  const reviewRoles = [];
   for (const [index, entry] of entries.entries()) {
     if (
       typeof entry.path !== "string" ||
@@ -138,8 +138,7 @@ async function bindInputManifest(manifestPath, inputFiles) {
       throw new Error("exactly one review artifact role is required for each artifact");
     }
     for (const role of entry.roles) {
-      if (!Object.hasOwn(roleCounts, role)) throw new Error("unknown review input artifact role");
-      roleCounts[role] += 1;
+      reviewRoles.push(role);
     }
     const bytes = await readFile(inputFiles[index].absolutePath);
     if (bytes.length !== entry.bytes || sha256(bytes) !== entry.sha256) {
@@ -148,12 +147,7 @@ async function bindInputManifest(manifestPath, inputFiles) {
     inputFiles[index].bytes = bytes;
     inputFiles[index].roles = entry.roles;
   }
-  for (const role of REQUIRED_REVIEW_ROLES) {
-    if (roleCounts[role] === 0) throw new Error(`missing required review artifact role: ${role}`);
-  }
-  for (const role of ["task", "candidate_diff", "final_message"]) {
-    if (roleCounts[role] !== 1) throw new Error(`review artifact role must occur exactly once: ${role}`);
-  }
+  validateRequiredReviewRoles(reviewRoles, "review artifact");
   return {bytes: manifestBytes, sha256: sha256(manifestBytes)};
 }
 
