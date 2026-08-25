@@ -9,6 +9,7 @@ import {
   lstat,
   mkdir,
   mkdtemp,
+  readdir,
   readlink,
   readFile,
   realpath,
@@ -36,6 +37,8 @@ const verifyOracleQualificationScript = resolve(
   benchmarkDir,
   "scripts/verify-oracle-qualification.mjs",
 );
+const buildReviewPacketScript = resolve(benchmarkDir, "scripts/build-review-packet.mjs");
+const scanReviewPacketScript = resolve(benchmarkDir, "scripts/scan-review-packet.mjs");
 const trustedCargoPath = spawnSync("rustup", ["which", "cargo"], {encoding: "utf8"}).stdout.trim();
 const trustedCargoSha256 = sha256(readFileSync(trustedCargoPath));
 const trustedRustcPath = spawnSync("rustup", ["which", "rustc"], {encoding: "utf8"}).stdout.trim();
@@ -2079,4 +2082,270 @@ test("oracle qualification records executed target/base evidence for all frozen 
     JSON.stringify(receipt.payload),
     /\/var\/folders|exec_time|duration_ms/,
   );
+});
+
+async function reviewTreeManifest(root) {
+  const entries = [];
+  async function walk(directory, prefix = "") {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        await walk(resolve(directory, entry.name), relative);
+      } else {
+        assert.equal(entry.isFile(), true, `${relative} must be a regular file`);
+        const bytes = await readFile(resolve(directory, entry.name));
+        entries.push({ path: relative, bytes: bytes.length, sha256: sha256(bytes) });
+      }
+    }
+  }
+  await walk(root);
+  return entries.sort((left, right) => Buffer.from(left.path).compare(Buffer.from(right.path)));
+}
+
+function runReviewPacketBuilder({ inputRoot, outputDir, variants }) {
+  const argumentsForBuilder = [
+    buildReviewPacketScript,
+    "--case-id", "TW-05",
+    "--candidate-id", "0123456789abcdef0123456789abcdef",
+    "--input-root", inputRoot,
+    "--contract", resolve(benchmarkDir, "evaluator/contracts/review-packet-blinding-v1.json"),
+    "--output-dir", outputDir,
+    "--custodian-id", "internal-custodian-01",
+    "--custodian-eligible", "true",
+    "--frozen-at", "2026-08-25T00:00:00.000Z",
+  ];
+  for (const variant of variants) argumentsForBuilder.push("--variant", variant);
+  return spawnSync(process.execPath, argumentsForBuilder, { encoding: "utf8" });
+}
+
+test("review packet deterministically applies frozen R1-R4 while preserving domain text", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-review-packet-"));
+  try {
+    const inputRoot = resolve(fixtureRoot, "captured-review-input");
+    const variantA = resolve(fixtureRoot, "sealed-a");
+    const variantB = resolve(fixtureRoot, "sealed-b");
+    const firstOutput = resolve(fixtureRoot, "packet-one");
+    const secondOutput = resolve(fixtureRoot, "packet-two");
+    const copied =
+      "Preserve the repository declared runtime package manager lockfile formatter linter build system and dependency workflow exactly today.";
+    const nearSource = "alpha beta gamma delta epsilon zeta theta omega";
+    await mkdir(resolve(inputRoot, "notes"), { recursive: true });
+    await writeFile(variantA, `${copied}\n${nearSource}\n`);
+    await writeFile(variantB, "Keep every accepted project boundary explicit and independently reviewable.\n");
+    await writeFile(resolve(inputRoot, "notes", "exact.txt"), `${copied}\n`);
+    await writeFile(
+      resolve(inputRoot, "notes", "case-whitespace.txt"),
+      "PRESERVE  THE REPOSITORY DECLARED RUNTIME PACKAGE MANAGER LOCKFILE FORMATTER LINTER BUILD SYSTEM AND DEPENDENCY WORKFLOW EXACTLY TODAY.\n",
+    );
+    await writeFile(
+      resolve(inputRoot, "notes", "near-copy.txt"),
+      "alpha beta gamma delta epsilxn zeta theta omega\n",
+    );
+    await writeFile(
+      resolve(inputRoot, "notes", "content-ref.txt"),
+      "This line explicitly mentions a DEVELOPER INSTRUCTION during review.\n",
+    );
+    await writeFile(
+      resolve(inputRoot, "notes", "ordinary-TW-05.txt"),
+      "TW-05 resident runtime parity evidence remains unchanged.\n",
+    );
+    await writeFile(
+      resolve(inputRoot, "notes", "AGENTS.md-copy.txt"),
+      "This path is intentionally sensitive while its content is ordinary.\n",
+    );
+
+    const first = runReviewPacketBuilder({
+      inputRoot,
+      outputDir: firstOutput,
+      variants: [variantA, variantB],
+    });
+    assert.equal(first.status, 0, first.stderr);
+    const second = runReviewPacketBuilder({
+      inputRoot,
+      outputDir: secondOutput,
+      variants: [variantB, variantA],
+    });
+    assert.equal(second.status, 0, second.stderr);
+
+    assert.deepEqual(
+      await reviewTreeManifest(firstOutput),
+      await reviewTreeManifest(secondOutput),
+      "same frozen inputs must regenerate byte-identical packet and receipts",
+    );
+
+    const receipt = await readJson(resolve(firstOutput, "receipt.json"));
+    assert.equal(receipt.schema, "tachiko-review-packet-receipt-v1");
+    assert.equal(receipt.classification, "construction_pilot_only");
+    assert.equal(receipt.formal_result_eligible, false);
+    assert.equal(receipt.safe_to_release, true);
+    assert.equal(receipt.semantic_scoring_performed, false);
+    assert.equal(receipt.post_render_scan.match_count, 0);
+    assert.equal(receipt.post_render_scan.safe_to_release, true);
+    assert.match(receipt.contract.sha256, /^[0-9a-f]{64}$/);
+    assert.match(receipt.variant_set.commitment_sha256, /^[0-9a-f]{64}$/);
+    assert.equal(receipt.variant_set.count, 2);
+    assert.match(receipt.private_match_map_sha256, /^[0-9a-f]{64}$/);
+    assert.match(receipt.rendered_packet_sha256, /^[0-9a-f]{64}$/);
+    assert.ok(receipt.match_counts_by_rule.R1 >= 2);
+    assert.ok(receipt.match_counts_by_rule.R2 >= 1);
+    assert.ok(receipt.match_counts_by_rule.R3 >= 1);
+    assert.ok(receipt.match_counts_by_rule.R4 >= 1);
+
+    const placeholder = "[instruction-reference redacted]\n";
+    for (const path of ["exact.txt", "case-whitespace.txt", "near-copy.txt", "content-ref.txt"]) {
+      assert.equal(
+        await readFile(resolve(firstOutput, "packet", "notes", path), "utf8"),
+        placeholder,
+      );
+    }
+    assert.equal(
+      await readFile(resolve(firstOutput, "packet", "notes", "ordinary-TW-05.txt"), "utf8"),
+      "TW-05 resident runtime parity evidence remains unchanged.\n",
+    );
+    const sensitiveRelativePath = "notes/AGENTS.md-copy.txt";
+    const redactedPath = `redacted-path-${sha256(Buffer.from(sensitiveRelativePath))}`;
+    assert.equal(
+      await readFile(resolve(firstOutput, "packet", redactedPath), "utf8"),
+      "This path is intentionally sensitive while its content is ordinary.\n",
+    );
+
+    const privateMap = await readJson(resolve(firstOutput, "private-match-map.json"));
+    assert.ok(privateMap.events.length >= 5);
+    for (const event of privateMap.events) {
+      assert.deepEqual(Object.keys(event).sort(), [
+        "line_number",
+        "opaque_path_alias",
+        "original_artifact_sha256",
+        "post_sha256",
+        "pre_sha256",
+        "rule_id",
+      ]);
+      assert.doesNotMatch(JSON.stringify(event), /Preserve|AGENTS\.md|Baseline A/);
+    }
+    const publicManifest = await readJson(
+      resolve(firstOutput, "packet", "packet-manifest.json"),
+    );
+    assert.equal(publicManifest.safe_to_scan, true);
+    assert.equal(publicManifest.artifacts.length, 6);
+    assert.equal(publicManifest.variant_set_commitment_sha256, receipt.variant_set.commitment_sha256);
+    assert.equal(publicManifest.contract_sha256, receipt.contract.sha256);
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("review packet fails closed for binary, symlinked, or overlapping production paths", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-review-reject-"));
+  try {
+    const inputRoot = resolve(fixtureRoot, "input");
+    const variant = resolve(fixtureRoot, "sealed-variant");
+    await mkdir(inputRoot);
+    await writeFile(variant, "one two three four five six seven eight long variant instruction line\n");
+    await writeFile(resolve(inputRoot, "binary.dat"), Buffer.from([0xff, 0xfe, 0x00, 0x01]));
+    let result = runReviewPacketBuilder({
+      inputRoot,
+      outputDir: resolve(fixtureRoot, "binary-output"),
+      variants: [variant],
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /strict UTF-8|binary/i);
+
+    await unlink(resolve(inputRoot, "binary.dat"));
+    await writeFile(resolve(fixtureRoot, "outside.txt"), "ordinary\n");
+    await symlink(resolve(fixtureRoot, "outside.txt"), resolve(inputRoot, "linked.txt"));
+    result = runReviewPacketBuilder({
+      inputRoot,
+      outputDir: resolve(fixtureRoot, "symlink-output"),
+      variants: [variant],
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /symlink|regular file/i);
+
+    await unlink(resolve(inputRoot, "linked.txt"));
+    await writeFile(resolve(inputRoot, "ordinary.txt"), "ordinary\n");
+    result = runReviewPacketBuilder({
+      inputRoot,
+      outputDir: resolve(inputRoot, "nested-output"),
+      variants: [variant],
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /disjoint|overlap/i);
+
+    const variantLink = resolve(fixtureRoot, "variant-link");
+    await symlink(variant, variantLink);
+    result = runReviewPacketBuilder({
+      inputRoot,
+      outputDir: resolve(fixtureRoot, "linked-variant-output"),
+      variants: [variantLink],
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /symlink/i);
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("review packet scanner rejects residual matches and qualifies ordinary subjective evidence", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-review-scan-"));
+  try {
+    const variant = resolve(fixtureRoot, "sealed-variant");
+    const unsafePacket = resolve(fixtureRoot, "unsafe-packet");
+    const safePacket = resolve(fixtureRoot, "safe-packet");
+    await writeFile(
+      variant,
+      "Preserve the repository runtime manager lockfile formatter linter build workflow exactly.\n",
+    );
+    await Promise.all([mkdir(unsafePacket), mkdir(safePacket)]);
+    await writeFile(resolve(unsafePacket, "review.txt"), "Baseline A must never remain visible.\n");
+    await writeFile(
+      resolve(safePacket, "review.txt"),
+      "The candidate explains runtime ownership and validates the requested behavior.\n",
+    );
+    const common = [
+      "--contract", resolve(benchmarkDir, "evaluator/contracts/review-packet-blinding-v1.json"),
+      "--variant", variant,
+    ];
+    const unsafeReceipt = resolve(fixtureRoot, "unsafe-scan.json");
+    let result = spawnSync(
+      process.execPath,
+      [scanReviewPacketScript, "--packet-dir", unsafePacket, "--receipt", unsafeReceipt, ...common],
+      { encoding: "utf8" },
+    );
+    assert.notEqual(result.status, 0);
+    const rejected = await readJson(unsafeReceipt);
+    assert.equal(rejected.safe_to_release, false);
+    assert.equal(rejected.terminal_classification, "invalid_discarded");
+    assert.ok(rejected.match_count > 0);
+
+    const safeReceipt = resolve(fixtureRoot, "safe-scan.json");
+    result = spawnSync(
+      process.execPath,
+      [scanReviewPacketScript, "--packet-dir", safePacket, "--receipt", safeReceipt, ...common],
+      { encoding: "utf8" },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    const accepted = await readJson(safeReceipt);
+    assert.equal(accepted.safe_to_release, true);
+    assert.equal(accepted.match_count, 0);
+    assert.equal(accepted.semantic_scoring_performed, false);
+    assert.equal(accepted.qualification, "subjective_packet_transport_only");
+
+    const linkedVariant = resolve(fixtureRoot, "linked-variant");
+    await symlink(variant, linkedVariant);
+    result = spawnSync(
+      process.execPath,
+      [
+        scanReviewPacketScript,
+        "--packet-dir", safePacket,
+        "--receipt", resolve(fixtureRoot, "linked-scan.json"),
+        "--contract", resolve(benchmarkDir, "evaluator/contracts/review-packet-blinding-v1.json"),
+        "--variant", linkedVariant,
+      ],
+      { encoding: "utf8" },
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /symlink/i);
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
 });
