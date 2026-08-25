@@ -189,6 +189,7 @@ and [`ro-format-v1.md`](ro-format-v1.md).
 
 ## Boundaries
 
-This profile does not define `.roproj` layout (#41), future `.ro` packaging
-(#43), cross-document references, a public SDK ABI, or UUID as semantic ID
-meaning. Final broad golden/negative corpus closure remains #40.
+This profile does not define the separately Accepted `.roproj/v1` tree or wire
+contract (ADR-0023), future `.ro` packaging (#43), cross-document references, a
+public SDK ABI, or UUID as semantic ID meaning. Final broad golden/negative
+corpus closure remains #40.

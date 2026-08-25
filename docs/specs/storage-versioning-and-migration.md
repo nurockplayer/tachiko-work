@@ -1,12 +1,16 @@
 # Storage Versioning and Migration Contract
 
-Decision state: Mixed — Accepted invariants under ADR-0017; Milestone 02 representation mechanics are Provisional where marked.
+Decision state: Mixed — Accepted invariants under ADR-0017 and Accepted
+`.roproj/v1` namespace, DTO, dispatch, and canonicalization rules under
+ADR-0023; direct-JSON Milestone 02 representation mechanics are Provisional
+where marked.
 
 Implementation state: Implemented for frozen `legacy-direct-ro/v1`, explicit
 deterministic v1→v2 migration, canonical identity-aware `direct-ro/v2`, and the
-normal direct-JSON Stage-0 admission profile.
+normal direct-JSON Stage-0 admission profile. The Accepted `.roproj/v1`
+contract is not yet implemented by a production codec.
 
-Authority: ADR-0017
+Authority: ADR-0017; ADR-0023 for `.roproj/v1`
 
 Implementation parent: #74
 
@@ -16,7 +20,18 @@ Conformance and identity integration: #40, #70
 
 Define how Tachiko Work selects persisted representation versions, separates versioned storage DTOs from semantic-core, handles unsupported or malformed versions, and performs explicit migration without silently changing durable state.
 
-This specification does not define `.roproj` filenames/sharding (#41), the future `.ro` package/container profile (#43), numeric semantics (#24), the cross-client diagnostic envelope (#23), or host-specific filesystem/browser transaction mechanisms (constrained by ADR-0022 and Deferred to future host/storage implementation).
+This specification records the Accepted `.roproj/v1` representation namespace,
+manifest-first dispatch, canonical-tree, and bounded-canonicalizer contract in
+[ADR-0023](../decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md),
+[roproj-layout-v1.md](roproj-layout-v1.md), and
+[roproj-format.md](roproj-format.md). It does not
+define the production `.roproj` reader/writer codec, `.roproj` resource/error
+profile or precedence, normal-open versus explicit-canonicalize/import policy,
+the future `.ro` package/container profile (#43), Git integration (#44),
+semantic delta (#45), three-way merge (#46), numeric semantics beyond ADR-0018
+(#24), the cross-client diagnostic envelope (decision issue #23 / ADR-0019),
+or host-specific filesystem/browser transaction mechanisms (constrained by
+ADR-0022 and Deferred to future host/storage implementation).
 
 ## Representation namespaces
 
@@ -25,15 +40,15 @@ Version numbers are local to a known representation profile/context.
 The following are distinct namespaces:
 
 - legacy/current direct `.ro` JSON representation;
-- future `.roproj` editable materialization;
+- `.roproj/v1` editable directory materialization;
 - future `.ro` portable package/container profile.
 
-The integer `1` in two different representation namespaces does not imply the same wire schema.
+The integer `1` in two different representation namespaces does not imply the same wire schema. In particular, `.roproj/v1` is Accepted as a namespace distinct from `legacy-direct-ro/v1`, `direct-ro/v2`, and the future packaged `.ro` namespace.
 
 The shipped v0.1 direct `.ro` JSON is frozen as the
 `legacy-direct-ro/v1` compatibility profile. Its implemented incompatible
 successor is `direct-ro/v2` within the same direct-JSON namespace. This does not
-assign `.roproj` version `2`.
+assign `.roproj` version `2`; `.roproj/v1` does not alias either direct-JSON DTO.
 
 ## Version envelope
 
@@ -58,6 +73,27 @@ The following are malformed for the Milestone 02 direct JSON profile:
 - values greater than `u32::MAX`.
 
 The use of `u32` is an implementation/profile mechanism, not a permanent ecosystem invariant.
+
+### Accepted `.roproj/v1` envelope dispatch
+
+`.roproj/v1` has a distinct, directory-local envelope. Its required
+`manifest.json` is the only version envelope and its outer closed-world DTO is
+exactly ordered as `format`, `format_version`, `document`; `format` is
+`"tachiko.roproj"` and the accepted v1 value of `format_version` is `1`.
+The `.roproj/v1` decoder is selected from that exact manifest envelope before
+`schemas.json` or any entity JSONL record is decoded or otherwise interpreted.
+
+An unsupported `.roproj` version must fail closed after the minimum valid
+manifest-envelope inspection: it must not inspect a schema or entity body,
+decode version-specific document metadata, canonicalize, rewrite, migrate, or
+mutate the source tree. This is the directory analogue of the existing
+direct-JSON unsupported-version rule; it neither adds an error code nor
+changes the existing error-precedence contract.
+
+Each `.roproj` version owns complete manifest, schema, entity, value, and
+expression DTOs. `direct-ro/v2` logical meanings may be adopted only through
+an explicit version-owned DTO contract; direct-JSON DTOs, semantic-core types,
+Rust field order, and `serde` derives are not the `.roproj/v1` wire schema.
 
 ## Normal direct-JSON admission profile
 
@@ -86,9 +122,15 @@ larger historical input. This specification does not implement that operation.
 It must remain explicit and bounded; unbounded bypasses such as `--no-limit`,
 `usize::MAX`, or equivalent are forbidden.
 
-## Reader pipeline
+The direct-JSON admission table and its error precedence do not apply to
+`.roproj/v1`: its directory tree is not a complete direct-JSON input and it
+does not reuse the 8 MiB complete-input or 256-byte number-token values. This
+specification defines no replacement `.roproj` resource limit, error code, or
+error precedence.
 
-A reader processes input in this order:
+## Direct-JSON reader pipeline
+
+A normal direct-JSON reader processes input in this order:
 
 ```text
 bytes
@@ -118,7 +160,67 @@ semantic document/state
 
 The version probe must not deserialize the semantic body into current DTOs merely to discover that the version is unsupported.
 
-## Error precedence and machine meaning
+## `.roproj/v1` canonicalization and conversion pipeline
+
+The Accepted `.roproj/v1` canonical tree is the exact eighteen-file tree in
+[ADR-0023](../decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md):
+`manifest.json`, `schemas.json`, and `entities/0.jsonl` through
+`entities/f.jsonl`. It has no tree digest or other integrity/inventory field.
+Canonical paths and file bodies are compared exactly, not through a digest.
+
+An explicit canonicalization operation has the deliberately bounded
+non-canonical input family in
+[`roproj-layout-v1.md`](roproj-layout-v1.md). It requires `manifest.json`,
+`schemas.json`, and an ordinary `entities/` directory at their exact root
+locations. The two JSON files may use the admitted non-canonical JSON spelling
+and stable-ID collection order after manifest-first dispatch. Beneath
+`entities/`, regular `*.jsonl` files may have non-canonical names or nesting,
+record order or shard placement, object-member order, legal token spelling, or
+non-LF JSON whitespace inside a physical record. Each record is exactly one
+JSON object terminated by LF; blank records and all other inter-record bytes
+are rejected.
+
+Ordinary directories below `entities/` are admitted only as ancestors of at
+least one accepted regular `*.jsonl` file; unrelated empty directories are
+rejected. Missing canonical empty buckets and extra empty JSONL inputs are
+admissible. The operation does not follow symlinks, accept non-regular
+non-directory entries, admit unknown top-level children, or admit non-JSONL
+files below `entities/`.
+
+For that bounded family, the required order is:
+
+```text
+select `.roproj` version from the exact manifest envelope
+→ strictly decode all selected version-owned DTOs
+→ prove SchemaId uniqueness across schemas
+→ prove FieldId uniqueness within each owning schema
+→ prove EntityId uniqueness across every entity input
+→ convert to the semantic aggregate
+→ apply the operation's Accepted validation gate
+→ emit a fresh exact canonical `.roproj/v1` tree
+```
+
+Duplicate JSON members, unknown DTO fields, duplicate stable record IDs across
+files, invalid typed references/formulas, and an invalid semantic document fail
+closed at their applicable existing representation or validation stage. This
+pipeline defines no new error code or precedence, and paths never supply
+semantic identity or relationship meaning.
+
+It remains Deferred whether ordinary open admits that bounded non-canonical
+family or it is available only through an explicit canonicalize/import
+operation. In neither case does reading or inspecting non-canonical input
+authorize a durable rewrite. Production codec behavior and durable
+rematerialization policy remain unimplemented. When a later host commits a
+candidate, the existing representation-level atomicity requirement applies;
+temporary files, rename/fsync, recovery, locking, browser transactions, and
+equivalent durability mechanisms remain host-owned under ADR-0022.
+
+`.roproj/v1` never adapts its canonical layout to scale or input shape.
+Changing the shard count/function, paths, file split, record framing, or other
+canonical tree property is a future representation version with an explicit,
+version-labelled migration, not an in-place layout convention.
+
+## Direct-JSON error precedence and machine meaning
 
 Storage-domain failures should preserve at least the following machine-distinguishable meanings:
 

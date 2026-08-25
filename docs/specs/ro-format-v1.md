@@ -9,7 +9,7 @@ migration source; the current semantic writer emits `direct-ro/v2`
 
 This document freezes the historical direct `.ro` JSON version-1 behavior as a compatibility and migration source profile.
 
-Its purpose is to preserve what the v0.1 reader/writer meant so later semantic-core and storage refactors cannot silently reinterpret old files. It is not authority for future `.roproj` layout, future `.ro` package/container design, or future semantic identity/numeric choices.
+Its purpose is to preserve what the v0.1 reader/writer meant so later semantic-core and storage refactors cannot silently reinterpret old files. It is not authority for the separate `.roproj/v1` layout, future `.ro` package/container design, or future semantic identity/numeric choices.
 
 ADR-0017 requires complete storage-owned historical DTOs and explicit
 migration. The implementation now satisfies that boundary: v1 decoding and
@@ -42,10 +42,12 @@ It is retained so existing files can be decoded and migrated deterministically. 
 `.ro` and `.roproj` represent the same logical semantic work under ADR-0003, but their physical/version namespaces are distinct.
 
 - direct `.ro` v1 is an immutable legacy compatibility profile;
-- future `.roproj` is the canonical editable/Git-native representation;
+- `.roproj/v1` is the separately Accepted canonical editable/Git-native
+  representation under ADR-0023;
 - future `.ro` packaging is owned by #43 and must not be inferred from this direct JSON v1 profile.
 
-A future `.roproj` version `1` would not mean the same wire schema as direct `.ro` JSON `format_version: 1`.
+Accepted `.roproj/v1` does not mean the same wire schema as direct `.ro` JSON
+`format_version: 1`; their representation namespaces are independent.
 
 ## Complete version-1 wire schema
 
@@ -378,5 +380,6 @@ If the direct `.ro` JSON representation evolves incompatibly before `.roproj` re
 - #40 — golden and negative fixtures
 - #70 — ADR-0015 identity migration integration
 - #24 — future numeric semantics and final numeric canonical vectors
-- #41 — `.roproj` physical layout
+- ADR-0023 and the `.roproj/v1` specifications — separate canonical editable
+  tree and wire contract
 - #43 — future `.ro` package profile

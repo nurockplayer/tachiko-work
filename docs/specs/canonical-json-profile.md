@@ -1,15 +1,16 @@
 # Tachiko Canonical JSON Profile
 
-Decision state: Mixed — deterministic/semantic-preservation rules under ADR-0017 and the finite-binary64 numeric primitive under ADR-0018 are Accepted; exact Milestone 02 textual/resource-limit mechanics remain version-specific and Provisional outside a version that adopts them.
+Decision state: Mixed — deterministic/semantic-preservation rules under ADR-0017 and the finite-binary64 numeric primitive under ADR-0018 are Accepted. The `.roproj/v1` rules adopted below are Accepted for that representation; direct-JSON textual/resource-limit mechanics remain version-specific and Provisional outside a version that adopts them.
 
 Implementation state: Implemented by the dedicated `direct-ro/v2` canonical
-writer. Frozen v1 retains its historical version-scoped writer.
+writer. Frozen v1 retains its historical version-scoped writer. The Accepted
+`.roproj/v1` profile is not yet implemented by a production codec.
 
 Authority: ADR-0017
 
 Accepted numeric authority: ADR-0018; decision record: #24
 
-Implementation and conformance: #74, #40
+Implementation and conformance: #74, #40. `.roproj/v1` authority: [ADR-0023](../decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md), [roproj-layout-v1.md](roproj-layout-v1.md), and [roproj-format.md](roproj-format.md).
 
 ## Purpose
 
@@ -53,11 +54,14 @@ adopting representation and #74/#96. They are not semantic Number or product
 limits. The normal-profile rejection of legacy direct-`.ro/v1` above 8 MiB is
 an intentional admission tightening; it does not change the v1 wire meaning.
 A future explicit legacy import/migration operation may define another finite
-bounded profile, but no unbounded reader bypass is permitted.
+bounded profile, but no unbounded reader bypass is permitted. This is a
+`legacy-direct-ro/v1`/`direct-ro/v2` admission rule only. `.roproj/v1` MUST
+NOT inherit its 8 MiB complete-input or v2 256-byte number-token limits; a
+`.roproj` limit requires its own version-scoped decision.
 
 ## Encoding
 
-For a version adopting the Milestone 02 textual profile:
+For a direct-JSON version adopting the Milestone 02 textual profile:
 
 - encoding is UTF-8;
 - no BOM is emitted;
@@ -67,7 +71,139 @@ For a version adopting the Milestone 02 textual profile:
 - no trailing spaces or tabs are emitted;
 - output ends with exactly one LF.
 
-These whitespace choices are version/profile mechanics, not semantic invariants across all future Tachiko formats.
+These whitespace choices are version/profile mechanics, not semantic invariants across all future Tachiko formats. `.roproj/v1` adopts the specific JSON and JSONL rules below instead of treating a whole directory as one direct-JSON byte stream.
+
+## Accepted `.roproj/v1` JSON, JSONL, and tree profile
+
+`.roproj/v1` is an editable directory representation, not a direct `.ro` JSON
+file. It has its own version-owned DTOs and canonical materialization. Its
+complete specification is constrained by ADR-0017, ADR-0018, ADR-0019,
+[ADR-0023](../decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md),
+[roproj-layout-v1.md](roproj-layout-v1.md), and [roproj-format.md](roproj-format.md);
+it does not adopt Rust/Serde declaration order, direct-JSON admission limits,
+or a future `.ro` package profile.
+
+### Exact canonical tree
+
+Every canonical `.roproj/v1` materialization contains exactly these eighteen
+regular UTF-8 text files at the listed paths. The required `entities/`
+directory is the only directory below the root; no other entry exists:
+
+```text
+manifest.json
+schemas.json
+entities/0.jsonl
+entities/1.jsonl
+entities/2.jsonl
+entities/3.jsonl
+entities/4.jsonl
+entities/5.jsonl
+entities/6.jsonl
+entities/7.jsonl
+entities/8.jsonl
+entities/9.jsonl
+entities/a.jsonl
+entities/b.jsonl
+entities/c.jsonl
+entities/d.jsonl
+entities/e.jsonl
+entities/f.jsonl
+```
+
+The root basename and host path are discovery/container details, not semantic
+identity. The tree does not include a tree digest, file digest, inventory,
+timestamp, tool version, absolute path, generated `.ro` artifact, or another
+derived summary. Such data cannot be introduced as an unversioned extension.
+
+`manifest.json` is the only version envelope. It is a closed-world,
+version-owned DTO whose canonical outer member order is `format`,
+`format_version`, `document`; its v1 values identify `tachiko.roproj`, version
+`1`, and the version-owned document DTO. `schemas.json` is a closed-world
+version-owned array of schema records. Schema records are ordered by stable
+`SchemaId`; each schema's field definitions are ordered by stable `FieldId`.
+The detailed record members, tags, required/optional/null rules, and member
+orders remain those explicitly owned by the `.roproj/v1` DTO specification,
+not by `direct-ro/v2` or semantic-core types.
+
+### JSON file and JSONL bytes
+
+`manifest.json` and `schemas.json` are pretty canonical JSON: UTF-8 without a
+BOM, LF line endings, two ASCII spaces per nesting level, no trailing spaces
+or tabs, and exactly one final LF. They use this profile's deterministic
+escaping, duplicate-member rejection, Unicode preservation, and Number rules.
+
+Their pretty renderer is defined recursively. Let `render(value, depth)` use
+the canonical primitive token, string escaping, and object-member order for
+`value`, where one indentation level is two ASCII spaces:
+
+- a primitive token and an empty object or array render on the current line as
+  that token, `{}`, or `[]`;
+- a nonempty array renders `[` followed by LF, then each element on its own
+  line as `depth + 1` indentation levels followed by
+  `render(element, depth + 1)`, a comma after every element except the last,
+  and LF; it then renders `depth` indentation levels followed by `]`;
+- a nonempty object follows the same line and comma rules with `{` and `}`;
+  each member line is `depth + 1` indentation levels, the canonical JSON
+  string token for the member name, the two bytes `: `, and
+  `render(member_value, depth + 1)`; and
+- no other structural whitespace or blank line is emitted.
+
+The file body is `render(root, 0)` followed by exactly one LF. Thus a nested
+nonempty container's opening delimiter remains on its member or element line,
+while its children and closing delimiter use the recursive indentation above.
+This algorithm, rather than a dependency library's pretty-printer defaults,
+defines punctuation, spacing, and line breaks for arbitrary v1 schema trees.
+
+An entity record is one compact canonical JSON object on exactly one JSONL
+line. A JSONL record has no leading/trailing whitespace and has no whitespace
+between its JSON tokens. The only separator between records is one LF byte;
+blank lines and every other inter-record whitespace are invalid, including a
+second trailing LF. A nonempty shard therefore ends in exactly one LF, while a
+canonical empty shard is exactly zero bytes. A line is not an entity-record
+boundary if it contains only JSON whitespace.
+
+The compact renderer uses the same canonical tokens and declared member and
+collection order, writes `:` and `,` without adjacent structural whitespace,
+and emits no structural whitespace inside the record. The following LF is the
+JSONL record delimiter, not part of the JSON value.
+
+Each record's member order is the `.roproj/v1` DTO's declared order. It carries
+the opaque stable `EntityId`, mutable key, stable schema target, and field
+values under the version-owned DTO rules; typed references and bound-formula
+references use stable IDs. Unknown members are rejected recursively and JSON
+member-name duplicates are rejected after escape decoding.
+
+### Entity placement and ordering
+
+For each entity, canonical materialization takes the decoded persisted
+`EntityId` scalar sequence without Unicode normalization, encodes it as UTF-8,
+computes SHA-256, and uses the high four bits as the lowercase hexadecimal
+shard filename. Records in a shard are ordered by their complete stable ID as
+unsigned UTF-8 bytes. The placement hash is a v1 layout function, not a
+semantic identity, content identity, integrity claim, or tree digest.
+
+Stable-ID ordering also applies to the unordered schema and field collections
+described above and to every other unordered `.roproj/v1` semantic collection.
+Semantic sequences retain their declared order. Canonical order never derives
+from a mutable key, path, filesystem enumeration, locale, insertion order, or
+hash iteration.
+
+### Canonical tree equality and rematerialization
+
+For the same valid `.roproj/v1` semantic document, construction order and an
+accepted non-canonical spelling cannot affect its materialization:
+
+```text
+canonical_paths(document_a) == canonical_paths(document_b)
+canonical_bytes(document_a) == canonical_bytes(document_b)
+```
+
+Canonical comparison is exact relative-path equality plus exact file-byte
+equality; no digest is substituted for either comparison. Conversely, paths
+are not semantic identity: a record placed in a wrong shard or non-canonical
+path neither changes nor creates its identity. A layout-only input change has
+an empty semantic diff, and canonical rematerialization restores the one v1
+tree above.
 
 ## JSON object members
 
@@ -264,6 +400,10 @@ canonical_encode(input_a) == canonical_encode(input_b)
 
 This property is scoped to the same representation version. A future version may define different canonical bytes for the same semantic meaning.
 
+For `.roproj/v1`, `canonical_bytes` means the exact file bodies associated with
+the exact canonical relative paths above. It is not a hash or a promise that
+another representation version has the same tree.
+
 ## Dependency-library rule
 
 Golden bytes and normative specifications are authority. `serde_json` or another library is an implementation dependency.
@@ -276,9 +416,9 @@ A dependency update that changes canonical output bytes must fail conformance te
 
 Library behavior must never silently redefine the public format.
 
-## Required #40 fixtures
+## Required conformance fixtures
 
-At minimum:
+The direct-JSON conformance work in #40 includes at minimum:
 
 - top-level duplicate member;
 - nested duplicate member;
@@ -312,12 +452,30 @@ At minimum:
   supported;
 - encode → decode → encode byte stability.
 
+A future production `.roproj/v1` codec must add representation-owned fixtures
+for:
+
+- recursive pretty-render punctuation and line breaks over nested nonempty and
+  empty objects/arrays, independently of a serializer's default formatter;
+- `.roproj/v1` exact eighteen-path canonical tree, including every empty
+  zero-byte shard and every nonempty shard's one final LF;
+- `.roproj/v1` compact one-object JSONL records, rejection of blank lines and
+  inter-record whitespace, stable-ID shard placement/order, and duplicate
+  entity IDs across shards;
+- `.roproj/v1` exact path-and-byte equality and rematerialization after a
+  layout-only non-canonical input change, without a stored or comparison tree
+  digest.
+
 ## Related
 
 - ADR-0017
 - ADR-0018 (Accepted)
+- ADR-0019 (Accepted; decision issue #23)
+- [ADR-0023](../decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md)
 - ADR-0015
-- #24, #38, #40, #74
+- [roproj-layout-v1.md](roproj-layout-v1.md)
+- [roproj-format.md](roproj-format.md)
+- #24, #38, #40, #41, #74
 - RFC 8259
 - RFC 7493
 - RFC 8785

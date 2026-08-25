@@ -388,7 +388,8 @@ this implementation.
   (ADR-0022; later runtime/transport implementation);
 - runtime state commit/swap/locking/cloning mechanics;
 - plugin ABI/runtime/sandbox (#17);
-- `.roproj` invalid-draft persistence (#41);
+- `.roproj` invalid-draft persistence (Deferred; ADR-0023 defines canonical
+  valid materialization, not an invalid-draft durability profile);
 - diagnostic suppression, baselines, fingerprints, or fix-it protocol; and
 - cross-document/project validation.
 

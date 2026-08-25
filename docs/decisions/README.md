@@ -32,6 +32,7 @@ For project-wide authority rules, read [`../governance/knowledge-authority.md`](
 | [ADR-0020](ADR-0020-first-class-headless-semantic-api.md) | First-class Headless Semantic API boundary | Accepted | All first-party semantic clients share transport-neutral query/command/propose/execute, gating, atomicity, capability-addressability, and compatibility laws; current Rust/serde/transport shapes remain non-authoritative |
 | [ADR-0021](ADR-0021-progressive-semantic-strengthening.md) | Progressive semantic strengthening | Accepted | Semantic-first does not imply schema-first; weaker semantic content may strengthen explicitly without weakening the current typed core or fabricating universal identity |
 | [ADR-0022](ADR-0022-resident-semantic-runtime-and-host-boundary.md) | Resident semantic runtime and host boundary | Accepted | Interactive authoritative semantic state belongs to the shared Rust runtime; resident topology is preferred while transport/session/revision/persistence mechanics remain replaceable |
+| [ADR-0023](ADR-0023-roproj-v1-canonical-tree-and-sharding.md) | `.roproj/v1` canonical tree and entity sharding | Accepted | Fixes the 18-file editable-source tree, version-scoped entity placement, canonical JSON/JSONL materialization, and path-nonidentity boundary; production codecs and adjacent protocols remain Deferred |
 
 ## How to use ADRs
 
