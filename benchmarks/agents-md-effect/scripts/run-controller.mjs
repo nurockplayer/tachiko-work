@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import {spawnSync} from "node:child_process";
-import {createHash} from "node:crypto";
+import {createHash, createHmac} from "node:crypto";
 import {createReadStream, existsSync} from "node:fs";
 import {
   appendFile,
@@ -20,10 +20,17 @@ import {
   writeFile,
 } from "node:fs/promises";
 import {basename, dirname, isAbsolute, relative, resolve} from "node:path";
-import {fileURLToPath} from "node:url";
-import {validateFormalAdapterPackage} from "./adapter-integrity.mjs";
-import {probeNetworkSandbox, runNetworkSandboxed} from "./network-sandbox.mjs";
-import {runProcessGroupOnce} from "./process-group-supervisor.mjs";
+import {fileURLToPath, pathToFileURL} from "node:url";
+import {loadControllerContext} from "./controller-context.mjs";
+import {
+  DENY_NETWORK_PROFILE,
+  probeNetworkSandbox,
+  runNetworkSandboxed,
+} from "./network-sandbox.mjs";
+import {
+  PROCESS_CONTAINMENT_PROFILE,
+  runProcessGroupOnce,
+} from "./process-group-supervisor.mjs";
 
 export {validateFormalAdapterPackage} from "./adapter-integrity.mjs";
 
@@ -33,7 +40,65 @@ export function formalAdapterOracleArguments(adapterPackage) {
     "--adapter-config", adapterPackage.config.path,
     "--adapter-integrity-receipt", adapterPackage.integrity_receipt.path,
     "--expected-adapter-integrity-sha256", adapterPackage.integrity_receipt.sha256,
+    ...(adapterPackage.probe_source
+      ? ["--adapter-probe-source", adapterPackage.probe_source.path]
+      : []),
+    ...(adapterPackage.candidate_manifest
+      ? ["--candidate-raw-manifest", adapterPackage.candidate_manifest.path]
+      : []),
+    ...(adapterPackage.probe_build_receipt
+      ? [
+        "--adapter-probe-file", adapterPackage.probe.path,
+        "--expected-adapter-probe-sha256", adapterPackage.probe.sha256,
+        "--adapter-probe-build-receipt", adapterPackage.probe_build_receipt.path,
+        "--expected-adapter-probe-build-receipt-sha256",
+        adapterPackage.probe_build_receipt.sha256,
+        "--adapter-build-stage-receipt", adapterPackage.adapter_build_stage_receipt.path,
+        "--expected-adapter-build-stage-receipt-sha256",
+        adapterPackage.adapter_build_stage_receipt.sha256,
+      ]
+      : []),
   ];
+}
+
+function formalControllerTrustArguments(common) {
+  if (!common.formal_result_eligible) return [];
+  return [
+    "--formal-authorization", common.formal_authorization.path,
+    "--expected-formal-authorization-sha256", common.formal_authorization.sha256,
+    "--attempt-registry-entry", common.attempt_registry_entry.path,
+    "--expected-attempt-registry-entry-sha256", common.attempt_registry_entry.sha256,
+  ];
+}
+
+export function formalControllerIssuanceRecord({body, authorizationToken}) {
+  if (typeof authorizationToken !== "string" || authorizationToken.length < 32 ||
+      body?.schema !== "tachiko-controller-context-issuance-v1" ||
+      body?.classification !== "formal_authorized_attempt" ||
+      body?.formal_result_eligible !== true) {
+    fail("formal controller issuance inputs are invalid");
+  }
+  return {
+    ...body,
+    issuer_hmac_sha256: createHmac("sha256", authorizationToken)
+      .update(canonicalJson(body))
+      .digest("hex"),
+  };
+}
+
+export function requireResumeContextBindings(common, context, state) {
+  for (const key of [
+    "protocol_id", "phase", "classification", "formal_result_eligible", "wave_id", "run_id",
+    "attempt_id", "candidate_id", "case_id",
+  ]) {
+    if (common?.[key] !== context?.[key]) fail(`controller evidence context resume ${key} mismatch`);
+  }
+  if (context.capture_receipt_sha256 !== state?.bound_receipts?.capture_sha256) {
+    fail("controller evidence context resume capture_receipt_sha256 mismatch");
+  }
+  if (context.formal_authorization_sha256 !== (common.formal_authorization?.sha256 ?? null)) {
+    fail("controller evidence context resume formal_authorization_sha256 mismatch");
+  }
 }
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -70,6 +135,7 @@ function usage() {
       "[--model-catalog-file /external/locked-catalog.json] " +
       "[--construction-smoke true] [--adapter-file /abs/adapter.mjs " +
       "--expected-adapter-sha256 <sha256>] [--adapter-config /external/config.json " +
+      "--adapter-probe-source /external/probe.rs " +
       "--adapter-integrity-receipt /external/review.json " +
       "--expected-adapter-integrity-sha256 <sha256>] [--cargo-home-template /abs/template] " +
       "[--rustup-home-template /abs/template] [--authorization-file /external/auth.json]. " +
@@ -91,7 +157,7 @@ function parseArgs(argv) {
     "attempt-registry-dir",
     "wave-id", "run-id", "attempt-id", "candidate-id", "construction-smoke",
     "adapter-file", "expected-adapter-sha256", "adapter-config", "expected-adapter-config-sha256",
-    "adapter-integrity-receipt", "expected-adapter-integrity-sha256",
+    "adapter-integrity-receipt", "expected-adapter-integrity-sha256", "adapter-probe-source",
     "cargo-home-template", "authorization-file", "custodian-id", "resume-artifact-dir",
     "model-catalog-file", "rustup-home-template",
   ]);
@@ -696,6 +762,12 @@ async function copyControls(artifactDir, sourceBenchmarkDir = benchmarkDir) {
 
 async function hashInfrastructureTree(root, seal = false) {
   const entries = [];
+  async function requireMode(path, info, expected) {
+    const observed = Number(info.mode & 0o777);
+    if (!seal && observed !== expected) {
+      fail(`controller bundle mode changed: ${path} (${observed.toString(8)} != ${expected.toString(8)})`);
+    }
+  }
   async function walk(directory, prefix = "") {
     const names = await readdir(directory);
     names.sort((left, right) => Buffer.from(left).compare(Buffer.from(right)));
@@ -705,18 +777,116 @@ async function hashInfrastructureTree(root, seal = false) {
       const info = await lstat(absolute);
       if (info.isSymbolicLink()) fail(`controller bundle contains a symlink: ${path}`);
       if (info.isDirectory()) {
-        entries.push({path, type: "directory"});
+        const mode = 0o700;
+        entries.push({path, type: "directory", mode});
         await walk(absolute, path);
+        await requireMode(path, info, mode);
+        if (seal) await chmod(absolute, mode);
       } else if (info.isFile()) {
         const bytes = await readFile(absolute);
-        entries.push({path, type: "file", bytes: bytes.length, sha256: sha256(bytes)});
-        if (seal) await chmod(absolute, 0o400);
+        const mode = path === "scripts/process-coalition-control" ? 0o500 : 0o400;
+        entries.push({path, type: "file", mode, bytes: bytes.length, sha256: sha256(bytes)});
+        await requireMode(path, info, mode);
+        if (seal) await chmod(absolute, mode);
       } else fail(`controller bundle contains an unsupported node: ${path}`);
     }
   }
+  const rootInfo = await lstat(root);
+  if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) {
+    fail("controller bundle root is not a regular directory");
+  }
+  entries.push({path: ".", type: "directory", mode: 0o700});
   await walk(root);
+  await requireMode(".", rootInfo, 0o700);
+  if (seal) await chmod(root, 0o700);
   const manifestBytes = canonicalBytes({schema: "tachiko-controller-bundle-manifest-v1", entries});
   return {entries: entries.length, bytes: manifestBytes, sha256: sha256(manifestBytes)};
+}
+
+async function assertControllerBundleIntact({
+  root, manifestPath, expectedSha256, expectedEntries, label,
+}) {
+  let observed;
+  let manifestIdentity;
+  try {
+    [observed, manifestIdentity] = await Promise.all([
+      hashInfrastructureTree(root),
+      fileIdentity(manifestPath),
+    ]);
+  } catch (error) {
+    fail(`controller executable bundle changed ${label}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (observed.sha256 !== expectedSha256 || manifestIdentity.sha256 !== expectedSha256 ||
+      (expectedEntries !== undefined && observed.entries !== expectedEntries)) {
+    fail(`controller executable bundle changed ${label}`);
+  }
+  return {
+    schema: "tachiko-controller-bundle-verification-v1",
+    label,
+    entries: observed.entries,
+    tree_sha256: observed.sha256,
+    manifest: manifestIdentity,
+    verified: true,
+  };
+}
+
+function quoteSandboxPath(path) {
+  return path.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+}
+
+export function candidateAccessProfile({
+  protectedRoots = [], protectedPaths = [], restrictedRoots = [],
+  allowedReadRoots = [], allowedWriteRoots = [], writeProtectedRoots = [],
+  writeProtectedPaths = [], baseProfile = PROCESS_CONTAINMENT_PROFILE,
+}) {
+  const roots = [...new Set(protectedRoots.map((path) => resolve(path)))].sort();
+  const paths = [...new Set(protectedPaths.map((path) => resolve(path)))].sort();
+  const restricted = [...new Set(restrictedRoots.map((path) => resolve(path)))].sort();
+  const readable = [...new Set(allowedReadRoots.map((path) => resolve(path)))].sort();
+  const writable = [...new Set(allowedWriteRoots.map((path) => resolve(path)))].sort();
+  const writeDeniedRoots = [...new Set(writeProtectedRoots.map((path) => resolve(path)))].sort();
+  const writeDeniedPaths = [...new Set(writeProtectedPaths.map((path) => resolve(path)))].sort();
+  const policy = `${baseProfile}${restricted.map((path) =>
+    `(deny file-read* (literal "${quoteSandboxPath(path)}"))\n` +
+    `(deny file-read* (subpath "${quoteSandboxPath(path)}"))\n` +
+    `(deny file-write* (literal "${quoteSandboxPath(path)}"))\n` +
+    `(deny file-write* (subpath "${quoteSandboxPath(path)}"))\n`).join("")}${readable.map((path) =>
+    `(allow file-read-metadata (literal "${quoteSandboxPath(dirname(path))}"))\n` +
+    `(allow file-read* (literal "${quoteSandboxPath(path)}"))\n` +
+    `(allow file-read* (subpath "${quoteSandboxPath(path)}"))\n`).join("")}${writable.map((path) =>
+    `(allow file-write* (literal "${quoteSandboxPath(path)}"))\n` +
+    `(allow file-write* (subpath "${quoteSandboxPath(path)}"))\n`).join("")}${roots.map((path) =>
+    `(deny file-read* (literal "${quoteSandboxPath(path)}"))\n` +
+    `(deny file-read* (subpath "${quoteSandboxPath(path)}"))\n` +
+    `(deny file-write* (literal "${quoteSandboxPath(path)}"))\n` +
+    `(deny file-write* (subpath "${quoteSandboxPath(path)}"))\n`).join("")}${paths.map((path) =>
+    `(deny file-read* (literal "${quoteSandboxPath(path)}"))\n` +
+    `(deny file-write* (literal "${quoteSandboxPath(path)}"))\n`).join("")}${writeDeniedRoots.map((path) =>
+    `(deny file-write* (literal "${quoteSandboxPath(path)}"))\n` +
+    `(deny file-write* (subpath "${quoteSandboxPath(path)}"))\n`).join("")}${writeDeniedPaths.map((path) =>
+    `(deny file-write* (literal "${quoteSandboxPath(path)}"))\n`).join("")}`;
+  return {
+    schema: "tachiko-candidate-access-profile-v1",
+    protected_roots: roots,
+    protected_paths: paths,
+    restricted_roots: restricted,
+    allowed_read_roots: readable,
+    allowed_write_roots: writable,
+    write_protected_roots: writeDeniedRoots,
+    write_protected_paths: writeDeniedPaths,
+    profile: policy,
+    profile_sha256: sha256(policy),
+  };
+}
+
+function trustedHelperWriteProfile({protectedRoots = [], protectedPaths = []}) {
+  const roots = [...new Set(protectedRoots.map((path) => resolve(path)))].sort();
+  const paths = [...new Set(protectedPaths.map((path) => resolve(path)))].sort();
+  const profile = `(version 1)\n(allow default)\n${roots.map((path) =>
+    `(deny file-write* (literal "${quoteSandboxPath(path)}"))\n` +
+    `(deny file-write* (subpath "${quoteSandboxPath(path)}"))\n`).join("")}${paths.map((path) =>
+    `(deny file-write* (literal "${quoteSandboxPath(path)}"))\n`).join("")}`;
+  return {roots, paths, profile, profile_sha256: sha256(profile)};
 }
 
 async function fileSha256(path) {
@@ -782,6 +952,39 @@ async function makeTreeOwnerAccessible(root) {
   await walk(root);
 }
 
+async function sealReadOnlyTree(root) {
+  async function walk(path) {
+    const info = await lstat(path);
+    if (info.isSymbolicLink()) fail(`trusted validation tree contains a symlink: ${path}`);
+    if (info.isDirectory()) {
+      for (const name of await readdir(path)) await walk(resolve(path, name));
+      await chmod(path, 0o500);
+    } else if (info.isFile()) {
+      await chmod(path, (info.mode & 0o111) === 0 ? 0o400 : 0o500);
+    } else fail(`trusted validation tree contains an unsupported node: ${path}`);
+  }
+  await walk(root);
+}
+
+async function assertEmptyDirectory(path, label) {
+  const info = await lstat(path);
+  if (!info.isDirectory() || info.isSymbolicLink() || (await readdir(path)).length !== 0) {
+    fail(`${label} is not a fresh empty directory`);
+  }
+}
+
+async function assertReadOnlyTree(root, label) {
+  async function walk(path) {
+    const info = await lstat(path);
+    if (info.isSymbolicLink()) fail(`${label} contains a symlink: ${path}`);
+    if ((info.mode & 0o222) !== 0) fail(`${label} contains a writable node: ${path}`);
+    if (info.isDirectory()) {
+      for (const name of await readdir(path)) await walk(resolve(path, name));
+    } else if (!info.isFile()) fail(`${label} contains an unsupported node: ${path}`);
+  }
+  await walk(root);
+}
+
 export async function prepareBaseWorkspace(sourceRepo, baseCommit, baseTree, targetCommit, workspace, trustedDir, environment) {
   await mkdir(trustedDir, {mode: 0o700});
   const bare = resolve(trustedDir, "source.git");
@@ -841,6 +1044,7 @@ async function runAgentOnce(
   taskBytes,
   timeoutMilliseconds,
   terminationGraceMilliseconds,
+  kernelContainmentProfile,
 ) {
   return runProcessGroupOnce({
     executable,
@@ -851,6 +1055,7 @@ async function runAgentOnce(
     timeoutMilliseconds,
     terminationGraceMilliseconds,
     maxOutputBytes: MAX_PROCESS_BYTES,
+    kernelContainmentProfile,
   });
 }
 
@@ -863,6 +1068,7 @@ export async function runCoreValidation(
   common,
   controllerBenchmarkDir,
   trustedShell = "/bin/bash",
+  kernelContainmentProfile,
 ) {
   const lock = JSON.parse(await readFile(resolve(controllerBenchmarkDir, "evaluator/core-score-lock.json"), "utf8"));
   const entry = lock.cases.find((candidate) => candidate.id === caseId);
@@ -878,17 +1084,29 @@ export async function runCoreValidation(
       commands.push({id: spec.id, command: spec.command, execution: "construction_smoke_not_executed", exit_code: null});
       continue;
     }
+    const commandTmp = await mkdtemp(resolve(environment.TMPDIR, "command-"));
+    await chmod(commandTmp, 0o700);
+    await assertEmptyDirectory(commandTmp, `core command ${spec.id} TMP`);
+    const commandEnvironment = {
+      ...environment,
+      TMPDIR: commandTmp,
+      TMP: commandTmp,
+      TEMP: commandTmp,
+    };
     const result = await runNetworkSandboxed({
       executable: trustedShell,
       args: ["--noprofile", "--norc", "-c", spec.command],
       cwd: candidateRoot,
-      environment,
+      environment: commandEnvironment,
       timeoutMilliseconds: 1_800_000,
       terminationGraceMilliseconds: 10_000,
       maxOutputBytes: MAX_PROCESS_BYTES,
+      profile: kernelContainmentProfile,
     });
     const stdout = result.stdout;
     const stderr = result.stderr;
+    const finalTmpIdentity = await hashContentTree(commandTmp);
+    await rm(commandTmp, {recursive: true, force: false});
     const stdoutPath = resolve(outputDir, `${String(index).padStart(2, "0")}.stdout`);
     const stderrPath = resolve(outputDir, `${String(index).padStart(2, "0")}.stderr`);
     await Promise.all([writeFile(stdoutPath, stdout), writeFile(stderrPath, stderr)]);
@@ -915,7 +1133,17 @@ export async function runCoreValidation(
       signal_actions: result.signal_actions,
       descendant_cleanup_required: result.descendant_cleanup_required,
       process_group_extinct_before_capture: result.process_group_extinct_before_capture,
+      process_containment: result.process_containment,
       network_sandbox: result.network_sandbox,
+      temporary_root: {
+        path: commandTmp,
+        initial_entries: 0,
+        initial_manifest_sha256: sha256("[]\n"),
+        final_entries: finalTmpIdentity.entries,
+        final_manifest_sha256: finalTmpIdentity.manifest_sha256,
+        inspected_after_process_extinction: result.process_group_extinct_before_capture,
+        removed_before_next_command: !existsSync(commandTmp),
+      },
       stdout: await fileIdentity(stdoutPath),
       stderr: await fileIdentity(stderrPath),
     });
@@ -925,6 +1153,9 @@ export async function runCoreValidation(
     ...common,
     construction_smoke: constructionSmoke,
     commands_executed: !constructionSmoke,
+    candidate_access_profile_sha256: kernelContainmentProfile
+      ? sha256(kernelContainmentProfile)
+      : null,
     network_enforcement: networkEnforcement,
     commands,
     all_commands_passed: allPassed,
@@ -938,7 +1169,7 @@ async function resumeWithAdapter(args) {
   const allowed = new Set([
     "resume-artifact-dir", "adapter-file", "expected-adapter-sha256", "adapter-config",
     "expected-adapter-config-sha256", "adapter-integrity-receipt",
-    "expected-adapter-integrity-sha256", "custodian-id",
+    "expected-adapter-integrity-sha256", "adapter-probe-source", "custodian-id",
   ]);
   for (const key of args.keys()) if (!allowed.has(key)) fail(`--${key} is not valid while resuming`);
   if (!args.has("resume-artifact-dir")) usage();
@@ -983,24 +1214,45 @@ async function resumeWithAdapter(args) {
     "controller benchmark bundle",
   );
   if (!isInside(controllerBenchmarkDir, artifactDir)) fail("controller benchmark bundle escaped artifacts");
+  const infrastructureManifestPath = await requireRegular(
+    resolve(artifactDir, "controller-bundle-manifest.json"),
+    "controller bundle manifest",
+  );
+  async function verifyControllerBundle(label) {
+    return assertControllerBundleIntact({
+      root: controllerBenchmarkDir,
+      manifestPath: infrastructureManifestPath,
+      expectedSha256: state.controller_bundle_sha256,
+      label,
+    });
+  }
   const infrastructure = await hashInfrastructureTree(controllerBenchmarkDir);
   if (infrastructure.sha256 !== state.controller_bundle_sha256 ||
       infrastructure.sha256 !== common.infrastructure_identity_sha256) {
     fail("controller executable bundle changed before adapter resume");
   }
-  const controllerContextPath = await requireRegular(
-    state.controller_context_path,
-    "controller evidence context",
+  await verifyControllerBundle("before loading adapter-resume controller modules");
+  const {validateFormalAdapterPackage: validateBundledFormalAdapterPackage} = await import(
+    pathToFileURL(resolve(controllerBenchmarkDir, "scripts/adapter-integrity.mjs")).href
   );
-  const controllerContextBytes = await readFile(controllerContextPath);
-  if (sha256(controllerContextBytes) !== state.controller_context_sha256) {
-    fail("controller evidence context changed before adapter resume");
-  }
-  const controllerContext = JSON.parse(controllerContextBytes.toString("utf8"));
-  if (controllerContext.attempt_id !== common.attempt_id ||
-      controllerContext.capture_receipt_sha256 !== state.bound_receipts?.capture_sha256) {
-    fail("controller evidence context resume binding mismatch");
-  }
+  const loadedControllerContext = await loadControllerContext({
+    path: state.controller_context_path,
+    expectedSha256: state.controller_context_sha256,
+    issuancePath: state.controller_issuance_path,
+    expectedIssuanceSha256: state.controller_issuance_sha256,
+    authorizationPath: common.formal_result_eligible ? common.formal_authorization?.path : undefined,
+    expectedAuthorizationSha256: common.formal_result_eligible
+      ? common.formal_authorization?.sha256 : undefined,
+    registryPath: common.formal_result_eligible ? common.attempt_registry_entry?.path : undefined,
+    expectedRegistrySha256: common.formal_result_eligible
+      ? common.attempt_registry_entry?.sha256 : undefined,
+    required: common.formal_result_eligible,
+  });
+  const controllerContextPath = loadedControllerContext.context_path;
+  const controllerContext = loadedControllerContext.context;
+  const controllerIssuancePath = loadedControllerContext.issuance_path;
+  const controllerIssuanceSha256 = loadedControllerContext.issuance_sha256;
+  requireResumeContextBindings(common, controllerContext, state);
   const adapterTmp = await requireDirectory(
     controllerContext.adapter_write_allowed_roots?.[0],
     "fresh adapter TMP",
@@ -1010,13 +1262,90 @@ async function resumeWithAdapter(args) {
       (await readdir(adapterTmp)).length !== 0) {
     fail("fresh adapter TMP changed before adapter resume");
   }
+  const environmentReceipt = JSON.parse(
+    await readFile(resolve(artifactDir, "environment-receipt.json"), "utf8"),
+  );
+  if (environmentReceipt.environment_identity_sha256 !== common.environment_identity_sha256) {
+    fail("environment identity changed before adapter resume");
+  }
+  const validationEnvironmentReceipt = JSON.parse(await readFile(
+    state.validation_environment_receipt_path,
+    "utf8",
+  ));
+  if (validationEnvironmentReceipt.schema !==
+        "tachiko-controller-trusted-validation-environment-v1" ||
+      validationEnvironmentReceipt.candidate_environment_identity_sha256 !==
+        common.environment_identity_sha256 ||
+      validationEnvironmentReceipt.agent_environment_inherited !== false ||
+      validationEnvironmentReceipt.created_after_agent_extinction !== true ||
+      validationEnvironmentReceipt.cargo_home_read_only !== true) {
+    fail("trusted validation environment receipt is invalid before adapter resume");
+  }
+  const environment = validationEnvironmentReceipt.environment;
+  const validationEnvironmentRoot = await requireDirectory(
+    state.validation_environment_root,
+    "trusted validation environment root",
+  );
+  if (!isInside(validationEnvironmentRoot, state.run_root)) {
+    fail("trusted validation environment root escaped the neutral run root");
+  }
+  for (const key of ["HOME", "CODEX_HOME", "TMPDIR", "CARGO_HOME"]) {
+    const path = await requireDirectory(environment[key], `trusted validation ${key}`);
+    if (!isInside(path, validationEnvironmentRoot) ||
+        environmentReceipt.environment[key] === environment[key]) {
+      fail(`trusted validation ${key} crosses the candidate environment boundary`);
+    }
+  }
+  const observedValidationCargo = await hashContentTree(environment.CARGO_HOME);
+  for (const key of ["digest_kind", "entries", "file_bytes", "manifest_sha256"]) {
+    if (observedValidationCargo[key] !== validationEnvironmentReceipt.cargo_home[key]) {
+      fail(`trusted validation Cargo home ${key} changed before adapter resume`);
+    }
+  }
+  await Promise.all([
+    assertEmptyDirectory(environment.HOME, "trusted validation HOME before resume"),
+    assertEmptyDirectory(environment.CODEX_HOME, "trusted validation CODEX_HOME before resume"),
+    assertEmptyDirectory(environment.TMPDIR, "trusted validation base TMP before resume"),
+  ]);
+  async function freshResumeValidationEnvironment(label) {
+    const path = await mkdtemp(resolve(validationEnvironmentRoot, `${label}-tmp-`));
+    await chmod(path, 0o700);
+    await assertEmptyDirectory(path, `trusted resumed ${label} TMP`);
+    return {...environment, TMPDIR: path, TMP: path, TEMP: path};
+  }
+  async function verifyResumeValidationGuard(label) {
+    const receiptIdentity = await fileIdentity(state.validation_environment_receipt_path);
+    if (receiptIdentity.sha256 !== state.bound_receipts?.validation_environment_sha256) {
+      fail(`trusted validation environment receipt changed ${label}`);
+    }
+    const cargoIdentity = await hashContentTree(environment.CARGO_HOME);
+    for (const key of ["digest_kind", "entries", "file_bytes", "manifest_sha256"]) {
+      if (cargoIdentity[key] !== validationEnvironmentReceipt.cargo_home[key]) {
+        fail(`trusted validation Cargo home ${key} changed ${label}`);
+      }
+    }
+    await Promise.all([
+      assertReadOnlyTree(environment.CARGO_HOME, "trusted validation Cargo home"),
+      assertEmptyDirectory(environment.HOME, "trusted validation HOME"),
+      assertEmptyDirectory(environment.CODEX_HOME, "trusted validation CODEX_HOME"),
+    ]);
+    return {
+      label,
+      receipt_sha256: receiptIdentity.sha256,
+      cargo_manifest_sha256: cargoIdentity.manifest_sha256,
+      verified: true,
+    };
+  }
+  await verifyResumeValidationGuard("before adapter resume inputs");
   let adapter;
   let adapterBytes;
   let adapterConfig = null;
   let formalAdapterPackage = null;
+  const preflightReceipt = JSON.parse(await readFile(state.preflight_receipt_path, "utf8"));
   if (common.formal_result_eligible) {
     const scaffold = resolve(controllerBenchmarkDir, "evaluator/adapters/candidate-adapter.mjs");
-    formalAdapterPackage = await validateFormalAdapterPackage({
+    await verifyResumeValidationGuard("before resumed formal adapter validation/build");
+    formalAdapterPackage = await validateBundledFormalAdapterPackage({
       adapterPath: args.get("adapter-file") ?? scaffold,
       configPath: args.get("adapter-config"),
       integrityReceiptPath: args.get("adapter-integrity-receipt"),
@@ -1027,7 +1356,17 @@ async function resumeWithAdapter(args) {
         state.run_root, state.original_candidate_workspace,
       ].filter(Boolean),
       context: controllerContext,
+      candidateRoot: state.validation_workspace,
+      probeSourcePath: args.get("adapter-probe-source"),
+      buildRoot: resolve(artifactDir, "formal-tw09-probe-build"),
+      cargoPath: preflightReceipt.binaries.cargo.path,
+      cargoSha256: preflightReceipt.binaries.cargo.sha256,
+      rustcPath: preflightReceipt.binaries.rustc.path,
+      rustcSha256: preflightReceipt.binaries.rustc.sha256,
+      candidateManifestPath: resolve(state.capture_dir, "raw-manifest.json"),
+      environment,
     });
+    await verifyResumeValidationGuard("after resumed formal adapter validation/build");
     adapter = formalAdapterPackage.scaffold.path;
     adapterBytes = await readFile(adapter);
     adapterConfig = formalAdapterPackage.config.path;
@@ -1071,6 +1410,7 @@ async function resumeWithAdapter(args) {
     [state.validation_receipt_path, "validation receipt"], [state.process_receipt_path, "process receipt"],
     [state.final_message_path, "final message"], [state.preflight_receipt_path, "preflight receipt"],
     [state.base_control_receipt_path, "base-control receipt"],
+    [state.validation_environment_receipt_path, "trusted validation environment receipt"],
   ]) {
     const canonical = await requireRegular(path, label);
     if (!isInside(canonical, artifactDir)) fail(`${label} escaped controller artifacts`);
@@ -1082,6 +1422,8 @@ async function resumeWithAdapter(args) {
     [state.capture_receipt_path, state.bound_receipts?.capture_sha256, "capture"],
     [state.validation_receipt_path, state.bound_receipts?.validation_sha256, "validation"],
     [state.core_receipt_path, state.bound_receipts?.core_sha256, "core"],
+    [state.validation_environment_receipt_path,
+      state.bound_receipts?.validation_environment_sha256, "trusted validation environment"],
   ];
   for (const [path, expected, label] of boundReceipts) {
     if (!SHA256.test(expected ?? "") || sha256(await readFile(path)) !== expected) {
@@ -1089,13 +1431,6 @@ async function resumeWithAdapter(args) {
     }
   }
   if (!isInside(await realpath(state.capture_dir), artifactDir)) fail("candidate capture escaped controller artifacts");
-  const environmentReceipt = JSON.parse(
-    await readFile(resolve(artifactDir, "environment-receipt.json"), "utf8"),
-  );
-  if (environmentReceipt.environment_identity_sha256 !== common.environment_identity_sha256) {
-    fail("environment identity changed before adapter resume");
-  }
-  const environment = environmentReceipt.environment;
   const helperNodeExecutable = await requireRegular(
     environmentReceipt.helper_node?.path,
     "recorded controller Node executable",
@@ -1124,11 +1459,21 @@ async function resumeWithAdapter(args) {
   for (const name of names) {
     const bytes = await readFile(resolve(stageDir, name));
     const receipt = JSON.parse(bytes.toString("utf8"));
-    if (receipt.stage_order !== stageOrder || receipt.prior_receipt_sha256 !== priorStageReceiptSha256 ||
-        receipt.attempt_id !== common.attempt_id || receipt.wave_id !== common.wave_id ||
-        receipt.control_sha256 !== common.control_sha256) fail("stage chain is invalid before resume");
+    if (receipt.stage_order !== stageOrder || receipt.prior_receipt_sha256 !== priorStageReceiptSha256) {
+      fail("stage chain is invalid before resume");
+    }
+    for (const key of commonKeys) {
+      if (canonicalJson(receipt[key]) !== canonicalJson(common[key])) {
+        fail(`stage chain ${key} is invalid before resume`);
+      }
+    }
     if (receipt.payload_sha256 !== sha256(canonicalBytes(receipt.payload))) {
       fail(`stage payload hash is invalid before resume: ${receipt.stage}`);
+    }
+    if (receipt.controller_bundle_verification?.verified !== true ||
+        receipt.controller_bundle_verification.tree_sha256 !== state.controller_bundle_sha256 ||
+        receipt.controller_bundle_verification.manifest?.sha256 !== state.controller_bundle_sha256) {
+      fail(`stage controller bundle verification is invalid before resume: ${receipt.stage}`);
     }
     for (const identity of [...(receipt.inputs ?? []), ...(receipt.outputs ?? [])]) {
       const path = await requireRegular(identity.path, `stage artifact ${receipt.stage}`);
@@ -1168,13 +1513,18 @@ async function resumeWithAdapter(args) {
     fail("registered attempt ledger entry hash is invalid");
   }
   async function writeStage(stage, payload, inputPaths = [], outputPaths = []) {
+    const validationGuard = await verifyResumeValidationGuard(`before resumed stage ${stage}`);
+    const bundleVerification = await verifyControllerBundle(`before resumed stage ${stage}`);
     const [inputs, outputs] = await Promise.all([
       Promise.all(inputPaths.map((path) => fileIdentity(path))),
       Promise.all(outputPaths.map((path) => fileIdentity(path))),
     ]);
     const receipt = {
       schema: "tachiko-controller-stage-receipt-v1", ...common, stage, stage_order: stageOrder,
-      prior_receipt_sha256: priorStageReceiptSha256, inputs, outputs,
+      prior_receipt_sha256: priorStageReceiptSha256,
+      controller_bundle_verification: bundleVerification,
+      trusted_validation_environment_verification: validationGuard,
+      inputs, outputs,
       payload_sha256: sha256(canonicalBytes(payload)), payload, completed_at: new Date().toISOString(),
     };
     const path = resolve(stageDir, `${String(stageOrder).padStart(2, "0")}-${stage}.json`);
@@ -1183,6 +1533,74 @@ async function resumeWithAdapter(args) {
     priorStageReceiptSha256 = sha256(bytes);
     stageOrder += 1;
     return path;
+  }
+  const resumeHelperProtectedRoots = [
+    controllerBenchmarkDir,
+    state.source_repo,
+    dirname(registryPath),
+    stageDir,
+    state.original_candidate_workspace,
+    state.validation_workspace,
+    state.capture_dir,
+    state.validation_environment_root,
+    environment.CARGO_HOME,
+    environment.HOME,
+    environment.CODEX_HOME,
+  ].filter(Boolean);
+  const resumeHelperProtectedPaths = [
+    infrastructureManifestPath,
+    statePath,
+    ledgerPath,
+    registryPath,
+    state.registered_variant_path,
+    state.registered_task_path,
+    state.preflight_receipt_path,
+    state.base_control_receipt_path,
+    state.process_receipt_path,
+    state.capture_receipt_path,
+    state.validation_receipt_path,
+    state.core_receipt_path,
+    common.formal_authorization?.path,
+  ].filter(Boolean);
+  async function runBundledHelper(relativeScript, helperArguments, options = {}, {
+    extraProtectedRoots = [], extraProtectedPaths = [], nestedProcessSupervisor = false,
+  } = {}) {
+    await verifyResumeValidationGuard(`before resumed trusted helper ${relativeScript}`);
+    await verifyControllerBundle(`before resumed trusted helper ${relativeScript}`);
+    const writePolicy = trustedHelperWriteProfile({
+      protectedRoots: [...resumeHelperProtectedRoots, ...extraProtectedRoots],
+      protectedPaths: [...resumeHelperProtectedPaths, ...extraProtectedPaths],
+    });
+    const protectionArgument = JSON.stringify({
+      schema: "tachiko-supervised-write-protection-v1",
+      protected_roots: writePolicy.roots,
+      protected_paths: writePolicy.paths,
+    });
+    const result = nestedProcessSupervisor
+      ? command(helperNodeExecutable, [
+        resolve(controllerBenchmarkDir, relativeScript),
+        ...helperArguments,
+        "--supervised-write-protection-json", protectionArgument,
+      ], options)
+      : command("/usr/bin/sandbox-exec", [
+        "-p", writePolicy.profile,
+        helperNodeExecutable,
+        resolve(controllerBenchmarkDir, relativeScript),
+        ...helperArguments,
+      ], options);
+    await verifyResumeValidationGuard(`after resumed trusted helper ${relativeScript}`);
+    await verifyControllerBundle(`after resumed trusted helper ${relativeScript}`);
+    result.controller_bundle_write_protection = {
+      schema: "tachiko-trusted-helper-write-protection-v1",
+      protected_roots: writePolicy.roots,
+      protected_paths: writePolicy.paths,
+      profile_sha256: writePolicy.profile_sha256,
+      active: true,
+      enforcement_scope: nestedProcessSupervisor
+        ? "every_inner_coalition_profile"
+        : "outer_trusted_helper_process",
+    };
+    return result;
   }
   const resumeLockPath = resolve(artifactDir, "adapter-resume-lock.json");
   await writeFile(resumeLockPath, canonicalBytes({
@@ -1241,6 +1659,31 @@ async function resumeWithAdapter(args) {
     await commitResumeTerminal(terminal);
   };
 
+  if (formalAdapterPackage?.probe_build_receipt) {
+    const buildStagePath = await writeStage("formal_adapter_build", {
+      case_id: common.case_id,
+      capture_receipt_sha256: controllerContext.capture_receipt_sha256,
+      candidate_tree: controllerContext.candidate_tree,
+      raw_tree_digest_sha256: controllerContext.raw_tree_digest_sha256,
+      probe_sha256: formalAdapterPackage.probe.sha256,
+      probe_build_receipt_sha256: formalAdapterPackage.probe_build_receipt.sha256,
+      cargo_home_manifest_sha256:
+        formalAdapterPackage.probe_build_receipt.cargo_home_manifest_sha256,
+      trusted_validation_environment_sha256:
+        state.bound_receipts.validation_environment_sha256,
+      sealed_controller_builder: true,
+    }, [
+      formalAdapterPackage.config.path,
+      formalAdapterPackage.integrity_receipt.path,
+      formalAdapterPackage.probe_source.path,
+      formalAdapterPackage.candidate_manifest.path,
+    ], [
+      formalAdapterPackage.probe.path,
+      formalAdapterPackage.probe_build_receipt.path,
+    ]);
+    formalAdapterPackage.adapter_build_stage_receipt = await fileIdentity(buildStagePath);
+  }
+
   const captureReceipt = JSON.parse(await readFile(state.capture_receipt_path, "utf8"));
   const sourceRepo = await requireDirectory(state.source_repo, "trusted source repository");
   const sourceInfo = await lstat(sourceRepo, {bigint: true});
@@ -1252,15 +1695,14 @@ async function resumeWithAdapter(args) {
   }
   const validationWorkspace = resolve(artifactDir, "resume-validation-workspace");
   const validationPreparationDir = resolve(artifactDir, "resume-validation-preparation");
-  const reconstruction = command(helperNodeExecutable, [
-    resolve(controllerBenchmarkDir, "scripts/prepare-validation.mjs"),
+  const reconstruction = await runBundledHelper("scripts/prepare-validation.mjs", [
     "--case", common.case_id,
     "--source-repo", sourceRepo,
     "--patch-file", resolve(state.capture_dir, "candidate.patch"),
     "--capture-receipt", state.capture_receipt_path,
     "--workspace", validationWorkspace,
     "--trusted-dir", validationPreparationDir,
-  ], {env: environment, allowFailure: true});
+  ], {env: await freshResumeValidationEnvironment("prepare"), allowFailure: true});
   const reconstructedValidationReceiptPath = resolve(
     validationPreparationDir,
     "validation-preparation-receipt.json",
@@ -1280,7 +1722,6 @@ async function resumeWithAdapter(args) {
     raw_tree_digest_sha256: validationReceipt.raw_tree_digest_sha256,
     agent_relaunched: false,
   }, [state.capture_receipt_path, resolve(state.capture_dir, "candidate.patch")], [reconstructedValidationReceiptPath]);
-  const preflightReceipt = JSON.parse(await readFile(state.preflight_receipt_path, "utf8"));
   const coreReceipt = JSON.parse(await readFile(state.core_receipt_path, "utf8"));
   const processReceipt = JSON.parse(await readFile(state.process_receipt_path, "utf8"));
   const oracleDir = resolve(artifactDir, "production-oracles");
@@ -1309,32 +1750,62 @@ async function resumeWithAdapter(args) {
       "--trusted-rustc", preflightReceipt.binaries.rustc.path,
       "--expected-rustc-sha256", preflightReceipt.binaries.rustc.sha256,
       "--candidate-commit", validationReceipt.candidate_commit,
+      "--trusted-validation-environment-receipt",
+      state.validation_environment_receipt_path,
+      "--expected-validation-environment-sha256",
+      state.bound_receipts.validation_environment_sha256,
       ...(formalAdapterPackage
         ? formalAdapterOracleArguments(formalAdapterPackage)
         : ["--adapter-file", adapter, ...(adapterConfig ? ["--adapter-config", adapterConfig] : [])]),
       "--controller-context", controllerContextPath,
       "--expected-controller-context-sha256", state.controller_context_sha256,
+      ...(controllerIssuancePath ? [
+        "--controller-issuance", controllerIssuancePath,
+        "--expected-controller-issuance-sha256", controllerIssuanceSha256,
+      ] : []),
+      ...formalControllerTrustArguments(common),
       ...(common.formal_result_eligible ? ["--require-formal-context", "true"] : []),
     ];
-    const oracleResult = command(helperNodeExecutable, oracleArguments, {
-      env: {...environment, TMPDIR: adapterTmp}, allowFailure: true,
-    });
+    const oracleResult = await runBundledHelper("scripts/run-oracles.mjs", oracleArguments.slice(1), {
+      env: {...environment, TMPDIR: adapterTmp, TMP: adapterTmp, TEMP: adapterTmp},
+      allowFailure: true,
+    }, {extraProtectedRoots: [validationWorkspace,
+      environment.HOME, environment.CODEX_HOME, environment.CARGO_HOME],
+    extraProtectedPaths: [state.validation_environment_receipt_path],
+    nestedProcessSupervisor: true});
     oracleReceiptPath = resolve(oracleDir, "oracle-run.json");
     if (!existsSync(oracleReceiptPath)) fail(`production oracle resume failed without receipt: ${oracleResult.stderr}`);
   }
   const oracleReceipt = JSON.parse(await readFile(oracleReceiptPath, "utf8"));
+  if (common.formal_result_eligible &&
+      oracleReceipt.controller_issuance_sha256 !== controllerIssuanceSha256) {
+    fail("production oracle resume does not bind the controller issuance");
+  }
   await writeStage("production_oracles", {
     resumed_same_attempt: true,
     adapter_sha256: sha256(adapterBytes),
     construction_smoke: state.construction_smoke,
     overall_status: oracleReceipt.overall_status ?? "not_executed",
     controller_context_sha256: state.controller_context_sha256,
+    controller_issuance_sha256: controllerIssuanceSha256,
     adapter_integrity_receipt_sha256: formalAdapterPackage?.integrity_receipt.sha256 ?? null,
+    adapter_probe_build_receipt_sha256:
+      formalAdapterPackage?.probe_build_receipt?.sha256 ?? null,
+    adapter_build_stage_receipt_sha256:
+      formalAdapterPackage?.adapter_build_stage_receipt?.sha256 ?? null,
   }, [
     statePath, state.core_receipt_path, adapter, resumeLockPath, controllerContextPath,
+    ...(controllerIssuancePath ? [controllerIssuancePath] : []),
     ...(formalAdapterPackage ? [formalAdapterPackage.scaffold_lock.path,
       formalAdapterPackage.config.path, formalAdapterPackage.probe.path,
-      formalAdapterPackage.integrity_receipt.path] : []),
+      formalAdapterPackage.integrity_receipt.path,
+      ...(formalAdapterPackage.probe_source ? [formalAdapterPackage.probe_source.path] : []),
+      ...(formalAdapterPackage.candidate_manifest
+        ? [formalAdapterPackage.candidate_manifest.path] : []),
+      ...(formalAdapterPackage.probe_build_receipt
+        ? [formalAdapterPackage.probe_build_receipt.path] : []),
+      ...(formalAdapterPackage.adapter_build_stage_receipt
+        ? [formalAdapterPackage.adapter_build_stage_receipt.path] : [])] : []),
   ], [oracleReceiptPath]);
 
   const reviewInputDir = resolve(artifactDir, "review-input");
@@ -1361,8 +1832,8 @@ async function resumeWithAdapter(args) {
   await writeFile(reviewInputManifestPath, canonicalBytes({schema: "tachiko-review-packet-input-v1", artifacts: reviewArtifacts}), {mode: 0o600, flag: "wx"});
   const reviewOutputDir = resolve(artifactDir, "review-output");
   const reviewTerminalPath = resolve(artifactDir, "review-terminal.json");
-  const reviewResult = command(helperNodeExecutable, [
-    resolve(controllerBenchmarkDir, "scripts/build-review-packet.mjs"), "--case-id", common.case_id,
+  const reviewResult = await runBundledHelper("scripts/build-review-packet.mjs", [
+    "--case-id", common.case_id,
     "--candidate-id", common.candidate_id, "--input-root", reviewInputDir,
     "--input-manifest", reviewInputManifestPath, "--variant", variant,
     "--contract", resolve(controllerBenchmarkDir, "evaluator/contracts/review-packet-blinding-v1.json"),
@@ -1371,39 +1842,59 @@ async function resumeWithAdapter(args) {
     "--custodian-eligible", "true", "--frozen-at", state.frozen_at,
     "--controller-context", controllerContextPath,
     "--expected-controller-context-sha256", state.controller_context_sha256,
+    ...(controllerIssuancePath ? [
+      "--controller-issuance", controllerIssuancePath,
+      "--expected-controller-issuance-sha256", controllerIssuanceSha256,
+    ] : []),
+    ...formalControllerTrustArguments(common),
     ...(common.formal_result_eligible ? ["--require-formal-context", "true"] : []),
-  ], {env: environment, allowFailure: true});
+  ], {env: await freshResumeValidationEnvironment("review-build"), allowFailure: true}, {
+    extraProtectedRoots: [validationWorkspace],
+  });
   const reviewReceiptPath = resolve(reviewOutputDir, "receipt.json");
   if (reviewResult.status !== 0 || !existsSync(reviewReceiptPath)) {
     fail(`review packet construction failed after adapter resume: ${reviewResult.stderr}`);
   }
   const reviewReceipt = JSON.parse(await readFile(reviewReceiptPath, "utf8"));
-  if (!reviewReceipt.safe_to_release) fail("review packet is not safe to release");
+  if (!reviewReceipt.safe_to_release || (common.formal_result_eligible &&
+      reviewReceipt.controller_issuance_sha256 !== controllerIssuanceSha256)) {
+    fail("review packet is not safe to release or lacks the controller issuance binding");
+  }
   const standaloneScanReceiptPath = resolve(artifactDir, "review-standalone-scan.json");
-  const scanResult = command(helperNodeExecutable, [
-    resolve(controllerBenchmarkDir, "scripts/scan-review-packet.mjs"),
+  const scanResult = await runBundledHelper("scripts/scan-review-packet.mjs", [
     "--packet-dir", resolve(reviewOutputDir, "packet"),
     "--contract", resolve(controllerBenchmarkDir, "evaluator/contracts/review-packet-blinding-v1.json"),
     "--variant", variant,
     "--receipt", standaloneScanReceiptPath,
     "--controller-context", controllerContextPath,
     "--expected-controller-context-sha256", state.controller_context_sha256,
+    ...(controllerIssuancePath ? [
+      "--controller-issuance", controllerIssuancePath,
+      "--expected-controller-issuance-sha256", controllerIssuanceSha256,
+    ] : []),
+    ...formalControllerTrustArguments(common),
     ...(common.formal_result_eligible ? ["--require-formal-context", "true"] : []),
-  ], {env: environment, allowFailure: true});
+  ], {env: await freshResumeValidationEnvironment("review-scan"), allowFailure: true}, {
+    extraProtectedRoots: [validationWorkspace, reviewInputDir],
+  });
   if (scanResult.status !== 0 || !existsSync(standaloneScanReceiptPath)) {
     fail(`standalone review packet scan failed after adapter resume: ${scanResult.stderr}`);
   }
   const standaloneScanReceipt = JSON.parse(await readFile(standaloneScanReceiptPath, "utf8"));
   if (!standaloneScanReceipt.safe_to_release ||
       standaloneScanReceipt.packet_tree_sha256 !== reviewReceipt.rendered_packet_sha256 ||
-      standaloneScanReceipt.controller_context_sha256 !== state.controller_context_sha256) {
+      standaloneScanReceipt.controller_context_sha256 !== state.controller_context_sha256 ||
+      (common.formal_result_eligible &&
+        standaloneScanReceipt.controller_issuance_sha256 !== controllerIssuanceSha256)) {
     fail("standalone review packet scan does not bind resumed packet and controller context");
   }
   await writeStage("review_packet", {
     safe_to_release: true, semantic_scoring_performed: false, resumed_same_attempt: true,
     controller_context_sha256: state.controller_context_sha256,
+    controller_issuance_sha256: controllerIssuanceSha256,
     standalone_scan_receipt_sha256: sha256(await readFile(standaloneScanReceiptPath)),
-  }, [reviewInputManifestPath, controllerContextPath], [
+  }, [reviewInputManifestPath, controllerContextPath,
+    ...(controllerIssuancePath ? [controllerIssuancePath] : [])], [
     reviewReceiptPath, reviewTerminalPath, standaloneScanReceiptPath,
   ]);
 
@@ -1427,6 +1918,7 @@ async function resumeWithAdapter(args) {
     review_receipt_sha256: sha256(await readFile(reviewReceiptPath)),
     review_scan_receipt_sha256: sha256(await readFile(standaloneScanReceiptPath)),
     controller_context_sha256: state.controller_context_sha256,
+    controller_issuance_sha256: controllerIssuanceSha256,
     adapter_integrity_receipt_sha256: formalAdapterPackage?.integrity_receipt.sha256 ?? null,
     scores_recorded: false,
     semantic_review_pending: true,
@@ -1438,7 +1930,8 @@ async function resumeWithAdapter(args) {
   };
   const resultPath = resolve(artifactDir, "result-skeleton.json");
   await writeFile(resultPath, canonicalBytes(resultSkeleton), {mode: 0o600, flag: "wx"});
-  await writeStage("result_skeleton", resultSkeleton, [reviewReceiptPath], [resultPath]);
+  await writeStage("result_skeleton", resultSkeleton, [reviewReceiptPath,
+    ...(controllerIssuancePath ? [controllerIssuancePath] : [])], [resultPath]);
 
   const terminal = {
     schema: "tachiko-controller-attempt-entry-v1", ...common, disposition, attempt_number: 1,
@@ -1449,6 +1942,7 @@ async function resumeWithAdapter(args) {
       launch_count: 1, resumed_same_attempt: true, adapter_sha256: sha256(adapterBytes),
       adapter_integrity_receipt_sha256: formalAdapterPackage?.integrity_receipt.sha256 ?? null,
       controller_context_sha256: state.controller_context_sha256,
+      controller_issuance_sha256: controllerIssuanceSha256,
       result_skeleton_sha256: sha256(await readFile(resultPath)),
     },
     terminal_at: new Date().toISOString(),
@@ -1510,7 +2004,11 @@ async function main() {
         typeof formalAuthorization.authorization_token !== "string" || formalAuthorization.authorization_token.length < 32) {
       fail("external formal authorization is invalid");
     }
-    authorizationIdentity = {bytes: authorizationBytes.length, sha256: sha256(authorizationBytes)};
+    authorizationIdentity = {
+      path: authorizationPath,
+      bytes: authorizationBytes.length,
+      sha256: sha256(authorizationBytes),
+    };
   }
 
   const variantFile = await requireRegular(args.get("variant-file"), "variant file");
@@ -1546,6 +2044,8 @@ async function main() {
   let formalEffectiveArguments = null;
   let formalCargoHomeInspection = null;
   let formalNetworkSandboxIdentity = null;
+  let formalRustupHomeTemplate = null;
+  let formalCargoHomeTemplate = null;
   const stagedModelCatalogPath = resolve(runRoot, "runtime", "model-catalog.json");
   if (formalAuthorization) {
     frozenEnvironmentLock = JSON.parse(await readFile(resolve(benchmarkDir, "environment-lock.json"), "utf8"));
@@ -1585,6 +2085,8 @@ async function main() {
       args.get("cargo-home-template"),
       "trusted Cargo home template",
     );
+    formalRustupHomeTemplate = rustupHomeTemplate;
+    formalCargoHomeTemplate = cargoHomeTemplate;
     for (const [path, label] of [
       [rustupHomeTemplate, "Rustup home template"],
       [cargoHomeTemplate, "Cargo home template"],
@@ -1657,6 +2159,7 @@ async function main() {
     rustup_home_template_sha256: formalRuntime?.rustup_home.manifest_sha256 ?? null,
     pnpm_home_template_sha256: formalRuntime?.pnpm_home.manifest_sha256 ?? null,
     cargo_home_template_sha256: formalCargoHomeInspection?.manifest_sha256 ?? null,
+    formal_authorization_sha256: authorizationIdentity?.sha256 ?? null,
     registered_at: new Date().toISOString(),
   };
   const registryEntryBytes = canonicalBytes(registryEntry);
@@ -1713,6 +2216,19 @@ async function main() {
   const infrastructure = await hashInfrastructureTree(controllerBenchmarkDir, true);
   const infrastructureManifestPath = resolve(artifactDir, "controller-bundle-manifest.json");
   await writeFile(infrastructureManifestPath, infrastructure.bytes, {mode: 0o600, flag: "wx"});
+  async function verifyControllerBundle(label) {
+    return assertControllerBundleIntact({
+      root: controllerBenchmarkDir,
+      manifestPath: infrastructureManifestPath,
+      expectedSha256: infrastructure.sha256,
+      expectedEntries: infrastructure.entries,
+      label,
+    });
+  }
+  await verifyControllerBundle("before loading controller modules");
+  const {validateFormalAdapterPackage: validateBundledFormalAdapterPackage} = await import(
+    pathToFileURL(resolve(controllerBenchmarkDir, "scripts/adapter-integrity.mjs")).href
+  );
   const workspace = resolve(runRoot, "workspace");
   const baseWorkspace = resolve(runRoot, "control");
   const home = resolve(runRoot, "home");
@@ -1816,10 +2332,42 @@ async function main() {
   const environmentReceiptPath = resolve(artifactDir, "environment-receipt.json");
   await writeFile(environmentReceiptPath, canonicalBytes(environmentObservation), {mode: 0o600, flag: "wx"});
 
+  let trustedValidationGuard = null;
+  async function verifyTrustedValidationGuard(label) {
+    if (!trustedValidationGuard) return null;
+    const observedReceipt = await fileIdentity(trustedValidationGuard.receiptPath);
+    if (observedReceipt.sha256 !== trustedValidationGuard.receiptSha256) {
+      fail(`trusted validation environment receipt changed ${label}`);
+    }
+    const observedCargo = await hashContentTree(trustedValidationGuard.cargoHome);
+    for (const key of ["digest_kind", "entries", "file_bytes", "manifest_sha256"]) {
+      if (observedCargo[key] !== trustedValidationGuard.cargoIdentity[key]) {
+        fail(`trusted validation Cargo home ${key} changed ${label}`);
+      }
+    }
+    await Promise.all([
+      assertReadOnlyTree(trustedValidationGuard.cargoHome,
+        "trusted validation Cargo home"),
+      assertEmptyDirectory(trustedValidationGuard.home,
+        "trusted validation HOME"),
+      assertEmptyDirectory(trustedValidationGuard.codexHome,
+        "trusted validation CODEX_HOME"),
+    ]);
+    return {
+      label,
+      receipt_sha256: observedReceipt.sha256,
+      cargo_manifest_sha256: observedCargo.manifest_sha256,
+      verified: true,
+    };
+  }
+
   let stageOrder = 0;
   let priorStageReceiptSha256 = null;
   const stageDir = resolve(artifactDir, "stage-receipts");
+  const stageReceiptIdentities = [];
   async function writeStage(stage, payload, inputPaths = [], outputPaths = []) {
+    const validationGuard = await verifyTrustedValidationGuard(`before stage ${stage}`);
+    const bundleVerification = await verifyControllerBundle(`before stage ${stage}`);
     const [inputs, outputs] = await Promise.all([
       Promise.all(inputPaths.map((path) => fileIdentity(path))),
       Promise.all(outputPaths.map((path) => fileIdentity(path))),
@@ -1830,6 +2378,8 @@ async function main() {
       stage,
       stage_order: stageOrder,
       prior_receipt_sha256: priorStageReceiptSha256,
+      controller_bundle_verification: bundleVerification,
+      trusted_validation_environment_verification: validationGuard,
       inputs,
       outputs,
       payload_sha256: sha256(canonicalBytes(payload)),
@@ -1839,6 +2389,7 @@ async function main() {
     const path = resolve(stageDir, `${String(stageOrder).padStart(2, "0")}-${stage}.json`);
     const bytes = canonicalBytes(receipt);
     await writeFile(path, bytes, {mode: 0o600, flag: "wx"});
+    stageReceiptIdentities.push({path, bytes: bytes.length, sha256: sha256(bytes)});
     priorStageReceiptSha256 = sha256(bytes);
     stageOrder += 1;
     return {path, bytes, receipt};
@@ -1897,6 +2448,73 @@ async function main() {
     }
   };
 
+  const helperProtectedRoots = [
+    controllerBenchmarkDir,
+    sourceRepo,
+    attemptRegistryDir,
+    stageDir,
+  ];
+  const helperProtectedPaths = [
+    infrastructureManifestPath,
+    registeredVariantPath,
+    registeredTaskPath,
+    environmentReceiptPath,
+    formalRuntimePreflight ? formalRuntimePreflightPath : null,
+    ledgerPath,
+    registryEntryPath,
+    variantFile,
+    agentArgsFile,
+    authorizationIdentity?.path,
+    formalCatalogSource,
+  ].filter(Boolean);
+  async function runBundledHelper(relativeScript, helperArguments, options = {}, {
+    protectCandidateWorkspace = true,
+    extraProtectedRoots = [],
+    extraProtectedPaths = [],
+    nestedProcessSupervisor = false,
+  } = {}) {
+    await verifyTrustedValidationGuard(`before trusted helper ${relativeScript}`);
+    await verifyControllerBundle(`before trusted helper ${relativeScript}`);
+    const writePolicy = trustedHelperWriteProfile({
+      protectedRoots: [
+        ...helperProtectedRoots,
+        ...(protectCandidateWorkspace ? [workspace] : []),
+        ...extraProtectedRoots,
+      ],
+      protectedPaths: [...helperProtectedPaths, ...extraProtectedPaths],
+    });
+    const protectionArgument = JSON.stringify({
+      schema: "tachiko-supervised-write-protection-v1",
+      protected_roots: writePolicy.roots,
+      protected_paths: writePolicy.paths,
+    });
+    const result = nestedProcessSupervisor
+      ? command(helperNodeExecutable, [
+        resolve(controllerBenchmarkDir, relativeScript),
+        ...helperArguments,
+        "--supervised-write-protection-json", protectionArgument,
+      ], options)
+      : command("/usr/bin/sandbox-exec", [
+        "-p", writePolicy.profile,
+        helperNodeExecutable,
+        resolve(controllerBenchmarkDir, relativeScript),
+        ...helperArguments,
+    ], options);
+    await verifyTrustedValidationGuard(`after trusted helper ${relativeScript}`);
+    await verifyControllerBundle(`after trusted helper ${relativeScript}`);
+    result.controller_bundle_write_protection = {
+      schema: "tachiko-trusted-helper-write-protection-v1",
+      protected_roots: writePolicy.roots,
+      protected_paths: writePolicy.paths,
+      profile_sha256: writePolicy.profile_sha256,
+      active: true,
+      enforcement_scope: nestedProcessSupervisor
+        ? "every_inner_coalition_profile"
+        : "outer_trusted_helper_process",
+    };
+    return result;
+  }
+
   try {
     await writeStage(
       "attempt_registration",
@@ -1945,22 +2563,26 @@ async function main() {
       "--expected-shell-sha256", trustedBaseShell.sha256,
       ...(constructionSmoke ? ["--construction-smoke", "true"] : []),
     ];
-    const baseResult = command(helperNodeExecutable, baseArguments, {env: environment, allowFailure: true});
+    const baseResult = await runBundledHelper(
+      "scripts/capture-base-control-evidence.mjs",
+      baseArguments.slice(1),
+      {env: environment, allowFailure: true},
+      {protectCandidateWorkspace: false, nestedProcessSupervisor: true},
+    );
     if (!existsSync(baseReceiptPath)) fail(`base control failed without a receipt: ${baseResult.stderr}`);
     const baseReceipt = JSON.parse(await readFile(baseReceiptPath, "utf8"));
     if (!baseReceipt.all_commands_passed) fail("same-wave base controls failed");
     await writeStage("same_wave_base_control", baseReceipt, [environmentReceiptPath], [baseReceiptPath]);
 
     const candidatePreparationDir = resolve(artifactDir, "candidate-preparation");
-    const prepareResult = command(helperNodeExecutable, [
-      resolve(controllerBenchmarkDir, "scripts/prepare-case.mjs"),
+    const prepareResult = await runBundledHelper("scripts/prepare-case.mjs", [
       "--case", caseId,
       "--source-repo", sourceRepo,
       "--variant-file", registeredVariantPath,
       "--workspace", workspace,
       "--trusted-dir", candidatePreparationDir,
       "--expected-variant-sha256", args.get("expected-variant-sha256"),
-    ], {env: environment, allowFailure: true});
+    ], {env: environment, allowFailure: true}, {protectCandidateWorkspace: false});
     const preparationReceiptPath = resolve(candidatePreparationDir, "preparation-receipt.json");
     if (prepareResult.status !== 0 || !existsSync(preparationReceiptPath)) {
       fail(`candidate preparation failed: ${prepareResult.stderr}`);
@@ -1980,8 +2602,7 @@ async function main() {
     await writeFile(overlayIdentityPath, canonicalBytes(expectedOverlayIdentity), {mode: 0o600, flag: "wx"});
 
     const preflightReceiptPath = resolve(artifactDir, "preflight-receipt.json");
-    const preflight = command(helperNodeExecutable, [
-      resolve(controllerBenchmarkDir, "scripts/preflight-run.mjs"),
+    const preflight = await runBundledHelper("scripts/preflight-run.mjs", [
       "--workspace", workspace,
       "--home", home,
       "--codex-home", codexHome,
@@ -2020,6 +2641,35 @@ async function main() {
         fail("formal code-mode host changed before agent launch");
       }
     }
+    const candidateAccess = candidateAccessProfile({
+      protectedRoots: [
+        artifactDir,
+        attemptRegistryDir,
+        sourceRepo,
+        baseWorkspace,
+        formalRustupHomeTemplate,
+        formalCargoHomeTemplate,
+      ].filter(Boolean),
+      protectedPaths: [
+        variantFile,
+        agentArgsFile,
+        authorizationIdentity?.path,
+        formalCatalogSource,
+      ].filter(Boolean),
+      restrictedRoots: [runRoot],
+      allowedReadRoots: [
+        workspace,
+        home,
+        codexHome,
+        tmp,
+        cargoHome,
+        toolBin,
+        dirname(stagedModelCatalogPath),
+        stagedRuntime.rustup_home_path,
+        stagedRuntime.pnpm_home_path,
+      ].filter(Boolean),
+      allowedWriteRoots: [workspace, home, codexHome, tmp, cargoHome],
+    });
     await writeStage("agent_launch", {
       spawn_count_before_stage: 0,
       executable: agentExecutableIdentity,
@@ -2029,6 +2679,15 @@ async function main() {
       timeout_seconds: timeoutSeconds,
       termination_grace_seconds: terminationGraceSeconds,
       base_control_stage_order: 2,
+      candidate_access: {
+        protected_roots: candidateAccess.protected_roots,
+        protected_paths: candidateAccess.protected_paths,
+        restricted_roots: candidateAccess.restricted_roots,
+        allowed_read_roots: candidateAccess.allowed_read_roots,
+        allowed_write_roots: candidateAccess.allowed_write_roots,
+        profile_sha256: candidateAccess.profile_sha256,
+        bundle_and_trusted_artifacts_denied: true,
+      },
     }, [preflightReceiptPath, baseReceiptPath], []);
 
     const taskBytes = await readFile(registeredTaskPath);
@@ -2041,7 +2700,21 @@ async function main() {
       taskBytes,
       timeoutSeconds * 1000,
       terminationGraceSeconds * 1000,
+      candidateAccess.profile,
     );
+    if (!processResult.process_group_extinct_before_capture) {
+      fail("agent coalition was not extinct before trusted post-run verification");
+    }
+    await verifyControllerBundle("after agent extinction before trusted capture");
+    processResult.process_containment.candidate_trusted_roots_denied = true;
+    processResult.process_containment.candidate_access = {
+      protected_roots: candidateAccess.protected_roots,
+      protected_paths: candidateAccess.protected_paths,
+      restricted_roots: candidateAccess.restricted_roots,
+      allowed_read_roots: candidateAccess.allowed_read_roots,
+      allowed_write_roots: candidateAccess.allowed_write_roots,
+      profile_sha256: candidateAccess.profile_sha256,
+    };
     if (JSON.stringify(await fileIdentity(agentExecutable)) !== JSON.stringify(agentExecutableIdentity) ||
         JSON.stringify(await fileIdentity(agentArgsFile)) !== JSON.stringify(agentArgumentsIdentity)) {
       fail("agent executable or argument bytes changed during the one-shot launch");
@@ -2117,11 +2790,105 @@ async function main() {
       return;
     }
 
+    // Candidate-writable HOME/CARGO_HOME/TMP are launch-only inputs. Trusted
+    // validation starts from a new tree created after coalition extinction;
+    // no candidate process can have retained a descriptor into it.
+    const validationEnvironmentRoot = resolve(runRoot, "trusted-validation");
+    const validationHome = resolve(validationEnvironmentRoot, "home");
+    const validationCodexHome = resolve(validationEnvironmentRoot, "codex-home");
+    const validationTmp = resolve(validationEnvironmentRoot, "tmp");
+    const validationCargoHome = resolve(validationEnvironmentRoot, "cargo-home");
+    await mkdir(validationEnvironmentRoot, {mode: 0o700});
+    await Promise.all([
+      mkdir(validationHome, {mode: 0o700}),
+      mkdir(validationCodexHome, {mode: 0o700}),
+      mkdir(validationTmp, {mode: 0o700}),
+    ]);
+    if (formalCargoHomeTemplate) {
+      await cloneTreeCopyOnWrite(formalCargoHomeTemplate, validationCargoHome);
+    } else {
+      await mkdir(validationCargoHome, {mode: 0o700});
+    }
+    for (const name of ["config", "config.toml"]) {
+      if (existsSync(resolve(validationCargoHome, name))) {
+        fail(`trusted validation Cargo home contains forbidden ${name}`);
+      }
+    }
+    const validationCargoIdentity = await hashContentTree(validationCargoHome);
+    if (formalAuthorization) {
+      for (const key of ["digest_kind", "entries", "file_bytes", "manifest_sha256"]) {
+        if (validationCargoIdentity[key] !== formalCargoHomeInspection[key]) {
+          fail(`trusted validation Cargo home ${key} differs from its preregistered template`);
+        }
+      }
+    }
+    await sealReadOnlyTree(validationCargoHome);
+    await Promise.all([
+      assertEmptyDirectory(validationHome, "trusted validation HOME"),
+      assertEmptyDirectory(validationCodexHome, "trusted validation CODEX_HOME"),
+      assertEmptyDirectory(validationTmp, "trusted validation TMP"),
+      chmod(validationHome, 0o500),
+      chmod(validationCodexHome, 0o500),
+    ]);
+    const validationEnvironment = sanitizeEnvironment(process.env, {
+      HOME: validationHome,
+      CODEX_HOME: validationCodexHome,
+      TMPDIR: validationTmp,
+      PATH: `${toolBin}:/usr/bin:/bin:/usr/sbin:/sbin`,
+      CARGO_HOME: validationCargoHome,
+      RUSTUP_HOME: environment.RUSTUP_HOME,
+      PNPM_HOME: environment.PNPM_HOME,
+    });
+    const validationEnvironmentObservation = {
+      schema: "tachiko-controller-trusted-validation-environment-v1",
+      ...common,
+      created_after_agent_extinction: true,
+      agent_environment_inherited: false,
+      candidate_environment_identity_sha256: common.environment_identity_sha256,
+      environment: Object.fromEntries(Object.keys(validationEnvironment).sort()
+        .map((key) => [key, validationEnvironment[key]])),
+      pristine_home: true,
+      pristine_codex_home: true,
+      pristine_tmp: true,
+      cargo_home_template_verified: true,
+      cargo_home_read_only: true,
+      cargo_home: validationCargoIdentity,
+      cargo_template: formalCargoHomeInspection ?? null,
+      stage_tmp_policy: "fresh_disjoint_tmp_per_candidate-executing_validation_stage",
+    };
+    validationEnvironmentObservation.validation_environment_identity_sha256 = sha256(
+      canonicalBytes(validationEnvironmentObservation),
+    );
+    const validationEnvironmentReceiptPath = resolve(
+      artifactDir,
+      "trusted-validation-environment.json",
+    );
+    await writeFile(
+      validationEnvironmentReceiptPath,
+      canonicalBytes(validationEnvironmentObservation),
+      {mode: 0o400, flag: "wx"},
+    );
+    trustedValidationGuard = {
+      receiptPath: validationEnvironmentReceiptPath,
+      receiptSha256: sha256(await readFile(validationEnvironmentReceiptPath)),
+      cargoHome: validationCargoHome,
+      cargoIdentity: validationCargoIdentity,
+      home: validationHome,
+      codexHome: validationCodexHome,
+    };
+    await verifyTrustedValidationGuard("immediately after trusted validation creation");
+
+    async function freshValidationStageEnvironment(label) {
+      const path = await mkdtemp(resolve(validationEnvironmentRoot, `${label}-tmp-`));
+      await chmod(path, 0o700);
+      await assertEmptyDirectory(path, `trusted validation ${label} TMP`);
+      return {...validationEnvironment, TMPDIR: path, TMP: path, TEMP: path};
+    }
+
     const exclusionsPath = resolve(artifactDir, "capture-exclusions.json");
     await writeFile(exclusionsPath, `${JSON.stringify(["target", "node_modules", ".pnpm-store"], null, 2)}\n`, {mode: 0o600, flag: "wx"});
     const captureDir = resolve(artifactDir, "candidate-capture");
-    const captureResult = command(helperNodeExecutable, [
-      resolve(controllerBenchmarkDir, "scripts/capture-candidate.mjs"),
+    const captureResult = await runBundledHelper("scripts/capture-candidate.mjs", [
       "--case", caseId,
       "--workspace", workspace,
       "--source-repo", sourceRepo,
@@ -2129,7 +2896,9 @@ async function main() {
       "--expected-agents-identity-file", overlayIdentityPath,
       "--trusted-dir", captureDir,
       "--expected-agents-sha256", args.get("expected-variant-sha256"),
-    ], {env: environment, allowFailure: true});
+    ], {env: await freshValidationStageEnvironment("capture"), allowFailure: true}, {
+      extraProtectedRoots: [validationCargoHome, validationHome, validationCodexHome],
+    });
     const captureReceiptPath = resolve(captureDir, "capture-receipt.json");
     if (captureResult.status !== 0 || !existsSync(captureReceiptPath)) fail(`candidate capture failed: ${captureResult.stderr}`);
     const captureReceipt = JSON.parse(await readFile(captureReceiptPath, "utf8"));
@@ -2138,19 +2907,23 @@ async function main() {
       candidate_commit: captureReceipt.candidate_commit,
       candidate_tree: captureReceipt.candidate_tree,
       raw_tree_digest_sha256: captureReceipt.raw_tree_digest_sha256,
-    }, [overlayIdentityPath, exclusionsPath], [captureReceiptPath, resolve(captureDir, "candidate.patch"), resolve(captureDir, "raw-manifest.json")]);
+      trusted_validation_environment_sha256: sha256(
+        await readFile(validationEnvironmentReceiptPath),
+      ),
+    }, [overlayIdentityPath, exclusionsPath, validationEnvironmentReceiptPath], [captureReceiptPath, resolve(captureDir, "candidate.patch"), resolve(captureDir, "raw-manifest.json")]);
 
     const validationWorkspace = resolve(artifactDir, "validation-workspace");
     const validationPreparationDir = resolve(artifactDir, "validation-preparation");
-    const validationResult = command(helperNodeExecutable, [
-      resolve(controllerBenchmarkDir, "scripts/prepare-validation.mjs"),
+    const validationResult = await runBundledHelper("scripts/prepare-validation.mjs", [
       "--case", caseId,
       "--source-repo", sourceRepo,
       "--patch-file", resolve(captureDir, "candidate.patch"),
       "--capture-receipt", captureReceiptPath,
       "--workspace", validationWorkspace,
       "--trusted-dir", validationPreparationDir,
-    ], {env: environment, allowFailure: true});
+    ], {env: await freshValidationStageEnvironment("prepare"), allowFailure: true,
+    }, {extraProtectedRoots: [captureDir, validationCargoHome, validationHome,
+      validationCodexHome]});
     const validationReceiptPath = resolve(validationPreparationDir, "validation-preparation-receipt.json");
     if (validationResult.status !== 0 || !existsSync(validationReceiptPath)) {
       fail(`validation preparation failed: ${validationResult.stderr}`);
@@ -2158,17 +2931,66 @@ async function main() {
     const validationReceipt = JSON.parse(await readFile(validationReceiptPath, "utf8"));
     await writeStage("validation_preparation", validationReceipt, [captureReceiptPath], [validationReceiptPath]);
 
+    const coreTmp = await mkdtemp(resolve(validationEnvironmentRoot, "core-tmp-"));
+    const coreTarget = resolve(validationEnvironmentRoot, "core-target");
+    await mkdir(coreTarget, {mode: 0o700});
+    const coreEnvironment = {
+      ...validationEnvironment,
+      TMPDIR: coreTmp,
+      TMP: coreTmp,
+      TEMP: coreTmp,
+      CARGO_TARGET_DIR: coreTarget,
+    };
+    const coreAccess = candidateAccessProfile({
+      protectedRoots: [
+        controllerBenchmarkDir,
+        attemptRegistryDir,
+        sourceRepo,
+        baseWorkspace,
+        workspace,
+        captureDir,
+        stageDir,
+        processDir,
+        validationPreparationDir,
+        resolve(artifactDir, "evaluator"),
+      ],
+      protectedPaths: helperProtectedPaths,
+      restrictedRoots: [artifactDir, runRoot],
+      allowedReadRoots: [
+        validationWorkspace, validationEnvironmentRoot, validationCargoHome,
+        validationHome, validationCodexHome, coreTmp, coreTarget, toolBin,
+        validationEnvironment.RUSTUP_HOME, validationEnvironment.PNPM_HOME,
+      ].filter(Boolean),
+      allowedWriteRoots: [validationWorkspace, coreTmp, coreTarget],
+      writeProtectedRoots: [
+        validationCargoHome, validationHome, validationCodexHome, toolBin,
+        validationEnvironment.RUSTUP_HOME, validationEnvironment.PNPM_HOME,
+      ].filter(Boolean),
+      baseProfile: DENY_NETWORK_PROFILE,
+    });
+    await verifyTrustedValidationGuard("before candidate core validation");
+    await verifyControllerBundle("before candidate core validation");
     const core = await runCoreValidation(
       caseId,
       validationWorkspace,
       resolve(artifactDir, "core-validation"),
-      environment,
+      coreEnvironment,
       constructionSmoke,
       common,
       controllerBenchmarkDir,
       formalAuthorization ? tools.find((tool) => tool.name === "bash")?.staged_path : "/bin/bash",
+      coreAccess.profile,
     );
-    await writeStage("core_validation", {all_commands_passed: core.receipt.all_commands_passed, construction_smoke: constructionSmoke}, [validationReceiptPath], [core.receiptPath]);
+    await verifyTrustedValidationGuard("after candidate core validation");
+    await writeStage("core_validation", {
+      all_commands_passed: core.receipt.all_commands_passed,
+      construction_smoke: constructionSmoke,
+      trusted_validation_environment_sha256: sha256(
+        await readFile(validationEnvironmentReceiptPath),
+      ),
+      candidate_environment_inherited: false,
+      cargo_home_read_only: true,
+    }, [validationReceiptPath, validationEnvironmentReceiptPath], [core.receiptPath]);
 
     // The adapter may only use a directory created after the agent and all
     // candidate core processes are extinct. The earlier per-run TMP remains a
@@ -2191,9 +3013,18 @@ async function main() {
       candidate_id: common.candidate_id,
       case_id: common.case_id,
       capture_receipt_sha256: sha256(await readFile(captureReceiptPath)),
+      candidate_tree: captureReceipt.candidate_tree,
+      raw_tree_digest_sha256: captureReceipt.raw_tree_digest_sha256,
       formal_authorization_sha256: common.formal_authorization?.sha256 ?? null,
+      trusted_validation_environment_sha256: sha256(
+        await readFile(validationEnvironmentReceiptPath),
+      ),
+      trusted_validation_cargo_manifest_sha256:
+        validationCargoIdentity.manifest_sha256,
       adapter_forbidden_roots: [
-        sourceRepo, artifactDir, workspace, baseWorkspace, controllerBenchmarkDir, tmp,
+        sourceRepo, artifactDir, workspace, baseWorkspace, controllerBenchmarkDir,
+        home, codexHome, tmp, cargoHome,
+        validationHome, validationCodexHome, validationCargoHome,
       ],
       adapter_write_forbidden_roots: [runRoot],
       adapter_write_allowed_roots: [adapterTmp],
@@ -2202,7 +3033,7 @@ async function main() {
     const controllerContextBytes = canonicalBytes(controllerContext);
     await writeFile(controllerContextPath, controllerContextBytes, {mode: 0o400, flag: "wx"});
     const controllerContextSha256 = sha256(controllerContextBytes);
-    await writeStage(
+    const contextStage = await writeStage(
       "controller_evidence_context",
       {controller_context_sha256: controllerContextSha256,
         adapter_tmp_initial_sha256: adapterTmpInitialSha256},
@@ -2210,11 +3041,53 @@ async function main() {
         ...(common.formal_authorization ? [common.formal_authorization.path] : [])],
       [controllerContextPath],
     );
+    let controllerIssuancePath = null;
+    let controllerIssuanceSha256 = null;
+    if (formalAuthorization) {
+      controllerIssuancePath = resolve(artifactDir, "controller-context-issuance.json");
+      const issuanceBody = {
+        schema: "tachiko-controller-context-issuance-v1",
+        protocol_id: common.protocol_id,
+        phase: common.phase,
+        classification: common.classification,
+        formal_result_eligible: common.formal_result_eligible,
+        wave_id: common.wave_id,
+        run_id: common.run_id,
+        attempt_id: common.attempt_id,
+        candidate_id: common.candidate_id,
+        case_id: common.case_id,
+        artifact_dir: artifactDir,
+        context: await fileIdentity(controllerContextPath),
+        formal_authorization: authorizationIdentity,
+        attempt_registry_entry: registryIdentity,
+        attempt_ledger: await fileIdentity(ledgerPath),
+        controller_bundle_manifest: await fileIdentity(infrastructureManifestPath),
+        capture_receipt: await fileIdentity(captureReceiptPath),
+        stage_receipts: [...stageReceiptIdentities],
+        context_stage_receipt_sha256: sha256(contextStage.bytes),
+        issued_at: new Date().toISOString(),
+      };
+      const issuance = formalControllerIssuanceRecord({
+        body: issuanceBody,
+        authorizationToken: formalAuthorization.authorization_token,
+      });
+      const issuanceBytes = canonicalBytes(issuance);
+      await writeFile(controllerIssuancePath, issuanceBytes, {mode: 0o400, flag: "wx"});
+      controllerIssuanceSha256 = sha256(issuanceBytes);
+      await writeStage(
+        "controller_context_issuance",
+        {controller_issuance_sha256: controllerIssuanceSha256},
+        [controllerContextPath, authorizationIdentity.path, registryEntryPath, ledgerPath,
+          infrastructureManifestPath, captureReceiptPath],
+        [controllerIssuancePath],
+      );
+    }
 
     const needsAdapter = productionCase.oracle_commands.some((entry) => entry.command_template.includes("<trusted-adapter-file>"));
     const adapterInputsReady = common.formal_result_eligible
       ? args.has("adapter-config") && args.has("adapter-integrity-receipt") &&
-        args.has("expected-adapter-integrity-sha256")
+        args.has("expected-adapter-integrity-sha256") &&
+        (caseId !== "TW-09" || args.has("adapter-probe-source"))
       : args.has("adapter-file") && args.has("expected-adapter-sha256");
     if (needsAdapter && !adapterInputsReady) {
       const pause = {
@@ -2232,6 +3105,8 @@ async function main() {
         capture_receipt_path: captureReceiptPath,
         capture_dir: captureDir,
         validation_receipt_path: validationReceiptPath,
+        validation_environment_receipt_path: validationEnvironmentReceiptPath,
+        validation_environment_root: validationEnvironmentRoot,
         process_receipt_path: processReceiptPath,
         final_message_path: finalMessagePath,
         preflight_receipt_path: preflightReceiptPath,
@@ -2248,6 +3123,8 @@ async function main() {
         source_repo_identity: captureReceipt.source_repo,
         controller_context_path: controllerContextPath,
         controller_context_sha256: controllerContextSha256,
+        controller_issuance_path: controllerIssuancePath,
+        controller_issuance_sha256: controllerIssuanceSha256,
         frozen_at: registrationBody.registered_at,
         construction_smoke: constructionSmoke,
         bound_receipts: {
@@ -2256,6 +3133,9 @@ async function main() {
           process_sha256: sha256(await readFile(processReceiptPath)),
           capture_sha256: sha256(await readFile(captureReceiptPath)),
           validation_sha256: sha256(await readFile(validationReceiptPath)),
+          validation_environment_sha256: sha256(
+            await readFile(validationEnvironmentReceiptPath),
+          ),
           core_sha256: sha256(await readFile(core.receiptPath)),
         },
       };
@@ -2300,12 +3180,22 @@ async function main() {
         "--trusted-rustc", rustc.path,
         "--expected-rustc-sha256", rustc.sha256,
         "--candidate-commit", validationReceipt.candidate_commit,
+        "--trusted-validation-environment-receipt", validationEnvironmentReceiptPath,
+        "--expected-validation-environment-sha256", sha256(
+          await readFile(validationEnvironmentReceiptPath),
+        ),
         "--controller-context", controllerContextPath,
         "--expected-controller-context-sha256", controllerContextSha256,
+        ...(controllerIssuancePath ? [
+          "--controller-issuance", controllerIssuancePath,
+          "--expected-controller-issuance-sha256", controllerIssuanceSha256,
+        ] : []),
+        ...formalControllerTrustArguments(common),
         ...(common.formal_result_eligible ? ["--require-formal-context", "true"] : []),
       ];
       if (needsAdapter && common.formal_result_eligible) {
-        adapterPackage = await validateFormalAdapterPackage({
+        await verifyTrustedValidationGuard("before formal adapter validation/build");
+        adapterPackage = await validateBundledFormalAdapterPackage({
           adapterPath: args.get("adapter-file") ?? resolve(
             controllerBenchmarkDir,
             "evaluator/adapters/candidate-adapter.mjs",
@@ -2317,7 +3207,39 @@ async function main() {
           forbiddenRoots: [sourceRepo, runRoot, artifactDir, workspace, validationWorkspace,
             controllerBenchmarkDir],
           context: controllerContext,
+          candidateRoot: validationWorkspace,
+          candidateManifestPath: resolve(captureDir, "raw-manifest.json"),
+          probeSourcePath: args.get("adapter-probe-source"),
+          buildRoot: resolve(artifactDir, "formal-tw09-probe-build"),
+          cargoPath: cargo.path,
+          cargoSha256: cargo.sha256,
+          rustcPath: rustc.path,
+          rustcSha256: rustc.sha256,
+          environment: validationEnvironment,
         });
+        await verifyTrustedValidationGuard("after formal adapter validation/build");
+        if (adapterPackage.probe_build_receipt) {
+          const buildStage = await writeStage("formal_adapter_build", {
+            case_id: common.case_id,
+            capture_receipt_sha256: controllerContext.capture_receipt_sha256,
+            candidate_tree: controllerContext.candidate_tree,
+            raw_tree_digest_sha256: controllerContext.raw_tree_digest_sha256,
+            probe_sha256: adapterPackage.probe.sha256,
+            probe_build_receipt_sha256: adapterPackage.probe_build_receipt.sha256,
+            cargo_home_manifest_sha256:
+              adapterPackage.probe_build_receipt.cargo_home_manifest_sha256,
+            trusted_validation_environment_sha256: sha256(
+              await readFile(validationEnvironmentReceiptPath),
+            ),
+            sealed_controller_builder: true,
+          }, [
+            adapterPackage.config.path,
+            adapterPackage.integrity_receipt.path,
+            adapterPackage.probe_source.path,
+            adapterPackage.candidate_manifest.path,
+          ], [adapterPackage.probe.path, adapterPackage.probe_build_receipt.path]);
+          adapterPackage.adapter_build_stage_receipt = await fileIdentity(buildStage.path);
+        }
         oracleArguments.push(...formalAdapterOracleArguments(adapterPackage));
       } else if (args.has("adapter-file")) {
         const adapter = await requireRegular(args.get("adapter-file"), "trusted adapter");
@@ -2333,27 +3255,48 @@ async function main() {
             sha256(bytes) !== args.get("expected-adapter-config-sha256")) fail("trusted adapter config SHA-256 mismatch");
         oracleArguments.push("--adapter-config", adapterConfig);
       }
-      const oracleResult = command(helperNodeExecutable, oracleArguments, {
-        env: {...environment, TMPDIR: adapterTmp}, allowFailure: true,
-      });
+      const oracleResult = await runBundledHelper("scripts/run-oracles.mjs", oracleArguments.slice(1), {
+        env: {...validationEnvironment, TMPDIR: adapterTmp, TMP: adapterTmp, TEMP: adapterTmp},
+        allowFailure: true,
+      }, {extraProtectedRoots: [captureDir, workspace, validationCargoHome,
+        validationHome, validationCodexHome],
+      extraProtectedPaths: [validationEnvironmentReceiptPath],
+      nestedProcessSupervisor: true});
       oracleReceiptPath = resolve(oracleDir, "oracle-run.json");
       if (!existsSync(oracleReceiptPath)) fail(`production oracle runner failed without receipt: ${oracleResult.stderr}`);
     }
     const oracleReceipt = JSON.parse(await readFile(oracleReceiptPath, "utf8"));
+    if (common.formal_result_eligible &&
+        oracleReceipt.controller_issuance_sha256 !== controllerIssuanceSha256) {
+      fail("production oracle evidence does not bind the controller issuance");
+    }
     await writeStage(
       "production_oracles",
       {
         construction_smoke: constructionSmoke,
         overall_status: oracleReceipt.overall_status ?? "not_executed",
         controller_context_sha256: controllerContextSha256,
+        controller_issuance_sha256: controllerIssuanceSha256,
         adapter_integrity_receipt_sha256: adapterPackage?.integrity_receipt.sha256 ?? null,
+        adapter_probe_build_receipt_sha256:
+          adapterPackage?.probe_build_receipt?.sha256 ?? null,
+        adapter_build_stage_receipt_sha256:
+          adapterPackage?.adapter_build_stage_receipt?.sha256 ?? null,
       },
       [
         core.receiptPath,
         controllerContextPath,
+        validationEnvironmentReceiptPath,
+        ...(controllerIssuancePath ? [controllerIssuancePath] : []),
         ...(adapterPackage ? [adapterPackage.scaffold.path, adapterPackage.scaffold_lock.path,
           adapterPackage.config.path, adapterPackage.probe.path,
-          adapterPackage.integrity_receipt.path] : []),
+          adapterPackage.integrity_receipt.path,
+          ...(adapterPackage.probe_source ? [adapterPackage.probe_source.path] : []),
+          ...(adapterPackage.candidate_manifest ? [adapterPackage.candidate_manifest.path] : []),
+          ...(adapterPackage.probe_build_receipt
+            ? [adapterPackage.probe_build_receipt.path] : []),
+          ...(adapterPackage.adapter_build_stage_receipt
+            ? [adapterPackage.adapter_build_stage_receipt.path] : [])] : []),
       ],
       [oracleReceiptPath],
     );
@@ -2382,8 +3325,7 @@ async function main() {
     const reviewOutputDir = resolve(artifactDir, "review-output");
     const reviewTerminalPath = resolve(artifactDir, "review-terminal.json");
     const frozenAt = registrationBody.registered_at;
-    const reviewResult = command(helperNodeExecutable, [
-      resolve(controllerBenchmarkDir, "scripts/build-review-packet.mjs"),
+    const reviewResult = await runBundledHelper("scripts/build-review-packet.mjs", [
       "--case-id", caseId,
       "--candidate-id", common.candidate_id,
       "--input-root", reviewInputDir,
@@ -2397,40 +3339,62 @@ async function main() {
       "--frozen-at", frozenAt,
       "--controller-context", controllerContextPath,
       "--expected-controller-context-sha256", controllerContextSha256,
+      ...(controllerIssuancePath ? [
+        "--controller-issuance", controllerIssuancePath,
+        "--expected-controller-issuance-sha256", controllerIssuanceSha256,
+      ] : []),
+      ...formalControllerTrustArguments(common),
       ...(common.formal_result_eligible ? ["--require-formal-context", "true"] : []),
-    ], {env: environment, allowFailure: true});
+    ], {env: await freshValidationStageEnvironment("review-build"), allowFailure: true}, {
+      extraProtectedRoots: [captureDir, validationWorkspace, validationCargoHome,
+        validationHome, validationCodexHome],
+    });
     const reviewReceiptPath = resolve(reviewOutputDir, "receipt.json");
     if (reviewResult.status !== 0 || !existsSync(reviewReceiptPath)) {
       fail(`review packet construction failed: ${reviewResult.stderr}`);
     }
     const reviewReceipt = JSON.parse(await readFile(reviewReceiptPath, "utf8"));
-    if (!reviewReceipt.safe_to_release) fail("review packet is not safe to release");
+    if (!reviewReceipt.safe_to_release || (common.formal_result_eligible &&
+        reviewReceipt.controller_issuance_sha256 !== controllerIssuanceSha256)) {
+      fail("review packet is not safe to release or lacks the controller issuance binding");
+    }
     const standaloneScanReceiptPath = resolve(artifactDir, "review-standalone-scan.json");
-    const scanResult = command(helperNodeExecutable, [
-      resolve(controllerBenchmarkDir, "scripts/scan-review-packet.mjs"),
+    const scanResult = await runBundledHelper("scripts/scan-review-packet.mjs", [
       "--packet-dir", resolve(reviewOutputDir, "packet"),
       "--contract", resolve(controllerBenchmarkDir, "evaluator/contracts/review-packet-blinding-v1.json"),
       "--variant", registeredVariantPath,
       "--receipt", standaloneScanReceiptPath,
       "--controller-context", controllerContextPath,
       "--expected-controller-context-sha256", controllerContextSha256,
+      ...(controllerIssuancePath ? [
+        "--controller-issuance", controllerIssuancePath,
+        "--expected-controller-issuance-sha256", controllerIssuanceSha256,
+      ] : []),
+      ...formalControllerTrustArguments(common),
       ...(common.formal_result_eligible ? ["--require-formal-context", "true"] : []),
-    ], {env: environment, allowFailure: true});
+    ], {env: await freshValidationStageEnvironment("review-scan"), allowFailure: true}, {
+      extraProtectedRoots: [captureDir, validationWorkspace, reviewInputDir,
+        validationCargoHome, validationHome, validationCodexHome],
+    });
     if (scanResult.status !== 0 || !existsSync(standaloneScanReceiptPath)) {
       fail(`standalone review packet scan failed: ${scanResult.stderr}`);
     }
     const standaloneScanReceipt = JSON.parse(await readFile(standaloneScanReceiptPath, "utf8"));
     if (!standaloneScanReceipt.safe_to_release ||
         standaloneScanReceipt.packet_tree_sha256 !== reviewReceipt.rendered_packet_sha256 ||
-        standaloneScanReceipt.controller_context_sha256 !== controllerContextSha256) {
+        standaloneScanReceipt.controller_context_sha256 !== controllerContextSha256 ||
+        (common.formal_result_eligible &&
+          standaloneScanReceipt.controller_issuance_sha256 !== controllerIssuanceSha256)) {
       fail("standalone review packet scan does not bind the built packet and controller context");
     }
     await writeStage("review_packet", {
       safe_to_release: true,
       semantic_scoring_performed: false,
       controller_context_sha256: controllerContextSha256,
+      controller_issuance_sha256: controllerIssuanceSha256,
       standalone_scan_receipt_sha256: sha256(await readFile(standaloneScanReceiptPath)),
-    }, [reviewInputManifestPath, controllerContextPath], [
+    }, [reviewInputManifestPath, controllerContextPath,
+      ...(controllerIssuancePath ? [controllerIssuancePath] : [])], [
       reviewReceiptPath, reviewTerminalPath, standaloneScanReceiptPath,
     ]);
 
@@ -2459,7 +3423,11 @@ async function main() {
       review_receipt_sha256: sha256(await readFile(reviewReceiptPath)),
       review_scan_receipt_sha256: sha256(await readFile(standaloneScanReceiptPath)),
       controller_context_sha256: controllerContextSha256,
+      controller_issuance_sha256: controllerIssuanceSha256,
       adapter_integrity_receipt_sha256: adapterPackage?.integrity_receipt.sha256 ?? null,
+      adapter_probe_build_receipt_sha256: adapterPackage?.probe_build_receipt?.sha256 ?? null,
+      adapter_build_stage_receipt_sha256:
+        adapterPackage?.adapter_build_stage_receipt?.sha256 ?? null,
       scores_recorded: false,
       semantic_review_pending: true,
       limitations: [
@@ -2470,14 +3438,19 @@ async function main() {
     };
     const resultPath = resolve(artifactDir, "result-skeleton.json");
     await writeFile(resultPath, canonicalBytes(resultSkeleton), {mode: 0o600, flag: "wx"});
-    await writeStage("result_skeleton", resultSkeleton, [reviewReceiptPath], [resultPath]);
+    await writeStage("result_skeleton", resultSkeleton, [reviewReceiptPath,
+      ...(controllerIssuancePath ? [controllerIssuancePath] : [])], [resultPath]);
     await terminalize(agentDisposition, {
       launch_count: 1,
       process_exit_code: processResult.exit_code,
       process_signal: processResult.signal,
       timed_out: processResult.timed_out,
       controller_context_sha256: controllerContextSha256,
+      controller_issuance_sha256: controllerIssuanceSha256,
       adapter_integrity_receipt_sha256: adapterPackage?.integrity_receipt.sha256 ?? null,
+      adapter_probe_build_receipt_sha256: adapterPackage?.probe_build_receipt?.sha256 ?? null,
+      adapter_build_stage_receipt_sha256:
+        adapterPackage?.adapter_build_stage_receipt?.sha256 ?? null,
       result_skeleton_sha256: sha256(await readFile(resultPath)),
     });
     console.log(JSON.stringify({artifact_dir: artifactDir, disposition: agentDisposition, launch_count: 1}));

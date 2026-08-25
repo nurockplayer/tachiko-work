@@ -4,6 +4,73 @@ function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+function deterministicProcessContainment(containment) {
+  if (!containment) return null;
+  return {
+    mode: containment.mode,
+    active_for_execution: containment.active_for_execution,
+    kernel_policy_active_for_execution: containment.kernel_policy_active_for_execution,
+    setsid_denied: containment.setsid_denied,
+    setpgid_denied: containment.setpgid_denied,
+    launchctl_exec_and_mach_bootstrap_denied:
+      containment.launchctl_exec_and_mach_bootstrap_denied,
+    posix_spawn_group_and_session_escape_contained_by_resource_coalition:
+      containment.posix_spawn_group_and_session_escape_contained_by_resource_coalition,
+    nested_sandbox_avoided: containment.nested_sandbox_avoided,
+    executable: {
+      bytes: containment.executable.bytes,
+      sha256: containment.executable.sha256,
+    },
+    profile: containment.requested_profile ?? containment.profile,
+    dynamic_control_profile_applied: Boolean(containment.control_root?.candidate_access_denied),
+    protected_control_basenames: (containment.control_root?.protected_basenames ?? [])
+      .map((name) => name.endsWith(".plist") ? "<launchd-service>.plist" : name)
+      .sort(),
+    status_authentication: containment.status_authentication ? {
+      algorithm: containment.status_authentication.algorithm,
+      verified: containment.status_authentication.verified,
+    } : null,
+    coalition_control: {
+      binary: {
+        bytes: containment.coalition_control.binary.bytes,
+        sha256: containment.coalition_control.binary.sha256,
+      },
+      source: {
+        bytes: containment.coalition_control.source.bytes,
+        sha256: containment.coalition_control.source.sha256,
+      },
+      lock: {
+        bytes: containment.coalition_control.lock.bytes,
+        sha256: containment.coalition_control.lock.sha256,
+      },
+      build_provenance: containment.coalition_control.build_provenance,
+      api: containment.coalition_control.api,
+      complete_enumeration_required:
+        containment.coalition_control.complete_enumeration_required,
+      all_enumerations_complete:
+        Array.isArray(containment.coalition_control.enumeration_scans) &&
+        containment.coalition_control.enumeration_scans.length > 0 &&
+        containment.coalition_control.enumeration_scans.every((entry) =>
+          entry.pid_list_complete === true &&
+          entry.stable_complete_scans === 2 &&
+          entry.scans.at(-1).count < entry.scans.at(-1).capacity &&
+          entry.scans.at(-1).duplicate_pid_entries === 0 &&
+          entry.scans.at(-2).count < entry.scans.at(-2).capacity &&
+          entry.scans.at(-2).duplicate_pid_entries === 0),
+    },
+    launchd: {
+      executable: {
+        bytes: containment.launchd.executable.bytes,
+        sha256: containment.launchd.executable.sha256,
+      },
+      abandon_process_group: containment.launchd.abandon_process_group,
+      unique_from_controller: containment.launchd.unique_from_controller,
+      final_members_empty: containment.launchd.final_members.length === 0,
+      bootout_status: containment.launchd.bootout.status,
+    },
+  };
+}
+
 export function contentSha256(value) {
   return sha256(`${JSON.stringify(value)}\n`);
 }
@@ -11,6 +78,9 @@ export function contentSha256(value) {
 function deterministicSupervision(supervision) {
   if (!supervision) return null;
   return {
+    mode: supervision.mode ?? "darwin_launchd_resource_coalition_v1",
+    formal_result_eligible: supervision.formal_result_eligible ?? null,
+    inner_process_supervision_required: supervision.inner_process_supervision_required ?? null,
     deadline_seconds: supervision.deadline_seconds,
     exit_code: supervision.exit_code,
     signal: supervision.signal,
@@ -25,6 +95,7 @@ function deterministicSupervision(supervision) {
     signals_sent: supervision.signal_actions.map((entry) => entry.signal),
     descendant_cleanup_required: supervision.descendant_cleanup_required,
     process_group_extinct_before_capture: supervision.process_group_extinct_before_capture,
+    process_containment: deterministicProcessContainment(supervision.process_containment),
   };
 }
 

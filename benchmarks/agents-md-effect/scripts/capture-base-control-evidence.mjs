@@ -10,7 +10,12 @@ import {existsSync} from "node:fs";
 import {lstat, mkdir, readFile, realpath, writeFile} from "node:fs/promises";
 import {basename, dirname, isAbsolute, relative, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
-import {probeNetworkSandbox, runNetworkSandboxed} from "./network-sandbox.mjs";
+import {
+  DENY_NETWORK_PROFILE,
+  probeNetworkSandbox,
+  runNetworkSandboxed,
+  supervisedWriteProtection,
+} from "./network-sandbox.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const benchmarkDir = resolve(scriptDir, "..");
@@ -39,6 +44,7 @@ function parseArgs(argv) {
     "wave-id", "run-id", "attempt-id", "candidate-id", "control-sha256",
     "environment-receipt", "construction-smoke",
     "trusted-shell", "expected-shell-sha256",
+    "supervised-write-protection-json",
   ]);
   const values = new Map();
   for (let index = 0; index < argv.length; index += 2) {
@@ -118,6 +124,58 @@ const controllerBound = args.get("controller-bound") === "true";
 const constructionSmoke = args.get("construction-smoke") === "true";
 if (args.has("controller-bound") && !controllerBound) fail("--controller-bound only accepts true");
 if (args.has("construction-smoke") && !constructionSmoke) fail("--construction-smoke only accepts true");
+
+async function parseWriteProtection(value, required) {
+  if (value === undefined) {
+    if (required) fail("controller-bound base control requires supervised write protection");
+    return supervisedWriteProtection();
+  }
+  let parsed;
+  try { parsed = JSON.parse(value); } catch { fail("supervised write protection is not valid JSON"); }
+  if (JSON.stringify(Object.keys(parsed ?? {}).sort()) !== JSON.stringify([
+    "protected_paths", "protected_roots", "schema",
+  ]) || parsed.schema !== "tachiko-supervised-write-protection-v1" ||
+      !Array.isArray(parsed.protected_roots) || !Array.isArray(parsed.protected_paths)) {
+    fail("supervised write protection has an invalid schema");
+  }
+  const canonicalRoots = [];
+  const canonicalPaths = [];
+  for (const [label, entries] of [
+    ["protected_roots", parsed.protected_roots],
+    ["protected_paths", parsed.protected_paths],
+  ]) {
+    if (entries.some((path) => typeof path !== "string" || !isAbsolute(path) || resolve(path) !== path) ||
+        new Set(entries).size !== entries.length ||
+        JSON.stringify(entries) !== JSON.stringify([...entries].sort())) {
+      fail(`supervised write protection ${label} must be unique sorted absolute paths`);
+    }
+  }
+  for (const path of parsed.protected_roots) {
+    const metadata = await lstat(path);
+    if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+      fail("supervised write protection root must be a non-symlink directory");
+    }
+    canonicalRoots.push(await realpath(path));
+  }
+  for (const path of parsed.protected_paths) {
+    const metadata = await lstat(path);
+    if (!metadata.isFile() || metadata.isSymbolicLink()) {
+      fail("supervised write protection path must be a non-symlink regular file");
+    }
+    canonicalPaths.push(await realpath(path));
+  }
+  const normalized = supervisedWriteProtection({
+    protectedRoots: canonicalRoots,
+    protectedPaths: canonicalPaths,
+  });
+  if (required && !normalized.active) fail("controller-bound write protection must not be empty");
+  return normalized;
+}
+
+const writeProtection = await parseWriteProtection(
+  args.get("supervised-write-protection-json"),
+  controllerBound,
+);
 
 const workspaceInput = resolve(args.get("workspace"));
 if (!isAbsolute(args.get("workspace"))) fail("workspace must be absolute");
@@ -256,7 +314,10 @@ if (commands.length === 0) fail(`${caseId} has an empty base-control union`);
 
 const networkEnforcement = constructionSmoke
   ? {mode: "construction_smoke_not_executed", probe_denied: null}
-  : await probeNetworkSandbox({nodeExecutable: process.execPath});
+  : await probeNetworkSandbox({
+    nodeExecutable: process.execPath,
+    profile: `${DENY_NETWORK_PROFILE}${writeProtection.profile_suffix}`,
+  });
 
 await mkdir(logDir, {mode: 0o700});
 const commandReceipts = [];
@@ -285,6 +346,7 @@ for (let index = 0; index < commands.length; index += 1) {
     environment: process.env,
     timeoutMilliseconds: 1_800_000,
     terminationGraceMilliseconds: 10_000,
+    profile: `${DENY_NETWORK_PROFILE}${writeProtection.profile_suffix}`,
   });
   const stdout = result.stdout;
   const stderr = result.stderr;
@@ -312,6 +374,7 @@ for (let index = 0; index < commands.length; index += 1) {
     signal_actions: result.signal_actions,
     descendant_cleanup_required: result.descendant_cleanup_required,
     process_group_extinct_before_integrity_check: result.process_group_extinct_before_capture,
+    process_containment: result.process_containment,
     network_sandbox: result.network_sandbox,
     stdout: await writeContentAddressed(logDir, "stdout", stdout),
     stderr: await writeContentAddressed(logDir, "stderr", stderr),
@@ -346,6 +409,13 @@ const receipt = {
   candidate_instruction_bytes_exposed: false,
   network_policy: "kernel-enforced darwin sandbox deny-network plus Cargo offline",
   network_enforcement: networkEnforcement,
+  supervised_write_protection: {
+    schema: writeProtection.schema,
+    active: writeProtection.active,
+    protected_roots: writeProtection.protected_roots,
+    protected_paths: writeProtection.protected_paths,
+    profile_suffix_sha256: writeProtection.profile_suffix_sha256,
+  },
   cargo_net_offline: process.env.CARGO_NET_OFFLINE === "true",
   environment: Object.fromEntries([
     "HOME", "CODEX_HOME", "TMPDIR", "PATH", "LANG", "LC_ALL", "TZ", "CARGO_INCREMENTAL",

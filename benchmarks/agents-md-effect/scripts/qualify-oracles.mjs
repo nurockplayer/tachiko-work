@@ -11,6 +11,7 @@ import {
   contentSha256,
   deterministicPayload,
 } from "./oracle-qualification-normalization.mjs";
+import {DENY_NETWORK_PROFILE} from "./network-sandbox.mjs";
 import {runProcessGroupOnce} from "./process-group-supervisor.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -19,7 +20,7 @@ const runOracles = resolve(scriptDir, "run-oracles.mjs");
 const runTw05Offline = resolve(scriptDir, "run-tw05-offline.mjs");
 const materializeOracles = resolve(scriptDir, "materialize-oracles.mjs");
 const sandboxExecutable = "/usr/bin/sandbox-exec";
-const sandboxProfile = "(version 1)\n(allow default)\n(deny network*)\n";
+const sandboxProfile = DENY_NETWORK_PROFILE;
 const commandTimeoutMs = 1_800_000;
 const terminationGraceMs = 10_000;
 // The outer Node runner may execute up to 17 oracle commands and each exact
@@ -86,6 +87,7 @@ function supervisedExecutionReceipt(execution, timeout) {
     signal_actions: execution.signal_actions,
     descendant_cleanup_required: execution.descendant_cleanup_required,
     process_group_extinct_before_capture: execution.process_group_extinct_before_capture,
+    process_containment: execution.process_containment,
   };
 }
 
@@ -99,6 +101,9 @@ async function executeSupervised(executable, args, options = {}) {
     input: options.input === undefined ? Buffer.alloc(0) : Buffer.from(options.input),
     timeoutMilliseconds: timeout,
     terminationGraceMilliseconds: terminationGraceMs,
+    ...(options.kernelContainmentProfile
+      ? {kernelContainmentProfile: options.kernelContainmentProfile}
+      : {}),
   });
   let error;
   if (execution.spawn_error) error = Object.assign(new Error(execution.spawn_error), {code: "ESPAWN"});
@@ -110,6 +115,44 @@ async function executeSupervised(executable, args, options = {}) {
     stdout: execution.stdout.toString("utf8"),
     stderr: execution.stderr.toString("utf8"),
     process_supervision: supervisedExecutionReceipt(execution, timeout),
+  };
+}
+
+function executeConstructionOrchestrator(executable, args, options = {}) {
+  const timeout = options.timeout ?? commandTimeoutMs;
+  const startedAt = new Date().toISOString();
+  const started = process.hrtime.bigint();
+  const result = execute(executable, args, {...options, timeout});
+  const timedOut = result.error?.code === "ETIMEDOUT";
+  return {
+    status: result.status,
+    signal: result.signal,
+    error: result.error,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+    process_supervision: {
+      mode: "construction_only_bounded_trusted_orchestrator",
+      formal_result_eligible: false,
+      inner_process_supervision_required: true,
+      started_at: startedAt,
+      completed_at: new Date().toISOString(),
+      duration_seconds: Number(process.hrtime.bigint() - started) / 1_000_000_000,
+      deadline_seconds: timeout / 1000,
+      exit_code: result.status,
+      signal: result.signal,
+      spawn_error: result.error?.message ?? null,
+      timed_out: timedOut,
+      process_group_created: false,
+      termination_grace_seconds: 0,
+      termination_grace_intervals: 0,
+      termination_deadline_reused_for_cleanup: false,
+      termination_signal_sent: false,
+      kill_signal_sent: false,
+      signal_actions: [],
+      descendant_cleanup_required: null,
+      process_group_extinct_before_capture: null,
+      process_containment: null,
+    },
   };
 }
 
@@ -258,9 +301,14 @@ async function materialize(caseId, sourceRepo, workspace, trustedDir) {
 async function runCore(caseManifest, workspace) {
   const commands = [];
   for (const command of caseManifest.core_commands) {
-    const result = await executeSupervised(sandboxExecutable, [
-      "-p", sandboxProfile, trustedShell.path, "--noprofile", "--norc", "-c", command.command_template,
-    ], {cwd: workspace, env: offlineEnvironment(), timeout: commandTimeoutMs});
+    const result = await executeSupervised(trustedShell.path, [
+      "--noprofile", "--norc", "-c", command.command_template,
+    ], {
+      cwd: workspace,
+      env: offlineEnvironment(),
+      timeout: commandTimeoutMs,
+      kernelContainmentProfile: sandboxProfile,
+    });
     commands.push({
       id: command.id,
       command_template: command.command_template,
@@ -303,7 +351,7 @@ async function runOracleCase({caseId, workspace, trustedDir, candidateCommit, ad
     "--expected-rustc-sha256", trustedRustc.sha256,
   ];
   if (adapterFile) command.push("--adapter-file", adapterFile);
-  const result = await executeSupervised(process.execPath, command, {
+  const result = executeConstructionOrchestrator(process.execPath, command, {
     env: offlineEnvironment(),
     timeout: oracleRunnerOuterTimeoutMs,
   });
@@ -423,7 +471,7 @@ version = "0.0.0"
     }],
   };
   const controls = await writeFixtureManifest(familyRoot, manifest, lock);
-  const executeFixture = (candidate, trusted) => executeSupervised(process.execPath, [
+  const executeFixture = (candidate, trusted) => executeConstructionOrchestrator(process.execPath, [
     runOracles,
     "--case", "QF",
     "--candidate-root", candidate,
@@ -495,7 +543,7 @@ async function qualifyPacketGate(root) {
   const lock = {protocol_id: manifest.protocol_id, cases: [{id: "QF", assertions: []}]};
   const controls = await writeFixtureManifest(familyRoot, manifest, lock);
   const trusted = resolve(familyRoot, "receipt");
-  const result = await executeSupervised(process.execPath, [
+    const result = executeConstructionOrchestrator(process.execPath, [
     runOracles,
     "--case", "QF",
     "--candidate-root", candidate,
@@ -511,7 +559,10 @@ async function qualifyPacketGate(root) {
     "--expected-cargo-sha256", trustedCargo.sha256,
     "--trusted-rustc", trustedRustc.path,
     "--expected-rustc-sha256", trustedRustc.sha256,
-  ], {env: offlineEnvironment(), timeout: oracleRunnerOuterTimeoutMs});
+  ], {
+    env: offlineEnvironment(),
+    timeout: oracleRunnerOuterTimeoutMs,
+  });
   const receipt = JSON.parse(await readFile(resolve(trusted, "oracle-run.json"), "utf8"));
   if (result.status !== 0 || receipt.overall_status !== "packet_gate_ready") {
     fail("subjective packet-gate qualification failed");
@@ -593,6 +644,18 @@ async function materializeCaseWorkspaces(caseEntry, root, sourceRepo) {
   };
 }
 
+async function removeCandidateBuildArtifacts(workspace) {
+  // Qualification receipts are fully captured before this boundary. Keeping
+  // target trees from an earlier candidate/stage only increases peak disk use
+  // and cannot be an input to the next independently supervised execution.
+  for (const path of [
+    resolve(workspace, "target"),
+    resolve(workspace, "spikes/issue-26-runtime/target"),
+  ]) {
+    await rm(path, {recursive: true, force: true});
+  }
+}
+
 async function qualifyCase({caseEntry, caseManifest, root, sourceRepo}) {
   const workspaces = await materializeCaseWorkspaces(caseEntry, root, sourceRepo);
   const adapterFiles = {
@@ -600,14 +663,27 @@ async function qualifyCase({caseEntry, caseManifest, root, sourceRepo}) {
     "TW-09": resolve(benchmarkDir, "evaluator/adapters/TW-09/historical-target-adapter.mjs"),
   };
   const targetCore = await runCore(caseManifest, workspaces.targetWorkspace);
+  await removeCandidateBuildArtifacts(workspaces.targetWorkspace);
   const negativeCore = await runCore(caseManifest, workspaces.negativeWorkspace);
+  await removeCandidateBuildArtifacts(workspaces.negativeWorkspace);
   let offlineHistoricalTarget;
   let offlineBehaviorMissingNegative;
+  let targetOracle;
   if (caseEntry.id === "TW-05") {
     offlineHistoricalTarget = await runTw05OfflineQualification(
       workspaces.targetWorkspace,
       resolve(workspaces.caseRoot, "target-offline.json"),
     );
+    const targetOracleDir = resolve(workspaces.caseRoot, "target-oracle");
+    targetOracle = await runOracleCase({
+      caseId: caseEntry.id,
+      workspace: workspaces.targetWorkspace,
+      trustedDir: targetOracleDir,
+      candidateCommit: workspaces.materialization.target.commit,
+      adapterFile: adapterFiles[caseEntry.id],
+    });
+    await rm(targetOracleDir, {recursive: true, force: true});
+    await removeCandidateBuildArtifacts(workspaces.targetWorkspace);
     offlineBehaviorMissingNegative = await runTw05OfflineQualification(
       workspaces.negativeWorkspace,
       resolve(workspaces.caseRoot, "negative-offline.json"),
@@ -616,20 +692,27 @@ async function qualifyCase({caseEntry, caseManifest, root, sourceRepo}) {
       fail("TW-05 offline target/negative qualification did not discriminate real execution");
     }
   }
-  const targetOracle = await runOracleCase({
-    caseId: caseEntry.id,
-    workspace: workspaces.targetWorkspace,
-    trustedDir: resolve(workspaces.caseRoot, "target-oracle"),
-    candidateCommit: workspaces.materialization.target.commit,
-    adapterFile: adapterFiles[caseEntry.id],
-  });
+  if (!targetOracle) {
+    const targetOracleDir = resolve(workspaces.caseRoot, "target-oracle");
+    targetOracle = await runOracleCase({
+      caseId: caseEntry.id,
+      workspace: workspaces.targetWorkspace,
+      trustedDir: targetOracleDir,
+      candidateCommit: workspaces.materialization.target.commit,
+      adapterFile: adapterFiles[caseEntry.id],
+    });
+    await rm(targetOracleDir, {recursive: true, force: true});
+  }
+  const negativeOracleDir = resolve(workspaces.caseRoot, "negative-oracle");
   const negativeOracle = await runOracleCase({
     caseId: caseEntry.id,
     workspace: workspaces.negativeWorkspace,
-    trustedDir: resolve(workspaces.caseRoot, "negative-oracle"),
+    trustedDir: negativeOracleDir,
     candidateCommit: caseEntry.historical_base_commit,
     adapterFile: adapterFiles[caseEntry.id],
   });
+  await rm(negativeOracleDir, {recursive: true, force: true});
+  await removeCandidateBuildArtifacts(workspaces.negativeWorkspace);
   const subjectiveOnly = caseManifest.assertions.length === 0 && caseManifest.subjective_groups.length > 0;
   const entry = {
     case_id: caseEntry.id,
@@ -695,11 +778,14 @@ async function qualifyTw05Reference(root) {
 }
 
 async function runTw05OfflineQualification(workspace, output) {
-  const result = await executeSupervised(process.execPath, [
+  const result = executeConstructionOrchestrator(process.execPath, [
     runTw05Offline,
     "--candidate-root", workspace,
     "--output", output,
-  ], {env: offlineEnvironment(), timeout: tw05OfflineOuterTimeoutMs});
+  ], {
+    env: offlineEnvironment(),
+    timeout: tw05OfflineOuterTimeoutMs,
+  });
   if (!existsSync(output)) {
     fail(
       `TW-05 offline qualification produced no receipt: exit=${result.status}, ` +
@@ -945,9 +1031,13 @@ try {
   const sandboxBytes = await readFile(sandboxExecutable).catch(() => {
     fail("/usr/bin/sandbox-exec is required for construction qualification");
   });
-  const probeResult = await executeSupervised(sandboxExecutable, [
-    "-p", sandboxProfile, process.execPath, resolve(scriptDir, "probe-network-denial.mjs"),
-  ], {env: offlineEnvironment(), timeout: 10_000});
+  const probeResult = await executeSupervised(process.execPath, [
+    resolve(scriptDir, "probe-network-denial.mjs"),
+  ], {
+    env: offlineEnvironment(),
+    timeout: 10_000,
+    kernelContainmentProfile: sandboxProfile,
+  });
   if (probeResult.status !== 0 || !/^network-denied:(?:EPERM|EACCES)\s*$/.test(probeResult.stdout)) {
     fail(`qualification network-denial probe failed: ${probeResult.stderr || probeResult.stdout}`);
   }
@@ -1073,6 +1163,10 @@ try {
     "scripts/controller-context.mjs",
     "scripts/network-sandbox.mjs",
     "scripts/oracle-qualification-normalization.mjs",
+    "scripts/launchd-contained-runner.mjs",
+    "scripts/process-coalition-control",
+    "scripts/process-coalition-control.c",
+    "scripts/process-coalition-control-lock.json",
     "scripts/process-group-supervisor.mjs",
     "scripts/qualify-oracles.mjs",
     "scripts/run-oracles.mjs",
@@ -1118,6 +1212,7 @@ try {
       "TW-01, TW-02, and TW-06 deterministic execution gates are qualified; their subjective semantic discrimination is deferred to deterministic blinded packet fixtures and is not claimed as machine-qualified here.",
       "Candidate implementations whose public names differ from the frozen adapter contract require a content-addressed trusted adapter configured during the same attempt; the attempt pauses without resampling.",
       "Provider-internal immutable deployment identity and additional independent reviewer panels remain outside this construction qualification.",
+      "Qualification-only trusted Node orchestration uses a padded bounded top-level deadline because macOS does not permit a launchd job to bootstrap the per-command launchd coalition; every candidate core/oracle command remains independently kernel-sandboxed and coalition-supervised, and this construction wrapper is not formal evidence.",
     ],
   };
   const payload = deterministicPayload(runReceipt);

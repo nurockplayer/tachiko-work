@@ -163,7 +163,13 @@ function evidenceBindings() {
     run_id: evidenceContext.context.run_id,
     attempt_id: evidenceContext.context.attempt_id,
     controller_context_sha256: evidenceContext.context_sha256,
-  } : {controller_context_sha256: null};
+    controller_issuance_sha256: evidenceContext.issuance_sha256,
+    formal_authorization_sha256: evidenceContext.authorization_sha256,
+    attempt_registry_entry_sha256: evidenceContext.registry_sha256,
+  } : {
+    controller_context_sha256: null, controller_issuance_sha256: null,
+    formal_authorization_sha256: null, attempt_registry_entry_sha256: null,
+  };
 }
 
 async function run() {
@@ -171,6 +177,12 @@ const {values, variants: variantArguments} = parseArgs(process.argv.slice(2));
 evidenceContext = await loadControllerContext({
   path: values.get("controller-context"),
   expectedSha256: values.get("expected-controller-context-sha256"),
+  issuancePath: values.get("controller-issuance"),
+  expectedIssuanceSha256: values.get("expected-controller-issuance-sha256"),
+  authorizationPath: values.get("formal-authorization"),
+  expectedAuthorizationSha256: values.get("expected-formal-authorization-sha256"),
+  registryPath: values.get("attempt-registry-entry"),
+  expectedRegistrySha256: values.get("expected-attempt-registry-entry-sha256"),
   required: values.get("require-formal-context") === "true",
 });
 if (values.has("require-formal-context") && values.get("require-formal-context") !== "true") {

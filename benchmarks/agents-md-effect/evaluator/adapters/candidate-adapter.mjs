@@ -3,10 +3,18 @@
 import {createHash} from "node:crypto";
 import {lstat, readFile, realpath} from "node:fs/promises";
 import {spawnSync} from "node:child_process";
-import {isAbsolute, relative, resolve} from "node:path";
+import {dirname, isAbsolute, parse, relative, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 
-const DENY_NETWORK_PROFILE = "(version 1)\n(allow default)\n(deny network*)\n";
+const DENY_NETWORK_PROFILE =
+  "(version 1)\n(allow default)\n(deny network*)\n" +
+  "(deny syscall-unix (syscall-number SYS_setsid SYS_setpgid))\n" +
+  "(deny process-exec (literal \"/bin/launchctl\"))\n" +
+  "(deny mach-bootstrap)\n";
+const IMMUTABLE_SYSTEM_READ_ROOTS = [
+  "/System", "/usr/bin", "/usr/lib", "/usr/libexec", "/usr/share", "/bin", "/sbin",
+];
+const IMMUTABLE_SYSTEM_READ_PATHS = ["/dev/null", "/private/etc/ssl/openssl.cnf"];
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
@@ -43,14 +51,49 @@ function denyReadProfile(
   const writeProtected = [...new Set(denyWritePaths.map(quote))].sort();
   const writableRoots = [...new Set(allowWriteRoots.map(quote))].sort();
   const writable = [...new Set(allowWritePaths.map(quote))].sort();
-  return `${DENY_NETWORK_PROFILE}${denied.map((root) =>
+  const readClosure = [...new Set([
+    ...IMMUTABLE_SYSTEM_READ_ROOTS.map((path) => resolve(path)),
+    ...allowReadRoots.map((path) => resolve(path)),
+  ])].sort();
+  const exactReadClosure = [...new Set([
+    ...IMMUTABLE_SYSTEM_READ_PATHS.map((path) => resolve(path)),
+    ...allowReadPaths.map((path) => resolve(path)),
+  ])].sort();
+  const metadataClosure = new Set([
+    "/", ...readClosure, ...exactReadClosure,
+    ...allowWriteRoots.map((path) => resolve(path)),
+    ...allowWritePaths.map((path) => resolve(path)),
+  ]);
+  for (const path of [...metadataClosure]) {
+    let parent = dirname(path);
+    while (parent !== parse(parent).root) {
+      metadataClosure.add(parent);
+      parent = dirname(parent);
+    }
+    metadataClosure.add(parent);
+  }
+  const notMatched = (paths, operation) =>
+    `(deny ${operation} (require-all ${paths.map(({kind, path}) =>
+      `(require-not (${kind} "${quote(path)}"))`).join(" ")}))\n`;
+  const closedReads = notMatched([
+    ...[...metadataClosure].sort().map((path) => ({kind: "literal", path})),
+    ...readClosure.map((path) => ({kind: "subpath", path})),
+    ...readClosure.map((path) => ({kind: "literal", path})),
+    ...exactReadClosure.map((path) => ({kind: "literal", path})),
+  ], "file-read-data") + notMatched([
+    ...[...metadataClosure].sort().map((path) => ({kind: "literal", path})),
+    ...readClosure.map((path) => ({kind: "subpath", path})),
+    ...readClosure.map((path) => ({kind: "literal", path})),
+  ], "file-read-metadata");
+  return `${DENY_NETWORK_PROFILE}${closedReads}(deny file-write*)\n${denied.map((root) =>
     `(deny file-read* (subpath "${root}"))\n`).join("")}${writeDenied.map((root) =>
     `(deny file-write* (subpath "${root}"))\n`).join("")}${writeProtected.map((path) =>
     `(deny file-write* (literal "${path}"))\n`).join("")}${[...new Set([...denied, ...writeDenied])].map((root) =>
     `(allow file-read-metadata (subpath "${root}"))\n`).join("")}${readable.map((root) =>
-    `(allow file-read* (subpath "${root}"))\n`).join("")}${allowed.map((path) =>
-    `(allow file-read* (literal "${path}"))\n`).join("")}${writableRoots.map((path) =>
-    `(allow file-write* (subpath "${path}"))\n`).join("")}${writable.map((path) =>
+    `(allow file-read* (literal "${root}"))\n(allow file-read* (subpath "${root}"))\n`).join("")}${allowed.map((path) =>
+    `(allow file-read* (literal "${path}"))\n`).join("")}${[...metadataClosure].sort().map((path) =>
+    `(allow file-read-metadata (literal "${quote(path)}"))\n`).join("")}${writableRoots.map((path) =>
+    `(allow file-write* (literal "${path}"))\n(allow file-write* (subpath "${path}"))\n`).join("")}${writable.map((path) =>
     `(allow file-write* (literal "${path}"))\n`).join("")}`;
 }
 
@@ -91,10 +134,13 @@ if (!configBytes.toString("utf8").endsWith("\n")) throw new Error("adapter confi
 const config = JSON.parse(configBytes.toString("utf8"));
 exactKeys(config, ["schema", "case_id", "probe"], "config");
 exactKeys(config.probe, ["executable", "sha256", "arguments"], "probe");
+const controllerBuiltProbe = values.get("--probe-file");
 if (
   config.schema !== "tachiko-candidate-adapter-v1" ||
   !["TW-05", "TW-09"].includes(config.case_id) ||
-  !isAbsolute(config.probe.executable) ||
+  (controllerBuiltProbe
+    ? config.case_id !== "TW-09" || config.probe.executable !== "controller-built:TW-09"
+    : !isAbsolute(config.probe.executable)) ||
   !/^[0-9a-f]{64}$/.test(config.probe.sha256) ||
   !Array.isArray(config.probe.arguments) ||
   config.probe.arguments.length === 0 ||
@@ -102,11 +148,13 @@ if (
 ) {
   throw new Error("adapter config contract mismatch");
 }
-const probeMetadata = await lstat(config.probe.executable);
+const requestedProbe = controllerBuiltProbe ?? config.probe.executable;
+if (!isAbsolute(requestedProbe)) throw new Error("adapter probe path must be absolute");
+const probeMetadata = await lstat(requestedProbe);
 if (probeMetadata.isSymbolicLink() || !probeMetadata.isFile()) {
   throw new Error("adapter probe must be a non-symlink regular file");
 }
-const probePath = await realpath(config.probe.executable);
+const probePath = await realpath(requestedProbe);
 if (inside(probePath, candidateRoot)) throw new Error("adapter probe is candidate-controlled");
 const probeBytes = await readFile(probePath);
 if (sha256(probeBytes) !== config.probe.sha256) throw new Error("adapter probe SHA-256 mismatch");
@@ -141,7 +189,7 @@ for (const input of allowWriteRootArguments) {
 }
 const profile = denyReadProfile(
   denyReadRoots,
-  [adapterPath],
+  [adapterPath, configPath, probePath, process.execPath],
   [candidateRoot],
   [candidateRoot, ...denyWriteRoots],
   denyWritePaths,
@@ -188,7 +236,9 @@ const result = spawnSync(
     env: {...process.env, CARGO_NET_OFFLINE: "true"},
   },
 );
-if (result.status !== 0) throw new Error(`candidate-specific probe failed: ${result.stderr}`);
+if (result.status !== 0) {
+  throw new Error(`candidate-specific probe failed (${result.status ?? result.signal}): ${result.stderr}`);
+}
 const payload = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1));
 const contractSha256 = values.has("--contract-sha256")
   ? values.get("--contract-sha256")

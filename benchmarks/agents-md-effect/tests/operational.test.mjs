@@ -3,6 +3,7 @@ import test from "node:test";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import {
+  appendFile,
   chmod,
   copyFile,
   cp,
@@ -20,7 +21,8 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import { basename, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -50,6 +52,10 @@ const processGroupSupervisorScript = resolve(
   benchmarkDir,
   "scripts/process-group-supervisor.mjs",
 );
+const processCoalitionControl = resolve(
+  benchmarkDir,
+  "scripts/process-coalition-control",
+);
 const repositoryRoot = resolve(benchmarkDir, "../..");
 const trustedCargoPath = spawnSync("rustup", ["which", "cargo"], {encoding: "utf8"}).stdout.trim();
 const trustedCargoSha256 = sha256(readFileSync(trustedCargoPath));
@@ -68,6 +74,68 @@ const CONTROL_ARTIFACTS = [
 
 async function readJson(path) {
   return JSON.parse(await readFile(path, "utf8"));
+}
+
+async function fixtureContentTreeIdentity(root) {
+  const canonicalRoot = await realpath(root);
+  const entries = [];
+  let fileBytes = 0;
+  async function walk(directory, prefix = "") {
+    const names = await readdir(directory);
+    names.sort();
+    for (const name of names) {
+      const path = resolve(directory, name);
+      const relativePath = prefix ? `${prefix}/${name}` : name;
+      const metadata = await lstat(path);
+      if (metadata.isDirectory()) {
+        entries.push({path: relativePath, type: "directory"});
+        await walk(path, relativePath);
+      } else if (metadata.isFile()) {
+        const bytes = await readFile(path);
+        entries.push({path: relativePath, type: "file", bytes: bytes.length,
+          sha256: sha256(bytes)});
+        fileBytes += bytes.length;
+      } else if (metadata.isSymbolicLink()) {
+        entries.push({path: relativePath, type: "symlink", target: await readlink(path)});
+      } else throw new Error(`unsupported trusted fixture node: ${relativePath}`);
+    }
+  }
+  await walk(canonicalRoot);
+  return {
+    path: canonicalRoot,
+    digest_kind: "paths-types-content-v1",
+    entries: entries.length,
+    file_bytes: fileBytes,
+    manifest_sha256: sha256(`${JSON.stringify(entries)}\n`),
+  };
+}
+
+async function makeFixtureTreeReadOnly(root) {
+  async function walk(path) {
+    const metadata = await lstat(path);
+    if (metadata.isDirectory()) {
+      for (const name of await readdir(path)) await walk(resolve(path, name));
+      await chmod(path, 0o500);
+    } else if (metadata.isFile()) {
+      await chmod(path, (metadata.mode & 0o111) === 0 ? 0o400 : 0o500);
+    } else if (!metadata.isSymbolicLink()) {
+      throw new Error(`unsupported fixture tree node: ${path}`);
+    }
+  }
+  await walk(root);
+}
+
+async function makeFixtureTreeWritable(root) {
+  async function walk(path) {
+    const metadata = await lstat(path);
+    if (metadata.isDirectory()) {
+      await chmod(path, 0o700);
+      for (const name of await readdir(path)) await walk(resolve(path, name));
+    } else if (metadata.isFile()) {
+      await chmod(path, metadata.mode | 0o600);
+    }
+  }
+  await walk(root);
 }
 
 function sha256(bytes) {
@@ -142,7 +210,7 @@ test("shared validator supervisor extinguishes a surviving descendant on one dea
       args: [leader, descendantPidPath],
       cwd: fixtureRoot,
       environment: process.env,
-      timeoutMilliseconds: 100,
+      timeoutMilliseconds: 1000,
       terminationGraceMilliseconds: 250,
     });
     const descendantPid = Number(await readFile(descendantPidPath, "utf8"));
@@ -156,6 +224,310 @@ test("shared validator supervisor extinguishes a surviving descendant on one dea
     assert.equal(result.descendant_cleanup_required, true);
     assert.equal(result.process_group_extinct_before_capture, true);
     assert.throws(() => process.kill(descendantPid, 0), /ESRCH/);
+  } finally {
+    await rm(fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("shared supervisor kernel containment denies setsid escape and extinguishes the child", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-validator-setsid-supervisor-"));
+  const leader = resolve(fixtureRoot, "leader.mjs");
+  const descendantPidPath = resolve(fixtureRoot, "descendant.pid");
+  const setsidResultPath = resolve(fixtureRoot, "setsid-result.txt");
+  let descendantPid = null;
+  try {
+    const childProgram = [
+      "use POSIX ();",
+      `open(my $pid, \">\", ${JSON.stringify(descendantPidPath)}) or die $!;`,
+      "print $pid $$; close($pid);",
+      "my $sid = POSIX::setsid();",
+      'my $errno = 0 + $!; my $error = "$!";',
+      `open(my $result, \">\", ${JSON.stringify(setsidResultPath)}) or die $!;`,
+      'print $result "$sid:$errno:$error\\n"; close($result);',
+      "$SIG{TERM} = sub {};",
+      "sleep 30;",
+    ].join(" ");
+    await writeFile(leader, `
+      import {spawn} from "node:child_process";
+      const child = spawn("/usr/bin/perl", ["-MPOSIX", "-e", ${JSON.stringify(childProgram)}], {
+        detached: false,
+        stdio: "ignore",
+      });
+      child.once("spawn", () => setTimeout(() => process.exit(0), 100));
+      child.once("error", (error) => { throw error; });
+    `);
+    const {runProcessGroupOnce} = await import(pathToFileURL(processGroupSupervisorScript));
+    const result = await runProcessGroupOnce({
+      executable: process.execPath,
+      args: [leader],
+      cwd: fixtureRoot,
+      environment: process.env,
+      timeoutMilliseconds: 5_000,
+      terminationGraceMilliseconds: 250,
+    });
+    descendantPid = Number(await readFile(descendantPidPath, "utf8"));
+    assert.match(await readFile(setsidResultPath, "utf8"), /^-1:1:Operation not permitted\n$/);
+    assert.equal(result.timed_out, false);
+    assert.equal(result.descendant_cleanup_required, true);
+    assert.equal(result.process_group_extinct_before_capture, true);
+    assert.equal(result.process_containment.mode, "darwin_launchd_resource_coalition_v1");
+    assert.equal(result.process_containment.active_for_execution, true);
+    assert.equal(result.process_containment.kernel_policy_active_for_execution, true);
+    assert.equal(result.process_containment.setsid_denied, true);
+    assert.equal(result.process_containment.setpgid_denied, true);
+    assert.match(result.process_containment.profile.sha256, /^[0-9a-f]{64}$/);
+    assert.equal(result.process_containment.launchd.abandon_process_group, false);
+    assert.equal(result.process_containment.launchd.unique_from_controller, true);
+    assert.deepEqual(result.process_containment.launchd.final_members, []);
+    assert.equal(
+      result.process_containment.posix_spawn_group_and_session_escape_contained_by_resource_coalition,
+      true,
+    );
+    assert.throws(() => process.kill(descendantPid, 0), /ESRCH/);
+  } finally {
+    if (Number.isSafeInteger(descendantPid) && descendantPid > 0) {
+      try { process.kill(descendantPid, "SIGKILL"); } catch {}
+    }
+    await rm(fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("resource-coalition containment extinguishes POSIX spawn PGID and session escapes", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-posix-spawn-coalition-"));
+  const source = resolve(fixtureRoot, "escape.c");
+  const executable = resolve(fixtureRoot, "escape");
+  const livePids = new Set();
+  try {
+    await writeFile(source, `
+      #include <spawn.h>
+      #include <stdio.h>
+      #include <stdlib.h>
+      #include <string.h>
+      #include <sys/types.h>
+      #include <unistd.h>
+      extern char **environ;
+      int main(int argc, char **argv) {
+        if (argc != 3) return 64;
+        posix_spawnattr_t attr;
+        if (posix_spawnattr_init(&attr) != 0) return 65;
+        short flags = strcmp(argv[1], "setsid") == 0 ? POSIX_SPAWN_SETSID : POSIX_SPAWN_SETPGROUP;
+        if (flags == POSIX_SPAWN_SETPGROUP && posix_spawnattr_setpgroup(&attr, 0) != 0) return 66;
+        if (posix_spawnattr_setflags(&attr, flags) != 0) return 67;
+        char *child_argv[] = {"perl", "-e", "$SIG{TERM}=sub{}; sleep 30", NULL};
+        pid_t pid = 0;
+        int error = posix_spawn(&pid, "/usr/bin/perl", NULL, &attr, child_argv, environ);
+        if (error != 0) return error;
+        FILE *output = fopen(argv[2], "w");
+        if (output == NULL) return 68;
+        fprintf(output, "%d\\n", pid);
+        fclose(output);
+        return 0;
+      }
+    `);
+    const compiled = spawnSync("/usr/bin/clang", [
+      "-Wall", "-Wextra", "-Werror", "-O2", "-o", executable, source,
+    ], {encoding: "utf8"});
+    assert.equal(compiled.status, 0, compiled.stderr);
+    const {runProcessGroupOnce} = await import(pathToFileURL(processGroupSupervisorScript));
+    for (const mode of ["setpgroup", "setsid"]) {
+      const pidPath = resolve(fixtureRoot, `${mode}.pid`);
+      const result = await runProcessGroupOnce({
+        executable,
+        args: [mode, pidPath],
+        cwd: fixtureRoot,
+        environment: process.env,
+        timeoutMilliseconds: 5_000,
+        terminationGraceMilliseconds: 250,
+      });
+      const pid = Number(await readFile(pidPath, "utf8"));
+      livePids.add(pid);
+      assert.equal(result.exit_code, 0, result.stderr.toString("utf8"));
+      assert.equal(result.timed_out, false);
+      assert.equal(result.descendant_cleanup_required, true);
+      assert.equal(result.process_group_extinct_before_capture, true);
+      assert.equal(result.process_containment.launchd.unique_from_controller, true);
+      assert.equal(
+        result.process_containment.posix_spawn_group_and_session_escape_contained_by_resource_coalition,
+        true,
+      );
+      assert.throws(() => process.kill(pid, 0), /ESRCH/);
+      livePids.delete(pid);
+    }
+  } finally {
+    for (const pid of livePids) {
+      try { process.kill(pid, "SIGKILL"); } catch {}
+    }
+    await rm(fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("contained command cannot ask launchd to bootstrap a second resource coalition", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-launchctl-escape-"));
+  try {
+    const {runProcessGroupOnce} = await import(pathToFileURL(processGroupSupervisorScript));
+    const result = await runProcessGroupOnce({
+      executable: "/bin/launchctl",
+      args: ["help"],
+      cwd: fixtureRoot,
+      environment: process.env,
+      timeoutMilliseconds: 5_000,
+      terminationGraceMilliseconds: 250,
+    });
+    assert.notEqual(result.exit_code, 0);
+    assert.equal(result.timed_out, false);
+    assert.equal(result.process_group_extinct_before_capture, true);
+    assert.equal(result.process_containment.launchctl_exec_and_mach_bootstrap_denied, true);
+    assert.equal(result.process_containment.launchd.unique_from_controller, true);
+    assert.deepEqual(result.process_containment.launchd.final_members, []);
+  } finally {
+    await rm(fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("contained command cannot forge launchd runner control or terminal files", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-coalition-control-forgery-"));
+  const attacker = resolve(fixtureRoot, "attacker.mjs");
+  const observation = resolve(fixtureRoot, "attack-observation.json");
+  try {
+    await writeFile(attacker, `
+      import {readdir, readFile, writeFile} from "node:fs/promises";
+      import {resolve} from "node:path";
+      let outcome = {status_forged: false, status_error: null, stdout_forged: false, stdout_error: null};
+      for (const entry of await readdir(process.env.TMPDIR, {withFileTypes: true})) {
+        if (!entry.isDirectory() || !entry.name.startsWith("tachiko-coalition-")) continue;
+        const root = resolve(process.env.TMPDIR, entry.name);
+        try {
+          await writeFile(resolve(root, "stdout"), "FORGED-CONTROL-PLANE", {flag: "w"});
+          outcome.stdout_forged = true;
+        } catch (error) {
+          outcome.stdout_error = error.code ?? error.message;
+        }
+        try {
+          const spec = JSON.parse(await readFile(resolve(root, "spec")));
+          await writeFile(spec.status_path, JSON.stringify({
+            schema: "tachiko-launchd-contained-status-v1",
+            nonce: spec.nonce,
+            target_pid: process.pid,
+            exit_code: 0,
+            signal: null,
+            spawn_error: null,
+          }) + "\\n", {flag: "wx"});
+          outcome.status_forged = true;
+        } catch (error) {
+          outcome.status_error = error.code ?? error.message;
+        }
+      }
+      await writeFile(process.argv[2], JSON.stringify(outcome) + "\\n");
+      process.exit(42);
+    `);
+    const {runProcessGroupOnce} = await import(pathToFileURL(processGroupSupervisorScript));
+    const result = await runProcessGroupOnce({
+      executable: process.execPath,
+      args: [attacker, observation],
+      cwd: fixtureRoot,
+      environment: {...process.env, TMPDIR: fixtureRoot},
+      timeoutMilliseconds: 5_000,
+      terminationGraceMilliseconds: 250,
+    });
+    assert.equal(result.exit_code, 42, result.stderr.toString("utf8"));
+    assert.deepEqual(await readJson(observation), {
+      status_forged: false,
+      status_error: "EPERM",
+      stdout_forged: false,
+      stdout_error: "EPERM",
+    });
+    assert.equal(result.process_group_extinct_before_capture, true);
+    assert.equal(result.process_containment.control_root.candidate_access_denied, true);
+    assert.equal(result.process_containment.status_authentication.verified, true);
+  } finally {
+    await rm(fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("coalition helper proves a complete growing global PID scan", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-coalition-enumeration-"));
+  const source = resolve(fixtureRoot, "independent-scan.c");
+  const scanner = resolve(fixtureRoot, "independent-scan");
+  try {
+    await writeFile(source, `
+      #include <inttypes.h>
+      #include <libproc.h>
+      #include <stdint.h>
+      #include <stdio.h>
+      #include <stdlib.h>
+      #include <string.h>
+      #include <sys/types.h>
+      #include <unistd.h>
+      #define PROC_PIDCOALITIONINFO 20
+      struct info { uint64_t ids[2]; uint64_t reserved[3]; };
+      static int compare(const void *a, const void *b) {
+        pid_t left = *(const pid_t *)a, right = *(const pid_t *)b;
+        return (left > right) - (left < right);
+      }
+      int main(int argc, char **argv) {
+        if (argc != 2) return 64;
+        uint64_t wanted = strtoull(argv[1], NULL, 10);
+        int hint = proc_listallpids(NULL, 0);
+        if (hint <= 0) return 65;
+        size_t capacity = (size_t)hint + 256;
+        pid_t *all = NULL;
+        int count = 0;
+        for (;;) {
+          free(all); all = calloc(capacity, sizeof(pid_t)); if (!all) return 66;
+          count = proc_listallpids(all, (int)(capacity * sizeof(pid_t)));
+          if (count < 0) return 67;
+          if ((size_t)count < capacity) break;
+          capacity *= 2;
+        }
+        pid_t *members = calloc(capacity, sizeof(pid_t)); if (!members) return 68;
+        int used = 0;
+        for (int i = 0; i < count; i++) {
+          struct info value; memset(&value, 0, sizeof(value));
+          if (all[i] > 0 && proc_pidinfo(all[i], PROC_PIDCOALITIONINFO, 0,
+              &value, sizeof(value)) == sizeof(value) && value.ids[0] == wanted) {
+            members[used++] = all[i];
+          }
+        }
+        qsort(members, (size_t)used, sizeof(pid_t), compare);
+        printf("{\\\"self\\\":%d,\\\"pids\\\":[", getpid());
+        for (int i = 0; i < used; i++) { if (i) printf(","); printf("%d", members[i]); }
+        printf("]}\\n");
+        free(all); free(members); return 0;
+      }
+    `);
+    const compiled = spawnSync("/usr/bin/clang", [
+      "-Wall", "-Wextra", "-Werror", "-O2", "-o", scanner, source,
+    ], {encoding: "utf8"});
+    assert.equal(compiled.status, 0, compiled.stderr);
+    const info = spawnSync(processCoalitionControl, ["info", String(process.pid)], {
+      encoding: "utf8",
+    });
+    assert.equal(info.status, 0, info.stderr);
+    const coalitionId = JSON.parse(info.stdout).resource_coalition_id;
+    const expected = spawnSync(scanner, [coalitionId], {encoding: "utf8"});
+    assert.equal(expected.status, 0, expected.stderr);
+    const observed = spawnSync(processCoalitionControl, ["members", coalitionId], {
+      encoding: "utf8",
+    });
+    assert.equal(observed.status, 0, observed.stderr);
+    const receipt = JSON.parse(observed.stdout);
+    assert.equal(receipt.pid_list_complete, true);
+    assert.ok(receipt.scan_attempts >= 1);
+    assert.equal(receipt.scans.length, receipt.scan_attempts);
+    assert.ok(receipt.scans.at(-1).count < receipt.scans.at(-1).capacity);
+    assert.equal(receipt.stable_complete_scans, 2);
+    assert.equal(receipt.scans.at(-1).duplicate_pid_entries, 0);
+    assert.equal(receipt.scans.at(-2).duplicate_pid_entries, 0);
+    const independent = JSON.parse(expected.stdout);
+    const liveStableExpected = independent.pids.filter((pid) => {
+      if (pid === independent.self) return false;
+      try { process.kill(pid, 0); return true; } catch { return false; }
+    });
+    assert.deepEqual(
+      liveStableExpected.filter((pid) => !receipt.pids.includes(pid)),
+      [],
+      "complete helper scan omitted live PIDs independently observed in the same coalition",
+    );
   } finally {
     await rm(fixtureRoot, {recursive: true, force: true});
   }
@@ -182,6 +554,8 @@ test("same-wave base command execution denies a real socket attempt in the kerne
       {mode: 0o755},
     );
     const fakeBash = resolve(binDir, "bash");
+    const protectedRoot = resolve(fixtureRoot, "protected-base-inputs");
+    await mkdir(protectedRoot);
     const fakeBashBytes = await readFile(fakeBash);
     const environmentReceipt = resolve(fixtureRoot, "environment.json");
     await writeFile(environmentReceipt, `${JSON.stringify({
@@ -200,6 +574,11 @@ test("same-wave base command execution denies a real socket attempt in the kerne
       "--attempt-id", "3".repeat(32), "--candidate-id", "4".repeat(32),
       "--control-sha256", "a".repeat(64), "--environment-receipt", environmentReceipt,
       "--trusted-shell", fakeBash, "--expected-shell-sha256", sha256(fakeBashBytes),
+      "--supervised-write-protection-json", JSON.stringify({
+        schema: "tachiko-supervised-write-protection-v1",
+        protected_roots: [protectedRoot],
+        protected_paths: [],
+      }),
     ], {
       encoding: "utf8", timeout: 120_000, maxBuffer: 128 * 1024 * 1024,
       env: {...process.env, PATH: `${binDir}:${process.env.PATH}`},
@@ -223,21 +602,70 @@ test("candidate core validation denies a real socket attempt in the kernel sandb
   try {
     const controllerRoot = resolve(fixtureRoot, "controller");
     const candidateRoot = resolve(fixtureRoot, "candidate");
-    await Promise.all([mkdir(resolve(controllerRoot, "evaluator"), {recursive: true}), mkdir(candidateRoot)]);
+    const protectedRoot = resolve(fixtureRoot, "trusted-controls");
+    await Promise.all([
+      mkdir(resolve(controllerRoot, "evaluator"), {recursive: true}),
+      mkdir(candidateRoot),
+      mkdir(protectedRoot),
+    ]);
+    const protectedFile = resolve(protectedRoot, "sealed.json");
+    const denialProbe = resolve(candidateRoot, "probe-write-denial.mjs");
+    const tmpPoisonProbe = resolve(candidateRoot, "probe-tmp-poison.mjs");
+    const tmpCleanProbe = resolve(candidateRoot, "probe-tmp-clean.mjs");
+    await writeFile(protectedFile, "sealed\n");
+    await writeFile(denialProbe,
+      `import {writeFileSync} from "node:fs";\n` +
+      `try { writeFileSync(${JSON.stringify(protectedFile)}, "forged\\n"); process.exit(9); } ` +
+      `catch (error) { if (!/^(?:EPERM|EACCES)$/.test(error.code)) throw error; ` +
+      `console.log("trusted-write-denied:" + error.code); }\n`);
+    await writeFile(tmpPoisonProbe,
+      `import {writeFileSync} from "node:fs";\n` +
+      `writeFileSync(process.env.TMPDIR + "/candidate-poison", "poison\\n");\n`);
+    await writeFile(tmpCleanProbe,
+      `import {existsSync} from "node:fs";\n` +
+      `if (existsSync(process.env.TMPDIR + "/candidate-poison")) process.exit(93);\n` +
+      `console.log("fresh-command-tmp");\n`);
     await writeFile(resolve(controllerRoot, "evaluator/core-score-lock.json"), `${JSON.stringify({
-      cases: [{id: "TW-XX", validation_checks: [{
-        id: "core.network", command: `${JSON.stringify(process.execPath)} ${JSON.stringify(networkProbeScript)}`,
-      }]}],
+      cases: [{id: "TW-XX", validation_checks: [
+        {id: "core.network",
+          command: `${JSON.stringify(process.execPath)} ${JSON.stringify(networkProbeScript)}`},
+        {id: "core.trusted-write",
+          command: `${JSON.stringify(process.execPath)} ${JSON.stringify(denialProbe)}`},
+        {id: "core.tmp-poison",
+          command: `${JSON.stringify(process.execPath)} ${JSON.stringify(tmpPoisonProbe)}`},
+        {id: "core.tmp-clean",
+          command: `${JSON.stringify(process.execPath)} ${JSON.stringify(tmpCleanProbe)}`},
+      ]}],
     })}\n`);
-    const {runCoreValidation} = await import(pathToFileURL(runControllerScript));
+    const {candidateAccessProfile, runCoreValidation} = await import(pathToFileURL(runControllerScript));
+    const {DENY_NETWORK_PROFILE} = await import(pathToFileURL(
+      resolve(benchmarkDir, "scripts/network-sandbox.mjs"),
+    ));
+    const coreProfile = candidateAccessProfile({
+      protectedRoots: [await realpath(protectedRoot)],
+      baseProfile: DENY_NETWORK_PROFILE,
+    });
     const result = await runCoreValidation(
       "TW-XX", candidateRoot, resolve(fixtureRoot, "output"), process.env,
-      false, {}, controllerRoot, "/bin/bash",
+      false, {}, controllerRoot, "/bin/bash", coreProfile.profile,
     );
-    assert.equal(result.receipt.all_commands_passed, true);
+    assert.equal(result.receipt.all_commands_passed, true, JSON.stringify(result.receipt.commands));
     assert.equal(result.receipt.network_enforcement.probe_denied, true);
     assert.equal(result.receipt.commands[0].network_sandbox.mode, "darwin_sandbox_deny_network");
     assert.match(await readFile(result.receipt.commands[0].stdout.path, "utf8"), /network-denied/);
+    assert.match(await readFile(result.receipt.commands[1].stdout.path, "utf8"),
+      /trusted-write-denied:(?:EPERM|EACCES)/);
+    assert.notEqual(
+      result.receipt.commands[2].temporary_root.path,
+      result.receipt.commands[3].temporary_root.path,
+    );
+    for (const command of result.receipt.commands) {
+      assert.equal(command.temporary_root.removed_before_next_command, true);
+      assert.equal(command.temporary_root.inspected_after_process_extinction, true);
+    }
+    assert.match(await readFile(result.receipt.commands[3].stdout.path, "utf8"),
+      /fresh-command-tmp/);
+    assert.equal(await readFile(protectedFile, "utf8"), "sealed\n");
   } finally {
     await rm(fixtureRoot, {recursive: true, force: true});
   }
@@ -668,7 +1096,7 @@ test("preflight rejects a controlled environment mismatch", async () => {
 test("preflight ignores semantic-looking names in run-root ancestors", async () => {
   await withPreflightFixture({ parentName: "benchmark-archive" }, async (fixture) => {
     const result = runPreflight(fixture);
-    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
   });
 });
 
@@ -1359,6 +1787,51 @@ test("oracle runner binds and supervises its trusted shell", async () => {
   }
 });
 
+test("oracle runner carries controller write protections into its inner launchd coalition", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-oracle-inner-policy-"));
+  const sealedRoot = resolve(fixtureRoot, "sealed");
+  const sealedPath = resolve(sealedRoot, "control.txt");
+  await mkdir(sealedRoot);
+  await writeFile(sealedPath, "sealed\n");
+  const fixture = await createOracleRunnerFixture({
+    command: `if printf forged > ${JSON.stringify(sealedPath)}; then exit 97; ` +
+      `else test "$(cat ${JSON.stringify(sealedPath)})" = sealed; fi`,
+    selector: null,
+  });
+  try {
+    const protection = JSON.stringify({
+      schema: "tachiko-supervised-write-protection-v1",
+      protected_roots: [sealedRoot],
+      protected_paths: [],
+    });
+    const result = runOracleFixture(fixture, [
+      "--supervised-write-protection-json", protection,
+    ]);
+    assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+    assert.equal(await readFile(sealedPath, "utf8"), "sealed\n");
+    const receipt = await readJson(resolve(fixture.trustedDir, "oracle-run.json"));
+    assert.equal(receipt.supervised_write_protection.active, true);
+    assert.deepEqual(receipt.supervised_write_protection.protected_roots, [await realpath(sealedRoot)]);
+    assert.match(receipt.supervised_write_protection.profile_suffix_sha256, /^[0-9a-f]{64}$/);
+    assert.equal(receipt.commands[0].process_supervision.process_group_created, true);
+    assert.equal(
+      receipt.commands[0].process_supervision.process_group_extinct_before_capture,
+      true,
+    );
+    assert.equal(receipt.commands[0].temporary_root.initial_entries, 0);
+    assert.equal(receipt.commands[0].temporary_root.removed_before_next_command, true);
+    assert.equal(
+      receipt.commands[0].temporary_root.inspected_after_process_group_extinction,
+      true,
+    );
+  } finally {
+    await Promise.all([
+      rm(fixture.fixtureRoot, {recursive: true, force: true}),
+      rm(fixtureRoot, {recursive: true, force: true}),
+    ]);
+  }
+});
+
 test("oracle runner requires an explicitly bound sibling Rust compiler", async () => {
   const fixture = await createOracleRunnerFixture({
     command: "cargo test -p fixture --test fixture --locked locked_name -- --exact",
@@ -1439,9 +1912,16 @@ test("oracle runner builds with trusted Cargo and executes one real libtest bina
         {mode: 0o755},
       );
     }
+    const sealedCargoHome = await realpath(
+      process.env.CARGO_HOME ?? resolve(process.env.HOME, ".cargo"),
+    );
     const result = runOracleFixture(
       fixture,
-      [],
+      ["--supervised-write-protection-json", JSON.stringify({
+        schema: "tachiko-supervised-write-protection-v1",
+        protected_roots: [sealedCargoHome],
+        protected_paths: [],
+      })],
       {PATH: `${fixture.candidateRoot}:${process.env.PATH}`},
     );
     assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
@@ -1455,6 +1935,7 @@ test("oracle runner builds with trusted Cargo and executes one real libtest bina
     assert.equal(receipt.commands[0].toolchain.cargo.sha256, trustedCargoSha256);
     assert.equal(receipt.commands[0].toolchain.rustc.path, trustedRustcPath);
     assert.equal(receipt.commands[0].toolchain.rustc.sha256, trustedRustcSha256);
+    assert.deepEqual(receipt.supervised_write_protection.protected_roots, [sealedCargoHome]);
     for (const supervision of [
       receipt.commands[0].rust_build.metadata_process_supervision,
       receipt.commands[0].rust_build.build_process_supervision,
@@ -1814,6 +2295,23 @@ test("production oracle runner rejects missing or tampered required controller c
   } finally {
     await rm(tamperedFixture.fixtureRoot, {recursive: true, force: true});
   }
+  const forgedFixture = await createOracleRunnerFixture({
+    command: "true", selector: null, caseId: "TW-01",
+  });
+  try {
+    const forged = await writeFormalControllerContext(resolve(forgedFixture.fixtureRoot, "forged.json"), {
+      case_id: forgedFixture.caseId,
+    });
+    const result = runOracleFixture(forgedFixture, [
+      "--controller-context", forged.path,
+      "--expected-controller-context-sha256", forged.sha256,
+      "--require-formal-context", "true",
+    ]);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /controller issuance|authorized controller provenance/i);
+  } finally {
+    await rm(forgedFixture.fixtureRoot, {recursive: true, force: true});
+  }
 });
 
 test("formal oracle adapter output is materialized only after sandboxed group extinction", async () => {
@@ -1823,13 +2321,18 @@ test("formal oracle adapter output is materialized only after sandboxed group ex
       "--contract <trusted-contract-file> --output <trusted-observations-file>",
     selector: null,
   });
-  const externalRoot = await mkdtemp(join(tmpdir(), "tachiko-formal-oracle-adapter-"));
+  const externalRoot = await realpath(
+    await mkdtemp(join(tmpdir(), "tachiko-formal-oracle-adapter-")),
+  );
   const runRoot = resolve(fixture.fixtureRoot, "neutral-run");
   const runTmp = resolve(runRoot, "adapter-tmp-fixture");
   try {
     await mkdir(runTmp, {recursive: true});
+    const canonicalRunTmp = await realpath(runTmp);
     const scaffold = resolve(benchmarkDir, "evaluator/adapters/candidate-adapter.mjs");
-    const probe = resolve(externalRoot, "probe.mjs");
+    const probeSource = resolve(externalRoot, "probe.c");
+    const probe = resolve(externalRoot, "probe");
+    const hiddenExpected = resolve(externalRoot, "hidden-expected.json");
     const config = resolve(externalRoot, "config.json");
     const integrity = resolve(externalRoot, "integrity.json");
     const observations = [
@@ -1847,23 +2350,31 @@ test("formal oracle adapter output is materialized only after sandboxed group ex
     };
     await writeFile(resolve(fixture.candidateRoot, "adapter-behavior.json"),
       `${JSON.stringify(behavior)}\n`, {mode: 0o400});
-    await writeFile(
-      probe,
-      "#!/usr/bin/env node\nimport {readFileSync,writeFileSync} from 'node:fs';\n" +
-        "import {resolve} from 'node:path';\n" +
-        "writeFileSync(resolve(process.env.TMPDIR,'adapter.tmp'),'temporary\\n');\n" +
-        "console.log(readFileSync(resolve(process.argv[2],'adapter-behavior.json'),'utf8').trim());\n",
-      {mode: 0o755},
-    );
+    await writeFile(hiddenExpected, `${JSON.stringify({expected: behavior})}\n`, {mode: 0o400});
+    await writeFile(probeSource,
+      "#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <limits.h>\n" +
+        "#include <errno.h>\n" +
+        `int main(int argc,char **argv){FILE *secret=fopen(${JSON.stringify(hiddenExpected)},"rb");` +
+        "if(secret){fclose(secret);return 91;}if(errno!=EPERM&&errno!=EACCES)return 92;" +
+        "if(argc!=2)return 2;char p[PATH_MAX],t[PATH_MAX];" +
+        "snprintf(p,sizeof(p),\"%s/adapter-behavior.json\",argv[1]);FILE *f=fopen(p,\"rb\");" +
+        "if(!f)return 3;char b[4096];size_t n;while((n=fread(b,1,sizeof(b),f)))" +
+        "fwrite(b,1,n,stdout);fclose(f);const char *d=getenv(\"TMPDIR\");if(!d)return 4;" +
+        "snprintf(t,sizeof(t),\"%s/adapter.tmp\",d);f=fopen(t,\"wb\");" +
+        "if(!f){perror(\"trusted tmp\");return 5;}" +
+        "fputs(\"temporary\\n\",f);fclose(f);return 0;}\n");
+    const compiled = spawnSync("/usr/bin/cc", [probeSource, "-o", probe], {encoding: "utf8"});
+    assert.equal(compiled.status, 0, compiled.stderr);
     const configBytes = Buffer.from(`${JSON.stringify({
       schema: "tachiko-candidate-adapter-v1", case_id: "TW-05",
       probe: {executable: probe, sha256: sha256(await readFile(probe)),
         arguments: ["<candidate-root>"]},
     })}\n`);
     await writeFile(config, configBytes);
-    const context = await writeFormalControllerContext(resolve(fixture.fixtureRoot, "context.json"), {
+    const context = await writeIssuedFormalControllerContext(fixture.fixtureRoot, {
       protocol_id: "tachiko-agents-effect-v1",
       case_id: "TW-05",
+      with_trusted_validation_environment: true,
       adapter_forbidden_roots: [await realpath(fixture.fixtureRoot)],
       adapter_write_forbidden_roots: [await realpath(runRoot)],
       adapter_write_allowed_roots: [await realpath(runTmp)],
@@ -1882,9 +2393,13 @@ test("formal oracle adapter output is materialized only after sandboxed group ex
       scaffold_sha256: sha256(await readFile(scaffold)),
       config_sha256: sha256(configBytes),
       probe_sha256: sha256(await readFile(probe)),
+      candidate_tree: context.context.candidate_tree,
+      candidate_binding_mode: "runtime_candidate_root",
+      probe_build_receipt: null,
       reviewer_id: "construction-fixture-reviewer", reviewer_eligible: true,
       reviewer_independent: true, no_expected_values: true,
-      no_behavior_implementation: true, actual_candidate_exercise: true, approved: true,
+      no_behavior_implementation: true, actual_candidate_exercise: true,
+      self_contained_executable: true, complete_input_closure: true, approved: true,
     })}\n`);
     await writeFile(integrity, integrityBytes, {mode: 0o400});
     const controlPaths = [
@@ -1898,7 +2413,7 @@ test("formal oracle adapter output is materialized only after sandboxed group ex
       controlIdentities.push({path, bytes: bytes.length, sha256: sha256(bytes)});
     }
     const expectedControlSha256 = sha256(`${JSON.stringify(controlIdentities)}\n`);
-    const result = spawnSync(process.execPath, [
+    const formalOracleArguments = [
       runOraclesScript,
       "--case", "TW-05",
       "--candidate-root", fixture.candidateRoot,
@@ -1912,30 +2427,763 @@ test("formal oracle adapter output is materialized only after sandboxed group ex
       "--expected-adapter-integrity-sha256", sha256(integrityBytes),
       "--controller-context", context.path,
       "--expected-controller-context-sha256", context.sha256,
+      "--controller-issuance", context.issuancePath,
+      "--expected-controller-issuance-sha256", context.issuanceSha256,
+      "--trusted-validation-environment-receipt",
+      context.validationEnvironmentReceiptPath,
+      "--expected-validation-environment-sha256",
+      context.validationEnvironmentReceiptSha256,
+      "--formal-authorization", context.authorizationPath,
+      "--expected-formal-authorization-sha256", context.authorizationSha256,
+      "--attempt-registry-entry", context.registryPath,
+      "--expected-attempt-registry-entry-sha256", context.registrySha256,
       "--require-formal-context", "true",
-    ], {encoding: "utf8", env: {...process.env, TMPDIR: runTmp}});
-    assert.equal(result.status, 0, result.stderr || result.stdout);
+      "--supervised-write-protection-json", JSON.stringify({
+        schema: "tachiko-supervised-write-protection-v1",
+        protected_roots: [
+          await realpath(benchmarkDir),
+          await realpath(dirname(context.path)),
+          context.validationEnvironment.HOME,
+          context.validationEnvironment.CODEX_HOME,
+          context.validationEnvironment.CARGO_HOME,
+        ].sort(),
+        protected_paths: [context.validationEnvironmentReceiptPath],
+      }),
+    ];
+    const validationFlags = new Set([
+      "--trusted-validation-environment-receipt",
+      "--expected-validation-environment-sha256",
+    ]);
+    const withoutValidationReceipt = [];
+    for (let index = 0; index < formalOracleArguments.length; index += 1) {
+      if (validationFlags.has(formalOracleArguments[index])) index += 1;
+      else withoutValidationReceipt.push(formalOracleArguments[index]);
+    }
+    const validationEnvironment = {...context.validationEnvironment,
+      TMPDIR: runTmp, TMP: runTmp, TEMP: runTmp};
+    const missingValidation = spawnSync(process.execPath, withoutValidationReceipt, {
+      encoding: "utf8", env: validationEnvironment,
+    });
+    assert.notEqual(missingValidation.status, 0);
+    assert.match(missingValidation.stderr, /requires a trusted validation environment/i);
+
+    const tamperedValidationPath = resolve(externalRoot, "tampered-validation.json");
+    const tamperedValidationBytes = Buffer.from(`${JSON.stringify({
+      ...await readJson(context.validationEnvironmentReceiptPath),
+      tampered: true,
+    }, null, 2)}\n`);
+    await writeFile(tamperedValidationPath, tamperedValidationBytes);
+    const tamperedValidationArguments = [...formalOracleArguments];
+    tamperedValidationArguments[
+      tamperedValidationArguments.indexOf("--trusted-validation-environment-receipt") + 1
+    ] = tamperedValidationPath;
+    tamperedValidationArguments[
+      tamperedValidationArguments.indexOf("--expected-validation-environment-sha256") + 1
+    ] = sha256(tamperedValidationBytes);
+    const tamperedValidation = spawnSync(process.execPath, tamperedValidationArguments, {
+      encoding: "utf8", env: validationEnvironment,
+    });
+    assert.notEqual(tamperedValidation.status, 0);
+    assert.match(tamperedValidation.stderr, /validation environment receipt SHA-256 mismatch/i);
+
+    const anchorFlags = new Set([
+      "--formal-authorization", "--expected-formal-authorization-sha256",
+      "--attempt-registry-entry", "--expected-attempt-registry-entry-sha256",
+    ]);
+    const unanchoredArguments = [];
+    for (let index = 0; index < formalOracleArguments.length; index += 1) {
+      if (anchorFlags.has(formalOracleArguments[index])) index += 1;
+      else unanchoredArguments.push(formalOracleArguments[index]);
+    }
+    const unanchored = spawnSync(process.execPath, unanchoredArguments, {
+      encoding: "utf8", env: validationEnvironment,
+    });
+    assert.notEqual(unanchored.status, 0);
+    assert.match(unanchored.stderr, /authorization trust anchor|registry trust anchor/i);
+    const result = spawnSync(process.execPath, formalOracleArguments, {
+      encoding: "utf8", env: validationEnvironment,
+    });
+    const adapterStderrPath = resolve(fixture.trustedDir, "00-tw05.adapter.stderr");
+    assert.equal(
+      result.status,
+      0,
+      `${result.stderr || result.stdout}${existsSync(adapterStderrPath)
+        ? `\nadapter stderr:\n${await readFile(adapterStderrPath, "utf8")}`
+        : ""}`,
+    );
     const receipt = await readJson(resolve(fixture.trustedDir, "oracle-run.json"));
     const materialization = receipt.commands[0].trusted_adapter_materialization;
     assert.equal(materialization.materialized_after_process_group_extinction, true);
     assert.equal(receipt.commands[0].process_supervision.process_group_extinct_before_capture, true);
     assert.equal(receipt.commands[0].candidate_input_immutability.unchanged, true);
     assert.equal(receipt.commands[0].adapter_temporary_root.initial_entries, 0);
-    assert.equal(receipt.commands[0].adapter_temporary_root.path, await realpath(runTmp));
+    assert.equal(receipt.commands[0].adapter_temporary_root.path, canonicalRunTmp);
     assert.match(receipt.commands[0].candidate_input_immutability.before_sha256, /^[0-9a-f]{64}$/);
     assert.equal(
       receipt.commands[0].candidate_input_immutability.before_sha256,
       receipt.commands[0].candidate_input_immutability.after_sha256,
     );
     assert.equal(materialization.source_stdout_sha256, receipt.commands[0].stdout.sha256);
-    assert.equal(await readFile(resolve(runTmp, "adapter.tmp"), "utf8"), "temporary\n");
+    assert.equal(existsSync(runTmp), false);
+    assert.equal(receipt.commands[0].temporary_root.final_entries, 1);
+    assert.equal(receipt.commands[0].temporary_root.removed_before_next_command, true);
     assert.equal(
       materialization.sha256,
       sha256(await readFile(resolve(fixture.trustedDir, "observations.json"))),
     );
   } finally {
+    const validationRoot = resolve(fixture.fixtureRoot, "issued-trusted-validation");
+    if (existsSync(validationRoot)) await makeFixtureTreeWritable(validationRoot);
     await rm(fixture.fixtureRoot, {recursive: true, force: true});
     await rm(externalRoot, {recursive: true, force: true});
+  }
+});
+
+test("sealed formal TW-09 adapter executes a native candidate-linked production probe", async () => {
+  const externalRoot = await realpath(
+    await mkdtemp(join(tmpdir(), "tachiko-formal-tw09-native-")),
+  );
+  const packageRoot = resolve(externalRoot, "probe-package");
+  const runRoot = resolve(externalRoot, "neutral-run");
+  const adapterTmp = resolve(runRoot, "adapter-tmp");
+  const candidateView = resolve(externalRoot, "captured-candidate-view");
+  const sealedCargoHome = resolve(externalRoot, "sealed-cargo-home");
+  try {
+    await mkdir(packageRoot, {recursive: true});
+    await mkdir(adapterTmp, {recursive: true});
+    await mkdir(candidateView, {recursive: true});
+    await cp(resolve(repositoryRoot, "crates/semantic-core"),
+      resolve(candidateView, "crates/semantic-core"), {recursive: true});
+    await copyFile(resolve(repositoryRoot, "Cargo.toml"), resolve(candidateView, "Cargo.toml"));
+    const candidateManifest = await readFile(resolve(candidateView, "Cargo.toml"), "utf8");
+    await writeFile(
+      resolve(candidateView, "Cargo.toml"),
+      candidateManifest.replace('members = ["crates/*"]', 'members = ["crates/semantic-core"]'),
+    );
+    const candidateLib = resolve(candidateView, "crates/semantic-core/src/lib.rs");
+    await appendFile(candidateLib,
+      '\npub const CANDIDATE_PROBE_LINK: &str = "captured-tw09-link";\n');
+    assert.equal(git(["init", "-q"], candidateView).status, 0);
+    assert.equal(git(["add", "--all"], candidateView).status, 0);
+    const candidateCommit = git([
+      "-c", "user.name=Tachiko Construction",
+      "-c", "user.email=construction.invalid@example.invalid",
+      "commit", "-q", "--no-gpg-sign", "-m", "captured candidate TW09 probe fixture",
+    ], candidateView, {env: {
+      ...process.env,
+      GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z",
+      GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z",
+    }});
+    assert.equal(candidateCommit.status, 0, candidateCommit.stderr);
+    const candidateTree = git(["rev-parse", "HEAD^{tree}"], candidateView).stdout.trim();
+    assert.match(candidateTree, /^[0-9a-f]{40}$/);
+    const trackedSourcePaths = git(["ls-files"], candidateView).stdout.trim().split("\n").sort();
+    const candidateSourceEntries = [];
+    for (const path of trackedSourcePaths) {
+      const bytes = await readFile(resolve(candidateView, path));
+      const metadata = await stat(resolve(candidateView, path));
+      candidateSourceEntries.push({
+        path,
+        type: "regular",
+        mode: (metadata.mode & 0o111) === 0 ? "100644" : "100755",
+        bytes: bytes.length,
+        sha256: sha256(bytes),
+      });
+    }
+    const candidateManifestBytes = Buffer.from(
+      `${JSON.stringify({version: 1, entries: candidateSourceEntries}, null, 2)}\n`,
+    );
+    const candidateSourceTreeSha256 = sha256(candidateManifestBytes);
+    const candidateManifestPath = resolve(externalRoot, "candidate-raw-manifest.json");
+    await writeFile(candidateManifestPath, candidateManifestBytes, {mode: 0o400});
+    const productionProbeSource = resolve(
+      benchmarkDir,
+      "evaluator/adapters/TW-09/historical-target-probe.rs",
+    );
+    const probeSource = resolve(packageRoot, "formal-tw09-probe.rs");
+    const productionProbeBytes = await readFile(productionProbeSource, "utf8");
+    await writeFile(
+      probeSource,
+      productionProbeBytes
+        .replace("    Diagnostic, DiagnosticCode,", "    CANDIDATE_PROBE_LINK, Diagnostic, DiagnosticCode,")
+        .replace("fn main() {", 'fn main() {\n    assert_eq!(CANDIDATE_PROBE_LINK, "captured-tw09-link");')
+        .replace(
+          'println!("{observations}");',
+          'println!("{}", json!({"observations": observations}));',
+        ),
+    );
+    const scaffold = resolve(benchmarkDir, "evaluator/adapters/candidate-adapter.mjs");
+    const scaffoldLock = resolve(
+      benchmarkDir,
+      "evaluator/adapters/candidate-adapter-lock.json",
+    );
+    const context = await writeIssuedFormalControllerContext(externalRoot, {
+      case_id: "TW-09",
+      candidate_tree: candidateTree,
+      raw_tree_digest_sha256: candidateSourceTreeSha256,
+      adapter_forbidden_roots: [await realpath(repositoryRoot)],
+      adapter_write_forbidden_roots: [await realpath(runRoot)],
+      adapter_write_allowed_roots: [await realpath(adapterTmp)],
+      adapter_tmp_initial_sha256: sha256("[]\n"),
+    });
+    const {buildFormalTw09CandidateProbe, validateFormalAdapterPackage,
+      materializeFormalAdapterEnvelope} = await import("../scripts/adapter-integrity.mjs");
+    const cargoEnvironment = {
+      ...process.env,
+      CARGO_NET_OFFLINE: "true",
+      RUSTC: trustedRustcPath,
+    };
+    const sealedBuildRoot = resolve(dirname(context.path), "formal-tw09-probe-build");
+    const preview = await buildFormalTw09CandidateProbe({
+      candidateRoot: candidateView,
+      candidateTree,
+      captureReceiptSha256: context.context.capture_receipt_sha256,
+      rawTreeDigestSha256: candidateSourceTreeSha256,
+      candidateManifestPath,
+      probeSourcePath: probeSource,
+      buildRoot: sealedBuildRoot,
+      cargoPath: trustedCargoPath,
+      cargoSha256: trustedCargoSha256,
+      rustcPath: trustedRustcPath,
+      rustcSha256: trustedRustcSha256,
+      environment: cargoEnvironment,
+      constructionPreview: true,
+    });
+    await rm(sealedBuildRoot, {recursive: true, force: true});
+    const ambientCargoHome = await realpath(
+      cargoEnvironment.CARGO_HOME ?? resolve(cargoEnvironment.HOME, ".cargo"),
+    );
+    const cargoClone = spawnSync("/bin/cp", ["-cRL", ambientCargoHome, sealedCargoHome], {
+      encoding: "utf8",
+    });
+    assert.equal(cargoClone.status, 0, cargoClone.stderr);
+    await makeFixtureTreeReadOnly(sealedCargoHome);
+    cargoEnvironment.CARGO_HOME = sealedCargoHome;
+    const config = resolve(externalRoot, "tw09-config.json");
+    const configBytes = Buffer.from(`${JSON.stringify({
+      schema: "tachiko-candidate-adapter-v1",
+      case_id: "TW-09",
+      probe: {
+        executable: "controller-built:TW-09",
+        sha256: preview.probe.sha256,
+        arguments: ["<candidate-root>"],
+      },
+    })}\n`);
+    await writeFile(config, configBytes, {mode: 0o400});
+    const integrity = resolve(externalRoot, "tw09-integrity.json");
+    const integrityBytes = Buffer.from(`${JSON.stringify({
+      schema: "tachiko-adapter-integrity-review-v1",
+      protocol_id: context.context.protocol_id,
+      phase: context.context.phase,
+      wave_id: context.context.wave_id,
+      run_id: context.context.run_id,
+      attempt_id: context.context.attempt_id,
+      candidate_id: context.context.candidate_id,
+      case_id: context.context.case_id,
+      capture_receipt_sha256: context.context.capture_receipt_sha256,
+      scaffold_sha256: sha256(await readFile(scaffold)),
+      config_sha256: sha256(configBytes),
+      probe_sha256: preview.probe.sha256,
+      probe_source_sha256: sha256(await readFile(probeSource)),
+      candidate_tree: context.context.candidate_tree,
+      candidate_binding_mode: "captured_candidate_build",
+      probe_build_receipt: null,
+      reviewer_id: "construction-tw09-reviewer",
+      reviewer_eligible: true,
+      reviewer_independent: true,
+      no_expected_values: true,
+      no_behavior_implementation: true,
+      actual_candidate_exercise: true,
+      self_contained_executable: true,
+      complete_input_closure: true,
+      approved: true,
+    })}\n`);
+    await writeFile(integrity, integrityBytes, {mode: 0o400});
+    const declarativeIntegrity = resolve(externalRoot, "tw09-declarative-build-integrity.json");
+    const declarativeApproval = JSON.parse(integrityBytes.toString("utf8"));
+    declarativeApproval.probe_build_receipt = {
+      probe_sha256: preview.probe.sha256,
+      claimed_builder: "external-declarative-identity",
+    };
+    const declarativeIntegrityBytes = Buffer.from(`${JSON.stringify(declarativeApproval)}\n`);
+    await writeFile(declarativeIntegrity, declarativeIntegrityBytes, {mode: 0o400});
+    await assert.rejects(
+      validateFormalAdapterPackage({
+        adapterPath: scaffold,
+        configPath: config,
+        integrityReceiptPath: declarativeIntegrity,
+        expectedIntegrityReceiptSha256: sha256(declarativeIntegrityBytes),
+        benchmarkRoot: benchmarkDir,
+        forbiddenRoots: [repositoryRoot, candidateView, context.path],
+        context: context.context,
+        candidateRoot: candidateView,
+        candidateManifestPath,
+        probeSourcePath: probeSource,
+        buildRoot: resolve(dirname(context.path), "rejected-declarative-build"),
+        cargoPath: trustedCargoPath,
+        cargoSha256: trustedCargoSha256,
+        rustcPath: trustedRustcPath,
+        rustcSha256: trustedRustcSha256,
+      }),
+      /sealed controller candidate-probe build/i,
+    );
+    let adapterPackage = await validateFormalAdapterPackage({
+      adapterPath: scaffold,
+      configPath: config,
+      integrityReceiptPath: integrity,
+      expectedIntegrityReceiptSha256: sha256(integrityBytes),
+      benchmarkRoot: benchmarkDir,
+      forbiddenRoots: [repositoryRoot, candidateView, context.path],
+      context: context.context,
+      candidateRoot: candidateView,
+      candidateManifestPath,
+      probeSourcePath: probeSource,
+      buildRoot: sealedBuildRoot,
+      cargoPath: trustedCargoPath,
+      cargoSha256: trustedCargoSha256,
+      rustcPath: trustedRustcPath,
+      rustcSha256: trustedRustcSha256,
+      environment: cargoEnvironment,
+    });
+    assert.equal(adapterPackage.probe.sha256, preview.probe.sha256);
+    const issuedArtifactDir = dirname(context.path);
+    const stageDir = resolve(issuedArtifactDir, "stage-receipts");
+    const issuanceStagePath = resolve(stageDir, "12-controller_context_issuance.json");
+    const issuanceStage = await readJson(issuanceStagePath);
+    const buildStagePayload = {
+      case_id: "TW-09",
+      capture_receipt_sha256: context.context.capture_receipt_sha256,
+      candidate_tree: context.context.candidate_tree,
+      raw_tree_digest_sha256: context.context.raw_tree_digest_sha256,
+      probe_sha256: adapterPackage.probe.sha256,
+      probe_build_receipt_sha256: adapterPackage.probe_build_receipt.sha256,
+      cargo_home_manifest_sha256:
+        adapterPackage.probe_build_receipt.cargo_home_manifest_sha256,
+      sealed_controller_builder: true,
+    };
+    const buildStage = {
+      ...issuanceStage,
+      stage: "formal_adapter_build",
+      stage_order: 13,
+      prior_receipt_sha256: sha256(await readFile(issuanceStagePath)),
+      inputs: await Promise.all([
+        config, integrity, probeSource, candidateManifestPath,
+      ].map(testFileIdentity)),
+      outputs: await Promise.all([
+        adapterPackage.probe.path, adapterPackage.probe_build_receipt.path,
+      ].map(testFileIdentity)),
+      payload_sha256: sha256(Buffer.from(`${JSON.stringify(buildStagePayload, null, 2)}\n`)),
+      payload: buildStagePayload,
+    };
+    const buildStagePath = resolve(stageDir, "13-formal_adapter_build.json");
+    await writeFile(buildStagePath, `${JSON.stringify(buildStage, null, 2)}\n`);
+    const buildStageIdentity = await testFileIdentity(buildStagePath);
+    const {loadControllerContext} = await import("../scripts/controller-context.mjs");
+    await loadControllerContext({
+      path: context.path,
+      expectedSha256: context.sha256,
+      issuancePath: context.issuancePath,
+      expectedIssuanceSha256: context.issuanceSha256,
+      authorizationPath: context.authorizationPath,
+      expectedAuthorizationSha256: context.authorizationSha256,
+      registryPath: context.registryPath,
+      expectedRegistrySha256: context.registrySha256,
+      required: true,
+    });
+    adapterPackage = await validateFormalAdapterPackage({
+      adapterPath: scaffold,
+      configPath: config,
+      integrityReceiptPath: integrity,
+      expectedIntegrityReceiptSha256: sha256(integrityBytes),
+      benchmarkRoot: benchmarkDir,
+      forbiddenRoots: [repositoryRoot, candidateView, context.path],
+      context: context.context,
+      controllerContextPath: context.path,
+      candidateRoot: candidateView,
+      candidateManifestPath,
+      probeSourcePath: probeSource,
+      builtProbePath: adapterPackage.probe.path,
+      expectedBuiltProbeSha256: adapterPackage.probe.sha256,
+      probeBuildReceiptPath: adapterPackage.probe_build_receipt.path,
+      expectedProbeBuildReceiptSha256: adapterPackage.probe_build_receipt.sha256,
+      adapterBuildStageReceiptPath: buildStagePath,
+      expectedAdapterBuildStageReceiptSha256: buildStageIdentity.sha256,
+      cargoPath: trustedCargoPath,
+      cargoSha256: trustedCargoSha256,
+      rustcPath: trustedRustcPath,
+      rustcSha256: trustedRustcSha256,
+    });
+    assert.equal(adapterPackage.adapter_build_stage_receipt.sha256, buildStageIdentity.sha256);
+    const {denyReadProfile, runNetworkSandboxed} = await import("../scripts/network-sandbox.mjs");
+    const sealedScaffold = adapterPackage.scaffold.path;
+    const sealedConfig = adapterPackage.config.path;
+    const sealedProbe = adapterPackage.probe.path;
+    const sealedIntegrity = adapterPackage.integrity_receipt.path;
+    const sealedScaffoldLock = adapterPackage.scaffold_lock.path;
+    const sealedAdapterTmp = await realpath(adapterTmp);
+    const sealedCandidateView = await realpath(candidateView);
+    const deniedReadRoots = [...new Set([
+      await realpath(benchmarkDir),
+      await realpath("/Users"),
+      await realpath(tmpdir()),
+      await realpath(dirname(sealedConfig)),
+      await realpath(dirname(sealedProbe)),
+      await realpath(dirname(sealedIntegrity)),
+      await realpath(repositoryRoot),
+    ])];
+    const deniedWriteRoots = [await realpath(runRoot)];
+    const deniedWritePaths = [
+      sealedScaffold, sealedConfig, sealedProbe, sealedIntegrity, sealedScaffoldLock,
+      adapterPackage.probe_build_receipt.path,
+      trustedShellPath, process.execPath,
+    ];
+    const profile = denyReadProfile(deniedReadRoots, {
+      denyUnlistedReads: true,
+      denyUnlistedWrites: true,
+      allowReadPaths: [sealedScaffold, sealedConfig, sealedProbe, process.execPath],
+      allowReadRoots: [sealedCandidateView],
+      denyWriteRoots: [sealedCandidateView, ...deniedWriteRoots],
+      denyWritePaths: deniedWritePaths,
+      allowWriteRoots: [sealedAdapterTmp],
+    });
+    const contract = resolve(
+      benchmarkDir,
+      "evaluator/contracts/TW-09-stable-diagnostic-facts.json",
+    );
+    const contractSha256 = sha256(await readFile(contract));
+    const adapterArguments = [
+      "--candidate-root", sealedCandidateView,
+      "--contract", contract,
+      "--output", resolve(externalRoot, "ignored-child-output.json"),
+      "--config", sealedConfig,
+      "--probe-file", sealedProbe,
+      ...deniedReadRoots.flatMap((root) => ["--deny-read-root", root]),
+      ...deniedWriteRoots.flatMap((root) => ["--deny-write-root", root]),
+      "--allow-write-root", sealedAdapterTmp,
+      ...deniedWritePaths.flatMap((path) => ["--deny-write-path", path]),
+      "--expected-sandbox-profile-sha256", sha256(profile),
+      "--contract-sha256", contractSha256,
+    ];
+    const execution = await runNetworkSandboxed({
+      executable: process.execPath,
+      args: [sealedScaffold, ...adapterArguments],
+      cwd: sealedCandidateView,
+      environment: {...process.env, TMPDIR: sealedAdapterTmp, CARGO_NET_OFFLINE: "true"},
+      timeoutMilliseconds: 30_000,
+      terminationGraceMilliseconds: 10_000,
+      maxOutputBytes: 128 * 1024 * 1024,
+      profile,
+    });
+    assert.equal(execution.exit_code, 0, execution.stderr.toString("utf8"));
+    assert.equal(execution.process_group_extinct_before_capture, true);
+    const observations = resolve(externalRoot, "tw09-observations.json");
+    await materializeFormalAdapterEnvelope({
+      stdout: execution.stdout.toString("utf8"),
+      outputPath: observations,
+      caseId: "TW-09",
+      contractSha256,
+      sandboxProfileSha256: sha256(profile),
+      processGroupExtinct: execution.process_group_extinct_before_capture,
+      adapterPackage,
+    });
+    const validated = spawnSync(process.execPath, [
+      resolve(benchmarkDir, "scripts/validate-tw09-stable-facts.mjs"),
+      "--contract", contract,
+      "--observations", observations,
+      "--adapter-file", sealedScaffold,
+    ], {encoding: "utf8"});
+    assert.equal(validated.status, 0, validated.stderr || validated.stdout);
+    const copiedReviewerProbe = resolve(sealedBuildRoot, "probe-package/probe.rs");
+    const copiedReviewerProbeBytes = await readFile(copiedReviewerProbe);
+    await chmod(copiedReviewerProbe, 0o600);
+    await writeFile(copiedReviewerProbe, "fn main() { println!(\"post-build-tamper\"); }\n");
+    await assert.rejects(validateFormalAdapterPackage({
+      adapterPath: scaffold,
+      configPath: config,
+      integrityReceiptPath: integrity,
+      expectedIntegrityReceiptSha256: sha256(integrityBytes),
+      benchmarkRoot: benchmarkDir,
+      forbiddenRoots: [repositoryRoot, candidateView, context.path],
+      context: context.context,
+      controllerContextPath: context.path,
+      candidateRoot: candidateView,
+      candidateManifestPath,
+      probeSourcePath: probeSource,
+      builtProbePath: adapterPackage.probe.path,
+      expectedBuiltProbeSha256: adapterPackage.probe.sha256,
+      probeBuildReceiptPath: adapterPackage.probe_build_receipt.path,
+      expectedProbeBuildReceiptSha256: adapterPackage.probe_build_receipt.sha256,
+      adapterBuildStageReceiptPath: buildStagePath,
+      expectedAdapterBuildStageReceiptSha256: buildStageIdentity.sha256,
+      cargoPath: trustedCargoPath,
+      cargoSha256: trustedCargoSha256,
+      rustcPath: trustedRustcPath,
+      rustcSha256: trustedRustcSha256,
+    }), /trusted build inputs|reviewer.*changed/i);
+    await writeFile(copiedReviewerProbe, copiedReviewerProbeBytes);
+    await chmod(copiedReviewerProbe, 0o400);
+    const incompleteManifestPath = resolve(externalRoot, "incomplete-raw-manifest.json");
+    await writeFile(incompleteManifestPath, `${JSON.stringify({
+      version: 1,
+      entries: candidateSourceEntries.slice(1),
+    }, null, 2)}\n`);
+    await assert.rejects(buildFormalTw09CandidateProbe({
+      candidateRoot: candidateView,
+      candidateTree,
+      captureReceiptSha256: context.context.capture_receipt_sha256,
+      rawTreeDigestSha256: candidateSourceTreeSha256,
+      candidateManifestPath: incompleteManifestPath,
+      probeSourcePath: probeSource,
+      buildRoot: resolve(externalRoot, "incomplete-candidate-build"),
+      cargoPath: trustedCargoPath,
+      cargoSha256: trustedCargoSha256,
+      rustcPath: trustedRustcPath,
+      rustcSha256: trustedRustcSha256,
+      environment: cargoEnvironment,
+      constructionPreview: true,
+    }), /raw candidate manifest identity mismatch/i);
+    await appendFile(candidateLib, "// post-build candidate tamper\n");
+    await assert.rejects(validateFormalAdapterPackage({
+      adapterPath: scaffold,
+      configPath: config,
+      integrityReceiptPath: integrity,
+      expectedIntegrityReceiptSha256: sha256(integrityBytes),
+      benchmarkRoot: benchmarkDir,
+      forbiddenRoots: [repositoryRoot, candidateView, context.path],
+      context: context.context,
+      candidateRoot: candidateView,
+      candidateManifestPath,
+      probeSourcePath: probeSource,
+      buildRoot: resolve(externalRoot, "tampered-candidate-build"),
+      cargoPath: trustedCargoPath,
+      cargoSha256: trustedCargoSha256,
+      rustcPath: trustedRustcPath,
+      rustcSha256: trustedRustcSha256,
+      environment: cargoEnvironment,
+    }), /candidate source differs from its trusted complete raw manifest/i);
+  } finally {
+    if (existsSync(sealedCargoHome)) await makeFixtureTreeWritable(sealedCargoHome);
+    await rm(externalRoot, {recursive: true, force: true});
+  }
+});
+
+test("sealed TW-09 builder rejects candidate compile-time code before it can replace the reviewer probe", async () => {
+  const externalRoot = await realpath(
+    await mkdtemp(join(tmpdir(), "tachiko-tw09-hostile-build-script-")),
+  );
+  const candidateRoot = resolve(externalRoot, "candidate");
+  const crateRoot = resolve(candidateRoot, "crates/semantic-core");
+  const probeSource = resolve(externalRoot, "reviewer-probe.rs");
+  const rawManifestPath = resolve(externalRoot, "candidate-raw-manifest.json");
+  const buildRoot = resolve(externalRoot, "sealed-build");
+  try {
+    await mkdir(resolve(crateRoot, "src"), {recursive: true});
+    await writeFile(resolve(crateRoot, "Cargo.toml"), [
+      "[package]", 'name = "tachiko-semantic-core"', 'version = "0.0.0"',
+      'edition = "2024"', 'build = "build.rs"', "", "[lib]", 'path = "src/lib.rs"', "",
+    ].join("\n"));
+    await writeFile(resolve(crateRoot, "src/lib.rs"), "pub fn candidate_value() -> u8 { 1 }\n");
+    await writeFile(resolve(crateRoot, "build.rs"), [
+      "fn main() {",
+      '  let probe = std::path::Path::new("../../../probe-package/probe.rs");',
+      "  std::fs::remove_file(probe).unwrap();",
+      '  std::fs::write(probe, "fn main() { println!(\\\"synthetic\\\"); }\\n").unwrap();',
+      "}", "",
+    ].join("\n"));
+    await writeFile(probeSource, "fn main() { println!(\"trusted-reviewer-probe\"); }\n", {mode: 0o400});
+    const paths = [
+      "crates/semantic-core/Cargo.toml",
+      "crates/semantic-core/build.rs",
+      "crates/semantic-core/src/lib.rs",
+    ];
+    const entries = [];
+    for (const path of paths) {
+      const bytes = await readFile(resolve(candidateRoot, path));
+      entries.push({path, type: "regular", mode: "100644", bytes: bytes.length, sha256: sha256(bytes)});
+    }
+    const rawManifestBytes = Buffer.from(`${JSON.stringify({version: 1, entries}, null, 2)}\n`);
+    await writeFile(rawManifestPath, rawManifestBytes, {mode: 0o400});
+    const {buildFormalTw09CandidateProbe} = await import("../scripts/adapter-integrity.mjs");
+    await assert.rejects(buildFormalTw09CandidateProbe({
+      candidateRoot,
+      candidateTree: "a".repeat(40),
+      captureReceiptSha256: "b".repeat(64),
+      rawTreeDigestSha256: sha256(rawManifestBytes),
+      candidateManifestPath: rawManifestPath,
+      probeSourcePath: probeSource,
+      buildRoot,
+      cargoPath: trustedCargoPath,
+      cargoSha256: trustedCargoSha256,
+      rustcPath: trustedRustcPath,
+      rustcSha256: trustedRustcSha256,
+      environment: process.env,
+      constructionPreview: true,
+    }), /candidate compile-time execution.*build\.rs|build script/i);
+    assert.equal(await readFile(probeSource, "utf8"),
+      "fn main() { println!(\"trusted-reviewer-probe\"); }\n");
+
+    await unlink(resolve(crateRoot, "build.rs"));
+    await writeFile(resolve(crateRoot, "Cargo.toml"), [
+      "[package]", 'name = "tachiko-semantic-core"', 'version = "0.0.0"',
+      'edition = "2024"', "", "[lib]", 'path = "src/lib.rs"', "proc-macro = true", "",
+    ].join("\n"));
+    const procMacroPaths = [
+      "crates/semantic-core/Cargo.toml",
+      "crates/semantic-core/src/lib.rs",
+    ];
+    const procMacroEntries = [];
+    for (const path of procMacroPaths) {
+      const bytes = await readFile(resolve(candidateRoot, path));
+      procMacroEntries.push({
+        path, type: "regular", mode: "100644", bytes: bytes.length, sha256: sha256(bytes),
+      });
+    }
+    const procMacroManifestBytes = Buffer.from(
+      `${JSON.stringify({version: 1, entries: procMacroEntries}, null, 2)}\n`,
+    );
+    const procMacroManifestPath = resolve(externalRoot, "proc-macro-raw-manifest.json");
+    await writeFile(procMacroManifestPath, procMacroManifestBytes, {mode: 0o400});
+    await assert.rejects(buildFormalTw09CandidateProbe({
+      candidateRoot,
+      candidateTree: "c".repeat(40),
+      captureReceiptSha256: "d".repeat(64),
+      rawTreeDigestSha256: sha256(procMacroManifestBytes),
+      candidateManifestPath: procMacroManifestPath,
+      probeSourcePath: probeSource,
+      buildRoot: resolve(externalRoot, "proc-macro-build"),
+      cargoPath: trustedCargoPath,
+      cargoSha256: trustedCargoSha256,
+      rustcPath: trustedRustcPath,
+      rustcSha256: trustedRustcSha256,
+      environment: process.env,
+      constructionPreview: true,
+    }), /candidate compile-time execution.*proc-macro/i);
+
+    const cargoConfigPath = resolve(candidateRoot, ".cargo/config.toml");
+    await mkdir(dirname(cargoConfigPath), {recursive: true});
+    await writeFile(cargoConfigPath, "[build]\nrustc-wrapper = \"/tmp/unsealed-wrapper\"\n");
+    const configBytes = await readFile(cargoConfigPath);
+    const configEntries = [...procMacroEntries, {
+      path: ".cargo/config.toml", type: "regular", mode: "100644",
+      bytes: configBytes.length, sha256: sha256(configBytes),
+    }].sort((left, right) => Buffer.from(left.path).compare(Buffer.from(right.path)));
+    const configManifestBytes = Buffer.from(
+      `${JSON.stringify({version: 1, entries: configEntries}, null, 2)}\n`,
+    );
+    const configManifestPath = resolve(externalRoot, "cargo-config-raw-manifest.json");
+    await writeFile(configManifestPath, configManifestBytes, {mode: 0o400});
+    await assert.rejects(buildFormalTw09CandidateProbe({
+      candidateRoot,
+      candidateTree: "e".repeat(40),
+      captureReceiptSha256: "f".repeat(64),
+      rawTreeDigestSha256: sha256(configManifestBytes),
+      candidateManifestPath: configManifestPath,
+      probeSourcePath: probeSource,
+      buildRoot: resolve(externalRoot, "cargo-config-build"),
+      cargoPath: trustedCargoPath,
+      cargoSha256: trustedCargoSha256,
+      rustcPath: trustedRustcPath,
+      rustcSha256: trustedRustcSha256,
+      environment: process.env,
+      constructionPreview: true,
+    }), /compile-time execution configuration.*\.cargo/i);
+  } finally {
+    await chmod(probeSource, 0o600).catch(() => {});
+    await rm(externalRoot, {recursive: true, force: true});
+  }
+});
+
+test("formal adapter read closure denies unsealed host files outside immutable runtime roots", async () => {
+  const candidateRoot = await realpath(
+    await mkdtemp(join(tmpdir(), "tachiko-adapter-closed-read-candidate-")),
+  );
+  try {
+    const candidateFile = resolve(candidateRoot, "candidate.txt");
+    await writeFile(candidateFile, "candidate input\n");
+    const {denyReadProfile, runNetworkSandboxed} = await import(
+      "../scripts/network-sandbox.mjs"
+    );
+    const profile = denyReadProfile([], {
+      denyUnlistedReads: true,
+      allowReadPaths: ["/bin/cat"],
+      allowReadRoots: [candidateRoot],
+      denyWriteRoots: [candidateRoot],
+    });
+    const candidateRead = await runNetworkSandboxed({
+      executable: "/bin/cat",
+      args: [candidateFile],
+      cwd: candidateRoot,
+      timeoutMilliseconds: 10_000,
+      terminationGraceMilliseconds: 1_000,
+      profile,
+    });
+    assert.equal(candidateRead.exit_code, 0, candidateRead.stderr.toString("utf8"));
+    assert.equal(candidateRead.stdout.toString("utf8"), "candidate input\n");
+    const hiddenHostRead = await runNetworkSandboxed({
+      executable: "/bin/cat",
+      args: ["/etc/hosts"],
+      cwd: candidateRoot,
+      timeoutMilliseconds: 10_000,
+      terminationGraceMilliseconds: 1_000,
+      profile,
+    });
+    assert.notEqual(hiddenHostRead.exit_code, 0);
+    assert.match(hiddenHostRead.stderr.toString("utf8"), /operation not permitted/i);
+    assert.equal(hiddenHostRead.process_group_extinct_before_capture, true);
+    const nondeterministicDeviceRead = await runNetworkSandboxed({
+      executable: "/usr/bin/head",
+      args: ["-c", "16", "/dev/urandom"],
+      cwd: candidateRoot,
+      timeoutMilliseconds: 10_000,
+      terminationGraceMilliseconds: 1_000,
+      profile,
+    });
+    assert.notEqual(nondeterministicDeviceRead.exit_code, 0);
+    assert.equal(nondeterministicDeviceRead.stdout.length, 0);
+    assert.match(nondeterministicDeviceRead.stderr.toString("utf8"), /operation not permitted/i);
+  } finally {
+    await rm(candidateRoot, {recursive: true, force: true});
+  }
+});
+
+test("formal adapter write closure permits only the exact fresh temporary root", async () => {
+  const fixtureRoot = await realpath(
+    await mkdtemp(join(tmpdir(), "tachiko-adapter-closed-write-")),
+  );
+  const allowedRoot = resolve(fixtureRoot, "adapter-tmp");
+  const unlistedRoot = await realpath(
+    await mkdtemp(join(tmpdir(), "tachiko-adapter-unlisted-write-")),
+  );
+  try {
+    await mkdir(allowedRoot);
+    const allowedOutput = resolve(allowedRoot, "allowed.txt");
+    const unlistedOutput = resolve(unlistedRoot, "escape.txt");
+    const {denyReadProfile, runNetworkSandboxed} = await import(
+      "../scripts/network-sandbox.mjs"
+    );
+    const profile = denyReadProfile([], {
+      denyUnlistedReads: true,
+      denyUnlistedWrites: true,
+      allowReadPaths: ["/bin/sh"],
+      allowWriteRoots: [allowedRoot],
+    });
+    const execution = await runNetworkSandboxed({
+      executable: "/bin/sh",
+      args: ["-c", 'printf allowed > "$1"; printf escaped > "$2"', "sh",
+        allowedOutput, unlistedOutput],
+      cwd: fixtureRoot,
+      timeoutMilliseconds: 10_000,
+      terminationGraceMilliseconds: 1_000,
+      profile,
+    });
+    assert.notEqual(execution.exit_code, 0);
+    assert.equal(await readFile(allowedOutput, "utf8"), "allowed");
+    assert.equal(existsSync(unlistedOutput), false);
+    assert.match(execution.stderr.toString("utf8"), /operation not permitted/i);
+    assert.equal(execution.process_group_extinct_before_capture, true);
+  } finally {
+    await rm(fixtureRoot, {recursive: true, force: true});
+    await rm(unlistedRoot, {recursive: true, force: true});
   }
 });
 
@@ -2418,8 +3666,15 @@ test("oracle qualification records executed target/base evidence for all frozen 
     }
     for (const oracle of [caseEntry.target.oracle, caseEntry.negative.oracle]) {
       assert.ok(oracle.runner_process_supervision.deadline_seconds > 1800);
-      assert.equal(oracle.runner_process_supervision.termination_grace_seconds, 10);
-      assert.equal(oracle.runner_process_supervision.process_group_extinct_before_capture, true);
+      assert.equal(
+        oracle.runner_process_supervision.mode,
+        "construction_only_bounded_trusted_orchestrator",
+      );
+      assert.equal(oracle.runner_process_supervision.formal_result_eligible, false);
+      assert.equal(oracle.runner_process_supervision.inner_process_supervision_required, true);
+      assert.equal(oracle.runner_process_supervision.timed_out, false);
+      assert.equal(oracle.runner_process_supervision.process_group_created, false);
+      assert.equal(oracle.runner_process_supervision.process_group_extinct_before_capture, null);
     }
     for (const assertion of [
       ...caseEntry.target.oracle.assertions,
@@ -2450,8 +3705,12 @@ test("oracle qualification records executed target/base evidence for all frozen 
   const tw05 = receipt.run_receipt.cases.find((entry) => entry.case_id === "TW-05");
   for (const offline of [tw05.offline_historical_target, tw05.offline_behavior_missing_negative]) {
     assert.ok(offline.process_supervision.deadline_seconds > 1800);
-    assert.equal(offline.process_supervision.termination_grace_seconds, 10);
-    assert.equal(offline.process_supervision.process_group_extinct_before_capture, true);
+    assert.equal(offline.process_supervision.mode, "construction_only_bounded_trusted_orchestrator");
+    assert.equal(offline.process_supervision.formal_result_eligible, false);
+    assert.equal(offline.process_supervision.inner_process_supervision_required, true);
+    assert.equal(offline.process_supervision.timed_out, false);
+    assert.equal(offline.process_supervision.process_group_created, false);
+    assert.equal(offline.process_supervision.process_group_extinct_before_capture, null);
   }
   assert.equal(tw05.target.accepted, false);
   assert.equal(tw05.target.expected_contract_miss, true);
@@ -2545,9 +3804,444 @@ async function writeFormalControllerContext(path, overrides = {}) {
   return {path, sha256: sha256(bytes), context, bytes};
 }
 
+async function testFileIdentity(path) {
+  const bytes = await readFile(path);
+  return {path: await realpath(path), bytes: bytes.length, sha256: sha256(bytes)};
+}
+
+async function writeIssuedFormalControllerContext(root, overrides = {}) {
+  const {
+    registry_basename: registryBasenameOverride,
+    with_trusted_validation_environment: withTrustedValidationEnvironment = false,
+    ...contextOverrides
+  } = overrides;
+  const artifactDir = resolve(root, "issued-controller-artifacts");
+  const registryDir = resolve(root, "issued-controller-registry");
+  const stageDir = resolve(artifactDir, "stage-receipts");
+  await mkdir(stageDir, {recursive: true});
+  await mkdir(registryDir, {recursive: true});
+  const contextPath = resolve(artifactDir, "controller-evidence-context.json");
+  const context = {
+    schema: "tachiko-controller-evidence-context-v1",
+    protocol_id: "tachiko-agents-effect-v1",
+    phase: "baseline_a",
+    classification: "formal_authorized_attempt",
+    formal_result_eligible: true,
+    wave_id: "1".repeat(32), run_id: "2".repeat(32), attempt_id: "3".repeat(32),
+    candidate_id: "0123456789abcdef0123456789abcdef", case_id: "TW-05",
+    capture_receipt_sha256: "0".repeat(64), formal_authorization_sha256: "0".repeat(64),
+    candidate_tree: "c".repeat(40), raw_tree_digest_sha256: "d".repeat(64),
+    adapter_forbidden_roots: [],
+    ...contextOverrides,
+  };
+  const authorizationPath = resolve(root, "issued-formal-authorization.json");
+  const authorization = {
+    schema: "tachiko-formal-run-authorization-v1",
+    protocol_id: context.protocol_id,
+    phase: context.phase,
+    wave_id: context.wave_id,
+    run_id: context.run_id,
+    attempt_id: context.attempt_id,
+    candidate_id: context.candidate_id,
+    case_id: context.case_id,
+    attempt_registry_dir: await realpath(registryDir),
+    authorization_token: "issued-fixture-token-".padEnd(64, "x"),
+    variant_sha256: "6".repeat(64),
+    agent_executable_sha256: "7".repeat(64),
+    agent_args_sha256: "8".repeat(64),
+    rustup_home_template_sha256: "9".repeat(64),
+    pnpm_home_template_sha256: "a".repeat(64),
+    cargo_home_template_sha256: "b".repeat(64),
+  };
+  await writeFile(authorizationPath, `${JSON.stringify(authorization, null, 2)}\n`);
+  const authorizationIdentity = await testFileIdentity(authorizationPath);
+  context.formal_authorization_sha256 = authorizationIdentity.sha256;
+  const capturePath = resolve(artifactDir, "capture-receipt.json");
+  await writeFile(capturePath, `${JSON.stringify({
+    candidate_id: context.candidate_id,
+    candidate_tree: context.candidate_tree,
+    raw_tree_digest_sha256: context.raw_tree_digest_sha256,
+  })}\n`);
+  const captureIdentity = await testFileIdentity(capturePath);
+  context.capture_receipt_sha256 = captureIdentity.sha256;
+  let validationEnvironmentReceiptIdentity = null;
+  let validationEnvironment = null;
+  let validationEnvironmentRoot = null;
+  if (withTrustedValidationEnvironment) {
+    validationEnvironmentRoot = resolve(root, "issued-trusted-validation");
+    const validationHome = resolve(validationEnvironmentRoot, "home");
+    const validationCodexHome = resolve(validationEnvironmentRoot, "codex-home");
+    const validationCargoHome = resolve(validationEnvironmentRoot, "cargo-home");
+    await Promise.all([
+      mkdir(validationHome, {recursive: true, mode: 0o700}),
+      mkdir(validationCodexHome, {recursive: true, mode: 0o700}),
+      mkdir(validationCargoHome, {recursive: true, mode: 0o700}),
+    ]);
+    validationEnvironment = {
+      HOME: await realpath(validationHome),
+      CODEX_HOME: await realpath(validationCodexHome),
+      CARGO_HOME: await realpath(validationCargoHome),
+    };
+    for (const key of [
+      "PATH", "RUSTUP_HOME", "PNPM_HOME", "LANG", "LC_ALL", "TZ",
+      "CARGO_INCREMENTAL", "CARGO_NET_OFFLINE", "CARGO_TERM_COLOR",
+      "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL", "GIT_ATTR_NOSYSTEM",
+      "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    ]) {
+      if (process.env[key] !== undefined) validationEnvironment[key] = process.env[key];
+    }
+    const cargoIdentity = await fixtureContentTreeIdentity(validationCargoHome);
+    const validationEnvironmentReceiptPath = resolve(
+      artifactDir,
+      "trusted-validation-environment.json",
+    );
+    await writeFile(validationEnvironmentReceiptPath, `${JSON.stringify({
+      schema: "tachiko-controller-trusted-validation-environment-v1",
+      phase: context.phase,
+      wave_id: context.wave_id,
+      run_id: context.run_id,
+      attempt_id: context.attempt_id,
+      candidate_id: context.candidate_id,
+      case_id: context.case_id,
+      created_after_agent_extinction: true,
+      agent_environment_inherited: false,
+      cargo_home_read_only: true,
+      environment: validationEnvironment,
+      cargo_home: cargoIdentity,
+    }, null, 2)}\n`, {mode: 0o400});
+    validationEnvironmentReceiptIdentity = await testFileIdentity(
+      validationEnvironmentReceiptPath,
+    );
+    context.trusted_validation_environment_sha256 =
+      validationEnvironmentReceiptIdentity.sha256;
+    context.trusted_validation_cargo_manifest_sha256 = cargoIdentity.manifest_sha256;
+    await makeFixtureTreeReadOnly(validationEnvironmentRoot);
+  }
+  const contextBytes = Buffer.from(`${JSON.stringify(context, null, 2)}\n`);
+  await writeFile(contextPath, contextBytes);
+  const contextIdentity = await testFileIdentity(contextPath);
+  const controllerBundleRoot = resolve(artifactDir, "controller-bundle");
+  const controllerBundleSentinel = resolve(controllerBundleRoot, "sentinel.mjs");
+  await mkdir(controllerBundleRoot, {mode: 0o700});
+  const controllerBundleSentinelBytes = Buffer.from("export const sealed = true;\n");
+  await writeFile(controllerBundleSentinel, controllerBundleSentinelBytes, {mode: 0o400});
+  const bundlePath = resolve(artifactDir, "controller-bundle-manifest.json");
+  await writeFile(bundlePath, `${JSON.stringify({
+    schema: "tachiko-controller-bundle-manifest-v1",
+    entries: [
+      {path: ".", type: "directory", mode: 0o700},
+      {path: "sentinel.mjs", type: "file", mode: 0o400,
+        bytes: controllerBundleSentinelBytes.length,
+        sha256: sha256(controllerBundleSentinelBytes)},
+    ],
+  }, null, 2)}\n`);
+  const bundleIdentity = await testFileIdentity(bundlePath);
+  const bundleVerification = {
+    schema: "tachiko-controller-bundle-verification-v1",
+    label: "issued formal fixture",
+    entries: 2,
+    tree_sha256: bundleIdentity.sha256,
+    manifest: bundleIdentity,
+    verified: true,
+  };
+  const slotKey = sha256(Buffer.from(
+    `${context.protocol_id}:${context.phase}:${context.wave_id}:${context.case_id}\n`,
+  ));
+  const registryPath = resolve(registryDir, registryBasenameOverride ?? `${slotKey}.json`);
+  const runBindings = {
+    protocol_id: context.protocol_id,
+    phase: context.phase,
+    wave_id: context.wave_id,
+    run_id: context.run_id,
+    attempt_id: context.attempt_id,
+    candidate_id: context.candidate_id,
+    case_id: context.case_id,
+  };
+  const registry = {
+    schema: "tachiko-controller-attempt-registry-v1",
+    ...runBindings,
+    artifact_dir: await realpath(artifactDir),
+    source_repo: resolve(root, "issued-source-repo"),
+    slot_key_sha256: slotKey,
+    uniqueness_scope: "protocol_id:phase:wave_id:case_id",
+    formal_authorization_sha256: authorizationIdentity.sha256,
+    variant_sha256: authorization.variant_sha256,
+    agent_executable_sha256: authorization.agent_executable_sha256,
+    agent_args_sha256: authorization.agent_args_sha256,
+    rustup_home_template_sha256: authorization.rustup_home_template_sha256,
+    pnpm_home_template_sha256: authorization.pnpm_home_template_sha256,
+    cargo_home_template_sha256: authorization.cargo_home_template_sha256,
+  };
+  await writeFile(registryPath, `${JSON.stringify(registry, null, 2)}\n`);
+  const registryIdentity = await testFileIdentity(registryPath);
+  const stageCommon = {
+    ...runBindings,
+    classification: context.classification,
+    formal_result_eligible: true,
+    formal_authorization: authorizationIdentity,
+    attempt_registry_entry: registryIdentity,
+    infrastructure_identity_sha256: bundleIdentity.sha256,
+  };
+  const ledgerPath = resolve(artifactDir, "attempt-ledger.jsonl");
+  const registration = {
+    schema: "tachiko-controller-attempt-entry-v1",
+    ...stageCommon,
+    disposition: "registered",
+    attempt_number: 1,
+    replacement_role: "initial",
+    previous_attempt_entry_sha256: null,
+    registered_at: "2026-08-25T00:00:00.000Z",
+  };
+  registration.entry_sha256 = sha256(Buffer.from(`${JSON.stringify(registration, null, 2)}\n`));
+  await writeFile(ledgerPath, `${JSON.stringify(registration)}\n`);
+  const ledgerIdentity = await testFileIdentity(ledgerPath);
+  const sequence = [
+    "attempt_registration", "base_workspace_preparation", "same_wave_base_control",
+    "candidate_workspace_preparation", "candidate_preflight", "agent_launch", "agent_process",
+    "overlay_identity_postcheck", "candidate_capture", "validation_preparation",
+    "core_validation", "controller_evidence_context",
+  ];
+  const stageIdentities = [];
+  let prior = null;
+  for (const [index, stage] of sequence.entries()) {
+    const payload = {stage};
+    const inputs = stage === "controller_evidence_context"
+      ? [captureIdentity]
+      : stage === "candidate_capture" && validationEnvironmentReceiptIdentity
+        ? [validationEnvironmentReceiptIdentity]
+        : [];
+    const outputs = stage === "attempt_registration"
+      ? [ledgerIdentity, bundleIdentity]
+      : stage === "candidate_capture"
+        ? [captureIdentity]
+        : stage === "controller_evidence_context" ? [contextIdentity] : [];
+    const receipt = {
+      schema: "tachiko-controller-stage-receipt-v1",
+      ...stageCommon,
+      stage,
+      stage_order: index,
+      prior_receipt_sha256: prior,
+      controller_bundle_verification: bundleVerification,
+      inputs,
+      outputs,
+      payload_sha256: sha256(Buffer.from(`${JSON.stringify(payload, null, 2)}\n`)),
+      payload,
+    };
+    const path = resolve(stageDir, `${String(index).padStart(2, "0")}-${stage}.json`);
+    await writeFile(path, `${JSON.stringify(receipt, null, 2)}\n`);
+    const identity = await testFileIdentity(path);
+    stageIdentities.push(identity);
+    prior = identity.sha256;
+  }
+  const issuancePath = resolve(artifactDir, "controller-context-issuance.json");
+  const issuanceBody = {
+    schema: "tachiko-controller-context-issuance-v1",
+    ...runBindings,
+    classification: context.classification,
+    formal_result_eligible: true,
+    artifact_dir: await realpath(artifactDir),
+    context: contextIdentity,
+    formal_authorization: authorizationIdentity,
+    attempt_registry_entry: registryIdentity,
+    attempt_ledger: ledgerIdentity,
+    controller_bundle_manifest: bundleIdentity,
+    capture_receipt: captureIdentity,
+    stage_receipts: stageIdentities,
+    context_stage_receipt_sha256: stageIdentities.at(-1).sha256,
+    issued_at: "2026-08-25T00:00:00.000Z",
+  };
+  const {formalControllerIssuanceRecord} = await import(pathToFileURL(runControllerScript));
+  const issuance = formalControllerIssuanceRecord({
+    body: issuanceBody,
+    authorizationToken: authorization.authorization_token,
+  });
+  await writeFile(issuancePath, `${JSON.stringify(issuance, null, 2)}\n`);
+  const issuanceIdentity = await testFileIdentity(issuancePath);
+  const issuanceStagePayload = {controller_issuance_sha256: issuanceIdentity.sha256};
+  const issuanceStage = {
+    schema: "tachiko-controller-stage-receipt-v1",
+    ...stageCommon,
+    stage: "controller_context_issuance",
+    stage_order: sequence.length,
+    prior_receipt_sha256: stageIdentities.at(-1).sha256,
+    controller_bundle_verification: bundleVerification,
+    inputs: [contextIdentity, authorizationIdentity, registryIdentity, ledgerIdentity,
+      bundleIdentity, captureIdentity],
+    outputs: [issuanceIdentity],
+    payload_sha256: sha256(Buffer.from(`${JSON.stringify(issuanceStagePayload, null, 2)}\n`)),
+    payload: issuanceStagePayload,
+  };
+  await writeFile(
+    resolve(stageDir, `${String(sequence.length).padStart(2, "0")}-controller_context_issuance.json`),
+    `${JSON.stringify(issuanceStage, null, 2)}\n`,
+  );
+  const issuanceStageIdentity = await testFileIdentity(
+    resolve(stageDir, `${String(sequence.length).padStart(2, "0")}-controller_context_issuance.json`),
+  );
+  return {
+    path: contextIdentity.path,
+    sha256: contextIdentity.sha256,
+    context,
+    bytes: contextBytes,
+    issuancePath: issuanceIdentity.path,
+    issuanceSha256: issuanceIdentity.sha256,
+    authorizationPath: authorizationIdentity.path,
+    authorizationSha256: authorizationIdentity.sha256,
+    registryPath: registryIdentity.path,
+    registrySha256: registryIdentity.sha256,
+    ledgerPath,
+    registration,
+    issuanceStageSha256: issuanceStageIdentity.sha256,
+    controllerBundleRoot,
+    controllerBundleSentinel,
+    validationEnvironmentRoot,
+    validationEnvironment,
+    validationEnvironmentReceiptPath: validationEnvironmentReceiptIdentity?.path ?? null,
+    validationEnvironmentReceiptSha256: validationEnvironmentReceiptIdentity?.sha256 ?? null,
+  };
+}
+
+test("a self-declared formal controller context is not authoritative helper evidence", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-forged-controller-context-"));
+  try {
+    const forged = await writeFormalControllerContext(resolve(fixtureRoot, "context.json"));
+    const {loadControllerContext} = await import("../scripts/controller-context.mjs");
+    await assert.rejects(
+      loadControllerContext({
+        path: forged.path,
+        expectedSha256: forged.sha256,
+        required: true,
+      }),
+      /controller issuance|authorized controller provenance/i,
+    );
+  } finally {
+    await rm(fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("an externally authorized controller stage chain issues formal helper evidence", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-issued-controller-context-"));
+  try {
+    const issued = await writeIssuedFormalControllerContext(fixtureRoot);
+    const {loadControllerContext} = await import("../scripts/controller-context.mjs");
+    await assert.rejects(loadControllerContext({
+      path: issued.path,
+      expectedSha256: issued.sha256,
+      issuancePath: issued.issuancePath,
+      expectedIssuanceSha256: issued.issuanceSha256,
+      required: true,
+    }), /external authorization trust anchor|registry trust anchor/i);
+    const trustAnchors = {
+      authorizationPath: issued.authorizationPath,
+      expectedAuthorizationSha256: issued.authorizationSha256,
+      registryPath: issued.registryPath,
+      expectedRegistrySha256: issued.registrySha256,
+    };
+    const loaded = await loadControllerContext({
+      path: issued.path,
+      expectedSha256: issued.sha256,
+      issuancePath: issued.issuancePath,
+      expectedIssuanceSha256: issued.issuanceSha256,
+      ...trustAnchors,
+      required: true,
+    });
+    assert.equal(loaded.formal_result_eligible, true);
+    assert.equal(loaded.issuance_sha256, issued.issuanceSha256);
+    const terminal = {
+      schema: "tachiko-controller-attempt-entry-v1",
+      protocol_id: issued.context.protocol_id,
+      phase: issued.context.phase,
+      wave_id: issued.context.wave_id,
+      run_id: issued.context.run_id,
+      attempt_id: issued.context.attempt_id,
+      candidate_id: issued.context.candidate_id,
+      case_id: issued.context.case_id,
+      disposition: "awaiting_review",
+      attempt_number: 1,
+      previous_attempt_entry_sha256: issued.registration.entry_sha256,
+      final_stage_receipt_sha256: issued.issuanceStageSha256,
+      resampling_performed: false,
+      launch_count: 1,
+      detail: {launch_count: 1},
+      terminal_at: "2026-08-25T00:00:01.000Z",
+    };
+    terminal.entry_sha256 = sha256(Buffer.from(`${JSON.stringify(terminal, null, 2)}\n`));
+    await appendFile(issued.ledgerPath, `${JSON.stringify(terminal)}\n`);
+    const afterTerminal = await loadControllerContext({
+      path: issued.path,
+      expectedSha256: issued.sha256,
+      issuancePath: issued.issuancePath,
+      expectedIssuanceSha256: issued.issuanceSha256,
+      ...trustAnchors,
+      required: true,
+    });
+    assert.equal(afterTerminal.issuance_sha256, issued.issuanceSha256);
+  } finally {
+    await rm(fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("formal controller provenance rejects a noncanonical atomic slot and unreachable terminal", async () => {
+  const wrongSlotRoot = await mkdtemp(join(tmpdir(), "tachiko-issued-wrong-slot-"));
+  const fakeTerminalRoot = await mkdtemp(join(tmpdir(), "tachiko-issued-fake-terminal-"));
+  const {loadControllerContext} = await import("../scripts/controller-context.mjs");
+  try {
+    const wrongSlot = await writeIssuedFormalControllerContext(wrongSlotRoot, {
+      registry_basename: "slot.json",
+    });
+    await assert.rejects(loadControllerContext({
+      path: wrongSlot.path,
+      expectedSha256: wrongSlot.sha256,
+      issuancePath: wrongSlot.issuancePath,
+      expectedIssuanceSha256: wrongSlot.issuanceSha256,
+      authorizationPath: wrongSlot.authorizationPath,
+      expectedAuthorizationSha256: wrongSlot.authorizationSha256,
+      registryPath: wrongSlot.registryPath,
+      expectedRegistrySha256: wrongSlot.registrySha256,
+      required: true,
+    }), /atomic registry binding/i);
+
+    const fakeTerminal = await writeIssuedFormalControllerContext(fakeTerminalRoot);
+    const terminal = {
+      schema: "tachiko-controller-attempt-entry-v1",
+      protocol_id: fakeTerminal.context.protocol_id,
+      phase: fakeTerminal.context.phase,
+      wave_id: fakeTerminal.context.wave_id,
+      run_id: fakeTerminal.context.run_id,
+      attempt_id: fakeTerminal.context.attempt_id,
+      candidate_id: fakeTerminal.context.candidate_id,
+      case_id: fakeTerminal.context.case_id,
+      disposition: "awaiting_review",
+      attempt_number: 1,
+      previous_attempt_entry_sha256: fakeTerminal.registration.entry_sha256,
+      final_stage_receipt_sha256: "c".repeat(64),
+      resampling_performed: false,
+      launch_count: 1,
+      detail: {launch_count: 1},
+      terminal_at: "2026-08-25T00:00:01.000Z",
+    };
+    terminal.entry_sha256 = sha256(Buffer.from(`${JSON.stringify(terminal, null, 2)}\n`));
+    await appendFile(fakeTerminal.ledgerPath, `${JSON.stringify(terminal)}\n`);
+    await assert.rejects(loadControllerContext({
+      path: fakeTerminal.path,
+      expectedSha256: fakeTerminal.sha256,
+      issuancePath: fakeTerminal.issuancePath,
+      expectedIssuanceSha256: fakeTerminal.issuanceSha256,
+      authorizationPath: fakeTerminal.authorizationPath,
+      expectedAuthorizationSha256: fakeTerminal.authorizationSha256,
+      registryPath: fakeTerminal.registryPath,
+      expectedRegistrySha256: fakeTerminal.registrySha256,
+      required: true,
+    }), /does not reach the final verified stage receipt/i);
+  } finally {
+    await rm(wrongSlotRoot, {recursive: true, force: true});
+    await rm(fakeTerminalRoot, {recursive: true, force: true});
+  }
+});
+
 function runReviewPacketBuilder({
   inputRoot, inputManifest, outputDir, terminalReceipt, variants, controllerContext,
-  requireFormalContext = false,
+  requireFormalContext = false, includeTrustAnchors = true,
 }) {
   const argumentsForBuilder = [
     buildReviewPacketScript,
@@ -2565,6 +4259,16 @@ function runReviewPacketBuilder({
   if (controllerContext) argumentsForBuilder.push(
     "--controller-context", controllerContext.path,
     "--expected-controller-context-sha256", controllerContext.sha256,
+    ...(controllerContext.issuancePath ? [
+      "--controller-issuance", controllerContext.issuancePath,
+      "--expected-controller-issuance-sha256", controllerContext.issuanceSha256,
+      ...(includeTrustAnchors ? [
+        "--formal-authorization", controllerContext.authorizationPath,
+        "--expected-formal-authorization-sha256", controllerContext.authorizationSha256,
+        "--attempt-registry-entry", controllerContext.registryPath,
+        "--expected-attempt-registry-entry-sha256", controllerContext.registrySha256,
+      ] : []),
+    ] : []),
   );
   if (requireFormalContext) argumentsForBuilder.push("--require-formal-context", "true");
   for (const variant of variants) argumentsForBuilder.push("--variant", variant);
@@ -2636,7 +4340,8 @@ test("formal review builder and standalone scanner require the same immutable co
     const inputRoot = resolve(fixtureRoot, "input");
     const inputManifest = resolve(fixtureRoot, "input-manifest.json");
     const variant = resolve(fixtureRoot, "variant");
-    const context = await writeFormalControllerContext(resolve(fixtureRoot, "context.json"));
+    const context = await writeIssuedFormalControllerContext(fixtureRoot);
+    const forged = await writeFormalControllerContext(resolve(fixtureRoot, "forged-context.json"));
     await mkdir(inputRoot);
     const roleByPath = {};
     for (const role of [
@@ -2666,6 +4371,22 @@ test("formal review builder and standalone scanner require the same immutable co
     assert.notEqual(tampered.status, 0);
     assert.match(tampered.stderr, /controller context SHA-256 mismatch/i);
 
+    const forgedBuild = runReviewPacketBuilder({
+      inputRoot, inputManifest, outputDir: resolve(fixtureRoot, "forged-output"),
+      terminalReceipt: resolve(fixtureRoot, "forged-terminal.json"), variants: [variant],
+      controllerContext: forged, requireFormalContext: true,
+    });
+    assert.notEqual(forgedBuild.status, 0);
+    assert.match(forgedBuild.stderr, /controller issuance|authorized controller provenance/i);
+
+    const unanchoredBuild = runReviewPacketBuilder({
+      inputRoot, inputManifest, outputDir: resolve(fixtureRoot, "unanchored-output"),
+      terminalReceipt: resolve(fixtureRoot, "unanchored-terminal.json"), variants: [variant],
+      controllerContext: context, requireFormalContext: true, includeTrustAnchors: false,
+    });
+    assert.notEqual(unanchoredBuild.status, 0);
+    assert.match(unanchoredBuild.stderr, /authorization trust anchor|registry trust anchor/i);
+
     const outputDir = resolve(fixtureRoot, "formal-output");
     const terminalPath = resolve(fixtureRoot, "formal-terminal.json");
     const built = runReviewPacketBuilder({
@@ -2680,15 +4401,45 @@ test("formal review builder and standalone scanner require the same immutable co
       assert.equal(receipt.formal_result_eligible, true);
       assert.equal(receipt.controller_context_sha256, context.sha256);
       assert.equal(receipt.attempt_id, context.context.attempt_id);
+      assert.equal(receipt.formal_authorization_sha256, context.authorizationSha256);
+      assert.equal(receipt.attempt_registry_entry_sha256, context.registrySha256);
     }
 
     const scanReceiptPath = resolve(fixtureRoot, "formal-scan.json");
+    const forgedScan = spawnSync(process.execPath, [
+      scanReviewPacketScript, "--packet-dir", resolve(outputDir, "packet"),
+      "--contract", resolve(benchmarkDir, "evaluator/contracts/review-packet-blinding-v1.json"),
+      "--variant", variant, "--receipt", resolve(fixtureRoot, "forged-scan.json"),
+      "--controller-context", forged.path,
+      "--expected-controller-context-sha256", forged.sha256,
+      "--require-formal-context", "true",
+    ], {encoding: "utf8"});
+    assert.notEqual(forgedScan.status, 0);
+    assert.match(forgedScan.stderr, /controller issuance|authorized controller provenance/i);
+    const unanchoredScan = spawnSync(process.execPath, [
+      scanReviewPacketScript, "--packet-dir", resolve(outputDir, "packet"),
+      "--contract", resolve(benchmarkDir, "evaluator/contracts/review-packet-blinding-v1.json"),
+      "--variant", variant, "--receipt", resolve(fixtureRoot, "unanchored-scan.json"),
+      "--controller-context", context.path,
+      "--expected-controller-context-sha256", context.sha256,
+      "--controller-issuance", context.issuancePath,
+      "--expected-controller-issuance-sha256", context.issuanceSha256,
+      "--require-formal-context", "true",
+    ], {encoding: "utf8"});
+    assert.notEqual(unanchoredScan.status, 0);
+    assert.match(unanchoredScan.stderr, /authorization trust anchor|registry trust anchor/i);
     const scanned = spawnSync(process.execPath, [
       scanReviewPacketScript, "--packet-dir", resolve(outputDir, "packet"),
       "--contract", resolve(benchmarkDir, "evaluator/contracts/review-packet-blinding-v1.json"),
       "--variant", variant, "--receipt", scanReceiptPath,
       "--controller-context", context.path,
       "--expected-controller-context-sha256", context.sha256,
+      "--controller-issuance", context.issuancePath,
+      "--expected-controller-issuance-sha256", context.issuanceSha256,
+      "--formal-authorization", context.authorizationPath,
+      "--expected-formal-authorization-sha256", context.authorizationSha256,
+      "--attempt-registry-entry", context.registryPath,
+      "--expected-attempt-registry-entry-sha256", context.registrySha256,
       "--require-formal-context", "true",
     ], {encoding: "utf8"});
     assert.equal(scanned.status, 0, scanned.stderr);
@@ -2696,6 +4447,35 @@ test("formal review builder and standalone scanner require the same immutable co
     assert.equal(scanReceipt.classification, "formal_authorized_attempt");
     assert.equal(scanReceipt.formal_result_eligible, true);
     assert.equal(scanReceipt.controller_context_sha256, context.sha256);
+    assert.equal(scanReceipt.controller_issuance_sha256, context.issuanceSha256);
+    assert.equal(scanReceipt.formal_authorization_sha256, context.authorizationSha256);
+    assert.equal(scanReceipt.attempt_registry_entry_sha256, context.registrySha256);
+
+    await chmod(context.controllerBundleSentinel, 0o600);
+    await writeFile(context.controllerBundleSentinel, "export const sealed = false;\n");
+    const driftedBuild = runReviewPacketBuilder({
+      inputRoot, inputManifest, outputDir: resolve(fixtureRoot, "drifted-output"),
+      terminalReceipt: resolve(fixtureRoot, "drifted-terminal.json"), variants: [variant],
+      controllerContext: context, requireFormalContext: true,
+    });
+    assert.notEqual(driftedBuild.status, 0);
+    assert.match(driftedBuild.stderr, /bundle tree differs from its immutable manifest/i);
+    const driftedScan = spawnSync(process.execPath, [
+      scanReviewPacketScript, "--packet-dir", resolve(outputDir, "packet"),
+      "--contract", resolve(benchmarkDir, "evaluator/contracts/review-packet-blinding-v1.json"),
+      "--variant", variant, "--receipt", resolve(fixtureRoot, "drifted-scan.json"),
+      "--controller-context", context.path,
+      "--expected-controller-context-sha256", context.sha256,
+      "--controller-issuance", context.issuancePath,
+      "--expected-controller-issuance-sha256", context.issuanceSha256,
+      "--formal-authorization", context.authorizationPath,
+      "--expected-formal-authorization-sha256", context.authorizationSha256,
+      "--attempt-registry-entry", context.registryPath,
+      "--expected-attempt-registry-entry-sha256", context.registrySha256,
+      "--require-formal-context", "true",
+    ], {encoding: "utf8"});
+    assert.notEqual(driftedScan.status, 0);
+    assert.match(driftedScan.stderr, /bundle tree differs from its immutable manifest/i);
   } finally {
     await rm(fixtureRoot, {recursive: true, force: true});
   }
@@ -3155,12 +4935,48 @@ async function createControllerSmokeFixture(mode, caseId = "TW-01") {
   await writeFile(
     fakeAgent,
     `#!/usr/bin/env node\n` +
-      `import {appendFileSync, writeFileSync} from "node:fs";\n` +
+      `import {appendFileSync, chmodSync, mkdirSync, readFileSync, symlinkSync, writeFileSync} from "node:fs";\n` +
       `import {spawn} from "node:child_process";\n` +
       `const mode = process.argv[2];\n` +
       `const launchPath = mode === "noop" || mode === "timeout_no_changes" ` +
       `? process.argv[3] : ".fake-agent-launches";\n` +
       `appendFileSync(launchPath, "1\\n");\n` +
+      `if (mode === "bundle_probe") {\n` +
+      `  const target = ${JSON.stringify(resolve(artifactDir, "controller-bundle/scripts/capture-candidate.mjs"))};\n` +
+      `  const observed = {};\n` +
+      `  let original = null;\n` +
+      `  try { original = readFileSync(target); observed.read = "allowed"; } ` +
+      `catch (error) { observed.read = error.code; }\n` +
+      `  try { chmodSync(target, 0o600); observed.chmod = "allowed"; } ` +
+      `catch (error) { observed.chmod = error.code; }\n` +
+      `  try { writeFileSync(target, original ?? "forged\\n"); observed.replace = "allowed"; } ` +
+      `catch (error) { observed.replace = error.code; }\n` +
+      `  try { symlinkSync(target, ".bundle-link"); readFileSync(".bundle-link"); ` +
+      `observed.symlink_read = "allowed"; } ` +
+      `catch (error) { observed.symlink_read = error.code; }\n` +
+      `  try { readFileSync(${JSON.stringify(resolve(repositoryRoot, "AGENTS.md"))}); ` +
+      `observed.source_read = "allowed"; } ` +
+      `catch (error) { observed.source_read = error.code; }\n` +
+      `  try { writeFileSync(${JSON.stringify(resolve(attemptRegistryDir, "candidate-forgery"))}, "x"); ` +
+      `observed.registry_write = "allowed"; } ` +
+      `catch (error) { observed.registry_write = error.code; }\n` +
+      `  try { writeFileSync(${JSON.stringify(resolve(artifactDir, "candidate-forgery"))}, "x"); ` +
+      `observed.artifact_write = "allowed"; } ` +
+      `catch (error) { observed.artifact_write = error.code; }\n` +
+      `  writeFileSync(".bundle-probe.json", JSON.stringify(observed));\n` +
+      `}\n` +
+      `if (mode === "bundle_drift") {\n` +
+      `  writeFileSync(".bundle-drift-ready", "ready\\n");\n` +
+      `  setTimeout(() => {}, 4000);\n` +
+      `}\n` +
+      `if (mode === "validation_poison") {\n` +
+      `  writeFileSync(process.env.CARGO_HOME + "/config.toml", ` +
+      `"[build]\\nrustc-wrapper = \\\"/candidate/wrapper\\\"\\n");\n` +
+      `  writeFileSync(process.env.HOME + "/.candidate-home-poison", "poison\\n");\n` +
+      `  mkdirSync(process.env.HOME + "/bin", {recursive: true});\n` +
+      `  writeFileSync(process.env.HOME + "/bin/cargo", "#!/bin/sh\\nexit 97\\n");\n` +
+      `  writeFileSync(process.env.TMPDIR + "/candidate-tmp-poison", "poison\\n");\n` +
+      `}\n` +
       `if (mode !== "noop" && mode !== "timeout_no_changes") ` +
       `writeFileSync("controller-smoke.txt", "candidate mutation\\n");\n` +
       `if (mode === "descendant" || mode === "timeout_descendant") {\n` +
@@ -3203,6 +5019,132 @@ async function createControllerSmokeFixture(mode, caseId = "TW-01") {
     ],
   };
 }
+
+test("controller agent profile denies controller bundle and trusted artifact access", async () => {
+  const fixture = await createControllerSmokeFixture("bundle_probe");
+  try {
+    const result = spawnSync(process.execPath, fixture.arguments, {
+      encoding: "utf8", timeout: 120_000, maxBuffer: 128 * 1024 * 1024,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const observed = await readJson(resolve(
+      fixture.runRoot,
+      "workspace/.bundle-probe.json",
+    ));
+    for (const operation of [
+      "read", "chmod", "replace", "symlink_read", "source_read", "registry_write",
+      "artifact_write",
+    ]) {
+      assert.match(observed[operation], /^(?:EPERM|EACCES)$/,
+        `candidate ${operation} unexpectedly reached controller bundle`);
+    }
+    const processReceipt = await readJson(resolve(fixture.artifactDir, "process/receipt.json"));
+    assert.equal(processReceipt.process_containment.candidate_trusted_roots_denied, true);
+    assert.match(
+      processReceipt.process_containment.requested_profile.sha256,
+      /^[0-9a-f]{64}$/,
+    );
+  } finally {
+    await rm(fixture.fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("controller rejects bundle drift before any trusted post-agent helper executes", async () => {
+  const fixture = await createControllerSmokeFixture("bundle_drift");
+  try {
+    const child = spawn(process.execPath, fixture.arguments, {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const readyPath = resolve(fixture.runRoot, "workspace/.bundle-drift-ready");
+    for (let attempt = 0; attempt < 400 && !existsSync(readyPath); attempt += 1) {
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
+    }
+    assert.equal(existsSync(readyPath), true, `agent never reached drift window: ${stderr}`);
+    const helperPath = resolve(
+      fixture.artifactDir,
+      "controller-bundle/scripts/capture-candidate.mjs",
+    );
+    const original = await readFile(helperPath, "utf8");
+    await chmod(helperPath, 0o600);
+    await writeFile(
+      helperPath,
+      `import {writeFileSync} from "node:fs";\n` +
+        `writeFileSync(${JSON.stringify(helperPath)}, ${JSON.stringify(original)});\n` +
+        `process.exit(0);\n`,
+    );
+    const [status] = await once(child, "close");
+    assert.notEqual(status, 0, stdout);
+    assert.match(stderr, /controller executable bundle changed.*after agent extinction/i);
+    assert.equal(existsSync(resolve(fixture.artifactDir, "candidate-capture")), false,
+      "tampered capture helper must not execute");
+    const terminal = await readJson(resolve(fixture.artifactDir, "terminal.json"));
+    assert.equal(terminal.disposition, "infrastructure_failed");
+    assert.equal(terminal.launch_count, 1);
+  } finally {
+    await rm(fixture.fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("controller creates a fresh trusted validation environment after candidate extinction", async () => {
+  const fixture = await createControllerSmokeFixture("validation_poison");
+  try {
+    const result = spawnSync(process.execPath, fixture.arguments, {
+      encoding: "utf8", timeout: 120_000, maxBuffer: 128 * 1024 * 1024,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const candidateEnvironment = await readJson(resolve(
+      fixture.artifactDir,
+      "environment-receipt.json",
+    ));
+    const validationEnvironment = await readJson(resolve(
+      fixture.artifactDir,
+      "trusted-validation-environment.json",
+    ));
+    for (const key of ["HOME", "CODEX_HOME", "TMPDIR", "CARGO_HOME"]) {
+      assert.notEqual(
+        validationEnvironment.environment[key],
+        candidateEnvironment.environment[key],
+        `${key} crossed the candidate/trusted validation boundary`,
+      );
+    }
+    assert.equal(validationEnvironment.created_after_agent_extinction, true);
+    assert.equal(validationEnvironment.agent_environment_inherited, false);
+    assert.equal(validationEnvironment.pristine_home, true);
+    assert.equal(validationEnvironment.pristine_codex_home, true);
+    assert.equal(validationEnvironment.pristine_tmp, true);
+    assert.equal(validationEnvironment.cargo_home_template_verified, true);
+    assert.equal(existsSync(resolve(validationEnvironment.environment.HOME,
+      ".candidate-home-poison")), false);
+    assert.equal(existsSync(resolve(validationEnvironment.environment.TMPDIR,
+      "candidate-tmp-poison")), false);
+    assert.equal(existsSync(resolve(validationEnvironment.environment.CARGO_HOME,
+      "config.toml")), false);
+    assert.equal(validationEnvironment.environment.PATH.includes(
+      candidateEnvironment.environment.HOME), false);
+    for (const key of [
+      "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", "RUSTDOC", "RUSTDOCFLAGS",
+      "CARGO_BUILD_RUSTC", "CARGO_BUILD_RUSTC_WRAPPER", "CARGO_TARGET_DIR",
+    ]) {
+      assert.equal(Object.hasOwn(validationEnvironment.environment, key), false,
+        `${key} crossed into trusted validation`);
+    }
+    const receipts = await controllerStageReceipts(fixture.artifactDir);
+    const captureStage = receipts.find((entry) => entry.stage === "candidate_capture");
+    assert.equal(
+      captureStage.payload.trusted_validation_environment_sha256,
+      sha256(await readFile(resolve(fixture.artifactDir,
+        "trusted-validation-environment.json"))),
+    );
+  } finally {
+    await rm(fixture.fixtureRoot, {recursive: true, force: true});
+  }
+});
 
 for (const [mode, expectedDisposition, expectedStatus] of [
   ["noop", "awaiting_review", 0],
@@ -3579,8 +5521,10 @@ test("one-shot controller records spawn failure without signaling an undefined p
     });
     assert.notEqual(result.status, 0);
     const processReceipt = await readJson(resolve(fixture.artifactDir, "process", "receipt.json"));
-    assert.match(processReceipt.spawn_error, /ENOENT|missing|spawn/i);
-    assert.equal(processReceipt.process_group_created, false);
+    assert.match(processReceipt.spawn_error, /ENOENT|missing|spawn|No such file/i);
+    assert.equal(processReceipt.process_group_created, true);
+    assert.equal(processReceipt.termination_signal_sent, false);
+    assert.deepEqual(processReceipt.process_containment.launchd.final_members, []);
     assert.equal(processReceipt.spawn_count, 1);
     const ledger = (await readFile(resolve(fixture.artifactDir, "attempt-ledger.jsonl"), "utf8"))
       .trim().split("\n").map(JSON.parse);
@@ -3675,6 +5619,72 @@ test("formal controller propagates one sealed adapter package to non-smoke oracl
     "--expected-adapter-integrity-sha256", packageIdentity.integrity_receipt.sha256,
   ]);
   assert.equal(argumentsForOracle.filter((entry) => entry === "--adapter-config").length, 1);
+  const tw09Package = {
+    ...packageIdentity,
+    probe_source: {path: "/external/reviewer-probe.rs"},
+    candidate_manifest: {path: "/artifacts/candidate/raw-manifest.json"},
+    probe: {path: "/artifacts/build/probe", sha256: "b".repeat(64)},
+    probe_build_receipt: {path: "/artifacts/build/receipt.json", sha256: "c".repeat(64)},
+    adapter_build_stage_receipt: {
+      path: "/artifacts/stage-receipts/13-formal_adapter_build.json",
+      sha256: "d".repeat(64),
+    },
+  };
+  const tw09Arguments = formalAdapterOracleArguments(tw09Package);
+  for (const [flag, value] of [
+    ["--adapter-probe-source", tw09Package.probe_source.path],
+    ["--candidate-raw-manifest", tw09Package.candidate_manifest.path],
+    ["--adapter-probe-file", tw09Package.probe.path],
+    ["--expected-adapter-probe-sha256", tw09Package.probe.sha256],
+    ["--adapter-probe-build-receipt", tw09Package.probe_build_receipt.path],
+    ["--expected-adapter-probe-build-receipt-sha256",
+      tw09Package.probe_build_receipt.sha256],
+    ["--adapter-build-stage-receipt", tw09Package.adapter_build_stage_receipt.path],
+    ["--expected-adapter-build-stage-receipt-sha256",
+      tw09Package.adapter_build_stage_receipt.sha256],
+  ]) {
+    assert.equal(tw09Arguments[tw09Arguments.indexOf(flag) + 1], value);
+  }
+});
+
+test("adapter resume rejects every relabeled formal attempt identity before continuing", async () => {
+  const {requireResumeContextBindings} = await import(pathToFileURL(runControllerScript));
+  const common = {
+    protocol_id: "tachiko-agents-effect-v1",
+    phase: "baseline_a",
+    classification: "formal_authorized_attempt",
+    formal_result_eligible: true,
+    wave_id: "1".repeat(32),
+    run_id: "2".repeat(32),
+    attempt_id: "3".repeat(32),
+    candidate_id: "4".repeat(32),
+    case_id: "TW-05",
+    formal_authorization: {sha256: "5".repeat(64)},
+  };
+  const state = {bound_receipts: {capture_sha256: "6".repeat(64)}};
+  const context = {
+    ...common,
+    capture_receipt_sha256: state.bound_receipts.capture_sha256,
+    formal_authorization_sha256: common.formal_authorization.sha256,
+  };
+  assert.doesNotThrow(() => requireResumeContextBindings(common, context, state));
+  for (const [field, changed] of [
+    ["phase", "variant_b"], ["classification", "construction_pilot_only"],
+    ["formal_result_eligible", false], ["wave_id", "7".repeat(32)],
+    ["run_id", "8".repeat(32)], ["attempt_id", "9".repeat(32)],
+    ["candidate_id", "a".repeat(32)], ["case_id", "TW-09"],
+  ]) {
+    assert.throws(
+      () => requireResumeContextBindings({...common, [field]: changed}, context, state),
+      new RegExp(field),
+    );
+  }
+  assert.throws(
+    () => requireResumeContextBindings(common, context, {
+      bound_receipts: {capture_sha256: "f".repeat(64)},
+    }),
+    /capture_receipt_sha256/i,
+  );
 });
 
 test("authorized formal result skeleton remains eligible while score freeze is pending", async () => {
@@ -3806,7 +5816,9 @@ test("formal adapter validation accepts only the sealed qualified scaffold", asy
 });
 
 test("formal adapter config and probe cannot originate in candidate or controller roots", async () => {
-  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-formal-adapter-roots-"));
+  const fixtureRoot = await realpath(
+    await mkdtemp(join(tmpdir(), "tachiko-formal-adapter-roots-")),
+  );
   const candidateRoot = resolve(fixtureRoot, "candidate");
   try {
     await mkdir(candidateRoot);
@@ -3835,7 +5847,9 @@ test("formal adapter config and probe cannot originate in candidate or controlle
 });
 
 test("formal adapter validation requires an external hash-bound integrity approval", async () => {
-  const externalRoot = await mkdtemp(join(tmpdir(), "tachiko-formal-adapter-external-"));
+  const externalRoot = await realpath(
+    await mkdtemp(join(tmpdir(), "tachiko-formal-adapter-external-")),
+  );
   try {
     const probe = resolve(externalRoot, "probe.mjs");
     const config = resolve(externalRoot, "adapter-config.json");
@@ -3871,10 +5885,9 @@ test("formal adapter integrity approval is bound to the capture and exact adapte
   const externalRoot = await mkdtemp(join(tmpdir(), "tachiko-formal-adapter-approved-"));
   try {
     const scaffold = resolve(benchmarkDir, "evaluator/adapters/candidate-adapter.mjs");
-    const probe = resolve(externalRoot, "probe.mjs");
+    const probe = await realpath("/usr/bin/true");
     const config = resolve(externalRoot, "adapter-config.json");
     const integrity = resolve(externalRoot, "adapter-integrity.json");
-    await writeFile(probe, "#!/usr/bin/env node\nconsole.log('{}');\n", {mode: 0o755});
     const configBytes = Buffer.from(`${JSON.stringify({
       schema: "tachiko-candidate-adapter-v1",
       case_id: "TW-05",
@@ -3886,14 +5899,18 @@ test("formal adapter integrity approval is bound to the capture and exact adapte
       wave_id: "1".repeat(32), run_id: "2".repeat(32), attempt_id: "3".repeat(32),
       candidate_id: "4".repeat(32), case_id: "TW-05",
       capture_receipt_sha256: "5".repeat(64),
+      candidate_tree: "c".repeat(40),
     };
     const integrityBytes = Buffer.from(`${JSON.stringify({
       schema: "tachiko-adapter-integrity-review-v1", ...context,
       scaffold_sha256: sha256(await readFile(scaffold)),
       config_sha256: sha256(configBytes), probe_sha256: sha256(await readFile(probe)),
+      candidate_tree: context.candidate_tree,
+      candidate_binding_mode: "runtime_candidate_root", probe_build_receipt: null,
       reviewer_id: "independent-reviewer", reviewer_eligible: true,
       reviewer_independent: true, no_expected_values: true,
-      no_behavior_implementation: true, actual_candidate_exercise: true, approved: true,
+      no_behavior_implementation: true, actual_candidate_exercise: true,
+      self_contained_executable: true, complete_input_closure: true, approved: true,
     })}\n`);
     await writeFile(integrity, integrityBytes);
     const {validateFormalAdapterPackage} = await import(pathToFileURL(runControllerScript));
@@ -3940,6 +5957,97 @@ test("formal adapter probes cannot receive contract or expected-value path token
   }
 });
 
+test("formal adapter probes reject an unbound executable argument path", async () => {
+  const externalRoot = await mkdtemp(join(tmpdir(), "tachiko-formal-adapter-unbound-input-"));
+  try {
+    const scaffold = resolve(benchmarkDir, "evaluator/adapters/candidate-adapter.mjs");
+    const config = resolve(externalRoot, "adapter-config.json");
+    const script = resolve(externalRoot, "mutable-probe.sh");
+    const integrity = resolve(externalRoot, "adapter-integrity.json");
+    const probe = await realpath("/bin/bash");
+    await writeFile(script, "#!/bin/bash\nprintf '{}\\n'\n", {mode: 0o755});
+    const configBytes = Buffer.from(`${JSON.stringify({
+      schema: "tachiko-candidate-adapter-v1", case_id: "TW-05",
+      probe: {executable: probe, sha256: sha256(await readFile(probe)),
+        arguments: [script, "<candidate-root>"]},
+    })}\n`);
+    await writeFile(config, configBytes);
+    const context = {
+      protocol_id: "tachiko-agents-effect-v1", phase: "baseline_a",
+      wave_id: "1".repeat(32), run_id: "2".repeat(32), attempt_id: "3".repeat(32),
+      candidate_id: "4".repeat(32), case_id: "TW-05",
+      capture_receipt_sha256: "5".repeat(64),
+      candidate_tree: "c".repeat(40),
+    };
+    const integrityBytes = Buffer.from(`${JSON.stringify({
+      schema: "tachiko-adapter-integrity-review-v1", ...context,
+      scaffold_sha256: sha256(await readFile(scaffold)),
+      config_sha256: sha256(configBytes), probe_sha256: sha256(await readFile(probe)),
+      reviewer_id: "independent-reviewer", reviewer_eligible: true,
+      reviewer_independent: true, no_expected_values: true,
+      no_behavior_implementation: true, actual_candidate_exercise: true, approved: true,
+    })}\n`);
+    await writeFile(integrity, integrityBytes);
+    const {validateFormalAdapterPackage} = await import(pathToFileURL(runControllerScript));
+    await assert.rejects(
+      validateFormalAdapterPackage({
+        adapterPath: scaffold, configPath: config, integrityReceiptPath: integrity,
+        expectedIntegrityReceiptSha256: sha256(integrityBytes), benchmarkRoot: benchmarkDir,
+        forbiddenRoots: [repositoryRoot], context,
+      }),
+      /unbound.*probe input|probe input closure|argument path/i,
+    );
+  } finally {
+    await rm(externalRoot, {recursive: true, force: true});
+  }
+});
+
+test("formal adapter probes reject an interpreted script even with no path arguments", async () => {
+  const externalRoot = await realpath(
+    await mkdtemp(join(tmpdir(), "tachiko-formal-adapter-interpreted-")),
+  );
+  try {
+    const scaffold = resolve(benchmarkDir, "evaluator/adapters/candidate-adapter.mjs");
+    const probe = resolve(externalRoot, "probe.mjs");
+    const config = resolve(externalRoot, "adapter-config.json");
+    const integrity = resolve(externalRoot, "adapter-integrity.json");
+    await writeFile(probe, "#!/usr/bin/env node\nconsole.log('{}');\n", {mode: 0o755});
+    const context = {
+      protocol_id: "tachiko-agents-effect-v1", phase: "baseline_a",
+      wave_id: "1".repeat(32), run_id: "2".repeat(32), attempt_id: "3".repeat(32),
+      candidate_id: "4".repeat(32), case_id: "TW-05",
+      capture_receipt_sha256: "5".repeat(64),
+      candidate_tree: "c".repeat(40),
+    };
+    const configBytes = Buffer.from(`${JSON.stringify({
+      schema: "tachiko-candidate-adapter-v1", case_id: "TW-05",
+      probe: {executable: probe, sha256: sha256(await readFile(probe)),
+        arguments: ["<candidate-root>"]},
+    })}\n`);
+    await writeFile(config, configBytes);
+    const integrityBytes = Buffer.from(`${JSON.stringify({
+      schema: "tachiko-adapter-integrity-review-v1", ...context,
+      scaffold_sha256: sha256(await readFile(scaffold)), config_sha256: sha256(configBytes),
+      probe_sha256: sha256(await readFile(probe)), reviewer_id: "independent-reviewer",
+      reviewer_eligible: true, reviewer_independent: true, no_expected_values: true,
+      no_behavior_implementation: true, actual_candidate_exercise: true,
+      self_contained_executable: true, complete_input_closure: true, approved: true,
+    })}\n`);
+    await writeFile(integrity, integrityBytes);
+    const {validateFormalAdapterPackage} = await import(pathToFileURL(runControllerScript));
+    await assert.rejects(
+      validateFormalAdapterPackage({
+        adapterPath: scaffold, configPath: config, integrityReceiptPath: integrity,
+        expectedIntegrityReceiptSha256: sha256(integrityBytes), benchmarkRoot: benchmarkDir,
+        forbiddenRoots: [repositoryRoot], context,
+      }),
+      /self-contained executable|interpreted probe|input closure/i,
+    );
+  } finally {
+    await rm(externalRoot, {recursive: true, force: true});
+  }
+});
+
 test("sealed candidate adapter never expands the trusted contract into probe arguments", async () => {
   const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-adapter-contract-token-"));
   const candidateRoot = resolve(fixtureRoot, "candidate");
@@ -3969,7 +6077,9 @@ test("sealed candidate adapter never expands the trusted contract into probe arg
 });
 
 test("sealed candidate adapter inherits one outer combined sandbox without nesting", async () => {
-  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-adapter-outer-sandbox-"));
+  const fixtureRoot = await realpath(
+    await mkdtemp(join(tmpdir(), "tachiko-adapter-outer-sandbox-")),
+  );
   const runRoot = resolve(fixtureRoot, "neutral-run");
   const stagedBin = resolve(runRoot, "tool-bin");
   const stagedNode = resolve(stagedBin, "node");
@@ -4029,23 +6139,27 @@ test("sealed candidate adapter inherits one outer combined sandbox without nesti
     const benchmarkRootReal = await realpath(benchmarkDir);
     const configReal = await realpath(config);
     const probeReal = await realpath(probe);
+    const stagedNodeReal = await realpath(stagedNode);
     const profile = denyReadProfile(
       [artifactRootReal, benchmarkRootReal, await realpath(priorTmp)],
       {
-        allowReadPaths: [adapter], allowReadRoots: [candidateRootReal],
+        denyUnlistedReads: true,
+        denyUnlistedWrites: true,
+        allowReadPaths: [adapter, configReal, probeReal, stagedNodeReal],
+        allowReadRoots: [candidateRootReal],
         denyWriteRoots: [candidateRootReal, await realpath(runRoot)],
-        denyWritePaths: [adapter, configReal, probeReal, stagedNode],
+        denyWritePaths: [adapter, configReal, probeReal, stagedNodeReal],
         allowWriteRoots: [await realpath(runTmp)],
       },
     );
     const result = spawnSync("/usr/bin/sandbox-exec", [
-      "-p", profile, stagedNode,
+      "-p", profile, stagedNodeReal,
       adapter,
       "--candidate-root", candidateRoot, "--contract", contract,
       "--output", output, "--config", config,
       "--deny-read-root", artifactRootReal, "--deny-read-root", benchmarkRootReal,
       "--deny-read-root", await realpath(priorTmp),
-      "--deny-write-path", stagedNode,
+      "--deny-write-path", stagedNodeReal,
       "--deny-write-root", await realpath(runRoot),
       "--allow-write-root", await realpath(runTmp),
       "--expected-sandbox-profile-sha256", sha256(profile),
@@ -4119,7 +6233,10 @@ test("sealed candidate adapter kernel sandbox denies probe reads of expected-val
     const profile = denyReadProfile(
       [expectedRootReal],
       {
-        allowReadPaths: [adapter], allowReadRoots: [candidateRootReal],
+        denyUnlistedReads: true,
+        denyUnlistedWrites: true,
+        allowReadPaths: [adapter, configReal, probeReal, process.execPath],
+        allowReadRoots: [candidateRootReal],
         denyWriteRoots: [candidateRootReal], denyWritePaths: [adapter, configReal, probeReal],
       },
     );
@@ -4175,7 +6292,10 @@ test("sealed candidate adapter kernel sandbox denies expected-root overwrite and
     const profile = denyReadProfile(
       [expectedRootReal],
       {
-        allowReadPaths: [adapter], allowReadRoots: [candidateRootReal],
+        denyUnlistedReads: true,
+        denyUnlistedWrites: true,
+        allowReadPaths: [adapter, configReal, probeReal, process.execPath],
+        allowReadRoots: [candidateRootReal],
         denyWriteRoots: [candidateRootReal], denyWritePaths: [adapter, configReal, probeReal],
       },
     );
@@ -4230,7 +6350,10 @@ test("sealed candidate adapter kernel sandbox preserves reconstructed candidate 
     const configReal = await realpath(config);
     const probeReal = await realpath(probe);
     const profile = denyReadProfile([expectedRootReal], {
-      allowReadPaths: [adapter], allowReadRoots: [candidateRootReal],
+      denyUnlistedReads: true,
+      denyUnlistedWrites: true,
+      allowReadPaths: [adapter, configReal, probeReal, process.execPath],
+      allowReadRoots: [candidateRootReal],
       denyWriteRoots: [candidateRootReal], denyWritePaths: [adapter, configReal, probeReal],
     });
     const result = spawnSync("/usr/bin/sandbox-exec", [
@@ -4250,7 +6373,9 @@ test("sealed candidate adapter kernel sandbox preserves reconstructed candidate 
 });
 
 test("combined adapter profile protects sibling controls while allowing nested candidate reads", async () => {
-  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-adapter-sibling-controls-"));
+  const fixtureRoot = await realpath(
+    await mkdtemp(join(tmpdir(), "tachiko-adapter-sibling-controls-")),
+  );
   const artifactRoot = resolve(fixtureRoot, "artifacts");
   const candidateRoot = resolve(artifactRoot, "validation-workspace");
   const expectedRoot = resolve(artifactRoot, "controller-expected-values");
@@ -4271,7 +6396,7 @@ test("combined adapter profile protects sibling controls while allowing nested c
     await writeFile(expected, expectedBytes, {mode: 0o400});
     await writeFile(
       probe,
-      "#!/usr/bin/env node\nimport {chmodSync,readFileSync,writeFileSync} from 'node:fs';\n" +
+      `#!${process.execPath}\nimport {chmodSync,readFileSync,writeFileSync} from 'node:fs';\n` +
         "import {resolve} from 'node:path';\n" +
         "const behavior=readFileSync(resolve(process.argv[2],'behavior.txt'),'utf8').trim();\n" +
         `let readDenied=false;try{readFileSync(${JSON.stringify(expected)})}catch(e){readDenied=e.code==='EPERM'||e.code==='EACCES'}\n` +
@@ -4295,7 +6420,10 @@ test("combined adapter profile protects sibling controls while allowing nested c
     const configReal = await realpath(config);
     const probeReal = await realpath(probe);
     const profile = denyReadProfile([artifactRootReal], {
-      allowReadPaths: [adapter], allowReadRoots: [candidateRootReal],
+      denyUnlistedReads: true,
+      denyUnlistedWrites: true,
+      allowReadPaths: [adapter, configReal, probeReal, process.execPath],
+      allowReadRoots: [candidateRootReal],
       denyWriteRoots: [candidateRootReal], denyWritePaths: [adapter, configReal, probeReal],
     });
     const result = spawnSync("/usr/bin/sandbox-exec", [

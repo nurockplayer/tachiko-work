@@ -2,15 +2,22 @@
 
 import {createHash} from "node:crypto";
 import {existsSync} from "node:fs";
-import {lstat, mkdir, readdir, readFile, readlink, realpath, writeFile} from "node:fs/promises";
+import {lstat, mkdir, mkdtemp, readdir, readFile, readlink, realpath, rm, writeFile} from "node:fs/promises";
 import {dirname, isAbsolute, relative, resolve} from "node:path";
+import {tmpdir} from "node:os";
 import {fileURLToPath} from "node:url";
 import {
   materializeFormalAdapterEnvelope,
   validateFormalAdapterPackage,
 } from "./adapter-integrity.mjs";
 import {loadControllerContext} from "./controller-context.mjs";
-import {denyReadProfile, probeNetworkSandbox, runNetworkSandboxed} from "./network-sandbox.mjs";
+import {
+  DENY_NETWORK_PROFILE,
+  denyReadProfile,
+  probeNetworkSandbox,
+  runNetworkSandboxed,
+  supervisedWriteProtection,
+} from "./network-sandbox.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const defaultBenchmarkDir = resolve(scriptDir, "..");
@@ -25,6 +32,7 @@ const frozenControlArtifacts = [
   "evaluator/production-oracles.json",
 ];
 const ORACLE_COMMAND_TIMEOUT_MS = 1_800_000;
+let commandWriteProtection = supervisedWriteProtection();
 
 function usage() {
   console.error(
@@ -36,9 +44,23 @@ function usage() {
       "[--trusted-rustc /abs/rustc --expected-rustc-sha256 <sha256>] " +
       "--trusted-shell /abs/bash --expected-shell-sha256 <sha256> " +
       "[--adapter-file /abs/adapter.mjs] " +
-      "[--adapter-config /abs/config.json --adapter-integrity-receipt /abs/review.json " +
+      "[--adapter-config /abs/config.json --adapter-probe-source /abs/probe.rs " +
+      "--candidate-raw-manifest /abs/raw-manifest.json " +
+      "--adapter-probe-file /abs/controller-built-probe " +
+      "--expected-adapter-probe-sha256 <sha256> " +
+      "--adapter-probe-build-receipt /abs/build-receipt.json " +
+      "--expected-adapter-probe-build-receipt-sha256 <sha256> " +
+      "--adapter-build-stage-receipt /abs/stage-receipt.json " +
+      "--expected-adapter-build-stage-receipt-sha256 <sha256> " +
+      "--adapter-integrity-receipt /abs/review.json " +
       "--expected-adapter-integrity-sha256 <sha256>] " +
       "[--controller-context /abs/context.json --expected-controller-context-sha256 <sha256>] " +
+      "[--controller-issuance /abs/issuance.json " +
+      "--expected-controller-issuance-sha256 <sha256>] " +
+      "[--formal-authorization /abs/authorization.json " +
+      "--expected-formal-authorization-sha256 <sha256> " +
+      "--attempt-registry-entry /abs/slot.json " +
+      "--expected-attempt-registry-entry-sha256 <sha256>] " +
       "[--contract-file /abs/contract.json] [--candidate-commit <sha>]",
   );
   process.exit(2);
@@ -82,11 +104,14 @@ function processSupervision(execution) {
     signal_actions: execution.signal_actions,
     descendant_cleanup_required: execution.descendant_cleanup_required,
     process_group_extinct_before_capture: execution.process_group_extinct_before_capture,
+    process_containment: execution.process_containment,
     network_sandbox: execution.network_sandbox,
   };
 }
 
 async function supervisedCommand(executable, commandArgs, {cwd, env, timeout, profile}) {
+  const effectiveProfile = `${profile ?? DENY_NETWORK_PROFILE}` +
+    commandWriteProtection.profile_suffix;
   const execution = await runNetworkSandboxed({
     executable,
     args: commandArgs,
@@ -94,7 +119,7 @@ async function supervisedCommand(executable, commandArgs, {cwd, env, timeout, pr
     environment: env,
     timeoutMilliseconds: timeout,
     terminationGraceMilliseconds: 10_000,
-    ...(profile ? {profile} : {}),
+    profile: effectiveProfile,
   });
   execution.deadline_seconds = timeout / 1000;
   let error;
@@ -108,6 +133,59 @@ async function supervisedCommand(executable, commandArgs, {cwd, env, timeout, pr
     stderr: execution.stderr.toString("utf8"),
     process_supervision: processSupervision(execution),
   };
+}
+
+async function parseSupervisedWriteProtection(value, required) {
+  if (value === undefined) {
+    if (required) fail("formal oracle execution requires controller supervised write protection");
+    return supervisedWriteProtection();
+  }
+  let parsed;
+  try { parsed = JSON.parse(value); } catch { fail("supervised write protection is not valid JSON"); }
+  const keys = Object.keys(parsed ?? {}).sort();
+  if (JSON.stringify(keys) !== JSON.stringify([
+    "protected_paths", "protected_roots", "schema",
+  ])) {
+    fail("supervised write protection has an invalid schema");
+  }
+  if (parsed.schema !== "tachiko-supervised-write-protection-v1" ||
+      !Array.isArray(parsed.protected_roots) || !Array.isArray(parsed.protected_paths)) {
+    fail("supervised write protection has an invalid schema");
+  }
+  for (const [label, entries] of [
+    ["protected_roots", parsed.protected_roots],
+    ["protected_paths", parsed.protected_paths],
+  ]) {
+    if (entries.some((path) => typeof path !== "string" || !isAbsolute(path) || resolve(path) !== path) ||
+        new Set(entries).size !== entries.length ||
+        JSON.stringify(entries) !== JSON.stringify([...entries].sort())) {
+      fail(`supervised write protection ${label} must be unique sorted absolute paths`);
+    }
+  }
+  const canonicalRoots = [];
+  const canonicalPaths = [];
+  for (const path of parsed.protected_roots) {
+    const metadata = await lstat(path);
+    if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+      fail("supervised write protection root must be a non-symlink directory");
+    }
+    canonicalRoots.push(await realpath(path));
+  }
+  for (const path of parsed.protected_paths) {
+    const metadata = await lstat(path);
+    if (!metadata.isFile() || metadata.isSymbolicLink()) {
+      fail("supervised write protection path must be a non-symlink regular file");
+    }
+    canonicalPaths.push(await realpath(path));
+  }
+  const normalized = supervisedWriteProtection({
+    protectedRoots: canonicalRoots,
+    protectedPaths: canonicalPaths,
+  });
+  if (required && !normalized.active) {
+    fail("formal oracle supervised write protection must not be empty");
+  }
+  return normalized;
 }
 
 function canonicalValue(value) {
@@ -168,6 +246,40 @@ async function candidateTreeIdentity(root) {
   }
   await walk(root);
   return {entries: entries.length, sha256: sha256(`${JSON.stringify(entries)}\n`)};
+}
+
+async function contentTreeIdentity(root) {
+  const canonicalRoot = await realpath(root);
+  const entries = [];
+  let fileBytes = 0;
+  async function walk(directory, prefix = "") {
+    const children = await readdir(directory, {withFileTypes: true});
+    children.sort((left, right) => Buffer.from(left.name).compare(Buffer.from(right.name)));
+    for (const child of children) {
+      const relativePath = prefix ? `${prefix}/${child.name}` : child.name;
+      const path = resolve(directory, child.name);
+      const metadata = await lstat(path);
+      if (metadata.isDirectory()) {
+        entries.push({path: relativePath, type: "directory"});
+        await walk(path, relativePath);
+      } else if (metadata.isFile()) {
+        const bytes = await readFile(path);
+        entries.push({path: relativePath, type: "file", bytes: bytes.length,
+          sha256: sha256(bytes)});
+        fileBytes += bytes.length;
+      } else if (metadata.isSymbolicLink()) {
+        entries.push({path: relativePath, type: "symlink", target: await readlink(path)});
+      } else fail(`unsupported trusted content tree entry: ${relativePath}`);
+    }
+  }
+  await walk(canonicalRoot);
+  return {
+    path: canonicalRoot,
+    digest_kind: "paths-types-content-v1",
+    entries: entries.length,
+    file_bytes: fileBytes,
+    manifest_sha256: sha256(`${JSON.stringify(entries)}\n`),
+  };
 }
 
 async function trustedRegularFile(path, label, candidateRoot) {
@@ -250,8 +362,8 @@ function parseRustTestCommand(command) {
   return {packageName: match[1], targetName: match[2], testName: match[3]};
 }
 
-function rustEnvironment(candidateRoot, targetDirectory, rustcInput) {
-  const forbidden = Object.keys(process.env).filter((key) =>
+function rustEnvironment(candidateRoot, targetDirectory, rustcInput, baseEnvironment, commandTmp) {
+  const forbidden = Object.keys(baseEnvironment).filter((key) =>
     key === "CARGO_BUILD_TARGET" ||
     key === "RUSTC" ||
     key === "RUSTDOC" ||
@@ -267,10 +379,13 @@ function rustEnvironment(candidateRoot, targetDirectory, rustcInput) {
     }
   }
   return {
-    ...process.env,
+    ...baseEnvironment,
     CARGO_TARGET_DIR: targetDirectory,
     RUSTC: rustcInput.path,
     RUSTC_BOOTSTRAP: "1",
+    TMPDIR: commandTmp,
+    TMP: commandTmp,
+    TEMP: commandTmp,
   };
 }
 
@@ -287,6 +402,8 @@ async function executeTrustedRustTest({
   logPrefix,
   trustedDir,
   timeout,
+  baseEnvironment,
+  commandTmp,
 }) {
   const commandStartedAt = new Date().toISOString();
   const commandStarted = process.hrtime.bigint();
@@ -314,7 +431,13 @@ async function executeTrustedRustTest({
     ),
   });
   const targetDirectory = resolve(trustedDir, "rust-target");
-  const environment = rustEnvironment(candidateRoot, targetDirectory, rustcInput);
+  const environment = rustEnvironment(
+    candidateRoot,
+    targetDirectory,
+    rustcInput,
+    baseEnvironment,
+    commandTmp,
+  );
   const metadataArgs = ["metadata", "--locked", "--format-version", "1", "--no-deps"];
   const metadataStdoutPath = `${logPrefix}.metadata.stdout`;
   const metadataStderrPath = `${logPrefix}.metadata.stderr`;
@@ -621,6 +744,12 @@ const candidateRoot = await realpath(resolve(args.get("candidate-root")));
 const evidenceContext = await loadControllerContext({
   path: args.get("controller-context"),
   expectedSha256: args.get("expected-controller-context-sha256"),
+  issuancePath: args.get("controller-issuance"),
+  expectedIssuanceSha256: args.get("expected-controller-issuance-sha256"),
+  authorizationPath: args.get("formal-authorization"),
+  expectedAuthorizationSha256: args.get("expected-formal-authorization-sha256"),
+  registryPath: args.get("attempt-registry-entry"),
+  expectedRegistrySha256: args.get("expected-attempt-registry-entry-sha256"),
   required: args.get("require-formal-context") === "true",
 });
 if (args.has("require-formal-context") && args.get("require-formal-context") !== "true") {
@@ -629,6 +758,10 @@ if (args.has("require-formal-context") && args.get("require-formal-context") !==
 if (evidenceContext.context && evidenceContext.context.case_id !== caseId) {
   fail("controller context case binding mismatch");
 }
+commandWriteProtection = await parseSupervisedWriteProtection(
+  args.get("supervised-write-protection-json"),
+  evidenceContext.formal_result_eligible,
+);
 const trustedDirInput = resolve(args.get("trusted-dir"));
 const trustedDir = await prospectiveRealpath(trustedDirInput);
 if (!isAbsolute(args.get("candidate-root")) || !isAbsolute(args.get("trusted-dir"))) {
@@ -651,7 +784,93 @@ if ((trustedShellMetadata.mode & 0o111) === 0) fail("trusted shell must be execu
 if (trustedShellInput.sha256 !== args.get("expected-shell-sha256")) {
   fail("trusted shell SHA-256 mismatch");
 }
-const networkEnforcement = await probeNetworkSandbox({nodeExecutable: process.execPath});
+let trustedValidationEnvironmentInput = null;
+let trustedValidationEnvironment = null;
+let trustedValidationCargo = null;
+if (evidenceContext.formal_result_eligible) {
+  if (!args.has("trusted-validation-environment-receipt") ||
+      !/^[0-9a-f]{64}$/.test(args.get("expected-validation-environment-sha256") ?? "")) {
+    fail("formal oracle execution requires a trusted validation environment receipt/hash");
+  }
+  trustedValidationEnvironmentInput = await trustedRegularFile(
+    args.get("trusted-validation-environment-receipt"),
+    "trusted validation environment receipt",
+    candidateRoot,
+  );
+  if (trustedValidationEnvironmentInput.sha256 !==
+        args.get("expected-validation-environment-sha256") ||
+      trustedValidationEnvironmentInput.sha256 !==
+        evidenceContext.context.trusted_validation_environment_sha256) {
+    fail("trusted validation environment receipt SHA-256 mismatch");
+  }
+  trustedValidationEnvironment = JSON.parse((await readFile(
+    trustedValidationEnvironmentInput.path,
+  )).toString("utf8"));
+  if (trustedValidationEnvironment.schema !==
+        "tachiko-controller-trusted-validation-environment-v1" ||
+      trustedValidationEnvironment.created_after_agent_extinction !== true ||
+      trustedValidationEnvironment.agent_environment_inherited !== false ||
+      trustedValidationEnvironment.cargo_home_read_only !== true) {
+    fail("trusted validation environment receipt contract mismatch");
+  }
+  for (const key of ["phase", "wave_id", "run_id", "attempt_id", "candidate_id", "case_id"]) {
+    if (trustedValidationEnvironment[key] !== evidenceContext.context[key]) {
+      fail(`trusted validation environment ${key} mismatch`);
+    }
+  }
+  const registeredEnvironment = trustedValidationEnvironment.environment;
+  for (const key of [
+    "HOME", "CODEX_HOME", "CARGO_HOME", "PATH", "RUSTUP_HOME", "PNPM_HOME",
+    "LANG", "LC_ALL", "TZ", "CARGO_INCREMENTAL", "CARGO_NET_OFFLINE",
+    "CARGO_TERM_COLOR", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL",
+    "GIT_ATTR_NOSYSTEM", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  ]) {
+    if (process.env[key] !== registeredEnvironment[key]) {
+      fail(`formal oracle environment ${key} differs from trusted validation`);
+    }
+  }
+  const dangerous = Object.keys(process.env).filter((key) =>
+    /^(?:RUSTC_WRAPPER|RUSTC_WORKSPACE_WRAPPER|RUSTDOC|RUSTDOCFLAGS|CARGO_BUILD_|CARGO_TARGET_)/
+      .test(key));
+  if (dangerous.length > 0) {
+    fail(`formal oracle environment contains override keys: ${dangerous.sort().join(", ")}`);
+  }
+  for (const key of ["HOME", "CODEX_HOME", "CARGO_HOME"]) {
+    const path = await realpath(registeredEnvironment[key]);
+    const metadata = await lstat(path);
+    if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+      fail(`trusted validation ${key} must be a non-symlink directory`);
+    }
+  }
+  if ((await readdir(registeredEnvironment.HOME)).length !== 0 ||
+      (await readdir(registeredEnvironment.CODEX_HOME)).length !== 0) {
+    fail("trusted validation HOME/CODEX_HOME is not empty");
+  }
+  trustedValidationCargo = await contentTreeIdentity(registeredEnvironment.CARGO_HOME);
+  for (const key of ["digest_kind", "entries", "file_bytes", "manifest_sha256"]) {
+    if (trustedValidationCargo[key] !== trustedValidationEnvironment.cargo_home[key]) {
+      fail(`trusted validation Cargo home ${key} mismatch`);
+    }
+  }
+  if (trustedValidationCargo.manifest_sha256 !==
+      evidenceContext.context.trusted_validation_cargo_manifest_sha256) {
+    fail("controller context trusted validation Cargo home mismatch");
+  }
+  for (const requiredRoot of [
+    registeredEnvironment.HOME,
+    registeredEnvironment.CODEX_HOME,
+    registeredEnvironment.CARGO_HOME,
+  ]) {
+    const canonical = await realpath(requiredRoot);
+    if (!commandWriteProtection.protected_roots.includes(canonical)) {
+      fail("formal oracle write protection omits a trusted validation root");
+    }
+  }
+}
+const networkEnforcement = await probeNetworkSandbox({
+  nodeExecutable: process.execPath,
+  profile: `${DENY_NETWORK_PROFILE}${commandWriteProtection.profile_suffix}`,
+});
 
 if (args.has("benchmark-dir")) fail("benchmark-dir override is not permitted");
 if (evidenceContext.formal_result_eligible && (args.has("manifest") || args.has("oracle-lock"))) {
@@ -727,9 +946,12 @@ if (new Set(commandIds).size !== commandIds.length) fail("duplicate command ID")
 const rustAssertionRequested = [...lockedAssertions.values()].some(
   (entry) => entry.selector?.kind === "rust_test_exact",
 );
+const tw09BuilderRequested = caseId === "TW-09" && evidenceContext.formal_result_eligible &&
+  manifestCase.oracle_commands.some((entry) =>
+    entry.command_template.includes("<trusted-adapter-file>"));
 let cargoInput;
 let rustcInput;
-if (rustAssertionRequested) {
+if (rustAssertionRequested || tw09BuilderRequested) {
   if (
     !args.has("trusted-cargo") ||
     !args.has("expected-cargo-sha256") ||
@@ -791,6 +1013,10 @@ const trustedInputs = [
     {kind: "trusted_cargo", ...cargoInput},
     {kind: "trusted_rustc", ...rustcInput},
   ] : []),
+  ...(trustedValidationEnvironmentInput ? [{
+    kind: "trusted_validation_environment",
+    ...trustedValidationEnvironmentInput,
+  }] : []),
 ];
 if (adapterRequested) {
   if (!args.has("adapter-file")) fail(`${caseId} requires --adapter-file`);
@@ -807,6 +1033,23 @@ if (adapterRequested) {
         ...(evidenceContext.context.adapter_forbidden_roots ?? []),
       ],
       context: evidenceContext.context,
+      candidateRoot,
+      candidateManifestPath: args.get("candidate-raw-manifest"),
+      probeSourcePath: args.get("adapter-probe-source"),
+      controllerContextPath: evidenceContext.context_path,
+      builtProbePath: args.get("adapter-probe-file"),
+      expectedBuiltProbeSha256: args.get("expected-adapter-probe-sha256"),
+      probeBuildReceiptPath: args.get("adapter-probe-build-receipt"),
+      expectedProbeBuildReceiptSha256:
+        args.get("expected-adapter-probe-build-receipt-sha256"),
+      adapterBuildStageReceiptPath: args.get("adapter-build-stage-receipt"),
+      expectedAdapterBuildStageReceiptSha256:
+        args.get("expected-adapter-build-stage-receipt-sha256"),
+      cargoPath: cargoInput?.path,
+      cargoSha256: cargoInput?.sha256,
+      rustcPath: rustcInput?.path,
+      rustcSha256: rustcInput?.sha256,
+      environment: process.env,
     });
     adapterFile = formalAdapterPackage.scaffold.path;
     adapterConfig = formalAdapterPackage.config.path;
@@ -846,6 +1089,23 @@ async function verifyTrustedInputsUnchanged(boundary) {
       fail(`trusted input ${input.kind} changed ${boundary}`);
     }
     identities.push({kind: input.kind, path: current.path, bytes: current.bytes, sha256: current.sha256});
+  }
+  if (trustedValidationEnvironment) {
+    const cargo = await contentTreeIdentity(
+      trustedValidationEnvironment.environment.CARGO_HOME,
+    );
+    if (cargo.manifest_sha256 !== trustedValidationCargo.manifest_sha256 ||
+        cargo.entries !== trustedValidationCargo.entries ||
+        cargo.file_bytes !== trustedValidationCargo.file_bytes) {
+      fail(`trusted validation Cargo home changed ${boundary}`);
+    }
+    identities.push({
+      kind: "trusted_validation_cargo_home",
+      path: cargo.path,
+      entries: cargo.entries,
+      file_bytes: cargo.file_bytes,
+      sha256: cargo.manifest_sha256,
+    });
   }
   return sha256(`${JSON.stringify(identities)}\n`);
 }
@@ -887,7 +1147,18 @@ for (const [commandIndex, command] of manifestCase.oracle_commands.entries()) {
       resolvedCommand += ` --config ${shellQuote(adapterConfig)}`;
     }
     if (formalAdapterPackage && adapterExecutionCommand) {
-      const deniedReadRootInputs = [benchmarkDir, ...(evidenceContext.context.adapter_forbidden_roots ?? [])]
+      if (formalAdapterPackage.probe_source) {
+        resolvedCommand += ` --probe-file ${shellQuote(formalAdapterPackage.probe.path)}`;
+      }
+      const deniedReadRootInputs = [
+        benchmarkDir,
+        "/Users",
+        tmpdir(),
+        dirname(formalAdapterPackage.config.path),
+        dirname(formalAdapterPackage.probe.path),
+        dirname(formalAdapterPackage.integrity_receipt.path),
+        ...(evidenceContext.context.adapter_forbidden_roots ?? []),
+      ]
         .filter((root, index, all) => all.indexOf(root) === index);
       const deniedWriteRootInputs = evidenceContext.context.adapter_write_forbidden_roots;
       const allowedWriteRootInputs = evidenceContext.context.adapter_write_allowed_roots;
@@ -906,6 +1177,9 @@ for (const [commandIndex, command] of manifestCase.oracle_commands.entries()) {
           fail("formal adapter temporary write root is not nested in a denied write root");
         }
         allowedWriteRoots.push(canonical);
+      }
+      for (let index = deniedReadRoots.length - 1; index >= 0; index -= 1) {
+        if (allowedWriteRoots.includes(deniedReadRoots[index])) deniedReadRoots.splice(index, 1);
       }
       if (evidenceContext.context.adapter_tmp_initial_sha256 !== sha256("[]\n") ||
           (await readdir(allowedWriteRoots[0])).length !== 0) {
@@ -931,6 +1205,8 @@ for (const [commandIndex, command] of manifestCase.oracle_commands.entries()) {
         formalAdapterPackage.config.path,
         formalAdapterPackage.probe.path,
         formalAdapterPackage.integrity_receipt.path,
+        ...(formalAdapterPackage.probe_build_receipt
+          ? [formalAdapterPackage.probe_build_receipt.path] : []),
         formalAdapterPackage.scaffold_lock.path,
         trustedShellInput.path,
         process.execPath,
@@ -940,7 +1216,14 @@ for (const [commandIndex, command] of manifestCase.oracle_commands.entries()) {
         resolvedCommand += ` --deny-write-path ${shellQuote(path)}`;
       }
       commandSandboxProfile = denyReadProfile(deniedReadRoots, {
-        allowReadPaths: [adapterFile],
+        denyUnlistedReads: true,
+        denyUnlistedWrites: true,
+        allowReadPaths: [
+          adapterFile,
+          formalAdapterPackage.config.path,
+          formalAdapterPackage.probe.path,
+          process.execPath,
+        ],
         allowReadRoots: [candidateRoot],
         denyWriteRoots: [candidateRoot, ...deniedWriteRoots],
         denyWritePaths: deniedWritePaths,
@@ -978,6 +1261,11 @@ for (const [commandIndex, command] of manifestCase.oracle_commands.entries()) {
   const candidateInputBefore = formalAdapterPackage && adapterExecutionCommand
     ? await candidateTreeIdentity(candidateRoot)
     : null;
+  const commandTemporaryRoot = adapterTemporaryRoot?.path ??
+    await mkdtemp(resolve(trustedDir, `.command-${String(commandIndex).padStart(2, "0")}-tmp-`));
+  if ((await readdir(commandTemporaryRoot)).length !== 0) {
+    fail(`oracle command ${command.id} TMP is not freshly empty`);
+  }
   if (rustAssertions.length > 0) {
     const commandSpec = parseRustTestCommand(resolvedCommand);
     if (!commandSpec || commandSpec.testName !== rustAssertions[0].selector.test_name) {
@@ -993,6 +1281,8 @@ for (const [commandIndex, command] of manifestCase.oracle_commands.entries()) {
       logPrefix,
       trustedDir,
       timeout: ORACLE_COMMAND_TIMEOUT_MS,
+      baseEnvironment: process.env,
+      commandTmp: commandTemporaryRoot,
     });
     result = execution.result;
     resolvedCommand = execution.resolvedCommand;
@@ -1003,12 +1293,18 @@ for (const [commandIndex, command] of manifestCase.oracle_commands.entries()) {
       after: lockedFilesAfter,
     };
   } else {
+    const commandEnvironment = {
+      ...process.env,
+      TMPDIR: commandTemporaryRoot,
+      TMP: commandTemporaryRoot,
+      TEMP: commandTemporaryRoot,
+    };
     result = await supervisedCommand(
       trustedShellInput.path,
       ["--noprofile", "--norc", "-c", resolvedCommand],
       {
       cwd: candidateRoot,
-      env: process.env,
+      env: commandEnvironment,
       timeout: ORACLE_COMMAND_TIMEOUT_MS,
       profile: commandSandboxProfile,
       },
@@ -1046,6 +1342,19 @@ for (const [commandIndex, command] of manifestCase.oracle_commands.entries()) {
       });
     }
   }
+  const commandTemporaryFinal = await candidateTreeIdentity(commandTemporaryRoot);
+  await rm(commandTemporaryRoot, {recursive: true, force: false});
+  executionReceipt.temporary_root = {
+    path: commandTemporaryRoot,
+    initial_entries: 0,
+    initial_sha256: sha256("[]\n"),
+    final_entries: commandTemporaryFinal.entries,
+    final_sha256: commandTemporaryFinal.sha256,
+    inspected_after_process_group_extinction:
+      result.process_supervision.process_group_extinct_before_capture,
+    removed_before_next_command: !existsSync(commandTemporaryRoot),
+    reused_from_prior_command: false,
+  };
   const trustedInputsAfterSha256 = await verifyTrustedInputsUnchanged(`after ${command.id}`);
   trustedInputBoundaryChecks.push({
     command_id: command.id,
@@ -1176,7 +1485,17 @@ const receipt = {
   classification: evidenceContext.classification,
   formal_result_eligible: evidenceContext.formal_result_eligible,
   controller_context_sha256: evidenceContext.context_sha256,
+  controller_issuance_sha256: evidenceContext.issuance_sha256,
+  formal_authorization_sha256: evidenceContext.authorization_sha256,
+  attempt_registry_entry_sha256: evidenceContext.registry_sha256,
   network_enforcement: networkEnforcement,
+  supervised_write_protection: {
+    schema: commandWriteProtection.schema,
+    active: commandWriteProtection.active,
+    protected_roots: commandWriteProtection.protected_roots,
+    protected_paths: commandWriteProtection.protected_paths,
+    profile_suffix_sha256: commandWriteProtection.profile_suffix_sha256,
+  },
   manifest_sha256: sha256(manifestBytes),
   oracle_lock_sha256: sha256(lockBytes),
   expected_control_sha256: args.get("expected-control-sha256"),

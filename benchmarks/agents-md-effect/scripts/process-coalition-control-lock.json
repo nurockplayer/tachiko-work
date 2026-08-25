@@ -1,0 +1,30 @@
+{
+  "schema": "tachiko-process-coalition-control-lock-v1",
+  "platform": "darwin-arm64",
+  "binary": {
+    "path": "scripts/process-coalition-control",
+    "bytes": 34328,
+    "sha256": "2607c2ce69970970c77445fb05ad66ee2a71f8f83b27d8eb7e6dec8c8e7b3ad5"
+  },
+  "source": {
+    "path": "scripts/process-coalition-control.c",
+    "bytes": 6553,
+    "sha256": "fd1cb9b61deda2f31d9d456f42ea944cb942c27c8b940b4ca81fad6e1c241725"
+  },
+  "compiler": {
+    "path": "/usr/bin/clang",
+    "sha256": "7f30f076d0e9c38f772a76449fca9da8cf97f6a3d43b94c90a00e4f9ce7ad39e",
+    "version": "Apple clang version 17.0.0 (clang-1700.0.13.5)"
+  },
+  "build_argv": [
+    "/usr/bin/clang",
+    "-Wall",
+    "-Wextra",
+    "-Werror",
+    "-O2",
+    "-o",
+    "scripts/process-coalition-control",
+    "scripts/process-coalition-control.c"
+  ],
+  "kernel_api": "proc_pidinfo(PROC_PIDCOALITIONINFO=20)+complete-growing-proc_listallpids"
+}

@@ -107,11 +107,11 @@ artifact from formal scores.
 Temporary pilot roots were deleted after receipts were recorded. Construction
 never invoked Codex on a frozen benchmark task. The compact oracle qualification
 summary has payload SHA-256
-`a2613a91bb4907df2706e84088130727aefd2fa1f240a3b7c93f9013769da53a`
+`3234ed6d3c150c9fdb60840347d5b1e2bd82806430135b54a3fbb4169e2e0b38`
 and run-receipt SHA-256
-`f1a569c7c2cc2fd9d1a71fe15d670bf6f5d0babca58e178d06867c94e09b6fa7`,
+`ee59d2f100f7beb83aa3aef5913f454e5f0dc6301fef07ebdc71bdffc72cd162`,
 and evidence commitment SHA-256
-`e527df8c8edad212078976ed9b0dc27a4126ae42d6d2f11b4e5b2628c07382ac`.
+`ac01d9623425b82c183efa74133badddb5e1b8d2f0784217e027f9a3c37fac8d`.
 
 ## Known cluster and carry-forward effects
 
