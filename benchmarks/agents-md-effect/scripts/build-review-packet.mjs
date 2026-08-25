@@ -19,8 +19,10 @@ import {
 function usage() {
   console.error(
     "usage: node build-review-packet.mjs --case-id TW-01 --candidate-id <32-hex> " +
-      "--input-root /abs/input --variant /abs/variant [--variant /abs/variant] " +
+      "--input-root /abs/input --input-manifest /abs/input.json " +
+      "--variant /abs/variant [--variant /abs/variant] " +
       "--contract /abs/contract.json --output-dir /abs/new-output " +
+      "--terminal-receipt /abs/terminal.json " +
       "--custodian-id <opaque-id> --custodian-eligible true --frozen-at <RFC3339>",
   );
   process.exit(2);
@@ -101,20 +103,88 @@ function addRule(counts, ruleId) {
   counts[ruleId] += 1;
 }
 
+const REQUIRED_INPUT_ROLES = [
+  "task",
+  "authority",
+  "candidate_checkout",
+  "candidate_diff",
+  "candidate_validation",
+  "final_message",
+];
+
+async function bindInputManifest(manifestPath, inputFiles) {
+  const manifestBytes = await readFile(manifestPath);
+  const manifest = JSON.parse(strictText(manifestBytes, "review input manifest"));
+  if (manifest.schema !== "tachiko-review-packet-input-v1" || !Array.isArray(manifest.artifacts)) {
+    throw new Error("invalid review input manifest schema");
+  }
+  const entries = [...manifest.artifacts];
+  entries.sort(byteSort);
+  if (JSON.stringify(entries) !== JSON.stringify(manifest.artifacts)) {
+    throw new Error("review input manifest artifacts must use unsigned UTF-8 path order");
+  }
+  if (new Set(entries.map((entry) => entry.path)).size !== entries.length) {
+    throw new Error("review input manifest contains duplicate paths");
+  }
+  const actualPaths = inputFiles.map((entry) => entry.path);
+  if (JSON.stringify(entries.map((entry) => entry.path)) !== JSON.stringify(actualPaths)) {
+    throw new Error("review input manifest must bind every and only reviewer-visible artifact");
+  }
+  const roleCounts = Object.fromEntries(REQUIRED_INPUT_ROLES.map((role) => [role, 0]));
+  for (const [index, entry] of entries.entries()) {
+    if (
+      typeof entry.path !== "string" ||
+      !Array.isArray(entry.roles) ||
+      entry.roles.length === 0 ||
+      !Number.isSafeInteger(entry.bytes) ||
+      entry.bytes < 0 ||
+      !/^[0-9a-f]{64}$/.test(entry.sha256)
+    ) {
+      throw new Error("invalid review input manifest artifact");
+    }
+    if (new Set(entry.roles).size !== entry.roles.length) {
+      throw new Error("review input manifest artifact roles must be unique");
+    }
+    for (const role of entry.roles) {
+      if (!Object.hasOwn(roleCounts, role)) throw new Error("unknown review input artifact role");
+      roleCounts[role] += 1;
+    }
+    const bytes = await readFile(inputFiles[index].absolutePath);
+    if (bytes.length !== entry.bytes || sha256(bytes) !== entry.sha256) {
+      throw new Error("review input artifact differs from its trusted manifest");
+    }
+    inputFiles[index].bytes = bytes;
+    inputFiles[index].roles = entry.roles;
+  }
+  for (const role of REQUIRED_INPUT_ROLES) {
+    if (roleCounts[role] === 0) throw new Error(`missing required review artifact role: ${role}`);
+  }
+  for (const role of ["task", "candidate_diff", "final_message"]) {
+    if (roleCounts[role] !== 1) throw new Error(`review artifact role must occur exactly once: ${role}`);
+  }
+  return {bytes: manifestBytes, sha256: sha256(manifestBytes)};
+}
+
+let terminalReceiptPath;
+let terminalContext = {};
+
+async function run() {
 const {values, variants: variantArguments} = parseArgs(process.argv.slice(2));
 for (const key of [
   "case-id",
   "candidate-id",
   "input-root",
+  "input-manifest",
   "contract",
   "output-dir",
+  "terminal-receipt",
   "custodian-id",
   "custodian-eligible",
   "frozen-at",
 ]) {
   if (!values.has(key)) usage();
 }
-for (const key of ["input-root", "contract", "output-dir"]) {
+for (const key of ["input-root", "input-manifest", "contract", "output-dir", "terminal-receipt"]) {
   if (!isAbsolute(values.get(key))) throw new Error(`--${key} must be an absolute path`);
 }
 if (variantArguments.length === 0 || variantArguments.some((path) => !isAbsolute(path))) {
@@ -134,16 +204,30 @@ if (new Date(values.get("frozen-at")).toISOString() !== values.get("frozen-at"))
   throw new Error("--frozen-at must be canonical RFC3339 UTC");
 }
 
+terminalReceiptPath = await canonicalNewPath(
+  resolve(values.get("terminal-receipt")),
+  "terminal receipt",
+);
+terminalContext = {
+  case_id: values.get("case-id"),
+  candidate_id: values.get("candidate-id"),
+  frozen_at: values.get("frozen-at"),
+};
+
 await requireDirectory(resolve(values.get("input-root")), "input root");
+await requireRegular(resolve(values.get("input-manifest")), "review input manifest");
 await requireRegular(resolve(values.get("contract")), "contract");
 for (const path of variantArguments) await requireRegular(resolve(path), "registered variant");
 const inputRoot = await realpath(values.get("input-root"));
+const inputManifestPath = await realpath(values.get("input-manifest"));
 const contractPath = await realpath(values.get("contract"));
 const variantPaths = await Promise.all(variantArguments.map((path) => realpath(path)));
 const outputDir = await canonicalNewPath(resolve(values.get("output-dir")), "output directory");
 
 for (const [label, path] of [
   ["output directory", outputDir],
+  ["terminal receipt", terminalReceiptPath],
+  ["review input manifest", inputManifestPath],
   ["contract", contractPath],
   ...variantPaths.map((path) => ["registered variant", path]),
 ]) {
@@ -151,17 +235,24 @@ for (const [label, path] of [
     throw new Error(`${label} and candidate input must be disjoint; paths overlap`);
   }
 }
+if (isWithin(outputDir, terminalReceiptPath) || isWithin(terminalReceiptPath, outputDir)) {
+  throw new Error("terminal receipt and packet output must be disjoint; paths overlap");
+}
 
 const blinding = await loadBlindingInputs(contractPath, variantPaths);
+terminalContext.contract_sha256 = blinding.contractIdentity.sha256;
+terminalContext.variant_set_commitment_sha256 = blinding.variantSet.commitment_sha256;
 const matcher = compileMatcher(blinding.variants);
 const inputFiles = await walkInput(inputRoot);
+const inputManifest = await bindInputManifest(inputManifestPath, inputFiles);
+terminalContext.input_manifest_sha256 = inputManifest.sha256;
 const rendered = [];
 const privateEvents = [];
 const totalRuleCounts = emptyRuleCounts();
 const displayedPaths = new Set();
 
 for (const input of inputFiles) {
-  const originalBytes = await readFile(input.absolutePath);
+  const originalBytes = input.bytes;
   const originalText = strictText(originalBytes, `${input.path} content`);
   const originalArtifactSha256 = sha256(originalBytes);
   const originalPathSha256 = sha256(Buffer.from(input.path, "utf8"));
@@ -207,8 +298,10 @@ for (const input of inputFiles) {
   const renderedBytes = Buffer.from(renderedLines.join(""), "utf8");
   rendered.push({
     path: input.path,
+    roles: input.roles,
     displayPath,
     bytes: renderedBytes,
+    matchCounts: {path: pathCounts, content: contentCounts},
     manifest: {
       display_path: displayPath,
       original_path_sha256: originalPathSha256,
@@ -216,7 +309,6 @@ for (const input of inputFiles) {
       pre_render_sha256: originalArtifactSha256,
       rendered_bytes: renderedBytes.length,
       rendered_sha256: sha256(renderedBytes),
-      match_counts: {path: pathCounts, content: contentCounts},
     },
   });
 }
@@ -244,9 +336,6 @@ const publicManifest = {
   rule_set_commitment_sha256: sha256(canonicalBytes(blinding.contract.machine_match_rules)),
   variant_set_commitment_sha256: blinding.variantSet.commitment_sha256,
   artifacts: rendered.map((entry) => entry.manifest),
-  match_counts_by_rule: totalRuleCounts,
-  safe_to_scan: true,
-  semantic_scoring_performed: false,
 };
 const publicManifestBytes = canonicalBytes(publicManifest);
 
@@ -275,6 +364,8 @@ await writeFile(resolve(outputDir, "scan-receipt.json"), scanReceiptBytes, {
   flag: "wx",
 });
 
+const finalMessage = rendered.find((entry) => entry.roles.includes("final_message"));
+
 const receipt = {
   schema: "tachiko-review-packet-receipt-v1",
   classification: "construction_pilot_only",
@@ -286,11 +377,23 @@ const receipt = {
   custodian: {id: values.get("custodian-id"), eligible: true},
   contract: blinding.contractIdentity,
   variant_set: blinding.variantSet,
+  input_manifest_sha256: inputManifest.sha256,
   artifact_manifest_sha256: sha256(publicManifestBytes),
   private_match_map_sha256: sha256(privateMapBytes),
   scan_receipt_sha256: sha256(scanReceiptBytes),
   rendered_packet_sha256: scan.tree_sha256,
   match_counts_by_rule: totalRuleCounts,
+  match_counts_by_artifact: rendered.map((entry) => ({
+    opaque_path_alias: `artifact-${entry.manifest.original_path_sha256}`,
+    path: entry.matchCounts.path,
+    content: entry.matchCounts.content,
+  })),
+  final_message: {
+    raw_bytes: finalMessage.manifest.pre_render_bytes,
+    raw_sha256: finalMessage.manifest.pre_render_sha256,
+    redacted_bytes: finalMessage.manifest.rendered_bytes,
+    redacted_sha256: finalMessage.manifest.rendered_sha256,
+  },
   post_render_scan: {
     match_count: scan.match_count,
     match_counts_by_rule: scan.match_counts_by_rule,
@@ -301,9 +404,43 @@ const receipt = {
   semantic_scoring_performed: false,
   multi_reviewer_panel_claimed: false,
 };
-await writeFile(resolve(outputDir, "receipt.json"), canonicalBytes(receipt), {
+const receiptBytes = canonicalBytes(receipt);
+await writeFile(resolve(outputDir, "receipt.json"), receiptBytes, {
   mode: 0o600,
   flag: "wx",
 });
-console.log(JSON.stringify(receipt));
-if (!scan.safe_to_release) process.exitCode = 1;
+return {receipt, receiptBytes};
+}
+
+try {
+  const result = await run();
+  const terminal = {
+    schema: "tachiko-review-packet-terminal-v1",
+    classification: "construction_pilot_only",
+    formal_result_eligible: false,
+    ...terminalContext,
+    output_receipt_sha256: sha256(result.receiptBytes),
+    rendered_packet_sha256: result.receipt.rendered_packet_sha256,
+    safe_to_release: result.receipt.safe_to_release,
+    terminal_classification: result.receipt.safe_to_release ? "qualified" : "invalid_discarded",
+    failure: result.receipt.safe_to_release ? null : "residual_match",
+  };
+  await writeFile(terminalReceiptPath, canonicalBytes(terminal), {mode: 0o600, flag: "wx"});
+  console.log(JSON.stringify(result.receipt));
+  if (!result.receipt.safe_to_release) process.exitCode = 1;
+} catch (error) {
+  if (terminalReceiptPath && !existsSync(terminalReceiptPath)) {
+    const terminal = {
+      schema: "tachiko-review-packet-terminal-v1",
+      classification: "construction_pilot_only",
+      formal_result_eligible: false,
+      ...terminalContext,
+      safe_to_release: false,
+      terminal_classification: "invalid_discarded",
+      failure: "packet_construction_failed",
+    };
+    await writeFile(terminalReceiptPath, canonicalBytes(terminal), {mode: 0o600, flag: "wx"});
+  }
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
+}

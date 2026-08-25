@@ -3,11 +3,12 @@
 import {createHash} from "node:crypto";
 import {existsSync} from "node:fs";
 import {lstat, mkdir, readFile, readdir, realpath, writeFile} from "node:fs/promises";
-import {dirname, isAbsolute, relative, resolve} from "node:path";
+import {basename, dirname, isAbsolute, relative, resolve} from "node:path";
 import {pathToFileURL} from "node:url";
 
 const RULE_IDS = ["R1", "R2", "R3", "R4"];
 const REDACTION = "[instruction-reference redacted]";
+const FROZEN_CONTRACT_SHA256 = "959b59e7a844d6b6f8dbad8b51092c1cc8663fc02664b70f93edce9a4a78659e";
 const IDENTIFIERS = [
   "agents.md",
   "baseline a",
@@ -17,7 +18,7 @@ const IDENTIFIERS = [
   "developer instruction",
   "instruction variant",
 ];
-const UTF8_DECODER = new TextDecoder("utf-8", {fatal: true});
+const UTF8_DECODER = new TextDecoder("utf-8", {fatal: true, ignoreBOM: true});
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
@@ -135,6 +136,9 @@ async function readRegular(path, label) {
 export async function loadBlindingInputs(contractPath, variantPaths) {
   if (variantPaths.length === 0) throw new Error("at least one registered variant is required");
   const contractBytes = await readRegular(contractPath, "contract");
+  if (sha256(contractBytes) !== FROZEN_CONTRACT_SHA256) {
+    throw new Error("review-packet contract does not match the frozen SHA-256");
+  }
   const contract = JSON.parse(strictText(contractBytes, "contract"));
   validateContract(contract);
   const variants = [];
@@ -314,6 +318,8 @@ function isWithin(parent, child) {
   return path === "" || (!path.startsWith("..") && !isAbsolute(path));
 }
 
+let failureReceiptPath;
+
 async function runCli() {
   const {values, variants} = parseArgs(process.argv.slice(2));
   for (const key of ["packet-dir", "contract", "receipt"]) {
@@ -328,15 +334,17 @@ async function runCli() {
   if (!packetMetadata.isDirectory() || packetMetadata.isSymbolicLink()) {
     throw new Error("packet directory must be a non-symlink directory");
   }
-  await readRegular(resolve(values.get("contract")), "contract");
-  for (const path of variants) await readRegular(resolve(path), "registered variant");
   const packetDir = await realpath(values.get("packet-dir"));
   const receiptPath = resolve(values.get("receipt"));
   if (existsSync(receiptPath)) throw new Error("scan receipt must not already exist");
   const receiptParent = await realpath(dirname(receiptPath));
-  if (isWithin(packetDir, resolve(receiptParent, receiptPath.slice(dirname(receiptPath).length + 1)))) {
+  const canonicalReceiptPath = resolve(receiptParent, basename(receiptPath));
+  if (isWithin(packetDir, canonicalReceiptPath)) {
     throw new Error("scan receipt must be disjoint from the packet directory");
   }
+  failureReceiptPath = canonicalReceiptPath;
+  await readRegular(resolve(values.get("contract")), "contract");
+  for (const path of variants) await readRegular(resolve(path), "registered variant");
   const contractPath = await realpath(values.get("contract"));
   const variantPaths = await Promise.all(variants.map((path) => realpath(path)));
   for (const [label, path] of [
@@ -360,10 +368,25 @@ async function runCli() {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  runCli().catch((error) => {
+  try {
+    await runCli();
+  } catch (error) {
+    if (failureReceiptPath && !existsSync(failureReceiptPath)) {
+      const receipt = {
+        schema: "tachiko-review-packet-scan-v1",
+        classification: "construction_pilot_only",
+        formal_result_eligible: false,
+        safe_to_release: false,
+        terminal_classification: "invalid_discarded",
+        failure: "scan_failed",
+        semantic_scoring_performed: false,
+        qualification: "subjective_packet_transport_only",
+      };
+      await writeFile(failureReceiptPath, canonicalBytes(receipt), {mode: 0o600, flag: "wx"});
+    }
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
-  });
+  }
 }
 
 export {REDACTION, RULE_IDS, canonicalBytes, sha256, splitLines, strictText};
