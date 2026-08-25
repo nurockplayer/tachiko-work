@@ -301,9 +301,16 @@ Every proposal binds one exact semantic base reference. The reference MUST be
 sufficient under the owning context/runtime contract to distinguish the
 semantic context and revision against which Propose was evaluated.
 
-Base equality is a semantic optimistic-concurrency precondition. It is not
-defined by `.roproj` bytes, paths, timestamps, UI state, provider metadata, or
-Git objects.
+Base equality is a semantic optimistic-concurrency precondition. It means exact
+semantic revision identity, not equality of semantic content. A proposal
+matches only the same semantic revision occurrence against which it was formed.
+Any intervening canonical semantic publication makes the proposal stale,
+including an unrelated semantic change. Later canonical state that is
+semantically equivalent to the original base does not restore the original
+revision identity or make the old proposal current again.
+
+Base equality is not defined by `.roproj` bytes, paths, timestamps, UI state,
+provider metadata, or Git objects.
 
 Before an existing proposal is re-evaluated, authorized, or executed against a
 current semantic context, the trusted application/runtime boundary MUST compare

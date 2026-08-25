@@ -8,7 +8,7 @@ Decision issue: [#27](https://github.com/nurockplayer/tachiko-work/issues/27)
 
 Specified by: [`semantic-api.md`](../specs/semantic-api.md)
 
-Related authority: ADR-0007, ADR-0015, ADR-0018 through ADR-0023
+Related authority: ADR-0007, ADR-0015 through ADR-0023
 
 ## Context
 
@@ -167,10 +167,17 @@ Every proposal is bound to one exact semantic base. The base reference MUST be
 sufficient in its owning runtime/context to distinguish the semantic context
 and revision against which the change was proposed.
 
-Base equality is a semantic concurrency precondition. It is not defined by
-`.roproj` bytes, a storage path, file modification time, UI state, provider
-metadata, or a Git commit, even when a host records such values as related
-provenance.
+Base equality is a semantic concurrency precondition. It means exact semantic
+revision identity, not equality of semantic content. A proposal matches only
+the same semantic revision occurrence against which it was formed. Any
+intervening canonical semantic publication makes the proposal stale, including
+an unrelated semantic change. If later canonical state becomes semantically
+equivalent to the original base, that does not restore the original revision
+identity or make the old proposal current again.
+
+Base equality is not defined by `.roproj` bytes, a storage path, file
+modification time, UI state, provider metadata, or a Git commit, even when a
+host records such values as related provenance.
 
 The base reference is representation-neutral at this contract layer. The
 concrete revision token type, generator, monotonicity mechanism, session scope,
@@ -325,10 +332,18 @@ observations, not concrete fixture bytes or Rust APIs.
 6. **Individually valid, invalid batch** — two formula changes that are each
    valid against the base but form a cycle together are rejected by the final
    authoritative batch gate, with no partial publication.
+7. **Proposal contents change after review** — changing any identity-defining
+   proposal content cannot retain the reviewed proposal identity. The changed
+   proposal must be issued as a new proposal occurrence before review or later
+   processing can refer to it.
+8. **Canonical semantic state changes after proposal creation** — any
+   intervening canonical semantic publication makes the old proposal stale,
+   including an unrelated change and a later return to semantically equivalent
+   content. Cached review evidence for the old proposal is historical only.
 
 Additional conformance must cover unsupported Semantic API compatibility,
-proposal-ID/content mismatch, generated-ID binding, and native/WASM equivalent
-Stable outcomes where the same capability is exposed.
+generated-ID binding, and native/WASM equivalent Stable outcomes where the same
+capability is exposed.
 
 ## Deliberately Provisional or Deferred
 
