@@ -8,7 +8,53 @@ export function contentSha256(value) {
   return sha256(`${JSON.stringify(value)}\n`);
 }
 
+function deterministicSupervision(supervision) {
+  if (!supervision) return null;
+  return {
+    deadline_seconds: supervision.deadline_seconds,
+    exit_code: supervision.exit_code,
+    signal: supervision.signal,
+    spawn_error: supervision.spawn_error,
+    timed_out: supervision.timed_out,
+    process_group_created: supervision.process_group_created,
+    termination_grace_seconds: supervision.termination_grace_seconds,
+    termination_grace_intervals: supervision.termination_grace_intervals,
+    termination_deadline_reused_for_cleanup: supervision.termination_deadline_reused_for_cleanup,
+    termination_signal_sent: supervision.termination_signal_sent,
+    kill_signal_sent: supervision.kill_signal_sent,
+    signals_sent: supervision.signal_actions.map((entry) => entry.signal),
+    descendant_cleanup_required: supervision.descendant_cleanup_required,
+    process_group_extinct_before_capture: supervision.process_group_extinct_before_capture,
+  };
+}
+
+function deterministicCommandSupervision(supervision) {
+  if (!supervision) return null;
+  const deadlines = supervision.stage_processes.map((entry) => entry.deadline_milliseconds);
+  return {
+    deadline_seconds: supervision.deadline_seconds,
+    stage_processes: supervision.stage_processes.map((entry) => ({
+      name: entry.name,
+      deadline_positive: entry.deadline_milliseconds > 0,
+      deadline_within_command:
+        entry.deadline_milliseconds <= supervision.deadline_seconds * 1000,
+      process_supervision: (() => {
+        const stable = deterministicSupervision(entry.process_supervision);
+        delete stable.deadline_seconds;
+        return stable;
+      })(),
+    })),
+    stage_deadlines_nonincreasing: deadlines.every(
+      (deadline, index) => index === 0 || deadline <= deadlines[index - 1],
+    ),
+    all_process_groups_extinct_before_capture:
+      supervision.all_process_groups_extinct_before_capture,
+  };
+}
+
 function deterministicCommand(command) {
+  const commandProcessSupervision = deterministicSupervision(command.process_supervision);
+  if (command.command_supervision) delete commandProcessSupervision.deadline_seconds;
   return {
     id: command.id,
     command_template_sha256: command.command_template_sha256,
@@ -17,6 +63,8 @@ function deterministicCommand(command) {
     exit_code: command.exit_code,
     signal: command.signal,
     spawn_error: command.spawn_error,
+    process_supervision: commandProcessSupervision,
+    command_supervision: deterministicCommandSupervision(command.command_supervision),
     ...(command.rust_build ? {
       toolchain: {
         cargo_sha256: command.toolchain.cargo.sha256,
@@ -25,6 +73,16 @@ function deterministicCommand(command) {
         rustc_bytes: command.toolchain.rustc.bytes,
       },
       rust_build: {
+        metadata_process_supervision: (() => {
+          const stable = deterministicSupervision(command.rust_build.metadata_process_supervision);
+          if (stable) delete stable.deadline_seconds;
+          return stable;
+        })(),
+        build_process_supervision: (() => {
+          const stable = deterministicSupervision(command.rust_build.build_process_supervision);
+          if (stable) delete stable.deadline_seconds;
+          return stable;
+        })(),
         package: command.rust_build.package ? {
           name: command.rust_build.package.name,
           manifest_sha256: command.rust_build.package.manifest_sha256,
@@ -109,6 +167,7 @@ function deterministicOracle(oracle) {
   return {
     evidence: oracle.evidence,
     process_exit_code: oracle.process_exit_code,
+    runner_process_supervision: deterministicSupervision(oracle.runner_process_supervision),
     assessment_mode: oracle.assessment_mode,
     overall_status: oracle.overall_status,
     commands_pass: oracle.commands_pass,
@@ -135,6 +194,7 @@ function deterministicOffline(offline) {
     pass: offline.pass,
     offline: offline.offline,
     package_manager_dependency: offline.package_manager_dependency,
+    process_supervision: deterministicSupervision(offline.process_supervision),
     network_enforcement: offline.network_enforcement,
     executables: offline.executables,
     executions: offline.executions.map(({purpose, name, args, exit_code, signal, spawn_error}) => ({
@@ -197,11 +257,21 @@ export function deterministicPayload(runReceipt) {
       bytes: runReceipt.trusted_rustc.bytes,
       sha256: runReceipt.trusted_rustc.sha256,
     },
+    trusted_shell: {
+      bytes: runReceipt.trusted_shell.bytes,
+      sha256: runReceipt.trusted_shell.sha256,
+      version: runReceipt.trusted_shell.version,
+    },
     expected_control_sha256: runReceipt.expected_control_sha256,
     controls: runReceipt.controls,
     frozen_manifest_sha256: runReceipt.frozen_manifest_sha256,
     frozen_oracle_lock_sha256: runReceipt.frozen_oracle_lock_sha256,
-    network_enforcement: runReceipt.network_enforcement,
+    network_enforcement: {
+      ...runReceipt.network_enforcement,
+      process_supervision: deterministicSupervision(
+        runReceipt.network_enforcement.process_supervision,
+      ),
+    },
     evidence_commitment_sha256: evidenceCommitmentSha256,
     ...normalizedEvidence,
     limitations: runReceipt.limitations,

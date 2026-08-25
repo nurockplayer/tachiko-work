@@ -10,6 +10,7 @@ import {
   contentSha256,
   deterministicPayload,
 } from "./oracle-qualification-normalization.mjs";
+import {runProcessGroupOnce} from "./process-group-supervisor.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const benchmarkDir = resolve(scriptDir, "..");
@@ -19,9 +20,16 @@ const materializeOracles = resolve(scriptDir, "materialize-oracles.mjs");
 const sandboxExecutable = "/usr/bin/sandbox-exec";
 const sandboxProfile = "(version 1)\n(allow default)\n(deny network*)\n";
 const commandTimeoutMs = 1_800_000;
+const terminationGraceMs = 10_000;
+// The outer Node runner may execute up to 17 oracle commands and each exact
+// Rust command has metadata, build, and direct-libtest stages. Its deadline
+// must never preempt an inner 1,800s command plus the frozen 10s cleanup.
+const oracleRunnerOuterTimeoutMs = 3 * 17 * (commandTimeoutMs + terminationGraceMs) + 60_000;
+const tw05OfflineOuterTimeoutMs = 6 * (commandTimeoutMs + terminationGraceMs) + 70_000;
 let expectedControlSha256;
 let trustedCargo;
 let trustedRustc;
+let trustedShell;
 
 function usage() {
   console.error(
@@ -56,6 +64,52 @@ function execute(executable, args, options = {}) {
     timeout: commandTimeoutMs,
     ...options,
   });
+}
+
+function supervisedExecutionReceipt(execution, timeout) {
+  return {
+    started_at: execution.started_at,
+    completed_at: execution.completed_at,
+    duration_seconds: execution.duration_seconds,
+    deadline_seconds: timeout / 1000,
+    exit_code: execution.exit_code,
+    signal: execution.signal,
+    spawn_error: execution.spawn_error,
+    timed_out: execution.timed_out,
+    process_group_created: execution.process_group_created,
+    termination_grace_seconds: execution.termination_grace_seconds,
+    termination_grace_intervals: execution.termination_grace_intervals,
+    termination_deadline_reused_for_cleanup: execution.termination_deadline_reused_for_cleanup,
+    termination_signal_sent: execution.termination_signal_sent,
+    kill_signal_sent: execution.kill_signal_sent,
+    signal_actions: execution.signal_actions,
+    descendant_cleanup_required: execution.descendant_cleanup_required,
+    process_group_extinct_before_capture: execution.process_group_extinct_before_capture,
+  };
+}
+
+async function executeSupervised(executable, args, options = {}) {
+  const timeout = options.timeout ?? commandTimeoutMs;
+  const execution = await runProcessGroupOnce({
+    executable,
+    args,
+    cwd: options.cwd,
+    environment: options.env ?? process.env,
+    input: options.input === undefined ? Buffer.alloc(0) : Buffer.from(options.input),
+    timeoutMilliseconds: timeout,
+    terminationGraceMilliseconds: terminationGraceMs,
+  });
+  let error;
+  if (execution.spawn_error) error = Object.assign(new Error(execution.spawn_error), {code: "ESPAWN"});
+  else if (execution.timed_out) error = Object.assign(new Error("command timed out"), {code: "ETIMEDOUT"});
+  return {
+    status: execution.exit_code,
+    signal: execution.signal,
+    error,
+    stdout: execution.stdout.toString("utf8"),
+    stderr: execution.stderr.toString("utf8"),
+    process_supervision: supervisedExecutionReceipt(execution, timeout),
+  };
 }
 
 function git(cwd, args, extraEnvironment = {}) {
@@ -112,6 +166,8 @@ function compactCommand(entry) {
     exit_code: entry.exit_code,
     signal: entry.signal,
     spawn_error: entry.spawn_error,
+    process_supervision: entry.process_supervision,
+    command_supervision: entry.command_supervision ?? null,
     stdout: {bytes: entry.stdout.bytes, sha256: entry.stdout.sha256},
     stderr: {bytes: entry.stderr.bytes, sha256: entry.stderr.sha256},
     ...(entry.rust_build ? {
@@ -122,7 +178,7 @@ function compactCommand(entry) {
   };
 }
 
-async function compactOracle(receipt, processStatus, trustedDir, adapterCase) {
+async function compactOracle(receipt, processStatus, trustedDir, adapterCase, runnerProcessSupervision) {
   let adapterExecution = null;
   if (adapterCase) {
     const adapterCommand = receipt.commands.find((entry) => entry.id.endsWith(".adapter"));
@@ -151,6 +207,7 @@ async function compactOracle(receipt, processStatus, trustedDir, adapterCase) {
   return {
     evidence: "executed",
     process_exit_code: processStatus,
+    runner_process_supervision: runnerProcessSupervision,
     assessment_mode: receipt.assessment_mode,
     overall_status: receipt.overall_status,
     commands_pass: receipt.commands_pass,
@@ -196,12 +253,12 @@ async function materialize(caseId, sourceRepo, workspace, trustedDir) {
   };
 }
 
-function runCore(caseManifest, workspace) {
+async function runCore(caseManifest, workspace) {
   const commands = [];
   for (const command of caseManifest.core_commands) {
-    const result = execute(sandboxExecutable, [
-      "-p", sandboxProfile, "/bin/bash", "--noprofile", "--norc", "-c", command.command_template,
-    ], {cwd: workspace, env: offlineEnvironment()});
+    const result = await executeSupervised(sandboxExecutable, [
+      "-p", sandboxProfile, trustedShell.path, "--noprofile", "--norc", "-c", command.command_template,
+    ], {cwd: workspace, env: offlineEnvironment(), timeout: commandTimeoutMs});
     commands.push({
       id: command.id,
       command_template: command.command_template,
@@ -210,6 +267,7 @@ function runCore(caseManifest, workspace) {
       exit_code: result.status,
       signal: result.signal,
       spawn_error: result.error?.message ?? null,
+      process_supervision: result.process_supervision,
       stdout: {
         bytes: Buffer.byteLength(result.stdout ?? ""),
         sha256: sha256(result.stdout ?? ""),
@@ -235,13 +293,18 @@ async function runOracleCase({caseId, workspace, trustedDir, candidateCommit, ad
     "--trusted-dir", trustedDir,
     "--expected-control-sha256", expectedControlSha256,
     "--candidate-commit", candidateCommit,
-    "--trusted-cargo", trustedCargo.path,
+      "--trusted-shell", trustedShell.path,
+      "--expected-shell-sha256", trustedShell.sha256,
+      "--trusted-cargo", trustedCargo.path,
     "--expected-cargo-sha256", trustedCargo.sha256,
     "--trusted-rustc", trustedRustc.path,
     "--expected-rustc-sha256", trustedRustc.sha256,
   ];
   if (adapterFile) command.push("--adapter-file", adapterFile);
-  const result = execute(process.execPath, command, {env: offlineEnvironment()});
+  const result = await executeSupervised(process.execPath, command, {
+    env: offlineEnvironment(),
+    timeout: oracleRunnerOuterTimeoutMs,
+  });
   const receiptBytes = await readFile(resolve(trustedDir, "oracle-run.json"), "utf8").catch(() => {
     fail(
       `${caseId} production oracle exited before receipt (${result.status}): ` +
@@ -249,7 +312,13 @@ async function runOracleCase({caseId, workspace, trustedDir, candidateCommit, ad
     );
   });
   const receipt = JSON.parse(receiptBytes);
-  return compactOracle(receipt, result.status, trustedDir, Boolean(adapterFile));
+  return compactOracle(
+    receipt,
+    result.status,
+    trustedDir,
+    Boolean(adapterFile),
+    result.process_supervision,
+  );
 }
 
 const fixtureCommand = `#!/usr/bin/env node
@@ -352,7 +421,7 @@ version = "0.0.0"
     }],
   };
   const controls = await writeFixtureManifest(familyRoot, manifest, lock);
-  const executeFixture = (candidate, trusted) => execute(process.execPath, [
+  const executeFixture = (candidate, trusted) => executeSupervised(process.execPath, [
     runOracles,
     "--case", "QF",
     "--candidate-root", candidate,
@@ -362,15 +431,20 @@ version = "0.0.0"
     "--expected-manifest-sha256", sha256(controls.manifestBytes),
     "--expected-oracle-lock-sha256", sha256(controls.lockBytes),
     "--expected-control-sha256", expectedControlSha256,
+    "--trusted-shell", trustedShell.path,
+    "--expected-shell-sha256", trustedShell.sha256,
     "--trusted-cargo", trustedCargo.path,
     "--expected-cargo-sha256", trustedCargo.sha256,
     "--trusted-rustc", trustedRustc.path,
     "--expected-rustc-sha256", trustedRustc.sha256,
-  ], {env: offlineEnvironment({PATH: `${candidate}:${process.env.PATH}`})});
+  ], {
+    env: offlineEnvironment({PATH: `${candidate}:${process.env.PATH}`}),
+    timeout: oracleRunnerOuterTimeoutMs,
+  });
   const positiveTrusted = resolve(familyRoot, "positive-receipt");
   const negativeTrusted = resolve(familyRoot, "negative-receipt");
-  const positiveResult = executeFixture(positive, positiveTrusted);
-  const negativeResult = executeFixture(negative, negativeTrusted);
+  const positiveResult = await executeFixture(positive, positiveTrusted);
+  const negativeResult = await executeFixture(negative, negativeTrusted);
   if (positiveResult.status !== 0 || negativeResult.status !== 1) {
     fail(
       `${id} selector qualification failed: positive=${positiveResult.status}, ` +
@@ -419,7 +493,7 @@ async function qualifyPacketGate(root) {
   const lock = {protocol_id: manifest.protocol_id, cases: [{id: "QF", assertions: []}]};
   const controls = await writeFixtureManifest(familyRoot, manifest, lock);
   const trusted = resolve(familyRoot, "receipt");
-  const result = execute(process.execPath, [
+  const result = await executeSupervised(process.execPath, [
     runOracles,
     "--case", "QF",
     "--candidate-root", candidate,
@@ -429,11 +503,13 @@ async function qualifyPacketGate(root) {
     "--expected-manifest-sha256", sha256(controls.manifestBytes),
     "--expected-oracle-lock-sha256", sha256(controls.lockBytes),
     "--expected-control-sha256", expectedControlSha256,
+    "--trusted-shell", trustedShell.path,
+    "--expected-shell-sha256", trustedShell.sha256,
     "--trusted-cargo", trustedCargo.path,
     "--expected-cargo-sha256", trustedCargo.sha256,
     "--trusted-rustc", trustedRustc.path,
     "--expected-rustc-sha256", trustedRustc.sha256,
-  ], {env: offlineEnvironment()});
+  ], {env: offlineEnvironment(), timeout: oracleRunnerOuterTimeoutMs});
   const receipt = JSON.parse(await readFile(resolve(trusted, "oracle-run.json"), "utf8"));
   if (result.status !== 0 || receipt.overall_status !== "packet_gate_ready") {
     fail("subjective packet-gate qualification failed");
@@ -521,8 +597,8 @@ async function qualifyCase({caseEntry, caseManifest, root, sourceRepo}) {
     "TW-05": resolve(benchmarkDir, "evaluator/adapters/TW-05/historical-target-adapter.mjs"),
     "TW-09": resolve(benchmarkDir, "evaluator/adapters/TW-09/historical-target-adapter.mjs"),
   };
-  const targetCore = runCore(caseManifest, workspaces.targetWorkspace);
-  const negativeCore = runCore(caseManifest, workspaces.negativeWorkspace);
+  const targetCore = await runCore(caseManifest, workspaces.targetWorkspace);
+  const negativeCore = await runCore(caseManifest, workspaces.negativeWorkspace);
   let offlineHistoricalTarget;
   let offlineBehaviorMissingNegative;
   if (caseEntry.id === "TW-05") {
@@ -611,15 +687,16 @@ async function qualifyTw05Reference(root) {
 }
 
 async function runTw05OfflineQualification(workspace, output) {
-  const result = execute(process.execPath, [
+  const result = await executeSupervised(process.execPath, [
     runTw05Offline,
     "--candidate-root", workspace,
     "--output", output,
-  ], {env: offlineEnvironment()});
+  ], {env: offlineEnvironment(), timeout: tw05OfflineOuterTimeoutMs});
   const receipt = JSON.parse(await readFile(output, "utf8"));
   return {
     evidence: "executed",
     process_exit_code: result.status,
+    process_supervision: result.process_supervision,
     pass: receipt.pass,
     offline: receipt.offline,
     package_manager_dependency: receipt.package_manager_dependency,
@@ -773,6 +850,35 @@ const mode = args.get("mode") ?? "full";
 if (!["full", "fixture-fast"].includes(mode)) fail("mode must be full or fixture-fast");
 const sourceRepo = await realpath(resolve(args.get("source-repo")));
 const output = resolve(args.get("output"));
+const environmentLock = JSON.parse(
+  await readFile(resolve(benchmarkDir, "environment-lock.json"), "utf8"),
+);
+const lockedBash = environmentLock.toolchain?.bash;
+if (!lockedBash || !isAbsolute(lockedBash.path) ||
+    !/^[0-9a-f]{64}$/.test(lockedBash.binary_sha256 ?? "") ||
+    typeof lockedBash.version !== "string") {
+  fail("environment lock does not contain a complete Bash identity");
+}
+const trustedShellPath = await realpath(lockedBash.path);
+const trustedShellMetadata = await lstat(trustedShellPath);
+if (trustedShellMetadata.isSymbolicLink() || !trustedShellMetadata.isFile() ||
+    (trustedShellMetadata.mode & 0o111) === 0) {
+  fail("trusted Bash must be an executable non-symlink regular file");
+}
+const trustedShellBytes = await readFile(trustedShellPath);
+const trustedShellVersion = execute(lockedBash.path, ["--version"]);
+if (sha256(trustedShellBytes) !== lockedBash.binary_sha256 ||
+    trustedShellVersion.status !== 0 ||
+    !trustedShellVersion.stdout.startsWith(`GNU bash, version ${lockedBash.version.slice("GNU bash ".length)}`)) {
+  fail("trusted Bash differs from the environment lock");
+}
+trustedShell = {
+  path: trustedShellPath,
+  locked_path: lockedBash.path,
+  bytes: trustedShellBytes.length,
+  sha256: sha256(trustedShellBytes),
+  version: lockedBash.version,
+};
 const rustupCargo = execute("rustup", ["which", "cargo"]);
 if (rustupCargo.status !== 0 || !rustupCargo.stdout.trim()) fail("trusted Cargo is unavailable");
 const trustedCargoPath = await realpath(rustupCargo.stdout.trim());
@@ -824,7 +930,7 @@ try {
   const sandboxBytes = await readFile(sandboxExecutable).catch(() => {
     fail("/usr/bin/sandbox-exec is required for construction qualification");
   });
-  const probeResult = execute(sandboxExecutable, [
+  const probeResult = await executeSupervised(sandboxExecutable, [
     "-p", sandboxProfile, process.execPath, resolve(scriptDir, "probe-network-denial.mjs"),
   ], {env: offlineEnvironment(), timeout: 10_000});
   if (probeResult.status !== 0 || !/^network-denied:(?:EPERM|EACCES)\s*$/.test(probeResult.stdout)) {
@@ -948,6 +1054,7 @@ try {
     "evaluator/construction-pilots/TW-09-rebased.patch",
     "scripts/materialize-oracles.mjs",
     "scripts/oracle-qualification-normalization.mjs",
+    "scripts/process-group-supervisor.mjs",
     "scripts/qualify-oracles.mjs",
     "scripts/run-oracles.mjs",
     "scripts/run-tw05-offline.mjs",
@@ -972,6 +1079,7 @@ try {
     no_codex_launched: true,
     trusted_cargo: trustedCargo,
     trusted_rustc: trustedRustc,
+    trusted_shell: trustedShell,
     expected_control_sha256: expectedControlSha256,
     controls,
     frozen_manifest_sha256: sha256(manifestBytes),
@@ -982,6 +1090,7 @@ try {
       profile_sha256: sha256(sandboxProfile),
       probe_script_sha256: sha256(await readFile(resolve(scriptDir, "probe-network-denial.mjs"))),
       probe_denied: true,
+      process_supervision: probeResult.process_supervision,
     },
     families,
     cases: caseQualifications,

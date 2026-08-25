@@ -3,9 +3,9 @@
 import {createHash} from "node:crypto";
 import {existsSync} from "node:fs";
 import {lstat, mkdir, readFile, realpath, writeFile} from "node:fs/promises";
-import {spawnSync} from "node:child_process";
 import {dirname, isAbsolute, relative, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
+import {runProcessGroupOnce} from "./process-group-supervisor.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const defaultBenchmarkDir = resolve(scriptDir, "..");
@@ -19,6 +19,7 @@ const frozenControlArtifacts = [
   "evaluator/authority-lock.json",
   "evaluator/production-oracles.json",
 ];
+const ORACLE_COMMAND_TIMEOUT_MS = 1_800_000;
 
 function usage() {
   console.error(
@@ -28,6 +29,7 @@ function usage() {
       "[--oracle-lock /abs/oracle-lock.json --expected-oracle-lock-sha256 <sha256>] " +
       "[--trusted-cargo /abs/cargo --expected-cargo-sha256 <sha256>] " +
       "[--trusted-rustc /abs/rustc --expected-rustc-sha256 <sha256>] " +
+      "--trusted-shell /abs/bash --expected-shell-sha256 <sha256> " +
       "[--adapter-file /abs/adapter.mjs] " +
       "[--contract-file /abs/contract.json] [--candidate-commit <sha>]",
   );
@@ -51,6 +53,51 @@ function fail(message) {
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function processSupervision(execution) {
+  return {
+    started_at: execution.started_at,
+    completed_at: execution.completed_at,
+    duration_seconds: execution.duration_seconds,
+    deadline_seconds: execution.deadline_seconds,
+    exit_code: execution.exit_code,
+    signal: execution.signal,
+    spawn_error: execution.spawn_error,
+    timed_out: execution.timed_out,
+    process_group_created: execution.process_group_created,
+    termination_grace_seconds: execution.termination_grace_seconds,
+    termination_grace_intervals: execution.termination_grace_intervals,
+    termination_deadline_reused_for_cleanup: execution.termination_deadline_reused_for_cleanup,
+    termination_signal_sent: execution.termination_signal_sent,
+    kill_signal_sent: execution.kill_signal_sent,
+    signal_actions: execution.signal_actions,
+    descendant_cleanup_required: execution.descendant_cleanup_required,
+    process_group_extinct_before_capture: execution.process_group_extinct_before_capture,
+  };
+}
+
+async function supervisedCommand(executable, commandArgs, {cwd, env, timeout}) {
+  const execution = await runProcessGroupOnce({
+    executable,
+    args: commandArgs,
+    cwd,
+    environment: env,
+    timeoutMilliseconds: timeout,
+    terminationGraceMilliseconds: 10_000,
+  });
+  execution.deadline_seconds = timeout / 1000;
+  let error;
+  if (execution.spawn_error) error = Object.assign(new Error(execution.spawn_error), {code: "ESPAWN"});
+  else if (execution.timed_out) error = Object.assign(new Error("command timed out"), {code: "ETIMEDOUT"});
+  return {
+    status: execution.exit_code,
+    signal: execution.signal,
+    error,
+    stdout: execution.stdout.toString("utf8"),
+    stderr: execution.stderr.toString("utf8"),
+    process_supervision: processSupervision(execution),
+  };
 }
 
 function canonicalValue(value) {
@@ -204,6 +251,31 @@ async function executeTrustedRustTest({
   trustedDir,
   timeout,
 }) {
+  const commandStartedAt = new Date().toISOString();
+  const commandStarted = process.hrtime.bigint();
+  const commandDeadline = commandStarted + BigInt(timeout) * 1_000_000n;
+  const stageProcesses = [];
+  const remainingTimeout = () => {
+    const remainingNanoseconds = commandDeadline - process.hrtime.bigint();
+    return Math.max(1, Number(remainingNanoseconds / 1_000_000n));
+  };
+  const recordStage = (name, deadlineMilliseconds, result) => {
+    stageProcesses.push({
+      name,
+      deadline_milliseconds: deadlineMilliseconds,
+      process_supervision: result.process_supervision,
+    });
+  };
+  const commandSupervision = () => ({
+    started_at: commandStartedAt,
+    completed_at: new Date().toISOString(),
+    duration_seconds: Number(process.hrtime.bigint() - commandStarted) / 1_000_000_000,
+    deadline_seconds: timeout / 1000,
+    stage_processes: stageProcesses,
+    all_process_groups_extinct_before_capture: stageProcesses.every(
+      (entry) => entry.process_supervision.process_group_extinct_before_capture,
+    ),
+  });
   const targetDirectory = resolve(trustedDir, "rust-target");
   const environment = rustEnvironment(candidateRoot, targetDirectory, rustcInput);
   const metadataArgs = ["metadata", "--locked", "--format-version", "1", "--no-deps"];
@@ -211,13 +283,13 @@ async function executeTrustedRustTest({
   const metadataStderrPath = `${logPrefix}.metadata.stderr`;
   const buildStdoutPath = `${logPrefix}.build.stdout`;
   const buildStderrPath = `${logPrefix}.build.stderr`;
-  const metadataResult = spawnSync(cargoInput.path, metadataArgs, {
+  const metadataTimeout = remainingTimeout();
+  const metadataResult = await supervisedCommand(cargoInput.path, metadataArgs, {
     cwd: candidateRoot,
-    encoding: "utf8",
     env: environment,
-    maxBuffer: 128 * 1024 * 1024,
-    timeout,
+    timeout: metadataTimeout,
   });
+  recordStage("cargo_metadata", metadataTimeout, metadataResult);
   if (metadataResult.status !== 0) {
     await Promise.all([
       writeFile(resolve(trustedDir, metadataStdoutPath), metadataResult.stdout ?? ""),
@@ -228,8 +300,11 @@ async function executeTrustedRustTest({
       resolvedCommand: `${cargoInput.path} ${metadataArgs.map(shellQuote).join(" ")}`,
       receipt: {
         execution_mode: "trusted_cargo_metadata_failed",
+        command_supervision: commandSupervision(),
+        process_supervision: metadataResult.process_supervision,
         toolchain: {cargo: cargoInput, rustc: rustcInput},
         rust_build: {
+          metadata_process_supervision: metadataResult.process_supervision,
           metadata_command_sha256: sha256(JSON.stringify([cargoInput.path, ...metadataArgs])),
           metadata_stdout: commandOutputEvidence(metadataStdoutPath, metadataResult.stdout ?? ""),
           metadata_stderr: commandOutputEvidence(metadataStderrPath, metadataResult.stderr ?? ""),
@@ -298,13 +373,13 @@ async function executeTrustedRustTest({
     "--test", commandSpec.targetName,
     "--locked", "--no-run", "--message-format=json",
   ];
-  const buildResult = spawnSync(cargoInput.path, buildArgs, {
+  const buildTimeout = remainingTimeout();
+  const buildResult = await supervisedCommand(cargoInput.path, buildArgs, {
     cwd: candidateRoot,
-    encoding: "utf8",
     env: environment,
-    maxBuffer: 128 * 1024 * 1024,
-    timeout,
+    timeout: buildTimeout,
   });
+  recordStage("cargo_build", buildTimeout, buildResult);
   const artifactMessages = [];
   for (const line of (buildResult.stdout ?? "").split(/\r?\n/).filter(Boolean)) {
     try {
@@ -335,12 +410,16 @@ async function executeTrustedRustTest({
       resolvedCommand: `${cargoInput.path} ${buildArgs.map(shellQuote).join(" ")}`,
       receipt: {
         execution_mode: "trusted_cargo_build_failed",
+        command_supervision: commandSupervision(),
+        process_supervision: buildResult.process_supervision,
         toolchain: {cargo: cargoInput, rustc: rustcInput},
         rust_build: {
+          metadata_process_supervision: metadataResult.process_supervision,
           metadata_command_sha256: sha256(JSON.stringify([cargoInput.path, ...metadataArgs])),
           metadata_stdout: commandOutputEvidence(metadataStdoutPath, metadataResult.stdout ?? ""),
           metadata_stderr: commandOutputEvidence(metadataStderrPath, metadataResult.stderr ?? ""),
           command_sha256: sha256(JSON.stringify([cargoInput.path, ...buildArgs])),
+          build_process_supervision: buildResult.process_supervision,
           stdout: commandOutputEvidence(buildStdoutPath, buildResult.stdout ?? ""),
           stderr: commandOutputEvidence(buildStderrPath, buildResult.stderr ?? ""),
           package: packageReceipt,
@@ -367,13 +446,13 @@ async function executeTrustedRustTest({
   if (!inside(executable, canonicalTargetDirectory)) fail("Cargo test artifact escaped trusted target dir");
   const executableBytes = await readFile(executable);
   const testArgs = [commandSpec.testName, "--exact", "-Z", "unstable-options", "--format", "json"];
-  const testResult = spawnSync(executable, testArgs, {
+  const testTimeout = remainingTimeout();
+  const testResult = await supervisedCommand(executable, testArgs, {
     cwd: candidateRoot,
-    encoding: "utf8",
     env: environment,
-    maxBuffer: 128 * 1024 * 1024,
-    timeout,
+    timeout: testTimeout,
   });
+  recordStage("direct_libtest", testTimeout, testResult);
   await Promise.all([
     writeFile(resolve(trustedDir, metadataStdoutPath), metadataResult.stdout ?? ""),
     writeFile(resolve(trustedDir, metadataStderrPath), metadataResult.stderr ?? ""),
@@ -385,12 +464,16 @@ async function executeTrustedRustTest({
     resolvedCommand: `${executable} ${testArgs.map(shellQuote).join(" ")}`,
     receipt: {
       execution_mode: "trusted_cargo_direct_libtest",
+      command_supervision: commandSupervision(),
+      process_supervision: testResult.process_supervision,
       toolchain: {cargo: cargoInput, rustc: rustcInput},
       rust_build: {
+        metadata_process_supervision: metadataResult.process_supervision,
         metadata_command_sha256: sha256(JSON.stringify([cargoInput.path, ...metadataArgs])),
         metadata_stdout: commandOutputEvidence(metadataStdoutPath, metadataResult.stdout ?? ""),
         metadata_stderr: commandOutputEvidence(metadataStderrPath, metadataResult.stderr ?? ""),
         command_sha256: sha256(JSON.stringify([cargoInput.path, ...buildArgs])),
+        build_process_supervision: buildResult.process_supervision,
         stdout: commandOutputEvidence(buildStdoutPath, buildResult.stdout ?? ""),
         stderr: commandOutputEvidence(buildStderrPath, buildResult.stderr ?? ""),
         package: packageReceipt,
@@ -485,7 +568,11 @@ function portableResult(observations, selector) {
 }
 
 const args = parseArgs(process.argv.slice(2));
-for (const key of ["case", "candidate-root", "trusted-dir", "expected-control-sha256"]) {
+if (args.has("timeout-ms")) fail("--timeout-ms is not permitted; oracle deadline is exactly 1800 seconds");
+for (const key of [
+  "case", "candidate-root", "trusted-dir", "expected-control-sha256",
+  "trusted-shell", "expected-shell-sha256",
+]) {
   if (!args.has(key)) usage();
 }
 if (!/^[0-9a-f]{64}$/.test(args.get("expected-control-sha256"))) {
@@ -502,6 +589,19 @@ if (!isAbsolute(args.get("candidate-root")) || !isAbsolute(args.get("trusted-dir
 if (existsSync(trustedDirInput)) fail("trusted-dir must not already exist");
 if (inside(trustedDir, candidateRoot) || inside(candidateRoot, trustedDir)) {
   fail("trusted-dir and candidate-root must be disjoint");
+}
+if (!/^[0-9a-f]{64}$/.test(args.get("expected-shell-sha256"))) {
+  fail("expected-shell-sha256 must be lowercase SHA-256");
+}
+const trustedShellInput = await trustedRegularFile(
+  args.get("trusted-shell"),
+  "trusted shell",
+  candidateRoot,
+);
+const trustedShellMetadata = await lstat(trustedShellInput.path);
+if ((trustedShellMetadata.mode & 0o111) === 0) fail("trusted shell must be executable");
+if (trustedShellInput.sha256 !== args.get("expected-shell-sha256")) {
+  fail("trusted shell SHA-256 mismatch");
 }
 
 if (args.has("benchmark-dir")) fail("benchmark-dir override is not permitted");
@@ -626,6 +726,7 @@ let contractFile;
 const trustedInputs = [
   {kind: "manifest", ...manifestInput},
   {kind: "oracle_lock", ...lockInput},
+  {kind: "trusted_shell", ...trustedShellInput},
   ...frozenControlInputs.map(({control_path: controlPath, bytes, sha256: hash}) => ({
     kind: "frozen_control",
     control_path: controlPath,
@@ -731,7 +832,7 @@ for (const [commandIndex, command] of manifestCase.oracle_commands.entries()) {
       lockedFiles: lockedFilesBefore,
       logPrefix,
       trustedDir: trustedDirInput,
-      timeout: Number(args.get("timeout-ms") ?? 1_800_000),
+      timeout: ORACLE_COMMAND_TIMEOUT_MS,
     });
     result = execution.result;
     resolvedCommand = execution.resolvedCommand;
@@ -742,13 +843,16 @@ for (const [commandIndex, command] of manifestCase.oracle_commands.entries()) {
       after: lockedFilesAfter,
     };
   } else {
-    result = spawnSync("/bin/bash", ["--noprofile", "--norc", "-c", resolvedCommand], {
+    result = await supervisedCommand(
+      trustedShellInput.path,
+      ["--noprofile", "--norc", "-c", resolvedCommand],
+      {
       cwd: candidateRoot,
-      encoding: "utf8",
       env: process.env,
-      maxBuffer: 128 * 1024 * 1024,
-      timeout: Number(args.get("timeout-ms") ?? 1_800_000),
-    });
+      timeout: ORACLE_COMMAND_TIMEOUT_MS,
+      },
+    );
+    executionReceipt = {process_supervision: result.process_supervision};
   }
   const stdout = result.stdout ?? "";
   const stderr = result.stderr ?? "";

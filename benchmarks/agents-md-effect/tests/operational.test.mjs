@@ -15,6 +15,7 @@ import {
   realpath,
   rename,
   rm,
+  stat,
   symlink,
   unlink,
   writeFile,
@@ -22,7 +23,7 @@ import {
 import { spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const benchmarkDir = resolve(testDir, "..");
@@ -39,10 +40,18 @@ const verifyOracleQualificationScript = resolve(
 );
 const buildReviewPacketScript = resolve(benchmarkDir, "scripts/build-review-packet.mjs");
 const scanReviewPacketScript = resolve(benchmarkDir, "scripts/scan-review-packet.mjs");
+const runControllerScript = resolve(benchmarkDir, "scripts/run-controller.mjs");
+const processGroupSupervisorScript = resolve(
+  benchmarkDir,
+  "scripts/process-group-supervisor.mjs",
+);
+const repositoryRoot = resolve(benchmarkDir, "../..");
 const trustedCargoPath = spawnSync("rustup", ["which", "cargo"], {encoding: "utf8"}).stdout.trim();
 const trustedCargoSha256 = sha256(readFileSync(trustedCargoPath));
 const trustedRustcPath = spawnSync("rustup", ["which", "rustc"], {encoding: "utf8"}).stdout.trim();
 const trustedRustcSha256 = sha256(readFileSync(trustedRustcPath));
+const trustedShellPath = "/bin/bash";
+const trustedShellSha256 = sha256(readFileSync(trustedShellPath));
 const CONTROL_ARTIFACTS = [
   "environment-lock.json",
   "evaluator/cases.json",
@@ -105,6 +114,47 @@ async function controlSha256(artifactDir) {
 function exactlyOnce(values, label) {
   assert.equal(new Set(values).size, values.length, `${label} must be unique`);
 }
+
+test("shared validator supervisor extinguishes a surviving descendant on one deadline", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-validator-supervisor-"));
+  const leader = resolve(fixtureRoot, "leader.mjs");
+  const descendantPidPath = resolve(fixtureRoot, "descendant.pid");
+  try {
+    await writeFile(leader, `
+      import {spawn} from "node:child_process";
+      import {writeFileSync} from "node:fs";
+      const child = spawn(process.execPath, ["-e", "process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"], {
+        detached: false,
+        stdio: "ignore",
+      });
+      writeFileSync(process.argv[2], String(child.pid));
+      process.on("SIGTERM", () => process.exit(0));
+      setInterval(() => {}, 1000);
+    `);
+    const {runProcessGroupOnce} = await import(pathToFileURL(processGroupSupervisorScript));
+    const result = await runProcessGroupOnce({
+      executable: process.execPath,
+      args: [leader, descendantPidPath],
+      cwd: fixtureRoot,
+      environment: process.env,
+      timeoutMilliseconds: 100,
+      terminationGraceMilliseconds: 250,
+    });
+    const descendantPid = Number(await readFile(descendantPidPath, "utf8"));
+    assert.equal(result.timed_out, true);
+    assert.equal(result.termination_grace_intervals, 1);
+    assert.equal(result.termination_deadline_reused_for_cleanup, true);
+    assert.equal(result.termination_signal_sent, true);
+    assert.equal(result.kill_signal_sent, true);
+    assert.deepEqual(result.signal_actions.map((entry) => entry.signal), ["SIGTERM", "SIGKILL"]);
+    assert.ok(result.signal_actions.every((entry) => !Number.isNaN(Date.parse(entry.sent_at))));
+    assert.equal(result.descendant_cleanup_required, true);
+    assert.equal(result.process_group_extinct_before_capture, true);
+    assert.throws(() => process.kill(descendantPid, 0), /ESRCH/);
+  } finally {
+    await rm(fixtureRoot, {recursive: true, force: true});
+  }
+});
 
 function ids(entries) {
   return entries.map((entry) => entry.id).sort();
@@ -268,7 +318,13 @@ async function createPreflightFixture(
 
 function runPreflight(
   fixture,
-  { environment = {}, includeExpectedAgents = true, includeExpectedControl = true, receipt } = {},
+  {
+    environment = {},
+    includeExpectedAgents = true,
+    includeExpectedControl = true,
+    receipt,
+    nodeExecutable = process.execPath,
+  } = {},
 ) {
   const argumentsForPreflight = [
     preflightScript,
@@ -309,7 +365,7 @@ function runPreflight(
   };
   delete childEnvironment.CARGO_TARGET_DIR;
   return spawnSync(
-    process.execPath,
+    nodeExecutable,
     argumentsForPreflight,
     {
       encoding: "utf8",
@@ -363,7 +419,7 @@ async function withPreflightFixture(options, body) {
 test("preflight accepts an empty neutral HOME and CODEX_HOME and records real observations", async () => {
   await withPreflightFixture({}, async (fixture) => {
     const result = runPreflight(fixture);
-    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
 
     const receipt = await readJson(fixture.receipt);
     assert.equal(receipt.valid, true);
@@ -1128,7 +1184,13 @@ function runOracleFixture(
   fixture,
   extra = [],
   environment = {},
-  {rustcPath = trustedRustcPath, rustcSha256 = trustedRustcSha256, includeRustc = true} = {},
+  {
+    rustcPath = trustedRustcPath,
+    rustcSha256 = trustedRustcSha256,
+    includeRustc = true,
+    shellPath = trustedShellPath,
+    shellSha256 = trustedShellSha256,
+  } = {},
 ) {
   return spawnSync(
     process.execPath,
@@ -1150,6 +1212,10 @@ function runOracleFixture(
       sha256(readFileSync(fixture.oracleLockPath)),
       "--expected-control-sha256",
       "0".repeat(64),
+      "--trusted-shell",
+      shellPath,
+      "--expected-shell-sha256",
+      shellSha256,
       "--trusted-cargo",
       trustedCargoPath,
       "--expected-cargo-sha256",
@@ -1165,6 +1231,41 @@ function runOracleFixture(
     {encoding: "utf8", env: {...process.env, ...environment}},
   );
 }
+
+test("oracle runner binds and supervises its trusted shell", async () => {
+  const timeoutOverrideFixture = await createOracleRunnerFixture({command: "true", selector: null});
+  try {
+    const rejected = runOracleFixture(timeoutOverrideFixture, ["--timeout-ms", "1"]);
+    assert.notEqual(rejected.status, 0);
+    assert.match(rejected.stderr, /timeout-ms.*not permitted|exact.*1800/i);
+  } finally {
+    await rm(timeoutOverrideFixture.fixtureRoot, {recursive: true, force: true});
+  }
+
+  const wrongHashFixture = await createOracleRunnerFixture({command: "true", selector: null});
+  try {
+    const rejected = runOracleFixture(wrongHashFixture, [], {}, {shellSha256: "f".repeat(64)});
+    assert.notEqual(rejected.status, 0);
+    assert.match(rejected.stderr, /trusted shell SHA-256 mismatch/i);
+  } finally {
+    await rm(wrongHashFixture.fixtureRoot, {recursive: true, force: true});
+  }
+
+  const fixture = await createOracleRunnerFixture({command: "true", selector: null});
+  try {
+    const result = runOracleFixture(fixture);
+    assert.equal(result.status, 0, result.stderr);
+    const receipt = await readJson(resolve(fixture.trustedDir, "oracle-run.json"));
+    const shell = receipt.trusted_inputs.find((entry) => entry.kind === "trusted_shell");
+    assert.equal(shell.sha256, trustedShellSha256);
+    assert.equal(receipt.commands[0].process_supervision.process_group_created, true);
+    assert.equal(receipt.commands[0].process_supervision.deadline_seconds, 1800);
+    assert.equal(receipt.commands[0].process_supervision.termination_grace_seconds, 10);
+    assert.equal(receipt.commands[0].process_supervision.process_group_extinct_before_capture, true);
+  } finally {
+    await rm(fixture.fixtureRoot, {recursive: true, force: true});
+  }
+});
 
 test("oracle runner requires an explicitly bound sibling Rust compiler", async () => {
   const fixture = await createOracleRunnerFixture({
@@ -1262,6 +1363,27 @@ test("oracle runner builds with trusted Cargo and executes one real libtest bina
     assert.equal(receipt.commands[0].toolchain.cargo.sha256, trustedCargoSha256);
     assert.equal(receipt.commands[0].toolchain.rustc.path, trustedRustcPath);
     assert.equal(receipt.commands[0].toolchain.rustc.sha256, trustedRustcSha256);
+    for (const supervision of [
+      receipt.commands[0].rust_build.metadata_process_supervision,
+      receipt.commands[0].rust_build.build_process_supervision,
+      receipt.commands[0].process_supervision,
+    ]) {
+      assert.equal(supervision.process_group_created, true);
+      assert.equal(supervision.termination_grace_seconds, 10);
+      assert.equal(supervision.process_group_extinct_before_capture, true);
+    }
+    const commandSupervision = receipt.commands[0].command_supervision;
+    assert.equal(commandSupervision.deadline_seconds, 1800);
+    assert.equal(commandSupervision.stage_processes.length, 3);
+    assert.ok(
+      commandSupervision.stage_processes[1].deadline_milliseconds <
+        commandSupervision.stage_processes[0].deadline_milliseconds,
+    );
+    assert.ok(
+      commandSupervision.stage_processes[2].deadline_milliseconds <
+        commandSupervision.stage_processes[1].deadline_milliseconds,
+    );
+    assert.equal(commandSupervision.all_process_groups_extinct_before_capture, true);
     assert.match(receipt.commands[0].rust_build.artifact.executable_sha256, /^[0-9a-f]{64}$/);
     assert.match(receipt.commands[0].rust_build.artifact.message_sha256, /^[0-9a-f]{64}$/);
     assert.ok(receipt.commands[0].rust_build.stdout.bytes > 0);
@@ -1640,6 +1762,8 @@ test("production oracle runner rejects an unbound control digest", async () => {
       "--candidate-root", candidateRoot,
       "--trusted-dir", trustedDir,
       "--expected-control-sha256", "0".repeat(64),
+      "--trusted-shell", trustedShellPath,
+      "--expected-shell-sha256", trustedShellSha256,
     ], {encoding: "utf8"});
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /control SHA-256 mismatch/i);
@@ -1860,6 +1984,11 @@ test("oracle qualification summary regenerates byte-for-byte across controlled f
       );
       assert.equal(receipt.payload.schema, "tachiko-oracle-qualification-summary-v3");
       assert.equal(receipt.run_receipt.schema, "tachiko-oracle-qualification-run-v3");
+      assert.deepEqual(receipt.payload.trusted_shell, {
+        bytes: receipt.run_receipt.trusted_shell.bytes,
+        sha256: receipt.run_receipt.trusted_shell.sha256,
+        version: receipt.run_receipt.trusted_shell.version,
+      });
       assert.equal(receipt.payload.mode, "fixture-fast");
       assert.equal(receipt.run_receipt.mode, "fixture-fast");
       assert.ok(receipt.run_receipt.cases.length > 0);
@@ -2011,6 +2140,13 @@ test("oracle qualification records executed target/base evidence for all frozen 
       assert.match(execution.stdout.sha256, /^[0-9a-f]{64}$/);
       assert.equal(typeof execution.stderr.bytes, "number");
       assert.match(execution.stderr.sha256, /^[0-9a-f]{64}$/);
+      assert.equal(
+        execution.command_supervision?.deadline_seconds ??
+          execution.process_supervision.deadline_seconds,
+        1800,
+      );
+      assert.equal(execution.process_supervision.termination_grace_seconds, 10);
+      assert.equal(execution.process_supervision.process_group_extinct_before_capture, true);
       if (execution.execution_mode === "trusted_cargo_direct_libtest") {
         assert.deepEqual(execution.locked_files.before, execution.locked_files.after);
         assert.ok(execution.locked_files.before.length > 0);
@@ -2018,6 +2154,11 @@ test("oracle qualification records executed target/base evidence for all frozen 
           /^[0-9a-f]{64}$/.test(entry.sha256)));
         assert.match(execution.toolchain.rustc.sha256, /^[0-9a-f]{64}$/);
       }
+    }
+    for (const oracle of [caseEntry.target.oracle, caseEntry.negative.oracle]) {
+      assert.ok(oracle.runner_process_supervision.deadline_seconds > 1800);
+      assert.equal(oracle.runner_process_supervision.termination_grace_seconds, 10);
+      assert.equal(oracle.runner_process_supervision.process_group_extinct_before_capture, true);
     }
     for (const assertion of [
       ...caseEntry.target.oracle.assertions,
@@ -2046,6 +2187,11 @@ test("oracle qualification records executed target/base evidence for all frozen 
     assert.equal(entry.negative.discriminated, true);
   }
   const tw05 = receipt.run_receipt.cases.find((entry) => entry.case_id === "TW-05");
+  for (const offline of [tw05.offline_historical_target, tw05.offline_behavior_missing_negative]) {
+    assert.ok(offline.process_supervision.deadline_seconds > 1800);
+    assert.equal(offline.process_supervision.termination_grace_seconds, 10);
+    assert.equal(offline.process_supervision.process_group_extinct_before_capture, true);
+  }
   assert.equal(tw05.target.accepted, false);
   assert.equal(tw05.target.expected_contract_miss, true);
   assert.equal(tw05.reference_positive.accepted, true);
@@ -2619,5 +2765,574 @@ test("review packet scanner rejects residual matches and qualifies ordinary subj
     assert.match(result.stderr, /symlink/i);
   } finally {
     await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+async function controllerStageReceipts(artifactDir) {
+  const receiptDir = resolve(artifactDir, "stage-receipts");
+  const names = (await readdir(receiptDir)).sort();
+  const receipts = [];
+  let prior = null;
+  for (const name of names) {
+    const bytes = await readFile(resolve(receiptDir, name));
+    const receipt = JSON.parse(bytes.toString("utf8"));
+    assert.equal(receipt.stage_order, receipts.length);
+    assert.equal(receipt.prior_receipt_sha256, prior);
+    prior = sha256(bytes);
+    receipts.push(receipt);
+  }
+  return receipts;
+}
+
+async function createControllerSmokeFixture(mode, caseId = "TW-01") {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-controller-"));
+  const runRoot = resolve(fixtureRoot, "r-0123456789abcdef0123456789abcdef");
+  const artifactDir = resolve(fixtureRoot, "trusted-controller-artifacts");
+  const fakeAgent = resolve(fixtureRoot, "fake-agent.mjs");
+  const agentArgs = resolve(fixtureRoot, "agent-args.json");
+  const attemptRegistryDir = resolve(fixtureRoot, "attempt-registry");
+  const variantFile = resolve(repositoryRoot, "AGENTS.md");
+  const variantBytes = await readFile(variantFile);
+  await mkdir(attemptRegistryDir);
+  await writeFile(
+    fakeAgent,
+    `#!/usr/bin/env node\n` +
+      `import {appendFileSync, writeFileSync} from "node:fs";\n` +
+      `import {spawn} from "node:child_process";\n` +
+      `const mode = process.argv[2];\n` +
+      `appendFileSync(".fake-agent-launches", "1\\n");\n` +
+      `writeFileSync("controller-smoke.txt", "candidate mutation\\n");\n` +
+      `if (mode === "descendant" || mode === "timeout_descendant") {\n` +
+      `  const childCode = mode === "timeout_descendant" ` +
+      `? "process.on('SIGTERM',()=>{}); setInterval(() => {}, 1000)" ` +
+      `: "setInterval(() => {}, 1000)";\n` +
+      `  const child = spawn(process.execPath, ["-e", childCode], {stdio:"ignore"});\n` +
+      `  child.unref();\n` +
+      `  writeFileSync(".descendant-pid", String(child.pid));\n` +
+      `}\n` +
+      `console.log(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:"construction smoke complete"}}));\n` +
+      `if (mode === "failure") process.exit(7);\n` +
+      `if (mode === "timeout" || mode === "timeout_descendant") setInterval(() => {}, 1000);\n`,
+    {mode: 0o755},
+  );
+  await writeFile(agentArgs, `${JSON.stringify([mode])}\n`);
+  return {
+    fixtureRoot,
+    runRoot,
+    artifactDir,
+    arguments: [
+      runControllerScript,
+      "--case", caseId,
+      "--source-repo", repositoryRoot,
+      "--variant-file", variantFile,
+      "--expected-variant-sha256", sha256(variantBytes),
+      "--phase", "construction_pilot_only",
+      "--run-root", runRoot,
+      "--artifact-dir", artifactDir,
+      "--attempt-registry-dir", attemptRegistryDir,
+      "--agent-executable", fakeAgent,
+      "--agent-args-file", agentArgs,
+      "--timeout-seconds", mode.startsWith("timeout") ? "1" : "10",
+      "--wave-id", "11111111111111111111111111111111",
+      "--run-id", "22222222222222222222222222222222",
+      "--attempt-id", "33333333333333333333333333333333",
+      "--candidate-id", "44444444444444444444444444444444",
+      "--construction-smoke", "true",
+    ],
+  };
+}
+
+test("one-shot controller orders same-wave controls, captures one successful launch, and chains every stage", async () => {
+  const fixture = await createControllerSmokeFixture("success");
+  try {
+    const result = spawnSync(process.execPath, fixture.arguments, {
+      encoding: "utf8",
+      timeout: 120_000,
+      maxBuffer: 128 * 1024 * 1024,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const receipts = await controllerStageReceipts(fixture.artifactDir);
+    const stages = receipts.map((entry) => entry.stage);
+    assert.ok(stages.indexOf("same_wave_base_control") < stages.indexOf("agent_launch"));
+    for (const receipt of receipts) {
+      assert.equal(receipt.wave_id, "11111111111111111111111111111111");
+      assert.equal(receipt.run_id, "22222222222222222222222222222222");
+      assert.equal(receipt.attempt_id, "33333333333333333333333333333333");
+      assert.equal(receipt.candidate_id, "44444444444444444444444444444444");
+      assert.equal(receipt.case_id, "TW-01");
+      assert.match(receipt.control_sha256, /^[0-9a-f]{64}$/);
+      assert.match(receipt.environment_identity_sha256, /^[0-9a-f]{64}$/);
+    }
+    for (const required of [
+      "candidate_preflight",
+      "agent_launch",
+      "agent_process",
+      "overlay_identity_postcheck",
+      "candidate_capture",
+      "validation_preparation",
+      "core_validation",
+      "production_oracles",
+      "review_packet",
+      "result_skeleton",
+    ]) {
+      assert.ok(stages.includes(required), `missing ${required}`);
+    }
+    assert.equal(
+      await readFile(resolve(fixture.runRoot, "workspace", ".fake-agent-launches"), "utf8"),
+      "1\n",
+    );
+    const ledgerLines = (await readFile(resolve(fixture.artifactDir, "attempt-ledger.jsonl"), "utf8"))
+      .trim().split("\n").map(JSON.parse);
+    assert.equal(ledgerLines.length, 2);
+    assert.equal(ledgerLines[0].disposition, "registered");
+    assert.equal(ledgerLines[1].disposition, "awaiting_review");
+    assert.equal(ledgerLines[1].previous_attempt_entry_sha256, ledgerLines[0].entry_sha256);
+    const base = await readJson(resolve(fixture.artifactDir, "base-control-receipt.json"));
+    assert.equal(base.classification, "same_wave_construction_control");
+    assert.equal(base.wave_id, ledgerLines[0].wave_id);
+    assert.equal(base.attempt_id, ledgerLines[0].attempt_id);
+    assert.equal(base.raw_logs_embedded, false);
+    const environmentReceipt = await readJson(resolve(fixture.artifactDir, "environment-receipt.json"));
+    const registeredBash = environmentReceipt.tools.find((tool) => tool.name === "bash");
+    assert.equal(base.trusted_shell.sha256, registeredBash.sha256);
+    assert.deepEqual(base.trusted_shell.arguments_prefix, ["--noprofile", "--norc", "-c"]);
+    assert.equal(base.trusted_shell.qualification_executed, true);
+    assert.equal(existsSync(resolve(fixture.artifactDir, "process", "stdout.raw")), true);
+    assert.equal(existsSync(resolve(fixture.artifactDir, "process", "stderr.raw")), true);
+    assert.equal(
+      await readFile(resolve(fixture.artifactDir, "process", "final-message.txt"), "utf8"),
+      "construction smoke complete\n",
+    );
+    const duplicateRunRoot = resolve(fixture.fixtureRoot, "r-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    const duplicateArtifactDir = resolve(fixture.fixtureRoot, "duplicate-artifacts");
+    const duplicateArguments = [...fixture.arguments];
+    duplicateArguments[duplicateArguments.indexOf(fixture.runRoot)] = duplicateRunRoot;
+    duplicateArguments[duplicateArguments.indexOf(fixture.artifactDir)] = duplicateArtifactDir;
+    duplicateArguments[duplicateArguments.indexOf("22222222222222222222222222222222")] =
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    duplicateArguments[duplicateArguments.indexOf("33333333333333333333333333333333")] =
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    duplicateArguments[duplicateArguments.indexOf("44444444444444444444444444444444")] =
+      "cccccccccccccccccccccccccccccccc";
+    const duplicate = spawnSync(process.execPath, duplicateArguments, {encoding: "utf8"});
+    assert.notEqual(duplicate.status, 0);
+    assert.match(duplicate.stderr, /wave.*case.*phase|slot.*registered|resampling denied/i);
+    assert.equal(existsSync(duplicateRunRoot), false);
+    assert.equal(existsSync(duplicateArtifactDir), false);
+  } finally {
+    await rm(fixture.fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("controller records an external terminal outcome when setup fails after atomic slot registration", async () => {
+  const fixture = await createControllerSmokeFixture("success");
+  try {
+    const missingTemplate = resolve(fixture.fixtureRoot, "missing-cargo-home-template");
+    const result = spawnSync(
+      process.execPath,
+      [...fixture.arguments, "--cargo-home-template", missingTemplate],
+      {encoding: "utf8", timeout: 120_000, maxBuffer: 128 * 1024 * 1024},
+    );
+    assert.notEqual(result.status, 0);
+    const registryDir = fixture.arguments[fixture.arguments.indexOf("--attempt-registry-dir") + 1];
+    const terminalNames = (await readdir(registryDir)).filter((name) => name.endsWith(".terminal.json"));
+    assert.equal(terminalNames.length, 1);
+    const terminal = await readJson(resolve(registryDir, terminalNames[0]));
+    assert.equal(terminal.disposition, "infrastructure_failed");
+    assert.equal(terminal.launch_count, 0);
+    assert.equal(terminal.resampling_performed, false);
+    assert.match(terminal.attempt_registry_entry_sha256, /^[0-9a-f]{64}$/);
+  } finally {
+    await rm(fixture.fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("terminal ledger append remains the single commit when marker persistence fails", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-terminal-commit-"));
+  try {
+    const ledgerPath = resolve(fixtureRoot, "attempt-ledger.jsonl");
+    const markerPath = resolve(fixtureRoot, "terminal.json");
+    await writeFile(ledgerPath, '{"disposition":"registered"}\n');
+    const {commitTerminalEntry} = await import(pathToFileURL(runControllerScript));
+    let committed = false;
+    const outcome = await commitTerminalEntry({
+      ledgerPath,
+      markerPath,
+      terminal: {disposition: "infrastructure_failed", entry_sha256: "a".repeat(64)},
+      onCommitted() { committed = true; },
+      markerWriter: async () => { throw new Error("injected marker failure"); },
+    });
+    const lines = (await readFile(ledgerPath, "utf8")).trim().split("\n").map(JSON.parse);
+    assert.equal(lines.length, 2);
+    assert.equal(lines[1].disposition, "infrastructure_failed");
+    assert.equal(committed, true);
+    assert.equal(outcome.marker_written, false);
+    assert.match(outcome.marker_error, /injected marker failure/);
+  } finally {
+    await rm(fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("formal runtime staging locks the catalog semantics and every staged binary identity", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-formal-runtime-"));
+  try {
+    const {
+      comparePreflightToolIdentities,
+      inspectFormalCargoHome,
+      inspectFormalRuntime,
+      stageFormalModelCatalog,
+      stageToolBin,
+      verifyStagedRuntimeArtifacts,
+    } =
+      await import(pathToFileURL(runControllerScript));
+    const lock = await readJson(resolve(benchmarkDir, "environment-lock.json"));
+    const rustupHomeTemplate = await realpath(
+      process.env.RUSTUP_HOME ?? resolve(process.env.HOME, ".rustup"),
+    );
+    const inspected = await inspectFormalRuntime(lock, rustupHomeTemplate);
+    for (const name of [
+      "bash", "cargo", "cargo-clippy", "codex-code-mode-host", "git", "node", "pnpm",
+      "rtk", "rustc", "rustfmt", "rustup",
+    ]) {
+      assert.ok(inspected.tools.some((tool) => tool.name === name), `missing formal runtime ${name}`);
+    }
+    assert.match(inspected.identity_sha256, /^[0-9a-f]{64}$/);
+    const stagedTools = await stageToolBin(resolve(fixtureRoot, "bin"), inspected);
+    assert.equal(stagedTools.identity_sha256, inspected.identity_sha256);
+    for (const tool of stagedTools.tools) {
+      assert.equal(sha256(await readFile(tool.staged_path)), tool.sha256);
+    }
+    const stagedPreflight = await verifyStagedRuntimeArtifacts(stagedTools, lock);
+    assert.equal(stagedPreflight.all_staged_artifacts_verified, true);
+    assert.equal(stagedPreflight.rustup_home_path, stagedTools.rustup_home_path);
+    const cargoHome = await inspectFormalCargoHome(lock.offline_dependency_cache.template_path, lock);
+    assert.equal(cargoHome.manifest_sha256, lock.offline_dependency_cache.tree_sha256);
+    const preflightFixture = await createPreflightFixture();
+    try {
+      const stagedNode = stagedTools.tools.find((tool) => tool.name === "node").staged_path;
+      const preflightResult = runPreflight(preflightFixture, {
+        nodeExecutable: stagedNode,
+        environment: {
+          PATH: `${resolve(fixtureRoot, "bin")}:/usr/bin:/bin:/usr/sbin:/sbin`,
+          RUSTUP_HOME: stagedTools.rustup_home_path,
+        },
+      });
+      assert.equal(preflightResult.status, 0, preflightResult.stderr);
+      const preflightReceipt = await readJson(preflightFixture.receipt);
+      const comparison = await comparePreflightToolIdentities(stagedTools.tools, preflightReceipt, true);
+      assert.equal(comparison.all_required_matched, true);
+      assert.deepEqual(
+        comparison.compared_names,
+        ["bash", "cargo", "clippy", "git", "node", "rtk", "rustc", "rustfmt", "rustup"],
+      );
+    } finally {
+      await rm(preflightFixture.fixtureRoot, {recursive: true, force: true});
+    }
+
+    const catalog = {
+      models: [{slug: "fixture-model", base_instructions: "fixture instructions"}],
+    };
+    const rawBytes = Buffer.from(`${JSON.stringify(catalog, null, 2)}\n`);
+    const canonicalJson = (value) => {
+      if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+      if (value && typeof value === "object") {
+        return `{${Object.keys(value).sort().map((key) =>
+          `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+      }
+      return JSON.stringify(value);
+    };
+    const source = resolve(fixtureRoot, "trusted-catalog.json");
+    const destination = resolve(fixtureRoot, "runtime", "model-catalog.json");
+    await writeFile(source, rawBytes);
+    const catalogLock = {
+      bytes: rawBytes.length,
+      raw_sha256: sha256(rawBytes),
+      canonical_catalog_sha256: sha256(`${canonicalJson(catalog)}\n`),
+      model_record_sha256: sha256(`${canonicalJson(catalog.models[0])}\n`),
+      base_instructions_sha256: sha256("fixture instructions\n"),
+    };
+    const staged = await stageFormalModelCatalog({
+      sourcePath: source,
+      destinationPath: destination,
+      catalogLock,
+      modelId: "fixture-model",
+    });
+    assert.equal(staged.sha256, catalogLock.raw_sha256);
+    assert.equal((await stat(destination)).mode & 0o222, 0);
+    await writeFile(source, Buffer.concat([rawBytes, Buffer.from(" ")]));
+    await assert.rejects(
+      stageFormalModelCatalog({
+        sourcePath: source,
+        destinationPath: resolve(fixtureRoot, "runtime", "tampered.json"),
+        catalogLock,
+        modelId: "fixture-model",
+      }),
+      /catalog.*lock|SHA-256|bytes/i,
+    );
+  } finally {
+    await rm(fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("timeout cleanup reuses one TERM deadline when a surviving descendant ignores TERM", async () => {
+  const fixture = await createControllerSmokeFixture("timeout_descendant");
+  try {
+    const result = spawnSync(process.execPath, fixture.arguments, {
+      encoding: "utf8",
+      timeout: 120_000,
+      maxBuffer: 128 * 1024 * 1024,
+    });
+    assert.notEqual(result.status, 0);
+    const receipt = await readJson(resolve(fixture.artifactDir, "process", "receipt.json"));
+    assert.equal(receipt.timed_out, true);
+    assert.equal(receipt.deadline_seconds, 1);
+    assert.equal(receipt.descendant_cleanup_required, true);
+    assert.equal(receipt.termination_grace_seconds, 0.25);
+    assert.equal(receipt.termination_grace_intervals, 1);
+    assert.equal(receipt.termination_deadline_reused_for_cleanup, true);
+    assert.equal(receipt.termination_signal_sent, true);
+    assert.equal(receipt.kill_signal_sent, true);
+    assert.deepEqual(receipt.signal_actions.map((entry) => entry.signal), ["SIGTERM", "SIGKILL"]);
+    const descendantPid = Number(await readFile(
+      resolve(fixture.runRoot, "workspace", ".descendant-pid"),
+      "utf8",
+    ));
+    assert.throws(() => process.kill(descendantPid, 0), /ESRCH|no such process/i);
+  } finally {
+    await rm(fixture.fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+for (const [mode, expectedDisposition] of [
+  ["failure", "agent_failed"],
+  ["timeout", "agent_timeout"],
+]) {
+  test(`one-shot controller terminalizes ${mode} after exactly one launch without resampling`, async () => {
+    const fixture = await createControllerSmokeFixture(mode);
+    try {
+      const result = spawnSync(process.execPath, fixture.arguments, {
+        encoding: "utf8",
+        timeout: 120_000,
+        maxBuffer: 128 * 1024 * 1024,
+      });
+      assert.notEqual(result.status, 0);
+      assert.equal(
+        await readFile(resolve(fixture.runRoot, "workspace", ".fake-agent-launches"), "utf8"),
+        "1\n",
+      );
+      const ledger = (await readFile(resolve(fixture.artifactDir, "attempt-ledger.jsonl"), "utf8"))
+        .trim().split("\n").map(JSON.parse);
+      assert.equal(ledger.length, 2);
+      assert.equal(ledger[1].disposition, expectedDisposition);
+      assert.equal(ledger.filter((entry) => entry.disposition !== "registered").length, 1);
+      const processReceipt = await readJson(resolve(fixture.artifactDir, "process", "receipt.json"));
+      assert.equal(processReceipt.spawn_count, 1);
+      assert.equal(processReceipt.resampling_performed, false);
+      assert.equal(processReceipt.timed_out, mode === "timeout");
+      assert.equal(processReceipt.termination_grace_seconds, 0.25);
+    } finally {
+      await rm(fixture.fixtureRoot, {recursive: true, force: true});
+    }
+  });
+}
+
+test("one-shot controller records spawn failure without signaling an undefined process group", async () => {
+  const fixture = await createControllerSmokeFixture("spawn_error");
+  try {
+    const executable = fixture.arguments[fixture.arguments.indexOf("--agent-executable") + 1];
+    await writeFile(executable, "#!/definitely/missing/interpreter\n", {mode: 0o755});
+    const result = spawnSync(process.execPath, fixture.arguments, {
+      encoding: "utf8",
+      timeout: 120_000,
+      maxBuffer: 128 * 1024 * 1024,
+    });
+    assert.notEqual(result.status, 0);
+    const processReceipt = await readJson(resolve(fixture.artifactDir, "process", "receipt.json"));
+    assert.match(processReceipt.spawn_error, /ENOENT|missing|spawn/i);
+    assert.equal(processReceipt.process_group_created, false);
+    assert.equal(processReceipt.spawn_count, 1);
+    const ledger = (await readFile(resolve(fixture.artifactDir, "attempt-ledger.jsonl"), "utf8"))
+      .trim().split("\n").map(JSON.parse);
+    assert.equal(ledger.length, 2);
+    assert.equal(ledger[1].disposition, "agent_failed", JSON.stringify(ledger[1].detail));
+  } finally {
+    await rm(fixture.fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("formal controller phase rejects without external authorization before preparation or launch", async () => {
+  const fixture = await createControllerSmokeFixture("success");
+  try {
+    const formalArguments = [...fixture.arguments];
+    formalArguments[formalArguments.indexOf("construction_pilot_only")] = "baseline_a";
+    let result = spawnSync(process.execPath, formalArguments, {encoding: "utf8"});
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /external formal authorization/i);
+    assert.equal(existsSync(fixture.runRoot), false);
+    assert.equal(existsSync(fixture.artifactDir), false);
+  } finally {
+    await rm(fixture.fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("formal authorization commitments bind every effective local runtime identity", async () => {
+  const {requireFormalAuthorizationCommitments, requireFormalFreeSpace, requireFormalTiming} =
+    await import(pathToFileURL(runControllerScript));
+  const commitments = {
+    agent_executable_sha256: "1".repeat(64),
+    agent_args_sha256: "2".repeat(64),
+    variant_sha256: "3".repeat(64),
+    model_catalog_sha256: "4".repeat(64),
+    code_mode_host_sha256: "5".repeat(64),
+    formal_runtime_identity_sha256: "6".repeat(64),
+    effective_agent_args_sha256: "7".repeat(64),
+    timeout_seconds: 5400,
+    termination_grace_seconds: 10,
+    rustup_home_template_sha256: "8".repeat(64),
+    cargo_home_template_sha256: "9".repeat(64),
+    pnpm_home_template_sha256: "a".repeat(64),
+  };
+  assert.doesNotThrow(() => requireFormalAuthorizationCommitments({...commitments}, commitments));
+  for (const field of Object.keys(commitments)) {
+    const changed = {...commitments, [field]: "f".repeat(64)};
+    assert.throws(
+      () => requireFormalAuthorizationCommitments(changed, commitments),
+      new RegExp(field),
+    );
+  }
+  const tw01 = (await readJson(resolve(benchmarkDir, "evaluator/cases.json"))).cases
+    .find((entry) => entry.id === "TW-01");
+  assert.doesNotThrow(() => requireFormalTiming(tw01, 5400, commitments));
+  assert.throws(() => requireFormalTiming(tw01, 5399, commitments), /exact frozen case time limit/i);
+  assert.throws(
+    () => requireFormalTiming(tw01, 5400, {...commitments, termination_grace_seconds: 9}),
+    /termination_grace_seconds/i,
+  );
+  const lock = await readJson(resolve(benchmarkDir, "environment-lock.json"));
+  assert.deepEqual(
+    requireFormalFreeSpace(
+      {free_space: {bytes: lock.controlled_runner.minimum_free_bytes_before_each_run}},
+      lock,
+      true,
+    ),
+    {
+      required_minimum_bytes: lock.controlled_runner.minimum_free_bytes_before_each_run,
+      observed_bytes: lock.controlled_runner.minimum_free_bytes_before_each_run,
+      enforced: true,
+    },
+  );
+  assert.throws(
+    () => requireFormalFreeSpace({free_space: {bytes: 1}}, lock, true),
+    /insufficient free space/i,
+  );
+  assert.equal(requireFormalFreeSpace({free_space: {bytes: 1}}, lock, false).enforced, false);
+});
+
+test("authorized formal result skeleton remains eligible while score freeze is pending", async () => {
+  const {pendingResultState} = await import(pathToFileURL(runControllerScript));
+  assert.deepEqual(pendingResultState(true), {
+    formal_result_eligible: true,
+    formal_attempt_authorized: true,
+    result_state: "awaiting_score_freeze",
+  });
+  assert.deepEqual(pendingResultState(false), {
+    formal_result_eligible: false,
+    formal_attempt_authorized: false,
+    result_state: "awaiting_score_freeze",
+  });
+});
+
+test("controller waits for descendant process-group extinction before candidate capture", async () => {
+  const fixture = await createControllerSmokeFixture("descendant");
+  try {
+    const result = spawnSync(process.execPath, fixture.arguments, {
+      encoding: "utf8",
+      timeout: 120_000,
+      maxBuffer: 128 * 1024 * 1024,
+    });
+    assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+    const descendantPid = Number(await readFile(resolve(fixture.runRoot, "workspace", ".descendant-pid"), "utf8"));
+    assert.throws(() => process.kill(descendantPid, 0), /ESRCH|no such process/i);
+    const receipt = await readJson(resolve(fixture.artifactDir, "process", "receipt.json"));
+    assert.equal(receipt.process_group_extinct_before_capture, true);
+    assert.equal(receipt.descendant_cleanup_required, true);
+    assert.equal(receipt.spawn_count, 1);
+  } finally {
+    await rm(fixture.fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("trusted adapter resumes the same captured attempt without launching the agent again", async () => {
+  const fixture = await createControllerSmokeFixture("success", "TW-05");
+  try {
+    let result = spawnSync(process.execPath, fixture.arguments, {
+      encoding: "utf8",
+      timeout: 120_000,
+      maxBuffer: 128 * 1024 * 1024,
+    });
+    assert.equal(result.status, 3, result.stderr);
+    assert.equal(existsSync(resolve(fixture.artifactDir, "terminal.json")), false);
+    assert.equal(
+      await readFile(resolve(fixture.runRoot, "workspace", ".fake-agent-launches"), "utf8"),
+      "1\n",
+    );
+    const adapter = resolve(fixture.fixtureRoot, "trusted-adapter.mjs");
+    const adapterBytes = Buffer.from("export default function adapter() { return {}; }\n");
+    await writeFile(adapter, adapterBytes, {mode: 0o600});
+    const patchPath = resolve(fixture.artifactDir, "candidate-capture", "candidate.patch");
+    const capturedPatchBytes = await readFile(patchPath);
+    await writeFile(patchPath, Buffer.concat([capturedPatchBytes, Buffer.from("tamper\n")]));
+    let rejected = spawnSync(process.execPath, [
+      runControllerScript,
+      "--resume-artifact-dir", fixture.artifactDir,
+      "--adapter-file", adapter,
+      "--expected-adapter-sha256", sha256(adapterBytes),
+    ], {encoding: "utf8"});
+    assert.notEqual(rejected.status, 0);
+    assert.match(rejected.stderr, /stage|candidate|patch|capture|changed/i);
+    assert.equal(existsSync(resolve(fixture.artifactDir, "terminal.json")), false);
+    await writeFile(patchPath, capturedPatchBytes);
+    const pausePath = resolve(fixture.artifactDir, "awaiting-trusted-adapter.json");
+    const pauseBytes = await readFile(pausePath);
+    const tamperedPause = JSON.parse(pauseBytes.toString("utf8"));
+    tamperedPause.validation_workspace = resolve(fixture.fixtureRoot, "redirected-validation");
+    await writeFile(pausePath, `${JSON.stringify(tamperedPause, null, 2)}\n`);
+    rejected = spawnSync(process.execPath, [
+      runControllerScript,
+      "--resume-artifact-dir", fixture.artifactDir,
+      "--adapter-file", adapter,
+      "--expected-adapter-sha256", sha256(adapterBytes),
+    ], {encoding: "utf8"});
+    assert.notEqual(rejected.status, 0);
+    assert.match(rejected.stderr, /validation workspace|redirected-validation|final stage|pause receipt/i);
+    assert.equal(existsSync(resolve(fixture.artifactDir, "terminal.json")), false);
+    await writeFile(pausePath, pauseBytes);
+    result = spawnSync(process.execPath, [
+      runControllerScript,
+      "--resume-artifact-dir", fixture.artifactDir,
+      "--adapter-file", adapter,
+      "--expected-adapter-sha256", sha256(adapterBytes),
+    ], {
+      encoding: "utf8",
+      timeout: 120_000,
+      maxBuffer: 128 * 1024 * 1024,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(
+      await readFile(resolve(fixture.runRoot, "workspace", ".fake-agent-launches"), "utf8"),
+      "1\n",
+    );
+    const ledger = (await readFile(resolve(fixture.artifactDir, "attempt-ledger.jsonl"), "utf8"))
+      .trim().split("\n").map(JSON.parse);
+    assert.equal(ledger.length, 2);
+    assert.equal(ledger[1].disposition, "awaiting_review");
+    assert.equal(ledger[1].detail.resumed_same_attempt, true);
+    assert.equal(ledger[1].launch_count, 1);
+    const receipts = await controllerStageReceipts(fixture.artifactDir);
+    const stages = receipts.map((entry) => entry.stage);
+    assert.ok(stages.includes("awaiting_trusted_adapter"));
+    assert.ok(stages.indexOf("awaiting_trusted_adapter") < stages.indexOf("production_oracles"));
+  } finally {
+    await rm(fixture.fixtureRoot, {recursive: true, force: true});
   }
 });
