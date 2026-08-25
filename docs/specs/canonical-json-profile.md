@@ -4,7 +4,9 @@ Decision state: Mixed — deterministic/semantic-preservation rules under ADR-00
 
 Implementation state: Implemented by the dedicated `direct-ro/v2` canonical
 writer. Frozen v1 retains its historical version-scoped writer. The Accepted
-`.roproj/v1` profile is not yet implemented by a production codec.
+`.roproj/v1` profile is not yet implemented by a production codec. The
+Accepted portable-package v1 manifest has a separate exact closed spelling;
+its production codec is also not implemented.
 
 Authority: ADR-0017
 
@@ -81,7 +83,12 @@ complete specification is constrained by ADR-0017, ADR-0018, ADR-0019,
 [ADR-0023](../decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md),
 [roproj-layout-v1.md](roproj-layout-v1.md), and [roproj-format.md](roproj-format.md);
 it does not adopt Rust/Serde declaration order, direct-JSON admission limits,
-or a future `.ro` package profile.
+or the distinct portable-package v1 manifest profile.
+
+ADR-0025's [`portable-package-v1.md`](portable-package-v1.md) defines the exact
+228-byte `package.json` spelling and embeds the canonical `.roproj/v1` bodies
+without rewriting them. That packaging-only JSON DTO does not alter or extend
+the `.roproj/v1` JSON/JSONL profile below.
 
 ### Exact canonical tree
 

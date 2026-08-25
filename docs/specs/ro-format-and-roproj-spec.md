@@ -16,11 +16,18 @@ The shipped CLI currently persists and operates on deterministic `.ro` files onl
 
 `Project.ro` is used by the current creation, authoring, validation, calculation, semantic diff/merge, and runtime export workflows.
 
-This implementation state does not supersede ADR-0003. `.roproj` materialization and deterministic pack/unpack are future implementation work.
+This implementation state does not supersede ADR-0003. ADR-0025 now fixes the
+deterministic portable-package v1 and integrity contract over `.roproj/v1`;
+production `.roproj` materialization and pack/unpack remain future
+implementation work.
 
 ## `.ro`
 
-Implemented v0.1 representation.
+The `.ro` filename currently carries the implemented direct-JSON v0.1
+representation. It is also the Provisional filename for the separately
+Accepted, not-yet-implemented `tachiko.portable-package/v1` representation.
+Content framing and representation-local version dispatch, not the extension,
+distinguish them.
 
 Current uses:
 
@@ -70,6 +77,20 @@ outside the v1 canonical tree.
 canonicalization boundary. [`roproj-format.md`](roproj-format.md) defines the
 complete version-owned DTO contract. Later versions may change representation
 layout through explicit migration without changing semantic identity.
+
+## Portable package v1
+
+ADR-0025 and [`portable-package-v1.md`](portable-package-v1.md) define the
+portable artifact as one deterministic 19-entry, store-only ZIP32 envelope
+containing `package.json` and the exact 18 `.roproj/v1` files under `payload/`.
+The package manifest adds only representation dispatch and a path-separated
+SHA-256 payload root; it does not define another semantic schema.
+
+Pack and unpack preserve every payload path and byte exactly. A verified
+package that disagrees with canonical tracked `.roproj` source reports a
+source mismatch without mutating either side; the tracked source remains
+authoritative in that working context. Production codecs and CLI commands are
+outside this specification's current implementation state.
 
 ## Canonical principle
 

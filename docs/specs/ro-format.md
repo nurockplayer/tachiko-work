@@ -14,6 +14,7 @@ It does **not** define an independent `.ro` contract. Use the documents below ac
 - [`ro-format-v2.md`](ro-format-v2.md) — normative current identity-aware direct `.ro` JSON representation.
 - [`roproj-format.md`](roproj-format.md) and [`roproj-layout-v1.md`](roproj-layout-v1.md) — Accepted `.roproj/v1` version-owned DTO and physical-tree contracts under ADR-0023; production materialization is not yet implemented.
 - [`../decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md`](../decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md) — Accepted authority for the exact v1 canonical tree, entity placement, canonical JSON/JSONL boundary, and path nonidentity.
+- [`portable-package-v1.md`](portable-package-v1.md) and [`../decisions/ADR-0025-portable-package-v1.md`](../decisions/ADR-0025-portable-package-v1.md) — Accepted authority for the exact portable-package v1 envelope, payload root, round trips, and tracked-source conflict behavior; production codecs and CLI are not implemented.
 - [`../decisions/ADR-0003-ro-and-roproj-representation.md`](../decisions/ADR-0003-ro-and-roproj-representation.md) — Accepted architectural authority for the long-term representation relationship.
 
 ## Current implementation state
@@ -24,7 +25,10 @@ operation without rewriting the source. New or explicitly saved semantic
 documents use canonical `direct-ro/v2`, which preserves opaque stable IDs,
 mutable human keys, bound references, and ADR-0018 Number semantics losslessly.
 
-The direct `.ro` v1 profile is stable only as **legacy compatibility input**. It is not the separate `.roproj/v1` editable format, the future `.ro` package/container profile, or authority for future identity and numeric semantics.
+The direct `.ro` v1 profile is stable only as **legacy compatibility input**.
+It is not the separate `.roproj/v1` editable format, the Accepted
+`tachiko.portable-package/v1` container profile, or authority for future
+identity and numeric semantics.
 
 ## Work ownership
 
@@ -34,6 +38,8 @@ The direct `.ro` v1 profile is stable only as **legacy compatibility input**. It
 - #70 owns ADR-0015 stable-identity migration integration.
 - ADR-0018 is the Accepted numeric/formula authority; #24 is closed.
 - ADR-0023 and the two `.roproj/v1` specifications resolve #41's durable physical-layout decision; a later implementation issue must own the production codec.
-- #43 retains future `.ro` package/container/integrity ownership.
+- ADR-0025 and `portable-package-v1.md` resolve #43's durable package,
+  integrity, round-trip, and conflict decision; #3 remains the production
+  codec/CLI implementation issue.
 
 For the project-wide authority model, see [`../governance/knowledge-authority.md`](../governance/knowledge-authority.md) and [`../governance/canonical-reconciliation-register.md`](../governance/canonical-reconciliation-register.md).

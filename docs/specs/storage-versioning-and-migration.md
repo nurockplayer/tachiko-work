@@ -2,15 +2,18 @@
 
 Decision state: Mixed — Accepted invariants under ADR-0017 and Accepted
 `.roproj/v1` namespace, DTO, dispatch, and canonicalization rules under
-ADR-0023; direct-JSON Milestone 02 representation mechanics are Provisional
-where marked.
+ADR-0023; the distinct portable-package v1 namespace and dispatch boundary are
+Accepted under ADR-0025; direct-JSON Milestone 02 representation mechanics are
+Provisional where marked.
 
 Implementation state: Implemented for frozen `legacy-direct-ro/v1`, explicit
 deterministic v1→v2 migration, canonical identity-aware `direct-ro/v2`, and the
 normal direct-JSON Stage-0 admission profile. The Accepted `.roproj/v1`
-contract is not yet implemented by a production codec.
+and portable-package v1 contracts are not yet implemented by production
+codecs.
 
-Authority: ADR-0017; ADR-0023 for `.roproj/v1`
+Authority: ADR-0017; ADR-0023 for `.roproj/v1`; ADR-0025 for
+`tachiko.portable-package/v1`
 
 Implementation parent: #74
 
@@ -27,11 +30,14 @@ manifest-first dispatch, canonical-tree, and bounded-canonicalizer contract in
 [roproj-format.md](roproj-format.md). It does not
 define the production `.roproj` reader/writer codec, `.roproj` resource/error
 profile or precedence, normal-open versus explicit-canonicalize/import policy,
-the future `.ro` package/container profile (#43), Git integration (#44),
-semantic delta (#45), three-way merge (#46), numeric semantics beyond ADR-0018
-(#24), the cross-client diagnostic envelope (decision issue #23 / ADR-0019),
-or host-specific filesystem/browser transaction mechanisms (constrained by
-ADR-0022 and Deferred to future host/storage implementation).
+Git integration (#44), semantic delta (#45), three-way merge (#46), numeric
+semantics beyond ADR-0018 (#24), the cross-client diagnostic envelope
+(decision issue #23 / ADR-0019), or host-specific filesystem/browser
+transaction mechanisms (constrained by ADR-0022 and Deferred to future
+host/storage implementation). The separately Accepted package namespace,
+dispatch, and container contract are defined by
+[ADR-0025](../decisions/ADR-0025-portable-package-v1.md) and
+[`portable-package-v1.md`](portable-package-v1.md), not by this specification.
 
 ## Representation namespaces
 
@@ -41,9 +47,12 @@ The following are distinct namespaces:
 
 - legacy/current direct `.ro` JSON representation;
 - `.roproj/v1` editable directory materialization;
-- future `.ro` portable package/container profile.
+- `tachiko.portable-package/v1` portable container profile.
 
-The integer `1` in two different representation namespaces does not imply the same wire schema. In particular, `.roproj/v1` is Accepted as a namespace distinct from `legacy-direct-ro/v1`, `direct-ro/v2`, and the future packaged `.ro` namespace.
+The integer `1` in two different representation namespaces does not imply the
+same wire schema. In particular, `.roproj/v1` is Accepted as a namespace
+distinct from `legacy-direct-ro/v1`, `direct-ro/v2`, and
+`tachiko.portable-package/v1`.
 
 The shipped v0.1 direct `.ro` JSON is frozen as the
 `legacy-direct-ro/v1` compatibility profile. Its implemented incompatible

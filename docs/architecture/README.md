@@ -29,7 +29,7 @@ mechanisms remain replaceable or separately owned.
 
 ### Storage, formats, and Git
 
-- [`ro-and-roproj-format.md`](ro-and-roproj-format.md) — architecture-level `.roproj` / `.ro` representation direction under ADR-0003 and the Accepted `.roproj/v1` materialization under ADR-0023.
+- [`ro-and-roproj-format.md`](ro-and-roproj-format.md) — architecture-level `.roproj` / `.ro` representation direction, the Accepted `.roproj/v1` materialization, and the Accepted portable-package v1 envelope.
 - [`git-native-workflow.md`](git-native-workflow.md) — how Git participates in authoring, review, and history without becoming the user interface.
 
 For implementable format contracts, continue to [`../specs/README.md`](../specs/README.md); architecture prose must not silently override the normative/provisional specification state.
@@ -66,7 +66,7 @@ Use these broad cues together with the reconciliation register:
 | Semantic-first platform direction | Accepted |
 | First-class Headless Semantic API boundary | Accepted under ADR-0020; exact Rust API and transports remain Provisional/Deferred |
 | Progressive semantic strengthening | Accepted under ADR-0021; concrete freeform object/runtime/UI mechanics Deferred |
-| `.roproj` source / `.ro` portable-artifact relationship | Accepted under ADR-0003; exact `.roproj/v1` tree/DTO contract Accepted under ADR-0023; production codec pending |
+| `.roproj` source / `.ro` portable-artifact relationship | Accepted under ADR-0003; exact `.roproj/v1` tree/DTO contract Accepted under ADR-0023; exact portable-package v1 contract Accepted under ADR-0025; production codecs and CLI pending |
 | Current `.ro` v0.1 encoding details | Provisional implemented baseline |
 | Rust crate graph | Accepted Milestone 02 boundary implemented; exact Rust API remains Provisional |
 | AI as delegated semantic client | Accepted under amended ADR-0007; capability/approval protocol Deferred |
