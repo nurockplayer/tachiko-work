@@ -27,6 +27,7 @@ function usage() {
       "[--manifest /abs/production-oracles.json --expected-manifest-sha256 <sha256>] " +
       "[--oracle-lock /abs/oracle-lock.json --expected-oracle-lock-sha256 <sha256>] " +
       "[--trusted-cargo /abs/cargo --expected-cargo-sha256 <sha256>] " +
+      "[--trusted-rustc /abs/rustc --expected-rustc-sha256 <sha256>] " +
       "[--adapter-file /abs/adapter.mjs] " +
       "[--contract-file /abs/contract.json] [--candidate-commit <sha>]",
   );
@@ -99,6 +100,52 @@ async function trustedRegularFile(path, label, candidateRoot) {
   return {path: canonical, bytes: bytes.length, sha256: sha256(bytes)};
 }
 
+async function bindLockedCandidateFiles(lockCase, candidateRoot) {
+  if (!Array.isArray(lockCase.files)) fail("oracle-lock files must be an array");
+  const seen = new Set();
+  const observations = [];
+  for (const entry of lockCase.files) {
+    if (
+      typeof entry.path !== "string" ||
+      entry.path.length === 0 ||
+      isAbsolute(entry.path) ||
+      entry.path.includes("\\") ||
+      entry.path.split("/").some((component) => component === "" || component === "." || component === "..")
+    ) {
+      fail(`invalid locked candidate file path: ${entry.path}`);
+    }
+    if (seen.has(entry.path)) fail(`duplicate locked candidate file path: ${entry.path}`);
+    seen.add(entry.path);
+    if (!/^[0-9a-f]{64}$/.test(entry.sha256 ?? "")) {
+      fail(`invalid locked candidate file SHA-256: ${entry.path}`);
+    }
+    const requested = resolve(candidateRoot, entry.path);
+    if (!inside(requested, candidateRoot) || requested === candidateRoot) {
+      fail(`locked candidate file escapes candidate-root: ${entry.path}`);
+    }
+    const metadata = await lstat(requested);
+    if (metadata.isSymbolicLink() || !metadata.isFile()) {
+      fail(`locked candidate file must be a non-symlink regular file: ${entry.path}`);
+    }
+    const canonical = await realpath(requested);
+    if (canonical !== requested) {
+      fail(`locked candidate file path was redirected: ${entry.path}`);
+    }
+    const bytes = await readFile(canonical);
+    const observedSha256 = sha256(bytes);
+    if (observedSha256 !== entry.sha256) {
+      fail(`locked file SHA-256 mismatch: ${entry.path}`);
+    }
+    observations.push({
+      path: entry.path,
+      canonical_path: canonical,
+      bytes: bytes.length,
+      sha256: observedSha256,
+    });
+  }
+  return observations;
+}
+
 function shellQuote(value) {
   return `'${String(value).replaceAll("'", `'\\''`)}'`;
 }
@@ -152,6 +199,7 @@ async function executeTrustedRustTest({
   rustcInput,
   candidateRoot,
   commandSpec,
+  lockedFiles,
   logPrefix,
   trustedDir,
   timeout,
@@ -219,8 +267,22 @@ async function executeTrustedRustTest({
     const metadata = await lstat(path);
     if (metadata.isSymbolicLink() || !metadata.isFile()) fail(`${label} must be a regular file`);
   }
+  const expectedSourcePath = resolve(
+    dirname(manifestPath),
+    "tests",
+    `${commandSpec.targetName}.rs`,
+  );
+  const matchingLockedSources = lockedFiles.filter(
+    (entry) => entry.canonical_path === expectedSourcePath,
+  );
+  if (matchingLockedSources.length !== 1 || sourcePath !== expectedSourcePath) {
+    fail(
+      `test source must equal the unique frozen locked source ` +
+        `${relative(candidateRoot, expectedSourcePath)}`,
+    );
+  }
   const manifestBytes = await readFile(manifestPath);
-  if (/(?:^|\n)\s*["']?harness["']?\s*=\s*false(?:\s|$)/m.test(manifestBytes.toString("utf8"))) {
+  if (/(?:^|\n)\s*["']?harness["']?\s*=\s*false(?=\s|#|$)/m.test(manifestBytes.toString("utf8"))) {
     fail("harness = false is not permitted for exact Rust oracle tests");
   }
   const packageReceipt = {
@@ -516,18 +578,32 @@ const rustAssertionRequested = [...lockedAssertions.values()].some(
 let cargoInput;
 let rustcInput;
 if (rustAssertionRequested) {
-  if (!args.has("trusted-cargo") || !args.has("expected-cargo-sha256")) {
-    fail("Rust exact tests require --trusted-cargo and --expected-cargo-sha256");
+  if (
+    !args.has("trusted-cargo") ||
+    !args.has("expected-cargo-sha256") ||
+    !args.has("trusted-rustc") ||
+    !args.has("expected-rustc-sha256")
+  ) {
+    fail(
+      "Rust exact tests require --trusted-cargo, --expected-cargo-sha256, " +
+        "--trusted-rustc, and --expected-rustc-sha256",
+    );
   }
   cargoInput = await trustedRegularFile(args.get("trusted-cargo"), "trusted-cargo", candidateRoot);
   if (cargoInput.sha256 !== args.get("expected-cargo-sha256")) {
     fail("trusted Cargo SHA-256 mismatch");
   }
   rustcInput = await trustedRegularFile(
-    resolve(dirname(cargoInput.path), "rustc"),
+    args.get("trusted-rustc"),
     "trusted Rust compiler",
     candidateRoot,
   );
+  if (rustcInput.sha256 !== args.get("expected-rustc-sha256")) {
+    fail("trusted Rust compiler SHA-256 mismatch");
+  }
+  if (rustcInput.path !== resolve(dirname(cargoInput.path), "rustc")) {
+    fail("trusted Cargo and rustc must be siblings in the same trusted toolchain directory");
+  }
 }
 
 await mkdir(trustedDirInput, {mode: 0o700});
@@ -646,11 +722,13 @@ for (const [commandIndex, command] of manifestCase.oracle_commands.entries()) {
     if (!commandSpec || commandSpec.testName !== rustAssertions[0].selector.test_name) {
       fail(`${command.id} Rust assertion is not a locked exact cargo test command`);
     }
+    const lockedFilesBefore = await bindLockedCandidateFiles(lockCase, candidateRoot);
     const execution = await executeTrustedRustTest({
       cargoInput,
       rustcInput,
       candidateRoot,
       commandSpec,
+      lockedFiles: lockedFilesBefore,
       logPrefix,
       trustedDir: trustedDirInput,
       timeout: Number(args.get("timeout-ms") ?? 1_800_000),
@@ -658,6 +736,11 @@ for (const [commandIndex, command] of manifestCase.oracle_commands.entries()) {
     result = execution.result;
     resolvedCommand = execution.resolvedCommand;
     executionReceipt = execution.receipt;
+    const lockedFilesAfter = await bindLockedCandidateFiles(lockCase, candidateRoot);
+    executionReceipt.locked_files = {
+      before: lockedFilesBefore,
+      after: lockedFilesAfter,
+    };
   } else {
     result = spawnSync("/bin/bash", ["--noprofile", "--norc", "-c", resolvedCommand], {
       cwd: candidateRoot,

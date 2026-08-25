@@ -5,6 +5,7 @@ import { readFile, stat } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {verifyQualificationReceipt} from "./oracle-qualification-normalization.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const benchmarkDir = resolve(scriptDir, "..");
@@ -68,6 +69,10 @@ const constructionPilotIndexPath = resolve(
   "evaluator/construction-pilot-index.json",
 );
 const rubricPath = resolve(benchmarkDir, "SCORING.md");
+const oracleQualificationPath = resolve(
+  benchmarkDir,
+  "evaluator/qualifications/oracles.json",
+);
 
 const casesDocument = JSON.parse(await readFile(casesPath, "utf8"));
 const oracleBytes = await readFile(oraclePath);
@@ -87,6 +92,8 @@ const resultSchema = JSON.parse(await readFile(schemaPath, "utf8"));
 const reviewSchema = JSON.parse(await readFile(reviewSchemaPath, "utf8"));
 const constructionPilotIndexBytes = await readFile(constructionPilotIndexPath);
 const constructionPilotIndex = JSON.parse(constructionPilotIndexBytes.toString("utf8"));
+const oracleQualification = JSON.parse(await readFile(oracleQualificationPath, "utf8"));
+const verifiedOracleQualification = verifyQualificationReceipt(oracleQualification);
 
 const globalContractBindings = [
   ["pre_unblind_projection_contract", "pre_unblind_projection_contract_sha256"],
@@ -930,3 +937,10 @@ console.log(`environment_lock_sha256=${sha256(await readFile(environmentPath))}`
 console.log(`result_schema_sha256=${sha256(await readFile(schemaPath))}`);
 console.log(`review_schema_sha256=${sha256(await readFile(reviewSchemaPath))}`);
 console.log(`construction_pilot_index_sha256=${sha256(constructionPilotIndexBytes)}`);
+console.log(
+  `oracle_qualification_payload_sha256=${verifiedOracleQualification.payload_sha256}`,
+);
+console.log(
+  `oracle_qualification_evidence_commitment_sha256=` +
+    verifiedOracleQualification.evidence_commitment_sha256,
+);

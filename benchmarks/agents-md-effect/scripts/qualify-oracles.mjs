@@ -6,6 +6,10 @@ import {spawnSync} from "node:child_process";
 import {dirname, isAbsolute, resolve} from "node:path";
 import {tmpdir} from "node:os";
 import {fileURLToPath} from "node:url";
+import {
+  contentSha256,
+  deterministicPayload,
+} from "./oracle-qualification-normalization.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const benchmarkDir = resolve(scriptDir, "..");
@@ -17,6 +21,7 @@ const sandboxProfile = "(version 1)\n(allow default)\n(deny network*)\n";
 const commandTimeoutMs = 1_800_000;
 let expectedControlSha256;
 let trustedCargo;
+let trustedRustc;
 
 function usage() {
   console.error(
@@ -109,7 +114,11 @@ function compactCommand(entry) {
     spawn_error: entry.spawn_error,
     stdout: {bytes: entry.stdout.bytes, sha256: entry.stdout.sha256},
     stderr: {bytes: entry.stderr.bytes, sha256: entry.stderr.sha256},
-    ...(entry.rust_build ? {rust_build: entry.rust_build, toolchain: entry.toolchain} : {}),
+    ...(entry.rust_build ? {
+      rust_build: entry.rust_build,
+      toolchain: entry.toolchain,
+      locked_files: entry.locked_files,
+    } : {}),
   };
 }
 
@@ -228,6 +237,8 @@ async function runOracleCase({caseId, workspace, trustedDir, candidateCommit, ad
     "--candidate-commit", candidateCommit,
     "--trusted-cargo", trustedCargo.path,
     "--expected-cargo-sha256", trustedCargo.sha256,
+    "--trusted-rustc", trustedRustc.path,
+    "--expected-rustc-sha256", trustedRustc.sha256,
   ];
   if (adapterFile) command.push("--adapter-file", adapterFile);
   const result = execute(process.execPath, command, {env: offlineEnvironment()});
@@ -284,12 +295,16 @@ async function executeSelectorFamily({root, id, command, selector, positiveConfi
       writeFile(resolve(directory, "fixture.json"), bytes),
     ]);
     if (config.kind === "rust") {
-      await mkdir(resolve(directory, "tests"));
+      await Promise.all([mkdir(resolve(directory, "tests")), mkdir(resolve(directory, "src"))]);
       await Promise.all([
         writeFile(resolve(directory, "Cargo.toml"), `[package]
 name = "fixture"
 version = "0.0.0"
 edition = "2024"
+
+[lib]
+name = "fixture_behavior"
+path = "src/lib.rs"
 
 [[test]]
 name = "fixture"
@@ -304,9 +319,11 @@ version = "0.0.0"
 `),
         writeFile(
           resolve(directory, "tests/fixture.rs"),
-          config.matches === 1
-            ? `#[test]\nfn ${config.name}() {}\n`
-            : "#[test]\nfn behavior_missing() {}\n",
+          `#[test]\nfn ${config.name}() { assert!(fixture_behavior::behavior()); }\n`,
+        ),
+        writeFile(
+          resolve(directory, "src/lib.rs"),
+          `pub fn behavior() -> bool { ${config.matches === 1 ? "true" : "false"} }\n`,
         ),
       ]);
     }
@@ -323,7 +340,17 @@ version = "0.0.0"
       subjective_groups: [],
     }],
   };
-  const lock = {protocol_id: manifest.protocol_id, cases: [{id: "QF", assertions: assertion}]};
+  const lock = {
+    protocol_id: manifest.protocol_id,
+    cases: [{
+      id: "QF",
+      files: positiveConfig.kind === "rust" ? [{
+        path: "tests/fixture.rs",
+        sha256: sha256(await readFile(resolve(positive, "tests/fixture.rs"))),
+      }] : [],
+      assertions: assertion,
+    }],
+  };
   const controls = await writeFixtureManifest(familyRoot, manifest, lock);
   const executeFixture = (candidate, trusted) => execute(process.execPath, [
     runOracles,
@@ -337,16 +364,22 @@ version = "0.0.0"
     "--expected-control-sha256", expectedControlSha256,
     "--trusted-cargo", trustedCargo.path,
     "--expected-cargo-sha256", trustedCargo.sha256,
+    "--trusted-rustc", trustedRustc.path,
+    "--expected-rustc-sha256", trustedRustc.sha256,
   ], {env: offlineEnvironment({PATH: `${candidate}:${process.env.PATH}`})});
   const positiveTrusted = resolve(familyRoot, "positive-receipt");
   const negativeTrusted = resolve(familyRoot, "negative-receipt");
   const positiveResult = executeFixture(positive, positiveTrusted);
   const negativeResult = executeFixture(negative, negativeTrusted);
+  if (positiveResult.status !== 0 || negativeResult.status !== 1) {
+    fail(
+      `${id} selector qualification failed: positive=${positiveResult.status}, ` +
+        `negative=${negativeResult.status}; positive_stderr=${positiveResult.stderr}; ` +
+        `negative_stderr=${negativeResult.stderr}`,
+    );
+  }
   const positiveReceipt = JSON.parse(await readFile(resolve(positiveTrusted, "oracle-run.json"), "utf8"));
   const negativeReceipt = JSON.parse(await readFile(resolve(negativeTrusted, "oracle-run.json"), "utf8"));
-  if (positiveResult.status !== 0 || negativeResult.status !== 1) {
-    fail(`${id} selector qualification failed: positive=${positiveResult.status}, negative=${negativeResult.status}`);
-  }
   return {
     id,
     evidence: "executed",
@@ -398,6 +431,8 @@ async function qualifyPacketGate(root) {
     "--expected-control-sha256", expectedControlSha256,
     "--trusted-cargo", trustedCargo.path,
     "--expected-cargo-sha256", trustedCargo.sha256,
+    "--trusted-rustc", trustedRustc.path,
+    "--expected-rustc-sha256", trustedRustc.sha256,
   ], {env: offlineEnvironment()});
   const receipt = JSON.parse(await readFile(resolve(trusted, "oracle-run.json"), "utf8"));
   if (result.status !== 0 || receipt.overall_status !== "packet_gate_ready") {
@@ -596,193 +631,134 @@ async function runTw05OfflineQualification(workspace, output) {
       probe_denied: receipt.network_enforcement.probe_denied,
     },
     executables: receipt.executables.map(({name, sha256: hash}) => ({name, sha256: hash})),
-    executions: receipt.executions.map(({purpose, name, args, exit_code, signal, spawn_error}) => ({
+    executions: receipt.executions.map(({purpose, name, args, exit_code, signal, spawn_error, stdout, stderr}) => ({
       purpose,
       name,
       args,
       exit_code,
       signal,
       spawn_error,
+      stdout,
+      stderr,
     })),
   };
 }
 
-function deterministicCommand(command) {
-  return {
-    id: command.id,
-    command_template_sha256: command.command_template_sha256,
-    resolved_command_bound_in_run_receipt: Boolean(command.resolved_command_sha256),
-    execution_mode: command.execution_mode ?? "shell",
-    exit_code: command.exit_code,
-    signal: command.signal,
-    spawn_error: command.spawn_error,
-    ...(command.rust_build ? {
-      toolchain: {
-        cargo_sha256: command.toolchain.cargo.sha256,
-        cargo_bytes: command.toolchain.cargo.bytes,
-        rustc_sha256: command.toolchain.rustc.sha256,
-        rustc_bytes: command.toolchain.rustc.bytes,
+function syntheticNormalizationCase(runRoot) {
+  const runSpecificSha256 = sha256(runRoot);
+  const outputEvidence = {
+    bytes: Buffer.byteLength(runRoot),
+    sha256: runSpecificSha256,
+  };
+  const command = {
+    id: "fixture.rust-command",
+    command_template: "cargo test -p fixture --test fixture --locked locked_name -- --exact",
+    command_template_sha256: sha256(
+      "cargo test -p fixture --test fixture --locked locked_name -- --exact",
+    ),
+    resolved_command: `${runRoot}/rust-target/fixture --exact`,
+    resolved_command_sha256: runSpecificSha256,
+    execution_mode: "trusted_cargo_direct_libtest",
+    exit_code: 0,
+    signal: null,
+    spawn_error: null,
+    stdout: outputEvidence,
+    stderr: outputEvidence,
+    toolchain: {cargo: trustedCargo, rustc: trustedRustc},
+    rust_build: {
+      stdout: outputEvidence,
+      stderr: outputEvidence,
+      package: {
+        name: "fixture",
+        manifest_sha256: "1".repeat(64),
+        target_name: "fixture",
+        target_source_sha256: "2".repeat(64),
       },
-      rust_build: {
-        package: command.rust_build.package ? {
-          name: command.rust_build.package.name,
-          manifest_sha256: command.rust_build.package.manifest_sha256,
-          target_name: command.rust_build.package.target_name,
-          target_source_sha256: command.rust_build.package.target_source_sha256,
-        } : null,
-        artifact_message_present: Boolean(command.rust_build.artifact?.message_sha256),
-        executable_present: Boolean(command.rust_build.artifact?.executable_sha256),
+      artifact: {
+        path: `${runRoot}/rust-target/fixture`,
+        message_sha256: runSpecificSha256,
+        executable_sha256: runSpecificSha256,
       },
-    } : {}),
-  };
-}
-
-function reasonClass(reason) {
-  const classes = [
-    "command exited",
-    "matching Rust tests",
-    "matching Rust test lacks",
-    "libtest JSON",
-    "JSON pointer",
-    "native selected",
-    "WASM selected",
-    "native/WASM selected",
-    "portable observations unavailable",
-    "selected native records",
-    "selected WASM records",
-  ];
-  return classes.find((prefix) => reason.startsWith(prefix)) ?? "other_selector_failure";
-}
-
-function deterministicAssertion(assertion) {
-  return Object.fromEntries(Object.entries({
-    id: assertion.id,
-    command_id: assertion.command_id,
-    selector_kind: assertion.selector_kind,
-    pass: assertion.pass,
-    reason_classes: [...new Set(assertion.reasons.map(reasonClass))],
-    evidence_mode: assertion.evidence_mode,
-    matching_tests: assertion.matching_tests,
-    matching_test_outcomes: assertion.matching_test_outcomes,
-    required_matching_tests: assertion.required_matching_tests,
-    suite_summary: assertion.suite_summary,
-    normalized_events_sha256: assertion.normalized_events_sha256,
-    normalized_suite_sha256: assertion.normalized_suite_sha256,
-    json_pointer: assertion.json_pointer,
-    found: assertion.found,
-    actual_canonical_sha256: assertion.actual_canonical_sha256,
-    selected_native_sha256: assertion.selected_native_sha256,
-    selected_wasm_sha256: assertion.selected_wasm_sha256,
-  }).filter(([, value]) => value !== undefined));
-}
-
-function deterministicAdapter(adapter) {
-  if (!adapter) return null;
-  const stableObservation = adapter.observation === null
-    ? null
-    : Object.fromEntries(Object.entries(adapter.observation).filter(
-      ([key]) => !["cargo_stdout_sha256", "cargo_stderr_sha256"].includes(key),
-    ));
-  return {
-    kind: adapter.kind,
-    command_exit_code: adapter.command_exit_code,
-    observation: stableObservation,
-    trusted_inputs: adapter.trusted_inputs,
-    observation_artifact_present: adapter.observation_artifact !== null,
-  };
-}
-
-function deterministicOracle(oracle) {
-  return {
-    evidence: oracle.evidence,
-    process_exit_code: oracle.process_exit_code,
-    assessment_mode: oracle.assessment_mode,
-    overall_status: oracle.overall_status,
-    commands_pass: oracle.commands_pass,
-    assertions_pass: oracle.assertions_pass,
-    commands: oracle.commands.map(deterministicCommand),
-    assertions: oracle.assertions.map(deterministicAssertion),
-    adapter_execution: deterministicAdapter(oracle.adapter_execution),
-  };
-}
-
-function deterministicCore(core) {
-  return {
-    evidence: core.evidence,
-    all_passed: core.all_passed,
-    commands: core.commands.map(deterministicCommand),
-  };
-}
-
-function deterministicOffline(offline) {
-  if (!offline) return undefined;
-  return {
-    evidence: offline.evidence,
-    process_exit_code: offline.process_exit_code,
-    pass: offline.pass,
-    offline: offline.offline,
-    package_manager_dependency: offline.package_manager_dependency,
-    network_enforcement: offline.network_enforcement,
-    executables: offline.executables,
-    executions: offline.executions.map(({purpose, name, args, exit_code, signal, spawn_error}) => ({
-      purpose, name, args, exit_code, signal, spawn_error,
-    })),
-  };
-}
-
-function deterministicCase(entry) {
-  return {
-    case_id: entry.case_id,
-    materialization: entry.materialization,
-    qualification: entry.qualification,
-    machine_semantic_discrimination_qualified: entry.machine_semantic_discrimination_qualified,
-    target: {
-      accepted: entry.target.accepted,
-      expected_contract_miss: entry.target.expected_contract_miss,
-      calibration: entry.target.calibration,
-      core: deterministicCore(entry.target.core),
-      oracle: deterministicOracle(entry.target.oracle),
     },
-    negative: {
-      discriminated: entry.negative.discriminated,
-      core: deterministicCore(entry.negative.core),
-      oracle: deterministicOracle(entry.negative.oracle),
-    },
-    ...(entry.offline_historical_target ? {
-      offline_historical_target: deterministicOffline(entry.offline_historical_target),
-      offline_behavior_missing_negative: deterministicOffline(entry.offline_behavior_missing_negative),
-    } : {}),
-    ...(entry.reference_positive ? {
-      reference_positive: {
-        accepted: entry.reference_positive.accepted,
-        label: entry.reference_positive.label,
-        oracle: deterministicOracle(entry.reference_positive.oracle),
+  };
+  const core = {evidence: "executed", all_passed: true, commands: [command]};
+  const oracle = {
+    evidence: "executed",
+    process_exit_code: 0,
+    assessment_mode: "machine_only",
+    overall_status: "passed",
+    commands_pass: true,
+    assertions_pass: true,
+    commands: [command],
+    assertions: [{
+      id: "fixture.rust-assertion",
+      command_id: command.id,
+      selector_kind: "rust_test_exact",
+      pass: true,
+      reasons: [],
+      evidence_mode: "trusted_cargo_direct_libtest_json_v0.1",
+      matching_tests: 1,
+      matching_test_outcomes: ["ok"],
+      required_matching_tests: 1,
+      suite_summary: {
+        type: "suite",
+        event: "ok",
+        passed: 1,
+        failed: 0,
+        ignored: 0,
+        exec_time: runRoot,
       },
-    } : {}),
-  };
-}
-
-function deterministicPayload(runReceipt) {
-  return {
-    schema: "tachiko-oracle-qualification-summary-v3",
-    protocol_id: runReceipt.protocol_id,
-    classification: runReceipt.classification,
-    formal_result_eligible: runReceipt.formal_result_eligible,
-    execution_standard: runReceipt.execution_standard,
-    mode: runReceipt.mode,
-    no_codex_launched: runReceipt.no_codex_launched,
-    trusted_cargo: {
-      bytes: runReceipt.trusted_cargo.bytes,
-      sha256: runReceipt.trusted_cargo.sha256,
+      normalized_events_sha256: "3".repeat(64),
+      normalized_suite_sha256: "4".repeat(64),
+    }],
+    adapter_execution: {
+      kind: "production_probe",
+      command_exit_code: 0,
+      observation: {
+        contract_id: "tachiko-tw09-stable-diagnostic-facts-v1",
+        stable_facts_match: true,
+        cargo_stdout_sha256: runSpecificSha256,
+        cargo_stderr_sha256: runSpecificSha256,
+        build_chatter_sha256: runSpecificSha256,
+        run_root: runRoot,
+      },
+      stdout: outputEvidence,
+      stderr: outputEvidence,
+      observation_artifact: outputEvidence,
+      trusted_inputs: [{kind: "adapter", bytes: 1, sha256: "5".repeat(64)}],
     },
-    expected_control_sha256: runReceipt.expected_control_sha256,
-    controls: runReceipt.controls,
-    frozen_manifest_sha256: runReceipt.frozen_manifest_sha256,
-    frozen_oracle_lock_sha256: runReceipt.frozen_oracle_lock_sha256,
-    network_enforcement: runReceipt.network_enforcement,
-    families: runReceipt.families,
-    cases: runReceipt.cases.map(deterministicCase),
-    limitations: runReceipt.limitations,
+  };
+  const offline = {
+    evidence: "executed",
+    process_exit_code: 0,
+    pass: true,
+    offline: true,
+    package_manager_dependency: false,
+    network_enforcement: {mode: "fixture-deny-network", probe_denied: true},
+    executables: [{name: "cargo", sha256: trustedCargo.sha256}],
+    executions: [{
+      purpose: "fixture",
+      name: "cargo",
+      args: ["test", "--locked"],
+      exit_code: 0,
+      signal: null,
+      spawn_error: null,
+      stdout: outputEvidence,
+      stderr: outputEvidence,
+    }],
+  };
+  return {
+    case_id: "QF-TW09-NORMALIZATION",
+    materialization: {
+      target: {kind: "synthetic_normalization_fixture", commit: "6".repeat(40)},
+      negative: {kind: "synthetic_normalization_fixture", commit: "7".repeat(40)},
+    },
+    qualification: "normalization_pipeline_fixture",
+    machine_semantic_discrimination_qualified: true,
+    target: {accepted: true, core, oracle},
+    negative: {discriminated: true, core, oracle},
+    offline_historical_target: offline,
+    offline_behavior_missing_negative: {...offline, pass: false, process_exit_code: 1},
   };
 }
 
@@ -809,6 +785,22 @@ trustedCargo = {
   path: trustedCargoPath,
   bytes: trustedCargoBytes.length,
   sha256: sha256(trustedCargoBytes),
+};
+const rustupRustc = execute("rustup", ["which", "rustc"]);
+if (rustupRustc.status !== 0 || !rustupRustc.stdout.trim()) fail("trusted rustc is unavailable");
+const trustedRustcPath = await realpath(rustupRustc.stdout.trim());
+const trustedRustcMetadata = await lstat(trustedRustcPath);
+if (trustedRustcMetadata.isSymbolicLink() || !trustedRustcMetadata.isFile()) {
+  fail("trusted rustc must be a non-symlink regular file");
+}
+if (trustedRustcPath !== resolve(dirname(trustedCargoPath), "rustc")) {
+  fail("trusted Cargo and rustc must share one toolchain directory");
+}
+const trustedRustcBytes = await readFile(trustedRustcPath);
+trustedRustc = {
+  path: trustedRustcPath,
+  bytes: trustedRustcBytes.length,
+  sha256: sha256(trustedRustcBytes),
 };
 const controlArtifacts = [
   "environment-lock.json",
@@ -931,6 +923,8 @@ try {
       positive: {accepted: tw09.target.accepted, source: "trusted_rebased_replay_positive"},
       negative: {discriminated: tw09.negative.discriminated, source: "historical_behavior_missing_base"},
     });
+  } else {
+    caseQualifications.push(syntheticNormalizationCase(qualificationRoot));
   }
 
   const controlPaths = [
@@ -953,12 +947,15 @@ try {
     "evaluator/adapters/TW-09/historical-target-probe.rs",
     "evaluator/construction-pilots/TW-09-rebased.patch",
     "scripts/materialize-oracles.mjs",
+    "scripts/oracle-qualification-normalization.mjs",
     "scripts/qualify-oracles.mjs",
     "scripts/run-oracles.mjs",
     "scripts/run-tw05-offline.mjs",
     "scripts/probe-network-denial.mjs",
     "scripts/validate-tw05-observations.mjs",
     "scripts/validate-tw09-stable-facts.mjs",
+    "scripts/verify-benchmark.mjs",
+    "scripts/verify-oracle-qualification.mjs",
   ];
   const controls = [];
   for (const path of controlPaths) {
@@ -974,6 +971,7 @@ try {
     mode,
     no_codex_launched: true,
     trusted_cargo: trustedCargo,
+    trusted_rustc: trustedRustc,
     expected_control_sha256: expectedControlSha256,
     controls,
     frozen_manifest_sha256: sha256(manifestBytes),
@@ -996,10 +994,11 @@ try {
   };
   const payload = deterministicPayload(runReceipt);
   const receipt = {
-    payload_sha256: sha256(`${JSON.stringify(payload)}\n`),
+    payload_sha256: contentSha256(payload),
     payload,
-    run_receipt_sha256: sha256(`${JSON.stringify(runReceipt)}\n`),
+    run_receipt_sha256: contentSha256(runReceipt),
     run_receipt: runReceipt,
+    evidence_commitment_sha256: payload.evidence_commitment_sha256,
   };
   await mkdir(dirname(output), {recursive: true});
   await writeFile(output, `${JSON.stringify(receipt, null, 2)}\n`, {mode: 0o600});

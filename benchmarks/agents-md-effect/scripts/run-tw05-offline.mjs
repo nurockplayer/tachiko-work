@@ -2,7 +2,7 @@
 
 import {createHash} from "node:crypto";
 import {constants, existsSync} from "node:fs";
-import {lstat, mkdir, open, readFile, realpath} from "node:fs/promises";
+import {lstat, mkdir, open, readFile, realpath, unlink} from "node:fs/promises";
 import {spawnSync} from "node:child_process";
 import {basename, dirname, isAbsolute, relative, resolve} from "node:path";
 
@@ -129,6 +129,9 @@ for (const key of ["candidate-root", "output"]) {
 if (!isAbsolute(args.get("candidate-root"))) throw new Error("candidate-root must be absolute");
 const candidateRoot = await realpath(resolve(args.get("candidate-root")));
 const {handle: outputHandle, output} = await reserveTrustedOutput(args.get("output"), candidateRoot);
+let outputClosed = false;
+let receiptWritten = false;
+try {
 const sandboxBytes = await readFile(sandboxExecutable).catch(() => {
   throw new Error("/usr/bin/sandbox-exec is required for kernel network denial");
 });
@@ -233,8 +236,14 @@ for (const command of commands) {
     exit_code: result.status,
     signal: result.signal,
     spawn_error: result.error?.message ?? null,
-    stdout_sha256: sha256(result.stdout ?? ""),
-    stderr_sha256: sha256(result.stderr ?? ""),
+    stdout: {
+      bytes: Buffer.byteLength(result.stdout ?? ""),
+      sha256: sha256(result.stdout ?? ""),
+    },
+    stderr: {
+      bytes: Buffer.byteLength(result.stderr ?? ""),
+      sha256: sha256(result.stderr ?? ""),
+    },
   });
 }
 
@@ -280,6 +289,14 @@ const receipt = {
 };
 await outputHandle.writeFile(`${JSON.stringify(receipt, null, 2)}\n`);
 await outputHandle.sync();
+receiptWritten = true;
 await outputHandle.close();
+outputClosed = true;
 console.log(JSON.stringify(receipt));
 if (!receipt.pass) process.exitCode = 1;
+} catch (error) {
+  throw error;
+} finally {
+  if (!outputClosed) await outputHandle.close().catch(() => {});
+  if (!receiptWritten) await unlink(output).catch(() => {});
+}

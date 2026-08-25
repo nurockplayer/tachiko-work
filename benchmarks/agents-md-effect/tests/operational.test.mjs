@@ -31,6 +31,11 @@ const prepareValidationScript = resolve(benchmarkDir, "scripts/prepare-validatio
 const runOraclesScript = resolve(benchmarkDir, "scripts/run-oracles.mjs");
 const runTw05OfflineScript = resolve(benchmarkDir, "scripts/run-tw05-offline.mjs");
 const qualifyOraclesScript = resolve(benchmarkDir, "scripts/qualify-oracles.mjs");
+const verifyBenchmarkScript = resolve(benchmarkDir, "scripts/verify-benchmark.mjs");
+const verifyOracleQualificationScript = resolve(
+  benchmarkDir,
+  "scripts/verify-oracle-qualification.mjs",
+);
 const trustedCargoPath = spawnSync("rustup", ["which", "cargo"], {encoding: "utf8"}).stdout.trim();
 const trustedCargoSha256 = sha256(readFileSync(trustedCargoPath));
 const trustedRustcPath = spawnSync("rustup", ["which", "rustc"], {encoding: "utf8"}).stdout.trim();
@@ -1109,14 +1114,19 @@ async function createOracleRunnerFixture({command, selector, subjectiveGroups = 
       oracleLockPath,
       `${JSON.stringify({
         protocol_id: "fixture-v1",
-        cases: [{id: "TW-XX", assertions: assertion}],
+        cases: [{id: "TW-XX", files: [], assertions: assertion}],
       }, null, 2)}\n`,
     ),
   ]);
   return {fixtureRoot, candidateRoot, trustedDir, manifestPath, oracleLockPath};
 }
 
-function runOracleFixture(fixture, extra = [], environment = {}) {
+function runOracleFixture(
+  fixture,
+  extra = [],
+  environment = {},
+  {rustcPath = trustedRustcPath, rustcSha256 = trustedRustcSha256, includeRustc = true} = {},
+) {
   return spawnSync(
     process.execPath,
     [
@@ -1141,11 +1151,40 @@ function runOracleFixture(fixture, extra = [], environment = {}) {
       trustedCargoPath,
       "--expected-cargo-sha256",
       trustedCargoSha256,
+      ...(includeRustc ? [
+        "--trusted-rustc",
+        rustcPath,
+        "--expected-rustc-sha256",
+        rustcSha256,
+      ] : []),
       ...extra,
     ],
     {encoding: "utf8", env: {...process.env, ...environment}},
   );
 }
+
+test("oracle runner requires an explicitly bound sibling Rust compiler", async () => {
+  const fixture = await createOracleRunnerFixture({
+    command: "cargo test -p fixture --test fixture --locked locked_name -- --exact",
+    selector: {kind: "rust_test_exact", test_name: "locked_name", required_matching_tests: 1},
+  });
+  const fakeRustc = resolve(fixture.fixtureRoot, "trusted-rustc");
+  try {
+    await writeFile(fakeRustc, "#!/bin/sh\nexit 0\n", {mode: 0o755});
+    const missing = runOracleFixture(fixture, [], {}, {includeRustc: false});
+    assert.notEqual(missing.status, 0);
+    assert.match(missing.stderr, /require.*trusted-rustc.*expected-rustc-sha256/i);
+
+    const mismatched = runOracleFixture(fixture, [], {}, {
+      rustcPath: fakeRustc,
+      rustcSha256: sha256(await readFile(fakeRustc)),
+    });
+    assert.notEqual(mismatched.status, 0);
+    assert.match(mismatched.stderr, /same trusted toolchain directory/i);
+  } finally {
+    await rm(fixture.fixtureRoot, {recursive: true, force: true});
+  }
+});
 
 async function writeRustOracleCrate(candidateRoot, {testSource, harnessFalse = false}) {
   await mkdir(resolve(candidateRoot, "tests"), {recursive: true});
@@ -1170,6 +1209,18 @@ version = "0.0.0"
   ]);
 }
 
+async function bindRustFixtureFiles(fixture, paths = ["tests/fixture.rs"]) {
+  const lock = await readJson(fixture.oracleLockPath);
+  lock.cases[0].files = [];
+  for (const path of paths) {
+    lock.cases[0].files.push({
+      path,
+      sha256: sha256(await readFile(resolve(fixture.candidateRoot, path))),
+    });
+  }
+  await writeFile(fixture.oracleLockPath, `${JSON.stringify(lock, null, 2)}\n`);
+}
+
 test("oracle runner builds with trusted Cargo and executes one real libtest binary", async () => {
   const fixture = await createOracleRunnerFixture({
     command: "cargo test -p fixture --test fixture --locked locked_name -- --exact",
@@ -1183,6 +1234,7 @@ test("oracle runner builds with trusted Cargo and executes one real libtest bina
     await writeRustOracleCrate(fixture.candidateRoot, {
       testSource: "#[test]\nfn locked_name() {}\n",
     });
+    await bindRustFixtureFiles(fixture);
     const fakeToolMarker = resolve(fixture.fixtureRoot, "fake-tool-used");
     for (const executable of ["cargo", "rustc"]) {
       await writeFile(
@@ -1232,6 +1284,7 @@ test("oracle runner rejects missing and ignored real libtest matches", async () 
     });
     try {
       await writeRustOracleCrate(fixture.candidateRoot, {testSource});
+      await bindRustFixtureFiles(fixture);
       const result = runOracleFixture(fixture);
       assert.equal(result.status, 1, result.stderr);
       const receipt = await readJson(resolve(fixture.trustedDir, "oracle-run.json"));
@@ -1275,6 +1328,7 @@ test("oracle runner records authenticated Cargo build failure as a failed exact 
     await writeRustOracleCrate(fixture.candidateRoot, {
       testSource: "#[test]\nfn locked_name() { this_will_not_compile }\n",
     });
+    await bindRustFixtureFiles(fixture);
     const result = runOracleFixture(fixture);
     assert.equal(result.status, 1, result.stderr);
     const receipt = await readJson(resolve(fixture.trustedDir, "oracle-run.json"));
@@ -1304,6 +1358,7 @@ test("oracle runner rejects harness=false, candidate Cargo config, and runner ov
       harnessFalse: true,
       testSource: "fn main() { println!(\"{\\\"type\\\":\\\"test\\\",\\\"event\\\":\\\"ok\\\",\\\"name\\\":\\\"locked_name\\\"}\"); }\n",
     });
+    await bindRustFixtureFiles(fixture);
     const result = runOracleFixture(fixture);
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /harness\s*=\s*false/i);
@@ -1319,6 +1374,7 @@ test("oracle runner rejects harness=false, candidate Cargo config, and runner ov
     await writeRustOracleCrate(configured.candidateRoot, {
       testSource: "#[test]\nfn locked_name() {}\n",
     });
+    await bindRustFixtureFiles(configured);
     await mkdir(resolve(configured.candidateRoot, ".cargo"));
     await writeFile(resolve(configured.candidateRoot, ".cargo/config.toml"), "[target.'cfg(all())']\nrunner = 'false'\n");
     const result = runOracleFixture(configured);
@@ -1336,6 +1392,7 @@ test("oracle runner rejects harness=false, candidate Cargo config, and runner ov
     await writeRustOracleCrate(overridden.candidateRoot, {
       testSource: "#[test]\nfn locked_name() {}\n",
     });
+    await bindRustFixtureFiles(overridden);
     const result = runOracleFixture(overridden, [], {
       CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER: "false",
     });
@@ -1343,6 +1400,99 @@ test("oracle runner rejects harness=false, candidate Cargo config, and runner ov
     assert.match(result.stderr, /runner environment override/i);
   } finally {
     await rm(overridden.fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("oracle runner rejects a redirected locked Rust target and compact harness=false", async () => {
+  const redirected = await createOracleRunnerFixture({
+    command: "cargo test -p fixture --test fixture --locked locked_name -- --exact",
+    selector: {kind: "rust_test_exact", test_name: "locked_name", required_matching_tests: 1},
+  });
+  try {
+    await writeRustOracleCrate(redirected.candidateRoot, {
+      testSource: "#[test]\nfn locked_name() {}\n",
+    });
+    await bindRustFixtureFiles(redirected);
+    await writeFile(
+      resolve(redirected.candidateRoot, "tests/redirected.rs"),
+      "#[test]\nfn locked_name() {}\n",
+    );
+    await writeFile(resolve(redirected.candidateRoot, "Cargo.toml"), `[package]
+name = "fixture"
+version = "0.0.0"
+edition = "2024"
+
+[[test]]
+name = "fixture"
+path = "tests/redirected.rs"
+`);
+    const result = runOracleFixture(redirected);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /test source.*frozen locked.*tests\/fixture\.rs/i);
+  } finally {
+    await rm(redirected.fixtureRoot, {recursive: true, force: true});
+  }
+
+  const harness = await createOracleRunnerFixture({
+    command: "cargo test -p fixture --test fixture --locked locked_name -- --exact",
+    selector: {kind: "rust_test_exact", test_name: "locked_name", required_matching_tests: 1},
+  });
+  try {
+    await writeRustOracleCrate(harness.candidateRoot, {
+      testSource: "fn main() {}\n",
+    });
+    await bindRustFixtureFiles(harness);
+    const manifest = await readFile(resolve(harness.candidateRoot, "Cargo.toml"), "utf8");
+    await writeFile(
+      resolve(harness.candidateRoot, "Cargo.toml"),
+      `${manifest}harness=false#comment\n`,
+    );
+    const result = runOracleFixture(harness);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /harness\s*=\s*false/i);
+  } finally {
+    await rm(harness.fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("oracle runner binds every locked Rust file before and after exact execution", async () => {
+  const mismatched = await createOracleRunnerFixture({
+    command: "cargo test -p fixture --test fixture --locked locked_name -- --exact",
+    selector: {kind: "rust_test_exact", test_name: "locked_name", required_matching_tests: 1},
+  });
+  try {
+    await writeRustOracleCrate(mismatched.candidateRoot, {
+      testSource: "#[test]\nfn locked_name() {}\n",
+    });
+    await bindRustFixtureFiles(mismatched);
+    await writeFile(
+      resolve(mismatched.candidateRoot, "tests/fixture.rs"),
+      "#[test]\nfn locked_name() { assert!(true); }\n",
+    );
+    const result = runOracleFixture(mismatched);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /locked file SHA-256 mismatch.*tests\/fixture\.rs/i);
+  } finally {
+    await rm(mismatched.fixtureRoot, {recursive: true, force: true});
+  }
+
+  const mutated = await createOracleRunnerFixture({
+    command: "cargo test -p fixture --test fixture --locked locked_name -- --exact",
+    selector: {kind: "rust_test_exact", test_name: "locked_name", required_matching_tests: 1},
+  });
+  try {
+    await writeRustOracleCrate(mutated.candidateRoot, {
+      testSource: `#[test]
+fn locked_name() { std::fs::write("locked.txt", "changed\\n").unwrap(); }
+`,
+    });
+    await writeFile(resolve(mutated.candidateRoot, "locked.txt"), "original\n");
+    await bindRustFixtureFiles(mutated, ["tests/fixture.rs", "locked.txt"]);
+    const result = runOracleFixture(mutated);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /locked file SHA-256 mismatch.*locked\.txt/i);
+  } finally {
+    await rm(mutated.fixtureRoot, {recursive: true, force: true});
   }
 });
 
@@ -1582,6 +1732,12 @@ test("TW-05 offline runner never invokes a package manager", async () => {
     assert.match(receipt.network_enforcement.profile_sha256, /^[0-9a-f]{64}$/);
     assert.deepEqual(receipt.executables.map((entry) => entry.name), ["cargo", "node", "node"]);
     assert.ok(receipt.executions.every((entry) => entry.exit_code === 0));
+    for (const execution of receipt.executions) {
+      assert.equal(typeof execution.stdout.bytes, "number");
+      assert.match(execution.stdout.sha256, /^[0-9a-f]{64}$/);
+      assert.equal(typeof execution.stderr.bytes, "number");
+      assert.match(execution.stderr.sha256, /^[0-9a-f]{64}$/);
+    }
   } finally {
     await rm(fixtureRoot, {recursive: true, force: true});
   }
@@ -1658,6 +1814,26 @@ test("TW-05 offline runner reserves a trusted disjoint output", async () => {
   }
 });
 
+test("TW-05 offline runner removes its reservation on setup failure", async () => {
+  const fixtureRoot = await realpath(await mkdtemp(join(tmpdir(), "tachiko-tw05-setup-fail-")));
+  const candidateRoot = resolve(fixtureRoot, "candidate");
+  const output = resolve(fixtureRoot, "failure-receipt.json");
+  try {
+    await mkdir(candidateRoot);
+    const result = spawnSync(process.execPath, [
+      runTw05OfflineScript,
+      "--candidate-root", candidateRoot,
+      "--output", output,
+      "--cargo-command", "not-cargo test --locked",
+    ], {encoding: "utf8"});
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /cargo-command must be a direct cargo invocation/i);
+    assert.equal(existsSync(output), false);
+  } finally {
+    await rm(fixtureRoot, {recursive: true, force: true});
+  }
+});
+
 test("oracle qualification summary regenerates byte-for-byte across controlled fixture runs", async () => {
   const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-oracle-summary-"));
   try {
@@ -1683,7 +1859,31 @@ test("oracle qualification summary regenerates byte-for-byte across controlled f
       assert.equal(receipt.run_receipt.schema, "tachiko-oracle-qualification-run-v3");
       assert.equal(receipt.payload.mode, "fixture-fast");
       assert.equal(receipt.run_receipt.mode, "fixture-fast");
+      assert.ok(receipt.run_receipt.cases.length > 0);
+      assert.ok(receipt.payload.cases.length > 0);
+      assert.equal(
+        receipt.evidence_commitment_sha256,
+        receipt.payload.evidence_commitment_sha256,
+      );
     }
+    const firstFixture = receipts[0].run_receipt.cases[0];
+    const secondFixture = receipts[1].run_receipt.cases[0];
+    assert.notEqual(
+      firstFixture.target.core.commands[0].resolved_command_sha256,
+      secondFixture.target.core.commands[0].resolved_command_sha256,
+    );
+    assert.notEqual(
+      firstFixture.target.oracle.assertions[0].suite_summary.exec_time,
+      secondFixture.target.oracle.assertions[0].suite_summary.exec_time,
+    );
+    assert.notEqual(
+      firstFixture.target.oracle.adapter_execution.observation.cargo_stdout_sha256,
+      secondFixture.target.oracle.adapter_execution.observation.cargo_stdout_sha256,
+    );
+    assert.notEqual(
+      firstFixture.offline_historical_target.executions[0].stdout.sha256,
+      secondFixture.offline_historical_target.executions[0].stdout.sha256,
+    );
     assert.equal(JSON.stringify(receipts[0].payload), JSON.stringify(receipts[1].payload));
     assert.equal(receipts[0].payload_sha256, receipts[1].payload_sha256);
     assert.doesNotMatch(
@@ -1695,6 +1895,62 @@ test("oracle qualification summary regenerates byte-for-byte across controlled f
   }
 });
 
+test("qualification verifier rejects independently tampered summary or run evidence", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-oracle-verify-"));
+  try {
+    const originalPath = resolve(fixtureRoot, "original.json");
+    const generated = spawnSync(process.execPath, [
+      qualifyOraclesScript,
+      "--source-repo", resolve(benchmarkDir, "../.."),
+      "--output", originalPath,
+      "--mode", "fixture-fast",
+    ], {encoding: "utf8", maxBuffer: 128 * 1024 * 1024});
+    assert.equal(generated.status, 0, `${generated.stderr}\n${generated.stdout}`);
+    const original = await readJson(originalPath);
+    const accepted = spawnSync(process.execPath, [
+      verifyOracleQualificationScript,
+      "--receipt", originalPath,
+    ], {encoding: "utf8"});
+    assert.equal(accepted.status, 0, accepted.stderr);
+
+    const tamperedPayload = structuredClone(original);
+    tamperedPayload.payload.cases[0].case_id = "TAMPERED-SUMMARY";
+    tamperedPayload.payload_sha256 = sha256(`${JSON.stringify(tamperedPayload.payload)}\n`);
+    const tamperedPayloadPath = resolve(fixtureRoot, "tampered-payload.json");
+    await writeFile(tamperedPayloadPath, `${JSON.stringify(tamperedPayload)}\n`);
+    const payloadResult = spawnSync(process.execPath, [
+      verifyOracleQualificationScript,
+      "--receipt", tamperedPayloadPath,
+    ], {encoding: "utf8"});
+    assert.notEqual(payloadResult.status, 0);
+    assert.match(payloadResult.stderr, /deterministic summary does not match run evidence/i);
+
+    const tamperedRun = structuredClone(original);
+    tamperedRun.run_receipt.cases[0].case_id = "TAMPERED-RUN";
+    tamperedRun.run_receipt_sha256 = sha256(`${JSON.stringify(tamperedRun.run_receipt)}\n`);
+    const tamperedRunPath = resolve(fixtureRoot, "tampered-run.json");
+    await writeFile(tamperedRunPath, `${JSON.stringify(tamperedRun)}\n`);
+    const runResult = spawnSync(process.execPath, [
+      verifyOracleQualificationScript,
+      "--receipt", tamperedRunPath,
+    ], {encoding: "utf8"});
+    assert.notEqual(runResult.status, 0);
+    assert.match(runResult.stderr, /deterministic summary does not match run evidence/i);
+  } finally {
+    await rm(fixtureRoot, {recursive: true, force: true});
+  }
+});
+
+test("benchmark verifier authenticates the checked oracle qualification receipt", () => {
+  const result = spawnSync(process.execPath, [verifyBenchmarkScript], {
+    encoding: "utf8",
+    maxBuffer: 128 * 1024 * 1024,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /oracle_qualification_payload_sha256=[0-9a-f]{64}/);
+  assert.match(result.stdout, /oracle_qualification_evidence_commitment_sha256=[0-9a-f]{64}/);
+});
+
 test("oracle qualification records executed target/base evidence for all frozen mappings", async () => {
   const [receipt, manifest] = await Promise.all([
     readJson(resolve(benchmarkDir, "evaluator/qualifications/oracles.json")),
@@ -1702,6 +1958,10 @@ test("oracle qualification records executed target/base evidence for all frozen 
   ]);
   assert.equal(receipt.payload_sha256, sha256(`${JSON.stringify(receipt.payload)}\n`));
   assert.equal(receipt.run_receipt_sha256, sha256(`${JSON.stringify(receipt.run_receipt)}\n`));
+  assert.equal(
+    receipt.evidence_commitment_sha256,
+    receipt.payload.evidence_commitment_sha256,
+  );
   assert.equal(receipt.payload.schema, "tachiko-oracle-qualification-summary-v3");
   assert.equal(receipt.run_receipt.schema, "tachiko-oracle-qualification-run-v3");
   assert.equal(receipt.payload.no_codex_launched, true);
@@ -1748,6 +2008,13 @@ test("oracle qualification records executed target/base evidence for all frozen 
       assert.match(execution.stdout.sha256, /^[0-9a-f]{64}$/);
       assert.equal(typeof execution.stderr.bytes, "number");
       assert.match(execution.stderr.sha256, /^[0-9a-f]{64}$/);
+      if (execution.execution_mode === "trusted_cargo_direct_libtest") {
+        assert.deepEqual(execution.locked_files.before, execution.locked_files.after);
+        assert.ok(execution.locked_files.before.length > 0);
+        assert.ok(execution.locked_files.before.every((entry) =>
+          /^[0-9a-f]{64}$/.test(entry.sha256)));
+        assert.match(execution.toolchain.rustc.sha256, /^[0-9a-f]{64}$/);
+      }
     }
     for (const assertion of [
       ...caseEntry.target.oracle.assertions,
@@ -1790,6 +2057,17 @@ test("oracle qualification records executed target/base evidence for all frozen 
   assert.match(tw05.target.adapter_execution.observation_artifact.sha256, /^[0-9a-f]{64}$/);
   assert.equal(tw05.offline_historical_target.network_enforcement.probe_denied, true);
   assert.equal(tw05.offline_historical_target.package_manager_dependency, false);
+  for (const offline of [
+    tw05.offline_historical_target,
+    tw05.offline_behavior_missing_negative,
+  ]) {
+    for (const execution of offline.executions) {
+      assert.equal(typeof execution.stdout.bytes, "number");
+      assert.match(execution.stdout.sha256, /^[0-9a-f]{64}$/);
+      assert.equal(typeof execution.stderr.bytes, "number");
+      assert.match(execution.stderr.sha256, /^[0-9a-f]{64}$/);
+    }
+  }
 
   const tw09 = receipt.run_receipt.cases.find((entry) => entry.case_id === "TW-09");
   assert.equal(tw09.materialization.target.kind, "trusted_rebased_replay_positive");
