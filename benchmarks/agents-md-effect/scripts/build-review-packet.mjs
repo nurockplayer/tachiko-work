@@ -5,6 +5,7 @@ import {lstat, mkdir, readFile, readdir, realpath, writeFile} from "node:fs/prom
 import {basename, dirname, isAbsolute, relative, resolve} from "node:path";
 import {
   REDACTION,
+  REQUIRED_REVIEW_ROLES,
   RULE_IDS,
   canonicalBytes,
   compileMatcher,
@@ -103,15 +104,6 @@ function addRule(counts, ruleId) {
   counts[ruleId] += 1;
 }
 
-const REQUIRED_INPUT_ROLES = [
-  "task",
-  "authority",
-  "candidate_checkout",
-  "candidate_diff",
-  "candidate_validation",
-  "final_message",
-];
-
 async function bindInputManifest(manifestPath, inputFiles) {
   const manifestBytes = await readFile(manifestPath);
   const manifest = JSON.parse(strictText(manifestBytes, "review input manifest"));
@@ -130,7 +122,7 @@ async function bindInputManifest(manifestPath, inputFiles) {
   if (JSON.stringify(entries.map((entry) => entry.path)) !== JSON.stringify(actualPaths)) {
     throw new Error("review input manifest must bind every and only reviewer-visible artifact");
   }
-  const roleCounts = Object.fromEntries(REQUIRED_INPUT_ROLES.map((role) => [role, 0]));
+  const roleCounts = Object.fromEntries(REQUIRED_REVIEW_ROLES.map((role) => [role, 0]));
   for (const [index, entry] of entries.entries()) {
     if (
       typeof entry.path !== "string" ||
@@ -142,8 +134,8 @@ async function bindInputManifest(manifestPath, inputFiles) {
     ) {
       throw new Error("invalid review input manifest artifact");
     }
-    if (new Set(entry.roles).size !== entry.roles.length) {
-      throw new Error("review input manifest artifact roles must be unique");
+    if (entry.roles.length !== 1 || new Set(entry.roles).size !== 1) {
+      throw new Error("exactly one review artifact role is required for each artifact");
     }
     for (const role of entry.roles) {
       if (!Object.hasOwn(roleCounts, role)) throw new Error("unknown review input artifact role");
@@ -156,7 +148,7 @@ async function bindInputManifest(manifestPath, inputFiles) {
     inputFiles[index].bytes = bytes;
     inputFiles[index].roles = entry.roles;
   }
-  for (const role of REQUIRED_INPUT_ROLES) {
+  for (const role of REQUIRED_REVIEW_ROLES) {
     if (roleCounts[role] === 0) throw new Error(`missing required review artifact role: ${role}`);
   }
   for (const role of ["task", "candidate_diff", "final_message"]) {
@@ -204,7 +196,7 @@ if (new Date(values.get("frozen-at")).toISOString() !== values.get("frozen-at"))
   throw new Error("--frozen-at must be canonical RFC3339 UTC");
 }
 
-terminalReceiptPath = await canonicalNewPath(
+const proposedTerminalReceiptPath = await canonicalNewPath(
   resolve(values.get("terminal-receipt")),
   "terminal receipt",
 );
@@ -226,7 +218,7 @@ const outputDir = await canonicalNewPath(resolve(values.get("output-dir")), "out
 
 for (const [label, path] of [
   ["output directory", outputDir],
-  ["terminal receipt", terminalReceiptPath],
+  ["terminal receipt", proposedTerminalReceiptPath],
   ["review input manifest", inputManifestPath],
   ["contract", contractPath],
   ...variantPaths.map((path) => ["registered variant", path]),
@@ -235,9 +227,13 @@ for (const [label, path] of [
     throw new Error(`${label} and candidate input must be disjoint; paths overlap`);
   }
 }
-if (isWithin(outputDir, terminalReceiptPath) || isWithin(terminalReceiptPath, outputDir)) {
+if (
+  isWithin(outputDir, proposedTerminalReceiptPath) ||
+  isWithin(proposedTerminalReceiptPath, outputDir)
+) {
   throw new Error("terminal receipt and packet output must be disjoint; paths overlap");
 }
+terminalReceiptPath = proposedTerminalReceiptPath;
 
 const blinding = await loadBlindingInputs(contractPath, variantPaths);
 terminalContext.contract_sha256 = blinding.contractIdentity.sha256;
@@ -304,6 +300,8 @@ for (const input of inputFiles) {
     matchCounts: {path: pathCounts, content: contentCounts},
     manifest: {
       display_path: displayPath,
+      path_redacted: pathRules.length > 0,
+      review_role: input.roles[0],
       original_path_sha256: originalPathSha256,
       pre_render_bytes: originalBytes.length,
       pre_render_sha256: originalArtifactSha256,
@@ -326,6 +324,11 @@ const privateMap = {
   events: privateEvents.map(({_sort_path, ...event}) => event),
 };
 const privateMapBytes = canonicalBytes(privateMap);
+const publicArtifacts = rendered
+  .map((entry) => entry.manifest)
+  .sort((left, right) =>
+    Buffer.from(left.display_path, "utf8").compare(Buffer.from(right.display_path, "utf8")),
+  );
 const publicManifest = {
   schema: "tachiko-review-packet-public-manifest-v1",
   protocol_id: blinding.contract.protocol_id,
@@ -335,7 +338,8 @@ const publicManifest = {
   contract_sha256: blinding.contractIdentity.sha256,
   rule_set_commitment_sha256: sha256(canonicalBytes(blinding.contract.machine_match_rules)),
   variant_set_commitment_sha256: blinding.variantSet.commitment_sha256,
-  artifacts: rendered.map((entry) => entry.manifest),
+  input_manifest_sha256: inputManifest.sha256,
+  artifacts: publicArtifacts,
 };
 const publicManifestBytes = canonicalBytes(publicManifest);
 

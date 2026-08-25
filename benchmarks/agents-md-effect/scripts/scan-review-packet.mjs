@@ -9,6 +9,14 @@ import {pathToFileURL} from "node:url";
 const RULE_IDS = ["R1", "R2", "R3", "R4"];
 const REDACTION = "[instruction-reference redacted]";
 const FROZEN_CONTRACT_SHA256 = "959b59e7a844d6b6f8dbad8b51092c1cc8663fc02664b70f93edce9a4a78659e";
+const REQUIRED_REVIEW_ROLES = [
+  "task",
+  "authority",
+  "candidate_checkout",
+  "candidate_diff",
+  "candidate_validation",
+  "final_message",
+];
 const IDENTIFIERS = [
   "agents.md",
   "baseline a",
@@ -238,15 +246,94 @@ async function walkRegularFiles(root) {
   return files;
 }
 
+async function validatePublicManifest(files, blinding) {
+  const manifestFile = files.find((file) => file.path === "packet-manifest.json");
+  if (!manifestFile) throw new Error("packet is missing packet-manifest.json");
+  manifestFile.bytes = await readFile(manifestFile.absolutePath);
+  const manifest = JSON.parse(strictText(manifestFile.bytes, "packet manifest"));
+  if (
+    manifest.schema !== "tachiko-review-packet-public-manifest-v1" ||
+    manifest.protocol_id !== blinding.contract.protocol_id ||
+    manifest.contract_sha256 !== blinding.contractIdentity.sha256 ||
+    manifest.variant_set_commitment_sha256 !== blinding.variantSet.commitment_sha256 ||
+    manifest.rule_set_commitment_sha256 !==
+      sha256(canonicalBytes(blinding.contract.machine_match_rules)) ||
+    !/^[0-9a-f]{64}$/.test(manifest.input_manifest_sha256) ||
+    !Array.isArray(manifest.artifacts)
+  ) {
+    throw new Error("packet manifest commitments are invalid");
+  }
+  const artifacts = manifest.artifacts;
+  const sortedArtifacts = [...artifacts].sort((left, right) =>
+    Buffer.from(left.display_path ?? "", "utf8").compare(
+      Buffer.from(right.display_path ?? "", "utf8"),
+    ),
+  );
+  if (JSON.stringify(artifacts) !== JSON.stringify(sortedArtifacts)) {
+    throw new Error("packet manifest artifacts are not in unsigned UTF-8 display-path order");
+  }
+  const visibleFiles = files.filter((file) => file !== manifestFile);
+  if (
+    JSON.stringify(artifacts.map((entry) => entry.display_path)) !==
+    JSON.stringify(visibleFiles.map((file) => file.path))
+  ) {
+    throw new Error("packet manifest must bind every and only reviewer-visible artifact");
+  }
+  const roleCounts = Object.fromEntries(REQUIRED_REVIEW_ROLES.map((role) => [role, 0]));
+  for (const [index, artifact] of artifacts.entries()) {
+    if (
+      typeof artifact.display_path !== "string" ||
+      typeof artifact.path_redacted !== "boolean" ||
+      !Object.hasOwn(roleCounts, artifact.review_role) ||
+      !/^[0-9a-f]{64}$/.test(artifact.original_path_sha256) ||
+      !Number.isSafeInteger(artifact.pre_render_bytes) ||
+      artifact.pre_render_bytes < 0 ||
+      !/^[0-9a-f]{64}$/.test(artifact.pre_render_sha256) ||
+      !Number.isSafeInteger(artifact.rendered_bytes) ||
+      artifact.rendered_bytes < 0 ||
+      !/^[0-9a-f]{64}$/.test(artifact.rendered_sha256)
+    ) {
+      throw new Error("packet manifest artifact is invalid");
+    }
+    const expectedDisplayPath = artifact.path_redacted
+      ? `redacted-path-${artifact.original_path_sha256}`
+      : artifact.display_path;
+    if (
+      artifact.display_path !== expectedDisplayPath ||
+      (!artifact.path_redacted &&
+        artifact.original_path_sha256 !== sha256(Buffer.from(artifact.display_path, "utf8")))
+    ) {
+      throw new Error("packet manifest path commitment is invalid");
+    }
+    roleCounts[artifact.review_role] += 1;
+    const file = visibleFiles[index];
+    file.bytes = await readFile(file.absolutePath);
+    if (
+      file.bytes.length !== artifact.rendered_bytes ||
+      sha256(file.bytes) !== artifact.rendered_sha256
+    ) {
+      throw new Error("reviewer-visible artifact differs from the packet manifest");
+    }
+  }
+  for (const role of REQUIRED_REVIEW_ROLES) {
+    if (roleCounts[role] === 0) throw new Error(`packet is missing required review role: ${role}`);
+  }
+  for (const role of ["task", "candidate_diff", "final_message"]) {
+    if (roleCounts[role] !== 1) throw new Error(`packet review role must occur exactly once: ${role}`);
+  }
+  return manifest;
+}
+
 export async function scanPacketTree(packetDir, blinding) {
   const matcher = compileMatcher(blinding.variants);
   const files = await walkRegularFiles(packetDir);
+  await validatePublicManifest(files, blinding);
   const artifacts = [];
   const counts = Object.fromEntries(RULE_IDS.map((id) => [id, 0]));
   let matchCount = 0;
   for (const file of files) {
     const pathMatches = matcher(file.path);
-    const bytes = await readFile(file.absolutePath);
+    const bytes = file.bytes ?? await readFile(file.absolutePath);
     const text = strictText(bytes, `${file.path} content`);
     const contentMatches = [];
     for (const [index, line] of splitLines(text).entries()) {
@@ -389,4 +476,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   }
 }
 
-export {REDACTION, RULE_IDS, canonicalBytes, sha256, splitLines, strictText};
+export {
+  REDACTION,
+  REQUIRED_REVIEW_ROLES,
+  RULE_IDS,
+  canonicalBytes,
+  sha256,
+  splitLines,
+  strictText,
+};

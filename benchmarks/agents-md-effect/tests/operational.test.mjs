@@ -2138,6 +2138,65 @@ function runReviewPacketBuilder({ inputRoot, inputManifest, outputDir, terminalR
   return spawnSync(process.execPath, argumentsForBuilder, { encoding: "utf8" });
 }
 
+async function writeStandaloneReviewPacket(packetDir, variantPath, overrides = {}) {
+  const roles = [
+    "task",
+    "authority",
+    "candidate_checkout",
+    "candidate_diff",
+    "candidate_validation",
+    "final_message",
+  ];
+  const artifacts = [];
+  for (const role of roles) {
+    const path = `${role}.txt`;
+    const value = overrides[role] ?? `${role} ordinary review evidence\n`;
+    const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value);
+    await writeFile(resolve(packetDir, path), bytes);
+    artifacts.push({
+      display_path: path,
+      path_redacted: false,
+      review_role: role,
+      original_path_sha256: sha256(Buffer.from(path)),
+      pre_render_bytes: bytes.length,
+      pre_render_sha256: sha256(bytes),
+      rendered_bytes: bytes.length,
+      rendered_sha256: sha256(bytes),
+    });
+  }
+  artifacts.sort((left, right) =>
+    Buffer.from(left.display_path).compare(Buffer.from(right.display_path)),
+  );
+  const contractPath = resolve(
+    benchmarkDir,
+    "evaluator/contracts/review-packet-blinding-v1.json",
+  );
+  const contractBytes = await readFile(contractPath);
+  const contract = JSON.parse(contractBytes.toString("utf8"));
+  const variantBytes = await readFile(variantPath);
+  const identities = [{bytes: variantBytes.length, sha256: sha256(variantBytes)}];
+  const manifest = {
+    schema: "tachiko-review-packet-public-manifest-v1",
+    protocol_id: "tachiko-agents-effect-v1",
+    case_id: "TW-05",
+    candidate_id: "0123456789abcdef0123456789abcdef",
+    frozen_at: "2026-08-25T00:00:00.000Z",
+    contract_sha256: sha256(contractBytes),
+    rule_set_commitment_sha256: sha256(
+      Buffer.from(`${JSON.stringify(contract.machine_match_rules, null, 2)}\n`),
+    ),
+    variant_set_commitment_sha256: sha256(
+      Buffer.from(`${JSON.stringify(identities, null, 2)}\n`),
+    ),
+    input_manifest_sha256: sha256(Buffer.from("trusted input manifest fixture")),
+    artifacts,
+  };
+  await writeFile(
+    resolve(packetDir, "packet-manifest.json"),
+    `${JSON.stringify(manifest, null, 2)}\n`,
+  );
+}
+
 test("review packet deterministically applies frozen R1-R4 while preserving domain text", async () => {
   const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-review-packet-"));
   try {
@@ -2276,6 +2335,11 @@ test("review packet deterministically applies frozen R1-R4 while preserving doma
     assert.equal(publicManifest.variant_set_commitment_sha256, receipt.variant_set.commitment_sha256);
     assert.equal(publicManifest.contract_sha256, receipt.contract.sha256);
     assert.equal(JSON.stringify(publicManifest).includes("match_counts"), false);
+    const displayedPaths = publicManifest.artifacts.map((entry) => entry.display_path);
+    assert.deepEqual(
+      displayedPaths,
+      [...displayedPaths].sort((left, right) => Buffer.from(left).compare(Buffer.from(right))),
+    );
   } finally {
     await rm(fixtureRoot, { recursive: true, force: true });
   }
@@ -2289,16 +2353,17 @@ test("review packet fails closed for binary, symlinked, or overlapping productio
     await mkdir(inputRoot);
     await writeFile(variant, "one two three four five six seven eight long variant instruction line\n");
     await writeFile(resolve(inputRoot, "binary.dat"), Buffer.from([0xff, 0xfe, 0x00, 0x01]));
+    for (const path of ["task.txt", "authority.txt", "checkout.txt", "diff.txt", "validation.txt"]) {
+      await writeFile(resolve(inputRoot, path), `${path} ordinary evidence\n`);
+    }
     const binaryManifest = resolve(fixtureRoot, "binary-manifest.json");
     await writeReviewInputManifest(inputRoot, binaryManifest, {
-      "binary.dat": [
-        "task",
-        "authority",
-        "candidate_checkout",
-        "candidate_diff",
-        "candidate_validation",
-        "final_message",
-      ],
+      "authority.txt": "authority",
+      "binary.dat": "final_message",
+      "checkout.txt": "candidate_checkout",
+      "diff.txt": "candidate_diff",
+      "task.txt": "task",
+      "validation.txt": "candidate_validation",
     });
     let result = runReviewPacketBuilder({
       inputRoot,
@@ -2314,6 +2379,9 @@ test("review packet fails closed for binary, symlinked, or overlapping productio
     assert.equal(terminal.safe_to_release, false);
 
     await unlink(resolve(inputRoot, "binary.dat"));
+    for (const path of ["task.txt", "authority.txt", "checkout.txt", "diff.txt", "validation.txt"]) {
+      await unlink(resolve(inputRoot, path));
+    }
     await writeFile(resolve(fixtureRoot, "outside.txt"), "ordinary\n");
     await symlink(resolve(fixtureRoot, "outside.txt"), resolve(inputRoot, "linked.txt"));
     const linkedInputManifest = resolve(fixtureRoot, "linked-input-manifest.json");
@@ -2396,6 +2464,38 @@ test("review packet fails closed for binary, symlinked, or overlapping productio
     assert.match(result.stderr, /required review artifact role/i);
     terminal = await readJson(resolve(fixtureRoot, "incomplete-terminal.json"));
     assert.equal(terminal.terminal_classification, "invalid_discarded");
+
+    const conflatedManifest = resolve(fixtureRoot, "conflated-manifest.json");
+    await writeReviewInputManifest(inputRoot, conflatedManifest, {
+      "ordinary.txt": [
+        "task",
+        "authority",
+        "candidate_checkout",
+        "candidate_diff",
+        "candidate_validation",
+        "final_message",
+      ],
+    });
+    result = runReviewPacketBuilder({
+      inputRoot,
+      inputManifest: conflatedManifest,
+      outputDir: resolve(fixtureRoot, "conflated-output"),
+      terminalReceipt: resolve(fixtureRoot, "conflated-terminal.json"),
+      variants: [variant],
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /exactly one review artifact role/i);
+
+    const forbiddenTerminal = resolve(inputRoot, "forbidden-terminal.json");
+    result = runReviewPacketBuilder({
+      inputRoot,
+      inputManifest: ordinaryManifest,
+      outputDir: resolve(fixtureRoot, "forbidden-terminal-output"),
+      terminalReceipt: forbiddenTerminal,
+      variants: [variant],
+    });
+    assert.notEqual(result.status, 0);
+    assert.equal(existsSync(forbiddenTerminal), false);
   } finally {
     await rm(fixtureRoot, { recursive: true, force: true });
   }
@@ -2405,24 +2505,43 @@ test("review packet scanner rejects residual matches and qualifies ordinary subj
   const fixtureRoot = await mkdtemp(join(tmpdir(), "tachiko-review-scan-"));
   try {
     const variant = resolve(fixtureRoot, "sealed-variant");
+    const incompletePacket = resolve(fixtureRoot, "incomplete-packet");
     const unsafePacket = resolve(fixtureRoot, "unsafe-packet");
     const safePacket = resolve(fixtureRoot, "safe-packet");
     await writeFile(
       variant,
       "Preserve the repository runtime manager lockfile formatter linter build workflow exactly.\n",
     );
-    await Promise.all([mkdir(unsafePacket), mkdir(safePacket)]);
-    await writeFile(resolve(unsafePacket, "review.txt"), "Baseline A must never remain visible.\n");
-    await writeFile(
-      resolve(safePacket, "review.txt"),
-      "The candidate explains runtime ownership and validates the requested behavior.\n",
-    );
+    await Promise.all([mkdir(incompletePacket), mkdir(unsafePacket), mkdir(safePacket)]);
+    await writeFile(resolve(incompletePacket, "review.txt"), "ordinary safe text\n");
+    await writeStandaloneReviewPacket(unsafePacket, variant, {
+      task: "Baseline A must never remain visible.\n",
+    });
+    await writeStandaloneReviewPacket(safePacket, variant, {
+      task: "The candidate explains runtime ownership and validates the requested behavior.\n",
+    });
     const common = [
       "--contract", resolve(benchmarkDir, "evaluator/contracts/review-packet-blinding-v1.json"),
       "--variant", variant,
     ];
-    const unsafeReceipt = resolve(fixtureRoot, "unsafe-scan.json");
+    const incompleteReceipt = resolve(fixtureRoot, "incomplete-scan.json");
     let result = spawnSync(
+      process.execPath,
+      [
+        scanReviewPacketScript,
+        "--packet-dir", incompletePacket,
+        "--receipt", incompleteReceipt,
+        ...common,
+      ],
+      { encoding: "utf8" },
+    );
+    assert.notEqual(result.status, 0);
+    const incomplete = await readJson(incompleteReceipt);
+    assert.equal(incomplete.safe_to_release, false);
+    assert.equal(incomplete.terminal_classification, "invalid_discarded");
+
+    const unsafeReceipt = resolve(fixtureRoot, "unsafe-scan.json");
+    result = spawnSync(
       process.execPath,
       [scanReviewPacketScript, "--packet-dir", unsafePacket, "--receipt", unsafeReceipt, ...common],
       { encoding: "utf8" },
@@ -2449,7 +2568,9 @@ test("review packet scanner rejects residual matches and qualifies ordinary subj
     const binaryPacket = resolve(fixtureRoot, "binary-packet");
     const binaryScanReceipt = resolve(fixtureRoot, "binary-scan.json");
     await mkdir(binaryPacket);
-    await writeFile(resolve(binaryPacket, "bad.dat"), Buffer.from([0xff, 0x00]));
+    await writeStandaloneReviewPacket(binaryPacket, variant, {
+      final_message: Buffer.from([0xff, 0x00]),
+    });
     result = spawnSync(
       process.execPath,
       [scanReviewPacketScript, "--packet-dir", binaryPacket, "--receipt", binaryScanReceipt, ...common],
