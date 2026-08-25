@@ -17,6 +17,8 @@ Authority: ADR-0017; ADR-0023 for `.roproj/v1`; ADR-0025 for
 
 Implementation parent: #74
 
+Portable-package production implementation: #3
+
 Conformance and identity integration: #40, #70
 
 ## Purpose
@@ -49,7 +51,7 @@ The following are distinct namespaces:
 - `.roproj/v1` editable directory materialization;
 - `tachiko.portable-package/v1` portable container profile.
 
-The integer `1` in two different representation namespaces does not imply the
+The same integer in distinct representation namespaces does not imply the
 same wire schema. In particular, `.roproj/v1` is Accepted as a namespace
 distinct from `legacy-direct-ro/v1`, `direct-ro/v2`, and
 `tachiko.portable-package/v1`.

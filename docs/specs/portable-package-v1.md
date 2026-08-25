@@ -19,6 +19,9 @@ Evidence: [portable-package v1 research record](../research/2026-08-26-portable-
 [executable probe](../research/probes/issue-43-portable-package-v1.mjs), and
 [byte-level golden vector](../research/fixtures/issue-43-portable-package-v1/empty-package-v1.hex)
 
+Tracking issue: [#3](https://github.com/nurockplayer/tachiko-work/issues/3)
+for production codecs and CLI implementation
+
 ## Purpose and normative language
 
 This specification defines the complete portable-package v1 byte profile,
@@ -689,6 +692,12 @@ pack source, and content framing. Its empty-payload
 semantic checker is intentionally fixture-specific; production conformance
 must use the normative `.roproj/v1` DTO and semantic validation implementation
 when those codecs are built.
+
+The probe's injected pre-publication hook verifies the stable outcome when a
+destination appears after preparation. It does not select or prove a
+production cross-platform atomic no-replace directory primitive; exact host
+publication mechanics remain Provisional while every implementation must
+satisfy the normative no-overwrite and no-partial-success result.
 
 ## Security and resource boundary
 

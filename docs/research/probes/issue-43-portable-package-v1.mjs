@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import {
   chmod,
   cp,
+  link,
   lstat,
   mkdir,
   mkdtemp,
@@ -17,6 +18,7 @@ import {
   rename,
   rm,
   stat,
+  symlink,
   utimes,
   writeFile,
 } from 'node:fs/promises';
@@ -436,6 +438,11 @@ function parseZip32Container(bytes) {
   };
   ensure(end.commentLength === 0, CODES.invalidContainer, 'archive comment is not absent');
   ensure(
+    end.diskNumber === 0 && end.centralDiskNumber === 0,
+    CODES.invalidContainer,
+    'split or spanned container disk numbers are not supported',
+  );
+  ensure(
     end.entriesOnDisk !== ZIP32_U16_SENTINEL &&
       end.totalEntries !== ZIP32_U16_SENTINEL &&
       end.centralSize !== ZIP32_U32_SENTINEL &&
@@ -481,6 +488,11 @@ function parseZip32Container(bytes) {
     CODES.invalidContainer,
     'central records do not consume the declared central directory exactly',
   );
+  ensure(
+    centralRecords.every((record) => record.diskNumberStart === 0),
+    CODES.invalidContainer,
+    'central record selects a split or spanned start disk',
+  );
   return { bytes, end, localRecords, centralRecords };
 }
 
@@ -509,26 +521,84 @@ function decodeUtf8(bytes, code, label) {
   }
 }
 
-function detectDuplicateJsonKeys(text) {
-  const seen = new Set();
-  const keyPattern = /"((?:\\.|[^"\\])*)"\s*:/gu;
-  for (const match of text.matchAll(keyPattern)) {
-    let key;
-    try {
-      key = JSON.parse(`"${match[1]}"`);
-    } catch {
+function skipJsonWhitespace(text, start) {
+  let index = start;
+  while (index < text.length && /[\t\n\r ]/u.test(text[index])) index += 1;
+  return index;
+}
+
+function jsonStringEnd(text, start) {
+  if (text[start] !== '"') return null;
+  let index = start + 1;
+  while (index < text.length) {
+    if (text[index] === '\\') {
+      index += 2;
       continue;
     }
-    if (seen.has(key)) return key;
-    seen.add(key);
+    if (text[index] === '"') return index + 1;
+    index += 1;
+  }
+  return null;
+}
+
+function scanTopLevelJsonMembers(text) {
+  let index = skipJsonWhitespace(text, 0);
+  if (text[index] !== '{') return null;
+  index += 1;
+  const members = new Map();
+  let duplicate = null;
+
+  while (index < text.length) {
+    index = skipJsonWhitespace(text, index);
+    if (text[index] === '}') {
+      index = skipJsonWhitespace(text, index + 1);
+      return index === text.length ? { members, duplicate } : null;
+    }
+
+    const keyEnd = jsonStringEnd(text, index);
+    if (keyEnd === null) return null;
+    const key = JSON.parse(text.slice(index, keyEnd));
+    index = skipJsonWhitespace(text, keyEnd);
+    if (text[index] !== ':') return null;
+    index = skipJsonWhitespace(text, index + 1);
+    const valueStart = index;
+    const closing = [];
+
+    while (index < text.length) {
+      const character = text[index];
+      if (character === '"') {
+        const stringEnd = jsonStringEnd(text, index);
+        if (stringEnd === null) return null;
+        index = stringEnd;
+        continue;
+      }
+      if (character === '{') closing.push('}');
+      else if (character === '[') closing.push(']');
+      else if (character === '}' || character === ']') {
+        if (closing.length === 0) break;
+        if (closing.pop() !== character) return null;
+      } else if (character === ',' && closing.length === 0) {
+        break;
+      }
+      index += 1;
+    }
+
+    const rawValue = text.slice(valueStart, index).trim();
+    if (rawValue.length === 0) return null;
+    if (members.has(key)) duplicate ??= key;
+    else members.set(key, rawValue);
+
+    if (text[index] === ',') {
+      index += 1;
+      continue;
+    }
+    if (text[index] !== '}') return null;
   }
   return null;
 }
 
 function parsePortableManifest(bytes) {
   const text = decodeUtf8(bytes, CODES.invalidManifest, 'package.json');
-  const duplicate = detectDuplicateJsonKeys(text);
-  ensure(duplicate === null, CODES.invalidManifest, `duplicate package.json member ${duplicate}`);
   let value;
   try {
     value = JSON.parse(text);
@@ -540,23 +610,13 @@ function parsePortableManifest(bytes) {
     CODES.invalidManifest,
     'package.json root is not an object',
   );
+  const memberScan = scanTopLevelJsonMembers(text);
+  ensure(memberScan !== null, CODES.invalidManifest, 'cannot scan package.json members');
   ensure(
-    value.format === 'tachiko.portable-package',
+    memberScan.duplicate === null,
     CODES.invalidManifest,
-    'package.json format is missing or malformed',
+    `duplicate package.json member ${memberScan.duplicate}`,
   );
-  ensure(
-    Number.isInteger(value.format_version) && value.format_version > 0,
-    CODES.invalidManifest,
-    'package.json format_version is missing or malformed',
-  );
-  if (value.format_version !== 1) {
-    fail(
-      CODES.unsupportedPackageVersion,
-      `unsupported ${PACKAGE_PROFILE.split('/')[0]} version ${value.format_version}`,
-    );
-  }
-
   const expectedKeys = [
     'format',
     'format_version',
@@ -570,9 +630,27 @@ function parsePortableManifest(bytes) {
     'package.json members are missing or unknown',
   );
   ensure(
-    value.payload_format === 'tachiko.roproj' && value.payload_format_version === 1,
+    value.format === 'tachiko.portable-package',
     CODES.invalidManifest,
-    'package.json payload claim is missing or malformed',
+    'package.json format is missing or malformed',
+  );
+  const formatVersion = memberScan.members.get('format_version');
+  ensure(
+    /^[1-9][0-9]*$/u.test(formatVersion ?? ''),
+    CODES.invalidManifest,
+    'package.json format_version is not a lexical positive integer',
+  );
+  if (formatVersion !== '1') {
+    fail(
+      CODES.unsupportedPackageVersion,
+      `unsupported ${PACKAGE_PROFILE.split('/')[0]} version ${formatVersion}`,
+    );
+  }
+  ensure(
+    value.payload_format === 'tachiko.roproj' &&
+      memberScan.members.get('payload_format_version') === '1',
+    CODES.invalidManifest,
+    'package.json payload claim is missing, malformed, or unsupported by package v1',
   );
   ensure(
     typeof value.payload_root_sha256 === 'string' &&
@@ -589,8 +667,9 @@ function parsePortableManifest(bytes) {
 }
 
 function packageManifestRecord(container) {
+  const packageName = Buffer.from('package.json', 'ascii');
   const matches = container.localRecords.filter(
-    (record) => decodeEntryName(record.nameBytes) === 'package.json',
+    (record) => record.nameBytes.equals(packageName),
   );
   ensure(matches.length === 1, CODES.invalidManifest, 'package.json is missing or duplicated');
   const record = matches[0];
@@ -798,6 +877,25 @@ async function exactDirectoryNames(directory) {
 }
 
 async function readCanonicalRoprojV1(root) {
+  let rootMetadata;
+  let entitiesMetadata;
+  try {
+    rootMetadata = await lstat(root);
+    entitiesMetadata = await lstat(join(root, 'entities'));
+  } catch (error) {
+    fail(CODES.sourceNotCanonical, `cannot inspect canonical source directories: ${error.message}`);
+  }
+  ensure(
+    rootMetadata.isDirectory() && !rootMetadata.isSymbolicLink(),
+    CODES.sourceNotCanonical,
+    'source root is not an ordinary directory',
+  );
+  ensure(
+    entitiesMetadata.isDirectory() && !entitiesMetadata.isSymbolicLink(),
+    CODES.sourceNotCanonical,
+    'source entities/ is not an ordinary directory',
+  );
+
   let rootNames;
   let entityNames;
   try {
@@ -855,7 +953,8 @@ async function ensureDestinationAbsent(destination) {
   );
 }
 
-async function unpackAtomically(bytes, destination) {
+async function unpackAtomically(bytes, destination, options = {}) {
+  const beforePublish = options.beforePublish ?? (async () => {});
   await ensureDestinationAbsent(destination);
   const validated = validatePackageBytes(bytes);
   await mkdir(dirname(destination), { recursive: true });
@@ -863,6 +962,7 @@ async function unpackAtomically(bytes, destination) {
   try {
     stage = await mkdtemp(join(dirname(destination), '.portable-package-v1-unpack-'));
     await writeTree(stage, validated.tree);
+    await beforePublish({ destination, stage });
     await ensureDestinationAbsent(destination);
     await rename(stage, destination);
     stage = undefined;
@@ -875,7 +975,8 @@ async function unpackAtomically(bytes, destination) {
   return validated;
 }
 
-async function packAtomically(source, destination) {
+async function packAtomically(source, destination, options = {}) {
+  const beforePublish = options.beforePublish ?? (async () => {});
   await ensureDestinationAbsent(destination);
   const tree = await readCanonicalRoprojV1(source);
   const bytes = packCanonicalRoprojV1(tree);
@@ -890,10 +991,19 @@ async function packAtomically(source, destination) {
     } finally {
       await handle.close();
     }
+    await beforePublish({ destination, partial, stage });
     await ensureDestinationAbsent(destination);
-    await rename(partial, destination);
-    await rm(stage, { recursive: true });
+    try {
+      await link(partial, destination);
+    } catch (error) {
+      if (error.code === 'EEXIST') {
+        fail(CODES.destinationExists, `destination appeared during publication: ${destination}`);
+      }
+      throw error;
+    }
+    const publishedStage = stage;
     stage = undefined;
+    await rm(publishedStage, { recursive: true, force: true }).catch(() => {});
   } catch (error) {
     if (error instanceof ProbeFailure) throw error;
     fail(CODES.publicationFailed, `pack publication failed: ${error.message}`);
@@ -922,6 +1032,13 @@ function classifyRepresentation(bytes) {
   }
   const first = bytes.find((byte) => ![0x09, 0x0a, 0x0d, 0x20].includes(byte));
   return first === 0x7b ? 'direct_ro_json' : 'unknown';
+}
+
+function dispatchRepresentation(bytes, readers) {
+  const framing = classifyRepresentation(bytes);
+  if (framing === 'portable_package') return readers.portablePackage(bytes);
+  if (framing === 'direct_ro_json') return readers.directJson(bytes);
+  fail(CODES.invalidContainer, 'input does not have recognized package or direct-JSON framing');
 }
 
 function replacePackageManifest(entries, manifestBytes) {
@@ -1047,6 +1164,31 @@ async function runPressureTests(work, fixtureTree, canonicalBytes) {
     CODES.invalidManifest,
   );
 
+  const canonicalManifestText = portableManifestBytes(
+    packageManifest.payload_root_sha256,
+  ).toString('utf8');
+  const malformedVersionSpellings = [
+    ['fractionalVersion', '"format_version": 1.0,'],
+    ['exponentVersion', '"format_version": 1e0,'],
+    ['stringVersion', '"format_version": "1",'],
+    ['fractionalPayloadVersion', '"payload_format_version": 1.0,'],
+  ];
+  for (const [label, replacement] of malformedVersionSpellings) {
+    const member = label === 'fractionalPayloadVersion'
+      ? '"payload_format_version": 1,'
+      : '"format_version": 1,';
+    rejections[label] = await expectUnpackRejection(
+      buildCanonicalZip32(
+        replacePackageManifest(
+          entries,
+          Buffer.from(canonicalManifestText.replace(member, replacement), 'utf8'),
+        ),
+      ),
+      join(work, `reject-${label}.roproj`),
+      CODES.invalidManifest,
+    );
+  }
+
   const unsupportedManifest = { ...packageManifest, format_version: 2 };
   const unsupportedEntries = replaceEntryBody(
     replacePackageManifest(entries, prettyJsonBytes(unsupportedManifest)),
@@ -1056,6 +1198,16 @@ async function runPressureTests(work, fixtureTree, canonicalBytes) {
   rejections.unsupportedVersion = await expectUnpackRejection(
     buildCanonicalZip32(unsupportedEntries),
     join(work, 'reject-unsupported.roproj'),
+    CODES.unsupportedPackageVersion,
+  );
+  const unsupportedWithInvalidLaterName = unsupportedEntries.map((entry) =>
+    entry.name === 'payload/entities/f.jsonl'
+      ? { ...entry, name: `payload/entities/${String.fromCharCode(0xff)}.jsonl` }
+      : entry,
+  );
+  rejections.unsupportedVersionBeforeEntryDecode = await expectUnpackRejection(
+    buildCanonicalZip32(unsupportedWithInvalidLaterName),
+    join(work, 'reject-unsupported-invalid-name.roproj'),
     CODES.unsupportedPackageVersion,
   );
 
@@ -1151,6 +1303,24 @@ async function runPressureTests(work, fixtureTree, canonicalBytes) {
     join(work, 'reject-trailing.roproj'),
     CODES.invalidContainer,
   );
+  const splitEndRecord = Buffer.from(canonicalBytes);
+  splitEndRecord.writeUInt16LE(1, splitEndRecord.length - 18);
+  rejections.splitContainer = await expectUnpackRejection(
+    splitEndRecord,
+    join(work, 'reject-split-container.roproj'),
+    CODES.invalidContainer,
+  );
+  const splitEntryRecord = Buffer.from(canonicalBytes);
+  const canonicalContainer = parseZip32Container(canonicalBytes);
+  splitEntryRecord.writeUInt16LE(
+    1,
+    canonicalContainer.centralRecords[0].offset + 34,
+  );
+  rejections.splitEntryDisk = await expectUnpackRejection(
+    splitEntryRecord,
+    join(work, 'reject-split-entry.roproj'),
+    CODES.invalidContainer,
+  );
 
   const repacked = packCanonicalRoprojV1(await readCanonicalRoprojV1(unpacked));
   assert(repacked.equals(canonicalBytes), 'pack -> unpack -> pack bytes differ');
@@ -1188,6 +1358,30 @@ async function runPressureTests(work, fixtureTree, canonicalBytes) {
   );
   assert.equal(await readFile(occupiedPackDestination, 'utf8'), 'unchanged\n');
 
+  const racedUnpackDestination = join(work, 'raced-unpack.roproj');
+  rejections.unpackPublicationRace = await expectFailure(
+    () => unpackAtomically(canonicalBytes, racedUnpackDestination, {
+      beforePublish: async ({ destination }) => {
+        await mkdir(destination);
+        await writeFile(join(destination, 'sentinel'), 'raced\n');
+      },
+    }),
+    CODES.destinationExists,
+  );
+  assert.equal(
+    await readFile(join(racedUnpackDestination, 'sentinel'), 'utf8'),
+    'raced\n',
+  );
+
+  const racedPackDestination = join(work, 'raced-pack.ro');
+  rejections.packPublicationRace = await expectFailure(
+    () => packAtomically(hostA, racedPackDestination, {
+      beforePublish: async ({ destination }) => writeFile(destination, 'raced\n'),
+    }),
+    CODES.destinationExists,
+  );
+  assert.equal(await readFile(racedPackDestination, 'utf8'), 'raced\n');
+
   const invalidSource = join(work, 'invalid-source.roproj');
   await cp(EMPTY_ROPROJ_DIRECTORY, invalidSource, {
     recursive: true,
@@ -1201,12 +1395,82 @@ async function runPressureTests(work, fixtureTree, canonicalBytes) {
   );
   assert.equal(await pathExists(invalidPackDestination), false);
 
-  assert.equal(classifyRepresentation(canonicalBytes), 'portable_package');
-  assert.equal(
-    classifyRepresentation(Buffer.from(' {"format_version":2}\n')),
-    'direct_ro_json',
+  const symlinkedSource = join(work, 'symlinked-source.roproj');
+  await mkdir(symlinkedSource);
+  await cp(
+    join(EMPTY_ROPROJ_DIRECTORY, 'manifest.json'),
+    join(symlinkedSource, 'manifest.json'),
   );
-  assert.equal(classifyRepresentation(Buffer.from('not-a-format')), 'unknown');
+  await cp(
+    join(EMPTY_ROPROJ_DIRECTORY, 'schemas.json'),
+    join(symlinkedSource, 'schemas.json'),
+  );
+  await symlink(
+    join(EMPTY_ROPROJ_DIRECTORY, 'entities'),
+    join(symlinkedSource, 'entities'),
+    'dir',
+  );
+  const symlinkedPackDestination = join(work, 'symlinked-source.ro');
+  rejections.symlinkedSource = await expectFailure(
+    () => packAtomically(symlinkedSource, symlinkedPackDestination),
+    CODES.sourceNotCanonical,
+  );
+  assert.equal(await pathExists(symlinkedPackDestination), false);
+
+  const packageDispatch = dispatchRepresentation(canonicalBytes, {
+    portablePackage: validatePackageBytes,
+    directJson: () => assert.fail('valid package fell back to direct JSON'),
+  });
+  assert.equal(packageDispatch.payloadRootSha256, payloadRootSha256(fixtureTree));
+  const directDispatch = dispatchRepresentation(Buffer.from(' {"format_version":2}\n'), {
+    portablePackage: () => assert.fail('direct JSON fell back to package parsing'),
+    directJson: () => 'direct_ro_json',
+  });
+  assert.equal(directDispatch, 'direct_ro_json');
+
+  let malformedPackageDirectCalls = 0;
+  await expectFailure(
+    async () => dispatchRepresentation(Buffer.from([0x50, 0x4b, 0x03, 0x04]), {
+      portablePackage: validatePackageBytes,
+      directJson: () => {
+        malformedPackageDirectCalls += 1;
+      },
+    }),
+    CODES.invalidContainer,
+  );
+  assert.equal(malformedPackageDirectCalls, 0);
+
+  let malformedDirectPackageCalls = 0;
+  const directFailure = new Error('probe direct-JSON reader rejected malformed input');
+  assert.throws(
+    () => dispatchRepresentation(Buffer.from(' {not-json'), {
+      portablePackage: () => {
+        malformedDirectPackageCalls += 1;
+      },
+      directJson: () => {
+        throw directFailure;
+      },
+    }),
+    (error) => error === directFailure,
+  );
+  assert.equal(malformedDirectPackageCalls, 0);
+
+  let prependedReaderCalls = 0;
+  await expectFailure(
+    async () => dispatchRepresentation(
+      Buffer.concat([Buffer.from([0]), canonicalBytes]),
+      {
+        portablePackage: () => {
+          prependedReaderCalls += 1;
+        },
+        directJson: () => {
+          prependedReaderCalls += 1;
+        },
+      },
+    ),
+    CODES.invalidContainer,
+  );
+  assert.equal(prependedReaderCalls, 0);
 
   return {
     repeatedPackByteIdentical: true,
@@ -1223,7 +1487,9 @@ async function runPressureTests(work, fixtureTree, canonicalBytes) {
     contentFraming: {
       package: 'portable_package',
       directJson: 'direct_ro_json',
-      malformedPackageFallback: false,
+      malformedPackageFallback: malformedPackageDirectCalls !== 0,
+      malformedDirectJsonFallback: malformedDirectPackageCalls !== 0,
+      prependedPackageAccepted: prependedReaderCalls !== 0,
     },
   };
 }

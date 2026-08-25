@@ -14,6 +14,9 @@ Specified by: [`portable-package-v1.md`](../specs/portable-package-v1.md)
 
 Related authority: ADR-0003, ADR-0015, ADR-0017, and ADR-0023
 
+Tracking issue: [#3](https://github.com/nurockplayer/tachiko-work/issues/3)
+for production codecs and CLI implementation
+
 ## Context
 
 ADR-0003 makes `.roproj` the canonical editable, Git-native materialization
@@ -314,8 +317,9 @@ The [Issue #43 evidence record](../research/2026-08-26-portable-package-v1.md)
 documents the standards mapping, golden vector, external ZIP-tool check, and
 all required pressure tests. The disposable Node probe manually writes and
 parses ZIP32 records without a ZIP dependency, then checks determinism,
-corruption paths, fail-closed dispatch, exact round trips, atomic publication,
-tracked-source mismatch, content framing, and all zero-byte shards.
+corruption paths, fail-closed dispatch, exact round trips, staged publication
+and injected destination-race rejection, tracked-source mismatch, content
+framing, and all zero-byte shards.
 
 ## Related
 

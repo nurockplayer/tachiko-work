@@ -8,6 +8,9 @@ Decision state: Evidence / Hypothesis; authority is promoted only by
 
 Decision issue: [#43](https://github.com/nurockplayer/tachiko-work/issues/43)
 
+Tracking issue: [#3](https://github.com/nurockplayer/tachiko-work/issues/3)
+for production implementation
+
 Repository baseline: `main@6b53565d6a2e61a629b02ac8173993424543b260`
 
 ## Question and boundary
@@ -107,9 +110,16 @@ different leaves because each leaf includes its canonical relative path.
 The disposable Node probe
 [`issue-43-portable-package-v1.mjs`](probes/issue-43-portable-package-v1.mjs)
 uses only Node standard-library primitives. It manually writes and parses the
-selected ZIP32 records, calculates CRC-32 and SHA-256, performs disposable
-atomic publication, and validates the checked-in fixture. It is deliberately
-not a production codec or reusable product API.
+selected ZIP32 records, calculates CRC-32 and SHA-256, stages disposable
+publication, injects late destination races, and validates the checked-in
+fixture. It is deliberately not a production codec or reusable product API.
+
+The injected pre-publication seam proves that a destination discovered after
+preparation is rejected unchanged and that staged output is cleaned. It does
+not claim Node's directory `rename` is a cross-platform atomic no-replace
+primitive or prescribe the production host mechanism. A production
+implementation must select a host primitive that satisfies the normative
+no-overwrite/publication contract; that mechanism remains Provisional.
 
 The canonical source fixture is
 [`empty.roproj/`](fixtures/issue-43-portable-package-v1/empty.roproj/manifest.json).
@@ -146,6 +156,7 @@ authority.
 | Recompute CRC but retain stale root | `portable_package.integrity_mismatch`; no destination |
 | Missing, malformed, or duplicate package metadata | Explicit invalid-manifest failure |
 | Unsupported package version | Unsupported-version failure before payload decoding |
+| Unsupported version plus a later malformed entry name | Unsupported version still wins before entry decoding |
 | Unknown package metadata | Explicit invalid-manifest failure |
 | Missing, unknown, duplicate, or aliased entry | Entry-set mismatch |
 | Package versus disagreeing tracked source | Source mismatch; neither side mutated |
@@ -154,13 +165,17 @@ authority.
 | Pack → unpack → pack | Byte-identical |
 | All required empty shards | All present, zero bytes, and included as distinct leaves |
 | Existing pack or unpack destination | Rejected and left unchanged |
+| Destination appears at the pre-publication seam | Rejected and raced destination left unchanged |
 | Noncanonical pack source | Rejected without artifact publication |
+| Symlinked canonical source directory | Rejected without artifact publication |
 | Prepended/trailing framing variation | Invalid-container failure |
+| Split EOCD or per-entry disk selection | Invalid-container failure |
 | Malformed package after package framing | No direct-JSON fallback |
 
 The probe also checks local/central agreement, exact entry order, zero extras
-and comments, canonical manifest spelling, inner payload-profile agreement,
-source non-mutation, and absent partial destinations.
+and comments, lexical version spelling, canonical manifest spelling, inner
+payload-profile agreement, source non-mutation, and absent partial
+destinations.
 
 Reproduce the complete evidence run with:
 
