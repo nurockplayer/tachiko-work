@@ -64,8 +64,10 @@ ADR-0026 defines the current MVP boundary:
 - It is consumed atomically with successful semantic publication; failure
   before publication does not consume it.
 - A changed proposal/write scope/mutation-class set, stale base, changed
-  principal, invalid authorizing Approve Grant, insufficient live Execute
-  authority, Approval expiry/revocation, or consumption requires new approval.
+  principal, invalid authorizing Approve Grant, Approval expiry/revocation, or
+  consumption requires new approval. Insufficient live Execute authority denies
+  the current execution attempt; a still-Active Approval may be retried after
+  the bound executor obtains sufficient live Execute authority.
 - Validation and operation gates remain independent authority and cannot be
   overridden by approval.
 

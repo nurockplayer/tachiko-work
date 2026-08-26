@@ -162,7 +162,7 @@ Execute. Approve does not imply Execute. Execute does not imply Approve.
 Unknown actions fail closed.
 
 ADR-0020 remains Execute meaning. This specification requires an exact
-SemanticPatch for a Delegated-origin or Delegated-execution approval path; it
+SemanticPatch for a Delegated-origin or Delegated-authority approval path; it
 does not require an ordinary directly authenticated Human editing operation to
 introduce a reviewable proposal when no policy requires one.
 
@@ -343,8 +343,9 @@ For one proposal:
 
 1. One Human approver must have live Approve authority covering the complete
    canonical-write scope and mutation classes.
-2. The named executor must have live Execute authority covering the same
-   requirement.
+2. Approval binds the named executor exactly. The trusted boundary checks that
+   executor's live Execute authority immediately before publication, not as an
+   issuance-time prerequisite.
 3. Approval covers the exact whole Command or AtomicBatch.
 4. Partial-batch approval and combining partial approvers are forbidden.
 5. Quorum, approval chains, standing/reusable policies, and autonomous
@@ -374,6 +375,7 @@ Approval additionally records:
 
 ```text
 ApprovalId
+HumanApproverPrincipalId
 IssuedAt
 finite ExpiresAt
 Approve Grant references used at issuance
@@ -524,13 +526,12 @@ allow iff:
   AND approver is authenticated Human
   AND live Approve Grants cover the complete requirement
   AND named executor is active
-  AND live Execute Grants cover the complete requirement
   AND finite expiry + supported policy version are recorded
 ```
 
 The trusted record captures ApprovalBinding and issuance Grant references.
 
-### Authorize delegated Execute
+### Authorize approval-gated Execute
 
 ```text
 1. Load the trusted immutable proposal and Approval by ID.
@@ -571,7 +572,6 @@ OriginatorPrincipalId
 Propose Grant references
 AuthorizationFootprint
 AuthorizationPolicyVersion
-ProposedAt
 ```
 
 When available, retain structured agent/provider/model/tool/orchestrator
@@ -584,6 +584,7 @@ At minimum:
 
 ```text
 ApprovalId + ApprovalBinding
+HumanApproverPrincipalId
 Approve Grant references used at issuance
 IssuedAt + ExpiresAt
 revocation/use evidence
@@ -603,9 +604,7 @@ CanonicalWriteScope + RequiredMutationClasses
 AuthorizationPolicyVersion
 base semantic revision + resulting semantic revision
 authoritative gate/report reference
-ExecutedAt + execution outcome
 Approval terminal state Consumed
-actual agent/provider/model/tool snapshot when known
 ```
 
 Additional laws:
@@ -613,7 +612,7 @@ Additional laws:
 1. The immutable proposal or a durable lossless reference MUST survive; a
    digest alone would not explain what was approved.
 2. Provider/model change does not alter authority when trusted principals and
-   ApprovalBinding are unchanged, but changed facts are recorded.
+   ApprovalBinding are unchanged.
 3. Full prompts, hidden reasoning, credentials, secrets, and complete chat
    transcripts are not minimum provenance.
 4. Provenance MUST NOT be written into `.roproj` merely to make it durable.
