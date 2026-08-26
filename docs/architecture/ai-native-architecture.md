@@ -59,7 +59,7 @@ ADR-0026 defines the current MVP boundary:
   authority requires one exact Human Approval.
 - Approval binds the proposal occurrence, complete ADR-0024
   `ExactChangeBinding`, originator, exact executor, complete associated
-  action/class/scope write requirements, and authorization-policy version. The
+  mutation-class/scope write requirements, and authorization-policy version. The
   trusted record also identifies the Human approver and authorizing Approve
   Grants.
 - Approval has finite lifetime, is revocable, and can authorize at most one

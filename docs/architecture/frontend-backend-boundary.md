@@ -62,7 +62,8 @@ The shared semantic/application runtime owns:
 - semantic validation and authoritative operation gates;
 - ADR-0020 typed semantic Commands and Queries;
 - Propose/Execute semantic behavior and ADR-0024 SemanticPatch binding;
-- trusted derivation of ADR-0026 disclosure/write footprints;
+- trusted derivation of ADR-0026 disclosure scope and associated
+  mutation-class/write-scope requirements;
 - live scoped-Grant and exact-Approval checks at a trusted boundary that is not
   only UI or `ai-api` convention;
 - semantic comparison/merge orchestration;

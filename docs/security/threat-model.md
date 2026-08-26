@@ -104,8 +104,9 @@ independent authorization contract.
 - Effective principal identity comes from a trusted host/session boundary.
 - Authorization is default-deny and based on explicit immutable,
   non-reusable Grant occurrences with terminal trusted revocation state.
-- Grant coverage preserves action/class/scope associations; independent unions
-  cannot manufacture crossed authority.
+- Grant coverage combines the requested action with each associated
+  mutation-class/scope requirement; independent unions cannot manufacture
+  crossed authority.
 - Query, Propose, Approve, and Execute are independent actions.
 - Value, Formula, Structure, Schema, and Destructive mutation authority are
   independently grantable and additive.
@@ -120,9 +121,9 @@ independent authorization contract.
   authority requires exact Approval from one authorized Human principal.
 - Approval binds one proposal occurrence, complete ADR-0024
   `ExactChangeBinding`, originator, exact executor, complete associated
-  action/class/scope write requirements, and authorization-policy version; the
-  trusted record also identifies the Human approver and authorizing Approve
-  Grants.
+  mutation-class/scope write requirements, and authorization-policy version;
+  the trusted record also identifies the Human approver and authorizing
+  Approve Grants.
 - Approval has finite lifetime, is revocable, and can authorize at most one
   successful semantic publication.
 - Successful semantic publication consumes Approval atomically; failure before

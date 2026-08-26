@@ -37,8 +37,8 @@ the provider-neutral MVP contract:
 - independent Query, Propose, Execute, and Approve capabilities;
 - Value, Formula, Structure, Schema, and Destructive mutation classes;
 - stable-ID Document, Schema, SchemaField, Entity, and EntityField scopes;
-- trusted `AuthorizationFootprint` derivation with associated class/scope
-  coverage;
+- trusted `AuthorizationFootprint` derivation with associated
+  mutation-class/scope coverage combined with the requested action;
 - explicit non-reusable Grants with per-use validity checks, authorizing
   Approve-reference rechecks, and fresh Execute coverage;
 - structural exact binding to ADR-0024 `SemanticPatch` and

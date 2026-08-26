@@ -210,10 +210,11 @@ proposal/revision Rust types, ID generation, transport, and lifecycle mechanics
 remain Provisional or owned by #29/#93.
 
 ADR-0026 adds the **authorization law** beside that application boundary. The
-trusted semantic/application authority derives disclosure scope, canonical
-write scope, and mutation classes from typed meaning and relevant
-base/candidate relationships. Trusted composition then enforces live scoped
-Grants and exact Human Approval for Delegated-origin or Delegated-authority
+trusted semantic/application authority derives disclosure scope and associated
+mutation-class/canonical-write-scope requirements from typed meaning and
+relevant base/candidate relationships. Trusted composition combines the
+requested action with each associated pair, then enforces live scoped Grants
+and exact Human Approval for Delegated-origin or Delegated-authority
 publication. Exact module/crate
 placement remains Provisional, but enforcement must not live only in `ai-api`,
 UI, or client convention, and authorization state must not become

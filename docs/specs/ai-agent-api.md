@@ -126,7 +126,7 @@ For AI:
 - delegated permission does not override a failed semantic gate;
 - Delegated-origin or Delegated-authority publication requires one exact finite
   Human Approval covering the whole proposal/batch, originator, authorized
-  executor, complete associated action/class/scope write requirements, and
+  executor, complete associated mutation-class/scope write requirements, and
   policy version, while separately recording the trusted Human approver and
   authorizing Approve Grant references;
 - approval or a previous gate result does not authorize a changed proposal,

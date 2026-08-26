@@ -109,10 +109,11 @@ Grant content.
 
 ### Authorization footprint
 
-The complete disclosure scope and associated action/class/scope write
+The complete disclosure scope and associated mutation-class/scope write
 requirements derived by the trusted semantic/application authority for an
-operation and its relevant base/candidate relationships. Flattened write-scope
-and mutation-class sets are summaries of that relation.
+operation and its relevant base/candidate relationships. The requested action
+is authorization-check context, not a member of that bound relation. Flattened
+write-scope and mutation-class sets are summaries of the relation.
 
 ### Approval
 
@@ -260,10 +261,12 @@ AuthorizationFootprint
 - RequiredMutationClasses
 ```
 
-`AssociatedWriteRequirements` retains every required `(action, mutation class,
-scope)` association. `CanonicalWriteScope` and `RequiredMutationClasses` are
-review/provenance summaries of that relation, not independently unionable
-permission sets. Exact representation remains Provisional.
+`AssociatedWriteRequirements` retains every required `(mutation class, scope)`
+pair. At a Propose, Approve, or Execute check, the requested action is combined
+with every pair for coverage. `CanonicalWriteScope` and
+`RequiredMutationClasses` are review/provenance summaries of that relation,
+not independently unionable permission sets. Exact representation remains
+Provisional.
 
 Normative laws:
 
@@ -271,8 +274,9 @@ Normative laws:
    typed operation meaning and relevant base/candidate relationships.
 2. A client, model, prompt, or request-supplied footprint is untrusted and MUST
    NOT reduce the derived requirement.
-3. Mutation authorization MUST retain each associated `(action, mutation
-   class, scope)` requirement. Flattened CanonicalWriteScope and
+3. Mutation authorization MUST retain each associated `(mutation class,
+   scope)` requirement. The requested Propose, Approve, or Execute action MUST
+   be checked with every pair. Flattened CanonicalWriteScope and
    RequiredMutationClasses are review summaries, not coverage proof and not
    permission to form their Cartesian product.
 4. AtomicBatch uses the union of every member Command's associated
@@ -318,10 +322,11 @@ Normative laws:
 4. A Delegated principal MUST NOT self-grant, expand, or transitively delegate
    authority.
 5. Authorization is allow-only and default-deny.
-6. Each derived `(action, mutation class when applicable, scope)` association
-   MUST be covered by one same live Grant. Different Grants MAY cover different
-   associated requirements, but independently unioning their capabilities,
-   classes, and scopes MUST NOT create crossed authority.
+6. For a requested mutation action, each derived `(mutation class, scope)` pair
+   MUST be covered together with that action by one same live Grant. Different
+   Grants MAY cover different associated requirements, but independently
+   unioning their capabilities, classes, and scopes MUST NOT create crossed
+   authority.
 7. A Grant covers only its fixed subject in its AuthorizationDomain. A
    same-spelled GrantId from another domain or a Grant for another subject
    grants nothing to the effective principal.
@@ -368,8 +373,8 @@ Query and Propose require Grants but no Approval.
 
 For one proposal:
 
-1. One Human approver must have live Approve authority covering every associated
-   action/class/scope write requirement.
+1. One Human approver must have live Approve authority covering every
+   associated mutation-class/scope write requirement.
 2. Approval binds the named executor exactly. The trusted boundary checks that
    executor's live Execute authority immediately before publication, not as an
    issuance-time prerequisite.
@@ -416,7 +421,7 @@ Normative laws:
 4. The trusted boundary MUST structurally verify the retained immutable
    proposal and the complete ExactChangeBinding defined by ADR-0024.
 5. Approval binds exact originator, executor, complete associated
-   action/class/scope write requirements, and policy version. Flattened
+   mutation-class/scope write requirements, and policy version. Flattened
    CanonicalWriteScope and RequiredMutationClasses MAY be retained as review or
    provenance summaries but MUST NOT replace the bound relation. The Approval
    record separately identifies the trusted Human approver.
@@ -769,7 +774,7 @@ authorized disclosure scope.
 | Closed document-local stable-ID scope concepts and containment | Accepted MVP contract |
 | Project/workspace/org/tenant/predicate scope | Deferred |
 | Trusted AuthorizationFootprint derivation | Accepted |
-| Associated action/class/scope coverage without crossed-Grant or Approval unions | Accepted |
+| Associated mutation-class/scope coverage, combined with the requested action, without crossed-Grant or Approval unions | Accepted |
 | Immutable, non-reusable, default-deny Grant occurrences with terminal revocation | Accepted |
 | Grant registry/admin/DTO/clock representation | Provisional |
 | Exact Human Approval for Delegated-origin or Delegated-authority publication | Accepted current MVP policy |

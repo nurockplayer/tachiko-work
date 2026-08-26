@@ -365,7 +365,8 @@ revealed by preview, diff, dependencies, impact, and diagnostics. Propose
 authority does not grant arbitrary Query authority: evidence outside live Query
 scope MUST be denied or safely reduced. The client cannot authoritatively
 declare its own footprint. Mutation coverage retains each associated
-action/class/scope requirement; independently unioning class and scope sets
+mutation-class/scope requirement; the requested action is combined with every
+pair at its authorization check. Independently unioning class and scope sets
 cannot authorize crossed combinations that no live Grant covers.
 
 Once proposal identity is issued, validation, review, rejection, or stale
