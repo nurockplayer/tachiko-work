@@ -316,6 +316,14 @@ Every retry rechecks expiry, revocation, Grants, exact base,
 `ExactChangeBinding`, associated mutation-class/scope write requirements,
 policy version, and authoritative semantic gate.
 
+At the publication boundary, semantic publication and Approval consumption are
+conditional on every required principal occurrence, authorizing Approve Grant
+reference, sufficient Execute Grant set, Approval state, exact semantic base,
+and authoritative gate result still being valid. Revocation, expiry,
+disablement, consumption, base advance, or gate invalidation racing with
+execution prevents publication. If the trusted boundary cannot prove that the
+complete conjunction still holds, it fails closed and publishes nothing.
+
 Before use, approval can be revoked by its approver, a referenced Grant issuer,
 or the trusted authorization authority. Loss of verifier use/revocation state
 fails closed. An ephemeral or session-bound approval becomes invalid when its
@@ -323,7 +331,9 @@ verifier state no longer exists. A stale or re-proposed patch requires a new
 Approval. Replay of a consumed Approval returns a machine-distinguishable
 denial.
 
-#29 owns concrete state storage and atomic consume-with-publication mechanics.
+#29/#93 own concrete reservation, locking, transaction, revision, and
+state-installation mechanics. This ADR fixes only the observable conditional
+publication guarantee.
 
 ### 9. Approval becomes unusable without publication
 
@@ -348,6 +358,20 @@ Approval may remain as historical evidence after becoming stale or unusable,
 but cannot authorize another proposal or base.
 
 ### 10. Execute is a conjunction, not a shortcut
+
+ADR-0024 requires the trusted application/runtime boundary to compare the
+current semantic context with the proposal base before re-evaluating,
+authorizing, or executing an existing proposal and before candidate
+construction against a changed base. Approval-gated Execute performs that
+comparison internally first and retains the result without disclosure.
+
+Internal stale detection grants no right to learn proposal or revision state.
+The boundary next authenticates and matches the Approval-bound executor and
+verifies the complete trusted proposal/Approval binding. An unauthenticated,
+unbound, or mismatched caller receives only a disclosure-safe authorization or
+binding denial. Only after those checks may the boundary expose the retained
+`Stale` outcome, and any details remain limited by Query authority. This
+detect-versus-disclose distinction preserves ADR-0024 without amending it.
 
 Before delegated publication, all of these independent requirements hold:
 
@@ -495,6 +519,23 @@ Future implementation must preserve these representation-neutral outcomes:
     replacement subject receives a new PrincipalId and cannot inherit the
     original occurrence's Grants, Approval originator/executor bindings, or
     provenance through a reused login, email, provider identifier, or alias.
+20. **Grant revocation races publication** — revoking a required authorizing
+    Approve Grant or relied-upon Execute Grant after the ordinary gate check but
+    before publication prevents publication and Approval consumption.
+21. **Principal disablement races publication** — disabling any required
+    principal occurrence after the ordinary gate check but before publication
+    prevents publication and Approval consumption.
+22. **Approval state races publication** — concurrent revocation, expiry, or
+    consumption of Approval prevents another publication.
+23. **Base advance races publication** — any intervening semantic revision
+    change before publication prevents candidate installation and leaves the
+    proposal stale.
+24. **Unauthorized stale probing** — an unauthenticated or wrong executor
+    cannot distinguish current, stale, missing, or mismatched proposal state
+    and receives only a disclosure-safe authorization denial.
+25. **Cross-proposal stale probing** — even the bound executor cannot use a
+    mismatched ProposalId or ApprovalBinding to probe another proposal through
+    `Stale`; binding mismatch denies before stale disclosure.
 
 ## Stability classification
 
@@ -516,7 +557,9 @@ Accepted:
   binding;
 - authorizing Approve Grant references remain live, with fresh executor
   authority rechecks before Execute;
-- finite Approval consumed atomically with at most one successful publication;
+- finite Approval consumed atomically with at most one successful publication,
+  and only while the complete publication-boundary authorization condition
+  remains valid;
 - revocation, fail-closed lost state, and replay denial;
 - trusted structural exact binding for the MVP;
 - minimum proposal/execution provenance; and

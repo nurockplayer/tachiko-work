@@ -327,6 +327,19 @@ that context with the proposal base. A mismatch is `Stale` and MUST:
 - perform no implicit rebase, merge, retarget, or best-effort replay; and
 - leave the immutable proposal unchanged.
 
+For approval-gated Execute, this ordering governs internal stale detection and
+candidate construction, not permission to disclose the result. The
+authorization layer MUST retain the base comparison internally while it
+authenticates the caller and verifies the complete trusted proposal/Approval
+binding. An unauthenticated, unbound, or mismatched caller receives only a
+disclosure-safe authorization or binding denial. Only an authenticated bound
+executor with a verified complete binding may receive `Stale`, and
+current-revision or other semantic details still require sufficient Query
+authority. Delaying disclosure in this way does not delay the ADR-0024
+comparison or permit re-evaluation or candidate construction against a changed
+base. Non-Approval paths remain subject to their applicable authentication and
+disclosure policy without acquiring an Approval requirement from this rule.
+
 Re-proposing against a newer base re-runs command construction/binding and
 authoritative Propose evaluation and receives a new proposal identity. Exact
 revision-token types, equality mechanics, session scope, persistence,

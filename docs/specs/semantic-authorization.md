@@ -524,6 +524,14 @@ Active -> Consumed | Revoked | Expired
   gate check.
 - A consumed ApprovalId MUST fail replay without publication.
 - Concurrent attempts MUST NOT both publish successfully.
+- At the publication boundary, semantic publication and Approval consumption
+  MUST remain conditional on every required principal occurrence, authorizing
+  Approve Grant reference, sufficient Execute Grant set, Approval state, exact
+  semantic base, and authoritative gate result still being valid.
+- Revocation, expiry, principal disablement, Approval consumption, base advance,
+  or gate invalidation racing with execution MUST prevent publication.
+- If the trusted boundary cannot prove that complete conjunction at the
+  publication boundary, it MUST fail closed and publish nothing.
 - Approval reservation, locking, and atomic-consumption coordination remain #29
   implementation work. Concrete revision concurrency and state installation
   remain #93 work; broader transaction/recovery and history protocols remain
@@ -586,37 +594,48 @@ references used at issuance.
 ### Authorize approval-gated Execute
 
 ```text
-1. Authenticate the caller, load the trusted immutable proposal and Approval
-   internally by opaque ID, and require caller == bound executor. An
+1. Load the trusted immutable proposal and Approval internally by opaque ID.
+   Before re-evaluation, authorization, execution, or candidate construction
+   against a changed base, compare the current semantic revision with the
+   proposal base under ADR-0024. Retain the result without disclosing it.
+2. Authenticate the caller and require caller == Approval-bound executor. An
    unauthenticated or unbound caller receives only a disclosure-safe
-   authorization denial.
-2. Reject unsupported Semantic API or authorization-policy versions.
-3. Verify proposal identity/content and complete ADR-0024 ExactChangeBinding.
-4. Rederive associated canonical-write-scope and mutation-class requirements
-   from typed meaning.
-5. Verify exact ApprovalBinding equality, including authorization domain,
-   ProposalId, originator, executor, ExactChangeBinding, complete associated
-   write requirements, and authorization-policy version. A mismatch receives
-   only a disclosure-safe binding denial.
-6. Compare current semantic revision with the proposal base; return Stale on
-   mismatch before candidate construction against the changed base.
-7. Recheck originator, approver, authorizing Approve Grant references,
-   executor, and sufficient current live Execute Grants.
-8. Recheck expiry, revocation, and use state.
-9. Re-run authoritative semantic preconditions, validation/calculation, and
+   authorization denial, regardless of the retained base result.
+3. Reject unsupported Semantic API or authorization-policy versions. Verify
+   trusted immutable proposal identity/content, complete ADR-0024
+   ExactChangeBinding, retained relational AuthorizationFootprint, and exact
+   ApprovalBinding equality, including authorization domain, ProposalId,
+   originator, executor, complete associated write requirements, and policy
+   version. A mismatch receives only a disclosure-safe binding denial.
+4. Only after steps 2-3, expose the retained Stale outcome when the base did not
+   match, before any candidate construction against the changed base. Stale
+   details require sufficient Query authority.
+5. For a current base, rederive associated canonical-write-scope and
+   mutation-class requirements from typed meaning and require equality with the
+   bound trusted footprint.
+6. Recheck originator, approver, authorizing Approve Grant references,
+   executor, sufficient current live Execute Grants, Approval expiry,
+   revocation, and use state.
+7. Re-run authoritative semantic preconditions, validation/calculation, and
    operation gate.
-10. Atomically publish all semantic state and mark Approval Consumed, or
-    publish none and leave it unconsumed when failure is known to precede
-    publication.
-11. Return a disclosure-safe outcome, resulting revision on success, and
+8. At the publication boundary, condition semantic publication and Approval
+   consumption on all required principals, authorizing Approve Grant
+   references, sufficient Execute Grants, Approval state, exact base, and
+   authoritative gate result still being valid. If any raced or cannot be
+   proven valid, publish nothing.
+9. When the complete condition holds, atomically publish all semantic state and
+   mark Approval Consumed.
+10. Return a disclosure-safe outcome, resulting revision on success, and
     minimum provenance.
 ```
 
-After the executor and complete ApprovalBinding checks, `Stale` identifies only
-the bound proposal's status; it MUST NOT reveal the current revision or other
-semantic facts without sufficient Query authority. Exact failure precedence
-and side-channel hardening remain #30 implementation work. An earlier preview,
-rendered diff, client gate result, or model claim is not authority for step 9.
+The ADR-0024 comparison in step 1 is an internal semantic precondition check,
+not authorization to disclose proposal state. After the executor and complete
+ApprovalBinding checks, `Stale` identifies only the bound proposal's status; it
+MUST NOT reveal the current revision or other semantic facts without sufficient
+Query authority. Exact failure precedence and side-channel hardening remain #30
+implementation work. An earlier preview, rendered diff, client gate result, or
+model claim is not authority for step 7 or publication under step 8.
 
 ## Minimum provenance contract
 
@@ -783,6 +802,21 @@ authorized disclosure scope.
     and cannot inherit the original occurrence's Grants, Approval
     originator/executor bindings, or provenance through a reused login, email,
     provider identifier, or alias.
+29. Revoking a required authorizing Approve Grant or relied-upon Execute Grant
+    after the ordinary gate check but before publication prevents publication
+    and Approval consumption.
+30. Disabling any required principal after the ordinary gate check but before
+    publication prevents publication and Approval consumption.
+31. Concurrent Approval revocation, expiry, or consumption prevents another
+    publication.
+32. Any base revision change before publication prevents candidate installation
+    and leaves the proposal stale.
+33. An unauthenticated or wrong executor cannot distinguish current, stale,
+    missing, or mismatched proposal state and receives only a disclosure-safe
+    authorization denial.
+34. A bound executor with a mismatched ProposalId or ApprovalBinding cannot
+    probe another proposal through Stale; binding mismatch denies before stale
+    disclosure.
 
 ## Stability classification
 
@@ -811,7 +845,7 @@ authorized disclosure scope.
 | Portable/offline Approval protocol | Deferred |
 | Finite expiry with no fixed TTL | Accepted law / Provisional value |
 | Explicit revocation and fail-closed unverifiable state | Accepted |
-| At-most-once successful publication and replay denial | Accepted |
+| At-most-once conditional publication and consumption while the complete publication-boundary authorization condition remains valid, plus replay denial | Accepted |
 | Approval reservation/locking/atomic-consumption mechanics | #29 Provisional implementation |
 | Concrete revision concurrency/state-installation mechanics | #93 Provisional implementation |
 | Minimum proposal/approval/execution provenance | Accepted |
