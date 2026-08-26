@@ -44,6 +44,11 @@ All notable changes to Tachiko Work are documented in this file.
   affected-area analysis, and validation findings through shared Rust queries
   and structured CLI JSON. Results carry caller-owned source-state labels and
   document identity without introducing mutation or revision semantics.
+- An Accepted `tachiko.portable-package/v1` specification and executable
+  evidence fix one deterministic ZIP32 envelope over exact `.roproj/v1`
+  bytes, a path-separated SHA-256 payload root, exact byte round trips, and
+  tracked-source conflict behavior. Production `.roproj` and packaged-`.ro`
+  codecs and CLI pack/unpack remain unimplemented.
 - An executed production-semantic conformance corpus compares normalized
   values, complete formula failures, stable diagnostic observations,
   dependency/SCC results, and stable formula projection byte-for-byte on native

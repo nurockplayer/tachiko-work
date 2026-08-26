@@ -31,9 +31,10 @@ This path is used by the current CLI, semantic diff/merge, validation, formula
 authoring, and product smoke journeys.
 
 This is a transitional implementation state, not a reversal of ADR-0003.
-ADR-0023 fixes the `.roproj/v1` durable representation contract, but its
-production materializer and the deterministic `.roproj` ↔ `.ro` pack/unpack
-path are not yet implemented.
+ADR-0023 fixes the `.roproj/v1` durable representation contract. ADR-0025
+fixes the deterministic portable-package v1 envelope and integrity root over
+that exact tree. The production `.roproj` materializer, packaged-`.ro` codec,
+and `.roproj` ↔ `.ro` pack/unpack path are not yet implemented.
 
 ## Target Git working representation
 
@@ -55,10 +56,32 @@ layout and DTO contracts live in
 [`roproj-layout-v1.md`](../specs/roproj-layout-v1.md) and
 [`roproj-format.md`](../specs/roproj-format.md).
 
+## Target portable representation
+
+Portable package v1 is a derived 19-entry, store-only ZIP32 envelope:
+
+```text
+project.ro
+├── package.json
+└── payload/              # exact canonical .roproj/v1 files
+```
+
+`package.json` selects `tachiko.portable-package/v1`, claims the
+`tachiko.roproj/v1` payload, and records a path-separated SHA-256 root over all
+18 exact payload files. The package adds no semantic DTO. Its fixed metadata,
+entry order, lossless pack/unpack laws, content framing, and tracked-source
+conflict behavior are normative in
+[`portable-package-v1.md`](../specs/portable-package-v1.md).
+
+When a verified package and a canonical tracked `.roproj` have different
+payload roots, the tracked tree remains authoritative. Neither side is
+automatically overwritten, synchronized, or merged.
+
 ## Rule
 
 - Current product behavior must document `.ro` as the implemented v0.1 persistence format.
 - Architecture documents must document `.roproj` as the Accepted canonical editable target under ADR-0003.
 - `.roproj/v1` documents must follow ADR-0023's Accepted physical and wire contract without treating paths, shard names, or line numbers as semantic identity.
+- Portable package v1 implementations must consume ADR-0025's exact envelope and integrity contract without introducing another semantic schema.
 - `.ro` packaging sophistication must not block semantic-core or user-workflow validation.
 - The system does not yet provide deterministic `.ro` ↔ `.roproj` conversion.
