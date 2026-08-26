@@ -592,27 +592,31 @@ references used at issuance.
    authorization denial.
 2. Reject unsupported Semantic API or authorization-policy versions.
 3. Verify proposal identity/content and complete ADR-0024 ExactChangeBinding.
-4. Compare current semantic revision with the proposal base; return Stale on
-   mismatch before candidate construction against the changed base.
-5. Rederive associated canonical-write-scope and mutation-class requirements
+4. Rederive associated canonical-write-scope and mutation-class requirements
    from typed meaning.
-6. Recheck originator, approver, authorizing Approve Grant references,
+5. Verify exact ApprovalBinding equality, including authorization domain,
+   ProposalId, originator, executor, ExactChangeBinding, complete associated
+   write requirements, and authorization-policy version. A mismatch receives
+   only a disclosure-safe binding denial.
+6. Compare current semantic revision with the proposal base; return Stale on
+   mismatch before candidate construction against the changed base.
+7. Recheck originator, approver, authorizing Approve Grant references,
    executor, and sufficient current live Execute Grants.
-7. Recheck expiry, revocation, use state, and exact ApprovalBinding equality.
-8. Re-run authoritative semantic preconditions, validation/calculation, and
+8. Recheck expiry, revocation, and use state.
+9. Re-run authoritative semantic preconditions, validation/calculation, and
    operation gate.
-9. Atomically publish all semantic state and mark Approval Consumed, or
+10. Atomically publish all semantic state and mark Approval Consumed, or
     publish none and leave it unconsumed when failure is known to precede
     publication.
-10. Return a disclosure-safe outcome, resulting revision on success, and
+11. Return a disclosure-safe outcome, resulting revision on success, and
     minimum provenance.
 ```
 
-After the executor check, `Stale` identifies only the bound proposal's status;
-it MUST NOT reveal the current revision or other semantic facts without
-sufficient Query authority. Exact failure precedence and side-channel hardening
-remain #30 implementation work. An earlier preview, rendered diff, client gate
-result, or model claim is not authority for step 8.
+After the executor and complete ApprovalBinding checks, `Stale` identifies only
+the bound proposal's status; it MUST NOT reveal the current revision or other
+semantic facts without sufficient Query authority. Exact failure precedence
+and side-channel hardening remain #30 implementation work. An earlier preview,
+rendered diff, client gate result, or model claim is not authority for step 9.
 
 ## Minimum provenance contract
 
