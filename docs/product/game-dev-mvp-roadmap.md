@@ -1,5 +1,12 @@
 # Game Dev MVP Roadmap
 
+> **Scope note:** This file records the narrower CLI-first Developer MVP and
+> game-balance slice. For the repository-wide product stages, current planning
+> horizon, live Milestone views, and roadmap maintenance rules, see
+> [`product-roadmap.md`](product-roadmap.md). Accepted ADRs, specifications, and
+> current implementation evidence take precedence over older checkpoint wording
+> below.
+
 ## Product Thesis
 
 The first product is not an Excel replacement.
