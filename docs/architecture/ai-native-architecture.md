@@ -45,32 +45,36 @@ ADR-0026 defines the current MVP boundary:
 - Principal identity is opaque and supplied by a trusted host/session boundary.
 - Provider, model, tool, prompt, and confidence are provenance rather than
   privilege.
-- Query, Propose, Approve, and Execute are independent actions.
+- Query, Propose, Approve, and Execute are independent actions, and each
+  operation family is independently capability-addressable.
 - Grants are default-deny and may contain a finite union of stable-ID Document,
   Schema, SchemaField, Entity, and EntityField scope atoms.
 - ADR-0007's allowed current-MVP Query/Propose flows are preserved through
   explicit trusted-host Grant provisioning, not ambient AI authority.
 - Value, Formula, Structure, Schema, and Destructive authority are independent.
-- The trusted application derives disclosure scope, canonical write scope, and
-  mutation classes; the agent cannot authoritatively declare its footprint.
+- The trusted application derives operation-family/disclosure-scope and
+  operation-family/mutation-class/write-scope relations; the agent cannot
+  authoritatively declare its footprint.
 - Propose does not grant arbitrary Query authority; preview evidence outside
   Query scope is denied or safely reduced.
 - A patch originated by a Delegated principal or executed using Delegated
   authority requires one exact Human Approval.
 - Approval binds the proposal occurrence, complete ADR-0024
   `ExactChangeBinding`, originator, exact executor, complete associated
-  mutation-class/scope write requirements, and authorization-policy version. The
-  trusted record also identifies the Human approver and authorizing Approve
-  Grants.
+  operation-family/mutation-class/scope write requirements, and the effective
+  authorization-policy version, which must remain effective through
+  publication. The trusted record also identifies the Human approver and
+  authorizing Approve Grants.
 - Approval has finite lifetime, is revocable, and can authorize at most one
   successful semantic publication.
 - It is consumed atomically with successful semantic publication; failure
   before publication does not consume it.
-- A changed proposal/write scope/mutation-class set, stale base, changed
-  principal, invalid authorizing Approve Grant, Approval expiry/revocation, or
-  consumption requires new approval. Insufficient live Execute authority denies
-  the current execution attempt; a still-Active Approval may be retried after
-  the bound executor obtains sufficient live Execute authority.
+- A changed proposal/relational authorization footprint, stale base, changed
+  principal, changed effective authorization policy, invalid authorizing
+  Approve Grant, Approval expiry/revocation, or consumption requires new
+  approval. Insufficient live Execute authority denies the current execution
+  attempt; a still-Active Approval may be retried after the bound executor
+  obtains sufficient live Execute authority.
 - Validation and operation gates remain independent authority and cannot be
   overridden by approval.
 

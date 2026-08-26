@@ -18,7 +18,8 @@ independent prerequisites; none substitutes for another.
 ## Areas
 
 - default-deny semantic Grants over stable-ID document-local scope
-- trusted derivation of disclosure/write authorization footprints
+- trusted relational derivation of operation-family/disclosure/write
+  authorization footprints
 - plugin isolation
 - exact finite Human Approval for Delegated-origin or Delegated-authority
   semantic publication
@@ -34,11 +35,13 @@ ADR-0026 and [`semantic-authorization.md`](semantic-authorization.md) define
 the provider-neutral MVP contract:
 
 - trusted Human and Delegated Principal classes in one authorization domain;
-- independent Query, Propose, Execute, and Approve capabilities;
+- independent Query, Propose, Execute, and Approve actions and operation
+  families;
 - Value, Formula, Structure, Schema, and Destructive mutation classes;
 - stable-ID Document, Schema, SchemaField, Entity, and EntityField scopes;
-- trusted `AuthorizationFootprint` derivation with associated
-  mutation-class/scope coverage combined with the requested action;
+- trusted `AuthorizationFootprint` derivation with complete
+  operation-family/mutation-class/scope coverage combined with the requested
+  action;
 - explicit non-reusable Grants with per-use validity checks, authorizing
   Approve-reference rechecks, and fresh Execute coverage;
 - structural exact binding to ADR-0024 `SemanticPatch` and

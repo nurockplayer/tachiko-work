@@ -110,10 +110,11 @@ For AI:
 
 - query/read capability does not imply propose;
 - propose does not imply execute;
-- execute does not imply approve, and one mutation class does not imply another;
-- the trusted semantic/application authority derives disclosure scope,
-  canonical write scope, and mutation classes rather than accepting an
-  agent-declared footprint;
+- execute does not imply approve, one operation family does not imply another,
+  and one mutation class does not imply another;
+- the trusted semantic/application authority derives operation-family/
+  disclosure-scope and operation-family/mutation-class/write-scope relations
+  rather than accepting an agent-declared footprint;
 - Propose authority does not grant arbitrary read access, so preview evidence
   outside Query scope is denied or safely reduced;
 - an inert proposal does not publish semantic state;
@@ -126,9 +127,10 @@ For AI:
 - delegated permission does not override a failed semantic gate;
 - Delegated-origin or Delegated-authority publication requires one exact finite
   Human Approval covering the whole proposal/batch, originator, authorized
-  executor, complete associated mutation-class/scope write requirements, and
-  policy version, while separately recording the trusted Human approver and
-  authorizing Approve Grant references;
+  executor, complete associated operation-family/mutation-class/scope write
+  requirements, and the effective authorization-policy version, which must
+  remain effective through publication, while separately recording the trusted
+  Human approver and authorizing Approve Grant references;
 - approval or a previous gate result does not authorize a changed proposal,
   write scope, mutation-class set, principal, policy, loss of required live
   Grant coverage, or semantic base;

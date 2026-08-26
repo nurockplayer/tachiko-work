@@ -43,13 +43,13 @@ operation catalogue, and transport mechanics replaceable. ADR-0024 defines one
 immutable proposal occurrence around `Propose(Command | AtomicBatch)`, exact
 Semantic API/base/change binding, and fail-closed stale meaning. ADR-0026 adds
 the closed MVP authorization contract: domain-scoped Human/Delegated
-principals, independent Query/Propose/Approve/Execute capabilities,
-stable-ID document-local scopes, trusted authorization-footprint derivation,
-Value/Formula/Structure/Schema/Destructive classes, exact finite Human Approval
-for Delegated-origin or Delegated-authority publication, replay/revocation
-rules, minimum provenance, and
-separation from host/external effects. Concrete lifecycle, state, enforcement,
-and revision mechanics remain #29/#30/#93. ADR-0022 accepts the resident shared Rust runtime,
+principals, independent Query/Propose/Approve/Execute actions and operation
+families, stable-ID document-local scopes, trusted relational authorization-
+footprint derivation, Value/Formula/Structure/Schema/Destructive classes, exact
+finite Human Approval for Delegated-origin or Delegated-authority publication,
+replay/revocation rules, minimum provenance, and separation from host/external
+effects. Concrete lifecycle, state, enforcement, and revision mechanics remain
+#29/#30/#93. ADR-0022 accepts the resident shared Rust runtime,
 no-second-canonical-client-model rule, host separation, explicit snapshot
 boundaries, and native/WASM semantic parity while leaving exact
 session/revision/Worker/ABI/persistence mechanics Deferred to #93–#95 and future

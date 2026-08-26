@@ -38,10 +38,10 @@ evidence of the MVP safety posture, not a durable authorization protocol.
 
 The MVP needs the smallest provider-neutral contract that lets a trusted
 application determine who may query, propose, approve, or execute; what exact
-semantic subjects and mutation classes that authority covers; what one human
-approved; and when that approval is no longer usable. It must not become
-enterprise IAM, a role system, a generic policy language, or a portable
-bearer-token protocol.
+operation families, semantic subjects, and mutation classes that authority
+covers; what one human approved; and when that approval is no longer usable. It
+must not become enterprise IAM, a role system, a generic policy language, or a
+portable bearer-token protocol.
 
 ## Decision
 
@@ -76,17 +76,22 @@ The authorization domain does not create a semantic `ProjectId` or
 `WorkspaceId`. Exact account/login/identity-provider behavior, principal ID
 encoding, and Rust/wire representations remain Provisional.
 
-### 2. Capabilities preserve independent action and mutation dimensions
+### 2. Capabilities preserve operation-family, action, and mutation dimensions
 
 Every Semantic API operation or family remains independently
 capability-addressable under ADR-0020. The minimum authority dimensions are:
 
 ```text
-Query
-Propose(MutationClass)
-Execute(MutationClass)
-Approve(MutationClass)
+Query(OperationFamily)
+Propose(OperationFamily, MutationClass)
+Execute(OperationFamily, MutationClass)
+Approve(OperationFamily, MutationClass)
 ```
+
+`OperationFamily` is an independent checked dimension selected by trusted
+Semantic API classification. Authority for one operation family does not cover
+another family with the same action, mutation class, or semantic scope.
+Unknown or unclassified operation-family meaning fails closed.
 
 `MutationClass` is an orthogonal set:
 
@@ -114,10 +119,11 @@ Examples:
 - formula removal requires `Formula + Destructive`; and
 - schema-field deletion requires `Schema + Destructive`.
 
-No capability implies another action or mutation class. Query does not imply
-Propose, Propose does not imply Execute, Approve does not imply Execute, and
-Execute does not imply Approve. Exact capability identifier strings and the
-complete operation-to-class catalogue remain Provisional.
+No capability implies another operation family, action, or mutation class.
+Query does not imply Propose, Propose does not imply Execute, Approve does not
+imply Execute, and Execute does not imply Approve. Exact operation-family and
+capability identifiers, the operation-family catalogue, and the complete
+operation-to-class catalogue remain Provisional.
 
 ### 3. Scope is stable-ID, document-local semantic scope
 
@@ -159,20 +165,21 @@ and the relevant base/candidate relationships:
 
 ```text
 AuthorizationFootprint
-- disclosure_scope
-- associated_write_requirements
+- disclosure_requirements: (OperationFamily, DisclosureScopeAtom)
+- associated_write_requirements: (OperationFamily, MutationClass, ScopeAtom)
 - canonical_write_scope
 - mutation_classes
 ```
 
 The client or agent cannot authoritatively declare its own footprint. Each
-associated write requirement retains one mutation-class/canonical-write-scope
-pair.
-At a Propose, Approve, or Execute check, the trusted boundary combines the
-requested action with every pair and requires same-Grant coverage for that
-complete association. The action is check context, not part of the footprint
-bound into Approval. `AtomicBatch` uses the union of those associated
-per-command requirements. Flattened canonical-write-scope and mutation-class
+disclosure requirement retains one operation-family/disclosure-scope pair.
+Each associated write requirement retains one operation-family,
+mutation-class, and canonical-write-scope tuple. At a Query, Propose, Approve,
+or Execute check, the trusted boundary combines the requested action with each
+applicable tuple and requires same-Grant coverage for that complete
+association. The action is check context, not part of the footprint bound into
+Approval. `AtomicBatch` preserves the union of those associated per-command
+tuples. Flattened operation-family, canonical-write-scope, and mutation-class
 sets are review summaries, not an authorization or Approval proof and not
 permission to form their Cartesian product.
 
@@ -212,13 +219,14 @@ revocation is terminal, and restored or equivalent authority requires a new
 Grant occurrence and GrantId.
 
 Authorization is denied unless sufficient live Grants cover the complete
-requirement. For a requested mutation action, each derived `(mutation class,
-scope)` pair must be covered together with that action by one same live Grant.
-Multiple Grants may combine across distinct associated requirements, but
-independently unioning their capabilities/classes and scopes must not create
-crossed authority that no Grant actually contains. A Grant from another
-authorization domain or for another subject grants nothing to the effective
-principal.
+requirement. Each Query requirement is a complete `(Query, operation family,
+disclosure scope)` tuple. For a requested mutation action, each derived
+`(action, operation family, mutation class, scope)` tuple must be covered by
+one same live Grant. Multiple Grants may combine across distinct associated
+requirements, but independently unioning their actions, operation families,
+classes, and scopes must not create crossed authority that no Grant actually
+contains. A Grant from another authorization domain or for another subject
+grants nothing to the effective principal.
 
 Grants are issued only through a trusted host authorization authority, which
 may act on an explicitly authorized Human provisioning action or trusted host
@@ -248,7 +256,7 @@ Query and Propose require Grants but no Approval.
 For one proposal or AtomicBatch:
 
 - one Human approver must hold live `Approve(...)` authority covering every
-  associated mutation-class/scope write requirement;
+  associated operation-family/mutation-class/scope write requirement;
 - approval covers the exact whole batch;
 - partial-batch approval is forbidden;
 - several partial approvers cannot be combined;
@@ -270,7 +278,7 @@ ApprovalBinding(A) =
   + ADR-0024 ExactChangeBinding
   + originating principal
   + authorized executor principal
-  + complete associated mutation-class/canonical-write-scope requirements
+  + complete associated operation-family/mutation-class/write-scope requirements
   + authorization-policy version
 ```
 
@@ -279,7 +287,9 @@ finite expiry, and the authorizing Approve Grant references.
 
 The trusted boundary structurally verifies one immutable proposal occurrence
 and its complete `ExactChangeBinding`, then binds the exact originator,
-executor, complete associated write requirements, and supported policy version.
+executor, complete associated operation-family/mutation-class/write-scope
+requirements, and the effective authorization-policy version selected by the
+trusted authorization domain at issuance.
 The Approval record separately identifies its trusted Human approver. Flattened
 canonical-write-scope and mutation-class summaries may be retained for review
 and provenance, but they do not replace the bound relation.
@@ -313,8 +323,9 @@ Active -> Consumed | Revoked | Expired
 Terminal states never return to Active. Successful semantic publication
 atomically consumes Approval. Failure before publication does not consume it.
 Every retry rechecks expiry, revocation, Grants, exact base,
-`ExactChangeBinding`, associated mutation-class/scope write requirements,
-policy version, and authoritative semantic gate.
+`ExactChangeBinding`, associated operation-family/mutation-class/scope write
+requirements, the Approval-bound policy version against the effective policy
+governing execution, and the authoritative semantic gate.
 
 For Approval-gated Execute, the common publication-boundary condition in
 section 10 is necessary but not sufficient. Semantic publication and Approval
@@ -345,8 +356,10 @@ Execute fails without publication when any of these holds:
 3. the semantic base is stale;
 4. the originator differs;
 5. the executor differs;
-6. the rederived associated mutation-class/scope write requirement differs;
-7. the authorization-policy version is unsupported or mismatched;
+6. the rederived associated operation-family/mutation-class/scope write
+   requirement differs;
+7. the Approval-bound authorization-policy version is unsupported or differs
+   from the effective policy governing execution;
 8. Approval expired;
 9. Approval was revoked;
 10. Approval was already consumed;
@@ -368,7 +381,9 @@ conditional on all of these facts still holding:
 ```text
 effective executor occurrence is active and authenticated
 AND live Execute Grants cover every rederived associated
-    mutation-class/scope requirement
+    operation-family/mutation-class/scope requirement
+AND authorization is evaluated under the effective policy selected by the
+    trusted authorization domain, and that policy remains effective
 AND the semantic context used to evaluate the candidate and gate is current,
     or an equivalent revision-safe condition holds
 AND the authoritative semantic gate still allows publication
@@ -376,9 +391,11 @@ AND no unauthorized host or external effect is performed
 ```
 
 Execute-Grant revocation or expiry, executor disablement, relevant semantic
-state advance, gate invalidation, or inability to prove this conjunction
-prevents publication. This common condition applies whether or not the Execute
-path uses a proposal or Approval.
+state advance, effective-policy change, gate invalidation, or inability to
+prove this conjunction prevents publication. This common condition applies
+whether or not the Execute path uses a proposal or Approval. Direct Human
+Execute uses the effective current policy and does not invent a historical or
+Approval-bound policy choice.
 
 ADR-0024 requires the trusted application/runtime boundary to compare the
 current semantic context with the proposal base before re-evaluating,
@@ -402,6 +419,8 @@ supported immutable SemanticPatch
 AND exact proposal/base + complete Approval binding
 AND authenticated executor matches the Approval-bound executor
 AND bound relational AuthorizationFootprint remains exact
+AND Approval-bound authorization-policy version equals the effective policy
+    governing execution and still equals it at publication
 AND valid active Human Approval
 AND active bound originator and Human approver
 AND live authorizing Approve Grant references
@@ -581,6 +600,25 @@ Future implementation must preserve these representation-neutral outcomes:
 30. **Approval-gated provenance and consumption remain complete** — successful
     Approval-gated Execute retains its full proposal/Approval provenance and
     consumes Approval atomically with publication.
+31. **Query families do not cross-authorize** — Query authority for one
+    operation family and disclosure scope does not authorize another Query
+    family over the same scope.
+32. **Execute families do not cross-authorize** — Execute authority for one
+    operation family, mutation class, and write scope does not authorize a
+    different Execute family with the same class and scope.
+33. **AtomicBatch preserves operation-family associations** — every batch
+    member retains its own operation-family/mutation-class/scope association;
+    flattened unions cannot synthesize coverage for a member tuple.
+34. **Readable historical policy does not remain authority** — an Approval
+    bound under V1 denies and requires a new Approval when V2 is the effective
+    execution policy, even if V1 remains readable or supported historically.
+35. **Effective-policy change races publication** — changing the effective
+    authorization policy after authorization/gating but before publication
+    prevents publication on every Execute path and, for Approval-gated Execute,
+    also prevents Approval consumption.
+36. **Direct Human uses current policy** — direct Human Execute is authorized
+    under the effective current policy and does not fabricate an Approval or
+    historical policy binding.
 
 ## Stability classification
 
@@ -592,14 +630,17 @@ Accepted:
 - default deny and explicit Grants;
 - non-reusable immutable Grant occurrences with terminal revocation;
 - Query/Propose/Execute/Approve non-implication;
+- operation-family identity as an independent checked capability dimension;
 - Value/Formula/Structure/Schema/Destructive distinctions;
 - stable-ID, document-local scope concepts and finite-union Grants;
 - trusted `AuthorizationFootprint` derivation;
-- associated mutation-class/scope coverage, combined with the requested action,
-  without crossed-Grant unions;
+- associated operation-family/mutation-class/scope coverage, combined with the
+  requested action, without crossed-Grant unions;
 - Human Approval for Delegated-origin or Delegated-authority publication;
 - exact originator/executor/proposal/associated-write-requirement/policy
   binding;
+- Approval-bound policy-version equality with the effective execution policy
+  through the publication boundary;
 - authorizing Approve Grant references remain live, with fresh executor
   authority rechecks before Execute;
 - the common publication-boundary condition for every Execute path;
@@ -615,9 +656,11 @@ Accepted:
 Provisional:
 
 - exact type, field, capability, and denial-code names;
+- exact operation-family identifiers and catalogue;
 - ID encodings and generators;
 - Grant/Approval/provenance DTOs and storage;
 - exact duration values and clock representation;
+- policy-version representation and effective-policy selection mechanisms;
 - complete operation catalogue and class mappings;
 - crate/module placement; and
 - result and wire formats.
@@ -666,12 +709,12 @@ structurally verified ADR-0024 `ExactChangeBinding`.
 ### Binding every Propose, Approve, and Execute GrantId into ApprovalBinding
 
 Rejected. The exact proposal, originator, executor, associated
-mutation-class/scope write requirements, and policy version are the smaller
-stable authorization context. Authorizing Approve Grant references remain
-immutable issuance and revocation dependencies, while Execute authority is
-freshly rederived and may be satisfied by another live Grant set. Propose
-authority is checked when the proposal is issued and retained as provenance;
-it is not later execution authority.
+operation-family/mutation-class/scope write requirements, and policy version
+are the smaller stable authorization context. Authorizing Approve Grant
+references remain immutable issuance and revocation dependencies, while
+Execute authority is freshly rederived and may be satisfied by another live
+Grant set. Propose authority is checked when the proposal is issued and
+retained as provenance; it is not later execution authority.
 
 ### Selecting a digest or portable approval token now
 

@@ -29,9 +29,11 @@ approval for a proposal originated by or executed with Delegated authority.
 This specification defines:
 
 - opaque principals within one trusted authorization domain;
-- independently grantable semantic actions and mutation classes;
+- independently grantable semantic actions, operation families, and mutation
+  classes;
 - a closed set of document-local stable-ID scope atoms;
-- trusted derivation of disclosure and canonical-write requirements;
+- trusted relational derivation of operation-family, disclosure, and
+  canonical-write requirements;
 - exact approval binding without selecting digest or wire bytes;
 - finite expiry, revocation, retry, and at-most-once successful publication;
 - minimum proposal, approval, and execution provenance; and
@@ -51,7 +53,7 @@ trusted identity / authorization domain
 authenticated Principal + live Grants
               |
               v
-trusted derivation of disclosure/write scope + mutation classes
+trusted derivation of operation family + disclosure/write scope + mutation classes
               |
               v
 Query / Propose / Approve / Execute authorization
@@ -112,11 +114,12 @@ Grant content.
 
 ### Authorization footprint
 
-The complete disclosure scope and associated mutation-class/scope write
-requirements derived by the trusted semantic/application authority for an
-operation and its relevant base/candidate relationships. The requested action
-is authorization-check context, not a member of that bound relation. Flattened
-write-scope and mutation-class sets are summaries of the relation.
+The complete operation-family/disclosure-scope requirements and associated
+operation-family/mutation-class/scope write requirements derived by the trusted
+semantic/application authority for an operation and its relevant base/candidate
+relationships. The requested action is authorization-check context, not a
+member of that bound relation. Flattened operation-family, write-scope, and
+mutation-class sets are summaries of the relation.
 
 ### Approval
 
@@ -158,11 +161,18 @@ executor. Mutable use/revocation state belongs to a trusted registry.
 The minimum action dimensions are:
 
 ```text
-Query
-Propose(MutationClass)
-Execute(MutationClass)
-Approve(MutationClass)
+Query(OperationFamily)
+Propose(OperationFamily, MutationClass)
+Execute(OperationFamily, MutationClass)
+Approve(OperationFamily, MutationClass)
 ```
+
+`OperationFamily` is an independent capability dimension derived by the
+trusted Semantic API authority. Authority for one family MUST NOT authorize a
+different family merely because action, mutation class, and semantic scope are
+otherwise equal. Unknown or unclassified operation-family meaning fails
+closed. Exact family identifiers and the complete family catalogue remain
+Provisional.
 
 ### Action meaning
 
@@ -270,18 +280,20 @@ Conceptually:
 
 ```text
 AuthorizationFootprint
-- DisclosureScope
-- AssociatedWriteRequirements
+- DisclosureRequirements: (OperationFamily, DisclosureScopeAtom)
+- AssociatedWriteRequirements: (OperationFamily, MutationClass, ScopeAtom)
 - CanonicalWriteScope
 - RequiredMutationClasses
 ```
 
-`AssociatedWriteRequirements` retains every required `(mutation class, scope)`
-pair. At a Propose, Approve, or Execute check, the requested action is combined
-with every pair for coverage. `CanonicalWriteScope` and
-`RequiredMutationClasses` are review/provenance summaries of that relation,
-not independently unionable permission sets. Exact representation remains
-Provisional.
+`DisclosureRequirements` retains every required `(operation family,
+disclosure scope)` pair. `AssociatedWriteRequirements` retains every required
+`(operation family, mutation class, scope)` tuple. At a Query, Propose,
+Approve, or Execute check, the requested action is combined with every
+applicable tuple for coverage. Flattened operation-family sets,
+`CanonicalWriteScope`, and `RequiredMutationClasses` are review/provenance
+summaries of those relations, not independently unionable permission sets.
+Exact representation remains Provisional.
 
 Normative laws:
 
@@ -289,22 +301,24 @@ Normative laws:
    typed operation meaning and relevant base/candidate relationships.
 2. A client, model, prompt, or request-supplied footprint is untrusted and MUST
    NOT reduce the derived requirement.
-3. Mutation authorization MUST retain each associated `(mutation class,
-   scope)` requirement. The requested Propose, Approve, or Execute action MUST
-   be checked with every pair. Flattened CanonicalWriteScope and
-   RequiredMutationClasses are review summaries, not coverage proof and not
-   permission to form their Cartesian product.
-4. AtomicBatch uses the union of every member Command's associated
-   requirements.
-5. CanonicalWriteScope includes direct targets, generated IDs, created/deleted
+3. Query authorization MUST retain each associated `(operation family,
+   disclosure scope)` requirement and check Query with every pair.
+4. Mutation authorization MUST retain each associated `(operation family,
+   mutation class, scope)` requirement. The requested Propose, Approve, or
+   Execute action MUST be checked with every tuple. Flattened operation-family,
+   CanonicalWriteScope, and RequiredMutationClasses summaries are not coverage
+   proof and not permission to form their Cartesian product.
+5. AtomicBatch uses the union of every member Command's associated tuples and
+   preserves each member's operation-family association.
+6. CanonicalWriteScope includes direct targets, generated IDs, created/deleted
    objects and their owning containers, explicit retargeting, and
    command-defined canonical side effects.
-6. Purely derived recalculation, FormulaImpact, validation findings, and review
+7. Purely derived recalculation, FormulaImpact, validation findings, and review
    projections are not canonical writes.
-7. DisclosureScope includes semantic subjects revealed by Query results,
+8. DisclosureScope includes semantic subjects revealed by Query results,
    preview, diff, dependencies, impact, diagnostics, explanations, and result
    projections.
-8. If the complete requirement cannot be derived safely, authorization fails
+9. If the complete requirement cannot be derived safely, authorization fails
    closed or requires broader explicit scope.
 
 ## Grant contract
@@ -337,10 +351,12 @@ Normative laws:
 4. A Delegated principal MUST NOT self-grant, expand, or transitively delegate
    authority.
 5. Authorization is allow-only and default-deny.
-6. For a requested mutation action, each derived `(mutation class, scope)` pair
-   MUST be covered together with that action by one same live Grant. Different
-   Grants MAY cover different associated requirements, but independently
-   unioning their capabilities, classes, and scopes MUST NOT create crossed
+6. Each Query requirement MUST be covered as one complete `(Query, operation
+   family, disclosure scope)` tuple by one same live Grant. For a requested
+   mutation action, each derived `(action, operation family, mutation class,
+   scope)` tuple MUST be covered by one same live Grant. Different Grants MAY
+   cover different associated requirements, but independently unioning their
+   actions, operation families, classes, and scopes MUST NOT create crossed
    authority.
 7. A Grant covers only its fixed subject in its AuthorizationDomain. A
    same-spelled GrantId from another domain or a Grant for another subject
@@ -389,7 +405,7 @@ Query and Propose require Grants but no Approval.
 For one proposal:
 
 1. One Human approver must have live Approve authority covering every
-   associated mutation-class/scope write requirement.
+   associated operation-family/mutation-class/scope write requirement.
 2. Approval binds the named executor exactly. The trusted boundary checks that
    executor's live Execute authority immediately before publication, not as an
    issuance-time prerequisite.
@@ -436,10 +452,11 @@ Normative laws:
 4. The trusted boundary MUST structurally verify the retained immutable
    proposal and the complete ExactChangeBinding defined by ADR-0024.
 5. Approval binds exact originator, executor, complete associated
-   mutation-class/scope write requirements, and policy version. Flattened
-   CanonicalWriteScope and RequiredMutationClasses MAY be retained as review or
-   provenance summaries but MUST NOT replace the bound relation. The Approval
-   record separately identifies the trusted Human approver.
+   operation-family/mutation-class/scope write requirements, and authorization-
+   policy version. Flattened operation-family, CanonicalWriteScope, and
+   RequiredMutationClasses summaries MAY be retained for review or provenance
+   but MUST NOT replace the bound relation. The Approval record separately
+   identifies the trusted Human approver.
 6. Disclosure scope is authorized independently and is not ApprovalBinding.
    Presentation or diagnostic projection changes do not redefine the approved
    semantic publication.
@@ -449,6 +466,17 @@ Normative laws:
 8. A client-supplied Approval is untrusted. The authoritative boundary MUST
    verify it against trusted Approval and lifecycle state.
 9. Approval MUST NOT become a transferable bearer credential.
+
+The trusted authorization domain determines the effective authorization-policy
+version governing each execution. Approval issuance MUST bind the version that
+is effective at issuance. Approval-gated Execute MUST require the bound version
+to equal the effective version governing execution, and that equality MUST
+still hold at the publication boundary. A historically readable or supported
+version is not execution authority after another version becomes effective;
+the proposal requires a new Approval. Direct Human Execute uses the effective
+current policy without fabricating an Approval or historical policy binding.
+Exact version representation, policy selection mechanism, migration, and
+support-window behavior remain Provisional.
 
 ### Authorizing Grant references
 
@@ -522,8 +550,8 @@ Active -> Consumed | Revoked | Expired
 - Failure before semantic publication MUST NOT consume Approval.
 - A retry while Approval remains Active MUST repeat every current-base,
   identity, structural-binding, associated-write-requirement, principal, Grant,
-  expiry, revocation, policy-version, semantic-precondition, validation, and
-  gate check.
+  expiry, revocation, effective-policy-version, semantic-precondition,
+  validation, and gate check.
 - A consumed ApprovalId MUST fail replay without publication.
 - Concurrent attempts MUST NOT both publish successfully.
 - Approval-gated Execute MUST satisfy the common Execute publication condition
@@ -531,8 +559,9 @@ Active -> Consumed | Revoked | Expired
   consumption on the bound originator and approver occurrences, authorizing
   Approve Grant references, Approval state, and exact proposal/Approval/base
   binding still being valid.
-- Revocation, expiry, principal disablement, Approval consumption, or proposal-
-  base invalidation racing with Approval-gated Execute MUST prevent publication.
+- Revocation, expiry, principal disablement, Approval consumption, effective-
+  policy change, or proposal-base invalidation racing with Approval-gated
+  Execute MUST prevent publication.
 - If the trusted boundary cannot prove the complete common and Approval-specific
   conjunction at the publication boundary, it MUST fail closed and publish
   nothing.
@@ -562,8 +591,9 @@ transaction, or transport sequence.
 ```text
 allow iff:
   authenticated Principal is active
-  AND trusted authority derives complete DisclosureScope
-  AND live Query Grants cover that scope
+  AND trusted authority derives complete operation-family/disclosure-scope
+      requirements
+  AND live Query Grants cover every complete requirement
 ```
 
 ### Authorize Propose
@@ -571,7 +601,8 @@ allow iff:
 ```text
 allow iff:
   authenticated Principal is active
-  AND trusted authority derives associated write-scope + mutation requirements
+  AND trusted authority derives associated operation-family + write-scope +
+      mutation requirements
   AND live Propose Grants cover the complete requirement
   AND command/base are admissible under the Semantic API
 ```
@@ -585,11 +616,13 @@ publishes nothing and does not imply later Execute authority.
 allow iff:
   immutable proposal identity/content are structurally consistent
   AND proposal base is current
-  AND trusted authority rederives associated write-scope + mutation requirements
+  AND trusted authority rederives associated operation-family + write-scope +
+      mutation requirements
   AND approver is authenticated Human
   AND live Approve Grants cover the complete requirement
   AND named executor is active
-  AND finite expiry + supported policy version are recorded
+  AND trusted authorization domain selects the effective policy version
+  AND finite expiry + that effective policy version are recorded
 ```
 
 The trusted record captures ApprovalBinding and the authorizing Approve Grant
@@ -602,25 +635,30 @@ SemanticPatch or Approval, MUST satisfy this common publication-boundary law:
 
 ```text
 1. Authenticate an active effective executor.
-2. Rederive every associated mutation-class/scope requirement from trusted
-   typed meaning and relevant semantic relationships.
+2. Determine the effective authorization policy selected by the trusted
+   authorization domain and rederive every associated operation-family/
+   mutation-class/scope requirement from trusted typed meaning and relevant
+   semantic relationships under that policy.
 3. Require sufficient live Execute Grants to cover every complete relational
    requirement.
 4. Evaluate the candidate and authoritative gate against a known semantic
    context.
 5. At the publication boundary, publish only while the executor occurrence is
    still active and authenticated, sufficient live relational Execute Grant
-   coverage still exists, the evaluated semantic context is still current (or
-   an equivalent revision-safe condition holds), the authoritative gate result
-   is still valid, and no unauthorized host/external effect is performed.
+   coverage still exists, the authorization policy used for evaluation remains
+   effective, the evaluated semantic context is still current (or an
+   equivalent revision-safe condition holds), the authoritative gate result is
+   still valid, and no unauthorized host/external effect is performed.
 ```
 
-Execute-Grant revocation or expiry, executor disablement, relevant semantic
-state advance, gate invalidation, or inability to prove the complete
-conjunction MUST prevent publication. Approval-gated Execute adds its
-proposal/Approval conditions to this common law; it does not replace or weaken
-it. Concrete reservation, locking, transaction, revision, retry, and
-state-installation mechanics remain #29/#93 work.
+Execute-Grant revocation or expiry, executor disablement, effective-policy
+change, relevant semantic state advance, gate invalidation, or inability to
+prove the complete conjunction MUST prevent publication. Direct Human Execute
+uses the effective current policy without an Approval or historical policy
+binding. Approval-gated Execute adds its proposal/Approval conditions to this
+common law; it does not replace or weaken it. Concrete reservation, locking,
+transaction, revision, retry, and state-installation mechanics remain #29/#93
+work.
 
 ### Authorize approval-gated Execute
 
@@ -632,29 +670,33 @@ state-installation mechanics remain #29/#93 work.
 2. Authenticate the caller and require caller == Approval-bound executor. An
    unauthenticated or unbound caller receives only a disclosure-safe
    authorization denial, regardless of the retained base result.
-3. Reject unsupported Semantic API or authorization-policy versions. Verify
-   trusted immutable proposal identity/content, complete ADR-0024
-   ExactChangeBinding, retained relational AuthorizationFootprint, and exact
-   ApprovalBinding equality, including authorization domain, ProposalId,
-   originator, executor, complete associated write requirements, and policy
-   version. A mismatch receives only a disclosure-safe binding denial.
+3. Reject unsupported Semantic API versions. Determine the effective
+   authorization-policy version selected by the trusted authorization domain
+   and require the Approval-bound version to equal it; historical readability
+   or support is insufficient. Verify trusted immutable proposal
+   identity/content, complete ADR-0024 ExactChangeBinding, retained relational
+   AuthorizationFootprint, and exact ApprovalBinding equality, including
+   authorization domain, ProposalId, originator, executor, complete associated
+   operation-family/mutation-class/scope requirements, and policy version. A
+   mismatch receives only a disclosure-safe binding denial.
 4. Only after steps 2-3, expose the retained Stale outcome when the base did not
    match, before any candidate construction against the changed base. Stale
    details require sufficient Query authority.
-5. For a current base, rederive associated canonical-write-scope and
-   mutation-class requirements from typed meaning and require equality with the
-   bound trusted footprint.
+5. For a current base, rederive associated operation-family,
+   canonical-write-scope, and mutation-class requirements from typed meaning
+   and require relational equality with the bound trusted footprint.
 6. Recheck originator, approver, authorizing Approve Grant references,
    executor, sufficient current live Execute Grants, Approval expiry,
    revocation, and use state.
 7. Re-run authoritative semantic preconditions, validation/calculation, and
    operation gate.
 8. At the publication boundary, satisfy the common Execute publication rule.
-   Additionally condition semantic publication and Approval consumption on the
-   bound originator and approver occurrences, authorizing Approve Grant
-   references, Approval state, and exact proposal/Approval/base binding still
-   being valid. If any common or Approval-specific condition raced or cannot
-   be proven valid, publish nothing.
+   Additionally require the Approval-bound authorization-policy version still
+   to equal the effective policy governing execution, and condition semantic
+   publication and Approval consumption on the bound originator and approver
+   occurrences, authorizing Approve Grant references, Approval state, and exact
+   proposal/Approval/base binding still being valid. If any common or Approval-
+   specific condition raced or cannot be proven valid, publish nothing.
 9. When the complete condition holds, atomically publish all semantic state and
    mark Approval Consumed.
 10. Return a disclosure-safe outcome, resulting revision on success, and
@@ -788,7 +830,7 @@ A conforming client can distinguish, where applicable:
 - approver not trusted Human;
 - proposal occurrence or exact binding mismatch;
 - originator, approver, or executor mismatch;
-- authorization-policy version unsupported;
+- authorization-policy version unsupported or not the effective version;
 - approval expired, revoked, consumed, or state unavailable;
 - live Approve or Execute authority lost;
 - stale proposal under ADR-0024;
@@ -875,6 +917,21 @@ authorized disclosure scope.
     approver, Approval, Approve Grant, or Consumed provenance.
 39. Successful Approval-gated Execute retains the complete proposal/Approval
     provenance above and consumes Approval atomically with publication.
+40. Query authority for operation family A over one disclosure scope does not
+    authorize Query family B over that same scope.
+41. Execute authority for operation family A over one mutation class and scope
+    does not authorize Execute family B over that same class and scope.
+42. AtomicBatch retains each member's operation-family/mutation-class/scope
+    associations; flattened family, class, or scope unions cannot synthesize a
+    covered member tuple.
+43. An Approval bound to policy V1 denies and requires a new Approval when V2
+    is the effective execution policy, even if V1 remains readable or
+    historically supported.
+44. A change in the effective authorization policy between authorization/gate
+    evaluation and publication prevents publication on every Execute path and,
+    for Approval-gated Execute, also prevents Approval consumption.
+45. Direct Human Execute uses the effective current policy without fabricating
+    an Approval or historical policy binding.
 
 ## Stability classification
 
@@ -884,19 +941,23 @@ authorized disclosure scope.
 | Human versus Delegated distinction for MVP policy | Accepted |
 | Principal/domain encoding and authentication mechanism | Provisional host concern |
 | Query, Propose, Approve, Execute non-implication | Accepted |
+| Operation-family identity as an independent checked capability dimension | Accepted under ADR-0020/ADR-0026 |
+| Exact operation-family identifiers and catalogue | Provisional |
 | Capability identifier strings and public representation | Provisional |
 | Value, Formula, Structure, Schema, Destructive meanings | Accepted MVP contract |
 | Complete Stable command-family mapping | Provisional; published mappings cannot change silently |
 | Closed document-local stable-ID scope concepts and containment | Accepted MVP contract |
 | Project/workspace/org/tenant/predicate scope | Deferred |
 | Trusted AuthorizationFootprint derivation | Accepted |
-| Associated mutation-class/scope coverage, combined with the requested action, without crossed-Grant or Approval unions | Accepted |
+| Associated operation-family/mutation-class/scope coverage, combined with the requested action, without crossed-Grant or Approval unions | Accepted |
 | Immutable, non-reusable, default-deny Grant occurrences with terminal revocation | Accepted |
 | Grant registry/admin/DTO/clock representation | Provisional |
 | Exact Human Approval for Delegated-origin or Delegated-authority publication | Accepted current MVP policy |
 | ApprovalBinding fields in this specification | Accepted |
 | Authorizing Approve Grant references remain valid and covering | Accepted |
 | Fresh executor-authority recheck before Execute | Accepted |
+| Approval-bound policy version equals the effective execution policy through publication | Accepted |
+| Policy-version representation and effective-policy selection mechanism | Provisional |
 | Structural equality with trusted immutable proposal | Accepted MVP profile |
 | Canonical bytes, digest/hash/transcript/signature/MAC | Deferred |
 | Approval is not transferable bearer authority | Accepted MVP profile |

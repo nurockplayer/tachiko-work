@@ -378,9 +378,10 @@ revealed by preview, diff, dependencies, impact, and diagnostics. Propose
 authority does not grant arbitrary Query authority: evidence outside live Query
 scope MUST be denied or safely reduced. The client cannot authoritatively
 declare its own footprint. Mutation coverage retains each associated
-mutation-class/scope requirement; the requested action is combined with every
-pair at its authorization check. Independently unioning class and scope sets
-cannot authorize crossed combinations that no live Grant covers.
+operation-family/mutation-class/scope requirement; the requested action is
+combined with every tuple at its authorization check. Independently unioning
+operation-family, class, and scope sets cannot authorize crossed combinations
+that no live Grant covers.
 
 Once proposal identity is issued, validation, review, rejection, or stale
 outcomes do not mutate the proposal record. A later execution must perform the
@@ -618,20 +619,25 @@ for authorization/capability purposes.
 
 The following minimum authority dimensions are distinct:
 
-- Query;
-- Propose by mutation class;
-- Execute by mutation class; and
-- Approve by mutation class.
+- Query by operation family and disclosure scope;
+- Propose by operation family, mutation class, and write scope;
+- Execute by operation family, mutation class, and write scope; and
+- Approve by operation family, mutation class, and write scope.
 
-Granting one MUST NOT imply another. Value, Formula, Structure, Schema, and
-Destructive mutation authority likewise do not imply one another.
+Operation-family identity is an independent checked dimension. Granting one
+family MUST NOT authorize another family merely because its action, mutation
+class, and semantic scope are otherwise equal. Granting one action MUST NOT
+imply another. Value, Formula, Structure, Schema, and Destructive mutation
+authority likewise do not imply one another. Unknown or unclassified operation
+families fail closed.
 
 ADR-0026 and [`semantic-authorization.md`](semantic-authorization.md) define
 the representation-neutral Principal, Grant, stable-ID semantic scope,
 `AuthorizationFootprint`, exact Human Approval, expiry/replay/revocation,
 minimum provenance, and external-effect separation laws that consume these
-operations. Exact capability strings, DTOs, storage, result codes, canonical
-bytes, digest/token profiles, and wire security mechanisms remain
+operations. Exact operation-family identifiers and catalogue are Provisional.
+Exact capability strings, DTOs, storage, and result codes remain Provisional;
+canonical bytes, digest/token profiles, and wire security mechanisms remain
 Provisional/Deferred.
 
 ## Compatibility and versioning

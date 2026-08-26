@@ -104,26 +104,29 @@ independent authorization contract.
 - Effective principal identity comes from a trusted host/session boundary.
 - Authorization is default-deny and based on explicit immutable,
   non-reusable Grant occurrences with terminal trusted revocation state.
-- Grant coverage combines the requested action with each associated
-  mutation-class/scope requirement; independent unions cannot manufacture
-  crossed authority.
-- Query, Propose, Approve, and Execute are independent actions.
+- Grant coverage combines the requested action with each complete associated
+  operation-family/mutation-class/scope requirement; independent unions cannot
+  manufacture crossed authority.
+- Query, Propose, Approve, and Execute are independent actions, and each
+  operation family is independently capability-addressable.
 - Value, Formula, Structure, Schema, and Destructive mutation authority are
   independently grantable and additive.
 - Grants use finite unions of stable-ID, document-local scope atoms; paths,
   JSON Pointers, UI/Git/storage coordinates, wildcards, and natural-language
   scope are not authority.
-- The trusted application derives disclosure scope, canonical write scope, and
-  mutation classes; clients do not authoritatively declare them.
+- The trusted application derives operation-family/disclosure-scope and
+  operation-family/mutation-class/write-scope relations; clients do not
+  authoritatively declare them.
 - Propose does not grant arbitrary Query authority; out-of-scope review evidence
   is denied or safely reduced.
 - A patch originated by a Delegated principal or executed using Delegated
   authority requires exact Approval from one authorized Human principal.
 - Approval binds one proposal occurrence, complete ADR-0024
   `ExactChangeBinding`, originator, exact executor, complete associated
-  mutation-class/scope write requirements, and authorization-policy version;
-  the trusted record also identifies the Human approver and authorizing
-  Approve Grants.
+  operation-family/mutation-class/scope write requirements, and the effective
+  authorization-policy version; that bound version must remain the effective
+  execution policy through publication. The trusted record also identifies the
+  Human approver and authorizing Approve Grants.
 - Approval has finite lifetime, is revocable, and can authorize at most one
   successful semantic publication.
 - Successful semantic publication consumes Approval atomically; failure before
