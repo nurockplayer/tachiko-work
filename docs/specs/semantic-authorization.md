@@ -524,8 +524,10 @@ Active -> Consumed | Revoked | Expired
   gate check.
 - A consumed ApprovalId MUST fail replay without publication.
 - Concurrent attempts MUST NOT both publish successfully.
-- Reservation, locking, transaction, recovery, and state-installation mechanics
-  remain #29/#93 implementation work.
+- Approval reservation, locking, and atomic-consumption coordination remain #29
+  implementation work. Concrete revision concurrency and state installation
+  remain #93 work; broader transaction/recovery and history protocols remain
+  with #11/#12.
 - If a failure leaves the trusted boundary unable to prove whether publication
   occurred, it MUST fail closed and MUST NOT permit retry until authoritative
   state is reconciled.
@@ -806,7 +808,8 @@ authorized disclosure scope.
 | Finite expiry with no fixed TTL | Accepted law / Provisional value |
 | Explicit revocation and fail-closed unverifiable state | Accepted |
 | At-most-once successful publication and replay denial | Accepted |
-| Reservation/locking/recovery/state-installation mechanics | #29/#93 Provisional implementation |
+| Approval reservation/locking/atomic-consumption mechanics | #29 Provisional implementation |
+| Concrete revision concurrency/state-installation mechanics | #93 Provisional implementation |
 | Minimum proposal/approval/execution provenance | Accepted |
 | Provenance store/retention/redaction/tamper evidence/UI | Provisional/Deferred |
 | Provider/model as provenance rather than privilege | Accepted under ADR-0007 |
@@ -814,7 +817,7 @@ authorized disclosure scope.
 | External-effect capability vocabulary | Deferred |
 | Roles/groups/ABAC/policy DSL/SSO/SCIM/tenancy | Deferred |
 | Auto-approval, autonomous mutation, quorum/multi-party approval | Deferred |
-| Event sourcing/operation log/undo/recovery protocol | Deferred |
+| Broader transaction/recovery and event sourcing/operation log/undo/history protocol | Deferred to #11/#12 |
 | Public Rust/Serde/wire authorization DTO | Deferred |
 
 ## Ownership boundaries
@@ -835,7 +838,8 @@ authorized disclosure scope.
   disclosure-safe denials, host-effect denial, and security diagnostics/tests.
 - #93 owns concrete resident session/revision/concurrency/state-installation
   mechanics.
-- #11 owns broader team/enterprise permissions and reusable policy questions.
+- #11 owns broader team/enterprise permissions, reusable policy questions, and
+  transaction/recovery architecture.
 - #12/history work owns persisted history, event sourcing, undo, and retention.
 - `workspace-engine` remains shared semantic transition/gate authority;
   authorization must not exist only in `ai-api`, UI, or client convention.

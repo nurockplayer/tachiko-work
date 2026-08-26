@@ -39,10 +39,6 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
-- Accepted a documentation-level semantic authorization contract for scoped
-  Grants, trusted authorization-footprint derivation, and exact finite Human
-  Approval with at-most-once successful publication. Product enforcement and
-  public authorization DTOs remain unimplemented under #29, #30, and #93.
 - A provider-free, read-only Semantic Analyst slice now exposes deterministic
   document inspection, formula and dependency analysis, semantic change and
   affected-area analysis, and validation findings through shared Rust queries
