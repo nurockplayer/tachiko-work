@@ -119,9 +119,10 @@ independent authorization contract.
 - A patch originated by a Delegated principal or executed using Delegated
   authority requires exact Approval from one authorized Human principal.
 - Approval binds one proposal occurrence, complete ADR-0024
-  `ExactChangeBinding`, originator, exact executor, canonical write
-  scope, mutation classes, and authorization-policy version; the trusted record
-  also identifies the Human approver and authorizing Approve Grants.
+  `ExactChangeBinding`, originator, exact executor, complete associated
+  action/class/scope write requirements, and authorization-policy version; the
+  trusted record also identifies the Human approver and authorizing Approve
+  Grants.
 - Approval has finite lifetime, is revocable, and can authorize at most one
   successful semantic publication.
 - Successful semantic publication consumes Approval atomically; failure before

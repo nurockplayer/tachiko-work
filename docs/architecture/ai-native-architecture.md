@@ -58,9 +58,10 @@ ADR-0026 defines the current MVP boundary:
 - A patch originated by a Delegated principal or executed using Delegated
   authority requires one exact Human Approval.
 - Approval binds the proposal occurrence, complete ADR-0024
-  `ExactChangeBinding`, originator, exact executor, canonical write
-  scope, mutation classes, and authorization-policy version. The trusted record
-  also identifies the Human approver and authorizing Approve Grants.
+  `ExactChangeBinding`, originator, exact executor, complete associated
+  action/class/scope write requirements, and authorization-policy version. The
+  trusted record also identifies the Human approver and authorizing Approve
+  Grants.
 - Approval has finite lifetime, is revocable, and can authorize at most one
   successful semantic publication.
 - It is consumed atomically with successful semantic publication; failure

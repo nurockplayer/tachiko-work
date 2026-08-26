@@ -109,9 +109,10 @@ Grant content.
 
 ### Authorization footprint
 
-The complete disclosure scope, canonical-write scope, and mutation classes
-derived by the trusted semantic/application authority for an operation and its
-relevant base/candidate relationships.
+The complete disclosure scope and associated action/class/scope write
+requirements derived by the trusted semantic/application authority for an
+operation and its relevant base/candidate relationships. Flattened write-scope
+and mutation-class sets are summaries of that relation.
 
 ### Approval
 
@@ -254,14 +255,15 @@ Conceptually:
 ```text
 AuthorizationFootprint
 - DisclosureScope
+- AssociatedWriteRequirements
 - CanonicalWriteScope
 - RequiredMutationClasses
 ```
 
-These are named projections of one derived requirement, not independently
-unionable permission sets. For mutation authorization the trusted footprint
-retains the association between each scope requirement and the mutation classes
-that apply to it. Exact representation remains Provisional.
+`AssociatedWriteRequirements` retains every required `(action, mutation class,
+scope)` association. `CanonicalWriteScope` and `RequiredMutationClasses` are
+review/provenance summaries of that relation, not independently unionable
+permission sets. Exact representation remains Provisional.
 
 Normative laws:
 
@@ -366,8 +368,8 @@ Query and Propose require Grants but no Approval.
 
 For one proposal:
 
-1. One Human approver must have live Approve authority covering the complete
-   canonical-write scope and mutation classes.
+1. One Human approver must have live Approve authority covering every associated
+   action/class/scope write requirement.
 2. Approval binds the named executor exactly. The trusted boundary checks that
    executor's live Execute authority immediately before publication, not as an
    issuance-time prerequisite.
@@ -391,8 +393,7 @@ ApprovalBinding(A) =
   + ADR-0024 ExactChangeBinding(P)
   + OriginatorPrincipalId
   + ExecutorPrincipalId
-  + CanonicalWriteScope
-  + RequiredMutationClasses
+  + complete AssociatedWriteRequirements
   + AuthorizationPolicyVersion
 ```
 
@@ -414,9 +415,11 @@ Normative laws:
    proposal occurrence requires another Approval.
 4. The trusted boundary MUST structurally verify the retained immutable
    proposal and the complete ExactChangeBinding defined by ADR-0024.
-5. Approval binds exact originator, executor, canonical-write scope, mutation
-   classes, and policy version. The Approval record separately identifies the
-   trusted Human approver.
+5. Approval binds exact originator, executor, complete associated
+   action/class/scope write requirements, and policy version. Flattened
+   CanonicalWriteScope and RequiredMutationClasses MAY be retained as review or
+   provenance summaries but MUST NOT replace the bound relation. The Approval
+   record separately identifies the trusted Human approver.
 6. Disclosure scope is authorized independently and is not ApprovalBinding.
    Presentation or diagnostic projection changes do not redefine the approved
    semantic publication.
@@ -498,8 +501,9 @@ Active -> Consumed | Revoked | Expired
 - One Approval can authorize at most one successful semantic publication.
 - Failure before semantic publication MUST NOT consume Approval.
 - A retry while Approval remains Active MUST repeat every current-base,
-  identity, structural-binding, scope/class, principal, Grant, expiry,
-  revocation, policy-version, semantic-precondition, validation, and gate check.
+  identity, structural-binding, associated-write-requirement, principal, Grant,
+  expiry, revocation, policy-version, semantic-precondition, validation, and
+  gate check.
 - A consumed ApprovalId MUST fail replay without publication.
 - Concurrent attempts MUST NOT both publish successfully.
 - Reservation, locking, transaction, recovery, and state-installation mechanics
@@ -562,28 +566,33 @@ references used at issuance.
 ### Authorize approval-gated Execute
 
 ```text
-1. Load the trusted immutable proposal and Approval by ID.
+1. Authenticate the caller, load the trusted immutable proposal and Approval
+   internally by opaque ID, and require caller == bound executor. An
+   unauthenticated or unbound caller receives only a disclosure-safe
+   authorization denial.
 2. Reject unsupported Semantic API or authorization-policy versions.
 3. Verify proposal identity/content and complete ADR-0024 ExactChangeBinding.
 4. Compare current semantic revision with the proposal base; return Stale on
    mismatch before candidate construction against the changed base.
 5. Rederive associated canonical-write-scope and mutation-class requirements
    from typed meaning.
-6. Require authenticated actor == bound executor.
-7. Recheck originator, approver, authorizing Approve Grant references,
+6. Recheck originator, approver, authorizing Approve Grant references,
    executor, and sufficient current live Execute Grants.
-8. Recheck expiry, revocation, use state, and exact ApprovalBinding equality.
-9. Re-run authoritative semantic preconditions, validation/calculation, and
+7. Recheck expiry, revocation, use state, and exact ApprovalBinding equality.
+8. Re-run authoritative semantic preconditions, validation/calculation, and
    operation gate.
-10. Atomically publish all semantic state and mark Approval Consumed, or
+9. Atomically publish all semantic state and mark Approval Consumed, or
     publish none and leave it unconsumed when failure is known to precede
     publication.
-11. Return a disclosure-safe outcome, resulting revision on success, and
+10. Return a disclosure-safe outcome, resulting revision on success, and
     minimum provenance.
 ```
 
-An earlier preview, rendered diff, client gate result, or model claim is not
-authority for step 9.
+After the executor check, `Stale` identifies only the bound proposal's status;
+it MUST NOT reveal the current revision or other semantic facts without
+sufficient Query authority. Exact failure precedence and side-channel hardening
+remain #30 implementation work. An earlier preview, rendered diff, client gate
+result, or model claim is not authority for step 8.
 
 ## Minimum provenance contract
 
@@ -732,10 +741,11 @@ authorized disclosure scope.
 19. Delegated self-approval denies.
 20. Semantic authorization cannot grant filesystem/network/process/Git/plugin/
     deployment/persistence effects.
-21. Mixed AtomicBatch requires union scope/classes, one whole-batch Approval,
-    and all-or-nothing publication.
+21. Mixed AtomicBatch requires the union of associated write requirements, one
+    whole-batch Approval, and all-or-nothing publication.
 22. Cross-pairing Formula authority for one field with Value authority for
-    another cannot authorize either class on the other field.
+    another cannot authorize either class on the other field, and exact
+    Approval cannot flatten those pairs into independent scope/class sets.
 23. A revoked Grant occurrence cannot be reactivated or have its GrantId
     reused; a newly issued equivalent Grant does not revive an Approval that
     references the revoked occurrence.
@@ -759,7 +769,7 @@ authorized disclosure scope.
 | Closed document-local stable-ID scope concepts and containment | Accepted MVP contract |
 | Project/workspace/org/tenant/predicate scope | Deferred |
 | Trusted AuthorizationFootprint derivation | Accepted |
-| Associated action/class/scope coverage without crossed-Grant unions | Accepted |
+| Associated action/class/scope coverage without crossed-Grant or Approval unions | Accepted |
 | Immutable, non-reusable, default-deny Grant occurrences with terminal revocation | Accepted |
 | Grant registry/admin/DTO/clock representation | Provisional |
 | Exact Human Approval for Delegated-origin or Delegated-authority publication | Accepted current MVP policy |
