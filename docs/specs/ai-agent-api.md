@@ -8,10 +8,13 @@ the semantic behavior boundary shared by AI and other first-party clients.
 ADR-0024 establishes the provider-neutral immutable revision-pinned
 SemanticPatch and exact-change binding used for reviewable proposals.
 ADR-0021 permits AI-assisted progressive semantic strengthening while keeping
-inference advisory rather than authoritative. Exact capability identifiers,
-principals, grants, approval tokens, execution authorization, minimum
-provenance, digest/integrity, replay/revocation mechanics, runtime placement,
-wire DTOs, and promotion DTOs remain Deferred as owned elsewhere.
+inference advisory rather than authoritative. ADR-0026 establishes
+domain-scoped Human/Delegated principals, independent capabilities, stable-ID
+semantic scopes, trusted `AuthorizationFootprint` derivation, exact finite
+Human Approval, expiry/replay/revocation, minimum provenance, and
+external-effect separation. Exact identifiers, DTOs, storage,
+projection/redaction, lifecycle implementation, runtime placement, wire
+formats, and promotion DTOs remain Provisional or Deferred as owned elsewhere.
 
 Implementation state: the provider-free `tachiko-ai-api` crate implements a v0.1 AI-facing read/explain/suggest adapter over `tachiko-workspace-engine`, including structured read-only Semantic Analyst queries. The current Rust DTOs are not the public Semantic API contract. No general schema-inference or freeform-promotion pipeline is implemented.
 
@@ -26,7 +29,9 @@ AI must not simulate mouse/keyboard usage as the primary architecture and must n
 ## Relationship to the Semantic API
 
 [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md),
-[ADR-0024](../decisions/ADR-0024-revision-pinned-semantic-patch.md), and
+[ADR-0024](../decisions/ADR-0024-revision-pinned-semantic-patch.md),
+[ADR-0026](../decisions/ADR-0026-scoped-semantic-authorization-and-approval.md),
+[`semantic-authorization.md`](semantic-authorization.md), and
 [`semantic-api.md`](semantic-api.md) own the shared semantic behavior:
 
 - Query semantics;
@@ -36,7 +41,9 @@ AI must not simulate mouse/keyboard usage as the primary architecture and must n
 - authoritative validation/gating;
 - formula outcome meaning;
 - semantic atomicity;
-- capability-addressability; and
+- capability-addressability;
+- trusted disclosure/write footprint, exact Human Approval, and provenance
+  requirements; and
 - compatibility/versioning laws.
 
 ADR-0007 adds the AI-authority constraint: a first-party AI Execute path must
@@ -44,8 +51,9 @@ use the same shared semantic transition/gating behavior and must cross trusted
 authorization/approval enforcement. ADR-0024 makes a reviewable AI proposal the
 same immutable base-bound SemanticPatch available to any semantic client; it
 does not make AI provenance or model output part of command meaning. Concrete
-principal, grant, approval, provenance, digest, and runtime enforcement are not
-defined here.
+state, enforcement, revision, and transport mechanisms remain #29/#30/#93.
+The AI adapter does not define Principal class, Grant scope, Approval, or
+provenance from provider/model claims.
 
 ADR-0021 adds a content-strengthening constraint: AI may analyze weak/freeform semantic content and propose stronger structure, but probabilistic inference is advisory evidence. Only an explicitly accepted typed semantic transition may change canonical semantic meaning.
 
@@ -102,6 +110,12 @@ For AI:
 
 - query/read capability does not imply propose;
 - propose does not imply execute;
+- execute does not imply approve, and one mutation class does not imply another;
+- the trusted semantic/application authority derives disclosure scope,
+  canonical write scope, and mutation classes rather than accepting an
+  agent-declared footprint;
+- Propose authority does not grant arbitrary read access, so preview evidence
+  outside Query scope is denied or safely reduced;
 - an inert proposal does not publish semantic state;
 - proposal identity is separate from semantic object identity and authority;
 - the same proposal identity never names changed base, body, order, target,
@@ -110,13 +124,22 @@ For AI:
   changed base and requires a newly identified proposal;
 - a successful semantic gate does not grant permission to execute;
 - delegated permission does not override a failed semantic gate;
-- approval or a previous gate result does not authorize a materially changed transition or materially changed relevant authorization context automatically; and
+- Delegated-origin or Delegated-authority publication requires one exact finite
+  Human Approval covering the whole proposal/batch, originator, authorized
+  executor, canonical write scope, mutation classes, and policy version, while
+  separately recording the trusted Human approver and authorizing Approve Grant
+  references;
+- approval or a previous gate result does not authorize a changed proposal,
+  write scope, mutation-class set, principal, policy, loss of required live
+  Grant coverage, or semantic base;
+- failure before publication does not consume Approval, while successful
+  publication consumes it atomically; and
 - an approved execution must use the same shared Semantic API command/gate semantics as the equivalent non-AI first-party operation.
 
 The current `requires_approval` boolean preserves v0.1 safety behavior only. It
 does not define or satisfy the ADR-0024 proposal/base contract and does not
-define capability, principal, grant, approval token, provenance,
-digest/integrity, replay, revocation, or execution protocol.
+define capability, principal, Grant, scope, footprint, Approval, provenance,
+replay, revocation, or execution protocol.
 
 For an AI-authored proposal, every semantic input that can affect candidate
 construction is part of ADR-0024 `ExactChangeBinding`. Stable targets, typed
@@ -131,8 +154,11 @@ ADR-0020 accepts the principle that each semantic operation or family can be ind
 
 AI adapters must therefore be able to expose a bounded subset such as read/query or propose without implicitly exposing arbitrary execute authority.
 
-Exact capability identifiers, scope grammar, delegation, authorization,
-approval, minimum provenance, and digest/integrity semantics remain #28.
+ADR-0026 fixes the minimum Query/Propose/Execute/Approve and
+Value/Formula/Structure/Schema/Destructive dimensions, stable-ID document-local
+scope atoms, trusted footprint derivation, default-deny Grants, exact Approval,
+and minimum provenance. Exact identifiers, DTOs, storage, clocks, operation
+catalogue, projection/redaction, and wire formats remain Provisional/Deferred.
 
 ## Effect separation
 
@@ -186,12 +212,13 @@ AI operations should be:
 - validated;
 - reviewable;
 - capability-bounded;
-- approval-gated where mutation authority requires it;
+- exact-Human-Approval-gated for a `SemanticPatch` originated by a Delegated
+  principal or executed using Delegated authority;
 - provider-neutral in semantic and authorization meaning;
 - deterministic in authoritative semantic evaluation; and
 - non-persistent unless an explicitly authorized Execute path performs the same shared semantic operation used by other first-party clients and the relevant host/persistence authority also permits the side effect.
 
-Machine-generated statements such as `validated=true`, `approved=true`, high confidence, or inferred schema conformance never substitute for deterministic Tachiko validation or trusted authorization/approval evidence.
+Model-generated statements such as `validated=true`, `approved=true`, high confidence, or inferred schema conformance never substitute for deterministic Tachiko validation or trusted authorization/approval evidence.
 
 ## Formula suggestions
 

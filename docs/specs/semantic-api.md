@@ -5,6 +5,9 @@ under [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md).
 The immutable, revision-pinned SemanticPatch proposal contract and exact-change
 binding law are Accepted under
 [ADR-0024](../decisions/ADR-0024-revision-pinned-semantic-patch.md).
+The authorization, stable-ID scope, trusted footprint, exact Human Approval,
+and provenance laws that consume this operation/proposal meaning are Accepted
+under [ADR-0026](../decisions/ADR-0026-scoped-semantic-authorization-and-approval.md).
 Runtime ownership, resident interactive topology, host separation, explicit
 snapshot boundaries, and native/WASM semantic parity are Accepted under
 [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md).
@@ -20,7 +23,8 @@ runtime/session implementation is later work under #93–#95. No current Rust
 type implements the general SemanticPatch envelope or AtomicBatch contract.
 
 Decision issues: [#10](https://github.com/nurockplayer/tachiko-work/issues/10),
-[#27](https://github.com/nurockplayer/tachiko-work/issues/27)
+[#27](https://github.com/nurockplayer/tachiko-work/issues/27),
+[#28](https://github.com/nurockplayer/tachiko-work/issues/28)
 
 ## Purpose
 
@@ -274,8 +278,10 @@ provider metadata, rendered diff prose, storage paths, `.roproj` bytes, or Git
 objects.
 
 This specification selects no canonical proposal bytes, hash, digest,
-signature, or MAC. Approval/integrity binding remains #28. Proposal identity by
-itself MUST NOT be treated as cryptographic proof of the expected binding.
+signature, or MAC. ADR-0026 requires trusted structural verification of this
+complete binding for exact Approval while deliberately deferring any canonical
+bytes, digest, signature, MAC, or portable token. Proposal identity by itself
+MUST NOT be treated as cryptographic proof of the expected binding.
 
 ### Semantic API compatibility binding
 
@@ -336,8 +342,9 @@ requires it and is included in `ExactChangeBinding`.
 
 Authorization, approval, expiry, replay/revocation policy, durable-write
 availability, and external-effect permission remain separate enforcement
-conditions. JSON Pointer predicates, storage checks, UI-coordinate tests,
-provider claims, and arbitrary scripts do not become semantic preconditions.
+conditions under ADR-0026 and the relevant host authority. JSON Pointer
+predicates, storage checks, UI-coordinate tests, provider claims, and arbitrary
+scripts do not become semantic preconditions.
 
 ### Proposal evidence
 
@@ -350,6 +357,14 @@ or become a mutation program. Rendered diff prose is presentation. A semantic
 diff explains base-to-candidate meaning. Validation success does not grant
 permission. A malformed request may fail before a reviewable proposal exists;
 an invalid or gate-rejected candidate publishes nothing.
+
+The trusted semantic/application boundary derives ADR-0026
+`AuthorizationFootprint` from typed operation meaning and relevant
+base/candidate relationships. Its disclosure scope includes every subject
+revealed by preview, diff, dependencies, impact, and diagnostics. Propose
+authority does not grant arbitrary Query authority: evidence outside live Query
+scope MUST be denied or safely reduced. The client cannot authoritatively
+declare its own footprint.
 
 Once proposal identity is issued, validation, review, rejection, or stale
 outcomes do not mutate the proposal record. A later execution must perform the
@@ -373,8 +388,10 @@ into ambient authority for a later changed state.
 
 ADR-0024 fixes proposal occurrence immutability, exact-change binding, Semantic
 API contract binding, semantic-base pinning, and fail-closed stale meaning.
-Proposal-ID/revision encoding, approval tokens, lifecycle DTOs, and concrete
-session/commit mechanics remain Provisional or Deferred to #28/#29/#93.
+ADR-0026 fixes structural exact Approval, live authorization, and
+consume-with-successful-publication laws without selecting a public token or
+DTO. Proposal-ID/revision encoding, Approval lifecycle DTOs, and concrete
+session/commit mechanics remain Provisional or Deferred to #29/#93.
 
 ## Semantic atomicity
 
@@ -570,19 +587,23 @@ Successful calculated values are operation/query facts, not diagnostics.
 Every semantic operation or operation family MUST be independently addressable
 for authorization/capability purposes.
 
-The following authorities are distinct:
+The following minimum authority dimensions are distinct:
 
-- query/read;
-- propose; and
-- execute/mutation.
+- Query;
+- Propose by mutation class;
+- Execute by mutation class; and
+- Approve by mutation class.
 
-Granting one MUST NOT imply the others unless an explicit future authorization
-policy says so.
+Granting one MUST NOT imply another. Value, Formula, Structure, Schema, and
+Destructive mutation authority likewise do not imply one another.
 
-This specification does not define capability identifier syntax, principal
-identity, grant format, approval token, provenance record, or security protocol.
-Those remain #28. ADR-0024 supplies the exact proposal/base binding that the
-authorization protocol must consume without selecting its digest or token.
+ADR-0026 and [`semantic-authorization.md`](semantic-authorization.md) define
+the representation-neutral Principal, Grant, stable-ID semantic scope,
+`AuthorizationFootprint`, exact Human Approval, expiry/replay/revocation,
+minimum provenance, and external-effect separation laws that consume these
+operations. Exact capability strings, DTOs, storage, result codes, canonical
+bytes, digest/token profiles, and wire security mechanisms remain
+Provisional/Deferred.
 
 ## Compatibility and versioning
 
@@ -688,7 +709,7 @@ fixtures and implementation belong to #29/#93.
 | Semantic API compatibility binding with no independent patch-operation version | Accepted under ADR-0024 |
 | Exact semantic-base pinning and fail-closed stale behavior | Accepted under ADR-0024 |
 | Proposal-ID, revision-token, and transport encoding | Provisional / #93 |
-| Hash/digest/signature/MAC/canonical proposal bytes | #28 / Deferred |
+| Hash/digest/signature/MAC/canonical proposal bytes | Deferred under ADR-0026 |
 | Preview is proposal projection, not independent canonical state | Accepted |
 | Finalization is operation-gate meaning, not mandatory stateful two-phase protocol | Accepted |
 | Single-command semantic atomicity | Accepted |
@@ -699,7 +720,8 @@ fixtures and implementation belong to #29/#93.
 | Gate outcome distinct from diagnostic severity | Accepted |
 | Formula Stage 4/5 facts remain ADR-0018/ADR-0019 authority | Accepted |
 | Capability-addressability of operation/family | Accepted principle |
-| Capability IDs/grants/approval/provenance | #28 / Deferred |
+| Capability/scope/Grant/Approval/provenance meaning | Accepted under ADR-0026 |
+| Exact authorization identifiers/DTOs/storage/wire representation | Provisional / Deferred |
 | Semantic API version independent from storage/crate/transport versions | Accepted |
 | Published diagnostic code meaning not silently reusable | Accepted |
 | Complete externally Stable operation catalogue | Provisional, promote operation-by-operation |
@@ -761,8 +783,8 @@ to semantic core by virtue of using the API.
 - Worker lifecycle/loading/startup/memory behavior;
 - proposal-ID/revision-token field encoding;
 - canonical proposal bytes, hash, digest, signature, or MAC;
-- approval token, capability, grant, provenance, expiry, replay, or revocation
-  format;
+- exact Approval/capability/Grant/provenance/expiry/replay/revocation DTO or
+  wire format;
 - projection patch/delivery/invalidation protocol;
 - native/browser persistence/recovery implementation;
 - plugin ABI/runtime/sandbox;
@@ -785,6 +807,8 @@ to semantic core by virtue of using the API.
 - [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md)
 - [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md)
 - [ADR-0024](../decisions/ADR-0024-revision-pinned-semantic-patch.md)
+- [ADR-0026](../decisions/ADR-0026-scoped-semantic-authorization-and-approval.md)
+- [Semantic authorization](semantic-authorization.md)
 - [Diagnostics contract](diagnostics-contract.md)
 - [Validation engine](validation-engine.md)
 - Issues #10, #17, #27, #28, #29, #93, #94, #95, #104

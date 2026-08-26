@@ -72,8 +72,11 @@ The platform must prevent at least:
 - a model, document, plugin, or request body selecting or upgrading its own
   PrincipalId;
 - Query or Propose authority silently becoming Execute authority;
-- a broad `editor` or `write:*` grant silently including Formula, Schema,
-  Destructive, or external effects;
+- a broad `editor` or `write:*` grant silently including Formula, Structure,
+  Schema, Destructive, or external effects;
+- an agent authoritatively declaring an incomplete disclosure/write footprint;
+- Propose authority revealing preview/diff/diagnostic content outside Query
+  scope;
 - validation success being treated as authorization;
 - authorization or approval overriding a failed semantic gate;
 - approval of rendered prose or a diff being reused for a changed proposal;
@@ -81,7 +84,7 @@ The platform must prevent at least:
   expiry, explicit revocation, or consumption;
 - replay or concurrent double use of one ApprovalId;
 - provider/model identity becoming privilege;
-- Machine self-approval satisfying the Human approval requirement;
+- Delegated self-approval satisfying the Human approval requirement;
 - raw semantic-core, storage, `.roproj`, filesystem, or host mutation bypassing
   the authorized Execute path; and
 - ordinary semantic authority granting network, process, Git, plugin,
@@ -93,24 +96,35 @@ The platform must prevent at least:
 - Effective principal identity comes from a trusted host/session boundary.
 - Authorization is default-deny and based on explicit immutable grants.
 - Query, Propose, Approve, and Execute are independent actions.
-- Data, Formula, Schema, and Destructive mutation authority are independently
-  grantable and additive.
-- Every Machine Execute in the current MVP requires exact approval from a
-  distinct Human principal.
+- Value, Formula, Structure, Schema, and Destructive mutation authority are
+  independently grantable and additive.
+- Grants use finite unions of stable-ID, document-local scope atoms; paths,
+  JSON Pointers, UI/Git/storage coordinates, wildcards, and natural-language
+  scope are not authority.
+- The trusted application derives disclosure scope, canonical write scope, and
+  mutation classes; clients do not authoritatively declare them.
+- Propose does not grant arbitrary Query authority; out-of-scope review evidence
+  is denied or safely reduced.
+- A patch originated by a Delegated principal or executed using Delegated
+  authority requires exact Approval from one authorized Human principal.
 - Approval binds one proposal occurrence, complete ADR-0024
-  `ExactChangeBinding`, exact base, exact executor, document, mutation classes,
-  approval profile, and the exact grants relied upon.
-- Approval has finite lifetime, is revocable, and is single-use.
+  `ExactChangeBinding`, originator, exact executor, canonical write
+  scope, mutation classes, and authorization-policy version; the trusted record
+  also identifies the Human approver and authorizing Approve Grants.
+- Approval has finite lifetime, is revocable, and can authorize at most one
+  successful semantic publication.
+- Successful semantic publication consumes Approval atomically; failure before
+  publication does not consume it.
 - Stale base fails closed before candidate construction against the changed
   base and never performs implicit rebase or replay.
 - Deterministic validation and operation gates remain authoritative.
 - Security-relevant denials are machine-readable and distinguish authorization,
   approval, stale, semantic-gate, representation, and host-effect failures.
-- Provenance records actor, agent/provider/model evidence, grants, approval,
-  gate outcome, base/result revisions, and execution result without becoming
-  canonical semantic state or privilege.
-- Unverifiable principal, grant, approval, time, registry, or integrity state
-  fails closed.
+- Provenance records authorization domain, proposal/exact binding, originator,
+  executor, approver, Grants, footprint, policy version, Approval, gate/report,
+  and base/result revisions without becoming canonical semantic state or privilege.
+- Unverifiable principal, Grant, Approval, time, lifecycle, or
+  structural-binding state fails closed.
 
 ## Effect Separation
 

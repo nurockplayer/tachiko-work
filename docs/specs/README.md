@@ -28,7 +28,7 @@ The semantic model owns meaning. Physical formats are representations. ADR-0017 
 | Document | Read it for |
 | --- | --- |
 | [`semantic-api.md`](semantic-api.md) | ADR-0020 first-class transport-neutral Semantic API, ADR-0024 immutable revision-pinned SemanticPatch, ADR-0026 authorization/approval integration, and ADR-0022 runtime-host ownership constraints; exact DTO/session/transport mechanics remain Deferred |
-| [`semantic-authorization.md`](semantic-authorization.md) | ADR-0026 principal, grant, mutation-class, exact approval, expiry/replay/revocation, provenance, and effect-domain contract |
+| [`semantic-authorization.md`](semantic-authorization.md) | ADR-0026 principal, capability, stable-ID scope, trusted footprint, Grant, exact Human Approval, expiry/replay/revocation, provenance, and effect-domain contract |
 | [`semantic-data-model.md`](semantic-data-model.md) | Semantic data-model contract and terminology |
 | [`schema-system.md`](schema-system.md) | Durable schema declaration behavior and the boundary from runtime validation policy |
 | [`validation-engine.md`](validation-engine.md) | ADR-0019 staged validation, candidate/finalization semantics, full-validation oracle, and operation gating |
@@ -41,12 +41,14 @@ product boundary while keeping current Rust APIs, serde shapes, complete
 operation catalogue, and transport mechanics replaceable. ADR-0024 defines one
 immutable proposal occurrence around `Propose(Command | AtomicBatch)`, exact
 Semantic API/base/change binding, and fail-closed stale meaning. ADR-0026 adds
-the closed MVP authorization contract: opaque trusted principals, independent
-Query/Propose/Approve/Execute actions, document-scoped default-deny grants,
-Data/Formula/Schema/Destructive mutation classes, exact finite Human approval,
-replay/revocation rules, minimum provenance, and separation from host/external
-effects. Concrete lifecycle, registry, enforcement, and revision mechanics
-remain #29/#30/#93. ADR-0022 accepts the resident shared Rust runtime,
+the closed MVP authorization contract: domain-scoped Human/Delegated
+principals, independent Query/Propose/Approve/Execute capabilities,
+stable-ID document-local scopes, trusted authorization-footprint derivation,
+Value/Formula/Structure/Schema/Destructive classes, exact finite Human Approval
+for Delegated-origin or Delegated-authority publication, replay/revocation
+rules, minimum provenance, and
+separation from host/external effects. Concrete lifecycle, state, enforcement,
+and revision mechanics remain #29/#30/#93. ADR-0022 accepts the resident shared Rust runtime,
 no-second-canonical-client-model rule, host separation, explicit snapshot
 boundaries, and native/WASM semantic parity while leaving exact
 session/revision/Worker/ABI/persistence mechanics Deferred to #93–#95 and future
@@ -64,9 +66,10 @@ ADR-0018; stable identity by ADR-0015; storage representation by ADR-0017.
 | [`migration-framework.md`](migration-framework.md) | Progressive migration direction and future adapter framework |
 
 Concrete AI mutation lifecycle and enforcement remain narrower implementation
-work. ADR-0026 resolves #28's principal/capability/grant/approval/provenance and
-integrity contract without freezing public DTOs or enterprise IAM. #29 owns the
-preview/apply lifecycle and approval registry/consumption implementation; #30
+work. ADR-0026 resolves #28's principal/capability/scope/Grant/Approval,
+footprint, provenance, and structural exact-binding contract without selecting
+canonical bytes, a digest profile, public DTOs, or enterprise IAM. #29 owns the
+preview/apply lifecycle and Approval-state/atomic-consumption implementation; #30
 owns trusted enforcement, prompt/data separation, bypass prevention, and
 external-effect denial; #93 owns concrete semantic revision/session mechanics.
 ADR-0019 allows deterministic read-only domain/extension validators to share

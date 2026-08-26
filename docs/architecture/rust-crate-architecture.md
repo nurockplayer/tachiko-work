@@ -7,7 +7,9 @@ Rust source surface. ADR-0024 accepts the immutable revision-pinned
 SemanticPatch and representation-neutral exact-change/base-binding laws without
 stabilizing a Rust or wire DTO. ADR-0022 accepts the resident shared Rust
 semantic/application runtime and host-separation direction without stabilizing
-current session/transport mechanisms.
+current session/transport mechanisms. ADR-0026 accepts the provider-neutral
+Principal/capability/scope/Grant/footprint/Approval/provenance laws without
+selecting crate placement or public Rust/wire types.
 
 Implementation state: ADR-0016 boundary implemented by Issue #72; authoritative
 validation/report composition implemented by Issue #89. Current workspace-engine
@@ -19,7 +21,7 @@ AtomicBatch.
 Architecture authority: ADR-0016 for crate ownership; ADR-0020 for the
 first-class Semantic API product boundary; ADR-0024 for SemanticPatch proposal
 meaning; ADR-0022 for runtime ownership, resident topology, native/WASM parity,
-and host separation.
+and host separation; ADR-0026 for authorization and exact Approval meaning.
 
 ## Purpose
 
@@ -202,9 +204,20 @@ ADR-0024 adds the **proposal envelope law** at that same application boundary:
 one immutable proposal occurrence binds a Semantic API compatibility contract,
 one exact semantic base, and exactly one typed Command or ordered AtomicBatch.
 It does not add another engine, crate, mutation primitive, operation vocabulary,
-or storage dependency. Exact proposal/revision Rust types, ID generation,
-transport, digest, and lifecycle mechanics remain Provisional or owned by
-#28/#29/#93.
+or storage dependency. ADR-0026 consumes its exact binding structurally and
+deliberately selects no canonical bytes, digest, public DTO, or crate. Exact
+proposal/revision Rust types, ID generation, transport, and lifecycle mechanics
+remain Provisional or owned by #29/#93.
+
+ADR-0026 adds the **authorization law** beside that application boundary. The
+trusted semantic/application authority derives disclosure scope, canonical
+write scope, and mutation classes from typed meaning and relevant
+base/candidate relationships. Trusted composition then enforces live scoped
+Grants and exact Human Approval for Delegated-origin or Delegated-authority
+publication. Exact module/crate
+placement remains Provisional, but enforcement must not live only in `ai-api`,
+UI, or client convention, and authorization state must not become
+`semantic-core` Document meaning.
 
 ADR-0022 now accepts a resident shared Rust semantic/application runtime as the
 preferred interactive topology. For an open interactive document, authoritative
@@ -229,14 +242,14 @@ It retains AI-facing descriptions, explanations, inert suggestions, and the
 candidate cloning, schema checks, formula complexity/projection checks,
 validation, and calculation delegate to workspace-engine.
 
-Under ADR-0007/ADR-0020/ADR-0024 the AI crate is an adapter/projection over the
+Under ADR-0007/ADR-0020/ADR-0024/ADR-0026 the AI crate is an adapter/projection over the
 same first-class Semantic API behavior and immutable revision-bound proposal
 contract as other clients. Its current
 `Suggestion { field, value, requires_approval }` has no proposal occurrence ID,
 Semantic API compatibility contract, semantic base, general Command, or
 AtomicBatch. It is implementation evidence only, not the SemanticPatch wire or
 source contract. `requires_approval` remains current v0.1 safety behavior, not
-the #28 capability/approval/provenance/digest protocol.
+the ADR-0026 scoped Grant, footprint, exact Approval, or provenance contract.
 
 No current AI operation persists or mutates the supplied document.
 
@@ -302,7 +315,7 @@ validation inside Rust as implementation mechanisms.
 | Runtime export semantic projection | CLI | Workspace-engine |
 | Host persistence and safe writes | CLI/storage | CLI/storage/host composition, unchanged |
 | AI proposal envelope | One-field inert `Suggestion` only | ADR-0024 SemanticPatch accepted at the Semantic API boundary; implementation pending #29/#93 |
-| AI approval DTO | AI API | AI adapter; ADR-0007 + #28 future authority |
+| Semantic authorization/Approval | Not implemented | ADR-0026 representation-neutral contract; exact placement/DTO/state remains #29/#30/#93 |
 | ID generation mechanism | CLI through workflow seam | CLI through workspace-engine seam |
 | Product-semantic client contract | Provisional/internal | First-class transport-neutral Semantic API under ADR-0020 |
 | Interactive authoritative state ownership | Open under #26 | Shared Rust semantic/application runtime under ADR-0022 |
@@ -387,8 +400,8 @@ A composition root may combine runtime, storage, and host adapters. This
 mechanical composition is not alternate semantic logic.
 
 Semantic publication, durable persistence, and external publication remain
-distinct effects under ADR-0007/ADR-0022. Semantic Execute authority does not
-implicitly grant filesystem/network/Git/deployment authority.
+distinct effects under ADR-0007/ADR-0022/ADR-0026. Semantic Execute authority
+does not implicitly grant filesystem/network/Git/plugin/deployment authority.
 
 ## Explicitly deferred seams
 
@@ -399,6 +412,11 @@ implicitly grant filesystem/network/Git/deployment authority.
 - ADR-0024 owns proposal occurrence immutability, exact-change and Semantic API
   compatibility binding, semantic-base pinning, and stale meaning; Rust/wire
   encodings and implementation remain Provisional/#29/#93.
+- ADR-0026 owns Principal, capability, stable-ID scope, Grant, trusted
+  AuthorizationFootprint, exact Approval, expiry/replay/revocation, provenance,
+  and external-effect separation. Exact crate/module placement, DTOs, storage,
+  clocks, result codes, and wire formats remain Provisional/#29/#30/#93;
+  canonical bytes/digest/signature/MAC/portable tokens remain Deferred.
 - ADR-0022 owns resident runtime/state and host-separation laws, while session
   handle shape, revision/concurrency, cancellation, state commit/swap/locking/
   cloning mechanics, Web Worker lifecycle, IPC/FFI/network mapping, projection
@@ -407,8 +425,6 @@ implicitly grant filesystem/network/Git/deployment authority.
   implementation.
 - #94 owns later selective semantic queries and projection invalidation.
 - #95 owns later retained incremental engine state with full-oracle equivalence.
-- #28 owns AI capability IDs, principals, grants, approval, provenance,
-  digest/integrity, and execution authorization.
 - ADR-0023 and the `.roproj/v1` specifications own the Accepted layout and
   version-owned wire contract; production materialization remains later
   storage/host implementation work.
@@ -432,8 +448,10 @@ ADR-0016 baseline must amend that ADR explicitly.
 - [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md)
 - [ADR-0023](../decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md)
 - [ADR-0024](../decisions/ADR-0024-revision-pinned-semantic-patch.md)
+- [ADR-0026](../decisions/ADR-0026-scoped-semantic-authorization-and-approval.md)
 - [Semantic API specification](../specs/semantic-api.md)
+- [Semantic authorization specification](../specs/semantic-authorization.md)
 - [Semantic core rationale](semantic-core-rationale.md)
 - [Knowledge authority](../governance/knowledge-authority.md)
-- GitHub issues #26, #27, #28, #29, #41, #93, #94, #95
+- GitHub issues #26, #27, #28, #29, #30, #41, #93, #94, #95
 - PR #91

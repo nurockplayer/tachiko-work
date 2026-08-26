@@ -39,15 +39,6 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
-- An Accepted scoped semantic authorization and exact-approval contract now
-  defines opaque Human/Machine principals; independent Query, Propose, Approve,
-  and Execute actions; document-scoped default-deny grants; additive Data,
-  Formula, Schema, and Destructive mutation classes; finite revocable
-  single-use Human approval for Machine execution; exact SemanticPatch/base and
-  grant-context binding; minimum provenance; and strict separation from
-  persistence and other host/external effects. Production lifecycle,
-  enforcement, revision, registry, and public DTO implementation remain future
-  work under #29, #30, and #93.
 - A provider-free, read-only Semantic Analyst slice now exposes deterministic
   document inspection, formula and dependency analysis, semantic change and
   affected-area analysis, and validation findings through shared Rust queries

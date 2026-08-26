@@ -1,13 +1,13 @@
-# Semantic Authorization, Exact Approval, and Provenance Specification
+# Semantic Authorization and Approval Specification
 
 Decision state: Accepted under
-[ADR-0026](../decisions/ADR-0026-scoped-semantic-authorization-and-exact-approval.md).
+[ADR-0026](../decisions/ADR-0026-scoped-semantic-authorization-and-approval.md).
 
 Implementation state: Not implemented. Current provider-free AI operations are
-read/explain/analyze/suggest-only, and the current `Suggestion` DTO is not a
-SemanticPatch, grant, approval, or execution credential. Concrete lifecycle,
-registry, consumption, runtime revision, enforcement, and transport work remain
-owned by #29, #30, and #93.
+read/explain/analyze/suggest-only. The current `Suggestion` DTO is not a
+SemanticPatch, Grant, Approval, execution credential, or public protocol.
+Lifecycle, registry, atomic publication/consumption, enforcement, revision,
+and transport work remains owned by #29, #30, and #93.
 
 Decision issue: [#28](https://github.com/nurockplayer/tachiko-work/issues/28)
 
@@ -22,709 +22,751 @@ and
 
 ## Purpose
 
-Define the smallest provider-neutral authorization and approval contract needed
-for safe Machine/AI-originated SemanticPatch execution in the current MVP.
+Define the smallest provider-neutral contract needed to authorize semantic
+Query, Propose, Approve, and Execute behavior and to require exact Human
+approval for a proposal originated by or executed with Delegated authority.
 
-This specification lets an implementation decide, without interpreting natural
-language:
+This specification defines:
 
-- which principal may Query, Propose, Approve, or Execute;
-- which semantic document and mutation classes that authority covers;
-- whether explicit approval is required;
-- the exact proposal, semantic base, executor, and authorization context an
-  approval covers;
-- what makes approval stale, expired, revoked, or consumed;
-- what minimum provenance must survive; and
-- where semantic authority stops before persistence or another host/external
-  effect begins.
+- opaque principals within one trusted authorization domain;
+- independently grantable semantic actions and mutation classes;
+- a closed set of document-local stable-ID scope atoms;
+- trusted derivation of disclosure and canonical-write requirements;
+- exact approval binding without selecting digest or wire bytes;
+- finite expiry, revocation, retry, and at-most-once successful publication;
+- minimum proposal, approval, and execution provenance; and
+- the boundary between semantic authorization and host/external effects.
 
-It consumes ADR-0024 `SemanticPatch` and `ExactChangeBinding` exactly. It does
-not define another command vocabulary, generic policy language, public wire
-DTO, or runtime/session protocol.
+It consumes ADR-0024 `SemanticPatch`, `ExactChangeBinding`, semantic-base, and
+stale laws exactly. It does not restate or amend those laws, define another
+mutation vocabulary, introduce a policy DSL, or freeze a public Rust/Serde/wire
+DTO.
 
 ## Contract boundary
 
-Conceptually:
-
 ```text
-trusted principal/session resolution
+trusted identity / authorization domain
               |
               v
-principal + grants
+authenticated Principal + live Grants
+              |
+              v
+trusted derivation of disclosure/write scope + mutation classes
               |
               v
 Query / Propose / Approve / Execute authorization
               |
               v
-immutable revision-pinned SemanticPatch
+immutable ADR-0024 SemanticPatch
               |
               v
-exact Human approval when required
+exact Human Approval when Delegated authority is involved
               |
               v
-authoritative base check + semantic gate
+current-base check + authoritative semantic gate
               |
               v
-single-use authorized semantic publication
+atomic semantic publication + Approval consumption
               |
               v
 result revision + minimum provenance
 
-separate host domains beside this path:
+separate host-effect domains beside this path:
 storage / filesystem / browser persistence / network / Git / process / plugin
 ```
 
-Semantic admissibility, deterministic operation gating, authorization, and
-approval are separate mandatory checks. Passing one does not satisfy another.
+Semantic admissibility, operation gating, authorization, approval, and host
+authority are independent. Passing one never satisfies another.
 
 ## Terminology
 
+### Authorization domain
+
+The trusted context in which Principal, Grant, and Approval identifiers are
+resolved and registry state is authoritative. The exact host/session/account
+mechanism and domain identifier encoding are Provisional.
+
 ### Principal
 
-An accountable authorization subject resolved by a trusted boundary.
+An accountable authorization subject resolved by the trusted identity or host
+boundary.
 
 ```text
-Principal
-- PrincipalId
-- PrincipalKind: Human | Machine
+PrincipalKind = Human | Delegated
 ```
 
-The exact type names and encodings are conceptual and Provisional.
+`Delegated` includes agents, automation, services, plugins, and similar
+non-human authorities. Provider, model, tool, prompt, confidence, and
+self-reported metadata are provenance, not principal class or privilege.
 
 ### Grant
 
-An immutable, revocable occurrence that grants one principal one semantic
-action over one exact DocumentId, with mutation classes where the action can
-address mutation.
+An immutable, revocable authorization occurrence issued by a trusted Human or
+host authority to one subject principal. One or more live Grants may combine to
+cover one complete semantic authorization requirement.
+
+### Authorization footprint
+
+The complete disclosure scope, canonical-write scope, and mutation classes
+derived by the trusted semantic/application authority for an operation and its
+relevant base/candidate relationships.
 
 ### Approval
 
 An immutable Human authorization occurrence for one exact proposal occurrence,
-exact semantic change/base, exact Machine executor, exact mutation classes, and
-exact grant context.
-
-### Direct semantic mutation
-
-The canonical semantic subjects and definitions a Command or AtomicBatch
-actually creates, changes, or removes.
-
-Derived formula results, dependency impacts, validation changes, and rendered
-review evidence are not additional direct writes, though they remain required
-review/provenance evidence where the owning Semantic API operation exposes them.
+exact ADR-0024 change/base, exact authorization context, and one authorized
+executor. Mutable use/revocation state belongs to a trusted registry.
 
 ## Principal contract
 
-1. A trusted host/authentication/session boundary MUST supply the effective
+1. A trusted identity/host/session boundary MUST supply the effective
    PrincipalId for every authorization-relevant request.
-2. Request payloads, model output, prompts, document text, imported content, or
-   plugin results MUST NOT select or upgrade the effective principal.
-3. A Machine principal includes an AI agent, automation, or service integration.
-4. Provider, model, tool, framework, prompt, confidence, and self-reported
-   validation are provenance/evidence only.
-5. Proposer, approver, and executor MUST be recorded separately.
-6. A Machine principal MUST NOT issue the Human approval required for its own
-   execution.
-7. Disabled, missing, or unresolvable principals fail closed.
-8. Human/Machine subtype expansion, identity proof, accounts, directories,
-   groups, organizations, and enterprise identity management are outside this
-   contract.
+2. PrincipalId is meaningful within one authorization domain. A client MUST
+   NOT substitute an identifier from another domain.
+3. A request payload, prompt, model response, document, import, or plugin result
+   MUST NOT select or upgrade the effective principal or principal kind.
+4. Proposer/originator, Human approver, and executor are separate recorded
+   roles. A Human may occupy more than one role when policy permits; no
+   mandatory four-eyes rule is introduced.
+5. The Human approval required by this specification MUST be issued by a
+   trusted Human principal. A Delegated principal cannot satisfy that role.
+6. Disabled, missing, unauthenticated, or unresolvable principals fail closed.
+7. Accounts, login providers, directories, groups, organizations, and
+   enterprise identity administration are outside this contract.
 
-## Semantic action contract
+## Semantic capability contract
 
-The closed MVP actions are:
+The minimum action dimensions are:
 
 ```text
 Query
-Propose
-Approve
-Execute
+Propose(MutationClass)
+Execute(MutationClass)
+Approve(MutationClass)
 ```
 
-### Query
+### Action meaning
 
-Query authorizes deterministic non-publishing Semantic API reads for the scoped
-document. This includes inspection, validation/report inspection, explanation,
-calculation, comparison, semantic diff/impact, and other operations that do not
-publish semantic state.
+- `Query` authorizes deterministic, non-publishing Semantic API reads for the
+  covered disclosure scope.
+- `Propose` authorizes non-publishing evaluation of typed Command or
+  AtomicBatch meaning for the covered canonical-write scope and mutation
+  classes. It may issue an immutable SemanticPatch.
+- `Approve` authorizes a Human to issue or revoke one exact Approval for the
+  covered canonical-write scope and mutation classes.
+- `Execute` authorizes the named executor to request authoritative semantic
+  publication for the covered canonical-write scope and mutation classes.
 
-### Propose
+No action implies another. Query does not imply Propose. Propose does not imply
+Execute. Approve does not imply Execute. Execute does not imply Approve.
+Unknown actions fail closed.
 
-Propose authorizes `Propose(Command | AtomicBatch)` for covered mutation
-classes. It may issue an immutable ADR-0024 SemanticPatch and review evidence.
-It publishes no semantic state.
-
-### Approve
-
-Approve authorizes a Human principal to issue or revoke exact approval for
-covered mutation classes in the scoped document. It does not grant Execute.
-
-### Execute
-
-Execute authorizes a principal to request publication of an exact
-SemanticPatch for covered mutation classes. It does not bypass required Human
-approval, base equality, semantic preconditions, or the authoritative operation
-gate.
-
-### Non-implication laws
-
-- Query MUST NOT imply Propose, Approve, or Execute.
-- Propose MUST NOT imply Execute.
-- Approve MUST NOT imply Execute.
-- Execute MUST NOT imply Approve.
-- Provider/model identity MUST NOT imply any action.
-- Unknown actions fail closed.
+ADR-0020 remains Execute meaning. This specification requires an exact
+SemanticPatch for a Delegated-origin or Delegated-execution approval path; it
+does not require an ordinary directly authenticated Human editing operation to
+introduce a reviewable proposal when no policy requires one.
 
 ## Mutation-class contract
 
 The closed MVP classes are:
 
 ```text
-Data
+Value
 Formula
+Structure
 Schema
 Destructive
 ```
 
-### Data
+- `Value` covers stored non-formula typed values, including references.
+- `Formula` covers formula definitions and formula-bearing transitions.
+- `Structure` covers non-schema document/entity lifecycle, creation,
+  duplication, rename, membership, and similar structure.
+- `Schema` covers schema/field definition, type, requiredness, reference-target,
+  and other schema meaning.
+- `Destructive` covers removal of an existing semantic object or fact without
+  a same-kind replacement, or another Stable command meaning explicitly
+  classified as data-losing. It combines with another class.
 
-Ordinary non-formula semantic data creation/update, typed reference-value
-update, non-destructive entity metadata or human-key change, and other mutation
-that does not alter formula-definition or schema-declaration meaning.
+Ordinary in-place replacement at one stable target is not automatically
+Destructive merely because the previous value or definition changes.
 
-### Formula
+Classification laws:
 
-Creation, replacement, or removal of a bound formula definition or
-formula-bearing semantic value.
-
-### Schema
-
-Creation, replacement, or removal of schema/field declaration meaning,
-including declared type, requiredness, or reference-target semantics.
-
-### Destructive
-
-Deletion or irreversible discard/replacement of established semantic objects or
-canonical data.
-
-### Classification laws
-
-1. Every Stable mutation Command family MUST publish one deterministic required
-   class set as part of its Semantic API compatibility contract.
-2. Classification MUST follow typed command meaning rather than prompt text,
-   provider/model metadata, confidence, rendered diff, or UI presentation.
+1. Every Stable mutation Command family MUST have a deterministic required
+   class set under its Semantic API compatibility contract.
+2. Classification follows typed command meaning, never prompt prose,
+   provider/model metadata, confidence, rendered diff, or UI labels.
 3. Classes are additive and non-hierarchical.
-4. Entity removal requires at least `Data + Destructive`.
-5. Formula removal requires at least `Formula + Destructive`.
-6. Schema/field removal requires at least `Schema + Destructive`.
-7. AtomicBatch requires the union of every member command's classes.
-8. Every required class must be independently granted and approved.
-9. Unknown, unsupported, or unclassified mutation commands fail closed.
-10. A Data-only class set is ordinary/routine review presentation. A set
-    containing Formula, Schema, or Destructive is elevated presentation. Risk
-    presentation does not replace the exact class set.
+4. Scalar/reference update requires at least Value.
+5. Formula update requires at least Formula.
+6. Entity creation/rename/duplicate requires at least Structure.
+7. Entity deletion requires at least Structure + Destructive.
+8. Formula removal requires at least Formula + Destructive.
+9. Schema/field deletion requires at least Schema + Destructive.
+10. AtomicBatch requires the union of every member Command's classes.
+11. Unknown, unsupported, or unclassified mutation meaning fails closed for
+    Propose, Approve, and Execute.
 
-## Scope and Grant contract
+The complete operation-to-class catalogue remains Provisional. Published
+Stable mappings cannot change silently.
 
-The only reusable semantic scope in this MVP profile is one exact `DocumentId`.
+## Semantic scope contract
+
+The closed MVP scope atoms are:
+
+```text
+Document(DocumentId)
+Schema(SchemaId)
+SchemaField(SchemaId, FieldId)
+Entity(EntityId)
+EntityField(EntityId, FieldId)
+```
+
+Every atom is interpreted within one document-local semantic context. ADR-0015
+keeps semantic relationships document-local; a matching subordinate ID in
+another document does not match scope. Exact source/wire representation of
+that document qualification remains Provisional.
+
+Containment meaning:
+
+- Document covers every semantic subject in that document.
+- Schema covers its definition, fields, and entities/instances belonging to it
+  in the relevant base or candidate.
+- SchemaField covers the field definition and its entity-field instances.
+- Entity covers the entity and its field instances, not its schema definition.
+- EntityField covers one exact field instance.
+
+A Grant MAY contain a finite union of atoms. Coverage is evaluated over the
+relevant base and candidate. An operation moving or retargeting meaning across
+containers requires coverage of both old and new sides.
+
+Project, workspace, organization, tenant, branch, path, JSON Pointer, wildcard
+string, tag, UI/storage/Git coordinate, natural-language predicate, and generic
+scope expression are not supported.
+
+## Trusted authorization-footprint derivation
 
 Conceptually:
+
+```text
+AuthorizationFootprint
+- DisclosureScope
+- CanonicalWriteScope
+- RequiredMutationClasses
+```
+
+Normative laws:
+
+1. The trusted semantic/application authority MUST derive the footprint from
+   typed operation meaning and relevant base/candidate relationships.
+2. A client, model, prompt, or request-supplied footprint is untrusted and MUST
+   NOT reduce the derived requirement.
+3. AtomicBatch uses the union of every member Command's requirements.
+4. CanonicalWriteScope includes direct targets, generated IDs, created/deleted
+   objects and their owning containers, explicit retargeting, and
+   command-defined canonical side effects.
+5. Purely derived recalculation, FormulaImpact, validation findings, and review
+   projections are not canonical writes.
+6. DisclosureScope includes semantic subjects revealed by Query results,
+   preview, diff, dependencies, impact, diagnostics, explanations, and result
+   projections.
+7. If the complete requirement cannot be derived safely, authorization fails
+   closed or requires broader explicit scope.
+
+## Grant contract
+
+Conceptually, without fixing source or wire fields:
 
 ```text
 Grant
 - GrantId
-- PrincipalId
-- SemanticAction
-- DocumentId
-- allowed MutationClass set for Propose/Approve/Execute
-- issued_by
-- issued_at
-- optional expires_at
+- AuthorizationDomain
+- IssuerPrincipal
+- SubjectPrincipal
+- Capabilities
+- SemanticScope
+- Validity
+- RevocationState
 ```
 
 Normative laws:
 
-1. A Grant is immutable after issuance.
-2. Changing principal, action, document, or class set creates a new GrantId.
-3. Grant state is held by a trusted authorization boundary and is at least
-   revocable.
-4. Authorization is default-deny.
-5. Query requires one active Query grant for the exact DocumentId.
-6. Propose, Approve, and Execute require active grants covering the exact
-   DocumentId and every required mutation class.
-7. A grant for one class does not imply another class.
-8. A grant for one document does not authorize another document.
-9. Document scope is semantic identity and MUST NOT be inferred from a path,
-   filename, project name, UI tab, `.roproj` location, Git branch, commit, or
-   repository.
-10. A revoked, expired, disabled, missing, or unresolvable grant grants no
-    authority.
-11. Grant state MUST be rechecked when approval is issued and immediately
-    before Execute.
-12. Roles, groups, inheritance, deny rules, conditions, wildcard expressions,
-    tags, path predicates, arbitrary scripts, and generic policy DSLs are not
-    supported.
-13. Entity-, schema-, field-, project-, workspace-, branch-, organization-, and
-    tenant-scoped reusable grants remain Deferred.
+1. A Grant is immutable after issuance. A changed subject, capability, scope,
+   or validity creates another occurrence.
+2. Only a trusted Human or host authorization authority may issue Grants.
+3. A Delegated principal MUST NOT self-grant, expand, or transitively delegate
+   authority.
+4. Authorization is allow-only and default-deny.
+5. Multiple Grants MAY combine only when their union covers the complete
+   capability and scope requirement.
+6. Every required mutation class and scope atom must be covered.
+7. Grant validity/revocation and subject state are checked at request time and
+   immediately before Execute.
+8. Missing, expired, revoked, disabled, unsupported, or unresolvable authority
+   grants nothing.
+9. Approval cannot create, extend, restore, or replace Grant authority.
+10. Host defaults for Query or Propose are provisioning choices, not intrinsic
+    AI authority.
 
-Exact proposal approval narrows document-level reusable authority to one
-occurrence and the complete stable-ID-targeted command semantics in
-ExactChangeBinding.
+Exact Grant DTOs, identifiers, storage, administration, expiry/clock encoding,
+and bootstrap remain Provisional.
 
-## Machine execution approval policy
+## Disclosure and review contract
 
-The current MVP rule is:
+1. Propose authority does not imply Query authority.
+2. Preview, diff, dependencies, impact, diagnostics, and explanations MUST NOT
+   disclose subjects outside sufficient Query coverage; the trusted boundary
+   denies or safely reduces the projection.
+3. Approve authority permits inspection of the exact immutable proposal body
+   needed to identify what is being approved. It does not grant arbitrary
+   Query over the base or candidate.
+4. Base values, candidate projections, diffs, dependencies, impact, and
+   diagnostics shown during review still require Query coverage or a safely
+   reduced approval projection.
+5. Execute outcomes and denials MUST NOT disclose unauthorized semantic facts.
+6. Exact redaction/projection DTOs and diagnostics belong to #29/#30; their
+   replaceability does not weaken these disclosure laws.
 
-```text
-Machine Execute => exact Human approval required
-```
+## Approval policy for Delegated origin or authority
 
-An approval may be issued only when:
-
-1. the immutable proposal occurrence and ExactChangeBinding are internally
-   consistent;
-2. the proposal base equals the current semantic context revision;
-3. the approver is an active Human principal;
-4. the approver is not the Machine executor;
-5. active Approve grants cover the proposal DocumentId and every required class;
-6. the named executor is active;
-7. active Execute grants cover the same DocumentId and every required class;
-8. the approval has finite expiry; and
-9. the selected authorization/approval profile is supported.
-
-All Machine Execute requests require approval, including ordinary Data writes.
-There is no Formula, Schema, Destructive, provider, model, confidence, or
-validation-success bypass.
-
-This profile does not add an approval requirement to ordinary directly
-authenticated Human editing paths. A host may impose a stricter policy without
-weakening this Machine rule.
-
-## Approval object contract
-
-Conceptually:
+Exact Human Approval is required when either condition holds:
 
 ```text
-Approval
-- ApprovalId
-- ProposalId
-- ExactChangeCommitment
-- SemanticApiCompatibilityContract
-- BaseReference
-- DocumentId
-- RequiredMutationClasses
-- ApproverPrincipalId
-- ApproverGrantIds
-- ExecutorPrincipalId
-- ExecutorGrantIds
-- AuthorizationProfileId
-- IssuedAt
-- ExpiresAt
+proposal originator is Delegated
+OR Execute uses Delegated authority
 ```
 
-The exact source/wire names are not stable.
+Query and Propose require Grants but no Approval.
+
+For one proposal:
+
+1. One Human approver must have live Approve authority covering the complete
+   canonical-write scope and mutation classes.
+2. The named executor must have live Execute authority covering the same
+   requirement.
+3. Approval covers the exact whole Command or AtomicBatch.
+4. Partial-batch approval and combining partial approvers are forbidden.
+5. Quorum, approval chains, standing/reusable policies, and autonomous
+   approval are not part of the MVP.
+6. Approval cannot override stale base, semantic inapplicability, validation,
+   or the authoritative gate.
+7. A Human approver may also be the Human executor; no mandatory four-eyes rule
+   is introduced.
+
+## Approval binding contract
+
+The Accepted logical binding is:
+
+```text
+ApprovalBinding(A) =
+    AuthorizationDomain
+  + ProposalId
+  + ADR-0024 ExactChangeBinding(P)
+  + OriginatorPrincipalId
+  + ExecutorPrincipalId
+  + CanonicalWriteScope
+  + RequiredMutationClasses
+  + AuthorizationPolicyVersion
+```
+
+Approval additionally records:
+
+```text
+ApprovalId
+IssuedAt
+finite ExpiresAt
+Approve Grant references used at issuance
+```
 
 Normative laws:
 
-1. ApprovalId identifies one approval occurrence and MUST NOT be reused.
-2. Approval contents are immutable after issuance.
-3. Approval binds one ProposalId and cannot transfer to another occurrence even
-   when its exact semantic contents are identical.
-4. Approval binds the complete ADR-0024 ExactChangeBinding, including Semantic
-   API contract, exact base, body kind, complete typed command semantics,
-   generated IDs, bound formulas, command-owned semantic preconditions, and
-   AtomicBatch order.
-5. Approval binds one exact executor principal.
-6. Approval binds one exact Human approver principal.
-7. Approval binds the exact GrantIds relied upon by the approver and executor.
-8. Approval binds the exact DocumentId, mutation-class set, and authorization
-   profile.
-9. Approval has finite ExpiresAt.
-10. Mutable status is maintained by a trusted registry and is at least
-    distinguishable as active, revoked, and consumed.
-11. Rendered diff prose, intent text, prompt, confidence, provider/model
-    identity, UI coordinates, `.roproj` bytes, storage paths, and Git objects
-    MUST NOT substitute for exact binding.
-12. A client-supplied approval record is untrusted. The authoritative boundary
-    MUST reload the trusted Approval by ApprovalId.
-13. ApprovalId is a registry reference, not a portable bearer capability.
+1. ApprovalId identifies one occurrence and MUST NOT be reused.
+2. Immutable Approval content MUST NOT change after issuance.
+3. Approval binds one ProposalId. An identical ExactChangeBinding under another
+   proposal occurrence requires another Approval.
+4. The trusted boundary MUST structurally verify the retained immutable
+   proposal and the complete ExactChangeBinding defined by ADR-0024.
+5. Approval binds exact originator, executor, canonical-write scope, mutation
+   classes, and policy version. The Approval record separately identifies the
+   trusted Human approver.
+6. Disclosure scope is authorized independently and is not ApprovalBinding.
+   Presentation or diagnostic projection changes do not redefine the approved
+   semantic publication.
+7. Rendered diff/prose, prompts, confidence, model/provider identity, UI
+   coordinates, storage bytes/paths, and Git objects MUST NOT substitute for
+   the binding.
+8. A client-supplied Approval is untrusted. The authoritative boundary MUST
+   verify it against trusted Approval and lifecycle state.
+9. Approval MUST NOT become a transferable bearer credential.
 
-## Exact-change integrity contract
+### Authorizing Grant references
 
-The Accepted logical law is:
+Approve Grant references used at issuance are immutable Approval evidence.
 
-```text
-Approval.ExactChange == ExactChangeBinding(SemanticPatch)
-```
+Immediately before Execute, the trusted boundary rederives the exact
+authorization requirement and requires sufficient live Approve and Execute
+Grants. Therefore:
 
-A trusted implementation MAY establish this through structural comparison with
-one retained immutable proposal record.
+- loss of effective Approve or Execute authority denies;
+- each authorizing Approve Grant reference needed for issuance must remain
+  valid and covering;
+- an equivalent newly issued Approve Grant does not revive Approval after a
+  referenced authorizing Grant expires or is revoked;
+- the Execute Grant references used at publication are retained as provenance;
+  and
+- explicit Approval revocation permanently cancels the occurrence even if
+  Grant authority later exists.
 
-When proposal and approval are separately persisted/decoded, the implementation
-MUST additionally use a versioned, domain-separated, collision-resistant
-commitment over the complete logical ExactChangeBinding.
+## Exact-change integrity boundary
 
-The commitment profile:
+Trusted structural equality with one retained immutable proposal record is
+sufficient for this MVP. ProposalId alone is not content-integrity proof.
 
-- MUST cover every identity-defining ADR-0024 field;
-- MUST preserve AtomicBatch order;
-- MUST encode typed values, normalized Numbers, bound ASTs, generated stable
-  IDs, and command-owned semantic preconditions without relying on
-  presentation;
-- MUST identify its profile and algorithm;
-- MUST reject unsupported profiles;
-- MUST NOT be a hash of only ProposalId, rendered diff, Rust memory,
-  Serde/transport bytes, `.roproj` bytes, Git objects, or package digests; and
-- MUST NOT be treated as proof of approver identity or authorization.
+This specification does not select:
 
-Preferred first implementation mechanism, classified Provisional:
+- canonical proposal or Approval bytes;
+- a digest/hash algorithm or transcript;
+- a commitment profile identifier;
+- a signature, MAC, PKI, or key lifecycle;
+- JSON/Serde, IPC, WASM, network, or SDK DTOs; or
+- a portable/offline Approval token.
 
-```text
-profile: tachiko.semantic-exact-change/v1
-algorithm: SHA-256
-topology: tagged, length-delimited, versioned internal transcript
-```
+An Approval that crosses an untrusted boundary requires a separately Accepted
+integrity-protected profile. An implementation MAY use an internal digest as a
+Provisional optimization, but conformance rests on the logical structural
+binding and trusted registry, not on any particular bytes or algorithm.
 
-Exact transcript bytes and future algorithm migration remain replaceable. A
-portable/offline approval format would require a separately Accepted MAC,
-signature, or authenticated protocol.
+## Expiry, revocation, replay, retry, and stale behavior
 
-## Validity, expiry, revocation, replay, and stale behavior
-
-An approval is usable only if every condition below remains true:
+The logical lifecycle is:
 
 ```text
-proposal occurrence matches
-AND exact-change commitment matches
-AND current semantic base exactly matches proposal base
-AND Semantic API / authorization profiles are supported
-AND approver and executor principals are active
-AND executor identity matches
-AND every bound approver/executor GrantId is active and covering
-AND approval is not expired
-AND approval is not revoked
-AND approval is not consumed
+Active -> Consumed | Revoked | Expired
 ```
 
 ### Expiry
 
-- Every approval MUST have finite ExpiresAt.
-- Permanent approval is invalid.
-- Exact TTL and maximum TTL are Provisional host policy.
-- A 15-minute default is recommended for the first implementation.
-- Trusted time belongs to the host/authorization boundary, not workspace-engine.
-- If trusted time or approval status cannot be determined, authorization fails
-  closed.
+- Every Approval MUST have finite expiry.
+- Permanent Approval is invalid.
+- Exact duration, maximum duration, time encoding, and trusted clock are
+  Provisional host/security-profile choices.
+- This specification recommends no concrete TTL.
+- Unavailable or untrusted time fails closed.
 
-### Revocation and grant changes
+### Revocation
 
-- Approval MUST be explicitly revocable before consumption.
-- Revoking, expiring, replacing, or disabling any bound grant invalidates the
-  approval.
-- A newly issued semantically equivalent GrantId does not revive it.
-- Disabling the approver or executor invalidates the approval.
-- Revocation does not undo an already published transition.
+- Active Approval MUST be revocable by its approver, a Grant issuer whose
+  authority supported issuance, or the trusted authorization authority.
+- Revocation is terminal and does not undo an already published transition.
+- Missing revocation/use state fails closed.
+- An ephemeral/session-bound Approval becomes unusable when its verifier state
+  no longer exists.
 
-### Stale interaction
+### At-most-once successful publication
 
-Stale behavior remains exactly ADR-0024:
+- Successful semantic publication and transition to Consumed MUST be atomic.
+- One Approval can authorize at most one successful semantic publication.
+- Failure before semantic publication MUST NOT consume Approval.
+- A retry while Approval remains Active MUST repeat every current-base,
+  identity, structural-binding, scope/class, principal, Grant, expiry,
+  revocation, policy-version, semantic-precondition, validation, and gate check.
+- A consumed ApprovalId MUST fail replay without publication.
+- Concurrent attempts MUST NOT both publish successfully.
+- Reservation, locking, transaction, recovery, and state-installation mechanics
+  remain #29/#93 implementation work.
+- If a failure leaves the trusted boundary unable to prove whether publication
+  occurred, it MUST fail closed and MUST NOT permit retry until authoritative
+  state is reconciled.
 
-- compare the current semantic revision with the proposal base before
-  re-authorizing or executing;
-- return Stale on mismatch before candidate construction against the changed
-  base;
-- publish no semantic state;
-- perform no implicit rebase, merge, retarget, or best-effort replay;
-- leave the proposal unchanged; and
-- require a new proposal and new approval.
+### Stale behavior
 
-Later semantic content equivalence does not revive the old revision occurrence.
-
-### Replay and consumption
-
-- Approval is single-use.
-- After all identity, integrity, base, principal, grant, expiry, revocation, and
-  semantic-gate checks pass, the trusted boundary MUST claim/consume the
-  approval before or atomically with entry into the semantic publication path.
-- At most one concurrent attempt may claim an ApprovalId.
-- A claimed/consumed approval MUST NOT be restored after a later execution or
-  host failure.
-- A second attempt with the same ApprovalId MUST fail without publication.
-- Exact reservation, locking, transaction, and state-installation mechanics are
-  owned by #29/#93.
+Stale behavior is exactly ADR-0024. A base mismatch is detected before
+candidate construction against the changed base, publishes nothing, performs
+no implicit rebase/merge/retarget/replay, and leaves the immutable proposal
+unchanged. A stale or re-proposed patch requires another Approval. Later
+semantic content equivalence does not revive the old base occurrence.
 
 ## Authorization algorithms
+
+The steps below specify required logical checks, not a Rust API, DTO, database
+transaction, or transport sequence.
 
 ### Authorize Query
 
 ```text
 allow iff:
-  principal is active
-  AND active Query grant covers exact DocumentId
+  authenticated Principal is active
+  AND trusted authority derives complete DisclosureScope
+  AND live Query Grants cover that scope
 ```
 
 ### Authorize Propose
 
 ```text
 allow iff:
-  principal is active
-  AND active Propose grants cover exact DocumentId
-  AND active Propose grants cover every RequiredMutationClass
-  AND command/base are otherwise admissible under the Semantic API
+  authenticated Principal is active
+  AND trusted authority derives CanonicalWriteScope + MutationClasses
+  AND live Propose Grants cover the complete requirement
+  AND command/base are admissible under the Semantic API
 ```
 
-Propose publishes nothing and does not imply later Execute authorization.
+Returned evidence is separately filtered by the disclosure contract. Propose
+publishes nothing and does not imply later Execute authority.
 
 ### Issue Approval
 
 ```text
 allow iff:
-  immutable proposal identity/content are consistent
+  immutable proposal identity/content are structurally consistent
   AND proposal base is current
-  AND approver is active Human
-  AND approver != Machine executor
-  AND exact active Approve GrantIds cover document + classes
-  AND exact active Execute GrantIds for the named executor cover document + classes
-  AND finite expiry and supported profiles are recorded
+  AND trusted authority rederives write scope + mutation classes
+  AND approver is authenticated Human
+  AND live Approve Grants cover the complete requirement
+  AND named executor is active
+  AND live Execute Grants cover the complete requirement
+  AND finite expiry + supported policy version are recorded
 ```
 
-### Authorize Execute
+The trusted record captures ApprovalBinding and issuance Grant references.
 
-A conforming trusted boundary preserves this logical order:
+### Authorize delegated Execute
 
 ```text
-1. Load immutable proposal and trusted Approval by ID.
-2. Reject unsupported Semantic API, commitment, or authorization profiles.
-3. Verify proposal identity/content consistency and exact-change commitment.
-4. Compare current semantic revision with proposal base; return Stale on mismatch.
-5. Recompute required mutation classes from typed command semantics.
-6. Require authenticated actor == bound executor principal.
-7. Recheck bound principals and exact GrantIds.
-8. Recheck expiry, revocation, and consumption.
-9. Require exact Approval binding equality.
-10. Re-run authoritative semantic preconditions, validation/calculation, and gate.
-11. Atomically claim/consume approval and enter all-or-nothing publication.
-12. Return outcome, resulting revision when successful, and minimum provenance.
+1. Load the trusted immutable proposal and Approval by ID.
+2. Reject unsupported Semantic API or authorization-policy versions.
+3. Verify proposal identity/content and complete ADR-0024 ExactChangeBinding.
+4. Compare current semantic revision with the proposal base; return Stale on
+   mismatch before candidate construction against the changed base.
+5. Rederive canonical-write scope and mutation classes from typed meaning.
+6. Require authenticated actor == bound executor.
+7. Recheck originator, approver, authorizing Approve Grant references,
+   executor, and sufficient current live Execute Grants.
+8. Recheck expiry, revocation, use state, and exact ApprovalBinding equality.
+9. Re-run authoritative semantic preconditions, validation/calculation, and
+   operation gate.
+10. Atomically publish all semantic state and mark Approval Consumed, or
+    publish none and leave it unconsumed when failure is known to precede
+    publication.
+11. Return a disclosure-safe outcome, resulting revision on success, and
+    minimum provenance.
 ```
 
-An earlier preview, rendered diff, validation result, or client-side allow/deny
-calculation is not authority for step 10.
+An earlier preview, rendered diff, client gate result, or model claim is not
+authority for step 9.
 
 ## Minimum provenance contract
 
-Provenance is machine-readable audit/history evidence outside canonical
-semantic Document state.
+Provenance is machine-readable evidence outside canonical semantic Document
+state.
 
 ### Proposal provenance
 
 At minimum:
 
 ```text
-ProposalId
-ExactChangeCommitment + profile
-Semantic API compatibility contract
-BaseReference
-ProposerPrincipalId + PrincipalKind
+AuthorizationDomain
+ProposalId + ExactChangeBinding reference
+OriginatorPrincipalId
+Propose Grant references
+AuthorizationFootprint
+AuthorizationPolicyVersion
 ProposedAt
 ```
 
-When available at the adapter boundary, structured agent instance, provider,
-model, tool/orchestrator identity/version, and correlation ID are also retained.
-They remain non-authoritative.
+When available, retain structured agent/provider/model/tool/orchestrator
+identity/version and correlation facts as opaque provenance. They never grant
+privilege. Full prompts/conversations are not required.
 
 ### Approval provenance
 
 At minimum:
 
 ```text
-ApprovalId
-ApproverPrincipalId
-ApproverGrantIds
-ExecutorPrincipalId
-ExecutorGrantIds
-AuthorizationProfileId
-DocumentId
-RequiredMutationClasses
-IssuedAt
-ExpiresAt
-Revocation/consumption evidence
+ApprovalId + ApprovalBinding
+Approve Grant references used at issuance
+IssuedAt + ExpiresAt
+revocation/use evidence
 ```
 
-### Successful Machine execution provenance
+### Successful approval-gated execution provenance
 
 At minimum:
 
 ```text
-ProposalId
-ExactChangeCommitment/profile
-BaseReference
-ProposerPrincipalId
+ProposalId + exact-binding reference
+Originator, Approver, and Executor PrincipalIds
 ApprovalId
-ApproverPrincipalId
-ExecutorPrincipalId
-bound GrantIds
-AuthorizationProfileId
-DocumentId
-RequiredMutationClasses
-ExecutedAt
-final authoritative gate outcome or durable evidence reference
-resulting semantic revision
-execution outcome
+Approve/Execute Grant references used at execution
+issuance Grant references or durable reference to Approval
+CanonicalWriteScope + RequiredMutationClasses
+AuthorizationPolicyVersion
+base semantic revision + resulting semantic revision
+authoritative gate/report reference
+ExecutedAt + execution outcome
+Approval terminal state Consumed
 actual agent/provider/model/tool snapshot when known
 ```
 
 Additional laws:
 
-1. The complete immutable proposal or a durable lossless reference to it MUST
-   survive; a digest alone is insufficient to explain what was approved.
-2. Provider/model changes with the same trusted executor PrincipalId do not
-   invalidate authority but MUST be reflected in provenance.
-3. A different resolved executor PrincipalId invalidates approval.
-4. Full prompts, hidden reasoning, credentials, secrets, and complete chat
+1. The immutable proposal or a durable lossless reference MUST survive; a
+   digest alone would not explain what was approved.
+2. Provider/model change does not alter authority when trusted principals and
+   ApprovalBinding are unchanged, but changed facts are recorded.
+3. Full prompts, hidden reasoning, credentials, secrets, and complete chat
    transcripts are not minimum provenance.
-5. Provenance MUST NOT be written into `.roproj` merely to make it durable.
-6. This specification does not require event sourcing, a universal operation
-   log, or tamper-evident ledger.
-7. Provenance DTO, retention, storage, redaction, and UI remain
-   Provisional/Deferred.
+4. Provenance MUST NOT be written into `.roproj` merely to make it durable.
+5. Event sourcing, a universal operation log, CRDT, or tamper-evident audit
+   ledger is not required.
+6. Storage, retention, redaction, history UI, and receipt DTOs remain
+   Provisional/Deferred to #29/#12.
 
-## Semantic and external effect separation
+## Semantic and external-effect separation
 
-The action and grant vocabulary in this specification authorizes only the
-Semantic API domain.
+Semantic Grants and Approvals authorize only the Semantic API domain. They do
+not authorize:
 
-It does not authorize:
-
-- filesystem or browser persistence reads/writes;
+- filesystem or browser persistence access;
 - `.roproj` or `.ro` materialization;
-- network requests;
-- shell or process execution;
-- Git commit/push/repository administration;
-- plugin execution;
+- network access;
+- process or shell execution;
+- Git commit, push, merge, or repository administration;
+- plugin/connector invocation;
 - deployment/publication;
 - credentials/secrets access; or
 - another host effect.
 
-A host may materialize or publish an already-authorized semantic result only
-under separate host authority. Storage/host code does not grant semantic
-permission, and semantic approval does not grant host authority.
+A host may materialize or externally publish an already-authorized semantic
+result only under separate authority. External-effect capability vocabulary is
+Deferred and is not invented by this specification.
 
 ## Failure meanings
 
-A conforming client must be able to distinguish these authorization/security
-meanings where applicable:
+A conforming client can distinguish, where applicable:
 
-- principal unavailable or disabled;
-- action capability missing;
-- document scope mismatch;
-- mutation class denied or unknown;
+- principal unavailable/disabled;
+- capability missing;
+- disclosure or write scope denied;
+- mutation class denied/unknown;
 - approval required/missing;
-- Machine/self approval rejected;
-- proposal occurrence mismatch;
-- exact-change commitment mismatch;
-- executor mismatch;
-- authorization profile unsupported;
-- approval expired;
-- approval revoked;
-- approval consumed/replayed;
-- bound grant unavailable/revoked/expired/replaced; and
-- approval registry/time/authentication state unavailable.
+- approver not trusted Human;
+- proposal occurrence or exact binding mismatch;
+- originator, approver, or executor mismatch;
+- authorization-policy version unsupported;
+- approval expired, revoked, consumed, or state unavailable;
+- live Approve or Execute authority lost;
+- stale proposal under ADR-0024;
+- semantic admission/precondition/gate failure; and
+- external effect denied.
 
-These remain distinct from ADR-0024 Stale, admission/construction failure,
-semantic precondition failure, authoritative gate rejection, representation
-failure, and host failure.
-
-Stable machine meaning is required; exact diagnostic code strings, Rust enums,
-transport tags, and message wording remain Provisional and are enforced under
-#30.
+Authorization outcomes remain separate from semantic `ValidationReport`,
+representation failure, and host failure. Stable machine meaning is required;
+exact code strings, Rust enums, transport tags, and messages remain
+Provisional under #30. A denial MUST NOT disclose semantic content outside
+authorized disclosure scope.
 
 ## Required conformance scenarios
 
 1. Query-only principal cannot Propose, Approve, or Execute.
-2. Propose-only principal can issue an inert covered proposal but cannot Execute.
-3. Covered ordinary Data proposal with exact Human approval publishes once.
-4. Data-only authority denies Formula mutation.
-5. Non-destructive authority denies entity/schema/formula removal.
-6. Changed target/value/formula/generated ID/base/body/order/contract requires a
-   new proposal and approval.
-7. Identical ExactChangeBinding under a different ProposalId cannot reuse
-   approval.
-8. Any intervening semantic publication makes proposal/approval stale.
-9. Expired approval denies.
-10. Explicitly revoked approval denies.
-11. Revoked/replaced bound grant denies; equivalent new GrantId does not revive.
-12. Consumed ApprovalId denies replay and concurrent double claim.
-13. Same executor principal with changed provider/model retains authority and
-    records new provenance.
-14. Different executor PrincipalId denies.
-15. Machine self-approval denies.
-16. Valid approval cannot override failed semantic gate.
-17. Semantic grants cannot authorize filesystem/network/process/Git/plugin/
+2. Propose-only principal can issue an inert covered proposal but cannot
+   Execute.
+3. Preview evidence outside Query scope is denied or safely reduced.
+4. Fine-grained scope does not match a same-spelled subordinate ID in another
+   DocumentId.
+5. Moving/retargeting across containers requires old- and new-side coverage.
+6. Covered ordinary Value proposal with exact Human Approval publishes once.
+7. Value-only authority denies Formula mutation.
+8. Non-destructive authority denies entity/schema/formula removal.
+9. Changed target/value/formula/generated ID/base/body/order/contract requires
+   another proposal and Approval under ADR-0024.
+10. Identical ExactChangeBinding under another ProposalId cannot reuse Approval.
+11. Any intervening semantic publication makes proposal/Approval stale.
+12. Expired or explicitly revoked Approval denies without publication.
+13. Expiry/revocation of an authorizing Approve Grant or loss of sufficient
+    live Execute authority denies; an equivalent new Approve Grant does not
+    revive Approval, while a different live Execute Grant set may satisfy the
+    fresh executor-authority recheck and is retained as execution provenance.
+14. A failed authoritative semantic gate publishes nothing and leaves Approval
+    Active when no publication occurred.
+15. A retry repeats every live authorization and semantic check.
+16. Concurrent attempts cannot both publish; consumed Approval denies replay.
+17. An uncertain publication outcome fails closed until reconciled.
+18. Provider/model change with unchanged principals/binding affects provenance,
+    not privilege.
+19. Delegated self-approval denies.
+20. Semantic authorization cannot grant filesystem/network/process/Git/plugin/
     deployment/persistence effects.
-18. Mixed AtomicBatch requires the union of every mutation class and publishes
-    no prefix.
+21. Mixed AtomicBatch requires union scope/classes, one whole-batch Approval,
+    and all-or-nothing publication.
 
 ## Stability classification
 
 | Concept | State |
 | --- | --- |
-| Opaque trusted Principal and Human/Machine distinction | Accepted |
-| PrincipalId encoding/authentication mechanism | Provisional host concern |
-| Query, Propose, Approve, Execute meanings and non-implication | Accepted |
-| Exact capability identifier spelling/wire form | Provisional |
-| Data, Formula, Schema, Destructive class meanings | Accepted MVP contract |
-| Stable command-family class mapping | Semantic API profile-specific; published meaning must not change silently |
-| DocumentId-only reusable semantic grant scope | Accepted MVP profile |
-| Entity/schema/field/project/workspace/org reusable scopes | Deferred |
+| Principal identity within one trusted authorization domain | Accepted |
+| Human versus Delegated distinction for MVP policy | Accepted |
+| Principal/domain encoding and authentication mechanism | Provisional host concern |
+| Query, Propose, Approve, Execute non-implication | Accepted |
+| Capability identifier strings and public representation | Provisional |
+| Value, Formula, Structure, Schema, Destructive meanings | Accepted MVP contract |
+| Complete Stable command-family mapping | Provisional; published mappings cannot change silently |
+| Closed document-local stable-ID scope concepts and containment | Accepted MVP contract |
+| Project/workspace/org/tenant/predicate scope | Deferred |
+| Trusted AuthorizationFootprint derivation | Accepted |
 | Immutable, revocable, default-deny Grant occurrences | Accepted |
-| Grant registry/admin/DTO | Provisional |
-| Exact Human approval for every Machine Execute | Accepted current MVP policy |
-| Approval binds occurrence, ExactChangeBinding/base, executor, classes, profile, and exact GrantIds | Accepted |
-| Structural equality as approval authority | Accepted |
-| Versioned domain-separated collision-resistant commitment when separately stored/decoded | Accepted |
-| SHA-256 tagged transcript first profile | Provisional recommended mechanism |
-| Exact transcript bytes and public digest/wire format | Provisional |
-| ApprovalId as trusted registry reference, not bearer credential | Accepted MVP profile |
-| Portable signed/MAC/offline approvals | Deferred |
-| Finite expiry | Accepted |
-| Exact TTL/clock implementation | Provisional |
+| Grant registry/admin/DTO/clock representation | Provisional |
+| Exact Human Approval for Delegated-origin or Delegated-authority publication | Accepted current MVP policy |
+| ApprovalBinding fields in this specification | Accepted |
+| Authorizing Approve Grant references remain valid and covering | Accepted |
+| Fresh executor-authority recheck before Execute | Accepted |
+| Structural equality with trusted immutable proposal | Accepted MVP profile |
+| Canonical bytes, digest/hash/transcript/signature/MAC | Deferred |
+| Approval is not transferable bearer authority | Accepted MVP profile |
+| Portable/offline Approval protocol | Deferred |
+| Finite expiry with no fixed TTL | Accepted law / Provisional value |
 | Explicit revocation and fail-closed unverifiable state | Accepted |
-| Single-use approval / replay denial | Accepted |
-| Reservation/locking/atomic consumption mechanism | #29/#93 Provisional implementation |
-| Minimum proposal/approval/execution provenance content | Accepted |
+| At-most-once successful publication and replay denial | Accepted |
+| Reservation/locking/recovery/state-installation mechanics | #29/#93 Provisional implementation |
+| Minimum proposal/approval/execution provenance | Accepted |
 | Provenance store/retention/redaction/tamper evidence/UI | Provisional/Deferred |
 | Provider/model as provenance rather than privilege | Accepted under ADR-0007 |
-| Semantic and host/external effect separation | Accepted under ADR-0007/ADR-0022 |
-| Host/external capability vocabulary | Deferred |
+| Semantic/host-effect separation | Accepted under ADR-0007/ADR-0022 |
+| External-effect capability vocabulary | Deferred |
 | Roles/groups/ABAC/policy DSL/SSO/SCIM/tenancy | Deferred |
-| Auto-approval/autonomous mutation/multi-party approval | Deferred |
+| Auto-approval, autonomous mutation, quorum/multi-party approval | Deferred |
 | Event sourcing/operation log/undo/recovery protocol | Deferred |
 | Public Rust/Serde/wire authorization DTO | Deferred |
 
 ## Ownership boundaries
 
-- ADR-0026 / this specification own authorization and exact approval semantics.
-- ADR-0024 owns proposal occurrence, ExactChangeBinding, base, and stale laws.
-- ADR-0020 owns Query/Command/Propose/Execute and atomic semantic publication.
-- #29 owns lifecycle, registry, approval claim/consumption, apply/verify, and
-  provenance persistence.
+- ADR-0026 and this specification own authorization and Approval semantics.
+- ADR-0024/#27 own proposal occurrence, immutable contents,
+  ExactChangeBinding, exact base, and stale behavior unchanged.
+- ADR-0020 owns Query/Command/Propose/Execute and semantic publication
+  atomicity.
+- #29 owns lifecycle, registry, reservation/consumption implementation,
+  atomic apply/verify, receipts, and provenance persistence.
 - #30 owns trusted enforcement, instruction/data separation, bypass prevention,
-  host-effect denial, and machine-readable security diagnostics.
-- #93 owns concrete resident session/revision/concurrency mechanics.
-- workspace-engine remains the shared semantic transition/gate authority.
+  disclosure-safe denials, host-effect denial, and security diagnostics/tests.
+- #93 owns concrete resident session/revision/concurrency/state-installation
+  mechanics.
+- #11 owns broader team/enterprise permissions and reusable policy questions.
+- #12/history work owns persisted history, event sourcing, undo, and retention.
+- `workspace-engine` remains shared semantic transition/gate authority;
+  authorization must not exist only in `ai-api`, UI, or client convention.
 - host/storage adapters remain separate effect authorities.
 
 ## Explicit non-goals
 
-- enterprise RBAC administration;
-- groups, organizations, tenants, SSO, or SCIM;
-- generic authorization or policy-expression language;
-- reusable automatic approval rules;
-- autonomous mutation without Human approval;
-- multi-party approval chains;
-- portable bearer approval tokens or signing infrastructure;
-- plugin/network/filesystem/process/Git capability design;
-- public Rust/Serde/JSON/IPC/network DTO freeze;
+- enterprise RBAC administration, groups, organizations, tenants, SSO, SCIM;
+- generic authorization, policy, or scope-expression language;
+- reusable automatic approval or autonomous mutation;
+- multi-party approval, quorum, escalation, or workflow chains;
+- canonical approval bytes, SHA-256 profile, signature/MAC, or portable token;
+- public Rust/Serde/JSON/IPC/WASM/network DTOs;
+- external-effect capability design or plugin/network sandboxing;
 - revision/session/concurrency implementation;
-- approval UI;
-- event sourcing, universal operation log, undo, or rollback; or
+- approval UI or redaction DTO design;
+- event sourcing, universal operation log, CRDT, undo, or rollback; or
 - production implementation in this documentation decision.

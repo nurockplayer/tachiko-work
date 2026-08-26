@@ -3,7 +3,7 @@
 Decision state: Accepted direction under
 [ADR-0007](../decisions/ADR-0007-ai-semantic-interaction-model.md),
 [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md), and
-[ADR-0026](../decisions/ADR-0026-scoped-semantic-authorization-and-exact-approval.md).
+[ADR-0026](../decisions/ADR-0026-scoped-semantic-authorization-and-approval.md).
 Reviewable semantic proposals use the immutable revision-pinned SemanticPatch
 contract Accepted by
 [ADR-0024](../decisions/ADR-0024-revision-pinned-semantic-patch.md).
@@ -23,14 +23,14 @@ User interface -> file format -> AI workaround
 Tachiko Work workflow:
 
 ```text
-trusted Machine principal
--> explicitly granted Query / Propose capability
+trusted Delegated principal
+-> explicitly granted Query / Propose capability and stable-ID scope
 -> typed Command or ordered AtomicBatch
 -> revision-pinned immutable SemanticPatch / Propose
--> deterministic semantic review evidence
--> exact approval from a distinct Human principal
+-> trusted AuthorizationFootprint + safely scoped review evidence
+-> exact approval from one authorized Human principal
 -> trusted authorization + current-base + authoritative-gate checks
--> single-use authorized Execute
+-> authorized Execute
 -> canonical semantic state + resulting revision/provenance
 ```
 
@@ -46,15 +46,26 @@ ADR-0026 defines the current MVP boundary:
 - Provider, model, tool, prompt, and confidence are provenance rather than
   privilege.
 - Query, Propose, Approve, and Execute are independent actions.
-- Reusable grants are default-deny and scoped to one exact semantic DocumentId.
-- Data, Formula, Schema, and Destructive authority are independently grantable.
-- Every Machine Execute requires exact approval from a distinct Human principal.
+- Grants are default-deny and may contain a finite union of stable-ID Document,
+  Schema, SchemaField, Entity, and EntityField scope atoms.
+- Value, Formula, Structure, Schema, and Destructive authority are independent.
+- The trusted application derives disclosure scope, canonical write scope, and
+  mutation classes; the agent cannot authoritatively declare its footprint.
+- Propose does not grant arbitrary Query authority; preview evidence outside
+  Query scope is denied or safely reduced.
+- A patch originated by a Delegated principal or executed using Delegated
+  authority requires one exact Human Approval.
 - Approval binds the proposal occurrence, complete ADR-0024
-  `ExactChangeBinding`, exact base, exact executor, mutation classes, approval
-  profile, and grants relied upon.
-- Approval has finite lifetime, is revocable, and is single-use.
-- A changed proposal, stale base, changed executor, revoked/replaced grant,
-  expiry, revocation, or consumption requires new approval.
+  `ExactChangeBinding`, originator, exact executor, canonical write
+  scope, mutation classes, and authorization-policy version. The trusted record
+  also identifies the Human approver and authorizing Approve Grants.
+- Approval has finite lifetime, is revocable, and can authorize at most one
+  successful semantic publication.
+- It is consumed atomically with successful semantic publication; failure
+  before publication does not consume it.
+- A changed proposal/write scope/mutation-class set, stale base, changed
+  principal, invalid authorizing Approve Grant, insufficient live Execute
+  authority, Approval expiry/revocation, or consumption requires new approval.
 - Validation and operation gates remain independent authority and cannot be
   overridden by approval.
 
@@ -83,15 +94,14 @@ expose raw storage or host effects as alternate semantic mutation paths.
 
 ## Provenance
 
-A reviewable Machine proposal and successful execution retain machine-readable
+A reviewable Delegated proposal and successful execution retain machine-readable
 provenance sufficient to identify:
 
-- proposal and exact-change commitment;
+- proposal and exact-binding reference;
 - semantic base and resulting revision;
-- proposer, Human approver, and Machine executor principals;
+- originator, Human approver, and executor principals;
 - grants and approval relied upon;
-- mutation classes and final gate outcome;
-- timestamps and execution result; and
+- trusted footprint, policy version, and final gate/report reference; and
 - agent/provider/model/tool evidence when known.
 
 Provenance is audit/history evidence, not command meaning, canonical Document
@@ -105,7 +115,8 @@ An AI agent can:
 - inspect and explain document structure;
 - explain formula dependencies and calculated impact;
 - detect inconsistencies;
-- propose typed Data or Formula changes within granted classes;
+- propose typed Value, Formula, Structure, or Schema changes within granted
+  classes and scope;
 - propose migrations or schema strengthening for Human review; and
 - request Execute only when its exact scoped grants and Human approval permit it.
 
