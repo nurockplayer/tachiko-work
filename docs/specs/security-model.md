@@ -1,8 +1,10 @@
 # Security Model
 
-Decision state: Accepted security direction under ADR-0007 and ADR-0026.
-Concrete instruction/data enforcement, authorization state, lifecycle,
-diagnostic codes, and external-effect enforcement remain #29/#30/#93 work.
+Decision state: Mixed. The semantic authorization laws summarized from
+ADR-0007 and ADR-0026 are Accepted. Plugin isolation, migration sandboxing,
+instruction/data enforcement, authorization state/lifecycle, diagnostic codes,
+and external-effect mechanisms remain Provisional, Deferred, or separately
+owned by #17/#29/#30/#93.
 
 ## Principles
 
@@ -35,8 +37,10 @@ the provider-neutral MVP contract:
 - independent Query, Propose, Execute, and Approve capabilities;
 - Value, Formula, Structure, Schema, and Destructive mutation classes;
 - stable-ID Document, Schema, SchemaField, Entity, and EntityField scopes;
-- trusted `AuthorizationFootprint` derivation;
-- explicit Grants with live request/execute rechecks;
+- trusted `AuthorizationFootprint` derivation with associated class/scope
+  coverage;
+- explicit non-reusable Grants with per-use validity checks, authorizing
+  Approve-reference rechecks, and fresh Execute coverage;
 - structural exact binding to ADR-0024 `SemanticPatch` and
   `ExactChangeBinding`;
 - finite, revocable Approval consumed atomically with at most one successful

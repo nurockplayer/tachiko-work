@@ -101,9 +101,11 @@ self-reported metadata are provenance, not principal class or privilege.
 
 ### Grant
 
-An immutable, revocable authorization occurrence issued by a trusted Human or
-host authority to one subject principal. One or more live Grants may combine to
-cover one complete semantic authorization requirement.
+An immutable authorization issuance occurrence created through a trusted host
+authorization authority for one subject principal. One or more live Grants may
+combine to cover one complete semantic authorization requirement. Revocation
+is terminal trusted registry state associated with the occurrence, not mutable
+Grant content.
 
 ### Authorization footprint
 
@@ -256,22 +258,32 @@ AuthorizationFootprint
 - RequiredMutationClasses
 ```
 
+These are named projections of one derived requirement, not independently
+unionable permission sets. For mutation authorization the trusted footprint
+retains the association between each scope requirement and the mutation classes
+that apply to it. Exact representation remains Provisional.
+
 Normative laws:
 
 1. The trusted semantic/application authority MUST derive the footprint from
    typed operation meaning and relevant base/candidate relationships.
 2. A client, model, prompt, or request-supplied footprint is untrusted and MUST
    NOT reduce the derived requirement.
-3. AtomicBatch uses the union of every member Command's requirements.
-4. CanonicalWriteScope includes direct targets, generated IDs, created/deleted
+3. Mutation authorization MUST retain each associated `(action, mutation
+   class, scope)` requirement. Flattened CanonicalWriteScope and
+   RequiredMutationClasses are review summaries, not coverage proof and not
+   permission to form their Cartesian product.
+4. AtomicBatch uses the union of every member Command's associated
+   requirements.
+5. CanonicalWriteScope includes direct targets, generated IDs, created/deleted
    objects and their owning containers, explicit retargeting, and
    command-defined canonical side effects.
-5. Purely derived recalculation, FormulaImpact, validation findings, and review
+6. Purely derived recalculation, FormulaImpact, validation findings, and review
    projections are not canonical writes.
-6. DisclosureScope includes semantic subjects revealed by Query results,
+7. DisclosureScope includes semantic subjects revealed by Query results,
    preview, diff, dependencies, impact, diagnostics, explanations, and result
    projections.
-7. If the complete requirement cannot be derived safely, authorization fails
+8. If the complete requirement cannot be derived safely, authorization fails
    closed or requires broader explicit scope.
 
 ## Grant contract
@@ -287,27 +299,40 @@ Grant
 - Capabilities
 - SemanticScope
 - Validity
-- RevocationState
 ```
 
 Normative laws:
 
-1. A Grant is immutable after issuance. A changed subject, capability, scope,
-   or validity creates another occurrence.
-2. Only a trusted Human or host authorization authority may issue Grants.
-3. A Delegated principal MUST NOT self-grant, expand, or transitively delegate
+1. `(AuthorizationDomain, GrantId)` MUST identify exactly one non-reusable
+   issuance occurrence. Issuer, subject, capabilities, semantic scope, and
+   validity are immutable; changed content creates another occurrence with a
+   new GrantId.
+2. Revocation state belongs to the trusted Grant registry. Revocation is
+   terminal for that occurrence; restored or equivalent authority requires a
+   new Grant occurrence and MUST NOT reactivate or reuse the old GrantId.
+3. Grants may be issued only through a trusted host authorization authority,
+   which may act on an explicitly authorized Human provisioning action or
+   trusted host policy. Human principal class alone grants no issuance power.
+4. A Delegated principal MUST NOT self-grant, expand, or transitively delegate
    authority.
-4. Authorization is allow-only and default-deny.
-5. Multiple Grants MAY combine only when their union covers the complete
-   capability and scope requirement.
-6. Every required mutation class and scope atom must be covered.
-7. Grant validity/revocation and subject state are checked at request time and
-   immediately before Execute.
-8. Missing, expired, revoked, disabled, unsupported, or unresolvable authority
+5. Authorization is allow-only and default-deny.
+6. Each derived `(action, mutation class when applicable, scope)` association
+   MUST be covered by one same live Grant. Different Grants MAY cover different
+   associated requirements, but independently unioning their capabilities,
+   classes, and scopes MUST NOT create crossed authority.
+7. A Grant covers only its fixed subject in its AuthorizationDomain. A
+   same-spelled GrantId from another domain or a Grant for another subject
+   grants nothing to the effective principal.
+8. Grant validity/revocation and subject state are checked whenever that Grant
+   occurrence is relied upon. Immediately before Execute, authorizing Approve
+   Grant references and sufficient current Execute Grants are rechecked.
+9. Missing, expired, revoked, disabled, unsupported, or unresolvable authority
    grants nothing.
-9. Approval cannot create, extend, restore, or replace Grant authority.
-10. Host defaults for Query or Propose are provisioning choices, not intrinsic
-    AI authority.
+10. Approval cannot create, extend, restore, or replace Grant authority.
+11. ADR-0007's current-MVP allowed read, analysis, explanation, and Propose
+    behavior MUST be preserved through explicit trusted-host provisioning of
+    sufficient Query and Propose Grants for supported flows. Those product
+    defaults are not ambient AI authority or exceptions to default deny.
 
 Exact Grant DTOs, identifiers, storage, administration, expiry/clock encoding,
 and bootstrap remain Provisional.
@@ -404,7 +429,9 @@ Normative laws:
 
 ### Authorizing Grant references
 
-Approve Grant references used at issuance are immutable Approval evidence.
+Approve Grant references used at issuance are immutable Approval evidence. A
+reference resolves one exact non-reusable `(AuthorizationDomain, GrantId)`
+occurrence and its fixed subject/content.
 
 Immediately before Execute, the trusted boundary rederives the exact
 authorization requirement and requires sufficient live Approve and Execute
@@ -508,7 +535,7 @@ allow iff:
 ```text
 allow iff:
   authenticated Principal is active
-  AND trusted authority derives CanonicalWriteScope + MutationClasses
+  AND trusted authority derives associated write-scope + mutation requirements
   AND live Propose Grants cover the complete requirement
   AND command/base are admissible under the Semantic API
 ```
@@ -522,14 +549,15 @@ publishes nothing and does not imply later Execute authority.
 allow iff:
   immutable proposal identity/content are structurally consistent
   AND proposal base is current
-  AND trusted authority rederives write scope + mutation classes
+  AND trusted authority rederives associated write-scope + mutation requirements
   AND approver is authenticated Human
   AND live Approve Grants cover the complete requirement
   AND named executor is active
   AND finite expiry + supported policy version are recorded
 ```
 
-The trusted record captures ApprovalBinding and issuance Grant references.
+The trusted record captures ApprovalBinding and the authorizing Approve Grant
+references used at issuance.
 
 ### Authorize approval-gated Execute
 
@@ -539,7 +567,8 @@ The trusted record captures ApprovalBinding and issuance Grant references.
 3. Verify proposal identity/content and complete ADR-0024 ExactChangeBinding.
 4. Compare current semantic revision with the proposal base; return Stale on
    mismatch before candidate construction against the changed base.
-5. Rederive canonical-write scope and mutation classes from typed meaning.
+5. Rederive associated canonical-write-scope and mutation-class requirements
+   from typed meaning.
 6. Require authenticated actor == bound executor.
 7. Recheck originator, approver, authorizing Approve Grant references,
    executor, and sufficient current live Execute Grants.
@@ -605,6 +634,7 @@ AuthorizationPolicyVersion
 base semantic revision + resulting semantic revision
 authoritative gate/report reference
 Approval terminal state Consumed
+agent/provider/model/tool facts at execution when known
 ```
 
 Additional laws:
@@ -612,7 +642,8 @@ Additional laws:
 1. The immutable proposal or a durable lossless reference MUST survive; a
    digest alone would not explain what was approved.
 2. Provider/model change does not alter authority when trusted principals and
-   ApprovalBinding are unchanged.
+   ApprovalBinding are unchanged, but changed execution facts are recorded when
+   known.
 3. Full prompts, hidden reasoning, credentials, secrets, and complete chat
    transcripts are not minimum provenance.
 4. Provenance MUST NOT be written into `.roproj` merely to make it durable.
@@ -639,6 +670,11 @@ not authorize:
 A host may materialize or externally publish an already-authorized semantic
 result only under separate authority. External-effect capability vocabulary is
 Deferred and is not invented by this specification.
+
+A denied request MAY produce separately authorized security/audit evidence.
+That recording is not semantic publication, does not consume Approval, and does
+not authorize any requested host effect; concrete denial logging remains #30 or
+later audit-policy work.
 
 ## Failure meanings
 
@@ -698,6 +734,16 @@ authorized disclosure scope.
     deployment/persistence effects.
 21. Mixed AtomicBatch requires union scope/classes, one whole-batch Approval,
     and all-or-nothing publication.
+22. Cross-pairing Formula authority for one field with Value authority for
+    another cannot authorize either class on the other field.
+23. A revoked Grant occurrence cannot be reactivated or have its GrantId
+    reused; a newly issued equivalent Grant does not revive an Approval that
+    references the revoked occurrence.
+24. A same-spelled GrantId from another authorization domain, or a Grant for
+    another subject, provides no coverage.
+25. Delegated origin with a Human executor still requires Human Approval.
+26. Human origin with a Delegated executor still requires Human Approval.
+27. Substituting either the bound originator or bound executor denies.
 
 ## Stability classification
 
@@ -713,7 +759,8 @@ authorized disclosure scope.
 | Closed document-local stable-ID scope concepts and containment | Accepted MVP contract |
 | Project/workspace/org/tenant/predicate scope | Deferred |
 | Trusted AuthorizationFootprint derivation | Accepted |
-| Immutable, revocable, default-deny Grant occurrences | Accepted |
+| Associated action/class/scope coverage without crossed-Grant unions | Accepted |
+| Immutable, non-reusable, default-deny Grant occurrences with terminal revocation | Accepted |
 | Grant registry/admin/DTO/clock representation | Provisional |
 | Exact Human Approval for Delegated-origin or Delegated-authority publication | Accepted current MVP policy |
 | ApprovalBinding fields in this specification | Accepted |
@@ -739,7 +786,8 @@ authorized disclosure scope.
 
 ## Ownership boundaries
 
-- ADR-0026 and this specification own authorization and Approval semantics.
+- ADR-0026 owns the authorization and Approval decision; this specification
+  normatively elaborates that decision without amending it.
 - ADR-0024/#27 own proposal occurrence, immutable contents,
   ExactChangeBinding, exact base, and stale behavior unchanged.
 - ADR-0020 owns Query/Command/Propose/Execute and semantic publication

@@ -1,8 +1,10 @@
 # Threat Model
 
-Decision state: Accepted security direction under ADR-0007 and ADR-0026.
-Concrete instruction/data labeling, bypass enforcement, security diagnostics,
-and host-effect enforcement remain implementation work under Issue #30.
+Decision state: Mixed. The semantic authorization threats and laws summarized
+from ADR-0007 and ADR-0026 are Accepted. Supply-chain controls, exact trust
+labels, instruction/data handling, bypass enforcement, diagnostics, and
+host-effect enforcement remain Provisional, Deferred, or separately owned by
+Issue #30 and their domain decisions.
 
 ## Security Philosophy
 
@@ -80,8 +82,9 @@ The platform must prevent at least:
 - validation success being treated as authorization;
 - authorization or approval overriding a failed semantic gate;
 - approval of rendered prose or a diff being reused for a changed proposal;
-- approval surviving exact base change, grant revocation, principal disablement,
-  expiry, explicit revocation, or consumption;
+- publication after the exact base changes, an authorizing Approve Grant is
+  revoked, a required principal is disabled, or Approval expires, is revoked,
+  or is consumed;
 - replay or concurrent double use of one ApprovalId;
 - provider/model identity becoming privilege;
 - Delegated self-approval satisfying the Human approval requirement;
@@ -92,9 +95,17 @@ The platform must prevent at least:
 
 ## Required Security Laws
 
+The normative authorization contract is ADR-0026 and
+[`semantic-authorization.md`](../specs/semantic-authorization.md). This
+threat-oriented summary maps risks to that authority and does not create an
+independent authorization contract.
+
 - AI and automation have no intrinsic authority.
 - Effective principal identity comes from a trusted host/session boundary.
-- Authorization is default-deny and based on explicit immutable grants.
+- Authorization is default-deny and based on explicit immutable,
+  non-reusable Grant occurrences with terminal trusted revocation state.
+- Grant coverage preserves action/class/scope associations; independent unions
+  cannot manufacture crossed authority.
 - Query, Propose, Approve, and Execute are independent actions.
 - Value, Formula, Structure, Schema, and Destructive mutation authority are
   independently grantable and additive.

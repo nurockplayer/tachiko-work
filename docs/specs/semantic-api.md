@@ -364,7 +364,9 @@ base/candidate relationships. Its disclosure scope includes every subject
 revealed by preview, diff, dependencies, impact, and diagnostics. Propose
 authority does not grant arbitrary Query authority: evidence outside live Query
 scope MUST be denied or safely reduced. The client cannot authoritatively
-declare its own footprint.
+declare its own footprint. Mutation coverage retains each associated
+action/class/scope requirement; independently unioning class and scope sets
+cannot authorize crossed combinations that no live Grant covers.
 
 Once proposal identity is issued, validation, review, rejection, or stale
 outcomes do not mutate the proposal record. A later execution must perform the
@@ -453,11 +455,13 @@ A conforming client must be able to distinguish, where applicable:
 2. failure before a new admissible semantic candidate exists;
 3. unsupported Semantic API compatibility or proposal identity/content
    mismatch;
-4. stale semantic base;
-5. semantic precondition/inapplicability failure;
-6. rejection by the authoritative operation gate, including relevant validation
+4. authorization, Approval, or host-effect denial without semantic
+   publication;
+5. stale semantic base;
+6. semantic precondition/inapplicability failure;
+7. rejection by the authoritative operation gate, including relevant validation
    and gate facts; and
-7. typed operation-specific outcomes such as merge conflict/reconciliation
+8. typed operation-specific outcomes such as merge conflict/reconciliation
    results.
 
 Exact public enum names, generic type constructors, tagged-union representation,
@@ -484,7 +488,18 @@ supported fails before candidate construction. Reuse of one proposal identity
 with different contents is rejected rather than treated as a replacement.
 
 Exact error codes, integrity verification, digest, and transport behavior remain
-Provisional or #28 work.
+Provisional/Deferred under ADR-0026, #30, and future transport profiles.
+
+### Authorization / Approval / host-effect denial
+
+Authorization and Approval failures are distinct from proposal-contract,
+stale-base, semantic-precondition, and gate failures. A conforming client can
+preserve the machine meaning defined by
+[`semantic-authorization.md`](semantic-authorization.md), including
+principal/capability/scope denial, approval required or unusable, lost live
+authority, and separately denied host effects, without disclosing semantic
+content outside authorized Query scope. Exact codes and transport mappings
+remain Provisional under #30 and later transport work.
 
 ### Stale base
 

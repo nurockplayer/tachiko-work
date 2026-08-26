@@ -159,6 +159,9 @@ Value/Formula/Structure/Schema/Destructive dimensions, stable-ID document-local
 scope atoms, trusted footprint derivation, default-deny Grants, exact Approval,
 and minimum provenance. Exact identifiers, DTOs, storage, clocks, operation
 catalogue, projection/redaction, and wire formats remain Provisional/Deferred.
+ADR-0007's allowed current-MVP read, analysis, explanation, and Propose behavior
+is preserved through explicit trusted-host Grant provisioning, not intrinsic AI
+authority.
 
 ## Effect separation
 

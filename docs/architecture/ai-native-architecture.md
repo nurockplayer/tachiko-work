@@ -48,6 +48,8 @@ ADR-0026 defines the current MVP boundary:
 - Query, Propose, Approve, and Execute are independent actions.
 - Grants are default-deny and may contain a finite union of stable-ID Document,
   Schema, SchemaField, Entity, and EntityField scope atoms.
+- ADR-0007's allowed current-MVP Query/Propose flows are preserved through
+  explicit trusted-host Grant provisioning, not ambient AI authority.
 - Value, Formula, Structure, Schema, and Destructive authority are independent.
 - The trusted application derives disclosure scope, canonical write scope, and
   mutation classes; the agent cannot authoritatively declare its footprint.
