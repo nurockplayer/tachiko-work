@@ -25,7 +25,7 @@ The words **MUST**, **MUST NOT**, **SHOULD**, and **MAY** are normative.
 
 `.roproj/v1` is its own representation namespace. Its `format_version` value
 `1` does not select `legacy-direct-ro/v1`, `direct-ro/v2`, a semantic-model
-version, or a future packaged `.ro` profile.
+version, or the distinct Accepted `tachiko.portable-package/v1` profile.
 
 These DTOs are owned by `.roproj/v1`. They are independent of:
 
@@ -547,8 +547,9 @@ This specification does not define or accept:
   Serde configuration;
 - host atomic replacement, fsync, locking, recovery, permissions, symlink-race,
   watcher, browser-storage, or other durability behavior;
-- future packaged `.ro` layout, compression, signing, integrity, or digest
-  rules;
+- portable-package container, integrity, and pack/unpack rules, which are
+  separately Accepted by ADR-0025 and
+  [`portable-package-v1.md`](portable-package-v1.md);
 - Git attributes, diff drivers, hooks, CI policy, repository operations, or
   generated `.ro` consistency policy;
 - semantic delta, revision, or operation-log formats;
@@ -567,7 +568,9 @@ semantic identity, or normative `.roproj/v1` value.
 - [ADR-0018: Bound formulas and deterministic binary64](../decisions/ADR-0018-bound-formulas-and-deterministic-binary64.md)
 - [ADR-0019: Staged semantic validation](../decisions/ADR-0019-staged-semantic-validation-and-diagnostics.md)
 - [ADR-0023: `.roproj/v1` canonical tree and sharding](../decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md)
+- [ADR-0025: Portable package v1](../decisions/ADR-0025-portable-package-v1.md)
 - [`.roproj/v1` physical layout](roproj-layout-v1.md)
+- [Portable package v1](portable-package-v1.md)
 - [Tachiko canonical JSON profile](canonical-json-profile.md)
 - [`direct-ro/v2` specification](ro-format-v2.md)
 - [Issue #41 layout and sharding research](../research/2026-08-24-roproj-v1-layout-and-sharding.md)

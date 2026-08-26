@@ -14,7 +14,8 @@ Representation namespace: `direct-ro/v2`
 Version 2 is the identity-aware successor to frozen `legacy-direct-ro/v1`. It
 persists opaque stable semantic IDs separately from mutable human keys and
 stores formula/reference targets by stable ID. It is not `.roproj/v2`, a global
-format version, or the future packaged `.ro` profile.
+format version, or the separately Accepted
+`tachiko.portable-package/v1` profile.
 
 ## Reader and writer contract
 
@@ -190,6 +191,7 @@ and [`ro-format-v1.md`](ro-format-v1.md).
 ## Boundaries
 
 This profile does not define the separately Accepted `.roproj/v1` tree or wire
-contract (ADR-0023), future `.ro` packaging (#43), cross-document references, a
-public SDK ABI, or UUID as semantic ID meaning. Final broad golden/negative
+contract (ADR-0023), portable package v1 (ADR-0025 and
+[`portable-package-v1.md`](portable-package-v1.md)), cross-document references,
+a public SDK ABI, or UUID as semantic ID meaning. Final broad golden/negative
 corpus closure remains #40.

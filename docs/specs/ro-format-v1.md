@@ -9,7 +9,11 @@ migration source; the current semantic writer emits `direct-ro/v2`
 
 This document freezes the historical direct `.ro` JSON version-1 behavior as a compatibility and migration source profile.
 
-Its purpose is to preserve what the v0.1 reader/writer meant so later semantic-core and storage refactors cannot silently reinterpret old files. It is not authority for the separate `.roproj/v1` layout, future `.ro` package/container design, or future semantic identity/numeric choices.
+Its purpose is to preserve what the v0.1 reader/writer meant so later
+semantic-core and storage refactors cannot silently reinterpret old files. It
+is not authority for the separate `.roproj/v1` layout, the Accepted
+`tachiko.portable-package/v1` container, or future semantic identity/numeric
+choices.
 
 ADR-0017 requires complete storage-owned historical DTOs and explicit
 migration. The implementation now satisfies that boundary: v1 decoding and
@@ -44,7 +48,9 @@ It is retained so existing files can be decoded and migrated deterministically. 
 - direct `.ro` v1 is an immutable legacy compatibility profile;
 - `.roproj/v1` is the separately Accepted canonical editable/Git-native
   representation under ADR-0023;
-- future `.ro` packaging is owned by #43 and must not be inferred from this direct JSON v1 profile.
+- portable package v1 is separately Accepted under ADR-0025 and
+  [`portable-package-v1.md`](portable-package-v1.md), and must not be inferred
+  from this direct JSON v1 profile.
 
 Accepted `.roproj/v1` does not mean the same wire schema as direct `.ro` JSON
 `format_version: 1`; their representation namespaces are independent.
@@ -382,4 +388,5 @@ If the direct `.ro` JSON representation evolves incompatibly before `.roproj` re
 - #24 — future numeric semantics and final numeric canonical vectors
 - ADR-0023 and the `.roproj/v1` specifications — separate canonical editable
   tree and wire contract
-- #43 — future `.ro` package profile
+- ADR-0025 and `portable-package-v1.md` — separate Accepted portable package
+  profile; production implementation remains #3
