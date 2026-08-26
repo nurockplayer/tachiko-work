@@ -403,13 +403,19 @@ authorizing, or executing an existing proposal and before candidate
 construction against a changed base. Approval-gated Execute performs that
 comparison internally first and retains the result without disclosure.
 
-Internal stale detection grants no right to learn proposal or revision state.
-The boundary next authenticates and matches the Approval-bound executor and
-verifies the complete trusted proposal/Approval binding. An unauthenticated,
-unbound, or mismatched caller receives only a disclosure-safe authorization or
-binding denial. Only after those checks may the boundary expose the retained
-`Stale` outcome, and any details remain limited by Query authority. This
-detect-versus-disclose distinction preserves ADR-0024 without amending it.
+The boundary may also detect Semantic API version support internally, but
+neither version detection nor stale detection grants a right to learn proposal
+or revision state. The boundary next authenticates and matches the
+Approval-bound executor and verifies the complete trusted proposal/Approval
+binding. An unauthenticated or unbound caller receives only a disclosure-safe
+authorization denial. A missing, unrelated, mismatched, or unverifiable
+proposal receives the same disclosure-safe binding denial regardless of the
+retained version or base result. Only after exact binding is proven may the
+boundary expose an unsupported-version result and then the retained `Stale`
+outcome; stale details remain limited by Query authority. If the complete
+binding cannot be proven for an unsupported version, the result is binding
+denial rather than version disclosure. This detect-versus-disclose distinction
+preserves ADR-0024 without amending it.
 
 Approval-gated Execute adds all of these independent requirements to the common
 publication condition:
@@ -619,6 +625,11 @@ Future implementation must preserve these representation-neutral outcomes:
 36. **Direct Human uses current policy** — direct Human Execute is authorized
     under the effective current policy and does not fabricate an Approval or
     historical policy binding.
+37. **Unsupported-version probing** — a bound executor supplying a missing,
+    unrelated, mismatched, or unverifiable proposal receives the same
+    disclosure-safe binding denial regardless of internally detected version
+    support; only a completely verified proposal/Approval binding may expose
+    an unsupported Semantic API version.
 
 ## Stability classification
 

@@ -666,50 +666,57 @@ work.
 1. Load the trusted immutable proposal and Approval internally by opaque ID.
    Before re-evaluation, authorization, execution, or candidate construction
    against a changed base, compare the current semantic revision with the
-   proposal base under ADR-0024. Retain the result without disclosing it.
+   proposal base under ADR-0024. Retain the result without disclosing it. The
+   trusted boundary MAY also detect Semantic API version support internally and
+   retain that result without disclosing it.
 2. Authenticate the caller and require caller == Approval-bound executor. An
    unauthenticated or unbound caller receives only a disclosure-safe
-   authorization denial, regardless of the retained base result.
-3. Reject unsupported Semantic API versions. Determine the effective
+   authorization denial, regardless of either retained result.
+3. Verify trusted immutable proposal identity/content, complete ADR-0024
+   ExactChangeBinding, retained relational AuthorizationFootprint, and exact
+   ApprovalBinding equality, including authorization domain, ProposalId,
+   originator, executor, complete associated operation-family/mutation-class/
+   scope requirements, and policy version. A missing, unrelated, mismatched,
+   or unverifiable proposal receives the same disclosure-safe binding denial,
+   regardless of either retained result.
+4. Only after complete binding is proven, expose an unsupported Semantic API
+   version. If the unsupported version prevents complete binding verification,
+   step 3 returns binding denial instead. Determine the effective
    authorization-policy version selected by the trusted authorization domain
    and require the Approval-bound version to equal it; historical readability
-   or support is insufficient. Verify trusted immutable proposal
-   identity/content, complete ADR-0024 ExactChangeBinding, retained relational
-   AuthorizationFootprint, and exact ApprovalBinding equality, including
-   authorization domain, ProposalId, originator, executor, complete associated
-   operation-family/mutation-class/scope requirements, and policy version. A
-   mismatch receives only a disclosure-safe binding denial.
-4. Only after steps 2-3, expose the retained Stale outcome when the base did not
+   or support is insufficient.
+5. Only after steps 2-4, expose the retained Stale outcome when the base did not
    match, before any candidate construction against the changed base. Stale
    details require sufficient Query authority.
-5. For a current base, rederive associated operation-family,
+6. For a current base, rederive associated operation-family,
    canonical-write-scope, and mutation-class requirements from typed meaning
    and require relational equality with the bound trusted footprint.
-6. Recheck originator, approver, authorizing Approve Grant references,
+7. Recheck originator, approver, authorizing Approve Grant references,
    executor, sufficient current live Execute Grants, Approval expiry,
    revocation, and use state.
-7. Re-run authoritative semantic preconditions, validation/calculation, and
+8. Re-run authoritative semantic preconditions, validation/calculation, and
    operation gate.
-8. At the publication boundary, satisfy the common Execute publication rule.
+9. At the publication boundary, satisfy the common Execute publication rule.
    Additionally require the Approval-bound authorization-policy version still
    to equal the effective policy governing execution, and condition semantic
    publication and Approval consumption on the bound originator and approver
    occurrences, authorizing Approve Grant references, Approval state, and exact
    proposal/Approval/base binding still being valid. If any common or Approval-
    specific condition raced or cannot be proven valid, publish nothing.
-9. When the complete condition holds, atomically publish all semantic state and
+10. When the complete condition holds, atomically publish all semantic state and
    mark Approval Consumed.
-10. Return a disclosure-safe outcome, resulting revision on success, and
+11. Return a disclosure-safe outcome, resulting revision on success, and
     minimum provenance.
 ```
 
-The ADR-0024 comparison in step 1 is an internal semantic precondition check,
-not authorization to disclose proposal state. After the executor and complete
-ApprovalBinding checks, `Stale` identifies only the bound proposal's status; it
-MUST NOT reveal the current revision or other semantic facts without sufficient
-Query authority. Exact failure precedence and side-channel hardening remain #30
+The ADR-0024 comparison and version-support detection in step 1 are internal
+checks, not authorization to disclose proposal state. After the executor and
+complete ApprovalBinding checks, an unsupported version may be exposed and
+`Stale` identifies only the bound proposal's status. Neither outcome may reveal
+the current revision or other semantic facts without sufficient Query
+authority. Exact failure precedence and side-channel hardening remain #30
 implementation work. An earlier preview, rendered diff, client gate result, or
-model claim is not authority for step 7 or publication under step 8.
+model claim is not authority for step 8 or publication under step 9.
 
 ## Minimum provenance contract
 
@@ -932,6 +939,11 @@ authorized disclosure scope.
     for Approval-gated Execute, also prevents Approval consumption.
 45. Direct Human Execute uses the effective current policy without fabricating
     an Approval or historical policy binding.
+46. A bound executor supplying a missing, unrelated, mismatched, or
+    unverifiable proposal receives the same disclosure-safe binding denial
+    regardless of internally detected Semantic API version support; only a
+    completely verified proposal/Approval binding may expose an unsupported
+    version.
 
 ## Stability classification
 

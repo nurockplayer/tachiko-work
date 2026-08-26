@@ -502,6 +502,16 @@ A durable/transported proposal whose Semantic API compatibility contract is not
 supported fails before candidate construction. Reuse of one proposal identity
 with different contents is rejected rather than treated as a replacement.
 
+For Approval-gated Execute, version support may be detected internally before
+authorization disclosure, but an unsupported-version result MUST NOT be exposed
+until the complete trusted proposal/Approval binding is verified. A missing,
+unrelated, mismatched, or unverifiable proposal receives the same
+disclosure-safe binding denial regardless of internally detected version
+support. Only after exact binding is proven may the unsupported-version outcome
+be returned. This detect-versus-disclose ordering does not delay ADR-0024's
+internal base comparison, re-evaluate a stale proposal, or permit candidate
+construction against a changed base.
+
 Exact error codes, integrity verification, digest, and transport behavior remain
 Provisional/Deferred under ADR-0026, #30, and future transport profiles.
 
