@@ -316,13 +316,14 @@ Every retry rechecks expiry, revocation, Grants, exact base,
 `ExactChangeBinding`, associated mutation-class/scope write requirements,
 policy version, and authoritative semantic gate.
 
-At the publication boundary, semantic publication and Approval consumption are
-conditional on every required principal occurrence, authorizing Approve Grant
-reference, sufficient Execute Grant set, Approval state, exact semantic base,
-and authoritative gate result still being valid. Revocation, expiry,
-disablement, consumption, base advance, or gate invalidation racing with
-execution prevents publication. If the trusted boundary cannot prove that the
-complete conjunction still holds, it fails closed and publishes nothing.
+For Approval-gated Execute, the common publication-boundary condition in
+section 10 is necessary but not sufficient. Semantic publication and Approval
+consumption are additionally conditional on the bound originator and approver
+occurrences, authorizing Approve Grant references, Approval state, and exact
+proposal/Approval/base binding still being valid. Revocation, expiry, disablement,
+consumption, or proposal-base invalidation racing with execution prevents both
+publication and Approval consumption. If the trusted boundary cannot prove the
+complete conjunction, it fails closed and publishes nothing.
 
 Before use, approval can be revoked by its approver, a referenced Grant issuer,
 or the trusted authorization authority. Loss of verifier use/revocation state
@@ -331,7 +332,7 @@ verifier state no longer exists. A stale or re-proposed patch requires a new
 Approval. Replay of a consumed Approval returns a machine-distinguishable
 denial.
 
-#29/#93 own concrete reservation, locking, transaction, revision, and
+#29/#93 own concrete reservation, locking, transaction, revision, retry, and
 state-installation mechanics. This ADR fixes only the observable conditional
 publication guarantee.
 
@@ -359,6 +360,26 @@ but cannot authorize another proposal or base.
 
 ### 10. Execute is a conjunction, not a shortcut
 
+Every semantic Execute path has the same publication-boundary safety core,
+including a directly authenticated Human Execute that legitimately has no
+SemanticPatch or Approval. At the publication boundary, publication remains
+conditional on all of these facts still holding:
+
+```text
+effective executor occurrence is active and authenticated
+AND live Execute Grants cover every rederived associated
+    mutation-class/scope requirement
+AND the semantic context used to evaluate the candidate and gate is current,
+    or an equivalent revision-safe condition holds
+AND the authoritative semantic gate still allows publication
+AND no unauthorized host or external effect is performed
+```
+
+Execute-Grant revocation or expiry, executor disablement, relevant semantic
+state advance, gate invalidation, or inability to prove this conjunction
+prevents publication. This common condition applies whether or not the Execute
+path uses a proposal or Approval.
+
 ADR-0024 requires the trusted application/runtime boundary to compare the
 current semantic context with the proposal base before re-evaluating,
 authorizing, or executing an existing proposal and before candidate
@@ -373,18 +394,18 @@ binding denial. Only after those checks may the boundary expose the retained
 `Stale` outcome, and any details remain limited by Query authority. This
 detect-versus-disclose distinction preserves ADR-0024 without amending it.
 
-Before delegated publication, all of these independent requirements hold:
+Approval-gated Execute adds all of these independent requirements to the common
+publication condition:
 
 ```text
 supported immutable SemanticPatch
-AND exact current base
-AND authenticated executor
-AND sufficient live Execute Grants
-AND complete associated mutation-class/scope coverage for Execute
+AND exact proposal/base + complete Approval binding
+AND authenticated executor matches the Approval-bound executor
+AND bound relational AuthorizationFootprint remains exact
 AND valid active Human Approval
-AND live approver authority
-AND authoritative semantic gate allows
-AND no unauthorized external effect
+AND active bound originator and Human approver
+AND live authorizing Approve Grant references
+AND atomic Approval consumption with successful publication
 ```
 
 Failure publishes no semantic state, advances no semantic revision, consumes
@@ -410,7 +431,7 @@ For AI-originated proposals, provider/model/tool/prompt-correlation facts should
 be retained when available as opaque provenance. Full prompt or conversation
 storage is not required, and those facts never grant privilege.
 
-Successful Execute provenance preserves at least:
+Successful Approval-gated Execute provenance preserves at least:
 
 - proposal ID and exact-binding reference;
 - originator, executor, and approver principals;
@@ -424,11 +445,20 @@ Successful Execute provenance preserves at least:
 - Approval terminal state `Consumed`; and
 - agent/provider/model/tool facts at execution when known.
 
-These facts may attach to an execution receipt or history record and cross
-adapter boundaries. They are not semantic Document data. Exact durable storage,
-receipt DTO, retention, and recovery links remain #29/#12 follow-up. Event
-sourcing, CRDT, and a general operation-log protocol are not required. Denials
-need machine-readable outcomes; durable denial logging remains #30/audit-policy
+A directly authenticated Human Execute that requires no proposal or Approval
+must not fabricate a proposal ID, `ExactChangeBinding`, originator or approver
+role, Approval ID, Approve Grant reference, or `Consumed` Approval state. A
+direct-Human receipt may retain the executor, effective Execute Grant
+references, trusted authorization footprint and policy version, relevant input
+and resulting revision, and gate/result evidence. Exact receipt/history DTO,
+storage, and retention remain #29/#12 work.
+
+Approval-gated provenance and any optional direct-Human receipt facts may
+attach to an execution receipt or history record and cross adapter boundaries.
+They are not semantic Document data. Exact durable storage, receipt DTO,
+retention, and recovery links remain #29/#12 follow-up. Event sourcing, CRDT,
+and a general operation-log protocol are not required. Denials need
+machine-readable outcomes; durable denial logging remains #30/audit-policy
 scope.
 
 ### 12. Semantic authorization never authorizes external effects
@@ -536,6 +566,21 @@ Future implementation must preserve these representation-neutral outcomes:
 25. **Cross-proposal stale probing** — even the bound executor cannot use a
     mismatched ProposalId or ApprovalBinding to probe another proposal through
     `Stale`; binding mismatch denies before stale disclosure.
+26. **Direct-Human Grant revocation races publication** — revoking or expiring
+    relied-upon Execute authority after ordinary authorization/gating but before
+    direct Human publication prevents publication.
+27. **Direct-Human executor disablement races publication** — disabling the
+    directly authenticated Human executor before publication prevents
+    publication.
+28. **Direct-Human context advances before publication** — relevant semantic
+    state advance prevents installation of a candidate evaluated against the
+    obsolete context.
+29. **Direct-Human provenance stays truthful** — successful direct Human
+    Execute does not manufacture proposal, originator, approver, Approval,
+    Approve Grant, or `Consumed` facts.
+30. **Approval-gated provenance and consumption remain complete** — successful
+    Approval-gated Execute retains its full proposal/Approval provenance and
+    consumes Approval atomically with publication.
 
 ## Stability classification
 
@@ -557,12 +602,14 @@ Accepted:
   binding;
 - authorizing Approve Grant references remain live, with fresh executor
   authority rechecks before Execute;
+- the common publication-boundary condition for every Execute path;
 - finite Approval consumed atomically with at most one successful publication,
   and only while the complete publication-boundary authorization condition
   remains valid;
 - revocation, fail-closed lost state, and replay denial;
 - trusted structural exact binding for the MVP;
-- minimum proposal/execution provenance; and
+- minimum proposal/Approval-gated execution provenance without fabricated
+  Approval facts on direct Human Execute; and
 - semantic/external-effect and authorization/validation separation.
 
 Provisional:

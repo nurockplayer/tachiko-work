@@ -57,16 +57,18 @@ trusted derivation of disclosure/write scope + mutation classes
 Query / Propose / Approve / Execute authorization
               |
               v
-immutable ADR-0024 SemanticPatch
+direct Human Execute OR immutable ADR-0024 SemanticPatch
+                         + exact Human Approval when required
               |
               v
-exact Human Approval when Delegated authority is involved
+current evaluated context + authoritative semantic gate
               |
               v
-current-base check + authoritative semantic gate
+common publication-boundary condition
               |
               v
-atomic semantic publication + Approval consumption
+atomic semantic publication
+plus Approval consumption only for Approval-gated Execute
               |
               v
 result revision + minimum provenance
@@ -524,14 +526,16 @@ Active -> Consumed | Revoked | Expired
   gate check.
 - A consumed ApprovalId MUST fail replay without publication.
 - Concurrent attempts MUST NOT both publish successfully.
-- At the publication boundary, semantic publication and Approval consumption
-  MUST remain conditional on every required principal occurrence, authorizing
-  Approve Grant reference, sufficient Execute Grant set, Approval state, exact
-  semantic base, and authoritative gate result still being valid.
-- Revocation, expiry, principal disablement, Approval consumption, base advance,
-  or gate invalidation racing with execution MUST prevent publication.
-- If the trusted boundary cannot prove that complete conjunction at the
-  publication boundary, it MUST fail closed and publish nothing.
+- Approval-gated Execute MUST satisfy the common Execute publication condition
+  below and additionally condition semantic publication and Approval
+  consumption on the bound originator and approver occurrences, authorizing
+  Approve Grant references, Approval state, and exact proposal/Approval/base
+  binding still being valid.
+- Revocation, expiry, principal disablement, Approval consumption, or proposal-
+  base invalidation racing with Approval-gated Execute MUST prevent publication.
+- If the trusted boundary cannot prove the complete common and Approval-specific
+  conjunction at the publication boundary, it MUST fail closed and publish
+  nothing.
 - Approval reservation, locking, and atomic-consumption coordination remain #29
   implementation work. Concrete revision concurrency and state installation
   remain #93 work; broader transaction/recovery and history protocols remain
@@ -591,6 +595,33 @@ allow iff:
 The trusted record captures ApprovalBinding and the authorizing Approve Grant
 references used at issuance.
 
+### Common Execute publication rule
+
+Every Execute path, including directly authenticated Human Execute without a
+SemanticPatch or Approval, MUST satisfy this common publication-boundary law:
+
+```text
+1. Authenticate an active effective executor.
+2. Rederive every associated mutation-class/scope requirement from trusted
+   typed meaning and relevant semantic relationships.
+3. Require sufficient live Execute Grants to cover every complete relational
+   requirement.
+4. Evaluate the candidate and authoritative gate against a known semantic
+   context.
+5. At the publication boundary, publish only while the executor occurrence is
+   still active and authenticated, sufficient live relational Execute Grant
+   coverage still exists, the evaluated semantic context is still current (or
+   an equivalent revision-safe condition holds), the authoritative gate result
+   is still valid, and no unauthorized host/external effect is performed.
+```
+
+Execute-Grant revocation or expiry, executor disablement, relevant semantic
+state advance, gate invalidation, or inability to prove the complete
+conjunction MUST prevent publication. Approval-gated Execute adds its
+proposal/Approval conditions to this common law; it does not replace or weaken
+it. Concrete reservation, locking, transaction, revision, retry, and
+state-installation mechanics remain #29/#93 work.
+
 ### Authorize approval-gated Execute
 
 ```text
@@ -618,11 +649,12 @@ references used at issuance.
    revocation, and use state.
 7. Re-run authoritative semantic preconditions, validation/calculation, and
    operation gate.
-8. At the publication boundary, condition semantic publication and Approval
-   consumption on all required principals, authorizing Approve Grant
-   references, sufficient Execute Grants, Approval state, exact base, and
-   authoritative gate result still being valid. If any raced or cannot be
-   proven valid, publish nothing.
+8. At the publication boundary, satisfy the common Execute publication rule.
+   Additionally condition semantic publication and Approval consumption on the
+   bound originator and approver occurrences, authorizing Approve Grant
+   references, Approval state, and exact proposal/Approval/base binding still
+   being valid. If any common or Approval-specific condition raced or cannot
+   be proven valid, publish nothing.
 9. When the complete condition holds, atomically publish all semantic state and
    mark Approval Consumed.
 10. Return a disclosure-safe outcome, resulting revision on success, and
@@ -689,7 +721,23 @@ Approval terminal state Consumed
 agent/provider/model/tool facts at execution when known
 ```
 
-Additional laws:
+### Direct Human execution provenance
+
+A directly authenticated Human Execute that legitimately requires no proposal
+or Approval MUST NOT fabricate:
+
+- ProposalId or ExactChangeBinding;
+- originator or approver roles that do not exist;
+- ApprovalId or Approve Grant references; or
+- Approval terminal state Consumed.
+
+Such a receipt MAY retain executor identity, effective Execute Grant
+references, the trusted AuthorizationFootprint and policy version, relevant
+input and resulting revisions, and gate/result evidence. This permission does
+not require a receipt or freeze its shape. Exact receipt/history DTO, storage,
+retention, and broader history architecture remain #29/#12 work.
+
+Additional Approval-gated provenance laws:
 
 1. The immutable proposal or a durable lossless reference MUST survive; a
    digest alone would not explain what was approved.
@@ -817,6 +865,16 @@ authorized disclosure scope.
 34. A bound executor with a mismatched ProposalId or ApprovalBinding cannot
     probe another proposal through Stale; binding mismatch denies before stale
     disclosure.
+35. Revoking or expiring relied-upon Execute authority after ordinary
+    authorization/gating but before direct Human publication publishes nothing.
+36. Disabling the directly authenticated Human executor before publication
+    publishes nothing.
+37. Relevant semantic state advance before direct Human publication prevents
+    installation of a candidate evaluated against obsolete state.
+38. Successful direct Human Execute does not manufacture proposal, originator,
+    approver, Approval, Approve Grant, or Consumed provenance.
+39. Successful Approval-gated Execute retains the complete proposal/Approval
+    provenance above and consumes Approval atomically with publication.
 
 ## Stability classification
 
@@ -845,10 +903,11 @@ authorized disclosure scope.
 | Portable/offline Approval protocol | Deferred |
 | Finite expiry with no fixed TTL | Accepted law / Provisional value |
 | Explicit revocation and fail-closed unverifiable state | Accepted |
+| Common conditional publication-boundary safety for every Execute path | Accepted |
 | At-most-once conditional publication and consumption while the complete publication-boundary authorization condition remains valid, plus replay denial | Accepted |
 | Approval reservation/locking/atomic-consumption mechanics | #29 Provisional implementation |
 | Concrete revision concurrency/state-installation mechanics | #93 Provisional implementation |
-| Minimum proposal/approval/execution provenance | Accepted |
+| Minimum proposal/approval/Approval-gated execution provenance without fabricated Approval facts on direct Human Execute | Accepted |
 | Provenance store/retention/redaction/tamper evidence/UI | Provisional/Deferred |
 | Provider/model as provenance rather than privilege | Accepted under ADR-0007 |
 | Semantic/host-effect separation | Accepted under ADR-0007/ADR-0022 |
