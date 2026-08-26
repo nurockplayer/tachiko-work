@@ -61,6 +61,17 @@ cannot self-assert or upgrade it. Provider, model, tool, prompt, confidence,
 and other model-supplied metadata may be retained as provenance but never
 grant privilege.
 
+`(authorization domain, PrincipalId)` identifies one non-reusable,
+non-reassignable principal occurrence. Deleting, disabling, transferring,
+recreating, or replacing an account cannot assign that PrincipalId to a
+different authorization subject; a replacement subject receives a new
+PrincipalId. Login names, email addresses, provider identifiers, aliases, and
+similar account attributes are not authorization identity and their reuse
+cannot retarget an existing Grant, Approval originator/executor binding, or
+provenance record. Those references remain attached only to the original
+principal occurrence and fail closed when that occurrence is disabled,
+missing, unauthenticated, or unresolvable.
+
 The authorization domain does not create a semantic `ProjectId` or
 `WorkspaceId`. Exact account/login/identity-provider behavior, principal ID
 encoding, and Rust/wire representations remain Provisional.
@@ -418,6 +429,9 @@ authority.
 - ADR-0026/#28 owns Principal, capabilities, Grant, scope,
   `AuthorizationFootprint`, Approval semantics, expiry/replay/revocation, and
   minimum provenance.
+- The trusted identity/host boundary owns Principal occurrence issuance and
+  resolution and must preserve non-reassignment across its account lifecycle;
+  exact account/provider mechanisms remain Provisional.
 - #29 owns proposal/Approval lifecycle integration, Approval state
   implementation, atomic consume+publication, and execution receipts.
 - #30 owns instruction/data separation, prompt-injection boundaries, raw
@@ -476,12 +490,18 @@ Future implementation must preserve these representation-neutral outcomes:
 18. **Originator/executor role disjuncts** — Delegated origin with a Human
     executor and Human origin with a Delegated executor both require Approval;
     substituting either bound principal denies.
+19. **Principal replacement or alias reuse** — deleting, transferring,
+    recreating, or replacing an account never reassigns its PrincipalId; a
+    replacement subject receives a new PrincipalId and cannot inherit the
+    original occurrence's Grants, Approval originator/executor bindings, or
+    provenance through a reused login, email, provider identifier, or alias.
 
 ## Stability classification
 
 Accepted:
 
-- opaque Principal identity within an authorization domain;
+- opaque, non-reusable, non-reassignable Principal occurrences within an
+  authorization domain;
 - trusted Human versus Delegated distinction for MVP policy;
 - default deny and explicit Grants;
 - non-reusable immutable Grant occurrences with terminal revocation;

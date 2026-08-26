@@ -88,8 +88,9 @@ mechanism and domain identifier encoding are Provisional.
 
 ### Principal
 
-An accountable authorization subject resolved by the trusted identity or host
-boundary.
+One non-reusable, non-reassignable occurrence of an accountable authorization
+subject, resolved by the trusted identity or host boundary within one
+authorization domain.
 
 ```text
 PrincipalKind = Human | Delegated
@@ -125,17 +126,29 @@ executor. Mutable use/revocation state belongs to a trusted registry.
 
 1. A trusted identity/host/session boundary MUST supply the effective
    PrincipalId for every authorization-relevant request.
-2. PrincipalId is meaningful within one authorization domain. A client MUST
+2. `(AuthorizationDomain, PrincipalId)` MUST identify exactly one principal
+   occurrence and MUST NOT be reused or reassigned to a different authorization
+   subject.
+3. Deleting, disabling, transferring, recreating, or replacing an account MUST
+   NOT reassign its PrincipalId. A replacement subject MUST receive a new
+   PrincipalId.
+4. Login names, email addresses, provider identifiers, aliases, and similar
+   account attributes MUST NOT define principal equality or retarget existing
+   Grants, Approval originator/executor bindings, or provenance when reused.
+   Those references remain attached only to the original principal occurrence.
+5. PrincipalId is meaningful within one authorization domain. A client MUST
    NOT substitute an identifier from another domain.
-3. A request payload, prompt, model response, document, import, or plugin result
+6. A request payload, prompt, model response, document, import, or plugin result
    MUST NOT select or upgrade the effective principal or principal kind.
-4. Proposer/originator, Human approver, and executor are separate recorded
+7. Proposer/originator, Human approver, and executor are separate recorded
    roles. A Human may occupy more than one role when policy permits; no
    mandatory four-eyes rule is introduced.
-5. The Human approval required by this specification MUST be issued by a
+8. The Human approval required by this specification MUST be issued by a
    trusted Human principal. A Delegated principal cannot satisfy that role.
-6. Disabled, missing, unauthenticated, or unresolvable principals fail closed.
-7. Accounts, login providers, directories, groups, organizations, and
+9. Disabled, missing, unauthenticated, or unresolvable principal occurrences
+   fail closed; resolving a replacement subject under a reused account
+   attribute does not reactivate the original occurrence.
+10. Accounts, login providers, directories, groups, organizations, and
    enterprise identity administration are outside this contract.
 
 ## Semantic capability contract
@@ -759,12 +772,17 @@ authorized disclosure scope.
 25. Delegated origin with a Human executor still requires Human Approval.
 26. Human origin with a Delegated executor still requires Human Approval.
 27. Substituting either the bound originator or bound executor denies.
+28. Deleting, transferring, recreating, or replacing an account never
+    reassigns its PrincipalId; a replacement subject receives a new PrincipalId
+    and cannot inherit the original occurrence's Grants, Approval
+    originator/executor bindings, or provenance through a reused login, email,
+    provider identifier, or alias.
 
 ## Stability classification
 
 | Concept | State |
 | --- | --- |
-| Principal identity within one trusted authorization domain | Accepted |
+| Non-reusable, non-reassignable Principal occurrences within one trusted authorization domain | Accepted |
 | Human versus Delegated distinction for MVP policy | Accepted |
 | Principal/domain encoding and authentication mechanism | Provisional host concern |
 | Query, Propose, Approve, Execute non-implication | Accepted |
@@ -807,8 +825,12 @@ authorized disclosure scope.
   ExactChangeBinding, exact base, and stale behavior unchanged.
 - ADR-0020 owns Query/Command/Propose/Execute and semantic publication
   atomicity.
-- #29 owns lifecycle, registry, reservation/consumption implementation,
-  atomic apply/verify, receipts, and provenance persistence.
+- The trusted identity/host boundary owns Principal occurrence issuance and
+  resolution and MUST preserve non-reassignment across its account lifecycle;
+  exact account/provider mechanisms remain Provisional.
+- #29 owns the proposal/Approval lifecycle registry,
+  reservation/consumption implementation, atomic apply/verify, receipts, and
+  provenance persistence.
 - #30 owns trusted enforcement, instruction/data separation, bypass prevention,
   disclosure-safe denials, host-effect denial, and security diagnostics/tests.
 - #93 owns concrete resident session/revision/concurrency/state-installation
