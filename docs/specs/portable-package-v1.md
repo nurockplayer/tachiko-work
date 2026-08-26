@@ -685,8 +685,10 @@ A production implementation must cover at least:
 13. prepended stubs, archive/file comments, explicit directories, data
     descriptors, ZIP64, and trailing bytes fail closed;
 14. an existing destination remains untouched;
-15. a noncanonical pack source creates no artifact; and
-16. content classification never falls back after selecting a malformed
+15. a destination created after the last userspace absence check is rejected
+    unchanged by the actual atomic no-replace publication primitive;
+16. a noncanonical pack source creates no artifact; and
+17. content classification never falls back after selecting a malformed
     package or direct-JSON representation.
 
 The checked-in evidence probe covers the Issue #43 pressure set plus host
@@ -697,11 +699,17 @@ semantic checker is intentionally fixture-specific; production conformance
 must use the normative `.roproj/v1` DTO and semantic validation implementation
 when those codecs are built.
 
-The probe's injected pre-publication hook verifies the stable outcome when a
-destination appears after preparation. It does not select or prove a
-production cross-platform atomic no-replace directory primitive; exact host
-publication mechanics remain Provisional while every implementation must
-satisfy the normative no-overwrite and no-partial-success result.
+For unpack, the probe demonstrates staged publication only while the
+destination remains absent, rejects a destination visible at its final
+userspace check, and exercises error mapping and cleanup when an injected
+publisher reports a no-replace conflict at the actual publication call. Its
+ordinary Node path still uses check-then-`rename` and leaves the final TOCTOU
+window uncovered. The injected publisher is a seam regression, not an atomic
+host primitive or evidence that Node's rename provides no-replace behavior.
+Production conformance must supply and test the real primitive required by
+case 15. Exact host publication mechanics remain Provisional while every
+implementation must satisfy the normative no-overwrite and no-partial-success
+result.
 
 ## Security and resource boundary
 

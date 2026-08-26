@@ -116,15 +116,25 @@ The disposable Node probe
 [`issue-43-portable-package-v1.mjs`](probes/issue-43-portable-package-v1.mjs)
 uses only Node standard-library primitives. It manually writes and parses the
 selected ZIP32 records, calculates CRC-32 and SHA-256, stages disposable
-publication, injects late destination races, and validates the checked-in
-fixture. It is deliberately not a production codec or reusable product API.
+unpack candidates, exercises destination-conflict seams, and validates the
+checked-in fixture. It is deliberately not a production codec or reusable
+product API.
 
-The injected pre-publication seam proves that a destination discovered after
-preparation is rejected unchanged and that staged output is cleaned. It does
-not claim Node's directory `rename` is a cross-platform atomic no-replace
-primitive or prescribe the production host mechanism. A production
-implementation must select a host primitive that satisfies the normative
-no-overwrite/publication contract; that mechanism remains Provisional.
+The controlled valid-unpack path uses two absence checks followed by Node's
+directory `rename`. Node's standard library does not expose a cross-platform
+atomic no-replace directory rename, so this path leaves a final TOCTOU window
+and is **not** evidence for the normative publication-race guarantee. The
+pre-final-check hook proves only that a destination already visible at that
+check is rejected unchanged.
+
+At the actual publication call, a separate injected publisher creates a raced
+destination and returns an `EEXIST`-style no-replace conflict. That regression
+proves the probe orchestration maps a conforming publisher's conflict to
+`portable_package.destination_exists`, preserves the raced destination, and
+cleans the staged tree. It deliberately does not implement or prove the host
+primitive itself. A production implementation must select and test an atomic
+no-replace primitive that satisfies the normative contract; exact host
+mechanics remain Provisional.
 
 The canonical source fixture is
 [`empty.roproj/`](fixtures/issue-43-portable-package-v1/empty.roproj/manifest.json).
@@ -156,7 +166,7 @@ authority.
 | --- | --- |
 | Pack the same canonical source twice | Byte-identical |
 | Change source basename, mode, or mtime | Package bytes unchanged |
-| Valid unpack | Exact 18 paths and bytes published |
+| Valid unpack with a controlled absent destination | Exact 18 paths and bytes published by staged rename; no final-race claim |
 | Corrupt one payload byte | `portable_package.crc_mismatch`; no destination |
 | Recompute CRC but retain stale root | `portable_package.integrity_mismatch`; no destination |
 | Missing, malformed, or duplicate package metadata | Explicit invalid-manifest failure |
@@ -170,7 +180,9 @@ authority.
 | Pack → unpack → pack | Byte-identical |
 | All required empty shards | All present, zero bytes, and included as distinct leaves |
 | Existing pack or unpack destination | Rejected and left unchanged |
-| Destination appears at the pre-publication seam | Rejected and raced destination left unchanged |
+| Unpack destination appears before the final userspace check | Rejected and raced destination left unchanged |
+| Injected unpack publisher reports a no-replace conflict at the publication call | `portable_package.destination_exists`; raced destination unchanged and staged tree cleaned; host primitive not proven |
+| Pack destination appears at the hard-link publication call | Rejected and raced destination left unchanged |
 | Noncanonical pack source | Rejected without artifact publication |
 | Symlinked canonical source directory | Rejected without artifact publication |
 | Prepended/trailing framing variation | Invalid-container failure |
@@ -180,7 +192,8 @@ authority.
 The probe also checks local/central agreement, exact entry order, zero extras
 and comments, lexical version spelling, canonical manifest spelling, inner
 payload-profile agreement, source non-mutation, and absent partial
-destinations.
+destinations for every exercised rejection. It does not claim the default Node
+directory rename covers a destination race after the final userspace check.
 
 Reproduce the complete evidence run with:
 

@@ -953,8 +953,22 @@ async function ensureDestinationAbsent(destination) {
   );
 }
 
-async function unpackAtomically(bytes, destination, options = {}) {
-  const beforePublish = options.beforePublish ?? (async () => {});
+async function publishDirectoryByRenameForControlledProbe(stage, destination) {
+  await rename(stage, destination);
+}
+
+// The probe deliberately requires a publisher. Controlled calls inject Node's
+// directory rename only when the destination remains absent; it is not a
+// cross-platform atomic no-replace primitive. A separate injected publisher
+// exercises the orchestration contract that a production host must satisfy.
+async function unpackWithStagedPublication(bytes, destination, options = {}) {
+  const beforeFinalDestinationCheck = options.beforeFinalDestinationCheck ?? (async () => {});
+  const publishDirectory = options.publishDirectory;
+  ensure(
+    typeof publishDirectory === 'function',
+    CODES.publicationFailed,
+    'disposable unpack evidence requires an explicit directory publisher',
+  );
   await ensureDestinationAbsent(destination);
   const validated = validatePackageBytes(bytes);
   await mkdir(dirname(destination), { recursive: true });
@@ -962,9 +976,16 @@ async function unpackAtomically(bytes, destination, options = {}) {
   try {
     stage = await mkdtemp(join(dirname(destination), '.portable-package-v1-unpack-'));
     await writeTree(stage, validated.tree);
-    await beforePublish({ destination, stage });
+    await beforeFinalDestinationCheck({ destination, stage });
     await ensureDestinationAbsent(destination);
-    await rename(stage, destination);
+    try {
+      await publishDirectory(stage, destination);
+    } catch (error) {
+      if (error.code === 'EEXIST' || await pathExists(destination)) {
+        fail(CODES.destinationExists, `destination appeared during publication: ${destination}`);
+      }
+      throw error;
+    }
     stage = undefined;
   } catch (error) {
     if (error instanceof ProbeFailure) throw error;
@@ -1065,7 +1086,9 @@ function corruptStoredByte(bytes, entryName) {
 
 async function expectUnpackRejection(bytes, destination, expectedCode) {
   await assert.rejects(
-    () => unpackAtomically(bytes, destination),
+    () => unpackWithStagedPublication(bytes, destination, {
+      publishDirectory: publishDirectoryByRenameForControlledProbe,
+    }),
     (error) => error instanceof ProbeFailure && error.code === expectedCode,
     `expected ${expectedCode}`,
   );
@@ -1131,7 +1154,9 @@ async function runPressureTests(work, fixtureTree, canonicalBytes) {
   assert((await readFile(packedAPath)).equals(canonicalBytes));
 
   const unpacked = join(work, 'unpacked.roproj');
-  await unpackAtomically(canonicalBytes, unpacked);
+  await unpackWithStagedPublication(canonicalBytes, unpacked, {
+    publishDirectory: publishDirectoryByRenameForControlledProbe,
+  });
   await assertTreesEqual(EMPTY_ROPROJ_DIRECTORY, unpacked);
 
   rejections.corruptPayload = await expectUnpackRejection(
@@ -1354,7 +1379,9 @@ async function runPressureTests(work, fixtureTree, canonicalBytes) {
   await mkdir(occupiedDestination);
   await writeFile(join(occupiedDestination, 'sentinel'), 'unchanged\n');
   rejections.unpackDestinationExists = await expectFailure(
-    () => unpackAtomically(canonicalBytes, occupiedDestination),
+    () => unpackWithStagedPublication(canonicalBytes, occupiedDestination, {
+      publishDirectory: publishDirectoryByRenameForControlledProbe,
+    }),
     CODES.destinationExists,
   );
   assert.equal(
@@ -1371,18 +1398,44 @@ async function runPressureTests(work, fixtureTree, canonicalBytes) {
   assert.equal(await readFile(occupiedPackDestination, 'utf8'), 'unchanged\n');
 
   const racedUnpackDestination = join(work, 'raced-unpack.roproj');
-  rejections.unpackPublicationRace = await expectFailure(
-    () => unpackAtomically(canonicalBytes, racedUnpackDestination, {
-      beforePublish: async ({ destination }) => {
+  rejections.unpackDestinationBeforeFinalCheck = await expectFailure(
+    () => unpackWithStagedPublication(canonicalBytes, racedUnpackDestination, {
+      beforeFinalDestinationCheck: async ({ destination }) => {
         await mkdir(destination);
         await writeFile(join(destination, 'sentinel'), 'raced\n');
       },
+      publishDirectory: publishDirectoryByRenameForControlledProbe,
     }),
     CODES.destinationExists,
   );
   assert.equal(
     await readFile(join(racedUnpackDestination, 'sentinel'), 'utf8'),
     'raced\n',
+  );
+
+  const noReplacePublisherDestination = join(work, 'publisher-raced-unpack.roproj');
+  let noReplacePublisherCalls = 0;
+  rejections.unpackInjectedNoReplacePublisherConflict = await expectFailure(
+    () => unpackWithStagedPublication(canonicalBytes, noReplacePublisherDestination, {
+      publishDirectory: async (_stage, destination) => {
+        noReplacePublisherCalls += 1;
+        await mkdir(destination);
+        await writeFile(join(destination, 'sentinel'), 'publisher-raced\n');
+        const error = new Error('injected atomic no-replace destination conflict');
+        error.code = 'EEXIST';
+        throw error;
+      },
+    }),
+    CODES.destinationExists,
+  );
+  assert.equal(noReplacePublisherCalls, 1);
+  assert.equal(
+    await readFile(join(noReplacePublisherDestination, 'sentinel'), 'utf8'),
+    'publisher-raced\n',
+  );
+  assert.deepEqual(
+    (await readdir(work)).filter((name) => name.startsWith('.portable-package-v1-unpack-')),
+    [],
   );
 
   const racedPackDestination = join(work, 'raced-pack.ro');

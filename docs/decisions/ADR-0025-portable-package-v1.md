@@ -318,8 +318,11 @@ documents the standards mapping, golden vector, external ZIP-tool check, and
 all required pressure tests. The disposable Node probe manually writes and
 parses ZIP32 records without a ZIP dependency, then checks determinism,
 corruption paths, fail-closed dispatch, exact round trips, staged publication
-and injected destination-race rejection, tracked-source mismatch, content
-framing, and all zero-byte shards.
+under a controlled absent unpack destination, pre-final-check conflict
+rejection, an injected no-replace publisher contract, atomic hard-link pack
+conflict rejection, tracked-source mismatch, content framing, and all zero-byte
+shards. The probe does not implement or prove the production host primitive
+required for atomic no-replace directory publication.
 
 ## Related
 
