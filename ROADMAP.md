@@ -11,6 +11,5 @@ single product-stage Milestone axis established by Issue #56. It does not
 supersede the Product Constitution, Accepted ADRs and policies, or normative
 specifications.
 
-The current planning horizon is `02 · Core & Format Hardening`. Milestones are
-maturity and dependency horizons, not calendar commitments; no due dates are
-implied.
+The current planning horizon is `03 · Game Dev Alpha`. Milestones are maturity
+and dependency horizons, not calendar commitments; no due dates are implied.
