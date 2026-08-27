@@ -9,8 +9,9 @@ Provisional where marked.
 Implementation state: Implemented for frozen `legacy-direct-ro/v1`, explicit
 deterministic v1→v2 migration, canonical identity-aware `direct-ro/v2`, and the
 normal direct-JSON Stage-0 admission profile. The Accepted `.roproj/v1`
-and portable-package v1 contracts are not yet implemented by production
-codecs.
+contract is implemented by production `tachiko-storage` plus explicit CLI host
+operations. The packaged `.ro` ZIP codec for the separately Accepted
+portable-package v1 contract is not yet implemented.
 
 Authority: ADR-0017; ADR-0023 for `.roproj/v1`; ADR-0025 for
 `tachiko.portable-package/v1`
@@ -217,14 +218,20 @@ closed at their applicable existing representation or validation stage. This
 pipeline defines no new error code or precedence, and paths never supply
 semantic identity or relationship meaning.
 
-It remains Deferred whether ordinary open admits that bounded non-canonical
-family or it is available only through an explicit canonicalize/import
-operation. In neither case does reading or inspecting non-canonical input
-authorize a durable rewrite. Production codec behavior and durable
-rematerialization policy remain unimplemented. When a later host commits a
-candidate, the existing representation-level atomicity requirement applies;
-temporary files, rename/fsync, recovery, locking, browser transactions, and
-equivalent durability mechanisms remain host-owned under ADR-0022.
+It remains Deferred whether a future ordinary-open policy admits that bounded
+non-canonical family. The current implementation makes a narrower
+implementation choice: ordinary `.roproj` load is canonical-only, while
+`tachiko roproj canonicalize` explicitly admits the bounded family and writes
+a distinct output. Reading or inspecting non-canonical input does not authorize
+a durable rewrite.
+
+Production `tachiko-storage` implements the pure v1 codec plus native host
+admission, canonicalization, and staged publication. The current native host
+publishes only to an absent destination after the complete candidate is ready,
+preserving the source and avoiding intentional overwrite or partial-tree
+publication. Hostile filesystem races, fsync, recovery, locking, browser
+transactions, and equivalent broader durability mechanisms remain Deferred
+and host-owned under ADR-0022.
 
 `.roproj/v1` never adapts its canonical layout to scale or input shape.
 Changing the shard count/function, paths, file split, record framing, or other
@@ -474,7 +481,13 @@ decode
 → prepare durable result
 ```
 
-ADR-0022 keeps durable persistence/recovery as host/storage responsibility outside `workspace-engine`. The exact temporary-file/rename/fsync/browser-transaction implementation remains Deferred to future host/storage implementation rather than this semantic/runtime decision.
+ADR-0022 keeps durable persistence/recovery as host/storage responsibility
+outside `workspace-engine`. The current native `.roproj` host stages a complete
+candidate in a sibling directory and renames it only to an absent destination;
+failure cleanup preserves the source and does not intentionally expose a
+partial canonical tree. Hostile races, fsync, recovery, locking, browser
+transactions, and the broader durable replacement policy remain Deferred
+rather than being decided by this semantic/runtime specification.
 
 ## Conformance requirements
 

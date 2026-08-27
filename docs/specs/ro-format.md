@@ -12,9 +12,9 @@ It does **not** define an independent `.ro` contract. Use the documents below ac
 - [`canonical-json-profile.md`](canonical-json-profile.md) — deterministic JSON, Unicode, ordering, member-emission, and whitespace rules whose non-numeric portions are settled for Milestone 02.
 - [`ro-format-v1.md`](ro-format-v1.md) — immutable normative legacy compatibility/migration profile for the direct `.ro` JSON bytes shipped by the v0.1 Developer MVP.
 - [`ro-format-v2.md`](ro-format-v2.md) — normative current identity-aware direct `.ro` JSON representation.
-- [`roproj-format.md`](roproj-format.md) and [`roproj-layout-v1.md`](roproj-layout-v1.md) — Accepted `.roproj/v1` version-owned DTO and physical-tree contracts under ADR-0023; production materialization is not yet implemented.
+- [`roproj-format.md`](roproj-format.md) and [`roproj-layout-v1.md`](roproj-layout-v1.md) — Accepted `.roproj/v1` version-owned DTO and physical-tree contracts under ADR-0023; the production pure codec and native explicit materialize/validate/canonicalize workflow are implemented by #123.
 - [`../decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md`](../decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md) — Accepted authority for the exact v1 canonical tree, entity placement, canonical JSON/JSONL boundary, and path nonidentity.
-- [`portable-package-v1.md`](portable-package-v1.md) and [`../decisions/ADR-0025-portable-package-v1.md`](../decisions/ADR-0025-portable-package-v1.md) — Accepted authority for the exact portable-package v1 envelope, payload root, round trips, and tracked-source conflict behavior; production codecs and CLI are not implemented.
+- [`portable-package-v1.md`](portable-package-v1.md) and [`../decisions/ADR-0025-portable-package-v1.md`](../decisions/ADR-0025-portable-package-v1.md) — Accepted authority for the exact portable-package v1 envelope, payload root, round trips, and tracked-source conflict behavior; the packaged `.ro` ZIP codec and CLI pack/unpack are not implemented.
 - [`../decisions/ADR-0003-ro-and-roproj-representation.md`](../decisions/ADR-0003-ro-and-roproj-representation.md) — Accepted architectural authority for the long-term representation relationship.
 
 ## Current implementation state
@@ -24,6 +24,12 @@ strict decoder, then migrates it deterministically in memory for the requested
 operation without rewriting the source. New or explicitly saved semantic
 documents use canonical `direct-ro/v2`, which preserves opaque stable IDs,
 mutable human keys, bound references, and ADR-0018 Number semantics losslessly.
+
+Production `tachiko-storage` also implements the independent `.roproj/v1` pure
+codec. The CLI exposes explicit `tachiko roproj materialize`, canonical-only
+`validate`, and bounded `canonicalize` operations through the native host; they
+publish only to distinct absent destinations and operate without Git. Packaged
+`.ro` ZIP creation and extraction remain separate #3 work.
 
 The direct `.ro` v1 profile is stable only as **legacy compatibility input**.
 It is not the separate `.roproj/v1` editable format, the Accepted
@@ -37,9 +43,9 @@ identity and numeric semantics.
 - #40 owns executable golden and negative conformance evidence.
 - #70 owns ADR-0015 stable-identity migration integration.
 - ADR-0018 is the Accepted numeric/formula authority; #24 is closed.
-- ADR-0023 and the two `.roproj/v1` specifications resolve #41's durable physical-layout decision; a later implementation issue must own the production codec.
+- ADR-0023 and the two `.roproj/v1` specifications resolve #41's durable physical-layout decision; #123 implements the production codec and explicit native host/CLI workflow.
 - ADR-0025 and `portable-package-v1.md` resolve #43's durable package,
-  integrity, round-trip, and conflict decision; #3 remains the production
-  codec/CLI implementation issue.
+  integrity, round-trip, and conflict decision; #3 remains the packaged `.ro`
+  ZIP codec and CLI pack/unpack implementation issue.
 
 For the project-wide authority model, see [`../governance/knowledge-authority.md`](../governance/knowledge-authority.md) and [`../governance/canonical-reconciliation-register.md`](../governance/canonical-reconciliation-register.md).

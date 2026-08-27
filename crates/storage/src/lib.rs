@@ -3,6 +3,7 @@
 mod direct_ro;
 mod legacy_direct_ro;
 mod migration;
+mod roproj;
 mod strict_json;
 
 use std::{
@@ -16,6 +17,12 @@ use direct_ro::v2::{CodecError as V2CodecError, DocumentV2};
 use strict_json::{FrontendError, VersionToken, inspect};
 use tachiko_semantic_core::{Diagnostic, Document, validate_document};
 use thiserror::Error;
+
+pub use roproj::{
+    CanonicalRoProjectFile, CanonicalRoProjectV1, ROPROJ_V1_FORMAT_VERSION, ROPROJ_V1_PATHS,
+    canonicalize_roproj, decode_roproj_v1, encode_roproj_v1, load_roproj, materialize_roproj,
+    publish_canonicalized_roproj, publish_roproj, read_canonical_roproj,
+};
 
 pub const LEGACY_FORMAT_VERSION: u32 = 1;
 pub const FORMAT_VERSION: u32 = 2;
@@ -48,6 +55,32 @@ pub enum FormatError {
     VersionMalformed,
     #[error("unsupported .ro format version {found}; this build supports through {supported}")]
     UnsupportedVersion { found: u32, supported: u32 },
+    #[error("invalid .roproj UTF-8 in '{path}': {source}")]
+    InvalidRoProjectUtf8 {
+        path: String,
+        #[source]
+        source: Utf8Error,
+    },
+    #[error("invalid .roproj JSON in '{path}': {source}")]
+    InvalidRoProjectJson {
+        path: String,
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("duplicate .roproj JSON member '{member}' in '{path}'")]
+    DuplicateRoProjectMember { path: String, member: String },
+    #[error("missing required .roproj format discriminator")]
+    RoProjectFormatMissing,
+    #[error("malformed .roproj format discriminator")]
+    RoProjectFormatMalformed,
+    #[error("missing required .roproj format version")]
+    RoProjectVersionMissing,
+    #[error("malformed .roproj format version")]
+    RoProjectVersionMalformed,
+    #[error("unsupported .roproj format version {found}; this build supports version {supported}")]
+    UnsupportedRoProjectVersion { found: u32, supported: u32 },
+    #[error("invalid .roproj representation: {message}")]
+    InvalidRoProjectRepresentation { message: String },
     #[error("invalid direct .ro representation: {message}")]
     InvalidRepresentation {
         message: String,
@@ -66,6 +99,20 @@ pub enum FormatError {
     InvalidDocument { diagnostics: Vec<Diagnostic> },
     #[error("'{}' already exists; refusing to overwrite it", path.display())]
     AlreadyExists { path: PathBuf },
+    #[error(
+        "canonicalization output '{}' overlaps source '{}'; choose a path outside the source",
+        destination.display(),
+        source_path.display()
+    )]
+    PathOverlap {
+        source_path: PathBuf,
+        destination: PathBuf,
+    },
+    #[error("cannot safely resolve publication path '{}': {message}", path.display())]
+    PathResolution {
+        path: PathBuf,
+        message: &'static str,
+    },
     #[error("failed to read '{}': {source}", path.display())]
     Read { path: PathBuf, source: io::Error },
     #[error("failed to write '{}': {source}", path.display())]
@@ -377,6 +424,10 @@ fn map_frontend_error(error: FrontendError) -> FormatError {
     match error {
         FrontendError::InvalidJson(source) => FormatError::InvalidJson { source },
         FrontendError::DuplicateMember(member) => FormatError::DuplicateMember { member },
+        FrontendError::NestingLimit { limit } => FormatError::InvalidRepresentation {
+            message: format!("JSON nesting exceeds representation limit {limit}"),
+            source: None,
+        },
     }
 }
 

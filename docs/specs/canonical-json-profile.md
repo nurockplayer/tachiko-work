@@ -4,9 +4,10 @@ Decision state: Mixed — deterministic/semantic-preservation rules under ADR-00
 
 Implementation state: Implemented by the dedicated `direct-ro/v2` canonical
 writer. Frozen v1 retains its historical version-scoped writer. The Accepted
-`.roproj/v1` profile is not yet implemented by a production codec. The
-Accepted portable-package v1 manifest has a separate exact closed spelling;
-its production codec is also not implemented.
+`.roproj/v1` profile is implemented by the production `tachiko-storage` codec
+and explicit host/CLI operations. The Accepted portable-package v1 manifest
+has a separate exact closed spelling; its packaged `.ro` ZIP production codec
+is not implemented.
 
 Authority: ADR-0017
 
@@ -459,8 +460,7 @@ The direct-JSON conformance work in #40 includes at minimum:
   supported;
 - encode → decode → encode byte stability.
 
-A future production `.roproj/v1` codec must add representation-owned fixtures
-for:
+The production `.roproj/v1` codec has representation-owned fixtures for:
 
 - recursive pretty-render punctuation and line breaks over nested nonempty and
   empty objects/arrays, independently of a serializer's default formatter;
@@ -472,6 +472,11 @@ for:
 - `.roproj/v1` exact path-and-byte equality and rematerialization after a
   layout-only non-canonical input change, without a stored or comparison tree
   digest.
+
+The portable conformance harness additionally fixes one production
+encode/decode/exact-re-encode tree fingerprint and executes the same record on
+native and `wasm32-unknown-unknown`. That fingerprint is harness evidence only;
+it is not stored tree data, identity, revision, or an integrity primitive.
 
 ## Related
 

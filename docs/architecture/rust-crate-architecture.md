@@ -16,7 +16,9 @@ validation/report composition implemented by Issue #89. Current workspace-engine
 operations remain substantially snapshot-style; resident runtime implementation
 is deferred to #93–#95. Current one-field inert proposal validation does not
 implement ADR-0024 proposal occurrence identity, base/compatibility binding, or
-AtomicBatch.
+AtomicBatch. Issue #123 implements the storage-owned `.roproj/v1` pure codec,
+native exact-tree host workflow, and CLI composition without changing the
+Accepted crate DAG.
 
 Architecture authority: ADR-0016 for crate ownership; ADR-0020 for the
 first-class Semantic API product boundary; ADR-0024 for SemanticPatch proposal
@@ -148,8 +150,15 @@ ADR-0020 even where the underlying algorithmic meaning is Accepted elsewhere.
 ### storage
 
 Storage owns strict version-specific DTOs/codecs, explicit migration, canonical
-direct-ro materialization, and native filesystem load/save APIs. It depends on
-semantic-core and remains a sibling of workspace-engine.
+direct-ro and `.roproj/v1` materialization, and native filesystem load/save
+APIs. It depends on semantic-core and remains a sibling of workspace-engine.
+
+Issue #123 adds production pure `.roproj/v1` encode/decode over the exact
+18-file tree plus native canonical-only load, bounded canonicalization, and
+staged absent-destination publication. The CLI composes these as explicit
+materialize, canonical-only validate, and bounded canonicalize operations. The
+workflow operates without Git and does not move filesystem authority into
+workspace-engine.
 
 The CLI composition root performs `load → semantic operation → canonical
 encode/write`. Workspace-engine does not depend on paths, files, storage DTOs,
@@ -262,7 +271,7 @@ owns:
 
 - Clap arguments and command dispatch;
 - OS paths and default titles derived from host paths;
-- storage load/canonical-encode composition;
+- direct `.ro` and explicit `.roproj/v1` storage/host composition;
 - UUIDv7 generation supplied through the engine's creation seam;
 - exclusive-create writes and no-overwrite timing; and
 - terminal and JSON rendering.
@@ -360,12 +369,14 @@ The capability-free portable set is:
 `wasm32-unknown-unknown`. Its shared production-API corpus executes on both
 targets and compares stable observations for normalized Number bits, typed
 failures, dependency/cycle behavior, binding/projection continuity, storage
-numeric bytes, workspace-engine calculated queries, AI formula explanation, and
-inert approval-required AI proposal validation.
+numeric bytes, the production `.roproj/v1` exact 18-path encode/decode/re-encode
+record, workspace-engine calculated queries, AI formula explanation, and inert
+approval-required AI proposal validation.
 
 Storage is also present in existing conformance coverage for portable codec
-behavior, but the crate remains host-facing because it exposes native path/file
-APIs. CLI is native-only.
+behavior. Its fixed `.roproj/v1` record proves native/WASM exact-tree parity for
+the pure codec, while the crate remains host-facing because it also exposes
+native path/file APIs. CLI is native-only.
 
 PR #91 adds executable topology evidence that a TypeScript → Node Worker → WASM
 → workspace-engine path can retain one Rust-owned authoritative semantic
@@ -428,8 +439,11 @@ does not implicitly grant filesystem/network/Git/plugin/deployment authority.
 - #94 owns later selective semantic queries and projection invalidation.
 - #95 owns later retained incremental engine state with full-oracle equivalence.
 - ADR-0023 and the `.roproj/v1` specifications own the Accepted layout and
-  version-owned wire contract; production materialization remains later
-  storage/host implementation work.
+  version-owned wire contract; #123 implements the production pure codec plus
+  current native exact-tree materialize/canonical-only-validate/explicit-
+  canonicalize host workflow. Packaged `.ro` ZIP and pack/unpack remain #3;
+  optional Git/CI integration remains #44; hostile filesystem races, full
+  durability/recovery, and broader host work remain Deferred.
 - A dedicated stable public Rust SDK/facade crate is Deferred until downstream
   pressure justifies it.
 
@@ -455,5 +469,5 @@ ADR-0016 baseline must amend that ADR explicitly.
 - [Semantic authorization specification](../specs/semantic-authorization.md)
 - [Semantic core rationale](semantic-core-rationale.md)
 - [Knowledge authority](../governance/knowledge-authority.md)
-- GitHub issues #26, #27, #28, #29, #30, #41, #93, #94, #95
+- GitHub issues #3, #26, #27, #28, #29, #30, #41, #44, #93, #94, #95, #123
 - PR #91

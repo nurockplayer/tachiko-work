@@ -14,11 +14,12 @@ rust-version.workspace = true
 
 [dependencies]
 serde.workspace = true
-serde_json = { workspace = true, features = ["arbitrary_precision"] }
+serde_json = { workspace = true, features = ["arbitrary_precision", "unbounded_depth"] }
 tachiko-semantic-core = { version = "0.1.0", path = "../semantic-core" }
 thiserror.workspace = true
 uuid = { workspace = true, features = ["v5"] }
 ryu-js.workspace = true
+sha2.workspace = true
 
 [lints]
 workspace = true

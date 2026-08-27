@@ -35,7 +35,9 @@ Features:
 - pull-request friendly review
 - balance validation CI
 
-Current release boundary: this is CLI-first with `.ro` persistence.
+Current release boundary: this is CLI-first with direct `.ro` as the ordinary
+persistence path plus Issue #123's explicit standalone `.roproj/v1`
+materialize, canonical-only validate, and bounded canonicalize workflow.
 
 ## Long Term Expansion
 
@@ -52,6 +54,9 @@ The same foundation can expand into:
 Non-implemented work in this release remains:
 
 - spreadsheet-native GUI editing
-- `.roproj`/working-copy workflow
+- packaged `.ro` ZIP and CLI pack/unpack (#3)
+- optional `.roproj` Git/CI integration (#44)
+- hostile filesystem race hardening, full durability/recovery, and broader
+  host work
 - realtime/online collaboration
 - engine plugins and hosted multiplayer pipelines

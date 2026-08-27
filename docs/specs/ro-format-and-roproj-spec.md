@@ -10,16 +10,22 @@ ADR-0003 is Accepted and defines the target relationship:
 - `.ro` is the portable single-file artifact.
 - the semantic model remains authoritative over both.
 
-## Current v0.1 implementation
+## Current implementation
 
-The shipped CLI currently persists and operates on deterministic `.ro` files only.
+The shipped CLI continues to use deterministic direct `.ro` files for ordinary
+creation, authoring, validation, calculation, semantic diff/merge, and runtime
+export workflows.
 
-`Project.ro` is used by the current creation, authoring, validation, calculation, semantic diff/merge, and runtime export workflows.
+It also implements explicit standalone `.roproj/v1` operations: materializing
+a direct `.ro` document to a distinct absent canonical tree, validating an
+exact canonical tree, and canonicalizing the Accepted bounded non-canonical
+family to a distinct absent output. These operations preserve their source and
+do not require Git.
 
 This implementation state does not supersede ADR-0003. ADR-0025 now fixes the
 deterministic portable-package v1 and integrity contract over `.roproj/v1`;
-production `.roproj` materialization and pack/unpack remain future
-implementation work.
+the packaged `.ro` ZIP codec and CLI pack/unpack remain future #3
+implementation work. Optional Git/CI integration remains #44.
 
 ## `.ro`
 
@@ -42,10 +48,12 @@ Users should not need to understand its internal tagged JSON structure for ordin
 ## `.roproj`
 
 Accepted canonical Git working/source representation. ADR-0023 now fixes the
-`.roproj/v1` physical and wire contract; a production reader, writer, and
-pack/unpack path are still not implemented.
+`.roproj/v1` physical and wire contract. Issue #123 implements the production
+pure reader/writer codec plus native materialize, canonical-only validate, and
+explicit bounded canonicalize operations. Package pack/unpack is separate and
+still not implemented.
 
-Target properties:
+Representation properties:
 
 - deterministic and canonical
 - UTF-8 where textual
@@ -89,8 +97,9 @@ SHA-256 payload root; it does not define another semantic schema.
 Pack and unpack preserve every payload path and byte exactly. A verified
 package that disagrees with canonical tracked `.roproj` source reports a
 source mismatch without mutating either side; the tracked source remains
-authoritative in that working context. Production codecs and CLI commands are
-outside this specification's current implementation state.
+authoritative in that working context. The packaged `.ro` ZIP codec and CLI
+pack/unpack remain unimplemented under #3; optional Git/CI integration remains
+owned by #44.
 
 ## Canonical principle
 

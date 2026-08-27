@@ -2,8 +2,9 @@
 
 Decision state: Accepted
 
-Implementation state: Not implemented by a production `.roproj` codec,
-packaged-`.ro` codec, or CLI command
+Implementation state: The production `.roproj/v1` payload codec and native
+materialize/validate/explicit-canonicalize workflow are implemented by #123.
+The packaged-`.ro` ZIP codec and CLI pack/unpack are not implemented.
 
 Package profile: `tachiko.portable-package/v1`
 
@@ -20,7 +21,7 @@ Evidence: [portable-package v1 research record](../research/2026-08-26-portable-
 [byte-level golden vector](../research/fixtures/issue-43-portable-package-v1/empty-package-v1.hex)
 
 Tracking issue: [#3](https://github.com/nurockplayer/tachiko-work/issues/3)
-for production codecs and CLI implementation
+for the packaged-`.ro` ZIP codec and CLI pack/unpack implementation
 
 ## Purpose and normative language
 
@@ -696,8 +697,8 @@ basename/mode/mtime independence, missing/aliased/duplicate entries, duplicate
 metadata, trailing data, existing pack and unpack destinations, noncanonical
 pack source, and content framing. Its empty-payload
 semantic checker is intentionally fixture-specific; production conformance
-must use the normative `.roproj/v1` DTO and semantic validation implementation
-when those codecs are built.
+must use the now-production `.roproj/v1` DTO and semantic validation
+implementation when the packaged `.ro` codec is built.
 
 For unpack, the probe demonstrates staged publication only while the
 destination remains absent, rejects a destination visible at its final

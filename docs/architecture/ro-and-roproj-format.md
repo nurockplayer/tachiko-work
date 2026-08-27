@@ -13,9 +13,9 @@ ADR-0003 is Accepted and defines two roles:
 
 The semantic model remains the architectural source of truth. Physical representations must preserve equivalent semantic meaning.
 
-## Current v0.1 implementation
+## Current implementation
 
-The current CLI implements only the single-file `.ro` persistence path:
+The current CLI retains the single-file direct `.ro` persistence path:
 
 ```text
 project.ro
@@ -30,13 +30,22 @@ file never rewrites it.
 This path is used by the current CLI, semantic diff/merge, validation, formula
 authoring, and product smoke journeys.
 
+Issue #123 also implements the independent production `.roproj/v1` pure codec
+and the native standalone host workflow. `tachiko roproj materialize` converts
+an explicit direct `.ro` input to a distinct absent canonical tree;
+`tachiko roproj validate` is canonical-only; and `tachiko roproj canonicalize`
+admits only the Accepted bounded family and writes a distinct absent canonical
+output. These operations preserve their source and do not require Git.
+
 This is a transitional implementation state, not a reversal of ADR-0003.
 ADR-0023 fixes the `.roproj/v1` durable representation contract. ADR-0025
 fixes the deterministic portable-package v1 envelope and integrity root over
-that exact tree. The production `.roproj` materializer, packaged-`.ro` codec,
-and `.roproj` ↔ `.ro` pack/unpack path are not yet implemented.
+that exact tree. The packaged `.ro` ZIP codec and CLI pack/unpack are not yet
+implemented under #3. Optional Git/CI integration remains #44, and hostile
+container/security plus broader race/durability work retain their existing
+owners and Deferred status.
 
-## Target Git working representation
+## Canonical Git working representation
 
 ```text
 project.roproj/
@@ -79,9 +88,11 @@ automatically overwritten, synchronized, or merged.
 
 ## Rule
 
-- Current product behavior must document `.ro` as the implemented v0.1 persistence format.
+- Current product behavior must document direct `.ro` as the implemented ordinary persistence format and `.roproj/v1` as an implemented explicit canonical materialization/validation/canonicalization path.
 - Architecture documents must document `.roproj` as the Accepted canonical editable target under ADR-0003.
 - `.roproj/v1` documents must follow ADR-0023's Accepted physical and wire contract without treating paths, shard names, or line numbers as semantic identity.
 - Portable package v1 implementations must consume ADR-0025's exact envelope and integrity contract without introducing another semantic schema.
 - `.ro` packaging sophistication must not block semantic-core or user-workflow validation.
-- The system does not yet provide deterministic `.ro` ↔ `.roproj` conversion.
+- The system provides explicit deterministic direct `.ro` → `.roproj/v1`
+  materialization but does not yet provide packaged `.ro` ZIP pack/unpack or
+  implicit ordinary-open conversion.

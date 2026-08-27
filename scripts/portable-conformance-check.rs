@@ -17,14 +17,14 @@ use tachiko_semantic_core::{
 };
 use tachiko_storage::{
     FormatError as StorageFormatError, NORMAL_DIRECT_JSON_MAX_INPUT_BYTES,
-    V2_MAX_NUMBER_TOKEN_BYTES, from_bytes as storage_from_bytes, from_str as storage_from_str,
-    to_canonical_string,
+    ROPROJ_V1_PATHS, V2_MAX_NUMBER_TOKEN_BYTES, decode_roproj_v1, encode_roproj_v1,
+    from_bytes as storage_from_bytes, from_str as storage_from_str, to_canonical_string,
 };
 use tachiko_workspace_engine::{
     ValidationReport, calculate_fields, diagnostic_codes, validation_report,
 };
 
-const CASE_COUNT: u32 = 46;
+const CASE_COUNT: u32 = 47;
 const VALUE: u32 = 0;
 const DIVISION_BY_ZERO: u32 = 1;
 const NON_FINITE: u32 = 2;
@@ -35,6 +35,7 @@ const NON_NUMERIC_REFERENCE: u32 = 6;
 const COMPLETE_ORACLE: u32 = 7;
 const DIRECT_JSON_ENVELOPE: u32 = 8;
 const VALIDATION_REPORT: u32 = 9;
+const ROPROJ_V1_EXACT_TREE: u32 = 10;
 const UNEXPECTED: u32 = 255;
 
 const VALIDATION_ACCUMULATION_COUNT: usize = 16;
@@ -45,6 +46,8 @@ const VALIDATION_CYCLE_COUNT: usize = 6;
 const VALIDATION_CYCLE_FINGERPRINT: u64 = 12_164_157_338_575_685_884;
 const VALIDATION_DISJOINT_CYCLE_COUNT: usize = 4;
 const VALIDATION_DISJOINT_CYCLE_FINGERPRINT: u64 = 18_384_632_427_777_425_720;
+const ROPROJ_V1_EXACT_TREE_FINGERPRINT: u64 = 2_796_923_835_209_599_950;
+const ROPROJ_V1_EXACT_TREE_FILE_COUNT: u64 = 18;
 
 #[derive(Clone, Copy)]
 struct Record {
@@ -162,6 +165,71 @@ fn mix_hash(hash: &mut u64, bytes: &[u8]) {
         *hash ^= u64::from(*byte);
         *hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
+}
+
+fn mix_framed(hash: &mut u64, domain: &[u8], payload: &[u8]) {
+    mix_hash(hash, &(domain.len() as u64).to_le_bytes());
+    mix_hash(hash, domain);
+    mix_hash(hash, &(payload.len() as u64).to_le_bytes());
+    mix_hash(hash, payload);
+}
+
+fn roproj_v1_record() -> Record {
+    let document = formula_document(number(42.0), input_reference());
+    let Ok(tree) = encode_roproj_v1(&document) else {
+        return Record::failure(UNEXPECTED, 46_u64 << 32);
+    };
+    if tree.files().len() != ROPROJ_V1_PATHS.len()
+        || tree
+            .files()
+            .iter()
+            .zip(ROPROJ_V1_PATHS)
+            .any(|(file, expected_path)| file.path() != expected_path)
+    {
+        return Record::failure(UNEXPECTED, (46_u64 << 32) | tree.files().len() as u64);
+    }
+
+    let mut fingerprint = 0xcbf2_9ce4_8422_2325_u64;
+    mix_framed(
+        &mut fingerprint,
+        b"record-domain",
+        b"tachiko.portable-conformance/roproj-v1-exact-tree/fnv1a64",
+    );
+    mix_framed(
+        &mut fingerprint,
+        b"file-count",
+        &(tree.files().len() as u64).to_le_bytes(),
+    );
+    for file in tree.files() {
+        mix_framed(&mut fingerprint, b"relative-path", file.path().as_bytes());
+        mix_framed(&mut fingerprint, b"exact-body", file.bytes());
+    }
+
+    let Ok(decoded) = decode_roproj_v1(&tree) else {
+        return Record::failure(UNEXPECTED, (46_u64 << 32) | 1);
+    };
+    if decoded != document {
+        return Record::failure(UNEXPECTED, (46_u64 << 32) | 2);
+    }
+    let Ok(reencoded) = encode_roproj_v1(&decoded) else {
+        return Record::failure(UNEXPECTED, (46_u64 << 32) | 3);
+    };
+    if reencoded != tree {
+        return Record::failure(UNEXPECTED, (46_u64 << 32) | 4);
+    }
+
+    let record = Record {
+        class: ROPROJ_V1_EXACT_TREE,
+        bits: fingerprint,
+        auxiliary: tree.files().len() as u64,
+    };
+    if record.class != ROPROJ_V1_EXACT_TREE
+        || record.bits != ROPROJ_V1_EXACT_TREE_FINGERPRINT
+        || record.auxiliary != ROPROJ_V1_EXACT_TREE_FILE_COUNT
+    {
+        return Record::failure(UNEXPECTED, fingerprint);
+    }
+    record
 }
 
 fn mix_field_ref(hash: &mut u64, field: &FieldRef) {
@@ -1370,6 +1438,7 @@ fn case_record(index: u32) -> Record {
         43 => rename_stability_record(),
         44 => validation_cycle_record(),
         45 => disjoint_cycle_record(),
+        46 => roproj_v1_record(),
         _ => Record::failure(UNEXPECTED, 0),
     }
 }

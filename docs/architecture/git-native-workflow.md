@@ -4,7 +4,7 @@
 
 Git is a storage and collaboration protocol, not the user interface.
 
-## Current v0.1 workflow
+## Current implementation
 
 The implemented CLI currently reads and writes deterministic single-file `.ro` documents:
 
@@ -14,15 +14,23 @@ project.ro
 
 That path is already used for branch-based editing, semantic diff, semantic three-way merge, validation, calculation, CI smoke journeys, and reviewable data changes.
 
-## Accepted target representation
+Issue #123 also implements the production `.roproj/v1` pure codec and native
+standalone exact-tree workflow: explicit direct `.ro` materialization,
+canonical-only validation, and explicit bounded canonicalization to a distinct
+absent output. These operations preserve their source and require no Git
+repository or Git configuration.
+
+## Accepted representation and implementation split
 
 ADR-0003 is Accepted and defines `project.roproj/` as the canonical editable/source representation for the mature Git-native workflow, with `.ro` as a portable artifact. ADR-0023 fixes the `.roproj/v1` canonical tree and entity-sharding contract. ADR-0025 fixes portable-package v1 as a deterministic envelope over those exact source bytes.
 
-The production `.roproj` codec remains deferred, not the representation
-decision itself. The production package codec and CLI also remain deferred,
-not the package decision itself. The current direct-JSON `.ro` workflow is
-therefore a validated transitional product path while implementation catches
-up.
+The production `.roproj/v1` pure codec and native host workflow are implemented
+by #123, not merely selected as representation direction. The packaged `.ro`
+ZIP codec and CLI pack/unpack remain #3 work, while optional Git attributes,
+diff/CI integration, and generated-artifact policy remain #44 work. Hostile
+filesystem races, full durability/recovery, and broader host hardening remain
+separately Deferred; #123's staged absent-destination publication does not
+resolve them.
 
 In v1, Git paths and JSONL line positions are materialization coordinates only.
 Entity identity comes from the stable ID inside the decoded record. A

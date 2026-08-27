@@ -8,7 +8,7 @@ The UI is a projection layer, not the owner of document meaning.
 
 A frontend may own selection, viewport, interaction state, draft authoring buffers, presentation caches, and user workflow state. It must not create a second canonical semantic model or reimplement semantic validation/formula/mutation policy.
 
-For an open interactive document, authoritative in-memory semantic state belongs to the shared Rust semantic/application runtime under ADR-0022. This does not replace ADR-0003/ADR-0017 durable representation authority; `.roproj` remains the canonical durable editable materialization when that representation is implemented.
+For an open interactive document, authoritative in-memory semantic state belongs to the shared Rust semantic/application runtime under ADR-0022. This does not replace ADR-0003/ADR-0017 durable representation authority; `.roproj/v1` is the canonical durable editable materialization, and Issue #123 implements its production pure codec plus native exact-tree materialize, canonical-only validate, and explicit bounded canonicalize workflow.
 
 ## Architecture
 
@@ -135,6 +135,12 @@ snapshot-style and has no general SemanticPatch or AtomicBatch implementation.
 ADR-0022/ADR-0024/ADR-0026 make the resident, proposal, and authorization laws
 Accepted targets while allowing implementation to lag until #29/#30/#93–#95.
 
+Separately, #123 implements `.roproj/v1` at the storage/native host boundary
+without moving filesystem authority into workspace-engine or the interactive
+runtime. Packaged `.ro` ZIP and pack/unpack remain #3 work; optional Git/CI
+integration remains #44; hostile filesystem races, full durability/recovery,
+browser persistence, and broader host mechanisms remain Deferred.
+
 No Web UI, resident session API, projection patch protocol, or browser persistence mechanism is introduced by this documentation decision.
 
 ## Why
@@ -151,5 +157,5 @@ This avoids both expensive whole-document client/runtime traffic as the default 
 - ADR-0022
 - ADR-0024
 - ADR-0026
-- Issues #26, #28, #29, #30, #93, #94, #95
+- Issues #3, #26, #28, #29, #30, #44, #93, #94, #95, #123
 - PR #91
