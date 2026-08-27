@@ -654,14 +654,23 @@ allow iff:
 ```text
 allow iff:
   authenticated Principal is active
+  AND trusted authorization domain selects an effective immutable
+      authorization-policy version
   AND trusted authority derives associated operation-family + write-scope +
-      mutation requirements
+      mutation requirements under that policy
   AND live Propose Grants cover the complete requirement
   AND command/base are admissible under the Semantic API
 ```
 
-Returned evidence is separately filtered by the disclosure contract. Propose
-publishes nothing and does not imply later Execute authority.
+On success, the trusted boundary records that selected effective policy version
+with the proposal provenance together with the Propose Grant references and
+AuthorizationFootprint. A client-supplied version is not authority. Unavailable
+or unprovable effective policy meaning fails closed. The recorded version
+identifies how Propose was authorized; it is not Approval, does not pin later
+execution policy, and does not replace the independently selected effective
+policy bound if Approval is later issued. Returned evidence is separately
+filtered by the disclosure contract. Propose publishes nothing and does not
+imply later Execute authority.
 
 ### Issue Approval
 
@@ -811,8 +820,11 @@ ProposalId + ExactChangeBinding reference
 OriginatorPrincipalId
 Propose Grant references
 AuthorizationFootprint
-AuthorizationPolicyVersion
+trusted effective AuthorizationPolicyVersion selected at proposal issuance
 ```
+
+The proposal provenance version records issuance-time authorization only. It is
+not a client choice, Approval binding, or historical execution-policy choice.
 
 When available, retain structured agent/provider/model/tool/orchestrator
 identity/version and correlation facts as opaque provenance. They never grant
@@ -1058,6 +1070,11 @@ authorized disclosure scope.
     same identifier. Changed family meaning requires a new identity or
     separately versioned compatibility occurrence; old authority does not
     transfer, and unprovable family meaning fails closed.
+55. Proposal issuance selects the effective immutable authorization-policy
+    version from the trusted AuthorizationDomain, evaluates Propose authority
+    under it, and records it as proposal provenance. A client-supplied or
+    unprovable version fails closed; the recorded version does not become
+    Approval or execution authority.
 
 ## Stability classification
 
@@ -1098,6 +1115,7 @@ authorized disclosure scope.
 | Approval reservation/locking/atomic-consumption mechanics | #29 Provisional implementation |
 | Concrete revision concurrency/state-installation mechanics | #93 Provisional implementation |
 | Minimum proposal/approval/Approval-gated execution provenance without fabricated Approval facts on direct Human Execute | Accepted |
+| Trusted effective-policy selection and provenance recording at proposal issuance without treating that record as Approval or execution authority | Accepted |
 | Provenance store/retention/redaction/tamper evidence/UI | Provisional/Deferred |
 | Provider/model as provenance rather than privilege | Accepted under ADR-0007 |
 | Semantic/host-effect separation | Accepted under ADR-0007/ADR-0022 |

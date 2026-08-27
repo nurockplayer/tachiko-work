@@ -283,6 +283,15 @@ Any `SemanticPatch` originated by a Delegated principal or executed using
 Delegated authority requires one explicit Human Approval before Execute.
 Query and Propose require Grants but no Approval.
 
+When Propose issues a proposal occurrence, the trusted authorization domain
+selects the effective authorization-policy version, derives and checks the
+proposal's authorization requirements under that policy, and records that
+version with the proposal provenance. A client-supplied version is not
+authority, and unavailable or unprovable effective policy meaning fails closed.
+This issuance-time provenance records how Propose was authorized; it is not an
+Approval, does not pin execution policy, and does not replace the independently
+selected effective policy bound when Approval is later issued.
+
 For one proposal or AtomicBatch:
 
 - one Human approver must hold live `Approve(...)` authority covering every
@@ -525,7 +534,8 @@ Proposal provenance preserves at least:
 - originating `PrincipalId`;
 - Propose Grant references;
 - `AuthorizationFootprint`; and
-- authorization-policy version.
+- the trusted effective authorization-policy version selected at proposal
+  issuance.
 
 For AI-originated proposals, provider/model/tool/prompt-correlation facts should
 be retained when available as opaque provenance. Full prompt or conversation
@@ -743,6 +753,11 @@ Future implementation must preserve these representation-neutral outcomes:
     changed operation later assigned to the same identifier; changed family
     meaning requires a new family identity or compatibility occurrence, old
     authority does not transfer, and unprovable meaning publishes nothing.
+46. **Propose records trusted effective policy** — issuing a proposal selects
+    the effective immutable authorization-policy version from the trusted
+    authorization domain, evaluates Propose authority under it, and records it
+    as proposal provenance; a client-supplied or unprovable version fails
+    closed, and the record does not become Approval or execution authority.
 
 ## Stability classification
 
@@ -785,7 +800,9 @@ Accepted:
 - revocation, fail-closed lost state, and replay denial;
 - trusted structural exact binding for the MVP;
 - minimum proposal/Approval-gated execution provenance without fabricated
-  Approval facts on direct Human Execute; and
+  Approval facts on direct Human Execute;
+- trusted effective-policy selection and provenance recording at proposal
+  issuance without treating that record as Approval or execution authority; and
 - semantic/external-effect and authorization/validation separation.
 
 Provisional:
