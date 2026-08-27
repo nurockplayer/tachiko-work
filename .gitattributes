@@ -1,0 +1,3 @@
+# Generated notices preserve exact vendored license text, including CRLF where
+# an upstream license file uses it.
+THIRD_PARTY_LICENSES.md -whitespace
