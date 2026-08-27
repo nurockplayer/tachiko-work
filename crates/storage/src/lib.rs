@@ -3,6 +3,7 @@
 mod direct_ro;
 mod legacy_direct_ro;
 mod migration;
+mod roproj;
 mod strict_json;
 
 use std::{
@@ -16,6 +17,11 @@ use direct_ro::v2::{CodecError as V2CodecError, DocumentV2};
 use strict_json::{FrontendError, VersionToken, inspect};
 use tachiko_semantic_core::{Diagnostic, Document, validate_document};
 use thiserror::Error;
+
+pub use roproj::{
+    CanonicalRoProjectFile, CanonicalRoProjectV1, ROPROJ_V1_FORMAT_VERSION, ROPROJ_V1_PATHS,
+    encode_roproj_v1,
+};
 
 pub const LEGACY_FORMAT_VERSION: u32 = 1;
 pub const FORMAT_VERSION: u32 = 2;
