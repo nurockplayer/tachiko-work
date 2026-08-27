@@ -176,8 +176,11 @@ Their containment meaning is:
   definition; and
 - `EntityField` covers one exact field instance.
 
-A Grant may contain a finite union of scope atoms. An operation that crosses
-old and new containers requires coverage of both relevant sides.
+A Grant may cover a finite union of scope atoms only through complete relational
+bindings between its action/family/class dimensions and each scope atom. Scope
+atoms are not a parallel list that can be crossed with independent capabilities.
+An operation that crosses old and new containers requires coverage of both
+relevant sides.
 
 Project, workspace, organization, tenant, path, JSON Pointer, wildcard string,
 UI coordinate, Git coordinate, storage coordinate, natural-language scope, and
@@ -222,6 +225,14 @@ Propose authority does not grant arbitrary read access. Preview evidence that
 would reveal subjects outside Query authority must be denied or safely reduced;
 exact projection and redaction mechanisms remain #29/#30 work.
 
+Approve authority likewise does not itself grant proposal-body disclosure. The
+trusted boundary may verify exact proposal/Approval binding internally, but
+Human review receives proposal content only through sufficient Query coverage
+or a separately authorized disclosure-safe approval projection limited to the
+exact evidence needed for that review. Without either disclosure authority, the
+content is not revealed and Approval cannot be completed. Exact projection and
+redaction mechanics remain #29/#30 work.
+
 ### 5. Grants are explicit, default-deny, and non-delegable by delegated principals
 
 Conceptually, without fixing a DTO:
@@ -232,16 +243,18 @@ Grant
 - authorization_domain
 - issuer_principal
 - subject_principal
-- capabilities
-- semantic_scope
+- covered_requirements:
+  - (Query, OperationFamily, DisclosureScopeAtom)
+  - (Propose | Approve | Execute, OperationFamily, MutationClass, ScopeAtom)
 - validity
 ```
 
 `(authorization_domain, grant_id)` identifies one non-reusable issuance
-occurrence. Its issuer, subject, capabilities, semantic scope, and validity are
-immutable. Trusted registry state records revocation for that occurrence;
-revocation is terminal, and restored or equivalent authority requires a new
-Grant occurrence and GrantId.
+occurrence. Its issuer, subject, complete covered-requirement bindings, and
+validity are immutable. Exact field/variant representation remains Provisional;
+the relational association is not. Trusted registry state records revocation
+for that occurrence; revocation is terminal, and restored or equivalent
+authority requires a new Grant occurrence and GrantId.
 
 Every OperationFamily referenced by a Grant retains the immutable capability
 meaning it had at issuance. A new or reclassified family identity receives no
@@ -252,11 +265,12 @@ Authorization is denied unless sufficient live Grants cover the complete
 requirement. Each Query requirement is a complete `(Query, operation family,
 disclosure scope)` tuple. For a requested mutation action, each derived
 `(action, operation family, mutation class, scope)` tuple must be covered by
-one same live Grant. Multiple Grants may combine across distinct associated
-requirements, but independently unioning their actions, operation families,
-classes, and scopes must not create crossed authority that no Grant actually
-contains. A Grant from another authorization domain or for another subject
-grants nothing to the effective principal.
+one complete binding inside one same live Grant. Multiple bindings in one Grant
+and multiple Grants may cover distinct associated requirements, but neither
+case permits independently unioning actions, operation families, classes, and
+scopes into crossed authority absent from a complete binding. A Grant from
+another authorization domain or for another subject grants nothing to the
+effective principal.
 
 Grants are issued only through a trusted host authorization authority, which
 may act on an explicitly authorized Human provisioning action or trusted host
@@ -758,6 +772,15 @@ Future implementation must preserve these representation-neutral outcomes:
     authorization domain, evaluates Propose authority under it, and records it
     as proposal provenance; a client-supplied or unprovable version fails
     closed, and the record does not become Approval or execution authority.
+47. **One Grant does not cross its own bindings** — a Grant containing
+    `Execute(Value)` for entity A and `Execute(Formula)` for entity B does not
+    authorize Formula on A or Value on B; each action/family/class/scope
+    association remains a complete binding.
+48. **Approve does not imply proposal disclosure** — Approve authority alone
+    reveals no changed typed value, reference, or other proposal content;
+    Human review requires sufficient Query coverage or a separately authorized
+    disclosure-safe approval projection, while exact binding verification may
+    remain internal.
 
 ## Stability classification
 
@@ -769,7 +792,8 @@ Accepted:
   PrincipalId required for Human/Delegated reclassification;
 - trusted Human versus Delegated distinction for MVP policy;
 - default deny and explicit Grants;
-- non-reusable immutable Grant occurrences with terminal revocation;
+- non-reusable immutable Grant occurrences with complete relational covered-
+  requirement bindings and terminal revocation;
 - Query/Propose/Execute/Approve non-implication;
 - operation-family identity as an independent checked capability dimension;
 - immutable capability meaning for every supported operation-family identity
