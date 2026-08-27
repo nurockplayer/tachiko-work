@@ -86,7 +86,7 @@ Issue and assign that child to the earliest stage that requires it.
 A GitHub Projects v2 board may present this roadmap, but it is a projection over
 Issues and Milestones, not another source of truth. Use exactly one project:
 
-> **Tachiko Work · Product Roadmap**
+> [**Tachiko Work · Product Roadmap**](https://github.com/users/nurockplayer/projects/2)
 
 Recommended views:
 
