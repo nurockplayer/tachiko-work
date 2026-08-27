@@ -188,6 +188,18 @@ otherwise equal. Unknown or unclassified operation-family meaning fails
 closed. Exact family identifiers and the complete family catalogue remain
 Provisional.
 
+Within one Semantic API compatibility context, each supported OperationFamily
+identity MUST retain one immutable capability meaning. A published family
+identity MUST NOT be reused, reassigned, or broadened to changed operation
+meaning; assigning a formerly distinct operation to that family is a meaning
+change. Changed family meaning requires a new family identity or separately
+versioned compatibility occurrence. Existing Grants, Approval footprints, and
+provenance remain attached only to the old meaning and MUST NOT transfer. If
+the trusted boundary cannot prove that current classification retains the same
+immutable meaning relied upon by authority, authorization fails closed. Exact
+identifiers, catalogue representation, compatibility versioning, and migration
+remain Provisional.
+
 ### Action meaning
 
 - `Query` authorizes deterministic, non-publishing Semantic API reads for the
@@ -322,17 +334,20 @@ Normative laws:
    Execute action MUST be checked with every tuple. Flattened operation-family,
    CanonicalWriteScope, and RequiredMutationClasses summaries are not coverage
    proof and not permission to form their Cartesian product.
-5. AtomicBatch uses the union of every member Command's associated tuples and
+5. Every retained OperationFamily identity MUST keep its immutable capability
+   meaning. Catalogue reuse, reassignment, or broadening MUST NOT retarget an
+   existing footprint or authority.
+6. AtomicBatch uses the union of every member Command's associated tuples and
    preserves each member's operation-family association.
-6. CanonicalWriteScope includes direct targets, generated IDs, created/deleted
+7. CanonicalWriteScope includes direct targets, generated IDs, created/deleted
    objects and their owning containers, explicit retargeting, and
    command-defined canonical side effects.
-7. Purely derived recalculation, FormulaImpact, validation findings, and review
+8. Purely derived recalculation, FormulaImpact, validation findings, and review
    projections are not canonical writes.
-8. DisclosureScope includes semantic subjects revealed by Query results,
+9. DisclosureScope includes semantic subjects revealed by Query results,
    preview, diff, dependencies, impact, diagnostics, explanations, and result
    projections.
-9. If the complete requirement cannot be derived safely, authorization fails
+10. If the complete requirement cannot be derived safely, authorization fails
    closed or requires broader explicit scope.
 
 ## Grant contract
@@ -375,13 +390,16 @@ Normative laws:
 7. A Grant covers only its fixed subject in its AuthorizationDomain. A
    same-spelled GrantId from another domain or a Grant for another subject
    grants nothing to the effective principal.
-8. Grant validity/revocation and subject state are checked whenever that Grant
+8. Every OperationFamily referenced by a Grant retains its immutable capability
+   meaning at issuance. Reusing or changing a catalogue identifier MUST NOT
+   cause an old Grant to cover new or changed operation meaning.
+9. Grant validity/revocation and subject state are checked whenever that Grant
    occurrence is relied upon. Immediately before Execute, authorizing Approve
    Grant references and sufficient current Execute Grants are rechecked.
-9. Missing, expired, revoked, disabled, unsupported, or unresolvable authority
+10. Missing, expired, revoked, disabled, unsupported, or unresolvable authority
    grants nothing.
-10. Approval cannot create, extend, restore, or replace Grant authority.
-11. ADR-0007's current-MVP allowed read, analysis, explanation, and Propose
+11. Approval cannot create, extend, restore, or replace Grant authority.
+12. ADR-0007's current-MVP allowed read, analysis, explanation, and Propose
     behavior MUST be preserved through explicit trusted-host provisioning of
     sufficient Query and Propose Grants for supported flows. Those product
     defaults are not ambient AI authority or exceptions to default deny.
@@ -480,6 +498,9 @@ Normative laws:
 8. A client-supplied Approval is untrusted. The authoritative boundary MUST
    verify it against trusted Approval and lifecycle state.
 9. Approval MUST NOT become a transferable bearer credential.
+10. Every OperationFamily in ApprovalBinding retains its immutable capability
+    meaning. Catalogue reuse, reassignment, or broadening MUST NOT retarget an
+    existing Approval to changed operation meaning.
 
 The trusted authorization domain determines the effective authorization-policy
 version governing each execution. Approval issuance MUST bind the version that
@@ -578,8 +599,8 @@ Active -> Consumed | Revoked | Expired
 - A retry while Approval remains Active MUST repeat every current-base,
   identity, structural-binding, associated-write-requirement, principal, Grant,
   expiry, revocation, effective-policy-version, uninterrupted-policy-selection-
-  continuity, immutable-policy-meaning, semantic-precondition, validation, and
-  gate check.
+  continuity, immutable-policy-meaning, immutable-operation-family-meaning,
+  semantic-precondition, validation, and gate check.
 - A consumed ApprovalId MUST fail replay without publication.
 - Concurrent attempts MUST NOT both publish successfully.
 - Approval-gated Execute MUST satisfy the common Execute publication condition
@@ -674,7 +695,8 @@ SemanticPatch or Approval, MUST satisfy this common publication-boundary law:
 2. Determine the effective authorization policy selected by the trusted
    authorization domain and rederive every associated operation-family/
    mutation-class/scope requirement from trusted typed meaning and relevant
-   semantic relationships under that policy.
+   semantic relationships under that policy. Require every relied-upon
+   OperationFamily identity to retain its immutable capability meaning.
 3. Require sufficient live Execute Grants to cover every complete relational
    requirement.
 4. Evaluate the candidate and authoritative gate against a known semantic
@@ -738,7 +760,8 @@ work.
    details require sufficient Query authority.
 6. For a current base, rederive associated operation-family,
    canonical-write-scope, and mutation-class requirements from typed meaning
-   and require relational equality with the bound trusted footprint.
+   and require relational equality with the bound trusted footprint, including
+   immutable meaning for every bound OperationFamily identity.
 7. Recheck the complete AuthorizationDomain/PrincipalId originator, approver,
    and executor occurrences and their immutable PrincipalKinds, authorizing
    Approve Grant references, sufficient current live Execute Grants from the
@@ -895,6 +918,7 @@ A conforming client can distinguish, where applicable:
 - authorization-policy version unsupported or not the effective version;
 - uninterrupted effective-policy-selection continuity unproven or lost;
 - immutable authorization-policy-version meaning changed or unproven;
+- immutable operation-family meaning changed or unproven;
 - approval expired, revoked, consumed, or state unavailable;
 - live Approve or Execute authority lost;
 - stale proposal under ADR-0024;
@@ -1029,6 +1053,11 @@ authorized disclosure scope.
     V1 Approval authority. The changed meaning requires a new version and
     effective-policy transition; attempted same-version mutation or unprovable
     immutable meaning fails closed without publication.
+54. A Grant and Approval footprint issued for operation family A cannot
+    authorize a formerly distinct or changed operation later assigned to the
+    same identifier. Changed family meaning requires a new identity or
+    separately versioned compatibility occurrence; old authority does not
+    transfer, and unprovable family meaning fails closed.
 
 ## Stability classification
 
@@ -1040,7 +1069,8 @@ authorized disclosure scope.
 | Principal/domain encoding and authentication mechanism | Provisional host concern |
 | Query, Propose, Approve, Execute non-implication | Accepted |
 | Operation-family identity as an independent checked capability dimension | Accepted under ADR-0020/ADR-0026 |
-| Exact operation-family identifiers and catalogue | Provisional |
+| Immutable capability meaning for each supported operation-family identity within one Semantic API compatibility context; changed meaning receives a new identity or separately versioned compatibility occurrence and old authority does not transfer | Accepted under ADR-0020/ADR-0026 |
+| Exact operation-family identifiers, catalogue representation, compatibility-occurrence/versioning mechanism, and migration | Provisional |
 | Capability identifier strings and public representation | Provisional |
 | Value, Formula, Structure, Schema, Destructive meanings | Accepted MVP contract |
 | Complete Stable command-family mapping | Provisional; published mappings cannot change silently |

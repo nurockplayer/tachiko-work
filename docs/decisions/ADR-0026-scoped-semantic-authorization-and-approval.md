@@ -107,6 +107,17 @@ Semantic API classification. Authority for one operation family does not cover
 another family with the same action, mutation class, or semantic scope.
 Unknown or unclassified operation-family meaning fails closed.
 
+Within one Semantic API compatibility context, each supported OperationFamily
+identity retains one immutable capability meaning. A published family identity
+cannot be reused, reassigned, or broadened to cover changed operation meaning;
+moving a formerly distinct operation into that family is such a change. Changed
+family meaning requires a new family identity or separately versioned
+compatibility occurrence, and existing Grants, Approval footprints, and
+provenance remain attached only to the old meaning. If the trusted boundary
+cannot prove that current classification has the same immutable meaning relied
+upon by authority, it fails closed. Exact identifiers, catalogue representation,
+versioning mechanism, and migration remain Provisional.
+
 `MutationClass` is an orthogonal set:
 
 - `Value`: stored non-formula typed values, including references;
@@ -231,6 +242,11 @@ occurrence. Its issuer, subject, capabilities, semantic scope, and validity are
 immutable. Trusted registry state records revocation for that occurrence;
 revocation is terminal, and restored or equivalent authority requires a new
 Grant occurrence and GrantId.
+
+Every OperationFamily referenced by a Grant retains the immutable capability
+meaning it had at issuance. A new or reclassified family identity receives no
+authority from an older Grant merely because an identifier is reused or its
+catalogue entry is changed.
 
 Authorization is denied unless sufficient live Grants cover the complete
 requirement. Each Query requirement is a complete `(Query, operation family,
@@ -357,8 +373,8 @@ Every retry rechecks expiry, revocation, Grants, exact base,
 `ExactChangeBinding`, associated operation-family/mutation-class/scope write
 requirements, the Approval-bound policy version against the effective policy
 governing execution, uninterrupted effective-policy-selection continuity since
-Approval issuance, required principal occurrences and their immutable kinds,
-and the authoritative semantic gate.
+Approval issuance, immutable operation-family meaning, required principal
+occurrences and their immutable kinds, and the authoritative semantic gate.
 
 For Approval-gated Execute, the common publication-boundary condition in
 section 10 is necessary but not sufficient. Semantic publication and Approval
@@ -392,7 +408,8 @@ Execute fails without publication when any of these holds:
 4. the originator differs or its occurrence/immutable kind cannot be proven;
 5. the executor differs or its occurrence/immutable kind cannot be proven;
 6. the rederived associated operation-family/mutation-class/scope write
-   requirement differs;
+   requirement differs, or a relied-upon operation-family identity no longer
+   resolves to its immutable capability meaning;
 7. the Approval-bound authorization-policy version is unsupported or differs
    from the effective policy governing execution;
 8. any effective-policy transition occurred after Approval issuance, including
@@ -425,7 +442,8 @@ complete effective executor occurrence, including authorization domain, is
 AND that occurrence's immutable PrincipalKind remains proven and matches the
     selected authorization path; direct Execute without Approval requires Human
 AND live Execute Grants cover every rederived associated
-    operation-family/mutation-class/scope requirement
+    operation-family/mutation-class/scope requirement under the same immutable
+    operation-family meaning relied upon by those Grants
 AND authorization is evaluated under the effective policy selected by the
     trusted authorization domain, and that selection remains continuously
     effective without an intervening transition or change to the immutable
@@ -475,6 +493,8 @@ AND complete authenticated executor occurrence, including authorization domain,
     matches the Approval-bound executor occurrence and remains equal at
     publication
 AND bound relational AuthorizationFootprint remains exact
+AND every bound operation-family identity retains its immutable capability
+    meaning; catalogue reuse or reassignment fails closed
 AND Approval-bound authorization-policy version equals the effective policy
     governing execution and still equals it at publication
 AND no effective-policy transition has occurred since Approval issuance;
@@ -718,6 +738,11 @@ Future implementation must preserve these representation-neutral outcomes:
     policy-version identity is immutable, changed meaning requires a new
     version and effective-policy transition, and unprovable identity/content
     continuity publishes nothing.
+45. **Operation-family reuse does not broaden authority** — a Grant and Approval
+    footprint issued for family A cannot authorize a formerly distinct or
+    changed operation later assigned to the same identifier; changed family
+    meaning requires a new family identity or compatibility occurrence, old
+    authority does not transfer, and unprovable meaning publishes nothing.
 
 ## Stability classification
 
@@ -732,6 +757,10 @@ Accepted:
 - non-reusable immutable Grant occurrences with terminal revocation;
 - Query/Propose/Execute/Approve non-implication;
 - operation-family identity as an independent checked capability dimension;
+- immutable capability meaning for every supported operation-family identity
+  within one Semantic API compatibility context; changed meaning receives a new
+  identity or separately versioned compatibility occurrence and old authority
+  does not transfer;
 - Value/Formula/Structure/Schema/Destructive distinctions;
 - stable-ID, document-local scope concepts and finite-union Grants;
 - trusted `AuthorizationFootprint` derivation;
@@ -762,7 +791,8 @@ Accepted:
 Provisional:
 
 - exact type, field, capability, and denial-code names;
-- exact operation-family identifiers and catalogue;
+- exact operation-family identifiers, catalogue representation, compatibility-
+  occurrence/versioning mechanism, and migration;
 - ID encodings and generators;
 - Grant/Approval/provenance DTOs and storage;
 - exact duration values and clock representation;
