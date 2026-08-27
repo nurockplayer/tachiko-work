@@ -491,11 +491,19 @@ issuance through publication. Any intervening effective-policy transition
 permanently makes the Approval unusable for execution, even if the bound
 version later becomes effective again. Rollback does not revive Approval; the
 proposal requires a new Approval issued under the newly effective selection.
+Within one AuthorizationDomain, each authorization-policy version MUST identify
+one immutable policy meaning and MUST NOT be reused or reassigned to changed
+policy content. Changed policy meaning requires a new version and counts as an
+effective-policy transition. An attempted in-place content change under the
+same version, or inability to prove that version's immutable meaning, MUST fail
+closed and MUST NOT preserve or revive Approval authority.
 Direct Human Execute uses the effective current policy without fabricating an
 Approval or historical policy binding. Exact version representation, policy
 selection mechanism, migration, support-window behavior, and the epoch,
 generation, history, or other representation used to prove uninterrupted
-selection continuity remain Provisional.
+selection continuity remain Provisional. Policy bytes, canonicalization,
+digest, registry, storage, and the mechanism used to prove immutable version
+meaning are also Provisional.
 
 ### Authorizing Grant references
 
@@ -570,7 +578,8 @@ Active -> Consumed | Revoked | Expired
 - A retry while Approval remains Active MUST repeat every current-base,
   identity, structural-binding, associated-write-requirement, principal, Grant,
   expiry, revocation, effective-policy-version, uninterrupted-policy-selection-
-  continuity, semantic-precondition, validation, and gate check.
+  continuity, immutable-policy-meaning, semantic-precondition, validation, and
+  gate check.
 - A consumed ApprovalId MUST fail replay without publication.
 - Concurrent attempts MUST NOT both publish successfully.
 - Approval-gated Execute MUST satisfy the common Execute publication condition
@@ -676,7 +685,8 @@ SemanticPatch or Approval, MUST satisfy this common publication-boundary law:
    selected authorization path, sufficient live relational Execute Grant
    coverage from that domain still exists, the authorization-policy selection
    used for evaluation has remained continuously effective without an
-   intervening transition, the evaluated semantic context is still
+   intervening transition, its version still identifies the same immutable
+   policy meaning, the evaluated semantic context is still
    current (or an equivalent revision-safe condition holds), the authoritative
    gate result is still valid, and no unauthorized host/external effect is
    performed.
@@ -720,7 +730,9 @@ work.
    and require the Approval-bound version to equal it; historical readability
    or support is insufficient. Require proof that no effective-policy
    transition has occurred since Approval issuance; a transition away and back
-   to the bound version permanently makes this Approval unusable.
+   to the bound version permanently makes this Approval unusable. Require the
+   bound version still to identify its one immutable policy meaning; changed or
+   unprovable meaning fails closed rather than preserving Approval authority.
 5. Only after steps 2-4, expose the retained Stale outcome when the base did not
    match, before any candidate construction against the changed base. Stale
    details require sufficient Query authority.
@@ -737,9 +749,11 @@ work.
    Additionally require the Approval-bound authorization-policy version still
    to equal the effective policy governing execution and uninterrupted
    continuity of that effective-policy selection since Approval issuance, and
-   condition semantic publication and Approval consumption on the authenticated
-   executor still equaling the complete Approval-bound executor occurrence, the
-   bound originator and approver occurrences and their immutable PrincipalKinds
+   require the bound version still to identify its same immutable policy
+   meaning. Condition semantic publication and Approval consumption on the
+   authenticated executor still equaling the complete Approval-bound executor
+   occurrence, the bound originator and approver occurrences and their
+   immutable PrincipalKinds
    still being proven, authorizing Approve Grant references, Approval state,
    and exact proposal/Approval/base binding still being valid. If any common
    or Approval-specific condition raced or cannot be proven valid, publish
@@ -880,6 +894,7 @@ A conforming client can distinguish, where applicable:
 - authorization-domain, originator, approver, or executor mismatch;
 - authorization-policy version unsupported or not the effective version;
 - uninterrupted effective-policy-selection continuity unproven or lost;
+- immutable authorization-policy-version meaning changed or unproven;
 - approval expired, revoked, consumed, or state unavailable;
 - live Approve or Execute authority lost;
 - stale proposal under ADR-0024;
@@ -1010,6 +1025,10 @@ authorized disclosure scope.
     unusable after V1 -> V2. A later V2 -> V1 rollback does not revive it; a new
     Approval issued after the rollback may authorize publication only if that
     effective-policy selection then remains uninterrupted through publication.
+53. Changing policy meaning while retaining the V1 identifier cannot preserve
+    V1 Approval authority. The changed meaning requires a new version and
+    effective-policy transition; attempted same-version mutation or unprovable
+    immutable meaning fails closed without publication.
 
 ## Stability classification
 
@@ -1036,7 +1055,8 @@ authorized disclosure scope.
 | Authorizing Approve Grant references remain valid and covering | Accepted |
 | Fresh executor-authority recheck before Execute | Accepted |
 | Approval-bound policy version equals the effective execution policy through publication, with uninterrupted selection continuity since issuance; any intervening transition permanently makes that Approval unusable | Accepted |
-| Policy-version representation, effective-policy selection mechanism, and epoch/generation/history representation used to prove selection continuity | Provisional |
+| Authorization-policy version identifies immutable policy meaning within one authorization domain; changed meaning requires a new version and effective-policy transition | Accepted |
+| Policy-version representation, effective-policy selection mechanism, epoch/generation/history representation used to prove selection continuity, and policy bytes/canonicalization/digest/registry/storage/meaning-proof mechanism | Provisional |
 | Structural equality with trusted immutable proposal | Accepted MVP profile |
 | Canonical bytes, digest/hash/transcript/signature/MAC | Deferred |
 | Approval is not transferable bearer authority | Accepted MVP profile |
