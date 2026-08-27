@@ -319,6 +319,15 @@ Approve Grant references recorded on Approval must also remain valid and
 covering. Expiry or revocation of a required referenced Approve Grant makes
 Approval unusable; a newly issued equivalent Grant does not revive it.
 
+The trusted boundary must also prove uninterrupted continuity of the effective
+authorization-policy selection from Approval issuance through publication.
+Any intervening transition to another effective policy permanently makes that
+Approval unusable for execution, even if the originally bound version later
+becomes effective again. Rollback does not revive the Approval; a new Approval
+issued under the newly effective selection is required. This law does not
+select an epoch, generation, transition-log, or other concrete representation
+for proving continuity.
+
 Trusted structural binding is sufficient for the MVP when the trusted proposal
 store proves immutability and non-reuse of `ProposalId`. This decision does not
 select canonical proposal/approval bytes, a hash or digest algorithm,
@@ -339,7 +348,8 @@ atomically consumes Approval. Failure before publication does not consume it.
 Every retry rechecks expiry, revocation, Grants, exact base,
 `ExactChangeBinding`, associated operation-family/mutation-class/scope write
 requirements, the Approval-bound policy version against the effective policy
-governing execution, required principal occurrences and their immutable kinds,
+governing execution, uninterrupted effective-policy-selection continuity since
+Approval issuance, required principal occurrences and their immutable kinds,
 and the authoritative semantic gate.
 
 For Approval-gated Execute, the common publication-boundary condition in
@@ -377,14 +387,17 @@ Execute fails without publication when any of these holds:
    requirement differs;
 7. the Approval-bound authorization-policy version is unsupported or differs
    from the effective policy governing execution;
-8. Approval expired;
-9. Approval was revoked;
-10. Approval was already consumed;
-11. the approver is not a trusted Human or its occurrence/immutable kind cannot
+8. any effective-policy transition occurred after Approval issuance, including
+   a transition away and back to the bound version, or uninterrupted continuity
+   cannot be proven;
+9. Approval expired;
+10. Approval was revoked;
+11. Approval was already consumed;
+12. the approver is not a trusted Human or its occurrence/immutable kind cannot
     be proven;
-12. an authorizing Approve Grant reference is no longer valid or covering;
-13. the executor's Execute Grants are no longer sufficient; or
-14. the authoritative semantic gate rejects publication.
+13. an authorizing Approve Grant reference is no longer valid or covering;
+14. the executor's Execute Grants are no longer sufficient; or
+15. the authoritative semantic gate rejects publication.
 
 Approval may remain as historical evidence after becoming stale or unusable,
 but cannot authorize another proposal or base.
@@ -404,7 +417,8 @@ AND that occurrence's immutable PrincipalKind remains proven and matches the
 AND live Execute Grants cover every rederived associated
     operation-family/mutation-class/scope requirement
 AND authorization is evaluated under the effective policy selected by the
-    trusted authorization domain, and that policy remains effective
+    trusted authorization domain, and that selection remains continuously
+    effective without an intervening transition
 AND the semantic context used to evaluate the candidate and gate is current,
     or an equivalent revision-safe condition holds
 AND the authoritative semantic gate still allows publication
@@ -452,6 +466,8 @@ AND complete authenticated executor occurrence, including authorization domain,
 AND bound relational AuthorizationFootprint remains exact
 AND Approval-bound authorization-policy version equals the effective policy
     governing execution and still equals it at publication
+AND no effective-policy transition has occurred since Approval issuance;
+    returning to the same version does not revive Approval
 AND valid active Human Approval
 AND active bound originator and Human approver occurrences with each immutable
     PrincipalKind still proven
@@ -679,6 +695,11 @@ Future implementation must preserve these representation-neutral outcomes:
     in another domain even when both domains contain the same-spelled
     PrincipalId; the complete occurrence equality remains required through
     publication, and Grants from one domain cannot cover the other.
+43. **Policy rollback does not revive Approval** — an Approval issued while V1
+    is effective becomes permanently unusable after V1 -> V2, and V2 -> V1
+    cannot revive it; publication requires a new Approval issued after the
+    rollback and uninterrupted continuity of that effective selection through
+    publication.
 
 ## Stability classification
 
@@ -702,7 +723,9 @@ Accepted:
 - exact originator/executor/proposal/associated-write-requirement/policy
   binding;
 - Approval-bound policy-version equality with the effective execution policy
-  through the publication boundary;
+  through the publication boundary, plus uninterrupted effective-policy-
+  selection continuity since Approval issuance; any intervening transition
+  permanently makes the Approval unusable even if the same version returns;
 - authorizing Approve Grant references remain live, with fresh executor
   authority rechecks before Execute;
 - the common publication-boundary condition for every Execute path;
@@ -722,7 +745,9 @@ Provisional:
 - ID encodings and generators;
 - Grant/Approval/provenance DTOs and storage;
 - exact duration values and clock representation;
-- policy-version representation and effective-policy selection mechanisms;
+- policy-version representation, effective-policy selection mechanisms, and
+  the epoch/generation/history representation used to prove uninterrupted
+  selection continuity;
 - complete operation catalogue and class mappings;
 - crate/module placement; and
 - result and wire formats.

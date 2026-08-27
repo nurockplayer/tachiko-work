@@ -485,12 +485,17 @@ The trusted authorization domain determines the effective authorization-policy
 version governing each execution. Approval issuance MUST bind the version that
 is effective at issuance. Approval-gated Execute MUST require the bound version
 to equal the effective version governing execution, and that equality MUST
-still hold at the publication boundary. A historically readable or supported
-version is not execution authority after another version becomes effective;
-the proposal requires a new Approval. Direct Human Execute uses the effective
-current policy without fabricating an Approval or historical policy binding.
-Exact version representation, policy selection mechanism, migration, and
-support-window behavior remain Provisional.
+still hold at the publication boundary. The trusted boundary MUST also prove
+uninterrupted continuity of that effective-policy selection from Approval
+issuance through publication. Any intervening effective-policy transition
+permanently makes the Approval unusable for execution, even if the bound
+version later becomes effective again. Rollback does not revive Approval; the
+proposal requires a new Approval issued under the newly effective selection.
+Direct Human Execute uses the effective current policy without fabricating an
+Approval or historical policy binding. Exact version representation, policy
+selection mechanism, migration, support-window behavior, and the epoch,
+generation, history, or other representation used to prove uninterrupted
+selection continuity remain Provisional.
 
 ### Authorizing Grant references
 
@@ -564,8 +569,8 @@ Active -> Consumed | Revoked | Expired
 - Failure before semantic publication MUST NOT consume Approval.
 - A retry while Approval remains Active MUST repeat every current-base,
   identity, structural-binding, associated-write-requirement, principal, Grant,
-  expiry, revocation, effective-policy-version, semantic-precondition,
-  validation, and gate check.
+  expiry, revocation, effective-policy-version, uninterrupted-policy-selection-
+  continuity, semantic-precondition, validation, and gate check.
 - A consumed ApprovalId MUST fail replay without publication.
 - Concurrent attempts MUST NOT both publish successfully.
 - Approval-gated Execute MUST satisfy the common Execute publication condition
@@ -575,9 +580,11 @@ Active -> Consumed | Revoked | Expired
   references, Approval state, and exact proposal/Approval/base binding still
   being valid.
 - Revocation, expiry, principal disablement, Approval consumption, effective-
-  policy change, loss of required occurrence or immutable-kind proof, attempted
-  same-ID kind reclassification, or proposal-base invalidation racing with
-  Approval-gated Execute MUST prevent publication.
+  policy change, any effective-policy transition since Approval issuance, loss
+  of required occurrence or immutable-kind proof, attempted same-ID kind
+  reclassification, or proposal-base invalidation racing with Approval-gated
+  Execute MUST prevent publication. Returning to the bound policy version MUST
+  NOT revive the Approval.
 - If the trusted boundary cannot prove the complete common and Approval-specific
   conjunction at the publication boundary, it MUST fail closed and publish
   nothing.
@@ -667,8 +674,9 @@ SemanticPatch or Approval, MUST satisfy this common publication-boundary law:
    occurrence, including AuthorizationDomain, is still active and
    authenticated, its immutable PrincipalKind remains proven and matches the
    selected authorization path, sufficient live relational Execute Grant
-   coverage from that domain still exists, the authorization policy used for
-   evaluation remains effective, the evaluated semantic context is still
+   coverage from that domain still exists, the authorization-policy selection
+   used for evaluation has remained continuously effective without an
+   intervening transition, the evaluated semantic context is still
    current (or an equivalent revision-safe condition holds), the authoritative
    gate result is still valid, and no unauthorized host/external effect is
    performed.
@@ -710,7 +718,9 @@ work.
    step 3 returns binding denial instead. Determine the effective
    authorization-policy version selected by the trusted authorization domain
    and require the Approval-bound version to equal it; historical readability
-   or support is insufficient.
+   or support is insufficient. Require proof that no effective-policy
+   transition has occurred since Approval issuance; a transition away and back
+   to the bound version permanently makes this Approval unusable.
 5. Only after steps 2-4, expose the retained Stale outcome when the base did not
    match, before any candidate construction against the changed base. Stale
    details require sufficient Query authority.
@@ -725,13 +735,15 @@ work.
    operation gate.
 9. At the publication boundary, satisfy the common Execute publication rule.
    Additionally require the Approval-bound authorization-policy version still
-   to equal the effective policy governing execution, and condition semantic
-   publication and Approval consumption on the authenticated executor still
-   equaling the complete Approval-bound executor occurrence, the bound
-   originator and approver occurrences and their immutable PrincipalKinds still
-   being proven, authorizing Approve Grant references, Approval state, and
-   exact proposal/Approval/base binding still being valid. If any common or
-   Approval-specific condition raced or cannot be proven valid, publish nothing.
+   to equal the effective policy governing execution and uninterrupted
+   continuity of that effective-policy selection since Approval issuance, and
+   condition semantic publication and Approval consumption on the authenticated
+   executor still equaling the complete Approval-bound executor occurrence, the
+   bound originator and approver occurrences and their immutable PrincipalKinds
+   still being proven, authorizing Approve Grant references, Approval state,
+   and exact proposal/Approval/base binding still being valid. If any common
+   or Approval-specific condition raced or cannot be proven valid, publish
+   nothing.
 10. When the complete condition holds, atomically publish all semantic state and
    mark Approval Consumed.
 11. Return a disclosure-safe outcome, resulting revision on success, and
@@ -867,6 +879,7 @@ A conforming client can distinguish, where applicable:
 - proposal occurrence or exact binding mismatch;
 - authorization-domain, originator, approver, or executor mismatch;
 - authorization-policy version unsupported or not the effective version;
+- uninterrupted effective-policy-selection continuity unproven or lost;
 - approval expired, revoked, consumed, or state unavailable;
 - live Approve or Execute authority lost;
 - stale proposal under ADR-0024;
@@ -993,6 +1006,10 @@ authorized disclosure scope.
     contain the same-spelled PrincipalId. The complete occurrence equality must
     remain valid through publication, and Grants from one domain provide no
     authority in the other.
+52. An Approval issued while policy V1 is effective becomes permanently
+    unusable after V1 -> V2. A later V2 -> V1 rollback does not revive it; a new
+    Approval issued after the rollback may authorize publication only if that
+    effective-policy selection then remains uninterrupted through publication.
 
 ## Stability classification
 
@@ -1018,8 +1035,8 @@ authorized disclosure scope.
 | ApprovalBinding fields in this specification | Accepted |
 | Authorizing Approve Grant references remain valid and covering | Accepted |
 | Fresh executor-authority recheck before Execute | Accepted |
-| Approval-bound policy version equals the effective execution policy through publication | Accepted |
-| Policy-version representation and effective-policy selection mechanism | Provisional |
+| Approval-bound policy version equals the effective execution policy through publication, with uninterrupted selection continuity since issuance; any intervening transition permanently makes that Approval unusable | Accepted |
+| Policy-version representation, effective-policy selection mechanism, and epoch/generation/history representation used to prove selection continuity | Provisional |
 | Structural equality with trusted immutable proposal | Accepted MVP profile |
 | Canonical bytes, digest/hash/transcript/signature/MAC | Deferred |
 | Approval is not transferable bearer authority | Accepted MVP profile |
