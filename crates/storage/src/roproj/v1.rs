@@ -1,13 +1,25 @@
-//! Storage-owned `.roproj/v1` DTOs and canonical tree writer.
+//! Storage-owned `.roproj/v1` DTOs and canonical tree codec.
 
+use std::collections::BTreeMap;
+
+use serde::{Deserialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
 use tachiko_semantic_core::{
-    Document, Entity, Expression, FieldDefinition, FieldRef, FieldType, Number, Schema, Value,
+    Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldDefinition, FieldId,
+    FieldKey, FieldRef, FieldType, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, Schema,
+    SchemaId, SchemaKey, Value,
 };
 
-use crate::FormatError;
+use crate::{
+    FormatError,
+    strict_json::{FrontendError, VersionToken, inspect_roproj},
+};
 
 pub const ROPROJ_V1_FORMAT_VERSION: u32 = 1;
+// A deepest valid entity is: entity -> fields -> value -> 64 expression
+// objects, with one binary `args` object between each expression node and one
+// reference `args` object at the leaf. No valid v1 DTO nests more deeply.
+const ROPROJ_V1_MAX_JSON_NESTING: usize = 132;
 pub const ROPROJ_V1_PATHS: [&str; 18] = [
     "manifest.json",
     "schemas.json",
@@ -65,23 +77,68 @@ impl CanonicalRoProjectV1 {
             .find(|file| file.path == path)
             .map(CanonicalRoProjectFile::bytes)
     }
+
+    /// Construct an exact canonical `.roproj/v1` tree from ordered path/byte pairs.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `.roproj` format, version, JSON, semantic, or representation
+    /// error unless the input is the exact canonical eighteen-file tree.
+    pub fn try_from_files(files: Vec<(String, Vec<u8>)>) -> Result<Self, FormatError> {
+        if files.len() != ROPROJ_V1_PATHS.len() {
+            return invalid_representation(format!(
+                "canonical tree requires {} files, found {}",
+                ROPROJ_V1_PATHS.len(),
+                files.len()
+            ));
+        }
+        for (index, ((path, _), expected)) in files.iter().zip(ROPROJ_V1_PATHS).enumerate() {
+            if path != expected {
+                return invalid_representation(format!(
+                    "canonical path {index} must be '{expected}', found '{path}'"
+                ));
+            }
+        }
+        let tree = Self {
+            files: files
+                .into_iter()
+                .map(|(path, bytes)| CanonicalRoProjectFile { path, bytes })
+                .collect(),
+        };
+        let document = decode(&tree)?;
+        let canonical = encode(&document)?;
+        if tree != canonical {
+            return invalid_representation("tree bytes are not canonical .roproj/v1".to_owned());
+        }
+        Ok(tree)
+    }
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ManifestV1 {
+    format: String,
+    format_version: u32,
     document: DocumentIdentityV1,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct DocumentIdentityV1 {
     id: String,
     title: String,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SchemaV1 {
     id: String,
     key: String,
     fields: Vec<FieldDefinitionV1>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FieldDefinitionV1 {
     id: String,
     key: String,
@@ -89,6 +146,8 @@ struct FieldDefinitionV1 {
     required: bool,
 }
 
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 enum FieldTypeV1 {
     Number,
     Text,
@@ -96,13 +155,22 @@ enum FieldTypeV1 {
     Reference { schema: String },
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct EntityV1 {
     id: String,
     key: String,
     schema: String,
-    fields: Vec<(String, ValueV1)>,
+    fields: BTreeMap<String, ValueV1>,
 }
 
+#[derive(Deserialize)]
+#[serde(
+    tag = "kind",
+    content = "value",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
 enum ValueV1 {
     Number(Number),
     Text(String),
@@ -111,6 +179,13 @@ enum ValueV1 {
     Formula(ExpressionV1),
 }
 
+#[derive(Deserialize)]
+#[serde(
+    tag = "op",
+    content = "args",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
 enum ExpressionV1 {
     Number(Number),
     Reference(FieldRefV1),
@@ -122,11 +197,15 @@ enum ExpressionV1 {
     Maximum(BinaryArgumentsV1),
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FieldRefV1 {
     entity: String,
     field: String,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct BinaryArgumentsV1 {
     left: Box<ExpressionV1>,
     right: Box<ExpressionV1>,
@@ -140,6 +219,7 @@ struct BinaryArgumentsV1 {
 /// [`FormatError::Json`] when canonical JSON string encoding fails.
 pub fn encode(document: &Document) -> Result<CanonicalRoProjectV1, FormatError> {
     super::super::check_document(document)?;
+    validate_semantic_expression_limits(document)?;
 
     let manifest = ManifestV1::from_semantic(document);
     let mut schemas = document
@@ -181,9 +261,331 @@ pub fn encode(document: &Document) -> Result<CanonicalRoProjectV1, FormatError> 
     Ok(CanonicalRoProjectV1 { files })
 }
 
+/// Decode an exact canonical `.roproj/v1` tree into the semantic document.
+///
+/// Manifest format/version dispatch completes before schema or entity bytes
+/// receive DTO or semantic interpretation.
+///
+/// # Errors
+///
+/// Returns an explicit `.roproj` format/version error, a strict JSON or
+/// representation error, or [`FormatError::InvalidDocument`] when semantic
+/// validation fails.
+pub fn decode(tree: &CanonicalRoProjectV1) -> Result<Document, FormatError> {
+    let manifest = decode_manifest(tree.file(ROPROJ_V1_PATHS[0]).ok_or_else(|| {
+        FormatError::InvalidRoProjectRepresentation {
+            message: "canonical tree is missing manifest.json".to_owned(),
+        }
+    })?)?;
+    let schemas: Vec<SchemaV1> = decode_json_file(
+        ROPROJ_V1_PATHS[1],
+        tree.file(ROPROJ_V1_PATHS[1]).ok_or_else(|| {
+            FormatError::InvalidRoProjectRepresentation {
+                message: "canonical tree is missing schemas.json".to_owned(),
+            }
+        })?,
+    )?;
+    let schemas = schemas_into_semantic(schemas)?;
+    let entities = decode_entities(tree)?;
+    let document = Document {
+        id: DocumentId::from(manifest.document.id),
+        title: manifest.document.title,
+        schemas,
+        entities,
+    };
+    super::super::check_document(&document)?;
+    validate_semantic_expression_limits(&document)?;
+    Ok(document)
+}
+
+fn decode_manifest(bytes: &[u8]) -> Result<ManifestV1, FormatError> {
+    let path = ROPROJ_V1_PATHS[0];
+    let source = utf8(path, bytes)?;
+    let inspection = inspect_roproj(source, ROPROJ_V1_MAX_JSON_NESTING)
+        .map_err(|error| map_frontend_error(path, error))?;
+    let value: serde_json::Value = deserialize_roproj(path, source)?;
+    let object = value
+        .as_object()
+        .ok_or(FormatError::RoProjectFormatMalformed)?;
+    match object.get("format") {
+        None => return Err(FormatError::RoProjectFormatMissing),
+        Some(serde_json::Value::String(format)) if format == "tachiko.roproj" => {}
+        Some(_) => return Err(FormatError::RoProjectFormatMalformed),
+    }
+    let version = match inspection.version {
+        None => return Err(FormatError::RoProjectVersionMissing),
+        Some(VersionToken::Unsigned(version)) => {
+            u32::try_from(version).map_err(|_| FormatError::RoProjectVersionMalformed)?
+        }
+        Some(VersionToken::Other) => return Err(FormatError::RoProjectVersionMalformed),
+    };
+    if version == 0 {
+        return Err(FormatError::RoProjectVersionMalformed);
+    }
+    if version != ROPROJ_V1_FORMAT_VERSION {
+        return Err(FormatError::UnsupportedRoProjectVersion {
+            found: version,
+            supported: ROPROJ_V1_FORMAT_VERSION,
+        });
+    }
+    let manifest: ManifestV1 = serde_json::from_value(value).map_err(|error| {
+        FormatError::InvalidRoProjectRepresentation {
+            message: format!("manifest.json does not match .roproj/v1: {error}"),
+        }
+    })?;
+    if manifest.format != "tachiko.roproj" || manifest.format_version != ROPROJ_V1_FORMAT_VERSION {
+        return Err(FormatError::RoProjectVersionMalformed);
+    }
+    require_id("document id", &manifest.document.id)?;
+    Ok(manifest)
+}
+
+fn decode_json_file<T>(path: &str, bytes: &[u8]) -> Result<T, FormatError>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let source = utf8(path, bytes)?;
+    inspect_roproj(source, ROPROJ_V1_MAX_JSON_NESTING)
+        .map_err(|error| map_frontend_error(path, error))?;
+    deserialize_roproj(path, source)
+}
+
+fn decode_entities(tree: &CanonicalRoProjectV1) -> Result<BTreeMap<EntityId, Entity>, FormatError> {
+    let mut entities = BTreeMap::new();
+    for (shard, path) in ROPROJ_V1_PATHS.iter().enumerate().skip(2) {
+        let bytes = tree
+            .file(path)
+            .ok_or_else(|| FormatError::InvalidRoProjectRepresentation {
+                message: format!("canonical tree is missing '{path}'"),
+            })?;
+        if bytes.is_empty() {
+            continue;
+        }
+        let source = utf8(path, bytes)?;
+        let records = source.strip_suffix('\n').ok_or_else(|| {
+            FormatError::InvalidRoProjectRepresentation {
+                message: format!("nonempty entity shard '{path}' must end with one LF"),
+            }
+        })?;
+        let mut previous_id: Option<String> = None;
+        for (record_index, record) in records.split('\n').enumerate() {
+            if record.is_empty() {
+                return invalid_representation(format!(
+                    "entity shard '{path}' contains a blank JSONL record"
+                ));
+            }
+            let record_path = format!("{path}:{}", record_index + 1);
+            inspect_roproj(record, ROPROJ_V1_MAX_JSON_NESTING)
+                .map_err(|error| map_frontend_error(&record_path, error))?;
+            let dto: EntityV1 = deserialize_roproj(&record_path, record)?;
+            require_id("entity id", &dto.id)?;
+            ensure_increasing("entity", previous_id.as_deref(), &dto.id)?;
+            previous_id = Some(dto.id.clone());
+            if shard_index(&dto.id) != shard - 2 {
+                return invalid_representation(format!(
+                    "entity '{}' is in wrong shard '{path}'",
+                    dto.id
+                ));
+            }
+            let id_text = dto.id.clone();
+            let id = EntityId::from(id_text.clone());
+            let entity = dto.into_semantic()?;
+            if entities.insert(id, entity).is_some() {
+                return invalid_representation(format!("duplicate entity id '{id_text}'"));
+            }
+        }
+    }
+    Ok(entities)
+}
+
+fn schemas_into_semantic(
+    schemas: Vec<SchemaV1>,
+) -> Result<BTreeMap<SchemaId, Schema>, FormatError> {
+    let mut semantic = BTreeMap::new();
+    let mut previous_id: Option<String> = None;
+    for schema in schemas {
+        require_id("schema id", &schema.id)?;
+        ensure_increasing("schema", previous_id.as_deref(), &schema.id)?;
+        previous_id = Some(schema.id.clone());
+        let id = SchemaId::from(schema.id.clone());
+        let id_text = schema.id.clone();
+        let schema = schema.into_semantic()?;
+        if semantic.insert(id, schema).is_some() {
+            return invalid_representation(format!("duplicate schema id '{id_text}'"));
+        }
+    }
+    Ok(semantic)
+}
+
+impl SchemaV1 {
+    fn into_semantic(self) -> Result<Schema, FormatError> {
+        let mut fields = BTreeMap::new();
+        let mut previous_id: Option<String> = None;
+        for field in self.fields {
+            require_id("field id", &field.id)?;
+            ensure_increasing("field", previous_id.as_deref(), &field.id)?;
+            previous_id = Some(field.id.clone());
+            let id = FieldId::from(field.id.clone());
+            let id_text = field.id.clone();
+            let definition = field.into_semantic()?;
+            if fields.insert(id, definition).is_some() {
+                return invalid_representation(format!("duplicate field id '{id_text}'"));
+            }
+        }
+        Ok(Schema {
+            id: SchemaId::from(self.id),
+            key: SchemaKey::from(self.key),
+            fields,
+        })
+    }
+}
+
+impl FieldDefinitionV1 {
+    fn into_semantic(self) -> Result<FieldDefinition, FormatError> {
+        Ok(FieldDefinition {
+            id: FieldId::from(self.id),
+            key: FieldKey::from(self.key),
+            field_type: self.field_type.into_semantic()?,
+            required: self.required,
+        })
+    }
+}
+
+impl FieldTypeV1 {
+    fn into_semantic(self) -> Result<FieldType, FormatError> {
+        Ok(match self {
+            Self::Number => FieldType::Number,
+            Self::Text => FieldType::Text,
+            Self::Boolean => FieldType::Boolean,
+            Self::Reference { schema } => {
+                require_id("reference field target schema id", &schema)?;
+                FieldType::Reference {
+                    schema: SchemaId::from(schema),
+                }
+            }
+        })
+    }
+}
+
+impl EntityV1 {
+    fn into_semantic(self) -> Result<Entity, FormatError> {
+        require_id("entity schema id", &self.schema)?;
+        let fields = self
+            .fields
+            .into_iter()
+            .map(|(id, value)| {
+                require_id("entity field id", &id)?;
+                Ok((FieldId::from(id), value.into_semantic()?))
+            })
+            .collect::<Result<_, FormatError>>()?;
+        Ok(Entity {
+            id: EntityId::from(self.id),
+            key: EntityKey::from(self.key),
+            schema: SchemaId::from(self.schema),
+            fields,
+        })
+    }
+}
+
+impl ValueV1 {
+    fn into_semantic(self) -> Result<Value, FormatError> {
+        Ok(match self {
+            Self::Number(number) => Value::Number(number),
+            Self::Text(text) => Value::Text(text),
+            Self::Boolean(boolean) => Value::Boolean(boolean),
+            Self::Reference(entity) => {
+                require_id("entity reference id", &entity)?;
+                Value::Reference(EntityId::from(entity))
+            }
+            Self::Formula(expression) => {
+                expression.validate_ids_and_limits()?;
+                Value::Formula(expression.into_semantic())
+            }
+        })
+    }
+}
+
+impl ExpressionV1 {
+    fn validate_ids_and_limits(&self) -> Result<(), FormatError> {
+        let mut nodes = 0_usize;
+        let mut stack = vec![(self, 1_usize)];
+        while let Some((node, depth)) = stack.pop() {
+            if depth > MAX_EXPRESSION_DEPTH {
+                return invalid_representation(format!(
+                    "formula expression exceeds {MAX_EXPRESSION_DEPTH}-depth limit"
+                ));
+            }
+            nodes += 1;
+            if nodes > MAX_EXPRESSION_NODES {
+                return invalid_representation(format!(
+                    "formula expression exceeds {MAX_EXPRESSION_NODES}-node limit"
+                ));
+            }
+            match node {
+                Self::Reference(reference) => {
+                    require_id("formula entity id", &reference.entity)?;
+                    require_id("formula field id", &reference.field)?;
+                }
+                Self::Add(arguments)
+                | Self::Subtract(arguments)
+                | Self::Multiply(arguments)
+                | Self::Divide(arguments)
+                | Self::Minimum(arguments)
+                | Self::Maximum(arguments) => {
+                    stack.push((&arguments.right, depth + 1));
+                    stack.push((&arguments.left, depth + 1));
+                }
+                Self::Number(_) => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn into_semantic(self) -> Expression {
+        match self {
+            Self::Number(number) => Expression::Number(number),
+            Self::Reference(reference) => {
+                Expression::Reference(FieldRef::new(reference.entity, reference.field))
+            }
+            Self::Add(arguments) => {
+                arguments.into_semantic(|left, right| Expression::Add { left, right })
+            }
+            Self::Subtract(arguments) => {
+                arguments.into_semantic(|left, right| Expression::Subtract { left, right })
+            }
+            Self::Multiply(arguments) => {
+                arguments.into_semantic(|left, right| Expression::Multiply { left, right })
+            }
+            Self::Divide(arguments) => {
+                arguments.into_semantic(|left, right| Expression::Divide { left, right })
+            }
+            Self::Minimum(arguments) => {
+                arguments.into_semantic(|left, right| Expression::Minimum { left, right })
+            }
+            Self::Maximum(arguments) => {
+                arguments.into_semantic(|left, right| Expression::Maximum { left, right })
+            }
+        }
+    }
+}
+
+impl BinaryArgumentsV1 {
+    fn into_semantic(
+        self,
+        constructor: impl FnOnce(Box<Expression>, Box<Expression>) -> Expression,
+    ) -> Expression {
+        constructor(
+            Box::new(self.left.into_semantic()),
+            Box::new(self.right.into_semantic()),
+        )
+    }
+}
+
 impl ManifestV1 {
     fn from_semantic(document: &Document) -> Self {
         Self {
+            format: "tachiko.roproj".to_owned(),
+            format_version: ROPROJ_V1_FORMAT_VERSION,
             document: DocumentIdentityV1 {
                 id: document.id.to_string(),
                 title: document.title.clone(),
@@ -234,12 +636,11 @@ impl FieldTypeV1 {
 
 impl EntityV1 {
     fn from_semantic(entity: &Entity) -> Self {
-        let mut fields = entity
+        let fields = entity
             .fields
             .iter()
             .map(|(id, value)| (id.to_string(), ValueV1::from_semantic(value)))
-            .collect::<Vec<_>>();
-        fields.sort_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
+            .collect();
         Self {
             id: entity.id.to_string(),
             key: entity.key.to_string(),
@@ -311,12 +712,12 @@ impl BinaryArgumentsV1 {
 fn render_manifest(manifest: &ManifestV1) -> Result<String, FormatError> {
     let mut output = String::new();
     output.push_str("{\n");
-    pretty_member_string(&mut output, 1, "format", "tachiko.roproj", true)?;
+    pretty_member_string(&mut output, 1, "format", &manifest.format, true)?;
     pretty_member_literal(
         &mut output,
         1,
         "format_version",
-        &ROPROJ_V1_FORMAT_VERSION.to_string(),
+        &manifest.format_version.to_string(),
         true,
     )?;
     pretty_member_prefix(&mut output, 1, "document")?;
@@ -612,4 +1013,111 @@ fn push_indent(output: &mut String, indent: usize) {
 
 fn shard_index(entity_id: &str) -> usize {
     usize::from(Sha256::digest(entity_id.as_bytes())[0] >> 4)
+}
+
+fn validate_semantic_expression_limits(document: &Document) -> Result<(), FormatError> {
+    for entity in document.entities.values() {
+        for value in entity.fields.values() {
+            let Value::Formula(expression) = value else {
+                continue;
+            };
+            let mut nodes = 0_usize;
+            let mut stack = vec![(expression, 1_usize)];
+            while let Some((node, depth)) = stack.pop() {
+                if depth > MAX_EXPRESSION_DEPTH {
+                    return invalid_representation(format!(
+                        "formula expression exceeds {MAX_EXPRESSION_DEPTH}-depth limit"
+                    ));
+                }
+                nodes += 1;
+                if nodes > MAX_EXPRESSION_NODES {
+                    return invalid_representation(format!(
+                        "formula expression exceeds {MAX_EXPRESSION_NODES}-node limit"
+                    ));
+                }
+                match node {
+                    Expression::Add { left, right }
+                    | Expression::Subtract { left, right }
+                    | Expression::Multiply { left, right }
+                    | Expression::Divide { left, right }
+                    | Expression::Minimum { left, right }
+                    | Expression::Maximum { left, right } => {
+                        stack.push((right, depth + 1));
+                        stack.push((left, depth + 1));
+                    }
+                    Expression::Number(_) | Expression::Reference(_) => {}
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn utf8<'a>(path: &str, bytes: &'a [u8]) -> Result<&'a str, FormatError> {
+    std::str::from_utf8(bytes).map_err(|source| FormatError::InvalidRoProjectUtf8 {
+        path: path.to_owned(),
+        source,
+    })
+}
+
+fn map_frontend_error(path: &str, error: FrontendError) -> FormatError {
+    match error {
+        FrontendError::InvalidJson(source) => FormatError::InvalidRoProjectJson {
+            path: path.to_owned(),
+            source,
+        },
+        FrontendError::DuplicateMember(member) => FormatError::DuplicateRoProjectMember {
+            path: path.to_owned(),
+            member,
+        },
+        FrontendError::NestingLimit { limit } => FormatError::InvalidRoProjectRepresentation {
+            message: format!("'{path}' exceeds .roproj/v1 JSON nesting limit {limit}"),
+        },
+    }
+}
+
+fn deserialize_roproj<T>(path: &str, source: &str) -> Result<T, FormatError>
+where
+    T: DeserializeOwned,
+{
+    let mut deserializer = serde_json::Deserializer::from_str(source);
+    deserializer.disable_recursion_limit();
+    let value = T::deserialize(&mut deserializer).map_err(|error| {
+        FormatError::InvalidRoProjectRepresentation {
+            message: format!("'{path}' does not match .roproj/v1: {error}"),
+        }
+    })?;
+    deserializer
+        .end()
+        .map_err(|error| FormatError::InvalidRoProjectRepresentation {
+            message: format!("'{path}' does not match .roproj/v1: {error}"),
+        })?;
+    Ok(value)
+}
+
+fn require_id(kind: &str, id: &str) -> Result<(), FormatError> {
+    if id.is_empty() {
+        invalid_representation(format!("{kind} must not be empty"))
+    } else {
+        Ok(())
+    }
+}
+
+fn ensure_increasing(kind: &str, previous: Option<&str>, current: &str) -> Result<(), FormatError> {
+    let Some(previous) = previous else {
+        return Ok(());
+    };
+    match previous.as_bytes().cmp(current.as_bytes()) {
+        std::cmp::Ordering::Less => Ok(()),
+        std::cmp::Ordering::Equal => {
+            invalid_representation(format!("duplicate {kind} id '{current}'"))
+        }
+        std::cmp::Ordering::Greater => invalid_representation(format!(
+            "{kind} ids are not in unsigned UTF-8 order: '{current}' follows '{previous}'"
+        )),
+    }
+}
+
+fn invalid_representation<T>(message: String) -> Result<T, FormatError> {
+    Err(FormatError::InvalidRoProjectRepresentation { message })
 }

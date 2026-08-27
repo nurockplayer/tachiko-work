@@ -20,7 +20,7 @@ use thiserror::Error;
 
 pub use roproj::{
     CanonicalRoProjectFile, CanonicalRoProjectV1, ROPROJ_V1_FORMAT_VERSION, ROPROJ_V1_PATHS,
-    encode_roproj_v1,
+    decode_roproj_v1, encode_roproj_v1,
 };
 
 pub const LEGACY_FORMAT_VERSION: u32 = 1;
@@ -54,6 +54,32 @@ pub enum FormatError {
     VersionMalformed,
     #[error("unsupported .ro format version {found}; this build supports through {supported}")]
     UnsupportedVersion { found: u32, supported: u32 },
+    #[error("invalid .roproj UTF-8 in '{path}': {source}")]
+    InvalidRoProjectUtf8 {
+        path: String,
+        #[source]
+        source: Utf8Error,
+    },
+    #[error("invalid .roproj JSON in '{path}': {source}")]
+    InvalidRoProjectJson {
+        path: String,
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("duplicate .roproj JSON member '{member}' in '{path}'")]
+    DuplicateRoProjectMember { path: String, member: String },
+    #[error("missing required .roproj format discriminator")]
+    RoProjectFormatMissing,
+    #[error("malformed .roproj format discriminator")]
+    RoProjectFormatMalformed,
+    #[error("missing required .roproj format version")]
+    RoProjectVersionMissing,
+    #[error("malformed .roproj format version")]
+    RoProjectVersionMalformed,
+    #[error("unsupported .roproj format version {found}; this build supports version {supported}")]
+    UnsupportedRoProjectVersion { found: u32, supported: u32 },
+    #[error("invalid .roproj representation: {message}")]
+    InvalidRoProjectRepresentation { message: String },
     #[error("invalid direct .ro representation: {message}")]
     InvalidRepresentation {
         message: String,
@@ -383,6 +409,10 @@ fn map_frontend_error(error: FrontendError) -> FormatError {
     match error {
         FrontendError::InvalidJson(source) => FormatError::InvalidJson { source },
         FrontendError::DuplicateMember(member) => FormatError::DuplicateMember { member },
+        FrontendError::NestingLimit { limit } => FormatError::InvalidRepresentation {
+            message: format!("JSON nesting exceeds representation limit {limit}"),
+            source: None,
+        },
     }
 }
 

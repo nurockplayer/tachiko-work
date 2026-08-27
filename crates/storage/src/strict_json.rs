@@ -1,6 +1,9 @@
 use std::{collections::HashSet, fmt};
 
-use serde::de::{self, DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
+use serde::{
+    Deserialize,
+    de::{self, DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor},
+};
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Inspection {
@@ -17,6 +20,7 @@ pub(crate) enum VersionToken {
 pub(crate) enum FrontendError {
     InvalidJson(serde_json::Error),
     DuplicateMember(String),
+    NestingLimit { limit: usize },
 }
 
 /// Parse a single JSON value, rejecting duplicate object members.
@@ -25,10 +29,45 @@ pub(crate) enum FrontendError {
 /// JSON syntax error takes precedence over any duplicate found earlier in the
 /// input. Both passes stream through the source and discard values as they go.
 pub(crate) fn inspect(source: &str) -> Result<Inspection, FrontendError> {
-    serde_json::from_str::<IgnoredAny>(source).map_err(FrontendError::InvalidJson)?;
+    inspect_with_recursion(source, false)
+}
+
+/// Inspect `.roproj` JSON with a representation-derived nesting bound.
+///
+/// The byte preflight ignores structural characters inside JSON strings, so
+/// serde's recursion limit can be disabled without admitting unbounded parser
+/// recursion. The normal direct-`.ro` frontend continues to use [`inspect`]
+/// and `serde_json`'s default recursion limit.
+pub(crate) fn inspect_roproj(
+    source: &str,
+    maximum_nesting: usize,
+) -> Result<Inspection, FrontendError> {
+    if exceeds_json_nesting(source.as_bytes(), maximum_nesting) {
+        return Err(FrontendError::NestingLimit {
+            limit: maximum_nesting,
+        });
+    }
+    inspect_with_recursion(source, true)
+}
+
+fn inspect_with_recursion(
+    source: &str,
+    disable_recursion_limit: bool,
+) -> Result<Inspection, FrontendError> {
+    let mut syntax_deserializer = serde_json::Deserializer::from_str(source);
+    if disable_recursion_limit {
+        syntax_deserializer.disable_recursion_limit();
+    }
+    IgnoredAny::deserialize(&mut syntax_deserializer).map_err(FrontendError::InvalidJson)?;
+    syntax_deserializer
+        .end()
+        .map_err(FrontendError::InvalidJson)?;
 
     let mut duplicate = None;
     let mut deserializer = serde_json::Deserializer::from_str(source);
+    if disable_recursion_limit {
+        deserializer.disable_recursion_limit();
+    }
     let inspection = RootSeed {
         duplicate: &mut duplicate,
     }
@@ -40,6 +79,36 @@ pub(crate) fn inspect(source: &str) -> Result<Inspection, FrontendError> {
     deserializer.end().map_err(FrontendError::InvalidJson)?;
 
     Ok(inspection)
+}
+
+fn exceeds_json_nesting(source: &[u8], maximum: usize) -> bool {
+    let mut nesting = 0_usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for &byte in source {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match byte {
+            b'"' => in_string = true,
+            b'{' | b'[' => {
+                nesting += 1;
+                if nesting > maximum {
+                    return true;
+                }
+            }
+            b'}' | b']' => nesting = nesting.saturating_sub(1),
+            _ => {}
+        }
+    }
+    false
 }
 
 struct RootSeed<'a> {
@@ -277,7 +346,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{FrontendError, VersionToken, inspect};
+    use super::{FrontendError, VersionToken, inspect, inspect_roproj};
 
     #[test]
     fn records_a_root_unsigned_format_version() {
@@ -332,6 +401,35 @@ mod tests {
         assert!(matches!(
             inspect(r#"{"format_version":1} trailing"#),
             Err(FrontendError::InvalidJson(_))
+        ));
+    }
+
+    #[test]
+    fn roproj_inspection_bounds_nesting_but_ignores_string_contents() {
+        assert!(inspect_roproj(r#"{"text":"[[{{\\\"}}]]"}"#, 1).is_ok());
+        assert!(matches!(
+            inspect_roproj(r#"{"nested":[{}]}"#, 2),
+            Err(FrontendError::NestingLimit { limit: 2 })
+        ));
+    }
+
+    #[test]
+    fn roproj_inspection_keeps_syntax_precedence_and_deep_escape_duplicates() {
+        let malformed = r#"{"a":1,"a":2,"nested":[}"#;
+        assert!(matches!(
+            inspect_roproj(malformed, 132),
+            Err(FrontendError::InvalidJson(_))
+        ));
+
+        let mut source = String::new();
+        for _ in 0..64 {
+            source.push_str("{\"nested\":");
+        }
+        source.push_str(r#"{"a":1,"\u0061":2}"#);
+        source.push_str(&"}".repeat(64));
+        assert!(matches!(
+            inspect_roproj(&source, 65),
+            Err(FrontendError::DuplicateMember(member)) if member == "a"
         ));
     }
 }
