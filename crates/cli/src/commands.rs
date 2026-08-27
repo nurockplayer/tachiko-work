@@ -10,7 +10,7 @@ use serde::Serialize;
 use serde_json::json;
 use tachiko_storage::{
     FormatError, canonicalize_roproj, decode_roproj_v1, load, load_roproj, materialize_roproj,
-    publish_roproj, to_canonical_string,
+    publish_canonicalized_roproj, to_canonical_string,
 };
 use tachiko_workspace_engine::{
     EditPreview, FieldAddress, FieldKind, IdGenerator, MergeConflict, SemanticChange,
@@ -122,11 +122,10 @@ pub fn validate_roproject(path: &Path) -> Result<String, CommandError> {
 }
 
 pub fn canonicalize_roproject(input: &Path, output: &Path) -> Result<String, CommandError> {
-    ensure_distinct_paths(input, output)?;
     let tree = canonicalize_roproj(input)?;
     let document = decode_roproj_v1(&tree)?;
     validate_semantics(&document)?;
-    publish_roproj(output, &tree)?;
+    publish_canonicalized_roproj(input, output, &tree)?;
     Ok(format!("canonicalized {}\n", output.display()))
 }
 

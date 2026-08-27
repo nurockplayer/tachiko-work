@@ -89,6 +89,41 @@ fn snapshot_tree(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
     files
 }
 
+fn snapshot_tree_topology(root: &Path) -> Vec<(PathBuf, Option<Vec<u8>>)> {
+    fn visit(root: &Path, current: &Path, nodes: &mut Vec<(PathBuf, Option<Vec<u8>>)>) {
+        for entry in fs::read_dir(current).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            let relative = path.strip_prefix(root).unwrap().to_owned();
+            if entry.file_type().unwrap().is_dir() {
+                nodes.push((relative, None));
+                visit(root, &path, nodes);
+            } else {
+                nodes.push((relative, Some(fs::read(path).unwrap())));
+            }
+        }
+    }
+
+    let mut nodes = Vec::new();
+    visit(root, root, &mut nodes);
+    nodes.sort_by(|left, right| left.0.cmp(&right.0));
+    nodes
+}
+
+fn staging_entries(parent: &Path) -> Vec<PathBuf> {
+    let mut entries = fs::read_dir(parent)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.contains(".tachiko-stage-"))
+        })
+        .collect::<Vec<_>>();
+    entries.sort();
+    entries
+}
+
 fn balance_document(damage: f64) -> Document {
     Document {
         id: DocumentId::from("balance"),
@@ -430,6 +465,66 @@ fn roproj_workflow_operates_outside_git() {
     );
     assert_eq!(snapshot_tree(&canonicalized), canonical_snapshot);
     assert_eq!(snapshot_tree(&noncanonical), noncanonical_snapshot);
+}
+
+#[test]
+fn roproj_canonicalize_rejects_an_output_nested_inside_its_source() {
+    let temp = TempDir::new();
+    let input = temp.path().join("source.roproj");
+    let output = input.join("nested-output.roproj");
+    materialize_roproj(&input, &balance_document(100.0)).unwrap();
+    fs::write(input.join("entities/extra.jsonl"), []).unwrap();
+    let source_before = snapshot_tree_topology(&input);
+    let parent_entries_before = fs::read_dir(&input).unwrap().count();
+
+    let result = run_from(
+        &[
+            "roproj",
+            "canonicalize",
+            input.to_str().unwrap(),
+            output.to_str().unwrap(),
+        ],
+        temp.path(),
+    );
+
+    let source_after = snapshot_tree_topology(&input);
+    assert!(String::from_utf8_lossy(&result.stderr).contains("overlaps source"));
+    assert!(
+        !result.status.success()
+            && source_after == source_before
+            && !output.exists()
+            && fs::read_dir(&input).unwrap().count() == parent_entries_before
+            && staging_entries(&input).is_empty(),
+        "canonicalize status={:?}, source_changed={}, destination_exists={}, staging={:?}",
+        result.status,
+        source_after != source_before,
+        output.exists(),
+        staging_entries(&input)
+    );
+}
+
+#[test]
+fn roproj_canonicalize_rejects_an_output_identical_to_its_source() {
+    let temp = TempDir::new();
+    let input = temp.path().join("source.roproj");
+    materialize_roproj(&input, &balance_document(100.0)).unwrap();
+    fs::write(input.join("entities/extra.jsonl"), []).unwrap();
+    let source_before = snapshot_tree_topology(&input);
+
+    let result = run_from(
+        &[
+            "roproj",
+            "canonicalize",
+            input.to_str().unwrap(),
+            input.to_str().unwrap(),
+        ],
+        temp.path(),
+    );
+
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("overlaps source"));
+    assert_eq!(snapshot_tree_topology(&input), source_before);
+    assert!(staging_entries(temp.path()).is_empty());
 }
 
 #[test]

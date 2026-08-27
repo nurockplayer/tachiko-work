@@ -21,7 +21,7 @@ use thiserror::Error;
 pub use roproj::{
     CanonicalRoProjectFile, CanonicalRoProjectV1, ROPROJ_V1_FORMAT_VERSION, ROPROJ_V1_PATHS,
     canonicalize_roproj, decode_roproj_v1, encode_roproj_v1, load_roproj, materialize_roproj,
-    publish_roproj, read_canonical_roproj,
+    publish_canonicalized_roproj, publish_roproj, read_canonical_roproj,
 };
 
 pub const LEGACY_FORMAT_VERSION: u32 = 1;
@@ -99,6 +99,15 @@ pub enum FormatError {
     InvalidDocument { diagnostics: Vec<Diagnostic> },
     #[error("'{}' already exists; refusing to overwrite it", path.display())]
     AlreadyExists { path: PathBuf },
+    #[error(
+        "canonicalization output '{}' overlaps source '{}'; choose a path outside the source",
+        destination.display(),
+        source_path.display()
+    )]
+    PathOverlap {
+        source_path: PathBuf,
+        destination: PathBuf,
+    },
     #[error("failed to read '{}': {source}", path.display())]
     Read { path: PathBuf, source: io::Error },
     #[error("failed to write '{}': {source}", path.display())]

@@ -11,7 +11,7 @@ use tachiko_semantic_core::{
 };
 use tachiko_storage::{
     FormatError, canonicalize_roproj, decode_roproj_v1, encode_roproj_v1, load_roproj,
-    materialize_roproj, publish_roproj, read_canonical_roproj,
+    materialize_roproj, publish_canonicalized_roproj, publish_roproj, read_canonical_roproj,
 };
 
 static NEXT_TEMP_DIR: AtomicU64 = AtomicU64::new(0);
@@ -144,6 +144,89 @@ fn publication_host_error_leaves_no_destination_or_staging_debris() {
     assert_eq!(fs::read(&parent_file).unwrap(), b"preserve");
     assert!(!destination.exists());
     assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn canonicalized_publication_rejects_a_destination_inside_the_source() {
+    let temp = TempDir::new();
+    let source = temp.path().join("source.roproj");
+    let destination = source.join("nested-output.roproj");
+    let tree = encode_roproj_v1(&Document::empty("doc-empty", "Empty")).unwrap();
+    publish_roproj(&source, &tree).unwrap();
+    let source_before = read_tree_bytes(&source);
+    let source_entries_before = fs::read_dir(&source).unwrap().count();
+
+    let error = publish_canonicalized_roproj(&source, &destination, &tree).unwrap_err();
+
+    assert!(matches!(
+        error,
+        FormatError::PathOverlap {
+            source_path: error_source,
+            destination: error_destination,
+        } if error_source == source && error_destination == destination
+    ));
+    assert_eq!(read_tree_bytes(&source), source_before);
+    assert_eq!(
+        fs::read_dir(&source).unwrap().count(),
+        source_entries_before
+    );
+    assert!(!destination.exists());
+    assert!(fs::read_dir(&source).unwrap().all(|entry| {
+        !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains(".tachiko-stage-")
+    }));
+}
+
+#[test]
+fn canonicalized_publication_rejects_lexically_normalized_containment() {
+    let temp = TempDir::new();
+    let source = temp.path().join("source.roproj");
+    let source_spelling = temp.path().join("anchor/../source.roproj");
+    let destination = source.join("nested-output.roproj");
+    let tree = encode_roproj_v1(&Document::empty("doc-empty", "Empty")).unwrap();
+    fs::create_dir(temp.path().join("anchor")).unwrap();
+    publish_roproj(&source, &tree).unwrap();
+    let source_before = read_tree_bytes(&source);
+    let source_entries_before = fs::read_dir(&source).unwrap().count();
+
+    let error = publish_canonicalized_roproj(&source_spelling, &destination, &tree).unwrap_err();
+
+    assert!(matches!(error, FormatError::PathOverlap { .. }));
+    assert_eq!(read_tree_bytes(&source), source_before);
+    assert_eq!(
+        fs::read_dir(&source).unwrap().count(),
+        source_entries_before
+    );
+    assert!(!destination.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn canonicalized_publication_rejects_symlink_aliased_parent_containment() {
+    use std::os::unix::fs::symlink;
+
+    let temp = TempDir::new();
+    let source = temp.path().join("source.roproj");
+    let alias = temp.path().join("source-alias");
+    let destination = alias.join("nested-output.roproj");
+    let tree = encode_roproj_v1(&Document::empty("doc-empty", "Empty")).unwrap();
+    publish_roproj(&source, &tree).unwrap();
+    symlink(&source, &alias).unwrap();
+    let source_before = read_tree_bytes(&source);
+    let source_entries_before = fs::read_dir(&source).unwrap().count();
+
+    let error = publish_canonicalized_roproj(&source, &destination, &tree).unwrap_err();
+
+    assert!(matches!(error, FormatError::PathOverlap { .. }));
+    assert_eq!(read_tree_bytes(&source), source_before);
+    assert_eq!(
+        fs::read_dir(&source).unwrap().count(),
+        source_entries_before
+    );
+    assert!(!destination.exists());
 }
 
 #[test]

@@ -3,7 +3,7 @@
 use std::{
     ffi::OsString,
     fs, io,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -123,6 +123,91 @@ pub fn publish_roproj(
         return Err(error);
     }
     finish_staged_publication(&staging, path)
+}
+
+/// Publish a canonicalized tree only when the destination is outside its source.
+///
+/// This source-aware boundary preserves the canonicalizer's no-mutation law;
+/// generic source-free publication remains available through [`publish_roproj`].
+///
+/// # Errors
+///
+/// Returns [`FormatError::PathOverlap`] when the destination is the source or
+/// is contained by it, otherwise the errors documented by [`publish_roproj`].
+pub fn publish_canonicalized_roproj(
+    source: impl AsRef<Path>,
+    destination: impl AsRef<Path>,
+    tree: &CanonicalRoProjectV1,
+) -> Result<(), FormatError> {
+    let source = source.as_ref();
+    let destination = destination.as_ref();
+    let normalized_source = lexically_absolute(source)?;
+    let normalized_destination = lexically_absolute(destination)?;
+    let resolved_source = resolve_existing_path_or_parent(source)?;
+    let resolved_destination = resolve_existing_path_or_parent(destination)?;
+    if normalized_destination == normalized_source
+        || normalized_destination.starts_with(&normalized_source)
+        || resolved_destination == resolved_source
+        || resolved_destination.starts_with(&resolved_source)
+    {
+        return Err(FormatError::PathOverlap {
+            source_path: source.to_owned(),
+            destination: destination.to_owned(),
+        });
+    }
+    publish_roproj(destination, tree)
+}
+
+fn resolve_existing_path_or_parent(path: &Path) -> Result<PathBuf, FormatError> {
+    match fs::canonicalize(path) {
+        Ok(resolved) => Ok(resolved),
+        Err(source) if source.kind() == io::ErrorKind::NotFound => {
+            let Some(parent) = path.parent() else {
+                return lexically_absolute(path);
+            };
+            let Some(name) = path.file_name() else {
+                return lexically_absolute(path);
+            };
+            match fs::canonicalize(parent) {
+                Ok(resolved_parent) => Ok(resolved_parent.join(name)),
+                Err(source) if source.kind() == io::ErrorKind::NotFound => lexically_absolute(path),
+                Err(source) => Err(FormatError::Read {
+                    path: parent.to_owned(),
+                    source,
+                }),
+            }
+        }
+        Err(source) => Err(FormatError::Read {
+            path: path.to_owned(),
+            source,
+        }),
+    }
+}
+
+fn lexically_absolute(path: &Path) -> Result<PathBuf, FormatError> {
+    let absolute = if path.is_absolute() {
+        path.to_owned()
+    } else {
+        std::env::current_dir()
+            .map_err(|source| FormatError::Read {
+                path: PathBuf::from("."),
+                source,
+            })?
+            .join(path)
+    };
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+                normalized.push(component.as_os_str());
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+        }
+    }
+    Ok(normalized)
 }
 
 /// Encode and publish a semantic document as canonical `.roproj/v1`.
