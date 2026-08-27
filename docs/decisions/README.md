@@ -35,6 +35,7 @@ For project-wide authority rules, read [`../governance/knowledge-authority.md`](
 | [ADR-0023](ADR-0023-roproj-v1-canonical-tree-and-sharding.md) | `.roproj/v1` canonical tree and entity sharding | Accepted | Fixes the 18-file editable-source tree, version-scoped entity placement, canonical JSON/JSONL materialization, and path-nonidentity boundary; production codecs and adjacent protocols remain Deferred |
 | [ADR-0024](ADR-0024-revision-pinned-semantic-patch.md) | Revision-pinned SemanticPatch proposal envelope | Accepted | One immutable proposal occurrence binds a Semantic API contract, exact semantic base, and one Command or ordered AtomicBatch without adding a mutation vocabulary, wire DTO, digest, approval, or runtime implementation |
 | [ADR-0025](ADR-0025-portable-package-v1.md) | Portable package v1 and payload integrity root | Accepted | Fixes the deterministic 19-entry ZIP32 envelope over exact `.roproj/v1` bytes, integrity root, lossless laws, and tracked-source conflict boundary; production codecs and CLI remain Deferred |
+| [ADR-0026](ADR-0026-scoped-semantic-authorization-and-approval.md) | Scoped semantic authorization and approval | Accepted | Defines domain-scoped Human/Delegated principals, independent capabilities, stable-ID semantic scopes, trusted authorization footprints, exact finite Human approval for Delegated-origin or Delegated-authority publication, replay/revocation laws, minimum provenance, and semantic/external-effect separation without freezing public DTOs or integrity bytes |
 
 ## How to use ADRs
 
