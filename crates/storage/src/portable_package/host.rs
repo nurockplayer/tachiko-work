@@ -10,7 +10,7 @@ use std::{
 
 use super::{
     PORTABLE_PACKAGE_V1_MAX_ARCHIVE_BYTES, PortablePackageError, VerifiedPortablePackageV1,
-    v1::{decode, encode, payload_root},
+    v1::{decode, encode, encode_hex, payload_root},
 };
 use crate::{
     FormatError,
@@ -325,16 +325,6 @@ fn map_tree_publication_error(destination: &Path, error: FormatError) -> FormatE
         }
         .into(),
     }
-}
-
-fn encode_hex(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for &byte in bytes {
-        output.push(char::from(DIGITS[usize::from(byte >> 4)]));
-        output.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
-    }
-    output
 }
 
 #[cfg(test)]

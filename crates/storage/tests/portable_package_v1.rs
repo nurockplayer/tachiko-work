@@ -151,6 +151,56 @@ fn refresh_record_crc(package: &mut [u8], name: &str) {
     write_u32(package, record.central_offset + 16, crc);
 }
 
+fn shift_offset(offset: usize, old_length: usize, new_length: usize) -> usize {
+    if new_length >= old_length {
+        offset.checked_add(new_length - old_length).unwrap()
+    } else {
+        offset.checked_sub(old_length - new_length).unwrap()
+    }
+}
+
+fn replace_entry_body(package: &[u8], name: &str, body: &[u8]) -> Vec<u8> {
+    let records = zip_records(package);
+    let target = records.iter().find(|record| record.name == name).unwrap();
+    let old_length = target.data_end - target.data_start;
+    let new_length = body.len();
+    let size = u32::try_from(new_length).unwrap();
+    let crc = crc32(body);
+    let old_end = package.len() - 22;
+    let old_central_offset = usize::try_from(read_u32(package, old_end + 16)).unwrap();
+    let mut output = package.to_vec();
+    output.splice(target.data_start..target.data_end, body.iter().copied());
+
+    write_u32(&mut output, target.local_offset + 14, crc);
+    write_u32(&mut output, target.local_offset + 18, size);
+    write_u32(&mut output, target.local_offset + 22, size);
+    for record in &records {
+        let central_offset = shift_offset(record.central_offset, old_length, new_length);
+        let local_offset = if record.local_offset > target.local_offset {
+            shift_offset(record.local_offset, old_length, new_length)
+        } else {
+            record.local_offset
+        };
+        write_u32(
+            &mut output,
+            central_offset + 42,
+            u32::try_from(local_offset).unwrap(),
+        );
+        if record.name == name {
+            write_u32(&mut output, central_offset + 16, crc);
+            write_u32(&mut output, central_offset + 20, size);
+            write_u32(&mut output, central_offset + 24, size);
+        }
+    }
+    let end = shift_offset(old_end, old_length, new_length);
+    write_u32(
+        &mut output,
+        end + 16,
+        u32::try_from(shift_offset(old_central_offset, old_length, new_length)).unwrap(),
+    );
+    output
+}
+
 fn package_payload_root(package: &[u8]) -> [u8; 32] {
     let records = zip_records(package);
     let mut root = Sha256::new();
@@ -223,7 +273,8 @@ fn duplicate_last_entry(package: &[u8]) -> Vec<u8> {
     let old_central_offset = usize::try_from(read_u32(package, old_end + 16)).unwrap();
     let old_central_size = usize::try_from(read_u32(package, old_end + 12)).unwrap();
     let local = package[target.local_offset..target.local_end].to_vec();
-    let central = package[target.central_offset..target.central_end].to_vec();
+    let mut central = package[target.central_offset..target.central_end].to_vec();
+    write_u32(&mut central, 42, u32::try_from(old_central_offset).unwrap());
     let mut output = Vec::with_capacity(package.len() + local.len() + central.len());
     output.extend_from_slice(&package[..old_central_offset]);
     output.extend_from_slice(&local);
@@ -419,6 +470,22 @@ fn unsupported_package_version_wins_before_v1_crc_and_payload_checks() {
 }
 
 #[test]
+fn unsupported_package_version_wins_over_future_owned_manifest_shape() {
+    let package = replace_entry_body(
+        &decode_hex(EMPTY_PACKAGE_HEX),
+        "package.json",
+        b"{\n  \"format\": \"tachiko.portable-package\",\n  \"format_version\": 2,\n  \"future\": {\"x\": 1, \"x\": 2}\n}\n",
+    );
+
+    assert!(matches!(
+        decode_portable_package_v1(&package),
+        Err(FormatError::PortablePackage(
+            PortablePackageError::UnsupportedVersion { ref found }
+        )) if found == "2"
+    ));
+}
+
+#[test]
 fn corruption_and_stale_integrity_have_distinct_failures() {
     let golden = decode_hex(EMPTY_PACKAGE_HEX);
     let payload = record(&golden, "payload/manifest.json");
@@ -444,23 +511,27 @@ fn corruption_and_stale_integrity_have_distinct_failures() {
 }
 
 #[test]
-fn malformed_manifest_and_entry_set_variations_fail_closed() {
+fn v1_manifest_metadata_variations_fail_closed() {
     let golden = decode_hex(EMPTY_PACKAGE_HEX);
-    let manifest = record(&golden, "package.json");
-    let payload_format = find_bytes(
-        &golden[manifest.data_start..manifest.data_end],
-        b"payload_format",
-    );
-    let mut duplicate_manifest = golden.clone();
-    duplicate_manifest[manifest.data_start + payload_format
-        ..manifest.data_start + payload_format + b"format_version".len()]
-        .copy_from_slice(b"format_version");
-    assert!(matches!(
-        decode_portable_package_v1(&duplicate_manifest),
-        Err(FormatError::PortablePackage(
-            PortablePackageError::InvalidManifest { .. }
-        ))
-    ));
+    for body in [
+        b"{\n  \"format\": \"tachiko.portable-package\",\n  \"format_version\": 1,\n  \"payload_format\": \"tachiko.roproj\",\n  \"payload_format_version\": 1\n}\n".as_slice(),
+        b"{\n  \"format\": \"tachiko.portable-package\",\n  \"format_version\": 1,\n  \"payload_format\": \"tachiko.roproj\",\n  \"payload_format_version\": 1,\n  \"payload_root_sha256\": \"71e2b1170ae3b2c2259cc0c90c217389a1e59c490b5ccde4c6fe2dadae1fed9c\",\n  \"unknown\": true\n}\n".as_slice(),
+        b"{\n  \"format\": \"tachiko.portable-package\",\n  \"format_version\": \"1\",\n  \"payload_format\": \"tachiko.roproj\",\n  \"payload_format_version\": 1,\n  \"payload_root_sha256\": \"71e2b1170ae3b2c2259cc0c90c217389a1e59c490b5ccde4c6fe2dadae1fed9c\"\n}\n".as_slice(),
+        b"{\n  \"format\": \"tachiko.portable-package\",\n  \"format_version\": 1,\n  \"format_version\": 1,\n  \"payload_format\": \"tachiko.roproj\",\n  \"payload_format_version\": 1,\n  \"payload_root_sha256\": \"71e2b1170ae3b2c2259cc0c90c217389a1e59c490b5ccde4c6fe2dadae1fed9c\"\n}\n".as_slice(),
+    ] {
+        let package = replace_entry_body(&golden, "package.json", body);
+        assert!(matches!(
+            decode_portable_package_v1(&package),
+            Err(FormatError::PortablePackage(
+                PortablePackageError::InvalidManifest { .. }
+            ))
+        ));
+    }
+}
+
+#[test]
+fn entry_set_variations_fail_closed() {
+    let golden = decode_hex(EMPTY_PACKAGE_HEX);
 
     let mut unknown = golden.clone();
     replace_entry_name(
@@ -509,7 +580,7 @@ fn noncanonical_zip_metadata_order_and_record_disagreement_are_rejected() {
     let payload = record(&golden, "payload/entities/0.jsonl");
 
     let mut metadata = golden.clone();
-    write_u16(&mut metadata, payload.local_offset + 6, 0x0808);
+    write_u16(&mut metadata, payload.local_offset + 6, 0x0802);
     assert!(matches!(
         decode_portable_package_v1(&metadata),
         Err(FormatError::PortablePackage(
@@ -540,19 +611,23 @@ fn noncanonical_zip_metadata_order_and_record_disagreement_are_rejected() {
         ))
     ));
 
-    let mut disagreement = golden;
+    let mut disagreement = golden.clone();
     let crc = read_u32(&disagreement, payload.central_offset + 16);
     write_u32(&mut disagreement, payload.central_offset + 16, crc ^ 1);
-    assert!(matches!(
-        decode_portable_package_v1(&disagreement),
-        Err(FormatError::PortablePackage(
-            PortablePackageError::NonCanonicalContainer { .. }
-        ))
-    ));
+    let mut offset_disagreement = golden;
+    write_u32(&mut offset_disagreement, payload.central_offset + 42, 0);
+    for package in [disagreement, offset_disagreement] {
+        assert!(matches!(
+            decode_portable_package_v1(&package),
+            Err(FormatError::PortablePackage(
+                PortablePackageError::NonCanonicalContainer { .. }
+            ))
+        ));
+    }
 }
 
 #[test]
-fn stubs_tails_comments_descriptors_and_zip64_are_rejected() {
+fn structural_and_noncanonical_zip_variants_have_distinct_failures() {
     let golden = decode_hex(EMPTY_PACKAGE_HEX);
     let mut stubbed = b"stub".to_vec();
     stubbed.extend_from_slice(&golden);
@@ -568,7 +643,7 @@ fn stubs_tails_comments_descriptors_and_zip64_are_rejected() {
     let end = zip64.len() - 22;
     write_u16(&mut zip64, end + 10, 0xffff);
 
-    for package in [stubbed, trailed, commented, data_descriptor, zip64] {
+    for package in [stubbed, trailed, zip64] {
         assert!(matches!(
             decode_portable_package_v1(&package),
             Err(FormatError::PortablePackage(
@@ -577,12 +652,14 @@ fn stubs_tails_comments_descriptors_and_zip64_are_rejected() {
         ));
     }
 
-    assert!(matches!(
-        decode_portable_package_v1(&file_comment),
-        Err(FormatError::PortablePackage(
-            PortablePackageError::NonCanonicalContainer { .. }
-        ))
-    ));
+    for package in [commented, data_descriptor, file_comment] {
+        assert!(matches!(
+            decode_portable_package_v1(&package),
+            Err(FormatError::PortablePackage(
+                PortablePackageError::NonCanonicalContainer { .. }
+            ))
+        ));
+    }
 }
 
 #[test]

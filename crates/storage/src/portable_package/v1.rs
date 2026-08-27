@@ -7,7 +7,7 @@ use super::PortablePackageError;
 use crate::{
     FormatError,
     roproj::{CanonicalRoProjectV1, ROPROJ_V1_PATHS},
-    strict_json::{FrontendError, inspect},
+    strict_json::{FrontendError, inspect, inspect_top_level},
 };
 
 const PACKAGE_FORMAT: &str = "tachiko.portable-package";
@@ -19,6 +19,7 @@ const PAYLOAD_DOMAIN: &[u8] = b"tachiko.portable-package/v1\0tachiko.roproj/v1\0
 const ZIP_LOCAL_SIGNATURE: u32 = 0x0403_4b50;
 const ZIP_CENTRAL_SIGNATURE: u32 = 0x0201_4b50;
 const ZIP_END_SIGNATURE: u32 = 0x0605_4b50;
+const ZIP_DATA_DESCRIPTOR_SIGNATURE: u32 = 0x0807_4b50;
 const ZIP_VERSION_MADE_BY: u16 = 20;
 const ZIP_VERSION_NEEDED: u16 = 10;
 const ZIP_UTF8_FLAG: u16 = 0x0800;
@@ -146,6 +147,7 @@ struct EndRecord {
     total_entries: u16,
     central_size: u32,
     central_offset: u32,
+    comment_length: u16,
 }
 
 struct Container<'a> {
@@ -157,13 +159,17 @@ struct Container<'a> {
 /// Calculate the Accepted exact-payload root for a canonical `.roproj/v1` tree.
 #[must_use]
 pub fn payload_root(tree: &CanonicalRoProjectV1) -> [u8; 32] {
+    calculate_payload_root(tree.files().iter().map(|file| (file.path(), file.bytes())))
+}
+
+fn calculate_payload_root<'a>(files: impl IntoIterator<Item = (&'a str, &'a [u8])>) -> [u8; 32] {
     let mut root = Sha256::new();
     root.update(PAYLOAD_DOMAIN);
-    for file in tree.files() {
+    for (path, body) in files {
         let mut leaf = Sha256::new();
-        leaf.update(file.path().as_bytes());
+        leaf.update(path.as_bytes());
         leaf.update([0]);
-        leaf.update(file.bytes());
+        leaf.update(body);
         root.update(leaf.finalize());
     }
     root.finalize().into()
@@ -358,10 +364,32 @@ fn parse_container(source: &[u8]) -> Result<Container<'_>, PortablePackageError>
     if read_u32(source, 0, "initial local signature")? != ZIP_LOCAL_SIGNATURE {
         return invalid_container("package has a prepended stub or lacks local-file framing");
     }
-    let end_offset = source.len() - END_RECORD_LENGTH;
-    if read_u32(source, end_offset, "end signature")? != ZIP_END_SIGNATURE {
-        return invalid_container("end record is absent, commented, or followed by trailing bytes");
+    let latest_end_offset = source.len() - END_RECORD_LENGTH;
+    let earliest_end_offset = latest_end_offset.saturating_sub(usize::from(ZIP32_U16_SENTINEL));
+    for end_offset in (earliest_end_offset..=latest_end_offset).rev() {
+        if read_u32(source, end_offset, "end signature").ok() != Some(ZIP_END_SIGNATURE) {
+            continue;
+        }
+        let Ok(comment_length) = read_u16(source, end_offset + 20, "archive comment length") else {
+            continue;
+        };
+        if end_offset.checked_add(END_RECORD_LENGTH + usize::from(comment_length))
+            != Some(source.len())
+        {
+            continue;
+        }
+        if let Ok(container) = parse_container_at_end(source, end_offset, comment_length) {
+            return Ok(container);
+        }
     }
+    invalid_container("end record is absent, malformed, or followed by trailing bytes")
+}
+
+fn parse_container_at_end(
+    source: &[u8],
+    end_offset: usize,
+    comment_length: u16,
+) -> Result<Container<'_>, PortablePackageError> {
     let end = EndRecord {
         disk_number: read_u16(source, end_offset + 4, "end disk number")?,
         central_disk_number: read_u16(source, end_offset + 6, "central disk number")?,
@@ -369,11 +397,8 @@ fn parse_container(source: &[u8]) -> Result<Container<'_>, PortablePackageError>
         total_entries: read_u16(source, end_offset + 10, "total entries")?,
         central_size: read_u32(source, end_offset + 12, "central size")?,
         central_offset: read_u32(source, end_offset + 16, "central offset")?,
+        comment_length,
     };
-    let comment_length = read_u16(source, end_offset + 20, "archive comment length")?;
-    if comment_length != 0 {
-        return invalid_container("archive comment is not absent");
-    }
     if end.disk_number != 0 || end.central_disk_number != 0 {
         return invalid_container("split or spanned disk numbers are not supported");
     }
@@ -395,20 +420,6 @@ fn parse_container(source: &[u8]) -> Result<Container<'_>, PortablePackageError>
         return invalid_container("central directory does not exactly precede the end record");
     }
 
-    let mut local_records = Vec::with_capacity(usize::from(end.total_entries));
-    let mut local_offset = 0;
-    for _ in 0..end.total_entries {
-        let record = parse_local_record(source, local_offset)?;
-        if record.end > central_offset {
-            return invalid_container("local entry overlaps the central directory");
-        }
-        local_offset = record.end;
-        local_records.push(record);
-    }
-    if local_offset != central_offset {
-        return invalid_container("local records do not end at the central-directory offset");
-    }
-
     let mut central_records = Vec::with_capacity(usize::from(end.total_entries));
     let mut record_offset = central_offset;
     for _ in 0..end.total_entries {
@@ -428,6 +439,23 @@ fn parse_container(source: &[u8]) -> Result<Container<'_>, PortablePackageError>
     {
         return invalid_container("a central entry selects another start disk");
     }
+
+    let mut local_records = Vec::with_capacity(usize::from(end.total_entries));
+    let mut local_offset = 0;
+    for _ in 0..end.total_entries {
+        let central = central_records
+            .iter()
+            .find(|record| usize::try_from(record.local_offset).ok() == Some(local_offset));
+        let record = parse_local_record(source, local_offset, central)?;
+        if record.end > central_offset {
+            return invalid_container("local entry overlaps the central directory");
+        }
+        local_offset = record.end;
+        local_records.push(record);
+    }
+    if local_offset != central_offset {
+        return invalid_container("local records do not end at the central-directory offset");
+    }
     Ok(Container {
         end,
         local_records,
@@ -435,17 +463,28 @@ fn parse_container(source: &[u8]) -> Result<Container<'_>, PortablePackageError>
     })
 }
 
-fn parse_local_record(
-    source: &[u8],
+fn parse_local_record<'a>(
+    source: &'a [u8],
     offset: usize,
-) -> Result<LocalRecord<'_>, PortablePackageError> {
+    central: Option<&CentralRecord<'_>>,
+) -> Result<LocalRecord<'a>, PortablePackageError> {
     require_range(source, offset, 30, "local header")?;
     if read_u32(source, offset, "local signature")? != ZIP_LOCAL_SIGNATURE {
         return invalid_container("missing local header at the declared offset");
     }
     let name_length = usize::from(read_u16(source, offset + 26, "local name length")?);
     let extra_length = read_u16(source, offset + 28, "local extra length")?;
+    let flags = read_u16(source, offset + 6, "local flags")?;
     let compressed_size = read_u32(source, offset + 18, "local compressed size")?;
+    let data_size = if flags & 0x0008 == 0 {
+        compressed_size
+    } else {
+        central
+            .ok_or_else(|| {
+                invalid_container_error("data descriptor has no matching central record")
+            })?
+            .compressed_size
+    };
     let name_start = checked_offset(offset, 30, "local name offset")?;
     let data_start = checked_offset(
         checked_offset(name_start, name_length, "local name end")?,
@@ -454,7 +493,7 @@ fn parse_local_record(
     )?;
     let data_end = checked_offset(
         data_start,
-        usize::try_from(compressed_size)
+        usize::try_from(data_size)
             .map_err(|_| invalid_container_error("local body size does not fit this host"))?,
         "local data end",
     )?;
@@ -468,14 +507,23 @@ fn parse_local_record(
     require_range(
         source,
         data_start,
-        usize::try_from(compressed_size)
+        usize::try_from(data_size)
             .map_err(|_| invalid_container_error("local body size does not fit this host"))?,
         "local data",
     )?;
+    let end = if flags & 0x0008 == 0 {
+        data_end
+    } else {
+        parse_data_descriptor_end(
+            source,
+            data_end,
+            central.expect("descriptor central record checked above"),
+        )?
+    };
     Ok(LocalRecord {
         offset,
         version_needed: read_u16(source, offset + 4, "local version")?,
-        flags: read_u16(source, offset + 6, "local flags")?,
+        flags,
         method: read_u16(source, offset + 8, "local method")?,
         dos_time: read_u16(source, offset + 10, "local time")?,
         dos_date: read_u16(source, offset + 12, "local date")?,
@@ -485,8 +533,45 @@ fn parse_local_record(
         name: &source[name_start..name_start + name_length],
         extra_length,
         data: &source[data_start..data_end],
-        end: data_end,
+        end,
     })
+}
+
+fn parse_data_descriptor_end(
+    source: &[u8],
+    offset: usize,
+    central: &CentralRecord<'_>,
+) -> Result<usize, PortablePackageError> {
+    if read_u32(source, offset, "data descriptor signature").ok()
+        == Some(ZIP_DATA_DESCRIPTOR_SIGNATURE)
+    {
+        let values_offset = checked_offset(offset, 4, "data descriptor values")?;
+        if data_descriptor_matches(source, values_offset, central) {
+            return checked_offset(values_offset, 12, "data descriptor end");
+        }
+    }
+    if data_descriptor_matches(source, offset, central) {
+        return checked_offset(offset, 12, "data descriptor end");
+    }
+    invalid_container("data descriptor is truncated or disagrees with the central record")
+}
+
+fn data_descriptor_matches(source: &[u8], offset: usize, central: &CentralRecord<'_>) -> bool {
+    read_u32(source, offset, "data descriptor CRC").ok() == Some(central.crc32)
+        && read_u32(
+            source,
+            offset.saturating_add(4),
+            "data descriptor compressed size",
+        )
+        .ok()
+            == Some(central.compressed_size)
+        && read_u32(
+            source,
+            offset.saturating_add(8),
+            "data descriptor uncompressed size",
+        )
+        .ok()
+            == Some(central.uncompressed_size)
 }
 
 fn parse_central_record(
@@ -569,7 +654,7 @@ struct ParsedManifest {
 fn parse_manifest(source: &[u8]) -> Result<ParsedManifest, PortablePackageError> {
     let text = std::str::from_utf8(source)
         .map_err(|_| invalid_manifest_error("package.json is not valid UTF-8"))?;
-    inspect(text).map_err(map_manifest_frontend_error)?;
+    inspect_top_level(text).map_err(map_manifest_frontend_error)?;
     let value: serde_json::Value = serde_json::from_str(text)
         .map_err(|_| invalid_manifest_error("package.json is not valid JSON"))?;
     let object = value
@@ -594,6 +679,7 @@ fn parse_manifest(source: &[u8]) -> Result<ParsedManifest, PortablePackageError>
     if version != PACKAGE_FORMAT_VERSION.to_string() {
         return Err(PortablePackageError::UnsupportedVersion { found: version });
     }
+    inspect(text).map_err(map_manifest_frontend_error)?;
     if object.len() != MANIFEST_KEYS.len()
         || !MANIFEST_KEYS.iter().all(|key| object.contains_key(*key))
     {
@@ -616,6 +702,9 @@ fn parse_manifest(source: &[u8]) -> Result<ParsedManifest, PortablePackageError>
 }
 
 fn validate_canonical_profile(container: &Container<'_>) -> Result<(), PortablePackageError> {
+    if container.end.comment_length != 0 {
+        return noncanonical_container("archive comment is not canonical v1");
+    }
     let local_names = decode_names(container.local_records.iter().map(|record| record.name))?;
     let central_names = decode_names(container.central_records.iter().map(|record| record.name))?;
     if !same_name_set(&local_names) || !same_name_set(&central_names) {
@@ -712,16 +801,11 @@ fn same_name_set(names: &[&str]) -> bool {
 }
 
 fn payload_root_from_files(files: &[(String, Vec<u8>)]) -> [u8; 32] {
-    let mut root = Sha256::new();
-    root.update(PAYLOAD_DOMAIN);
-    for (path, body) in files {
-        let mut leaf = Sha256::new();
-        leaf.update(path.as_bytes());
-        leaf.update([0]);
-        leaf.update(body);
-        root.update(leaf.finalize());
-    }
-    root.finalize().into()
+    calculate_payload_root(
+        files
+            .iter()
+            .map(|(path, body)| (path.as_str(), body.as_slice())),
+    )
 }
 
 fn decode_root(source: &str) -> Result<[u8; 32], PortablePackageError> {
@@ -747,7 +831,7 @@ fn hex_nibble(byte: u8) -> u8 {
     }
 }
 
-fn encode_hex(bytes: &[u8]) -> String {
+pub(super) fn encode_hex(bytes: &[u8]) -> String {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";
     let mut output = String::with_capacity(bytes.len() * 2);
     for &byte in bytes {
