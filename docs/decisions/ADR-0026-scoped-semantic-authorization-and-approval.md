@@ -61,16 +61,26 @@ cannot self-assert or upgrade it. Provider, model, tool, prompt, confidence,
 and other model-supplied metadata may be retained as provenance but never
 grant privilege.
 
+`PrincipalKind` is an immutable authorization attribute of one `(authorization
+domain, PrincipalId)` occurrence. The same PrincipalId can never be
+reclassified between `Human` and `Delegated`; a change of kind creates a new
+principal occurrence with a new PrincipalId.
+
 `(authorization domain, PrincipalId)` identifies one non-reusable,
 non-reassignable principal occurrence. Deleting, disabling, transferring,
 recreating, or replacing an account cannot assign that PrincipalId to a
 different authorization subject; a replacement subject receives a new
 PrincipalId. Login names, email addresses, provider identifiers, aliases, and
 similar account attributes are not authorization identity and their reuse
-cannot retarget an existing Grant, Approval originator/executor binding, or
-provenance record. Those references remain attached only to the original
-principal occurrence and fail closed when that occurrence is disabled,
-missing, unauthenticated, or unresolvable.
+cannot retarget an existing Grant, Approval originator/executor binding,
+Approval approver reference, or provenance record. Those references remain
+attached only to the original principal occurrence and do not transfer to a
+replacement occurrence created for a different subject or kind. A disabled
+occurrence may be re-enabled only when the trusted boundary proves continuity
+of the same authorization subject and the same immutable PrincipalKind.
+Otherwise it must issue a new PrincipalId. Resolution fails closed when the
+required occurrence is disabled, missing, unauthenticated, or unresolvable, or
+when subject continuity or immutable kind cannot be proven.
 
 The authorization domain does not create a semantic `ProjectId` or
 `WorkspaceId`. Exact account/login/identity-provider behavior, principal ID
@@ -325,14 +335,17 @@ atomically consumes Approval. Failure before publication does not consume it.
 Every retry rechecks expiry, revocation, Grants, exact base,
 `ExactChangeBinding`, associated operation-family/mutation-class/scope write
 requirements, the Approval-bound policy version against the effective policy
-governing execution, and the authoritative semantic gate.
+governing execution, required principal occurrences and their immutable kinds,
+and the authoritative semantic gate.
 
 For Approval-gated Execute, the common publication-boundary condition in
 section 10 is necessary but not sufficient. Semantic publication and Approval
 consumption are additionally conditional on the bound originator and approver
-occurrences, authorizing Approve Grant references, Approval state, and exact
-proposal/Approval/base binding still being valid. Revocation, expiry, disablement,
-consumption, or proposal-base invalidation racing with execution prevents both
+occurrences and their immutable PrincipalKinds still being proven, authorizing
+Approve Grant references, Approval state, and exact proposal/Approval/base
+binding still being valid. Revocation, expiry, disablement, consumption,
+attempted same-ID kind reclassification, loss of required occurrence or kind
+proof, or proposal-base invalidation racing with execution prevents both
 publication and Approval consumption. If the trusted boundary cannot prove the
 complete conjunction, it fails closed and publishes nothing.
 
@@ -354,8 +367,8 @@ Execute fails without publication when any of these holds:
 1. `ProposalId` differs;
 2. `ExactChangeBinding` differs;
 3. the semantic base is stale;
-4. the originator differs;
-5. the executor differs;
+4. the originator differs or its occurrence/immutable kind cannot be proven;
+5. the executor differs or its occurrence/immutable kind cannot be proven;
 6. the rederived associated operation-family/mutation-class/scope write
    requirement differs;
 7. the Approval-bound authorization-policy version is unsupported or differs
@@ -363,7 +376,8 @@ Execute fails without publication when any of these holds:
 8. Approval expired;
 9. Approval was revoked;
 10. Approval was already consumed;
-11. the approver is not a trusted Human;
+11. the approver is not a trusted Human or its occurrence/immutable kind cannot
+    be proven;
 12. an authorizing Approve Grant reference is no longer valid or covering;
 13. the executor's Execute Grants are no longer sufficient; or
 14. the authoritative semantic gate rejects publication.
@@ -380,6 +394,8 @@ conditional on all of these facts still holding:
 
 ```text
 effective executor occurrence is active and authenticated
+AND that occurrence's immutable PrincipalKind remains proven and matches the
+    selected authorization path; direct Execute without Approval requires Human
 AND live Execute Grants cover every rederived associated
     operation-family/mutation-class/scope requirement
 AND authorization is evaluated under the effective policy selected by the
@@ -391,11 +407,12 @@ AND no unauthorized host or external effect is performed
 ```
 
 Execute-Grant revocation or expiry, executor disablement, relevant semantic
-state advance, effective-policy change, gate invalidation, or inability to
-prove this conjunction prevents publication. This common condition applies
-whether or not the Execute path uses a proposal or Approval. Direct Human
-Execute uses the effective current policy and does not invent a historical or
-Approval-bound policy choice.
+state advance, effective-policy change, gate invalidation, attempted same-ID
+kind reclassification, loss of kind proof, or inability to prove this
+conjunction prevents publication. This common condition applies whether or not
+the Execute path uses a proposal or Approval. Direct Human Execute uses the
+effective current policy and does not invent a historical or Approval-bound
+policy choice.
 
 ADR-0024 requires the trusted application/runtime boundary to compare the
 current semantic context with the proposal base before re-evaluating,
@@ -428,7 +445,8 @@ AND bound relational AuthorizationFootprint remains exact
 AND Approval-bound authorization-policy version equals the effective policy
     governing execution and still equals it at publication
 AND valid active Human Approval
-AND active bound originator and Human approver
+AND active bound originator and Human approver occurrences with each immutable
+    PrincipalKind still proven
 AND live authorizing Approve Grant references
 AND atomic Approval consumption with successful publication
 ```
@@ -509,8 +527,9 @@ authority.
   `AuthorizationFootprint`, Approval semantics, expiry/replay/revocation, and
   minimum provenance.
 - The trusted identity/host boundary owns Principal occurrence issuance and
-  resolution and must preserve non-reassignment across its account lifecycle;
-  exact account/provider mechanisms remain Provisional.
+  resolution and must preserve subject non-reassignment and immutable
+  PrincipalKind continuity across its account lifecycle; exact
+  account/provider and re-enable mechanisms remain Provisional.
 - #29 owns proposal/Approval lifecycle integration, Approval state
   implementation, atomic consume+publication, and execution receipts.
 - #30 owns instruction/data separation, prompt-injection boundaries, raw
@@ -630,6 +649,23 @@ Future implementation must preserve these representation-neutral outcomes:
     disclosure-safe binding denial regardless of internally detected version
     support; only a completely verified proposal/Approval binding may expose
     an unsupported Semantic API version.
+38. **Human-to-Delegated race** — after a direct Human Execute is authorized
+    and gated, attempting to reclassify that same PrincipalId as Delegated
+    before publication cannot satisfy the immutable-kind proof and publishes
+    nothing; a Delegated replacement is a new occurrence requiring a new ID
+    and the applicable Approval path.
+39. **Delegated-to-Human bypass** — a Delegated originator or executor cannot
+    be reclassified under the same PrincipalId as Human to bypass Approval; a
+    Human replacement is a distinct occurrence and does not retarget the
+    proposal or Approval.
+40. **Kind-changing replacement has no inherited authority** — every valid
+    Human/Delegated reclassification creates a new PrincipalId whose occurrence
+    inherits no Grant, Approval originator/executor binding, Approval approver
+    reference, or provenance from the old occurrence.
+41. **Same-occurrence re-enable** — a disabled occurrence may be re-enabled
+    under the same PrincipalId only when the trusted boundary proves the same
+    authorization subject and unchanged PrincipalKind; all independent Grant,
+    Approval, and publication checks still apply.
 
 ## Stability classification
 
@@ -637,6 +673,8 @@ Accepted:
 
 - opaque, non-reusable, non-reassignable Principal occurrences within an
   authorization domain;
+- immutable PrincipalKind per occurrence, with a new occurrence and
+  PrincipalId required for Human/Delegated reclassification;
 - trusted Human versus Delegated distinction for MVP policy;
 - default deny and explicit Grants;
 - non-reusable immutable Grant occurrences with terminal revocation;
