@@ -647,6 +647,39 @@ fn canonicalizer_proves_duplicate_ids_before_semantic_conversion() {
 }
 
 #[test]
+fn canonicalizer_proves_aggregate_uniqueness_before_any_semantic_conversion() {
+    let temp = TempDir::new();
+    let source = temp.path().join("aggregate-uniqueness-first.roproj");
+    write_noncanonical_project(&source);
+    fs::write(
+        source.join("schemas.json"),
+        b"[{\"id\":\"schema-a\",\"key\":\"record\",\"fields\":[{\"id\":\"field-ref\",\"key\":\"target\",\"field_type\":{\"type\":\"reference\",\"schema\":\"\"},\"required\":false}]}]\n",
+    )
+    .unwrap();
+    fs::remove_dir_all(source.join("entities")).unwrap();
+    fs::create_dir(source.join("entities")).unwrap();
+    fs::write(
+        source.join("entities/a.jsonl"),
+        b"{\"id\":\"duplicate\",\"key\":\"first\",\"schema\":\"missing-schema\",\"fields\":{}}\n",
+    )
+    .unwrap();
+    fs::write(
+        source.join("entities/z.jsonl"),
+        b"{\"id\":\"duplicate\",\"key\":\"second\",\"schema\":\"missing-schema\",\"fields\":{}}\n",
+    )
+    .unwrap();
+
+    let error = canonicalize_roproj(&source).unwrap_err();
+    let FormatError::InvalidRoProjectRepresentation { message } = error else {
+        panic!("unexpected error: {error:?}");
+    };
+    assert!(
+        message.contains("duplicate entity id 'duplicate'"),
+        "{message}"
+    );
+}
+
+#[test]
 fn canonicalizer_allows_equal_spellings_in_different_id_types() {
     let temp = TempDir::new();
     let source = temp.path().join("cross-type-equality.roproj");
@@ -674,6 +707,45 @@ fn canonicalizer_allows_equal_spellings_in_different_id_types() {
     assert_eq!(document.schemas["same"].id.as_str(), "same");
     assert_eq!(document.schemas["same"].fields["same"].id.as_str(), "same");
     assert_eq!(document.entities["same"].id.as_str(), "same");
+}
+
+#[test]
+fn canonicalizer_numeric_bridge_preserves_rounding_and_subnormal_bits() {
+    let temp = TempDir::new();
+    let source = temp.path().join("numeric-bridge.roproj");
+    fs::create_dir(&source).unwrap();
+    fs::write(
+        source.join("manifest.json"),
+        b"{\"format\":\"tachiko.roproj\",\"format_version\":1,\"document\":{\"id\":\"doc-numeric\",\"title\":\"Numeric\"}}\n",
+    )
+    .unwrap();
+    fs::write(
+        source.join("schemas.json"),
+        b"[{\"id\":\"schema-numeric\",\"key\":\"numeric\",\"fields\":[{\"id\":\"field-round\",\"key\":\"round\",\"field_type\":{\"type\":\"number\"},\"required\":true},{\"id\":\"field-subnormal\",\"key\":\"subnormal\",\"field_type\":{\"type\":\"number\"},\"required\":true}]}]\n",
+    )
+    .unwrap();
+    fs::create_dir(source.join("entities")).unwrap();
+    fs::write(
+        source.join("entities/noncanonical.jsonl"),
+        b"{\"id\":\"entity-numeric\",\"key\":\"numeric\",\"schema\":\"schema-numeric\",\"fields\":{\"field-round\":{\"value\":1424953923781206.25,\"kind\":\"number\"},\"field-subnormal\":{\"value\":4.9406564584124654e-324,\"kind\":\"number\"}}}\n",
+    )
+    .unwrap();
+    let expected = numeric_bridge_document();
+
+    let canonical = canonicalize_roproj(&source).unwrap();
+    let document = decode_roproj_v1(&canonical).unwrap();
+
+    assert_eq!(canonical, encode_roproj_v1(&expected).unwrap());
+    assert_eq!(document, expected);
+    let Value::Number(rounding) = document.entities["entity-numeric"].fields["field-round"] else {
+        panic!("rounding field changed value kind")
+    };
+    let Value::Number(subnormal) = document.entities["entity-numeric"].fields["field-subnormal"]
+    else {
+        panic!("subnormal field changed value kind")
+    };
+    assert_eq!(rounding.to_bits(), 0x4314_3ff3_c1cb_0959);
+    assert_eq!(subnormal.to_bits(), 1);
 }
 
 #[test]
@@ -819,5 +891,57 @@ fn bounded_document() -> Document {
                 },
             ),
         ]),
+    }
+}
+
+fn numeric_bridge_document() -> Document {
+    Document {
+        id: "doc-numeric".into(),
+        title: "Numeric".to_owned(),
+        schemas: BTreeMap::from([(
+            SchemaId::from("schema-numeric"),
+            Schema {
+                id: "schema-numeric".into(),
+                key: SchemaKey::from("numeric"),
+                fields: BTreeMap::from([
+                    (
+                        FieldId::from("field-round"),
+                        FieldDefinition {
+                            id: "field-round".into(),
+                            key: FieldKey::from("round"),
+                            field_type: FieldType::Number,
+                            required: true,
+                        },
+                    ),
+                    (
+                        FieldId::from("field-subnormal"),
+                        FieldDefinition {
+                            id: "field-subnormal".into(),
+                            key: FieldKey::from("subnormal"),
+                            field_type: FieldType::Number,
+                            required: true,
+                        },
+                    ),
+                ]),
+            },
+        )]),
+        entities: BTreeMap::from([(
+            EntityId::from("entity-numeric"),
+            Entity {
+                id: "entity-numeric".into(),
+                key: "numeric".into(),
+                schema: "schema-numeric".into(),
+                fields: BTreeMap::from([
+                    (
+                        FieldId::from("field-round"),
+                        Value::Number(Number::new(f64::from_bits(0x4314_3ff3_c1cb_0959)).unwrap()),
+                    ),
+                    (
+                        FieldId::from("field-subnormal"),
+                        Value::Number(Number::new(f64::from_bits(1)).unwrap()),
+                    ),
+                ]),
+            },
+        )]),
     }
 }

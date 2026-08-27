@@ -215,6 +215,12 @@ struct BinaryArgumentsV1 {
     right: Box<ExpressionV1>,
 }
 
+struct UnorderedRoProjectV1 {
+    manifest: ManifestV1,
+    schemas: Vec<SchemaV1>,
+    entities: Vec<EntityV1>,
+}
+
 /// Encode a valid semantic document into the exact canonical `.roproj/v1` tree.
 ///
 /// # Errors
@@ -353,16 +359,9 @@ pub(crate) fn canonicalize_unordered(
     schemas_bytes: &[u8],
     entity_records: Vec<(String, Vec<u8>)>,
 ) -> Result<CanonicalRoProjectV1, FormatError> {
-    let manifest = decode_manifest(manifest_bytes)?;
-    let schemas: Vec<SchemaV1> = decode_json_file_unordered(ROPROJ_V1_PATHS[1], schemas_bytes)?;
-    let schemas = schemas_into_semantic_unordered(schemas)?;
-    let entities = entities_into_semantic_unordered(entity_records)?;
-    let document = Document {
-        id: DocumentId::from(manifest.document.id),
-        title: manifest.document.title,
-        schemas,
-        entities,
-    };
+    let aggregate = UnorderedRoProjectV1::decode(manifest_bytes, schemas_bytes, entity_records)?;
+    aggregate.prove_scoped_uniqueness()?;
+    let document = aggregate.into_semantic()?;
     super::super::check_document(&document)?;
     validate_semantic_expression_limits(&document)?;
     encode(&document)
@@ -458,54 +457,78 @@ fn schemas_into_semantic(
     Ok(semantic)
 }
 
-fn schemas_into_semantic_unordered(
-    schemas: Vec<SchemaV1>,
-) -> Result<BTreeMap<SchemaId, Schema>, FormatError> {
-    let mut schema_ids = BTreeSet::new();
-    for schema in &schemas {
-        require_id("schema id", &schema.id)?;
-        if !schema_ids.insert(schema.id.as_str()) {
-            return invalid_representation(format!("duplicate schema id '{}'", schema.id));
-        }
+impl UnorderedRoProjectV1 {
+    fn decode(
+        manifest_bytes: &[u8],
+        schemas_bytes: &[u8],
+        entity_records: Vec<(String, Vec<u8>)>,
+    ) -> Result<Self, FormatError> {
+        let manifest = decode_manifest(manifest_bytes)?;
+        let schemas = decode_json_file_unordered(ROPROJ_V1_PATHS[1], schemas_bytes)?;
+        let entities = entity_records
+            .into_iter()
+            .map(|(record_path, bytes)| decode_json_file_unordered(&record_path, &bytes))
+            .collect::<Result<_, _>>()?;
+        Ok(Self {
+            manifest,
+            schemas,
+            entities,
+        })
     }
-    for schema in &schemas {
-        let mut field_ids = BTreeSet::new();
-        for field in &schema.fields {
-            require_id("field id", &field.id)?;
-            if !field_ids.insert(field.id.as_str()) {
-                return invalid_representation(format!("duplicate field id '{}'", field.id));
+
+    fn prove_scoped_uniqueness(&self) -> Result<(), FormatError> {
+        let mut schema_ids = BTreeSet::new();
+        for schema in &self.schemas {
+            require_id("schema id", &schema.id)?;
+            if !schema_ids.insert(schema.id.as_str()) {
+                return invalid_representation(format!("duplicate schema id '{}'", schema.id));
             }
         }
-    }
-    schemas
-        .into_iter()
-        .map(|schema| {
-            let id = SchemaId::from(schema.id.clone());
-            Ok((id, schema.into_semantic_unordered()?))
-        })
-        .collect()
-}
 
-fn entities_into_semantic_unordered(
-    records: Vec<(String, Vec<u8>)>,
-) -> Result<BTreeMap<EntityId, Entity>, FormatError> {
-    let dtos = records
-        .into_iter()
-        .map(|(record_path, bytes)| decode_json_file_unordered(&record_path, &bytes))
-        .collect::<Result<Vec<EntityV1>, _>>()?;
-    let mut entity_ids = BTreeSet::new();
-    for dto in &dtos {
-        require_id("entity id", &dto.id)?;
-        if !entity_ids.insert(dto.id.as_str()) {
-            return invalid_representation(format!("duplicate entity id '{}'", dto.id));
+        for schema in &self.schemas {
+            let mut field_ids = BTreeSet::new();
+            for field in &schema.fields {
+                require_id("field id", &field.id)?;
+                if !field_ids.insert(field.id.as_str()) {
+                    return invalid_representation(format!("duplicate field id '{}'", field.id));
+                }
+            }
         }
+
+        let mut entity_ids = BTreeSet::new();
+        for entity in &self.entities {
+            require_id("entity id", &entity.id)?;
+            if !entity_ids.insert(entity.id.as_str()) {
+                return invalid_representation(format!("duplicate entity id '{}'", entity.id));
+            }
+        }
+        Ok(())
     }
-    dtos.into_iter()
-        .map(|dto| {
-            let id = EntityId::from(dto.id.clone());
-            Ok((id, dto.into_semantic()?))
+
+    fn into_semantic(self) -> Result<Document, FormatError> {
+        let schemas = self
+            .schemas
+            .into_iter()
+            .map(|schema| {
+                let id = SchemaId::from(schema.id.clone());
+                Ok((id, schema.into_semantic_unordered()?))
+            })
+            .collect::<Result<_, FormatError>>()?;
+        let entities = self
+            .entities
+            .into_iter()
+            .map(|entity| {
+                let id = EntityId::from(entity.id.clone());
+                Ok((id, entity.into_semantic()?))
+            })
+            .collect::<Result<_, FormatError>>()?;
+        Ok(Document {
+            id: DocumentId::from(self.manifest.document.id),
+            title: self.manifest.document.title,
+            schemas,
+            entities,
         })
-        .collect()
+    }
 }
 
 impl SchemaV1 {
