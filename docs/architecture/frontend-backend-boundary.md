@@ -1,6 +1,6 @@
 # Frontend and Backend Boundary
 
-Decision state: Accepted direction. ADR-0020 makes the Headless Semantic API the mandatory first-party semantic product boundary. ADR-0024 defines immutable revision-pinned SemanticPatch proposal meaning. ADR-0022 accepts the resident shared Rust semantic/application runtime and host separation as the preferred interactive topology. Concrete proposal/revision/session/transport mechanics remain Deferred to later runtime work.
+Decision state: Accepted direction. ADR-0020 makes the Headless Semantic API the mandatory first-party semantic product boundary. ADR-0024 defines immutable revision-pinned SemanticPatch proposal meaning. ADR-0026 defines trusted footprint derivation, scoped authorization, exact Human Approval, and semantic/external-effect separation. ADR-0022 accepts the resident shared Rust semantic/application runtime and host separation as the preferred interactive topology. Concrete authorization/proposal/revision/session/transport mechanics remain Deferred to #29/#30/#93 and later runtime work.
 
 ## Principle
 
@@ -14,7 +14,7 @@ For an open interactive document, authoritative in-memory semantic state belongs
 
 In this document, `Rust Runtime` means the shared Rust semantic/application runtime built around `workspace-engine` and the lower semantic engines, not the `semantic-core` crate alone.
 
-The Accepted crate ownership and dependency direction are recorded in [ADR-0016](../decisions/ADR-0016-milestone-02-rust-crate-layering.md). The first-class client contract is defined by [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md), the revision-pinned proposal contract by [ADR-0024](../decisions/ADR-0024-revision-pinned-semantic-patch.md), and both are specified by [`semantic-api.md`](../specs/semantic-api.md). Runtime ownership and host separation are defined by [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md).
+The Accepted crate ownership and dependency direction are recorded in [ADR-0016](../decisions/ADR-0016-milestone-02-rust-crate-layering.md). The first-class client contract is defined by [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md), the revision-pinned proposal contract by [ADR-0024](../decisions/ADR-0024-revision-pinned-semantic-patch.md), and both are specified by [`semantic-api.md`](../specs/semantic-api.md). Authorization and Approval meaning are defined by [ADR-0026](../decisions/ADR-0026-scoped-semantic-authorization-and-approval.md) and [`semantic-authorization.md`](../specs/semantic-authorization.md). Runtime ownership and host separation are defined by [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md).
 
 ```text
 React / Desktop / Web / future Mobile UI
@@ -22,6 +22,9 @@ React / Desktop / Web / future Mobile UI
         | first-party Semantic API client
         v
 First-class Semantic API
+        |
+        v
+Trusted authorization/application boundary
         |
         v
 Resident shared Rust semantic/application runtime
@@ -59,17 +62,24 @@ The shared semantic/application runtime owns:
 - semantic validation and authoritative operation gates;
 - ADR-0020 typed semantic Commands and Queries;
 - Propose/Execute semantic behavior and ADR-0024 SemanticPatch binding;
+- trusted derivation of ADR-0026 operation-family/disclosure-scope and
+  associated operation-family/mutation-class/write-scope requirements;
+- live scoped-Grant and exact-Approval checks at a trusted boundary that is not
+  only UI or `ai-api` convention;
 - semantic comparison/merge orchestration;
 - all-or-nothing semantic publication for commands/batches; and
 - presentation-neutral semantic results/diagnostics.
 
 ADR-0022 prefers retaining this runtime across ordinary interactive operations instead of serializing/reconstructing the complete semantic document for each edit/query.
 
-When SemanticPatch is implemented, the trusted runtime boundary MUST enforce
-base equality and same-ID immutability. The exact proposal-ID and
-revision/precondition types, resident session handle, concurrency algorithm,
-cancellation behavior, state commit/swap mechanism, and projection-delivery
-protocol remain Deferred to #29/#93/#94 and related runtime work.
+When SemanticPatch is implemented, the trusted boundary MUST enforce base
+equality, same-ID immutability, rederived authorization footprints, live Grant
+coverage, and exact Human Approval for Delegated-origin or Delegated-authority
+publication. Approval is consumed only atomically with successful semantic
+publication. Exact crate
+placement, authorization/Approval DTOs and state, proposal/revision types,
+resident session handle, concurrency algorithm, state commit/swap mechanism,
+and projection/redaction delivery remain #29/#30/#93/#94 work.
 
 ## Snapshot boundaries
 
@@ -106,6 +116,9 @@ A frontend MUST NOT:
 - target storage paths, JSON pointers, row/cell coordinates, or Rust field layout as semantic identity;
 - mutate proposal contents under the same proposal identity or silently rebase
   a stale proposal;
+- authoritatively declare its own disclosure/write footprint, Principal class,
+  Grant coverage, or Approval state;
+- reveal preview/diff/diagnostic evidence beyond live Query scope;
 - derive operation permission from diagnostic severity/message rather than the authoritative gate/authorization boundary; or
 - implement a host-specific version of formula, validation, mutation, diff, merge, or atomicity semantics.
 
@@ -119,8 +132,8 @@ A Worker, bridge, or transport may host, retain, cache, serialize, batch-deliver
 
 The current workspace-engine operation surface remains substantially
 snapshot-style and has no general SemanticPatch or AtomicBatch implementation.
-ADR-0022/ADR-0024 make the resident and proposal laws Accepted targets while
-allowing implementation to lag until #29/#93–#95.
+ADR-0022/ADR-0024/ADR-0026 make the resident, proposal, and authorization laws
+Accepted targets while allowing implementation to lag until #29/#30/#93–#95.
 
 Separately, #123 implements `.roproj/v1` at the storage/native host boundary
 without moving filesystem authority into workspace-engine or the interactive
@@ -143,5 +156,6 @@ This avoids both expensive whole-document client/runtime traffic as the default 
 - ADR-0020
 - ADR-0022
 - ADR-0024
-- Issues #3, #26, #28, #29, #44, #93, #94, #95, #123
+- ADR-0026
+- Issues #3, #26, #28, #29, #30, #44, #93, #94, #95, #123
 - PR #91

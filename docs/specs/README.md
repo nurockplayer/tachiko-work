@@ -28,7 +28,8 @@ The semantic model owns meaning. Physical formats are representations. ADR-0017 
 
 | Document | Read it for |
 | --- | --- |
-| [`semantic-api.md`](semantic-api.md) | ADR-0020 first-class transport-neutral Semantic API, ADR-0024 immutable revision-pinned SemanticPatch, and ADR-0022 runtime-host ownership constraints; exact DTO/session/transport mechanics remain Deferred |
+| [`semantic-api.md`](semantic-api.md) | ADR-0020 first-class transport-neutral Semantic API, ADR-0024 immutable revision-pinned SemanticPatch, ADR-0026 authorization/approval integration, and ADR-0022 runtime-host ownership constraints; exact DTO/session/transport mechanics remain Deferred |
+| [`semantic-authorization.md`](semantic-authorization.md) | ADR-0026 principal, capability, stable-ID scope, trusted footprint, Grant, exact Human Approval, expiry/replay/revocation, provenance, and effect-domain contract |
 | [`semantic-data-model.md`](semantic-data-model.md) | Semantic data-model contract and terminology |
 | [`schema-system.md`](schema-system.md) | Durable schema declaration behavior and the boundary from runtime validation policy |
 | [`validation-engine.md`](validation-engine.md) | ADR-0019 staged validation, candidate/finalization semantics, full-validation oracle, and operation gating |
@@ -40,32 +41,40 @@ ADR-0020 makes the Headless Semantic API the mandatory first-party semantic
 product boundary while keeping current Rust APIs, serde shapes, complete
 operation catalogue, and transport mechanics replaceable. ADR-0024 defines one
 immutable proposal occurrence around `Propose(Command | AtomicBatch)`, exact
-Semantic API/base/change binding, and fail-closed stale meaning without freezing
-proposal/revision bytes, digests, approval, or implementation. ADR-0022 accepts
-the resident shared Rust runtime, no-second-canonical-client-model rule, host
-separation, explicit snapshot boundaries, and native/WASM semantic parity while
-leaving exact session/revision/Worker/ABI/persistence mechanics Deferred to
-#93–#95 and future host/transport implementation. ADR-0019 resolves the
-validation/diagnostics architecture; formula binding/failure/numeric semantics
-remain governed by ADR-0018; stable identity by ADR-0015; storage representation
-by ADR-0017.
+Semantic API/base/change binding, and fail-closed stale meaning. ADR-0026 adds
+the closed MVP authorization contract: domain-scoped Human/Delegated
+principals, independent Query/Propose/Approve/Execute actions and operation
+families, stable-ID document-local scopes, trusted relational authorization-
+footprint derivation, Value/Formula/Structure/Schema/Destructive classes, exact
+finite Human Approval for Delegated-origin or Delegated-authority publication,
+replay/revocation rules, minimum provenance, and separation from host/external
+effects. Concrete lifecycle, state, enforcement, and revision mechanics remain
+#29/#30/#93. ADR-0022 accepts the resident shared Rust runtime,
+no-second-canonical-client-model rule, host separation, explicit snapshot
+boundaries, and native/WASM semantic parity while leaving exact
+session/revision/Worker/ABI/persistence mechanics Deferred to #93–#95 and future
+host/transport implementation. ADR-0019 resolves the validation/diagnostics
+architecture; formula binding/failure/numeric semantics remain governed by
+ADR-0018; stable identity by ADR-0015; storage representation by ADR-0017.
 
 ## AI, security, and extensibility
 
 | Document | Read it for |
 | --- | --- |
-| [`ai-agent-api.md`](ai-agent-api.md) | Implemented AI-facing read/explain/suggest adapter over ADR-0007 delegated authority, ADR-0020 Semantic API behavior, and ADR-0024 proposal rules; current `Suggestion` is not SemanticPatch |
+| [`ai-agent-api.md`](ai-agent-api.md) | Implemented AI-facing read/explain/suggest adapter over ADR-0007 delegated authority, ADR-0020 Semantic API behavior, ADR-0024 proposal rules, and ADR-0026 authorization/approval; current `Suggestion` is not SemanticPatch or Approval |
 | [`security-model.md`](security-model.md) | Security constraints and model |
 | [`plugin-system.md`](plugin-system.md) | Accepted extensibility direction plus still-open runtime/sandbox design |
 | [`migration-framework.md`](migration-framework.md) | Progressive migration direction and future adapter framework |
 
-Concrete AI mutation, capability identifiers, grants, approval/provenance and
-digest protocol, plugin ABI/sandbox, and migration fidelity contracts remain
-narrower decision work. ADR-0024 resolves #27's proposal/base contract;
-ADR-0020 requires semantic operations to be capability-addressable while #28
-retains the exact authorization protocol. ADR-0019 allows deterministic
-read-only domain/extension validators to share diagnostic semantics without
-deciding plugin runtime mechanics.
+Concrete AI mutation lifecycle and enforcement remain narrower implementation
+work. ADR-0026 resolves #28's principal/capability/scope/Grant/Approval,
+footprint, provenance, and structural exact-binding contract without selecting
+canonical bytes, a digest profile, public DTOs, or enterprise IAM. #29 owns the
+preview/apply lifecycle and Approval-state/atomic-consumption implementation; #30
+owns trusted enforcement, prompt/data separation, bypass prevention, and
+external-effect denial; #93 owns concrete semantic revision/session mechanics.
+ADR-0019 allows deterministic read-only domain/extension validators to share
+diagnostic semantics without deciding plugin runtime mechanics.
 
 ## Collaboration and history models
 
