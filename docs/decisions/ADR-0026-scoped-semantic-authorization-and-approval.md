@@ -66,6 +66,10 @@ domain, PrincipalId)` occurrence. The same PrincipalId can never be
 reclassified between `Human` and `Delegated`; a change of kind creates a new
 principal occurrence with a new PrincipalId.
 
+Every authorization-relevant principal comparison uses the complete
+`(authorization domain, PrincipalId)` occurrence. A bare PrincipalId from one
+domain never matches the same-spelled PrincipalId in another domain.
+
 `(authorization domain, PrincipalId)` identifies one non-reusable,
 non-reassignable principal occurrence. Deleting, disabling, transferring,
 recreating, or replacing an account cannot assign that PrincipalId to a
@@ -393,7 +397,8 @@ SemanticPatch or Approval. At the publication boundary, publication remains
 conditional on all of these facts still holding:
 
 ```text
-effective executor occurrence is active and authenticated
+complete effective executor occurrence, including authorization domain, is
+    active and authenticated
 AND that occurrence's immutable PrincipalKind remains proven and matches the
     selected authorization path; direct Execute without Approval requires Human
 AND live Execute Grants cover every rederived associated
@@ -423,16 +428,17 @@ comparison internally first and retains the result without disclosure.
 The boundary may also detect Semantic API version support internally, but
 neither version detection nor stale detection grants a right to learn proposal
 or revision state. The boundary next authenticates and matches the
-Approval-bound executor and verifies the complete trusted proposal/Approval
-binding. An unauthenticated or unbound caller receives only a disclosure-safe
-authorization denial. A missing, unrelated, mismatched, or unverifiable
-proposal receives the same disclosure-safe binding denial regardless of the
-retained version or base result. Only after exact binding is proven may the
-boundary expose an unsupported-version result and then the retained `Stale`
-outcome; stale details remain limited by Query authority. If the complete
-binding cannot be proven for an unsupported version, the result is binding
-denial rather than version disclosure. This detect-versus-disclose distinction
-preserves ADR-0024 without amending it.
+complete authenticated caller occurrence, including authorization domain,
+against the Approval-bound executor occurrence and verifies the complete
+trusted proposal/Approval binding. An unauthenticated, cross-domain, or unbound
+caller receives only a disclosure-safe authorization denial. A missing,
+unrelated, mismatched, or unverifiable proposal receives the same disclosure-
+safe binding denial regardless of the retained version or base result. Only
+after exact binding is proven may the boundary expose an unsupported-version
+result and then the retained `Stale` outcome; stale details remain limited by
+Query authority. If the complete binding cannot be proven for an unsupported
+version, the result is binding denial rather than version disclosure. This
+detect-versus-disclose distinction preserves ADR-0024 without amending it.
 
 Approval-gated Execute adds all of these independent requirements to the common
 publication condition:
@@ -440,7 +446,9 @@ publication condition:
 ```text
 supported immutable SemanticPatch
 AND exact proposal/base + complete Approval binding
-AND authenticated executor matches the Approval-bound executor
+AND complete authenticated executor occurrence, including authorization domain,
+    matches the Approval-bound executor occurrence and remains equal at
+    publication
 AND bound relational AuthorizationFootprint remains exact
 AND Approval-bound authorization-policy version equals the effective policy
     governing execution and still equals it at publication
@@ -666,6 +674,11 @@ Future implementation must preserve these representation-neutral outcomes:
     under the same PrincipalId only when the trusted boundary proves the same
     authorization subject and unchanged PrincipalKind; all independent Grant,
     Approval, and publication checks still apply.
+42. **Cross-domain same-ID executor** — an authenticated caller from one
+    authorization domain cannot satisfy an Approval-bound executor occurrence
+    in another domain even when both domains contain the same-spelled
+    PrincipalId; the complete occurrence equality remains required through
+    publication, and Grants from one domain cannot cover the other.
 
 ## Stability classification
 

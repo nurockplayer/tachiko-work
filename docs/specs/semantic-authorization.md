@@ -130,7 +130,8 @@ executor. Mutable use/revocation state belongs to a trusted registry.
 ## Principal contract
 
 1. A trusted identity/host/session boundary MUST supply the effective
-   PrincipalId for every authorization-relevant request.
+   AuthorizationDomain and PrincipalId for every authorization-relevant
+   request.
 2. `(AuthorizationDomain, PrincipalId)` MUST identify exactly one principal
    occurrence, its authorization subject, and one immutable PrincipalKind. It
    MUST NOT be reused or reassigned to a different subject or kind.
@@ -146,8 +147,11 @@ executor. Mutable use/revocation state belongs to a trusted registry.
    or provenance when reused. Those references remain attached only to the
    original principal occurrence and MUST NOT transfer to a replacement
    occurrence created for a different subject or kind.
-6. PrincipalId is meaningful within one authorization domain. A client MUST
-   NOT substitute an identifier from another domain.
+6. PrincipalId is meaningful within one authorization domain. Every principal
+   equality check MUST compare the complete `(AuthorizationDomain,
+   PrincipalId)` occurrence; a client MUST NOT substitute an identifier from
+   another domain, and same-spelled PrincipalIds in different domains are
+   distinct occurrences.
 7. A request payload, prompt, model response, document, import, or plugin result
    MUST NOT select or upgrade the effective principal or principal kind.
 8. Proposer/originator, Human approver, and executor are separate recorded
@@ -647,7 +651,8 @@ Every Execute path, including directly authenticated Human Execute without a
 SemanticPatch or Approval, MUST satisfy this common publication-boundary law:
 
 ```text
-1. Authenticate an active effective executor and resolve that occurrence's
+1. Authenticate an active effective executor as one complete
+   `(AuthorizationDomain, PrincipalId)` occurrence and resolve that occurrence's
    immutable PrincipalKind. A direct Execute path without Approval requires
    Human.
 2. Determine the effective authorization policy selected by the trusted
@@ -658,14 +663,15 @@ SemanticPatch or Approval, MUST satisfy this common publication-boundary law:
    requirement.
 4. Evaluate the candidate and authoritative gate against a known semantic
    context.
-5. At the publication boundary, publish only while the same executor occurrence
-   is still active and authenticated, its immutable PrincipalKind remains
-   proven and matches the selected authorization path, sufficient live
-   relational Execute Grant coverage still exists, the authorization policy
-   used for evaluation remains effective, the evaluated semantic context is
-   still current (or an equivalent revision-safe condition holds), the
-   authoritative gate result is still valid, and no unauthorized host/external
-   effect is performed.
+5. At the publication boundary, publish only while the same complete executor
+   occurrence, including AuthorizationDomain, is still active and
+   authenticated, its immutable PrincipalKind remains proven and matches the
+   selected authorization path, sufficient live relational Execute Grant
+   coverage from that domain still exists, the authorization policy used for
+   evaluation remains effective, the evaluated semantic context is still
+   current (or an equivalent revision-safe condition holds), the authoritative
+   gate result is still valid, and no unauthorized host/external effect is
+   performed.
 ```
 
 Execute-Grant revocation or expiry, executor disablement, effective-policy
@@ -687,9 +693,11 @@ work.
    proposal base under ADR-0024. Retain the result without disclosing it. The
    trusted boundary MAY also detect Semantic API version support internally and
    retain that result without disclosing it.
-2. Authenticate the caller and require caller == Approval-bound executor. An
-   unauthenticated or unbound caller receives only a disclosure-safe
-   authorization denial, regardless of either retained result.
+2. Authenticate the caller as a complete `(AuthorizationDomain, PrincipalId)`
+   occurrence and require exact equality with the Approval-bound executor
+   occurrence, including the ApprovalBinding AuthorizationDomain. An
+   unauthenticated, cross-domain, or otherwise unbound caller receives only a
+   disclosure-safe authorization denial, regardless of either retained result.
 3. Verify trusted immutable proposal identity/content, complete ADR-0024
    ExactChangeBinding, retained relational AuthorizationFootprint, and exact
    ApprovalBinding equality, including authorization domain, ProposalId,
@@ -709,19 +717,21 @@ work.
 6. For a current base, rederive associated operation-family,
    canonical-write-scope, and mutation-class requirements from typed meaning
    and require relational equality with the bound trusted footprint.
-7. Recheck originator, approver, and executor occurrences and their immutable
-   PrincipalKinds, authorizing Approve Grant references, sufficient current
-   live Execute Grants, Approval expiry, revocation, and use state.
+7. Recheck the complete AuthorizationDomain/PrincipalId originator, approver,
+   and executor occurrences and their immutable PrincipalKinds, authorizing
+   Approve Grant references, sufficient current live Execute Grants from the
+   bound domain, Approval expiry, revocation, and use state.
 8. Re-run authoritative semantic preconditions, validation/calculation, and
    operation gate.
 9. At the publication boundary, satisfy the common Execute publication rule.
    Additionally require the Approval-bound authorization-policy version still
    to equal the effective policy governing execution, and condition semantic
-   publication and Approval consumption on the bound originator and approver
-   occurrences and their immutable PrincipalKinds still being proven,
-   authorizing Approve Grant references, Approval state, and exact proposal/
-   Approval/base binding still being valid. If any common or Approval-specific
-   condition raced or cannot be proven valid, publish nothing.
+   publication and Approval consumption on the authenticated executor still
+   equaling the complete Approval-bound executor occurrence, the bound
+   originator and approver occurrences and their immutable PrincipalKinds still
+   being proven, authorizing Approve Grant references, Approval state, and
+   exact proposal/Approval/base binding still being valid. If any common or
+   Approval-specific condition raced or cannot be proven valid, publish nothing.
 10. When the complete condition holds, atomically publish all semantic state and
    mark Approval Consumed.
 11. Return a disclosure-safe outcome, resulting revision on success, and
@@ -855,7 +865,7 @@ A conforming client can distinguish, where applicable:
 - approval required/missing;
 - approver not trusted Human;
 - proposal occurrence or exact binding mismatch;
-- originator, approver, or executor mismatch;
+- authorization-domain, originator, approver, or executor mismatch;
 - authorization-policy version unsupported or not the effective version;
 - approval expired, revoked, consumed, or state unavailable;
 - live Approve or Execute authority lost;
@@ -978,6 +988,11 @@ authorized disclosure scope.
     only when the trusted boundary proves continuity of the same authorization
     subject and unchanged PrincipalKind; all independent live Grant, Approval,
     and publication checks still apply.
+51. An authenticated caller in one AuthorizationDomain cannot satisfy an
+    Approval-bound executor occurrence in another domain even when both domains
+    contain the same-spelled PrincipalId. The complete occurrence equality must
+    remain valid through publication, and Grants from one domain provide no
+    authority in the other.
 
 ## Stability classification
 
