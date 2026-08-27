@@ -5,7 +5,8 @@ Decision state: **Accepted**
 Authority: [ADR-0023](../decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md),
 [Issue #41](https://github.com/nurockplayer/tachiko-work/issues/41)
 
-Implementation state: Not implemented in v0.1
+Implementation state: Implemented by the production `tachiko-storage` codec,
+its native host composition, and the explicit `tachiko roproj` CLI workflow.
 
 ## Scope
 
@@ -186,3 +187,9 @@ The [Issue #41 layout-and-sharding research](../research/2026-08-24-roproj-v1-la
 evaluated this fixed 16-way tree against monolithic, mutable-key, per-object,
 and range-sharded alternatives. It provides the reproducible determinism and
 Git-diff evidence for the v1 choice.
+
+Production storage tests execute the exact-path, exact-byte, placement,
+ordering, canonicalization, and no-clobber host cases. The portable conformance
+harness also encodes one fixed semantic document to all eighteen ordered paths,
+decodes it, proves exact re-encoding, and compares its fixed evidence record
+byte-for-byte between native and `wasm32-unknown-unknown`.

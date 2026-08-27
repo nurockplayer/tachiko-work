@@ -2,7 +2,10 @@
 
 Decision state: Accepted
 
-Implementation state: Not yet implemented by a production `.roproj` codec
+Implementation state: Implemented by the production storage-owned
+`tachiko-storage` codec and explicit `tachiko roproj materialize`, `validate`,
+and `canonicalize` operations. Fixed native/`wasm32-unknown-unknown`
+conformance executes production encode, decode, and exact-tree re-encoding.
 
 Representation namespace: `.roproj/v1`
 

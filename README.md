@@ -24,6 +24,8 @@ The current product provides a complete, safe CLI-first game-balance workflow:
 - typed schemas, entities, fields, and references;
 - opaque stable semantic IDs with ergonomic mutable keys;
 - canonical identity-aware `.ro` v2 serialization plus deterministic legacy-v1 migration;
+- canonical editable `.roproj/v1` materialization, validation, and bounded
+  canonicalization as an exact 18-file project tree;
 - deterministic formula calculation and dependency tracking;
 - semantic diff with derived formula impact;
 - guided starter creation, browsing, explanation, and typed edits;
@@ -148,6 +150,29 @@ The checked-in Moonfall example and expected output are documented in
 
 Use `tachiko init scratch.ro --template empty` only when you intentionally want
 to author schemas and entities directly in canonical `.ro` JSON.
+
+## Work with canonical `.roproj/v1`
+
+Materialize an existing direct `.ro` document, validate an exact canonical
+project tree, or explicitly canonicalize an admitted bounded non-canonical
+tree:
+
+```sh
+tachiko roproj materialize balance.ro balance.roproj
+tachiko roproj validate balance.roproj
+tachiko roproj canonicalize imported.roproj canonical.roproj
+```
+
+`validate` is canonical-only: paths and bytes must already be the exact
+`.roproj/v1` tree. `canonicalize` is the explicit operation for the bounded
+non-canonical input family; it validates the complete source and publishes a
+fresh canonical tree at a distinct, absent destination. `materialize` likewise
+requires an absent output. Both operations preserve their source and never
+overwrite an existing destination or intentionally publish a partial tree.
+
+These commands work in an ordinary directory without Git, GitHub, or repository
+configuration. Direct `.ro` remains a supported compatibility representation,
+and ordinary `.ro` reads do not silently convert or rewrite it as `.roproj`.
 
 ## Grow the balance roster
 
