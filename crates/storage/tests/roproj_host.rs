@@ -512,6 +512,55 @@ fn bounded_canonicalizer_reorders_and_rehomes_without_mutating_source() {
 }
 
 #[test]
+fn bounded_canonicalizer_rejects_forbidden_field_type_members() {
+    let temp = TempDir::new();
+    let cases = [
+        (
+            "number-schema",
+            r#"{"type":"number","schema":"schema-target"}"#,
+        ),
+        ("text-schema", r#"{"type":"text","schema":"schema-target"}"#),
+        (
+            "boolean-schema",
+            r#"{"type":"boolean","schema":"schema-target"}"#,
+        ),
+        ("number-unknown", r#"{"type":"number","extra":false}"#),
+        (
+            "reference-unknown",
+            r#"{"type":"reference","schema":"schema-target","extra":false}"#,
+        ),
+    ];
+
+    for (name, field_type) in cases {
+        let source = temp.path().join(format!("{name}.roproj"));
+        write_field_type_project(&source, field_type);
+
+        assert!(
+            matches!(
+                canonicalize_roproj(&source),
+                Err(FormatError::InvalidRoProjectRepresentation { .. })
+            ),
+            "field type case {name} unexpectedly canonicalized"
+        );
+    }
+}
+
+#[test]
+fn bounded_canonicalizer_accepts_reference_with_exact_required_members() {
+    let temp = TempDir::new();
+    let source = temp.path().join("reference.roproj");
+    write_field_type_project(&source, r#"{"schema":"schema-target","type":"reference"}"#);
+
+    let canonical = canonicalize_roproj(&source).unwrap();
+
+    assert!(
+        std::str::from_utf8(canonical.file("schemas.json").unwrap())
+            .unwrap()
+            .contains("\"type\": \"reference\",\n          \"schema\": \"schema-target\"")
+    );
+}
+
+#[test]
 fn canonicalizer_manifest_error_precedes_malformed_bodies() {
     let temp = TempDir::new();
     let source = temp.path().join("noncanonical.roproj");
@@ -985,6 +1034,23 @@ fn write_noncanonical_project(root: &Path) {
     )
     .unwrap();
     fs::write(root.join("entities/extra-empty.jsonl"), b"").unwrap();
+}
+
+fn write_field_type_project(root: &Path, field_type: &str) {
+    fs::create_dir(root).unwrap();
+    fs::write(
+        root.join("manifest.json"),
+        b"{\"format\":\"tachiko.roproj\",\"format_version\":1,\"document\":{\"id\":\"doc-field-type\",\"title\":\"Field Type\"}}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("schemas.json"),
+        format!(
+            "[{{\"id\":\"schema-target\",\"key\":\"target\",\"fields\":[]}},{{\"id\":\"schema-owner\",\"key\":\"owner\",\"fields\":[{{\"id\":\"field-a\",\"key\":\"field\",\"field_type\":{field_type},\"required\":false}}]}}]\n"
+        ),
+    )
+    .unwrap();
+    fs::create_dir(root.join("entities")).unwrap();
 }
 
 fn bounded_document() -> Document {

@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::{Deserialize, de::DeserializeOwned};
+use serde::{Deserialize, Deserializer, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
 use tachiko_semantic_core::{
     Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldDefinition, FieldId,
@@ -146,13 +146,72 @@ struct FieldDefinitionV1 {
     required: bool,
 }
 
-#[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 enum FieldTypeV1 {
     Number,
     Text,
     Boolean,
     Reference { schema: String },
+}
+
+impl<'de> Deserialize<'de> for FieldTypeV1 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let mut object = BTreeMap::<String, serde_json::Value>::deserialize(deserializer)?;
+        let field_type = object
+            .remove("type")
+            .ok_or_else(|| serde::de::Error::missing_field("type"))?;
+        let serde_json::Value::String(field_type) = field_type else {
+            return Err(serde::de::Error::custom("field `type` must be a string"));
+        };
+
+        match field_type.as_str() {
+            "number" => {
+                reject_unknown_field_type_members::<D>(&object, &["type"])?;
+                Ok(Self::Number)
+            }
+            "text" => {
+                reject_unknown_field_type_members::<D>(&object, &["type"])?;
+                Ok(Self::Text)
+            }
+            "boolean" => {
+                reject_unknown_field_type_members::<D>(&object, &["type"])?;
+                Ok(Self::Boolean)
+            }
+            "reference" => {
+                let schema = object.get("schema");
+                reject_unknown_field_type_members::<D>(&object, &["type", "schema"])?;
+                let schema = schema.ok_or_else(|| serde::de::Error::missing_field("schema"))?;
+                let serde_json::Value::String(schema) = schema else {
+                    return Err(serde::de::Error::custom("field `schema` must be a string"));
+                };
+                Ok(Self::Reference {
+                    schema: schema.clone(),
+                })
+            }
+            other => Err(serde::de::Error::unknown_variant(
+                other,
+                &["number", "text", "boolean", "reference"],
+            )),
+        }
+    }
+}
+
+fn reject_unknown_field_type_members<'de, D>(
+    object: &BTreeMap<String, serde_json::Value>,
+    expected: &'static [&'static str],
+) -> Result<(), D::Error>
+where
+    D: Deserializer<'de>,
+{
+    if let Some(member) = object
+        .keys()
+        .find(|member| !expected.contains(&member.as_str()))
+    {
+        return Err(serde::de::Error::unknown_field(member, expected));
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
