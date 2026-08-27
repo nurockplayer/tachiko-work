@@ -159,7 +159,7 @@ Document(DocumentId)
 Schema(SchemaId)
 SchemaField(SchemaId, FieldId)
 Entity(EntityId)
-EntityField(EntityId, FieldId)
+EntityField(EntityId, SchemaId, FieldId)
 ```
 
 Every atom is interpreted within one document-local semantic context. A stable
@@ -174,7 +174,10 @@ Their containment meaning is:
 - `SchemaField` covers the field definition and its entity-field instances;
 - `Entity` covers the entity and its field instances, but not its schema
   definition; and
-- `EntityField` covers one exact field instance.
+- `EntityField` covers one exact field instance qualified by both its EntityId
+  and schema-scoped `(SchemaId, FieldId)` identity. Entity schema-membership
+  change does not retarget an existing atom; the old atom stops matching and a
+  new atom is required for the new membership.
 
 A Grant may cover a finite union of scope atoms only through complete relational
 bindings between its action/family/class dimensions and each scope atom. Scope
@@ -781,6 +784,11 @@ Future implementation must preserve these representation-neutral outcomes:
     Human review requires sufficient Query coverage or a separately authorized
     disclosure-safe approval projection, while exact binding verification may
     remain internal.
+49. **Entity membership does not retarget field scope** — a Grant covering
+    `EntityField(E, SchemaA, F)` does not cover `EntityField(E, SchemaB, F)`
+    after E changes schema membership, even when the schema-scoped FieldIds have
+    the same spelling; the membership change requires old/new-side authority
+    and later access under SchemaB requires a new covering Grant binding.
 
 ## Stability classification
 

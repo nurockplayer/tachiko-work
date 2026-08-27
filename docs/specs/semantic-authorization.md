@@ -275,7 +275,7 @@ Document(DocumentId)
 Schema(SchemaId)
 SchemaField(SchemaId, FieldId)
 Entity(EntityId)
-EntityField(EntityId, FieldId)
+EntityField(EntityId, SchemaId, FieldId)
 ```
 
 Every atom is interpreted within one document-local semantic context. ADR-0015
@@ -290,7 +290,10 @@ Containment meaning:
   in the relevant base or candidate.
 - SchemaField covers the field definition and its entity-field instances.
 - Entity covers the entity and its field instances, not its schema definition.
-- EntityField covers one exact field instance.
+- EntityField covers one exact field instance qualified by both its EntityId
+  and schema-scoped `(SchemaId, FieldId)` identity. Changing entity schema
+  membership MUST NOT retarget an existing atom; the old atom stops matching
+  and a new atom is required for the new membership.
 
 A Grant MAY cover a finite union of atoms only through complete relational
 bindings between its action/family/class dimensions and each atom. Scope atoms
@@ -1091,6 +1094,11 @@ authorized disclosure scope.
     proposal content. Human review requires sufficient Query coverage or a
     separately authorized disclosure-safe approval projection; exact binding
     verification may remain internal.
+58. A Grant covering `EntityField(E, SchemaA, F)` does not cover
+    `EntityField(E, SchemaB, F)` after E changes schema membership, even when
+    the two schema-scoped FieldIds have the same spelling. The membership change
+    requires old/new-side authority, and later access under SchemaB requires a
+    new covering Grant binding.
 
 ## Stability classification
 
