@@ -727,9 +727,10 @@ hostile-container profile; they must remain explicit and machine-
 distinguishable.
 
 The current production host admits at most 64 MiB of complete package bytes
-and applies the same finite budget while reading a pack source. This is the
-Provisional `portable_package.resource_limit` profile, not ZIP32 capacity or a
-semantic document limit.
+and applies the same finite budget while reading a pack source. Its
+version-independent `package.json` probe admits at most 256 nested JSON
+containers. These are the Provisional `portable_package.resource_limit`
+profile, not ZIP32 capacity or semantic document limits.
 
 CRC-32 and the unauthenticated payload root are not security against a
 malicious writer. Signatures, trust roots, authentication, freshness,

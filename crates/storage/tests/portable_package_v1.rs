@@ -79,6 +79,80 @@ fn write_u32(destination: &mut [u8], offset: usize, value: u32) {
     destination[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
 }
 
+fn push_u16(destination: &mut Vec<u8>, value: u16) {
+    destination.extend_from_slice(&value.to_le_bytes());
+}
+
+fn push_u32(destination: &mut Vec<u8>, value: u32) {
+    destination.extend_from_slice(&value.to_le_bytes());
+}
+
+fn many_entry_future_package(entry_count: u16) -> Vec<u8> {
+    assert!(entry_count > 0 && entry_count < u16::MAX);
+    let manifest = b"{\"format\":\"tachiko.portable-package\",\"format_version\":2}";
+    let mut archive = Vec::new();
+    let mut local_offsets = Vec::with_capacity(usize::from(entry_count));
+
+    for index in 0..entry_count {
+        let (name, body) = if index == 0 {
+            (b"package.json".as_slice(), manifest.as_slice())
+        } else {
+            (b"x".as_slice(), b"".as_slice())
+        };
+        local_offsets.push(u32::try_from(archive.len()).unwrap());
+        push_u32(&mut archive, 0x0403_4b50);
+        push_u16(&mut archive, 10);
+        push_u16(&mut archive, 0x0800);
+        push_u16(&mut archive, 0);
+        push_u16(&mut archive, 0);
+        push_u16(&mut archive, 0x0021);
+        push_u32(&mut archive, crc32(body));
+        push_u32(&mut archive, u32::try_from(body.len()).unwrap());
+        push_u32(&mut archive, u32::try_from(body.len()).unwrap());
+        push_u16(&mut archive, u16::try_from(name.len()).unwrap());
+        push_u16(&mut archive, 0);
+        archive.extend_from_slice(name);
+        archive.extend_from_slice(body);
+    }
+
+    let central_offset = u32::try_from(archive.len()).unwrap();
+    for (index, local_offset) in local_offsets.into_iter().enumerate() {
+        let (name, body) = if index == 0 {
+            (b"package.json".as_slice(), manifest.as_slice())
+        } else {
+            (b"x".as_slice(), b"".as_slice())
+        };
+        push_u32(&mut archive, 0x0201_4b50);
+        push_u16(&mut archive, 20);
+        push_u16(&mut archive, 10);
+        push_u16(&mut archive, 0x0800);
+        push_u16(&mut archive, 0);
+        push_u16(&mut archive, 0);
+        push_u16(&mut archive, 0x0021);
+        push_u32(&mut archive, crc32(body));
+        push_u32(&mut archive, u32::try_from(body.len()).unwrap());
+        push_u32(&mut archive, u32::try_from(body.len()).unwrap());
+        push_u16(&mut archive, u16::try_from(name.len()).unwrap());
+        push_u16(&mut archive, 0);
+        push_u16(&mut archive, 0);
+        push_u16(&mut archive, 0);
+        push_u16(&mut archive, 0);
+        push_u32(&mut archive, 0);
+        push_u32(&mut archive, local_offset);
+        archive.extend_from_slice(name);
+    }
+    let central_size = u32::try_from(archive.len()).unwrap() - central_offset;
+    push_u32(&mut archive, 0x0605_4b50);
+    push_u16(&mut archive, 0);
+    push_u16(&mut archive, 0);
+    push_u16(&mut archive, entry_count);
+    push_u16(&mut archive, entry_count);
+    push_u32(&mut archive, central_size);
+    push_u32(&mut archive, central_offset);
+    push_u16(&mut archive, 0);
+    archive
+}
+
 fn zip_records(source: &[u8]) -> Vec<ZipRecord> {
     let end = source.len() - 22;
     let count = usize::from(read_u16(source, end + 10));
@@ -486,6 +560,64 @@ fn unsupported_package_version_wins_over_future_owned_manifest_shape() {
 }
 
 #[test]
+fn unsupported_package_version_wins_over_deep_future_owned_values() {
+    let nested = format!(
+        "{{\"format\":\"tachiko.portable-package\",\"format_version\":2,\"future\":{}{}}}",
+        "[".repeat(140),
+        "]".repeat(140)
+    );
+    let package = replace_entry_body(
+        &decode_hex(EMPTY_PACKAGE_HEX),
+        "package.json",
+        nested.as_bytes(),
+    );
+
+    assert!(matches!(
+        decode_portable_package_v1(&package),
+        Err(FormatError::PortablePackage(
+            PortablePackageError::UnsupportedVersion { ref found }
+        )) if found == "2"
+    ));
+}
+
+#[test]
+fn future_manifest_nesting_limit_is_explicit() {
+    let nested = format!(
+        "{{\"format\":\"tachiko.portable-package\",\"format_version\":2,\"future\":{}{}}}",
+        "[".repeat(300),
+        "]".repeat(300)
+    );
+    let package = replace_entry_body(
+        &decode_hex(EMPTY_PACKAGE_HEX),
+        "package.json",
+        nested.as_bytes(),
+    );
+
+    assert!(matches!(
+        decode_portable_package_v1(&package),
+        Err(FormatError::PortablePackage(
+            PortablePackageError::ResourceLimit {
+                resource: "package.json nesting",
+                ..
+            }
+        ))
+    ));
+}
+
+#[test]
+fn maximum_zip32_entry_count_dispatches_in_linear_work() {
+    let package = many_entry_future_package(u16::MAX - 1);
+    assert!(package.len() < PORTABLE_PACKAGE_V1_MAX_ARCHIVE_BYTES);
+
+    assert!(matches!(
+        decode_portable_package_v1(&package),
+        Err(FormatError::PortablePackage(
+            PortablePackageError::UnsupportedVersion { ref found }
+        )) if found == "2"
+    ));
+}
+
+#[test]
 fn corruption_and_stale_integrity_have_distinct_failures() {
     let golden = decode_hex(EMPTY_PACKAGE_HEX);
     let payload = record(&golden, "payload/manifest.json");
@@ -616,7 +748,26 @@ fn noncanonical_zip_metadata_order_and_record_disagreement_are_rejected() {
     write_u32(&mut disagreement, payload.central_offset + 16, crc ^ 1);
     let mut offset_disagreement = golden;
     write_u32(&mut offset_disagreement, payload.central_offset + 42, 0);
-    for package in [disagreement, offset_disagreement] {
+    let mut local_size_disagreement = decode_hex(EMPTY_PACKAGE_HEX);
+    let final_shard = record(&local_size_disagreement, "payload/entities/f.jsonl");
+    write_u32(
+        &mut local_size_disagreement,
+        final_shard.local_offset + 18,
+        1,
+    );
+    let mut central_size_disagreement = decode_hex(EMPTY_PACKAGE_HEX);
+    let final_shard = record(&central_size_disagreement, "payload/entities/f.jsonl");
+    write_u32(
+        &mut central_size_disagreement,
+        final_shard.central_offset + 20,
+        1,
+    );
+    for package in [
+        disagreement,
+        offset_disagreement,
+        local_size_disagreement,
+        central_size_disagreement,
+    ] {
         assert!(matches!(
             decode_portable_package_v1(&package),
             Err(FormatError::PortablePackage(

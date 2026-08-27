@@ -183,7 +183,8 @@ root, exact payload bytes, and semantic validity before publishing the exact
 18-file tree. `compare-package` is read-only: equal roots report `consistent`;
 a mismatch changes neither side. Pack and unpack use atomic no-replace
 publication, including destination races, and admit at most 64 MiB per package
-under the current host resource profile.
+and at most 256 nested JSON containers in `package.json` under the current host
+resource profile.
 
 These commands work in an ordinary directory without Git, GitHub, or repository
 configuration. Direct `.ro` remains a supported compatibility representation,

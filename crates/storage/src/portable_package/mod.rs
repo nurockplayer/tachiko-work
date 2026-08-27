@@ -48,9 +48,7 @@ pub enum PortablePackageError {
     SourceNotCanonical { message: String },
     #[error("portable_package.capacity_exceeded: {resource} exceeds ordinary ZIP32 capacity")]
     CapacityExceeded { resource: &'static str },
-    #[error(
-        "portable_package.resource_limit: {resource} limit is {limit} bytes, found {actual} bytes"
-    )]
+    #[error("portable_package.resource_limit: {resource} limit is {limit}, found {actual}")]
     ResourceLimit {
         resource: &'static str,
         limit: usize,

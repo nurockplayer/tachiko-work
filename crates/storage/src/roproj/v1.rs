@@ -383,9 +383,9 @@ fn decode_manifest(bytes: &[u8]) -> Result<ManifestV1, FormatError> {
     }
     let version = match inspection.version {
         None => return Err(FormatError::RoProjectVersionMissing),
-        Some(VersionToken::Unsigned(version)) => {
-            u32::try_from(version).map_err(|_| FormatError::RoProjectVersionMalformed)?
-        }
+        Some(VersionToken::Unsigned(version)) => version
+            .parse::<u32>()
+            .map_err(|_| FormatError::RoProjectVersionMalformed)?,
         Some(VersionToken::Other) => return Err(FormatError::RoProjectVersionMalformed),
     };
     if version == 0 {
@@ -1271,7 +1271,7 @@ fn map_frontend_error(path: &str, error: FrontendError) -> FormatError {
             path: path.to_owned(),
             member,
         },
-        FrontendError::NestingLimit { limit } => FormatError::InvalidRoProjectRepresentation {
+        FrontendError::NestingLimit { limit, .. } => FormatError::InvalidRoProjectRepresentation {
             message: format!("'{path}' exceeds .roproj/v1 JSON nesting limit {limit}"),
         },
     }

@@ -336,9 +336,9 @@ fn inspect_envelope(source: &[u8]) -> Result<(&str, u32), FormatError> {
     let inspection = inspect(source).map_err(map_frontend_error)?;
     let version = match inspection.version {
         None => return Err(FormatError::VersionMissing),
-        Some(VersionToken::Unsigned(version)) => {
-            u32::try_from(version).map_err(|_| FormatError::VersionMalformed)?
-        }
+        Some(VersionToken::Unsigned(version)) => version
+            .parse::<u32>()
+            .map_err(|_| FormatError::VersionMalformed)?,
         Some(VersionToken::Other) => return Err(FormatError::VersionMalformed),
     };
     if version == 0 {
@@ -488,7 +488,7 @@ fn map_frontend_error(error: FrontendError) -> FormatError {
     match error {
         FrontendError::InvalidJson(source) => FormatError::InvalidJson { source },
         FrontendError::DuplicateMember(member) => FormatError::DuplicateMember { member },
-        FrontendError::NestingLimit { limit } => FormatError::InvalidRepresentation {
+        FrontendError::NestingLimit { limit, .. } => FormatError::InvalidRepresentation {
             message: format!("JSON nesting exceeds representation limit {limit}"),
             source: None,
         },

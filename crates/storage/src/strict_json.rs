@@ -4,15 +4,17 @@ use serde::{
     Deserialize,
     de::{self, DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor},
 };
+use serde_json::value::RawValue;
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Inspection {
     pub(crate) version: Option<VersionToken>,
+    pub(crate) format: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum VersionToken {
-    Unsigned(u64),
+    Unsigned(String),
     Other,
 }
 
@@ -20,7 +22,14 @@ pub(crate) enum VersionToken {
 pub(crate) enum FrontendError {
     InvalidJson(serde_json::Error),
     DuplicateMember(String),
-    NestingLimit { limit: usize },
+    NestingLimit { limit: usize, actual: usize },
+}
+
+fn empty_inspection() -> Inspection {
+    Inspection {
+        version: None,
+        format: None,
+    }
 }
 
 /// Parse a single JSON value, rejecting duplicate object members.
@@ -36,8 +45,18 @@ pub(crate) fn inspect(source: &str) -> Result<Inspection, FrontendError> {
 ///
 /// This supports representation dispatch before a selected version owns the
 /// structure of nested future metadata.
-pub(crate) fn inspect_top_level(source: &str) -> Result<Inspection, FrontendError> {
-    inspect_with_recursion(source, false, false)
+pub(crate) fn inspect_top_level(
+    source: &str,
+    maximum_nesting: usize,
+) -> Result<Inspection, FrontendError> {
+    let actual = json_nesting_depth(source.as_bytes());
+    if actual > maximum_nesting {
+        return Err(FrontendError::NestingLimit {
+            limit: maximum_nesting,
+            actual,
+        });
+    }
+    inspect_with_recursion(source, true, false)
 }
 
 /// Inspect `.roproj` JSON with a representation-derived nesting bound.
@@ -50,9 +69,11 @@ pub(crate) fn inspect_roproj(
     source: &str,
     maximum_nesting: usize,
 ) -> Result<Inspection, FrontendError> {
-    if exceeds_json_nesting(source.as_bytes(), maximum_nesting) {
+    let actual = json_nesting_depth(source.as_bytes());
+    if actual > maximum_nesting {
         return Err(FrontendError::NestingLimit {
             limit: maximum_nesting,
+            actual,
         });
     }
     inspect_with_recursion(source, true, true)
@@ -91,8 +112,9 @@ fn inspect_with_recursion(
     Ok(inspection)
 }
 
-fn exceeds_json_nesting(source: &[u8], maximum: usize) -> bool {
+fn json_nesting_depth(source: &[u8]) -> usize {
     let mut nesting = 0_usize;
+    let mut maximum = 0_usize;
     let mut in_string = false;
     let mut escaped = false;
     for &byte in source {
@@ -110,15 +132,13 @@ fn exceeds_json_nesting(source: &[u8], maximum: usize) -> bool {
             b'"' => in_string = true,
             b'{' | b'[' => {
                 nesting += 1;
-                if nesting > maximum {
-                    return true;
-                }
+                maximum = maximum.max(nesting);
             }
             b'}' | b']' => nesting = nesting.saturating_sub(1),
             _ => {}
         }
     }
-    false
+    maximum
 }
 
 struct RootSeed<'a> {
@@ -197,42 +217,42 @@ impl<'de> Visitor<'de> for ValueVisitor<'_> {
     where
         E: de::Error,
     {
-        Ok(Inspection { version: None })
+        Ok(empty_inspection())
     }
 
     fn visit_i64<E>(self, _: i64) -> Result<Self::Value, E>
     where
         E: de::Error,
     {
-        Ok(Inspection { version: None })
+        Ok(empty_inspection())
     }
 
     fn visit_u64<E>(self, _: u64) -> Result<Self::Value, E>
     where
         E: de::Error,
     {
-        Ok(Inspection { version: None })
+        Ok(empty_inspection())
     }
 
     fn visit_f64<E>(self, _: f64) -> Result<Self::Value, E>
     where
         E: de::Error,
     {
-        Ok(Inspection { version: None })
+        Ok(empty_inspection())
     }
 
     fn visit_str<E>(self, _: &str) -> Result<Self::Value, E>
     where
         E: de::Error,
     {
-        Ok(Inspection { version: None })
+        Ok(empty_inspection())
     }
 
     fn visit_unit<E>(self) -> Result<Self::Value, E>
     where
         E: de::Error,
     {
-        Ok(Inspection { version: None })
+        Ok(empty_inspection())
     }
 
     fn visit_seq<A>(self, sequence: A) -> Result<Self::Value, A::Error>
@@ -240,7 +260,7 @@ impl<'de> Visitor<'de> for ValueVisitor<'_> {
         A: SeqAccess<'de>,
     {
         inspect_array(sequence, self.duplicate, self.check_nested_duplicates)?;
-        Ok(Inspection { version: None })
+        Ok(empty_inspection())
     }
 
     fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
@@ -251,7 +271,7 @@ impl<'de> Visitor<'de> for ValueVisitor<'_> {
             inspect_object(map, self.duplicate, self.root, self.check_nested_duplicates)
         } else {
             ignore_object(map)?;
-            Ok(Inspection { version: None })
+            Ok(empty_inspection())
         }
     }
 }
@@ -286,7 +306,7 @@ impl<'de> Visitor<'de> for VersionVisitor<'_> {
     where
         E: de::Error,
     {
-        Ok(VersionToken::Unsigned(value))
+        Ok(VersionToken::Unsigned(value.to_string()))
     }
 
     fn visit_f64<E>(self, _: f64) -> Result<Self::Value, E>
@@ -364,6 +384,7 @@ where
 {
     let mut members = HashSet::new();
     let mut version = None;
+    let mut format = None;
 
     while let Some(member) = map.next_key::<String>()? {
         if !members.insert(member.clone()) {
@@ -371,7 +392,13 @@ where
             return Err(de::Error::custom("duplicate JSON object member"));
         }
 
-        if root && member == "format_version" {
+        if root && !check_nested_duplicates && member == "format" {
+            let raw = map.next_value::<Box<RawValue>>()?;
+            format = serde_json::from_str::<String>(raw.get()).ok();
+        } else if root && !check_nested_duplicates && member == "format_version" {
+            let raw = map.next_value::<Box<RawValue>>()?;
+            version = Some(version_from_raw(raw.get()));
+        } else if root && member == "format_version" {
             version = Some(map.next_value_seed(VersionSeed {
                 duplicate,
                 check_nested_duplicates,
@@ -386,7 +413,16 @@ where
 
     Ok(Inspection {
         version: root.then_some(version).flatten(),
+        format: root.then_some(format).flatten(),
     })
+}
+
+fn version_from_raw(raw: &str) -> VersionToken {
+    if !raw.is_empty() && raw.bytes().all(|byte| byte.is_ascii_digit()) {
+        VersionToken::Unsigned(raw.to_owned())
+    } else {
+        VersionToken::Other
+    }
 }
 
 fn ignore_object<'de, A>(mut map: A) -> Result<(), A::Error>
@@ -407,7 +443,7 @@ mod tests {
 
         assert!(matches!(
             inspection.version,
-            Some(VersionToken::Unsigned(1))
+            Some(VersionToken::Unsigned(ref version)) if version == "1"
         ));
     }
 
@@ -420,10 +456,27 @@ mod tests {
 
     #[test]
     fn top_level_inspection_ignores_nested_duplicates_only() {
-        assert!(inspect_top_level(r#"{"format_version":2,"future":{"a":1,"a":2}}"#).is_ok());
+        assert!(
+            inspect_top_level(
+                r#"{"format":"future","format_version":2,"future":{"a":1,"a":2}}"#,
+                16,
+            )
+            .is_ok()
+        );
         assert!(matches!(
-            inspect_top_level(r#"{"format_version":2,"format_version":3}"#),
+            inspect_top_level(r#"{"format_version":2,"format_version":3}"#, 16),
             Err(FrontendError::DuplicateMember(member)) if member == "format_version"
+        ));
+        let inspection = inspect_top_level(
+            r#"{"format":"future","format_version":18446744073709551616}"#,
+            16,
+        )
+        .unwrap();
+        assert_eq!(inspection.format.as_deref(), Some("future"));
+        assert!(matches!(
+            inspection.version,
+            Some(VersionToken::Unsigned(ref version))
+                if version == "18446744073709551616"
         ));
     }
 
@@ -448,7 +501,7 @@ mod tests {
 
         assert!(matches!(
             inspect(r#"{"format_version":0}"#).unwrap().version,
-            Some(VersionToken::Unsigned(0))
+            Some(VersionToken::Unsigned(ref version)) if version == "0"
         ));
     }
 
@@ -471,7 +524,10 @@ mod tests {
         assert!(inspect_roproj(r#"{"text":"[[{{\\\"}}]]"}"#, 1).is_ok());
         assert!(matches!(
             inspect_roproj(r#"{"nested":[{}]}"#, 2),
-            Err(FrontendError::NestingLimit { limit: 2 })
+            Err(FrontendError::NestingLimit {
+                limit: 2,
+                actual: 3,
+            })
         ));
     }
 

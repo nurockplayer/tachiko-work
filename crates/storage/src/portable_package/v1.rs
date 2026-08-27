@@ -1,5 +1,7 @@
 //! Pure canonical portable-package/v1 ZIP32 codec.
 
+use std::collections::HashMap;
+
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -32,6 +34,7 @@ const ZIP32_MAX_ORDINARY_U32: u64 = 0xffff_fffe;
 const LOCAL_HEADER_LENGTH: u64 = 30;
 const CENTRAL_HEADER_LENGTH: u64 = 46;
 const END_RECORD_LENGTH: usize = 22;
+const PACKAGE_MANIFEST_MAX_JSON_NESTING: usize = 256;
 
 /// Finite in-memory admission bound for one package-v1 artifact.
 pub const PORTABLE_PACKAGE_V1_MAX_ARCHIVE_BYTES: usize = 64 * 1024 * 1024;
@@ -440,13 +443,24 @@ fn parse_container_at_end(
         return invalid_container("a central entry selects another start disk");
     }
 
+    let mut central_by_local_offset = HashMap::with_capacity(central_records.len());
+    for (index, record) in central_records.iter().enumerate() {
+        let Ok(offset) = usize::try_from(record.local_offset) else {
+            continue;
+        };
+        central_by_local_offset
+            .entry(offset)
+            .and_modify(|matching: &mut Option<usize>| *matching = None)
+            .or_insert(Some(index));
+    }
+
     let mut local_records = Vec::with_capacity(usize::from(end.total_entries));
     let mut local_offset = 0;
     for _ in 0..end.total_entries {
-        let central = central_records
-            .iter()
-            .find(|record| usize::try_from(record.local_offset).ok() == Some(local_offset));
-        let record = parse_local_record(source, local_offset, central)?;
+        let central = central_by_local_offset
+            .get(&local_offset)
+            .and_then(|index| index.map(|index| &central_records[index]));
+        let record = parse_local_record(source, local_offset, central, central_offset)?;
         if record.end > central_offset {
             return invalid_container("local entry overlaps the central directory");
         }
@@ -467,6 +481,7 @@ fn parse_local_record<'a>(
     source: &'a [u8],
     offset: usize,
     central: Option<&CentralRecord<'_>>,
+    local_section_end: usize,
 ) -> Result<LocalRecord<'a>, PortablePackageError> {
     require_range(source, offset, 30, "local header")?;
     if read_u32(source, offset, "local signature")? != ZIP_LOCAL_SIGNATURE {
@@ -477,14 +492,21 @@ fn parse_local_record<'a>(
     let flags = read_u16(source, offset + 6, "local flags")?;
     let compressed_size = read_u32(source, offset + 18, "local compressed size")?;
     let data_size = if flags & 0x0008 == 0 {
-        compressed_size
+        select_ordinary_data_size(
+            source,
+            offset,
+            name_length,
+            extra_length,
+            compressed_size,
+            central.map(|record| record.compressed_size),
+            local_section_end,
+        )?
     } else {
-        central
-            .ok_or_else(|| {
-                invalid_container_error("data descriptor has no matching central record")
-            })?
-            .compressed_size
+        central.map_or(compressed_size, |record| record.compressed_size)
     };
+    if flags & 0x0008 != 0 && central.is_none() {
+        return invalid_container("data descriptor has no matching central record");
+    }
     let name_start = checked_offset(offset, 30, "local name offset")?;
     let data_start = checked_offset(
         checked_offset(name_start, name_length, "local name end")?,
@@ -535,6 +557,57 @@ fn parse_local_record<'a>(
         data: &source[data_start..data_end],
         end,
     })
+}
+
+fn select_ordinary_data_size(
+    source: &[u8],
+    offset: usize,
+    name_length: usize,
+    extra_length: u16,
+    local_size: u32,
+    central_size: Option<u32>,
+    local_section_end: usize,
+) -> Result<u32, PortablePackageError> {
+    let Some(central_size) = central_size else {
+        return Ok(local_size);
+    };
+    if local_size == central_size {
+        return Ok(local_size);
+    }
+    let data_start = checked_offset(
+        checked_offset(
+            checked_offset(offset, 30, "local name offset")?,
+            name_length,
+            "local name end",
+        )?,
+        usize::from(extra_length),
+        "local extra end",
+    )?;
+    let local_plausible =
+        ordinary_data_boundary_is_plausible(source, data_start, local_size, local_section_end);
+    let central_plausible =
+        ordinary_data_boundary_is_plausible(source, data_start, central_size, local_section_end);
+    Ok(match (local_plausible, central_plausible) {
+        (true, false) => local_size,
+        _ => central_size,
+    })
+}
+
+fn ordinary_data_boundary_is_plausible(
+    source: &[u8],
+    data_start: usize,
+    size: u32,
+    local_section_end: usize,
+) -> bool {
+    let Ok(size) = usize::try_from(size) else {
+        return false;
+    };
+    let Some(end) = data_start.checked_add(size) else {
+        return false;
+    };
+    end == local_section_end
+        || (end < local_section_end
+            && read_u32(source, end, "next local signature").ok() == Some(ZIP_LOCAL_SIGNATURE))
 }
 
 fn parse_data_descriptor_end(
@@ -654,22 +727,17 @@ struct ParsedManifest {
 fn parse_manifest(source: &[u8]) -> Result<ParsedManifest, PortablePackageError> {
     let text = std::str::from_utf8(source)
         .map_err(|_| invalid_manifest_error("package.json is not valid UTF-8"))?;
-    inspect_top_level(text).map_err(map_manifest_frontend_error)?;
-    let value: serde_json::Value = serde_json::from_str(text)
-        .map_err(|_| invalid_manifest_error("package.json is not valid JSON"))?;
-    let object = value
-        .as_object()
-        .ok_or_else(|| invalid_manifest_error("package.json root is not an object"))?;
-    if object.get("format").and_then(serde_json::Value::as_str) != Some(PACKAGE_FORMAT) {
+    let probe = inspect_top_level(text, PACKAGE_MANIFEST_MAX_JSON_NESTING)
+        .map_err(map_manifest_probe_error)?;
+    if probe.format.as_deref() != Some(PACKAGE_FORMAT) {
         return invalid_manifest("package.json format is missing or malformed");
     }
-    let version = object
-        .get("format_version")
-        .and_then(serde_json::Value::as_number)
-        .map(ToString::to_string)
-        .ok_or_else(|| {
-            invalid_manifest_error("format_version is not a lexical positive integer")
-        })?;
+    let version = match probe.version {
+        Some(crate::strict_json::VersionToken::Unsigned(version)) => version,
+        None | Some(crate::strict_json::VersionToken::Other) => {
+            return invalid_manifest("format_version is not a lexical positive integer");
+        }
+    };
     if version.is_empty()
         || version.starts_with('0')
         || !version.bytes().all(|byte| byte.is_ascii_digit())
@@ -680,6 +748,11 @@ fn parse_manifest(source: &[u8]) -> Result<ParsedManifest, PortablePackageError>
         return Err(PortablePackageError::UnsupportedVersion { found: version });
     }
     inspect(text).map_err(map_manifest_frontend_error)?;
+    let value: serde_json::Value = serde_json::from_str(text)
+        .map_err(|_| invalid_manifest_error("package.json is not valid JSON"))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| invalid_manifest_error("package.json root is not an object"))?;
     if object.len() != MANIFEST_KEYS.len()
         || !MANIFEST_KEYS.iter().all(|key| object.contains_key(*key))
     {
@@ -942,6 +1015,17 @@ fn map_manifest_frontend_error(error: FrontendError) -> PortablePackageError {
         FrontendError::NestingLimit { .. } => {
             invalid_manifest_error("package.json exceeds its JSON nesting limit")
         }
+    }
+}
+
+fn map_manifest_probe_error(error: FrontendError) -> PortablePackageError {
+    match error {
+        FrontendError::NestingLimit { limit, actual } => PortablePackageError::ResourceLimit {
+            resource: "package.json nesting",
+            limit,
+            actual,
+        },
+        other => map_manifest_frontend_error(other),
     }
 }
 
