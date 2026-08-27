@@ -108,6 +108,11 @@ pub enum FormatError {
         source_path: PathBuf,
         destination: PathBuf,
     },
+    #[error("cannot safely resolve publication path '{}': {message}", path.display())]
+    PathResolution {
+        path: PathBuf,
+        message: &'static str,
+    },
     #[error("failed to read '{}': {source}", path.display())]
     Read { path: PathBuf, source: io::Error },
     #[error("failed to write '{}': {source}", path.display())]

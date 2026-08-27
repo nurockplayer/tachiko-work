@@ -141,14 +141,9 @@ pub fn publish_canonicalized_roproj(
 ) -> Result<(), FormatError> {
     let source = source.as_ref();
     let destination = destination.as_ref();
-    let normalized_source = lexically_absolute(source)?;
-    let normalized_destination = lexically_absolute(destination)?;
-    let resolved_source = resolve_existing_path_or_parent(source)?;
-    let resolved_destination = resolve_existing_path_or_parent(destination)?;
-    if normalized_destination == normalized_source
-        || normalized_destination.starts_with(&normalized_source)
-        || resolved_destination == resolved_source
-        || resolved_destination.starts_with(&resolved_source)
+    let resolved_source = resolve_component_path(source)?;
+    let resolved_destination = resolve_component_path(destination)?;
+    if resolved_destination == resolved_source || resolved_destination.starts_with(&resolved_source)
     {
         return Err(FormatError::PathOverlap {
             source_path: source.to_owned(),
@@ -158,56 +153,66 @@ pub fn publish_canonicalized_roproj(
     publish_roproj(destination, tree)
 }
 
-fn resolve_existing_path_or_parent(path: &Path) -> Result<PathBuf, FormatError> {
-    match fs::canonicalize(path) {
-        Ok(resolved) => Ok(resolved),
-        Err(source) if source.kind() == io::ErrorKind::NotFound => {
-            let Some(parent) = path.parent() else {
-                return lexically_absolute(path);
-            };
-            let Some(name) = path.file_name() else {
-                return lexically_absolute(path);
-            };
-            match fs::canonicalize(parent) {
-                Ok(resolved_parent) => Ok(resolved_parent.join(name)),
-                Err(source) if source.kind() == io::ErrorKind::NotFound => lexically_absolute(path),
-                Err(source) => Err(FormatError::Read {
-                    path: parent.to_owned(),
+fn resolve_component_path(path: &Path) -> Result<PathBuf, FormatError> {
+    let absolute = absolute_path(path)?;
+    let components = absolute.components().collect::<Vec<_>>();
+    for prefix_len in (1..=components.len()).rev() {
+        let prefix = path_from_components(&components[..prefix_len]);
+        match fs::canonicalize(&prefix) {
+            Ok(mut resolved) => {
+                for component in &components[prefix_len..] {
+                    match component {
+                        Component::Normal(segment) => resolved.push(segment),
+                        Component::CurDir => {}
+                        Component::ParentDir => {
+                            return Err(FormatError::PathResolution {
+                                path: path.to_owned(),
+                                message: "unresolved suffix contains a parent component",
+                            });
+                        }
+                        Component::Prefix(_) | Component::RootDir => {
+                            return Err(FormatError::PathResolution {
+                                path: path.to_owned(),
+                                message: "unresolved suffix contains an absolute-path component",
+                            });
+                        }
+                    }
+                }
+                return Ok(resolved);
+            }
+            Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(FormatError::Read {
+                    path: prefix,
                     source,
-                }),
+                });
             }
         }
-        Err(source) => Err(FormatError::Read {
-            path: path.to_owned(),
-            source,
-        }),
     }
+    Err(FormatError::PathResolution {
+        path: path.to_owned(),
+        message: "no existing ancestor could be resolved",
+    })
 }
 
-fn lexically_absolute(path: &Path) -> Result<PathBuf, FormatError> {
-    let absolute = if path.is_absolute() {
-        path.to_owned()
+fn absolute_path(path: &Path) -> Result<PathBuf, FormatError> {
+    if path.is_absolute() {
+        Ok(path.to_owned())
     } else {
-        std::env::current_dir()
+        Ok(std::env::current_dir()
             .map_err(|source| FormatError::Read {
                 path: PathBuf::from("."),
                 source,
             })?
-            .join(path)
-    };
-    let mut normalized = PathBuf::new();
-    for component in absolute.components() {
-        match component {
-            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
-                normalized.push(component.as_os_str());
-            }
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-        }
+            .join(path))
     }
-    Ok(normalized)
+}
+
+fn path_from_components(components: &[Component<'_>]) -> PathBuf {
+    components
+        .iter()
+        .map(|component| component.as_os_str())
+        .collect()
 }
 
 /// Encode and publish a semantic document as canonical `.roproj/v1`.

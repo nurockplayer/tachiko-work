@@ -229,6 +229,89 @@ fn canonicalized_publication_rejects_symlink_aliased_parent_containment() {
     assert!(!destination.exists());
 }
 
+#[cfg(unix)]
+#[test]
+fn canonicalized_publication_accepts_safe_symlink_parent_traversal() {
+    use std::os::unix::fs::symlink;
+
+    let temp = TempDir::new();
+    let source = temp.path().join("source.roproj");
+    let other = temp.path().join("other");
+    let deep = other.join("deep");
+    let resolved_parent = other.join("source.roproj");
+    let link = temp.path().join("link");
+    let spelled_destination = link.join("../source.roproj/output.roproj");
+    let resolved_destination = resolved_parent.join("resolved-output.roproj");
+    let tree = encode_roproj_v1(&Document::empty("doc-empty", "Empty")).unwrap();
+    publish_roproj(&source, &tree).unwrap();
+    fs::create_dir_all(&deep).unwrap();
+    fs::create_dir(&resolved_parent).unwrap();
+    symlink(&deep, &link).unwrap();
+    let source_before = read_tree_bytes(&source);
+
+    publish_canonicalized_roproj(&source, &spelled_destination, &tree).unwrap();
+    publish_canonicalized_roproj(&source, &resolved_destination, &tree).unwrap();
+
+    assert_eq!(read_canonical_roproj(&spelled_destination).unwrap(), tree);
+    assert_eq!(read_canonical_roproj(&resolved_destination).unwrap(), tree);
+    assert_eq!(read_tree_bytes(&source), source_before);
+}
+
+#[cfg(unix)]
+#[test]
+fn canonicalized_publication_resolves_the_deepest_existing_ancestor() {
+    use std::os::unix::fs::symlink;
+
+    let temp = TempDir::new();
+    let source = temp.path().join("source.roproj");
+    let alias = temp.path().join("source-alias");
+    let destination = alias.join("missing/out.roproj");
+    let tree = encode_roproj_v1(&Document::empty("doc-empty", "Empty")).unwrap();
+    publish_roproj(&source, &tree).unwrap();
+    symlink(&source, &alias).unwrap();
+    let source_before = read_tree_bytes(&source);
+    let source_entries_before = fs::read_dir(&source).unwrap().count();
+    let root_entries_before = fs::read_dir(temp.path()).unwrap().count();
+
+    let error = publish_canonicalized_roproj(&source, &destination, &tree).unwrap_err();
+
+    assert!(matches!(error, FormatError::PathOverlap { .. }));
+    assert_eq!(read_tree_bytes(&source), source_before);
+    assert_eq!(
+        fs::read_dir(&source).unwrap().count(),
+        source_entries_before
+    );
+    assert_eq!(
+        fs::read_dir(temp.path()).unwrap().count(),
+        root_entries_before
+    );
+    assert!(!alias.join("missing").exists());
+    assert!(fs::read_dir(&source).unwrap().all(|entry| {
+        !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains(".tachiko-stage-")
+    }));
+}
+
+#[test]
+fn canonicalized_publication_fails_closed_on_an_unresolved_parent_suffix() {
+    let temp = TempDir::new();
+    let source = temp.path().join("source.roproj");
+    let destination = temp.path().join("missing/../outside.roproj");
+    let tree = encode_roproj_v1(&Document::empty("doc-empty", "Empty")).unwrap();
+    publish_roproj(&source, &tree).unwrap();
+    let source_before = read_tree_bytes(&source);
+
+    let error = publish_canonicalized_roproj(&source, &destination, &tree).unwrap_err();
+
+    assert!(matches!(error, FormatError::PathResolution { .. }));
+    assert_eq!(read_tree_bytes(&source), source_before);
+    assert!(!temp.path().join("missing").exists());
+    assert!(!temp.path().join("outside.roproj").exists());
+}
+
 #[test]
 fn host_workflow_operates_without_git_discovery() {
     let temp = TempDir::new();
