@@ -449,16 +449,21 @@ For one proposal:
 
 1. One Human approver must have live Approve authority covering every
    associated operation-family/mutation-class/scope write requirement.
-2. Approval binds the named executor exactly. The trusted boundary checks that
+2. Before Approval issuance, the trusted boundary MUST prove that Human review
+   received the required proposal evidence through sufficient Query coverage or
+   a separately authorized disclosure-safe approval projection under the
+   disclosure contract. Approve authority and internal exact-binding
+   verification are not substitutes.
+3. Approval binds the named executor exactly. The trusted boundary checks that
    executor's live Execute authority immediately before publication, not as an
    issuance-time prerequisite.
-3. Approval covers the exact whole Command or AtomicBatch.
-4. Partial-batch approval and combining partial approvers are forbidden.
-5. Quorum, approval chains, standing/reusable policies, and autonomous
+4. Approval covers the exact whole Command or AtomicBatch.
+5. Partial-batch approval and combining partial approvers are forbidden.
+6. Quorum, approval chains, standing/reusable policies, and autonomous
    approval are not part of the MVP.
-6. Approval cannot override stale base, semantic inapplicability, validation,
+7. Approval cannot override stale base, semantic inapplicability, validation,
    or the authoritative gate.
-7. A Human approver may also be the Human executor; no mandatory four-eyes rule
+8. A Human approver may also be the Human executor; no mandatory four-eyes rule
    is introduced.
 
 ## Approval binding contract
@@ -694,6 +699,9 @@ allow iff:
   AND approver is an authenticated Human occurrence whose immutable kind is
       proven
   AND live Approve Grants cover the complete requirement
+  AND Human review received the required proposal evidence through sufficient
+      Query coverage or a separately authorized disclosure-safe approval
+      projection
   AND named executor occurrence is active and its immutable kind is proven
   AND trusted authorization domain selects the effective policy version
   AND finite expiry + that effective policy version are recorded
@@ -1099,6 +1107,10 @@ authorized disclosure scope.
     the two schema-scoped FieldIds have the same spelling. The membership change
     requires old/new-side authority, and later access under SchemaB requires a
     new covering Grant binding.
+59. A Human with complete Approve authority but neither sufficient Query
+    coverage nor a separately authorized disclosure-safe approval projection
+    cannot inspect the proposal and cannot issue Approval. Internal exact-
+    binding verification does not satisfy the Human review requirement.
 
 ## Stability classification
 

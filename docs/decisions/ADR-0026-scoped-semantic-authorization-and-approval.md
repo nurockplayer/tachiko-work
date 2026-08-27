@@ -313,6 +313,10 @@ For one proposal or AtomicBatch:
 
 - one Human approver must hold live `Approve(...)` authority covering every
   associated operation-family/mutation-class/scope write requirement;
+- before Approval issuance, the trusted boundary must prove that Human review
+  received the required proposal evidence through sufficient Query coverage or
+  a separately authorized disclosure-safe approval projection under section 4;
+  Approve authority and internal binding verification are not substitutes;
 - approval covers the exact whole batch;
 - partial-batch approval is forbidden;
 - several partial approvers cannot be combined;
@@ -789,6 +793,11 @@ Future implementation must preserve these representation-neutral outcomes:
     after E changes schema membership, even when the schema-scoped FieldIds have
     the same spelling; the membership change requires old/new-side authority
     and later access under SchemaB requires a new covering Grant binding.
+50. **Approval requires authorized review disclosure** — a Human with complete
+    Approve authority but neither sufficient Query coverage nor a separately
+    authorized disclosure-safe approval projection cannot inspect the proposal
+    and cannot issue Approval; internal exact-binding verification does not
+    satisfy the Human review requirement.
 
 ## Stability classification
 
