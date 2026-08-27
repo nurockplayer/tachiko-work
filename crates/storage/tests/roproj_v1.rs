@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 
 use tachiko_semantic_core::{
     Document, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey, FieldRef,
-    FieldType, MAX_EXPRESSION_DEPTH, Number, Schema, SchemaId, SchemaKey, Value,
+    FieldType, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, Schema, SchemaId, SchemaKey,
+    Value,
 };
 use tachiko_storage::{
     CanonicalRoProjectV1, FormatError, ROPROJ_V1_PATHS, decode_roproj_v1, encode_roproj_v1,
@@ -339,6 +340,76 @@ fn malformed_jsonl_invalid_numbers_and_blank_records_are_rejected() {
 }
 
 #[test]
+fn canonical_number_vectors_decode_to_exact_binary64_values() {
+    let vectors = [
+        ("0", 0x0000_0000_0000_0000),
+        ("5e-324", 0x0000_0000_0000_0001),
+        ("-5e-324", 0x8000_0000_0000_0001),
+        ("1.7976931348623157e+308", 0x7fef_ffff_ffff_ffff),
+        ("-1.7976931348623157e+308", 0xffef_ffff_ffff_ffff),
+        ("9007199254740992", 0x4340_0000_0000_0000),
+        ("1424953923781206.2", 0x4314_3ff3_c1cb_0959),
+    ];
+    for (token, expected_bits) in vectors {
+        let tree = CanonicalRoProjectV1::try_from_files(number_files(token)).unwrap();
+        let document = decode_roproj_v1(&tree).unwrap();
+        let Value::Number(number) = document.entities["entity-a"].fields["field-base"] else {
+            panic!("{token} changed value kind")
+        };
+        assert_eq!(number.to_bits(), expected_bits, "token {token}");
+        assert_eq!(encode_roproj_v1(&document).unwrap(), tree, "token {token}");
+    }
+
+    let tree = CanonicalRoProjectV1::try_from_files(formula_number_files("5e-324")).unwrap();
+    let document = decode_roproj_v1(&tree).unwrap();
+    let Value::Formula(Expression::Add { left, .. }) =
+        &document.entities["entity-a"].fields["field-power"]
+    else {
+        panic!("formula number changed expression shape")
+    };
+    let Expression::Number(number) = left.as_ref() else {
+        panic!("formula number changed expression kind")
+    };
+    assert_eq!(number.to_bits(), 1);
+}
+
+#[test]
+fn noncanonical_and_overflow_number_tokens_are_rejected() {
+    for token in [
+        "-0",
+        "-0.0",
+        "1e-4000",
+        "-1e-4000",
+        "9007199254740993",
+        "1424953923781206.25",
+    ] {
+        let error = CanonicalRoProjectV1::try_from_files(number_files(token)).unwrap_err();
+        assert!(matches!(
+            error,
+            FormatError::InvalidRoProjectRepresentation { ref message }
+                if message == "tree bytes are not canonical .roproj/v1"
+        ));
+    }
+
+    for token in ["1e400", "-1e400"] {
+        for files in [number_files(token), formula_number_files(token)] {
+            let error = CanonicalRoProjectV1::try_from_files(files).unwrap_err();
+            let FormatError::InvalidRoProjectRepresentation { message } = error else {
+                panic!("{token} produced unexpected error: {error:?}")
+            };
+            assert!(
+                message.starts_with("'entities/6.jsonl:1' does not match .roproj/v1:"),
+                "token {token}: {message}"
+            );
+            assert!(
+                message.contains("number out of range at line 1 column"),
+                "token {token}: {message}"
+            );
+        }
+    }
+}
+
+#[test]
 fn canonical_constructor_rejects_noncanonical_bytes_and_wrong_shards() {
     let encoded = encode_roproj_v1(&full_shape_document()).unwrap();
 
@@ -451,6 +522,39 @@ fn duplicate_out_of_order_and_empty_ids_are_rejected() {
     assert!(matches!(
         CanonicalRoProjectV1::try_from_files(entity_order),
         Err(FormatError::InvalidRoProjectRepresentation { .. })
+    ));
+}
+
+#[test]
+fn canonical_constructor_rejects_duplicate_field_ids() {
+    let encoded = encode_roproj_v1(&Document::empty("doc-empty", "Empty")).unwrap();
+    let mut files = owned_files(&encoded);
+    replace_file(
+        &mut files,
+        "schemas.json",
+        br#"[{"id":"schema-a","key":"a","fields":[{"id":"field-a","key":"a","field_type":{"type":"number"},"required":false},{"id":"field-a","key":"b","field_type":{"type":"text"},"required":false}]}]
+"#
+        .to_vec(),
+    );
+    assert!(matches!(
+        CanonicalRoProjectV1::try_from_files(files),
+        Err(FormatError::InvalidRoProjectRepresentation { message })
+            if message == "duplicate field id 'field-a'"
+    ));
+}
+
+#[test]
+fn canonical_constructor_rejects_duplicate_entity_ids() {
+    let encoded = encode_roproj_v1(&character_document()).unwrap();
+    let mut files = owned_files(&encoded);
+    let line = file_bytes(&files, "entities/6.jsonl").to_vec();
+    let mut duplicate = line.clone();
+    duplicate.extend_from_slice(&line);
+    replace_file(&mut files, "entities/6.jsonl", duplicate);
+    assert!(matches!(
+        CanonicalRoProjectV1::try_from_files(files),
+        Err(FormatError::InvalidRoProjectRepresentation { message })
+            if message == "duplicate entity id 'entity-a'"
     ));
 }
 
@@ -588,6 +692,42 @@ fn expression_depth_above_limit_is_rejected_during_decode() {
         CanonicalRoProjectV1::try_from_files(files),
         Err(FormatError::InvalidRoProjectRepresentation { message })
             if message.contains("64-depth limit")
+    ));
+}
+
+#[test]
+fn formula_node_limit_accepts_255_and_rejects_257_below_depth_limit() {
+    let mut document = full_shape_document();
+    let admitted = balanced_add_expression(MAX_EXPRESSION_NODES - 1);
+    assert_eq!(expression_node_count(&admitted), 255);
+    assert!(expression_depth(&admitted) < MAX_EXPRESSION_DEPTH);
+    document
+        .entities
+        .get_mut("entity-a")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("field-result"), Value::Formula(admitted));
+
+    let encoded = encode_roproj_v1(&document).unwrap();
+    let reconstructed = CanonicalRoProjectV1::try_from_files(owned_files(&encoded)).unwrap();
+    assert_eq!(decode_roproj_v1(&reconstructed).unwrap(), document);
+
+    let mut files = owned_files(&encoded);
+    let entity = String::from_utf8(file_bytes(&files, "entities/6.jsonl").to_vec()).unwrap();
+    let admitted_json = balanced_add_json(MAX_EXPRESSION_NODES - 1);
+    let rejected_json = balanced_add_json(MAX_EXPRESSION_NODES + 1);
+    assert!(entity.contains(&admitted_json));
+    replace_file(
+        &mut files,
+        "entities/6.jsonl",
+        entity
+            .replacen(&admitted_json, &rejected_json, 1)
+            .into_bytes(),
+    );
+    assert!(matches!(
+        CanonicalRoProjectV1::try_from_files(files),
+        Err(FormatError::InvalidRoProjectRepresentation { message })
+            if message.contains("256-node limit")
     ));
 }
 
@@ -883,6 +1023,65 @@ fn left_deep_add_json(depth: usize) -> String {
     expression
 }
 
+fn balanced_add_expression(nodes: usize) -> Expression {
+    assert_eq!(nodes % 2, 1);
+    if nodes == 1 {
+        return Expression::Number(Number::new(1.0).unwrap());
+    }
+    let mut left_nodes = (nodes - 1) / 2;
+    if left_nodes % 2 == 0 {
+        left_nodes -= 1;
+    }
+    let right_nodes = nodes - 1 - left_nodes;
+    Expression::Add {
+        left: Box::new(balanced_add_expression(left_nodes)),
+        right: Box::new(balanced_add_expression(right_nodes)),
+    }
+}
+
+fn balanced_add_json(nodes: usize) -> String {
+    assert_eq!(nodes % 2, 1);
+    if nodes == 1 {
+        return r#"{"op":"number","args":1}"#.to_owned();
+    }
+    let mut left_nodes = (nodes - 1) / 2;
+    if left_nodes % 2 == 0 {
+        left_nodes -= 1;
+    }
+    let right_nodes = nodes - 1 - left_nodes;
+    let left = balanced_add_json(left_nodes);
+    let right = balanced_add_json(right_nodes);
+    format!(r#"{{"op":"add","args":{{"left":{left},"right":{right}}}}}"#)
+}
+
+fn expression_depth(expression: &Expression) -> usize {
+    match expression {
+        Expression::Number(_) | Expression::Reference(_) => 1,
+        Expression::Add { left, right }
+        | Expression::Subtract { left, right }
+        | Expression::Multiply { left, right }
+        | Expression::Divide { left, right }
+        | Expression::Minimum { left, right }
+        | Expression::Maximum { left, right } => {
+            1 + expression_depth(left).max(expression_depth(right))
+        }
+    }
+}
+
+fn expression_node_count(expression: &Expression) -> usize {
+    match expression {
+        Expression::Number(_) | Expression::Reference(_) => 1,
+        Expression::Add { left, right }
+        | Expression::Subtract { left, right }
+        | Expression::Multiply { left, right }
+        | Expression::Divide { left, right }
+        | Expression::Minimum { left, right }
+        | Expression::Maximum { left, right } => {
+            1 + expression_node_count(left) + expression_node_count(right)
+        }
+    }
+}
+
 fn field(id: &str, key: &str, field_type: FieldType, required: bool) -> FieldDefinition {
     FieldDefinition {
         id: FieldId::from(id),
@@ -897,6 +1096,33 @@ fn owned_files(tree: &CanonicalRoProjectV1) -> Vec<(String, Vec<u8>)> {
         .iter()
         .map(|file| (file.path().to_owned(), file.bytes().to_vec()))
         .collect()
+}
+
+fn number_files(token: &str) -> Vec<(String, Vec<u8>)> {
+    replace_entity_fragment(
+        r#""field-base":{"kind":"number","value":40}"#,
+        &format!(r#""field-base":{{"kind":"number","value":{token}}}"#),
+    )
+}
+
+fn formula_number_files(token: &str) -> Vec<(String, Vec<u8>)> {
+    replace_entity_fragment(
+        r#""op":"number","args":2"#,
+        &format!(r#""op":"number","args":{token}"#),
+    )
+}
+
+fn replace_entity_fragment(from: &str, to: &str) -> Vec<(String, Vec<u8>)> {
+    let encoded = encode_roproj_v1(&character_document()).unwrap();
+    let mut files = owned_files(&encoded);
+    let entity = String::from_utf8(file_bytes(&files, "entities/6.jsonl").to_vec()).unwrap();
+    assert!(entity.contains(from));
+    replace_file(
+        &mut files,
+        "entities/6.jsonl",
+        entity.replacen(from, to, 1).into_bytes(),
+    );
+    files
 }
 
 fn replace_file(files: &mut [(String, Vec<u8>)], path: &str, bytes: Vec<u8>) {

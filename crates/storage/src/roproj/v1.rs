@@ -164,6 +164,10 @@ struct EntityV1 {
     fields: BTreeMap<String, ValueV1>,
 }
 
+#[derive(Clone, Copy, Deserialize)]
+#[serde(transparent)]
+struct NumberV1(f64);
+
 #[derive(Deserialize)]
 #[serde(
     tag = "kind",
@@ -172,7 +176,7 @@ struct EntityV1 {
     deny_unknown_fields
 )]
 enum ValueV1 {
-    Number(Number),
+    Number(NumberV1),
     Text(String),
     Boolean(bool),
     Reference(String),
@@ -187,7 +191,7 @@ enum ValueV1 {
     deny_unknown_fields
 )]
 enum ExpressionV1 {
-    Number(Number),
+    Number(NumberV1),
     Reference(FieldRefV1),
     Add(BinaryArgumentsV1),
     Subtract(BinaryArgumentsV1),
@@ -490,7 +494,7 @@ impl EntityV1 {
 impl ValueV1 {
     fn into_semantic(self) -> Result<Value, FormatError> {
         Ok(match self {
-            Self::Number(number) => Value::Number(number),
+            Self::Number(number) => Value::Number(number.into_semantic()?),
             Self::Text(text) => Value::Text(text),
             Self::Boolean(boolean) => Value::Boolean(boolean),
             Self::Reference(entity) => {
@@ -499,8 +503,16 @@ impl ValueV1 {
             }
             Self::Formula(expression) => {
                 expression.validate_ids_and_limits()?;
-                Value::Formula(expression.into_semantic())
+                Value::Formula(expression.into_semantic()?)
             }
+        })
+    }
+}
+
+impl NumberV1 {
+    fn into_semantic(self) -> Result<Number, FormatError> {
+        Number::new(self.0).map_err(|_| FormatError::InvalidRoProjectRepresentation {
+            message: "number must be finite".to_owned(),
         })
     }
 }
@@ -541,31 +553,31 @@ impl ExpressionV1 {
         Ok(())
     }
 
-    fn into_semantic(self) -> Expression {
-        match self {
-            Self::Number(number) => Expression::Number(number),
+    fn into_semantic(self) -> Result<Expression, FormatError> {
+        Ok(match self {
+            Self::Number(number) => Expression::Number(number.into_semantic()?),
             Self::Reference(reference) => {
                 Expression::Reference(FieldRef::new(reference.entity, reference.field))
             }
             Self::Add(arguments) => {
-                arguments.into_semantic(|left, right| Expression::Add { left, right })
+                arguments.into_semantic(|left, right| Expression::Add { left, right })?
             }
             Self::Subtract(arguments) => {
-                arguments.into_semantic(|left, right| Expression::Subtract { left, right })
+                arguments.into_semantic(|left, right| Expression::Subtract { left, right })?
             }
             Self::Multiply(arguments) => {
-                arguments.into_semantic(|left, right| Expression::Multiply { left, right })
+                arguments.into_semantic(|left, right| Expression::Multiply { left, right })?
             }
             Self::Divide(arguments) => {
-                arguments.into_semantic(|left, right| Expression::Divide { left, right })
+                arguments.into_semantic(|left, right| Expression::Divide { left, right })?
             }
             Self::Minimum(arguments) => {
-                arguments.into_semantic(|left, right| Expression::Minimum { left, right })
+                arguments.into_semantic(|left, right| Expression::Minimum { left, right })?
             }
             Self::Maximum(arguments) => {
-                arguments.into_semantic(|left, right| Expression::Maximum { left, right })
+                arguments.into_semantic(|left, right| Expression::Maximum { left, right })?
             }
-        }
+        })
     }
 }
 
@@ -573,11 +585,11 @@ impl BinaryArgumentsV1 {
     fn into_semantic(
         self,
         constructor: impl FnOnce(Box<Expression>, Box<Expression>) -> Expression,
-    ) -> Expression {
-        constructor(
-            Box::new(self.left.into_semantic()),
-            Box::new(self.right.into_semantic()),
-        )
+    ) -> Result<Expression, FormatError> {
+        Ok(constructor(
+            Box::new(self.left.into_semantic()?),
+            Box::new(self.right.into_semantic()?),
+        ))
     }
 }
 
@@ -653,7 +665,7 @@ impl EntityV1 {
 impl ValueV1 {
     fn from_semantic(value: &Value) -> Self {
         match value {
-            Value::Number(number) => Self::Number(*number),
+            Value::Number(number) => Self::Number(NumberV1(number.get())),
             Value::Text(text) => Self::Text(text.clone()),
             Value::Boolean(boolean) => Self::Boolean(*boolean),
             Value::Reference(entity) => Self::Reference(entity.to_string()),
@@ -665,7 +677,7 @@ impl ValueV1 {
 impl ExpressionV1 {
     fn from_semantic(expression: &Expression) -> Self {
         match expression {
-            Expression::Number(number) => Self::Number(*number),
+            Expression::Number(number) => Self::Number(NumberV1(number.get())),
             Expression::Reference(reference) => {
                 Self::Reference(FieldRefV1::from_semantic(reference))
             }
@@ -974,12 +986,16 @@ fn compact_member_string(
 fn compact_member_number(
     output: &mut String,
     name: &str,
-    value: Number,
+    value: NumberV1,
     comma: bool,
 ) -> Result<(), FormatError> {
+    if !value.0.is_finite() {
+        return invalid_representation("number must be finite".to_owned());
+    }
+    let value = if value.0 == 0.0 { 0.0 } else { value.0 };
     let mut buffer = ryu_js::Buffer::new();
     compact_member_prefix(output, name)?;
-    output.push_str(buffer.format_finite(value.get()));
+    output.push_str(buffer.format_finite(value));
     if comma {
         output.push(',');
     }
@@ -1120,4 +1136,15 @@ fn ensure_increasing(kind: &str, previous: Option<&str>, current: &str) -> Resul
 
 fn invalid_representation<T>(message: String) -> Result<T, FormatError> {
     Err(FormatError::InvalidRoProjectRepresentation { message })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NumberV1;
+
+    #[test]
+    fn storage_number_conversion_normalizes_zero_and_rejects_nonfinite() {
+        assert_eq!(NumberV1(-0.0).into_semantic().unwrap().to_bits(), 0);
+        assert!(NumberV1(f64::INFINITY).into_semantic().is_err());
+    }
 }
