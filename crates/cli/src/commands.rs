@@ -8,7 +8,10 @@ use std::{
 
 use serde::Serialize;
 use serde_json::json;
-use tachiko_storage::{FormatError, load, to_canonical_string};
+use tachiko_storage::{
+    FormatError, canonicalize_roproj, decode_roproj_v1, load, load_roproj, materialize_roproj,
+    publish_roproj, to_canonical_string,
+};
 use tachiko_workspace_engine::{
     EditPreview, FieldAddress, FieldKind, IdGenerator, MergeConflict, SemanticChange,
     SemanticIdKind, StarterTemplate, WorkspaceError, WorkspaceMergeOutcome,
@@ -102,6 +105,29 @@ pub fn validate(path: &Path) -> Result<String, CommandError> {
     let document = load(path)?;
     validate_semantics(&document)?;
     Ok(format!("valid {}\n", path.display()))
+}
+
+pub fn materialize_roproject(input: &Path, output: &Path) -> Result<String, CommandError> {
+    ensure_distinct_paths(input, output)?;
+    let document = load(input)?;
+    validate_semantics(&document)?;
+    materialize_roproj(output, &document)?;
+    Ok(format!("materialized {}\n", output.display()))
+}
+
+pub fn validate_roproject(path: &Path) -> Result<String, CommandError> {
+    let document = load_roproj(path)?;
+    validate_semantics(&document)?;
+    Ok(format!("valid {}\n", path.display()))
+}
+
+pub fn canonicalize_roproject(input: &Path, output: &Path) -> Result<String, CommandError> {
+    ensure_distinct_paths(input, output)?;
+    let tree = canonicalize_roproj(input)?;
+    let document = decode_roproj_v1(&tree)?;
+    validate_semantics(&document)?;
+    publish_roproj(output, &tree)?;
+    Ok(format!("canonicalized {}\n", output.display()))
 }
 
 pub fn calculate_document(path: &Path) -> Result<String, CommandError> {

@@ -6,7 +6,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use tachiko_storage::{load, save};
+use tachiko_storage::{load, materialize_roproj, save};
 use tachiko_workspace_engine::{
     Document, DocumentId, DocumentOverview, Entity, EntityId, Expression, FieldAddress,
     FieldDefinition, FieldId, FieldKey, FieldKind, FieldRef, FieldType, Number, Schema, SchemaId,
@@ -42,10 +42,51 @@ impl Drop for TempDir {
 }
 
 fn run(arguments: &[&str]) -> Output {
+    run_from(arguments, Path::new(env!("CARGO_MANIFEST_DIR")))
+}
+
+fn run_from(arguments: &[&str], current_dir: &Path) -> Output {
     Command::new(env!("CARGO_BIN_EXE_tachiko"))
         .args(arguments)
+        .current_dir(current_dir)
         .output()
         .unwrap()
+}
+
+fn copy_tree(source: &Path, destination: &Path) {
+    fs::create_dir(destination).unwrap();
+    for entry in fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_tree(&source_path, &destination_path);
+        } else {
+            fs::copy(source_path, destination_path).unwrap();
+        }
+    }
+}
+
+fn snapshot_tree(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    fn visit(root: &Path, current: &Path, files: &mut Vec<(PathBuf, Vec<u8>)>) {
+        for entry in fs::read_dir(current).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if entry.file_type().unwrap().is_dir() {
+                visit(root, &path, files);
+            } else {
+                files.push((
+                    path.strip_prefix(root).unwrap().to_owned(),
+                    fs::read(path).unwrap(),
+                ));
+            }
+        }
+    }
+
+    let mut files = Vec::new();
+    visit(root, root, &mut files);
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    files
 }
 
 fn balance_document(damage: f64) -> Document {
@@ -304,6 +345,273 @@ fn validate_is_ci_safe_for_valid_and_invalid_documents() {
     assert!(String::from_utf8_lossy(&valid.stdout).contains("valid"));
     assert!(!invalid.status.success());
     assert!(String::from_utf8_lossy(&invalid.stderr).contains("error:"));
+}
+
+#[test]
+fn roproj_workflow_operates_outside_git() {
+    let temp = TempDir::new();
+    assert!(
+        temp.path()
+            .ancestors()
+            .all(|ancestor| !ancestor.join(".git").exists()),
+        "test fixture must have no .git ancestor"
+    );
+    let input = temp.path().join("balance.ro");
+    let canonical = temp.path().join("balance.roproj");
+    let noncanonical = temp.path().join("noncanonical.roproj");
+    let canonicalized = temp.path().join("canonicalized.roproj");
+    save(&input, &balance_document(100.0)).unwrap();
+
+    let materialized = run_from(
+        &[
+            "roproj",
+            "materialize",
+            input.to_str().unwrap(),
+            canonical.to_str().unwrap(),
+        ],
+        temp.path(),
+    );
+    assert!(
+        materialized.status.success(),
+        "{}",
+        String::from_utf8_lossy(&materialized.stderr)
+    );
+
+    let validated = run_from(
+        &["roproj", "validate", canonical.to_str().unwrap()],
+        temp.path(),
+    );
+    assert!(
+        validated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&validated.stderr)
+    );
+    let canonical_snapshot = snapshot_tree(&canonical);
+
+    let repeated = run_from(
+        &[
+            "roproj",
+            "materialize",
+            input.to_str().unwrap(),
+            canonical.to_str().unwrap(),
+        ],
+        temp.path(),
+    );
+    assert!(!repeated.status.success());
+    assert_eq!(snapshot_tree(&canonical), canonical_snapshot);
+
+    copy_tree(&canonical, &noncanonical);
+    fs::write(noncanonical.join("entities/extra.jsonl"), []).unwrap();
+    let noncanonical_snapshot = snapshot_tree(&noncanonical);
+
+    let canonicalized_output = run_from(
+        &[
+            "roproj",
+            "canonicalize",
+            noncanonical.to_str().unwrap(),
+            canonicalized.to_str().unwrap(),
+        ],
+        temp.path(),
+    );
+    assert!(
+        canonicalized_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&canonicalized_output.stderr)
+    );
+
+    let revalidated = run_from(
+        &["roproj", "validate", canonicalized.to_str().unwrap()],
+        temp.path(),
+    );
+    assert!(
+        revalidated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&revalidated.stderr)
+    );
+    assert_eq!(snapshot_tree(&canonicalized), canonical_snapshot);
+    assert_eq!(snapshot_tree(&noncanonical), noncanonical_snapshot);
+}
+
+#[test]
+fn roproj_materialize_rejects_workspace_invalid_document_before_publication() {
+    let temp = TempDir::new();
+    let input = temp.path().join("invalid.ro");
+    let output = temp.path().join("invalid.roproj");
+    let mut document = balance_document(100.0);
+    document
+        .entities
+        .get_mut("sword")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("attack_interval"), number(0.0));
+    save(&input, &document).unwrap();
+    let before = snapshot_tree(temp.path());
+
+    let result = run_from(
+        &[
+            "roproj",
+            "materialize",
+            input.to_str().unwrap(),
+            output.to_str().unwrap(),
+        ],
+        temp.path(),
+    );
+
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("divided by zero"));
+    assert!(!output.exists());
+    assert_eq!(snapshot_tree(temp.path()), before);
+    assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn roproj_canonicalize_rejects_workspace_invalid_tree_before_publication() {
+    let temp = TempDir::new();
+    let input = temp.path().join("invalid-input.roproj");
+    let output = temp.path().join("invalid-output.roproj");
+    let mut document = balance_document(100.0);
+    document
+        .entities
+        .get_mut("sword")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("attack_interval"), number(0.0));
+    materialize_roproj(&input, &document).unwrap();
+    fs::write(input.join("entities/extra.jsonl"), []).unwrap();
+    let before = snapshot_tree(temp.path());
+
+    let result = run_from(
+        &[
+            "roproj",
+            "canonicalize",
+            input.to_str().unwrap(),
+            output.to_str().unwrap(),
+        ],
+        temp.path(),
+    );
+
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("divided by zero"));
+    assert!(!output.exists());
+    assert_eq!(snapshot_tree(temp.path()), before);
+    assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn roproj_validate_rejects_workspace_invalid_canonical_tree_without_mutation() {
+    let temp = TempDir::new();
+    let input = temp.path().join("invalid.roproj");
+    let mut document = balance_document(100.0);
+    document
+        .entities
+        .get_mut("sword")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("attack_interval"), number(0.0));
+    materialize_roproj(&input, &document).unwrap();
+    let before = snapshot_tree(&input);
+
+    let result = run_from(
+        &["roproj", "validate", input.to_str().unwrap()],
+        temp.path(),
+    );
+
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("divided by zero"));
+    assert_eq!(snapshot_tree(&input), before);
+}
+
+#[test]
+fn roproj_validate_rejects_bounded_noncanonical_tree_without_mutation() {
+    let temp = TempDir::new();
+    let input = temp.path().join("noncanonical.roproj");
+    materialize_roproj(&input, &balance_document(100.0)).unwrap();
+    fs::write(input.join("entities/extra.jsonl"), []).unwrap();
+    let before = snapshot_tree(&input);
+
+    let result = run_from(
+        &["roproj", "validate", input.to_str().unwrap()],
+        temp.path(),
+    );
+
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("representation"));
+    assert_eq!(snapshot_tree(&input), before);
+}
+
+#[test]
+fn roproj_outputs_never_overwrite_existing_files_or_directories() {
+    let temp = TempDir::new();
+    let direct_input = temp.path().join("input.ro");
+    let tree_input = temp.path().join("input.roproj");
+    save(&direct_input, &balance_document(100.0)).unwrap();
+    materialize_roproj(&tree_input, &balance_document(100.0)).unwrap();
+    fs::write(tree_input.join("entities/extra.jsonl"), []).unwrap();
+
+    for (operation, input) in [
+        ("materialize", direct_input.as_path()),
+        ("canonicalize", tree_input.as_path()),
+    ] {
+        let existing_file = temp.path().join(format!("{operation}-existing-file"));
+        fs::write(&existing_file, "preserve file").unwrap();
+        let file_result = run_from(
+            &[
+                "roproj",
+                operation,
+                input.to_str().unwrap(),
+                existing_file.to_str().unwrap(),
+            ],
+            temp.path(),
+        );
+        assert!(!file_result.status.success());
+        assert_eq!(fs::read_to_string(existing_file).unwrap(), "preserve file");
+
+        let existing_directory = temp.path().join(format!("{operation}-existing-directory"));
+        fs::create_dir(&existing_directory).unwrap();
+        fs::write(existing_directory.join("marker"), "preserve directory").unwrap();
+        let directory_before = snapshot_tree(&existing_directory);
+        let directory_result = run_from(
+            &[
+                "roproj",
+                operation,
+                input.to_str().unwrap(),
+                existing_directory.to_str().unwrap(),
+            ],
+            temp.path(),
+        );
+        assert!(!directory_result.status.success());
+        assert_eq!(snapshot_tree(&existing_directory), directory_before);
+    }
+}
+
+#[test]
+fn roproj_help_exposes_explicit_operations() {
+    let output = run(&["roproj", "--help"]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("materialize"));
+    assert!(stdout.contains("validate"));
+    assert!(stdout.contains("canonicalize"));
+    assert!(stdout.contains("never-overwritten"));
+}
+
+#[test]
+fn direct_ro_validate_remains_a_read_only_direct_ro_command() {
+    let temp = TempDir::new();
+    let input = temp.path().join("balance.ro");
+    save(&input, &balance_document(100.0)).unwrap();
+    let before = fs::read(&input).unwrap();
+
+    let result = run_from(&["validate", input.to_str().unwrap()], temp.path());
+
+    assert!(result.status.success());
+    assert!(String::from_utf8_lossy(&result.stdout).contains("valid"));
+    assert_eq!(fs::read(&input).unwrap(), before);
+    assert_eq!(
+        snapshot_tree(temp.path()),
+        vec![(PathBuf::from("balance.ro"), before)]
+    );
 }
 
 #[test]

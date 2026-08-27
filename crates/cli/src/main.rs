@@ -43,6 +43,11 @@ enum Commands {
         #[command(subcommand)]
         command: AnalyzeCommands,
     },
+    /// Explicitly convert, validate, or canonicalize a .roproj tree
+    Roproj {
+        #[command(subcommand)]
+        command: RoProjectCommands,
+    },
     /// Create a changed document from one schema-typed field edit
     Set {
         input: PathBuf,
@@ -168,6 +173,26 @@ enum AnalyzeCommands {
     },
 }
 
+#[derive(Debug, Subcommand)]
+enum RoProjectCommands {
+    /// Explicitly convert a direct .ro document into a new, never-overwritten .roproj tree
+    Materialize {
+        /// Direct .ro compatibility representation to convert
+        input: PathBuf,
+        /// New .roproj tree to create; existing paths are never overwritten
+        output: PathBuf,
+    },
+    /// Validate an exact canonical .roproj tree without rewriting it
+    Validate { path: PathBuf },
+    /// Canonicalize a bounded .roproj tree into a new, never-overwritten output tree
+    Canonicalize {
+        /// Bounded .roproj tree to canonicalize without mutation
+        input: PathBuf,
+        /// New canonical .roproj tree to create; existing paths are never overwritten
+        output: PathBuf,
+    },
+}
+
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum TemplateName {
     GameBalance,
@@ -225,6 +250,15 @@ fn execute(cli: Cli) -> Result<String, commands::CommandError> {
             } => commands::analyze_changes(&before, &after, before_state, after_state),
             AnalyzeCommands::Validation { path, source_state } => {
                 commands::analyze_validation(&path, source_state)
+            }
+        },
+        Commands::Roproj { command } => match command {
+            RoProjectCommands::Materialize { input, output } => {
+                commands::materialize_roproject(&input, &output)
+            }
+            RoProjectCommands::Validate { path } => commands::validate_roproject(&path),
+            RoProjectCommands::Canonicalize { input, output } => {
+                commands::canonicalize_roproject(&input, &output)
             }
         },
         Commands::Set {
