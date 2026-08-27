@@ -4,7 +4,10 @@ Decision state: Accepted
 
 Implementation state: The production `.roproj/v1` payload codec and native
 materialize/validate/explicit-canonicalize workflow are implemented by #123.
-The packaged-`.ro` ZIP codec and CLI pack/unpack are not implemented.
+Issue #3 implements the packaged-`.ro` pure codec, content-framed reader,
+bounded native host workflows, atomic no-replace publication, tracked-source
+comparison, CLI pack/unpack/compare commands, and native/WASM exact-byte
+evidence. Direct JSON remains the current writer.
 
 Package profile: `tachiko.portable-package/v1`
 
@@ -20,8 +23,7 @@ Evidence: [portable-package v1 research record](../research/2026-08-26-portable-
 [executable probe](../research/probes/issue-43-portable-package-v1.mjs), and
 [byte-level golden vector](../research/fixtures/issue-43-portable-package-v1/empty-package-v1.hex)
 
-Tracking issue: [#3](https://github.com/nurockplayer/tachiko-work/issues/3)
-for the packaged-`.ro` ZIP codec and CLI pack/unpack implementation
+Production implementation: [#3](https://github.com/nurockplayer/tachiko-work/issues/3)
 
 ## Purpose and normative language
 
@@ -31,9 +33,9 @@ package/tracked-source comparison, and stable failure meanings.
 
 The words **MUST**, **MUST NOT**, **SHOULD**, and **MAY** are normative.
 
-This document does not define a production codec or command. The exact
-container and hash logic in the disposable evidence probe demonstrates the
-contract independently of a ZIP library but is not a product API.
+The storage crate and CLI implement this contract. The exact container and
+hash logic in the disposable evidence probe remains independent evidence of
+the byte profile, not a product API.
 
 ## Representation role and version ownership
 
@@ -697,8 +699,9 @@ basename/mode/mtime independence, missing/aliased/duplicate entries, duplicate
 metadata, trailing data, existing pack and unpack destinations, noncanonical
 pack source, and content framing. Its empty-payload
 semantic checker is intentionally fixture-specific; production conformance
-must use the now-production `.roproj/v1` DTO and semantic validation
-implementation when the packaged `.ro` codec is built.
+uses the production `.roproj/v1` DTO and semantic validation implementation.
+Issue #3 adds the full-shape pure-codec, host, CLI, and native/WASM regressions
+without promoting the disposable probe to product code.
 
 For unpack, the probe demonstrates staged publication only while the
 destination remains absent, rejects a destination visible at its final
@@ -707,8 +710,9 @@ publisher reports a no-replace conflict at the actual publication call. Its
 ordinary Node path still uses check-then-`rename` and leaves the final TOCTOU
 window uncovered. The injected publisher is a seam regression, not an atomic
 host primitive or evidence that Node's rename provides no-replace behavior.
-Production conformance must supply and test the real primitive required by
-case 15. Exact host publication mechanics remain Provisional while every
+Issue #3 supplies and tests the real OS-backed atomic no-replace primitive
+required by case 15 for both package files and unpacked directories. Exact host
+publication mechanics remain Provisional while every
 implementation must satisfy the normative no-overwrite and no-partial-success
 result.
 
@@ -721,6 +725,11 @@ memory, archive-byte, per-entry-byte, nesting, or time limits. Such finite
 limits are Provisional implementation details until #52 establishes a broader
 hostile-container profile; they must remain explicit and machine-
 distinguishable.
+
+The current production host admits at most 64 MiB of complete package bytes
+and applies the same finite budget while reading a pack source. This is the
+Provisional `portable_package.resource_limit` profile, not ZIP32 capacity or a
+semantic document limit.
 
 CRC-32 and the unauthenticated payload root are not security against a
 malicious writer. Signatures, trust roots, authentication, freshness,
@@ -736,11 +745,9 @@ path sanitization as a substitute for exact-set validation.
 
 ## Explicitly out of scope
 
-This specification does not define or authorize:
+This package profile does not define or authorize:
 
 - a production `.roproj` reader, writer, or canonicalizer;
-- a production packaged-`.ro` codec;
-- CLI pack/unpack commands or flags;
 - a change to the current direct-JSON CLI writer;
 - compression or ZIP64;
 - package extension areas;

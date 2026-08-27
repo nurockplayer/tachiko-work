@@ -6,8 +6,8 @@ Implementation state: Implemented by the dedicated `direct-ro/v2` canonical
 writer. Frozen v1 retains its historical version-scoped writer. The Accepted
 `.roproj/v1` profile is implemented by the production `tachiko-storage` codec
 and explicit host/CLI operations. The Accepted portable-package v1 manifest
-has a separate exact closed spelling; its packaged `.ro` ZIP production codec
-is not implemented.
+has a separate exact closed spelling implemented by the packaged `.ro` codec
+and native/WASM evidence from #3.
 
 Authority: ADR-0017
 

@@ -10,8 +10,9 @@ Implementation state: Implemented for frozen `legacy-direct-ro/v1`, explicit
 deterministic v1→v2 migration, canonical identity-aware `direct-ro/v2`, and the
 normal direct-JSON Stage-0 admission profile. The Accepted `.roproj/v1`
 contract is implemented by production `tachiko-storage` plus explicit CLI host
-operations. The packaged `.ro` ZIP codec for the separately Accepted
-portable-package v1 contract is not yet implemented.
+operations. The separately Accepted portable-package v1 codec, content-framed
+reader, bounded host workflow, and CLI pack/unpack/compare operations are
+implemented by #3.
 
 Authority: ADR-0017; ADR-0023 for `.roproj/v1`; ADR-0025 for
 `tachiko.portable-package/v1`
