@@ -278,10 +278,26 @@ Entity(EntityId)
 EntityField(EntityId, SchemaId, FieldId)
 ```
 
-Every atom is interpreted within one document-local semantic context. ADR-0015
-keeps semantic relationships document-local; a matching subordinate ID in
-another document does not match scope. Exact source/wire representation of
-that document qualification remains Provisional.
+Every atom is interpreted within one document-local semantic context and MUST
+be implicitly qualified by one trusted, non-reusable, non-reassignable
+document-scope occurrence within its AuthorizationDomain. Scope equality and
+containment MUST compare that complete occurrence qualifier as well as the atom
+identity. ADR-0015 keeps semantic relationships document-local; neither a
+matching DocumentId nor matching subordinate IDs in another imported or
+migrated document establish authorization-scope equality.
+
+Replacing or recreating the protected document MUST create a new document-
+scope occurrence unless the trusted boundary proves continuity of the same
+protected document occurrence. Existing Grants, Approval bindings, and
+provenance remain attached only to the original occurrence and MUST NOT
+transfer. If occurrence identity or continuity cannot be proven, authorization
+fails closed.
+
+The document-scope occurrence is authorization context, not a new semantic
+DocumentId, project/workspace identity, or cross-document reference mechanism.
+Its exact type name, identifier, registry, lifecycle, continuity-proof
+mechanism, and source/wire representation remain Provisional host/security
+implementation concerns.
 
 Containment meaning:
 
@@ -1111,6 +1127,10 @@ authorized disclosure scope.
     coverage nor a separately authorized disclosure-safe approval projection
     cannot inspect the proposal and cannot issue Approval. Internal exact-
     binding verification does not satisfy the Human review requirement.
+60. Two unrelated legacy documents whose migration yields the same DocumentId
+    and subordinate IDs retain distinct document-scope occurrences. A Grant,
+    Approval binding, or provenance record for the first cannot match or
+    transfer to the second; unprovable occurrence continuity fails closed.
 
 ## Stability classification
 
@@ -1127,7 +1147,8 @@ authorized disclosure scope.
 | Capability identifier strings and public representation | Provisional |
 | Value, Formula, Structure, Schema, Destructive meanings | Accepted MVP contract |
 | Complete Stable command-family mapping | Provisional; published mappings cannot change silently |
-| Closed document-local stable-ID scope concepts and containment | Accepted MVP contract |
+| Closed document-local stable-ID scope concepts and containment, qualified by a non-reusable, non-reassignable document-scope occurrence | Accepted MVP contract |
+| Document-scope-occurrence type/identifier, registry, lifecycle, continuity-proof mechanism, and source/wire representation | Provisional host/security implementation concern |
 | Project/workspace/org/tenant/predicate scope | Deferred |
 | Trusted AuthorizationFootprint derivation | Accepted |
 | Associated operation-family/mutation-class/scope coverage, combined with the requested action, without crossed-Grant or Approval unions | Accepted |

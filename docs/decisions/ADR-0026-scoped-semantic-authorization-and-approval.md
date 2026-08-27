@@ -162,9 +162,22 @@ Entity(EntityId)
 EntityField(EntityId, SchemaId, FieldId)
 ```
 
-Every atom is interpreted within one document-local semantic context. A stable
-object ID from another document is not scope equivalence; exact source or wire
-representation of that document qualification remains Provisional.
+Every atom is interpreted within one document-local semantic context and is
+implicitly qualified by one trusted, non-reusable, non-reassignable document-
+scope occurrence within its authorization domain. Scope equality and
+containment require the same complete document-scope occurrence as well as the
+same atom identity. A `DocumentId` or subordinate semantic ID does not establish
+that occurrence equality: unrelated imported or migrated documents can retain
+the same semantic IDs without sharing authorization scope. Replacing or
+recreating the protected document creates a new occurrence unless the trusted
+boundary proves continuity of the same protected document occurrence. Existing
+Grants, Approval bindings, and provenance remain attached only to the original
+occurrence. Unprovable occurrence identity or continuity fails closed.
+
+This qualifier is authorization context, not a new semantic `DocumentId`,
+ProjectId, WorkspaceId, or cross-document reference mechanism. Its exact type
+name, identifier, registry, lifecycle, and source/wire representation remain
+Provisional host/security implementation concerns.
 
 Their containment meaning is:
 
@@ -798,6 +811,11 @@ Future implementation must preserve these representation-neutral outcomes:
     authorized disclosure-safe approval projection cannot inspect the proposal
     and cannot issue Approval; internal exact-binding verification does not
     satisfy the Human review requirement.
+51. **Migrated ID collision does not transfer scope** — two unrelated legacy
+    documents whose migration yields the same DocumentId and subordinate IDs
+    retain distinct document-scope occurrences. A Grant, Approval binding, or
+    provenance record for the first cannot match or transfer to the second; if
+    the trusted boundary cannot prove occurrence continuity, it fails closed.
 
 ## Stability classification
 
@@ -818,7 +836,8 @@ Accepted:
   identity or separately versioned compatibility occurrence and old authority
   does not transfer;
 - Value/Formula/Structure/Schema/Destructive distinctions;
-- stable-ID, document-local scope concepts and finite-union Grants;
+- stable-ID, document-local scope concepts qualified by a non-reusable,
+  non-reassignable document-scope occurrence, and finite-union Grants;
 - trusted `AuthorizationFootprint` derivation;
 - associated operation-family/mutation-class/scope coverage, combined with the
   requested action, without crossed-Grant unions;
@@ -849,6 +868,8 @@ Accepted:
 Provisional:
 
 - exact type, field, capability, and denial-code names;
+- document-scope-occurrence type/identifier, registry, lifecycle, continuity-
+  proof mechanism, and source/wire representation;
 - exact operation-family identifiers, catalogue representation, compatibility-
   occurrence/versioning mechanism, and migration;
 - ID encodings and generators;
