@@ -31,6 +31,11 @@ import {
   PROCESS_CONTAINMENT_PROFILE,
   runProcessGroupOnce,
 } from "./process-group-supervisor.mjs";
+import {
+  prepareFreshHomeForKeyring,
+  validateProviderAuthQualification,
+  verifyChatGptKeyringStatus,
+} from "./provider-auth.mjs";
 
 export {validateFormalAdapterPackage} from "./adapter-integrity.mjs";
 
@@ -99,6 +104,10 @@ export function requireResumeContextBindings(common, context, state) {
   if (context.formal_authorization_sha256 !== (common.formal_authorization?.sha256 ?? null)) {
     fail("controller evidence context resume formal_authorization_sha256 mismatch");
   }
+  if (context.provider_auth_qualification_sha256 !==
+      (common.provider_auth_qualification_sha256 ?? null)) {
+    fail("controller evidence context resume provider_auth_qualification_sha256 mismatch");
+  }
 }
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -133,6 +142,8 @@ function usage() {
       "--agent-args-file /abs/args.json --timeout-seconds 3600 --wave-id <32hex> " +
       "--run-id <32hex> --attempt-id <32hex> --candidate-id <32hex> " +
       "[--model-catalog-file /external/locked-catalog.json] " +
+      "[--provider-auth-qualification /external/provider-auth.json " +
+      "--operator-keychain /external/login.keychain-db] " +
       "[--construction-smoke true] [--adapter-file /abs/adapter.mjs " +
       "--expected-adapter-sha256 <sha256>] [--adapter-config /external/config.json " +
       "--adapter-probe-source /external/probe.rs " +
@@ -159,7 +170,8 @@ function parseArgs(argv) {
     "adapter-file", "expected-adapter-sha256", "adapter-config", "expected-adapter-config-sha256",
     "adapter-integrity-receipt", "expected-adapter-integrity-sha256", "adapter-probe-source",
     "cargo-home-template", "authorization-file", "custodian-id", "resume-artifact-dir",
-    "model-catalog-file", "rustup-home-template",
+    "model-catalog-file", "rustup-home-template", "provider-auth-qualification",
+    "operator-keychain",
   ]);
   const values = new Map();
   for (let index = 0; index < argv.length; index += 2) {
@@ -182,7 +194,7 @@ function canonicalJson(value) {
   return JSON.stringify(value);
 }
 
-function frozenFormalAgentArguments(
+export function frozenFormalAgentArguments(
   lock,
   workspacePath = "<workspace>",
   modelCatalogPath = "<model-catalog>",
@@ -225,6 +237,7 @@ function frozenFormalAgentArguments(
     "exec", "--cd", workspacePath, "--model", lock.controlled_agent.model_id,
     "--sandbox", lock.controlled_agent.sandbox_mode, "--ephemeral", "--ignore-user-config",
     "--ignore-rules", "--strict-config", ...featureArgs,
+    "-c", 'cli_auth_credentials_store="keyring"',
     "-c", `model_reasoning_effort=${JSON.stringify(lock.controlled_agent.reasoning_effort)}`,
     "-c", 'model_reasoning_summary="none"', "-c", 'model_verbosity="low"',
     "-c", `service_tier=${JSON.stringify(lock.controlled_agent.service_tier)}`,
@@ -1191,6 +1204,7 @@ async function resumeWithAdapter(args) {
     "attempt_id", "candidate_id", "case_id", "control_sha256", "formal_authorization",
     "environment_identity_sha256", "attempt_registry_entry", "infrastructure_identity_sha256",
     "formal_runtime_identity_sha256", "staged_model_catalog", "effective_agent_args_sha256",
+    "provider_auth_qualification_sha256",
   ];
   const common = Object.fromEntries(commonKeys.map((key) => [key, state[key]]));
   if (![common.wave_id, common.run_id, common.attempt_id, common.candidate_id].every((id) => ID.test(id ?? "")) ||
@@ -1981,6 +1995,12 @@ async function main() {
   if (phase !== "construction_pilot_only" && !args.has("authorization-file")) {
     fail("external formal authorization file is required before preparation or launch");
   }
+  if (phase !== "construction_pilot_only" && !args.has("provider-auth-qualification")) {
+    fail("external provider auth qualification is required before registration or launch");
+  }
+  if (phase !== "construction_pilot_only" && !args.has("operator-keychain")) {
+    fail("operator keychain is required before formal registration or launch");
+  }
   if (constructionSmoke && phase !== "construction_pilot_only") fail("construction smoke is forbidden in formal phases");
 
   const sourceRepo = await requireDirectory(args.get("source-repo"), "source repository");
@@ -2046,9 +2066,43 @@ async function main() {
   let formalNetworkSandboxIdentity = null;
   let formalRustupHomeTemplate = null;
   let formalCargoHomeTemplate = null;
+  let providerAuthQualification = null;
+  let providerAuthQualificationIdentity = null;
+  let operatorKeychain = null;
   const stagedModelCatalogPath = resolve(runRoot, "runtime", "model-catalog.json");
   if (formalAuthorization) {
     frozenEnvironmentLock = JSON.parse(await readFile(resolve(benchmarkDir, "environment-lock.json"), "utf8"));
+    const providerAuthQualificationPath = await requireRegular(
+      args.get("provider-auth-qualification"),
+      "external provider auth qualification",
+    );
+    operatorKeychain = await requireRegular(args.get("operator-keychain"), "operator keychain");
+    for (const [path, label] of [
+      [providerAuthQualificationPath, "provider auth qualification"],
+      [operatorKeychain, "operator keychain"],
+    ]) {
+      if (isInside(path, sourceRepo) || isInside(path, benchmarkDir) ||
+          isInside(path, runRoot) || isInside(path, artifactDir)) {
+        fail(`external ${label} must be disjoint from repositories and run artifacts`);
+      }
+    }
+    const providerAuthQualificationBytes = await readFile(providerAuthQualificationPath);
+    providerAuthQualification = JSON.parse(providerAuthQualificationBytes.toString("utf8"));
+    validateProviderAuthQualification(providerAuthQualification, {
+      runRoot,
+      codexBinarySha256: frozenEnvironmentLock.controlled_agent.codex_binary_sha256,
+      modelId: frozenEnvironmentLock.controlled_agent.model_id,
+      reasoningEffort: frozenEnvironmentLock.controlled_agent.reasoning_effort,
+    });
+    if (providerAuthQualification.keychain_path_sha256 !==
+        sha256(Buffer.from(operatorKeychain, "utf8"))) {
+      fail("operator keychain path differs from the provider auth qualification");
+    }
+    providerAuthQualificationIdentity = {
+      path: providerAuthQualificationPath,
+      bytes: providerAuthQualificationBytes.length,
+      sha256: sha256(providerAuthQualificationBytes),
+    };
     const frozenCodexPath = await realpath(frozenEnvironmentLock.controlled_agent.codex_binary_path);
     if (agentExecutable !== frozenCodexPath ||
         agentExecutableIdentity.sha256 !== frozenEnvironmentLock.controlled_agent.codex_binary_sha256) {
@@ -2077,6 +2131,9 @@ async function main() {
       frozenEnvironmentLock.controlled_agent.bundled_model_catalog,
       frozenEnvironmentLock.controlled_agent.model_id,
     );
+    if (providerAuthQualification.model_catalog_sha256 !== formalCatalogInspection.sha256) {
+      fail("formal model catalog differs from the provider auth qualification");
+    }
     const rustupHomeTemplate = await requireDirectory(
       args.get("rustup-home-template"),
       "trusted Rustup home template",
@@ -2098,6 +2155,10 @@ async function main() {
     }
     formalRuntime = await inspectFormalRuntime(frozenEnvironmentLock, rustupHomeTemplate);
     formalNetworkSandboxIdentity = await fileIdentity("/usr/bin/sandbox-exec");
+    if (providerAuthQualification.sandbox_executable_sha256 !==
+        formalNetworkSandboxIdentity.sha256) {
+      fail("formal candidate sandbox differs from the provider auth qualification");
+    }
     formalCargoHomeInspection = await inspectFormalCargoHome(cargoHomeTemplate, frozenEnvironmentLock);
     formalEffectiveArguments = frozenFormalAgentArguments(
       frozenEnvironmentLock,
@@ -2117,6 +2178,7 @@ async function main() {
       pnpm_home_template_sha256: formalRuntime.pnpm_home.manifest_sha256,
       cargo_home_template_sha256: formalCargoHomeInspection.manifest_sha256,
       sandbox_executable_sha256: formalNetworkSandboxIdentity.sha256,
+      provider_auth_qualification_sha256: providerAuthQualificationIdentity.sha256,
     });
   }
 
@@ -2160,6 +2222,7 @@ async function main() {
     pnpm_home_template_sha256: formalRuntime?.pnpm_home.manifest_sha256 ?? null,
     cargo_home_template_sha256: formalCargoHomeInspection?.manifest_sha256 ?? null,
     formal_authorization_sha256: authorizationIdentity?.sha256 ?? null,
+    provider_auth_qualification_sha256: providerAuthQualificationIdentity?.sha256 ?? null,
     registered_at: new Date().toISOString(),
   };
   const registryEntryBytes = canonicalBytes(registryEntry);
@@ -2311,6 +2374,7 @@ async function main() {
     infrastructure_identity_sha256: infrastructure.sha256,
     attempt_registry_entry: registryIdentity,
     formal_authorization: authorizationIdentity,
+    provider_auth_qualification_sha256: providerAuthQualificationIdentity?.sha256 ?? null,
     formal_runtime_identity_sha256: formalRuntime?.identity_sha256 ?? null,
     staged_model_catalog: stagedModelCatalog,
     effective_agent_args_sha256: formalEffectiveArguments
@@ -2465,6 +2529,8 @@ async function main() {
     variantFile,
     agentArgsFile,
     authorizationIdentity?.path,
+    providerAuthQualificationIdentity?.path,
+    operatorKeychain,
     formalCatalogSource,
   ].filter(Boolean);
   async function runBundledHelper(relativeScript, helperArguments, options = {}, {
@@ -2591,8 +2657,24 @@ async function main() {
 
     // Trusted Git/rtk preparation can create controller caches under HOME on
     // macOS. They are not agent inputs: erase them before the neutral preflight
-    // and launch, then require the preflight's exact empty-tree check.
+    // and launch, then require either the exact empty-tree check or the formal
+    // credential-free Keychain metadata identity.
     await Promise.all([emptyOwnedDirectory(home), emptyOwnedDirectory(codexHome)]);
+    let formalKeyringMetadata = null;
+    if (formalAuthorization) {
+      formalKeyringMetadata = await prepareFreshHomeForKeyring({
+        home,
+        keychainPath: operatorKeychain,
+      });
+      if (JSON.stringify(formalKeyringMetadata.metadata) !==
+          JSON.stringify(providerAuthQualification.keychain_metadata)) {
+        fail("fresh HOME Keychain metadata differs from the provider auth qualification");
+      }
+      if (formalKeyringMetadata.keychain_path_sha256 !==
+          providerAuthQualification.keychain_path_sha256) {
+        fail("fresh HOME keychain path differs from the provider auth qualification");
+      }
+    }
 
     const overlayPath = resolve(workspace, "AGENTS.md");
     const overlayBytes = await readFile(overlayPath);
@@ -2610,6 +2692,10 @@ async function main() {
       "--receipt", preflightReceiptPath,
       "--expected-agents-sha256", args.get("expected-variant-sha256"),
       "--expected-control-sha256", controls.sha256,
+      ...(formalKeyringMetadata ? [
+        "--expected-keychain-metadata-sha256", formalKeyringMetadata.metadata.sha256,
+        "--expected-keychain-metadata-bytes", String(formalKeyringMetadata.metadata.bytes),
+      ] : []),
     ], {env: environment, allowFailure: true});
     if (preflight.status !== 0 || !existsSync(preflightReceiptPath)) fail(`candidate preflight failed: ${preflight.stderr}`);
     const preflightReceipt = JSON.parse(await readFile(preflightReceiptPath, "utf8"));
@@ -2630,7 +2716,29 @@ async function main() {
       model_catalog_identity_verified: stagedModelCatalog !== null,
       code_mode_host_identity_verified: formalRuntime !== null,
       free_space: freeSpace,
+      provider_auth_mode: preflightReceipt.provider_auth?.mode ?? "none",
     }, [environmentReceiptPath], [preflightReceiptPath]);
+
+    let providerAuthStatus = null;
+    if (formalAuthorization) {
+      providerAuthStatus = await verifyChatGptKeyringStatus({
+        codexExecutable: agentExecutable,
+        codexHome,
+        environment,
+      });
+      if (providerAuthStatus.keyring_account !== providerAuthQualification.keyring_account) {
+        fail("formal keyring account differs from the provider auth qualification");
+      }
+      await writeStage("provider_auth_preflight", {
+        method: providerAuthStatus.method,
+        mode: providerAuthStatus.mode,
+        keyring_account: providerAuthStatus.keyring_account,
+        auth_json_present: providerAuthStatus.auth_json_present,
+        qualification_sha256: providerAuthQualificationIdentity.sha256,
+        keychain_path_sha256: formalKeyringMetadata.keychain_path_sha256,
+        metadata_sha256: formalKeyringMetadata.metadata.sha256,
+      }, [preflightReceiptPath, providerAuthQualificationIdentity.path], []);
+    }
 
     const effectiveAgentArguments = formalEffectiveArguments ?? agentArguments;
     const formalCodeModeHost = formalRuntime?.tools.find((tool) => tool.name === "codex-code-mode-host") ?? null;
@@ -2654,6 +2762,7 @@ async function main() {
         variantFile,
         agentArgsFile,
         authorizationIdentity?.path,
+        providerAuthQualificationIdentity?.path,
         formalCatalogSource,
       ].filter(Boolean),
       restrictedRoots: [runRoot],
@@ -2679,6 +2788,7 @@ async function main() {
       timeout_seconds: timeoutSeconds,
       termination_grace_seconds: terminationGraceSeconds,
       base_control_stage_order: 2,
+      provider_auth: providerAuthStatus,
       candidate_access: {
         protected_roots: candidateAccess.protected_roots,
         protected_paths: candidateAccess.protected_paths,
@@ -2688,7 +2798,8 @@ async function main() {
         profile_sha256: candidateAccess.profile_sha256,
         bundle_and_trusted_artifacts_denied: true,
       },
-    }, [preflightReceiptPath, baseReceiptPath], []);
+    }, [preflightReceiptPath, baseReceiptPath,
+      ...(providerAuthQualificationIdentity ? [providerAuthQualificationIdentity.path] : [])], []);
 
     const taskBytes = await readFile(registeredTaskPath);
     launchCount = 1;
@@ -3016,6 +3127,8 @@ async function main() {
       candidate_tree: captureReceipt.candidate_tree,
       raw_tree_digest_sha256: captureReceipt.raw_tree_digest_sha256,
       formal_authorization_sha256: common.formal_authorization?.sha256 ?? null,
+      provider_auth_qualification_sha256:
+        common.provider_auth_qualification_sha256,
       trusted_validation_environment_sha256: sha256(
         await readFile(validationEnvironmentReceiptPath),
       ),

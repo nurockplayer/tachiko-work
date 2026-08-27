@@ -1,10 +1,13 @@
 # Readiness Verdict
 
-The frozen nine-case benchmark is operationally ready for a standalone Baseline
-A wave under the practical internal-experiment standard. No Baseline A or
-Variant B task was executed while establishing readiness; every construction
-execution receipt referenced here is `construction_pilot_only` and ineligible
-for a formal score.
+The frozen nine-case benchmark is operationally ready for a **new** standalone
+Baseline A wave under the practical internal-experiment standard. The first
+formal wave terminated `infrastructure_invalid_unsealed` at its occupied TW-01
+slot after provider authentication returned HTTP 401 before any model output.
+That wave and slot remain permanently invalid, unsealed, unscoreable, and
+ineligible for resampling. No Baseline A or Variant B task was rerun while
+repairing the bootstrap; every new execution receipt referenced below is
+`construction_pilot_only` and ineligible for a formal score.
 
 Readiness is not launch authorization. Each formal attempt must still pass the
 controller's external authorization, unique-slot registration, and per-run
@@ -14,11 +17,11 @@ preflight before candidate exposure or model contact.
 
 | Requirement | Operational evidence |
 | --- | --- |
-| Neutral runner and HOME | `preflight-run.mjs` requires an opaque `r-<128-bit-hex>` root, fresh empty HOME and CODEX_HOME, a closed environment, and recursive ancestor/tree scans for `AGENTS.md`, other agent instructions, skills, and symlink exposure. It records the exact root overlay identity and fails on semantic path labels or unexpected content. |
+| Neutral runner and HOME | `preflight-run.mjs` requires an opaque `r-<128-bit-hex>` root, fresh HOME and CODEX_HOME, a closed environment, and recursive ancestor/tree scans for `AGENTS.md`, other agent instructions, skills, and symlink exposure. Construction HOME is empty; formal HOME contains only the exact qualified credential-free macOS Keychain preferences file. CODEX_HOME is empty and `auth.json` is forbidden before the keyring status gate. It records the exact root overlay identity and fails on semantic path labels or unexpected content. |
 | Production commands for all cases | `evaluator/production-oracles.json` maps all 9 cases, 27 core commands, 58 oracle commands, 74 machine assertions, and 16 subjective groups one-to-one to the frozen locks. |
 | Positive and negative oracle qualification | `evaluator/qualifications/oracles.json` records an executed all-nine construction qualification. Machine cases pass a qualified positive and discriminate a behavior-missing/base negative; TW-01, TW-02, and TW-06 use deterministic subjective packet gates. Selector-family fixtures independently qualify exact Rust-test matching, JSON pointers, and portable record sets. |
 | One-shot controller and no resampling | `run-controller.mjs` atomically reserves each wave/case/phase slot, records a hash-chained attempt ledger, launches at most one agent process group, never retries candidate quality/failure/timeout, proves descendant extinction before capture, and emits one terminal disposition. A trusted adapter may resume only the same immutable captured attempt and cannot relaunch the agent. An empty candidate patch reconstructs the base and continues through scoring rather than becoming an infrastructure failure. |
-| Per-run preflight and recording | The controller seals its executable/control bundle and records exact environment values, agent/argument/variant/catalog identities, locally controlled Node, pnpm, Rust/Cargo/rustc/rustfmt/clippy, Git/rtk/Bash, Codex and code-mode-host binaries, WASM target artifacts, disk availability, process timing, raw JSONL/stdout/stderr, and stage input/output hashes. Formal authorization binds the effective invocation and runtime identity. |
+| Per-run preflight and recording | The controller seals its executable/control bundle and records exact environment values, agent/argument/variant/catalog/auth-qualification identities, locally controlled Node, pnpm, Rust/Cargo/rustc/rustfmt/clippy, Git/rtk/Bash, Codex and code-mode-host binaries, WASM target artifacts, disk availability, process timing, raw JSONL/stdout/stderr, and stage input/output hashes. Formal authorization binds the effective invocation, runtime identity, and path-bound provider-auth qualification. |
 | Trusted candidate result/diff capture | `capture-candidate.mjs` walks raw filesystem bytes and modes, includes ignored/untracked/index-hidden changes, rejects special nodes, bypasses candidate hooks/configuration/attributes/filters, writes a separate trusted object database/index, and proves patch/tree round-trip equality before validation. |
 | TW-05 package-manager neutrality | `run-tw05-offline.mjs` directly executes the Rust, Node test, Worker/parity, benchmark, and portability paths under offline Cargo plus an independently probed OS network denial. Qualification fails if npm, pnpm, or yarn is invoked. |
 | Trusted adapter boundary | Formal TW-05/TW-09 adaptation uses only the hash-locked evaluator scaffold, a disjoint candidate-exercising probe/config pair, and an external hash-bound eligible independent integrity approval. A single kernel sandbox denies network and expected/control reads, protects the candidate and all trusted inputs from writes, exposes only a fresh empty adapter TMP, and binds pre/post identities. The scaffold emits one receipt on stdout; the controller materializes normalized output only after process-group extinction. |
@@ -35,6 +38,39 @@ and evidence commitment SHA-256
 smokes and the operational test suite exercise the controller without supplying
 a formal authorization or frozen benchmark task to Codex.
 
+## Provider-auth bootstrap closure
+
+The 401 was a construction gap, not a task or model failure. With fresh HOME,
+macOS did not expose a default user keychain until the credential-free
+`Library/Preferences/com.apple.security.plist` metadata was created. Codex
+0.149.0 additionally scopes the `Codex Auth` Keychain account to the exact
+`CODEX_HOME` (`cli|` plus the first 16 hexadecimal characters of its path
+SHA-256), so an operator login under the ordinary Codex home cannot authenticate
+an independently fresh formal home.
+
+`qualify-provider-auth.mjs` now pre-qualifies each exact prospective formal run
+root before formal authorization or slot registration. It configures only the
+fresh HOME's Keychain-discovery metadata, performs an interactive ChatGPT login
+with `cli_auth_credentials_store="keyring"`, and sends the neutral prompt
+`Return exactly CONTROL_OK. Do not use tools.` under the locked
+`gpt-5.6-sol`/`high` invocation. It rejects a pre-existing keyring login,
+`auth.json`, any tool call, workspace write, non-exact response, or cleanup
+failure. The successful 2026-08-27 construction receipt is external to the
+repository, has SHA-256
+`ef117e66038327f060bd820dd2e2a419e700a1da1e7d9c18f194371051e494dd`,
+and records `CONTROL_OK`, zero tool calls, no benchmark task, no `auth.json`, an
+empty workspace, and removal of its prospective run root.
+
+For a formal attempt, authorization must commit that receipt hash. The
+controller recreates the same run path, regenerates and byte-checks the exact
+credential-free Keychain metadata, requires `codex login status` to report
+ChatGPT authentication, and only then writes the `provider_auth_preflight`
+stage and launches. The neutral control is itself executed under the locked
+candidate sandbox executable and a path-equivalent candidate access profile.
+Credential plaintext remains managed by the OS keyring; it is never copied into
+the task, workspace, recorded environment, repository, artifacts, fresh
+HOME/CODEX_HOME, or any other agent-readable file.
+
 ## Per-attempt launch gates
 
 These checks are expected to fail a specific attempt before model contact when
@@ -43,7 +79,11 @@ unresolved readiness defects:
 
 - an external authorization receipt binds the phase, unique slot, IDs, frozen
   Baseline variant, Codex binary, code-mode host, materialized model catalog,
-  complete local runtime identity, and exact effective arguments;
+  complete local runtime identity, exact effective arguments, and the external
+  path-bound provider-auth qualification receipt;
+- the exact prospective run root has a successful construction-only ChatGPT
+  keyring qualification; the controller reproduces its credential-free HOME
+  metadata, forbids `auth.json`, and verifies keyring status before launch;
 - the catalog is freshly materialized from the locked Codex binary, verified
   against its raw/canonical/model/base-instruction hashes, and staged read-only
   under the opaque run root;
@@ -103,4 +143,4 @@ fresh A and B observations in the same registered wave with identical local
 controls and the frozen pair-level cancellation, blinding, and no-resampling
 rules. A standalone Baseline result cannot be reused as the A side of that wave.
 
-**READY for Baseline A**
+**READY for a new Baseline A wave**

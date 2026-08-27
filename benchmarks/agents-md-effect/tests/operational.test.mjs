@@ -837,6 +837,7 @@ function runPreflight(
     environment = {},
     includeExpectedAgents = true,
     includeExpectedControl = true,
+    keychainMetadata = null,
     receipt,
     nodeExecutable = process.execPath,
   } = {},
@@ -859,6 +860,14 @@ function runPreflight(
   }
   if (includeExpectedControl) {
     argumentsForPreflight.push("--expected-control-sha256", fixture.expectedControlSha256);
+  }
+  if (keychainMetadata) {
+    argumentsForPreflight.push(
+      "--expected-keychain-metadata-sha256",
+      keychainMetadata.sha256,
+      "--expected-keychain-metadata-bytes",
+      String(keychainMetadata.bytes),
+    );
   }
   const childEnvironment = {
     ...process.env,
@@ -988,6 +997,31 @@ test("preflight accepts an empty neutral HOME and CODEX_HOME and records real ob
         (entry) => entry.path === "evaluator/production-oracles.json",
       ),
     );
+  });
+});
+
+test("formal auth preflight admits only the exact credential-free Keychain metadata", async () => {
+  await withPreflightFixture({}, async (fixture) => {
+    const preferences = resolve(fixture.home, "Library", "Preferences");
+    await mkdir(preferences, {recursive: true});
+    const metadataBytes = Buffer.from("credential-free keychain path metadata\n", "utf8");
+    await writeFile(resolve(preferences, "com.apple.security.plist"), metadataBytes);
+    const result = runPreflight(fixture, {
+      keychainMetadata: {bytes: metadataBytes.length, sha256: sha256(metadataBytes)},
+    });
+    assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+    const receipt = await readJson(fixture.receipt);
+    assert.equal(receipt.provider_auth.mode, "macos_user_keychain");
+    assert.equal(receipt.provider_auth.auth_json_present, false);
+    assert.equal(receipt.provider_auth.metadata.sha256, sha256(metadataBytes));
+
+    await writeFile(resolve(fixture.codexHome, "auth.json"), "forbidden credential file\n");
+    const rejected = runPreflight(fixture, {
+      keychainMetadata: {bytes: metadataBytes.length, sha256: sha256(metadataBytes)},
+      receipt: resolve(fixture.artifactDir, "receipts", "auth-json-rejected.json"),
+    });
+    assert.notEqual(rejected.status, 0);
+    assert.match(rejected.stderr, /auth\.json.*forbidden/i);
   });
 });
 
@@ -2748,7 +2782,7 @@ test("sealed formal TW-09 adapter executes a native candidate-linked production 
     assert.equal(adapterPackage.probe.sha256, preview.probe.sha256);
     const issuedArtifactDir = dirname(context.path);
     const stageDir = resolve(issuedArtifactDir, "stage-receipts");
-    const issuanceStagePath = resolve(stageDir, "12-controller_context_issuance.json");
+    const issuanceStagePath = resolve(stageDir, "13-controller_context_issuance.json");
     const issuanceStage = await readJson(issuanceStagePath);
     const buildStagePayload = {
       case_id: "TW-09",
@@ -2764,7 +2798,7 @@ test("sealed formal TW-09 adapter executes a native candidate-linked production 
     const buildStage = {
       ...issuanceStage,
       stage: "formal_adapter_build",
-      stage_order: 13,
+      stage_order: 14,
       prior_receipt_sha256: sha256(await readFile(issuanceStagePath)),
       inputs: await Promise.all([
         config, integrity, probeSource, candidateManifestPath,
@@ -3796,6 +3830,7 @@ async function writeFormalControllerContext(path, overrides = {}) {
     wave_id: "1".repeat(32), run_id: "2".repeat(32), attempt_id: "3".repeat(32),
     candidate_id: "0123456789abcdef0123456789abcdef", case_id: "TW-05",
     capture_receipt_sha256: "4".repeat(64), formal_authorization_sha256: "5".repeat(64),
+    provider_auth_qualification_sha256: "6".repeat(64),
     adapter_forbidden_roots: [],
     ...overrides,
   };
@@ -3830,6 +3865,7 @@ async function writeIssuedFormalControllerContext(root, overrides = {}) {
     wave_id: "1".repeat(32), run_id: "2".repeat(32), attempt_id: "3".repeat(32),
     candidate_id: "0123456789abcdef0123456789abcdef", case_id: "TW-05",
     capture_receipt_sha256: "0".repeat(64), formal_authorization_sha256: "0".repeat(64),
+    provider_auth_qualification_sha256: "0".repeat(64),
     candidate_tree: "c".repeat(40), raw_tree_digest_sha256: "d".repeat(64),
     adapter_forbidden_roots: [],
     ...contextOverrides,
@@ -3852,10 +3888,13 @@ async function writeIssuedFormalControllerContext(root, overrides = {}) {
     rustup_home_template_sha256: "9".repeat(64),
     pnpm_home_template_sha256: "a".repeat(64),
     cargo_home_template_sha256: "b".repeat(64),
+    provider_auth_qualification_sha256: "c".repeat(64),
   };
   await writeFile(authorizationPath, `${JSON.stringify(authorization, null, 2)}\n`);
   const authorizationIdentity = await testFileIdentity(authorizationPath);
   context.formal_authorization_sha256 = authorizationIdentity.sha256;
+  context.provider_auth_qualification_sha256 =
+    authorization.provider_auth_qualification_sha256;
   const capturePath = resolve(artifactDir, "capture-receipt.json");
   await writeFile(capturePath, `${JSON.stringify({
     candidate_id: context.candidate_id,
@@ -3971,6 +4010,8 @@ async function writeIssuedFormalControllerContext(root, overrides = {}) {
     rustup_home_template_sha256: authorization.rustup_home_template_sha256,
     pnpm_home_template_sha256: authorization.pnpm_home_template_sha256,
     cargo_home_template_sha256: authorization.cargo_home_template_sha256,
+    provider_auth_qualification_sha256:
+      authorization.provider_auth_qualification_sha256,
   };
   await writeFile(registryPath, `${JSON.stringify(registry, null, 2)}\n`);
   const registryIdentity = await testFileIdentity(registryPath);
@@ -3979,6 +4020,8 @@ async function writeIssuedFormalControllerContext(root, overrides = {}) {
     classification: context.classification,
     formal_result_eligible: true,
     formal_authorization: authorizationIdentity,
+    provider_auth_qualification_sha256:
+      authorization.provider_auth_qualification_sha256,
     attempt_registry_entry: registryIdentity,
     infrastructure_identity_sha256: bundleIdentity.sha256,
   };
@@ -3997,7 +4040,8 @@ async function writeIssuedFormalControllerContext(root, overrides = {}) {
   const ledgerIdentity = await testFileIdentity(ledgerPath);
   const sequence = [
     "attempt_registration", "base_workspace_preparation", "same_wave_base_control",
-    "candidate_workspace_preparation", "candidate_preflight", "agent_launch", "agent_process",
+    "candidate_workspace_preparation", "candidate_preflight", "provider_auth_preflight",
+    "agent_launch", "agent_process",
     "overlay_identity_postcheck", "candidate_capture", "validation_preparation",
     "core_validation", "controller_evidence_context",
   ];
@@ -5550,6 +5594,37 @@ test("formal controller phase rejects without external authorization before prep
   }
 });
 
+test("formal controller requires a path-bound provider auth qualification before registration", async () => {
+  const fixture = await createControllerSmokeFixture("success");
+  try {
+    const formalArguments = [...fixture.arguments];
+    formalArguments[formalArguments.indexOf("construction_pilot_only")] = "baseline_a";
+    formalArguments.splice(formalArguments.indexOf("--construction-smoke"), 2);
+    const authorizationPath = resolve(fixture.fixtureRoot, "authorization.json");
+    const argumentValue = (flag) => formalArguments[formalArguments.indexOf(flag) + 1];
+    await writeFile(authorizationPath, `${JSON.stringify({
+      schema: "tachiko-formal-run-authorization-v1",
+      phase: "baseline_a",
+      wave_id: argumentValue("--wave-id"),
+      run_id: argumentValue("--run-id"),
+      attempt_id: argumentValue("--attempt-id"),
+      candidate_id: argumentValue("--candidate-id"),
+      case_id: "TW-01",
+      attempt_registry_dir: await realpath(argumentValue("--attempt-registry-dir")),
+      authorization_token: "fixture-authorization-token".padEnd(64, "x"),
+    }, null, 2)}\n`);
+    formalArguments.push("--authorization-file", authorizationPath);
+
+    const result = spawnSync(process.execPath, formalArguments, {encoding: "utf8"});
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /provider auth qualification.*required/i);
+    assert.equal(existsSync(fixture.runRoot), false);
+    assert.equal(existsSync(fixture.artifactDir), false);
+  } finally {
+    await rm(fixture.fixtureRoot, {recursive: true, force: true});
+  }
+});
+
 test("formal authorization commitments bind every effective local runtime identity", async () => {
   const {requireFormalAuthorizationCommitments, requireFormalFreeSpace, requireFormalTiming} =
     await import(pathToFileURL(runControllerScript));
@@ -5567,6 +5642,7 @@ test("formal authorization commitments bind every effective local runtime identi
     cargo_home_template_sha256: "9".repeat(64),
     pnpm_home_template_sha256: "a".repeat(64),
     sandbox_executable_sha256: "b".repeat(64),
+    provider_auth_qualification_sha256: "c".repeat(64),
   };
   assert.doesNotThrow(() => requireFormalAuthorizationCommitments({...commitments}, commitments));
   for (const field of Object.keys(commitments)) {
@@ -5626,7 +5702,7 @@ test("formal controller propagates one sealed adapter package to non-smoke oracl
     probe: {path: "/artifacts/build/probe", sha256: "b".repeat(64)},
     probe_build_receipt: {path: "/artifacts/build/receipt.json", sha256: "c".repeat(64)},
     adapter_build_stage_receipt: {
-      path: "/artifacts/stage-receipts/13-formal_adapter_build.json",
+      path: "/artifacts/stage-receipts/14-formal_adapter_build.json",
       sha256: "d".repeat(64),
     },
   };
@@ -5660,12 +5736,15 @@ test("adapter resume rejects every relabeled formal attempt identity before cont
     candidate_id: "4".repeat(32),
     case_id: "TW-05",
     formal_authorization: {sha256: "5".repeat(64)},
+    provider_auth_qualification_sha256: "7".repeat(64),
   };
   const state = {bound_receipts: {capture_sha256: "6".repeat(64)}};
   const context = {
     ...common,
     capture_receipt_sha256: state.bound_receipts.capture_sha256,
     formal_authorization_sha256: common.formal_authorization.sha256,
+    provider_auth_qualification_sha256:
+      common.provider_auth_qualification_sha256,
   };
   assert.doesNotThrow(() => requireResumeContextBindings(common, context, state));
   for (const [field, changed] of [
@@ -5684,6 +5763,14 @@ test("adapter resume rejects every relabeled formal attempt identity before cont
       bound_receipts: {capture_sha256: "f".repeat(64)},
     }),
     /capture_receipt_sha256/i,
+  );
+  assert.throws(
+    () => requireResumeContextBindings(
+      {...common, provider_auth_qualification_sha256: "f".repeat(64)},
+      context,
+      state,
+    ),
+    /provider_auth_qualification_sha256/i,
   );
 });
 

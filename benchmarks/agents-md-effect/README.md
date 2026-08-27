@@ -55,6 +55,10 @@ result. This benchmark does not propose or optimize an `AGENTS.md` variant.
 - [`scripts/run-controller.mjs`](scripts/run-controller.mjs) — one-shot run
   controller with neutral preflight, same-wave base control, trusted capture,
   validation, and blinded-packet stages.
+- [`scripts/qualify-provider-auth.mjs`](scripts/qualify-provider-auth.mjs) and
+  [`scripts/provider-auth.mjs`](scripts/provider-auth.mjs) — path-bound,
+  construction-only ChatGPT OS-keyring qualification without an agent-readable
+  credential file.
 - [`scripts/preflight-run.mjs`](scripts/preflight-run.mjs) — fail-closed
   per-attempt environment, tool, artifact, and instruction-surface preflight.
 - [`scripts/capture-candidate.mjs`](scripts/capture-candidate.mjs) — trusted
@@ -77,11 +81,12 @@ result. This benchmark does not propose or optimize an `AGENTS.md` variant.
   deterministic blinded packet construction and standalone, formal-context-
   bound release scanning.
 
-The current practical internal-experiment verdict is **READY for Baseline A**.
-Every formal attempt still requires the controller's external authorization and
-per-run preflight; readiness is not authorization and no formal Baseline A or
-Variant B task has been executed during construction. See `READINESS.md` for the
-remaining recorded limitations.
+The current practical internal-experiment verdict is **READY for a new Baseline
+A wave**. The failed first wave and its occupied TW-01 slot remain permanently
+invalid/unsealed. Every new formal attempt still requires the controller's
+external authorization, path-bound provider-auth qualification, and per-run
+preflight; readiness is not authorization. See `READINESS.md` for the evidence
+and remaining recorded limitations.
 
 ## Visibility boundary
 

@@ -16,6 +16,7 @@ const CONTEXT_STAGE_SEQUENCE = [
   "same_wave_base_control",
   "candidate_workspace_preparation",
   "candidate_preflight",
+  "provider_auth_preflight",
   "agent_launch",
   "agent_process",
   "overlay_identity_postcheck",
@@ -266,6 +267,8 @@ async function verifyFormalIssuance({
     basename(registryIdentity.path) !== `${expectedSlotKey}.json` ||
     registry.uniqueness_scope !== "protocol_id:phase:wave_id:case_id" ||
     registry.formal_authorization_sha256 !== authorizationIdentity.sha256 ||
+    registry.provider_auth_qualification_sha256 !==
+      context.provider_auth_qualification_sha256 ||
     registry.artifact_dir !== issuance.artifact_dir ||
     authorization.attempt_registry_dir !== dirname(registryIdentity.path) ||
     !inside(contextIdentity.path, registry.artifact_dir) ||
@@ -281,7 +284,7 @@ async function verifyFormalIssuance({
   for (const field of [
     "variant_sha256", "agent_executable_sha256", "agent_args_sha256",
     "rustup_home_template_sha256", "pnpm_home_template_sha256",
-    "cargo_home_template_sha256",
+    "cargo_home_template_sha256", "provider_auth_qualification_sha256",
   ]) {
     if (!SHA256.test(registry[field] ?? "") || authorization[field] !== registry[field]) {
       throw new Error(`controller issuance attempt registry ${field} commitment mismatch`);
@@ -384,6 +387,8 @@ async function verifyFormalIssuance({
       receipt.attempt_registry_entry?.path !== registryIdentity.path ||
       receipt.attempt_registry_entry?.bytes !== registryIdentity.bytes ||
       receipt.attempt_registry_entry?.sha256 !== registryIdentity.sha256 ||
+      receipt.provider_auth_qualification_sha256 !==
+        context.provider_auth_qualification_sha256 ||
       receipt.infrastructure_identity_sha256 !== bundleIdentity.sha256 ||
       !stageVerifiesControllerBundle(receipt, bundleIdentity)
     ) {
@@ -574,7 +579,8 @@ export async function loadControllerContext({
     if (
       context.classification !== "formal_authorized_attempt" ||
       context.formal_result_eligible !== true ||
-      !SHA256.test(context.formal_authorization_sha256 ?? "")
+      !SHA256.test(context.formal_authorization_sha256 ?? "") ||
+      !SHA256.test(context.provider_auth_qualification_sha256 ?? "")
     ) {
       throw new Error("formal controller context lacks an external authorization binding");
     }
@@ -591,7 +597,8 @@ export async function loadControllerContext({
   } else if (
     context.classification !== "construction_pilot_only" ||
     context.formal_result_eligible !== false ||
-    context.formal_authorization_sha256 !== null
+    context.formal_authorization_sha256 !== null ||
+    context.provider_auth_qualification_sha256 !== null
   ) {
     throw new Error("construction controller context may not claim formal eligibility");
   } else if (

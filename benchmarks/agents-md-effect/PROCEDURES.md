@@ -56,7 +56,34 @@ For every observation:
    path is substituted into the externally authorized Codex arguments. Both
    arms of a future paired wave must bind identical catalog bytes.
 
-4. Launch the environment verifier with only the locked environment:
+4. Before formal authorization, run-root preparation, or slot registration,
+   qualify the exact prospective run-root path with the operator's
+   ChatGPT-authenticated context:
+
+   ```sh
+   node <controller>/scripts/qualify-provider-auth.mjs \
+     --run-root <neutral-parent>/r-<128-bit-hex> \
+     --receipt <trusted-external-auth-dir>/<new-opaque-id>.json \
+     --model-catalog-file <sealed-wave>/models-0.149.0.json \
+     --keychain <operator-user-keychain-db>
+   ```
+
+   The qualifier must begin with no keyring login for that prospective
+   `CODEX_HOME`, create only credential-free macOS Keychain discovery metadata
+   under fresh HOME, run interactive `codex login` with
+   `cli_auth_credentials_store="keyring"`, and send only the neutral
+   `CONTROL_OK` prompt under the frozen model/effort and locked candidate sandbox
+   executable/access profile. It must record no benchmark task, exact
+   `CONTROL_OK`, zero tool calls, no workspace entries, no `auth.json`, and
+   successful removal of the prospective run root. Keep the
+   receipt outside the repository, run root, artifacts, and registry; bind its
+   SHA-256 as `provider_auth_qualification_sha256` in the external formal
+   authorization. Do not read or copy keychain credential bytes. Record only
+   the provider context that the client exposes.
+   A sealed supervisor broker and provider-signed identity receipt are stronger
+   future controls but are not available repository-side.
+
+5. Launch the environment verifier with only the locked environment:
 
    ```sh
    /usr/bin/env -i \
@@ -71,7 +98,7 @@ For every observation:
      <locked-node> <controller>/scripts/verify-environment.mjs
    ```
 
-5. With the exact Codex flags below, separately require: the effective feature
+6. With the exact Codex flags below, separately require: the effective feature
    list hash `3ee1728480bd8371db3bb68b095f711de9c38e4690b29260233e1824bb1095f5`;
    `mcp list --json` equal to `[]`; strict-config parse success up to the expected
    “no transport configured” error; and a neutral `debug prompt-input` containing
@@ -81,11 +108,6 @@ For every observation:
    command paths, mounts, process arguments, and representative denied-path
    errors; fail if any reveals benchmark/protocol, case, arm, or variant labels
    or an evaluator-only construction source path.
-6. Use the operator's authenticated provider context without placing credential
-   bytes in the agent task, workspace, or recorded environment. Record the
-   provider account/project/organization/region/entitlement context that the
-   client exposes. A sealed supervisor broker and provider-signed identity
-   receipt are stronger future controls but are not available repository-side.
 7. Abort as `invalid_run` on any mismatch. The externally reserved
    `(wave_id, case_id, phase)` slot is never resampled, including failures before
    model output. Once launch is attempted, never launch another agent. At most
@@ -133,16 +155,21 @@ node <controller>/scripts/run-controller.mjs \
   --cargo-home-template <sealed-cargo-home-template> \
   --rustup-home-template <sealed-rustup-home-template> \
   --custodian-id <opaque-custodian-id> \
-  --authorization-file <external-formal-authorization.json>
+  --authorization-file <external-formal-authorization.json> \
+  --provider-auth-qualification <trusted-external-auth-dir>/<new-opaque-id>.json \
+  --operator-keychain <operator-user-keychain-db>
 ```
 
 The registered argument template contains literal `<workspace>` and
 `<model-catalog>` placeholders. For a formal attempt, the controller requires
 the frozen case timeout, substitutes only the opaque per-run workspace and
 staged catalog paths, and verifies authorization commitments for the exact
-effective arguments and complete local runtime identity before reserving the
-slot. The external registry and artifact directory must be disjoint from both
-the source repository and run root.
+effective arguments, complete local runtime identity, and path-bound provider-
+auth qualification receipt before reserving the slot. The external auth
+receipt, registry, and artifact directory must be disjoint from the source
+repository and run root. The operator keychain path is never placed in the
+agent environment, and credential plaintext remains exclusively managed by the
+OS keyring rather than copied into an agent-readable file.
 
 ## Timeout and termination policy
 
@@ -279,6 +306,7 @@ A and B.
   -c 'include_environment_context=false' \
   -c 'orchestrator.skills.enabled=false' \
   -c 'orchestrator.mcp.enabled=false' \
+  -c 'cli_auth_credentials_store="keyring"' \
   -c 'model_catalog_json="<opaque-run-root>/runtime/model-catalog.json"' \
   -c 'approval_policy="never"' \
   -c 'sandbox_workspace_write.network_access=false' \
@@ -298,12 +326,16 @@ code, start/end timestamps, timeout reason, usage, task hash, all effective
 locks, and the raw final-message hash. No resume, fork, steering, user reply,
 retry for task quality, or sub-agent is allowed.
 
-`HOME` is a newly created empty directory inside the opaque run root. Freeze its
-empty-tree/path/owner/mode receipt before launch and delete it with the run; it
-is never reused across attempts. `CODEX_HOME` and `TMPDIR` are likewise fresh
-per attempt and disjoint from every pre-existing user or construction home. A
-dedicated supervisor-owned read-only HOME is stronger deployment hardening for
-a future multi-account runner, not a practical internal Baseline prerequisite.
+`HOME` is newly created inside the opaque run root. Before formal launch, it
+contains only the exact credential-free
+`Library/Preferences/com.apple.security.plist` bytes reproduced from the
+path-bound qualification; construction HOME remains empty. `CODEX_HOME` is
+fresh and empty at preflight, and `auth.json` is always forbidden. The
+controller then requires exact ChatGPT keyring status before launch. HOME,
+CODEX_HOME, and TMPDIR are deleted with the run and never reused across
+attempts. A dedicated supervisor-owned read-only HOME is stronger deployment
+hardening for a future multi-account runner, not a practical internal Baseline
+prerequisite.
 
 ## Candidate capture and validation order
 

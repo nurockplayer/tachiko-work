@@ -310,6 +310,23 @@ try {
   ]) {
     if (!/^[0-9a-f]{64}$/.test(value)) fail(`${key} must be 64 lowercase hexadecimal characters`);
   }
+  const hasKeychainSha = args.has("--expected-keychain-metadata-sha256");
+  const hasKeychainBytes = args.has("--expected-keychain-metadata-bytes");
+  if (hasKeychainSha !== hasKeychainBytes) {
+    fail("keychain metadata SHA-256 and byte count must be supplied together");
+  }
+  let expectedKeychainMetadata = null;
+  if (hasKeychainSha) {
+    const metadataSha256 = args.get("--expected-keychain-metadata-sha256");
+    const metadataBytes = Number(args.get("--expected-keychain-metadata-bytes"));
+    if (!/^[0-9a-f]{64}$/.test(metadataSha256)) {
+      fail("--expected-keychain-metadata-sha256 must be 64 lowercase hexadecimal characters");
+    }
+    if (!Number.isSafeInteger(metadataBytes) || metadataBytes < 1) {
+      fail("--expected-keychain-metadata-bytes must be a positive safe integer");
+    }
+    expectedKeychainMetadata = {sha256: metadataSha256, bytes: metadataBytes};
+  }
   const [workspace, home, codexHome, artifactDir] = await Promise.all([
     realpath(args.get("--workspace")),
     realpath(args.get("--home")),
@@ -371,8 +388,48 @@ try {
   ]) {
     if (identity.type !== "directory") fail(`${label} must be a real directory`);
   }
-  if (homeEntries.length !== 0) fail("neutral HOME must be empty");
-  if (codexHomeEntries.length !== 0) fail("neutral CODEX_HOME must be empty");
+  if (codexHomeEntries.some((entry) => entry.path === "auth.json")) {
+    fail("CODEX_HOME auth.json is forbidden");
+  }
+  let providerAuth = {
+    mode: "none",
+    auth_json_present: false,
+    metadata: null,
+  };
+  if (expectedKeychainMetadata) {
+    const expectedEntries = [
+      {path: "Library", type: "directory"},
+      {path: "Library/Preferences", type: "directory"},
+      {path: "Library/Preferences/com.apple.security.plist", type: "file"},
+    ];
+    if (JSON.stringify(homeEntries) !== JSON.stringify(expectedEntries)) {
+      fail("formal auth HOME must contain only exact credential-free Keychain metadata");
+    }
+    if (codexHomeEntries.length !== 0) fail("neutral CODEX_HOME must be empty before auth status");
+    const metadataPath = resolve(home, "Library", "Preferences", "com.apple.security.plist");
+    const metadataInfo = await lstat(metadataPath);
+    if (!metadataInfo.isFile() || metadataInfo.isSymbolicLink()) {
+      fail("formal auth Keychain metadata must be a regular non-symlink file");
+    }
+    const metadataBytes = await readFile(metadataPath);
+    if (metadataBytes.length !== expectedKeychainMetadata.bytes ||
+        sha256(metadataBytes) !== expectedKeychainMetadata.sha256) {
+      fail("formal auth Keychain metadata identity mismatch");
+    }
+    providerAuth = {
+      mode: "macos_user_keychain",
+      auth_json_present: false,
+      metadata: {
+        path: "Library/Preferences/com.apple.security.plist",
+        bytes: metadataBytes.length,
+        sha256: sha256(metadataBytes),
+        mode: metadataInfo.mode & 0o7777,
+      },
+    };
+  } else {
+    if (homeEntries.length !== 0) fail("neutral HOME must be empty");
+    if (codexHomeEntries.length !== 0) fail("neutral CODEX_HOME must be empty");
+  }
 
   const [instructions, controls, bashPath, gitPath, rtkPath, rustupPath, filesystem] = await Promise.all([
     scanWorkspaceInstructions(workspace, expectedAgentsSha256),
@@ -432,6 +489,10 @@ try {
       GIT_ATTR_NOSYSTEM: process.env.GIT_ATTR_NOSYSTEM,
       expected_agents_sha256: expectedAgentsSha256,
       expected_control_sha256: expectedControlSha256,
+      ...(expectedKeychainMetadata ? {
+        expected_keychain_metadata_sha256: expectedKeychainMetadata.sha256,
+        expected_keychain_metadata_bytes: expectedKeychainMetadata.bytes,
+      } : {}),
     },
     filesystem: {
       workspace: workspaceIdentity,
@@ -445,6 +506,7 @@ try {
       home: { entries: homeEntries },
       codex_home: { entries: codexHomeEntries },
     },
+    provider_auth: providerAuth,
     binaries: { node, bash, git, rtk, rustup, cargo, rustc, rustfmt, clippy },
     rust_target: rustTarget,
     free_space: { bytes: Number(filesystem.bavail * filesystem.bsize) },

@@ -1,8 +1,11 @@
 # Contamination and Reproducibility Audit
 
-Audit date: 2026-08-25. Scope: benchmark construction only. No Codex benchmark
-task was run, and no construction or Ultra observation is eligible for Baseline
-A or Variant B.
+Audit date: 2026-08-27. Scope: benchmark construction plus provider-auth
+bootstrap remediation. The first formal wave reached provider contact for its
+TW-01 slot but terminated `infrastructure_invalid_unsealed` on HTTP 401 before
+any model output. That wave and slot remain permanently invalid/unsealed and
+were not rerun. No construction or Ultra observation is eligible for Baseline A
+or Variant B.
 
 ## Methods and evidence boundary
 
@@ -33,6 +36,7 @@ runtime dependency of an experiment wave.
 | Are capabilities needlessly duplicated? | Nine cases cover identity authority, storage-contract remediation, numeric conversion, crate architecture, resident-runtime research, governance reconciliation, graph oracle, legacy persistence, and staged diagnostics. Native/WASM/release gates and formula/workspace semantics still recur because they dominate the repository's strong merged evidence. | Disclosed cluster limitation |
 | Does scoring favor wording unique to one `AGENTS.md`? | Core tooling scores one explicit locked manager ecosystem rather than pnpm specifically; task text and subjective anchors do not cite either variant. Construction agents did see Baseline A. | Internal review passes; further independent neutrality audits are a recorded limitation |
 | Are external dependencies reproducible? | Five distinct Cargo.lock byte sets resolved from the sealed cache with `CARGO_NET_OFFLINE=true`. TW-05 builds and exercises Rust, native Node tests, the Worker/parity path, benchmark, and portability directly under enforced network denial without invoking npm, pnpm, or yarn. GNU Bash 5, clone-local targets, binary hashes, WASM target artifacts, and free-space checks are recorded per attempt. | Pass |
+| Can fresh formal homes authenticate without exposing credential bytes? | The 401 reproduction showed that fresh HOME lacked default-Keychain discovery metadata and that Codex 0.149.0 keys `Codex Auth` by the exact `CODEX_HOME` path. A path-bound construction qualification now creates only credential-free Keychain preferences, performs ChatGPT login into the OS keyring, returns exact `CONTROL_OK` with zero tools under the locked model/effort and candidate access profile, removes the run root, and emits a nonsecret external receipt. Formal authorization, registry, preflight, launch stage, and controller evidence all bind that receipt; `auth.json` is forbidden and no credential plaintext is copied into an agent-readable file. | Pass |
 
 ## Construction pilot results
 
@@ -61,6 +65,13 @@ from formal results:
   validation root;
 - a no-task Codex configuration smoke in an empty directory returned exactly
   `CONTROL_OK` with zero tool calls;
+- a fresh-HOME/fresh-CODEX_HOME authentication reproduction returned HTTP 401
+  until macOS Keychain discovery and Codex's path-scoped Keychain account were
+  bootstrapped; the final construction-only qualification used the neutral
+  `CONTROL_OK` prompt under `gpt-5.6-sol` with `high` reasoning, made zero tool
+  calls, supplied no benchmark task, created no `auth.json`, left the workspace
+  empty, removed the prospective run root, and wrote external receipt SHA-256
+  `ef117e66038327f060bd820dd2e2a419e700a1da1e7d9c18f194371051e494dd`;
 - untouched-base oracle discrimination showed semantic red tests where stable
   public seams existed, while TW-04/TW-05/TW-07/TW-08/TW-09 exposed
   candidate-interface coupling; this directly motivated assertion granularity
@@ -136,10 +147,12 @@ readiness defects:
    selector-family discrimination, adapters, and TW-05 package-manager-neutral
    offline evidence. The verifier recomputes both its semantic payload and its
    separate content-addressed run receipt.
-3. `preflight-run.mjs` and the controller record a closed environment, neutral
-   instruction surface, overlay identity, free space, local runtime binary
-   versions/hashes, WASM artifacts, model catalog, and the sealed controller
-   bundle for each attempt.
+3. `qualify-provider-auth.mjs`, `preflight-run.mjs`, and the controller require a
+   path-bound ChatGPT OS-keyring qualification, reproduce only its exact
+   credential-free Keychain metadata, forbid `auth.json`, and record the auth
+   receipt, closed environment, neutral instruction surface, overlay identity,
+   free space, local runtime binary versions/hashes, WASM artifacts, model
+   catalog, and sealed controller bundle for each attempt.
 4. `capture-candidate.mjs` performs raw lexical capture into a separate trusted
    Git object database/index and proves candidate patch/tree round-trip equality.
 5. `run-controller.mjs` externally registers a unique wave/case/phase slot,
@@ -164,11 +177,13 @@ readiness defects:
    supervision receipt.
 
 An individual Baseline attempt remains fail-closed: missing external
-authorization, catalog/tool/hash drift, insufficient disk, base-control failure,
-instruction leakage, overlay drift, surviving descendants, capture mismatch, or
-invalid review material prevents or invalidates that observation. Those are
-per-run gates implemented by the controller, not missing infrastructure and not
-candidate score deductions.
+authorization or path-bound provider-auth qualification, unavailable ChatGPT
+keyring status, any `auth.json`, catalog/tool/hash drift, insufficient disk,
+base-control failure, instruction leakage, overlay drift, surviving descendants,
+capture mismatch, or invalid review material prevents or invalidates that
+observation. Those are per-run gates implemented by the controller, not
+candidate score deductions. The failed first wave's occupied TW-01 slot is not
+made reusable by this remediation.
 
 ## Recorded limitations
 
