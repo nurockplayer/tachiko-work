@@ -1,6 +1,6 @@
 //! Storage-owned `.roproj/v1` DTOs and canonical tree codec.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
@@ -344,6 +344,30 @@ fn decode_manifest(bytes: &[u8]) -> Result<ManifestV1, FormatError> {
     Ok(manifest)
 }
 
+pub(crate) fn dispatch_manifest(bytes: &[u8]) -> Result<(), FormatError> {
+    decode_manifest(bytes).map(|_| ())
+}
+
+pub(crate) fn canonicalize_unordered(
+    manifest_bytes: &[u8],
+    schemas_bytes: &[u8],
+    entity_records: Vec<(String, Vec<u8>)>,
+) -> Result<CanonicalRoProjectV1, FormatError> {
+    let manifest = decode_manifest(manifest_bytes)?;
+    let schemas: Vec<SchemaV1> = decode_json_file_unordered(ROPROJ_V1_PATHS[1], schemas_bytes)?;
+    let schemas = schemas_into_semantic_unordered(schemas)?;
+    let entities = entities_into_semantic_unordered(entity_records)?;
+    let document = Document {
+        id: DocumentId::from(manifest.document.id),
+        title: manifest.document.title,
+        schemas,
+        entities,
+    };
+    super::super::check_document(&document)?;
+    validate_semantic_expression_limits(&document)?;
+    encode(&document)
+}
+
 fn decode_json_file<T>(path: &str, bytes: &[u8]) -> Result<T, FormatError>
 where
     T: for<'de> Deserialize<'de>,
@@ -352,6 +376,19 @@ where
     inspect_roproj(source, ROPROJ_V1_MAX_JSON_NESTING)
         .map_err(|error| map_frontend_error(path, error))?;
     deserialize_roproj(path, source)
+}
+
+fn decode_json_file_unordered<T>(path: &str, bytes: &[u8]) -> Result<T, FormatError>
+where
+    T: DeserializeOwned,
+{
+    let source = utf8(path, bytes)?;
+    inspect_roproj(source, ROPROJ_V1_MAX_JSON_NESTING)
+        .map_err(|error| map_frontend_error(path, error))?;
+    let value: serde_json::Value = deserialize_roproj(path, source)?;
+    serde_json::from_value(value).map_err(|error| FormatError::InvalidRoProjectRepresentation {
+        message: format!("'{path}' does not match .roproj/v1: {error}"),
+    })
 }
 
 fn decode_entities(tree: &CanonicalRoProjectV1) -> Result<BTreeMap<EntityId, Entity>, FormatError> {
@@ -421,6 +458,56 @@ fn schemas_into_semantic(
     Ok(semantic)
 }
 
+fn schemas_into_semantic_unordered(
+    schemas: Vec<SchemaV1>,
+) -> Result<BTreeMap<SchemaId, Schema>, FormatError> {
+    let mut schema_ids = BTreeSet::new();
+    for schema in &schemas {
+        require_id("schema id", &schema.id)?;
+        if !schema_ids.insert(schema.id.as_str()) {
+            return invalid_representation(format!("duplicate schema id '{}'", schema.id));
+        }
+    }
+    for schema in &schemas {
+        let mut field_ids = BTreeSet::new();
+        for field in &schema.fields {
+            require_id("field id", &field.id)?;
+            if !field_ids.insert(field.id.as_str()) {
+                return invalid_representation(format!("duplicate field id '{}'", field.id));
+            }
+        }
+    }
+    schemas
+        .into_iter()
+        .map(|schema| {
+            let id = SchemaId::from(schema.id.clone());
+            Ok((id, schema.into_semantic_unordered()?))
+        })
+        .collect()
+}
+
+fn entities_into_semantic_unordered(
+    records: Vec<(String, Vec<u8>)>,
+) -> Result<BTreeMap<EntityId, Entity>, FormatError> {
+    let dtos = records
+        .into_iter()
+        .map(|(record_path, bytes)| decode_json_file_unordered(&record_path, &bytes))
+        .collect::<Result<Vec<EntityV1>, _>>()?;
+    let mut entity_ids = BTreeSet::new();
+    for dto in &dtos {
+        require_id("entity id", &dto.id)?;
+        if !entity_ids.insert(dto.id.as_str()) {
+            return invalid_representation(format!("duplicate entity id '{}'", dto.id));
+        }
+    }
+    dtos.into_iter()
+        .map(|dto| {
+            let id = EntityId::from(dto.id.clone());
+            Ok((id, dto.into_semantic()?))
+        })
+        .collect()
+}
+
 impl SchemaV1 {
     fn into_semantic(self) -> Result<Schema, FormatError> {
         let mut fields = BTreeMap::new();
@@ -436,6 +523,22 @@ impl SchemaV1 {
                 return invalid_representation(format!("duplicate field id '{id_text}'"));
             }
         }
+        Ok(Schema {
+            id: SchemaId::from(self.id),
+            key: SchemaKey::from(self.key),
+            fields,
+        })
+    }
+
+    fn into_semantic_unordered(self) -> Result<Schema, FormatError> {
+        let fields = self
+            .fields
+            .into_iter()
+            .map(|field| {
+                let id = FieldId::from(field.id.clone());
+                Ok((id, field.into_semantic()?))
+            })
+            .collect::<Result<_, FormatError>>()?;
         Ok(Schema {
             id: SchemaId::from(self.id),
             key: SchemaKey::from(self.key),
