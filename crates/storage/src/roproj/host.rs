@@ -340,7 +340,7 @@ fn require_exact_root_entries(root: &Path) -> Result<(), FormatError> {
 }
 
 fn require_exact_entity_entries(entities: &Path) -> Result<(), FormatError> {
-    let mut present = [false; 16];
+    let mut present = [false; ROPROJ_V1_PATHS.len() - 2];
     for entry in read_directory(entities)? {
         let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
             return invalid_layout(&entry.path(), "entity shard name is not canonical UTF-8");

@@ -74,7 +74,7 @@ pub struct CanonicalRoProjectV1 {
 pub fn encode_roproj_v1(document: &Document) -> Result<CanonicalRoProjectV1, FormatError>;
 ```
 
-Define manifest/schema/entity/value/expression DTOs inside `roproj::v1`, convert explicitly from semantic types, render pretty JSON for the first two files and compact JSONL for entities, and add `sha2 = "0.10"` for the normative placement function.
+Define manifest/schema/entity/value/expression DTOs inside `roproj::v1`, convert explicitly from semantic types, render pretty JSON for the first two files and compact JSONL for entities, and add `sha2 = { workspace = true }` for the normative placement function.
 
 - [ ] **Step 4: Run the focused storage test**
 
