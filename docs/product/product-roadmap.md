@@ -27,14 +27,15 @@ Issues remain the operational planning surface.
 
 The current repository planning horizon is:
 
-> **02 · Core & Format Hardening**
+> **03 · Game Dev Alpha**
 
-Its purpose is to stabilize expensive-to-change foundations before wider
-adoption: semantic identity, shared application and API boundaries,
-diagnostics, formula semantics, storage/versioning/canonicalization, executable
-fixtures, and Native/WASM portability.
+Its purpose is to make Tachiko Work credible for early real game-development
+use: prove a complete standalone semantic game-balance workflow, productionize
+the canonical `.roproj` / portable `.ro` path, provide optional first-class Git
+review and CI integration, and complete the minimum safe AI-assisted mutation
+boundary without requiring a hosted LLM provider.
 
-- [Open work in the current horizon](https://github.com/nurockplayer/tachiko-work/issues?q=is%3Aissue+is%3Aopen+milestone%3A%2202+%C2%B7+Core+%26+Format+Hardening%22)
+- [Open work in the current horizon](https://github.com/nurockplayer/tachiko-work/issues?q=is%3Aissue+is%3Aopen+milestone%3A%2203+%C2%B7+Game+Dev+Alpha%22)
 - [All open Issues](https://github.com/nurockplayer/tachiko-work/issues?q=is%3Aissue+is%3Aopen)
 - [Intentionally or provisionally unmilestoned Issues](https://github.com/nurockplayer/tachiko-work/issues?q=is%3Aissue+is%3Aopen+no%3Amilestone)
 
@@ -43,8 +44,8 @@ fixtures, and Native/WASM portability.
 | Stage | Planning state | Product outcome | Live Issue view |
 | --- | --- | --- | --- |
 | `01 · Developer MVP` | Baseline established | Prove the CLI-first semantic game-balance workflow: typed data, deterministic formulas, validation, semantic diff/merge, Git review, and provider-free AI analysis. | [Issues](https://github.com/nurockplayer/tachiko-work/issues?q=is%3Aissue+milestone%3A%2201+%C2%B7+Developer+MVP%22) |
-| `02 · Core & Format Hardening` | **Active** | Stabilize the irreversible or expensive-to-change semantic, runtime, diagnostics, formula, storage, versioning, and portability contracts. | [Issues](https://github.com/nurockplayer/tachiko-work/issues?q=is%3Aissue+milestone%3A%2202+%C2%B7+Core+%26+Format+Hardening%22) |
-| `03 · Game Dev Alpha` | Future horizon | Make `.roproj`/`.ro`, Git/CI review, SemanticPatch, safe AI-assisted mutation, and the Semantic Analyst credible in early real game-development workflows. | [Issues](https://github.com/nurockplayer/tachiko-work/issues?q=is%3Aissue+milestone%3A%2203+%C2%B7+Game+Dev+Alpha%22) |
+| `02 · Core & Format Hardening` | Completed horizon | Stabilize the irreversible or expensive-to-change semantic, runtime, diagnostics, formula, storage, versioning, and portability contracts. | [Issues](https://github.com/nurockplayer/tachiko-work/issues?q=is%3Aissue+milestone%3A%2202+%C2%B7+Core+%26+Format+Hardening%22) |
+| `03 · Game Dev Alpha` | **Active** | Prove the standalone game-balance product workflow plus optional Git-native review/CI, production `.roproj` / `.ro`, safe SemanticPatch-based mutation, and useful semantic analysis for early adopters. | [Issues](https://github.com/nurockplayer/tachiko-work/issues?q=is%3Aissue+milestone%3A%2203+%C2%B7+Game+Dev+Alpha%22) |
 | `04 · Game Studio Beta` | Future horizon | Add practical engine-integration paths, richer formula/scenario analysis, extension foundations, and pilot evidence from technical designers and tools teams. | [Issues](https://github.com/nurockplayer/tachiko-work/issues?q=is%3Aissue+milestone%3A%2204+%C2%B7+Game+Studio+Beta%22) |
 | `05 · Designer MVP` | Future horizon | Enable non-CLI-first use through a graphical workspace, table/spreadsheet projections, visual authoring, progressive typing, and designer-grade diagnostics. | [Issues](https://github.com/nurockplayer/tachiko-work/issues?q=is%3Aissue+milestone%3A%2205+%C2%B7+Designer+MVP%22) |
 | `06 · Team Workspace Beta` | Future horizon | Make semantic work reviewable and collaborative through machine deltas, deterministic merge/conflicts, history policy, permissions, and team review workflows. | [Issues](https://github.com/nurockplayer/tachiko-work/issues?q=is%3Aissue+milestone%3A%2206+%C2%B7+Team+Workspace+Beta%22) |
@@ -91,9 +92,9 @@ Issues and Milestones, not another source of truth. Use exactly one project:
 Recommended views:
 
 1. **Product Roadmap** — all open Issues, grouped by Milestone.
-2. **Current · M02** — open Issues in `02 · Core & Format Hardening`.
+2. **Current · M03** — open Issues in `03 · Game Dev Alpha`.
 3. **Workstreams** — grouped or filtered by area labels and Epic relationships.
-4. **Future** — Milestones `03` through `08`.
+4. **Future** — Milestones `04` through `08`.
 5. **Unmilestoned** — explicit Epics, deferred placeholders, and research only.
 
 Do not add speculative start dates, target dates, or iterations merely to fill a
