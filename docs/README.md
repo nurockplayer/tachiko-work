@@ -17,7 +17,7 @@ Read these first when you need to understand or change the project:
 7. [`architecture/README.md`](architecture/README.md) — architecture map by subsystem and maturity.
 8. [`specs/README.md`](specs/README.md) — specification map and which contract to read for each topic.
 
-The current repository planning horizon is `02 · Core & Format Hardening`. GitHub Issues own unresolved decisions and implementation work; their existence does not by itself make a direction Accepted.
+The current repository planning horizon is `03 · Game Dev Alpha`. GitHub Issues own unresolved decisions and implementation work; their existence does not by itself make a direction Accepted.
 
 ## Authority in one minute
 
