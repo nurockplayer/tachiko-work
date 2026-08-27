@@ -16,19 +16,19 @@ Regenerate it with `bash scripts/generate-third-party-licenses.sh`.
 | `anstyle-query` | `1.1.5` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/rust-cli/anstyle.git |
 | `anstyle-wincon` | `3.0.11` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/rust-cli/anstyle.git |
 | `anstyle` | `1.0.14` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/rust-cli/anstyle.git |
-| `block-buffer` | `0.10.4` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/RustCrypto/utils |
+| `block-buffer` | `0.12.1` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/RustCrypto/utils |
 | `cfg-if` | `1.0.4` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/rust-lang/cfg-if |
 | `clap_builder` | `4.6.6` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/clap-rs/clap |
 | `clap_derive` | `4.6.4` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/clap-rs/clap |
 | `clap_lex` | `1.1.0` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/clap-rs/clap |
 | `clap` | `4.6.6` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/clap-rs/clap |
 | `colorchoice` | `1.0.5` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/rust-cli/anstyle.git |
-| `cpufeatures` | `0.2.17` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/RustCrypto/utils |
-| `crypto-common` | `0.1.7` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/RustCrypto/traits |
-| `digest` | `0.10.7` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/RustCrypto/traits |
-| `generic-array` | `0.14.7` | MIT | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/fizyk20/generic-array.git |
+| `cpufeatures` | `0.3.1` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/RustCrypto/utils |
+| `crypto-common` | `0.2.2` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/RustCrypto/traits |
+| `digest` | `0.11.3` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/RustCrypto/traits |
 | `getrandom` | `0.2.17` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/rust-random/getrandom |
 | `heck` | `0.5.0` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/withoutboats/heck |
+| `hybrid-array` | `0.4.14` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/RustCrypto/hybrid-array |
 | `is_terminal_polyfill` | `1.70.2` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/polyfill-rs/is_terminal_polyfill |
 | `itoa` | `1.0.18` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/dtolnay/itoa |
 | `libc` | `0.2.189` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/rust-lang/libc |
@@ -42,7 +42,7 @@ Regenerate it with `bash scripts/generate-third-party-licenses.sh`.
 | `serde_json` | `1.0.151` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/serde-rs/json |
 | `serde` | `1.0.229` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/serde-rs/serde |
 | `sha1_smol` | `1.0.1` | BSD-3-Clause | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/mitsuhiko/sha1-smol |
-| `sha2` | `0.10.9` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/RustCrypto/hashes |
+| `sha2` | `0.11.0` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/RustCrypto/hashes |
 | `strsim` | `0.11.1` | MIT | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/rapidfuzz/strsim-rs |
 | `syn` | `3.0.3` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/dtolnay/syn |
 | `thiserror-impl` | `2.0.20` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/dtolnay/thiserror |
@@ -74,8 +74,8 @@ attribution is retained.
 | `anstyle-wincon 3.0.11` | `LICENSE-MIT` | `6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6` |
 | `anstyle 1.0.14` | `LICENSE-APACHE` | `c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08` |
 | `anstyle 1.0.14` | `LICENSE-MIT` | `6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6` |
-| `block-buffer 0.10.4` | `LICENSE-APACHE` | `a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5` |
-| `block-buffer 0.10.4` | `LICENSE-MIT` | `d5c22aa3118d240e877ad41c5d9fa232f9c77d757d4aac0c2f943afc0a95e0ef` |
+| `block-buffer 0.12.1` | `LICENSE-APACHE` | `a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5` |
+| `block-buffer 0.12.1` | `LICENSE-MIT` | `98181e7249d0c01737645ec982499ce99a0f07eb8f7d625b8840d799d10dbc01` |
 | `cfg-if 1.0.4` | `LICENSE-APACHE` | `a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2` |
 | `cfg-if 1.0.4` | `LICENSE-MIT` | `378f5840b258e2779c39418f3f2d7b2ba96f1c7917dd6be0713f88305dbda397` |
 | `clap_builder 4.6.6` | `LICENSE-APACHE` | `c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08` |
@@ -88,17 +88,18 @@ attribution is retained.
 | `clap 4.6.6` | `LICENSE-MIT` | `6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6` |
 | `colorchoice 1.0.5` | `LICENSE-APACHE` | `c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08` |
 | `colorchoice 1.0.5` | `LICENSE-MIT` | `6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6` |
-| `cpufeatures 0.2.17` | `LICENSE-APACHE` | `a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5` |
-| `cpufeatures 0.2.17` | `LICENSE-MIT` | `ae9baa7beea910273c2f384c2a6b721fb7bd02bda3436074a1072e4ee689f985` |
-| `crypto-common 0.1.7` | `LICENSE-APACHE` | `a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5` |
-| `crypto-common 0.1.7` | `LICENSE-MIT` | `3521672491a3479422d5fe1aca6645dd2984090f85da6e5205abfb18fb7a6897` |
-| `digest 0.10.7` | `LICENSE-APACHE` | `a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5` |
-| `digest 0.10.7` | `LICENSE-MIT` | `9e0dfd2dd4173a530e238cb6adb37aa78c34c6bc7444e0e10c1ab5d8881f63ba` |
-| `generic-array 0.14.7` | `LICENSE` | `c09aae9d3c77b531f56351a9947bc7446511d6b025b3255312d3e3442a9a7583` |
+| `cpufeatures 0.3.1` | `LICENSE-APACHE` | `a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5` |
+| `cpufeatures 0.3.1` | `LICENSE-MIT` | `73b9dc2e79c7308998dd30296e073aefaefb944a68fb89aa412c23c0edcabcaa` |
+| `crypto-common 0.2.2` | `LICENSE-APACHE` | `a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5` |
+| `crypto-common 0.2.2` | `LICENSE-MIT` | `d2e7ec5355c96eeade56b09187ceb48a6a30299da3ce7531a66d3d11405ab963` |
+| `digest 0.11.3` | `LICENSE-APACHE` | `a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5` |
+| `digest 0.11.3` | `LICENSE-MIT` | `af59cea35d7f5e2777a713b8d155d65efa2c339eb43f3c14e868c6ac8506edad` |
 | `getrandom 0.2.17` | `LICENSE-APACHE` | `aaff376532ea30a0cd5330b9502ad4a4c8bf769c539c87ffe78819d188a18ebf` |
 | `getrandom 0.2.17` | `LICENSE-MIT` | `42fa16951ce7f24b5a467a40e5b449a1d41e662f97ca779864f053f39e097737` |
 | `heck 0.5.0` | `LICENSE-APACHE` | `a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2` |
 | `heck 0.5.0` | `LICENSE-MIT` | `7b63ecd5f1902af1b63729947373683c32745c16a10e8e6292e2e2dcd7e90ae0` |
+| `hybrid-array 0.4.14` | `LICENSE-APACHE` | `a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5` |
+| `hybrid-array 0.4.14` | `LICENSE-MIT` | `70c9d40f1f9545c3f133b8a67206e89da850f6468eed072281bb3701514114a9` |
 | `is_terminal_polyfill 1.70.2` | `LICENSE-APACHE` | `c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08` |
 | `is_terminal_polyfill 1.70.2` | `LICENSE-MIT` | `6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6` |
 | `itoa 1.0.18` | `LICENSE-APACHE` | `62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a` |
@@ -125,8 +126,8 @@ attribution is retained.
 | `serde 1.0.229` | `LICENSE-APACHE` | `62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a` |
 | `serde 1.0.229` | `LICENSE-MIT` | `23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3` |
 | `sha1_smol 1.0.1` | `LICENSE` | `282a21b0710441c364025461a447362daf18f5798a7b72ae2f801a2aa536da51` |
-| `sha2 0.10.9` | `LICENSE-APACHE` | `a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5` |
-| `sha2 0.10.9` | `LICENSE-MIT` | `b4eb00df6e2a4d22518fcaa6a2b4646f249b3a3c9814509b22bd2091f1392ff1` |
+| `sha2 0.11.0` | `LICENSE-APACHE` | `a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5` |
+| `sha2 0.11.0` | `LICENSE-MIT` | `831e0f43ad0bf014c1c4fec5767aae470434c1d66d6e671be2d823e729063e25` |
 | `strsim 0.11.1` | `LICENSE` | `1e697ce8d21401fbf1bddd9b5c3fd4c4c79ae1e3bdf51f81761c85e11d5a89cd` |
 | `syn 3.0.3` | `LICENSE-APACHE` | `62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a` |
 | `syn 3.0.3` | `LICENSE-MIT` | `23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3` |
@@ -585,41 +586,6 @@ src/simd.rs is licensed under the MIT license:
 
 Copyright (c) 2006-2009 Graydon Hoare
 Copyright (c) 2009-2013 Mozilla Foundation
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-
-````
-
-### `3521672491a3479422d5fe1aca6645dd2984090f85da6e5205abfb18fb7a6897`
-
-Used by:
-
-- `crypto-common 0.1.7 — LICENSE-MIT`
-
-````text
-Copyright (c) 2021 RustCrypto Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -1203,6 +1169,76 @@ SOFTWARE.
 
 ````
 
+### `70c9d40f1f9545c3f133b8a67206e89da850f6468eed072281bb3701514114a9`
+
+Used by:
+
+- `hybrid-array 0.4.14 — LICENSE-MIT`
+
+````text
+Copyright (c) 2022-2026 The RustCrypto Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+````
+
+### `73b9dc2e79c7308998dd30296e073aefaefb944a68fb89aa412c23c0edcabcaa`
+
+Used by:
+
+- `cpufeatures 0.3.1 — LICENSE-MIT`
+
+````text
+Copyright (c) 2020-2026 The RustCrypto Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+````
+
 ### `7b63ecd5f1902af1b63729947373683c32745c16a10e8e6292e2e2dcd7e90ae0`
 
 Used by:
@@ -1272,14 +1308,52 @@ For more information, please refer to <http://unlicense.org/>
 
 ````
 
-### `9e0dfd2dd4173a530e238cb6adb37aa78c34c6bc7444e0e10c1ab5d8881f63ba`
+### `831e0f43ad0bf014c1c4fec5767aae470434c1d66d6e671be2d823e729063e25`
 
 Used by:
 
-- `digest 0.10.7 — LICENSE-MIT`
+- `sha2 0.11.0 — LICENSE-MIT`
 
 ````text
-Copyright (c) 2017 Artyom Pavlov
+Copyright (c) 2016-2026 The RustCrypto Project Developers
+Copyright (c) 2016 Artyom Pavlov
+Copyright (c) 2009-2013 Mozilla Foundation
+Copyright (c) 2006-2009 Graydon Hoare
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+````
+
+### `98181e7249d0c01737645ec982499ce99a0f07eb8f7d625b8840d799d10dbc01`
+
+Used by:
+
+- `block-buffer 0.12.1 — LICENSE-MIT`
+
+````text
+Copyright (c) 2018-2025 The RustCrypto Project Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -1556,11 +1630,12 @@ SOFTWARE.
 
 Used by:
 
-- `block-buffer 0.10.4 — LICENSE-APACHE`
-- `cpufeatures 0.2.17 — LICENSE-APACHE`
-- `crypto-common 0.1.7 — LICENSE-APACHE`
-- `digest 0.10.7 — LICENSE-APACHE`
-- `sha2 0.10.9 — LICENSE-APACHE`
+- `block-buffer 0.12.1 — LICENSE-APACHE`
+- `cpufeatures 0.3.1 — LICENSE-APACHE`
+- `crypto-common 0.2.2 — LICENSE-APACHE`
+- `digest 0.11.3 — LICENSE-APACHE`
+- `hybrid-array 0.4.14 — LICENSE-APACHE`
+- `sha2 0.11.0 — LICENSE-APACHE`
 
 ````text
                               Apache License
@@ -1978,14 +2053,15 @@ limitations under the License.
 
 ````
 
-### `ae9baa7beea910273c2f384c2a6b721fb7bd02bda3436074a1072e4ee689f985`
+### `af59cea35d7f5e2777a713b8d155d65efa2c339eb43f3c14e868c6ac8506edad`
 
 Used by:
 
-- `cpufeatures 0.2.17 — LICENSE-MIT`
+- `digest 0.11.3 — LICENSE-MIT`
 
 ````text
-Copyright (c) 2020-2025 The RustCrypto Project Developers
+Copyright (c) 2017-2025 RustCrypto Developers
+Copyright (c) 2017 Artyom Pavlov
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -2011,73 +2087,6 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
-````
-
-### `b4eb00df6e2a4d22518fcaa6a2b4646f249b3a3c9814509b22bd2091f1392ff1`
-
-Used by:
-
-- `sha2 0.10.9 — LICENSE-MIT`
-
-````text
-Copyright (c) 2006-2009 Graydon Hoare
-Copyright (c) 2009-2013 Mozilla Foundation
-Copyright (c) 2016 Artyom Pavlov
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-
-````
-
-### `c09aae9d3c77b531f56351a9947bc7446511d6b025b3255312d3e3442a9a7583`
-
-Used by:
-
-- `generic-array 0.14.7 — LICENSE`
-
-````text
-The MIT License (MIT)
-
-Copyright (c) 2015 Bartłomiej Kamiński
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
 ````
 
 ### `c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b`
@@ -2580,14 +2589,14 @@ DEALINGS IN THE SOFTWARE.
 
 ````
 
-### `d5c22aa3118d240e877ad41c5d9fa232f9c77d757d4aac0c2f943afc0a95e0ef`
+### `d2e7ec5355c96eeade56b09187ceb48a6a30299da3ce7531a66d3d11405ab963`
 
 Used by:
 
-- `block-buffer 0.10.4 — LICENSE-MIT`
+- `crypto-common 0.2.2 — LICENSE-MIT`
 
 ````text
-Copyright (c) 2018-2019 The RustCrypto Project Developers
+Copyright (c) 2021-2026 RustCrypto Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
