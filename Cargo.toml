@@ -24,6 +24,7 @@ thiserror = "2.0"
 uuid = { version = "=1.12.1", default-features = false, features = ["std"] }
 ryu-js = "1.0.3"
 sha2 = { version = "0.11.0", default-features = false }
+renamore = "=0.3.2"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

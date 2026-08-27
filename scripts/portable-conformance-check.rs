@@ -17,14 +17,16 @@ use tachiko_semantic_core::{
 };
 use tachiko_storage::{
     FormatError as StorageFormatError, NORMAL_DIRECT_JSON_MAX_INPUT_BYTES,
-    ROPROJ_V1_PATHS, V2_MAX_NUMBER_TOKEN_BYTES, decode_roproj_v1, encode_roproj_v1,
-    from_bytes as storage_from_bytes, from_str as storage_from_str, to_canonical_string,
+    ROPROJ_V1_PATHS, V2_MAX_NUMBER_TOKEN_BYTES, decode_portable_package_v1,
+    decode_roproj_v1, encode_portable_package_v1, encode_roproj_v1,
+    from_bytes as storage_from_bytes, from_str as storage_from_str,
+    portable_package_payload_root, to_canonical_string,
 };
 use tachiko_workspace_engine::{
     ValidationReport, calculate_fields, diagnostic_codes, validation_report,
 };
 
-const CASE_COUNT: u32 = 47;
+const CASE_COUNT: u32 = 48;
 const VALUE: u32 = 0;
 const DIVISION_BY_ZERO: u32 = 1;
 const NON_FINITE: u32 = 2;
@@ -36,6 +38,7 @@ const COMPLETE_ORACLE: u32 = 7;
 const DIRECT_JSON_ENVELOPE: u32 = 8;
 const VALIDATION_REPORT: u32 = 9;
 const ROPROJ_V1_EXACT_TREE: u32 = 10;
+const PORTABLE_PACKAGE_V1_EXACT_BYTES: u32 = 11;
 const UNEXPECTED: u32 = 255;
 
 const VALIDATION_ACCUMULATION_COUNT: usize = 16;
@@ -48,6 +51,12 @@ const VALIDATION_DISJOINT_CYCLE_COUNT: usize = 4;
 const VALIDATION_DISJOINT_CYCLE_FINGERPRINT: u64 = 18_384_632_427_777_425_720;
 const ROPROJ_V1_EXACT_TREE_FINGERPRINT: u64 = 2_796_923_835_209_599_950;
 const ROPROJ_V1_EXACT_TREE_FILE_COUNT: u64 = 18;
+const PORTABLE_PACKAGE_V1_FINGERPRINT: u64 = 4_165_964_772_177_000_947;
+const PORTABLE_PACKAGE_V1_LENGTH: u64 = 2_692;
+const PORTABLE_PACKAGE_V1_PAYLOAD_ROOT: [u8; 32] = [
+    0x71, 0xe2, 0xb1, 0x17, 0x0a, 0xe3, 0xb2, 0xc2, 0x25, 0x9c, 0xc0, 0xc9, 0x0c, 0x21, 0x73, 0x89,
+    0xa1, 0xe5, 0x9c, 0x49, 0x0b, 0x5c, 0xcd, 0xe4, 0xc6, 0xfe, 0x2d, 0xad, 0xae, 0x1f, 0xed, 0x9c,
+];
 
 #[derive(Clone, Copy)]
 struct Record {
@@ -230,6 +239,46 @@ fn roproj_v1_record() -> Record {
         return Record::failure(UNEXPECTED, fingerprint);
     }
     record
+}
+
+fn portable_package_v1_record() -> Record {
+    let document = Document::empty("doc-empty", "Empty");
+    let Ok(tree) = encode_roproj_v1(&document) else {
+        return Record::failure(UNEXPECTED, 47_u64 << 32);
+    };
+    let root = portable_package_payload_root(&tree);
+    if root != PORTABLE_PACKAGE_V1_PAYLOAD_ROOT {
+        return Record::failure(
+            UNEXPECTED,
+            u64::from_le_bytes(root[..8].try_into().unwrap()),
+        );
+    }
+    let Ok(package) = encode_portable_package_v1(&tree) else {
+        return Record::failure(UNEXPECTED, (47_u64 << 32) | 1);
+    };
+    let fingerprint = fnv1a64(&package);
+    if package.len() as u64 != PORTABLE_PACKAGE_V1_LENGTH
+        || fingerprint != PORTABLE_PACKAGE_V1_FINGERPRINT
+    {
+        return Record::failure(UNEXPECTED, fingerprint);
+    }
+    let Ok(verified) = decode_portable_package_v1(&package) else {
+        return Record::failure(UNEXPECTED, (47_u64 << 32) | 2);
+    };
+    if verified.tree() != &tree || verified.payload_root() != root {
+        return Record::failure(UNEXPECTED, (47_u64 << 32) | 3);
+    }
+    let Ok(reencoded) = encode_portable_package_v1(verified.tree()) else {
+        return Record::failure(UNEXPECTED, (47_u64 << 32) | 4);
+    };
+    if reencoded != package {
+        return Record::failure(UNEXPECTED, (47_u64 << 32) | 5);
+    }
+    Record {
+        class: PORTABLE_PACKAGE_V1_EXACT_BYTES,
+        bits: fingerprint,
+        auxiliary: package.len() as u64,
+    }
 }
 
 fn mix_field_ref(hash: &mut u64, field: &FieldRef) {
@@ -1439,6 +1488,7 @@ fn case_record(index: u32) -> Record {
         44 => validation_cycle_record(),
         45 => disjoint_cycle_record(),
         46 => roproj_v1_record(),
+        47 => portable_package_v1_record(),
         _ => Record::failure(UNEXPECTED, 0),
     }
 }

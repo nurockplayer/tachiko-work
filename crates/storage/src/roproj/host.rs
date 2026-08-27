@@ -2,7 +2,8 @@
 
 use std::{
     ffi::OsString,
-    fs, io,
+    fs::{self, File},
+    io::{self, Read},
     path::{Component, Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -27,12 +28,31 @@ static NEXT_STAGING_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 /// Returns host read errors, layout/representation failures, explicit manifest
 /// dispatch errors, or the canonical codec's DTO and semantic failures.
 pub fn read_canonical_roproj(path: impl AsRef<Path>) -> Result<CanonicalRoProjectV1, FormatError> {
-    let root = path.as_ref();
+    read_canonical_roproj_inner(path.as_ref(), None)
+}
+
+pub(crate) fn read_canonical_roproj_bounded(
+    path: impl AsRef<Path>,
+    limit: usize,
+) -> Result<CanonicalRoProjectV1, FormatError> {
+    read_canonical_roproj_inner(
+        path.as_ref(),
+        Some(ReadBudget {
+            limit,
+            remaining: limit,
+        }),
+    )
+}
+
+fn read_canonical_roproj_inner(
+    root: &Path,
+    mut budget: Option<ReadBudget>,
+) -> Result<CanonicalRoProjectV1, FormatError> {
     require_directory(root, "canonical .roproj root")?;
     require_exact_root_entries(root)?;
 
     let manifest_path = root.join(ROPROJ_V1_PATHS[0]);
-    let manifest = read_file(&manifest_path)?;
+    let manifest = read_file_with_budget(&manifest_path, &mut budget)?;
     dispatch_manifest(&manifest)?;
 
     let entities = root.join("entities");
@@ -41,9 +61,17 @@ pub fn read_canonical_roproj(path: impl AsRef<Path>) -> Result<CanonicalRoProjec
     let mut files = Vec::with_capacity(ROPROJ_V1_PATHS.len());
     files.push((ROPROJ_V1_PATHS[0].to_owned(), manifest));
     for relative in ROPROJ_V1_PATHS.iter().skip(1) {
-        files.push(((*relative).to_owned(), read_file(&root.join(relative))?));
+        files.push((
+            (*relative).to_owned(),
+            read_file_with_budget(&root.join(relative), &mut budget)?,
+        ));
     }
     CanonicalRoProjectV1::try_from_files(files)
+}
+
+struct ReadBudget {
+    limit: usize,
+    remaining: usize,
 }
 
 /// Load a semantic document from an exact canonical `.roproj/v1` directory.
@@ -141,6 +169,14 @@ pub fn publish_canonicalized_roproj(
 ) -> Result<(), FormatError> {
     let source = source.as_ref();
     let destination = destination.as_ref();
+    ensure_destination_outside_source(source, destination)?;
+    publish_roproj(destination, tree)
+}
+
+pub(crate) fn ensure_destination_outside_source(
+    source: &Path,
+    destination: &Path,
+) -> Result<(), FormatError> {
     let resolved_source = resolve_component_path(source)?;
     let resolved_destination = resolve_component_path(destination)?;
     if resolved_destination == resolved_source || resolved_destination.starts_with(&resolved_source)
@@ -150,7 +186,7 @@ pub fn publish_canonicalized_roproj(
             destination: destination.to_owned(),
         });
     }
-    publish_roproj(destination, tree)
+    Ok(())
 }
 
 fn resolve_component_path(path: &Path) -> Result<PathBuf, FormatError> {
@@ -271,7 +307,7 @@ fn write_staging_tree(staging: &Path, tree: &CanonicalRoProjectV1) -> Result<(),
 }
 
 fn finish_staged_publication(staging: &Path, destination: &Path) -> Result<(), FormatError> {
-    match fs::rename(staging, destination) {
+    match renamore::rename_exclusive(staging, destination) {
         Ok(()) => Ok(()),
         Err(source) => {
             let error = if source.kind() == io::ErrorKind::AlreadyExists {
@@ -479,6 +515,39 @@ fn read_file(path: &Path) -> Result<Vec<u8>, FormatError> {
     })
 }
 
+fn read_file_with_budget(
+    path: &Path,
+    budget: &mut Option<ReadBudget>,
+) -> Result<Vec<u8>, FormatError> {
+    let Some(budget) = budget else {
+        return read_file(path);
+    };
+    let file = File::open(path).map_err(|source| FormatError::Read {
+        path: path.to_owned(),
+        source,
+    })?;
+    let read_limit = u64::try_from(budget.remaining)
+        .expect("portable package source limit fits u64")
+        .saturating_add(1);
+    let mut bytes = Vec::new();
+    file.take(read_limit)
+        .read_to_end(&mut bytes)
+        .map_err(|source| FormatError::Read {
+            path: path.to_owned(),
+            source,
+        })?;
+    if bytes.len() > budget.remaining {
+        return Err(crate::PortablePackageError::ResourceLimit {
+            resource: "canonical .roproj source bytes",
+            limit: budget.limit,
+            actual: budget.limit.saturating_add(1),
+        }
+        .into());
+    }
+    budget.remaining -= bytes.len();
+    Ok(bytes)
+}
+
 fn invalid_layout<T>(path: &Path, message: &str) -> Result<T, FormatError> {
     Err(FormatError::InvalidRoProjectRepresentation {
         message: format!("invalid .roproj layout at '{}': {message}", path.display()),
@@ -493,7 +562,7 @@ mod tests {
     use std::sync::atomic::Ordering;
 
     #[test]
-    fn failed_final_publication_removes_an_existing_staging_tree() {
+    fn exclusive_final_publication_rejects_an_empty_directory_created_by_a_racer() {
         let sequence = NEXT_STAGING_DIRECTORY.fetch_add(1, Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!(
             "tachiko-storage-staging-cleanup-{}-{sequence}",
@@ -505,11 +574,14 @@ mod tests {
         fs::create_dir(&staging).unwrap();
         fs::write(staging.join("partial"), b"partial").unwrap();
         fs::create_dir(&destination).unwrap();
-        fs::write(destination.join("preserve"), b"preserve").unwrap();
 
-        assert!(finish_staged_publication(&staging, &destination).is_err());
+        assert!(matches!(
+            finish_staged_publication(&staging, &destination),
+            Err(crate::FormatError::AlreadyExists { .. })
+        ));
         assert!(!staging.exists());
-        assert_eq!(fs::read(destination.join("preserve")).unwrap(), b"preserve");
+        assert!(destination.is_dir());
+        assert_eq!(fs::read_dir(&destination).unwrap().count(), 0);
 
         fs::remove_dir_all(root).unwrap();
     }

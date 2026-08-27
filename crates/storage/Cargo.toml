@@ -20,6 +20,7 @@ thiserror.workspace = true
 uuid = { workspace = true, features = ["v5"] }
 ryu-js.workspace = true
 sha2.workspace = true
+renamore.workspace = true
 
 [lints]
 workspace = true
