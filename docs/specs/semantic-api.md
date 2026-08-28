@@ -266,14 +266,17 @@ target scope cannot be derived safely, permits semantic classification or
 external exposure. The target may then be classified against the exact source
 snapshot. If it resolves to an existing semantic subject and supported M04
 formula-reasoning result/inspection facet, it yields the applicable requested
-structured facts; otherwise it yields structured missing, stale, or
+structured facts; otherwise it yields structured unresolved-target or
 unsupported-kind failure evidence preserving the requested stable identity and
-expected/actual kind where applicable. Without sufficient actual or broader
-coverage, the target instead yields one disclosure-safe denial without
-target-specific facts. Each target therefore has exactly one outcome;
-one unsuccessful target does not suppress outcomes for independently resolvable
-targets. The application authority MUST NOT silently omit, retarget, or resolve
-a requested target against another revision.
+expected/actual kind where applicable. An identity absent from the exact source
+snapshot yields the unresolved-target family without claiming whether it never
+existed or was removed elsewhere; target-history lookup is not authoritative
+scenario input. Without sufficient actual or broader coverage, the target
+instead yields one disclosure-safe denial without target-specific facts. Each
+target therefore has exactly one outcome; one unsuccessful target does not
+suppress outcomes for independently resolvable targets. The application
+authority MUST NOT silently omit, retarget, or resolve a requested target
+against another revision.
 
 The source context pins the effective deterministic ADR-0019 validator
 configuration. That same configuration governs baseline and transient-candidate
@@ -957,10 +960,11 @@ domain must demonstrate:
    Query disclosure authority producing equal exposed target outcomes; and a
    changed validator configuration being distinguished whenever it changes
    validation facts;
-5. invalid override; missing, stale, and unsupported requested targets;
+5. invalid override; unresolved and unsupported-kind requested targets;
    division/evaluation failure; validation failure; and source-cycle cases
    returning structured evidence with no publication, with each otherwise
-   admitted requested target producing exactly one outcome;
+   admitted requested target producing exactly one outcome and an unresolved
+   target revealing no target-history claim;
 6. a valid typed formula update becoming one ADR-0024 SemanticPatch whose exact
    binding contains the complete bound expression and references;
 7. invalid, rebound/stale-target, and cycle-inducing formula updates failing

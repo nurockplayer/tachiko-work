@@ -249,10 +249,13 @@ same internal non-disclosing resolution, actual-scope derivation, and Query
 authorization order above. Only sufficient actual scope, or broader explicit
 scope within the same proven document occurrence when narrower actual target
 scope cannot be derived safely, permits target classification or exposure. The
-target then yields the applicable requested facts or structured missing, stale,
-or unsupported-kind failure evidence preserving the requested stable identity
-and expected/actual kind where applicable. Without that coverage, it yields one
-disclosure-safe denial without target-specific facts.
+target then yields the applicable requested facts or structured
+unresolved-target or unsupported-kind failure evidence preserving the requested
+stable identity and expected/actual kind where applicable. An identity absent
+from the exact source snapshot is unresolved; that outcome does not claim
+whether the identity never existed or was removed elsewhere. Without that
+coverage, the target yields one disclosure-safe denial without target-specific
+facts.
 Each target therefore has exactly one outcome; one unsuccessful target does not
 suppress outcomes for independently resolvable targets. The application
 authority must not silently omit, retarget, or resolve a requested target
