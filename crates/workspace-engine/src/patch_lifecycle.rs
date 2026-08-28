@@ -1189,17 +1189,8 @@ impl PatchLifecycle {
     ) -> Result<ExecutionReceipt, PatchLifecycleError> {
         let (document, current_revision) = publication.current_snapshot();
         self.require_document(&document)?;
-        let proposal = self
-            .proposals
-            .get(proposal_id)
-            .ok_or(PatchLifecycleError::ProposalNotFound)?
-            .clone();
-        let footprint = proposal
-            .footprint
-            .clone()
-            .ok_or(PatchLifecycleError::ProposalNotExecutable)?;
-        let approval =
-            self.select_execution_approval(approval_id, executor, &proposal, &footprint)?;
+        let (proposal, footprint, approval) =
+            self.select_execution_context(proposal_id, approval_id, executor)?;
         let can_disclose = self
             .authorize_query(executor, &footprint.disclosure_requirements, now)
             .is_ok();
@@ -1289,6 +1280,46 @@ impl PatchLifecycle {
             receipt.validation_report = None;
         }
         Ok(receipt)
+    }
+
+    fn select_execution_context(
+        &self,
+        proposal_id: &ProposalId,
+        approval_id: Option<&ApprovalId>,
+        executor: &PrincipalId,
+    ) -> Result<
+        (
+            ProposalRecord,
+            AuthorizationFootprint,
+            Option<StoredApproval>,
+        ),
+        PatchLifecycleError,
+    > {
+        if self.require_active_principal(executor).is_err() {
+            return Err(PatchLifecycleError::AuthorizationDenied);
+        }
+        let proposal = self
+            .proposals
+            .get(proposal_id)
+            .ok_or(PatchLifecycleError::AuthorizationDenied)?
+            .clone();
+        let footprint = proposal
+            .footprint
+            .clone()
+            .ok_or(PatchLifecycleError::AuthorizationDenied)?;
+        let approval =
+            match self.select_execution_approval(approval_id, executor, &proposal, &footprint) {
+                Ok(approval) => approval,
+                Err(
+                    PatchLifecycleError::UnknownPrincipal
+                    | PatchLifecycleError::PrincipalDisabled
+                    | PatchLifecycleError::ApprovalRequired
+                    | PatchLifecycleError::ApprovalBindingMismatch
+                    | PatchLifecycleError::AuthorizationDenied,
+                ) => return Err(PatchLifecycleError::AuthorizationDenied),
+                Err(error) => return Err(error),
+            };
+        Ok((proposal, footprint, approval))
     }
 
     fn select_execution_approval(

@@ -740,6 +740,61 @@ fn stale_base_after_preview_denies_without_consuming_approval() {
 }
 
 #[test]
+fn unauthorized_executor_cannot_probe_missing_or_issued_proposal_ids() {
+    let document = game_balance_document("game", "Game");
+    let mut lifecycle = lifecycle();
+    provision_standard_authority(&mut lifecycle);
+    let proposal = propose(
+        &mut lifecycle,
+        &document,
+        "proposal-probe-resistant",
+        SemanticPatchBody::command(field_command("iron_sword", "damage", number(45.0))),
+        "agent",
+    );
+    let approval = preview_and_approve(
+        &mut lifecycle,
+        &document,
+        &proposal,
+        "approval-probe-resistant",
+        "agent",
+    );
+    let missing = proposal_id("proposal-never-issued");
+    let history_before = lifecycle.proposal_history(&proposal).unwrap().to_vec();
+    let mut publication = TestPublication::new(document, "r1", "r2");
+
+    for (executor, supplied_approval) in [
+        (principal("unregistered"), Some(&approval)),
+        (principal("other-agent"), None),
+        (principal("agent"), None),
+    ] {
+        for target in [&proposal, &missing] {
+            let error = lifecycle
+                .execute(
+                    target,
+                    supplied_approval,
+                    &executor,
+                    &mut publication,
+                    TrustedInstant::new(11),
+                )
+                .unwrap_err();
+
+            assert!(matches!(error, PatchLifecycleError::AuthorizationDenied));
+        }
+    }
+
+    assert_eq!(publication.publish_calls, 0);
+    assert_eq!(
+        lifecycle.approval_status(&approval).unwrap(),
+        ApprovalStatus::Active
+    );
+    assert_eq!(
+        lifecycle.proposal_history(&proposal).unwrap(),
+        history_before
+    );
+    assert!(lifecycle.execution_receipts().is_empty());
+}
+
+#[test]
 fn preview_authorizes_disclosure_before_revealing_stale_state() {
     let document = game_balance_document("game", "Game");
     let mut lifecycle = lifecycle();
@@ -846,10 +901,7 @@ fn approval_for_one_proposal_cannot_execute_another() {
         )
         .unwrap_err();
 
-    assert!(matches!(
-        error,
-        PatchLifecycleError::ApprovalBindingMismatch
-    ));
+    assert!(matches!(error, PatchLifecycleError::AuthorizationDenied));
     assert_eq!(publication.document, original);
     assert_eq!(publication.publish_calls, 0);
     assert_eq!(
@@ -1856,7 +1908,11 @@ fn disabled_executor_or_approver_blocks_publication() {
             )
             .unwrap_err();
 
-        assert!(matches!(error, PatchLifecycleError::PrincipalDisabled));
+        if disabled == "agent" {
+            assert!(matches!(error, PatchLifecycleError::AuthorizationDenied));
+        } else {
+            assert!(matches!(error, PatchLifecycleError::PrincipalDisabled));
+        }
         assert_eq!(publication.document, original);
         assert_eq!(publication.publish_calls, 0);
         assert_eq!(
