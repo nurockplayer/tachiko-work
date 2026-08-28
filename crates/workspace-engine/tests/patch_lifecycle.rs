@@ -2418,6 +2418,59 @@ fn wrong_executor_cannot_use_or_probe_an_approval() {
 }
 
 #[test]
+fn human_origin_and_executor_do_not_issue_an_unusable_approval() {
+    let document = game_balance_document("game", "Game");
+    let mut lifecycle = lifecycle();
+    provision_standard_authority(&mut lifecycle);
+    let proposal = propose(
+        &mut lifecycle,
+        &document,
+        "proposal-human-unnecessary-approval",
+        SemanticPatchBody::command(field_command("iron_sword", "damage", number(45.0))),
+        "human-editor",
+    );
+    lifecycle
+        .preview(
+            &document_scope_id(),
+            &document,
+            &revision("r1"),
+            &proposal,
+            &principal("reviewer"),
+            NOW,
+        )
+        .unwrap();
+    let approval = ApprovalId::from("approval-human-unnecessary");
+
+    let error = lifecycle
+        .approve(
+            &document_scope_id(),
+            &document,
+            &revision("r1"),
+            ApprovalRequest::new(
+                approval.clone(),
+                proposal.clone(),
+                principal("reviewer"),
+                principal("human-editor"),
+                EXPIRY,
+            ),
+            NOW,
+        )
+        .unwrap_err();
+
+    assert!(matches!(error, PatchLifecycleError::ApprovalNotRequired));
+    assert!(matches!(
+        lifecycle.approval_status(&approval),
+        Err(PatchLifecycleError::ApprovalNotFound)
+    ));
+    assert!(
+        !lifecycle
+            .proposal_history(&proposal)
+            .unwrap()
+            .contains(&PatchLifecycleState::Approved)
+    );
+}
+
+#[test]
 fn directly_authenticated_human_execution_fabricates_no_approval_evidence() {
     let document = game_balance_document("game", "Game");
     let mut lifecycle = lifecycle();

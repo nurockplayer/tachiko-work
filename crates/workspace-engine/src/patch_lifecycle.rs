@@ -676,6 +676,8 @@ pub enum PatchLifecycleError {
     ApprovalNotFound,
     #[error("exact Human Approval is required")]
     ApprovalRequired,
+    #[error("exact Human Approval is not required for this proposal and executor")]
+    ApprovalNotRequired,
     #[error("Approval does not bind this exact proposal and executor")]
     ApprovalBindingMismatch,
     #[error("a semantic scope requirement could not be derived from the exact change")]
@@ -1094,8 +1096,8 @@ impl PatchLifecycle {
     ///
     /// # Errors
     ///
-    /// Returns identity, review, stale, semantic, policy, expiry, or Approve
-    /// authorization failure without semantic publication.
+    /// Returns identity, review, stale, semantic, policy, expiry, unnecessary-
+    /// Approval, or Approve authorization failure without semantic publication.
     pub fn approve(
         &mut self,
         document_scope: &DocumentScopeId,
@@ -1122,6 +1124,9 @@ impl PatchLifecycle {
             .clone()
             .ok_or(PatchLifecycleError::ProposalNotExecutable)?;
         Self::require_nonterminal_proposal(&proposal, true)?;
+        if !self.execution_requires_approval(&proposal, &request.executor)? {
+            return Err(PatchLifecycleError::ApprovalNotRequired);
+        }
         if !proposal.reviewed_by.contains(&request.approver) {
             return Err(PatchLifecycleError::ReviewRequired);
         }
