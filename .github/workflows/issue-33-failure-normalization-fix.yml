@@ -151,3 +151,5 @@ jobs:
           git diff --cached --check
           git commit -m "docs: define deterministic analysis failure selection"
           git push origin HEAD:steward/issue-33-analysis-authority
+
+# retriggered after branch movement
