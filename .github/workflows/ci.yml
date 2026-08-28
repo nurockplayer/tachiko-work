@@ -56,7 +56,11 @@ jobs:
         run: cargo package --workspace --locked --no-verify
 
       - name: Exercise the standalone Game Dev Alpha journey
-        run: bash scripts/first-user-smoke.sh
+        run: |
+          inherited_git_dir="${RUNNER_TEMP}/tachiko-standalone-bare.git"
+          git init --bare --quiet "${inherited_git_dir}"
+          GIT_DIR="${inherited_git_dir}" TMPDIR="${GITHUB_WORKSPACE}" \
+            bash scripts/first-user-smoke.sh
 
       - name: Exercise the collaboration journey
         run: bash scripts/collaboration-smoke.sh

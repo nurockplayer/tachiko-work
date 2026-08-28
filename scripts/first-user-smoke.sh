@@ -13,15 +13,25 @@ if [[ "${tachiko_bin}" != */* ]]; then
 fi
 tachiko_bin="$(cd "$(dirname "${tachiko_bin}")" && pwd)/$(basename "${tachiko_bin}")"
 
+inside_git_worktree() {
+  local directory="$1"
+  local worktree_state
+  command -v git >/dev/null 2>&1 || return 1
+  worktree_state="$(
+    unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_CEILING_DIRECTORIES
+    git -C "${directory}" rev-parse --is-inside-work-tree 2>/dev/null || true
+  )"
+  [[ "${worktree_state}" == "true" ]]
+}
+
 smoke_dir="$(mktemp -d "${TMPDIR:-/tmp}/tachiko-first-user.XXXXXX")"
 trap 'rm -rf "${smoke_dir}"' EXIT
-if command -v git >/dev/null 2>&1 && \
-  git -C "${smoke_dir}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+if inside_git_worktree "${smoke_dir}"; then
   rmdir "${smoke_dir}"
   smoke_dir="$(mktemp -d "/tmp/tachiko-first-user.XXXXXX")"
 fi
 cd "${smoke_dir}"
-if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+if inside_git_worktree "${smoke_dir}"; then
   echo "first-user smoke: standalone lane must execute outside a Git worktree" >&2
   exit 1
 fi
