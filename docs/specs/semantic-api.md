@@ -291,7 +291,22 @@ The application authority:
 4. returns structured baseline/scenario evidence without publishing or
    persisting the candidate.
 
-The result preserves, as applicable:
+Before returning any scenario evidence, the trusted application boundary
+derives disclosure requirements from the complete underlying outcome and the
+trusted source/candidate relationships for every subject or fact the projection
+would reveal. This includes baseline and scenario outcomes, changed or affected
+subjects, dependencies, impact, validation/diagnostic facts, and their related
+stable evidence. It enforces applicable ADR-0026 Query coverage for all of them.
+
+Evidence outside live coverage MAY be safely reduced only when the reduction
+reveals no unauthorized identity, existence, kind, relationship, diagnostic, or
+other semantic fact and does not present an incomplete subject/fact set as
+complete. If the required scenario or explanation meaning cannot survive that
+reduction, the affected target outcome or entire scenario projection MUST be a
+disclosure-safe denial. Exact redaction/projection mechanics and wire spelling
+remain Provisional.
+
+The authorized result projection preserves, as applicable:
 
 - the exact source revision/context reference and validation
   configuration/provenance sufficient to distinguish any configuration change
@@ -307,15 +322,15 @@ The result preserves, as applicable:
 Before ADR-0026 disclosure projection, equal exact source revision, effective
 deterministic validator configuration, normalized overrides, and requested
 targets produce equal underlying semantic scenario outcomes. Live Query
-authority may replace an exposed target outcome with the disclosure-safe denial
-above; it MUST NOT change the transient candidate or underlying outcome, and
-principal/Grant state is not scenario meaning. The normalized override
-collection preserves override request order as reproducibility evidence; it
-does not make the overrides sequential. Requested-target order remains
-non-semantic, and output ordering is projection-only. Exact normalization
-encoding, finite limits, validator configuration/profile identifiers,
-revision-token encoding, result field names, and wire representation remain
-Provisional.
+authority may safely reduce exposed evidence or replace an affected target or
+scenario outcome with a disclosure-safe denial; it MUST NOT change the transient
+candidate or underlying outcome, and principal/Grant state is not scenario
+meaning. The normalized override collection preserves override request order as
+reproducibility evidence; it does not make the overrides sequential.
+Requested-target order remains non-semantic, and output ordering is
+projection-only. Exact normalization encoding, finite limits, validator
+configuration/profile identifiers, revision-token encoding, result field
+names, and wire representation remain Provisional.
 
 Invalid scenario input, source formula failure or cycle, candidate calculation
 failure, or validation failure returns the applicable structured failure facts
@@ -949,15 +964,25 @@ domain must demonstrate:
 6. a valid typed formula update becoming one ADR-0024 SemanticPatch whose exact
    binding contains the complete bound expression and references;
 7. invalid, rebound/stale-target, and cycle-inducing formula updates failing
-   through the existing admission, validation, or gate families;
+   through the existing admission, validation, or gate families while proving
+   unchanged canonical semantic revision/state identity and no canonical
+   semantic publication; an authoring or admission failure retaining diagnostic
+   evidence only and issuing no proposal occurrence; a later validation, gate,
+   or stale rejection retaining immutable non-authoritative proposal and
+   diagnostic evidence only when a reviewable proposal was validly issued; and
+   each command's authoritative semantic transition publishing atomically in
+   full or not at all;
 8. Query disclosure limits applying independently to reasoning, scenarios, and
    proposal preview evidence, including trusted non-disclosing resolution of
    actual document occurrence and `EntityField` membership before scenario
    authorization; caller-supplied membership granting nothing; an unprovable
    document occurrence failing closed; broader scope applying only within the
    same proven occurrence; insufficient source/override coverage denying before
-   classification, exposure, or candidate derivation; and an insufficiently
-   covered requested target yielding only its disclosure-safe denial; and
+   classification, exposure, or candidate derivation; an insufficiently covered
+   requested target yielding only its disclosure-safe denial; and unauthorized
+   dependency, impact, affected-subject, or diagnostic evidence being safely
+   reduced without false completeness or causing a disclosure-safe target or
+   scenario denial; and
 9. Delegated formula Execute using ADR-0026's existing exact finite Human
    Approval and Formula-class footprint without new formula-specific evidence.
 

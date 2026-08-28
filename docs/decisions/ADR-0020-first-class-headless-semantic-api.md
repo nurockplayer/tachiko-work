@@ -258,7 +258,18 @@ suppress outcomes for independently resolvable targets. The application
 authority must not silently omit, retarget, or resolve a requested target
 against another revision.
 
-The result preserves enough structured meaning to identify:
+Before returning any scenario evidence, the trusted boundary derives disclosure
+requirements from the complete underlying outcome and trusted source/candidate
+relationships for every subject or fact the projection would reveal. This
+includes baseline/scenario outcomes, changed or affected subjects, dependencies,
+impact, and diagnostics. It enforces applicable Query coverage for all of them.
+Evidence outside live coverage may be safely reduced only when the reduction
+reveals no unauthorized semantic fact and does not present incomplete evidence
+as complete. Otherwise the affected target outcome or scenario projection is a
+disclosure-safe denial. Exact redaction/projection mechanics remain Provisional.
+
+The authorized result projection preserves enough structured meaning to
+identify:
 
 - the exact source revision/context and validation configuration/provenance
   sufficient to distinguish any configuration change that can change returned
@@ -273,11 +284,12 @@ The result preserves enough structured meaning to identify:
 Before ADR-0026 disclosure projection, the same exact source revision,
 effective deterministic validator configuration, normalized overrides, and
 requested targets produce the same underlying semantic scenario outcome. Live
-Query authority may replace an exposed target outcome with the disclosure-safe
-denial above; it must not change the transient candidate or underlying outcome,
-and principal/Grant state is not scenario meaning. Invalid, duplicate, missing,
-or wrong-typed override targets; formula failures; cycles; and validation
-failures return structured failure evidence and publish nothing.
+Query authority may safely reduce exposed evidence or replace an affected target
+or scenario outcome with a disclosure-safe denial; it must not change the
+transient candidate or underlying outcome, and principal/Grant state is not
+scenario meaning. Invalid, duplicate, missing, or wrong-typed override targets;
+formula failures; cycles; and validation failures return structured failure
+evidence and publish nothing.
 Requested-target failures follow the per-target outcome rule above and likewise
 publish nothing. A scenario is not canonical state, a SemanticPatch, a saved
 branch, a mutation transaction, or a persisted scenario object.
