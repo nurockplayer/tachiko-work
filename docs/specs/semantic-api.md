@@ -1272,9 +1272,10 @@ without promoting incidental Rust/CLI/wire shapes, at least:
    definition and relevant deterministic configuration producing equal
    underlying results, including paired A/B evaluation that changes only the
    supplied execution contexts and does not renormalize the definition;
-10. missing, wrong-typed, unsupported metric/group/predicate and calculation
-    failure cases preserving structured failure meaning, including operation-
-    wide metric failure with no successful group or `Count` payload;
+10. unresolved or wrong-typed metric, grouping, or predicate targets;
+    unsupported metric/group/aggregate kinds; calculation failure; and selected-
+    member metric incompleteness preserving structured failure meaning, including
+    operation-wide metric failure with no successful group or `Count` payload;
 11. a complete selected membership, grouped result, or per-member observation
     collection exceeding the finite result profile producing a structured
     result-too-large outcome with no truncation, sampling, partial-success claim,

@@ -399,10 +399,12 @@ semantic model.
 
 The optional grouping key is one stable FieldId within the selected domain.
 M04 grouping uses present, supported, non-Formula typed semantic values and
-their authoritative equality meaning. A Formula-valued grouping key is
-unsupported and Deferred; Analysis MUST NOT group by formula structure or by
-its calculated Number. Multi-key grouping, grouping sets, and renderer-defined
-buckets are Deferred.
+their authoritative equality meaning. If any selected entity omits the grouping
+field, the grouped analysis returns a structured missing-group-value failure; it
+MUST NOT drop that entity or synthesize a null/absent group. A Formula-valued
+grouping key is unsupported and Deferred; Analysis MUST NOT group by formula
+structure or by its calculated Number. Multi-key grouping, grouping sets, and
+renderer-defined buckets are Deferred.
 
 The Accepted M04 result primitives are deliberately small:
 
@@ -423,12 +425,24 @@ and no otherwise successful membership, group, `Count`, `Min`, `Max`, or
 per-member payload. Values and members are never silently skipped.
 
 `Count`, `Min`, and `Max` are Accepted because their M04 meaning can be fixed
-without selecting a floating reduction order. `Sum`, `Mean`, weighted mean, and
-other floating reductions remain Deferred until a deterministic reduction law
-is separately justified. Ranking/top-k, outlier/statistical semantics,
-percentiles, optimization, and other higher analytics likewise remain
-Deferred. Per-member observations do not make ranking itself authoritative
-analysis behavior.
+without selecting a floating reduction order. An empty selected population
+returns exact `Count = 0`; requested ungrouped `Min`/`Max` over zero authoritative
+Number observations returns a structured empty-aggregate outcome rather than a
+fabricated Number, a Number-shaped null, omission, or a prior value. Grouping an
+empty selection produces an empty group collection and no synthetic empty group.
+
+Exact membership, grouped-result collections, and per-member observations are
+bounded complete results. If the complete requested collection exceeds the
+applicable finite result profile, the Analysis Query returns a structured
+result-too-large outcome and MUST NOT truncate, sample, implicitly paginate, or
+return partial success as complete. Concrete limits and public result encoding
+remain Provisional.
+
+`Sum`, `Mean`, weighted mean, and other floating reductions remain Deferred until
+a deterministic reduction law is separately justified. Ranking/top-k,
+outlier/statistical semantics, percentiles, optimization, and other higher
+analytics likewise remain Deferred. Per-member observations do not make ranking
+itself authoritative analysis behavior.
 
 The same context-independent normalized analysis definition MAY be evaluated
 independently over two explicitly supplied exact semantic contexts and returned
@@ -473,22 +487,32 @@ metadata may be adapter provenance but are not semantic analysis identity.
 #### Authorization and disclosure are complete-result laws
 
 Analysis is Query behavior and consumes ADR-0026 without a parallel permission
-model. The trusted application authority derives the complete disclosure
-footprint from actual semantic state. For schema-wide analysis this footprint
-includes the complete selected membership and every predicate, grouping,
-metric, calculation, lineage, and result fact required to make the returned
-assertion truthful. Caller-supplied membership or scope claims grant nothing.
+model. After request-local envelope admission, the trusted application authority
+non-disclosingly resolves the exact source, complete schema/type candidate domain,
+optional explicit EntityId narrowing intersection, and requested predicate,
+grouping, metric, and authoritative dependency/calculation scopes. Before any
+predicate evaluation or semantic value/type exposure, it derives a conservative
+preauthorization footprint containing the complete candidate-domain membership
+and every requested fact scope needed to evaluate the query. Query authority MUST
+cover that footprint. Caller-supplied membership or scope claims grant nothing.
+
+Only after preauthorization succeeds may the authority classify targets,
+calculate Formula-backed predicates or metrics, evaluate predicates, derive the
+selected membership, group members, and reduce results. It then derives the final
+complete-result footprint from the actual selected membership, groups,
+aggregates/observations, lineage, and every other fact the projection would
+reveal, and performs a final Query disclosure check before projection.
 
 The trusted ordering is:
 
 ```text
 request-local bounded envelope admission
--> trusted source/domain resolution
--> disclosure-footprint derivation
--> Query authorization
--> semantic target/type classification
+-> trusted non-disclosing source/domain/candidate-domain and target-scope resolution
+-> conservative preauthorization-footprint derivation
+-> Query authorization over candidate-domain membership and requested fact scopes
+-> semantic target/type classification and authoritative predicate evaluation
 -> authoritative selection/group/reduction
--> final complete-result disclosure check
+-> final complete-result disclosure-footprint check
 -> projection
 ```
 
@@ -506,10 +530,13 @@ The logical analysis result distinguishes at least:
 - malformed, oversized, or unsupported analysis request;
 - unresolved or wrong-typed field, group, predicate, or metric target;
 - unresolved or wrong-domain explicit EntityId narrowing target;
+- selected entity missing a required grouping value;
 - unsupported Formula-valued grouping key;
 - formula/calculation failure inherited from authoritative computation;
 - operation-wide requested-metric incompleteness with no successful payload;
 - invalid aggregate/type combination;
+- structured empty aggregate for requested ungrouped `Min`/`Max` over zero observations;
+- complete bounded membership/group/per-member result exceeding the finite result profile;
 - insufficient Query authority or disclosure-safe denial; and
 - ambiguous or unsupported two-context comparison.
 
