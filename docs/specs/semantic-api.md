@@ -496,6 +496,25 @@ semantics, optimization, and other higher analytics are Deferred. Returning
 per-member numeric observations does not make a caller's ranking or chart
 projection authoritative semantic analysis behavior.
 
+An empty selected population has one deterministic meaning. `Count` returns
+exactly zero. An ungrouped `Min` or `Max` request over zero authoritative Number
+observations returns a structured empty-aggregate outcome; it MUST NOT return a
+fabricated Number, `null` presented as a Number, omit the requested result, or
+silently reuse a prior value. Grouping synthesizes no empty group: groups arise
+only from selected members, so an empty selection returns an empty group
+collection. Exact public error/result code spelling for the empty-aggregate
+outcome remains Provisional.
+
+Exact selected membership, grouped result collections, and per-member Number
+observations are bounded collection results. After trusted selection/grouping
+and sufficient Query authorization, if the complete requested collection would
+exceed the applicable finite result profile, the operation returns a structured
+result-too-large outcome. It MUST NOT truncate, sample, implicitly paginate, or
+return a partial collection as complete. The exact finite limits and public
+error/result spelling remain Provisional. This is distinct from request-envelope
+admission failure: a small request may be admitted and later produce a complete
+result that is too large for the current bounded profile.
+
 ### Two-context evaluation
 
 The same normalized analysis definition MAY be evaluated independently over two
@@ -564,7 +583,10 @@ present that value as the requested complete aggregate. If the complete
 assertion cannot be disclosed safely, the result is a disclosure-safe denial.
 This rule prevents unauthorized membership, empty-group, aggregate,
 ranking-input, lineage, or cross-context facts from being inferred from a
-partial projection.
+partial projection. Result-too-large classification occurs only after the
+trusted boundary has enough Query authority to classify the complete requested
+collection; an unauthorized caller receives the disclosure-safe denial rather
+than collection-size evidence.
 
 ### Failure and persistence boundary
 
@@ -574,10 +596,13 @@ The logical family distinguishes at least:
 - unresolved or wrong-typed field, predicate, group, or metric target;
 - authoritative formula/calculation failure;
 - invalid aggregate/type combination;
+- empty aggregate for requested `Min`/`Max` with zero Number observations;
+- complete bounded membership/group/per-member result exceeding the finite
+  result profile;
 - insufficient Query authority or disclosure-safe denial; and
 - ambiguous or unsupported two-context comparison.
 
-Exact error codes, Rust variants, DTO spelling, request limits,
+Exact error codes, Rust variants, DTO spelling, request/result limits,
 normalized-definition encoding, output ordering, and internal execution-plan
 shape remain Provisional.
 
@@ -1142,25 +1167,31 @@ without promoting incidental Rust/CLI/wire shapes, at least:
    semantic targeting;
 2. one grouped entity-count result;
 3. exact `Count`, Number `Min`, and Number `Max` over supported observations;
-4. one formula-backed numeric metric that demonstrably consumes ADR-0018
+4. an empty selection returning `Count = 0`, a structured empty-aggregate
+   outcome for requested `Min`/`Max`, and no synthesized empty group;
+5. one formula-backed numeric metric that demonstrably consumes ADR-0018
    calculation authority rather than a second evaluator;
-5. repeated equal exact context + normalized definition + relevant deterministic
+6. repeated equal exact context + normalized definition + relevant deterministic
    configuration producing equal underlying results;
-6. missing, wrong-typed, unsupported metric/group/predicate and calculation
+7. missing, wrong-typed, unsupported metric/group/predicate and calculation
    failure cases preserving structured failure meaning;
-7. a disclosure case where membership, group existence, count, aggregate,
-   per-member observations, or lineage would otherwise reveal unauthorized
-   facts, proving complete-or-denied behavior rather than a visible-subset
-   aggregate;
-8. the same normalized analysis evaluated over two explicit exact semantic
-   contexts, with no history lookup or parallel revision semantics; and
-9. lineage sufficient for a consumer to explain and reproduce the deterministic
-   result without an LLM reconstructing selection or aggregation semantics.
+8. a complete selected membership, grouped result, or per-member observation
+   collection exceeding the finite result profile producing a structured
+   result-too-large outcome with no truncation, sampling, partial-success claim,
+   or implicit pagination;
+9. a disclosure case where membership, group existence, count, aggregate,
+   per-member observations, result-size classification, or lineage would
+   otherwise reveal unauthorized facts, proving complete-or-denied behavior
+   rather than a visible-subset aggregate;
+10. the same normalized analysis evaluated over two explicit exact semantic
+    contexts, with no history lookup or parallel revision semantics; and
+11. lineage sufficient for a consumer to explain and reproduce the deterministic
+    result without an LLM reconstructing selection or aggregation semantics.
 
-The implementation Issue may choose reversible finite limits, internal plan
-structures, output ordering, Rust/result types, and CLI spelling. It may not
-silently add Sum/Mean, ranking, statistics, general boolean query ASTs, joins,
-UDFs, persistence, or another analytics authority.
+The implementation Issue may choose reversible finite request/result limits,
+internal plan structures, output ordering, Rust/result types, and CLI spelling.
+It may not silently add Sum/Mean, ranking, statistics, general boolean query
+ASTs, joins, UDFs, persistence, pagination, or another analytics authority.
 
 ## M04 formula/scenario conformance evidence
 
