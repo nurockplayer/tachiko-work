@@ -319,7 +319,14 @@ The formula-update Command meaning includes:
   contract.
 
 Authoring source text is only bounded parse/bind/type-check input. The complete
-typed bound meaning is fixed before proposal identity is issued. A reviewable
+typed bound meaning is fixed before proposal identity is issued. Request-local
+syntax/shape evidence may describe only the caller-supplied source. Any
+authoring/admission evidence that depends on semantic target/reference
+resolution, binding, or type-checking against the exact base is derived
+internally without disclosure; the boundary derives its actual ADR-0026 scopes
+and requires live Query coverage before projection. Without that coverage it
+returns a disclosure-safe admission denial, not subject-specific evidence, and
+creates no admissible formula Command or proposal occurrence. A reviewable
 formula update therefore uses the existing path:
 
 ```text
@@ -342,11 +349,11 @@ require mutation Approval merely because an AI adapter consumes the result.
 
 Formula-update proposal and execution require the existing Propose/Execute
 actions, Formula mutation class, trusted disclosure/write-footprint
-derivation, and exact Approval rules from ADR-0026. Preview evidence outside
-live Query authority is denied or safely reduced. Delegated-origin or
-Delegated-authority publication requires the existing exact finite Human
-Approval. A successful calculation, validation, or scenario never grants
-Propose or Execute authority.
+derivation, and exact Approval rules from ADR-0026. Authoring/admission and
+preview evidence outside live Query authority are denied or safely reduced;
+Propose never grants disclosure. Delegated-origin or Delegated-authority
+publication requires the existing exact finite Human Approval. A successful
+calculation, validation, or scenario never grants Propose or Execute authority.
 
 Production implementation is not authorized by this amendment alone. It
 requires a separate implementation Issue that consumes this Accepted contract.

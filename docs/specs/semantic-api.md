@@ -376,6 +376,18 @@ Command. A successful authoring projection is not the proposal meaning: the
 complete typed bound expression and stable references are fixed before ADR-0024
 proposal identity is issued.
 
+Bounded source-shape or syntax evidence that requires no semantic lookup MAY
+describe request-local facts only. For target/reference resolution, binding, or
+type-checking against the exact base, the trusted application boundary performs
+the work internally without disclosure, derives the actual ADR-0026 Query
+requirements for every semantic subject or fact in the resulting authoring or
+admission evidence, and enforces live coverage before external projection.
+Without sufficient coverage it MUST return a disclosure-safe admission denial
+without subject-specific evidence. Internally retained diagnostics do not grant
+their external disclosure, and an authoring/admission failure issues neither an
+admissible Command nor a proposal occurrence. Propose authority never
+substitutes for this Query coverage.
+
 Review and execution use only the existing lifecycle:
 
 ```text
@@ -394,13 +406,14 @@ stale-target, or cycle-inducing formula updates are rejected by the existing
 formula, validation, stale-base, and operation-gate contracts and publish
 nothing.
 
-The trusted application layer derives Formula-class write requirements and
-every disclosure scope exposed by diff, dependency, calculation, or validation
-evidence. Query authority for formula reasoning or scenarios does not imply
-Propose or Execute. Propose does not imply Query or Execute. Preview outside
-live Query authority is denied or safely reduced. Delegated-origin or
-Delegated-authority Execute uses ADR-0026's existing exact finite Human
-Approval; successful validation or scenario evaluation grants no authority.
+The trusted application layer applies the authoring/admission disclosure law
+above, derives Formula-class write requirements, and derives every disclosure
+scope exposed by diff, dependency, calculation, or validation evidence. Query
+authority for formula reasoning or scenarios does not imply Propose or Execute.
+Propose does not imply Query or Execute. Preview outside live Query authority is
+denied or safely reduced. Delegated-origin or Delegated-authority Execute uses
+ADR-0026's existing exact finite Human Approval; successful validation or
+scenario evaluation grants no authority.
 
 There is no `FormulaPatch`, formula-specific approval token, AI-only mutation
 API, or second formula proposal vocabulary.
@@ -980,26 +993,30 @@ domain must demonstrate:
 7. invalid, rebound/stale-target, and cycle-inducing formula updates failing
    through the existing admission, validation, or gate families while proving
    unchanged canonical semantic revision/state identity and no canonical
-   semantic publication; an authoring or admission failure retaining diagnostic
-   evidence only and issuing no proposal occurrence; a later validation, gate,
-   or stale rejection retaining immutable non-authoritative proposal and
-   diagnostic evidence only when a reviewable proposal was validly issued; and
-   each command's authoritative semantic transition publishing atomically in
-   full or not at all;
-8. Query disclosure limits applying independently to reasoning, scenarios, and
-   proposal preview evidence, including, before any source/target resolution,
-   finite-envelope rejection, duplicate override-target rejection, and duplicate
-   requested-target normalization, all revealing request-local facts only;
-   trusted non-disclosing resolution of actual document occurrence and
-   `EntityField` membership before scenario authorization; caller-supplied
-   membership granting nothing; an unprovable document occurrence failing
-   closed; broader scope applying only within the same proven occurrence;
-   insufficient source/override coverage denying before classification,
-   exposure, or candidate derivation; an insufficiently covered requested target
-   yielding only its disclosure-safe denial; and unauthorized dependency,
-   impact, affected-subject, or diagnostic evidence being safely reduced without
-   false completeness or causing a disclosure-safe target or scenario denial;
-   and
+   semantic publication; an authoring or admission failure issuing no proposal
+   occurrence and retaining semantic-base-dependent diagnostics internally
+   unless Query-authorized for external projection; a later validation, gate, or
+   stale rejection retaining immutable non-authoritative proposal and diagnostic
+   evidence only when a reviewable proposal was validly issued; and each
+   command's authoritative semantic transition publishing atomically in full or
+   not at all;
+8. Query disclosure limits applying independently to reasoning, scenarios,
+   formula authoring/admission, and proposal preview evidence, including
+   request-local syntax evidence revealing no semantic-base fact; trusted
+   non-disclosing target/reference resolution, binding, and type-checking before
+   Query-authorized authoring/admission projection or a disclosure-safe denial;
+   before any scenario source/target resolution, finite-envelope rejection,
+   duplicate override-target rejection, and duplicate requested-target
+   normalization, all revealing request-local facts only; trusted non-disclosing
+   resolution of actual document occurrence and `EntityField` membership before
+   scenario authorization; caller-supplied membership granting nothing; an
+   unprovable document occurrence failing closed; broader scope applying only
+   within the same proven occurrence; insufficient source/override coverage
+   denying before classification, exposure, or candidate derivation; an
+   insufficiently covered requested target yielding only its disclosure-safe
+   denial; and unauthorized dependency, impact, affected-subject, or diagnostic
+   evidence being safely reduced without false completeness or causing a
+   disclosure-safe target or scenario denial; and
 9. Delegated formula Execute using ADR-0026's existing exact finite Human
    Approval and Formula-class footprint without new formula-specific evidence.
 
