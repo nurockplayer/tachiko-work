@@ -461,16 +461,28 @@ authority. The shared application boundary resolves the source domain and stable
 targets from the supplied exact semantic context.
 
 Each predicate is a typed field/operator/operand constraint. It is evaluated
-against authoritative semantic values only after trusted resolution and Query
-authorization. M04 accepts the bounded conjunction shape, not a general boolean
-query AST. The exact finite supported predicate-operator catalogue and request
-limits remain Provisional for the first implementation slice; an implementation
-MUST NOT introduce representation-path matching, untyped coercion, arbitrary
-expressions, or another evaluator as an implementation shortcut. If an entity
-in the candidate domain omits the targeted optional predicate field, that
-predicate evaluates `false` for that entity. Absence is not coerced to a typed
-operand, exposed as a synthetic value, or treated as an error for predicate
-selection.
+against authoritative effective semantic values only after the preauthorization
+coverage described below succeeds. M04 accepts the bounded conjunction shape,
+not a general boolean query AST. The exact finite supported predicate-operator
+catalogue and request limits remain Provisional for the first implementation
+slice; an implementation MUST NOT introduce representation-path matching,
+untyped coercion, arbitrary expressions, or another evaluator as an
+implementation shortcut.
+
+For a predicate whose operator requires a Number on a Number-typed field, the
+effective predicate value is the stored finite Number when present, or the
+ADR-0018 authoritative calculated Number when the field stores a Formula. A
+formula-backed predicate therefore reuses the same formula calculation and
+failure semantics as a formula-backed result metric; it MUST NOT inspect formula
+source text or evaluate through a second expression engine. Formula calculation
+failure is a structured analysis failure, not a predicate `false` result and not
+a silently skipped entity. The predicate's calculation/dependency facts are
+part of the trusted disclosure footprint.
+
+If an entity in the candidate domain omits the targeted optional predicate
+field, that predicate evaluates `false` for that entity. Absence is not coerced
+to a typed operand, exposed as a synthetic value, or treated as an error for
+predicate selection.
 
 The optional grouping key is one stable FieldId from the selected domain.
 Grouping follows the authoritative typed semantic value/equality meaning of
@@ -563,7 +575,7 @@ The logical result preserves enough lineage to reproduce and review the result:
   that definition;
 - per-result derivation meaning for returned membership, groups, aggregates,
   and per-member observations;
-- ADR-0018 calculation authority used by formula-backed metrics;
+- ADR-0018 calculation authority used by formula-backed metrics and predicates;
 - relevant deterministic validation/configuration identity when it can change
   returned facts; and
 - explicit A/B source provenance for two-context evaluation.
@@ -578,27 +590,50 @@ be adapter provenance but MUST NOT become semantic analysis identity.
 
 Analysis obeys ADR-0026 Query authority. Bounded request-envelope checks that
 need only caller-supplied facts happen before semantic lookup. After admission,
-the trusted application authority derives the actual source/domain occurrence,
-membership relationships, predicate/group/metric targets, calculation facts,
-lineage facts, and resulting disclosure footprint from canonical semantic state.
-Caller-supplied membership or scope claims grant nothing.
+the trusted application authority non-disclosingly resolves the actual source
+occurrence, schema/type domain, optional explicit EntityId narrowing, and the
+stable predicate/group/metric target scopes. This structural resolution derives
+the **candidate domain** but does not evaluate predicate truth, expose target
+types or values, or perform a reduction.
+
+Before predicate evaluation or semantic target/type classification, the trusted
+boundary derives a conservative preauthorization footprint. For the candidate
+domain that footprint includes complete domain membership plus the requested
+predicate, grouping, and metric field scopes for every candidate entity, along
+with any dependency/calculation scopes required to evaluate a formula-backed
+Number predicate or metric. Query authority must cover that complete footprint.
+A Grant that covers only the entities that would happen to survive filtering is
+not sufficient for a broader schema/domain query, because determining that
+post-filter set would itself depend on protected predicate facts. A caller may
+use the explicit bounded EntityId narrowing set to reduce the candidate domain
+before this footprint is derived; the narrowing set itself still grants no
+authority.
+
+Only after this preauthorization succeeds may the application authority
+classify semantic target types, calculate formula-backed predicate values,
+evaluate the predicates, derive the selected membership, group selected members,
+and perform the requested reductions. The final result footprint then includes
+the exact selected membership, groups, aggregates/observations, lineage, and
+other facts that the projection would reveal, and receives a final complete-
+result Query disclosure check before projection.
 
 The required ordering is:
 
 ```text
 request-local bounded envelope admission
--> trusted source/domain resolution
--> disclosure-footprint derivation
--> Query authorization
--> semantic target/type classification
--> authoritative selection/group/reduction
--> final complete-result disclosure check
+-> trusted non-disclosing source/domain/candidate-domain and target-scope resolution
+-> conservative preauthorization-footprint derivation
+-> Query authorization over candidate-domain membership and requested fact scopes
+-> semantic target/type classification and authoritative predicate calculation/selection
+-> authoritative grouping/reduction
+-> final complete-result disclosure-footprint check
 -> projection
 ```
 
-For a schema-wide analysis, complete selected membership and every predicate,
-grouping, metric, calculation, lineage, and result fact needed to make the
-assertion truthful are part of the trusted disclosure footprint.
+Caller-supplied membership or scope claims grant nothing. For a schema-wide
+analysis, the candidate-domain coverage rule above prevents predicate values,
+formula dependencies, group keys, metric facts, or excluded membership from
+being used as an unauthorized inference channel.
 
 Grouped results and `Count`/`Min`/`Max` are **complete-or-denied** in M04. A
 conforming implementation MUST NOT compute over only the visible subset and
@@ -618,7 +653,7 @@ The logical family distinguishes at least:
 - malformed, oversized, or unsupported analysis request;
 - unresolved or wrong-typed field, predicate, group, or metric target;
 - selected entity missing a required grouping value;
-- authoritative formula/calculation failure;
+- authoritative formula/calculation failure in a predicate or metric;
 - invalid aggregate/type combination;
 - empty aggregate for requested `Min`/`Max` with zero Number observations;
 - complete bounded membership/group/per-member result exceeding the finite
@@ -1190,36 +1225,44 @@ without promoting incidental Rust/CLI/wire shapes, at least:
 1. bounded typed selection/filter over a schema/type domain with stable
    semantic targeting, including a candidate entity that omits an optional
    predicate field and therefore does not match that predicate;
-2. one grouped entity-count result with complete selected membership
+2. one formula-backed Number predicate that consumes the ADR-0018 calculated
+   value and turns an authoritative calculation failure into structured analysis
+   failure rather than non-match;
+3. one grouped entity-count result with complete selected membership
    partitioned exactly once across groups;
-3. grouped `Count`, Number `Min`, and Number `Max` evaluated per group, with no
+4. grouped `Count`, Number `Min`, and Number `Max` evaluated per group, with no
    implicit simultaneous global reduction;
-4. a selected entity missing the grouping field producing a structured
+5. a selected entity missing the grouping field producing a structured
    missing-group-value failure rather than omission or a synthetic null group;
-5. exact ungrouped `Count`, Number `Min`, and Number `Max` over supported
+6. exact ungrouped `Count`, Number `Min`, and Number `Max` over supported
    observations;
-6. an empty selection returning `Count = 0`, a structured empty-aggregate
+7. an empty selection returning `Count = 0`, a structured empty-aggregate
    outcome for requested ungrouped `Min`/`Max`, and no synthesized empty group;
-7. one formula-backed numeric metric that demonstrably consumes ADR-0018
+8. one formula-backed numeric metric that demonstrably consumes ADR-0018
    calculation authority rather than a second evaluator;
-8. repeated equal exact context(s) plus equal context-independent normalized
+9. repeated equal exact context(s) plus equal context-independent normalized
    definition and relevant deterministic configuration producing equal
    underlying results, including paired A/B evaluation that changes only the
    supplied execution contexts and does not renormalize the definition;
-9. missing, wrong-typed, unsupported metric/group/predicate and calculation
-   failure cases preserving structured failure meaning;
-10. a complete selected membership, grouped result, or per-member observation
+10. missing, wrong-typed, unsupported metric/group/predicate and calculation
+    failure cases preserving structured failure meaning;
+11. a complete selected membership, grouped result, or per-member observation
     collection exceeding the finite result profile producing a structured
     result-too-large outcome with no truncation, sampling, partial-success claim,
     or implicit pagination;
-11. a disclosure case where membership, group existence, count, aggregate,
+12. authorization evidence proving that a predicate-bearing schema/domain query
+    cannot use post-filter membership to bootstrap authority: the complete
+    candidate domain and requested predicate/group/metric/calculation scopes are
+    covered before predicate evaluation, while an explicit bounded EntityId
+    narrowing set can reduce that candidate domain without granting authority;
+13. a disclosure case where membership, group existence, count, aggregate,
     per-member observations, result-size classification, missing-group-value
     classification, or lineage would otherwise reveal unauthorized facts,
     proving complete-or-denied behavior rather than a visible-subset aggregate;
-12. the same context-independent normalized analysis definition evaluated over
+14. the same context-independent normalized analysis definition evaluated over
     two explicit exact semantic contexts, with no history lookup, definition
     renormalization, or parallel revision semantics; and
-13. lineage sufficient for a consumer to explain and reproduce the deterministic
+15. lineage sufficient for a consumer to explain and reproduce the deterministic
     result without an LLM reconstructing selection or aggregation semantics.
 
 The implementation Issue may choose reversible finite request/result limits,
