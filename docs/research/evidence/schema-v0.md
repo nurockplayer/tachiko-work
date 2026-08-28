@@ -42,12 +42,16 @@ links:
 or `retrospective`; `capture_status` is `active` or `closed`; and
 `authority_state` uses the existing repository decision-state vocabulary.
 `base_sha` is the exact repository commit when known, otherwise the literal
-`unknown`.
+`unknown`. `issue` is required and names the canonical material Research or
+Decision Issue that durably owns the episode; v0 defines no issue-less episode
+representation.
 
 `context_manifest_status` is `exact`, `partial`, or `unknown`. It describes
 how completely the episode can establish the context actually supplied, not
 how many governing sources happen to be known now. `links` is an index to
-durable evidence, not a second authority graph.
+durable evidence, not a second authority graph. `links.evidence` is the generic
+v0 bucket for fixtures, probes, external evidence bundles, hashes/indexes, and
+similar reproducibility artifacts.
 
 ## Unknown and empty values
 

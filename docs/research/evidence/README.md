@@ -37,6 +37,10 @@ episode readable without private chat history. Prospective captures should be
 made before a recommendation is promoted into Accepted authority when that is
 practical.
 
+Every v0 episode, including a formal experiment or benchmark, must reference
+one material Research or Decision Issue as that durable owner; v0 defines no
+issue-less episode representation.
+
 Record only context that durable evidence proves was supplied. Use the literal
 value `unknown` for unavailable metadata; never infer a provider, model,
 deployment, prompt, configuration, or historical context. Append downstream

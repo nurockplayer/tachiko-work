@@ -25,7 +25,7 @@ links:
   specs: []
   tests: []
   evidence:
-    - https://gist.github.com/nurockplayer/7400afc71bb30989781800bf178b68a2
+    - https://gist.github.com/nurockplayer/7400afc71bb30989781800bf178b68a2/cbc2b66fe8b94e59c780a3ffc28512f41942e584
     - https://github.com/nurockplayer/tachiko-work/issues/104#issuecomment-5454232508
     - https://github.com/nurockplayer/tachiko-work/issues/104#issuecomment-5455440106
 ---
@@ -135,7 +135,7 @@ compression pipeline, or other productionization was authorized by this result.
 - [#104 research Issue](https://github.com/nurockplayer/tachiko-work/issues/104)
 - [Definitive benchmark report](https://github.com/nurockplayer/tachiko-work/issues/104#issuecomment-5454232508)
 - [Project Steward review](https://github.com/nurockplayer/tachiko-work/issues/104#issuecomment-5455440106)
-- [Evidence bundle](https://gist.github.com/nurockplayer/7400afc71bb30989781800bf178b68a2), evidence-index SHA-256 `e81b1182e483b09b535455c69b9a413ed3f311823d83b37e5f2f41e1b3219598`
+- [Evidence bundle, pinned Gist revision](https://gist.github.com/nurockplayer/7400afc71bb30989781800bf178b68a2/cbc2b66fe8b94e59c780a3ffc28512f41942e584), evidence-index SHA-256 `e81b1182e483b09b535455c69b9a413ed3f311823d83b37e5f2f41e1b3219598`
 - [#146 retrospective calibration index](https://github.com/nurockplayer/tachiko-work/issues/104#issuecomment-5457585707)
 
 ## Downstream observations
