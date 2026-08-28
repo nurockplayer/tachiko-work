@@ -48,8 +48,9 @@ families, stable-ID document-local scopes, trusted relational authorization-
 footprint derivation, Value/Formula/Structure/Schema/Destructive classes, exact
 finite Human Approval for Delegated-origin or Delegated-authority publication,
 replay/revocation rules, minimum provenance, and separation from host/external
-effects. Concrete lifecycle, state, enforcement, and revision mechanics remain
-#29/#30/#93. ADR-0022 accepts the resident shared Rust runtime,
+effects. Issue #29 implements the current provisional workspace-engine
+lifecycle/state/publication seam; hostile-boundary enforcement and concrete
+resident revision/session mechanics remain #30/#93. ADR-0022 accepts the resident shared Rust runtime,
 no-second-canonical-client-model rule, host separation, explicit snapshot
 boundaries, and native/WASM semantic parity while leaving exact
 session/revision/Worker/ABI/persistence mechanics Deferred to #93–#95 and future
@@ -69,8 +70,8 @@ ADR-0018; stable identity by ADR-0015; storage representation by ADR-0017.
 Concrete AI mutation lifecycle and enforcement remain narrower implementation
 work. ADR-0026 resolves #28's principal/capability/scope/Grant/Approval,
 footprint, provenance, and structural exact-binding contract without selecting
-canonical bytes, a digest profile, public DTOs, or enterprise IAM. #29 owns the
-preview/apply lifecycle and Approval-state/atomic-consumption implementation; #30
+canonical bytes, a digest profile, public DTOs, or enterprise IAM. #29 now
+implements the provisional preview/apply lifecycle and Approval-state/atomic-consumption seam; #30
 owns trusted enforcement, prompt/data separation, bypass prevention, and
 external-effect denial; #93 owns concrete semantic revision/session mechanics.
 ADR-0019 allows deterministic read-only domain/extension validators to share

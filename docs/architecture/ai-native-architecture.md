@@ -7,8 +7,10 @@ Decision state: Accepted direction under
 Reviewable semantic proposals use the immutable revision-pinned SemanticPatch
 contract Accepted by
 [ADR-0024](../decisions/ADR-0024-revision-pinned-semantic-patch.md).
-Concrete lifecycle/registry implementation remains #29, trusted security
-boundary enforcement remains #30, and revision/session mechanics remain #93.
+Issue #29 now implements a provisional provider-neutral lifecycle/registry in
+workspace-engine for the current typed field-value Command family and ordered
+AtomicBatch. Provider-facing hostile-client/security-boundary enforcement
+remains #30, and concrete resident revision/session mechanics remain #93.
 
 ## Principle
 
@@ -79,7 +81,9 @@ ADR-0026 defines the current MVP boundary:
   overridden by approval.
 
 Current `Suggestion.requires_approval` remains an inert adapter safety marker,
-not an implementation or wire precedent for this contract.
+not an implementation or wire precedent for this contract. The Issue #29
+workspace-engine lifecycle is independently exercisable without an LLM and is
+not yet wired as an `ai-api` Execute operation.
 
 ## Effect separation
 

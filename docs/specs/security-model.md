@@ -2,9 +2,10 @@
 
 Decision state: Mixed. The semantic authorization laws summarized from
 ADR-0007 and ADR-0026 are Accepted. Plugin isolation, migration sandboxing,
-instruction/data enforcement, authorization state/lifecycle, diagnostic codes,
+instruction/data enforcement, durable authorization state, diagnostic codes,
 and external-effect mechanisms remain Provisional, Deferred, or separately
-owned by #17/#29/#30/#93.
+owned by #17/#30/#93. Issue #29 supplies the current provisional trusted
+in-process authorization/Approval lifecycle seam.
 
 ## Principles
 

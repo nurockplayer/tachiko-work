@@ -51,7 +51,9 @@ use the same shared semantic transition/gating behavior and must cross trusted
 authorization/approval enforcement. ADR-0024 makes a reviewable AI proposal the
 same immutable base-bound SemanticPatch available to any semantic client; it
 does not make AI provenance or model output part of command meaning. Concrete
-state, enforcement, revision, and transport mechanisms remain #29/#30/#93.
+The provisional workspace-engine lifecycle/state implementation is now present
+under #29; provider-facing enforcement, hostile-boundary behavior, concrete
+resident revisions/sessions, and transport mechanisms remain #30/#93.
 The AI adapter does not define Principal class, Grant scope, Approval, or
 provenance from provider/model claims.
 

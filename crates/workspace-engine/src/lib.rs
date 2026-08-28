@@ -29,6 +29,8 @@ pub use tachiko_semantic_core::{
 };
 use thiserror::Error;
 
+pub mod patch_lifecycle;
+
 /// Symbolic codes emitted by workspace composition of formula-engine outcomes.
 ///
 /// The catalog is internal and provisional under ADR-0019; code meanings are

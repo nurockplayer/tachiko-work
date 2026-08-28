@@ -188,6 +188,10 @@ The engine owns real application behavior:
 - overview, human-addressed field explanation, and stable formula analysis;
 - scalar/formula edits and entity lifecycle candidate transitions;
 - inert typed field-proposal validation shared with the AI adapter;
+- a provisional snapshot-style SemanticPatch lifecycle for stable-ID typed
+  field-value Commands and ordered AtomicBatch evaluation, including scoped
+  Grants/preview, exact Human Approval, atomic publication/consumption,
+  verification, and receipts through a host-supplied revision/publication seam;
 - semantic comparison and merge-plus-impact orchestration; and
 - deterministic runtime-export projection independent of filesystem and
   terminal rendering.
@@ -215,8 +219,10 @@ one exact semantic base, and exactly one typed Command or ordered AtomicBatch.
 It does not add another engine, crate, mutation primitive, operation vocabulary,
 or storage dependency. ADR-0026 consumes its exact binding structurally and
 deliberately selects no canonical bytes, digest, public DTO, or crate. Exact
-proposal/revision Rust types, ID generation, transport, and lifecycle mechanics
-remain Provisional or owned by #29/#93.
+proposal/revision Rust types, ID generation, and transport remain Provisional.
+Issue #29 now supplies one provisional snapshot/publication lifecycle
+implementation without selecting #93's concrete resident revision/session
+mechanics.
 
 ADR-0026 adds the **authorization law** beside that application boundary. The
 trusted semantic/application authority derives operation-family/disclosure-
@@ -225,10 +231,11 @@ requirements from typed meaning and relevant base/candidate relationships.
 Trusted composition combines the requested action with each associated tuple,
 then enforces live scoped Grants
 and exact Human Approval for Delegated-origin or Delegated-authority
-publication. Exact module/crate
-placement remains Provisional, but enforcement must not live only in `ai-api`,
-UI, or client convention, and authorization state must not become
-`semantic-core` Document meaning.
+publication. Issue #29 places the current provisional trusted lifecycle and
+authorization-state implementation in workspace-engine. Public DTO/module
+stability remains Provisional; enforcement must not live only in `ai-api`, UI,
+or client convention, and authorization state must not become `semantic-core`
+Document meaning.
 
 ADR-0022 now accepts a resident shared Rust semantic/application runtime as the
 preferred interactive topology. For an open interactive document, authoritative
@@ -325,8 +332,8 @@ validation inside Rust as implementation mechanisms.
 | Merge plus base-to-result impact | CLI over merge and diff engines | Workspace-engine |
 | Runtime export semantic projection | CLI | Workspace-engine |
 | Host persistence and safe writes | CLI/storage | CLI/storage/host composition, unchanged |
-| AI proposal envelope | One-field inert `Suggestion` only | ADR-0024 SemanticPatch accepted at the Semantic API boundary; implementation pending #29/#93 |
-| Semantic authorization/Approval | Not implemented | ADR-0026 representation-neutral contract; exact placement/DTO/state remains #29/#30/#93 |
+| AI proposal envelope | One-field inert `Suggestion` only | Issue #29 implements a provider-neutral provisional SemanticPatch/AtomicBatch lifecycle in workspace-engine; `ai-api` remains an inert adapter and #93 owns resident revision/session mechanics |
+| Semantic authorization/Approval | Not implemented | Issue #29 implements provisional trusted in-process relational Grants, scoped preview, exact finite Approval state, atomic consumption/publication, and receipts; public DTO/security/host/runtime completion remains #30/#93 |
 | ID generation mechanism | CLI through workflow seam | CLI through workspace-engine seam |
 | Product-semantic client contract | Provisional/internal | First-class transport-neutral Semantic API under ADR-0020 |
 | Interactive authoritative state ownership | Open under #26 | Shared Rust semantic/application runtime under ADR-0022 |
@@ -423,12 +430,14 @@ does not implicitly grant filesystem/network/Git/plugin/deployment authority.
 - ADR-0020 owns external Semantic API semantic laws and compatibility; complete
   operation catalogue and exact Rust/wire shapes remain Provisional.
 - ADR-0024 owns proposal occurrence immutability, exact-change and Semantic API
-  compatibility binding, semantic-base pinning, and stale meaning; Rust/wire
-  encodings and implementation remain Provisional/#29/#93.
+  compatibility binding, semantic-base pinning, and stale meaning; Issue #29
+  supplies the current provisional Rust lifecycle while wire encodings and
+  concrete resident revision mechanics remain Provisional/#93.
 - ADR-0026 owns Principal, capability, stable-ID scope, Grant, trusted
   AuthorizationFootprint, exact Approval, expiry/replay/revocation, provenance,
   and external-effect separation. Exact crate/module placement, DTOs, storage,
-  clocks, result codes, and wire formats remain Provisional/#29/#30/#93;
+  clocks, result codes, and wire formats remain Provisional/#30/#93; Issue #29
+  supplies the current replaceable in-process implementation;
   canonical bytes/digest/signature/MAC/portable tokens remain Deferred.
 - ADR-0022 owns resident runtime/state and host-separation laws, while session
   handle shape, revision/concurrency, cancellation, state commit/swap/locking/
