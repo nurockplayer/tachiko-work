@@ -26,13 +26,13 @@ enum Commands {
         #[arg(long, value_enum, default_value_t = TemplateName::GameBalance)]
         template: TemplateName,
     },
-    /// Check structure, references, types, and formulas
+    /// Check a supported .ro file or exact .roproj tree
     Validate { path: PathBuf },
-    /// Materialize all numeric and formula values as JSON
+    /// Materialize numeric and formula values from a supported read source as JSON
     Calculate { path: PathBuf },
-    /// Browse entities and calculated values
+    /// Browse entities and calculated values from a supported read source
     Show { path: PathBuf },
-    /// Explain a field, its formula, and downstream impact
+    /// Explain a field, its formula, and downstream impact from a supported read source
     Explain {
         path: PathBuf,
         /// Human field address in entity.field form
@@ -69,7 +69,7 @@ enum Commands {
         #[command(subcommand)]
         command: FormulaCommands,
     },
-    /// Compare two document versions by semantic meaning
+    /// Compare two supported read sources by semantic meaning
     Diff { before: PathBuf, after: PathBuf },
     /// Merge semantic changes from two document versions
     Merge {
@@ -80,7 +80,7 @@ enum Commands {
         #[arg(long)]
         output: PathBuf,
     },
-    /// Export a calculated runtime JSON projection
+    /// Export a calculated runtime JSON projection from a supported read source
     Export { input: PathBuf, output: PathBuf },
 }
 
