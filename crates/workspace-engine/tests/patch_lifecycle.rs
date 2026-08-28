@@ -1340,6 +1340,41 @@ fn provision_grant_rejects_a_manually_malformed_query_mutation_requirement() {
 }
 
 #[test]
+fn principal_occurrence_identity_and_kind_are_immutable() {
+    let mut lifecycle = lifecycle();
+
+    let duplicate = lifecycle
+        .register_principal(principal("agent"), PrincipalKind::Delegated)
+        .unwrap_err();
+    let reclassification = lifecycle
+        .register_principal(principal("agent"), PrincipalKind::Human)
+        .unwrap_err();
+
+    assert!(matches!(
+        duplicate,
+        PatchLifecycleError::PrincipalIdAlreadyExists
+    ));
+    assert!(matches!(
+        reclassification,
+        PatchLifecycleError::PrincipalKindMismatch
+    ));
+}
+
+#[test]
+fn policy_version_identity_cannot_be_reused_for_changed_meaning() {
+    let mut lifecycle = lifecycle();
+
+    let error = lifecycle
+        .transition_effective_policy(
+            AuthorizationPolicyVersion::from("policy-v1"),
+            PolicyMeaningId::from("changed-policy-v1-meaning"),
+        )
+        .unwrap_err();
+
+    assert!(matches!(error, PatchLifecycleError::PolicyMeaningConflict));
+}
+
+#[test]
 fn value_authority_does_not_authorize_formula_mutation() {
     let document = game_balance_document("game", "Game");
     let mut lifecycle = lifecycle();
@@ -1671,6 +1706,50 @@ fn loss_of_live_execute_grant_denies_and_leaves_approval_active() {
         ApprovalStatus::Active
     );
     assert_eq!(publication.document, original);
+}
+
+#[test]
+fn disabled_executor_or_approver_blocks_publication() {
+    for (disabled, suffix) in [("agent", "executor"), ("reviewer", "approver")] {
+        let document = game_balance_document("game", "Game");
+        let original = document.clone();
+        let mut lifecycle = lifecycle();
+        provision_standard_authority(&mut lifecycle);
+        let proposal = propose(
+            &mut lifecycle,
+            &document,
+            &format!("proposal-disabled-{suffix}"),
+            SemanticPatchBody::command(field_command("iron_sword", "damage", number(45.0))),
+            "agent",
+        );
+        let approval = preview_and_approve(
+            &mut lifecycle,
+            &document,
+            &proposal,
+            &format!("approval-disabled-{suffix}"),
+            "agent",
+        );
+        lifecycle.disable_principal(&principal(disabled)).unwrap();
+        let mut publication = TestPublication::new(document, "r1", "r2");
+
+        let error = lifecycle
+            .execute(
+                &proposal,
+                Some(&approval),
+                &principal("agent"),
+                &mut publication,
+                TrustedInstant::new(11),
+            )
+            .unwrap_err();
+
+        assert!(matches!(error, PatchLifecycleError::PrincipalDisabled));
+        assert_eq!(publication.document, original);
+        assert_eq!(publication.publish_calls, 0);
+        assert_eq!(
+            lifecycle.approval_status(&approval).unwrap(),
+            ApprovalStatus::Active
+        );
+    }
 }
 
 #[test]

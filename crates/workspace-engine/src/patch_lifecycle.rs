@@ -657,6 +657,8 @@ pub enum PatchLifecycleError {
     ApprovalRequired,
     #[error("Approval does not bind this exact proposal and executor")]
     ApprovalBindingMismatch,
+    #[error("a semantic scope requirement could not be derived from the exact change")]
+    ScopeDerivationFailed,
     #[error("Approval expired")]
     ApprovalExpired,
     #[error("Approval was revoked")]
@@ -1809,7 +1811,7 @@ impl PatchLifecycle {
         let entity_record = document
             .entities
             .get(entity)
-            .ok_or(PatchLifecycleError::ApprovalBindingMismatch)?;
+            .ok_or(PatchLifecycleError::ScopeDerivationFailed)?;
         Ok(ScopedSemanticSubject::new(
             self.document_scope.clone(),
             self.document.clone(),
@@ -1853,7 +1855,7 @@ impl PatchLifecycle {
                         self.insert_field_disclosure(before, after, cause, &mut disclosures)?;
                     }
                 }
-                _ => return Err(PatchLifecycleError::ApprovalBindingMismatch),
+                _ => return Err(PatchLifecycleError::ScopeDerivationFailed),
             }
         }
         Ok(disclosures)
@@ -1869,7 +1871,7 @@ impl PatchLifecycle {
         let scope = self
             .field_scope(after, field)
             .or_else(|_| self.field_scope(before, field))
-            .map_err(|_| PatchLifecycleError::ApprovalBindingMismatch)?;
+            .map_err(|_| PatchLifecycleError::ScopeDerivationFailed)?;
         disclosures.insert(DisclosureRequirement {
             family: OperationFamily::SetFieldValue,
             scope,
@@ -2161,5 +2163,34 @@ fn scope_covers(granted: &ScopedSemanticSubject, required: &ScopedSemanticSubjec
 fn push_once(history: &mut Vec<PatchLifecycleState>, state: PatchLifecycleState) {
     if !history.contains(&state) {
         history.push(state);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_entity_has_a_distinct_scope_derivation_failure() {
+        let lifecycle = PatchLifecycle::new(
+            AuthorizationDomainId::from("domain"),
+            DocumentScopeId::from("document-occurrence"),
+            DocumentId::from("document"),
+            SemanticApiContract::from("semantic-v1"),
+            AuthorizationPolicyVersion::from("policy-v1"),
+            PolicyMeaningId::from("policy-v1-meaning"),
+        );
+        let document = Document {
+            id: DocumentId::from("document"),
+            title: "Document".to_owned(),
+            schemas: BTreeMap::new(),
+            entities: BTreeMap::new(),
+        };
+
+        let error = lifecycle
+            .entity_scope(&document, &EntityId::from("missing"))
+            .unwrap_err();
+
+        assert!(matches!(error, PatchLifecycleError::ScopeDerivationFailed));
     }
 }
