@@ -1211,7 +1211,14 @@ impl PatchLifecycle {
                 PatchLifecycleError::AuthorizationDenied
             });
         }
-        self.require_execution_approval_active(proposal_id, approval.as_ref(), now)?;
+        self.require_execution_approval_active(
+            proposal_id,
+            &proposal,
+            approval.as_ref(),
+            executor,
+            &footprint,
+            now,
+        )?;
 
         let evaluated = self.evaluate_patch(&document, &proposal.patch)?;
         if evaluated.footprint != footprint {
@@ -1285,23 +1292,45 @@ impl PatchLifecycle {
         proposal: &ProposalRecord,
         footprint: &AuthorizationFootprint,
     ) -> Result<Option<StoredApproval>, PatchLifecycleError> {
-        let executor_kind = self.require_active_principal(executor)?;
-        let originator_kind = self.require_active_principal(&proposal.originator)?;
-        let approval_required = executor_kind == PrincipalKind::Delegated
-            || originator_kind == PrincipalKind::Delegated;
-        if !approval_required {
-            if approval_id.is_some() {
-                return Err(PatchLifecycleError::ApprovalBindingMismatch);
-            }
-            return Ok(None);
-        }
+        let approval = match (
+            self.execution_requires_approval(proposal, executor)?,
+            approval_id,
+        ) {
+            (true, Some(id)) => Some(
+                self.approvals
+                    .get(id)
+                    .ok_or(PatchLifecycleError::AuthorizationDenied)?
+                    .clone(),
+            ),
+            (true, None) => return Err(PatchLifecycleError::ApprovalRequired),
+            (false, Some(_)) => return Err(PatchLifecycleError::ApprovalBindingMismatch),
+            (false, None) => None,
+        };
+        self.validate_execution_approval_selection(
+            proposal,
+            approval.as_ref(),
+            executor,
+            footprint,
+        )?;
+        Ok(approval)
+    }
 
-        let id = approval_id.ok_or(PatchLifecycleError::ApprovalRequired)?;
-        let stored = self
-            .approvals
-            .get(id)
-            .ok_or(PatchLifecycleError::AuthorizationDenied)?
-            .clone();
+    fn validate_execution_approval_selection(
+        &self,
+        proposal: &ProposalRecord,
+        approval: Option<&StoredApproval>,
+        executor: &PrincipalId,
+        footprint: &AuthorizationFootprint,
+    ) -> Result<(), PatchLifecycleError> {
+        let stored = match (
+            self.execution_requires_approval(proposal, executor)?,
+            approval,
+        ) {
+            (true, Some(stored)) => stored,
+            (true, None) => return Err(PatchLifecycleError::ApprovalRequired),
+            (false, Some(_)) => return Err(PatchLifecycleError::ApprovalBindingMismatch),
+            (false, None) => return Ok(()),
+        };
         if stored.approval.binding.executor != *executor {
             return Err(PatchLifecycleError::AuthorizationDenied);
         }
@@ -1322,15 +1351,31 @@ impl PatchLifecycle {
         {
             return Err(PatchLifecycleError::AuthorizationPolicyChanged);
         }
-        Ok(Some(stored))
+        Ok(())
     }
 
-    fn require_execution_approval_active(
-        &mut self,
-        proposal_id: &ProposalId,
+    fn execution_requires_approval(
+        &self,
+        proposal: &ProposalRecord,
+        executor: &PrincipalId,
+    ) -> Result<bool, PatchLifecycleError> {
+        let executor_kind = self.require_active_principal(executor)?;
+        let originator_kind = self.require_active_principal(&proposal.originator)?;
+        Ok(
+            executor_kind == PrincipalKind::Delegated
+                || originator_kind == PrincipalKind::Delegated,
+        )
+    }
+
+    fn validate_execution_approval(
+        &self,
+        proposal: &ProposalRecord,
         approval: Option<&StoredApproval>,
+        executor: &PrincipalId,
+        footprint: &AuthorizationFootprint,
         now: TrustedInstant,
     ) -> Result<(), PatchLifecycleError> {
+        self.validate_execution_approval_selection(proposal, approval, executor, footprint)?;
         let Some(stored) = approval else {
             return Ok(());
         };
@@ -1341,18 +1386,38 @@ impl PatchLifecycle {
             ApprovalStatus::Expired => return Err(PatchLifecycleError::ApprovalExpired),
         }
         if now >= stored.approval.expires_at {
-            let approval = self
-                .approvals
-                .get_mut(&stored.approval.id)
-                .ok_or(PatchLifecycleError::ApprovalNotFound)?;
-            approval.status = ApprovalStatus::Expired;
-            self.append_state(proposal_id, PatchLifecycleState::Expired);
             return Err(PatchLifecycleError::ApprovalExpired);
         }
         if self.require_active_principal(&stored.approval.approver)? != PrincipalKind::Human {
             return Err(PatchLifecycleError::AuthorizationDenied);
         }
         Ok(())
+    }
+
+    fn require_execution_approval_active(
+        &mut self,
+        proposal_id: &ProposalId,
+        proposal: &ProposalRecord,
+        approval: Option<&StoredApproval>,
+        executor: &PrincipalId,
+        footprint: &AuthorizationFootprint,
+        now: TrustedInstant,
+    ) -> Result<(), PatchLifecycleError> {
+        let result = self.validate_execution_approval(proposal, approval, executor, footprint, now);
+        if matches!(result, Err(PatchLifecycleError::ApprovalExpired))
+            && approval.is_some_and(|stored| {
+                stored.status == ApprovalStatus::Active && now >= stored.approval.expires_at
+            })
+        {
+            let stored = approval.ok_or(PatchLifecycleError::ApprovalNotFound)?;
+            let approval = self
+                .approvals
+                .get_mut(&stored.approval.id)
+                .ok_or(PatchLifecycleError::ApprovalNotFound)?;
+            approval.status = ApprovalStatus::Expired;
+            self.append_state(proposal_id, PatchLifecycleState::Expired);
+        }
+        result
     }
 
     fn authorize_execution(
@@ -1390,54 +1455,7 @@ impl PatchLifecycle {
         footprint: &AuthorizationFootprint,
         now: TrustedInstant,
     ) -> Result<(BTreeSet<GrantId>, BTreeSet<GrantId>), PatchLifecycleError> {
-        let executor_kind = self.require_active_principal(executor)?;
-        let originator_kind = self.require_active_principal(&proposal.originator)?;
-        let approval_required = executor_kind == PrincipalKind::Delegated
-            || originator_kind == PrincipalKind::Delegated;
-        match (approval_required, approval) {
-            (true, None) => return Err(PatchLifecycleError::ApprovalRequired),
-            (false, Some(_)) => return Err(PatchLifecycleError::ApprovalBindingMismatch),
-            (false, None) => {}
-            (true, Some(stored)) => {
-                if stored.approval.binding.executor != *executor {
-                    return Err(PatchLifecycleError::AuthorizationDenied);
-                }
-                let binding = &stored.approval.binding;
-                if binding.authorization_domain != self.authorization_domain
-                    || binding.proposal_id != proposal.patch.id
-                    || binding.exact_change != proposal.patch.exact_change
-                    || binding.originator != proposal.originator
-                    || binding.associated_write_requirements
-                        != footprint.associated_write_requirements
-                {
-                    return Err(PatchLifecycleError::ApprovalBindingMismatch);
-                }
-                match stored.status {
-                    ApprovalStatus::Active => {}
-                    ApprovalStatus::Consumed => {
-                        return Err(PatchLifecycleError::ApprovalConsumed);
-                    }
-                    ApprovalStatus::Revoked => {
-                        return Err(PatchLifecycleError::ApprovalRevoked);
-                    }
-                    ApprovalStatus::Expired => {
-                        return Err(PatchLifecycleError::ApprovalExpired);
-                    }
-                }
-                if binding.policy_version != self.effective_policy
-                    || stored.policy_selection != self.policy_selection
-                {
-                    return Err(PatchLifecycleError::AuthorizationPolicyChanged);
-                }
-                if now >= stored.approval.expires_at {
-                    return Err(PatchLifecycleError::ApprovalExpired);
-                }
-                if self.require_active_principal(&stored.approval.approver)? != PrincipalKind::Human
-                {
-                    return Err(PatchLifecycleError::AuthorizationDenied);
-                }
-            }
-        }
+        self.validate_execution_approval(proposal, approval, executor, footprint, now)?;
         self.authorize_execution(approval, executor, footprint, now)
     }
 
