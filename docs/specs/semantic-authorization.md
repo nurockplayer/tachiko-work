@@ -663,11 +663,13 @@ Active -> Consumed | Revoked | Expired
 - Issue #29 implements current exclusive in-process Approval reservation and
   consume-with-successful-publication coordination over a host-supplied
   compare-and-publish seam. The host invokes a fresh trusted-time lifecycle
-  authorization callback inside the same exclusive publication guard, so
-  principal, Approval, Grant, policy, expiry, and Query-result disclosure are
-  rechecked at the actual install decision. Concrete revision concurrency and
-  state installation remain #93 work; broader transaction/recovery and
-  history protocols remain with #11/#12.
+  authorization callback inside the same exclusive publication guard
+  immediately before returning a semantic no-publication result or installing
+  the candidate, so principal, Approval, Grant, policy, expiry, and Query-result
+  disclosure are rechecked at the actual boundary decision. A host omission
+  safely reduces a Stale/Conflict result to authorization denial. Concrete
+  revision concurrency and state installation remain #93 work; broader
+  transaction/recovery and history protocols remain with #11/#12.
 - If a failure leaves the trusted boundary unable to prove whether publication
   occurred, it MUST fail closed and MUST NOT permit retry until authoritative
   state is reconciled.

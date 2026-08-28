@@ -286,18 +286,18 @@ impl SemanticPublicationAuthority for TestPublication {
         authorize: impl FnOnce(TrustedInstant) -> Option<Authorization>,
     ) -> Result<(SemanticRevision, Authorization), SemanticPublicationError> {
         self.publish_calls += 1;
+        if self.mode == PublishMode::RaceStale {
+            self.revision = revision("r-raced");
+        }
+        let authorization = authorize(self.publication_time)
+            .ok_or(SemanticPublicationError::AuthorizationDenied)?;
         match self.mode {
-            PublishMode::RaceStale => {
-                self.revision = revision("r-raced");
-                Err(SemanticPublicationError::Stale)
-            }
+            PublishMode::RaceStale => Err(SemanticPublicationError::Stale),
             PublishMode::Conflict => Err(SemanticPublicationError::Conflict),
             PublishMode::Normal | PublishMode::TamperAfterSuccess => {
                 if &self.revision != expected_revision {
                     return Err(SemanticPublicationError::Stale);
                 }
-                let authorization = authorize(self.publication_time)
-                    .ok_or(SemanticPublicationError::AuthorizationDenied)?;
                 self.document = candidate;
                 if self.mode == PublishMode::TamperAfterSuccess {
                     self.document.title.push_str(" (tampered)");
@@ -1974,6 +1974,78 @@ fn publisher_conflict_does_not_consume_approval_or_install_candidate() {
         .unwrap_err();
 
     assert!(matches!(error, PatchLifecycleError::Conflict));
+    assert_eq!(publication.document, original);
+    assert_eq!(
+        lifecycle.approval_status(&approval).unwrap(),
+        ApprovalStatus::Active
+    );
+    assert_eq!(
+        lifecycle.proposal_history(&proposal).unwrap().last(),
+        Some(&PatchLifecycleState::Conflict)
+    );
+}
+
+#[test]
+fn query_expiry_at_failed_publication_hides_the_semantic_conflict() {
+    let document = game_balance_document("game", "Game");
+    let original = document.clone();
+    let mut lifecycle = lifecycle();
+    lifecycle
+        .provision_grant(Grant::new(
+            GrantId::from("agent-expiring-query"),
+            principal("authority"),
+            principal("agent"),
+            vec![query_requirement()],
+            Some(TrustedInstant::new(12)),
+        ))
+        .unwrap();
+    grant(
+        &mut lifecycle,
+        "agent-mutation-authority",
+        "agent",
+        vec![
+            mutation_requirement(AuthorizationAction::Propose, MutationClass::Value),
+            mutation_requirement(AuthorizationAction::Execute, MutationClass::Value),
+        ],
+    );
+    grant(
+        &mut lifecycle,
+        "reviewer-authority",
+        "reviewer",
+        vec![
+            query_requirement(),
+            mutation_requirement(AuthorizationAction::Approve, MutationClass::Value),
+        ],
+    );
+    let proposal = propose(
+        &mut lifecycle,
+        &document,
+        "proposal-conflict-after-query-expiry",
+        SemanticPatchBody::command(field_command("iron_sword", "damage", number(45.0))),
+        "agent",
+    );
+    let approval = preview_and_approve(
+        &mut lifecycle,
+        &document,
+        &proposal,
+        "approval-conflict-after-query-expiry",
+        "agent",
+    );
+    let mut publication = TestPublication::new(document, "r1", "r2")
+        .with_mode(PublishMode::Conflict)
+        .with_publication_time(TrustedInstant::new(12));
+
+    let error = lifecycle
+        .execute(
+            &proposal,
+            Some(&approval),
+            &principal("agent"),
+            &mut publication,
+            TrustedInstant::new(11),
+        )
+        .unwrap_err();
+
+    assert!(matches!(error, PatchLifecycleError::AuthorizationDenied));
     assert_eq!(publication.document, original);
     assert_eq!(
         lifecycle.approval_status(&approval).unwrap(),

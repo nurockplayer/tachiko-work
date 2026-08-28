@@ -570,17 +570,20 @@ pub trait SemanticPublicationAuthority {
     /// Capture one coherent current semantic document/revision pair.
     fn current_snapshot(&self) -> (Document, SemanticRevision);
 
-    /// Atomically install `candidate` only while `expected_revision` remains
-    /// current and `authorize` accepts a fresh trusted instant, then return the
-    /// distinct resulting revision and the authorization evidence produced by
-    /// that callback. The callback must run exactly once inside the same
-    /// exclusive publication guard immediately before installation.
+    /// Resolve one publication attempt under an exclusive guard. The callback
+    /// must run exactly once with a fresh trusted instant inside that guard,
+    /// immediately before returning a semantic Stale/Conflict outcome or
+    /// installing the candidate. Install only while `expected_revision`
+    /// remains current and the callback accepts, then return the distinct
+    /// resulting revision and the callback's authorization evidence.
     ///
     /// # Errors
     ///
     /// Every error must prove that `candidate` was not published. In
     /// particular, a callback returning `None` must produce
-    /// [`SemanticPublicationError::AuthorizationDenied`].
+    /// [`SemanticPublicationError::AuthorizationDenied`]. A semantic failure
+    /// returned without invoking the callback is treated as undisclosable by
+    /// the lifecycle even though such a host violates this contract.
     fn publish_if_current<Authorization>(
         &mut self,
         expected_revision: &SemanticRevision,
@@ -732,7 +735,6 @@ struct PublicationAttempt<'a> {
     footprint: &'a AuthorizationFootprint,
     current_revision: &'a SemanticRevision,
     candidate: Document,
-    can_disclose: bool,
 }
 
 type PublishedCandidate = (
@@ -1243,7 +1245,6 @@ impl PatchLifecycle {
                     footprint: &footprint,
                     current_revision: &current_revision,
                     candidate: evaluated.document,
-                    can_disclose,
                 },
             )?;
         let mut receipt = ExecutionReceipt {
@@ -1472,7 +1473,6 @@ impl PatchLifecycle {
             footprint,
             current_revision,
             candidate,
-            can_disclose,
         } = attempt;
         let mut reserved = if let Some(stored) = approval {
             let approval = self
@@ -1485,6 +1485,7 @@ impl PatchLifecycle {
         };
 
         let mut boundary_error = None;
+        let mut boundary_disclosure = None;
         let publication_result =
             publication.publish_if_current(current_revision, candidate, |boundary_now| match self
                 .authorize_publication_boundary(
@@ -1494,13 +1495,17 @@ impl PatchLifecycle {
                     footprint,
                     boundary_now,
                 ) {
-                Ok((approve_grants, execute_grants)) => Some(PublicationAuthorization {
-                    approve_grants,
-                    execute_grants,
-                    can_disclose: self
+                Ok((approve_grants, execute_grants)) => {
+                    let can_disclose = self
                         .authorize_query(executor, &footprint.disclosure_requirements, boundary_now)
-                        .is_ok(),
-                }),
+                        .is_ok();
+                    boundary_disclosure = Some(can_disclose);
+                    Some(PublicationAuthorization {
+                        approve_grants,
+                        execute_grants,
+                        can_disclose,
+                    })
+                }
                 Err(error) => {
                     boundary_error = Some(error);
                     None
@@ -1514,7 +1519,7 @@ impl PatchLifecycle {
                     reserved,
                     boundary_error,
                     error,
-                    can_disclose,
+                    boundary_disclosure,
                 ));
             }
         };
@@ -1545,7 +1550,7 @@ impl PatchLifecycle {
         mut reserved: Option<StoredApproval>,
         boundary_error: Option<PatchLifecycleError>,
         publication_error: SemanticPublicationError,
-        can_disclose: bool,
+        boundary_disclosure: Option<bool>,
     ) -> PatchLifecycleError {
         let approval_expired = matches!(
             boundary_error.as_ref(),
@@ -1575,7 +1580,7 @@ impl PatchLifecycle {
             }
         };
         self.append_state(proposal_id, state);
-        if can_disclose {
+        if boundary_disclosure == Some(true) {
             disclosed_error
         } else {
             PatchLifecycleError::AuthorizationDenied
