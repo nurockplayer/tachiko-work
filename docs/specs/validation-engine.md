@@ -387,7 +387,7 @@ this implementation.
 - exact native/WASM/IPC transport, session, revision, or delivery protocol
   (ADR-0022; later runtime/transport implementation);
 - runtime state commit/swap/locking/cloning mechanics;
-- plugin ABI/runtime/sandbox (#17);
+- plugin ABI/runtime/sandbox (Deferred; not assigned by ADR-0028);
 - `.roproj` invalid-draft persistence (Deferred; ADR-0023 defines canonical
   valid materialization, not an invalid-draft durability profile);
 - diagnostic suppression, baselines, fingerprints, or fix-it protocol; and
