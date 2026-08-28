@@ -762,11 +762,28 @@ fn noncanonical_zip_metadata_order_and_record_disagreement_are_rejected() {
         final_shard.central_offset + 20,
         1,
     );
+    let embedded_signature = b"xPK\x03\x04payload";
+    let mut central_ambiguous = replace_entry_body(
+        &decode_hex(EMPTY_PACKAGE_HEX),
+        "payload/entities/0.jsonl",
+        embedded_signature,
+    );
+    let shard = record(&central_ambiguous, "payload/entities/0.jsonl");
+    write_u32(&mut central_ambiguous, shard.central_offset + 20, 1);
+    let mut local_ambiguous = replace_entry_body(
+        &decode_hex(EMPTY_PACKAGE_HEX),
+        "payload/entities/0.jsonl",
+        embedded_signature,
+    );
+    let shard = record(&local_ambiguous, "payload/entities/0.jsonl");
+    write_u32(&mut local_ambiguous, shard.local_offset + 18, 1);
     for package in [
         disagreement,
         offset_disagreement,
         local_size_disagreement,
         central_size_disagreement,
+        central_ambiguous,
+        local_ambiguous,
     ] {
         assert!(matches!(
             decode_portable_package_v1(&package),

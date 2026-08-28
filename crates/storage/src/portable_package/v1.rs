@@ -457,10 +457,25 @@ fn parse_container_at_end(
     let mut local_records = Vec::with_capacity(usize::from(end.total_entries));
     let mut local_offset = 0;
     for _ in 0..end.total_entries {
-        let central = central_by_local_offset
+        let central_index = central_by_local_offset
             .get(&local_offset)
-            .and_then(|index| index.map(|index| &central_records[index]));
-        let record = parse_local_record(source, local_offset, central, central_offset)?;
+            .copied()
+            .flatten();
+        let central = central_index.map(|index| &central_records[index]);
+        let expected_next_offset = central_index.and_then(|index| {
+            central_records.get(index + 1).map_or_else(
+                || Some(central_offset),
+                |record| usize::try_from(record.local_offset).ok(),
+            )
+        });
+        let record = parse_local_record(
+            source,
+            local_offset,
+            central,
+            central_offset,
+            expected_next_offset,
+            &central_by_local_offset,
+        )?;
         if record.end > central_offset {
             return invalid_container("local entry overlaps the central directory");
         }
@@ -482,6 +497,8 @@ fn parse_local_record<'a>(
     offset: usize,
     central: Option<&CentralRecord<'_>>,
     local_section_end: usize,
+    expected_next_offset: Option<usize>,
+    central_by_local_offset: &HashMap<usize, Option<usize>>,
 ) -> Result<LocalRecord<'a>, PortablePackageError> {
     require_range(source, offset, 30, "local header")?;
     if read_u32(source, offset, "local signature")? != ZIP_LOCAL_SIGNATURE {
@@ -491,28 +508,27 @@ fn parse_local_record<'a>(
     let extra_length = read_u16(source, offset + 28, "local extra length")?;
     let flags = read_u16(source, offset + 6, "local flags")?;
     let compressed_size = read_u32(source, offset + 18, "local compressed size")?;
-    let data_size = if flags & 0x0008 == 0 {
-        select_ordinary_data_size(
-            source,
-            offset,
-            name_length,
-            extra_length,
-            compressed_size,
-            central.map(|record| record.compressed_size),
-            local_section_end,
-        )?
-    } else {
-        central.map_or(compressed_size, |record| record.compressed_size)
-    };
-    if flags & 0x0008 != 0 && central.is_none() {
-        return invalid_container("data descriptor has no matching central record");
-    }
     let name_start = checked_offset(offset, 30, "local name offset")?;
     let data_start = checked_offset(
         checked_offset(name_start, name_length, "local name end")?,
         usize::from(extra_length),
         "local extra end",
     )?;
+    let data_size = if flags & 0x0008 == 0 {
+        select_ordinary_data_size(
+            data_start,
+            compressed_size,
+            central.map(|record| record.compressed_size),
+            local_section_end,
+            expected_next_offset,
+            central_by_local_offset,
+        )
+    } else {
+        central.map_or(compressed_size, |record| record.compressed_size)
+    };
+    if flags & 0x0008 != 0 && central.is_none() {
+        return invalid_container("data descriptor has no matching central record");
+    }
     let data_end = checked_offset(
         data_start,
         usize::try_from(data_size)
@@ -560,54 +576,49 @@ fn parse_local_record<'a>(
 }
 
 fn select_ordinary_data_size(
-    source: &[u8],
-    offset: usize,
-    name_length: usize,
-    extra_length: u16,
+    data_start: usize,
     local_size: u32,
     central_size: Option<u32>,
     local_section_end: usize,
-) -> Result<u32, PortablePackageError> {
+    expected_next_offset: Option<usize>,
+    central_by_local_offset: &HashMap<usize, Option<usize>>,
+) -> u32 {
     let Some(central_size) = central_size else {
-        return Ok(local_size);
+        return local_size;
     };
     if local_size == central_size {
-        return Ok(local_size);
+        return local_size;
     }
-    let data_start = checked_offset(
-        checked_offset(
-            checked_offset(offset, 30, "local name offset")?,
-            name_length,
-            "local name end",
-        )?,
-        usize::from(extra_length),
-        "local extra end",
-    )?;
-    let local_plausible =
-        ordinary_data_boundary_is_plausible(source, data_start, local_size, local_section_end);
-    let central_plausible =
-        ordinary_data_boundary_is_plausible(source, data_start, central_size, local_section_end);
-    Ok(match (local_plausible, central_plausible) {
-        (true, false) => local_size,
-        _ => central_size,
-    })
+    let local_end = ordinary_data_end(data_start, local_size, local_section_end);
+    let central_end = ordinary_data_end(data_start, central_size, local_section_end);
+    // Stored data can contain local-header signature bytes. Resolve a size
+    // disagreement from the parsed central offset chain, never from a payload
+    // byte pattern that merely resembles the next record.
+    if let Some(expected_next_offset) = expected_next_offset {
+        if local_end == Some(expected_next_offset) && central_end != Some(expected_next_offset) {
+            return local_size;
+        }
+        if central_end == Some(expected_next_offset) && local_end != Some(expected_next_offset) {
+            return central_size;
+        }
+    }
+    let local_declared = local_end.is_some_and(|end| {
+        end == local_section_end || matches!(central_by_local_offset.get(&end), Some(Some(_)))
+    });
+    let central_declared = central_end.is_some_and(|end| {
+        end == local_section_end || matches!(central_by_local_offset.get(&end), Some(Some(_)))
+    });
+    if central_declared && !local_declared {
+        central_size
+    } else {
+        local_size
+    }
 }
 
-fn ordinary_data_boundary_is_plausible(
-    source: &[u8],
-    data_start: usize,
-    size: u32,
-    local_section_end: usize,
-) -> bool {
-    let Ok(size) = usize::try_from(size) else {
-        return false;
-    };
-    let Some(end) = data_start.checked_add(size) else {
-        return false;
-    };
-    end == local_section_end
-        || (end < local_section_end
-            && read_u32(source, end, "next local signature").ok() == Some(ZIP_LOCAL_SIGNATURE))
+fn ordinary_data_end(data_start: usize, size: u32, local_section_end: usize) -> Option<usize> {
+    let size = usize::try_from(size).ok()?;
+    let end = data_start.checked_add(size)?;
+    (end <= local_section_end).then_some(end)
 }
 
 fn parse_data_descriptor_end(
