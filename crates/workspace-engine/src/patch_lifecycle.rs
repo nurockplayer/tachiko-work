@@ -1033,7 +1033,11 @@ impl PatchLifecycle {
     ///
     /// # Errors
     ///
-    /// Returns proposal, stale, semantic, or Query-authorization failure.
+    /// Returns [`PatchLifecycleError::DisclosureDenied`] unless the viewer is
+    /// active and has current Query authority for the retained proposal's
+    /// complete disclosure footprint. Missing proposal occurrences are hidden
+    /// by the same outcome. Once disclosure is authorized, returns a typed
+    /// terminal, stale, or semantic failure.
     pub fn preview(
         &mut self,
         document_scope: &DocumentScopeId,
@@ -1044,18 +1048,12 @@ impl PatchLifecycle {
         now: TrustedInstant,
     ) -> Result<PatchPreview, PatchLifecycleError> {
         self.require_document(document_scope, document)?;
-        self.require_active_principal(viewer)?;
-        let record = self
-            .proposals
-            .get(proposal_id)
-            .ok_or(PatchLifecycleError::ProposalNotFound)?
-            .clone();
+        let record = self.select_disclosable_proposal(proposal_id, viewer, now)?;
         let stored_footprint = record
             .footprint
             .clone()
             .ok_or(PatchLifecycleError::ProposalNotExecutable)?;
-        self.authorize_query(viewer, &stored_footprint.disclosure_requirements, now)
-            .map_err(|_| PatchLifecycleError::DisclosureDenied)?;
+        Self::require_nonterminal_proposal(&record, true)?;
         if record.patch.exact_change.base_revision != *current_revision {
             self.append_state(proposal_id, PatchLifecycleState::Stale);
             return Err(PatchLifecycleError::Stale);
@@ -1117,20 +1115,16 @@ impl PatchLifecycle {
             return Err(PatchLifecycleError::ApproverMustBeHuman);
         }
         self.require_active_principal(&request.executor)?;
-        let proposal = self
-            .proposals
-            .get(&request.proposal_id)
-            .ok_or(PatchLifecycleError::ProposalNotFound)?
-            .clone();
+        let proposal =
+            self.select_disclosable_proposal(&request.proposal_id, &request.approver, now)?;
         let footprint = proposal
             .footprint
             .clone()
             .ok_or(PatchLifecycleError::ProposalNotExecutable)?;
+        Self::require_nonterminal_proposal(&proposal, true)?;
         if !proposal.reviewed_by.contains(&request.approver) {
             return Err(PatchLifecycleError::ReviewRequired);
         }
-        self.authorize_query(&request.approver, &footprint.disclosure_requirements, now)
-            .map_err(|_| PatchLifecycleError::DisclosureDenied)?;
         let approve_grants = self.authorize_mutation(
             &request.approver,
             AuthorizationAction::Approve,
@@ -1221,6 +1215,7 @@ impl PatchLifecycle {
         let can_disclose = self
             .authorize_query(executor, &footprint.disclosure_requirements, now)
             .is_ok();
+        Self::require_nonterminal_proposal(&proposal, can_disclose)?;
 
         if proposal.patch.exact_change.base_revision != current_revision {
             self.append_state(proposal_id, PatchLifecycleState::Stale);
@@ -1348,6 +1343,44 @@ impl PatchLifecycle {
                 Err(error) => return Err(error),
             };
         Ok((proposal, footprint, approval))
+    }
+
+    fn select_disclosable_proposal(
+        &self,
+        proposal_id: &ProposalId,
+        viewer: &PrincipalId,
+        now: TrustedInstant,
+    ) -> Result<ProposalRecord, PatchLifecycleError> {
+        if self.require_active_principal(viewer).is_err() {
+            return Err(PatchLifecycleError::DisclosureDenied);
+        }
+        let proposal = self
+            .proposals
+            .get(proposal_id)
+            .ok_or(PatchLifecycleError::DisclosureDenied)?
+            .clone();
+        let disclosure_requirements = proposal.footprint.as_ref().map_or_else(
+            || self.document_disclosure(),
+            |footprint| footprint.disclosure_requirements.clone(),
+        );
+        self.authorize_query(viewer, &disclosure_requirements, now)
+            .map_err(|_| PatchLifecycleError::DisclosureDenied)?;
+        Ok(proposal)
+    }
+
+    fn require_nonterminal_proposal(
+        proposal: &ProposalRecord,
+        can_disclose: bool,
+    ) -> Result<(), PatchLifecycleError> {
+        if proposal_is_terminal(proposal) {
+            Err(if can_disclose {
+                PatchLifecycleError::ProposalNotExecutable
+            } else {
+                PatchLifecycleError::AuthorizationDenied
+            })
+        } else {
+            Ok(())
+        }
     }
 
     fn select_execution_approval(
@@ -1733,33 +1766,30 @@ impl PatchLifecycle {
     ///
     /// # Errors
     ///
-    /// Returns an absent/non-executable proposal outcome or
-    /// [`PatchLifecycleError::DisclosureDenied`] when `viewer` lacks current
-    /// Query authority over the complete proposal footprint.
+    /// Returns [`PatchLifecycleError::DisclosureDenied`] unless `viewer` is
+    /// active and has current Query authority over the complete retained
+    /// proposal footprint; missing proposal occurrences are hidden by the same
+    /// outcome. A disclosure-authorized retained failure returns
+    /// [`PatchLifecycleError::ProposalNotExecutable`].
     pub fn proposal_provenance(
         &self,
         id: &ProposalId,
         viewer: &PrincipalId,
         now: TrustedInstant,
     ) -> Result<ProposalProvenance, PatchLifecycleError> {
-        let proposal = self
-            .proposals
-            .get(id)
-            .ok_or(PatchLifecycleError::ProposalNotFound)?;
+        let proposal = self.select_disclosable_proposal(id, viewer, now)?;
         let footprint = proposal
             .footprint
             .clone()
             .ok_or(PatchLifecycleError::ProposalNotExecutable)?;
-        self.authorize_query(viewer, &footprint.disclosure_requirements, now)
-            .map_err(|_| PatchLifecycleError::DisclosureDenied)?;
         Ok(ProposalProvenance {
             authorization_domain: self.authorization_domain.clone(),
             proposal_id: id.clone(),
-            exact_change: proposal.patch.exact_change.clone(),
-            originator: proposal.originator.clone(),
-            propose_grants: proposal.propose_grants.clone(),
+            exact_change: proposal.patch.exact_change,
+            originator: proposal.originator,
+            propose_grants: proposal.propose_grants,
             authorization_footprint: footprint,
-            policy_version: proposal.policy_version.clone(),
+            policy_version: proposal.policy_version,
         })
     }
 
@@ -2140,6 +2170,9 @@ impl PatchLifecycle {
 
     fn append_state(&mut self, id: &ProposalId, state: PatchLifecycleState) {
         if let Some(proposal) = self.proposals.get_mut(id) {
+            if proposal_is_terminal(proposal) {
+                return;
+            }
             push_once(&mut proposal.history, state);
         }
     }
@@ -2275,6 +2308,19 @@ fn push_once(history: &mut Vec<PatchLifecycleState>, state: PatchLifecycleState)
     if !history.contains(&state) {
         history.push(state);
     }
+}
+
+fn proposal_is_terminal(proposal: &ProposalRecord) -> bool {
+    proposal.history.iter().any(|state| {
+        matches!(
+            state,
+            PatchLifecycleState::Verified
+                | PatchLifecycleState::Rejected
+                | PatchLifecycleState::ValidationFailed
+                | PatchLifecycleState::Stale
+                | PatchLifecycleState::Conflict
+        )
+    })
 }
 
 #[cfg(test)]

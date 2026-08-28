@@ -643,6 +643,99 @@ fn validation_failure_details_require_independent_query_authority() {
 }
 
 #[test]
+fn disclosure_gated_entry_points_hide_proposal_registry_state() {
+    let document = game_balance_document("game", "Game");
+    let mut lifecycle = lifecycle();
+    provision_standard_authority(&mut lifecycle);
+    let retained_failure = proposal_id("proposal-retained-private-failure");
+    let failure = lifecycle
+        .propose(
+            &document_scope_id(),
+            &document,
+            &revision("r1"),
+            ProposalRequest::new(
+                retained_failure.clone(),
+                revision("r1"),
+                SemanticPatchBody::command(field_command(
+                    "iron_sword",
+                    "attack_interval",
+                    number(0.0),
+                )),
+                principal("agent"),
+            ),
+            NOW,
+        )
+        .unwrap_err();
+    assert!(matches!(
+        failure,
+        PatchLifecycleError::ValidationFailed { .. }
+    ));
+    let executable = propose(
+        &mut lifecycle,
+        &document,
+        "proposal-private-executable",
+        SemanticPatchBody::command(field_command("iron_sword", "damage", number(45.0))),
+        "agent",
+    );
+    let missing = proposal_id("proposal-private-missing");
+    let retained_history = lifecycle
+        .proposal_history(&retained_failure)
+        .unwrap()
+        .to_vec();
+    let executable_history = lifecycle.proposal_history(&executable).unwrap().to_vec();
+
+    for viewer in [principal("other-agent"), principal("unregistered")] {
+        for proposal in [&missing, &retained_failure, &executable] {
+            assert!(matches!(
+                lifecycle.preview(
+                    &document_scope_id(),
+                    &document,
+                    &revision("r1"),
+                    proposal,
+                    &viewer,
+                    NOW,
+                ),
+                Err(PatchLifecycleError::DisclosureDenied)
+            ));
+            assert!(matches!(
+                lifecycle.proposal_provenance(proposal, &viewer, NOW),
+                Err(PatchLifecycleError::DisclosureDenied)
+            ));
+        }
+    }
+    for (index, proposal) in [&missing, &retained_failure, &executable]
+        .into_iter()
+        .enumerate()
+    {
+        assert!(matches!(
+            lifecycle.approve(
+                &document_scope_id(),
+                &document,
+                &revision("r1"),
+                ApprovalRequest::new(
+                    ApprovalId::from(format!("approval-private-probe-{index}")),
+                    proposal.clone(),
+                    principal("authority"),
+                    principal("agent"),
+                    EXPIRY,
+                ),
+                NOW,
+            ),
+            Err(PatchLifecycleError::DisclosureDenied)
+        ));
+    }
+
+    assert_eq!(
+        lifecycle.proposal_history(&retained_failure).unwrap(),
+        retained_history
+    );
+    assert_eq!(
+        lifecycle.proposal_history(&executable).unwrap(),
+        executable_history
+    );
+}
+
+#[test]
 fn individually_valid_formula_commands_that_form_a_cycle_fail_as_one_batch() {
     let document = game_balance_document("game", "Game");
     let original = document.clone();
@@ -1381,7 +1474,7 @@ fn approve_authority_alone_neither_discloses_nor_completes_review() {
     ));
     assert!(matches!(
         approval_error,
-        PatchLifecycleError::ReviewRequired
+        PatchLifecycleError::DisclosureDenied
     ));
 }
 
@@ -1991,6 +2084,90 @@ fn consumed_approval_replay_is_distinct_and_cannot_publish_twice() {
         .unwrap_err();
 
     assert!(matches!(error, PatchLifecycleError::ApprovalConsumed));
+    assert_eq!(publication.publish_calls, 1);
+}
+
+#[test]
+fn verified_proposal_history_remains_terminal_across_later_entry_points() {
+    let document = game_balance_document("game", "Game");
+    let mut lifecycle = lifecycle();
+    provision_standard_authority(&mut lifecycle);
+    let proposal = propose(
+        &mut lifecycle,
+        &document,
+        "proposal-verified-terminal",
+        SemanticPatchBody::command(field_command("iron_sword", "damage", number(45.0))),
+        "human-editor",
+    );
+    lifecycle
+        .preview(
+            &document_scope_id(),
+            &document,
+            &revision("r1"),
+            &proposal,
+            &principal("reviewer"),
+            NOW,
+        )
+        .unwrap();
+    let mut publication = TestPublication::new(document, "r1", "r2");
+    lifecycle
+        .execute(
+            &proposal,
+            None,
+            &principal("human-editor"),
+            &mut publication,
+            TrustedInstant::new(11),
+        )
+        .unwrap();
+    let verified_history = lifecycle.proposal_history(&proposal).unwrap().to_vec();
+    assert_eq!(
+        verified_history.last(),
+        Some(&PatchLifecycleState::Verified)
+    );
+    let installed = publication.document.clone();
+
+    let preview = lifecycle
+        .preview(
+            &document_scope_id(),
+            &installed,
+            &revision("r2"),
+            &proposal,
+            &principal("reviewer"),
+            TrustedInstant::new(12),
+        )
+        .unwrap_err();
+    let approval = lifecycle
+        .approve(
+            &document_scope_id(),
+            &installed,
+            &revision("r2"),
+            ApprovalRequest::new(
+                ApprovalId::from("approval-after-verified"),
+                proposal.clone(),
+                principal("reviewer"),
+                principal("human-editor"),
+                TrustedInstant::new(20),
+            ),
+            TrustedInstant::new(12),
+        )
+        .unwrap_err();
+    let execute = lifecycle
+        .execute(
+            &proposal,
+            None,
+            &principal("human-editor"),
+            &mut publication,
+            TrustedInstant::new(12),
+        )
+        .unwrap_err();
+
+    for error in [preview, approval, execute] {
+        assert!(matches!(error, PatchLifecycleError::ProposalNotExecutable));
+    }
+    assert_eq!(
+        lifecycle.proposal_history(&proposal).unwrap(),
+        verified_history
+    );
     assert_eq!(publication.publish_calls, 1);
 }
 
