@@ -213,7 +213,7 @@ formula evaluator, dependency graph, or validation path.
 The minimum M04 scenario Query means:
 
 ```text
-one exact source semantic revision
+one exact source semantic revision/context
 + one bounded ordered collection of typed Number overrides
 + one bounded set of requested stable result/inspection targets
 ```
@@ -228,9 +228,25 @@ is reproducibility evidence, not a sequence of intermediate publications.
 Requested targets form a stable-identity set: duplicate request occurrences
 normalize to one member, and target request order is not semantic.
 
+The source context pins the effective deterministic ADR-0019 validator
+configuration used for both baseline and candidate validation. After the
+scenario envelope is admitted, the trusted application boundary first derives
+and enforces the applicable ADR-0026 Query disclosure scope for each normalized
+requested target. With sufficient scope, the target resolves only against the
+exact source snapshot and yields the applicable requested facts or structured
+missing, stale, or unsupported-kind failure evidence preserving the requested
+stable identity and expected/actual kind where applicable. If sufficient scope
+cannot be established, the target instead yields one disclosure-safe denial
+without target-specific facts. Each target therefore has exactly one outcome;
+one unsuccessful target does not suppress outcomes for independently resolvable
+targets. The application authority must not silently omit, retarget, or resolve
+a requested target against another revision.
+
 The result preserves enough structured meaning to identify:
 
-- the exact source revision/context;
+- the exact source revision/context and validation configuration/provenance
+  sufficient to distinguish any configuration change that can change returned
+  validation facts;
 - the normalized ordered stable-target/typed-Number overrides;
 - authoritative baseline and scenario formula outcomes for requested subjects;
 - deterministic changed and affected subjects available from the existing
@@ -238,17 +254,23 @@ The result preserves enough structured meaning to identify:
 - applicable validation/diagnostic outcomes; and
 - dependency facts sufficient to explain why a requested outcome changed.
 
-The same exact source revision, normalized overrides, and requested targets
-produce the same semantic result. Invalid or duplicate overrides, missing or
-wrong-typed targets, formula failures, cycles, and validation failures return
-structured failure evidence and publish nothing. A scenario is not canonical
-state, a SemanticPatch, a saved branch, a mutation transaction, or a persisted
-scenario object.
+Before ADR-0026 disclosure projection, the same exact source revision,
+effective deterministic validator configuration, normalized overrides, and
+requested targets produce the same underlying semantic scenario outcome. Live
+Query authority may replace an exposed target outcome with the disclosure-safe
+denial above; it must not change the transient candidate or underlying outcome,
+and principal/Grant state is not scenario meaning. Invalid, duplicate, missing,
+or wrong-typed override targets; formula failures; cycles; and validation
+failures return structured failure evidence and publish nothing.
+Requested-target failures follow the per-target outcome rule above and likewise
+publish nothing. A scenario is not canonical state, a SemanticPatch, a saved
+branch, a mutation transaction, or a persisted scenario object.
 
 Formula, schema, or structural mutation inside a scenario; parameter sweeps;
 optimization; randomness; statistics; and persisted scenarios remain Deferred.
-Exact finite request limits, normalization encoding, DTOs, and revision-token
-encoding remain Provisional and must not change the logical laws above.
+Exact finite request limits, normalization encoding, DTOs, validator
+configuration/profile identifiers, and revision-token encoding remain
+Provisional and must not change the logical laws above.
 
 #### Formula update is one normal typed Command
 

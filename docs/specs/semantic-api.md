@@ -227,21 +227,40 @@ dependency graph, or validation path.
 The logical M04 scenario request contains:
 
 ```text
-exact source semantic revision/context
+exact source semantic revision/context, including deterministic validation context
 + bounded ordered collection of typed Number overrides
 + bounded set of requested stable result/inspection targets
 ```
 
 Each override identifies by stable semantic identity one existing field whose
 current semantic value is a Number, not a Formula, and supplies one ADR-0018
-`Number`. Each target occurs at most once. Normalization applies ADR-0018 Number
-normalization and preserves request order. A duplicate target, missing target,
-wrong-typed target, non-finite Number, or request beyond the applicable finite
-profile is an invalid scenario request.
+`Number`. Each override target occurs at most once. Normalization applies
+ADR-0018 Number normalization and preserves request order. A duplicate, missing,
+or wrong-typed override target; non-finite Number; or request beyond the
+applicable finite profile is an invalid scenario request.
 
 Requested result/inspection targets form a stable-identity set. Duplicate
 request occurrences normalize to one member, and target request order has no
 semantic meaning. Exact result ordering is a Provisional projection detail.
+
+After the scenario envelope is admitted, the trusted application boundary first
+derives and enforces the applicable ADR-0026 Query disclosure scope for each
+normalized requested target. With sufficient scope, the target is resolved only
+against the exact source snapshot. If it resolves to an existing semantic
+subject and supported M04 formula-reasoning result/inspection facet, it yields
+the applicable requested structured facts; otherwise it yields structured
+missing, stale, or unsupported-kind failure evidence preserving the requested
+stable identity and expected/actual kind where applicable. If sufficient scope
+cannot be established, the target instead yields one disclosure-safe denial
+without target-specific facts. Each target therefore has exactly one outcome;
+one unsuccessful target does not suppress outcomes for independently resolvable
+targets. The application authority MUST NOT silently omit, retarget, or resolve
+a requested target against another revision.
+
+The source context pins the effective deterministic ADR-0019 validator
+configuration. That same configuration governs baseline and transient-candidate
+validation; ambient host validator state is not an authoritative scenario
+input.
 
 The application authority:
 
@@ -249,13 +268,16 @@ The application authority:
 2. derives one transient candidate and applies the normalized overrides as one
    hypothetical input set, not as sequential publications;
 3. runs the authoritative full formula-calculation oracle and applicable full
-   semantic validation on that candidate; and
+   semantic validation needed for the baseline and candidate outcomes, using
+   the pinned validator configuration for both; and
 4. returns structured baseline/scenario evidence without publishing or
    persisting the candidate.
 
 The result preserves, as applicable:
 
-- the exact source revision/context reference;
+- the exact source revision/context reference and validation
+  configuration/provenance sufficient to distinguish any configuration change
+  that can change returned validation facts;
 - the normalized ordered stable-target/typed-Number override set;
 - authoritative baseline and scenario formula outcomes for the requested
   subjects;
@@ -264,16 +286,23 @@ The result preserves, as applicable:
 - applicable validation/diagnostic outcomes; and
 - dependency facts sufficient to explain why a requested result changed.
 
-Equal exact source revision, normalized overrides, and requested targets
-produce equal semantic outcomes. Ordering in the normalized result is
-request-preserving reproducibility evidence; it does not make the overrides
-sequential. Exact normalization encoding, finite limits, revision-token
-encoding, result field names, and wire representation remain Provisional.
+Before ADR-0026 disclosure projection, equal exact source revision, effective
+deterministic validator configuration, normalized overrides, and requested
+targets produce equal underlying semantic scenario outcomes. Live Query
+authority may replace an exposed target outcome with the disclosure-safe denial
+above; it MUST NOT change the transient candidate or underlying outcome, and
+principal/Grant state is not scenario meaning. Ordering in the normalized
+result is request-preserving reproducibility evidence; it does not make the
+overrides sequential. Exact normalization encoding, finite limits, validator
+configuration/profile identifiers, revision-token encoding, result field
+names, and wire representation remain Provisional.
 
 Invalid scenario input, source formula failure or cycle, candidate calculation
 failure, or validation failure returns the applicable structured failure facts
-and publishes nothing. A scenario is neither canonical state nor a
-SemanticPatch, branch, transaction, saved object, or mutation proposal.
+and publishes nothing. Requested-target failures return the per-target outcomes
+defined above and likewise publish nothing. A scenario is neither canonical
+state nor a SemanticPatch, branch, transaction, saved object, or mutation
+proposal.
 
 Formula/schema/structure mutation inside a scenario, parameter sweeps,
 optimization, solver/statistical behavior, randomness, and persisted scenario
@@ -885,10 +914,16 @@ domain must demonstrate:
 2. deterministic stable-ID direct-input and direct-dependent facts;
 3. one Number override scenario that changes requested derived values while
    leaving canonical state byte-for-byte or structurally unchanged;
-4. repeated equal source revision, normalized overrides, and requested targets
-   producing equal structured semantic outcomes;
-5. invalid override, division/evaluation failure, validation failure, and
-   source-cycle cases returning structured evidence with no publication;
+4. repeated equal source revision, effective deterministic validator
+   configuration, normalized overrides, and requested targets producing equal
+   underlying structured semantic outcomes before disclosure projection; equal
+   Query disclosure authority producing equal exposed target outcomes; and a
+   changed validator configuration being distinguished whenever it changes
+   validation facts;
+5. invalid override; missing, stale, and unsupported requested targets;
+   division/evaluation failure; validation failure; and source-cycle cases
+   returning structured evidence with no publication, with each otherwise
+   admitted requested target producing exactly one outcome;
 6. a valid typed formula update becoming one ADR-0024 SemanticPatch whose exact
    binding contains the complete bound expression and references;
 7. invalid, rebound/stale-target, and cycle-inducing formula updates failing
