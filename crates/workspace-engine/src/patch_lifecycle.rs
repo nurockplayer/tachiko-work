@@ -579,15 +579,18 @@ pub struct ExecutionReceipt {
 /// published. The lifecycle holds exclusive proposal/Approval state while this
 /// method runs and consumes Approval immediately after a successful return.
 pub trait SemanticPublicationAuthority {
-    /// Capture one coherent current semantic document/revision pair.
-    fn current_snapshot(&self) -> (Document, SemanticRevision);
+    /// Capture one coherent protected-occurrence/document/revision tuple.
+    fn current_snapshot(&self) -> (DocumentScopeId, Document, SemanticRevision);
 
-    /// Resolve one publication attempt under an exclusive guard. The callback
-    /// must run exactly once with a fresh trusted instant inside that guard,
-    /// immediately before returning a semantic Stale/Conflict outcome or
-    /// installing the candidate. Install only while `expected_revision`
-    /// remains current and the callback accepts, then return the distinct
-    /// resulting revision and the callback's authorization evidence.
+    /// Resolve one publication attempt under an exclusive guard. First compare
+    /// `expected_document_scope`; an occurrence change returns
+    /// [`SemanticPublicationError::DocumentScopeMismatch`] without invoking
+    /// authorization for the old occurrence. Otherwise the callback must run
+    /// exactly once with a fresh trusted instant inside that guard, immediately
+    /// before returning a semantic Stale/Conflict outcome or installing the
+    /// candidate. Install only while `expected_revision` remains current and
+    /// the callback accepts, then return the distinct resulting revision and
+    /// the callback's authorization evidence.
     ///
     /// # Errors
     ///
@@ -598,6 +601,7 @@ pub trait SemanticPublicationAuthority {
     /// the lifecycle even though such a host violates this contract.
     fn publish_if_current<Authorization>(
         &mut self,
+        expected_document_scope: &DocumentScopeId,
         expected_revision: &SemanticRevision,
         candidate: Document,
         authorize: impl FnOnce(TrustedInstant) -> Option<Authorization>,
@@ -607,6 +611,8 @@ pub trait SemanticPublicationAuthority {
 /// Proved no-publication result from the host publication boundary.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum SemanticPublicationError {
+    #[error("protected document occurrence changed")]
+    DocumentScopeMismatch,
     #[error("semantic base is stale")]
     Stale,
     #[error("semantic publication conflicted")]
@@ -745,6 +751,7 @@ struct PublicationAttempt<'a> {
     approval: Option<StoredApproval>,
     executor: &'a PrincipalId,
     footprint: &'a AuthorizationFootprint,
+    current_document_scope: &'a DocumentScopeId,
     current_revision: &'a SemanticRevision,
     candidate: Document,
 }
@@ -923,12 +930,13 @@ impl PatchLifecycle {
     /// authorization failure without semantic publication.
     pub fn propose(
         &mut self,
+        document_scope: &DocumentScopeId,
         document: &Document,
         current_revision: &SemanticRevision,
         request: ProposalRequest,
         now: TrustedInstant,
     ) -> Result<SemanticPatch, PatchLifecycleError> {
-        self.require_document(document)?;
+        self.require_document(document_scope, document)?;
         if self.proposals.contains_key(&request.id) {
             return Err(PatchLifecycleError::ProposalIdAlreadyExists);
         }
@@ -1028,13 +1036,14 @@ impl PatchLifecycle {
     /// Returns proposal, stale, semantic, or Query-authorization failure.
     pub fn preview(
         &mut self,
+        document_scope: &DocumentScopeId,
         document: &Document,
         current_revision: &SemanticRevision,
         proposal_id: &ProposalId,
         viewer: &PrincipalId,
         now: TrustedInstant,
     ) -> Result<PatchPreview, PatchLifecycleError> {
-        self.require_document(document)?;
+        self.require_document(document_scope, document)?;
         self.require_active_principal(viewer)?;
         let record = self
             .proposals
@@ -1091,12 +1100,13 @@ impl PatchLifecycle {
     /// authorization failure without semantic publication.
     pub fn approve(
         &mut self,
+        document_scope: &DocumentScopeId,
         document: &Document,
         current_revision: &SemanticRevision,
         request: ApprovalRequest,
         now: TrustedInstant,
     ) -> Result<Approval, PatchLifecycleError> {
-        self.require_document(document)?;
+        self.require_document(document_scope, document)?;
         if self.approvals.contains_key(&request.id) {
             return Err(PatchLifecycleError::ApprovalIdAlreadyExists);
         }
@@ -1199,8 +1209,13 @@ impl PatchLifecycle {
         publication: &mut impl SemanticPublicationAuthority,
         now: TrustedInstant,
     ) -> Result<ExecutionReceipt, PatchLifecycleError> {
-        let (document, current_revision) = publication.current_snapshot();
-        self.require_document(&document)?;
+        let (current_document_scope, document, current_revision) = publication.current_snapshot();
+        if self
+            .require_document(&current_document_scope, &document)
+            .is_err()
+        {
+            return Err(PatchLifecycleError::AuthorizationDenied);
+        }
         let (proposal, footprint, approval) =
             self.select_execution_context(proposal_id, approval_id, executor)?;
         let can_disclose = self
@@ -1245,6 +1260,7 @@ impl PatchLifecycle {
                     approval,
                     executor,
                     footprint: &footprint,
+                    current_document_scope: &current_document_scope,
                     current_revision: &current_revision,
                     candidate: evaluated.document,
                 },
@@ -1527,6 +1543,7 @@ impl PatchLifecycle {
             approval,
             executor,
             footprint,
+            current_document_scope,
             current_revision,
             candidate,
         } = attempt;
@@ -1542,15 +1559,17 @@ impl PatchLifecycle {
 
         let mut boundary_error = None;
         let mut boundary_disclosure = None;
-        let publication_result =
-            publication.publish_if_current(current_revision, candidate, |boundary_now| match self
-                .authorize_publication_boundary(
-                    proposal,
-                    reserved.as_ref(),
-                    executor,
-                    footprint,
-                    boundary_now,
-                ) {
+        let publication_result = publication.publish_if_current(
+            current_document_scope,
+            current_revision,
+            candidate,
+            |boundary_now| match self.authorize_publication_boundary(
+                proposal,
+                reserved.as_ref(),
+                executor,
+                footprint,
+                boundary_now,
+            ) {
                 Ok((approve_grants, execute_grants)) => {
                     let can_disclose = self
                         .authorize_query(executor, &footprint.disclosure_requirements, boundary_now)
@@ -1566,7 +1585,8 @@ impl PatchLifecycle {
                     boundary_error = Some(error);
                     None
                 }
-            });
+            },
+        );
         let (resulting_revision, publication_authorization) = match publication_result {
             Ok(success) => success,
             Err(error) => {
@@ -1625,6 +1645,9 @@ impl PatchLifecycle {
             self.append_state(proposal_id, PatchLifecycleState::Expired);
         }
         let (state, disclosed_error) = match publication_error {
+            SemanticPublicationError::DocumentScopeMismatch => {
+                return PatchLifecycleError::AuthorizationDenied;
+            }
             SemanticPublicationError::Stale => {
                 (PatchLifecycleState::Stale, PatchLifecycleError::Stale)
             }
@@ -1651,7 +1674,12 @@ impl PatchLifecycle {
         resulting_revision: &SemanticRevision,
         candidate: &Document,
     ) -> Result<ValidationReport, PatchLifecycleError> {
-        let (installed_document, installed_revision) = publication.current_snapshot();
+        let (installed_document_scope, installed_document, installed_revision) =
+            publication.current_snapshot();
+        if installed_document_scope != self.document_scope {
+            self.append_state(proposal_id, PatchLifecycleState::Conflict);
+            return Err(PatchLifecycleError::VerificationFailed);
+        }
         let report = super::validation_report(&installed_document);
         if &installed_revision != resulting_revision
             || resulting_revision == base_revision
@@ -1735,8 +1763,12 @@ impl PatchLifecycle {
         })
     }
 
-    fn require_document(&self, document: &Document) -> Result<(), PatchLifecycleError> {
-        if document.id == self.document {
+    fn require_document(
+        &self,
+        document_scope: &DocumentScopeId,
+        document: &Document,
+    ) -> Result<(), PatchLifecycleError> {
+        if document_scope == &self.document_scope && document.id == self.document {
             Ok(())
         } else {
             Err(PatchLifecycleError::DocumentScopeMismatch)

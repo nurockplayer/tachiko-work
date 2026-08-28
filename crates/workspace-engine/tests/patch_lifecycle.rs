@@ -35,9 +35,13 @@ fn principal(value: &str) -> PrincipalId {
     PrincipalId::from(value)
 }
 
+fn document_scope_id() -> DocumentScopeId {
+    DocumentScopeId::from("game-occurrence")
+}
+
 fn document_scope() -> ScopedSemanticSubject {
     ScopedSemanticSubject::new(
-        DocumentScopeId::from("game-occurrence"),
+        document_scope_id(),
         DocumentId::from("game"),
         SemanticScope::Document,
     )
@@ -77,7 +81,7 @@ fn schema_scope(schema: &str) -> ScopedSemanticSubject {
 fn lifecycle() -> PatchLifecycle {
     let mut lifecycle = PatchLifecycle::new(
         AuthorizationDomainId::from("local-domain"),
-        DocumentScopeId::from("game-occurrence"),
+        document_scope_id(),
         DocumentId::from("game"),
         SemanticApiContract::from("tachiko-sem-v1"),
         AuthorizationPolicyVersion::from("policy-v1"),
@@ -186,6 +190,7 @@ fn propose(
     let proposal_id = proposal_id(id);
     lifecycle
         .propose(
+            &document_scope_id(),
             document,
             &revision("r1"),
             ProposalRequest::new(
@@ -209,6 +214,7 @@ fn preview_and_approve(
 ) -> ApprovalId {
     lifecycle
         .preview(
+            &document_scope_id(),
             document,
             &revision("r1"),
             proposal,
@@ -219,6 +225,7 @@ fn preview_and_approve(
     let approval_id = ApprovalId::from(approval);
     lifecycle
         .approve(
+            &document_scope_id(),
             document,
             &revision("r1"),
             ApprovalRequest::new(
@@ -239,10 +246,12 @@ enum PublishMode {
     Normal,
     RaceStale,
     Conflict,
+    ReplaceOccurrence,
     TamperAfterSuccess,
 }
 
 struct TestPublication {
+    document_scope: DocumentScopeId,
     document: Document,
     revision: SemanticRevision,
     next_revision: SemanticRevision,
@@ -254,6 +263,7 @@ struct TestPublication {
 impl TestPublication {
     fn new(document: Document, current: &str, next: &str) -> Self {
         Self {
+            document_scope: document_scope_id(),
             document,
             revision: revision(current),
             next_revision: revision(next),
@@ -275,12 +285,17 @@ impl TestPublication {
 }
 
 impl SemanticPublicationAuthority for TestPublication {
-    fn current_snapshot(&self) -> (Document, SemanticRevision) {
-        (self.document.clone(), self.revision.clone())
+    fn current_snapshot(&self) -> (DocumentScopeId, Document, SemanticRevision) {
+        (
+            self.document_scope.clone(),
+            self.document.clone(),
+            self.revision.clone(),
+        )
     }
 
     fn publish_if_current<Authorization>(
         &mut self,
+        expected_document_scope: &DocumentScopeId,
         expected_revision: &SemanticRevision,
         candidate: Document,
         authorize: impl FnOnce(TrustedInstant) -> Option<Authorization>,
@@ -289,12 +304,20 @@ impl SemanticPublicationAuthority for TestPublication {
         if self.mode == PublishMode::RaceStale {
             self.revision = revision("r-raced");
         }
+        if self.mode == PublishMode::ReplaceOccurrence {
+            self.document_scope = DocumentScopeId::from("replacement-occurrence");
+        }
+        if &self.document_scope != expected_document_scope {
+            return Err(SemanticPublicationError::DocumentScopeMismatch);
+        }
         let authorization = authorize(self.publication_time)
             .ok_or(SemanticPublicationError::AuthorizationDenied)?;
         match self.mode {
             PublishMode::RaceStale => Err(SemanticPublicationError::Stale),
             PublishMode::Conflict => Err(SemanticPublicationError::Conflict),
-            PublishMode::Normal | PublishMode::TamperAfterSuccess => {
+            PublishMode::Normal
+            | PublishMode::ReplaceOccurrence
+            | PublishMode::TamperAfterSuccess => {
                 if &self.revision != expected_revision {
                     return Err(SemanticPublicationError::Stale);
                 }
@@ -421,6 +444,7 @@ fn approved_one_field_patch_previews_applies_verifies_and_records_provenance() {
 
     let preview = lifecycle
         .preview(
+            &document_scope_id(),
             &document,
             &revision("r1"),
             &proposal,
@@ -440,6 +464,7 @@ fn approved_one_field_patch_previews_applies_verifies_and_records_provenance() {
 
     let approval = lifecycle
         .approve(
+            &document_scope_id(),
             &document,
             &revision("r1"),
             ApprovalRequest::new(
@@ -525,6 +550,7 @@ fn final_validation_failure_records_failure_without_publication() {
 
     let error = lifecycle
         .propose(
+            &document_scope_id(),
             &document,
             &revision("r1"),
             ProposalRequest::new(
@@ -560,6 +586,7 @@ fn final_validation_failure_records_failure_without_publication() {
     );
     assert!(matches!(
         lifecycle.preview(
+            &document_scope_id(),
             &document,
             &revision("r1"),
             &proposal,
@@ -591,6 +618,7 @@ fn validation_failure_details_require_independent_query_authority() {
 
     let error = lifecycle
         .propose(
+            &document_scope_id(),
             &document,
             &revision("r1"),
             ProposalRequest::new(
@@ -640,6 +668,7 @@ fn individually_valid_formula_commands_that_form_a_cycle_fail_as_one_batch() {
 
     let error = lifecycle
         .propose(
+            &document_scope_id(),
             &document,
             &revision("r1"),
             ProposalRequest::new(proposal.clone(), revision("r1"), body, principal("agent")),
@@ -678,6 +707,7 @@ fn middle_command_failure_never_publishes_a_successful_prefix() {
 
     let error = lifecycle
         .propose(
+            &document_scope_id(),
             &document,
             &revision("r1"),
             ProposalRequest::new(proposal.clone(), revision("r1"), body, principal("agent")),
@@ -810,6 +840,7 @@ fn preview_authorizes_disclosure_before_revealing_stale_state() {
 
     let error = lifecycle
         .preview(
+            &document_scope_id(),
             &document,
             &revision("r2"),
             &proposal,
@@ -865,6 +896,53 @@ fn publication_compare_and_swap_closes_the_post_validation_race() {
         lifecycle.approval_status(&approval).unwrap(),
         ApprovalStatus::Active
     );
+}
+
+#[test]
+fn document_occurrence_replacement_does_not_inherit_authority() {
+    let document = game_balance_document("game", "Game");
+    let original = document.clone();
+    let mut lifecycle = lifecycle();
+    provision_standard_authority(&mut lifecycle);
+    let proposal = propose(
+        &mut lifecycle,
+        &document,
+        "proposal-replaced-occurrence",
+        SemanticPatchBody::command(field_command("iron_sword", "damage", number(45.0))),
+        "agent",
+    );
+    let approval = preview_and_approve(
+        &mut lifecycle,
+        &document,
+        &proposal,
+        "approval-replaced-occurrence",
+        "agent",
+    );
+    let mut publication =
+        TestPublication::new(document, "r1", "r2").with_mode(PublishMode::ReplaceOccurrence);
+
+    let error = lifecycle
+        .execute(
+            &proposal,
+            Some(&approval),
+            &principal("agent"),
+            &mut publication,
+            TrustedInstant::new(11),
+        )
+        .unwrap_err();
+
+    assert!(matches!(error, PatchLifecycleError::AuthorizationDenied));
+    assert_eq!(
+        publication.document_scope,
+        DocumentScopeId::from("replacement-occurrence")
+    );
+    assert_eq!(publication.document, original);
+    assert_eq!(publication.publish_calls, 1);
+    assert_eq!(
+        lifecycle.approval_status(&approval).unwrap(),
+        ApprovalStatus::Active
+    );
+    assert!(lifecycle.execution_receipts().is_empty());
 }
 
 #[test]
@@ -926,6 +1004,7 @@ fn proposal_identity_cannot_be_reused_even_for_equal_contents() {
 
     let error = lifecycle
         .propose(
+            &document_scope_id(),
             &document,
             &revision("r1"),
             ProposalRequest::new(proposal, revision("r1"), body, principal("agent")),
@@ -952,6 +1031,7 @@ fn missing_propose_capability_fails_closed() {
 
     let error = lifecycle
         .propose(
+            &document_scope_id(),
             &document,
             &revision("r1"),
             ProposalRequest::new(
@@ -987,6 +1067,7 @@ fn unauthorized_failed_attempts_do_not_reserve_proposal_ids() {
 
     let stale = lifecycle
         .propose(
+            &document_scope_id(),
             &document,
             &revision("r1"),
             ProposalRequest::new(
@@ -1000,6 +1081,7 @@ fn unauthorized_failed_attempts_do_not_reserve_proposal_ids() {
         .unwrap_err();
     let rejected = lifecycle
         .propose(
+            &document_scope_id(),
             &document,
             &revision("r1"),
             ProposalRequest::new(
@@ -1038,6 +1120,7 @@ fn unauthorized_failed_attempts_do_not_reserve_proposal_ids() {
     for id in [stale_id, rejected_id] {
         lifecycle
             .propose(
+                &document_scope_id(),
                 &document,
                 &revision("r1"),
                 ProposalRequest::new(
@@ -1075,6 +1158,7 @@ fn propose_only_authority_issues_inert_patch_but_reveals_no_preview() {
 
     let error = lifecycle
         .preview(
+            &document_scope_id(),
             &document,
             &revision("r1"),
             &proposal,
@@ -1139,6 +1223,7 @@ fn intermediate_batch_reference_still_derives_disclosure_from_the_exact_command_
 
     let error = lifecycle
         .preview(
+            &document_scope_id(),
             &document,
             &revision("r1"),
             &proposal,
@@ -1266,6 +1351,7 @@ fn approve_authority_alone_neither_discloses_nor_completes_review() {
 
     let preview_error = lifecycle
         .preview(
+            &document_scope_id(),
             &document,
             &revision("r1"),
             &proposal,
@@ -1275,6 +1361,7 @@ fn approve_authority_alone_neither_discloses_nor_completes_review() {
         .unwrap_err();
     let approval_error = lifecycle
         .approve(
+            &document_scope_id(),
             &document,
             &revision("r1"),
             ApprovalRequest::new(
@@ -1328,6 +1415,7 @@ fn relational_grant_bindings_cannot_cross_mutation_class_and_scope() {
 
     let error = lifecycle
         .propose(
+            &document_scope_id(),
             &document,
             &revision("r1"),
             ProposalRequest::new(
@@ -1382,6 +1470,7 @@ fn schema_scope_covers_its_entity_instances_and_fields() {
 
     let preview = lifecycle
         .preview(
+            &document_scope_id(),
             &document,
             &revision("r1"),
             &proposal,
@@ -1420,6 +1509,7 @@ fn matching_semantic_ids_in_another_document_occurrence_grant_nothing() {
 
     let error = lifecycle
         .propose(
+            &document_scope_id(),
             &document,
             &revision("r1"),
             ProposalRequest::new(
@@ -1438,6 +1528,49 @@ fn matching_semantic_ids_in_another_document_occurrence_grant_nothing() {
             action: AuthorizationAction::Propose
         }
     ));
+}
+
+#[test]
+fn replacement_occurrence_snapshot_is_rejected_even_with_the_same_document_id() {
+    let document = game_balance_document("game", "Game");
+    let mut lifecycle = lifecycle();
+    provision_standard_authority(&mut lifecycle);
+    let proposal = proposal_id("proposal-replacement-snapshot");
+
+    let error = lifecycle
+        .propose(
+            &DocumentScopeId::from("replacement-occurrence"),
+            &document,
+            &revision("r1"),
+            ProposalRequest::new(
+                proposal.clone(),
+                revision("r1"),
+                SemanticPatchBody::command(field_command("iron_sword", "damage", number(45.0))),
+                principal("agent"),
+            ),
+            NOW,
+        )
+        .unwrap_err();
+
+    assert!(matches!(error, PatchLifecycleError::DocumentScopeMismatch));
+    assert!(matches!(
+        lifecycle.proposal_history(&proposal),
+        Err(PatchLifecycleError::ProposalNotFound)
+    ));
+    lifecycle
+        .propose(
+            &document_scope_id(),
+            &document,
+            &revision("r1"),
+            ProposalRequest::new(
+                proposal,
+                revision("r1"),
+                SemanticPatchBody::command(field_command("iron_sword", "damage", number(45.0))),
+                principal("agent"),
+            ),
+            NOW,
+        )
+        .unwrap();
 }
 
 #[test]
@@ -1587,6 +1720,7 @@ fn value_authority_does_not_authorize_formula_mutation() {
 
     let error = lifecycle
         .propose(
+            &document_scope_id(),
             &document,
             &revision("r1"),
             ProposalRequest::new(
@@ -1636,6 +1770,7 @@ fn expired_and_revoked_approvals_never_publish() {
         );
         lifecycle
             .preview(
+                &document_scope_id(),
                 &document,
                 &revision("r1"),
                 &proposal,
@@ -1646,6 +1781,7 @@ fn expired_and_revoked_approvals_never_publish() {
         let approval_id = ApprovalId::from(approval_name);
         lifecycle
             .approve(
+                &document_scope_id(),
                 &document,
                 &revision("r1"),
                 ApprovalRequest::new(
@@ -1698,6 +1834,7 @@ fn approval_expiring_inside_the_publication_guard_never_publishes() {
     );
     lifecycle
         .preview(
+            &document_scope_id(),
             &document,
             &revision("r1"),
             &proposal,
@@ -1708,6 +1845,7 @@ fn approval_expiring_inside_the_publication_guard_never_publishes() {
     let approval = ApprovalId::from("approval-boundary-expiry");
     lifecycle
         .approve(
+            &document_scope_id(),
             &document,
             &revision("r1"),
             ApprovalRequest::new(
@@ -2116,6 +2254,7 @@ fn directly_authenticated_human_execution_fabricates_no_approval_evidence() {
     );
     lifecycle
         .preview(
+            &document_scope_id(),
             &document,
             &revision("r1"),
             &proposal,
