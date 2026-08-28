@@ -66,7 +66,7 @@ Command while leaving their production implementation to a separate Issue.
 
 | Document | Read it for |
 | --- | --- |
-| [`ai-agent-api.md`](ai-agent-api.md) | Implemented AI-facing read/explain/suggest adapter plus provisional typed Propose/Execute hostile boundary; #32's provider-neutral formula Queries and formula-update Command remain unimplemented shared Semantic API behavior, and current `Suggestion` remains neither SemanticPatch nor Approval |
+| [`ai-agent-api.md`](ai-agent-api.md) | Implemented AI-facing read/explain/suggest adapter plus provisional typed Propose/Execute hostile boundary; #32's provider-neutral logical formula-reasoning Query, exact-snapshot read-only scenario Query, and typed FormulaUpdate Command remain unimplemented shared Semantic API behavior, and current `Suggestion` remains neither SemanticPatch nor Approval |
 | [`security-model.md`](security-model.md) | Security constraints and model |
 | [`plugin-system.md`](plugin-system.md) | ADR-0028 game-engine host extension boundary; general plugin ABI/runtime/sandbox mechanics remain Deferred, while #134/#135 own narrower private/public policy |
 | [`migration-framework.md`](migration-framework.md) | Progressive migration direction and future adapter framework |

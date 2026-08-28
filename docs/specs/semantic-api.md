@@ -235,13 +235,14 @@ exact source semantic revision/context, including deterministic validation conte
 Each override identifies by stable semantic identity one existing field whose
 current semantic value is a Number, not a Formula, and supplies one ADR-0018
 `Number`. Each override target occurs at most once. Normalization applies
-ADR-0018 Number normalization and preserves request order. A duplicate, missing,
-or wrong-typed override target; non-finite Number; or request beyond the
-applicable finite profile is an invalid scenario request.
+ADR-0018 Number normalization and preserves request order. A duplicate override
+target; a missing or wrong-typed override target; a non-finite Number; or a
+request beyond the applicable finite profile is an invalid scenario request.
 
 Requested result/inspection targets form a stable-identity set. Duplicate
-request occurrences normalize to one member, and target request order has no
-semantic meaning. Exact result ordering is a Provisional projection detail.
+requested-target occurrences normalize to one member, and target request order
+has no semantic meaning. Exact result ordering is a Provisional projection
+detail.
 
 After the scenario envelope is admitted, the trusted application boundary first
 derives and enforces the applicable ADR-0026 Query disclosure scope for each
@@ -913,7 +914,9 @@ domain must demonstrate:
 1. inspection and authoritative evaluation of a DPS-style bound formula;
 2. deterministic stable-ID direct-input and direct-dependent facts;
 3. one Number override scenario that changes requested derived values while
-   leaving canonical state byte-for-byte or structurally unchanged;
+   proving that canonical semantic revision/state identity is unchanged, that
+   no publication or persistence event occurred, and that canonical
+   representation remains byte-for-byte or structurally unchanged;
 4. repeated equal source revision, effective deterministic validator
    configuration, normalized overrides, and requested targets producing equal
    underlying structured semantic outcomes before disclosure projection; equal

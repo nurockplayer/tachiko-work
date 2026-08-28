@@ -219,14 +219,15 @@ one exact source semantic revision/context
 ```
 
 Each override targets by stable semantic identity one existing field whose
-current semantic value is a Number, not a Formula. A target occurs at most once.
-Normalization applies ADR-0018 Number normalization and preserves request order.
+current semantic value is a Number, not a Formula. An override target occurs at
+most once. Normalization applies ADR-0018 Number normalization and preserves
+request order.
 The application authority applies all overrides to one transient candidate
 derived from the exact source snapshot, then runs the same authoritative
 formula calculation and validation used outside the scenario. Override order
 is reproducibility evidence, not a sequence of intermediate publications.
-Requested targets form a stable-identity set: duplicate request occurrences
-normalize to one member, and target request order is not semantic.
+Requested targets form a stable-identity set: duplicate requested-target
+occurrences normalize to one member, and target request order is not semantic.
 
 The source context pins the effective deterministic ADR-0019 validator
 configuration used for both baseline and candidate validation. After the
