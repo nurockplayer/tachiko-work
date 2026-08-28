@@ -207,8 +207,8 @@ ADR-0020, ADR-0021, ADR-0022, ADR-0023, ADR-0024, ADR-0025, and ADR-0026
 respectively.
 Production `.roproj/v1` pure codec/native host work is implemented by #123.
 Portable-package v1 packaged `.ro` codec/native host/CLI work is implemented by
-#3 and consumes, without redesigning, the Accepted package contract and the
-production `.roproj/v1` seam. SemanticPatch and authorization
+Issue `#3` and consumes, without redesigning, the Accepted package contract and
+the production `.roproj/v1` seam. SemanticPatch and authorization
 production/wire/lifecycle work remains unimplemented and must consume, not
 redesign, ADR-0024/ADR-0026 through #29/#30/#93. #93–#95 remain
 later Designer-MVP runtime/performance implementation and must not

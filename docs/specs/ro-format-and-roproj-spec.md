@@ -26,7 +26,7 @@ This implementation state does not supersede ADR-0003. ADR-0025 now fixes the
 deterministic portable-package v1 and integrity contract over `.roproj/v1`;
 Issue #3 implements its exact packaged `.ro` codec, bounded host pack/unpack,
 read-only comparison, and CLI workflow. Optional Git/CI integration remains
-#44.
+Issue `#44`.
 
 ## `.ro`
 

@@ -27,6 +27,8 @@ native_ai="$(node scripts/cargo-artifact-path.mjs \
   "${check_dir}/native-build.jsonl" tachiko_ai_api)"
 native_formula="$(node scripts/cargo-artifact-path.mjs \
   "${check_dir}/native-build.jsonl" tachiko_formula_engine)"
+native_sha2="$(node scripts/cargo-artifact-path.mjs \
+  "${check_dir}/native-build.jsonl" sha2)"
 native_semantic="$(node scripts/cargo-artifact-path.mjs \
   "${check_dir}/native-build.jsonl" tachiko_semantic_core)"
 native_storage="$(node scripts/cargo-artifact-path.mjs \
@@ -38,6 +40,7 @@ rustc --edition=2024 \
   -L "dependency=${native_deps}" \
   --extern "tachiko_ai_api=${native_ai}" \
   --extern "tachiko_formula_engine=${native_formula}" \
+  --extern "sha2=${native_sha2}" \
   --extern "tachiko_semantic_core=${native_semantic}" \
   --extern "tachiko_storage=${native_storage}" \
   --extern "tachiko_workspace_engine=${native_workspace}" \
@@ -53,6 +56,8 @@ wasm_ai="$(node scripts/cargo-artifact-path.mjs \
   "${check_dir}/wasm-build.jsonl" tachiko_ai_api)"
 wasm_formula="$(node scripts/cargo-artifact-path.mjs \
   "${check_dir}/wasm-build.jsonl" tachiko_formula_engine)"
+wasm_sha2="$(node scripts/cargo-artifact-path.mjs \
+  "${check_dir}/wasm-build.jsonl" sha2)"
 wasm_semantic="$(node scripts/cargo-artifact-path.mjs \
   "${check_dir}/wasm-build.jsonl" tachiko_semantic_core)"
 wasm_storage="$(node scripts/cargo-artifact-path.mjs \
@@ -65,6 +70,7 @@ rustc --edition=2024 --target wasm32-unknown-unknown --crate-type cdylib \
   -L "dependency=${native_deps}" \
   --extern "tachiko_ai_api=${wasm_ai}" \
   --extern "tachiko_formula_engine=${wasm_formula}" \
+  --extern "sha2=${wasm_sha2}" \
   --extern "tachiko_semantic_core=${wasm_semantic}" \
   --extern "tachiko_storage=${wasm_storage}" \
   --extern "tachiko_workspace_engine=${wasm_workspace}" \

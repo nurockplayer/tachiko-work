@@ -49,7 +49,7 @@ pub fn publish_portable_package(
     let bytes = encode(tree)?;
     require_destination_absent(path)?;
     let (staging, mut file) = create_staging_file(path)?;
-    if let Err(source) = file.write_all(&bytes) {
+    if let Err(source) = file.write_all(&bytes).and_then(|()| file.sync_all()) {
         drop(file);
         remove_staging_file(&staging)?;
         return Err(PortablePackageError::PublicationFailed {

@@ -5,6 +5,7 @@ use std::{
     sync::OnceLock,
 };
 
+use sha2::{Digest, Sha256};
 use tachiko_ai_api::{explain_formula, suggest_field_change};
 use tachiko_formula_engine::{
     CalculationError, CalculationFailure, CalculationOutcome, CanonicalAuthoringProjectionError,
@@ -53,6 +54,10 @@ const ROPROJ_V1_EXACT_TREE_FINGERPRINT: u64 = 2_796_923_835_209_599_950;
 const ROPROJ_V1_EXACT_TREE_FILE_COUNT: u64 = 18;
 const PORTABLE_PACKAGE_V1_FINGERPRINT: u64 = 4_165_964_772_177_000_947;
 const PORTABLE_PACKAGE_V1_LENGTH: u64 = 2_692;
+const PORTABLE_PACKAGE_V1_SHA256: [u8; 32] = [
+    0x13, 0x68, 0xeb, 0xe3, 0x8c, 0x86, 0xde, 0x28, 0xd2, 0x37, 0x9a, 0xe6, 0xc0, 0xca, 0x7a, 0x5c,
+    0xa8, 0x50, 0x25, 0x43, 0x00, 0x2f, 0xe0, 0x84, 0xe3, 0x32, 0x54, 0xad, 0x1d, 0xb4, 0xd7, 0xbc,
+];
 const PORTABLE_PACKAGE_V1_PAYLOAD_ROOT: [u8; 32] = [
     0x71, 0xe2, 0xb1, 0x17, 0x0a, 0xe3, 0xb2, 0xc2, 0x25, 0x9c, 0xc0, 0xc9, 0x0c, 0x21, 0x73, 0x89,
     0xa1, 0xe5, 0x9c, 0x49, 0x0b, 0x5c, 0xcd, 0xe4, 0xc6, 0xfe, 0x2d, 0xad, 0xae, 0x1f, 0xed, 0x9c,
@@ -262,17 +267,36 @@ fn portable_package_v1_record() -> Record {
     {
         return Record::failure(UNEXPECTED, fingerprint);
     }
+    let package_digest: [u8; 32] = Sha256::digest(&package).into();
+    if package_digest != PORTABLE_PACKAGE_V1_SHA256 {
+        return Record::failure(
+            UNEXPECTED,
+            u64::from_le_bytes(package_digest[..8].try_into().unwrap()),
+        );
+    }
     let Ok(verified) = decode_portable_package_v1(&package) else {
         return Record::failure(UNEXPECTED, (47_u64 << 32) | 2);
     };
     if verified.tree() != &tree || verified.payload_root() != root {
         return Record::failure(UNEXPECTED, (47_u64 << 32) | 3);
     }
-    let Ok(reencoded) = encode_portable_package_v1(verified.tree()) else {
+    let Ok(decoded_tree) = decode_roproj_v1(verified.tree()) else {
         return Record::failure(UNEXPECTED, (47_u64 << 32) | 4);
     };
-    if reencoded != package {
+    if decoded_tree != document {
         return Record::failure(UNEXPECTED, (47_u64 << 32) | 5);
+    }
+    let Ok(decoded_package) = storage_from_bytes(&package) else {
+        return Record::failure(UNEXPECTED, (47_u64 << 32) | 6);
+    };
+    if decoded_package != document {
+        return Record::failure(UNEXPECTED, (47_u64 << 32) | 7);
+    }
+    let Ok(reencoded) = encode_portable_package_v1(verified.tree()) else {
+        return Record::failure(UNEXPECTED, (47_u64 << 32) | 8);
+    };
+    if reencoded != package {
+        return Record::failure(UNEXPECTED, (47_u64 << 32) | 9);
     }
     Record {
         class: PORTABLE_PACKAGE_V1_EXACT_BYTES,

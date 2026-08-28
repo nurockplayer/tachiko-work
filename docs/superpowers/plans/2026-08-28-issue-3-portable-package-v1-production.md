@@ -38,10 +38,10 @@
 - `portable_package_payload_root(&CanonicalRoProjectV1) -> [u8; 32]`
 - `PORTABLE_PACKAGE_V1_MAX_ARCHIVE_BYTES`
 
-- [ ] Add a failing test that encodes the normative empty `.roproj/v1` fixture and compares every byte, length, complete SHA-256, and payload root with the checked-in golden vector.
-- [ ] Implement the domain-separated 18-leaf SHA-256 root over exact path/NUL/body bytes.
-- [ ] Implement a manual canonical store-only ZIP32 writer with fixed headers, standard reflected CRC-32, checked ordinary-field bounds, exact names/order, no extras/comments/descriptors, and a finite archive admission limit.
-- [ ] Prove repeated encoding and path/host metadata independence are byte-identical.
+- [x] Add a failing test that encodes the normative empty `.roproj/v1` fixture and compares every byte, length, complete SHA-256, and payload root with the checked-in golden vector.
+- [x] Implement the domain-separated 18-leaf SHA-256 root over exact path/NUL/body bytes.
+- [x] Implement a manual canonical store-only ZIP32 writer with fixed headers, standard reflected CRC-32, checked ordinary-field bounds, exact names/order, no extras/comments/descriptors, and a finite archive admission limit.
+- [x] Prove repeated encoding and path/host metadata independence are byte-identical.
 
 ### Task 2: Bounded strict decoder and stable failure classes
 
@@ -56,12 +56,12 @@
 - `VerifiedPortablePackageV1`, exposing the exact payload tree and verified root.
 - `decode_portable_package_v1(&[u8]) -> Result<VerifiedPortablePackageV1, FormatError>`.
 
-- [ ] Add failing vertical tests for a valid golden decode and exact `unpack(pack(P))` / `pack(unpack(R))` byte laws.
-- [ ] Parse ordinary ZIP32 records with checked offsets and exact end-of-input accounting; reject stubs, tails, comments, split records, sentinels, overlaps, and impossible bounds.
-- [ ] Locate one stored `package.json`, reject duplicate JSON members, dispatch its positive lexical version, and let unsupported versions win before all v1-owned checks.
-- [ ] Enforce the closed canonical manifest, exact 19-name set/order, fixed ZIP fields, local/central agreement, CRC/sizes, and exact payload root.
-- [ ] Verify inner `.roproj` claims, then construct the production `CanonicalRoProjectV1`; map representation and semantic failures separately.
-- [ ] Add focused negatives for corruption, stale root, missing/duplicate/aliased/unknown entries, reordered/noncanonical records, malformed metadata, local/central disagreement, ZIP64/descriptors/comments, unsupported future manifest shape, resource/capacity bounds, and no parser fallback.
+- [x] Add failing vertical tests for a valid golden decode and exact `unpack(pack(P))` / `pack(unpack(R))` byte laws.
+- [x] Parse ordinary ZIP32 records with checked offsets and exact end-of-input accounting; reject stubs, tails, comments, split records, sentinels, overlaps, and impossible bounds.
+- [x] Locate one stored `package.json`, reject duplicate JSON members, dispatch its positive lexical version, and let unsupported versions win before all v1-owned checks.
+- [x] Enforce the closed canonical manifest, exact 19-name set/order, fixed ZIP fields, local/central agreement, CRC/sizes, and exact payload root.
+- [x] Verify inner `.roproj` claims, then construct the production `CanonicalRoProjectV1`; map representation and semantic failures separately.
+- [x] Add focused negatives for corruption, stale root, missing/duplicate/aliased/unknown entries, reordered/noncanonical records, malformed metadata, local/central disagreement, ZIP64/descriptors/comments, unsupported future manifest shape, resource/capacity bounds, and no parser fallback.
 
 ### Task 3: Content framing and semantic read coexistence
 
@@ -69,9 +69,9 @@
 - Modify: `crates/storage/src/lib.rs`
 - Modify: direct-storage regression tests
 
-- [ ] Add a failing test that exact initial `50 4b 03 04` selects package decoding and that malformed/unsupported packages remain package errors.
-- [ ] Dispatch package bytes from `from_bytes`/`load`, decode their production `.roproj/v1` payload into one semantic `Document`, and preserve the existing direct JSON path for all non-package input.
-- [ ] Prove `save` and canonical direct JSON bytes remain unchanged.
+- [x] Add a failing test that exact initial `50 4b 03 04` selects package decoding and that malformed/unsupported packages remain package errors.
+- [x] Dispatch package bytes from `from_bytes`/`load`, decode their production `.roproj/v1` payload into one semantic `Document`, and preserve the existing direct JSON path for all non-package input.
+- [x] Prove `save` and canonical direct JSON bytes remain unchanged.
 
 ### Task 4: Host pack, unpack, compare, and real no-replace publication
 
@@ -89,13 +89,13 @@
 - `read_portable_package`, `pack_roproj`, `unpack_roproj`, and `compare_portable_package_with_roproj`.
 - Pinned `renamore = 0.3.2` as the safe wrapper around Linux `renameat2(RENAME_NOREPLACE)`, Darwin `renamex_np(RENAME_EXCL)`, and Windows no-replace move behavior.
 
-- [ ] Add failing host journeys for pack/unpack exactness, standalone operation, existing destinations, source mismatch, source noncanonicality, and cleanup on failure.
-- [ ] Strengthen staged `.roproj` directory publication to use the actual atomic no-replace primitive, failing closed when unsupported.
-- [ ] Add a deterministic two-publisher race test: exactly one staged directory wins, the loser reports destination existence, and the winning tree is intact.
-- [ ] Implement pack as bounded exact-source admission, complete in-memory encode/verify, sibling staged-file write, and exclusive rename.
-- [ ] Implement unpack as complete package verification followed by existing canonical-tree staging and exclusive directory rename.
-- [ ] Implement read-only root comparison; mismatch returns `portable_package.source_mismatch` without changing either input.
-- [ ] Verify native and wasm32 builds with the dependency present; host-only behavior must not enter the pure conformance path.
+- [x] Add failing host journeys for pack/unpack exactness, standalone operation, existing destinations, source mismatch, source noncanonicality, and cleanup on failure.
+- [x] Strengthen staged `.roproj` directory publication to use the actual atomic no-replace primitive, failing closed when unsupported.
+- [x] Add a deterministic two-publisher race test: exactly one staged directory wins, the loser reports destination existence, and the winning tree is intact.
+- [x] Implement pack as bounded exact-source admission, complete in-memory encode/verify, sibling staged-file write, and exclusive rename.
+- [x] Implement unpack as complete package verification followed by existing canonical-tree staging and exclusive directory rename.
+- [x] Implement read-only root comparison; mismatch returns `portable_package.source_mismatch` without changing either input.
+- [x] Verify native and wasm32 builds with the dependency present; host-only behavior must not enter the pure conformance path.
 
 ### Task 5: CLI composition and workspace validation
 
@@ -109,10 +109,10 @@
 - `tachiko roproj unpack <INPUT.ro> <OUTPUT.roproj>`
 - `tachiko roproj compare-package <PACKAGE.ro> <TRACKED.roproj>`
 
-- [ ] Add a failing outside-Git CLI journey that materializes, packs twice to distinct names, validates the package through ordinary read commands, unpacks byte-identically, compares as consistent, and refuses every overwrite.
-- [ ] Compose storage admission with the workspace validation gate before pack/unpack publication; never publish a workspace-invalid candidate.
-- [ ] Emit stable success output and preserve machine-distinguishable package errors on stderr.
-- [ ] Add mismatch and corruption journeys proving both source trees and destinations remain untouched.
+- [x] Add a failing outside-Git CLI journey that materializes, packs twice to distinct names, validates the package through ordinary read commands, unpacks byte-identically, compares as consistent, and refuses every overwrite.
+- [x] Compose storage admission with the workspace validation gate before pack/unpack publication; never publish a workspace-invalid candidate.
+- [x] Emit stable success output and preserve machine-distinguishable package errors on stderr.
+- [x] Add mismatch and corruption journeys proving both source trees and destinations remain untouched.
 
 ### Task 6: Native/WASM conformance and documentation
 
@@ -123,15 +123,15 @@
 - Modify only implementation-status prose in relevant Accepted specs/research reconciliation
 - Regenerate: `THIRD_PARTY_LICENSES.md`
 
-- [ ] Add a native/WASM conformance record that encodes and decodes the normative package, asserts the root and complete package digest, and increments the exact case count.
-- [ ] Document package framing, pack/unpack/compare commands, exact-source/no-clobber behavior, finite host limit, and the fact that direct JSON remains the writer.
-- [ ] Update only stale implementation-status statements; do not alter Accepted architecture or normative bytes.
-- [ ] Regenerate exact third-party notices after the lockfile/runtime dependency change.
+- [x] Add a native/WASM conformance record that encodes and decodes the normative package, asserts the root and complete package digest, and increments the exact case count.
+- [x] Document package framing, pack/unpack/compare commands, exact-source/no-clobber behavior, finite host limit, and the fact that direct JSON remains the writer.
+- [x] Update only stale implementation-status statements; do not alter Accepted architecture or normative bytes.
+- [x] Regenerate exact third-party notices after the lockfile/runtime dependency change.
 
 ### Task 7: Repository gates, review, and delivery
 
-- [ ] Run `cargo fmt --all -- --check`, exact Rust 1.85 build/test coverage, clippy with repository flags, workspace tests, portable conformance, dependency graph validation, documentation/link checks, and `scripts/release-check.sh` from a clean commit.
-- [ ] Review the full diff against Issue #3 and ADR-0025, including every conformance case and unrelated direct JSON/storage regressions.
-- [ ] Request an independent code review, address every actionable finding with focused tests, and rerun affected plus full gates.
+- [x] Run `cargo fmt --all -- --check`, exact Rust 1.85 build/test coverage, clippy with repository flags, workspace tests, portable conformance, dependency graph validation, documentation/link checks, and `scripts/release-check.sh` from a clean commit.
+- [x] Review the full diff against Issue #3 and ADR-0025, including every conformance case and unrelated direct JSON/storage regressions.
+- [x] Request an independent code review, address every actionable finding with focused tests, and rerun affected plus full gates.
 - [ ] Open one Issue #3 PR from the final reviewed head, monitor all required checks/review threads, merge with head-match protection, and verify live `main`, Issue closure, and Project status.
 - [ ] Recalibrate the live repository and Product Roadmap before selecting the next genuinely Ready critical-path Issue.
