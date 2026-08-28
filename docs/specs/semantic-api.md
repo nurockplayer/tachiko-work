@@ -685,9 +685,34 @@ The logical family distinguishes at least:
 - insufficient Query authority or disclosure-safe denial; and
 - ambiguous or unsupported two-context comparison.
 
-Exact error codes, Rust variants, DTO spelling, request/result limits,
-normalized-definition encoding, output ordering, and internal execution-plan
-shape remain Provisional.
+A conforming Analysis Query selects failures by an Accepted phase law, not by
+whichever target, member, metric, or context an implementation happens to visit
+first:
+
+1. envelope/admission evaluates bounded request-local facts only. If that phase
+   finds any invalidity, it returns the complete deterministically normalized
+   request-local failure set and performs no semantic resolution;
+2. insufficient preauthorization, paired-context authorization, or final
+   disclosure coverage returns one disclosure-safe denial and suppresses all
+   semantic classification and failure detail;
+3. after authorization, the trusted authority evaluates every directly applicable
+   semantic/evaluation failure for the normalized request. Equal failures are
+   deduplicated, then the complete set is ordered by the logical failure-family
+   order above and stable semantic coordinates (including A/B side for an
+   authorized paired evaluation). A non-empty semantic failure set returns one
+   failed-analysis outcome containing that complete set and no membership, group,
+   aggregate, observation, lineage, or other successful payload; and
+4. only when semantic evaluation has no failure does the boundary construct the
+   complete successful result and classify whether it exceeds the finite result
+   profile. If so, it returns the single result-too-large outcome instead of the
+   successful payload.
+
+Equal exact context input(s), equal context-independent normalized definition,
+and equal deterministic configuration therefore produce equal underlying failure
+outcomes independently of internal traversal, parallelism, or plan shape. Exact
+Rust variants, public codes, set/container encoding, and serialized ordering stay
+Provisional; implementations MUST preserve the logical phase precedence,
+complete-set semantics, deduplication, and stable semantic ordering.
 
 M04 analysis is an ephemeral Query result. It creates no persisted `AnalysisId`,
 saved semantic analysis block, analytics datastore, report authority, or
@@ -1296,8 +1321,14 @@ without promoting incidental Rust/CLI/wire shapes, at least:
     renormalization, or parallel revision semantics, including independent
     complete authorization in A and B plus authorization of the combined paired
     projection, and one whole-operation disclosure-safe denial when any check
-    fails; and
-15. lineage sufficient for a consumer to explain and reproduce the deterministic
+    fails;
+15. one authorized query containing multiple semantic failures, repeated under
+    different internal traversal/execution-plan orders, producing the same
+    complete deduplicated and stably ordered failure set with no successful
+    payload; plus evidence that request-local failures and disclosure denial
+    short-circuit later phases and result-too-large is classified only after an
+    otherwise successful complete result; and
+16. lineage sufficient for a consumer to explain and reproduce the deterministic
     result without an LLM reconstructing selection or aggregation semantics.
 
 The implementation Issue may choose reversible finite request/result limits,

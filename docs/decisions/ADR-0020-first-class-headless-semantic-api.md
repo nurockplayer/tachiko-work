@@ -540,9 +540,30 @@ The logical analysis result distinguishes at least:
 - insufficient Query authority or disclosure-safe denial; and
 - ambiguous or unsupported two-context comparison.
 
-Exact public error codes, Rust variants, DTO spelling, finite limits,
-normalized-definition encoding, output ordering, and internal execution plan
-remain Provisional.
+Failure selection is phase-ordered and deterministic rather than dependent on
+implementation traversal order:
+
+1. request-local envelope/admission invalidity returns a deterministically
+   normalized complete set of request-local failures and performs no semantic
+   resolution;
+2. insufficient Query authority or final disclosure coverage returns one
+   disclosure-safe denial and exposes no semantic failure detail;
+3. after authorization, all directly applicable semantic/evaluation failures for
+   the normalized Analysis Query form one complete normalized failure set,
+   deduplicated and ordered by logical failure-family order plus stable semantic
+   coordinates; any non-empty set returns one failed-analysis outcome containing
+   that set and no successful result payload; and
+4. result-too-large is considered only after semantic evaluation would otherwise
+   produce a successful complete result, and replaces that result with the single
+   structured result-too-large outcome.
+
+For paired A/B evaluation, the authorized context side is part of a failure's
+stable coordinate. Equal exact context input(s), normalized definition, and
+deterministic configuration MUST therefore produce the same underlying failure
+outcome even when an implementation changes internal traversal or execution-plan
+order. Exact public error codes, Rust variants, DTO/set encoding, and serialized
+ordering remain Provisional; the phase precedence, completeness, deduplication,
+and semantic ordering law are Accepted.
 
 M04 analysis is an ephemeral Query result only. It creates no persisted
 `AnalysisId`, saved semantic analysis block, analytics datastore, materialized
