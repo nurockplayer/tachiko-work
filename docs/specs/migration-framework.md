@@ -1,18 +1,20 @@
 # Migration Framework Strategy
 
-Decision state: Accepted direction; concrete mappings and adapters are Hypothesis / Open Question
+Decision state: Accepted direction under ADR-0027; concrete mappings and adapters are Hypothesis / Open Question
 
 Implementation state: Broad legacy migration framework not implemented in v0.1
 
-Decision owners: #14, #18, #34
+Decision authority: ADR-0027; concrete mapping and migration owners: #18, #34
 
 ## Authority note
 
 The project has accepted the principle that legacy compatibility belongs at explicit boundaries rather than becoming the semantic core, and that adoption should support progressive migration rather than a forced replacement event.
 
-This document records that direction. It does not claim that XLSX, DOCX, VBA, ODF, or other source-format semantics have already been mapped or that lossless conversion is always possible.
+ADR-0027 now defines the repository-wide open-format/interoperability policy: reuse mature standards before invention, keep external formats at explicit adapter boundaries unless separately Accepted, require an open independently implementable Tachiko-native ownership path, and make material fidelity loss or changed meaning explicit rather than silently assuming equivalence.
 
-Concrete interoperability policy, format-specific conversion semantics, fidelity reporting, and AI-assisted migration remain focused research/decision work.
+This document records the migration direction beneath that policy. It does not claim that XLSX, DOCX, VBA, ODF, or other source-format semantics have already been mapped or that lossless conversion is always possible.
+
+Format-specific conversion semantics, fidelity-ledger mechanics, and AI-assisted migration remain focused later-stage research/decision work under their existing owners.
 
 ## Principle
 
