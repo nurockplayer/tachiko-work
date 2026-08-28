@@ -159,6 +159,11 @@ struct Container<'a> {
     central_records: Vec<CentralRecord<'a>>,
 }
 
+struct CentralOffsetIndex {
+    record_index: Option<usize>,
+    next_offset: Option<usize>,
+}
+
 /// Calculate the Accepted exact-payload root for a canonical `.roproj/v1` tree.
 #[must_use]
 pub fn payload_root(tree: &CanonicalRoProjectV1) -> [u8; 32] {
@@ -443,31 +448,18 @@ fn parse_container_at_end(
         return invalid_container("a central entry selects another start disk");
     }
 
-    let mut central_by_local_offset = HashMap::with_capacity(central_records.len());
-    for (index, record) in central_records.iter().enumerate() {
-        let Ok(offset) = usize::try_from(record.local_offset) else {
-            continue;
-        };
-        central_by_local_offset
-            .entry(offset)
-            .and_modify(|matching: &mut Option<usize>| *matching = None)
-            .or_insert(Some(index));
-    }
+    let central_by_local_offset = index_central_offsets(&central_records, central_offset);
 
     let mut local_records = Vec::with_capacity(usize::from(end.total_entries));
     let mut local_offset = 0;
     for _ in 0..end.total_entries {
         let central_index = central_by_local_offset
             .get(&local_offset)
-            .copied()
-            .flatten();
+            .and_then(|matching| matching.record_index);
         let central = central_index.map(|index| &central_records[index]);
-        let expected_next_offset = central_index.and_then(|index| {
-            central_records.get(index + 1).map_or_else(
-                || Some(central_offset),
-                |record| usize::try_from(record.local_offset).ok(),
-            )
-        });
+        let expected_next_offset = central_by_local_offset
+            .get(&local_offset)
+            .and_then(|matching| matching.next_offset);
         let record = parse_local_record(
             source,
             local_offset,
@@ -492,13 +484,50 @@ fn parse_container_at_end(
     })
 }
 
+fn index_central_offsets(
+    central_records: &[CentralRecord<'_>],
+    central_offset: usize,
+) -> HashMap<usize, CentralOffsetIndex> {
+    let mut index_by_offset = HashMap::with_capacity(central_records.len());
+    let mut sorted_offsets = Vec::with_capacity(central_records.len());
+    for (index, record) in central_records.iter().enumerate() {
+        let Ok(offset) = usize::try_from(record.local_offset) else {
+            continue;
+        };
+        index_by_offset
+            .entry(offset)
+            .and_modify(|matching: &mut CentralOffsetIndex| matching.record_index = None)
+            .or_insert(CentralOffsetIndex {
+                record_index: Some(index),
+                next_offset: None,
+            });
+        if offset < central_offset {
+            sorted_offsets.push(record.local_offset);
+        }
+    }
+    radix_sort_and_dedup(&mut sorted_offsets);
+    for (position, &offset) in sorted_offsets.iter().enumerate() {
+        let offset = usize::try_from(offset).expect("filtered ZIP32 offset fits this host");
+        let next_offset = sorted_offsets
+            .get(position + 1)
+            .map_or(central_offset, |next| {
+                usize::try_from(*next).expect("filtered ZIP32 offset fits this host")
+            });
+        index_by_offset
+            .get_mut(&offset)
+            .expect("sorted offsets came from the central index")
+            .next_offset = Some(next_offset);
+    }
+    index_by_offset
+}
+
 fn parse_local_record<'a>(
     source: &'a [u8],
     offset: usize,
     central: Option<&CentralRecord<'_>>,
     local_section_end: usize,
     expected_next_offset: Option<usize>,
-    central_by_local_offset: &HashMap<usize, Option<usize>>,
+    central_by_local_offset: &HashMap<usize, CentralOffsetIndex>,
 ) -> Result<LocalRecord<'a>, PortablePackageError> {
     require_range(source, offset, 30, "local header")?;
     if read_u32(source, offset, "local signature")? != ZIP_LOCAL_SIGNATURE {
@@ -581,7 +610,7 @@ fn select_ordinary_data_size(
     central_size: Option<u32>,
     local_section_end: usize,
     expected_next_offset: Option<usize>,
-    central_by_local_offset: &HashMap<usize, Option<usize>>,
+    central_by_local_offset: &HashMap<usize, CentralOffsetIndex>,
 ) -> u32 {
     let Some(central_size) = central_size else {
         return local_size;
@@ -603,16 +632,45 @@ fn select_ordinary_data_size(
         }
     }
     let local_declared = local_end.is_some_and(|end| {
-        end == local_section_end || matches!(central_by_local_offset.get(&end), Some(Some(_)))
+        end == local_section_end
+            || central_by_local_offset
+                .get(&end)
+                .is_some_and(|matching| matching.record_index.is_some())
     });
     let central_declared = central_end.is_some_and(|end| {
-        end == local_section_end || matches!(central_by_local_offset.get(&end), Some(Some(_)))
+        end == local_section_end
+            || central_by_local_offset
+                .get(&end)
+                .is_some_and(|matching| matching.record_index.is_some())
     });
     if central_declared && !local_declared {
         central_size
     } else {
         local_size
     }
+}
+
+fn radix_sort_and_dedup(offsets: &mut Vec<u32>) {
+    let mut scratch = vec![0_u32; offsets.len()];
+    for byte_index in 0..4 {
+        let mut positions = [0_usize; 256];
+        for &offset in offsets.iter() {
+            positions[usize::from(offset.to_le_bytes()[byte_index])] += 1;
+        }
+        let mut next_position = 0;
+        for position in &mut positions {
+            let count = *position;
+            *position = next_position;
+            next_position += count;
+        }
+        for &offset in offsets.iter() {
+            let bucket = usize::from(offset.to_le_bytes()[byte_index]);
+            scratch[positions[bucket]] = offset;
+            positions[bucket] += 1;
+        }
+        offsets.copy_from_slice(&scratch);
+    }
+    offsets.dedup();
 }
 
 fn ordinary_data_end(data_start: usize, size: u32, local_section_end: usize) -> Option<usize> {

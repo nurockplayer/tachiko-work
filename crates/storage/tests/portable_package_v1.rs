@@ -384,6 +384,17 @@ fn add_last_file_comment(package: &[u8]) -> Vec<u8> {
     output
 }
 
+fn move_central_record_to_end(package: &[u8], name: &str) -> Vec<u8> {
+    let target = record(package, name);
+    let end = package.len() - 22;
+    let mut output = Vec::with_capacity(package.len());
+    output.extend_from_slice(&package[..target.central_offset]);
+    output.extend_from_slice(&package[target.central_end..end]);
+    output.extend_from_slice(&package[target.central_offset..target.central_end]);
+    output.extend_from_slice(&package[end..]);
+    output
+}
+
 fn add_last_data_descriptor(package: &[u8]) -> Vec<u8> {
     let target = record(package, "payload/entities/f.jsonl");
     let old_end = package.len() - 22;
@@ -777,6 +788,20 @@ fn noncanonical_zip_metadata_order_and_record_disagreement_are_rejected() {
     );
     let shard = record(&local_ambiguous, "payload/entities/0.jsonl");
     write_u32(&mut local_ambiguous, shard.local_offset + 18, 1);
+    let mut central_reordered_size = decode_hex(EMPTY_PACKAGE_HEX);
+    let manifest = record(&central_reordered_size, "package.json");
+    let central_start = usize::try_from(read_u32(
+        &central_reordered_size,
+        central_reordered_size.len() - 22 + 16,
+    ))
+    .unwrap();
+    write_u32(
+        &mut central_reordered_size,
+        manifest.central_offset + 20,
+        u32::try_from(central_start - manifest.data_start).unwrap(),
+    );
+    let central_reordered_size =
+        move_central_record_to_end(&central_reordered_size, "package.json");
     for package in [
         disagreement,
         offset_disagreement,
@@ -784,6 +809,7 @@ fn noncanonical_zip_metadata_order_and_record_disagreement_are_rejected() {
         central_size_disagreement,
         central_ambiguous,
         local_ambiguous,
+        central_reordered_size,
     ] {
         assert!(matches!(
             decode_portable_package_v1(&package),
