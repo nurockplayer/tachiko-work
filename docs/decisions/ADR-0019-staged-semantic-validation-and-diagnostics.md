@@ -258,10 +258,11 @@ Accepted core identity, type, reference, Number, formula, or storage semantics.
 External or nondeterministic checks may exist as separate host/workflow
 services, but their results do not silently become canonical semantic validity.
 
-Plugin runtime, ABI, sandboxing, signing, capability grants, distribution, and
-compatibility remain Deferred. ADR-0028 later resolves only the M04
-game-engine host-adapter classification; its #134/#135 follow-ups own narrower
-private-enterprise and public-ecosystem policy, not these mechanics.
+Plugin runtime, ABI, sandboxing, signing, plugin-specific capability-grant
+mechanics, distribution, and compatibility remain Deferred. ADR-0028 later
+resolves only the M04 game-engine host-adapter classification; its #134/#135
+follow-ups own narrower private-enterprise and public-ecosystem policy, not
+these mechanics.
 
 ### 9. Keep the ADR-0016 crate boundary
 

@@ -214,7 +214,7 @@ ADR-0020, ADR-0021, ADR-0022, ADR-0023, ADR-0024, ADR-0025, and ADR-0026
 respectively.
 #14 is separately resolved by ADR-0027 without promoting concrete external-format
 adapters into the current milestone.
-#17 is separately resolved by ADR-0028 without stabilizing a general plugin
+`#17` is separately resolved by ADR-0028 without stabilizing a general plugin
 platform; #134 and #135 remain open at the M07 and M08 horizons.
 Production `.roproj/v1` pure codec/native host work is implemented by #123.
 Portable-package v1 packaged `.ro` codec/native host/CLI work is implemented by

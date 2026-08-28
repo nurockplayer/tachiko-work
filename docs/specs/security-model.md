@@ -1,11 +1,13 @@
 # Security Model
 
 Decision state: Mixed. The semantic authorization laws summarized from
-ADR-0007 and ADR-0026 are Accepted. Instruction/data enforcement, durable
-authorization state, diagnostic codes, and external-effect mechanisms remain
-Provisional, Deferred, or separately owned by #30/#93. Plugin isolation and
-migration sandbox mechanics remain Deferred; #134/#135 own only their narrower
-private-enterprise and public-ecosystem policies. Issue #29 supplies the current
+ADR-0007 and ADR-0026 are Accepted; ADR-0019 owns diagnostic-code meaning.
+Trusted instruction/data and external-effect enforcement belongs to Issue #30;
+semantic revision/session mechanics belong to Issue #93. Other concrete
+mechanisms retain their Provisional or Deferred classifications in the
+canonical reconciliation register. Plugin isolation and migration sandbox
+mechanics remain Deferred; Issues #134 and #135 own only their narrower private-
+enterprise and public-ecosystem policies. Issue #29 supplies the current
 provisional trusted in-process authorization/Approval lifecycle seam.
 
 ## Principles
