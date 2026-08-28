@@ -11,6 +11,9 @@ under [ADR-0026](../decisions/ADR-0026-scoped-semantic-authorization-and-approva
 Runtime ownership, resident interactive topology, host separation, explicit
 snapshot boundaries, and native/WASM semantic parity are Accepted under
 [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md).
+The M04 logical formula-reasoning Query, read-only scenario Query, and typed
+formula-update Command semantics are Accepted by ADR-0020's Issue #32
+amendment.
 Exact Rust APIs, complete operation catalogue, wire schemas, transports,
 proposal/revision encodings, session mechanics, and several result/projection
 shapes remain Provisional or Deferred as marked below.
@@ -32,10 +35,14 @@ to prove an active Delegated occurrence, delegates typed proposal/execution to
 it, and projects disclosure-safe machine outcomes while rejecting raw mutation
 and host effects. The complete operation catalogue, authentication, transports,
 and wire/SDK contract remain Provisional or Deferred.
+The M04 formula-reasoning, scenario, and formula-update contracts are not yet
+implemented; a separate implementation Issue must own the first
+provider-neutral workspace/CLI vertical slice.
 
 Decision issues: [#10](https://github.com/nurockplayer/tachiko-work/issues/10),
 [#27](https://github.com/nurockplayer/tachiko-work/issues/27),
-[#28](https://github.com/nurockplayer/tachiko-work/issues/28)
+[#28](https://github.com/nurockplayer/tachiko-work/issues/28),
+[#32](https://github.com/nurockplayer/tachiko-work/issues/32)
 
 ## Purpose
 
@@ -181,6 +188,145 @@ An intent equivalent to changing a typed field value by `EntityId + FieldId` can
 be a semantic command. An arbitrary mutation of an internal Rust field or JSON
 path is not the stable product contract merely because an adapter can express
 one mechanically.
+
+## M04 formula reasoning and scenario Queries
+
+ADR-0020 promotes the following logical M04 operations without freezing their
+external names, DTOs, Rust layout, transport identifiers, or placement in a
+complete API catalogue.
+
+### Formula reasoning Query
+
+A bounded formula-reasoning Query targets one formula-valued field by stable
+semantic identity in one semantic context. Its structured result preserves, as
+requested and applicable:
+
+- the target stable identity;
+- the complete typed bound expression meaning, including typed operators,
+  normalized literals, and stable references, without exposing an internal
+  Rust AST layout as public API;
+- stable-ID direct inputs and direct dependents;
+- the authoritative ADR-0018 calculation outcome;
+- deterministic dependency and affected-subject facts; and
+- applicable ADR-0019 validation/diagnostic facts.
+
+Human keys and canonical authoring text MAY accompany that result as
+presentation projections. They do not replace stable targeting or the bound
+expression meaning, and ADR-0018 projection failure emits no fabricated
+copyable source. Optional natural-language explanation consumes this
+structured result; it is not an authoritative result field and may neither
+recalculate nor override it.
+
+The shared application authority obtains every calculation, dependency,
+impact, and validation fact from the existing semantic/formula engines. A
+first-party client or AI adapter MUST NOT maintain an independent evaluator,
+dependency graph, or validation path.
+
+### Read-only scenario Query
+
+The logical M04 scenario request contains:
+
+```text
+exact source semantic revision/context
++ bounded ordered collection of typed Number overrides
++ bounded set of requested stable result/inspection targets
+```
+
+Each override identifies by stable semantic identity one existing field whose
+current semantic value is a Number, not a Formula, and supplies one ADR-0018
+`Number`. Each target occurs at most once. Normalization applies ADR-0018 Number
+normalization and preserves request order. A duplicate target, missing target,
+wrong-typed target, non-finite Number, or request beyond the applicable finite
+profile is an invalid scenario request.
+
+Requested result/inspection targets form a stable-identity set. Duplicate
+request occurrences normalize to one member, and target request order has no
+semantic meaning. Exact result ordering is a Provisional projection detail.
+
+The application authority:
+
+1. resolves the exact source snapshot without rebasing it;
+2. derives one transient candidate and applies the normalized overrides as one
+   hypothetical input set, not as sequential publications;
+3. runs the authoritative full formula-calculation oracle and applicable full
+   semantic validation on that candidate; and
+4. returns structured baseline/scenario evidence without publishing or
+   persisting the candidate.
+
+The result preserves, as applicable:
+
+- the exact source revision/context reference;
+- the normalized ordered stable-target/typed-Number override set;
+- authoritative baseline and scenario formula outcomes for the requested
+  subjects;
+- deterministic changed and affected stable subjects available from the
+  current engines;
+- applicable validation/diagnostic outcomes; and
+- dependency facts sufficient to explain why a requested result changed.
+
+Equal exact source revision, normalized overrides, and requested targets
+produce equal semantic outcomes. Ordering in the normalized result is
+request-preserving reproducibility evidence; it does not make the overrides
+sequential. Exact normalization encoding, finite limits, revision-token
+encoding, result field names, and wire representation remain Provisional.
+
+Invalid scenario input, source formula failure or cycle, candidate calculation
+failure, or validation failure returns the applicable structured failure facts
+and publishes nothing. A scenario is neither canonical state nor a
+SemanticPatch, branch, transaction, saved object, or mutation proposal.
+
+Formula/schema/structure mutation inside a scenario, parameter sweeps,
+optimization, solver/statistical behavior, randomness, and persisted scenario
+objects are Deferred.
+
+Model-generated prose, provider/model identity, wall-clock time, Git metadata,
+UI coordinates, and storage paths are not scenario meaning.
+
+## M04 formula-update Command
+
+One logical formula-update Command expresses normal typed semantic mutation.
+Its exact semantic meaning contains:
+
+- one stable formula target identity;
+- the complete accepted typed bound formula expression;
+- every stable reference in that expression; and
+- every command-owned semantic precondition required by the Accepted formula
+  contract.
+
+Formula authoring source is bounded input to parse, bind, and type-check against
+the exact semantic base. Failure at that boundary creates no admissible formula
+Command. A successful authoring projection is not the proposal meaning: the
+complete typed bound expression and stable references are fixed before ADR-0024
+proposal identity is issued.
+
+Review and execution use only the existing lifecycle:
+
+```text
+formula-update Command
+  -> Propose
+  -> immutable revision-pinned SemanticPatch
+  -> candidate / semantic diff / dependency impact / validation
+  -> authorization and exact Approval when required
+  -> Execute
+```
+
+Changing the target, bound expression, any stable reference, command-owned
+precondition, semantic base, or batch order changes ADR-0024 exact-change
+meaning and cannot reuse the same proposal occurrence. Invalid, rebound,
+stale-target, or cycle-inducing formula updates are rejected by the existing
+formula, validation, stale-base, and operation-gate contracts and publish
+nothing.
+
+The trusted application layer derives Formula-class write requirements and
+every disclosure scope exposed by diff, dependency, calculation, or validation
+evidence. Query authority for formula reasoning or scenarios does not imply
+Propose or Execute. Propose does not imply Query or Execute. Preview outside
+live Query authority is denied or safely reduced. Delegated-origin or
+Delegated-authority Execute uses ADR-0026's existing exact finite Human
+Approval; successful validation or scenario evaluation grants no authority.
+
+There is no `FormulaPatch`, formula-specific approval token, AI-only mutation
+API, or second formula proposal vocabulary.
 
 ## Query, Propose, and Execute
 
@@ -729,6 +875,32 @@ code as an opaque machine finding according to the relevant transport mapping.
 It MUST NOT require an exhaustive known-code switch to derive operation gate
 policy.
 
+## M04 formula/scenario conformance evidence
+
+The separate implementation Issue must exercise the Accepted logical contract
+with provider-neutral structured fixtures. At minimum, the current game-balance
+domain must demonstrate:
+
+1. inspection and authoritative evaluation of a DPS-style bound formula;
+2. deterministic stable-ID direct-input and direct-dependent facts;
+3. one Number override scenario that changes requested derived values while
+   leaving canonical state byte-for-byte or structurally unchanged;
+4. repeated equal source revision, normalized overrides, and requested targets
+   producing equal structured semantic outcomes;
+5. invalid override, division/evaluation failure, validation failure, and
+   source-cycle cases returning structured evidence with no publication;
+6. a valid typed formula update becoming one ADR-0024 SemanticPatch whose exact
+   binding contains the complete bound expression and references;
+7. invalid, rebound/stale-target, and cycle-inducing formula updates failing
+   through the existing admission, validation, or gate families;
+8. Query disclosure limits applying independently to reasoning, scenarios, and
+   proposal preview evidence; and
+9. Delegated formula Execute using ADR-0026's existing exact finite Human
+   Approval and Formula-class footprint without new formula-specific evidence.
+
+These are semantic observations, not a requirement for shared fixture bytes,
+Rust types, command names, or transport encoding.
+
 ## SemanticPatch conformance scenarios
 
 Future implementation and transport mappings MUST preserve these logical
@@ -749,8 +921,10 @@ fixtures without requiring common bytes or Rust types:
 Conformance also covers unsupported Semantic API compatibility, reuse of one
 proposal identity with different content, generated-ID binding, and equivalent
 Stable native/WASM outcomes where the same capability is exposed. Issue #29
-implements current field-value/batch lifecycle fixtures; complete catalogue,
-runtime, and transport conformance remains #93 and later work.
+implements current field-value/batch lifecycle fixtures. Formula reasoning,
+scenario, and formula-update conformance remains for the separate
+implementation Issue required by #32; complete catalogue, runtime, and
+transport conformance remains #93 and later work.
 
 ## Stability classification
 
@@ -783,6 +957,13 @@ runtime, and transport conformance remains #93 and later work.
 | Exact Rust/wire `ValidationReport` shape | Provisional |
 | Gate outcome distinct from diagnostic severity | Accepted |
 | Formula Stage 4/5 facts remain ADR-0018/ADR-0019 authority | Accepted |
+| Bounded formula-reasoning Query structured meaning and shared-engine requirement | Accepted under ADR-0020 / #32 |
+| Exact-revision, Number-override scenario Query is transient and non-publishing | Accepted under ADR-0020 / #32 |
+| Scenario provenance, baseline/outcome, affected-subject, validation, and dependency meaning | Accepted under ADR-0020 / #32 |
+| Typed formula-update Command binds complete bound meaning before proposal identity | Accepted under ADR-0020 / #32 |
+| Formula-update reuse of SemanticPatch and ADR-0026 authorization/Approval | Accepted under ADR-0020 / #32 |
+| Exact operation names, family identifiers, request limits, normalization encoding, and result DTOs | Provisional |
+| Production formula-reasoning/scenario/formula-update implementation | Not implemented / separate Issue |
 | Capability-addressability of operation/family | Accepted principle |
 | Capability/scope/Grant/Approval/provenance meaning | Accepted under ADR-0026 |
 | Exact authorization identifiers/DTOs/storage/wire representation | Provisional / Deferred |
@@ -846,6 +1027,9 @@ to semantic core by virtue of using the API.
 - exact runtime commit/swap/locking/cloning mechanism;
 - Worker lifecycle/loading/startup/memory behavior;
 - proposal-ID/revision-token field encoding;
+- exact formula-reasoning, scenario, and formula-update operation identifiers,
+  family IDs, finite request limits, normalization representation, and result
+  DTO fields;
 - canonical proposal bytes, hash, digest, signature, or MAC;
 - exact Approval/capability/Grant/provenance/expiry/replay/revocation DTO or
   wire format;
@@ -855,6 +1039,8 @@ to semantic core by virtue of using the API.
 - `.roproj` physical layout;
 - generic CRUD/JSON Patch;
 - generic transaction scripting language;
+- persisted scenarios, scenario mutation, parameter sweeps, optimization,
+  randomness, statistics, or a generic data-analysis/query IR;
 - event sourcing / operation log / undo history;
 - complete Stable operation catalogue;
 - stable public Rust SDK; or
@@ -875,4 +1061,4 @@ to semantic core by virtue of using the API.
 - [Semantic authorization](semantic-authorization.md)
 - [Diagnostics contract](diagnostics-contract.md)
 - [Validation engine](validation-engine.md)
-- Issues #10, #17, #27, #28, #29, #93, #94, #95, #104
+- Issues #10, #17, #27, #28, #29, #32, #93, #94, #95, #104

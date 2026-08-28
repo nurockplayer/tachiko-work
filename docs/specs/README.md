@@ -28,13 +28,13 @@ The semantic model owns meaning. Physical formats are representations. ADR-0017 
 
 | Document | Read it for |
 | --- | --- |
-| [`semantic-api.md`](semantic-api.md) | ADR-0020 first-class transport-neutral Semantic API, ADR-0024 immutable revision-pinned SemanticPatch, ADR-0026 authorization/approval integration, and ADR-0022 runtime-host ownership constraints; exact DTO/session/transport mechanics remain Deferred |
+| [`semantic-api.md`](semantic-api.md) | ADR-0020 first-class transport-neutral Semantic API, including #32's Accepted logical formula-reasoning Query, read-only scenario Query, and formula-update Command; ADR-0024 SemanticPatch, ADR-0026 authorization/approval, and ADR-0022 runtime-host constraints still apply; exact DTO/session/transport mechanics remain Deferred |
 | [`semantic-authorization.md`](semantic-authorization.md) | ADR-0026 principal, capability, stable-ID scope, trusted footprint, Grant, exact Human Approval, expiry/replay/revocation, provenance, and effect-domain contract |
 | [`semantic-data-model.md`](semantic-data-model.md) | Semantic data-model contract and terminology |
 | [`schema-system.md`](schema-system.md) | Durable schema declaration behavior and the boundary from runtime validation policy |
 | [`validation-engine.md`](validation-engine.md) | ADR-0019 staged validation, candidate/finalization semantics, full-validation oracle, and operation gating |
 | [`diagnostics-contract.md`](diagnostics-contract.md) | Semantic-ID-centered machine-readable diagnostic meaning and stability boundaries |
-| [`formula-engine-spec.md`](formula-engine-spec.md) | Accepted bounded authoring and ADR-0018 stable-ID projection/rename, binary64, dependency, and recomputation contract |
+| [`formula-engine-spec.md`](formula-engine-spec.md) | Accepted bounded authoring and ADR-0018 stable-ID projection/rename, binary64, dependency, and recomputation contract; #32's Semantic API scenarios compose this same oracle without creating a second evaluator |
 | [`semantic-diff-spec.md`](semantic-diff-spec.md) | Semantic diff behavior |
 
 ADR-0020 makes the Headless Semantic API the mandatory first-party semantic
@@ -58,12 +58,15 @@ session/revision/Worker/ABI/persistence mechanics Deferred to #93–#95 and futu
 host/transport implementation. ADR-0019 resolves the validation/diagnostics
 architecture; formula binding/failure/numeric semantics remain governed by
 ADR-0018; stable identity by ADR-0015; storage representation by ADR-0017.
+ADR-0020's #32 amendment additionally accepts logical structured formula
+reasoning, exact-snapshot read-only scenarios, and the typed formula-update
+Command while leaving their production implementation to a separate Issue.
 
 ## AI, security, and extensibility
 
 | Document | Read it for |
 | --- | --- |
-| [`ai-agent-api.md`](ai-agent-api.md) | Implemented AI-facing read/explain/suggest adapter plus provisional typed Propose/Execute hostile boundary over ADR-0007 delegated authority, ADR-0020 Semantic API behavior, ADR-0024 proposal rules, and ADR-0026 authorization/approval; current `Suggestion` remains neither SemanticPatch nor Approval |
+| [`ai-agent-api.md`](ai-agent-api.md) | Implemented AI-facing read/explain/suggest adapter plus provisional typed Propose/Execute hostile boundary; #32's provider-neutral formula Queries and formula-update Command remain unimplemented shared Semantic API behavior, and current `Suggestion` remains neither SemanticPatch nor Approval |
 | [`security-model.md`](security-model.md) | Security constraints and model |
 | [`plugin-system.md`](plugin-system.md) | ADR-0028 game-engine host extension boundary; general plugin ABI/runtime/sandbox mechanics remain Deferred, while #134/#135 own narrower private/public policy |
 | [`migration-framework.md`](migration-framework.md) | Progressive migration direction and future adapter framework |

@@ -6,6 +6,8 @@ Accepted
 
 Decision issue: [#10](https://github.com/nurockplayer/tachiko-work/issues/10)
 
+Amendment decision issue: [#32](https://github.com/nurockplayer/tachiko-work/issues/32)
+
 Research: [`2026-08-24-headless-semantic-api-boundary.md`](../research/2026-08-24-headless-semantic-api-boundary.md)
 
 Specified by: [`semantic-api.md`](../specs/semantic-api.md)
@@ -181,6 +183,116 @@ These are not alternate first-party semantic client authorities.
 
 A first-party GUI, CLI, AI, runtime bridge, or integration MUST NOT bypass the Semantic API merely because it shares a process, language, or Rust crate graph with the implementation.
 
+### 12. M04 promotes formula reasoning, scenarios, and formula update meaning
+
+Game Studio Beta promotes three related logical operation families into the
+Accepted Semantic API contract. Their semantic meaning is stable; exact
+operation names, Rust types, result field names, wire encodings, transport
+identifiers, and catalogue layout remain Provisional.
+
+#### Formula reasoning is Query behavior
+
+A bounded formula-reasoning Query MUST support, as requested and applicable:
+
+- inspect one formula's complete typed bound expression meaning without making
+  the current Rust AST layout public API;
+- identify its stable-ID direct inputs and direct dependents;
+- evaluate it through the authoritative ADR-0018 formula engine; and
+- return deterministic dependency, impact, calculation, and applicable
+  ADR-0019 validation facts needed to explain the result.
+
+Stable semantic identities and structured expression meaning are
+authoritative. Formula source text and mutable human addresses remain
+ADR-0018 authoring/presentation projections. Natural-language explanation is
+an optional adapter projection over the structured result and is never formula
+or calculation authority. No client or AI adapter may create a separate
+formula evaluator, dependency graph, or validation path.
+
+#### A scenario is a pure read-only hypothetical evaluation
+
+The minimum M04 scenario Query means:
+
+```text
+one exact source semantic revision
++ one bounded ordered collection of typed Number overrides
++ one bounded set of requested stable result/inspection targets
+```
+
+Each override targets by stable semantic identity one existing field whose
+current semantic value is a Number, not a Formula. A target occurs at most once.
+Normalization applies ADR-0018 Number normalization and preserves request order.
+The application authority applies all overrides to one transient candidate
+derived from the exact source snapshot, then runs the same authoritative
+formula calculation and validation used outside the scenario. Override order
+is reproducibility evidence, not a sequence of intermediate publications.
+Requested targets form a stable-identity set: duplicate request occurrences
+normalize to one member, and target request order is not semantic.
+
+The result preserves enough structured meaning to identify:
+
+- the exact source revision/context;
+- the normalized ordered stable-target/typed-Number overrides;
+- authoritative baseline and scenario formula outcomes for requested subjects;
+- deterministic changed and affected subjects available from the existing
+  semantic engines;
+- applicable validation/diagnostic outcomes; and
+- dependency facts sufficient to explain why a requested outcome changed.
+
+The same exact source revision, normalized overrides, and requested targets
+produce the same semantic result. Invalid or duplicate overrides, missing or
+wrong-typed targets, formula failures, cycles, and validation failures return
+structured failure evidence and publish nothing. A scenario is not canonical
+state, a SemanticPatch, a saved branch, a mutation transaction, or a persisted
+scenario object.
+
+Formula, schema, or structural mutation inside a scenario; parameter sweeps;
+optimization; randomness; statistics; and persisted scenarios remain Deferred.
+Exact finite request limits, normalization encoding, DTOs, and revision-token
+encoding remain Provisional and must not change the logical laws above.
+
+#### Formula update is one normal typed Command
+
+The formula-update Command meaning includes:
+
+- the stable target identity;
+- the complete accepted typed bound formula meaning;
+- every stable reference in that bound formula; and
+- command-owned semantic preconditions required by the Accepted formula
+  contract.
+
+Authoring source text is only bounded parse/bind/type-check input. The complete
+typed bound meaning is fixed before proposal identity is issued. A reviewable
+formula update therefore uses the existing path:
+
+```text
+formula-update Command
+  -> Propose
+  -> immutable revision-pinned SemanticPatch
+  -> candidate / diff / dependency impact / validation
+  -> authorization and exact Approval where ADR-0026 requires it
+  -> Execute through the shared lifecycle
+```
+
+This amendment creates neither `FormulaPatch`, a formula-specific approval
+token, nor an AI-only mutation vocabulary.
+
+#### Existing authorization and approval laws apply unchanged
+
+Formula reasoning and scenario operations require applicable Query authority
+for their operation family and every disclosed semantic scope. They do not
+require mutation Approval merely because an AI adapter consumes the result.
+
+Formula-update proposal and execution require the existing Propose/Execute
+actions, Formula mutation class, trusted disclosure/write-footprint
+derivation, and exact Approval rules from ADR-0026. Preview evidence outside
+live Query authority is denied or safely reduced. Delegated-origin or
+Delegated-authority publication requires the existing exact finite Human
+Approval. A successful calculation, validation, or scenario never grants
+Propose or Execute authority.
+
+Production implementation is not authorized by this amendment alone. It
+requires a separate implementation Issue that consumes this Accepted contract.
+
 ## #26 dependency boundary
 
 After this ADR, #26 owns **how** the Semantic API is hosted and transported, not **what its semantic behavior means**.
@@ -222,6 +334,10 @@ The following remain intentionally replaceable or unresolved:
 - exact diagnostic namespace/catalog spelling, while published code meanings remain stable;
 - exact related/facts encoding;
 - full externally Stable operation catalogue;
+- exact formula-reasoning, scenario, and formula-update operation-family
+  identifiers or catalogue entries;
+- exact scenario request limits, normalization/ordering representation, and
+  result DTO fields;
 - exact result field/tagged-union representation;
 - semantic effect/diff projection shape;
 - concrete revision/precondition token representation (#93);
@@ -246,6 +362,9 @@ This ADR does not:
 - create a generic CRUD/JSON-Patch platform;
 - create a generic transaction scripting language;
 - require operation logs, event sourcing, undo, or history for batch atomicity;
+- implement formula reasoning, scenario evaluation, or formula update;
+- define persisted scenarios, scenario mutation, sweeps, optimization,
+  randomness, statistics, or a generic data-analysis IR;
 - promote Project Memory vocabulary or provenance workflow into semantic core; or
 - introduce production code.
 
@@ -290,7 +409,9 @@ Costs:
 
 - current internal workspace-engine APIs do not yet constitute a complete deliberate public operation catalogue;
 - adapters that currently inspect re-exported/internal document fields may need future query projections;
-- batch support is an implementation gap; and
+- #29 implements a provisional field-value/ordered-batch lifecycle, while the
+  complete public operation catalogue and runtime/transport mapping remain
+  implementation gaps; and
 - future public exposure requires an intentional versioned mapping rather than exporting existing Rust/serde types directly.
 
 ## Required follow-up
@@ -301,6 +422,9 @@ Costs:
 - #26 may now proceed against the Accepted Semantic API boundary.
 - ADR-0024 resolves #27's revision-pinned immutable proposal contract without adding another operation vocabulary.
 - #28 continues to own capability/approval/provenance and digest/integrity protocol.
+- #32 is resolved by the M04 amendment above and the normative Semantic API
+  specification; a separate implementation Issue must own the first
+  provider-neutral workspace/CLI slice.
 - #104 remains a later read-only-first reference/dogfood pressure test.
 
 ## Related
@@ -313,4 +437,4 @@ Costs:
 - ADR-0018
 - ADR-0019
 - ADR-0024
-- Issues #10, #17, #26, #27, #28, #104
+- Issues #10, #17, #26, #27, #28, #32, #104
