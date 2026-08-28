@@ -230,7 +230,7 @@ project=game-data/game-balance.roproj
 base_ref=origin/main
 base_tree=$(mktemp -d "${TMPDIR:-/tmp}/tachiko-base.XXXXXX")
 
-git diff -- "$project"
+git diff "$base_ref" -- "$project"
 git archive --format=tar "$base_ref" -- "$project" | tar -xf - -C "$base_tree"
 
 tachiko diff "$base_tree/$project" "$project"

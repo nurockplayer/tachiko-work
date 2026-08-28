@@ -4,11 +4,13 @@
 
 **Goal:** Implement the optional, provider-neutral Git-facing adapter for canonical `.roproj/v1` projects so ordinary raw diffs, deterministic semantic review, CI validation, and tracked-package consistency compose without making Git part of semantic correctness.
 
-**Architecture:** The existing storage and workspace engines remain authoritative. The CLI composition root will admit an exact canonical `.roproj/v1` directory for existing read-only semantic commands while preserving direct and packaged `.ro` file handling. Repository attributes will force canonical project members to text with LF endings without installing a driver or changing Git configuration. An executable ordinary-Git smoke journey will prove localized raw diffs and compose the same standalone validation, structured semantic analysis, and package/root comparison commands used outside Git.
+**Architecture:** The existing storage and workspace engines remain authoritative. The CLI composition root will admit an exact canonical `.roproj/v1` directory for existing read-only semantic commands while preserving direct and packaged `.ro` file handling. Repository attributes will force canonical project members to text with LF endings without installing a custom diff/merge driver or mutating Git configuration. An executable ordinary-Git smoke journey will prove localized raw diffs and compose the same standalone validation, structured semantic analysis, and package/root comparison commands used outside Git.
 
 **Tech Stack:** Rust 2024 (MSRV 1.85.0), the existing `tachiko-storage` and `tachiko-workspace-engine` APIs, Clap, ordinary Git CLI plumbing in a test-only smoke journey, Bash, Cargo, and the existing native/WASM/release gates.
 
-**Authority:** Issue #44; ADR-0003, ADR-0011, ADR-0015, ADR-0023, and ADR-0025. [`git-native-not-git-shaped.md`](../../discussions/2026-08-26-git-native-not-git-shaped.md) is rationale only and does not amend Accepted authority.
+**Scope:** Issue #44.
+
+**Authority:** ADR-0003, ADR-0011, ADR-0015, ADR-0023, and ADR-0025 under the [knowledge-authority policy](../../governance/knowledge-authority.md). [`git-native-not-git-shaped.md`](../../discussions/2026-08-26-git-native-not-git-shaped.md) is rationale only and does not amend Accepted authority.
 
 ## Global constraints
 
@@ -83,6 +85,6 @@
 
 - [x] Run focused CLI tests and the Git/CI smoke while iterating, including direct/package regressions and negative canonicality/validity/drift cases.
 - [x] Run formatting, warnings-as-errors Clippy, all workspace/all-target tests, exact Rust 1.85, native/WASM conformance, documentation checks, packaging, and `scripts/release-check.sh` from a clean commit.
-- [ ] Review the complete diff against Issue #44 and Accepted authority, then request independent review and address every actionable finding with focused regression coverage.
+- [x] Review the complete diff against Issue #44 and Accepted authority, then request independent review and address every actionable finding with focused regression coverage.
 - [ ] Open one Issue #44 PR, monitor all required checks and review threads, merge with head-match protection, and verify live `main`, Issue closure, and Project status.
 - [ ] Recalibrate live `main` and the Product Roadmap before selecting the next genuinely Ready critical-path Issue.

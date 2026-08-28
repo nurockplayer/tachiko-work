@@ -46,7 +46,9 @@ CLI composition. Issue #44 adds the optional provider-neutral Git/CI adapter:
 existing read-only semantic commands accept exact canonical `.roproj` trees,
 repository attributes preserve LF text diffs, and CI composes canonical and
 workspace validation with read-only package/source comparison. It installs no
-Git driver or configuration and introduces no Git identity into semantics.
+custom Git diff or merge driver. The repository `.gitattributes` defines the
+canonical text attributes, and the adapter introduces no Git identity into
+semantics.
 Broader hostile-container/security and durability work retain their existing
 owners and Deferred status.
 
