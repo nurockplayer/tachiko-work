@@ -13,7 +13,7 @@ agent:
   provider: unknown
   model: gpt-5.6-luna
   configuration: reasoning low; fixed disabled features; fresh --ephemeral process/thread per run
-context_manifest_status: exact
+context_manifest_status: partial
 intervention_classes: [correction]
 failure_classes: [authority_miss, authority_drift, reasoning_error, tooling_failure]
 links:
