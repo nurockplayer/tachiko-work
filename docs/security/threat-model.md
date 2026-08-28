@@ -10,10 +10,12 @@ Deferred or separately owned by their domain decisions.
 Implementation state: `tachiko-ai-api::security_boundary` now treats document,
 import, plugin, model, and client-request content as untrusted data; excludes
 identity/time/validation/Approval claims from untrusted proposal DTOs; delegates
-typed Propose/Execute to the trusted workspace lifecycle; and rejects raw
-semantic/storage mutation plus every currently named host-effect family with
-stable machine codes. This in-process seam is not a public wire/authentication
-contract and does not implement external capabilities.
+typed Propose/Execute to the trusted workspace lifecycle only after that
+registry proves an active Delegated principal; and rejects raw semantic/storage
+mutation plus every currently named host-effect family with stable machine
+codes. Human session principals are not AI credentials. This in-process seam is
+not a public wire/authentication contract and does not implement external
+capabilities.
 
 ## Security Philosophy
 

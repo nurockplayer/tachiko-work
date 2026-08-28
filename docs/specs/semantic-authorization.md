@@ -12,11 +12,12 @@ binding, exclusive Approval reservation, atomic semantic publication/
 consumption, verification, trusted receipts, and Query-reduced execution
 responses for the current stable-ID field-value Command family and ordered
 AtomicBatch. Issue #30's provisional `ai-api` seam now obtains identity/time
-only from trusted host context, delegates typed Propose/Execute to this
-lifecycle, returns disclosure-safe stable codes, and rejects raw mutation and
-host effects. Concrete identity provisioning, durable registry/receipt storage,
-public DTO/wire integrity, and #93's resident revision/session/concurrency/
-state-installation mechanics remain unimplemented. Current convenience
+only from trusted host context, requires this lifecycle to prove an active
+Delegated occurrence, delegates typed Propose/Execute to it, returns disclosure-
+safe stable codes, and rejects raw mutation and host effects. A Human session
+principal is not an AI credential. Concrete identity provisioning, durable
+registry/receipt storage, public DTO/wire integrity, and #93's resident revision/
+session/concurrency/state-installation mechanics remain unimplemented. Current convenience
 `Suggestion` remains inert and is not a SemanticPatch, Grant, Approval,
 execution credential, or public protocol.
 

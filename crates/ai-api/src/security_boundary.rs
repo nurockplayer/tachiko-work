@@ -231,6 +231,9 @@ pub const fn admit_operation(operation: AiBoundaryOperation) -> Result<(), AiBou
 ///
 /// Implementations belong to trusted composition code. An untrusted request
 /// must never implement or select this context through a transport payload.
+/// The adapter also verifies that the resolved occurrence is active and
+/// `Delegated` in the trusted lifecycle; a Human session principal is not an
+/// AI execution credential.
 pub trait TrustedAiRequestContext {
     fn effective_principal(&self) -> Option<&PrincipalId>;
     fn trusted_instant(&self) -> Option<TrustedInstant>;
@@ -283,7 +286,8 @@ impl SubmittedSemanticProposal {
 
 /// Submit typed intent through the trusted Propose lifecycle.
 ///
-/// Effective originator and time come only from `context`. Evidence is
+/// Effective originator and time come only from `context`, and the lifecycle
+/// must prove that originator is an active Delegated occurrence. Evidence is
 /// retained beside the resulting proposal but is never passed as validation,
 /// authorization, Approval, or command meaning.
 ///
@@ -300,7 +304,7 @@ pub fn submit_semantic_proposal(
     request: AiProposalRequest,
 ) -> Result<SubmittedSemanticProposal, AiBoundaryError> {
     admit_operation(AiBoundaryOperation::SemanticProposal)?;
-    let (originator, now) = trusted_context(context)?;
+    let (originator, now) = trusted_delegated_context(lifecycle, context)?;
     let AiProposalRequest {
         id,
         base_revision,
@@ -338,9 +342,10 @@ impl AiExecutionRequest {
 
 /// Execute an exact proposal through the trusted authorization/publication lifecycle.
 ///
-/// Effective executor and time come only from `context`. The caller-supplied
-/// publication authority is trusted host composition and remains separate from
-/// storage or other external effects.
+/// Effective executor and time come only from `context`, and the lifecycle
+/// must prove that executor is an active Delegated occurrence. The caller-
+/// supplied publication authority is trusted host composition and remains
+/// separate from storage or other external effects.
 ///
 /// # Errors
 ///
@@ -354,7 +359,7 @@ pub fn execute_semantic_proposal(
     publication: &mut impl SemanticPublicationAuthority,
 ) -> Result<ExecutionReceipt, AiBoundaryError> {
     admit_operation(AiBoundaryOperation::SemanticExecution)?;
-    let (executor, now) = trusted_context(context)?;
+    let (executor, now) = trusted_delegated_context(lifecycle, context)?;
     lifecycle
         .execute(
             &request.proposal_id,
@@ -366,7 +371,8 @@ pub fn execute_semantic_proposal(
         .map_err(map_lifecycle_error)
 }
 
-fn trusted_context(
+fn trusted_delegated_context(
+    lifecycle: &PatchLifecycle,
     context: &impl TrustedAiRequestContext,
 ) -> Result<(PrincipalId, TrustedInstant), AiBoundaryError> {
     let principal = context
@@ -376,6 +382,9 @@ fn trusted_context(
     let now = context
         .trusted_instant()
         .ok_or(AiBoundaryError::TrustedContextUnavailable)?;
+    if !lifecycle.is_active_delegated_principal(&principal) {
+        return Err(AiBoundaryError::AuthorizationDenied);
+    }
     Ok((principal, now))
 }
 

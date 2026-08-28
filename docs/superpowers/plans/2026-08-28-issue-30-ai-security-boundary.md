@@ -30,12 +30,14 @@
 - [x] Add an invalid typed proposal whose natural-language evidence claims safety, proving deterministic validation still wins.
 - [x] Add an external-effect request denied independently of semantic capability.
 - [x] Add one successful approved Delegated execution proving the admitted path delegates to the trusted lifecycle.
+- [x] Add Human-context proposal/execution regressions proving an AI request cannot inherit the lifecycle's direct-Human Approval exemption.
 - [x] Run the focused test and capture the initial missing-boundary compilation failure.
 
 ### 2. Provider-neutral boundary implementation
 
 - [x] Add explicit context-source/treatment and untrusted-evidence value types.
 - [x] Add trusted-host context lookup that is absent from untrusted request DTOs and fails closed when identity/time is unavailable.
+- [x] Require the trusted lifecycle registry to prove an active Delegated occurrence before either AI-facing operation.
 - [x] Add a closed operation boundary for typed semantic proposal/execution versus raw mutation and host effects.
 - [x] Delegate proposal/execution to `PatchLifecycle` and project lifecycle failures into stable disclosure-safe security/result families.
 - [x] Keep validation reports only on authorized semantic-gate rejection; never preserve client validation/approval claims as authority.

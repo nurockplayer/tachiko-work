@@ -43,9 +43,11 @@ All notable changes to Tachiko Work are documented in this file.
   system/developer/user instructions, trusted semantic metadata, and untrusted
   document/import/plugin/model content explicitly separated. Untrusted typed
   Propose/Execute requests receive effective identity and time only from a
-  trusted host context and delegate to the workspace lifecycle; raw semantic
-  or storage mutation and persistence/filesystem/network/process/Git/plugin/
-  deployment/credential effects are rejected with stable machine codes.
+  trusted host context, must resolve to an active Delegated lifecycle principal,
+  and cannot reuse a Human session principal to avoid Approval. They delegate to
+  the workspace lifecycle; raw semantic or storage mutation and persistence/
+  filesystem/network/process/Git/plugin/deployment/credential effects are
+  rejected with stable machine codes.
   Model explanations and validation claims remain inert evidence. Concrete
   authentication/session/revision/transport mechanics remain #93, and actual
   host/plugin capability mechanisms remain separately owned.

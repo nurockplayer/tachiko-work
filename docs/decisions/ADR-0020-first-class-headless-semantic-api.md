@@ -239,7 +239,8 @@ This ADR does not:
 
 - select JSON, Protobuf, IPC, FFI, WASM ABI, or a network protocol;
 - decide #26 resident state, Worker placement, revision/concurrency, or persistence composition;
-- design plugin ABI/runtime/sandbox/distribution (#17);
+- design plugin ABI/runtime/sandbox/distribution (Deferred; ADR-0028 later
+  resolves only the M04 game-engine host-adapter classification);
 - redesign `.roproj` (#41);
 - reopen ADR-0015 through ADR-0019;
 - create a generic CRUD/JSON-Patch platform;

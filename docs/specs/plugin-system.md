@@ -1,73 +1,40 @@
 # Plugin System Direction
 
-Decision state: Accepted extensibility direction; concrete runtime is Open Question
+Decision state: Mixed. The Game Studio Beta game-engine host extension
+boundary is Accepted under
+[ADR-0028](../decisions/ADR-0028-game-engine-host-extension-boundary.md).
+A general plugin platform remains Deferred.
 
-Implementation state: No public plugin runtime in v0.1
+Implementation state: No plugin or game-engine integration is implemented by
+this decision.
 
-Decision owner: #17
+## Accepted Game Studio Beta boundary
 
-## Authority note
+Unity, Unreal Engine, and Godot integrations are host extensions/adapters, not
+semantic authorities. Their semantic reads and mutation requests use the
+existing Semantic API/runtime/authorization authority. Engine and deployment
+effects remain separately authorized host effects.
 
-Tachiko Work has accepted the product/architecture principle that the ecosystem should be able to extend the platform without requiring every domain capability to enter the core.
+ADR-0028 adds no new Semantic API, runtime, authorization, or approval law; it
+applies ADR-0020, ADR-0022, and ADR-0026 to the game-engine boundary.
 
-This does not mean that any specific plugin language, runtime, sandbox, package format, registry, API surface, or compatibility promise is already Accepted.
+## Deferred platform contracts
 
-#17 owns those concrete decisions. Current core/API work should preserve plausible extension seams without prematurely freezing a public plugin ABI.
+Game Studio Beta does not stabilize a public plugin ABI, manifest/package
+contract, scripting runtime, WASM sandbox, native loading model, marketplace,
+registry, signing scheme, distribution mechanism, or compatibility/support
+promise.
 
-## Goal
+Later policy decisions are split by roadmap need:
 
-Tachiko Work should become an extensible platform, not a closed monolithic application.
+- [#134](https://github.com/nurockplayer/tachiko-work/issues/134) owns legacy
+  Office/VBA migration and private enterprise extension policy in M07.
+- [#135](https://github.com/nurockplayer/tachiko-work/issues/135) owns public
+  plugin distribution/marketplace, signing, compatibility, lifecycle, and
+  support policy in M08.
 
-## Candidate plugin categories
+Potential extension categories beyond that narrow boundary remain planning
+hypotheses, not a public manifest or compatibility contract.
 
-Potential extensions include:
-
-- import/export adapters
-- renderers/views
-- formula or rule extensions
-- AI integrations
-- validators
-- system/data integrations
-- game-engine connectors
-
-These categories are planning hypotheses, not a v0.1 plugin manifest.
-
-## Examples
-
-Game development may eventually include:
-
-- Unity integration
-- Unreal integration
-- Godot integration
-
-Knowledge and business work may eventually include:
-
-- GitHub integrations
-- documentation systems
-- data connectors
-- private company workflow adapters
-
-## Accepted design principles
-
-The semantic core should remain small and stable.
-
-Extensions should operate through explicit semantic/capability boundaries rather than redefine canonical state or bypass validation.
-
-Domain-specific behavior should be able to evolve outside the core where practical.
-
-## Open questions
-
-#17 must determine, using security and ecosystem evidence:
-
-- public semantic API stability required for plugins;
-- scripting/WASM/native extension tiers, if any;
-- capability/sandbox model;
-- private versus public distribution;
-- version/compatibility guarantees;
-- whether validators/formula extensions must be deterministic or pure;
-- supply-chain, signing, update, disable, and audit behavior;
-- how legacy Office/VBA workflows migrate into semantic rules/extensions without recreating VBA as the foundational abstraction.
-
-## Long-term vision
-
-A healthy ecosystem around Tachiko Work is more valuable than a large monolithic application, but the project should freeze extension contracts only after the semantic foundation is mature enough to support them responsibly.
+General plugin ABI, runtime, loading, and sandbox mechanics remain Deferred
+without a decision owner assigned by ADR-0028, #134, or #135.

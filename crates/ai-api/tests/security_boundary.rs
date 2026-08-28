@@ -13,8 +13,8 @@ use tachiko_workspace_engine::{
         ApprovalId, ApprovalRequest, AuthorizationAction, AuthorizationDomainId,
         AuthorizationPolicyVersion, DocumentScopeId, Grant, GrantId, GrantRequirement,
         MutationClass, OperationFamily, PatchLifecycle, PolicyMeaningId, PrincipalId,
-        PrincipalKind, ProposalId, ScopedSemanticSubject, SemanticApiContract, SemanticCommand,
-        SemanticPatchBody, SemanticPublicationAuthority, SemanticPublicationError,
+        PrincipalKind, ProposalId, ProposalRequest, ScopedSemanticSubject, SemanticApiContract,
+        SemanticCommand, SemanticPatchBody, SemanticPublicationAuthority, SemanticPublicationError,
         SemanticRevision, SemanticScope, TrustedInstant,
     },
 };
@@ -156,6 +156,13 @@ impl TestContext {
     fn agent() -> Self {
         Self {
             principal: Some(principal("agent")),
+            now: Some(NOW),
+        }
+    }
+
+    fn human() -> Self {
+        Self {
+            principal: Some(principal("authority")),
             now: Some(NOW),
         }
     }
@@ -315,6 +322,80 @@ fn typed_mutation_without_capability_is_denied_without_changing_state() {
 
     assert_eq!(error.code(), boundary_codes::AUTHORIZATION_DENIED);
     assert_eq!(document, original);
+}
+
+#[test]
+fn human_session_principal_cannot_originate_an_ai_proposal() {
+    let document = security_document("ordinary data");
+    let mut lifecycle = lifecycle();
+    grant(
+        &mut lifecycle,
+        "human-propose",
+        "authority",
+        vec![mutation_requirement(
+            AuthorizationAction::Propose,
+            MutationClass::Value,
+        )],
+    );
+
+    let error = submit_semantic_proposal(
+        &mut lifecycle,
+        &TestContext::human(),
+        &document_scope_id(),
+        &document,
+        &revision("r1"),
+        AiProposalRequest::new(
+            ProposalId::from("human-originated-ai-proposal"),
+            revision("r1"),
+            field_body(number(20.0)),
+            Vec::new(),
+        ),
+    )
+    .expect_err("an AI-facing request must exercise Delegated authority");
+
+    assert_eq!(error.code(), boundary_codes::AUTHORIZATION_DENIED);
+}
+
+#[test]
+fn human_session_principal_cannot_execute_through_the_ai_adapter() {
+    let document = security_document("ordinary data");
+    let mut lifecycle = lifecycle();
+    grant(
+        &mut lifecycle,
+        "human-authority",
+        "authority",
+        vec![
+            query_requirement(),
+            mutation_requirement(AuthorizationAction::Propose, MutationClass::Value),
+            mutation_requirement(AuthorizationAction::Execute, MutationClass::Value),
+        ],
+    );
+    let patch = lifecycle
+        .propose(
+            &document_scope_id(),
+            &document,
+            &revision("r1"),
+            ProposalRequest::new(
+                ProposalId::from("direct-human-proposal"),
+                revision("r1"),
+                field_body(number(20.0)),
+                principal("authority"),
+            ),
+            NOW,
+        )
+        .expect("the non-AI Human proposal should be valid");
+    let mut publication = TestPublication::new(document);
+
+    let error = execute_semantic_proposal(
+        &mut lifecycle,
+        &TestContext::human(),
+        &AiExecutionRequest::new(patch.id().clone(), None),
+        &mut publication,
+    )
+    .expect_err("an AI-facing execution must not inherit a Human-session approval exemption");
+
+    assert_eq!(error.code(), boundary_codes::AUTHORIZATION_DENIED);
+    assert_eq!(publication.revision, revision("r1"));
 }
 
 #[test]

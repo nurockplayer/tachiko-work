@@ -1,13 +1,15 @@
 # Security Model
 
 Decision state: Mixed. The semantic authorization laws summarized from
-ADR-0007 and ADR-0026 are Accepted. Issue #29 supplies the provisional trusted
-in-process authorization/Approval lifecycle seam, and #30 supplies a
-provisional provider-facing instruction/data, bypass-denial, safe-code, and
-host-effect-denial adapter over it. Plugin isolation, migration sandboxing,
-durable authorization/audit state, public wire codes, authentication/transport
-integrity, and actual external-effect mechanisms remain Provisional, Deferred,
-or separately owned by #17/#93 and their domain decisions.
+ADR-0007 and ADR-0026 are Accepted; ADR-0019 owns diagnostic-code meaning.
+Issue #29 supplies the provisional trusted in-process authorization/Approval
+lifecycle seam, and #30 supplies a provisional provider-facing instruction/data,
+bypass-denial, safe-code, and host-effect-denial adapter over it. Semantic
+revision/session mechanics belong to Issue #93. Durable authorization/audit
+state, public wire codes, authentication/transport integrity, and actual
+external-effect mechanisms remain Provisional or Deferred. Plugin isolation and
+migration sandbox mechanics remain Deferred; Issues #134 and #135 own only their
+narrower private-enterprise and public-ecosystem policies.
 
 ## Principles
 
@@ -71,8 +73,9 @@ Approval, bypass the Semantic API, or authorize an external effect.
 
 The current `ai-api` boundary makes this executable for provider-facing calls:
 untrusted request evidence cannot carry effective Principal or trusted time;
-typed proposal/execution delegates to the workspace lifecycle; raw semantic or
-storage mutation and durable-persistence/filesystem/network/process/Git/plugin/
-deployment/credential requests return separate stable denial codes. Concrete
-transports must preserve this boundary rather than serialize trusted host
-context as a client credential.
+typed proposal/execution requires the workspace lifecycle to prove an active
+Delegated occurrence, so a Human session principal cannot become an AI
+credential; raw semantic or storage mutation and durable-persistence/filesystem/
+network/process/Git/plugin/deployment/credential requests return separate stable
+denial codes. Concrete transports must preserve this boundary rather than
+serialize trusted host context as a client credential.

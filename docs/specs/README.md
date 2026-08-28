@@ -65,7 +65,7 @@ ADR-0018; stable identity by ADR-0015; storage representation by ADR-0017.
 | --- | --- |
 | [`ai-agent-api.md`](ai-agent-api.md) | Implemented AI-facing read/explain/suggest adapter plus provisional typed Propose/Execute hostile boundary over ADR-0007 delegated authority, ADR-0020 Semantic API behavior, ADR-0024 proposal rules, and ADR-0026 authorization/approval; current `Suggestion` remains neither SemanticPatch nor Approval |
 | [`security-model.md`](security-model.md) | Security constraints and model |
-| [`plugin-system.md`](plugin-system.md) | Accepted extensibility direction plus still-open runtime/sandbox design |
+| [`plugin-system.md`](plugin-system.md) | ADR-0028 game-engine host extension boundary; general plugin ABI/runtime/sandbox mechanics remain Deferred, while #134/#135 own narrower private/public policy |
 | [`migration-framework.md`](migration-framework.md) | Progressive migration direction and future adapter framework |
 
 Concrete AI mutation lifecycle and enforcement remain narrower implementation

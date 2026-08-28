@@ -27,11 +27,11 @@ lifecycle remains snapshot-style and receives opaque revision/current-state
 publication mechanics from a trusted host seam; the concrete resident runtime,
 revision token, concurrency, and state-installation implementation remains
 later work under #93–#95. Issue #30's provisional `ai-api` boundary now obtains
-effective identity/time only from trusted host context, delegates typed
-proposal/execution to this lifecycle, and projects disclosure-safe machine
-outcomes while rejecting raw mutation and host effects. The complete operation
-catalogue, authentication, transports, and wire/SDK contract remain Provisional
-or Deferred.
+effective identity/time only from trusted host context, requires the lifecycle
+to prove an active Delegated occurrence, delegates typed proposal/execution to
+it, and projects disclosure-safe machine outcomes while rejecting raw mutation
+and host effects. The complete operation catalogue, authentication, transports,
+and wire/SDK contract remain Provisional or Deferred.
 
 Decision issues: [#10](https://github.com/nurockplayer/tachiko-work/issues/10),
 [#27](https://github.com/nurockplayer/tachiko-work/issues/27),

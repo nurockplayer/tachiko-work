@@ -269,7 +269,11 @@ AtomicBatch. It is implementation evidence only, not the SemanticPatch wire or
 source contract. `requires_approval` remains current v0.1 safety behavior, not
 the ADR-0026 scoped Grant, footprint, exact Approval, or provenance contract.
 
-No current AI operation persists or mutates the supplied document.
+Issue #30's provisional `security_boundary` accepts typed Propose/Execute only
+after the workspace lifecycle proves an active Delegated occurrence. It may
+publish only through that lifecycle's exact Approval and guarded publication
+path; it never directly mutates a supplied snapshot or persists one. Raw
+semantic/storage mutation and host effects are denied independently.
 
 ### cli
 

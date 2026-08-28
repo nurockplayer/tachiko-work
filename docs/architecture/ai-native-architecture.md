@@ -11,9 +11,11 @@ Issue #29 implements a provisional provider-neutral lifecycle/registry in
 workspace-engine for the current typed field-value Command family and ordered
 AtomicBatch. Issue #30 now composes that authority through a provisional
 provider-facing `ai-api` hostile-client boundary with explicit instruction/data
-treatment, trusted-host identity/time, stable safe denials, and unconditional
-raw-mutation/host-effect rejection. Concrete authentication, resident revision/
-session/transport mechanics remain #93 and later host work.
+treatment, trusted-host identity/time, lifecycle proof of an active Delegated
+occurrence, stable safe denials, and unconditional raw-mutation/host-effect
+rejection. A Human session principal is not an AI credential. Concrete
+authentication, resident revision/session/transport mechanics remain #93 and
+later host work.
 
 ## Principle
 

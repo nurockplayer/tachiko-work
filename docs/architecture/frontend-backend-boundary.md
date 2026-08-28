@@ -78,11 +78,12 @@ coverage, and exact Human Approval for Delegated-origin or Delegated-authority
 publication. Approval is consumed only atomically with successful semantic
 publication through a host-supplied opaque-revision compare-and-publish seam.
 The #30 `ai-api` seam obtains identity/time only from trusted host context,
-delegates typed proposal/execution to this lifecycle, and returns stable safe
-denials for raw mutation and host effects. Public authorization/Approval wire
-DTOs, concrete authentication, resident session handles, concurrency/state
-installation, and broader projection delivery remain #93/#94 and later host/
-transport work.
+requires that lifecycle to prove an active Delegated occurrence, delegates
+typed proposal/execution to it, and returns stable safe denials for raw mutation
+and host effects. A Human session principal is not accepted as an AI credential.
+Public authorization/Approval wire DTOs, concrete authentication, resident
+session handles, concurrency/state installation, and broader projection delivery
+remain #93/#94 and later host/transport work.
 
 ## Snapshot boundaries
 

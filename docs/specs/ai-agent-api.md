@@ -21,10 +21,12 @@ v0.1 AI-facing read/explain/suggest adapter over `tachiko-workspace-engine`,
 including structured read-only Semantic Analyst queries. Its provisional
 `security_boundary` also accepts only typed proposal/execution intent, obtains
 effective Principal and trusted time from host context rather than the request,
-delegates semantic enforcement to the #29 workspace lifecycle, and returns
-stable disclosure-safe outcome codes. Raw semantic/storage mutation and host
-effects are explicitly denied. The current Rust DTOs and code spellings are not
-the public Semantic API/wire contract. No general schema-inference, freeform-
+requires the lifecycle registry to prove that occurrence is active and
+Delegated, delegates semantic enforcement to the #29 workspace lifecycle, and
+returns stable disclosure-safe outcome codes. A Human session principal cannot
+be reused as an AI credential. Raw semantic/storage mutation and host effects
+are explicitly denied. The current Rust DTOs and code spellings are not the
+public Semantic API/wire contract. No general schema-inference, freeform-
 promotion, authentication/session/transport, or host-effect capability pipeline
 is implemented.
 
