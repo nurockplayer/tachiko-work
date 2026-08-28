@@ -188,6 +188,31 @@ enum AnalyzeCommands {
         #[arg(long)]
         source_state: Option<String>,
     },
+    /// Run a bounded typed query against one exact semantic source
+    Query {
+        path: PathBuf,
+        /// Stable schema identity to query
+        #[arg(value_name = "SCHEMA")]
+        schema: Option<String>,
+        /// Stable schema identity to query (alternative to the positional SCHEMA)
+        #[arg(long = "schema", conflicts_with = "schema")]
+        schema_flag: Option<String>,
+        /// Stable entity identity to include (repeatable; defaults to all entities)
+        #[arg(long = "entity")]
+        entities: Vec<String>,
+        /// Typed predicate in field:operator:type:value form (repeatable)
+        #[arg(long = "predicate")]
+        predicates: Vec<String>,
+        /// Optional stable field identity used to group results
+        #[arg(long = "group-by")]
+        group_by: Option<String>,
+        /// Result request (membership, count, min:FIELD, max:FIELD, observations:FIELD)
+        #[arg(long = "result", required = true)]
+        results: Vec<String>,
+        /// Optional second exact source evaluated with the same definition
+        #[arg(long)]
+        compare: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -259,6 +284,7 @@ fn main() -> ExitCode {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn execute(cli: Cli) -> Result<String, commands::CommandError> {
     match cli.command {
         Commands::Init {
@@ -289,6 +315,31 @@ fn execute(cli: Cli) -> Result<String, commands::CommandError> {
             AnalyzeCommands::Validation { path, source_state } => {
                 commands::analyze_validation(&path, source_state)
             }
+            AnalyzeCommands::Query {
+                path,
+                schema,
+                schema_flag,
+                entities,
+                predicates,
+                group_by,
+                results,
+                compare,
+            } => commands::analyze_query(
+                &path,
+                schema_flag
+                    .as_deref()
+                    .or(schema.as_deref())
+                    .ok_or_else(|| commands::CommandError::InvalidAnalysisSyntax {
+                        kind: "schema",
+                        value: String::new(),
+                        expected: "a stable schema ID",
+                    })?,
+                &entities,
+                &predicates,
+                group_by.as_deref(),
+                &results,
+                compare.as_deref(),
+            ),
         },
         Commands::Roproj { command } => match command {
             RoProjectCommands::Materialize { input, output } => {

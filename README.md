@@ -41,7 +41,11 @@ The current product provides a complete, safe CLI-first game-balance workflow:
 - CLI validation and evaluated runtime JSON export;
 - provider-free read-only Semantic Analyst queries for structure, formulas,
   upstream dependencies, downstream impact, changes, affected areas, and
-  validation findings, plus approval-required suggestions.
+  validation findings, plus approval-required suggestions;
+- bounded typed semantic Analysis Query selection, optional stable-ID
+  narrowing, zero/one grouping field, exact membership and Count, Number
+  Min/Max, bounded Number observations, paired exact contexts, and structured
+  reproducibility lineage.
 
 It deliberately does not include a spreadsheet UI, Office compatibility,
 realtime collaboration, cloud infrastructure, or game-engine plugins.
@@ -149,6 +153,19 @@ tachiko analyze changes \
 without an LLM provider. Optional state labels are opaque caller-owned evidence
 (for example a path, commit, or fixture name); they are not revision tokens or
 mutation authority.
+
+`tachiko analyze query` emits deterministic structured JSON for the same
+bounded normalized query over one source or, with `--compare`, two explicitly
+supplied exact sources. Predicates use
+`FIELD:OPERATOR:TYPE:VALUE`; supported result requests are `membership`,
+`count`, `min:FIELD`, `max:FIELD`, and `observations:FIELD`. Formula-backed
+Number values use the same calculator as the rest of the workspace, and a
+failure or disclosure denial never returns a partial aggregate.
+
+The command targets the opaque stable IDs shown by `tachiko show` and
+`tachiko analyze document`, not mutable human keys. The checked-in Moonfall
+example provides a complete executable query using its deterministic IDs in
+[`examples/game-balance/README.md`](examples/game-balance/README.md#cli-workflow).
 
 The checked-in Moonfall example and expected output are documented in
 [`examples/game-balance/README.md`](examples/game-balance/README.md).

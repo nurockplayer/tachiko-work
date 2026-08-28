@@ -67,14 +67,15 @@ exact selected membership/Count/Number Min/Max and per-member Number
 observations, same-definition two-context evaluation, reproducibility lineage,
 and complete-or-denied aggregate disclosure. Sum/Mean, ranking/statistics,
 general predicate ASTs, joins/UDFs, persisted analysis, analytics storage,
-concrete Rust/CLI/DTO/wire shapes, and production analysis implementation remain
-Deferred or Provisional as marked in `semantic-api.md`.
+and public DTO/wire shapes remain Deferred or Provisional as marked in
+`semantic-api.md`. Issue #150 implements the first Provisional provider-neutral
+workspace/CLI slice without stabilizing those replaceable shapes.
 
 ## AI, security, and extensibility
 
 | Document | Read it for |
 | --- | --- |
-| [`ai-agent-api.md`](ai-agent-api.md) | Implemented AI-facing read/explain/suggest adapter plus provisional typed Propose/Execute hostile boundary; #144 implements #32's first Provisional provider-neutral formula-reasoning, exact-snapshot scenario, and FormulaUpdate workspace/CLI slice, while AI/public mappings remain deferred and current `Suggestion` remains neither SemanticPatch nor Approval |
+| [`ai-agent-api.md`](ai-agent-api.md) | Implemented AI-facing read/explain/suggest adapter plus provisional typed Propose/Execute hostile boundary; #144 and #150 implement provider-neutral formula/scenario/formula-update and bounded Analysis Query workspace/CLI slices, while AI/public mappings remain deferred and current `Suggestion` remains neither SemanticPatch nor Approval |
 | [`security-model.md`](security-model.md) | Security constraints and model |
 | [`plugin-system.md`](plugin-system.md) | ADR-0028 game-engine host extension boundary; general plugin ABI/runtime/sandbox mechanics remain Deferred, while #134/#135 own narrower private/public policy |
 | [`migration-framework.md`](migration-framework.md) | Progressive migration direction and future adapter framework |

@@ -49,8 +49,9 @@ limits, content-derived opaque CLI revision tokens, and host composition remain
 Provisional; this implementation does not establish a public wire or SDK
 contract.
 The Issue #33 amendment accepts only the logical bounded semantic analysis Query
-contract below. No production analysis implementation is introduced by that
-decision; a separate bounded implementation Issue must consume this authority.
+contract below. Issue #150 supplies its first provider-neutral, Provisional
+workspace/CLI implementation and native/WASM evidence without changing the
+Accepted meaning or stabilizing the concrete Rust, CLI, result, or wire shapes.
 
 Decision issues: [#10](https://github.com/nurockplayer/tachiko-work/issues/10),
 [#27](https://github.com/nurockplayer/tachiko-work/issues/27),
@@ -1305,6 +1306,30 @@ internal plan structures, output ordering, Rust/result types, and CLI spelling.
 It may not silently add Sum/Mean, ranking, statistics, general boolean query
 ASTs, joins, UDFs, persistence, pagination, or another analytics authority.
 
+## M04 semantic analysis conformance evidence
+
+Issue #150 exercises the requirements above through one provider-neutral
+`workspace-engine` Query family and a structured CLI projection. Focused
+conformance fixtures cover request-local bounded admission, stable-ID domain
+narrowing, optional predicate absence, stored and ADR-0018 formula-backed
+Number values, per-group and ungrouped reductions, empty aggregates, complete
+metric failure, collection limits, repeated and paired exact contexts, and
+structured lineage.
+
+Authorization regressions provision the existing ADR-0026 lifecycle with an
+independent Analysis Query operation family. They prove that complete candidate
+membership, requested field facts, and static formula-dependency scopes are
+covered before target classification, calculation, or predicate truth; that an
+explicit narrowing set grants nothing; that empty-domain existence is not
+revealed without scope; and that final projection or result-size facts are
+complete-or-denied. The portable production-semantic corpus executes fixed
+successful, structured-failure, authorization, and paired-context Analysis
+records natively and under `wasm32-unknown-unknown`.
+
+The current finite limits, equality/Number-ordering predicate catalogue,
+stable-ID output order, Rust types, CLI grammar, and JSON projection are
+Provisional implementation evidence. No Deferred analysis behavior is added.
+
 ## M04 formula/scenario conformance evidence
 
 Issue #144 exercises the Accepted logical contract with provider-neutral
@@ -1430,7 +1455,7 @@ runtime, and transport conformance remains #93 and later work.
 | Sum/Mean, ranking/top-k, statistics, general predicate ASTs, joins, UDFs | Deferred |
 | Exact operation names, family identifiers, request limits, predicate catalogue, normalization encoding, and result DTOs | Provisional |
 | Production formula-reasoning/scenario/formula-update implementation | Provisional provider-neutral workspace/CLI slice implemented by #144; public wire/SDK remains undefined |
-| Production semantic analysis implementation | Not implemented; separate bounded implementation Issue required |
+| Production semantic analysis implementation | Provisional provider-neutral workspace/CLI slice implemented by #150; public wire/SDK remains undefined |
 | Capability-addressability of operation/family | Accepted principle |
 | Capability/scope/Grant/Approval/provenance meaning | Accepted under ADR-0026 |
 | Exact authorization identifiers/DTOs/storage/wire representation | Provisional / Deferred |

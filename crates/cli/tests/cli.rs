@@ -6,6 +6,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+use serde_json::Value as JsonValue;
 use tachiko_storage::{load, materialize_roproj, pack_roproj, save};
 use tachiko_workspace_engine::{
     Document, DocumentId, DocumentOverview, Entity, EntityId, Expression, FieldAddress,
@@ -2202,4 +2203,124 @@ fn formula_help_makes_computational_authoring_discoverable() {
     ] {
         assert!(text.contains(phrase), "missing help text: {phrase}\n{text}");
     }
+}
+
+#[test]
+fn analyze_query_emits_typed_grouped_formula_lineage() {
+    let temp = TempDir::new();
+    let path = temp.path().join("analysis.ro");
+    save(&path, &balance_document(100.0)).unwrap();
+
+    let output = run(&[
+        "analyze",
+        "query",
+        path.to_str().unwrap(),
+        "--schema",
+        "weapon",
+        "--entity",
+        "sword",
+        "--predicate",
+        "damage:>=:number:90",
+        "--group-by",
+        "name",
+        "--result",
+        "count",
+        "--result",
+        "observations:dps",
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: JsonValue = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["formula_calculation_used"], true);
+    assert_eq!(json["normalized_definition"]["schema"], "weapon");
+    assert_eq!(
+        json["normalized_definition"]["predicates"][0]["operand"]["type"],
+        "number"
+    );
+    assert_eq!(json["outcome"]["kind"], "complete");
+    assert_eq!(json["outcome"]["projection"]["kind"], "grouped");
+    assert_eq!(
+        json["outcome"]["projection"]["groups"][0]["bucket"]["values"][0]["kind"],
+        "count"
+    );
+    assert!(
+        json["derivations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["kind"] == "grouped_by")
+    );
+    assert!(
+        json["sources"][0]["source_revision"]
+            .as_str()
+            .unwrap()
+            .starts_with("cli-semantic-sha256:")
+    );
+}
+
+#[test]
+fn analyze_query_compare_emits_two_exact_outcomes() {
+    let temp = TempDir::new();
+    let before = temp.path().join("before.ro");
+    let after = temp.path().join("after.ro");
+    save(&before, &balance_document(100.0)).unwrap();
+    save(&after, &balance_document(120.0)).unwrap();
+
+    let output = run(&[
+        "analyze",
+        "query",
+        before.to_str().unwrap(),
+        "--schema",
+        "weapon",
+        "--result",
+        "count",
+        "--compare",
+        after.to_str().unwrap(),
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: JsonValue = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["sources"].as_array().unwrap().len(), 2);
+    assert_eq!(json["first"]["kind"], "complete");
+    assert_eq!(json["second"]["kind"], "complete");
+    assert_ne!(
+        json["sources"][0]["source_revision"],
+        json["sources"][1]["source_revision"]
+    );
+}
+
+#[test]
+fn analyze_query_semantic_failure_has_no_partial_projection() {
+    let temp = TempDir::new();
+    let path = temp.path().join("analysis.ro");
+    save(&path, &balance_document(100.0)).unwrap();
+
+    let output = run(&[
+        "analyze",
+        "query",
+        path.to_str().unwrap(),
+        "--schema",
+        "weapon",
+        "--entity",
+        "missing",
+        "--result",
+        "count",
+    ]);
+    assert!(
+        output.status.success(),
+        "semantic failures should be structured JSON"
+    );
+    let json: JsonValue = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["outcome"]["kind"], "failure");
+    assert!(json["outcome"]["projection"].is_null());
+    assert_eq!(
+        json["outcome"]["failure"]["kind"],
+        "unresolved_narrowing_entity"
+    );
 }

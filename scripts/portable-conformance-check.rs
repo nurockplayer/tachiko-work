@@ -24,6 +24,14 @@ use tachiko_storage::{
 };
 use tachiko_workspace_engine::{
     ValidationReport, calculate_fields, diagnostic_codes,
+    analysis_operations::{
+        AnalysisBucket, AnalysisCollectionKind, AnalysisDefinition, AnalysisDerivation,
+        AnalysisFailure, AnalysisFieldRole, AnalysisGroup, AnalysisGroupKey, AnalysisLineage,
+        AnalysisOperationError, AnalysisOutcome, AnalysisPredicate, AnalysisPredicateOperator,
+        AnalysisProjection, AnalysisQueryResult, AnalysisResultRequest, AnalysisResultValue,
+        AnalysisValueKind, MetricIncompleteReason, NumericAggregateOutcome,
+        PairedAnalysisQueryResult, PredicateOperand,
+    },
     formula_operations::{
         FormulaCalculationOutcome, FormulaReasoningOutcome, FormulaUpdateRequest, NumberOverride,
         ScenarioOutcome, ScenarioRequest, ScenarioTargetOutcome, ValidatorConfiguration,
@@ -31,14 +39,15 @@ use tachiko_workspace_engine::{
     patch_lifecycle::{
         AuthorizationAction, AuthorizationDomainId, AuthorizationPolicyVersion, DocumentScopeId,
         Grant, GrantId, GrantRequirement, MutationClass, OperationFamily, PatchLifecycle,
-        PolicyMeaningId, PrincipalId, PrincipalKind, ProposalId, ScopedSemanticSubject,
-        SemanticApiContract, SemanticCommand, SemanticPatchBody, SemanticPublicationAuthority,
-        SemanticPublicationError, SemanticRevision, SemanticScope, TrustedInstant,
+        PatchLifecycleError, PolicyMeaningId, PrincipalId, PrincipalKind, ProposalId,
+        ScopedSemanticSubject, SemanticApiContract, SemanticCommand, SemanticPatchBody,
+        SemanticPublicationAuthority, SemanticPublicationError, SemanticRevision, SemanticScope,
+        TrustedInstant,
     },
     validation_report,
 };
 
-const CASE_COUNT: u32 = 51;
+const CASE_COUNT: u32 = 54;
 const VALUE: u32 = 0;
 const DIVISION_BY_ZERO: u32 = 1;
 const NON_FINITE: u32 = 2;
@@ -51,6 +60,9 @@ const DIRECT_JSON_ENVELOPE: u32 = 8;
 const VALIDATION_REPORT: u32 = 9;
 const ROPROJ_V1_EXACT_TREE: u32 = 10;
 const PORTABLE_PACKAGE_V1_EXACT_BYTES: u32 = 11;
+const ANALYSIS_COMPLETE: u32 = 12;
+const ANALYSIS_FAILURE: u32 = 13;
+const ANALYSIS_PAIRED_AUTHORIZATION: u32 = 14;
 const UNEXPECTED: u32 = 255;
 
 const VALIDATION_ACCUMULATION_COUNT: usize = 16;
@@ -1350,6 +1362,746 @@ fn validation_cycle_record() -> Record {
     )
 }
 
+fn analysis_text_field(id: &str, required: bool) -> FieldDefinition {
+    FieldDefinition {
+        id: FieldId::from(id),
+        key: FieldKey::from(id),
+        field_type: FieldType::Text,
+        required,
+    }
+}
+
+fn analysis_number_field(id: &str, required: bool) -> FieldDefinition {
+    FieldDefinition {
+        id: FieldId::from(id),
+        key: FieldKey::from(id),
+        field_type: FieldType::Number,
+        required,
+    }
+}
+
+fn analysis_weapon(
+    entity: &str,
+    category: &str,
+    tier: Option<f64>,
+    damage: f64,
+    interval: f64,
+) -> Entity {
+    let mut fields = BTreeMap::from([
+        (FieldId::from("category"), Value::Text(category.to_owned())),
+        (FieldId::from("damage"), Value::Number(number(damage))),
+        (
+            FieldId::from("attack_interval"),
+            Value::Number(number(interval)),
+        ),
+        (
+            FieldId::from("dps"),
+            Value::Formula(Expression::Divide {
+                left: Box::new(Expression::Reference(FieldRef::new(entity, "damage"))),
+                right: Box::new(Expression::Reference(FieldRef::new(
+                    entity,
+                    "attack_interval",
+                ))),
+            }),
+        ),
+    ]);
+    if let Some(tier) = tier {
+        fields.insert(FieldId::from("tier"), Value::Number(number(tier)));
+    }
+    Entity {
+        id: EntityId::from(entity),
+        key: EntityKey::from(entity),
+        schema: SchemaId::from("analysis-weapons"),
+        fields,
+    }
+}
+
+fn analysis_document() -> Document {
+    let schema = SchemaId::from("analysis-weapons");
+    Document {
+        id: DocumentId::from("portable-analysis-document"),
+        title: "Portable analysis conformance".to_owned(),
+        schemas: BTreeMap::from([(
+            schema.clone(),
+            Schema {
+                id: schema,
+                key: SchemaKey::from("analysis-weapons"),
+                fields: BTreeMap::from([
+                    (
+                        FieldId::from("category"),
+                        analysis_text_field("category", true),
+                    ),
+                    (FieldId::from("tier"), analysis_number_field("tier", false)),
+                    (
+                        FieldId::from("damage"),
+                        analysis_number_field("damage", true),
+                    ),
+                    (
+                        FieldId::from("attack_interval"),
+                        analysis_number_field("attack_interval", true),
+                    ),
+                    (FieldId::from("dps"), analysis_number_field("dps", true)),
+                ]),
+            },
+        )]),
+        entities: BTreeMap::from([
+            (
+                EntityId::from("alpha"),
+                analysis_weapon("alpha", "melee", Some(2.0), 50.0, 1.0),
+            ),
+            (
+                EntityId::from("beta"),
+                analysis_weapon("beta", "ranged", None, 30.0, 2.0),
+            ),
+            (
+                EntityId::from("gamma"),
+                analysis_weapon("gamma", "melee", Some(3.0), 60.0, 1.5),
+            ),
+        ]),
+    }
+}
+
+fn analysis_operation_lifecycle(
+    document: &Document,
+    family: OperationFamily,
+) -> Result<(PatchLifecycle, DocumentScopeId, PrincipalId), ()> {
+    let scope = DocumentScopeId::from("portable-analysis-occurrence");
+    let principal = PrincipalId::from("portable-analysis-principal");
+    let document_subject =
+        ScopedSemanticSubject::new(scope.clone(), document.id.clone(), SemanticScope::Document);
+    let mut lifecycle = PatchLifecycle::new(
+        AuthorizationDomainId::from("portable-analysis-domain"),
+        scope.clone(),
+        document.id.clone(),
+        SemanticApiContract::from("portable-analysis-api"),
+        AuthorizationPolicyVersion::from("portable-analysis-policy-v1"),
+        PolicyMeaningId::from("portable-analysis-policy-meaning-v1"),
+    );
+    lifecycle
+        .register_principal(principal.clone(), PrincipalKind::Human)
+        .map_err(|_| ())?;
+    lifecycle
+        .provision_grant(Grant::new(
+            GrantId::from("portable-analysis-query-grant"),
+            principal.clone(),
+            principal.clone(),
+            vec![GrantRequirement::query(family, document_subject)],
+            None,
+        ))
+        .map_err(|_| ())?;
+    Ok((lifecycle, scope, principal))
+}
+
+fn analysis_success_definition() -> AnalysisDefinition {
+    AnalysisDefinition::new(
+        SchemaId::from("analysis-weapons"),
+        Some(vec![EntityId::from("beta"), EntityId::from("alpha")]),
+        vec![AnalysisPredicate::new(
+            FieldId::from("tier"),
+            AnalysisPredicateOperator::GreaterThanOrEqual,
+            PredicateOperand::Number(number(2.0)),
+        )],
+        None,
+        vec![
+            AnalysisResultRequest::Observations(FieldId::from("dps")),
+            AnalysisResultRequest::Maximum(FieldId::from("dps")),
+            AnalysisResultRequest::Minimum(FieldId::from("damage")),
+            AnalysisResultRequest::Count,
+            AnalysisResultRequest::Membership,
+        ],
+    )
+}
+
+fn analysis_success_record() -> Record {
+    let document = analysis_document();
+    let definition = analysis_success_definition();
+    let Ok(expected_definition) = definition.admit_envelope() else {
+        return Record::failure(UNEXPECTED, 51_u64 << 32);
+    };
+    let Ok((lifecycle, scope, principal)) =
+        analysis_operation_lifecycle(&document, OperationFamily::AnalysisQuery)
+    else {
+        return Record::failure(UNEXPECTED, (51_u64 << 32) | 1);
+    };
+    let Ok(result) = lifecycle.query_analysis(
+        &scope,
+        &document,
+        (
+            &SemanticRevision::from("portable-analysis-r1"),
+            ValidatorConfiguration::WorkspaceFull,
+        ),
+        &definition,
+        &principal,
+        TrustedInstant::new(1),
+    ) else {
+        return Record::failure(UNEXPECTED, (51_u64 << 32) | 2);
+    };
+    let expected_values = vec![
+        AnalysisResultValue::Membership(vec![EntityId::from("alpha")]),
+        AnalysisResultValue::Count(1),
+        AnalysisResultValue::Minimum {
+            field: FieldId::from("damage"),
+            outcome: NumericAggregateOutcome::Value(number(50.0)),
+        },
+        AnalysisResultValue::Maximum {
+            field: FieldId::from("dps"),
+            outcome: NumericAggregateOutcome::Value(number(50.0)),
+        },
+        AnalysisResultValue::Observations {
+            field: FieldId::from("dps"),
+            values: vec![(EntityId::from("alpha"), number(50.0))],
+        },
+    ];
+    let expected_derivations = vec![
+        AnalysisDerivation::Predicate(FieldId::from("tier")),
+        AnalysisDerivation::Membership,
+        AnalysisDerivation::Count,
+        AnalysisDerivation::Minimum(FieldId::from("damage")),
+        AnalysisDerivation::Maximum(FieldId::from("dps")),
+        AnalysisDerivation::Observations(FieldId::from("dps")),
+    ];
+    let exact = result.lineage.sources.len() == 1
+        && result.lineage.sources[0].document == document.id
+        && result.lineage.sources[0].source_revision == SemanticRevision::from("portable-analysis-r1")
+        && result.lineage.sources[0].validator_configuration == ValidatorConfiguration::WorkspaceFull
+        && result.lineage.normalized_definition == expected_definition
+        && result.lineage.formula_calculation_used
+        && result.lineage.derivations == expected_derivations
+        && matches!(
+            &result.outcome,
+            AnalysisOutcome::Complete(AnalysisProjection::Ungrouped(AnalysisBucket { values }))
+                if *values == expected_values
+        );
+    if !exact {
+        return Record::failure(UNEXPECTED, (51_u64 << 32) | 3);
+    }
+    Record {
+        class: ANALYSIS_COMPLETE,
+        bits: number(50.0).to_bits(),
+        auxiliary: analysis_result_fingerprint(&result),
+    }
+}
+
+fn analysis_failure_record() -> Record {
+    let mut document = analysis_document();
+    document
+        .entities
+        .get_mut("beta")
+        .expect("portable analysis fixture has beta")
+        .fields
+        .insert(FieldId::from("attack_interval"), Value::Number(number(0.0)));
+    let definition = AnalysisDefinition::new(
+        SchemaId::from("analysis-weapons"),
+        None,
+        vec![AnalysisPredicate::new(
+            FieldId::from("dps"),
+            AnalysisPredicateOperator::GreaterThan,
+            PredicateOperand::Number(number(10.0)),
+        )],
+        None,
+        vec![AnalysisResultRequest::Count],
+    );
+    let Ok((lifecycle, scope, principal)) =
+        analysis_operation_lifecycle(&document, OperationFamily::AnalysisQuery)
+    else {
+        return Record::failure(UNEXPECTED, 52_u64 << 32);
+    };
+    let Ok(result) = lifecycle.query_analysis(
+        &scope,
+        &document,
+        (
+            &SemanticRevision::from("portable-analysis-failure-r1"),
+            ValidatorConfiguration::WorkspaceFull,
+        ),
+        &definition,
+        &principal,
+        TrustedInstant::new(1),
+    ) else {
+        return Record::failure(UNEXPECTED, (52_u64 << 32) | 1);
+    };
+    let exact = result.lineage.formula_calculation_used
+        && matches!(
+            &result.outcome,
+            AnalysisOutcome::Failure(AnalysisFailure::CalculationFailed {
+                field,
+                failure: Some(CalculationFailure::DivisionByZero),
+            }) if *field == FieldRef::new("beta", "dps")
+        );
+    if !exact {
+        return Record::failure(UNEXPECTED, (52_u64 << 32) | 2);
+    }
+    Record {
+        class: ANALYSIS_FAILURE,
+        bits: 0,
+        auxiliary: analysis_result_fingerprint(&result),
+    }
+}
+
+fn analysis_paired_authorization_record() -> Record {
+    let mut first = analysis_document();
+    first
+        .entities
+        .retain(|entity, _| entity == &EntityId::from("alpha"));
+    let mut second = first.clone();
+    second
+        .entities
+        .get_mut("alpha")
+        .expect("portable analysis fixture has alpha")
+        .fields
+        .insert(FieldId::from("damage"), Value::Number(number(80.0)));
+    let definition = AnalysisDefinition::new(
+        SchemaId::from("analysis-weapons"),
+        None,
+        vec![],
+        None,
+        vec![
+            AnalysisResultRequest::Count,
+            AnalysisResultRequest::Maximum(FieldId::from("dps")),
+        ],
+    );
+    let Ok(expected_definition) = definition.admit_envelope() else {
+        return Record::failure(UNEXPECTED, 53_u64 << 32);
+    };
+    let Ok((lifecycle, scope, principal)) =
+        analysis_operation_lifecycle(&first, OperationFamily::AnalysisQuery)
+    else {
+        return Record::failure(UNEXPECTED, (53_u64 << 32) | 1);
+    };
+    let Ok(result) = lifecycle.query_analysis_pair(
+        &scope,
+        &first,
+        (
+            &SemanticRevision::from("portable-analysis-pair-r1"),
+            ValidatorConfiguration::WorkspaceFull,
+        ),
+        &scope,
+        &second,
+        (
+            &SemanticRevision::from("portable-analysis-pair-r2"),
+            ValidatorConfiguration::WorkspaceFull,
+        ),
+        &definition,
+        &principal,
+        TrustedInstant::new(1),
+    ) else {
+        return Record::failure(UNEXPECTED, (53_u64 << 32) | 2);
+    };
+    let first_outcome = AnalysisOutcome::Complete(AnalysisProjection::Ungrouped(AnalysisBucket {
+        values: vec![
+            AnalysisResultValue::Count(1),
+            AnalysisResultValue::Maximum {
+                field: FieldId::from("dps"),
+                outcome: NumericAggregateOutcome::Value(number(50.0)),
+            },
+        ],
+    }));
+    let second_outcome = AnalysisOutcome::Complete(AnalysisProjection::Ungrouped(AnalysisBucket {
+        values: vec![
+            AnalysisResultValue::Count(1),
+            AnalysisResultValue::Maximum {
+                field: FieldId::from("dps"),
+                outcome: NumericAggregateOutcome::Value(number(80.0)),
+            },
+        ],
+    }));
+    let exact = result.lineage.sources.len() == 2
+        && result.lineage.sources[0].document == first.id
+        && result.lineage.sources[0].source_revision
+            == SemanticRevision::from("portable-analysis-pair-r1")
+        && result.lineage.sources[1].document == second.id
+        && result.lineage.sources[1].source_revision
+            == SemanticRevision::from("portable-analysis-pair-r2")
+        && result.lineage.normalized_definition == expected_definition
+        && result.lineage.formula_calculation_used
+        && result.first == first_outcome
+        && result.second == second_outcome
+        && result.first != result.second;
+    if !exact {
+        return Record::failure(UNEXPECTED, (53_u64 << 32) | 3);
+    }
+
+    let Ok((wrong_family, wrong_scope, wrong_principal)) =
+        analysis_operation_lifecycle(&first, OperationFamily::FormulaReasoning)
+    else {
+        return Record::failure(UNEXPECTED, (53_u64 << 32) | 4);
+    };
+    if !matches!(
+        wrong_family.query_analysis(
+            &wrong_scope,
+            &first,
+            (
+                &SemanticRevision::from("portable-analysis-pair-r1"),
+                ValidatorConfiguration::WorkspaceFull,
+            ),
+            &definition,
+            &wrong_principal,
+            TrustedInstant::new(1),
+        ),
+        Err(AnalysisOperationError::Lifecycle(PatchLifecycleError::DisclosureDenied))
+    ) {
+        return Record::failure(UNEXPECTED, (53_u64 << 32) | 5);
+    }
+    Record {
+        class: ANALYSIS_PAIRED_AUTHORIZATION,
+        bits: number(80.0).to_bits(),
+        auxiliary: analysis_pair_fingerprint(&result),
+    }
+}
+
+fn analysis_hash_text(hash: &mut u64, value: &str) {
+    mix_framed(hash, b"text", value.as_bytes());
+}
+
+fn analysis_hash_number(hash: &mut u64, value: Number) {
+    mix_framed(hash, b"number", &value.to_bits().to_le_bytes());
+}
+
+fn analysis_hash_field_ref(hash: &mut u64, value: &FieldRef) {
+    mix_framed(hash, b"field-ref", value.entity.as_str().as_bytes());
+    mix_framed(hash, b"field-ref", value.field.as_str().as_bytes());
+}
+
+fn analysis_hash_predicate(hash: &mut u64, predicate: &AnalysisPredicate) {
+    analysis_hash_text(hash, predicate.field.as_str());
+    analysis_hash_text(
+        hash,
+        match predicate.operator {
+            AnalysisPredicateOperator::Equal => "equal",
+            AnalysisPredicateOperator::NotEqual => "not-equal",
+            AnalysisPredicateOperator::LessThan => "less-than",
+            AnalysisPredicateOperator::LessThanOrEqual => "less-than-or-equal",
+            AnalysisPredicateOperator::GreaterThan => "greater-than",
+            AnalysisPredicateOperator::GreaterThanOrEqual => "greater-than-or-equal",
+        },
+    );
+    match &predicate.operand {
+        PredicateOperand::Number(value) => analysis_hash_number(hash, *value),
+        PredicateOperand::Text(value) => analysis_hash_text(hash, value),
+        PredicateOperand::Boolean(value) => mix_framed(hash, b"boolean", &[*value as u8]),
+        PredicateOperand::Reference(value) => analysis_hash_text(hash, value.as_str()),
+    }
+}
+
+fn analysis_hash_result_request(hash: &mut u64, request: &AnalysisResultRequest) {
+    match request {
+        AnalysisResultRequest::Membership => analysis_hash_text(hash, "membership"),
+        AnalysisResultRequest::Count => analysis_hash_text(hash, "count"),
+        AnalysisResultRequest::Minimum(field) => {
+            analysis_hash_text(hash, "minimum");
+            analysis_hash_text(hash, field.as_str());
+        }
+        AnalysisResultRequest::Maximum(field) => {
+            analysis_hash_text(hash, "maximum");
+            analysis_hash_text(hash, field.as_str());
+        }
+        AnalysisResultRequest::Observations(field) => {
+            analysis_hash_text(hash, "observations");
+            analysis_hash_text(hash, field.as_str());
+        }
+    }
+}
+
+fn analysis_hash_lineage(hash: &mut u64, lineage: &AnalysisLineage) {
+    for source in &lineage.sources {
+        analysis_hash_text(hash, source.document.as_str());
+        analysis_hash_text(hash, source.source_revision.as_str());
+        analysis_hash_text(
+            hash,
+            match source.validator_configuration {
+                ValidatorConfiguration::WorkspaceFull => "workspace-full",
+            },
+        );
+    }
+    analysis_hash_text(hash, lineage.normalized_definition.schema.as_str());
+    for entity in &lineage.normalized_definition.narrowing {
+        analysis_hash_text(hash, entity.as_str());
+    }
+    for predicate in &lineage.normalized_definition.predicates {
+        analysis_hash_predicate(hash, predicate);
+    }
+    match &lineage.normalized_definition.group_by {
+        Some(field) => analysis_hash_text(hash, field.as_str()),
+        None => analysis_hash_text(hash, "ungrouped"),
+    }
+    for request in &lineage.normalized_definition.results {
+        analysis_hash_result_request(hash, request);
+    }
+    mix_framed(hash, b"formula-calculation-used", &[lineage.formula_calculation_used as u8]);
+    for derivation in &lineage.derivations {
+        match derivation {
+            AnalysisDerivation::Predicate(field) => {
+                analysis_hash_text(hash, "predicate");
+                analysis_hash_text(hash, field.as_str());
+            }
+            AnalysisDerivation::GroupedBy(field) => {
+                analysis_hash_text(hash, "grouped-by");
+                analysis_hash_text(hash, field.as_str());
+            }
+            AnalysisDerivation::Membership => analysis_hash_text(hash, "membership"),
+            AnalysisDerivation::Count => analysis_hash_text(hash, "count"),
+            AnalysisDerivation::Minimum(field) => {
+                analysis_hash_text(hash, "minimum");
+                analysis_hash_text(hash, field.as_str());
+            }
+            AnalysisDerivation::Maximum(field) => {
+                analysis_hash_text(hash, "maximum");
+                analysis_hash_text(hash, field.as_str());
+            }
+            AnalysisDerivation::Observations(field) => {
+                analysis_hash_text(hash, "observations");
+                analysis_hash_text(hash, field.as_str());
+            }
+        }
+    }
+}
+
+fn analysis_hash_numeric_aggregate(hash: &mut u64, outcome: &NumericAggregateOutcome) {
+    match outcome {
+        NumericAggregateOutcome::Value(value) => analysis_hash_number(hash, *value),
+        NumericAggregateOutcome::Empty => analysis_hash_text(hash, "empty"),
+    }
+}
+
+fn analysis_hash_bucket(hash: &mut u64, bucket: &AnalysisBucket) {
+    for value in &bucket.values {
+        match value {
+            AnalysisResultValue::Membership(members) => {
+                analysis_hash_text(hash, "membership");
+                for member in members {
+                    analysis_hash_text(hash, member.as_str());
+                }
+            }
+            AnalysisResultValue::Count(count) => {
+                analysis_hash_text(hash, "count");
+                mix_framed(hash, b"count", &count.to_le_bytes());
+            }
+            AnalysisResultValue::Minimum { field, outcome } => {
+                analysis_hash_text(hash, "minimum");
+                analysis_hash_text(hash, field.as_str());
+                analysis_hash_numeric_aggregate(hash, outcome);
+            }
+            AnalysisResultValue::Maximum { field, outcome } => {
+                analysis_hash_text(hash, "maximum");
+                analysis_hash_text(hash, field.as_str());
+                analysis_hash_numeric_aggregate(hash, outcome);
+            }
+            AnalysisResultValue::Observations { field, values } => {
+                analysis_hash_text(hash, "observations");
+                analysis_hash_text(hash, field.as_str());
+                for (entity, value) in values {
+                    analysis_hash_text(hash, entity.as_str());
+                    analysis_hash_number(hash, *value);
+                }
+            }
+        }
+    }
+}
+
+fn analysis_hash_calculation_failure(hash: &mut u64, failure: &CalculationFailure) {
+    match failure {
+        CalculationFailure::InvalidExpression { error } => {
+            analysis_hash_text(hash, "invalid-expression");
+            analysis_hash_text(hash, &error.to_string());
+        }
+        CalculationFailure::InvalidReferences { targets } => {
+            analysis_hash_text(hash, "invalid-references");
+            for (field, failure) in targets {
+                analysis_hash_field_ref(hash, field);
+                analysis_hash_text(
+                    hash,
+                    match failure {
+                        ReferenceFailure::Missing => "missing",
+                        ReferenceFailure::NonNumeric => "non-numeric",
+                    },
+                );
+            }
+        }
+        CalculationFailure::Cycle { members } => {
+            analysis_hash_text(hash, "cycle");
+            for field in members {
+                analysis_hash_field_ref(hash, field);
+            }
+        }
+        CalculationFailure::FailedDependencies { dependencies } => {
+            analysis_hash_text(hash, "failed-dependencies");
+            for field in dependencies {
+                analysis_hash_field_ref(hash, field);
+            }
+        }
+        CalculationFailure::DivisionByZero => analysis_hash_text(hash, "division-by-zero"),
+        CalculationFailure::NonFiniteResult => analysis_hash_text(hash, "non-finite-result"),
+    }
+}
+
+fn analysis_hash_outcome(hash: &mut u64, outcome: &AnalysisOutcome) {
+    match outcome {
+        AnalysisOutcome::Complete(AnalysisProjection::Ungrouped(bucket)) => {
+            analysis_hash_text(hash, "complete-ungrouped");
+            analysis_hash_bucket(hash, bucket);
+        }
+        AnalysisOutcome::Complete(AnalysisProjection::Grouped(groups)) => {
+            analysis_hash_text(hash, "complete-grouped");
+            for AnalysisGroup { key, bucket } in groups {
+                match key {
+                    AnalysisGroupKey::Number(value) => analysis_hash_number(hash, *value),
+                    AnalysisGroupKey::Text(value) => analysis_hash_text(hash, value),
+                    AnalysisGroupKey::Boolean(value) => {
+                        mix_framed(hash, b"boolean", &[*value as u8]);
+                    }
+                    AnalysisGroupKey::Reference(value) => analysis_hash_text(hash, value.as_str()),
+                }
+                analysis_hash_bucket(hash, bucket);
+            }
+        }
+        AnalysisOutcome::Failure(failure) => analysis_hash_failure(hash, failure),
+    }
+}
+
+fn analysis_hash_failure(hash: &mut u64, failure: &AnalysisFailure) {
+    match failure {
+        AnalysisFailure::UnresolvedSchema { schema } => {
+            analysis_hash_text(hash, "unresolved-schema");
+            analysis_hash_text(hash, schema.as_str());
+        }
+        AnalysisFailure::UnresolvedField { role, field } => {
+            analysis_hash_text(hash, "unresolved-field");
+            analysis_hash_text(
+                hash,
+                match role {
+                    AnalysisFieldRole::Predicate => "predicate",
+                    AnalysisFieldRole::Group => "group",
+                    AnalysisFieldRole::Metric => "metric",
+                },
+            );
+            analysis_hash_text(hash, field.as_str());
+        }
+        AnalysisFailure::UnresolvedNarrowingEntity { entity } => {
+            analysis_hash_text(hash, "unresolved-narrowing-entity");
+            analysis_hash_text(hash, entity.as_str());
+        }
+        AnalysisFailure::WrongDomainNarrowingEntity {
+            entity,
+            expected,
+            actual,
+        } => {
+            analysis_hash_text(hash, "wrong-domain-narrowing-entity");
+            analysis_hash_text(hash, entity.as_str());
+            analysis_hash_text(hash, expected.as_str());
+            analysis_hash_text(hash, actual.as_str());
+        }
+        AnalysisFailure::InvalidPredicateType { field, declared }
+        | AnalysisFailure::InvalidMetricType { field, declared } => {
+            analysis_hash_text(hash, "invalid-declared-type");
+            analysis_hash_text(hash, field.as_str());
+            analysis_hash_text(
+                hash,
+                match declared {
+                    FieldType::Number => "number",
+                    FieldType::Text => "text",
+                    FieldType::Boolean => "boolean",
+                    FieldType::Reference { schema } => schema.as_str(),
+                },
+            );
+        }
+        AnalysisFailure::InvalidPredicateValue {
+            entity,
+            field,
+            actual,
+        }
+        | AnalysisFailure::InvalidGroupValue {
+            entity,
+            field,
+            actual,
+        } => {
+            analysis_hash_text(hash, "invalid-value");
+            analysis_hash_text(hash, entity.as_str());
+            analysis_hash_text(hash, field.as_str());
+            analysis_hash_value_kind(hash, actual);
+        }
+        AnalysisFailure::MissingGroupValue { entity, field } => {
+            analysis_hash_text(hash, "missing-group-value");
+            analysis_hash_text(hash, entity.as_str());
+            analysis_hash_text(hash, field.as_str());
+        }
+        AnalysisFailure::FormulaGroupingUnsupported { field } => {
+            analysis_hash_text(hash, "formula-grouping-unsupported");
+            analysis_hash_text(hash, field.as_str());
+        }
+        AnalysisFailure::CalculationFailed { field, failure } => {
+            analysis_hash_text(hash, "calculation-failed");
+            analysis_hash_field_ref(hash, field);
+            match failure {
+                Some(failure) => analysis_hash_calculation_failure(hash, failure),
+                None => analysis_hash_text(hash, "unavailable"),
+            }
+        }
+        AnalysisFailure::MetricIncomplete {
+            entity,
+            field,
+            reason,
+        } => {
+            analysis_hash_text(hash, "metric-incomplete");
+            analysis_hash_text(hash, entity.as_str());
+            analysis_hash_text(hash, field.as_str());
+            match reason {
+                MetricIncompleteReason::Missing => analysis_hash_text(hash, "missing"),
+                MetricIncompleteReason::WrongKind(kind) => analysis_hash_value_kind(hash, kind),
+            }
+        }
+        AnalysisFailure::ResultTooLarge { collection, limit } => {
+            analysis_hash_text(hash, "result-too-large");
+            analysis_hash_text(
+                hash,
+                match collection {
+                    AnalysisCollectionKind::Membership => "membership",
+                    AnalysisCollectionKind::Groups => "groups",
+                    AnalysisCollectionKind::Observations => "observations",
+                },
+            );
+            mix_framed(hash, b"limit", &limit.to_le_bytes());
+        }
+    }
+}
+
+fn analysis_hash_value_kind(hash: &mut u64, kind: &AnalysisValueKind) {
+    analysis_hash_text(
+        hash,
+        match kind {
+            AnalysisValueKind::Number => "number",
+            AnalysisValueKind::Formula => "formula",
+            AnalysisValueKind::Text => "text",
+            AnalysisValueKind::Boolean => "boolean",
+            AnalysisValueKind::Reference => "reference",
+        },
+    );
+}
+
+fn analysis_result_fingerprint(result: &AnalysisQueryResult) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    mix_framed(
+        &mut hash,
+        b"record-domain",
+        b"tachiko.portable-conformance/analysis-result/fnv1a64",
+    );
+    analysis_hash_lineage(&mut hash, &result.lineage);
+    analysis_hash_outcome(&mut hash, &result.outcome);
+    hash
+}
+
+fn analysis_pair_fingerprint(result: &PairedAnalysisQueryResult) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    mix_framed(
+        &mut hash,
+        b"record-domain",
+        b"tachiko.portable-conformance/analysis-pair/fnv1a64",
+    );
+    analysis_hash_lineage(&mut hash, &result.lineage);
+    analysis_hash_outcome(&mut hash, &result.first);
+    analysis_hash_outcome(&mut hash, &result.second);
+    analysis_hash_text(&mut hash, "formula-reasoning-grant-denied-analysis-query");
+    hash
+}
+
 fn formula_operation_lifecycle(
     document: &Document,
     family: OperationFamily,
@@ -1741,6 +2493,9 @@ fn case_record(index: u32) -> Record {
         48 => formula_query_record(),
         49 => formula_scenario_record(),
         50 => formula_update_record(),
+        51 => analysis_success_record(),
+        52 => analysis_failure_record(),
+        53 => analysis_paired_authorization_record(),
         _ => Record::failure(UNEXPECTED, 0),
     }
 }

@@ -30,6 +30,7 @@ pub use tachiko_semantic_core::{
 };
 use thiserror::Error;
 
+pub mod analysis_operations;
 pub mod formula_operations;
 pub mod patch_lifecycle;
 
