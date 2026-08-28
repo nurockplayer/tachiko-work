@@ -119,5 +119,10 @@ commands and results used for verification. Include migration or compatibility
 notes when applicable. Avoid unrelated cleanup, generated noise, and narrative
 that duplicates an issue, ADR, or discoverable repository state.
 
+Agent-owned issue delivery follows the canonical
+[`Repository delivery workflow`](docs/governance/project-governance.md#repository-delivery-workflow),
+including its Ready gate, exactly-one PR handoff comment, PATCH-in-place rule,
+review discipline, and post-merge recalibration.
+
 Security reports do not belong in ordinary pull requests or public issues. See
 [`SECURITY.md`](SECURITY.md) before sharing vulnerability details.

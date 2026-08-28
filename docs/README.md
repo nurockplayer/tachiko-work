@@ -12,12 +12,13 @@ Read these first when you need to understand or change the project:
 2. [`vision/design-principles.md`](vision/design-principles.md) and [`vision/mission.md`](vision/mission.md) — durable product principles and mission.
 3. [`governance/knowledge-authority.md`](governance/knowledge-authority.md) — how Principle, Accepted, Provisional, Hypothesis, Open Question, and Superseded states work.
 4. [`governance/decision-traceability.md`](governance/decision-traceability.md) — how research, decisions, specs, implementation, PRs, and evidence cross-link without changing their authority.
-5. [`governance/canonical-reconciliation-register.md`](governance/canonical-reconciliation-register.md) — current authority and supersession map across ADRs, architecture, specifications, and Issues.
-6. [`decisions/README.md`](decisions/README.md) — ADR index and current decision status.
-7. [`architecture/README.md`](architecture/README.md) — architecture map by subsystem and maturity.
-8. [`specs/README.md`](specs/README.md) — specification map and which contract to read for each topic.
+5. [`governance/project-governance.md`](governance/project-governance.md) — decision governance and the canonical repository delivery workflow.
+6. [`governance/canonical-reconciliation-register.md`](governance/canonical-reconciliation-register.md) — current authority and supersession map across ADRs, architecture, specifications, and Issues.
+7. [`decisions/README.md`](decisions/README.md) — ADR index and current decision status.
+8. [`architecture/README.md`](architecture/README.md) — architecture map by subsystem and maturity.
+9. [`specs/README.md`](specs/README.md) — specification map and which contract to read for each topic.
 
-The current repository planning horizon is `03 · Game Dev Alpha`. GitHub Issues own unresolved decisions and implementation work; their existence does not by itself make a direction Accepted.
+The current repository planning horizon is `04 · Game Studio Beta`. GitHub Issues own unresolved decisions and implementation work; their existence does not by itself make a direction Accepted.
 
 ## Authority in one minute
 
