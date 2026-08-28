@@ -6,6 +6,14 @@
 //! contract. Concrete resident sessions and revision mechanics remain owned by
 //! Issue #93; callers supply those mechanics through
 //! [`SemanticPublicationAuthority`].
+//!
+//! The trusted host owns the mutable registry, principal/Grant provisioning,
+//! and every [`TrustedInstant`] supplied here. Public Rust visibility is an
+//! in-process host integration seam, not a client credential or transport
+//! surface: an adapter must never accept a client-provided tick, and must fail
+//! before calling the lifecycle when trusted time is unavailable. The concrete
+//! clock and hostile-client adapter remain Issues #30 and #93
+//! host/security-profile work.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -54,6 +62,10 @@ opaque_text_id!(SemanticApiContract);
 opaque_text_id!(SemanticRevision);
 
 /// Host-supplied trusted logical time used for provisional validity checks.
+///
+/// Only the trusted in-process host may construct or supply this value. This
+/// provisional constructor is not an authorization credential and must not be
+/// projected through an untrusted adapter.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct TrustedInstant(u64);
 
@@ -824,8 +836,8 @@ impl PatchLifecycle {
     ///
     /// # Errors
     ///
-    /// Rejects reused IDs, empty or malformed Grants, Delegated issuers, or
-    /// unresolved issuer/subject occurrences.
+    /// Rejects reused IDs, empty or malformed Grants, disabled or Delegated
+    /// issuers, or unresolved issuer/subject occurrences.
     pub fn provision_grant(&mut self, grant: Grant) -> Result<(), PatchLifecycleError> {
         if self.grants.contains_key(&grant.id) {
             return Err(PatchLifecycleError::GrantIdAlreadyExists);
@@ -843,7 +855,7 @@ impl PatchLifecycle {
             || self
                 .principals
                 .get(&grant.issuer)
-                .is_none_or(|issuer| issuer.kind == PrincipalKind::Delegated)
+                .is_none_or(|issuer| !issuer.active || issuer.kind == PrincipalKind::Delegated)
             || !self.principals.contains_key(&grant.subject)
         {
             return Err(PatchLifecycleError::InvalidGrant);

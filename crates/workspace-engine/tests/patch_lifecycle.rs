@@ -1506,6 +1506,36 @@ fn delegated_principal_cannot_issue_or_delegate_grants() {
 }
 
 #[test]
+fn disabled_human_cannot_issue_grants() {
+    let mut lifecycle = lifecycle();
+    let grant_id = GrantId::from("disabled-issuer-grant");
+    lifecycle
+        .disable_principal(&principal("authority"))
+        .unwrap();
+
+    let error = lifecycle
+        .provision_grant(Grant::new(
+            grant_id.clone(),
+            principal("authority"),
+            principal("agent"),
+            vec![query_requirement()],
+            None,
+        ))
+        .unwrap_err();
+
+    assert!(matches!(error, PatchLifecycleError::InvalidGrant));
+    lifecycle
+        .provision_grant(Grant::new(
+            grant_id,
+            principal("reviewer"),
+            principal("agent"),
+            vec![query_requirement()],
+            None,
+        ))
+        .unwrap();
+}
+
+#[test]
 fn principal_occurrence_identity_and_kind_are_immutable() {
     let mut lifecycle = lifecycle();
 
