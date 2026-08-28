@@ -1122,6 +1122,30 @@ fn export_refuses_to_overwrite_an_existing_file() {
 }
 
 #[test]
+fn export_rejects_an_output_inside_a_roproj_source_without_mutation() {
+    let temp = TempDir::new();
+    let input = temp.path().join("balance.roproj");
+    let output_path = input.join("runtime.json");
+    materialize_roproj(&input, &balance_document(100.0)).unwrap();
+    let source_before = snapshot_tree(&input);
+
+    let output = run(&[
+        "export",
+        input.to_str().unwrap(),
+        output_path.to_str().unwrap(),
+    ]);
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("inside directory input"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!output_path.exists());
+    assert_eq!(snapshot_tree(&input), source_before);
+}
+
+#[test]
 fn show_turns_a_document_into_a_readable_semantic_overview() {
     let temp = TempDir::new();
     let path = temp.path().join("balance.ro");

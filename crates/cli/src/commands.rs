@@ -61,6 +61,12 @@ pub enum CommandError {
     MissingAnalysisTarget { value: String },
     #[error("output '{}' is the same as the input; choose a new path", path.display())]
     SameInputOutput { path: PathBuf },
+    #[error(
+        "output '{}' is inside directory input '{}'; choose a path outside the source",
+        output.display(),
+        input.display()
+    )]
+    OutputInsideDirectoryInput { input: PathBuf, output: PathBuf },
     #[error("'{}' already exists; refusing to overwrite it", path.display())]
     AlreadyExists { path: PathBuf },
     #[error("failed to create '{}': {source}", path.display())]
@@ -454,6 +460,7 @@ pub fn merge_documents(
 
 pub fn export(input: &Path, output: &Path) -> Result<String, CommandError> {
     let document = load_read_source(input)?;
+    ensure_output_outside_directory_source(input, output)?;
     let exported = runtime_export(&document)?;
     let encoded = canonical_output(&exported)?;
     write_new(output, encoded.as_bytes())?;
@@ -645,6 +652,28 @@ fn ensure_distinct_paths(input: &Path, output: &Path) -> Result<(), CommandError
     if input == output {
         return Err(CommandError::SameInputOutput {
             path: input.to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn ensure_output_outside_directory_source(input: &Path, output: &Path) -> Result<(), CommandError> {
+    if !input.is_dir() {
+        return Ok(());
+    }
+
+    let output_parent = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let is_inside = match (input.canonicalize(), output_parent.canonicalize()) {
+        (Ok(input), Ok(output_parent)) => output_parent.starts_with(input),
+        _ => output.starts_with(input),
+    };
+    if is_inside {
+        return Err(CommandError::OutputInsideDirectoryInput {
+            input: input.to_owned(),
+            output: output.to_owned(),
         });
     }
     Ok(())
