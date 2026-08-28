@@ -140,6 +140,19 @@ impl ScenarioRequest {
             requested_targets,
         }
     }
+
+    /// Admit only the disclosure-independent request envelope.
+    ///
+    /// Hosts may call this before dereferencing a source snapshot. The Query
+    /// boundary repeats the same admission before using the request.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ScenarioEnvelopeError`] when the request exceeds the bounded
+    /// profile, repeats an override target, or contains a non-finite Number.
+    pub fn admit_envelope(&self) -> Result<(), ScenarioEnvelopeError> {
+        admit_scenario_envelope(self).map(|_| ())
+    }
 }
 
 /// Disclosure-independent request-local scenario admission failure.

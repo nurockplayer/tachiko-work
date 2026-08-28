@@ -454,10 +454,13 @@ pub fn run_formula_scenario(
         .iter()
         .map(|value| parse_stable_field_ref(value))
         .collect::<Result<Vec<_>, _>>()?;
+    let request = ScenarioRequest::new(overrides, targets);
+    request
+        .admit_envelope()
+        .map_err(FormulaOperationError::from)?;
     let document = load_read_source(path)?;
     let (lifecycle, scope, principal, revision) =
         local_formula_query(&document, OperationFamily::NumberOverrideScenario)?;
-    let request = ScenarioRequest::new(overrides, targets);
     let result = lifecycle.query_number_override_scenario(
         &scope,
         &document,

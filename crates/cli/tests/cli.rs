@@ -1652,6 +1652,32 @@ fn formula_scenario_is_repeatable_and_never_changes_or_publishes_source_state() 
 }
 
 #[test]
+fn formula_scenario_admits_the_request_envelope_before_loading_the_source() {
+    let temp = TempDir::new();
+    let missing = temp.path().join("missing.ro");
+
+    let output = run(&[
+        "formula",
+        "scenario",
+        missing.to_str().unwrap(),
+        "--override",
+        "sword.damage=40",
+        "--override",
+        "sword.damage=45",
+        "--target",
+        "sword.dps",
+    ]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("scenario override target 'sword.damage' occurs more than once"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("missing.ro"), "{stderr}");
+}
+
+#[test]
 fn formula_set_rejects_parse_reference_cycle_and_target_errors_without_output() {
     let temp = TempDir::new();
     let input = temp.path().join("balance.ro");
