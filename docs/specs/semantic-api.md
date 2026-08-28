@@ -464,12 +464,30 @@ authorization. M04 accepts the bounded conjunction shape, not a general boolean
 query AST. The exact finite supported predicate-operator catalogue and request
 limits remain Provisional for the first implementation slice; an implementation
 MUST NOT introduce representation-path matching, untyped coercion, arbitrary
-expressions, or another evaluator as an implementation shortcut.
+expressions, or another evaluator as an implementation shortcut. If an entity
+in the candidate domain omits the targeted optional predicate field, that
+predicate evaluates `false` for that entity. Absence is not coerced to a typed
+operand, exposed as a synthetic value, or treated as an error for predicate
+selection.
 
 The optional grouping key is one stable FieldId from the selected domain.
 Grouping follows the authoritative typed semantic value/equality meaning of
-that field. Multi-key grouping, grouping sets, query-defined bucketing, joins,
+that field. If any selected entity omits the grouping field, the grouped
+analysis returns a structured missing-group-value failure; it MUST NOT drop the
+entity, synthesize a null/absent group key, or silently place it in another
+group. Multi-key grouping, grouping sets, query-defined bucketing, joins,
 subqueries, and windows are Deferred.
+
+When a grouping key is present, grouping partitions the complete selected
+population before result reduction. Every requested result primitive is then
+evaluated independently **per group** over that group's members or Number
+observations. A grouped request does not additionally return a global Count,
+Min, Max, membership set, or per-member observation collection for the entire
+selection. A caller that needs a global reduction issues the same normalized
+analysis without a grouping key. When exact membership or per-member Number
+observations are requested in a grouped analysis, they are returned within
+their group result; the union of group memberships is the complete selected
+membership.
 
 ### Supported result primitives
 
@@ -501,9 +519,9 @@ exactly zero. An ungrouped `Min` or `Max` request over zero authoritative Number
 observations returns a structured empty-aggregate outcome; it MUST NOT return a
 fabricated Number, `null` presented as a Number, omit the requested result, or
 silently reuse a prior value. Grouping synthesizes no empty group: groups arise
-only from selected members, so an empty selection returns an empty group
-collection. Exact public error/result code spelling for the empty-aggregate
-outcome remains Provisional.
+only from selected members with present grouping values, so an empty selection
+returns an empty group collection. Exact public error/result code spelling for
+the empty-aggregate and missing-group-value outcomes remains Provisional.
 
 Exact selected membership, grouped result collections, and per-member Number
 observations are bounded collection results. After trusted selection/grouping
@@ -594,6 +612,7 @@ The logical family distinguishes at least:
 
 - malformed, oversized, or unsupported analysis request;
 - unresolved or wrong-typed field, predicate, group, or metric target;
+- selected entity missing a required grouping value;
 - authoritative formula/calculation failure;
 - invalid aggregate/type combination;
 - empty aggregate for requested `Min`/`Max` with zero Number observations;
@@ -1164,28 +1183,35 @@ The first provider-neutral implementation of the Issue #33 contract must prove,
 without promoting incidental Rust/CLI/wire shapes, at least:
 
 1. bounded typed selection/filter over a schema/type domain with stable
-   semantic targeting;
-2. one grouped entity-count result;
-3. exact `Count`, Number `Min`, and Number `Max` over supported observations;
-4. an empty selection returning `Count = 0`, a structured empty-aggregate
-   outcome for requested `Min`/`Max`, and no synthesized empty group;
-5. one formula-backed numeric metric that demonstrably consumes ADR-0018
+   semantic targeting, including a candidate entity that omits an optional
+   predicate field and therefore does not match that predicate;
+2. one grouped entity-count result with complete selected membership
+   partitioned exactly once across groups;
+3. grouped `Count`, Number `Min`, and Number `Max` evaluated per group, with no
+   implicit simultaneous global reduction;
+4. a selected entity missing the grouping field producing a structured
+   missing-group-value failure rather than omission or a synthetic null group;
+5. exact ungrouped `Count`, Number `Min`, and Number `Max` over supported
+   observations;
+6. an empty selection returning `Count = 0`, a structured empty-aggregate
+   outcome for requested ungrouped `Min`/`Max`, and no synthesized empty group;
+7. one formula-backed numeric metric that demonstrably consumes ADR-0018
    calculation authority rather than a second evaluator;
-6. repeated equal exact context + normalized definition + relevant deterministic
+8. repeated equal exact context + normalized definition + relevant deterministic
    configuration producing equal underlying results;
-7. missing, wrong-typed, unsupported metric/group/predicate and calculation
+9. missing, wrong-typed, unsupported metric/group/predicate and calculation
    failure cases preserving structured failure meaning;
-8. a complete selected membership, grouped result, or per-member observation
-   collection exceeding the finite result profile producing a structured
-   result-too-large outcome with no truncation, sampling, partial-success claim,
-   or implicit pagination;
-9. a disclosure case where membership, group existence, count, aggregate,
-   per-member observations, result-size classification, or lineage would
-   otherwise reveal unauthorized facts, proving complete-or-denied behavior
-   rather than a visible-subset aggregate;
-10. the same normalized analysis evaluated over two explicit exact semantic
+10. a complete selected membership, grouped result, or per-member observation
+    collection exceeding the finite result profile producing a structured
+    result-too-large outcome with no truncation, sampling, partial-success claim,
+    or implicit pagination;
+11. a disclosure case where membership, group existence, count, aggregate,
+    per-member observations, result-size classification, missing-group-value
+    classification, or lineage would otherwise reveal unauthorized facts,
+    proving complete-or-denied behavior rather than a visible-subset aggregate;
+12. the same normalized analysis evaluated over two explicit exact semantic
     contexts, with no history lookup or parallel revision semantics; and
-11. lineage sufficient for a consumer to explain and reproduce the deterministic
+13. lineage sufficient for a consumer to explain and reproduce the deterministic
     result without an LLM reconstructing selection or aggregation semantics.
 
 The implementation Issue may choose reversible finite request/result limits,
