@@ -15,7 +15,7 @@ use tachiko_storage::{
     read_portable_package_source, to_canonical_string,
 };
 use tachiko_workspace_engine::{
-    EditPreview, FieldAddress, FieldKind, IdGenerator, MergeConflict, SemanticChange,
+    Document, EditPreview, FieldAddress, FieldKind, IdGenerator, MergeConflict, SemanticChange,
     SemanticIdKind, StarterTemplate, WorkspaceError, WorkspaceMergeOutcome,
     analyze_changes as analyze_semantic_changes, analyze_field as analyze_semantic_field,
     analyze_validation as analyze_semantic_validation, calculate_fields, compare_documents,
@@ -61,6 +61,12 @@ pub enum CommandError {
     MissingAnalysisTarget { value: String },
     #[error("output '{}' is the same as the input; choose a new path", path.display())]
     SameInputOutput { path: PathBuf },
+    #[error(
+        "output '{}' is inside directory input '{}'; choose a path outside the source",
+        output.display(),
+        input.display()
+    )]
+    OutputInsideDirectoryInput { input: PathBuf, output: PathBuf },
     #[error("'{}' already exists; refusing to overwrite it", path.display())]
     AlreadyExists { path: PathBuf },
     #[error("failed to create '{}': {source}", path.display())]
@@ -69,6 +75,14 @@ pub enum CommandError {
     Write { path: PathBuf, source: io::Error },
     #[error("could not encode command output: {0}")]
     Output(#[from] serde_json::Error),
+}
+
+fn load_read_source(path: &Path) -> Result<Document, CommandError> {
+    if path.is_dir() {
+        Ok(load_roproj(path)?)
+    } else {
+        Ok(load(path)?)
+    }
 }
 
 pub fn init(
@@ -104,7 +118,7 @@ pub fn init(
 }
 
 pub fn validate(path: &Path) -> Result<String, CommandError> {
-    let document = load(path)?;
+    let document = load_read_source(path)?;
     validate_semantics(&document)?;
     Ok(format!("valid {}\n", path.display()))
 }
@@ -168,7 +182,7 @@ pub fn compare_roproject_package(
 }
 
 pub fn calculate_document(path: &Path) -> Result<String, CommandError> {
-    let document = load(path)?;
+    let document = load_read_source(path)?;
     let output: BTreeMap<_, _> = calculate_fields(&document)?
         .into_iter()
         .map(|field| (field.address.to_string(), field.value))
@@ -177,7 +191,7 @@ pub fn calculate_document(path: &Path) -> Result<String, CommandError> {
 }
 
 pub fn show(path: &Path) -> Result<String, CommandError> {
-    let document = load(path)?;
+    let document = load_read_source(path)?;
     let view = overview(&document)?;
     let mut output = format!(
         "{} · {} schemas · {} entities · {} formulas\ndocument id: {}\n",
@@ -209,7 +223,7 @@ pub fn show(path: &Path) -> Result<String, CommandError> {
 }
 
 pub fn explain(path: &Path, field: &str) -> Result<String, CommandError> {
-    let document = load(path)?;
+    let document = load_read_source(path)?;
     let field = parse_field_ref(field)?;
     let explanation = explain_field(&document, &field)?;
     let mut output = format!("{} = {}\n", explanation.address, explanation.display_value);
@@ -243,7 +257,7 @@ pub fn explain(path: &Path, field: &str) -> Result<String, CommandError> {
 }
 
 pub fn analyze_document(path: &Path, source_state: Option<String>) -> Result<String, CommandError> {
-    let document = load(path)?;
+    let document = load_read_source(path)?;
     canonical_output(&inspect_document(
         &document,
         analysis_source_label(path, source_state),
@@ -255,7 +269,7 @@ pub fn analyze_field(
     field: &str,
     source_state: Option<String>,
 ) -> Result<String, CommandError> {
-    let document = load(path)?;
+    let document = load_read_source(path)?;
     let address = parse_field_ref(field)?;
     let target =
         document
@@ -276,8 +290,8 @@ pub fn analyze_changes(
     before_state: Option<String>,
     after_state: Option<String>,
 ) -> Result<String, CommandError> {
-    let before = load(before_path)?;
-    let after = load(after_path)?;
+    let before = load_read_source(before_path)?;
+    let after = load_read_source(after_path)?;
     let analysis = analyze_semantic_changes(
         &before,
         analysis_source_label(before_path, before_state),
@@ -303,7 +317,7 @@ pub fn analyze_validation(
     path: &Path,
     source_state: Option<String>,
 ) -> Result<String, CommandError> {
-    let document = load(path)?;
+    let document = load_read_source(path)?;
     canonical_output(&analyze_semantic_validation(
         &document,
         analysis_source_label(path, source_state),
@@ -415,8 +429,8 @@ pub fn set_formula_document(
 }
 
 pub fn diff_documents(before: &Path, after: &Path) -> Result<String, CommandError> {
-    let before = load(before)?;
-    let after = load(after)?;
+    let before = load_read_source(before)?;
+    let after = load_read_source(after)?;
     Ok(compare_documents(&before, &after)?.render_text())
 }
 
@@ -445,7 +459,8 @@ pub fn merge_documents(
 }
 
 pub fn export(input: &Path, output: &Path) -> Result<String, CommandError> {
-    let document = load(input)?;
+    let document = load_read_source(input)?;
+    ensure_output_outside_directory_source(input, output)?;
     let exported = runtime_export(&document)?;
     let encoded = canonical_output(&exported)?;
     write_new(output, encoded.as_bytes())?;
@@ -637,6 +652,28 @@ fn ensure_distinct_paths(input: &Path, output: &Path) -> Result<(), CommandError
     if input == output {
         return Err(CommandError::SameInputOutput {
             path: input.to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn ensure_output_outside_directory_source(input: &Path, output: &Path) -> Result<(), CommandError> {
+    if !input.is_dir() {
+        return Ok(());
+    }
+
+    let output_parent = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let is_inside = match (input.canonicalize(), output_parent.canonicalize()) {
+        (Ok(input), Ok(output_parent)) => output_parent.starts_with(input),
+        _ => output.starts_with(input),
+    };
+    if is_inside {
+        return Err(CommandError::OutputInsideDirectoryInput {
+            input: input.to_owned(),
+            output: output.to_owned(),
         });
     }
     Ok(())

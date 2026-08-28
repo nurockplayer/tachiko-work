@@ -139,7 +139,8 @@ Separately, #123 implements `.roproj/v1` at the storage/native host boundary
 without moving filesystem authority into workspace-engine or the interactive
 runtime. #3 implements packaged `.ro` codec/pack/unpack/compare at that same
 boundary, including atomic no-replace destination publication. Optional Git/CI
-integration remains #44; broader hostile source/path handling, full durability/
+composition is implemented by #44 at the CLI/repository edge without moving Git
+into workspace-engine; broader hostile source/path handling, full durability/
 recovery, browser persistence, and host mechanisms remain Deferred.
 
 No Web UI, resident session API, projection patch protocol, or browser persistence mechanism is introduced by this documentation decision.

@@ -53,6 +53,16 @@ fn run_from(arguments: &[&str], current_dir: &Path) -> Output {
         .unwrap()
 }
 
+fn successful_stdout(arguments: &[&str]) -> Vec<u8> {
+    let output = run(arguments);
+    assert!(
+        output.status.success(),
+        "command {arguments:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output.stdout
+}
+
 fn copy_tree(source: &Path, destination: &Path) {
     fs::create_dir(destination).unwrap();
     for entry in fs::read_dir(source).unwrap() {
@@ -465,6 +475,142 @@ fn roproj_workflow_operates_outside_git() {
     );
     assert_eq!(snapshot_tree(&canonicalized), canonical_snapshot);
     assert_eq!(snapshot_tree(&noncanonical), noncanonical_snapshot);
+}
+
+#[test]
+fn read_only_semantic_commands_accept_exact_roproj_sources() {
+    let temp = TempDir::new();
+    let before_direct = temp.path().join("before.ro");
+    let before_project = temp.path().join("before.roproj");
+
+    save(&before_direct, &balance_document(100.0)).unwrap();
+    materialize_roproj(&before_project, &balance_document(100.0)).unwrap();
+
+    assert!(
+        run(&["validate", before_project.to_str().unwrap()])
+            .status
+            .success()
+    );
+
+    for arguments in [
+        vec!["calculate", before_direct.to_str().unwrap()],
+        vec!["show", before_direct.to_str().unwrap()],
+        vec!["explain", before_direct.to_str().unwrap(), "sword.dps"],
+        vec![
+            "analyze",
+            "document",
+            before_direct.to_str().unwrap(),
+            "--source-state",
+            "base",
+        ],
+        vec![
+            "analyze",
+            "field",
+            before_direct.to_str().unwrap(),
+            "sword.dps",
+            "--source-state",
+            "base",
+        ],
+        vec![
+            "analyze",
+            "validation",
+            before_direct.to_str().unwrap(),
+            "--source-state",
+            "base",
+        ],
+    ] {
+        let mut project_arguments = arguments.clone();
+        let source_index = project_arguments
+            .iter()
+            .position(|argument| *argument == before_direct.to_str().unwrap())
+            .unwrap();
+        project_arguments[source_index] = before_project.to_str().unwrap();
+        assert_eq!(
+            successful_stdout(&arguments),
+            successful_stdout(&project_arguments),
+            "read-only command diverged for {arguments:?}"
+        );
+    }
+}
+
+#[test]
+fn roproj_semantic_review_and_export_match_direct_sources() {
+    let temp = TempDir::new();
+    let before_direct = temp.path().join("before.ro");
+    let after_direct = temp.path().join("after.ro");
+    let before_project = temp.path().join("before.roproj");
+    let after_project = temp.path().join("after.roproj");
+    let direct_export = temp.path().join("direct-export.json");
+    let project_export = temp.path().join("project-export.json");
+
+    save(&before_direct, &balance_document(100.0)).unwrap();
+    save(&after_direct, &balance_document(120.0)).unwrap();
+    materialize_roproj(&before_project, &balance_document(100.0)).unwrap();
+    materialize_roproj(&after_project, &balance_document(120.0)).unwrap();
+
+    let direct_diff = successful_stdout(&[
+        "diff",
+        before_direct.to_str().unwrap(),
+        after_direct.to_str().unwrap(),
+    ]);
+    let project_diff = successful_stdout(&[
+        "diff",
+        before_project.to_str().unwrap(),
+        after_project.to_str().unwrap(),
+    ]);
+    assert_eq!(project_diff, direct_diff);
+
+    let direct_analysis = successful_stdout(&[
+        "analyze",
+        "changes",
+        before_direct.to_str().unwrap(),
+        after_direct.to_str().unwrap(),
+        "--before-state",
+        "base",
+        "--after-state",
+        "working",
+    ]);
+    let project_analysis = successful_stdout(&[
+        "analyze",
+        "changes",
+        before_project.to_str().unwrap(),
+        after_project.to_str().unwrap(),
+        "--before-state",
+        "base",
+        "--after-state",
+        "working",
+    ]);
+    assert_eq!(project_analysis, direct_analysis);
+
+    successful_stdout(&[
+        "export",
+        before_direct.to_str().unwrap(),
+        direct_export.to_str().unwrap(),
+    ]);
+    successful_stdout(&[
+        "export",
+        before_project.to_str().unwrap(),
+        project_export.to_str().unwrap(),
+    ]);
+    assert_eq!(
+        fs::read(project_export).unwrap(),
+        fs::read(direct_export).unwrap()
+    );
+}
+
+#[test]
+fn read_only_source_dispatch_rejects_noncanonical_roproj_without_fallback() {
+    let temp = TempDir::new();
+    let project = temp.path().join("noncanonical.roproj");
+    materialize_roproj(&project, &balance_document(100.0)).unwrap();
+    fs::write(project.join("entities/extra.jsonl"), []).unwrap();
+    let before = snapshot_tree(&project);
+
+    let result = run(&["validate", project.to_str().unwrap()]);
+
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("representation"));
+    assert_eq!(snapshot_tree(&project), before);
 }
 
 #[test]
@@ -973,6 +1119,30 @@ fn export_refuses_to_overwrite_an_existing_file() {
     assert!(!output.status.success());
     assert_eq!(fs::read_to_string(output_path).unwrap(), "preserve me");
     assert!(String::from_utf8_lossy(&output.stderr).contains("already exists"));
+}
+
+#[test]
+fn export_rejects_an_output_inside_a_roproj_source_without_mutation() {
+    let temp = TempDir::new();
+    let input = temp.path().join("balance.roproj");
+    let output_path = input.join("runtime.json");
+    materialize_roproj(&input, &balance_document(100.0)).unwrap();
+    let source_before = snapshot_tree(&input);
+
+    let output = run(&[
+        "export",
+        input.to_str().unwrap(),
+        output_path.to_str().unwrap(),
+    ]);
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("inside directory input"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!output_path.exists());
+    assert_eq!(snapshot_tree(&input), source_before);
 }
 
 #[test]
@@ -1797,7 +1967,8 @@ fn top_level_help_describes_the_complete_first_user_workflow() {
         "Create a changed document",
         "Grow, rename, or remove entities safely",
         "Create or revise computed fields safely",
-        "Compare two document versions",
+        "Compare two supported read sources",
+        "exact .roproj tree",
     ] {
         assert!(text.contains(phrase), "missing help text: {phrase}\n{text}");
     }

@@ -39,6 +39,11 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- An optional provider-neutral Git/CI adapter now keeps canonical `.roproj/v1`
+  members as LF text, accepts exact project trees in existing read-only
+  semantic commands, and composes canonical/workspace validation with
+  read-only generated-package consistency checks. The executable journey uses
+  ordinary Git without a host API or semantic Git identity.
 - Accepted a documentation-level semantic authorization contract for scoped
   Grants, trusted authorization-footprint derivation, and exact finite Human
   Approval with at-most-once successful publication. Product enforcement and

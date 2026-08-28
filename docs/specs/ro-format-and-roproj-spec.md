@@ -25,8 +25,9 @@ do not require Git.
 This implementation state does not supersede ADR-0003. ADR-0025 now fixes the
 deterministic portable-package v1 and integrity contract over `.roproj/v1`;
 Issue #3 implements its exact packaged `.ro` codec, bounded host pack/unpack,
-read-only comparison, and CLI workflow. Optional Git/CI integration remains
-Issue `#44`.
+read-only comparison, and CLI workflow. Issue #44 implements the optional
+provider-neutral Git/CI composition over the standalone semantic/project
+commands without changing these format contracts.
 
 ## `.ro`
 
@@ -99,8 +100,8 @@ Pack and unpack preserve every payload path and byte exactly. A verified
 package that disagrees with canonical tracked `.roproj` source reports a
 source mismatch without mutating either side; the tracked source remains
 authoritative in that working context. The packaged `.ro` ZIP codec and CLI
-pack/unpack/compare workflow are implemented by #3; optional Git/CI integration
-remains owned by #44.
+pack/unpack/compare workflow are implemented by #3; Issue #44 composes exact
+tracked-source comparison into the optional Git/CI adapter.
 
 ## Canonical principle
 
