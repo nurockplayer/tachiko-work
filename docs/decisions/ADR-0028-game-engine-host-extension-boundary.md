@@ -74,8 +74,8 @@ and authorizes no implementation.
   `08 · Tachiko Work 1.0`, owns public plugin distribution/marketplace,
   signing, compatibility, lifecycle, and support policy.
 
-ADR-0027 remains the general interoperability authority. Issue #14 remains
-open; this decision does not close or supersede it.
+ADR-0027 remains the general interoperability authority and resolves Issue
+#14. This decision does not reopen or supersede either.
 
 ## Consequences
 
