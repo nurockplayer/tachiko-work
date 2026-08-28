@@ -18,11 +18,11 @@ The format documents have different roles. Do not treat similarly named files as
 | [`ro-format.md`](ro-format.md) | Compatibility/navigation entry point for older links | Non-normative navigation stub; follow the format documents above |
 | [`roproj-format.md`](roproj-format.md) | Complete version-owned `.roproj/v1` DTO and wire contract | Accepted under ADR-0023; production pure codec implemented by #123 |
 | [`roproj-layout-v1.md`](roproj-layout-v1.md) | Exact `.roproj/v1` canonical tree, sharding, path, and canonicalization contract | Accepted under ADR-0023; native materialize/validate/explicit canonicalize workflow implemented by #123 |
-| [`portable-package-v1.md`](portable-package-v1.md) | Exact portable-package v1 ZIP32 bytes, payload integrity root, pack/unpack laws, conflict behavior, and conformance outcomes | Accepted under ADR-0025; packaged `.ro` ZIP codec and CLI pack/unpack remain unimplemented under #3 |
+| [`portable-package-v1.md`](portable-package-v1.md) | Exact portable-package v1 ZIP32 bytes, payload integrity root, pack/unpack laws, conflict behavior, and conformance outcomes | Accepted under ADR-0025; production codec/native host/CLI workflow implemented by #3 |
 | [`runtime-export-v1.md`](runtime-export-v1.md) | Historical evaluated runtime JSON export contract | Frozen historical contract |
 | [`runtime-export-v2.md`](runtime-export-v2.md) | Current stable-identity/normalized-Number evaluated runtime JSON export | Provisional implemented contract |
 
-The semantic model owns meaning. Physical formats are representations. ADR-0017 fixes the versioned storage boundary and canonical-representation invariants; ADR-0018 fixes the admitted-token binary64 conversion and spelling authority; ADR-0023 fixes the `.roproj/v1` physical and wire contract without making layout semantic identity. Issue #123 implements that production pure codec and the native explicit host workflow. ADR-0025 separately fixes the portable-package v1 envelope and integrity contract; the packaged `.ro` ZIP codec and CLI pack/unpack remain unimplemented under #3.
+The semantic model owns meaning. Physical formats are representations. ADR-0017 fixes the versioned storage boundary and canonical-representation invariants; ADR-0018 fixes the admitted-token binary64 conversion and spelling authority; ADR-0023 fixes the `.roproj/v1` physical and wire contract without making layout semantic identity. Issue #123 implements that production pure codec and the native explicit host workflow. ADR-0025 separately fixes the portable-package v1 envelope and integrity contract; #3 implements its production codec, bounded host workflow, and CLI pack/unpack/compare operations.
 
 ## Semantic API, core, schema, validation, formulas, and diff
 

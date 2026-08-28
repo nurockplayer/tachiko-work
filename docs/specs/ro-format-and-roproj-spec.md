@@ -24,14 +24,15 @@ do not require Git.
 
 This implementation state does not supersede ADR-0003. ADR-0025 now fixes the
 deterministic portable-package v1 and integrity contract over `.roproj/v1`;
-the packaged `.ro` ZIP codec and CLI pack/unpack remain future #3
-implementation work. Optional Git/CI integration remains #44.
+Issue #3 implements its exact packaged `.ro` codec, bounded host pack/unpack,
+read-only comparison, and CLI workflow. Optional Git/CI integration remains
+Issue `#44`.
 
 ## `.ro`
 
 The `.ro` filename currently carries the implemented direct-JSON v0.1
 representation. It is also the Provisional filename for the separately
-Accepted, not-yet-implemented `tachiko.portable-package/v1` representation.
+Accepted and implemented `tachiko.portable-package/v1` representation.
 Content framing and representation-local version dispatch, not the extension,
 distinguish them.
 
@@ -50,8 +51,8 @@ Users should not need to understand its internal tagged JSON structure for ordin
 Accepted canonical Git working/source representation. ADR-0023 now fixes the
 `.roproj/v1` physical and wire contract. Issue #123 implements the production
 pure reader/writer codec plus native materialize, canonical-only validate, and
-explicit bounded canonicalize operations. Package pack/unpack is separate and
-still not implemented.
+explicit bounded canonicalize operations. Issue #3 implements package
+pack/unpack and comparison over that exact tree.
 
 Representation properties:
 
@@ -98,8 +99,8 @@ Pack and unpack preserve every payload path and byte exactly. A verified
 package that disagrees with canonical tracked `.roproj` source reports a
 source mismatch without mutating either side; the tracked source remains
 authoritative in that working context. The packaged `.ro` ZIP codec and CLI
-pack/unpack remain unimplemented under #3; optional Git/CI integration remains
-owned by #44.
+pack/unpack/compare workflow are implemented by #3; optional Git/CI integration
+remains owned by #44.
 
 ## Canonical principle
 

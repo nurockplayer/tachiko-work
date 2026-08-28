@@ -9,8 +9,10 @@ use std::{
 use serde::Serialize;
 use serde_json::json;
 use tachiko_storage::{
-    FormatError, canonicalize_roproj, decode_roproj_v1, load, load_roproj, materialize_roproj,
-    publish_canonicalized_roproj, to_canonical_string,
+    FormatError, canonicalize_roproj, compare_verified_package_with_roproj, decode_roproj_v1, load,
+    load_roproj, materialize_roproj, publish_canonicalized_roproj,
+    publish_portable_package_from_roproj, publish_unpacked_roproj, read_portable_package,
+    read_portable_package_source, to_canonical_string,
 };
 use tachiko_workspace_engine::{
     EditPreview, FieldAddress, FieldKind, IdGenerator, MergeConflict, SemanticChange,
@@ -127,6 +129,42 @@ pub fn canonicalize_roproject(input: &Path, output: &Path) -> Result<String, Com
     validate_semantics(&document)?;
     publish_canonicalized_roproj(input, output, &tree)?;
     Ok(format!("canonicalized {}\n", output.display()))
+}
+
+pub fn pack_roproject(input: &Path, output: &Path) -> Result<String, CommandError> {
+    ensure_distinct_paths(input, output)?;
+    let tree = read_portable_package_source(input)?;
+    let document = decode_roproj_v1(&tree)?;
+    validate_semantics(&document)?;
+    publish_portable_package_from_roproj(input, output, &tree)?;
+    Ok(format!("packed {}\n", output.display()))
+}
+
+pub fn unpack_roproject(input: &Path, output: &Path) -> Result<String, CommandError> {
+    ensure_distinct_paths(input, output)?;
+    let package = read_portable_package(input)?;
+    let document = decode_roproj_v1(package.tree())?;
+    validate_semantics(&document)?;
+    publish_unpacked_roproj(output, &package)?;
+    Ok(format!("unpacked {}\n", output.display()))
+}
+
+pub fn compare_roproject_package(
+    package_path: &Path,
+    tracked_path: &Path,
+) -> Result<String, CommandError> {
+    let package = read_portable_package(package_path)?;
+    let package_document = decode_roproj_v1(package.tree())?;
+    validate_semantics(&package_document)?;
+    let tracked = read_portable_package_source(tracked_path)?;
+    let tracked_document = decode_roproj_v1(&tracked)?;
+    validate_semantics(&tracked_document)?;
+    compare_verified_package_with_roproj(&package, &tracked)?;
+    Ok(format!(
+        "consistent {} {}\n",
+        package_path.display(),
+        tracked_path.display()
+    ))
 }
 
 pub fn calculate_document(path: &Path) -> Result<String, CommandError> {

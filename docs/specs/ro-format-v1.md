@@ -389,4 +389,4 @@ If the direct `.ro` JSON representation evolves incompatibly before `.roproj` re
 - ADR-0023 and the `.roproj/v1` specifications — separate canonical editable
   tree and wire contract
 - ADR-0025 and `portable-package-v1.md` — separate Accepted portable package
-  profile; production implementation remains #3
+  profile; production codec/host/CLI implementation is supplied by #3

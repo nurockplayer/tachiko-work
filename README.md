@@ -26,6 +26,8 @@ The current product provides a complete, safe CLI-first game-balance workflow:
 - canonical identity-aware `.ro` v2 serialization plus deterministic legacy-v1 migration;
 - canonical editable `.roproj/v1` materialization, validation, and bounded
   canonicalization as an exact 18-file project tree;
+- deterministic portable-package/v1 pack, verified unpack, and read-only
+  package/tracked-source comparison over those exact project bytes;
 - deterministic formula calculation and dependency tracking;
 - semantic diff with derived formula impact;
 - guided starter creation, browsing, explanation, and typed edits;
@@ -161,6 +163,10 @@ tree:
 tachiko roproj materialize balance.ro balance.roproj
 tachiko roproj validate balance.roproj
 tachiko roproj canonicalize imported.roproj canonical.roproj
+tachiko roproj pack balance.roproj balance-portable.ro
+tachiko validate balance-portable.ro
+tachiko roproj unpack balance-portable.ro restored.roproj
+tachiko roproj compare-package balance-portable.ro balance.roproj
 ```
 
 `validate` is canonical-only: paths and bytes must already be the exact
@@ -170,9 +176,21 @@ fresh canonical tree at a distinct, absent destination. `materialize` likewise
 requires an absent output. Both operations preserve their source and never
 overwrite an existing destination or intentionally publish a partial tree.
 
+`pack` accepts only an already-exact canonical `.roproj/v1` source and emits
+the fixed 19-entry store-only ZIP32 package profile. `unpack` verifies the
+container, manifest/version, metadata and entry order, CRCs, SHA-256 payload
+root, exact payload bytes, and semantic validity before publishing the exact
+18-file tree. `compare-package` is read-only: equal roots report `consistent`;
+a mismatch changes neither side. Pack and unpack use atomic no-replace
+publication, including destination races, and admit at most 64 MiB per package
+and at most 256 nested JSON containers in `package.json` under the current host
+resource profile.
+
 These commands work in an ordinary directory without Git, GitHub, or repository
 configuration. Direct `.ro` remains a supported compatibility representation,
-and ordinary `.ro` reads do not silently convert or rewrite it as `.roproj`.
+and the direct-JSON writer remains unchanged. Readers select a portable package
+only from its exact initial ZIP signature and never silently convert or rewrite
+either representation as `.roproj`.
 
 ## Grow the balance roster
 

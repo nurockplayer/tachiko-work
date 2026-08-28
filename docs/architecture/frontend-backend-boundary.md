@@ -137,9 +137,10 @@ Accepted targets while allowing implementation to lag until #29/#30/#93–#95.
 
 Separately, #123 implements `.roproj/v1` at the storage/native host boundary
 without moving filesystem authority into workspace-engine or the interactive
-runtime. Packaged `.ro` ZIP and pack/unpack remain #3 work; optional Git/CI
-integration remains #44; hostile filesystem races, full durability/recovery,
-browser persistence, and broader host mechanisms remain Deferred.
+runtime. #3 implements packaged `.ro` codec/pack/unpack/compare at that same
+boundary, including atomic no-replace destination publication. Optional Git/CI
+integration remains #44; broader hostile source/path handling, full durability/
+recovery, browser persistence, and host mechanisms remain Deferred.
 
 No Web UI, resident session API, projection patch protocol, or browser persistence mechanism is introduced by this documentation decision.
 

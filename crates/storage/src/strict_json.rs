@@ -4,15 +4,17 @@ use serde::{
     Deserialize,
     de::{self, DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor},
 };
+use serde_json::value::RawValue;
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Inspection {
     pub(crate) version: Option<VersionToken>,
+    pub(crate) format: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum VersionToken {
-    Unsigned(u64),
+    Unsigned(String),
     Other,
 }
 
@@ -20,7 +22,14 @@ pub(crate) enum VersionToken {
 pub(crate) enum FrontendError {
     InvalidJson(serde_json::Error),
     DuplicateMember(String),
-    NestingLimit { limit: usize },
+    NestingLimit { limit: usize, actual: usize },
+}
+
+fn empty_inspection() -> Inspection {
+    Inspection {
+        version: None,
+        format: None,
+    }
 }
 
 /// Parse a single JSON value, rejecting duplicate object members.
@@ -29,7 +38,25 @@ pub(crate) enum FrontendError {
 /// JSON syntax error takes precedence over any duplicate found earlier in the
 /// input. Both passes stream through the source and discard values as they go.
 pub(crate) fn inspect(source: &str) -> Result<Inspection, FrontendError> {
-    inspect_with_recursion(source, false)
+    inspect_with_recursion(source, false, true)
+}
+
+/// Parse one JSON value while rejecting duplicate root-object members only.
+///
+/// This supports representation dispatch before a selected version owns the
+/// structure of nested future metadata.
+pub(crate) fn inspect_top_level(
+    source: &str,
+    maximum_nesting: usize,
+) -> Result<Inspection, FrontendError> {
+    let actual = json_nesting_depth(source.as_bytes());
+    if actual > maximum_nesting {
+        return Err(FrontendError::NestingLimit {
+            limit: maximum_nesting,
+            actual,
+        });
+    }
+    inspect_with_recursion(source, true, false)
 }
 
 /// Inspect `.roproj` JSON with a representation-derived nesting bound.
@@ -42,17 +69,20 @@ pub(crate) fn inspect_roproj(
     source: &str,
     maximum_nesting: usize,
 ) -> Result<Inspection, FrontendError> {
-    if exceeds_json_nesting(source.as_bytes(), maximum_nesting) {
+    let actual = json_nesting_depth(source.as_bytes());
+    if actual > maximum_nesting {
         return Err(FrontendError::NestingLimit {
             limit: maximum_nesting,
+            actual,
         });
     }
-    inspect_with_recursion(source, true)
+    inspect_with_recursion(source, true, true)
 }
 
 fn inspect_with_recursion(
     source: &str,
     disable_recursion_limit: bool,
+    check_nested_duplicates: bool,
 ) -> Result<Inspection, FrontendError> {
     let mut syntax_deserializer = serde_json::Deserializer::from_str(source);
     if disable_recursion_limit {
@@ -70,6 +100,7 @@ fn inspect_with_recursion(
     }
     let inspection = RootSeed {
         duplicate: &mut duplicate,
+        check_nested_duplicates,
     }
     .deserialize(&mut deserializer)
     .map_err(|error| match duplicate {
@@ -81,8 +112,9 @@ fn inspect_with_recursion(
     Ok(inspection)
 }
 
-fn exceeds_json_nesting(source: &[u8], maximum: usize) -> bool {
+fn json_nesting_depth(source: &[u8]) -> usize {
     let mut nesting = 0_usize;
+    let mut maximum = 0_usize;
     let mut in_string = false;
     let mut escaped = false;
     for &byte in source {
@@ -100,19 +132,18 @@ fn exceeds_json_nesting(source: &[u8], maximum: usize) -> bool {
             b'"' => in_string = true,
             b'{' | b'[' => {
                 nesting += 1;
-                if nesting > maximum {
-                    return true;
-                }
+                maximum = maximum.max(nesting);
             }
             b'}' | b']' => nesting = nesting.saturating_sub(1),
             _ => {}
         }
     }
-    false
+    maximum
 }
 
 struct RootSeed<'a> {
     duplicate: &'a mut Option<String>,
+    check_nested_duplicates: bool,
 }
 
 impl<'de> DeserializeSeed<'de> for RootSeed<'_> {
@@ -125,12 +156,14 @@ impl<'de> DeserializeSeed<'de> for RootSeed<'_> {
         deserializer.deserialize_any(ValueVisitor {
             duplicate: self.duplicate,
             root: true,
+            check_nested_duplicates: self.check_nested_duplicates,
         })
     }
 }
 
 struct ValueSeed<'a> {
     duplicate: &'a mut Option<String>,
+    check_nested_duplicates: bool,
 }
 
 impl<'de> DeserializeSeed<'de> for ValueSeed<'_> {
@@ -143,12 +176,14 @@ impl<'de> DeserializeSeed<'de> for ValueSeed<'_> {
         deserializer.deserialize_any(ValueVisitor {
             duplicate: self.duplicate,
             root: false,
+            check_nested_duplicates: self.check_nested_duplicates,
         })
     }
 }
 
 struct VersionSeed<'a> {
     duplicate: &'a mut Option<String>,
+    check_nested_duplicates: bool,
 }
 
 impl<'de> DeserializeSeed<'de> for VersionSeed<'_> {
@@ -160,6 +195,7 @@ impl<'de> DeserializeSeed<'de> for VersionSeed<'_> {
     {
         deserializer.deserialize_any(VersionVisitor {
             duplicate: self.duplicate,
+            check_nested_duplicates: self.check_nested_duplicates,
         })
     }
 }
@@ -167,6 +203,7 @@ impl<'de> DeserializeSeed<'de> for VersionSeed<'_> {
 struct ValueVisitor<'a> {
     duplicate: &'a mut Option<String>,
     root: bool,
+    check_nested_duplicates: bool,
 }
 
 impl<'de> Visitor<'de> for ValueVisitor<'_> {
@@ -180,62 +217,68 @@ impl<'de> Visitor<'de> for ValueVisitor<'_> {
     where
         E: de::Error,
     {
-        Ok(Inspection { version: None })
+        Ok(empty_inspection())
     }
 
     fn visit_i64<E>(self, _: i64) -> Result<Self::Value, E>
     where
         E: de::Error,
     {
-        Ok(Inspection { version: None })
+        Ok(empty_inspection())
     }
 
     fn visit_u64<E>(self, _: u64) -> Result<Self::Value, E>
     where
         E: de::Error,
     {
-        Ok(Inspection { version: None })
+        Ok(empty_inspection())
     }
 
     fn visit_f64<E>(self, _: f64) -> Result<Self::Value, E>
     where
         E: de::Error,
     {
-        Ok(Inspection { version: None })
+        Ok(empty_inspection())
     }
 
     fn visit_str<E>(self, _: &str) -> Result<Self::Value, E>
     where
         E: de::Error,
     {
-        Ok(Inspection { version: None })
+        Ok(empty_inspection())
     }
 
     fn visit_unit<E>(self) -> Result<Self::Value, E>
     where
         E: de::Error,
     {
-        Ok(Inspection { version: None })
+        Ok(empty_inspection())
     }
 
     fn visit_seq<A>(self, sequence: A) -> Result<Self::Value, A::Error>
     where
         A: SeqAccess<'de>,
     {
-        inspect_array(sequence, self.duplicate)?;
-        Ok(Inspection { version: None })
+        inspect_array(sequence, self.duplicate, self.check_nested_duplicates)?;
+        Ok(empty_inspection())
     }
 
     fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
     where
         A: MapAccess<'de>,
     {
-        inspect_object(map, self.duplicate, self.root)
+        if self.root || self.check_nested_duplicates {
+            inspect_object(map, self.duplicate, self.root, self.check_nested_duplicates)
+        } else {
+            ignore_object(map)?;
+            Ok(empty_inspection())
+        }
     }
 }
 
 struct VersionVisitor<'a> {
     duplicate: &'a mut Option<String>,
+    check_nested_duplicates: bool,
 }
 
 impl<'de> Visitor<'de> for VersionVisitor<'_> {
@@ -263,7 +306,7 @@ impl<'de> Visitor<'de> for VersionVisitor<'_> {
     where
         E: de::Error,
     {
-        Ok(VersionToken::Unsigned(value))
+        Ok(VersionToken::Unsigned(value.to_string()))
     }
 
     fn visit_f64<E>(self, _: f64) -> Result<Self::Value, E>
@@ -291,7 +334,7 @@ impl<'de> Visitor<'de> for VersionVisitor<'_> {
     where
         A: SeqAccess<'de>,
     {
-        inspect_array(sequence, self.duplicate)?;
+        inspect_array(sequence, self.duplicate, self.check_nested_duplicates)?;
         Ok(VersionToken::Other)
     }
 
@@ -299,19 +342,34 @@ impl<'de> Visitor<'de> for VersionVisitor<'_> {
     where
         A: MapAccess<'de>,
     {
-        inspect_object(map, self.duplicate, false)?;
+        if self.check_nested_duplicates {
+            inspect_object(map, self.duplicate, false, true)?;
+        } else {
+            ignore_object(map)?;
+        }
         Ok(VersionToken::Other)
     }
 }
 
-fn inspect_array<'de, A>(mut sequence: A, duplicate: &mut Option<String>) -> Result<(), A::Error>
+fn inspect_array<'de, A>(
+    mut sequence: A,
+    duplicate: &mut Option<String>,
+    check_nested_duplicates: bool,
+) -> Result<(), A::Error>
 where
     A: SeqAccess<'de>,
 {
-    while sequence
-        .next_element_seed(ValueSeed { duplicate })?
-        .is_some()
-    {}
+    if check_nested_duplicates {
+        while sequence
+            .next_element_seed(ValueSeed {
+                duplicate,
+                check_nested_duplicates,
+            })?
+            .is_some()
+        {}
+    } else {
+        while sequence.next_element::<IgnoredAny>()?.is_some() {}
+    }
     Ok(())
 }
 
@@ -319,12 +377,14 @@ fn inspect_object<'de, A>(
     mut map: A,
     duplicate: &mut Option<String>,
     root: bool,
+    check_nested_duplicates: bool,
 ) -> Result<Inspection, A::Error>
 where
     A: MapAccess<'de>,
 {
     let mut members = HashSet::new();
     let mut version = None;
+    let mut format = None;
 
     while let Some(member) = map.next_key::<String>()? {
         if !members.insert(member.clone()) {
@@ -332,21 +392,50 @@ where
             return Err(de::Error::custom("duplicate JSON object member"));
         }
 
-        if root && member == "format_version" {
-            version = Some(map.next_value_seed(VersionSeed { duplicate })?);
+        if root && !check_nested_duplicates && member == "format" {
+            let raw = map.next_value::<Box<RawValue>>()?;
+            format = serde_json::from_str::<String>(raw.get()).ok();
+        } else if root && !check_nested_duplicates && member == "format_version" {
+            let raw = map.next_value::<Box<RawValue>>()?;
+            version = Some(version_from_raw(raw.get()));
+        } else if root && member == "format_version" {
+            version = Some(map.next_value_seed(VersionSeed {
+                duplicate,
+                check_nested_duplicates,
+            })?);
         } else {
-            map.next_value_seed(ValueSeed { duplicate })?;
+            map.next_value_seed(ValueSeed {
+                duplicate,
+                check_nested_duplicates,
+            })?;
         }
     }
 
     Ok(Inspection {
         version: root.then_some(version).flatten(),
+        format: root.then_some(format).flatten(),
     })
+}
+
+fn version_from_raw(raw: &str) -> VersionToken {
+    if !raw.is_empty() && raw.bytes().all(|byte| byte.is_ascii_digit()) {
+        VersionToken::Unsigned(raw.to_owned())
+    } else {
+        VersionToken::Other
+    }
+}
+
+fn ignore_object<'de, A>(mut map: A) -> Result<(), A::Error>
+where
+    A: MapAccess<'de>,
+{
+    while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{FrontendError, VersionToken, inspect, inspect_roproj};
+    use super::{FrontendError, VersionToken, inspect, inspect_roproj, inspect_top_level};
 
     #[test]
     fn records_a_root_unsigned_format_version() {
@@ -354,7 +443,7 @@ mod tests {
 
         assert!(matches!(
             inspection.version,
-            Some(VersionToken::Unsigned(1))
+            Some(VersionToken::Unsigned(ref version)) if version == "1"
         ));
     }
 
@@ -363,6 +452,32 @@ mod tests {
         let error = inspect(r#"{"format_version":2,"future":{"a":1,"\u0061":2}}"#).unwrap_err();
 
         assert!(matches!(error, FrontendError::DuplicateMember(member) if member == "a"));
+    }
+
+    #[test]
+    fn top_level_inspection_ignores_nested_duplicates_only() {
+        assert!(
+            inspect_top_level(
+                r#"{"format":"future","format_version":2,"future":{"a":1,"a":2}}"#,
+                16,
+            )
+            .is_ok()
+        );
+        assert!(matches!(
+            inspect_top_level(r#"{"format_version":2,"format_version":3}"#, 16),
+            Err(FrontendError::DuplicateMember(member)) if member == "format_version"
+        ));
+        let inspection = inspect_top_level(
+            r#"{"format":"future","format_version":18446744073709551616}"#,
+            16,
+        )
+        .unwrap();
+        assert_eq!(inspection.format.as_deref(), Some("future"));
+        assert!(matches!(
+            inspection.version,
+            Some(VersionToken::Unsigned(ref version))
+                if version == "18446744073709551616"
+        ));
     }
 
     #[test]
@@ -386,7 +501,7 @@ mod tests {
 
         assert!(matches!(
             inspect(r#"{"format_version":0}"#).unwrap().version,
-            Some(VersionToken::Unsigned(0))
+            Some(VersionToken::Unsigned(ref version)) if version == "0"
         ));
     }
 
@@ -409,7 +524,10 @@ mod tests {
         assert!(inspect_roproj(r#"{"text":"[[{{\\\"}}]]"}"#, 1).is_ok());
         assert!(matches!(
             inspect_roproj(r#"{"nested":[{}]}"#, 2),
-            Err(FrontendError::NestingLimit { limit: 2 })
+            Err(FrontendError::NestingLimit {
+                limit: 2,
+                actual: 3,
+            })
         ));
     }
 

@@ -40,10 +40,11 @@ output. These operations preserve their source and do not require Git.
 This is a transitional implementation state, not a reversal of ADR-0003.
 ADR-0023 fixes the `.roproj/v1` durable representation contract. ADR-0025
 fixes the deterministic portable-package v1 envelope and integrity root over
-that exact tree. The packaged `.ro` ZIP codec and CLI pack/unpack are not yet
-implemented under #3. Optional Git/CI integration remains #44, and hostile
-container/security plus broader race/durability work retain their existing
-owners and Deferred status.
+that exact tree. Issue #3 implements the packaged `.ro` pure codec, bounded
+native pack/unpack and comparison workflows, fail-closed content framing, and
+CLI composition. Optional Git/CI integration remains #44; broader hostile-
+container/security and durability work retain their existing owners and
+Deferred status.
 
 ## Canonical Git working representation
 
@@ -65,7 +66,7 @@ layout and DTO contracts live in
 [`roproj-layout-v1.md`](../specs/roproj-layout-v1.md) and
 [`roproj-format.md`](../specs/roproj-format.md).
 
-## Target portable representation
+## Portable representation
 
 Portable package v1 is a derived 19-entry, store-only ZIP32 envelope:
 
@@ -88,11 +89,14 @@ automatically overwritten, synchronized, or merged.
 
 ## Rule
 
-- Current product behavior must document direct `.ro` as the implemented ordinary persistence format and `.roproj/v1` as an implemented explicit canonical materialization/validation/canonicalization path.
+- Current product behavior must document direct `.ro` as the implemented
+  ordinary writer, `.roproj/v1` as the implemented canonical editable path,
+  and portable-package/v1 as the implemented derived single-file artifact.
 - Architecture documents must document `.roproj` as the Accepted canonical editable target under ADR-0003.
 - `.roproj/v1` documents must follow ADR-0023's Accepted physical and wire contract without treating paths, shard names, or line numbers as semantic identity.
 - Portable package v1 implementations must consume ADR-0025's exact envelope and integrity contract without introducing another semantic schema.
 - `.ro` packaging sophistication must not block semantic-core or user-workflow validation.
 - The system provides explicit deterministic direct `.ro` → `.roproj/v1`
-  materialization but does not yet provide packaged `.ro` ZIP pack/unpack or
-  implicit ordinary-open conversion.
+  materialization plus exact `.roproj/v1` → packaged `.ro` pack and verified
+  unpack. Package reads decode in memory and never implicitly rewrite either
+  representation.

@@ -3,12 +3,13 @@
 mod direct_ro;
 mod legacy_direct_ro;
 mod migration;
+mod portable_package;
 mod roproj;
 mod strict_json;
 
 use std::{
-    fs::{self, OpenOptions},
-    io::{self, Write},
+    fs::{File, OpenOptions},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
     str::Utf8Error,
 };
@@ -17,6 +18,14 @@ use direct_ro::v2::{CodecError as V2CodecError, DocumentV2};
 use strict_json::{FrontendError, VersionToken, inspect};
 use tachiko_semantic_core::{Diagnostic, Document, validate_document};
 use thiserror::Error;
+
+pub use portable_package::{
+    PORTABLE_PACKAGE_V1_MAX_ARCHIVE_BYTES, PortablePackageError, VerifiedPortablePackageV1,
+    compare_portable_package_with_roproj, compare_verified_package_with_roproj,
+    decode_portable_package_v1, encode_portable_package_v1, pack_roproj,
+    portable_package_payload_root, publish_portable_package, publish_portable_package_from_roproj,
+    publish_unpacked_roproj, read_portable_package, read_portable_package_source, unpack_roproj,
+};
 
 pub use roproj::{
     CanonicalRoProjectFile, CanonicalRoProjectV1, ROPROJ_V1_FORMAT_VERSION, ROPROJ_V1_PATHS,
@@ -35,6 +44,8 @@ pub const V2_MAX_NUMBER_TOKEN_BYTES: usize = 256;
 
 #[derive(Debug, Error)]
 pub enum FormatError {
+    #[error(transparent)]
+    PortablePackage(#[from] PortablePackageError),
     #[error("invalid .ro UTF-8: {source}")]
     InvalidUtf8 {
         #[source]
@@ -158,6 +169,10 @@ pub fn from_str(source: &str) -> Result<Document, FormatError> {
 /// Returns a machine-distinguishable [`FormatError`] at the first failed stage
 /// of the storage reader pipeline.
 pub fn from_bytes(source: &[u8]) -> Result<Document, FormatError> {
+    if source.starts_with(&[0x50, 0x4b, 0x03, 0x04]) {
+        let package = decode_portable_package_v1(source)?;
+        return decode_roproj_v1(package.tree());
+    }
     let (source_text, version) = inspect_envelope(source)?;
     let document = match version {
         LEGACY_FORMAT_VERSION => {
@@ -222,11 +237,60 @@ pub fn canonicalize_legacy_v1(source: &[u8]) -> Result<String, FormatError> {
 /// propagates parsing, compatibility, migration, and validation errors.
 pub fn load(path: impl AsRef<Path>) -> Result<Document, FormatError> {
     let path = path.as_ref();
-    let source = fs::read(path).map_err(|source| FormatError::Read {
+    let source = read_bounded_storage_input(path)?;
+    from_bytes(&source)
+}
+
+fn read_bounded_storage_input(path: &Path) -> Result<Vec<u8>, FormatError> {
+    let mut file = File::open(path).map_err(|source| FormatError::Read {
         path: path.to_owned(),
         source,
     })?;
-    from_bytes(&source)
+    let mut prefix = [0_u8; 4];
+    let mut prefix_length = 0;
+    while prefix_length < prefix.len() {
+        let read = file
+            .read(&mut prefix[prefix_length..])
+            .map_err(|source| FormatError::Read {
+                path: path.to_owned(),
+                source,
+            })?;
+        if read == 0 {
+            break;
+        }
+        prefix_length += read;
+    }
+    let is_package = prefix_length == prefix.len() && prefix == [0x50, 0x4b, 0x03, 0x04];
+    let limit = if is_package {
+        PORTABLE_PACKAGE_V1_MAX_ARCHIVE_BYTES
+    } else {
+        NORMAL_DIRECT_JSON_MAX_INPUT_BYTES
+    };
+    let mut source = Vec::with_capacity(prefix_length);
+    source.extend_from_slice(&prefix[..prefix_length]);
+    let remaining = limit.saturating_sub(prefix_length).saturating_add(1);
+    file.take(u64::try_from(remaining).expect("storage input limits fit u64"))
+        .read_to_end(&mut source)
+        .map_err(|source| FormatError::Read {
+            path: path.to_owned(),
+            source,
+        })?;
+    if source.len() > limit {
+        if is_package {
+            return Err(PortablePackageError::ResourceLimit {
+                resource: "archive bytes",
+                limit,
+                actual: source.len(),
+            }
+            .into());
+        }
+        return Err(FormatError::ResourceLimit {
+            resource: "input",
+            limit,
+            actual: source.len(),
+        });
+    }
+    Ok(source)
 }
 
 /// Save a semantic document using canonical direct-ro/v2 encoding.
@@ -272,9 +336,9 @@ fn inspect_envelope(source: &[u8]) -> Result<(&str, u32), FormatError> {
     let inspection = inspect(source).map_err(map_frontend_error)?;
     let version = match inspection.version {
         None => return Err(FormatError::VersionMissing),
-        Some(VersionToken::Unsigned(version)) => {
-            u32::try_from(version).map_err(|_| FormatError::VersionMalformed)?
-        }
+        Some(VersionToken::Unsigned(version)) => version
+            .parse::<u32>()
+            .map_err(|_| FormatError::VersionMalformed)?,
         Some(VersionToken::Other) => return Err(FormatError::VersionMalformed),
     };
     if version == 0 {
@@ -424,7 +488,7 @@ fn map_frontend_error(error: FrontendError) -> FormatError {
     match error {
         FrontendError::InvalidJson(source) => FormatError::InvalidJson { source },
         FrontendError::DuplicateMember(member) => FormatError::DuplicateMember { member },
-        FrontendError::NestingLimit { limit } => FormatError::InvalidRepresentation {
+        FrontendError::NestingLimit { limit, .. } => FormatError::InvalidRepresentation {
             message: format!("JSON nesting exceeds representation limit {limit}"),
             source: None,
         },

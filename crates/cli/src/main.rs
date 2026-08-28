@@ -191,6 +191,27 @@ enum RoProjectCommands {
         /// New canonical .roproj tree to create; existing paths are never overwritten
         output: PathBuf,
     },
+    /// Pack an exact canonical .roproj tree into a new portable .ro artifact
+    Pack {
+        /// Exact canonical .roproj/v1 source tree
+        input: PathBuf,
+        /// New portable .ro artifact; existing paths are never overwritten
+        output: PathBuf,
+    },
+    /// Unpack a verified portable .ro artifact into a new exact .roproj tree
+    Unpack {
+        /// Portable package-v1 .ro artifact
+        input: PathBuf,
+        /// New .roproj tree; existing paths are never overwritten
+        output: PathBuf,
+    },
+    /// Compare a verified package with an exact canonical tracked .roproj tree
+    ComparePackage {
+        /// Portable package-v1 .ro artifact
+        package: PathBuf,
+        /// Canonical tracked .roproj/v1 source
+        tracked: PathBuf,
+    },
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -259,6 +280,13 @@ fn execute(cli: Cli) -> Result<String, commands::CommandError> {
             RoProjectCommands::Validate { path } => commands::validate_roproject(&path),
             RoProjectCommands::Canonicalize { input, output } => {
                 commands::canonicalize_roproject(&input, &output)
+            }
+            RoProjectCommands::Pack { input, output } => commands::pack_roproject(&input, &output),
+            RoProjectCommands::Unpack { input, output } => {
+                commands::unpack_roproject(&input, &output)
+            }
+            RoProjectCommands::ComparePackage { package, tracked } => {
+                commands::compare_roproject_package(&package, &tracked)
             }
         },
         Commands::Set {

@@ -51,8 +51,11 @@ All notable changes to Tachiko Work are documented in this file.
 - An Accepted `tachiko.portable-package/v1` specification and executable
   evidence fix one deterministic ZIP32 envelope over exact `.roproj/v1`
   bytes, a path-separated SHA-256 payload root, exact byte round trips, and
-  tracked-source conflict behavior. The packaged `.ro` ZIP codec and CLI
-  pack/unpack remain unimplemented.
+  tracked-source conflict behavior. Production storage now implements the
+  bounded exact-byte codec, fail-closed content framing, atomic no-replace
+  pack/unpack, and read-only source comparison. `tachiko roproj pack`,
+  `unpack`, and `compare-package` compose those operations with workspace
+  validation; fixed package evidence agrees on native and WASM.
 - Production `tachiko-storage` now encodes and decodes the canonical 18-file
   `.roproj/v1` tree. Explicit `tachiko roproj materialize`, `validate`, and
   `canonicalize` commands provide a standalone host workflow with staged,

@@ -6,7 +6,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use tachiko_storage::{load, materialize_roproj, save};
+use tachiko_storage::{load, materialize_roproj, pack_roproj, save};
 use tachiko_workspace_engine::{
     Document, DocumentId, DocumentOverview, Entity, EntityId, Expression, FieldAddress,
     FieldDefinition, FieldId, FieldKey, FieldKind, FieldRef, FieldType, Number, Schema, SchemaId,
@@ -468,6 +468,146 @@ fn roproj_workflow_operates_outside_git() {
 }
 
 #[test]
+fn portable_package_workflow_operates_outside_git_and_preserves_exact_tree() {
+    let temp = TempDir::new();
+    let direct = temp.path().join("balance-direct.ro");
+    let source = temp.path().join("balance.roproj");
+    let first = temp.path().join("balance.ro");
+    let second = temp.path().join("balance-copy.ro");
+    let restored = temp.path().join("restored.roproj");
+    save(&direct, &balance_document(100.0)).unwrap();
+    materialize_roproj(&source, &balance_document(100.0)).unwrap();
+    let source_before = snapshot_tree(&source);
+
+    for output in [&first, &second] {
+        let packed = run_from(
+            &[
+                "roproj",
+                "pack",
+                source.to_str().unwrap(),
+                output.to_str().unwrap(),
+            ],
+            temp.path(),
+        );
+        assert!(
+            packed.status.success(),
+            "{}",
+            String::from_utf8_lossy(&packed.stderr)
+        );
+    }
+    assert_eq!(fs::read(&first).unwrap(), fs::read(&second).unwrap());
+    assert_eq!(snapshot_tree(&source), source_before);
+
+    let validated = run_from(&["validate", first.to_str().unwrap()], temp.path());
+    assert!(
+        validated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&validated.stderr)
+    );
+    let unpacked = run_from(
+        &[
+            "roproj",
+            "unpack",
+            first.to_str().unwrap(),
+            restored.to_str().unwrap(),
+        ],
+        temp.path(),
+    );
+    assert!(
+        unpacked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&unpacked.stderr)
+    );
+    assert_eq!(snapshot_tree(&restored), source_before);
+
+    let compared = run_from(
+        &[
+            "roproj",
+            "compare-package",
+            first.to_str().unwrap(),
+            source.to_str().unwrap(),
+        ],
+        temp.path(),
+    );
+    assert!(
+        compared.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compared.stderr)
+    );
+    assert!(String::from_utf8_lossy(&compared.stdout).contains("consistent"));
+
+    let source_package_before = fs::read(&first).unwrap();
+    let repeated_pack = run_from(
+        &[
+            "roproj",
+            "pack",
+            source.to_str().unwrap(),
+            first.to_str().unwrap(),
+        ],
+        temp.path(),
+    );
+    let repeated_unpack = run_from(
+        &[
+            "roproj",
+            "unpack",
+            first.to_str().unwrap(),
+            restored.to_str().unwrap(),
+        ],
+        temp.path(),
+    );
+    assert!(!repeated_pack.status.success());
+    assert!(!repeated_unpack.status.success());
+    assert_eq!(fs::read(&first).unwrap(), source_package_before);
+    assert_eq!(snapshot_tree(&restored), source_before);
+}
+
+#[test]
+fn portable_package_cli_rejects_workspace_invalid_snapshots_before_publication() {
+    let temp = TempDir::new();
+    let invalid_tree = temp.path().join("invalid.roproj");
+    let package = temp.path().join("invalid.ro");
+    let cli_package = temp.path().join("cli-invalid.ro");
+    let restored = temp.path().join("restored.roproj");
+    let mut document = balance_document(100.0);
+    document
+        .entities
+        .get_mut("sword")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("attack_interval"), number(0.0));
+    materialize_roproj(&invalid_tree, &document).unwrap();
+
+    let rejected_pack = run_from(
+        &[
+            "roproj",
+            "pack",
+            invalid_tree.to_str().unwrap(),
+            cli_package.to_str().unwrap(),
+        ],
+        temp.path(),
+    );
+    assert!(!rejected_pack.status.success());
+    assert!(String::from_utf8_lossy(&rejected_pack.stderr).contains("divided by zero"));
+    assert!(!cli_package.exists());
+
+    pack_roproj(&invalid_tree, &package).unwrap();
+    let package_before = fs::read(&package).unwrap();
+    let rejected_unpack = run_from(
+        &[
+            "roproj",
+            "unpack",
+            package.to_str().unwrap(),
+            restored.to_str().unwrap(),
+        ],
+        temp.path(),
+    );
+    assert!(!rejected_unpack.status.success());
+    assert!(String::from_utf8_lossy(&rejected_unpack.stderr).contains("divided by zero"));
+    assert!(!restored.exists());
+    assert_eq!(fs::read(&package).unwrap(), package_before);
+}
+
+#[test]
 fn roproj_canonicalize_rejects_an_output_nested_inside_its_source() {
     let temp = TempDir::new();
     let input = temp.path().join("source.roproj");
@@ -688,6 +828,9 @@ fn roproj_help_exposes_explicit_operations() {
     assert!(stdout.contains("materialize"));
     assert!(stdout.contains("validate"));
     assert!(stdout.contains("canonicalize"));
+    assert!(stdout.contains("pack"));
+    assert!(stdout.contains("unpack"));
+    assert!(stdout.contains("compare-package"));
     assert!(stdout.contains("never-overwritten"));
 }
 

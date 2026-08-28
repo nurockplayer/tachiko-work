@@ -1,4 +1,4 @@
-mod host;
+pub(crate) mod host;
 pub(crate) mod v1;
 
 pub use host::{

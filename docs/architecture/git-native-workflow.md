@@ -25,12 +25,12 @@ repository or Git configuration.
 ADR-0003 is Accepted and defines `project.roproj/` as the canonical editable/source representation for the mature Git-native workflow, with `.ro` as a portable artifact. ADR-0023 fixes the `.roproj/v1` canonical tree and entity-sharding contract. ADR-0025 fixes portable-package v1 as a deterministic envelope over those exact source bytes.
 
 The production `.roproj/v1` pure codec and native host workflow are implemented
-by #123, not merely selected as representation direction. The packaged `.ro`
-ZIP codec and CLI pack/unpack remain #3 work, while optional Git attributes,
-diff/CI integration, and generated-artifact policy remain #44 work. Hostile
-filesystem races, full durability/recovery, and broader host hardening remain
-separately Deferred; #123's staged absent-destination publication does not
-resolve them.
+by #123, not merely selected as representation direction. Issue #3 implements
+the packaged `.ro` codec, exact pack/unpack, read-only comparison, and real
+atomic no-replace destination publication. Optional Git attributes, diff/CI
+integration, and generated-artifact policy remain #44 work. Broader hostile
+source/path races, full durability/recovery, and host hardening remain
+separately Deferred.
 
 In v1, Git paths and JSONL line positions are materialization coordinates only.
 Entity identity comes from the stable ID inside the decoded record. A
