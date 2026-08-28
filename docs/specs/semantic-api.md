@@ -11,6 +11,9 @@ under [ADR-0026](../decisions/ADR-0026-scoped-semantic-authorization-and-approva
 Runtime ownership, resident interactive topology, host separation, explicit
 snapshot boundaries, and native/WASM semantic parity are Accepted under
 [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md).
+The M04 logical formula-reasoning Query, read-only scenario Query, and typed
+formula-update Command semantics are Accepted by ADR-0020's Issue #32
+amendment.
 Exact Rust APIs, complete operation catalogue, wire schemas, transports,
 proposal/revision encodings, session mechanics, and several result/projection
 shapes remain Provisional or Deferred as marked below.
@@ -32,10 +35,14 @@ to prove an active Delegated occurrence, delegates typed proposal/execution to
 it, and projects disclosure-safe machine outcomes while rejecting raw mutation
 and host effects. The complete operation catalogue, authentication, transports,
 and wire/SDK contract remain Provisional or Deferred.
+The M04 formula-reasoning, scenario, and formula-update contracts are not yet
+implemented; a separate implementation Issue must own the first
+provider-neutral workspace/CLI vertical slice.
 
 Decision issues: [#10](https://github.com/nurockplayer/tachiko-work/issues/10),
 [#27](https://github.com/nurockplayer/tachiko-work/issues/27),
-[#28](https://github.com/nurockplayer/tachiko-work/issues/28)
+[#28](https://github.com/nurockplayer/tachiko-work/issues/28),
+[#32](https://github.com/nurockplayer/tachiko-work/issues/32)
 
 ## Purpose
 
@@ -181,6 +188,235 @@ An intent equivalent to changing a typed field value by `EntityId + FieldId` can
 be a semantic command. An arbitrary mutation of an internal Rust field or JSON
 path is not the stable product contract merely because an adapter can express
 one mechanically.
+
+## M04 formula reasoning and scenario Queries
+
+ADR-0020 promotes the following logical M04 operations without freezing their
+external names, DTOs, Rust layout, transport identifiers, or placement in a
+complete API catalogue.
+
+### Formula reasoning Query
+
+A bounded formula-reasoning Query targets one formula-valued field by stable
+semantic identity in one semantic context. Its structured result preserves, as
+requested and applicable:
+
+- the target stable identity;
+- the complete typed bound expression meaning, including typed operators,
+  normalized literals, and stable references, without exposing an internal
+  Rust AST layout as public API;
+- stable-ID direct inputs and direct dependents;
+- the authoritative ADR-0018 calculation outcome;
+- deterministic dependency and affected-subject facts; and
+- applicable ADR-0019 validation/diagnostic facts.
+
+Human keys and canonical authoring text MAY accompany that result as
+presentation projections. They do not replace stable targeting or the bound
+expression meaning, and ADR-0018 projection failure emits no fabricated
+copyable source. Optional natural-language explanation consumes this
+structured result; it is not an authoritative result field and may neither
+recalculate nor override it.
+
+The shared application authority obtains every calculation, dependency,
+impact, and validation fact from the existing semantic/formula engines. A
+first-party client or AI adapter MUST NOT maintain an independent evaluator,
+dependency graph, or validation path.
+
+### Read-only scenario Query
+
+The logical M04 scenario request contains:
+
+```text
+exact source semantic revision/context, including deterministic validation context
++ bounded ordered collection of typed Number overrides
++ bounded set of requested stable result/inspection targets
+```
+
+Before resolving any semantic identity, the trusted application boundary MUST
+perform bounded, disclosure-independent envelope admission using request-local
+facts only. It enforces the applicable finite request profile, structural shape,
+duplicate override targets, duplicate requested-target normalization, and
+ADR-0018 Number representation/normalization. These checks MUST NOT dereference
+a source or target, inspect semantic state, or expose anything beyond the
+caller-supplied invalidity. Exact thresholds and representation remain
+Provisional.
+
+After envelope admission and before semantic classification or external
+exposure, the boundary performs internal, non-disclosing resolution against the
+exact source snapshot only as needed to derive the actual document-scope
+occurrence and applicable ADR-0026 disclosure-scope atoms, including actual
+`EntityField` schema membership. It derives and enforces Query authority from
+those trusted facts; request identities or caller-supplied membership MUST NOT
+establish scope. If the document-scope occurrence cannot be proven, the
+boundary fails closed. If that occurrence is proven but a narrower actual scope
+cannot be derived safely, it fails closed or requires broader explicit scope
+within that same occurrence. Without sufficient actual or broader source and
+override coverage, it returns one disclosure-safe scenario denial without
+source- or override-specific facts and before source/target classification,
+candidate derivation, calculation, or validation.
+
+After authorization, each override is semantically classified and must identify
+by stable semantic identity one existing field whose current semantic value is
+a Number, not a Formula. Each supplies one admitted ADR-0018 `Number`;
+normalization preserves request order. Duplicate override targets, non-finite
+Numbers, and requests beyond the applicable finite profile fail envelope
+admission. Missing or wrong-typed override targets fail only after authorized
+semantic classification.
+
+Requested result/inspection targets form a stable-identity set. Duplicate
+requested-target occurrences normalize to one member, and target request order
+has no semantic meaning. Exact result ordering is a Provisional projection
+detail.
+
+After the scenario envelope is admitted, each normalized requested target
+follows the same internal non-disclosing resolution, actual-scope derivation,
+and Query-authorization order above. Only sufficient actual scope, or broader
+explicit scope within the same proven document occurrence when narrower actual
+target scope cannot be derived safely, permits semantic classification or
+external exposure. The target may then be classified against the exact source
+snapshot. If it resolves to an existing semantic subject and supported M04
+formula-reasoning result/inspection facet, it yields the applicable requested
+structured facts; otherwise it yields structured unresolved-target or
+unsupported-kind failure evidence preserving the requested stable identity and
+expected/actual kind where applicable. An identity absent from the exact source
+snapshot yields the unresolved-target family without claiming whether it never
+existed or was removed elsewhere; target-history lookup is not authoritative
+scenario input. Without sufficient actual or broader coverage, the target
+instead yields one disclosure-safe denial without target-specific facts. Each
+target therefore has exactly one outcome; one unsuccessful target does not
+suppress outcomes for independently resolvable targets. The application
+authority MUST NOT silently omit, retarget, or resolve a requested target
+against another revision.
+
+The source context pins the effective deterministic ADR-0019 validator
+configuration. That same configuration governs baseline and transient-candidate
+validation; ambient host validator state is not an authoritative scenario
+input.
+
+The application authority:
+
+1. resolves the exact source snapshot without rebasing it;
+2. derives one transient candidate and applies the normalized overrides as one
+   hypothetical input set, not as sequential publications;
+3. runs the authoritative full formula-calculation oracle and applicable full
+   semantic validation needed for the baseline and candidate outcomes, using
+   the pinned validator configuration for both; and
+4. returns structured baseline/scenario evidence without publishing or
+   persisting the candidate.
+
+Before returning any scenario evidence, the trusted application boundary
+derives disclosure requirements from the complete underlying outcome and the
+trusted source/candidate relationships for every subject or fact the projection
+would reveal. This includes baseline and scenario outcomes, changed or affected
+subjects, dependencies, impact, validation/diagnostic facts, and their related
+stable evidence. It enforces applicable ADR-0026 Query coverage for all of them.
+
+Evidence outside live coverage MAY be safely reduced only when the reduction
+reveals no unauthorized identity, existence, kind, relationship, diagnostic, or
+other semantic fact and does not present an incomplete subject/fact set as
+complete. If the required scenario or explanation meaning cannot survive that
+reduction, the affected target outcome or entire scenario projection MUST be a
+disclosure-safe denial. Exact redaction/projection mechanics and wire spelling
+remain Provisional.
+
+The authorized result projection preserves, as applicable:
+
+- the exact source revision/context reference and validation
+  configuration/provenance sufficient to distinguish any configuration change
+  that can change returned validation facts;
+- the normalized ordered stable-target/typed-Number override set;
+- authoritative baseline and scenario formula outcomes for the requested
+  subjects;
+- deterministic changed and affected stable subjects available from the
+  current engines;
+- applicable validation/diagnostic outcomes; and
+- dependency facts sufficient to explain why a requested result changed.
+
+Before ADR-0026 disclosure projection, equal exact source revision, effective
+deterministic validator configuration, normalized overrides, and requested
+targets produce equal underlying semantic scenario outcomes. Live Query
+authority may safely reduce exposed evidence or replace an affected target or
+scenario outcome with a disclosure-safe denial; it MUST NOT change the transient
+candidate or underlying outcome, and principal/Grant state is not scenario
+meaning. The normalized override collection preserves override request order as
+reproducibility evidence; it does not make the overrides sequential.
+Requested-target order remains non-semantic, and output ordering is
+projection-only. Exact normalization encoding, finite limits, validator
+configuration/profile identifiers, revision-token encoding, result field
+names, and wire representation remain Provisional.
+
+Invalid scenario input, source formula failure or cycle, candidate calculation
+failure, or validation failure returns the applicable structured failure facts
+and publishes nothing. Requested-target failures return the per-target outcomes
+defined above and likewise publish nothing. A scenario is neither canonical
+state nor a SemanticPatch, branch, transaction, saved object, or mutation
+proposal.
+
+Formula/schema/structure mutation inside a scenario, parameter sweeps,
+optimization, solver/statistical behavior, randomness, and persisted scenario
+objects are Deferred.
+
+Model-generated prose, provider/model identity, wall-clock time, Git metadata,
+UI coordinates, and storage paths are not scenario meaning.
+
+## M04 formula-update Command
+
+One logical formula-update Command expresses normal typed semantic mutation.
+Its exact semantic meaning contains:
+
+- one stable formula target identity;
+- the complete accepted typed bound formula expression;
+- every stable reference in that expression; and
+- every command-owned semantic precondition required by the Accepted formula
+  contract.
+
+Formula authoring source is bounded input to parse, bind, and type-check against
+the exact semantic base. Failure at that boundary creates no admissible formula
+Command. A successful authoring projection is not the proposal meaning: the
+complete typed bound expression and stable references are fixed before ADR-0024
+proposal identity is issued.
+
+Bounded source-shape or syntax evidence that requires no semantic lookup MAY
+describe request-local facts only. For target/reference resolution, binding, or
+type-checking against the exact base, the trusted application boundary performs
+the work internally without disclosure, derives the actual ADR-0026 Query
+requirements for every semantic subject or fact in the resulting authoring or
+admission evidence, and enforces live coverage before external projection.
+Without sufficient coverage it MUST return a disclosure-safe admission denial
+without subject-specific evidence. Internally retained diagnostics do not grant
+their external disclosure, and an authoring/admission failure issues neither an
+admissible Command nor a proposal occurrence. Propose authority never
+substitutes for this Query coverage.
+
+Review and execution use only the existing lifecycle:
+
+```text
+formula-update Command
+  -> Propose
+  -> immutable revision-pinned SemanticPatch
+  -> candidate / semantic diff / dependency impact / validation
+  -> authorization and exact Approval when required
+  -> Execute
+```
+
+Changing the target, bound expression, any stable reference, command-owned
+precondition, semantic base, or batch order changes ADR-0024 exact-change
+meaning and cannot reuse the same proposal occurrence. Invalid, rebound,
+stale-target, or cycle-inducing formula updates are rejected by the existing
+formula, validation, stale-base, and operation-gate contracts and publish
+nothing.
+
+The trusted application layer applies the authoring/admission disclosure law
+above, derives Formula-class write requirements, and derives every disclosure
+scope exposed by diff, dependency, calculation, or validation evidence. Query
+authority for formula reasoning or scenarios does not imply Propose or Execute.
+Propose does not imply Query or Execute. Preview outside live Query authority is
+denied or safely reduced. Delegated-origin or Delegated-authority Execute uses
+ADR-0026's existing exact finite Human Approval; successful validation or
+scenario evaluation grants no authority.
+
+There is no `FormulaPatch`, formula-specific approval token, AI-only mutation
+API, or second formula proposal vocabulary.
 
 ## Query, Propose, and Execute
 
@@ -729,6 +965,64 @@ code as an opaque machine finding according to the relevant transport mapping.
 It MUST NOT require an exhaustive known-code switch to derive operation gate
 policy.
 
+## M04 formula/scenario conformance evidence
+
+The separate implementation Issue must exercise the Accepted logical contract
+with provider-neutral structured fixtures. At minimum, the current game-balance
+domain must demonstrate:
+
+1. inspection and authoritative evaluation of a DPS-style bound formula;
+2. deterministic stable-ID direct-input and direct-dependent facts;
+3. one Number override scenario that changes requested derived values while
+   proving that canonical semantic revision/state identity is unchanged, that
+   no publication or persistence event occurred, and that canonical
+   representation remains byte-for-byte or structurally unchanged;
+4. repeated equal source revision, effective deterministic validator
+   configuration, normalized overrides, and requested targets producing equal
+   underlying structured semantic outcomes before disclosure projection; equal
+   Query disclosure authority producing equal exposed target outcomes; and a
+   changed validator configuration being distinguished whenever it changes
+   validation facts;
+5. invalid override; unresolved and unsupported-kind requested targets;
+   division/evaluation failure; validation failure; and source-cycle cases
+   returning structured evidence with no publication, with each otherwise
+   admitted requested target producing exactly one outcome and an unresolved
+   target revealing no target-history claim;
+6. a valid typed formula update becoming one ADR-0024 SemanticPatch whose exact
+   binding contains the complete bound expression and references;
+7. invalid, rebound/stale-target, and cycle-inducing formula updates failing
+   through the existing admission, validation, or gate families while proving
+   unchanged canonical semantic revision/state identity and no canonical
+   semantic publication; an authoring or admission failure issuing no proposal
+   occurrence and retaining semantic-base-dependent diagnostics internally
+   unless Query-authorized for external projection; a later validation, gate, or
+   stale rejection retaining immutable non-authoritative proposal and diagnostic
+   evidence only when a reviewable proposal was validly issued; and each
+   command's authoritative semantic transition publishing atomically in full or
+   not at all;
+8. Query disclosure limits applying independently to reasoning, scenarios,
+   formula authoring/admission, and proposal preview evidence, including
+   request-local syntax evidence revealing no semantic-base fact; trusted
+   non-disclosing target/reference resolution, binding, and type-checking before
+   Query-authorized authoring/admission projection or a disclosure-safe denial;
+   before any scenario source/target resolution, finite-envelope rejection,
+   duplicate override-target rejection, and duplicate requested-target
+   normalization, all revealing request-local facts only; trusted non-disclosing
+   resolution of actual document occurrence and `EntityField` membership before
+   scenario authorization; caller-supplied membership granting nothing; an
+   unprovable document occurrence failing closed; broader scope applying only
+   within the same proven occurrence; insufficient source/override coverage
+   denying before classification, exposure, or candidate derivation; an
+   insufficiently covered requested target yielding only its disclosure-safe
+   denial; and unauthorized dependency, impact, affected-subject, or diagnostic
+   evidence being safely reduced without false completeness or causing a
+   disclosure-safe target or scenario denial; and
+9. Delegated formula Execute using ADR-0026's existing exact finite Human
+   Approval and Formula-class footprint without new formula-specific evidence.
+
+These are semantic observations, not a requirement for shared fixture bytes,
+Rust types, command names, or transport encoding.
+
 ## SemanticPatch conformance scenarios
 
 Future implementation and transport mappings MUST preserve these logical
@@ -749,8 +1043,10 @@ fixtures without requiring common bytes or Rust types:
 Conformance also covers unsupported Semantic API compatibility, reuse of one
 proposal identity with different content, generated-ID binding, and equivalent
 Stable native/WASM outcomes where the same capability is exposed. Issue #29
-implements current field-value/batch lifecycle fixtures; complete catalogue,
-runtime, and transport conformance remains #93 and later work.
+implements current field-value/batch lifecycle fixtures. Formula reasoning,
+scenario, and formula-update conformance remains for the separate
+implementation Issue required by #32; complete catalogue, runtime, and
+transport conformance remains #93 and later work.
 
 ## Stability classification
 
@@ -783,6 +1079,13 @@ runtime, and transport conformance remains #93 and later work.
 | Exact Rust/wire `ValidationReport` shape | Provisional |
 | Gate outcome distinct from diagnostic severity | Accepted |
 | Formula Stage 4/5 facts remain ADR-0018/ADR-0019 authority | Accepted |
+| Bounded formula-reasoning Query structured meaning and shared-engine requirement | Accepted under ADR-0020 / #32 |
+| Exact-revision, Number-override scenario Query is transient and non-publishing | Accepted under ADR-0020 / #32 |
+| Scenario provenance, baseline/outcome, affected-subject, validation, and dependency meaning | Accepted under ADR-0020 / #32 |
+| Typed formula-update Command binds complete bound meaning before proposal identity | Accepted under ADR-0020 / #32 |
+| Formula-update reuse of SemanticPatch and ADR-0026 authorization/Approval | Accepted under ADR-0020 / #32 |
+| Exact operation names, family identifiers, request limits, normalization encoding, and result DTOs | Provisional |
+| Production formula-reasoning/scenario/formula-update implementation | Not implemented / separate Issue |
 | Capability-addressability of operation/family | Accepted principle |
 | Capability/scope/Grant/Approval/provenance meaning | Accepted under ADR-0026 |
 | Exact authorization identifiers/DTOs/storage/wire representation | Provisional / Deferred |
@@ -846,6 +1149,9 @@ to semantic core by virtue of using the API.
 - exact runtime commit/swap/locking/cloning mechanism;
 - Worker lifecycle/loading/startup/memory behavior;
 - proposal-ID/revision-token field encoding;
+- exact formula-reasoning, scenario, and formula-update operation identifiers,
+  family IDs, finite request limits, normalization representation, and result
+  DTO fields;
 - canonical proposal bytes, hash, digest, signature, or MAC;
 - exact Approval/capability/Grant/provenance/expiry/replay/revocation DTO or
   wire format;
@@ -855,6 +1161,8 @@ to semantic core by virtue of using the API.
 - `.roproj` physical layout;
 - generic CRUD/JSON Patch;
 - generic transaction scripting language;
+- persisted scenarios, scenario mutation, parameter sweeps, optimization,
+  randomness, statistics, or a generic data-analysis/query IR;
 - event sourcing / operation log / undo history;
 - complete Stable operation catalogue;
 - stable public Rust SDK; or
@@ -875,4 +1183,4 @@ to semantic core by virtue of using the API.
 - [Semantic authorization](semantic-authorization.md)
 - [Diagnostics contract](diagnostics-contract.md)
 - [Validation engine](validation-engine.md)
-- Issues #10, #17, #27, #28, #29, #93, #94, #95, #104
+- Issues #10, #17, #27, #28, #29, #32, #93, #94, #95, #104

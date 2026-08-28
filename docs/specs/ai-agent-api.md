@@ -12,7 +12,10 @@ inference advisory rather than authoritative. ADR-0026 establishes
 domain-scoped Human/Delegated principals, independent capabilities, stable-ID
 semantic scopes, trusted `AuthorizationFootprint` derivation, exact finite
 Human Approval, expiry/replay/revocation, minimum provenance, and
-external-effect separation. Exact identifiers, DTOs, storage,
+external-effect separation. ADR-0020's Issue #32 amendment accepts the logical
+formula-reasoning Query, read-only scenario Query, and typed formula-update
+Command shared by AI and every other first-party client. Exact identifiers,
+DTOs, storage,
 projection/redaction, lifecycle implementation, runtime placement, wire
 formats, and promotion DTOs remain Provisional or Deferred as owned elsewhere.
 
@@ -28,7 +31,9 @@ be reused as an AI credential. Raw semantic/storage mutation and host effects
 are explicitly denied. The current Rust DTOs and code spellings are not the
 public Semantic API/wire contract. No general schema-inference, freeform-
 promotion, authentication/session/transport, or host-effect capability pipeline
-is implemented.
+is implemented. The M04 formula-reasoning, scenario, and formula-update
+Semantic API operations are also not yet implemented; their first
+provider-neutral workspace/CLI slice requires a separate implementation Issue.
 
 ## Principle
 
@@ -52,6 +57,8 @@ AI must not simulate mouse/keyboard usage as the primary architecture and must n
 - immutable revision-pinned SemanticPatch occurrence and exact-change binding;
 - authoritative validation/gating;
 - formula outcome meaning;
+- M04 structured formula reasoning, read-only scenario, and typed
+  formula-update meaning;
 - semantic atomicity;
 - capability-addressability;
 - trusted disclosure/write footprint, exact Human Approval, and provenance
@@ -284,6 +291,23 @@ AI operations should be:
 
 Model-generated statements such as `validated=true`, `approved=true`, high confidence, or inferred schema conformance never substitute for deterministic Tachiko validation or trusted authorization/approval evidence.
 
+## M04 formula operations
+
+An AI adapter may consume the Accepted formula-reasoning and scenario Queries
+only through the shared provider-neutral Semantic API. It receives structured
+bound-expression, calculation, dependency/impact, validation, and scenario
+provenance facts within live Query disclosure authority. Generated explanation
+is an optional projection over those facts; it does not recompute or become
+formula authority. A Query needs no mutation Approval merely because its caller
+is Delegated.
+
+An AI-originated formula update uses the normal typed formula-update Command,
+ADR-0024 SemanticPatch, and ADR-0026 Formula-class Propose/Execute and exact
+Approval rules. The adapter cannot introduce an AI-only scenario evaluator,
+`FormulaPatch`, approval token, operation family, or mutation path. Successful
+reasoning, scenario evaluation, or validation grants no proposal or execution
+authority.
+
 ## Formula suggestions
 
 Implemented formula suggestions:
@@ -296,10 +320,10 @@ Implemented formula suggestions:
 
 These behaviors are current implementation evidence constrained by the Accepted
 formula/validation contracts. They do not provide ADR-0024 occurrence identity,
-base or compatibility binding, generated-ID coverage, or batch semantics. A
-future SemanticPatch formula command binds the complete typed bound formula and
-stable references; the current `Suggestion` DTO is not stabilized as that
-contract.
+base or compatibility binding, generated-ID coverage, or batch semantics. The
+Accepted but unimplemented formula-update Command binds the complete typed bound
+formula and stable references before proposal identity; the current
+`Suggestion` DTO is not stabilized as that contract.
 
 ## Project Memory
 

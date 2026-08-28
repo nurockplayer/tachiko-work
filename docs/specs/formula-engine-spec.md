@@ -14,7 +14,8 @@ full outcome is the correctness oracle and legacy fail-first calculation is
 only its compatibility projection.
 
 Authority: ADR-0014, ADR-0015, ADR-0016, ADR-0017, and ADR-0018. Decision
-record: #24.
+record: #24. ADR-0020's Issue #32 amendment owns the M04 Semantic API
+composition over this engine; that API composition is not yet implemented.
 
 ## Purpose and scope
 
@@ -377,6 +378,32 @@ normalized dependency outcomes. Exact hash, collection, residency, and eviction
 mechanisms are Provisional. Parallel evaluation is Deferred; if added later it
 must be observationally equivalent to the serial oracle.
 
+## M04 Semantic API composition boundary
+
+ADR-0020's Issue #32 amendment promotes formula reasoning, read-only scenario
+evaluation, and a typed formula-update Command at the Semantic API/workspace
+boundary. It does not create new formula-engine meaning.
+
+- Formula reasoning projects the existing typed bound expression, stable
+  dependencies/dependents, authoritative calculation outcome, and applicable
+  validation facts. Exact public projection types are not the internal Rust
+  AST contract.
+- A scenario derives one transient candidate from an exact source snapshot,
+  applies one bounded ordered set of stable-ID overrides to fields whose
+  current semantic values are Numbers rather than Formulas, and invokes this
+  specification's same full calculation oracle. Workspace validation then
+  applies ADR-0019 to that candidate. No scenario publishes canonical state or
+  creates a second evaluator, dependency graph, or failure policy.
+- A formula-update authoring request uses the existing bounded parse, bind,
+  type-check, static-dependency, and validation pipeline. Its Semantic API
+  Command binds the complete typed expression and stable references before
+  ADR-0024 proposal identity is issued.
+
+Scenario provenance, authorization, proposal lifecycle, and result projection
+belong to the Semantic API/application boundary, not this pure engine. The
+first provider-neutral implementation and conformance evidence require a
+separate implementation Issue.
+
 ## Function and capability boundary
 
 Accepted Milestone 02 functions are only the pure, total-on-valid-input
@@ -465,6 +492,8 @@ stable IDs, and bound AST on rejection.
 - The portable conformance corpus executes the same production implementation
   natively and as `wasm32-unknown-unknown` and compares complete stable formula
   observations. It is not an independent second-language implementation.
+- No production Semantic API formula-reasoning, scenario, or formula-update
+  operation is implemented by the Issue #32 authority amendment.
 
 ## Deferred language features
 
@@ -472,7 +501,9 @@ stable IDs, and bound AST on rejection.
 - conditional expressions and comparisons;
 - lookups and schema-level computed defaults;
 - user-defined or extension functions;
-- simulation and optimization planners;
+- formula/schema/structure mutation inside scenarios;
+- persisted scenario objects, parameter sweeps, simulation, optimization,
+  solver/statistical behavior, and randomness;
 - cross-document references;
 - persisted dependency indexes or calculated-value caches;
 - exact integer, decimal, fixed-point, and money types; and
@@ -485,9 +516,11 @@ stable IDs, and bound AST on rejection.
 - [ADR-0016](../decisions/ADR-0016-milestone-02-rust-crate-layering.md)
 - [ADR-0017](../decisions/ADR-0017-versioned-storage-and-canonical-representation.md)
 - [ADR-0018](../decisions/ADR-0018-bound-formulas-and-deterministic-binary64.md)
+- [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md)
 - [Formula numeric semantics evidence](../research/2026-08-22-formula-numeric-semantics.md)
 - [Canonical JSON profile](canonical-json-profile.md)
 - [#23](https://github.com/nurockplayer/tachiko-work/issues/23)
 - [#24](https://github.com/nurockplayer/tachiko-work/issues/24)
+- [#32](https://github.com/nurockplayer/tachiko-work/issues/32)
 - [#40](https://github.com/nurockplayer/tachiko-work/issues/40)
 - [#74](https://github.com/nurockplayer/tachiko-work/issues/74)
