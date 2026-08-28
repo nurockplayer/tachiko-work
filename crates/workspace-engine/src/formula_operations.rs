@@ -466,10 +466,14 @@ impl PatchLifecycle {
                 .iter()
                 .chain(&projected.affected_fields)
                 .map(|field| {
-                    self.field_requirement(document, OperationFamily::NumberOverrideScenario, field)
+                    self.field_or_document_requirement(
+                        document_scope,
+                        document,
+                        OperationFamily::NumberOverrideScenario,
+                        field,
+                    )
                 })
-                .collect::<Result<BTreeSet<_>, _>>()
-                .map_err(|_| PatchLifecycleError::ScopeDerivationFailed)?;
+                .collect::<BTreeSet<_>>();
             if self.authorize_query(principal, &requirements, now).is_err() {
                 impact = None;
             }

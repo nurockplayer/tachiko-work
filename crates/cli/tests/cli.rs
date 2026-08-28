@@ -1579,10 +1579,9 @@ fn formula_inspect_emits_structured_exact_snapshot_reasoning() {
 
     let first = successful_stdout(&arguments);
     let second = successful_stdout(&arguments);
+    assert_eq!(first, second);
     let result: serde_json::Value = serde_json::from_slice(&first).unwrap();
-    let repeated: serde_json::Value = serde_json::from_slice(&second).unwrap();
     assert_eq!(result["document"], "balance");
-    assert_eq!(result["source_revision"], repeated["source_revision"]);
     assert!(
         result["source_revision"]
             .as_str()
@@ -1604,16 +1603,10 @@ fn formula_inspect_emits_structured_exact_snapshot_reasoning() {
     );
     assert_eq!(result["outcome"]["validation"]["is_valid"], true);
 
-    let changed_input = temp.path().join("changed.ro");
-    save(&changed_input, &balance_document(60.0)).unwrap();
-    let changed_arguments = [
-        "formula",
-        "inspect",
-        changed_input.to_str().unwrap(),
-        "sword.dps",
-    ];
+    fs::remove_file(&input).unwrap();
+    save(&input, &balance_document(60.0)).unwrap();
     let changed: serde_json::Value =
-        serde_json::from_slice(&successful_stdout(&changed_arguments)).unwrap();
+        serde_json::from_slice(&successful_stdout(&arguments)).unwrap();
     assert_ne!(result["source_revision"], changed["source_revision"]);
 }
 
