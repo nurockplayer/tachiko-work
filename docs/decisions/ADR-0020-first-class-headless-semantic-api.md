@@ -218,6 +218,14 @@ one exact source semantic revision/context
 + one bounded set of requested stable result/inspection targets
 ```
 
+Before resolving or classifying the source context or any override target, the
+trusted application boundary derives and enforces the applicable ADR-0026 Query
+disclosure scope from the request's stable identities. If sufficient source or
+override scope cannot be established, it denies the scenario as a whole without
+source- or override-specific facts and before admission or candidate derivation.
+It must not reveal whether an unauthorized override target exists or which
+semantic kind it has.
+
 Each override targets by stable semantic identity one existing field whose
 current semantic value is a Number, not a Formula. An override target occurs at
 most once. Normalization applies ADR-0018 Number normalization and preserves

@@ -232,6 +232,14 @@ exact source semantic revision/context, including deterministic validation conte
 + bounded set of requested stable result/inspection targets
 ```
 
+Before resolving or classifying the source context or any override target, the
+trusted application boundary derives and enforces the applicable ADR-0026 Query
+disclosure scope from the request's stable identities. If sufficient source or
+override scope cannot be established, it returns one disclosure-safe scenario
+denial without source- or override-specific facts and before semantic admission,
+candidate derivation, calculation, or validation. It MUST NOT reveal whether an
+unauthorized override target exists or which semantic kind it has.
+
 Each override identifies by stable semantic identity one existing field whose
 current semantic value is a Number, not a Formula, and supplies one ADR-0018
 `Number`. Each override target occurs at most once. Normalization applies
@@ -932,7 +940,10 @@ domain must demonstrate:
 7. invalid, rebound/stale-target, and cycle-inducing formula updates failing
    through the existing admission, validation, or gate families;
 8. Query disclosure limits applying independently to reasoning, scenarios, and
-   proposal preview evidence; and
+   proposal preview evidence, including an unauthorized scenario source or
+   override being denied before resolution/classification or candidate
+   derivation and an unauthorized requested target yielding only its
+   disclosure-safe denial; and
 9. Delegated formula Execute using ADR-0026's existing exact finite Human
    Approval and Formula-class footprint without new formula-specific evidence.
 
