@@ -300,11 +300,13 @@ deterministic validator configuration, normalized overrides, and requested
 targets produce equal underlying semantic scenario outcomes. Live Query
 authority may replace an exposed target outcome with the disclosure-safe denial
 above; it MUST NOT change the transient candidate or underlying outcome, and
-principal/Grant state is not scenario meaning. Ordering in the normalized
-result is request-preserving reproducibility evidence; it does not make the
-overrides sequential. Exact normalization encoding, finite limits, validator
-configuration/profile identifiers, revision-token encoding, result field
-names, and wire representation remain Provisional.
+principal/Grant state is not scenario meaning. The normalized override
+collection preserves override request order as reproducibility evidence; it
+does not make the overrides sequential. Requested-target order remains
+non-semantic, and output ordering is projection-only. Exact normalization
+encoding, finite limits, validator configuration/profile identifiers,
+revision-token encoding, result field names, and wire representation remain
+Provisional.
 
 Invalid scenario input, source formula failure or cycle, candidate calculation
 failure, or validation failure returns the applicable structured failure facts
