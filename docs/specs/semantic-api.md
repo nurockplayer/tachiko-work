@@ -232,26 +232,36 @@ exact source semantic revision/context, including deterministic validation conte
 + bounded set of requested stable result/inspection targets
 ```
 
-Before semantic classification or external exposure, the trusted application
-boundary performs internal, non-disclosing resolution against the exact source
-snapshot only as needed to derive the actual document-scope occurrence and
-applicable ADR-0026 disclosure-scope atoms, including actual `EntityField`
-schema membership. It derives and enforces Query authority from those trusted
-facts; request identities or caller-supplied membership MUST NOT establish
-scope. If the document-scope occurrence cannot be proven, the boundary fails
-closed. If that occurrence is proven but a narrower actual scope cannot be
-derived safely, it fails closed or requires broader explicit scope within that
-same occurrence. Without sufficient actual or broader source and override
-coverage, it returns one disclosure-safe scenario denial without source- or
-override-specific facts and before semantic admission, candidate derivation,
-calculation, or validation.
+Before resolving any semantic identity, the trusted application boundary MUST
+perform bounded, disclosure-independent envelope admission using request-local
+facts only. It enforces the applicable finite request profile, structural shape,
+duplicate override targets, duplicate requested-target normalization, and
+ADR-0018 Number representation/normalization. These checks MUST NOT dereference
+a source or target, inspect semantic state, or expose anything beyond the
+caller-supplied invalidity. Exact thresholds and representation remain
+Provisional.
 
-Each override identifies by stable semantic identity one existing field whose
-current semantic value is a Number, not a Formula, and supplies one ADR-0018
-`Number`. Each override target occurs at most once. Normalization applies
-ADR-0018 Number normalization and preserves request order. A duplicate override
-target; a missing or wrong-typed override target; a non-finite Number; or a
-request beyond the applicable finite profile is an invalid scenario request.
+After envelope admission and before semantic classification or external
+exposure, the boundary performs internal, non-disclosing resolution against the
+exact source snapshot only as needed to derive the actual document-scope
+occurrence and applicable ADR-0026 disclosure-scope atoms, including actual
+`EntityField` schema membership. It derives and enforces Query authority from
+those trusted facts; request identities or caller-supplied membership MUST NOT
+establish scope. If the document-scope occurrence cannot be proven, the
+boundary fails closed. If that occurrence is proven but a narrower actual scope
+cannot be derived safely, it fails closed or requires broader explicit scope
+within that same occurrence. Without sufficient actual or broader source and
+override coverage, it returns one disclosure-safe scenario denial without
+source- or override-specific facts and before source/target classification,
+candidate derivation, calculation, or validation.
+
+After authorization, each override is semantically classified and must identify
+by stable semantic identity one existing field whose current semantic value is
+a Number, not a Formula. Each supplies one admitted ADR-0018 `Number`;
+normalization preserves request order. Duplicate override targets, non-finite
+Numbers, and requests beyond the applicable finite profile fail envelope
+admission. Missing or wrong-typed override targets fail only after authorized
+semantic classification.
 
 Requested result/inspection targets form a stable-identity set. Duplicate
 requested-target occurrences normalize to one member, and target request order
@@ -977,16 +987,19 @@ domain must demonstrate:
    each command's authoritative semantic transition publishing atomically in
    full or not at all;
 8. Query disclosure limits applying independently to reasoning, scenarios, and
-   proposal preview evidence, including trusted non-disclosing resolution of
-   actual document occurrence and `EntityField` membership before scenario
-   authorization; caller-supplied membership granting nothing; an unprovable
-   document occurrence failing closed; broader scope applying only within the
-   same proven occurrence; insufficient source/override coverage denying before
-   classification, exposure, or candidate derivation; an insufficiently covered
-   requested target yielding only its disclosure-safe denial; and unauthorized
-   dependency, impact, affected-subject, or diagnostic evidence being safely
-   reduced without false completeness or causing a disclosure-safe target or
-   scenario denial; and
+   proposal preview evidence, including, before any source/target resolution,
+   finite-envelope rejection, duplicate override-target rejection, and duplicate
+   requested-target normalization, all revealing request-local facts only;
+   trusted non-disclosing resolution of actual document occurrence and
+   `EntityField` membership before scenario authorization; caller-supplied
+   membership granting nothing; an unprovable document occurrence failing
+   closed; broader scope applying only within the same proven occurrence;
+   insufficient source/override coverage denying before classification,
+   exposure, or candidate derivation; an insufficiently covered requested target
+   yielding only its disclosure-safe denial; and unauthorized dependency,
+   impact, affected-subject, or diagnostic evidence being safely reduced without
+   false completeness or causing a disclosure-safe target or scenario denial;
+   and
 9. Delegated formula Execute using ADR-0026's existing exact finite Human
    Approval and Formula-class footprint without new formula-specific evidence.
 

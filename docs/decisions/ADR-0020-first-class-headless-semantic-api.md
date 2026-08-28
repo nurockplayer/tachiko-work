@@ -218,18 +218,23 @@ one exact source semantic revision/context
 + one bounded set of requested stable result/inspection targets
 ```
 
-Before semantic classification or external exposure, the trusted application
-boundary performs internal, non-disclosing resolution against the exact source
-snapshot only as needed to derive the actual document-scope occurrence and
-applicable ADR-0026 disclosure-scope atoms, including actual `EntityField`
-schema membership. It derives and enforces Query authority from those trusted
-facts; request identities or caller-supplied membership never establish scope.
+Before resolving any semantic identity, the boundary performs bounded,
+disclosure-independent envelope admission using only request-local facts. It
+enforces the applicable finite profile, request shape, duplicate-override rule,
+and typed-Number representation; it neither dereferences a source/target nor
+exposes semantic state. After envelope admission and before semantic
+classification or external exposure, the trusted application boundary performs
+internal, non-disclosing resolution against the exact source snapshot only as
+needed to derive the actual document-scope occurrence and applicable ADR-0026
+disclosure-scope atoms, including actual `EntityField` schema membership. It
+derives and enforces Query authority from those trusted facts; request
+identities or caller-supplied membership never establish scope.
 If the document-scope occurrence cannot be proven, the boundary fails closed.
 If that occurrence is proven but a narrower actual scope cannot be derived
 safely, it fails closed or requires broader explicit scope within that same
 occurrence. Without sufficient actual or broader source and override coverage,
 it denies the scenario as a whole without source- or override-specific facts and
-before semantic admission or candidate derivation.
+before source/target classification or candidate derivation.
 
 Each override targets by stable semantic identity one existing field whose
 current semantic value is a Number, not a Formula. An override target occurs at
