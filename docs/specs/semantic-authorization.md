@@ -667,7 +667,10 @@ Active -> Consumed | Revoked | Expired
   immediately before returning a semantic no-publication result or installing
   the candidate, so principal, Approval, Grant, policy, expiry, and Query-result
   disclosure are rechecked at the actual boundary decision. A host omission
-  safely reduces a Stale/Conflict result to authorization denial. Concrete
+  safely reduces a Stale/Conflict result to authorization denial. A later
+  post-install verification failure remains in trusted history/receipt state
+  but is returned only when that fresh boundary Query decision permits the
+  detail; otherwise the executor receives authorization denial. Concrete
   revision concurrency and state installation remain #93 work; broader
   transaction/recovery and history protocols remain with #11/#12.
 - If a failure leaves the trusted boundary unable to prove whether publication
@@ -719,6 +722,13 @@ execution policy, and does not replace the independently selected effective
 policy bound if Approval is later issued. Returned evidence is separately
 filtered by the disclosure contract. Propose publishes nothing and does not
 imply later Execute authority.
+
+Issue #29's provisional registry assigns a non-reusable ProposalId only after
+the base is current, the complete Command/AtomicBatch can be planned, and
+Propose authority is proved over the derived write requirements. Stale or
+unplannable pre-issuance attempts retain no ProposalRecord and reserve no ID;
+an authorized proposal that later fails the authoritative validation gate keeps
+its terminal failure record.
 
 ### Issue Approval
 

@@ -939,8 +939,6 @@ impl PatchLifecycle {
 
         if patch.exact_change.base_revision != *current_revision {
             let originator = record.originator.clone();
-            record.history.push(PatchLifecycleState::Stale);
-            self.proposals.insert(patch.id.clone(), record);
             return if self
                 .authorize_query(&originator, &self.document_disclosure(), now)
                 .is_ok()
@@ -955,8 +953,6 @@ impl PatchLifecycle {
             Ok(planned) => planned,
             Err(source) => {
                 let originator = record.originator.clone();
-                record.history.push(PatchLifecycleState::Rejected);
-                self.proposals.insert(patch.id.clone(), record);
                 if self
                     .authorize_query(&originator, &self.document_disclosure(), now)
                     .is_err()
@@ -1264,20 +1260,26 @@ impl PatchLifecycle {
             formula_impacts: evaluated.formula_impacts,
             validation_report: Some(evaluated.validation_report),
         };
+        let can_disclose = publication_authorization.can_disclose;
         self.execution_receipts.push(receipt.clone());
-        receipt.validation_report = Some(self.verify_publication(
+        let verification_report = match self.verify_publication(
             proposal_id,
             publication,
             &current_revision,
             &resulting_revision,
             &candidate,
-        )?);
+        ) {
+            Ok(report) => report,
+            Err(error) if can_disclose => return Err(error),
+            Err(_) => return Err(PatchLifecycleError::AuthorizationDenied),
+        };
+        receipt.validation_report = Some(verification_report);
         receipt.verified = true;
         self.append_state(proposal_id, PatchLifecycleState::Verified);
         if let Some(stored) = self.execution_receipts.last_mut() {
             *stored = receipt.clone();
         }
-        if !publication_authorization.can_disclose {
+        if !can_disclose {
             receipt.authorization_footprint = None;
             receipt.semantic_changes.clear();
             receipt.formula_impacts.clear();

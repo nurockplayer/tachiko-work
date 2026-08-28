@@ -687,10 +687,10 @@ fn middle_command_failure_never_publishes_a_successful_prefix() {
 
     assert!(matches!(error, PatchLifecycleError::CommandRejected { .. }));
     assert_eq!(document, original);
-    assert_eq!(
-        lifecycle.proposal_history(&proposal).unwrap().last(),
-        Some(&PatchLifecycleState::Rejected)
-    );
+    assert!(matches!(
+        lifecycle.proposal_history(&proposal),
+        Err(PatchLifecycleError::ProposalNotFound)
+    ));
     assert!(lifecycle.execution_receipts().is_empty());
 }
 
@@ -918,6 +918,86 @@ fn missing_propose_capability_fails_closed() {
             action: AuthorizationAction::Propose
         }
     ));
+}
+
+#[test]
+fn unauthorized_failed_attempts_do_not_reserve_proposal_ids() {
+    let document = game_balance_document("game", "Game");
+    let mut lifecycle = lifecycle();
+    grant(
+        &mut lifecycle,
+        "agent-query-only",
+        "agent",
+        vec![query_requirement()],
+    );
+    let stale_id = proposal_id("unauthorized-stale-attempt");
+    let rejected_id = proposal_id("unauthorized-rejected-attempt");
+
+    let stale = lifecycle
+        .propose(
+            &document,
+            &revision("r1"),
+            ProposalRequest::new(
+                stale_id.clone(),
+                revision("r0"),
+                SemanticPatchBody::command(field_command("iron_sword", "damage", number(45.0))),
+                principal("agent"),
+            ),
+            NOW,
+        )
+        .unwrap_err();
+    let rejected = lifecycle
+        .propose(
+            &document,
+            &revision("r1"),
+            ProposalRequest::new(
+                rejected_id.clone(),
+                revision("r1"),
+                SemanticPatchBody::command(field_command("missing-entity", "damage", number(45.0))),
+                principal("agent"),
+            ),
+            NOW,
+        )
+        .unwrap_err();
+
+    assert!(matches!(stale, PatchLifecycleError::Stale));
+    assert!(matches!(
+        rejected,
+        PatchLifecycleError::CommandRejected { .. }
+    ));
+    assert!(matches!(
+        lifecycle.proposal_history(&stale_id),
+        Err(PatchLifecycleError::ProposalNotFound)
+    ));
+    assert!(matches!(
+        lifecycle.proposal_history(&rejected_id),
+        Err(PatchLifecycleError::ProposalNotFound)
+    ));
+
+    grant(
+        &mut lifecycle,
+        "agent-propose-after-failures",
+        "agent",
+        vec![mutation_requirement(
+            AuthorizationAction::Propose,
+            MutationClass::Value,
+        )],
+    );
+    for id in [stale_id, rejected_id] {
+        lifecycle
+            .propose(
+                &document,
+                &revision("r1"),
+                ProposalRequest::new(
+                    id,
+                    revision("r1"),
+                    SemanticPatchBody::command(field_command("iron_sword", "damage", number(45.0))),
+                    principal("agent"),
+                ),
+                NOW,
+            )
+            .unwrap();
+    }
 }
 
 #[test]
@@ -2090,6 +2170,68 @@ fn post_publication_verification_detects_installed_state_mismatch() {
         .unwrap_err();
 
     assert!(matches!(error, PatchLifecycleError::VerificationFailed));
+    assert_eq!(
+        lifecycle.approval_status(&approval).unwrap(),
+        ApprovalStatus::Consumed
+    );
+    assert_eq!(lifecycle.execution_receipts().len(), 1);
+    assert!(!lifecycle.execution_receipts()[0].verified);
+    assert_eq!(
+        lifecycle.proposal_history(&proposal).unwrap().last(),
+        Some(&PatchLifecycleState::Conflict)
+    );
+}
+
+#[test]
+fn write_only_executor_cannot_observe_verification_failure() {
+    let document = game_balance_document("game", "Game");
+    let mut lifecycle = lifecycle();
+    grant(
+        &mut lifecycle,
+        "agent-write-only",
+        "agent",
+        vec![
+            mutation_requirement(AuthorizationAction::Propose, MutationClass::Value),
+            mutation_requirement(AuthorizationAction::Execute, MutationClass::Value),
+        ],
+    );
+    grant(
+        &mut lifecycle,
+        "reviewer-review",
+        "reviewer",
+        vec![
+            query_requirement(),
+            mutation_requirement(AuthorizationAction::Approve, MutationClass::Value),
+        ],
+    );
+    let proposal = propose(
+        &mut lifecycle,
+        &document,
+        "proposal-private-verification",
+        SemanticPatchBody::command(field_command("iron_sword", "damage", number(45.0))),
+        "agent",
+    );
+    let approval = preview_and_approve(
+        &mut lifecycle,
+        &document,
+        &proposal,
+        "approval-private-verification",
+        "agent",
+    );
+    let mut publication =
+        TestPublication::new(document, "r1", "r2").with_mode(PublishMode::TamperAfterSuccess);
+
+    let error = lifecycle
+        .execute(
+            &proposal,
+            Some(&approval),
+            &principal("agent"),
+            &mut publication,
+            TrustedInstant::new(11),
+        )
+        .unwrap_err();
+
+    assert!(matches!(error, PatchLifecycleError::AuthorizationDenied));
     assert_eq!(
         lifecycle.approval_status(&approval).unwrap(),
         ApprovalStatus::Consumed
