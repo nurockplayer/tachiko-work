@@ -481,16 +481,10 @@ fn roproj_workflow_operates_outside_git() {
 fn read_only_semantic_commands_accept_exact_roproj_sources() {
     let temp = TempDir::new();
     let before_direct = temp.path().join("before.ro");
-    let after_direct = temp.path().join("after.ro");
     let before_project = temp.path().join("before.roproj");
-    let after_project = temp.path().join("after.roproj");
-    let direct_export = temp.path().join("direct-export.json");
-    let project_export = temp.path().join("project-export.json");
 
     save(&before_direct, &balance_document(100.0)).unwrap();
-    save(&after_direct, &balance_document(120.0)).unwrap();
     materialize_roproj(&before_project, &balance_document(100.0)).unwrap();
-    materialize_roproj(&after_project, &balance_document(120.0)).unwrap();
 
     assert!(
         run(&["validate", before_project.to_str().unwrap()])
@@ -537,6 +531,22 @@ fn read_only_semantic_commands_accept_exact_roproj_sources() {
             "read-only command diverged for {arguments:?}"
         );
     }
+}
+
+#[test]
+fn roproj_semantic_review_and_export_match_direct_sources() {
+    let temp = TempDir::new();
+    let before_direct = temp.path().join("before.ro");
+    let after_direct = temp.path().join("after.ro");
+    let before_project = temp.path().join("before.roproj");
+    let after_project = temp.path().join("after.roproj");
+    let direct_export = temp.path().join("direct-export.json");
+    let project_export = temp.path().join("project-export.json");
+
+    save(&before_direct, &balance_document(100.0)).unwrap();
+    save(&after_direct, &balance_document(120.0)).unwrap();
+    materialize_roproj(&before_project, &balance_document(100.0)).unwrap();
+    materialize_roproj(&after_project, &balance_document(120.0)).unwrap();
 
     let direct_diff = successful_stdout(&[
         "diff",
