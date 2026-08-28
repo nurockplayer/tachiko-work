@@ -1,0 +1,5 @@
+# Canonical .roproj/v1 members are UTF-8 text with normative LF endings.
+# Keep the mixed direct-JSON/package .ro extension unclassified here.
+**/*.roproj/manifest.json text eol=lf diff
+**/*.roproj/schemas.json text eol=lf diff
+**/*.roproj/entities/*.jsonl text eol=lf diff
