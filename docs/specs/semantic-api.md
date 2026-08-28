@@ -442,21 +442,23 @@ or LLM reconstruction.
 
 ### Normalized analysis definition
 
-The minimum logical request contains:
+An Analysis Query supplies one context-independent normalized analysis
+definition and one exact semantic context as its execution input. The normalized
+definition contains:
 
 ```text
-one exact semantic context
-+ one schema/type entity domain
+one schema/type entity domain
 + optional bounded explicit stable-EntityId narrowing set
 + bounded AND-only typed field predicates
 + zero or one stable FieldId grouping key
 + one or more supported result requests
 ```
 
-The explicit EntityId set MAY narrow the trusted schema/type population but MUST
-NOT establish membership, semantic scope, or Query authority. The shared
-application boundary resolves the source domain and stable targets from
-canonical semantic state.
+The exact semantic context is not part of normalized analysis definition
+identity. The explicit EntityId set MAY narrow the trusted schema/type
+population but MUST NOT establish membership, semantic scope, or Query
+authority. The shared application boundary resolves the source domain and stable
+targets from the supplied exact semantic context.
 
 Each predicate is a typed field/operator/operand constraint. It is evaluated
 against authoritative semantic values only after trusted resolution and Query
@@ -535,10 +537,12 @@ result that is too large for the current bounded profile.
 
 ### Two-context evaluation
 
-The same normalized analysis definition MAY be evaluated independently over two
-explicitly supplied exact semantic contexts. The logical result is a paired A/B
-analysis result. Neither context is inferred from session history, Git, a
-branch, a resident revision token, or current-state lookup.
+The same context-independent normalized analysis definition MAY be evaluated
+independently over two explicitly supplied exact semantic contexts. The logical
+result is a paired A/B analysis result. A/B evaluation substitutes only the
+execution context; it does not rewrite or renormalize the analysis definition.
+Neither context is inferred from session history, Git, a branch, a resident
+revision token, or current-state lookup.
 
 Two-context analysis performs no rebasing, history traversal, or implicit change
 attribution. If a consumer asks what changed semantically between contexts, the
@@ -547,13 +551,14 @@ existing semantic-diff authority remains the source of change facts.
 ### Reproducibility and lineage
 
 Before ADR-0026 disclosure projection, equal exact semantic context(s), equal
-normalized typed analysis definition, and equal deterministic configuration
-that can affect requested facts MUST produce equal underlying analysis results.
+context-independent normalized typed analysis definition, and equal
+deterministic configuration that can affect requested facts MUST produce equal
+underlying analysis results.
 
 The logical result preserves enough lineage to reproduce and review the result:
 
-- exact source semantic context or paired A/B contexts;
-- normalized typed analysis definition;
+- exact source semantic context or paired A/B contexts as execution provenance;
+- context-independent normalized typed analysis definition;
 - stable schema, field, and explicitly targeted entity identities required by
   that definition;
 - per-result derivation meaning for returned membership, groups, aggregates,
@@ -1197,8 +1202,10 @@ without promoting incidental Rust/CLI/wire shapes, at least:
    outcome for requested ungrouped `Min`/`Max`, and no synthesized empty group;
 7. one formula-backed numeric metric that demonstrably consumes ADR-0018
    calculation authority rather than a second evaluator;
-8. repeated equal exact context + normalized definition + relevant deterministic
-   configuration producing equal underlying results;
+8. repeated equal exact context(s) plus equal context-independent normalized
+   definition and relevant deterministic configuration producing equal
+   underlying results, including paired A/B evaluation that changes only the
+   supplied execution contexts and does not renormalize the definition;
 9. missing, wrong-typed, unsupported metric/group/predicate and calculation
    failure cases preserving structured failure meaning;
 10. a complete selected membership, grouped result, or per-member observation
@@ -1209,8 +1216,9 @@ without promoting incidental Rust/CLI/wire shapes, at least:
     per-member observations, result-size classification, missing-group-value
     classification, or lineage would otherwise reveal unauthorized facts,
     proving complete-or-denied behavior rather than a visible-subset aggregate;
-12. the same normalized analysis evaluated over two explicit exact semantic
-    contexts, with no history lookup or parallel revision semantics; and
+12. the same context-independent normalized analysis definition evaluated over
+    two explicit exact semantic contexts, with no history lookup, definition
+    renormalization, or parallel revision semantics; and
 13. lineage sufficient for a consumer to explain and reproduce the deterministic
     result without an LLM reconstructing selection or aggregation semantics.
 
