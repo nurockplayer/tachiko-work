@@ -533,6 +533,66 @@ fn scenario_formula_failure_uses_authoritative_validation_and_has_no_diff_impact
 }
 
 #[test]
+fn scenario_undeclared_override_returns_validation_without_diff_impact() {
+    let mut document = game_balance_document("game", "Game");
+    document
+        .entities
+        .get_mut("iron_sword")
+        .unwrap()
+        .fields
+        .insert(
+            FieldId::from("undeclared"),
+            Value::Number(Number::new(1.0).unwrap()),
+        );
+    let original = document.clone();
+    let mut lifecycle = lifecycle();
+    grant(
+        &mut lifecycle,
+        "scenario-query",
+        "agent",
+        vec![query_requirement(
+            OperationFamily::NumberOverrideScenario,
+            document_scope(),
+        )],
+    );
+
+    let result = lifecycle
+        .query_number_override_scenario(
+            &document_scope_id(),
+            &document,
+            (&revision("r1"), ValidatorConfiguration::WorkspaceFull),
+            &ScenarioRequest::new(
+                vec![NumberOverride::new(
+                    FieldRef::new("iron_sword", "undeclared"),
+                    2.0,
+                )],
+                Vec::new(),
+            ),
+            &principal("agent"),
+            NOW,
+        )
+        .unwrap();
+
+    let ScenarioOutcome::Evaluated(evaluation) = result.outcome else {
+        panic!("expected evaluated scenario");
+    };
+    assert!(
+        !evaluation
+            .baseline_validation
+            .expect("document Query exposes baseline validation")
+            .is_valid()
+    );
+    assert!(
+        !evaluation
+            .candidate_validation
+            .expect("document Query exposes candidate validation")
+            .is_valid()
+    );
+    assert!(evaluation.impact.is_none());
+    assert_eq!(document, original);
+}
+
+#[test]
 fn formula_update_binds_before_proposal_and_uses_formula_authority() {
     let document = game_balance_document("game", "Game");
     let mut lifecycle = lifecycle();
@@ -578,6 +638,75 @@ fn formula_update_binds_before_proposal_and_uses_formula_authority() {
         &BTreeSet::from([FieldRef::new("iron_sword", "damage")])
     );
     assert!(matches!(command.expression(), Expression::Add { .. }));
+}
+
+#[test]
+fn formula_update_binding_failures_use_resolvable_field_query_scopes() {
+    let document = game_balance_document("game", "Game");
+    let mut lifecycle = lifecycle();
+    grant(
+        &mut lifecycle,
+        "field-scoped-formula",
+        "agent",
+        vec![
+            query_requirement(
+                OperationFamily::FormulaUpdate,
+                field_scope("iron_sword", "weapons", "dps"),
+            ),
+            query_requirement(
+                OperationFamily::FormulaUpdate,
+                field_scope("iron_sword", "weapons", "name"),
+            ),
+            mutation_requirement(
+                AuthorizationAction::Propose,
+                OperationFamily::FormulaUpdate,
+                MutationClass::Formula,
+                field_scope("iron_sword", "weapons", "dps"),
+            ),
+            mutation_requirement(
+                AuthorizationAction::Propose,
+                OperationFamily::FormulaUpdate,
+                MutationClass::Formula,
+                field_scope("iron_sword", "weapons", "name"),
+            ),
+        ],
+    );
+
+    for (id, target, source) in [
+        (
+            "nonnumeric-target",
+            FieldRef::new("iron_sword", "name"),
+            "1",
+        ),
+        (
+            "nonnumeric-reference",
+            FieldRef::new("iron_sword", "dps"),
+            "[iron_sword.name] + 1",
+        ),
+    ] {
+        let proposal_id = ProposalId::from(id);
+        let error = lifecycle
+            .propose_formula_update(
+                &document_scope_id(),
+                &document,
+                &revision("r1"),
+                FormulaUpdateRequest::new(
+                    proposal_id.clone(),
+                    revision("r1"),
+                    target,
+                    source,
+                    principal("agent"),
+                ),
+                NOW,
+            )
+            .unwrap_err();
+
+        assert!(matches!(error, PatchLifecycleError::CommandRejected { .. }));
+        assert!(matches!(
+            lifecycle.proposal_history(&proposal_id),
+            Err(PatchLifecycleError::ProposalNotFound)
+        ));
+    }
 }
 
 #[test]

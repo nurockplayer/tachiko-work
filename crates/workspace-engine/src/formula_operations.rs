@@ -5,6 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use tachiko_formula_engine::FormulaBindError;
 use thiserror::Error;
 
 use crate::patch_lifecycle::{
@@ -565,7 +566,7 @@ impl PatchLifecycle {
             Ok(expression) => expression,
             Err(source) => {
                 let disclosure =
-                    document_requirements(document_scope, document, OperationFamily::FormulaUpdate);
+                    self.formula_update_binding_requirements(document_scope, document, &source);
                 self.require_query_for_admission(&request.originator, &disclosure, now)?;
                 return Err(PatchLifecycleError::CommandRejected {
                     source: Box::new(source),
@@ -799,6 +800,43 @@ impl PatchLifecycle {
     ) -> DisclosureRequirement {
         self.field_requirement(document, family, field)
             .unwrap_or_else(|_| document_requirement(document_scope, document, family))
+    }
+
+    fn formula_update_binding_requirements(
+        &self,
+        document_scope: &DocumentScopeId,
+        document: &Document,
+        source: &WorkspaceError,
+    ) -> BTreeSet<DisclosureRequirement> {
+        let fields = match source {
+            WorkspaceError::NonNumericFormulaField { field } => {
+                Some(BTreeSet::from([field.clone()]))
+            }
+            WorkspaceError::FormulaBinding { field, source } => match source.as_ref() {
+                FormulaBindError::Complexity(_) => Some(BTreeSet::from([field.clone()])),
+                FormulaBindError::NonNumericTarget { reference, .. } => {
+                    Some(BTreeSet::from([field.clone(), reference.clone()]))
+                }
+                FormulaBindError::Index { .. } | FormulaBindError::Address { .. } => None,
+            },
+            _ => None,
+        };
+        fields.map_or_else(
+            || document_requirements(document_scope, document, OperationFamily::FormulaUpdate),
+            |fields| {
+                fields
+                    .iter()
+                    .map(|field| {
+                        self.field_or_document_requirement(
+                            document_scope,
+                            document,
+                            OperationFamily::FormulaUpdate,
+                            field,
+                        )
+                    })
+                    .collect()
+            },
+        )
     }
 
     fn require_query_projection(
