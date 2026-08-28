@@ -78,7 +78,8 @@ conditions hold:
 
 1. current live repository authority and the Product Roadmap have been checked;
 2. durable architecture or product decisions required by the Issue are already
-   Accepted or have been explicitly supplied by the Project Steward;
+   Accepted, or the Project Steward has explicitly supplied a clearly scoped
+   Provisional implementation choice permitted by current Accepted authority;
 3. scope and acceptance criteria are sufficient for focused delivery; and
 4. no conflicting open implementation PR owns the same work.
 
