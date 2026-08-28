@@ -45,6 +45,6 @@
 ### 3. Documentation and delivery
 
 - [x] Reconcile AI API, threat/security model, architecture, changelog, and canonical register implementation-state prose.
-- [ ] Run focused tests, all-target workspace tests, formatting, strict Clippy/rustdoc/MSRV/native-WASM/package/smoke release gates.
-- [ ] Review the complete diff against #30 and Accepted authority, fix every actionable finding, and validate the exact head.
+- [x] Run focused tests, all-target workspace tests, formatting, strict Clippy/rustdoc/MSRV/native-WASM/package/smoke release gates.
+- [x] Review the complete diff against #30 and Accepted authority, fix every actionable finding, and validate the exact head.
 - [ ] Open one #30 PR, maintain one canonical `agent-handoff:v1` comment, merge with head protection after all gates, and recalibrate live Roadmap.
