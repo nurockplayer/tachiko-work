@@ -1571,6 +1571,151 @@ fn formula_set_writes_a_calculated_formula_and_prints_semantic_impact() {
 }
 
 #[test]
+fn formula_inspect_emits_structured_exact_snapshot_reasoning() {
+    let temp = TempDir::new();
+    let input = temp.path().join("balance.ro");
+    save(&input, &balance_document(50.0)).unwrap();
+    let arguments = ["formula", "inspect", input.to_str().unwrap(), "sword.dps"];
+
+    let first = successful_stdout(&arguments);
+    let second = successful_stdout(&arguments);
+    assert_eq!(first, second);
+    let result: serde_json::Value = serde_json::from_slice(&first).unwrap();
+    assert_eq!(result["document"], "balance");
+    assert!(
+        result["source_revision"]
+            .as_str()
+            .unwrap()
+            .starts_with("cli-semantic-sha256:")
+    );
+    assert_eq!(result["validator_configuration"], "workspace_full");
+    assert_eq!(result["outcome"]["kind"], "formula");
+    assert_eq!(result["outcome"]["target"]["entity"], "sword");
+    assert_eq!(result["outcome"]["target"]["field"], "dps");
+    assert_eq!(result["outcome"]["calculation"]["kind"], "value");
+    assert_eq!(result["outcome"]["calculation"]["value"], 40.0);
+    assert_eq!(
+        result["outcome"]["direct_inputs"],
+        serde_json::json!([
+            { "entity": "sword", "field": "attack_interval" },
+            { "entity": "sword", "field": "damage" }
+        ])
+    );
+    assert_eq!(result["outcome"]["validation"]["is_valid"], true);
+
+    fs::remove_file(&input).unwrap();
+    save(&input, &balance_document(60.0)).unwrap();
+    let changed: serde_json::Value =
+        serde_json::from_slice(&successful_stdout(&arguments)).unwrap();
+    assert_ne!(result["source_revision"], changed["source_revision"]);
+    assert_eq!(changed["outcome"]["calculation"]["value"], 48.0);
+}
+
+#[test]
+fn formula_inspect_preserves_structured_calculation_failure_evidence() {
+    let temp = TempDir::new();
+    let input = temp.path().join("cycle.ro");
+    let mut document = balance_document(50.0);
+    document.entities.get_mut("sword").unwrap().fields.insert(
+        FieldId::from("damage"),
+        Value::Formula(Expression::Reference(FieldRef::new("sword", "dps"))),
+    );
+    save(&input, &document).unwrap();
+
+    let result: serde_json::Value = serde_json::from_slice(&successful_stdout(&[
+        "formula",
+        "inspect",
+        input.to_str().unwrap(),
+        "sword.dps",
+    ]))
+    .unwrap();
+
+    assert_eq!(
+        result["outcome"]["calculation"],
+        serde_json::json!({
+            "kind": "failure",
+            "failure": {
+                "kind": "cycle",
+                "members": [
+                    { "entity": "sword", "field": "damage" },
+                    { "entity": "sword", "field": "dps" }
+                ]
+            }
+        })
+    );
+}
+
+#[test]
+fn formula_scenario_is_repeatable_and_never_changes_or_publishes_source_state() {
+    let temp = TempDir::new();
+    let input = temp.path().join("balance.ro");
+    save(&input, &balance_document(50.0)).unwrap();
+    let original = fs::read(&input).unwrap();
+    let arguments = [
+        "formula",
+        "scenario",
+        input.to_str().unwrap(),
+        "--override",
+        "sword.damage=45",
+        "--target",
+        "sword.dps",
+    ];
+
+    let first = successful_stdout(&arguments);
+    let second = successful_stdout(&arguments);
+
+    assert_eq!(first, second);
+    assert_eq!(fs::read(&input).unwrap(), original);
+    assert_eq!(
+        snapshot_tree(temp.path()),
+        vec![(PathBuf::from("balance.ro"), original)]
+    );
+    let result: serde_json::Value = serde_json::from_slice(&first).unwrap();
+    assert_eq!(result["outcome"]["kind"], "evaluated");
+    assert_eq!(result["normalized_overrides"][0]["value"], 45.0);
+    assert_eq!(
+        result["outcome"]["targets"][0]["outcome"]["kind"],
+        "formula"
+    );
+    assert_eq!(
+        result["outcome"]["targets"][0]["outcome"]["baseline"]["value"],
+        40.0
+    );
+    assert_eq!(
+        result["outcome"]["targets"][0]["outcome"]["candidate"]["value"],
+        36.0
+    );
+    assert_eq!(result["outcome"]["baseline_validation"]["is_valid"], true);
+    assert_eq!(result["outcome"]["candidate_validation"]["is_valid"], true);
+}
+
+#[test]
+fn formula_scenario_admits_the_request_envelope_before_loading_the_source() {
+    let temp = TempDir::new();
+    let missing = temp.path().join("missing.ro");
+
+    let output = run(&[
+        "formula",
+        "scenario",
+        missing.to_str().unwrap(),
+        "--override",
+        "sword.damage=40",
+        "--override",
+        "sword.damage=45",
+        "--target",
+        "sword.dps",
+    ]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("scenario override target 'sword.damage' occurs more than once"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("missing.ro"), "{stderr}");
+}
+
+#[test]
 fn formula_set_rejects_parse_reference_cycle_and_target_errors_without_output() {
     let temp = TempDir::new();
     let input = temp.path().join("balance.ro");
@@ -2050,5 +2195,11 @@ fn formula_help_makes_computational_authoring_discoverable() {
 
     assert!(output.status.success());
     let text = String::from_utf8(output.stdout).unwrap();
-    assert!(text.contains("Set a numeric field formula"));
+    for phrase in [
+        "Set a numeric field formula",
+        "Query structured formula reasoning",
+        "Evaluate a read-only Number-override scenario",
+    ] {
+        assert!(text.contains(phrase), "missing help text: {phrase}\n{text}");
+    }
 }

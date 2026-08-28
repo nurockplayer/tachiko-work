@@ -8,6 +8,7 @@ use std::{
 
 use serde::Serialize;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use tachiko_storage::{
     FormatError, canonicalize_roproj, compare_verified_package_with_roproj, decode_roproj_v1, load,
     load_roproj, materialize_roproj, publish_canonicalized_roproj,
@@ -15,13 +16,28 @@ use tachiko_storage::{
     read_portable_package_source, to_canonical_string,
 };
 use tachiko_workspace_engine::{
-    Document, EditPreview, FieldAddress, FieldKind, IdGenerator, MergeConflict, SemanticChange,
-    SemanticIdKind, StarterTemplate, WorkspaceError, WorkspaceMergeOutcome,
+    CalculationFailure, Document, EditPreview, ExpressionComplexityError, FieldAddress, FieldKind,
+    FieldRef, IdGenerator, MergeConflict, ReferenceFailure, SemanticChange, SemanticIdKind,
+    StarterTemplate, ValidationReport, WorkspaceError, WorkspaceMergeOutcome,
     analyze_changes as analyze_semantic_changes, analyze_field as analyze_semantic_field,
     analyze_validation as analyze_semantic_validation, calculate_fields, compare_documents,
     create_document, duplicate_entity, explain_field, inspect_document,
     merge_documents as merge_semantic_documents, overview, remove_entity, rename_entity,
     runtime_export, set_formula, set_scalar, validate as validate_semantics,
+};
+use tachiko_workspace_engine::{
+    formula_operations::{
+        FormulaCalculationOutcome, FormulaOperationError, FormulaReasoningOutcome,
+        FormulaReasoningResult, NumberOverride, ScenarioOutcome, ScenarioOverrideFailure,
+        ScenarioRequest, ScenarioResult, ScenarioTargetOutcome, SemanticValueKind,
+        ValidatorConfiguration,
+    },
+    patch_lifecycle::{
+        AuthorizationDomainId, AuthorizationPolicyVersion, DocumentScopeId, Grant, GrantId,
+        GrantRequirement, OperationFamily, PatchLifecycle, PatchLifecycleError, PolicyMeaningId,
+        PrincipalId, PrincipalKind, ScopedSemanticSubject, SemanticApiContract, SemanticRevision,
+        SemanticScope, TrustedInstant,
+    },
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -59,6 +75,12 @@ pub enum CommandError {
     InvalidFieldReference { value: String },
     #[error("analysis target '{value}' does not exist")]
     MissingAnalysisTarget { value: String },
+    #[error("invalid scenario override '{value}'; expected entity-id.field-id=number")]
+    InvalidScenarioOverride { value: String },
+    #[error(transparent)]
+    FormulaOperation(#[from] FormulaOperationError),
+    #[error(transparent)]
+    PatchLifecycle(#[from] PatchLifecycleError),
     #[error("output '{}' is the same as the input; choose a new path", path.display())]
     SameInputOutput { path: PathBuf },
     #[error(
@@ -404,6 +426,53 @@ pub fn remove_entity_document(
     ))
 }
 
+pub fn inspect_formula(path: &Path, field: &str) -> Result<String, CommandError> {
+    let document = load_read_source(path)?;
+    let target = parse_stable_field_ref(field)?;
+    let (lifecycle, scope, principal, revision) =
+        local_formula_query(&document, OperationFamily::FormulaReasoning)?;
+    let result = lifecycle.query_formula_reasoning(
+        &scope,
+        &document,
+        (&revision, ValidatorConfiguration::WorkspaceFull),
+        &target,
+        &principal,
+        TrustedInstant::new(1),
+    )?;
+    canonical_output(&formula_reasoning_output(&result))
+}
+
+pub fn run_formula_scenario(
+    path: &Path,
+    overrides: &[String],
+    targets: &[String],
+) -> Result<String, CommandError> {
+    let overrides = overrides
+        .iter()
+        .map(|value| parse_number_override(value))
+        .collect::<Result<Vec<_>, _>>()?;
+    let targets = targets
+        .iter()
+        .map(|value| parse_stable_field_ref(value))
+        .collect::<Result<Vec<_>, _>>()?;
+    let request = ScenarioRequest::new(overrides, targets);
+    request
+        .admit_envelope()
+        .map_err(FormulaOperationError::from)?;
+    let document = load_read_source(path)?;
+    let (lifecycle, scope, principal, revision) =
+        local_formula_query(&document, OperationFamily::NumberOverrideScenario)?;
+    let result = lifecycle.query_number_override_scenario(
+        &scope,
+        &document,
+        (&revision, ValidatorConfiguration::WorkspaceFull),
+        &request,
+        &principal,
+        TrustedInstant::new(1),
+    )?;
+    canonical_output(&scenario_output(&result))
+}
+
 pub fn set_formula_document(
     input: &Path,
     field: &str,
@@ -623,6 +692,252 @@ fn field_change_output(change: &SemanticChange) -> serde_json::Value {
         }),
         _ => unreachable!("field change adapter called for non-field change"),
     }
+}
+
+fn local_formula_query(
+    document: &Document,
+    family: OperationFamily,
+) -> Result<
+    (
+        PatchLifecycle,
+        DocumentScopeId,
+        PrincipalId,
+        SemanticRevision,
+    ),
+    CommandError,
+> {
+    // This executable is the local read host: successful source loading is its
+    // policy input for a fresh, read-only Delegated occurrence. The client
+    // occurrence never self-selects Human kind and receives no mutation grant.
+    let occurrence = Uuid::now_v7().to_string();
+    let scope = DocumentScopeId::from(format!("cli-document-{occurrence}"));
+    let authority = PrincipalId::from(format!("cli-host-authority-{occurrence}"));
+    let principal = PrincipalId::from(format!("cli-query-client-{occurrence}"));
+    let revision = semantic_revision_for(document)?;
+    let document_subject =
+        ScopedSemanticSubject::new(scope.clone(), document.id.clone(), SemanticScope::Document);
+    let mut lifecycle = PatchLifecycle::new(
+        AuthorizationDomainId::from(format!("cli-domain-{occurrence}")),
+        scope.clone(),
+        document.id.clone(),
+        SemanticApiContract::from("tachiko-semantic-api-provisional"),
+        AuthorizationPolicyVersion::from("cli-local-query-policy-v1"),
+        PolicyMeaningId::from("cli-local-readable-source-query"),
+    );
+    lifecycle.register_principal(authority.clone(), PrincipalKind::Human)?;
+    lifecycle.register_principal(principal.clone(), PrincipalKind::Delegated)?;
+    lifecycle.provision_grant(Grant::new(
+        GrantId::from(format!("cli-query-grant-{occurrence}")),
+        authority,
+        principal.clone(),
+        vec![GrantRequirement::query(family, document_subject)],
+        None,
+    ))?;
+    Ok((lifecycle, scope, principal, revision))
+}
+
+fn semantic_revision_for(document: &Document) -> Result<SemanticRevision, CommandError> {
+    let digest = Sha256::digest(to_canonical_string(document)?.as_bytes());
+    let mut revision = String::from("cli-semantic-sha256:");
+    for byte in digest {
+        let _ = write!(revision, "{byte:02x}");
+    }
+    Ok(SemanticRevision::from(revision))
+}
+
+fn formula_reasoning_output(result: &FormulaReasoningResult) -> serde_json::Value {
+    let outcome = match &result.outcome {
+        FormulaReasoningOutcome::Formula(facts) => json!({
+            "kind": "formula",
+            "target": facts.target,
+            "expression": facts.expression,
+            "direct_inputs": facts.direct_inputs,
+            "direct_dependents": facts.direct_dependents,
+            "affected_subjects": facts.affected_subjects,
+            "calculation": calculation_output(&facts.calculation),
+            "validation": validation_output(facts.validation_report.as_ref()),
+        }),
+        FormulaReasoningOutcome::UnresolvedTarget { target } => {
+            json!({ "kind": "unresolved_target", "target": target })
+        }
+        FormulaReasoningOutcome::UnsupportedKind { target, actual } => json!({
+            "kind": "unsupported_kind",
+            "target": target,
+            "actual": value_kind_name(*actual),
+        }),
+    };
+    json!({
+        "document": result.document,
+        "source_revision": result.context.source_revision().as_str(),
+        "validator_configuration": validator_name(result.context.validator_configuration()),
+        "outcome": outcome,
+    })
+}
+
+fn scenario_output(result: &ScenarioResult) -> serde_json::Value {
+    let outcome = match &result.outcome {
+        ScenarioOutcome::InvalidOverrides(failures) => json!({
+            "kind": "invalid_overrides",
+            "failures": failures.iter().map(override_failure_output).collect::<Vec<_>>(),
+        }),
+        ScenarioOutcome::Evaluated(evaluation) => json!({
+            "kind": "evaluated",
+            "baseline_validation": validation_output(evaluation.baseline_validation.as_ref()),
+            "candidate_validation": validation_output(evaluation.candidate_validation.as_ref()),
+            "impact": evaluation.impact.as_ref().map(|impact| json!({
+                "changed_fields": impact.changed_fields,
+                "affected_fields": impact.affected_fields,
+            })),
+            "targets": evaluation.targets.iter().map(|target| json!({
+                "target": target.target,
+                "outcome": scenario_target_output(&target.outcome),
+            })).collect::<Vec<_>>(),
+        }),
+    };
+    json!({
+        "document": result.document,
+        "source_revision": result.context.source_revision().as_str(),
+        "validator_configuration": validator_name(result.context.validator_configuration()),
+        "normalized_overrides": result.normalized_overrides.iter().map(|item| json!({
+            "target": item.target,
+            "value": item.value,
+        })).collect::<Vec<_>>(),
+        "outcome": outcome,
+    })
+}
+
+fn scenario_target_output(outcome: &ScenarioTargetOutcome) -> serde_json::Value {
+    match outcome {
+        ScenarioTargetOutcome::Formula(comparison) => json!({
+            "kind": "formula",
+            "expression": comparison.expression,
+            "direct_inputs": comparison.direct_inputs,
+            "direct_dependents": comparison.direct_dependents,
+            "baseline": calculation_output(&comparison.baseline),
+            "candidate": calculation_output(&comparison.candidate),
+        }),
+        ScenarioTargetOutcome::UnresolvedTarget => json!({ "kind": "unresolved_target" }),
+        ScenarioTargetOutcome::UnsupportedKind { actual } => {
+            json!({ "kind": "unsupported_kind", "actual": value_kind_name(*actual) })
+        }
+        ScenarioTargetOutcome::DisclosureDenied => json!({ "kind": "disclosure_denied" }),
+    }
+}
+
+fn override_failure_output(failure: &ScenarioOverrideFailure) -> serde_json::Value {
+    match failure {
+        ScenarioOverrideFailure::UnresolvedTarget { target } => {
+            json!({ "kind": "unresolved_target", "target": target })
+        }
+        ScenarioOverrideFailure::UnsupportedKind { target, actual } => json!({
+            "kind": "unsupported_kind",
+            "target": target,
+            "actual": value_kind_name(*actual),
+        }),
+    }
+}
+
+fn calculation_output(outcome: &FormulaCalculationOutcome) -> serde_json::Value {
+    match outcome {
+        FormulaCalculationOutcome::Value(value) => json!({ "kind": "value", "value": value }),
+        FormulaCalculationOutcome::Failure(failure) => {
+            json!({ "kind": "failure", "failure": calculation_failure_output(failure) })
+        }
+        FormulaCalculationOutcome::Unavailable => json!({ "kind": "unavailable" }),
+    }
+}
+
+fn calculation_failure_output(failure: &CalculationFailure) -> serde_json::Value {
+    match failure {
+        CalculationFailure::InvalidExpression { error } => json!({
+            "kind": "invalid_expression",
+            "error": expression_complexity_name(*error),
+        }),
+        CalculationFailure::InvalidReferences { targets } => json!({
+            "kind": "invalid_references",
+            "targets": targets.iter().map(|(target, reason)| json!({
+                "target": target,
+                "reason": reference_failure_name(*reason),
+            })).collect::<Vec<_>>(),
+        }),
+        CalculationFailure::Cycle { members } => json!({
+            "kind": "cycle",
+            "members": members,
+        }),
+        CalculationFailure::FailedDependencies { dependencies } => json!({
+            "kind": "failed_dependencies",
+            "dependencies": dependencies,
+        }),
+        CalculationFailure::DivisionByZero => json!({ "kind": "division_by_zero" }),
+        CalculationFailure::NonFiniteResult => json!({ "kind": "non_finite_result" }),
+    }
+}
+
+const fn expression_complexity_name(error: ExpressionComplexityError) -> &'static str {
+    match error {
+        ExpressionComplexityError::NodeLimit => "node_limit",
+        ExpressionComplexityError::DepthLimit => "depth_limit",
+        ExpressionComplexityError::CanonicalLengthLimit => "canonical_length_limit",
+    }
+}
+
+const fn reference_failure_name(failure: ReferenceFailure) -> &'static str {
+    match failure {
+        ReferenceFailure::Missing => "missing",
+        ReferenceFailure::NonNumeric => "non_numeric",
+    }
+}
+
+fn validation_output(report: Option<&ValidationReport>) -> serde_json::Value {
+    report.map_or(serde_json::Value::Null, |report| {
+        json!({
+            "is_valid": report.is_valid(),
+            "diagnostics": report.diagnostics(),
+        })
+    })
+}
+
+const fn validator_name(configuration: ValidatorConfiguration) -> &'static str {
+    match configuration {
+        ValidatorConfiguration::WorkspaceFull => "workspace_full",
+    }
+}
+
+const fn value_kind_name(kind: SemanticValueKind) -> &'static str {
+    match kind {
+        SemanticValueKind::Number => "number",
+        SemanticValueKind::Formula => "formula",
+        SemanticValueKind::Text => "text",
+        SemanticValueKind::Boolean => "boolean",
+        SemanticValueKind::Reference => "reference",
+    }
+}
+
+fn parse_stable_field_ref(value: &str) -> Result<FieldRef, CommandError> {
+    let address = parse_field_ref(value)?;
+    Ok(FieldRef::new(
+        address.entity.as_str(),
+        address.field.as_str(),
+    ))
+}
+
+fn parse_number_override(value: &str) -> Result<NumberOverride, CommandError> {
+    let Some((target, number)) = value.split_once('=') else {
+        return Err(CommandError::InvalidScenarioOverride {
+            value: value.to_owned(),
+        });
+    };
+    let target =
+        parse_stable_field_ref(target).map_err(|_| CommandError::InvalidScenarioOverride {
+            value: value.to_owned(),
+        })?;
+    let value_number =
+        number
+            .parse::<f64>()
+            .map_err(|_| CommandError::InvalidScenarioOverride {
+                value: value.to_owned(),
+            })?;
+    Ok(NumberOverride::new(target, value_number))
 }
 
 fn parse_field_ref(value: &str) -> Result<FieldAddress, CommandError> {

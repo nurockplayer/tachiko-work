@@ -60,13 +60,14 @@ architecture; formula binding/failure/numeric semantics remain governed by
 ADR-0018; stable identity by ADR-0015; storage representation by ADR-0017.
 ADR-0020's #32 amendment additionally accepts logical structured formula
 reasoning, exact-snapshot read-only scenarios, and the typed formula-update
-Command while leaving their production implementation to a separate Issue.
+Command. Issue #144 implements their first Provisional provider-neutral
+workspace/CLI slice; public wire/SDK and AI-facing mappings remain deferred.
 
 ## AI, security, and extensibility
 
 | Document | Read it for |
 | --- | --- |
-| [`ai-agent-api.md`](ai-agent-api.md) | Implemented AI-facing read/explain/suggest adapter plus provisional typed Propose/Execute hostile boundary; #32's provider-neutral logical formula-reasoning Query, exact-snapshot read-only scenario Query, and typed FormulaUpdate Command remain unimplemented shared Semantic API behavior, and current `Suggestion` remains neither SemanticPatch nor Approval |
+| [`ai-agent-api.md`](ai-agent-api.md) | Implemented AI-facing read/explain/suggest adapter plus provisional typed Propose/Execute hostile boundary; #144 implements #32's first Provisional provider-neutral formula-reasoning, exact-snapshot scenario, and FormulaUpdate workspace/CLI slice, while AI/public mappings remain deferred and current `Suggestion` remains neither SemanticPatch nor Approval |
 | [`security-model.md`](security-model.md) | Security constraints and model |
 | [`plugin-system.md`](plugin-system.md) | ADR-0028 game-engine host extension boundary; general plugin ABI/runtime/sandbox mechanics remain Deferred, while #134/#135 own narrower private/public policy |
 | [`migration-framework.md`](migration-framework.md) | Progressive migration direction and future adapter framework |

@@ -10,9 +10,9 @@ Grants, trusted footprint derivation, disclosure-gated preview, exact finite
 Human Approval, expiry/revocation/replay checks, transition-aware policy
 binding, exclusive Approval reservation, atomic semantic publication/
 consumption, verification, trusted receipts, and Query-reduced execution
-responses for the current stable-ID field-value Command family and ordered
-AtomicBatch. Issue #30's provisional `ai-api` seam now obtains identity/time
-only from trusted host context, requires this lifecycle to prove an active
+responses for the current stable-ID field-value and FormulaUpdate Command
+families and ordered AtomicBatch. Issue #30's provisional `ai-api` seam now
+obtains identity/time only from trusted host context, requires this lifecycle to prove an active
 Delegated occurrence, delegates typed Propose/Execute to it, returns disclosure-
 safe stable codes, and rejects raw mutation and host effects. A Human session
 principal is not an AI credential. Concrete identity provisioning, durable

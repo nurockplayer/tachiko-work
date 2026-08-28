@@ -39,6 +39,15 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- A provisional provider-neutral M04 vertical slice now exposes structured
+  formula-reasoning and exact-snapshot read-only Number-override scenario
+  Queries through the workspace and CLI. Typed formula updates now bind their
+  complete stable-reference meaning before entering the existing
+  SemanticPatch Propose/Execute/Approval lifecycle. The implementation reuses
+  the authoritative calculation, dependency, validation, diff, authorization,
+  and publication paths; scenarios remain transient and non-publishing, and
+  native/WASM conformance covers all three operations without defining a
+  public wire or SDK contract.
 - The Game Dev Alpha acceptance journey now starts from the durable Moonfall
   canonical `.roproj`, edits it semantically without touching internal files,
   materializes a distinct accepted tree, proves deterministic review,

@@ -122,6 +122,22 @@ enum EntityCommands {
 
 #[derive(Debug, Subcommand)]
 enum FormulaCommands {
+    /// Query structured formula reasoning from one exact loaded snapshot
+    Inspect {
+        path: PathBuf,
+        /// Stable field identity in entity-id.field-id form
+        field: String,
+    },
+    /// Evaluate a read-only Number-override scenario on one exact loaded snapshot
+    Scenario {
+        path: PathBuf,
+        /// Ordered stable field override in entity-id.field-id=number form
+        #[arg(long = "override", required = true)]
+        overrides: Vec<String>,
+        /// Stable formula target in entity-id.field-id form
+        #[arg(long = "target", required = true)]
+        targets: Vec<String>,
+    },
     /// Set a numeric field formula
     Set {
         input: PathBuf,
@@ -316,6 +332,12 @@ fn execute(cli: Cli) -> Result<String, commands::CommandError> {
             } => commands::remove_entity_document(&input, &entity, &output),
         },
         Commands::Formula { command } => match command {
+            FormulaCommands::Inspect { path, field } => commands::inspect_formula(&path, &field),
+            FormulaCommands::Scenario {
+                path,
+                overrides,
+                targets,
+            } => commands::run_formula_scenario(&path, &overrides, &targets),
             FormulaCommands::Set {
                 input,
                 field,
