@@ -54,9 +54,10 @@ AI is a first-party semantic client under ADR-0007/ADR-0020. Its reviewable
 semantic proposals use ADR-0024's immutable revision-pinned SemanticPatch rather
 than an AI-only mutation vocabulary. ADR-0026 supplies the Human/Delegated,
 capability/scope/Grant, trusted-footprint, exact-Approval, replay/revocation,
-provenance, and external-effect boundary. Concrete identifiers, DTOs, state,
-lifecycle implementation, projection/redaction, revision mechanics, and
-security enforcement remain #29/#30/#93 work.
+provenance, and external-effect boundary. Issue #29 implements the current
+provisional workspace-engine lifecycle/state seam. Concrete host identity,
+public DTOs, projection/redaction, hostile-boundary security enforcement, and
+resident revision mechanics remain #30/#93 work.
 
 ### Collaboration and future presentation
 
@@ -75,8 +76,8 @@ Use these broad cues together with the reconciliation register:
 | `.roproj` source / `.ro` portable-artifact relationship | Accepted under ADR-0003; exact `.roproj/v1` tree/DTO contract Accepted under ADR-0023 and production pure codec/native explicit host workflow implemented by #123; exact portable-package v1 contract Accepted under ADR-0025 with production codec/native host/CLI workflow implemented by #3; optional provider-neutral Git/CI composition implemented by #44 |
 | Current `.ro` v0.1 encoding details | Provisional implemented baseline |
 | Rust crate graph | Accepted Milestone 02 boundary implemented; exact Rust API remains Provisional |
-| AI as delegated semantic client | Accepted under amended ADR-0007; scoped authorization and exact Human Approval Accepted under ADR-0026; implementation pending #29/#30/#93 |
-| Revision-pinned SemanticPatch proposal | Accepted under ADR-0024; ADR-0026 consumes its structural binding without selecting canonical bytes/digest/token; Rust/wire and #29/#93 implementation Deferred |
+| AI as delegated semantic client | Accepted under amended ADR-0007; scoped authorization and exact Human Approval Accepted under ADR-0026; #29 provisional provider-neutral lifecycle implemented below the still-inert AI adapter, with #30/#93 integration remaining |
+| Revision-pinned SemanticPatch proposal | Accepted under ADR-0024; ADR-0026 consumes its structural binding without selecting canonical bytes/digest/token; #29 provisional Rust lifecycle implemented while wire and #93 resident revision mechanics remain Deferred |
 | Resident Native/WASM runtime and host separation | Accepted under ADR-0022; current snapshot-style implementation may lag; concrete session/transport/persistence mechanics Deferred |
 | Distributed collaboration beyond semantic merge | Hypothesis / Open Question |
 | Rendering/UI and cross-view projection architecture | Future hypothesis |

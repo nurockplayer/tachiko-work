@@ -16,11 +16,17 @@ proposal/revision encodings, session mechanics, and several result/projection
 shapes remain Provisional or Deferred as marked below.
 
 Implementation state: partially implemented through `workspace-engine` as the
-shared first-party application authority. Current Rust functions and result
-structures are implementation evidence, not the versioned public product
-contract. Current operations remain substantially snapshot-style; the resident
-runtime/session implementation is later work under #93–#95. No current Rust
-type implements the general SemanticPatch envelope or AtomicBatch contract.
+shared first-party application authority. Its provisional `patch_lifecycle`
+module now implements Issue #29's immutable SemanticPatch envelope, one current
+stable-ID field-value Command family, ordered non-empty AtomicBatch evaluation,
+scoped preview, exact finite Human Approval, atomic publication/consumption,
+verification, and receipts. Current Rust functions and result structures are
+implementation evidence, not the versioned public product contract. The
+lifecycle remains snapshot-style and receives opaque revision/current-state
+publication mechanics from a trusted host seam; the concrete resident runtime,
+revision token, concurrency, and state-installation implementation remains
+later work under #93–#95. The complete operation catalogue, transports, and
+wire/SDK contract remain Provisional or Deferred.
 
 Decision issues: [#10](https://github.com/nurockplayer/tachiko-work/issues/10),
 [#27](https://github.com/nurockplayer/tachiko-work/issues/27),
@@ -341,9 +347,11 @@ base. Non-Approval paths remain subject to their applicable authentication and
 disclosure policy without acquiring an Approval requirement from this rule.
 
 Re-proposing against a newer base re-runs command construction/binding and
-authoritative Propose evaluation and receives a new proposal identity. Exact
-revision-token types, equality mechanics, session scope, persistence,
-concurrency algorithms, and stale-result DTOs remain #93/#29 work.
+authoritative Propose evaluation and receives a new proposal identity. Issue
+#29's provisional lifecycle now returns an internal stale outcome over a
+host-supplied opaque revision reference. Exact revision-token types, equality
+mechanics, session scope, persistence, concurrency algorithms, and public
+stale-result DTOs remain #93 or later transport work.
 
 ### Preconditions
 
@@ -407,8 +415,10 @@ ADR-0024 fixes proposal occurrence immutability, exact-change binding, Semantic
 API contract binding, semantic-base pinning, and fail-closed stale meaning.
 ADR-0026 fixes structural exact Approval, live authorization, and
 consume-with-successful-publication laws without selecting a public token or
-DTO. Proposal-ID/revision encoding, Approval lifecycle DTOs, and concrete
-session/commit mechanics remain Provisional or Deferred to #29/#93.
+DTO. Issue #29 supplies the current provisional in-process Approval lifecycle
+types. Proposal-ID/revision encoding, public Approval DTOs, and concrete
+session/commit mechanics remain Provisional or Deferred to #93 and transport
+work.
 
 ## Semantic atomicity
 
@@ -730,8 +740,9 @@ fixtures without requiring common bytes or Rust types:
 
 Conformance also covers unsupported Semantic API compatibility, reuse of one
 proposal identity with different content, generated-ID binding, and equivalent
-Stable native/WASM outcomes where the same capability is exposed. Concrete
-fixtures and implementation belong to #29/#93.
+Stable native/WASM outcomes where the same capability is exposed. Issue #29
+implements current field-value/batch lifecycle fixtures; complete catalogue,
+runtime, and transport conformance remains #93 and later work.
 
 ## Stability classification
 

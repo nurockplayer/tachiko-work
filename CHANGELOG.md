@@ -39,15 +39,27 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- A provisional provider-neutral SemanticPatch lifecycle in
+  `tachiko-workspace-engine` now evaluates stable-ID typed field-value Commands
+  and ordered AtomicBatch proposals through the shared validation, formula, and
+  semantic-diff path. It derives relational scoped capabilities, gates review
+  evidence with independent Query authority, binds finite one-shot Human
+  Approval to the exact proposal/base/executor/policy context, publishes only
+  through an opaque revision compare-and-publish seam, consumes Approval with
+  successful publication, verifies installed state, and retains execution
+  receipts. Concrete resident sessions/revisions remain #93, and hostile-
+  boundary/external-effect security remains #30.
 - An optional provider-neutral Git/CI adapter now keeps canonical `.roproj/v1`
   members as LF text, accepts exact project trees in existing read-only
   semantic commands, and composes canonical/workspace validation with
   read-only generated-package consistency checks. The executable journey uses
   ordinary Git without a host API or semantic Git identity.
-- Accepted a documentation-level semantic authorization contract for scoped
-  Grants, trusted authorization-footprint derivation, and exact finite Human
-  Approval with at-most-once successful publication. Product enforcement and
-  public authorization DTOs remain unimplemented under #29, #30, and #93.
+- Accepted a semantic authorization contract for scoped Grants, trusted
+  authorization-footprint derivation, and exact finite Human Approval with
+  at-most-once successful publication. Issue #29 now provides the provisional
+  in-process lifecycle implementation; public authorization DTOs, hostile-
+  boundary enforcement, and concrete resident revision/session mechanics
+  remain under #30/#93.
 - A provider-free, read-only Semantic Analyst slice now exposes deterministic
   document inspection, formula and dependency analysis, semantic change and
   affected-area analysis, and validation findings through shared Rust queries

@@ -3,11 +3,20 @@
 Decision state: Accepted under
 [ADR-0026](../decisions/ADR-0026-scoped-semantic-authorization-and-approval.md).
 
-Implementation state: Not implemented. Current provider-free AI operations are
-read/explain/analyze/suggest-only. The current `Suggestion` DTO is not a
-SemanticPatch, Grant, Approval, execution credential, or public protocol.
-Lifecycle, registry, atomic publication/consumption, enforcement, revision,
-and transport work remains owned by #29, #30, and #93.
+Implementation state: partially implemented by the provisional
+`workspace-engine::patch_lifecycle` module under Issue #29. It provides one
+trusted in-process lifecycle registry for domain-scoped principals, relational
+Grants, trusted footprint derivation, disclosure-gated preview, exact finite
+Human Approval, expiry/revocation/replay checks, transition-aware policy
+binding, exclusive Approval reservation, atomic semantic publication/
+consumption, verification, and receipts for the current stable-ID field-value
+Command family and ordered AtomicBatch. Concrete identity provisioning,
+durable registry/receipt storage, public DTOs/wire integrity, #30's hostile-
+client and external-effect security boundary, and #93's resident revision/
+session/concurrency/state-installation mechanics remain unimplemented. Current
+provider-free AI operations are still read/explain/analyze/suggest-only, and
+the current `Suggestion` DTO is not a SemanticPatch, Grant, Approval,
+execution credential, or public protocol.
 
 Decision issue: [#28](https://github.com/nurockplayer/tachiko-work/issues/28)
 
@@ -650,10 +659,11 @@ Active -> Consumed | Revoked | Expired
 - If the trusted boundary cannot prove the complete common and Approval-specific
   conjunction at the publication boundary, it MUST fail closed and publish
   nothing.
-- Approval reservation, locking, and atomic-consumption coordination remain #29
-  implementation work. Concrete revision concurrency and state installation
-  remain #93 work; broader transaction/recovery and history protocols remain
-  with #11/#12.
+- Issue #29 implements current exclusive in-process Approval reservation and
+  consume-with-successful-publication coordination over a host-supplied
+  compare-and-publish seam. Concrete revision concurrency and state
+  installation remain #93 work; broader transaction/recovery and history
+  protocols remain with #11/#12.
 - If a failure leaves the trusted boundary unable to prove whether publication
   occurred, it MUST fail closed and MUST NOT permit retry until authoritative
   state is reconciled.
@@ -764,9 +774,9 @@ kind reclassification, loss of immutable-kind proof, or inability to prove the
 complete conjunction MUST prevent publication. Direct Human Execute uses the
 effective current policy without an Approval or historical policy binding.
 Approval-gated Execute adds its proposal/Approval conditions to this common
-law; it does not replace or weaken it. Concrete reservation, locking,
-transaction, revision, retry, and state-installation mechanics remain #29/#93
-work.
+law; it does not replace or weaken it. Issue #29 supplies current in-process
+reservation/retry orchestration. Concrete resident locking, transaction,
+revision, and state-installation mechanics remain #93 work.
 
 ### Authorize approval-gated Execute
 
@@ -908,8 +918,9 @@ or Approval MUST NOT fabricate:
 Such a receipt MAY retain executor identity, effective Execute Grant
 references, the trusted AuthorizationFootprint and policy version, relevant
 input and resulting revisions, and gate/result evidence. This permission does
-not require a receipt or freeze its shape. Exact receipt/history DTO, storage,
-retention, and broader history architecture remain #29/#12 work.
+not require a receipt or freeze its shape. Issue #29 now supplies a provisional
+in-memory receipt; exact public/durable receipt DTO, storage, retention, and
+broader history architecture remain #12 work.
 
 Additional Approval-gated provenance laws:
 
@@ -923,8 +934,9 @@ Additional Approval-gated provenance laws:
 4. Provenance MUST NOT be written into `.roproj` merely to make it durable.
 5. Event sourcing, a universal operation log, CRDT, or tamper-evident audit
    ledger is not required.
-6. Storage, retention, redaction, history UI, and receipt DTOs remain
-   Provisional/Deferred to #29/#12.
+6. Issue #29's in-memory receipt is implementation evidence only. Durable
+   storage, retention, redaction, history UI, and public receipt DTOs remain
+   Provisional/Deferred to #12 and later adapter work.
 
 ## Semantic and external-effect separation
 
