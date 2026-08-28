@@ -259,7 +259,9 @@ External or nondeterministic checks may exist as separate host/workflow
 services, but their results do not silently become canonical semantic validity.
 
 Plugin runtime, ABI, sandboxing, signing, capability grants, distribution, and
-compatibility remain #17.
+compatibility remain Deferred. ADR-0028 later resolves only the M04
+game-engine host-adapter classification; its #134/#135 follow-ups own narrower
+private-enterprise and public-ecosystem policy, not these mechanics.
 
 ### 9. Keep the ADR-0016 crate boundary
 
@@ -311,7 +313,8 @@ This ADR does not decide:
   or bypass policy (#10);
 - native/WASM/IPC/Tauri serialization, resident runtime, Web Worker placement,
   or diagnostic delivery protocol (#26);
-- plugin runtime/ABI/sandbox/registry/distribution (#17);
+- plugin runtime/ABI/sandbox/registry/distribution (Deferred; ADR-0028 resolves
+  only the game-engine host-adapter classification);
 - `.roproj` physical layout, source spans, or invalid-draft persistence (#41);
 - generic schema constraint DSLs or complete enum/range/pattern/default type
   semantics;
@@ -360,7 +363,8 @@ Costs:
   transport.
 - #26 decides native/WASM/IPC runtime transport and resident interactive state.
 - #13 decides progressive/freeform authoring semantics.
-- #17 decides plugin validator runtime mechanics.
+- Plugin validator runtime mechanics remain Deferred; ADR-0028 and its
+  #134/#135 follow-ups do not stabilize them.
 - #41 decides `.roproj` physical materialization and any durable draft profile.
 
 ## Related
