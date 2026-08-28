@@ -23,7 +23,7 @@
 - Recheck base, principal occurrences, Grant state, policy continuity, exact binding, validation, and gate immediately before publication.
 - Evaluate every batch on a clone and offer only the final validated candidate to the publication boundary. Never publish a successful prefix.
 - Consume Approval only after the publication authority proves one successful compare-and-publish; failure before publication leaves it unconsumed, and replay fails distinctly.
-- Verify the installed snapshot and returned revision after publication and return semantic diff, validation, revision, and minimum provenance evidence.
+- Verify the exact immutable installed occurrence/document/revision snapshot returned by the guarded publication result, without rereading a later mutable head, and return semantic diff, validation, revision, and minimum provenance evidence.
 - Leave concrete revision encoding/generation, resident state/session topology, concurrency algorithm, and state installation to #93; leave disclosure redaction/side-channel hardening, raw bypass, and external effects to #30.
 - Do not add persistence, `.roproj` writes, Git/network/process effects, event sourcing, undo, reusable approval policy, enterprise IAM, or public Rust/Serde/wire stability promises.
 
@@ -75,7 +75,7 @@
 - [x] Define the abstract `SemanticPublicationAuthority` seam over caller-supplied opaque revisions, with errors contractually proving no publication.
 - [x] Implement approval-gated and direct-Human Execute through one common path with exact binding, stale, live principal/Grant/policy, footprint, validation, and gate rechecks.
 - [x] Hold exclusive lifecycle state while the host invokes a fresh trusted-time live-authorization callback and compares/publishes the complete final candidate, then mark Approval Consumed immediately after the infallible successful publication result; never consume on a proved no-publication failure.
-- [x] Re-read and validate the installed state, prove the resulting revision/candidate, and return a machine-readable execution receipt with diff, validation, base/result revisions, Grant references, principals, policy, and truthful Approval evidence.
+- [x] Capture and return the exact installed occurrence/document/revision snapshot before releasing the publication guard, validate that immutable result even if a later writer advances the live head, and return a machine-readable execution receipt with diff, validation, base/result revisions, Grant references, principals, policy, and truthful Approval evidence.
 - [x] Preserve machine-distinguishable stale, validation, capability, approval mismatch/expiry/revocation/replay, conflict, and verification outcomes without exposing host-effect authority.
 
 ### Task 5: Documentation, validation, review, and delivery

@@ -666,12 +666,16 @@ Active -> Consumed | Revoked | Expired
   authorization callback inside the same exclusive publication guard
   immediately before returning a semantic no-publication result or installing
   the candidate, so principal, Approval, Grant, policy, expiry, and Query-result
-  disclosure are rechecked at the actual boundary decision. A host omission
-  safely reduces a Stale/Conflict result to authorization denial. A later
-  post-install verification failure remains in trusted history/receipt state
-  but is returned only when that fresh boundary Query decision permits the
-  detail; otherwise the executor receives authorization denial. Concrete
-  revision concurrency and state installation remain #93 work; broader
+  disclosure are rechecked at the actual boundary decision. On success, the
+  host captures the exact installed document occurrence, immutable document,
+  and resulting revision before releasing that guard; lifecycle verification
+  uses that returned snapshot rather than rereading a mutable head that a later
+  writer may already have advanced. A host omission safely reduces a
+  Stale/Conflict result to authorization denial. A genuine post-install
+  verification failure remains in trusted history/receipt state but is returned
+  only when that fresh boundary Query decision permits the detail; otherwise
+  the executor receives authorization denial. Concrete revision concurrency and
+  state installation remain #93 work; broader
   transaction/recovery and history protocols remain with #11/#12.
 - If a failure leaves the trusted boundary unable to prove whether publication
   occurred, it MUST fail closed and MUST NOT permit retry until authoritative

@@ -20,8 +20,9 @@ shared first-party application authority. Its provisional `patch_lifecycle`
 module now implements Issue #29's immutable SemanticPatch envelope, one current
 stable-ID field-value Command family, ordered non-empty AtomicBatch evaluation,
 scoped preview, exact finite Human Approval, atomic publication/consumption,
-verification, and receipts. Current Rust functions and result structures are
-implementation evidence, not the versioned public product contract. The
+verification against the immutable installed snapshot captured by the guarded
+publication result, and receipts. Current Rust functions and result structures
+are implementation evidence, not the versioned public product contract. The
 lifecycle remains snapshot-style and receives opaque revision/current-state
 publication mechanics from a trusted host seam; the concrete resident runtime,
 revision token, concurrency, and state-installation implementation remains

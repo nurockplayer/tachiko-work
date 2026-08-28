@@ -589,8 +589,11 @@ pub trait SemanticPublicationAuthority {
     /// exactly once with a fresh trusted instant inside that guard, immediately
     /// before returning a semantic Stale/Conflict outcome or installing the
     /// candidate. Install only while `expected_revision` remains current and
-    /// the callback accepts, then return the distinct resulting revision and
-    /// the callback's authorization evidence.
+    /// the callback accepts, then capture and return the exact installed
+    /// document occurrence, immutable document snapshot, distinct resulting
+    /// revision, and the callback's authorization evidence before releasing
+    /// the guard. A later publication may advance [`Self::current_snapshot`]
+    /// without changing this successful result.
     ///
     /// # Errors
     ///
@@ -605,7 +608,10 @@ pub trait SemanticPublicationAuthority {
         expected_revision: &SemanticRevision,
         candidate: Document,
         authorize: impl FnOnce(TrustedInstant) -> Option<Authorization>,
-    ) -> Result<(SemanticRevision, Authorization), SemanticPublicationError>;
+    ) -> Result<
+        (DocumentScopeId, Document, SemanticRevision, Authorization),
+        SemanticPublicationError,
+    >;
 }
 
 /// Proved no-publication result from the host publication boundary.
@@ -758,11 +764,13 @@ struct PublicationAttempt<'a> {
     candidate: Document,
 }
 
-type PublishedCandidate = (
-    SemanticRevision,
-    Option<ApprovalExecutionEvidence>,
-    PublicationAuthorization,
-);
+struct PublishedCandidate {
+    document_scope: DocumentScopeId,
+    document: Document,
+    revision: SemanticRevision,
+    approval: Option<ApprovalExecutionEvidence>,
+    authorization: PublicationAuthorization,
+}
 
 /// Provisional trusted in-process proposal and Approval lifecycle registry.
 pub struct PatchLifecycle {
@@ -1262,45 +1270,45 @@ impl PatchLifecycle {
             now,
         )?;
         let candidate = evaluated.document.clone();
-        let (resulting_revision, approval_evidence, publication_authorization) = self
-            .publish_candidate(
-                publication,
-                PublicationAttempt {
-                    proposal_id,
-                    proposal: &proposal,
-                    approval,
-                    executor,
-                    footprint: &footprint,
-                    current_document_scope: &current_document_scope,
-                    current_revision: &current_revision,
-                    candidate: evaluated.document,
-                },
-            )?;
+        let published = self.publish_candidate(
+            publication,
+            PublicationAttempt {
+                proposal_id,
+                proposal: &proposal,
+                approval,
+                executor,
+                footprint: &footprint,
+                current_document_scope: &current_document_scope,
+                current_revision: &current_revision,
+                candidate: evaluated.document,
+            },
+        )?;
+        let can_disclose = published.authorization.can_disclose;
         let mut receipt = ExecutionReceipt {
             proposal_id: proposal_id.clone(),
             originator: proposal.originator.clone(),
             executor: executor.clone(),
-            approval: approval_evidence,
+            approval: published.approval,
             propose_grants: proposal.propose_grants.clone(),
-            approve_grants: publication_authorization.approve_grants,
-            execute_grants: publication_authorization.execute_grants,
+            approve_grants: published.authorization.approve_grants,
+            execute_grants: published.authorization.execute_grants,
             authorization_footprint: Some(footprint),
             policy_version: self.effective_policy.clone(),
             base_revision: current_revision.clone(),
-            resulting_revision: resulting_revision.clone(),
+            resulting_revision: published.revision.clone(),
             verified: false,
             semantic_changes: evaluated.semantic_changes,
             formula_impacts: evaluated.formula_impacts,
             validation_report: Some(evaluated.validation_report),
         };
-        let can_disclose = publication_authorization.can_disclose;
         self.execution_receipts.push(receipt.clone());
         let verification_report = match self.verify_publication(
             proposal_id,
-            publication,
             &current_revision,
-            &resulting_revision,
+            &published.revision,
             &candidate,
+            &published.document_scope,
+            &published.document,
         ) {
             Ok(report) => report,
             Err(error) if can_disclose => return Err(error),
@@ -1636,7 +1644,12 @@ impl PatchLifecycle {
                 }
             },
         );
-        let (resulting_revision, publication_authorization) = match publication_result {
+        let (
+            installed_document_scope,
+            installed_document,
+            resulting_revision,
+            publication_authorization,
+        ) = match publication_result {
             Ok(success) => success,
             Err(error) => {
                 return Err(self.restore_after_publication_failure(
@@ -1662,11 +1675,13 @@ impl PatchLifecycle {
                 .insert(approval.approval.id.clone(), approval);
         }
         self.append_state(proposal_id, PatchLifecycleState::Applied);
-        Ok((
-            resulting_revision,
-            approval_evidence,
-            publication_authorization,
-        ))
+        Ok(PublishedCandidate {
+            document_scope: installed_document_scope,
+            document: installed_document,
+            revision: resulting_revision,
+            approval: approval_evidence,
+            authorization: publication_authorization,
+        })
     }
 
     fn restore_after_publication_failure(
@@ -1718,21 +1733,19 @@ impl PatchLifecycle {
     fn verify_publication(
         &mut self,
         proposal_id: &ProposalId,
-        publication: &impl SemanticPublicationAuthority,
         base_revision: &SemanticRevision,
         resulting_revision: &SemanticRevision,
         candidate: &Document,
+        installed_document_scope: &DocumentScopeId,
+        installed_document: &Document,
     ) -> Result<ValidationReport, PatchLifecycleError> {
-        let (installed_document_scope, installed_document, installed_revision) =
-            publication.current_snapshot();
-        if installed_document_scope != self.document_scope {
+        if installed_document_scope != &self.document_scope {
             self.append_state(proposal_id, PatchLifecycleState::Conflict);
             return Err(PatchLifecycleError::VerificationFailed);
         }
-        let report = super::validation_report(&installed_document);
-        if &installed_revision != resulting_revision
-            || resulting_revision == base_revision
-            || &installed_document != candidate
+        let report = super::validation_report(installed_document);
+        if resulting_revision == base_revision
+            || installed_document != candidate
             || !report.is_valid()
         {
             self.append_state(proposal_id, PatchLifecycleState::Conflict);

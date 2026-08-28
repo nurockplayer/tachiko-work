@@ -249,6 +249,7 @@ enum PublishMode {
     Conflict,
     ReplaceOccurrence,
     TamperAfterSuccess,
+    AdvanceAfterSuccess,
 }
 
 struct TestPublication {
@@ -300,7 +301,10 @@ impl SemanticPublicationAuthority for TestPublication {
         expected_revision: &SemanticRevision,
         candidate: Document,
         authorize: impl FnOnce(TrustedInstant) -> Option<Authorization>,
-    ) -> Result<(SemanticRevision, Authorization), SemanticPublicationError> {
+    ) -> Result<
+        (DocumentScopeId, Document, SemanticRevision, Authorization),
+        SemanticPublicationError,
+    > {
         self.publish_calls += 1;
         if self.mode == PublishMode::RaceStale {
             self.revision = revision("r-raced");
@@ -318,7 +322,8 @@ impl SemanticPublicationAuthority for TestPublication {
             PublishMode::Conflict => Err(SemanticPublicationError::Conflict),
             PublishMode::Normal
             | PublishMode::ReplaceOccurrence
-            | PublishMode::TamperAfterSuccess => {
+            | PublishMode::TamperAfterSuccess
+            | PublishMode::AdvanceAfterSuccess => {
                 if &self.revision != expected_revision {
                     return Err(SemanticPublicationError::Stale);
                 }
@@ -327,7 +332,22 @@ impl SemanticPublicationAuthority for TestPublication {
                     self.document.title.push_str(" (tampered)");
                 }
                 self.revision = self.next_revision.clone();
-                Ok((self.next_revision.clone(), authorization))
+                let installed_document_scope = self.document_scope.clone();
+                let installed_document = self.document.clone();
+                let resulting_revision = self.revision.clone();
+                if self.mode == PublishMode::AdvanceAfterSuccess {
+                    // Model another writer advancing live state after the
+                    // guarded result is captured but before lifecycle
+                    // verification consumes that immutable result.
+                    self.document.title.push_str(" (later write)");
+                    self.revision = revision("r3");
+                }
+                Ok((
+                    installed_document_scope,
+                    installed_document,
+                    resulting_revision,
+                    authorization,
+                ))
             }
         }
     }
@@ -2772,6 +2792,48 @@ fn post_publication_verification_detects_installed_state_mismatch() {
     assert_eq!(
         lifecycle.proposal_history(&proposal).unwrap().last(),
         Some(&PatchLifecycleState::Conflict)
+    );
+}
+
+#[test]
+fn later_publication_does_not_invalidate_verification_of_the_installed_revision() {
+    let document = game_balance_document("game", "Game");
+    let mut lifecycle = lifecycle();
+    provision_standard_authority(&mut lifecycle);
+    let proposal = propose(
+        &mut lifecycle,
+        &document,
+        "proposal-later-publication",
+        SemanticPatchBody::command(field_command("iron_sword", "damage", number(45.0))),
+        "agent",
+    );
+    let approval = preview_and_approve(
+        &mut lifecycle,
+        &document,
+        &proposal,
+        "approval-later-publication",
+        "agent",
+    );
+    let mut publication =
+        TestPublication::new(document, "r1", "r2").with_mode(PublishMode::AdvanceAfterSuccess);
+
+    let receipt = lifecycle
+        .execute(
+            &proposal,
+            Some(&approval),
+            &principal("agent"),
+            &mut publication,
+            TrustedInstant::new(11),
+        )
+        .unwrap();
+
+    assert_eq!(receipt.resulting_revision, revision("r2"));
+    assert!(receipt.verified);
+    assert_eq!(publication.revision, revision("r3"));
+    assert_eq!(publication.document.title, "Game (later write)");
+    assert_eq!(
+        lifecycle.proposal_history(&proposal).unwrap().last(),
+        Some(&PatchLifecycleState::Verified)
     );
 }
 
