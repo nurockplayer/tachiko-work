@@ -381,10 +381,15 @@ one schema/type entity domain
 ```
 
 The exact semantic context is therefore not part of normalized analysis
-definition identity. A caller-supplied EntityId set only narrows the trusted
-schema/type domain. It never grants membership, scope, or Query authority.
-Predicates are typed field/operator/operand constraints evaluated by the shared
-semantic authority after trusted target resolution and authorization. M04
+definition identity. A caller-supplied EntityId set is optional, but when present
+it MUST narrow the trusted schema/type domain to the intersection with those
+stable identities. Every supplied identity resolves against the exact context and
+belongs to that domain; after sufficient Query authority, an unresolved or
+wrong-domain identity is a structured failure rather than an ignored non-match.
+Without sufficient authority only a disclosure-safe denial may be returned. The
+set never grants membership, scope, or Query authority. Predicates are typed
+field/operator/operand constraints evaluated by the shared semantic authority
+after trusted target resolution and authorization. M04
 accepts only a bounded conjunction shape; general OR/NOT predicate trees,
 joins, subqueries, windows, and arbitrary expressions are Deferred. The exact
 finite supported predicate operator catalogue and request limits remain
@@ -393,9 +398,11 @@ not introduce coercive or representation-path semantics that bypass the typed
 semantic model.
 
 The optional grouping key is one stable FieldId within the selected domain.
-Grouping uses the authoritative typed semantic value/equality meaning for that
-field. Multi-key grouping, grouping sets, and renderer-defined buckets are
-Deferred.
+M04 grouping uses present, supported, non-Formula typed semantic values and
+their authoritative equality meaning. A Formula-valued grouping key is
+unsupported and Deferred; Analysis MUST NOT group by formula structure or by
+its calculated Number. Multi-key grouping, grouping sets, and renderer-defined
+buckets are Deferred.
 
 The Accepted M04 result primitives are deliberately small:
 
@@ -409,9 +416,11 @@ The Accepted M04 result primitives are deliberately small:
 A numeric metric may be a stored Number field or an authoritative calculated
 Number field. Formula-backed observations MUST reuse ADR-0018 calculation
 meaning and failure semantics; Analysis introduces no second formula or
-expression evaluator. Missing, wrong-typed, unsupported, or failed calculated
-observations are structured analysis failures rather than values silently
-skipped from an aggregate.
+expression evaluator. Requested metric completeness is operation-wide: if any
+selected member or group has a missing, wrong-typed, unsupported, or failed
+calculated observation, the entire Analysis Query returns one structured failure
+and no otherwise successful membership, group, `Count`, `Min`, `Max`, or
+per-member payload. Values and members are never silently skipped.
 
 `Count`, `Min`, and `Max` are Accepted because their M04 meaning can be fixed
 without selecting a floating reduction order. `Sum`, `Mean`, weighted mean, and
@@ -428,7 +437,11 @@ it does not rewrite or renormalize the analysis definition. Both contexts are
 explicit Query inputs. This comparison performs no history lookup, rebasing,
 branch resolution, revision-token interpretation, or implicit change
 attribution. When the question is what semantically changed, the existing
-semantic-diff authority remains the source of change facts.
+semantic-diff authority remains the source of change facts. The complete Query
+footprint is authorized independently in A and B and then for the combined paired
+lineage/result projection. Failure of either side or the combined projection
+denies the entire paired operation without a one-sided result or revealing which
+context failed.
 
 #### Reproducibility and lineage
 
@@ -492,7 +505,10 @@ The logical analysis result distinguishes at least:
 
 - malformed, oversized, or unsupported analysis request;
 - unresolved or wrong-typed field, group, predicate, or metric target;
+- unresolved or wrong-domain explicit EntityId narrowing target;
+- unsupported Formula-valued grouping key;
 - formula/calculation failure inherited from authoritative computation;
+- operation-wide requested-metric incompleteness with no successful payload;
 - invalid aggregate/type combination;
 - insufficient Query authority or disclosure-safe denial; and
 - ambiguous or unsupported two-context comparison.
