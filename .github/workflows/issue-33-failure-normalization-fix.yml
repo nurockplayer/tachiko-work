@@ -1,0 +1,153 @@
+name: Temporary Issue 33 failure normalization correction
+
+on:
+  push:
+    branches:
+      - steward/issue-33-analysis-authority
+
+permissions:
+  contents: write
+
+jobs:
+  amend-authority:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: steward/issue-33-analysis-authority
+          fetch-depth: 0
+
+      - name: Define deterministic Analysis Query failure normalization
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          adr_path = Path("docs/decisions/ADR-0020-first-class-headless-semantic-api.md")
+          adr = adr_path.read_text()
+          adr_old = """- insufficient Query authority or disclosure-safe denial; and
+          - ambiguous or unsupported two-context comparison.
+
+          Exact public error codes, Rust variants, DTO spelling, finite limits,
+          normalized-definition encoding, output ordering, and internal execution plan
+          remain Provisional.
+          """
+          adr_new = """- insufficient Query authority or disclosure-safe denial; and
+          - ambiguous or unsupported two-context comparison.
+
+          Failure selection is phase-ordered and deterministic rather than dependent on
+          implementation traversal order:
+
+          1. request-local envelope/admission invalidity returns a deterministically
+             normalized complete set of request-local failures and performs no semantic
+             resolution;
+          2. insufficient Query authority or final disclosure coverage returns one
+             disclosure-safe denial and exposes no semantic failure detail;
+          3. after authorization, all directly applicable semantic/evaluation failures for
+             the normalized Analysis Query form one complete normalized failure set,
+             deduplicated and ordered by logical failure-family order plus stable semantic
+             coordinates; any non-empty set returns one failed-analysis outcome containing
+             that set and no successful result payload; and
+          4. result-too-large is considered only after semantic evaluation would otherwise
+             produce a successful complete result, and replaces that result with the single
+             structured result-too-large outcome.
+
+          For paired A/B evaluation, the authorized context side is part of a failure's
+          stable coordinate. Equal exact context input(s), normalized definition, and
+          deterministic configuration MUST therefore produce the same underlying failure
+          outcome even when an implementation changes internal traversal or execution-plan
+          order. Exact public error codes, Rust variants, DTO/set encoding, and serialized
+          ordering remain Provisional; the phase precedence, completeness, deduplication,
+          and semantic ordering law are Accepted.
+          """
+          if adr.count(adr_old) != 1:
+              raise SystemExit(f"ADR replacement target count={adr.count(adr_old)}")
+          adr_path.write_text(adr.replace(adr_old, adr_new, 1))
+
+          spec_path = Path("docs/specs/semantic-api.md")
+          spec = spec_path.read_text()
+          spec_old = """- insufficient Query authority or disclosure-safe denial; and
+          - ambiguous or unsupported two-context comparison.
+
+          Exact error codes, Rust variants, DTO spelling, request/result limits,
+          normalized-definition encoding, output ordering, and internal execution-plan
+          shape remain Provisional.
+          """
+          spec_new = """- insufficient Query authority or disclosure-safe denial; and
+          - ambiguous or unsupported two-context comparison.
+
+          A conforming Analysis Query selects failures by an Accepted phase law, not by
+          whichever target, member, metric, or context an implementation happens to visit
+          first:
+
+          1. envelope/admission evaluates bounded request-local facts only. If that phase
+             finds any invalidity, it returns the complete deterministically normalized
+             request-local failure set and performs no semantic resolution;
+          2. insufficient preauthorization, paired-context authorization, or final
+             disclosure coverage returns one disclosure-safe denial and suppresses all
+             semantic classification and failure detail;
+          3. after authorization, the trusted authority evaluates every directly applicable
+             semantic/evaluation failure for the normalized request. Equal failures are
+             deduplicated, then the complete set is ordered by the logical failure-family
+             order above and stable semantic coordinates (including A/B side for an
+             authorized paired evaluation). A non-empty semantic failure set returns one
+             failed-analysis outcome containing that complete set and no membership, group,
+             aggregate, observation, lineage, or other successful payload; and
+          4. only when semantic evaluation has no failure does the boundary construct the
+             complete successful result and classify whether it exceeds the finite result
+             profile. If so, it returns the single result-too-large outcome instead of the
+             successful payload.
+
+          Equal exact context input(s), equal context-independent normalized definition,
+          and equal deterministic configuration therefore produce equal underlying failure
+          outcomes independently of internal traversal, parallelism, or plan shape. Exact
+          Rust variants, public codes, set/container encoding, and serialized ordering stay
+          Provisional; implementations MUST preserve the logical phase precedence,
+          complete-set semantics, deduplication, and stable semantic ordering.
+          """
+          if spec.count(spec_old) != 1:
+              raise SystemExit(f"spec replacement target count={spec.count(spec_old)}")
+          spec = spec.replace(spec_old, spec_new, 1)
+
+          conf_old = """14. the same context-independent normalized analysis definition evaluated over
+              two explicit exact semantic contexts, with no history lookup, definition
+              renormalization, or parallel revision semantics, including independent
+              complete authorization in A and B plus authorization of the combined paired
+              projection, and one whole-operation disclosure-safe denial when any check
+              fails; and
+          15. lineage sufficient for a consumer to explain and reproduce the deterministic
+              result without an LLM reconstructing selection or aggregation semantics.
+          """
+          conf_new = """14. the same context-independent normalized analysis definition evaluated over
+              two explicit exact semantic contexts, with no history lookup, definition
+              renormalization, or parallel revision semantics, including independent
+              complete authorization in A and B plus authorization of the combined paired
+              projection, and one whole-operation disclosure-safe denial when any check
+              fails;
+          15. one authorized query containing multiple semantic failures, repeated under
+              different internal traversal/execution-plan orders, producing the same
+              complete deduplicated and stably ordered failure set with no successful
+              payload; plus evidence that request-local failures and disclosure denial
+              short-circuit later phases and result-too-large is classified only after an
+              otherwise successful complete result; and
+          16. lineage sufficient for a consumer to explain and reproduce the deterministic
+              result without an LLM reconstructing selection or aggregation semantics.
+          """
+          if spec.count(conf_old) != 1:
+              raise SystemExit(f"conformance replacement target count={spec.count(conf_old)}")
+          spec_path.write_text(spec.replace(conf_old, conf_new, 1))
+          PY
+
+      - name: Validate documentation consistency
+        run: bash scripts/docs-consistency-check.sh
+
+      - name: Commit deterministic failure law
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/decisions/ADR-0020-first-class-headless-semantic-api.md docs/specs/semantic-api.md
+          git diff --cached --check
+          git commit -m "docs: define deterministic analysis failure selection"
+          git push origin HEAD:steward/issue-33-analysis-authority
