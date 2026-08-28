@@ -16,7 +16,19 @@ external-effect separation. Exact identifiers, DTOs, storage,
 projection/redaction, lifecycle implementation, runtime placement, wire
 formats, and promotion DTOs remain Provisional or Deferred as owned elsewhere.
 
-Implementation state: the provider-free `tachiko-ai-api` crate implements a v0.1 AI-facing read/explain/suggest adapter over `tachiko-workspace-engine`, including structured read-only Semantic Analyst queries. The current Rust DTOs are not the public Semantic API contract. No general schema-inference or freeform-promotion pipeline is implemented.
+Implementation state: the provider-free `tachiko-ai-api` crate implements a
+v0.1 AI-facing read/explain/suggest adapter over `tachiko-workspace-engine`,
+including structured read-only Semantic Analyst queries. Its provisional
+`security_boundary` also accepts only typed proposal/execution intent, obtains
+effective Principal and trusted time from host context rather than the request,
+requires the lifecycle registry to prove that occurrence is active and
+Delegated, delegates semantic enforcement to the #29 workspace lifecycle, and
+returns stable disclosure-safe outcome codes. A Human session principal cannot
+be reused as an AI credential. Raw semantic/storage mutation and host effects
+are explicitly denied. The current Rust DTOs and code spellings are not the
+public Semantic API/wire contract. No general schema-inference, freeform-
+promotion, authentication/session/transport, or host-effect capability pipeline
+is implemented.
 
 ## Principle
 
@@ -50,10 +62,12 @@ ADR-0007 adds the AI-authority constraint: a first-party AI Execute path must
 use the same shared semantic transition/gating behavior and must cross trusted
 authorization/approval enforcement. ADR-0024 makes a reviewable AI proposal the
 same immutable base-bound SemanticPatch available to any semantic client; it
-does not make AI provenance or model output part of command meaning. Concrete
-The provisional workspace-engine lifecycle/state implementation is now present
-under #29; provider-facing enforcement, hostile-boundary behavior, concrete
-resident revisions/sessions, and transport mechanisms remain #30/#93.
+does not make AI provenance or model output part of command meaning. The
+provisional workspace-engine lifecycle/state implementation is present under
+#29. The #30 AI adapter enforces provider-facing instruction/data, raw-bypass,
+trusted-context, and host-effect-denial boundaries while leaving concrete
+authentication, resident revisions/sessions, transport integrity, and actual
+external capability mechanisms to #93 and their host/domain owners.
 The AI adapter does not define Principal class, Grant scope, Approval, or
 provenance from provider/model claims.
 
@@ -65,7 +79,8 @@ Long term, AI-facing read/explain/suggest/execute experiences should map to Sema
 
 ## Current operations
 
-Implemented v0.1 operations are read, explain, and suggest-only:
+Implemented v0.1 convenience operations remain read, explain, and inert
+suggest-only:
 
 ```text
 describe_document(document)
@@ -79,6 +94,19 @@ suggest_field_change(document, field_ref, value)
 ```
 
 No current AI API writes the document directly.
+
+The provider-facing security seam adds two non-wire adapter operations:
+
+```text
+submit_semantic_proposal(trusted_host_context, typed_intent, inert_evidence)
+execute_semantic_proposal(trusted_host_context, exact_proposal, optional_approval)
+```
+
+These operations do not add another mutation vocabulary. They reuse the #29
+`SemanticPatch` Propose/Execute lifecycle, and the execution path can publish
+semantic state only through its trusted `SemanticPublicationAuthority` seam.
+The untrusted request contains neither effective Principal nor trusted time;
+client/model validation or safety prose is retained only as inert evidence.
 
 Suggestions are inert adapter objects. Formula analysis, semantic comparison,
 typed candidate construction, validation, and calculation delegate to the
@@ -173,7 +201,36 @@ Semantic publication, durable persistence, and external publication or host side
 
 A semantic edit capability must not imply filesystem, network, process, Git push, plugin, deployment, or other host authority. Provider-facing AI adapters must not create raw storage or host-effect paths that act as alternate semantic mutation authority.
 
-Storage and host adapters may materialize or externally publish an authorized semantic result under their own authority; they do not redefine semantic meaning or grant semantic permission.
+Storage and host adapters may materialize or externally publish an authorized
+semantic result under their own authority; they do not redefine semantic
+meaning or grant semantic permission. The current `ai-api` operation classifier
+admits only typed semantic proposal/execution and returns stable denials for raw
+semantic-state mutation, storage-representation mutation, durable persistence,
+filesystem, network, process, Git, plugin, deployment, and credential requests.
+It does not implement a generic external-effect capability.
+
+## Instruction and data boundary
+
+The current adapter distinguishes host-proven system, developer, and user
+instructions from trusted semantic metadata and from untrusted document,
+import, plugin, model, and client-request content. These are orchestration
+treatment classes, not semantic authorization classes:
+
+- instructions may guide orchestration but do not grant a Principal,
+  capability, Approval, or host effect;
+- trusted semantic metadata remains evidence/facts supplied by the trusted
+  application boundary and cannot replace authorization;
+- document/import/plugin/model/client content remains untrusted data even when
+  it contains imperative language, structured capability claims, or assertions
+  that a proposal is valid, approved, or safe; and
+- an untrusted proposal request may carry only typed semantic intent plus inert
+  untrusted evidence. It cannot select its trust class, effective Principal,
+  Principal kind, trusted time, Grants, footprint, Approval, or gate result.
+
+This is a deterministic platform boundary, not a claim to solve every model-
+level prompt-injection problem. A concrete transport must preserve the same
+separation and must not expose the trusted host-context trait as a client
+credential or payload.
 
 ## Progressive semantic strengthening
 

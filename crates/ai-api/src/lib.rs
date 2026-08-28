@@ -1,4 +1,6 @@
-//! Read-only semantic queries for Tachiko Work.
+//! Provider-free semantic AI adapters for Tachiko Work.
+
+pub mod security_boundary;
 
 use tachiko_workspace_engine::{
     CalculationError, CanonicalAuthoringProjectionError, DiffError, Document, DocumentId, EntityId,

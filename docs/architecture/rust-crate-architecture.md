@@ -269,7 +269,11 @@ AtomicBatch. It is implementation evidence only, not the SemanticPatch wire or
 source contract. `requires_approval` remains current v0.1 safety behavior, not
 the ADR-0026 scoped Grant, footprint, exact Approval, or provenance contract.
 
-No current AI operation persists or mutates the supplied document.
+Issue #30's provisional `security_boundary` accepts typed Propose/Execute only
+after the workspace lifecycle proves an active Delegated occurrence. It may
+publish only through that lifecycle's exact Approval and guarded publication
+path; it never directly mutates a supplied snapshot or persists one. Raw
+semantic/storage mutation and host effects are denied independently.
 
 ### cli
 
@@ -332,8 +336,8 @@ validation inside Rust as implementation mechanisms.
 | Merge plus base-to-result impact | CLI over merge and diff engines | Workspace-engine |
 | Runtime export semantic projection | CLI | Workspace-engine |
 | Host persistence and safe writes | CLI/storage | CLI/storage/host composition, unchanged |
-| AI proposal envelope | One-field inert `Suggestion` only | Issue #29 implements a provider-neutral provisional SemanticPatch/AtomicBatch lifecycle in workspace-engine; `ai-api` remains an inert adapter and #93 owns resident revision/session mechanics |
-| Semantic authorization/Approval | Not implemented | Issue #29 implements provisional trusted in-process relational Grants, scoped preview, exact finite Approval state, atomic consumption/publication, and receipts; public DTO/security/host/runtime completion remains #30/#93 |
+| AI proposal envelope | One-field inert `Suggestion` only | Issue #29 implements a provider-neutral provisional SemanticPatch/AtomicBatch lifecycle in workspace-engine; #30 adds typed `ai-api` proposal/execution delegation with inert untrusted evidence, while #93 owns resident revision/session mechanics |
+| Semantic authorization/Approval | Not implemented | Issue #29 implements provisional trusted in-process relational Grants, scoped preview, exact finite Approval state, atomic consumption/publication, and receipts; #30 adds hostile-client admission and safe denials; public wire/authentication/host/runtime completion remains Deferred/#93 |
 | ID generation mechanism | CLI through workflow seam | CLI through workspace-engine seam |
 | Product-semantic client contract | Provisional/internal | First-class transport-neutral Semantic API under ADR-0020 |
 | Interactive authoritative state ownership | Open under #26 | Shared Rust semantic/application runtime under ADR-0022 |
@@ -436,8 +440,9 @@ does not implicitly grant filesystem/network/Git/plugin/deployment authority.
 - ADR-0026 owns Principal, capability, stable-ID scope, Grant, trusted
   AuthorizationFootprint, exact Approval, expiry/replay/revocation, provenance,
   and external-effect separation. Exact crate/module placement, DTOs, storage,
-  clocks, result codes, and wire formats remain Provisional/#30/#93; Issue #29
-  supplies the current replaceable in-process implementation;
+  clocks and wire formats remain Provisional/#93; Issue #29 supplies the
+  current replaceable in-process implementation, while #30 supplies provisional
+  provider-facing context/error shapes and stable internal code meanings;
   canonical bytes/digest/signature/MAC/portable tokens remain Deferred.
 - ADR-0022 owns resident runtime/state and host-separation laws, while session
   handle shape, revision/concurrency, cancellation, state commit/swap/locking/

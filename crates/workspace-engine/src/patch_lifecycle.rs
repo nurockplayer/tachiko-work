@@ -839,6 +839,18 @@ impl PatchLifecycle {
         Ok(())
     }
 
+    /// Whether one trusted principal occurrence is active and Delegated.
+    ///
+    /// This host-composition check intentionally collapses unknown, disabled,
+    /// and non-Delegated occurrences to `false`; callers must not use it as a
+    /// client-visible principal-discovery surface.
+    #[must_use]
+    pub fn is_active_delegated_principal(&self, id: &PrincipalId) -> bool {
+        self.principals
+            .get(id)
+            .is_some_and(|principal| principal.active && principal.kind == PrincipalKind::Delegated)
+    }
+
     /// Disable one principal occurrence without reassigning its identity.
     ///
     /// # Errors

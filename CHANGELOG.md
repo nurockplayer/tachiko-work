@@ -39,6 +39,18 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- A provisional provider-facing `tachiko-ai-api::security_boundary` now keeps
+  system/developer/user instructions, trusted semantic metadata, and untrusted
+  document/import/plugin/model content explicitly separated. Untrusted typed
+  Propose/Execute requests receive effective identity and time only from a
+  trusted host context, must resolve to an active Delegated lifecycle principal,
+  and cannot reuse a Human session principal to avoid Approval. They delegate to
+  the workspace lifecycle; raw semantic or storage mutation and persistence/
+  filesystem/network/process/Git/plugin/deployment/credential effects are
+  rejected with stable machine codes.
+  Model explanations and validation claims remain inert evidence. Concrete
+  authentication/session/revision/transport mechanics remain #93, and actual
+  host/plugin capability mechanisms remain separately owned.
 - A provisional provider-neutral SemanticPatch lifecycle in
   `tachiko-workspace-engine` now evaluates stable-ID typed field-value Commands
   and ordered AtomicBatch proposals through the shared validation, formula, and
@@ -48,8 +60,9 @@ All notable changes to Tachiko Work are documented in this file.
   through an opaque revision compare-and-publish seam with a fresh trusted-time
   authorization callback, consumes Approval with successful publication,
   verifies installed state, and retains disclosure-safe execution receipts.
-  Concrete resident sessions/revisions remain #93, and hostile-
-  boundary/external-effect security remains #30.
+  Concrete resident sessions/revisions remain #93; the provider-facing hostile
+  boundary now composes this lifecycle through `tachiko-ai-api`, while actual
+  external-effect capabilities remain separate host/plugin work.
 - An optional provider-neutral Git/CI adapter now keeps canonical `.roproj/v1`
   members as LF text, accepts exact project trees in existing read-only
   semantic commands, and composes canonical/workspace validation with
@@ -58,9 +71,9 @@ All notable changes to Tachiko Work are documented in this file.
 - Accepted a semantic authorization contract for scoped Grants, trusted
   authorization-footprint derivation, and exact finite Human Approval with
   at-most-once successful publication. Issue #29 now provides the provisional
-  in-process lifecycle implementation; public authorization DTOs, hostile-
-  boundary enforcement, and concrete resident revision/session mechanics
-  remain under #30/#93.
+  in-process lifecycle implementation, and #30 adds the provisional hostile-
+  client adapter plus safe denial projection. Public authorization/wire DTOs
+  and concrete resident revision/session mechanics remain deferred.
 - A provider-free, read-only Semantic Analyst slice now exposes deterministic
   document inspection, formula and dependency analysis, semantic change and
   affected-area analysis, and validation findings through shared Rust queries

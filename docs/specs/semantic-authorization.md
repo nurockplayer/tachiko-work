@@ -11,12 +11,14 @@ Human Approval, expiry/revocation/replay checks, transition-aware policy
 binding, exclusive Approval reservation, atomic semantic publication/
 consumption, verification, trusted receipts, and Query-reduced execution
 responses for the current stable-ID field-value Command family and ordered
-AtomicBatch. Concrete identity provisioning,
-durable registry/receipt storage, public DTOs/wire integrity, #30's hostile-
-client and external-effect security boundary, and #93's resident revision/
-session/concurrency/state-installation mechanics remain unimplemented. Current
-provider-free AI operations are still read/explain/analyze/suggest-only, and
-the current `Suggestion` DTO is not a SemanticPatch, Grant, Approval,
+AtomicBatch. Issue #30's provisional `ai-api` seam now obtains identity/time
+only from trusted host context, requires this lifecycle to prove an active
+Delegated occurrence, delegates typed Propose/Execute to it, returns disclosure-
+safe stable codes, and rejects raw mutation and host effects. A Human session
+principal is not an AI credential. Concrete identity provisioning, durable
+registry/receipt storage, public DTO/wire integrity, and #93's resident revision/
+session/concurrency/state-installation mechanics remain unimplemented. Current convenience
+`Suggestion` remains inert and is not a SemanticPatch, Grant, Approval,
 execution credential, or public protocol.
 
 Decision issue: [#28](https://github.com/nurockplayer/tachiko-work/issues/28)
@@ -875,9 +877,12 @@ checks, not authorization to disclose proposal state. After the executor and
 complete ApprovalBinding checks, an unsupported version may be exposed and
 `Stale` identifies only the bound proposal's status. Neither outcome may reveal
 the current revision or other semantic facts without sufficient Query
-authority. Exact failure precedence and side-channel hardening remain #30
-implementation work. An earlier preview, rendered diff, client gate result, or
-model claim is not authority for step 8 or publication under step 9.
+authority. The #30 in-process AI adapter now collapses lifecycle outcomes into
+disclosure-safe families, including proposal-identity collisions and unavailable
+trusted context. Exact cross-transport failure precedence and broader side-
+channel hardening remain later transport/security-profile work. An earlier
+preview, rendered diff, client gate result, or model claim is not authority for
+step 8 or publication under step 9.
 
 ## Minimum provenance contract
 
@@ -988,8 +993,9 @@ Deferred and is not invented by this specification.
 
 A denied request MAY produce separately authorized security/audit evidence.
 That recording is not semantic publication, does not consume Approval, and does
-not authorize any requested host effect; concrete denial logging remains #30 or
-later audit-policy work.
+not authorize any requested host effect; #30 returns a stable host-effect denial
+at the current AI boundary, while concrete durable denial logging remains later
+audit-policy work.
 
 ## Failure meanings
 
@@ -1014,10 +1020,11 @@ A conforming client can distinguish, where applicable:
 - external effect denied.
 
 Authorization outcomes remain separate from semantic `ValidationReport`,
-representation failure, and host failure. Stable machine meaning is required;
-exact code strings, Rust enums, transport tags, and messages remain
-Provisional under #30. A denial MUST NOT disclose semantic content outside
-authorized disclosure scope.
+representation failure, and host failure. Stable machine meaning is required.
+#30 implements provisional Rust error families and stable in-process symbolic
+codes; public DTOs, complete catalogues, transport tags, and messages remain
+Provisional. A denial MUST NOT disclose semantic content outside authorized
+disclosure scope.
 
 ## Required conformance scenarios
 
@@ -1238,8 +1245,9 @@ authorized disclosure scope.
 - #29 owns the proposal/Approval lifecycle registry,
   reservation/consumption implementation, atomic apply/verify, receipts, and
   provenance persistence.
-- #30 owns trusted enforcement, instruction/data separation, bypass prevention,
-  disclosure-safe denials, host-effect denial, and security diagnostics/tests.
+- #30 implements the current provider-facing trusted-context, instruction/data
+  separation, bypass prevention, disclosure-safe code projection, host-effect
+  denial, and security regression seam.
 - #93 owns concrete resident session/revision/concurrency/state-installation
   mechanics.
 - #11 owns broader team/enterprise permissions, reusable policy questions, and
