@@ -1293,20 +1293,18 @@ impl PatchLifecycle {
         proposal: &ProposalRecord,
         footprint: &AuthorizationFootprint,
     ) -> Result<Option<StoredApproval>, PatchLifecycleError> {
-        let approval = match (
+        let approval_id = Self::validate_execution_approval_presence(
             self.execution_requires_approval(proposal, executor)?,
             approval_id,
-        ) {
-            (true, Some(id)) => Some(
+        )?;
+        let approval = approval_id
+            .map(|id| {
                 self.approvals
                     .get(id)
-                    .ok_or(PatchLifecycleError::AuthorizationDenied)?
-                    .clone(),
-            ),
-            (true, None) => return Err(PatchLifecycleError::ApprovalRequired),
-            (false, Some(_)) => return Err(PatchLifecycleError::ApprovalBindingMismatch),
-            (false, None) => None,
-        };
+                    .ok_or(PatchLifecycleError::AuthorizationDenied)
+                    .cloned()
+            })
+            .transpose()?;
         self.validate_execution_approval_selection(
             proposal,
             approval.as_ref(),
@@ -1323,14 +1321,8 @@ impl PatchLifecycle {
         executor: &PrincipalId,
         footprint: &AuthorizationFootprint,
     ) -> Result<(), PatchLifecycleError> {
-        let stored = match (
-            self.execution_requires_approval(proposal, executor)?,
-            approval,
-        ) {
-            (true, Some(stored)) => stored,
-            (true, None) => return Err(PatchLifecycleError::ApprovalRequired),
-            (false, Some(_)) => return Err(PatchLifecycleError::ApprovalBindingMismatch),
-            (false, None) => return Ok(()),
+        let Some(stored) = approval else {
+            return Ok(());
         };
         if stored.approval.binding.executor != *executor {
             return Err(PatchLifecycleError::AuthorizationDenied);
@@ -1355,6 +1347,18 @@ impl PatchLifecycle {
         Ok(())
     }
 
+    fn validate_execution_approval_presence<T>(
+        approval_required: bool,
+        approval: Option<T>,
+    ) -> Result<Option<T>, PatchLifecycleError> {
+        match (approval_required, approval) {
+            (true, Some(approval)) => Ok(Some(approval)),
+            (true, None) => Err(PatchLifecycleError::ApprovalRequired),
+            (false, Some(_)) => Err(PatchLifecycleError::ApprovalBindingMismatch),
+            (false, None) => Ok(None),
+        }
+    }
+
     fn execution_requires_approval(
         &self,
         proposal: &ProposalRecord,
@@ -1376,6 +1380,10 @@ impl PatchLifecycle {
         footprint: &AuthorizationFootprint,
         now: TrustedInstant,
     ) -> Result<(), PatchLifecycleError> {
+        let approval = Self::validate_execution_approval_presence(
+            self.execution_requires_approval(proposal, executor)?,
+            approval,
+        )?;
         self.validate_execution_approval_selection(proposal, approval, executor, footprint)?;
         let Some(stored) = approval else {
             return Ok(());
