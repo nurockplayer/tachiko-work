@@ -2154,25 +2154,43 @@ impl PatchLifecycle {
                 before: old_value,
                 after: new_value,
             } => {
-                let family =
-                    command_family_for_field(body, field).unwrap_or(OperationFamily::SetFieldValue);
-                self.insert_field_disclosure_for(family, before, after, field, disclosures)?;
-                self.insert_value_disclosures_for(family, before, after, old_value, disclosures)?;
-                self.insert_value_disclosures_for(family, before, after, new_value, disclosures)
-            }
-            SemanticChange::FormulaImpact { field, causes, .. } => {
-                let mut families = causes
-                    .iter()
-                    .filter_map(|cause| command_family_for_field(body, cause))
-                    .collect::<BTreeSet<_>>();
+                let mut families = command_families_for_field(body, field);
                 if families.is_empty() {
                     families.insert(OperationFamily::SetFieldValue);
                 }
                 for family in families {
                     self.insert_field_disclosure_for(family, before, after, field, disclosures)?;
-                    for cause in causes.iter().filter(|cause| {
-                        command_family_for_field(body, cause).unwrap_or(family) == family
-                    }) {
+                    self.insert_value_disclosures_for(
+                        family,
+                        before,
+                        after,
+                        old_value,
+                        disclosures,
+                    )?;
+                    self.insert_value_disclosures_for(
+                        family,
+                        before,
+                        after,
+                        new_value,
+                        disclosures,
+                    )?;
+                }
+                Ok(())
+            }
+            SemanticChange::FormulaImpact { field, causes, .. } => {
+                let mut family_causes = BTreeMap::<OperationFamily, Vec<&FieldRef>>::new();
+                for cause in causes {
+                    let mut families = command_families_for_field(body, cause);
+                    if families.is_empty() {
+                        families.insert(OperationFamily::SetFieldValue);
+                    }
+                    for family in families {
+                        family_causes.entry(family).or_default().push(cause);
+                    }
+                }
+                for (family, causes) in family_causes {
+                    self.insert_field_disclosure_for(family, before, after, field, disclosures)?;
+                    for cause in causes {
                         self.insert_field_disclosure_for(
                             family,
                             before,
@@ -2392,16 +2410,22 @@ impl PatchLifecycle {
     }
 }
 
-fn command_family_for_field(body: &SemanticPatchBody, field: &FieldRef) -> Option<OperationFamily> {
-    body.commands().iter().find_map(|command| match command {
-        SemanticCommand::FormulaUpdate(command) if command.target() == field => {
-            Some(OperationFamily::FormulaUpdate)
-        }
-        SemanticCommand::SetFieldValue { field: target, .. } if target == field => {
-            Some(OperationFamily::SetFieldValue)
-        }
-        _ => None,
-    })
+fn command_families_for_field(
+    body: &SemanticPatchBody,
+    field: &FieldRef,
+) -> BTreeSet<OperationFamily> {
+    body.commands()
+        .iter()
+        .filter_map(|command| match command {
+            SemanticCommand::FormulaUpdate(command) if command.target() == field => {
+                Some(OperationFamily::FormulaUpdate)
+            }
+            SemanticCommand::SetFieldValue { field: target, .. } if target == field => {
+                Some(OperationFamily::SetFieldValue)
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 fn classify_field_transition(existing: &Value, replacement: &Value) -> BTreeSet<MutationClass> {

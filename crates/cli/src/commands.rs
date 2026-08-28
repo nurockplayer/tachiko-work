@@ -16,13 +16,14 @@ use tachiko_storage::{
     read_portable_package_source, to_canonical_string,
 };
 use tachiko_workspace_engine::{
-    CalculationFailure, Document, EditPreview, FieldAddress, FieldKind, FieldRef, IdGenerator,
-    MergeConflict, SemanticChange, SemanticIdKind, StarterTemplate, ValidationReport,
-    WorkspaceError, WorkspaceMergeOutcome, analyze_changes as analyze_semantic_changes,
-    analyze_field as analyze_semantic_field, analyze_validation as analyze_semantic_validation,
-    calculate_fields, compare_documents, create_document, duplicate_entity, explain_field,
-    inspect_document, merge_documents as merge_semantic_documents, overview, remove_entity,
-    rename_entity, runtime_export, set_formula, set_scalar, validate as validate_semantics,
+    CalculationFailure, Document, EditPreview, ExpressionComplexityError, FieldAddress, FieldKind,
+    FieldRef, IdGenerator, MergeConflict, ReferenceFailure, SemanticChange, SemanticIdKind,
+    StarterTemplate, ValidationReport, WorkspaceError, WorkspaceMergeOutcome,
+    analyze_changes as analyze_semantic_changes, analyze_field as analyze_semantic_field,
+    analyze_validation as analyze_semantic_validation, calculate_fields, compare_documents,
+    create_document, duplicate_entity, explain_field, inspect_document,
+    merge_documents as merge_semantic_documents, overview, remove_entity, rename_entity,
+    runtime_export, set_formula, set_scalar, validate as validate_semantics,
 };
 use tachiko_workspace_engine::{
     formula_operations::{
@@ -840,20 +841,50 @@ fn calculation_output(outcome: &FormulaCalculationOutcome) -> serde_json::Value 
     match outcome {
         FormulaCalculationOutcome::Value(value) => json!({ "kind": "value", "value": value }),
         FormulaCalculationOutcome::Failure(failure) => {
-            json!({ "kind": "failure", "failure": calculation_failure_name(failure) })
+            json!({ "kind": "failure", "failure": calculation_failure_output(failure) })
         }
         FormulaCalculationOutcome::Unavailable => json!({ "kind": "unavailable" }),
     }
 }
 
-fn calculation_failure_name(failure: &CalculationFailure) -> &'static str {
+fn calculation_failure_output(failure: &CalculationFailure) -> serde_json::Value {
     match failure {
-        CalculationFailure::InvalidExpression { .. } => "invalid_expression",
-        CalculationFailure::InvalidReferences { .. } => "invalid_references",
-        CalculationFailure::Cycle { .. } => "cycle",
-        CalculationFailure::FailedDependencies { .. } => "failed_dependencies",
-        CalculationFailure::DivisionByZero => "division_by_zero",
-        CalculationFailure::NonFiniteResult => "non_finite_result",
+        CalculationFailure::InvalidExpression { error } => json!({
+            "kind": "invalid_expression",
+            "error": expression_complexity_name(*error),
+        }),
+        CalculationFailure::InvalidReferences { targets } => json!({
+            "kind": "invalid_references",
+            "targets": targets.iter().map(|(target, reason)| json!({
+                "target": target,
+                "reason": reference_failure_name(*reason),
+            })).collect::<Vec<_>>(),
+        }),
+        CalculationFailure::Cycle { members } => json!({
+            "kind": "cycle",
+            "members": members,
+        }),
+        CalculationFailure::FailedDependencies { dependencies } => json!({
+            "kind": "failed_dependencies",
+            "dependencies": dependencies,
+        }),
+        CalculationFailure::DivisionByZero => json!({ "kind": "division_by_zero" }),
+        CalculationFailure::NonFiniteResult => json!({ "kind": "non_finite_result" }),
+    }
+}
+
+const fn expression_complexity_name(error: ExpressionComplexityError) -> &'static str {
+    match error {
+        ExpressionComplexityError::NodeLimit => "node_limit",
+        ExpressionComplexityError::DepthLimit => "depth_limit",
+        ExpressionComplexityError::CanonicalLengthLimit => "canonical_length_limit",
+    }
+}
+
+const fn reference_failure_name(failure: ReferenceFailure) -> &'static str {
+    match failure {
+        ReferenceFailure::Missing => "missing",
+        ReferenceFailure::NonNumeric => "non_numeric",
     }
 }
 

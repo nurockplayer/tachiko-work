@@ -1608,6 +1608,41 @@ fn formula_inspect_emits_structured_exact_snapshot_reasoning() {
     let changed: serde_json::Value =
         serde_json::from_slice(&successful_stdout(&arguments)).unwrap();
     assert_ne!(result["source_revision"], changed["source_revision"]);
+    assert_eq!(changed["outcome"]["calculation"]["value"], 48.0);
+}
+
+#[test]
+fn formula_inspect_preserves_structured_calculation_failure_evidence() {
+    let temp = TempDir::new();
+    let input = temp.path().join("cycle.ro");
+    let mut document = balance_document(50.0);
+    document.entities.get_mut("sword").unwrap().fields.insert(
+        FieldId::from("damage"),
+        Value::Formula(Expression::Reference(FieldRef::new("sword", "dps"))),
+    );
+    save(&input, &document).unwrap();
+
+    let result: serde_json::Value = serde_json::from_slice(&successful_stdout(&[
+        "formula",
+        "inspect",
+        input.to_str().unwrap(),
+        "sword.dps",
+    ]))
+    .unwrap();
+
+    assert_eq!(
+        result["outcome"]["calculation"],
+        serde_json::json!({
+            "kind": "failure",
+            "failure": {
+                "kind": "cycle",
+                "members": [
+                    { "entity": "sword", "field": "damage" },
+                    { "entity": "sword", "field": "dps" }
+                ]
+            }
+        })
+    );
 }
 
 #[test]

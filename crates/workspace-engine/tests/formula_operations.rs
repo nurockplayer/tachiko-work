@@ -4,7 +4,8 @@ use std::collections::BTreeSet;
 
 use common::game_balance_document;
 use tachiko_workspace_engine::{
-    Document, DocumentId, Expression, FieldId, FieldRef, Number, Value,
+    DiagnosticCode, Document, DocumentId, Expression, FieldId, FieldRef, Number, SemanticSubject,
+    ValidationRole, Value, WorkspaceError, compare_documents,
     formula_operations::{
         FormulaCalculationOutcome, FormulaOperationError, FormulaReasoningOutcome,
         FormulaUpdateRequest, NumberOverride, ScenarioEnvelopeError, ScenarioOutcome,
@@ -12,11 +13,12 @@ use tachiko_workspace_engine::{
     },
     patch_lifecycle::{
         ApprovalId, ApprovalRequest, ApprovalStatus, AuthorizationAction, AuthorizationDomainId,
-        AuthorizationPolicyVersion, DocumentScopeId, Grant, GrantId, GrantRequirement,
-        MutationClass, OperationFamily, PatchLifecycle, PatchLifecycleError, PolicyMeaningId,
-        PrincipalId, PrincipalKind, ProposalId, ScopedSemanticSubject, SemanticApiContract,
-        SemanticCommand, SemanticPatchBody, SemanticPublicationAuthority, SemanticPublicationError,
-        SemanticRevision, SemanticScope, TrustedInstant,
+        AuthorizationPolicyVersion, DisclosureRequirement, DocumentScopeId, Grant, GrantId,
+        GrantRequirement, MutationClass, OperationFamily, PatchLifecycle, PatchLifecycleError,
+        PolicyMeaningId, PrincipalId, PrincipalKind, ProposalId, ProposalRequest,
+        ScopedSemanticSubject, SemanticApiContract, SemanticCommand, SemanticPatchBody,
+        SemanticPublicationAuthority, SemanticPublicationError, SemanticRevision, SemanticScope,
+        TrustedInstant,
     },
 };
 
@@ -576,18 +578,41 @@ fn scenario_undeclared_override_returns_validation_without_diff_impact() {
     let ScenarioOutcome::Evaluated(evaluation) = result.outcome else {
         panic!("expected evaluated scenario");
     };
-    assert!(
-        !evaluation
-            .baseline_validation
-            .expect("document Query exposes baseline validation")
-            .is_valid()
-    );
-    assert!(
-        !evaluation
-            .candidate_validation
-            .expect("document Query exposes candidate validation")
-            .is_valid()
-    );
+    let expected_subject = SemanticSubject::EntityField(FieldRef::new("iron_sword", "undeclared"));
+    let baseline_report = evaluation
+        .baseline_validation
+        .expect("document Query exposes baseline validation");
+    let candidate_report = evaluation
+        .candidate_validation
+        .expect("document Query exposes candidate validation");
+    for report in [&baseline_report, &candidate_report] {
+        assert_eq!(report.diagnostics().len(), 1);
+        assert_eq!(
+            report.diagnostics()[0].code,
+            DiagnosticCode::UNEXPECTED_FIELD
+        );
+        assert_eq!(
+            report.diagnostics()[0].subjects.as_slice(),
+            std::slice::from_ref(&expected_subject)
+        );
+    }
+    let mut candidate = document.clone();
+    candidate
+        .entities
+        .get_mut("iron_sword")
+        .unwrap()
+        .fields
+        .insert(
+            FieldId::from("undeclared"),
+            Value::Number(Number::new(2.0).unwrap()),
+        );
+    assert!(matches!(
+        compare_documents(&document, &candidate),
+        Err(WorkspaceError::InvalidDocument {
+            role: ValidationRole::ComparisonBefore,
+            ..
+        })
+    ));
     assert!(evaluation.impact.is_none());
     assert_eq!(document, original);
 }
@@ -701,11 +726,148 @@ fn formula_update_binding_failures_use_resolvable_field_query_scopes() {
             )
             .unwrap_err();
 
-        assert!(matches!(error, PatchLifecycleError::CommandRejected { .. }));
+        let PatchLifecycleError::CommandRejected { source } = error else {
+            panic!("expected typed command rejection");
+        };
+        match (id, *source) {
+            ("nonnumeric-target", WorkspaceError::NonNumericFormulaField { field }) => {
+                assert_eq!(field, FieldRef::new("iron_sword", "name"));
+            }
+            ("nonnumeric-reference", WorkspaceError::FormulaBinding { field, .. }) => {
+                assert_eq!(field, FieldRef::new("iron_sword", "dps"));
+            }
+            (_, source) => panic!("unexpected binding failure: {source:?}"),
+        }
         assert!(matches!(
             lifecycle.proposal_history(&proposal_id),
             Err(PatchLifecycleError::ProposalNotFound)
         ));
+    }
+}
+
+fn repeated_target_formula_proposal()
+-> (Document, PatchLifecycle, ProposalId, ScopedSemanticSubject) {
+    let document = game_balance_document("game", "Game");
+    let mut lifecycle = lifecycle();
+    let damage_scope = field_scope("iron_sword", "weapons", "damage");
+    let price_scope = field_scope("iron_sword", "weapons", "price");
+    let dps_scope = field_scope("iron_sword", "weapons", "dps");
+    grant(
+        &mut lifecycle,
+        "mixed-target-authority",
+        "agent",
+        vec![
+            query_requirement(OperationFamily::FormulaUpdate, damage_scope.clone()),
+            query_requirement(OperationFamily::FormulaUpdate, price_scope.clone()),
+            query_requirement(OperationFamily::SetFieldValue, damage_scope.clone()),
+            query_requirement(OperationFamily::SetFieldValue, price_scope),
+            query_requirement(OperationFamily::SetFieldValue, dps_scope.clone()),
+            mutation_requirement(
+                AuthorizationAction::Propose,
+                OperationFamily::FormulaUpdate,
+                MutationClass::Formula,
+                damage_scope.clone(),
+            ),
+            mutation_requirement(
+                AuthorizationAction::Propose,
+                OperationFamily::SetFieldValue,
+                MutationClass::Value,
+                damage_scope.clone(),
+            ),
+        ],
+    );
+    let admitted = lifecycle
+        .propose_formula_update(
+            &document_scope_id(),
+            &document,
+            &revision("r1"),
+            FormulaUpdateRequest::new(
+                ProposalId::from("admitted-family-command"),
+                revision("r1"),
+                FieldRef::new("iron_sword", "damage"),
+                "[iron_sword.price]",
+                principal("agent"),
+            ),
+            NOW,
+        )
+        .unwrap();
+    let SemanticPatchBody::Command(formula_command) = admitted.exact_change().body() else {
+        panic!("expected one admitted formula command");
+    };
+    let proposal_id = ProposalId::from("mixed-repeated-target");
+    lifecycle
+        .propose(
+            &document_scope_id(),
+            &document,
+            &revision("r1"),
+            ProposalRequest::new(
+                proposal_id.clone(),
+                revision("r1"),
+                SemanticPatchBody::atomic_batch(vec![
+                    SemanticCommand::set_field_value(
+                        FieldRef::new("iron_sword", "damage"),
+                        Value::Number(Number::new(45.0).unwrap()),
+                    ),
+                    formula_command.clone(),
+                ])
+                .unwrap(),
+                principal("agent"),
+            ),
+            NOW,
+        )
+        .unwrap();
+
+    (document, lifecycle, proposal_id, dps_scope)
+}
+
+#[test]
+fn repeated_batch_targets_retain_every_command_family_for_impact_disclosure() {
+    let (document, mut lifecycle, proposal_id, dps_scope) = repeated_target_formula_proposal();
+
+    assert!(matches!(
+        lifecycle.preview(
+            &document_scope_id(),
+            &document,
+            &revision("r1"),
+            &proposal_id,
+            &principal("agent"),
+            NOW,
+        ),
+        Err(PatchLifecycleError::DisclosureDenied)
+    ));
+
+    grant(
+        &mut lifecycle,
+        "set-impact-query",
+        "agent",
+        vec![query_requirement(
+            OperationFamily::FormulaUpdate,
+            dps_scope.clone(),
+        )],
+    );
+    let preview = lifecycle
+        .preview(
+            &document_scope_id(),
+            &document,
+            &revision("r1"),
+            &proposal_id,
+            &principal("agent"),
+            NOW,
+        )
+        .unwrap();
+    for family in [
+        OperationFamily::FormulaUpdate,
+        OperationFamily::SetFieldValue,
+    ] {
+        assert!(
+            preview
+                .authorization_footprint
+                .disclosure_requirements
+                .contains(&DisclosureRequirement {
+                    family,
+                    scope: dps_scope.clone(),
+                })
+        );
     }
 }
 

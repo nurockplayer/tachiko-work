@@ -10,12 +10,12 @@ use tachiko_diff_engine::diff;
 pub use tachiko_diff_engine::{DiffError, SemanticChange, SemanticDiff};
 use tachiko_formula_engine::{
     Calculation, CalculationFailures, CalculationOutcome, FormulaBindError, FormulaParseError,
-    ReferenceFailure, bind_expression, calculate_complete, parse_expression, project_expression,
+    bind_expression, calculate_complete, parse_expression, project_expression,
     validate_expression_structure,
 };
 pub use tachiko_formula_engine::{
     CalculationError, CalculationFailure, CanonicalAuthoringProjectionError,
-    ExpressionComplexityError,
+    ExpressionComplexityError, ReferenceFailure,
 };
 pub use tachiko_merge_engine::{MergeConflict, MergeValue};
 use tachiko_merge_engine::{MergeOutcome, merge};
