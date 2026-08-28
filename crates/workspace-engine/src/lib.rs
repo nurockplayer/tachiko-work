@@ -9,12 +9,13 @@ use serde::Serialize;
 use tachiko_diff_engine::diff;
 pub use tachiko_diff_engine::{DiffError, SemanticChange, SemanticDiff};
 use tachiko_formula_engine::{
-    Calculation, CalculationFailure, CalculationFailures, CalculationOutcome, FormulaBindError,
-    FormulaParseError, ReferenceFailure, bind_expression, calculate_complete, parse_expression,
-    project_expression, validate_expression_structure,
+    Calculation, CalculationFailures, CalculationOutcome, FormulaBindError, FormulaParseError,
+    ReferenceFailure, bind_expression, calculate_complete, parse_expression, project_expression,
+    validate_expression_structure,
 };
 pub use tachiko_formula_engine::{
-    CalculationError, CanonicalAuthoringProjectionError, ExpressionComplexityError,
+    CalculationError, CalculationFailure, CanonicalAuthoringProjectionError,
+    ExpressionComplexityError,
 };
 pub use tachiko_merge_engine::{MergeConflict, MergeValue};
 use tachiko_merge_engine::{MergeOutcome, merge};
@@ -29,6 +30,7 @@ pub use tachiko_semantic_core::{
 };
 use thiserror::Error;
 
+pub mod formula_operations;
 pub mod patch_lifecycle;
 
 /// Symbolic codes emitted by workspace composition of formula-engine outcomes.
@@ -1059,31 +1061,64 @@ pub fn set_formula(
     input: &str,
 ) -> Result<EditPreview, WorkspaceError> {
     let field = document.resolve_field(address)?;
-    let entity = &document.entities[&field.entity];
-    let definition = document.schemas[&entity.schema]
-        .fields
-        .get(&field.field)
-        .ok_or_else(|| WorkspaceError::MissingField {
-            field: field.clone(),
-        })?;
+    let expression = bind_formula_update(document, &field, input)?;
+    let value = Value::Formula(expression);
+    let edited = field_value_candidate(document, &field, &value)?;
+    finalize_edit(document, edited)
+}
+
+/// Admit formula authoring into one complete typed bound expression without
+/// applying the later candidate validation/publication gate.
+pub(crate) fn bind_formula_update(
+    document: &Document,
+    field: &FieldRef,
+    input: &str,
+) -> Result<Expression, WorkspaceError> {
+    let unbound = parse_expression(input).map_err(|source| WorkspaceError::InvalidFormula {
+        field: field.clone(),
+        source,
+    })?;
+    bind_formula_update_unbound(document, field, &unbound)
+}
+
+pub(crate) fn bind_formula_update_unbound(
+    document: &Document,
+    field: &FieldRef,
+    unbound: &tachiko_formula_engine::UnboundExpression,
+) -> Result<Expression, WorkspaceError> {
+    let entity =
+        document
+            .entities
+            .get(&field.entity)
+            .ok_or_else(|| WorkspaceError::MissingEntityId {
+                entity: field.entity.clone(),
+            })?;
+    let schema =
+        document
+            .schemas
+            .get(&entity.schema)
+            .ok_or_else(|| WorkspaceError::MissingSchema {
+                schema: entity.schema.clone(),
+            })?;
+    let definition =
+        schema
+            .fields
+            .get(&field.field)
+            .ok_or_else(|| WorkspaceError::MissingField {
+                field: field.clone(),
+            })?;
     if definition.field_type != FieldType::Number {
         return Err(WorkspaceError::NonNumericFormulaField {
             field: field.clone(),
         });
     }
 
-    let unbound = parse_expression(input).map_err(|source| WorkspaceError::InvalidFormula {
-        field: field.clone(),
-        source,
-    })?;
     let expression =
-        bind_expression(document, &unbound).map_err(|source| WorkspaceError::FormulaBinding {
+        bind_expression(document, unbound).map_err(|source| WorkspaceError::FormulaBinding {
             field: field.clone(),
             source: Box::new(source),
         })?;
-    let value = Value::Formula(expression);
-    let edited = field_value_candidate(document, &field, &value)?;
-    finalize_edit(document, edited)
+    Ok(expression)
 }
 
 /// Duplicate an entity under a new key and generated stable identity.
@@ -1383,7 +1418,7 @@ fn expression_references_entity(expression: &Expression, target: &EntityId) -> b
     }
 }
 
-fn field_value_candidate(
+pub(crate) fn field_value_candidate(
     document: &Document,
     field: &FieldRef,
     value: &Value,

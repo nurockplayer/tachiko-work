@@ -409,6 +409,7 @@ dependencies = [
  "clap",
  "serde",
  "serde_json",
+ "sha2",
  "tachiko-storage",
  "tachiko-workspace-engine",
  "thiserror",

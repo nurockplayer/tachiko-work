@@ -20,6 +20,7 @@ path = "src/main.rs"
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 tachiko-storage = { version = "0.1.0", path = "../storage" }
 tachiko-workspace-engine = { version = "0.1.0", path = "../workspace-engine" }
 thiserror.workspace = true

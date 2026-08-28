@@ -35,9 +35,18 @@ to prove an active Delegated occurrence, delegates typed proposal/execution to
 it, and projects disclosure-safe machine outcomes while rejecting raw mutation
 and host effects. The complete operation catalogue, authentication, transports,
 and wire/SDK contract remain Provisional or Deferred.
-The M04 formula-reasoning, scenario, and formula-update contracts are not yet
-implemented; a separate implementation Issue must own the first
-provider-neutral workspace/CLI vertical slice.
+Issue #144 supplies the first provider-neutral, Provisional workspace/CLI
+implementation of the M04 formula-reasoning Query, exact-snapshot read-only
+Number-override scenario Query, and typed formula-update Command. It reuses the
+authoritative calculation, dependency, validation, diff, authorization,
+SemanticPatch, Approval, and publication paths. Focused workspace/CLI tests and
+the portable native/WASM corpus record the implementation evidence, including
+bounded admission, disclosure projection, unchanged scenario source state,
+atomic no-publication failures, complete bound FormulaUpdate meaning, and the
+existing exact Human Approval path. The Rust types, CLI spelling, result JSON,
+limits, content-derived opaque CLI revision tokens, and host composition remain
+Provisional; this implementation does not establish a public wire or SDK
+contract.
 
 Decision issues: [#10](https://github.com/nurockplayer/tachiko-work/issues/10),
 [#27](https://github.com/nurockplayer/tachiko-work/issues/27),
@@ -967,9 +976,8 @@ policy.
 
 ## M04 formula/scenario conformance evidence
 
-The separate implementation Issue must exercise the Accepted logical contract
-with provider-neutral structured fixtures. At minimum, the current game-balance
-domain must demonstrate:
+Issue #144 exercises the Accepted logical contract with provider-neutral
+structured fixtures. At minimum, the current game-balance domain demonstrates:
 
 1. inspection and authoritative evaluation of a DPS-style bound formula;
 2. deterministic stable-ID direct-input and direct-dependent facts;
@@ -1043,10 +1051,9 @@ fixtures without requiring common bytes or Rust types:
 Conformance also covers unsupported Semantic API compatibility, reuse of one
 proposal identity with different content, generated-ID binding, and equivalent
 Stable native/WASM outcomes where the same capability is exposed. Issue #29
-implements current field-value/batch lifecycle fixtures. Formula reasoning,
-scenario, and formula-update conformance remains for the separate
-implementation Issue required by #32; complete catalogue, runtime, and
-transport conformance remains #93 and later work.
+implements current field-value/batch lifecycle fixtures. Issue #144 adds
+formula reasoning, scenario, and formula-update conformance; complete catalogue,
+runtime, and transport conformance remains #93 and later work.
 
 ## Stability classification
 
@@ -1085,7 +1092,7 @@ transport conformance remains #93 and later work.
 | Typed formula-update Command binds complete bound meaning before proposal identity | Accepted under ADR-0020 / #32 |
 | Formula-update reuse of SemanticPatch and ADR-0026 authorization/Approval | Accepted under ADR-0020 / #32 |
 | Exact operation names, family identifiers, request limits, normalization encoding, and result DTOs | Provisional |
-| Production formula-reasoning/scenario/formula-update implementation | Not implemented / separate Issue |
+| Production formula-reasoning/scenario/formula-update implementation | Provisional provider-neutral workspace/CLI slice implemented by #144; public wire/SDK remains undefined |
 | Capability-addressability of operation/family | Accepted principle |
 | Capability/scope/Grant/Approval/provenance meaning | Accepted under ADR-0026 |
 | Exact authorization identifiers/DTOs/storage/wire representation | Provisional / Deferred |

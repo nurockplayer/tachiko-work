@@ -17,17 +17,28 @@ use tachiko_semantic_core::{
     SchemaKey, SemanticSubject, Value,
 };
 use tachiko_storage::{
-    FormatError as StorageFormatError, NORMAL_DIRECT_JSON_MAX_INPUT_BYTES,
-    ROPROJ_V1_PATHS, V2_MAX_NUMBER_TOKEN_BYTES, decode_portable_package_v1,
-    decode_roproj_v1, encode_portable_package_v1, encode_roproj_v1,
-    from_bytes as storage_from_bytes, from_str as storage_from_str,
-    portable_package_payload_root, to_canonical_string,
+    FormatError as StorageFormatError, NORMAL_DIRECT_JSON_MAX_INPUT_BYTES, ROPROJ_V1_PATHS,
+    V2_MAX_NUMBER_TOKEN_BYTES, decode_portable_package_v1, decode_roproj_v1,
+    encode_portable_package_v1, encode_roproj_v1, from_bytes as storage_from_bytes,
+    from_str as storage_from_str, portable_package_payload_root, to_canonical_string,
 };
 use tachiko_workspace_engine::{
-    ValidationReport, calculate_fields, diagnostic_codes, validation_report,
+    ValidationReport, calculate_fields, diagnostic_codes,
+    formula_operations::{
+        FormulaCalculationOutcome, FormulaReasoningOutcome, FormulaUpdateRequest, NumberOverride,
+        ScenarioOutcome, ScenarioRequest, ScenarioTargetOutcome, ValidatorConfiguration,
+    },
+    patch_lifecycle::{
+        AuthorizationAction, AuthorizationDomainId, AuthorizationPolicyVersion, DocumentScopeId,
+        Grant, GrantId, GrantRequirement, MutationClass, OperationFamily, PatchLifecycle,
+        PolicyMeaningId, PrincipalId, PrincipalKind, ProposalId, ScopedSemanticSubject,
+        SemanticApiContract, SemanticCommand, SemanticPatchBody, SemanticPublicationAuthority,
+        SemanticPublicationError, SemanticRevision, SemanticScope, TrustedInstant,
+    },
+    validation_report,
 };
 
-const CASE_COUNT: u32 = 48;
+const CASE_COUNT: u32 = 51;
 const VALUE: u32 = 0;
 const DIVISION_BY_ZERO: u32 = 1;
 const NON_FINITE: u32 = 2;
@@ -392,11 +403,7 @@ fn adversarial_numeric_corpus_record() -> Record {
 fn schema_type_change_record() -> Record {
     let mut document = formula_document(number(42.0), input_reference());
     let schema = document.schemas.get_mut("schema-stable").unwrap();
-    schema
-        .fields
-        .get_mut("input-stable")
-        .unwrap()
-        .field_type = FieldType::Text;
+    schema.fields.get_mut("input-stable").unwrap().field_type = FieldType::Text;
     let mut output_definition = schema.fields.remove("output-stable").unwrap();
     output_definition.id = FieldId::from("a-output-stable");
     schema
@@ -422,9 +429,7 @@ fn complete_oracle_record() -> Record {
     let schema_id = SchemaId::from("oracle-schema-stable");
     let entity_id = EntityId::from("oracle-entity-stable");
     let formula = |expression| Value::Formula(expression);
-    let reference = |field| {
-        Expression::Reference(FieldRef::new("oracle-entity-stable", field))
-    };
+    let reference = |field| Expression::Reference(FieldRef::new("oracle-entity-stable", field));
     let fields = [
         "cycle-a",
         "cycle-b",
@@ -518,10 +523,7 @@ fn complete_oracle_record() -> Record {
         (
             node("downstream-failure"),
             CalculationFailure::FailedDependencies {
-                dependencies: BTreeSet::from([
-                    node("cycle-a"),
-                    node("evaluation-failure"),
-                ]),
+                dependencies: BTreeSet::from([node("cycle-a"), node("evaluation-failure")]),
             },
         ),
         (
@@ -531,19 +533,13 @@ fn complete_oracle_record() -> Record {
         (
             node("missing-failure"),
             CalculationFailure::InvalidReferences {
-                targets: BTreeMap::from([(
-                    node("missing-target"),
-                    ReferenceFailure::Missing,
-                )]),
+                targets: BTreeMap::from([(node("missing-target"), ReferenceFailure::Missing)]),
             },
         ),
         (
             node("type-failure"),
             CalculationFailure::InvalidReferences {
-                targets: BTreeMap::from([(
-                    node("text-target"),
-                    ReferenceFailure::NonNumeric,
-                )]),
+                targets: BTreeMap::from([(node("text-target"), ReferenceFailure::NonNumeric)]),
             },
         ),
     ]);
@@ -603,10 +599,8 @@ fn padded_direct_json(prefix: &str, suffix: &str, target: usize) -> String {
 fn direct_json_envelope_input(index: u32) -> Vec<u8> {
     let oversized = NORMAL_DIRECT_JSON_MAX_INPUT_BYTES + 1;
     match index {
-        0 => br#"{"format_version":1,"id":"doc","title":"x","schemas":{},"entities":{}}"#
-            .to_vec(),
-        1 => br#"{"format_version":2,"id":"doc","title":"x","schemas":{},"entities":{}}"#
-            .to_vec(),
+        0 => br#"{"format_version":1,"id":"doc","title":"x","schemas":{},"entities":{}}"#.to_vec(),
+        1 => br#"{"format_version":2,"id":"doc","title":"x","schemas":{},"entities":{}}"#.to_vec(),
         2 => padded_direct_json(r#"{"format_version":2,"future":""#, "", oversized).into_bytes(),
         3 => padded_direct_json(
             r#"{"format_version":3,"padding":""#,
@@ -615,18 +609,11 @@ fn direct_json_envelope_input(index: u32) -> Vec<u8> {
         )
         .into_bytes(),
         4 => padded_direct_json(r#"{"future":""#, r#""}"#, oversized).into_bytes(),
-        5 => padded_direct_json(
-            r#"{"format_version":"2","future":""#,
-            r#""}"#,
-            oversized,
-        )
-        .into_bytes(),
-        6 => padded_direct_json(
-            r#"{"format_version":3,"future":""#,
-            r#""}"#,
-            oversized,
-        )
-        .into_bytes(),
+        5 => padded_direct_json(r#"{"format_version":"2","future":""#, r#""}"#, oversized)
+            .into_bytes(),
+        6 => {
+            padded_direct_json(r#"{"format_version":3,"future":""#, r#""}"#, oversized).into_bytes()
+        }
         7 => {
             let mut input = vec![b' '; oversized];
             input[oversized - 1] = 0xff;
@@ -738,10 +725,9 @@ fn workspace_calculation_record() -> Record {
 
 fn ai_formula_record() -> Record {
     let document = formula_document(number(42.0), input_reference());
-    let Ok(explanation) = explain_formula(
-        &document,
-        &FieldRef::new("entity-stable", "output-stable"),
-    ) else {
+    let Ok(explanation) =
+        explain_formula(&document, &FieldRef::new("entity-stable", "output-stable"))
+    else {
         return Record::failure(UNEXPECTED, 23);
     };
     if explanation.value != number(42.0) || explanation.dependencies.len() != 1 {
@@ -1003,10 +989,9 @@ fn validation_accumulation_record() -> Record {
         .unwrap()
         .id = "different-stable-id".into();
     let entity = document.entities.get_mut("entity").unwrap();
-    entity.fields.insert(
-        FieldId::from("text"),
-        Value::Number(number(7.0)),
-    );
+    entity
+        .fields
+        .insert(FieldId::from("text"), Value::Number(number(7.0)));
     entity.fields.insert(
         FieldId::from("cycle-a"),
         Value::Formula(Expression::Add {
@@ -1038,7 +1023,10 @@ fn validation_accumulation_record() -> Record {
     );
     entity.fields.insert(
         FieldId::from("typed-dependent"),
-        Value::Formula(Expression::Reference(FieldRef::new("entity", "typed-input"))),
+        Value::Formula(Expression::Reference(FieldRef::new(
+            "entity",
+            "typed-input",
+        ))),
     );
     entity.fields.insert(
         FieldId::from("blocked-owner"),
@@ -1073,10 +1061,7 @@ fn validation_accumulation_record() -> Record {
             id: "orphan".into(),
             key: "orphan".into(),
             schema: "missing-schema".into(),
-            fields: BTreeMap::from([(
-                FieldId::from("unknown"),
-                Value::Formula(numeric(1.0)),
-            )]),
+            fields: BTreeMap::from([(FieldId::from("unknown"), Value::Formula(numeric(1.0)))]),
         },
     );
     let report = validation_report(&document);
@@ -1094,7 +1079,9 @@ fn validation_accumulation_record() -> Record {
         && report.diagnostics().iter().any(|diagnostic| {
             diagnostic.code == DiagnosticCode::TYPE_MISMATCH
                 && diagnostic.subjects
-                    == [SemanticSubject::EntityField(FieldRef::new("entity", "text"))]
+                    == [SemanticSubject::EntityField(FieldRef::new(
+                        "entity", "text",
+                    ))]
         })
         && report.diagnostics().iter().any(|diagnostic| {
             diagnostic.code == diagnostic_codes::FORMULA_INVALID_REFERENCES
@@ -1104,10 +1091,7 @@ fn validation_accumulation_record() -> Record {
                     ))]
                 && diagnostic.related_subjects
                     == [
-                        SemanticSubject::EntityField(FieldRef::new(
-                            "entity",
-                            "missing-binding",
-                        )),
+                        SemanticSubject::EntityField(FieldRef::new("entity", "missing-binding")),
                         SemanticSubject::EntityField(FieldRef::new("entity", "text")),
                     ]
         })
@@ -1119,7 +1103,9 @@ fn validation_accumulation_record() -> Record {
                         "mixed-binding",
                     ))]
                 && diagnostic.related_subjects
-                    == [SemanticSubject::EntityField(FieldRef::new("ghost", "value"))]
+                    == [SemanticSubject::EntityField(FieldRef::new(
+                        "ghost", "value",
+                    ))]
                 && diagnostic.facts.len() == 1
                 && diagnostic.facts[0].name == "missing_target"
                 && diagnostic.facts[0].value == "5:ghost5:value"
@@ -1148,7 +1134,9 @@ fn validation_accumulation_record() -> Record {
                         "aggregate-dependent",
                     ))]
                 && diagnostic.related_subjects
-                    == [SemanticSubject::EntityField(FieldRef::new("entity", "zero"))]
+                    == [SemanticSubject::EntityField(FieldRef::new(
+                        "entity", "zero",
+                    ))]
         })
         && !report.diagnostics().iter().any(|diagnostic| {
             diagnostic.code == diagnostic_codes::FORMULA_DIVISION_BY_ZERO
@@ -1274,14 +1262,8 @@ fn rename_stability_record() -> Record {
             key: "source".into(),
             schema: "schema-stable".into(),
             fields: BTreeMap::from([
-                (
-                    FieldId::from("input-stable"),
-                    Value::Number(number(2.0)),
-                ),
-                (
-                    FieldId::from("output-stable"),
-                    Value::Number(number(3.0)),
-                ),
+                (FieldId::from("input-stable"), Value::Number(number(2.0))),
+                (FieldId::from("output-stable"), Value::Number(number(3.0))),
             ]),
         },
     );
@@ -1340,7 +1322,8 @@ fn validation_cycle_record() -> Record {
         diagnostic.code == diagnostic_codes::FORMULA_FAILED_DEPENDENCY
             && diagnostic.subjects
                 == [SemanticSubject::EntityField(FieldRef::new(
-                    "entity", "dependent",
+                    "entity",
+                    "dependent",
                 ))]
     });
     let expected_cycle = vec![
@@ -1354,9 +1337,8 @@ fn validation_cycle_record() -> Record {
     let exact = cycle.len() == 1
         && cycle[0].subjects == expected_cycle
         && cycle[0].provider.as_str() == "tachiko.formula-engine"
-        && dependency.is_some_and(|diagnostic| {
-            diagnostic.related_subjects == expected_dependencies
-        });
+        && dependency
+            .is_some_and(|diagnostic| diagnostic.related_subjects == expected_dependencies);
     if !exact {
         return Record::failure(UNEXPECTED, 33);
     }
@@ -1366,6 +1348,257 @@ fn validation_cycle_record() -> Record {
         VALIDATION_CYCLE_FINGERPRINT,
         33_u64 << 32,
     )
+}
+
+fn formula_operation_lifecycle(
+    document: &Document,
+    family: OperationFamily,
+    mutation_actions: &[AuthorizationAction],
+) -> Result<(PatchLifecycle, DocumentScopeId, PrincipalId), ()> {
+    let scope = DocumentScopeId::from("portable-document-occurrence");
+    let principal = PrincipalId::from("portable-human");
+    let document_subject =
+        ScopedSemanticSubject::new(scope.clone(), document.id.clone(), SemanticScope::Document);
+    let mut lifecycle = PatchLifecycle::new(
+        AuthorizationDomainId::from("portable-domain"),
+        scope.clone(),
+        document.id.clone(),
+        SemanticApiContract::from("portable-semantic-api"),
+        AuthorizationPolicyVersion::from("portable-policy-v1"),
+        PolicyMeaningId::from("portable-policy-meaning-v1"),
+    );
+    lifecycle
+        .register_principal(principal.clone(), PrincipalKind::Human)
+        .map_err(|_| ())?;
+    let mut requirements = vec![GrantRequirement::query(family, document_subject.clone())];
+    for action in mutation_actions {
+        requirements.push(
+            GrantRequirement::mutation(
+                *action,
+                family,
+                MutationClass::Formula,
+                document_subject.clone(),
+            )
+            .map_err(|_| ())?,
+        );
+    }
+    lifecycle
+        .provision_grant(Grant::new(
+            GrantId::from("portable-formula-grant"),
+            principal.clone(),
+            principal.clone(),
+            requirements,
+            None,
+        ))
+        .map_err(|_| ())?;
+    Ok((lifecycle, scope, principal))
+}
+
+fn formula_query_record() -> Record {
+    let document = formula_document(number(42.0), input_reference());
+    let Ok((lifecycle, scope, principal)) =
+        formula_operation_lifecycle(&document, OperationFamily::FormulaReasoning, &[])
+    else {
+        return Record::failure(UNEXPECTED, 48_u64 << 32);
+    };
+    let Ok(result) = lifecycle.query_formula_reasoning(
+        &scope,
+        &document,
+        (
+            &SemanticRevision::from("portable-r1"),
+            ValidatorConfiguration::WorkspaceFull,
+        ),
+        &FieldRef::new("entity-stable", "output-stable"),
+        &principal,
+        TrustedInstant::new(1),
+    ) else {
+        return Record::failure(UNEXPECTED, (48_u64 << 32) | 1);
+    };
+    let FormulaReasoningOutcome::Formula(facts) = result.outcome else {
+        return Record::failure(UNEXPECTED, (48_u64 << 32) | 2);
+    };
+    let FormulaCalculationOutcome::Value(value) = facts.calculation else {
+        return Record::failure(UNEXPECTED, (48_u64 << 32) | 3);
+    };
+    if facts.expression != input_reference()
+        || facts.direct_inputs != [FieldRef::new("entity-stable", "input-stable")]
+        || !facts.direct_dependents.is_empty()
+        || !facts.affected_subjects.is_empty()
+        || facts
+            .validation_report
+            .is_none_or(|report| !report.is_valid())
+    {
+        return Record::failure(UNEXPECTED, (48_u64 << 32) | 4);
+    }
+    Record::value(value, facts.direct_inputs.len() as u64)
+}
+
+fn formula_scenario_record() -> Record {
+    let document = formula_document(number(42.0), input_reference());
+    let original = document.clone();
+    let Ok((lifecycle, scope, principal)) =
+        formula_operation_lifecycle(&document, OperationFamily::NumberOverrideScenario, &[])
+    else {
+        return Record::failure(UNEXPECTED, 49_u64 << 32);
+    };
+    let request = ScenarioRequest::new(
+        vec![NumberOverride::new(
+            FieldRef::new("entity-stable", "input-stable"),
+            5.0,
+        )],
+        vec![FieldRef::new("entity-stable", "output-stable")],
+    );
+    let Ok(result) = lifecycle.query_number_override_scenario(
+        &scope,
+        &document,
+        (
+            &SemanticRevision::from("portable-r1"),
+            ValidatorConfiguration::WorkspaceFull,
+        ),
+        &request,
+        &principal,
+        TrustedInstant::new(1),
+    ) else {
+        return Record::failure(UNEXPECTED, (49_u64 << 32) | 1);
+    };
+    let ScenarioOutcome::Evaluated(evaluation) = result.outcome else {
+        return Record::failure(UNEXPECTED, (49_u64 << 32) | 2);
+    };
+    let Some(target) = evaluation.targets.first() else {
+        return Record::failure(UNEXPECTED, (49_u64 << 32) | 3);
+    };
+    let ScenarioTargetOutcome::Formula(comparison) = &target.outcome else {
+        return Record::failure(UNEXPECTED, (49_u64 << 32) | 4);
+    };
+    let (FormulaCalculationOutcome::Value(baseline), FormulaCalculationOutcome::Value(candidate)) =
+        (&comparison.baseline, &comparison.candidate)
+    else {
+        return Record::failure(UNEXPECTED, (49_u64 << 32) | 5);
+    };
+    let reports_valid = evaluation
+        .baseline_validation
+        .as_ref()
+        .is_some_and(ValidationReport::is_valid)
+        && evaluation
+            .candidate_validation
+            .as_ref()
+            .is_some_and(ValidationReport::is_valid);
+    if document != original
+        || *baseline != number(42.0)
+        || *candidate != number(5.0)
+        || result.normalized_overrides.len() != 1
+        || !reports_valid
+    {
+        return Record::failure(UNEXPECTED, (49_u64 << 32) | 6);
+    }
+    Record::value(*candidate, baseline.to_bits())
+}
+
+struct PortablePublication {
+    scope: DocumentScopeId,
+    document: Document,
+    revision: SemanticRevision,
+}
+
+impl SemanticPublicationAuthority for PortablePublication {
+    fn current_snapshot(&self) -> (DocumentScopeId, Document, SemanticRevision) {
+        (
+            self.scope.clone(),
+            self.document.clone(),
+            self.revision.clone(),
+        )
+    }
+
+    fn publish_if_current<Authorization>(
+        &mut self,
+        expected_document_scope: &DocumentScopeId,
+        expected_revision: &SemanticRevision,
+        candidate: Document,
+        authorize: impl FnOnce(TrustedInstant) -> Option<Authorization>,
+    ) -> Result<
+        (DocumentScopeId, Document, SemanticRevision, Authorization),
+        SemanticPublicationError,
+    > {
+        if expected_document_scope != &self.scope {
+            return Err(SemanticPublicationError::DocumentScopeMismatch);
+        }
+        if expected_revision != &self.revision {
+            return Err(SemanticPublicationError::Stale);
+        }
+        let authorization = authorize(TrustedInstant::new(3))
+            .ok_or(SemanticPublicationError::AuthorizationDenied)?;
+        self.document = candidate;
+        self.revision = SemanticRevision::from("portable-r2");
+        Ok((
+            self.scope.clone(),
+            self.document.clone(),
+            self.revision.clone(),
+            authorization,
+        ))
+    }
+}
+
+fn formula_update_record() -> Record {
+    let document = formula_document(number(42.0), input_reference());
+    let original = document.clone();
+    let Ok((mut lifecycle, scope, principal)) = formula_operation_lifecycle(
+        &document,
+        OperationFamily::FormulaUpdate,
+        &[AuthorizationAction::Propose, AuthorizationAction::Execute],
+    ) else {
+        return Record::failure(UNEXPECTED, 50_u64 << 32);
+    };
+    let revision = SemanticRevision::from("portable-r1");
+    let Ok(patch) = lifecycle.propose_formula_update(
+        &scope,
+        &document,
+        &revision,
+        FormulaUpdateRequest::new(
+            ProposalId::from("portable-formula-update"),
+            revision.clone(),
+            FieldRef::new("entity-stable", "output-stable"),
+            "[source.input-stable] + 1",
+            principal.clone(),
+        ),
+        TrustedInstant::new(1),
+    ) else {
+        return Record::failure(UNEXPECTED, (50_u64 << 32) | 1);
+    };
+    let SemanticPatchBody::Command(SemanticCommand::FormulaUpdate(command)) =
+        patch.exact_change().body()
+    else {
+        return Record::failure(UNEXPECTED, (50_u64 << 32) | 2);
+    };
+    if command.target() != &FieldRef::new("entity-stable", "output-stable")
+        || command.references() != &BTreeSet::from([FieldRef::new("entity-stable", "input-stable")])
+    {
+        return Record::failure(UNEXPECTED, (50_u64 << 32) | 3);
+    }
+    let mut publication = PortablePublication {
+        scope,
+        document: document.clone(),
+        revision,
+    };
+    let Ok(receipt) = lifecycle.execute(
+        patch.id(),
+        None,
+        &principal,
+        &mut publication,
+        TrustedInstant::new(2),
+    ) else {
+        return Record::failure(UNEXPECTED, (50_u64 << 32) | 4);
+    };
+    let outcome = calculate_complete(&publication.document);
+    let CalculationOutcome::Complete(calculation) = outcome else {
+        return Record::failure(UNEXPECTED, (50_u64 << 32) | 5);
+    };
+    let Some(value) = calculation.value(&FieldRef::new("entity-stable", "output-stable")) else {
+        return Record::failure(UNEXPECTED, (50_u64 << 32) | 6);
+    };
+    if document != original || !receipt.verified || value != number(43.0) {
+        return Record::failure(UNEXPECTED, (50_u64 << 32) | 7);
+    }
+    Record::value(value, receipt.semantic_changes.len() as u64)
 }
 
 fn case_record(index: u32) -> Record {
@@ -1470,21 +1703,13 @@ fn case_record(index: u32) -> Record {
             0x3eb0_c6f7_a0b5_ed8c,
             0x854a_1541_0f9d_e70a,
         ),
-        15 => storage_record(
-            "0.000001",
-            0x3eb0_c6f7_a0b5_ed8d,
-            0x65c8_993e_f682_f106,
-        ),
+        15 => storage_record("0.000001", 0x3eb0_c6f7_a0b5_ed8d, 0x65c8_993e_f682_f106),
         16 => storage_record(
             "999999999999999900000",
             0x444b_1ae4_d6e2_ef4f,
             0x8546_e95c_6c56_79c3,
         ),
-        17 => storage_record(
-            "1e+21",
-            0x444b_1ae4_d6e2_ef50,
-            0xefcf_57a3_ad34_d99d,
-        ),
+        17 => storage_record("1e+21", 0x444b_1ae4_d6e2_ef50, 0xefcf_57a3_ad34_d99d),
         18 => storage_record(
             "9007199254740993",
             0x4340_0000_0000_0000,
@@ -1513,6 +1738,9 @@ fn case_record(index: u32) -> Record {
         45 => disjoint_cycle_record(),
         46 => roproj_v1_record(),
         47 => portable_package_v1_record(),
+        48 => formula_query_record(),
+        49 => formula_scenario_record(),
+        50 => formula_update_record(),
         _ => Record::failure(UNEXPECTED, 0),
     }
 }

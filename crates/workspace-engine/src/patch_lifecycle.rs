@@ -96,6 +96,9 @@ pub enum AuthorizationAction {
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum OperationFamily {
     SetFieldValue,
+    FormulaReasoning,
+    NumberOverrideScenario,
+    FormulaUpdate,
 }
 
 /// Accepted MVP semantic mutation classes.
@@ -279,12 +282,50 @@ impl AuthorizationFootprint {
 #[derive(Clone, Debug, PartialEq)]
 pub enum SemanticCommand {
     SetFieldValue { field: FieldRef, value: Value },
+    FormulaUpdate(FormulaUpdateCommand),
 }
 
 impl SemanticCommand {
     #[must_use]
     pub fn set_field_value(field: FieldRef, value: Value) -> Self {
         Self::SetFieldValue { field, value }
+    }
+}
+
+/// One admitted formula-update Command with complete bound meaning.
+///
+/// The fields stay private so authoring text cannot bypass the trusted
+/// parse/bind/type-check admission boundary.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FormulaUpdateCommand {
+    target: FieldRef,
+    expression: Expression,
+    references: BTreeSet<FieldRef>,
+}
+
+impl FormulaUpdateCommand {
+    pub(crate) fn new(target: FieldRef, expression: Expression) -> Self {
+        let references = tachiko_formula_engine::extract_dependencies(&expression);
+        Self {
+            target,
+            expression,
+            references,
+        }
+    }
+
+    #[must_use]
+    pub fn target(&self) -> &FieldRef {
+        &self.target
+    }
+
+    #[must_use]
+    pub fn expression(&self) -> &Expression {
+        &self.expression
+    }
+
+    #[must_use]
+    pub fn references(&self) -> &BTreeSet<FieldRef> {
+        &self.references
     }
 }
 
@@ -984,11 +1025,12 @@ impl PatchLifecycle {
             history: vec![PatchLifecycleState::Draft, PatchLifecycleState::Planned],
             reviewed_by: BTreeSet::new(),
         };
+        let conservative_disclosure = self.body_document_disclosure(patch.exact_change.body());
 
         if patch.exact_change.base_revision != *current_revision {
             let originator = record.originator.clone();
             return if self
-                .authorize_query(&originator, &self.document_disclosure(), now)
+                .authorize_query(&originator, &conservative_disclosure, now)
                 .is_ok()
             {
                 Err(PatchLifecycleError::Stale)
@@ -1002,7 +1044,7 @@ impl PatchLifecycle {
             Err(source) => {
                 let originator = record.originator.clone();
                 if self
-                    .authorize_query(&originator, &self.document_disclosure(), now)
+                    .authorize_query(&originator, &conservative_disclosure, now)
                     .is_err()
                 {
                     return Err(PatchLifecycleError::DisclosureDenied);
@@ -1028,7 +1070,7 @@ impl PatchLifecycle {
         // conservative complete disclosure boundary. Successful evaluation
         // replaces this with the precise derived footprint below.
         record.footprint = Some(AuthorizationFootprint {
-            disclosure_requirements: self.document_disclosure(),
+            disclosure_requirements: conservative_disclosure.clone(),
             associated_write_requirements: provisional_footprint
                 .associated_write_requirements
                 .clone(),
@@ -1052,7 +1094,7 @@ impl PatchLifecycle {
                 );
                 self.proposals.insert(patch.id.clone(), record);
                 if self
-                    .authorize_query(&originator, &self.document_disclosure(), now)
+                    .authorize_query(&originator, &conservative_disclosure, now)
                     .is_err()
                 {
                     return Err(PatchLifecycleError::DisclosureDenied);
@@ -1843,7 +1885,7 @@ impl PatchLifecycle {
         })
     }
 
-    fn require_document(
+    pub(crate) fn require_document(
         &self,
         document_scope: &DocumentScopeId,
         document: &Document,
@@ -1866,7 +1908,27 @@ impl PatchLifecycle {
         }])
     }
 
-    fn require_active_principal(
+    fn body_document_disclosure(
+        &self,
+        body: &SemanticPatchBody,
+    ) -> BTreeSet<DisclosureRequirement> {
+        body.commands()
+            .iter()
+            .map(|command| DisclosureRequirement {
+                family: match command {
+                    SemanticCommand::SetFieldValue { .. } => OperationFamily::SetFieldValue,
+                    SemanticCommand::FormulaUpdate(_) => OperationFamily::FormulaUpdate,
+                },
+                scope: ScopedSemanticSubject::new(
+                    self.document_scope.clone(),
+                    self.document.clone(),
+                    SemanticScope::Document,
+                ),
+            })
+            .collect()
+    }
+
+    pub(crate) fn require_active_principal(
         &self,
         id: &PrincipalId,
     ) -> Result<PrincipalKind, PatchLifecycleError> {
@@ -1910,6 +1972,20 @@ impl PatchLifecycle {
                         });
                     }
                     candidate = field_value_candidate(&candidate, field, value)?;
+                }
+                SemanticCommand::FormulaUpdate(command) => {
+                    let field = command.target();
+                    let scope = self.field_scope(&candidate, field)?;
+                    writes.insert(AssociatedWriteRequirement {
+                        family: OperationFamily::FormulaUpdate,
+                        mutation_class: MutationClass::Formula,
+                        scope,
+                    });
+                    candidate = field_value_candidate(
+                        &candidate,
+                        field,
+                        &Value::Formula(command.expression().clone()),
+                    )?;
                 }
             }
         }
@@ -1964,7 +2040,7 @@ impl PatchLifecycle {
         self.finalize_evaluation(document, candidate, patch.exact_change.body(), writes)
     }
 
-    fn field_scope(
+    pub(crate) fn field_scope(
         &self,
         document: &Document,
         field: &FieldRef,
@@ -2022,34 +2098,94 @@ impl PatchLifecycle {
     ) -> Result<BTreeSet<DisclosureRequirement>, PatchLifecycleError> {
         let mut disclosures = BTreeSet::new();
         for command in body.commands() {
-            match command {
-                SemanticCommand::SetFieldValue { field, value } => {
-                    self.insert_field_disclosure(before, after, field, &mut disclosures)?;
-                    self.insert_value_disclosures(before, after, value, &mut disclosures)?;
-                }
-            }
+            self.insert_command_disclosures(before, after, command, &mut disclosures)?;
         }
         for change in changes {
-            match change {
-                SemanticChange::FieldChanged {
-                    field,
-                    before: old_value,
-                    after: new_value,
-                } => {
-                    self.insert_field_disclosure(before, after, field, &mut disclosures)?;
-                    self.insert_value_disclosures(before, after, old_value, &mut disclosures)?;
-                    self.insert_value_disclosures(before, after, new_value, &mut disclosures)?;
-                }
-                SemanticChange::FormulaImpact { field, causes, .. } => {
-                    self.insert_field_disclosure(before, after, field, &mut disclosures)?;
-                    for cause in causes {
-                        self.insert_field_disclosure(before, after, cause, &mut disclosures)?;
-                    }
-                }
-                _ => return Err(PatchLifecycleError::ScopeDerivationFailed),
-            }
+            self.insert_change_disclosures(before, after, body, change, &mut disclosures)?;
         }
         Ok(disclosures)
+    }
+
+    fn insert_command_disclosures(
+        &self,
+        before: &Document,
+        after: &Document,
+        command: &SemanticCommand,
+        disclosures: &mut BTreeSet<DisclosureRequirement>,
+    ) -> Result<(), PatchLifecycleError> {
+        match command {
+            SemanticCommand::SetFieldValue { field, value } => {
+                self.insert_field_disclosure(before, after, field, disclosures)?;
+                self.insert_value_disclosures(before, after, value, disclosures)
+            }
+            SemanticCommand::FormulaUpdate(command) => {
+                self.insert_field_disclosure_for(
+                    OperationFamily::FormulaUpdate,
+                    before,
+                    after,
+                    command.target(),
+                    disclosures,
+                )?;
+                for reference in command.references() {
+                    self.insert_field_disclosure_for(
+                        OperationFamily::FormulaUpdate,
+                        before,
+                        after,
+                        reference,
+                        disclosures,
+                    )?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn insert_change_disclosures(
+        &self,
+        before: &Document,
+        after: &Document,
+        body: &SemanticPatchBody,
+        change: &SemanticChange,
+        disclosures: &mut BTreeSet<DisclosureRequirement>,
+    ) -> Result<(), PatchLifecycleError> {
+        match change {
+            SemanticChange::FieldChanged {
+                field,
+                before: old_value,
+                after: new_value,
+            } => {
+                let family =
+                    command_family_for_field(body, field).unwrap_or(OperationFamily::SetFieldValue);
+                self.insert_field_disclosure_for(family, before, after, field, disclosures)?;
+                self.insert_value_disclosures_for(family, before, after, old_value, disclosures)?;
+                self.insert_value_disclosures_for(family, before, after, new_value, disclosures)
+            }
+            SemanticChange::FormulaImpact { field, causes, .. } => {
+                let mut families = causes
+                    .iter()
+                    .filter_map(|cause| command_family_for_field(body, cause))
+                    .collect::<BTreeSet<_>>();
+                if families.is_empty() {
+                    families.insert(OperationFamily::SetFieldValue);
+                }
+                for family in families {
+                    self.insert_field_disclosure_for(family, before, after, field, disclosures)?;
+                    for cause in causes.iter().filter(|cause| {
+                        command_family_for_field(body, cause).unwrap_or(family) == family
+                    }) {
+                        self.insert_field_disclosure_for(
+                            family,
+                            before,
+                            after,
+                            cause,
+                            disclosures,
+                        )?;
+                    }
+                }
+                Ok(())
+            }
+            _ => Err(PatchLifecycleError::ScopeDerivationFailed),
+        }
     }
 
     fn insert_field_disclosure(
@@ -2059,14 +2195,28 @@ impl PatchLifecycle {
         field: &FieldRef,
         disclosures: &mut BTreeSet<DisclosureRequirement>,
     ) -> Result<(), PatchLifecycleError> {
+        self.insert_field_disclosure_for(
+            OperationFamily::SetFieldValue,
+            before,
+            after,
+            field,
+            disclosures,
+        )
+    }
+
+    fn insert_field_disclosure_for(
+        &self,
+        family: OperationFamily,
+        before: &Document,
+        after: &Document,
+        field: &FieldRef,
+        disclosures: &mut BTreeSet<DisclosureRequirement>,
+    ) -> Result<(), PatchLifecycleError> {
         let scope = self
             .field_scope(after, field)
             .or_else(|_| self.field_scope(before, field))
             .map_err(|_| PatchLifecycleError::ScopeDerivationFailed)?;
-        disclosures.insert(DisclosureRequirement {
-            family: OperationFamily::SetFieldValue,
-            scope,
-        });
+        disclosures.insert(DisclosureRequirement { family, scope });
         Ok(())
     }
 
@@ -2077,19 +2227,33 @@ impl PatchLifecycle {
         value: &Value,
         disclosures: &mut BTreeSet<DisclosureRequirement>,
     ) -> Result<(), PatchLifecycleError> {
+        self.insert_value_disclosures_for(
+            OperationFamily::SetFieldValue,
+            before,
+            after,
+            value,
+            disclosures,
+        )
+    }
+
+    fn insert_value_disclosures_for(
+        &self,
+        family: OperationFamily,
+        before: &Document,
+        after: &Document,
+        value: &Value,
+        disclosures: &mut BTreeSet<DisclosureRequirement>,
+    ) -> Result<(), PatchLifecycleError> {
         match value {
             Value::Reference(entity) => {
                 let scope = self
                     .entity_scope(after, entity)
                     .or_else(|_| self.entity_scope(before, entity))?;
-                disclosures.insert(DisclosureRequirement {
-                    family: OperationFamily::SetFieldValue,
-                    scope,
-                });
+                disclosures.insert(DisclosureRequirement { family, scope });
             }
             Value::Formula(expression) => {
                 for field in expression_references(expression) {
-                    self.insert_field_disclosure(before, after, &field, disclosures)?;
+                    self.insert_field_disclosure_for(family, before, after, &field, disclosures)?;
                 }
             }
             Value::Number(_) | Value::Text(_) | Value::Boolean(_) => {}
@@ -2097,7 +2261,7 @@ impl PatchLifecycle {
         Ok(())
     }
 
-    fn authorize_query(
+    pub(crate) fn authorize_query(
         &self,
         subject: &PrincipalId,
         requirements: &BTreeSet<DisclosureRequirement>,
@@ -2226,6 +2390,18 @@ impl PatchLifecycle {
             push_once(&mut proposal.history, state);
         }
     }
+}
+
+fn command_family_for_field(body: &SemanticPatchBody, field: &FieldRef) -> Option<OperationFamily> {
+    body.commands().iter().find_map(|command| match command {
+        SemanticCommand::FormulaUpdate(command) if command.target() == field => {
+            Some(OperationFamily::FormulaUpdate)
+        }
+        SemanticCommand::SetFieldValue { field: target, .. } if target == field => {
+            Some(OperationFamily::SetFieldValue)
+        }
+        _ => None,
+    })
 }
 
 fn classify_field_transition(existing: &Value, replacement: &Value) -> BTreeSet<MutationClass> {
