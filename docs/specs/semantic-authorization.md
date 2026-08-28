@@ -677,6 +677,11 @@ Active -> Consumed | Revoked | Expired
   the executor receives authorization denial. Concrete revision concurrency and
   state installation remain #93 work; broader transaction/recovery and history
   protocols remain with #11/#12.
+- The current direct-Human path resolves the proposal originator's retained
+  immutable PrincipalKind without making originator activity a common
+  publication condition; the executor must remain an active Human with live
+  Execute authority. Approval-gated execution continues to require its bound
+  originator occurrence to remain active through publication.
 - A host-proved no-publication conflict leaves Approval Active and records the
   current nonterminal `RetryableConflict` lifecycle evidence so a retry repeats
   every live authorization and semantic check. Terminal `Conflict` remains

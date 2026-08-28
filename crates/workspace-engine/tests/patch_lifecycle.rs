@@ -2634,6 +2634,93 @@ fn directly_authenticated_human_execution_fabricates_no_approval_evidence() {
 }
 
 #[test]
+fn active_human_executor_may_publish_a_disabled_human_originators_proposal() {
+    let document = game_balance_document("game", "Game");
+    let mut lifecycle = lifecycle();
+    provision_standard_authority(&mut lifecycle);
+    lifecycle
+        .register_principal(principal("human-originator"), PrincipalKind::Human)
+        .unwrap();
+    grant(
+        &mut lifecycle,
+        "human-originator-authority",
+        "human-originator",
+        vec![
+            query_requirement(),
+            mutation_requirement(AuthorizationAction::Propose, MutationClass::Value),
+        ],
+    );
+    let proposal = propose(
+        &mut lifecycle,
+        &document,
+        "proposal-disabled-human-originator",
+        SemanticPatchBody::command(field_command("iron_sword", "damage", number(45.0))),
+        "human-originator",
+    );
+    lifecycle
+        .disable_principal(&principal("human-originator"))
+        .unwrap();
+    let mut publication = TestPublication::new(document, "r1", "r2");
+
+    let receipt = lifecycle
+        .execute(
+            &proposal,
+            None,
+            &principal("human-editor"),
+            &mut publication,
+            TrustedInstant::new(11),
+        )
+        .unwrap();
+
+    assert!(receipt.verified);
+    assert!(receipt.approval.is_none());
+    assert_eq!(receipt.originator, principal("human-originator"));
+    assert_eq!(receipt.executor, principal("human-editor"));
+}
+
+#[test]
+fn disabled_delegated_originator_still_blocks_approval_gated_human_execution() {
+    let document = game_balance_document("game", "Game");
+    let original = document.clone();
+    let mut lifecycle = lifecycle();
+    provision_standard_authority(&mut lifecycle);
+    let proposal = propose(
+        &mut lifecycle,
+        &document,
+        "proposal-disabled-delegated-originator",
+        SemanticPatchBody::command(field_command("iron_sword", "damage", number(45.0))),
+        "agent",
+    );
+    let approval = preview_and_approve(
+        &mut lifecycle,
+        &document,
+        &proposal,
+        "approval-disabled-delegated-originator",
+        "human-editor",
+    );
+    lifecycle.disable_principal(&principal("agent")).unwrap();
+    let mut publication = TestPublication::new(document, "r1", "r2");
+
+    let error = lifecycle
+        .execute(
+            &proposal,
+            Some(&approval),
+            &principal("human-editor"),
+            &mut publication,
+            TrustedInstant::new(11),
+        )
+        .unwrap_err();
+
+    assert!(matches!(error, PatchLifecycleError::AuthorizationDenied));
+    assert_eq!(publication.document, original);
+    assert_eq!(publication.publish_calls, 0);
+    assert_eq!(
+        lifecycle.approval_status(&approval).unwrap(),
+        ApprovalStatus::Active
+    );
+}
+
+#[test]
 fn publisher_conflict_does_not_consume_approval_or_install_candidate() {
     let document = game_balance_document("game", "Game");
     let original = document.clone();

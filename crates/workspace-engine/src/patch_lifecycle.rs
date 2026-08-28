@@ -1489,11 +1489,16 @@ impl PatchLifecycle {
         executor: &PrincipalId,
     ) -> Result<bool, PatchLifecycleError> {
         let executor_kind = self.require_active_principal(executor)?;
-        let originator_kind = self.require_active_principal(&proposal.originator)?;
-        Ok(
-            executor_kind == PrincipalKind::Delegated
-                || originator_kind == PrincipalKind::Delegated,
-        )
+        let originator = self
+            .principals
+            .get(&proposal.originator)
+            .ok_or(PatchLifecycleError::UnknownPrincipal)?;
+        let approval_required = executor_kind == PrincipalKind::Delegated
+            || originator.kind == PrincipalKind::Delegated;
+        if approval_required && !originator.active {
+            return Err(PatchLifecycleError::PrincipalDisabled);
+        }
+        Ok(approval_required)
     }
 
     fn validate_execution_approval(

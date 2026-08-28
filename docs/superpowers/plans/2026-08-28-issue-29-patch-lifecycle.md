@@ -20,6 +20,7 @@
 - Derive relational operation-family/mutation-class/scope requirements in trusted workspace code. Never accept a client-declared footprint or flatten capability dimensions for authorization.
 - Require explicit live Query coverage before returning preview/review evidence and live Propose, Approve, and Execute coverage for their independent actions.
 - Require one exact finite Human Approval whenever origin or execution authority is Delegated; bind proposal occurrence, complete exact change/base, originator, executor, relational footprint, and effective policy selection.
+- Preserve the common direct-Human publication law: require an active Human executor with live Execute authority, use the originator occurrence's retained immutable kind to select the path, and require originator activity only when execution is Approval-gated.
 - Recheck base, principal occurrences, Grant state, policy continuity, exact binding, validation, and gate immediately before publication.
 - Evaluate every batch on a clone and offer only the final validated candidate to the publication boundary. Never publish a successful prefix.
 - Consume Approval only after the publication authority proves one successful compare-and-publish; failure before publication leaves it unconsumed, and replay fails distinctly.
