@@ -6,7 +6,9 @@ Accepted
 
 Decision issue: [#10](https://github.com/nurockplayer/tachiko-work/issues/10)
 
-Amendment decision issue: [#32](https://github.com/nurockplayer/tachiko-work/issues/32)
+Amendment decision issues:
+[#32](https://github.com/nurockplayer/tachiko-work/issues/32),
+[#33](https://github.com/nurockplayer/tachiko-work/issues/33)
 
 Research: [`2026-08-24-headless-semantic-api-boundary.md`](../research/2026-08-24-headless-semantic-api-boundary.md)
 
@@ -358,6 +360,150 @@ calculation, validation, or scenario never grants Propose or Execute authority.
 Production implementation is not authorized by this amendment alone. It
 requires a separate implementation Issue that consumes this Accepted contract.
 
+### 13. M04 promotes a bounded semantic analysis Query family
+
+Game Studio Beta also promotes the minimum logical analysis layer needed so a
+first-party client does not have to recreate schema-population selection,
+typed predicate evaluation, grouping, or aggregate reduction outside the
+shared Rust application authority. This is a bounded Semantic API Query family,
+not SQL compatibility or a general analytics language.
+
+The minimum normalized analysis definition contains:
+
+```text
+one exact semantic context
++ one schema/type entity domain
++ optional bounded explicit stable-EntityId narrowing set
++ bounded AND-only typed field predicates
++ zero or one stable FieldId grouping key
++ one or more supported analysis result requests
+```
+
+A caller-supplied EntityId set only narrows the trusted schema/type domain. It
+never grants membership, scope, or Query authority. Predicates are typed
+field/operator/operand constraints evaluated by the shared semantic authority
+after trusted target resolution and authorization. M04 accepts only a bounded
+conjunction shape; general OR/NOT predicate trees, joins, subqueries, windows,
+and arbitrary expressions are Deferred. The exact finite supported predicate
+operator catalogue and request limits remain Provisional until the first
+implementation slice, but an implementation may not introduce coercive or
+representation-path semantics that bypass the typed semantic model.
+
+The optional grouping key is one stable FieldId within the selected domain.
+Grouping uses the authoritative typed semantic value/equality meaning for that
+field. Multi-key grouping, grouping sets, and renderer-defined buckets are
+Deferred.
+
+The Accepted M04 result primitives are deliberately small:
+
+- exact selected stable-EntityId membership when explicitly requested and
+  authorized;
+- exact `Count` of the selected membership;
+- `Min` and `Max` over authoritative finite ADR-0018 Number observations; and
+- bounded per-member `(EntityId, effective Number)` observations as structured
+  input for a caller-side chart or ranking projection.
+
+A numeric metric may be a stored Number field or an authoritative calculated
+Number field. Formula-backed observations MUST reuse ADR-0018 calculation
+meaning and failure semantics; Analysis introduces no second formula or
+expression evaluator. Missing, wrong-typed, unsupported, or failed calculated
+observations are structured analysis failures rather than values silently
+skipped from an aggregate.
+
+`Count`, `Min`, and `Max` are Accepted because their M04 meaning can be fixed
+without selecting a floating reduction order. `Sum`, `Mean`, weighted mean, and
+other floating reductions remain Deferred until a deterministic reduction law
+is separately justified. Ranking/top-k, outlier/statistical semantics,
+percentiles, optimization, and other higher analytics likewise remain
+Deferred. Per-member observations do not make ranking itself authoritative
+analysis behavior.
+
+The same normalized analysis definition MAY be evaluated independently over
+two explicitly supplied exact semantic contexts and returned as paired A/B
+results. Both contexts are explicit Query inputs. This comparison performs no
+history lookup, rebasing, branch resolution, revision-token interpretation, or
+implicit change attribution. When the question is what semantically changed,
+the existing semantic-diff authority remains the source of change facts.
+
+#### Reproducibility and lineage
+
+Before ADR-0026 disclosure projection, equal exact semantic context(s), equal
+normalized typed analysis definition, and equal deterministic configuration
+that can change requested facts MUST produce equal underlying analysis results.
+
+Logical lineage preserves enough structured provenance to reproduce and review
+the result, including:
+
+- the exact source semantic context or A/B contexts;
+- the normalized typed analysis definition;
+- stable schema, field, and explicitly targeted entity identities required by
+  that definition;
+- the derivation meaning of each returned membership, group, aggregate, or
+  per-member observation;
+- the ADR-0018 calculation authority relied upon for formula-backed metrics;
+- relevant deterministic validation/configuration identity when it can change
+  returned facts; and
+- A/B source provenance for two-context evaluation.
+
+Aggregate results do not have to disclose every contributor identity or a
+Min/Max witness identity unless the request explicitly asks for that membership
+or per-member evidence and the caller is authorized to receive it. Git commits,
+host paths, wall clock, provider/model identity, UI coordinates, and transport
+metadata may be adapter provenance but are not semantic analysis identity.
+
+#### Authorization and disclosure are complete-result laws
+
+Analysis is Query behavior and consumes ADR-0026 without a parallel permission
+model. The trusted application authority derives the complete disclosure
+footprint from actual semantic state. For schema-wide analysis this footprint
+includes the complete selected membership and every predicate, grouping,
+metric, calculation, lineage, and result fact required to make the returned
+assertion truthful. Caller-supplied membership or scope claims grant nothing.
+
+The trusted ordering is:
+
+```text
+request-local bounded envelope admission
+-> trusted source/domain resolution
+-> disclosure-footprint derivation
+-> Query authorization
+-> semantic target/type classification
+-> authoritative selection/group/reduction
+-> final complete-result disclosure check
+-> projection
+```
+
+For M04, grouped results and `Count`/`Min`/`Max` are complete-or-denied. The
+application MUST NOT aggregate only the visible subset and present that reduced
+value as the requested complete result. If sufficient Query authority for the
+complete assertion cannot be proven, the result is a disclosure-safe denial.
+This prevents hidden membership, empty-group, aggregate, ranking-input, lineage,
+or cross-context facts from becoming an inference channel.
+
+#### Failure and persistence boundary
+
+The logical analysis result distinguishes at least:
+
+- malformed, oversized, or unsupported analysis request;
+- unresolved or wrong-typed field, group, predicate, or metric target;
+- formula/calculation failure inherited from authoritative computation;
+- invalid aggregate/type combination;
+- insufficient Query authority or disclosure-safe denial; and
+- ambiguous or unsupported two-context comparison.
+
+Exact public error codes, Rust variants, DTO spelling, finite limits,
+normalized-definition encoding, output ordering, and internal execution plan
+remain Provisional.
+
+M04 analysis is an ephemeral Query result only. It creates no persisted
+`AnalysisId`, saved semantic analysis block, analytics datastore, materialized
+report authority, or parallel revision/history axis. A chart, report, or future
+presentation projection may consume the structured result without becoming
+semantic authority.
+
+Production implementation requires a separate bounded implementation Issue.
+This amendment itself adds no analytics production code.
+
 ## #26 dependency boundary
 
 After this ADR, #26 owns **how** the Semantic API is hosted and transported, not **what its semantic behavior means**.
@@ -399,10 +545,10 @@ The following remain intentionally replaceable or unresolved:
 - exact diagnostic namespace/catalog spelling, while published code meanings remain stable;
 - exact related/facts encoding;
 - full externally Stable operation catalogue;
-- exact formula-reasoning, scenario, and formula-update operation-family
+- exact formula-reasoning, scenario, formula-update, and analysis operation-family
   identifiers or catalogue entries;
-- exact scenario request limits, normalization/ordering representation, and
-  result DTO fields;
+- exact scenario and analysis request limits, predicate operator catalogue,
+  normalization/ordering representation, internal plan shapes, and result DTO fields;
 - exact result field/tagged-union representation;
 - semantic effect/diff projection shape;
 - concrete revision/precondition token representation (#93);
@@ -427,9 +573,14 @@ This ADR does not:
 - create a generic CRUD/JSON-Patch platform;
 - create a generic transaction scripting language;
 - require operation logs, event sourcing, undo, or history for batch atomicity;
-- implement formula reasoning, scenario evaluation, or formula update;
+- implement formula reasoning, scenario evaluation, formula update, or semantic
+  analysis;
 - define persisted scenarios, scenario mutation, sweeps, optimization,
-  randomness, statistics, or a generic data-analysis IR;
+  randomness, statistics, SQL compatibility, a general relational/dataframe
+  query language, general OR/NOT predicates, joins, subqueries, windows,
+  arbitrary query expressions/UDFs, Sum/Mean, ranking/top-k, outliers,
+  percentiles, partial aggregates, persisted analysis objects, or an analytics
+  datastore;
 - promote Project Memory vocabulary or provenance workflow into semantic core; or
 - introduce production code.
 
@@ -488,8 +639,11 @@ Costs:
 - ADR-0024 resolves #27's revision-pinned immutable proposal contract without adding another operation vocabulary.
 - #28 continues to own capability/approval/provenance and digest/integrity protocol.
 - #32 is resolved by the M04 amendment above and the normative Semantic API
-  specification; a separate implementation Issue must own the first
-  provider-neutral workspace/CLI slice.
+  specification; #144 supplies the first provider-neutral workspace/CLI
+  implementation evidence.
+- #33 is resolved by the bounded M04 analysis amendment above and the normative
+  Semantic API specification; production analysis remains a separate bounded
+  implementation Issue.
 - #104 remains a later read-only-first reference/dogfood pressure test.
 
 ## Related
@@ -502,4 +656,4 @@ Costs:
 - ADR-0018
 - ADR-0019
 - ADR-0024
-- Issues #10, #17, #26, #27, #28, #32, #104
+- Issues #10, #17, #26, #27, #28, #32, #33, #104
