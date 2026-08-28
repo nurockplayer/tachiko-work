@@ -41,7 +41,10 @@ materialize, canonical-only validate, and bounded canonicalize workflow, and
 Issue #3's portable package pack/unpack/compare workflow. Issue #44 adds
 optional `.roproj` raw Git review, semantic review, canonical validation, and
 generated-package consistency composition for provider-neutral CI without
-changing the standalone product boundary.
+changing the standalone product boundary. Issue #119 composes those contracts
+into the executable Game Dev Alpha proof: one durable fixture, standalone
+canonical editing and deterministic rejection, plus an optional ordinary-Git
+branch and CI lane over the same semantic facts.
 
 ## Long Term Expansion
 

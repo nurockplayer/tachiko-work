@@ -55,8 +55,12 @@ jobs:
       - name: Validate Cargo source packages
         run: cargo package --workspace --locked --no-verify
 
-      - name: Exercise the first-user journey
-        run: bash scripts/first-user-smoke.sh
+      - name: Exercise the standalone Game Dev Alpha journey
+        run: |
+          inherited_git_dir="${RUNNER_TEMP}/tachiko-standalone-bare.git"
+          git init --bare --quiet "${inherited_git_dir}"
+          GIT_DIR="${inherited_git_dir}" TMPDIR="${GITHUB_WORKSPACE}" \
+            bash scripts/first-user-smoke.sh
 
       - name: Exercise the collaboration journey
         run: bash scripts/collaboration-smoke.sh
@@ -67,7 +71,7 @@ jobs:
       - name: Exercise the formula authoring journey
         run: bash scripts/formula-authoring-smoke.sh
 
-      - name: Exercise the optional Git and CI adapter
+      - name: Exercise the optional Git-native Game Dev Alpha journey
         run: bash scripts/git-ci-smoke.sh
 
   minimum-rust:

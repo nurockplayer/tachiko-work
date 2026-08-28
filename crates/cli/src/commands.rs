@@ -330,12 +330,9 @@ pub fn set_document(
     value: &str,
     output: &Path,
 ) -> Result<String, CommandError> {
-    if input == output {
-        return Err(CommandError::SameInputOutput {
-            path: input.to_owned(),
-        });
-    }
-    let document = load(input)?;
+    ensure_distinct_paths(input, output)?;
+    ensure_output_outside_directory_source(input, output)?;
+    let document = load_read_source(input)?;
     let field = parse_field_ref(field)?;
     let preview = set_scalar(&document, &field, value)?;
     let encoded = to_canonical_string(&preview.document)?;

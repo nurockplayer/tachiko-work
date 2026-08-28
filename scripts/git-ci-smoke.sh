@@ -24,29 +24,14 @@ outside_dir="${smoke_dir}/outside"
 repository_dir="${smoke_dir}/repository"
 mkdir "${outside_dir}" "${repository_dir}"
 
-base_direct="${outside_dir}/base.ro"
+base_direct="${repo_root}/examples/game-balance/game-balance.ro"
 buffed_direct="${outside_dir}/buffed.ro"
 base_project="${outside_dir}/base.roproj"
 buffed_project="${outside_dir}/buffed.roproj"
 base_package="${outside_dir}/base-package.ro"
 
-"${tachiko_bin}" init "${base_direct}" \
-  --id game-balance --title "Moonfall: starter balance" >/dev/null
-"${tachiko_bin}" set "${base_direct}" iron_sword.damage 45 \
-  --output "${buffed_direct}" >/dev/null
 "${tachiko_bin}" roproj materialize "${base_direct}" "${base_project}" >/dev/null
-"${tachiko_bin}" roproj materialize "${buffed_direct}" "${buffed_project}" >/dev/null
 "${tachiko_bin}" roproj pack "${base_project}" "${base_package}" >/dev/null
-
-"${tachiko_bin}" validate "${base_project}" >/dev/null
-"${tachiko_bin}" validate "${buffed_project}" >/dev/null
-"${tachiko_bin}" diff "${base_project}" "${buffed_project}" \
-  >"${smoke_dir}/outside-diff.txt"
-"${tachiko_bin}" analyze changes "${base_project}" "${buffed_project}" \
-  --before-state base --after-state working \
-  >"${smoke_dir}/outside-analysis.json"
-"${tachiko_bin}" analyze validation "${buffed_project}" \
-  --source-state working >"${smoke_dir}/outside-validation.json"
 
 git -C "${repository_dir}" init --quiet
 cp "${repo_root}/.gitattributes" "${repository_dir}/.gitattributes"
@@ -61,8 +46,21 @@ git -C "${repository_dir}" \
   "${repository_dir}/game-balance.roproj" >/dev/null
 git -C "${repository_dir}" switch --quiet -c buffed-sword
 
+"${tachiko_bin}" set "${repository_dir}/game-balance.roproj" \
+  iron_sword.damage 45 --output "${buffed_direct}" >/dev/null
+"${tachiko_bin}" roproj materialize "${buffed_direct}" "${buffed_project}" >/dev/null
 rm -rf -- "${repository_dir}/game-balance.roproj"
 cp -R "${buffed_project}" "${repository_dir}/game-balance.roproj"
+
+"${tachiko_bin}" validate "${base_project}" >/dev/null
+"${tachiko_bin}" validate "${buffed_project}" >/dev/null
+"${tachiko_bin}" diff "${base_project}" "${buffed_project}" \
+  >"${smoke_dir}/outside-diff.txt"
+"${tachiko_bin}" analyze changes "${base_project}" "${buffed_project}" \
+  --before-state base --after-state working \
+  >"${smoke_dir}/outside-analysis.json"
+"${tachiko_bin}" analyze validation "${buffed_project}" \
+  --source-state working >"${smoke_dir}/outside-validation.json"
 
 git -C "${repository_dir}" diff --check
 git -C "${repository_dir}" diff --numstat -- game-balance.roproj \

@@ -23,6 +23,70 @@ semantic diff therefore shows both the direct input change and the affected
 formula result (`dps`: 40 to 50); prices and the economy formulas remain
 unchanged.
 
+## Game Dev Alpha 60-second proof
+
+Build once, then run the standalone product path from the durable Moonfall
+fixture. No Git repository, host account, CSV step, internal `.roproj` edit, or
+hosted LLM is involved:
+
+```sh
+cargo build -p tachiko-cli
+moonfall_alpha=$(mktemp -d "${TMPDIR:-/tmp}/tachiko-alpha.XXXXXX")
+
+./target/debug/tachiko roproj materialize \
+  examples/game-balance/game-balance.ro \
+  "$moonfall_alpha/base.roproj"
+./target/debug/tachiko set \
+  "$moonfall_alpha/base.roproj" iron_sword.damage 45 \
+  --output "$moonfall_alpha/buffed-direct.ro"
+./target/debug/tachiko roproj materialize \
+  "$moonfall_alpha/buffed-direct.ro" \
+  "$moonfall_alpha/buffed.roproj"
+
+./target/debug/tachiko diff \
+  "$moonfall_alpha/base.roproj" "$moonfall_alpha/buffed.roproj"
+./target/debug/tachiko analyze changes \
+  "$moonfall_alpha/base.roproj" "$moonfall_alpha/buffed.roproj" \
+  --before-state base --after-state buffed
+./target/debug/tachiko calculate "$moonfall_alpha/buffed.roproj"
+./target/debug/tachiko roproj validate "$moonfall_alpha/buffed.roproj"
+./target/debug/tachiko export \
+  "$moonfall_alpha/buffed.roproj" "$moonfall_alpha/runtime.json"
+```
+
+The meaningful result is `damage: 36 -> 45`, with deterministic derived impact
+`dps: 40 -> 50`. The source project remains unchanged. The accepted result is
+a fresh canonical tree, while the direct candidate remains an explicit step
+rather than a silently synchronized second authority.
+
+The same deterministic engine rejects an invalid balance change before it can
+create an output:
+
+```sh
+if ./target/debug/tachiko set \
+  "$moonfall_alpha/base.roproj" iron_sword.attack_interval 0 \
+  --output "$moonfall_alpha/invalid.ro"; then
+  echo "unexpected success" >&2
+  exit 1
+fi
+test ! -e "$moonfall_alpha/invalid.ro"
+```
+
+The error identifies division by zero in `iron_sword.dps`. Executable release
+evidence reruns review, calculation, and export for byte-identical outcomes,
+then exercises the same fixture in an ordinary temporary Git branch:
+
+```sh
+TACHIKO_BIN="$PWD/target/debug/tachiko" bash scripts/first-user-smoke.sh
+TACHIKO_BIN="$PWD/target/debug/tachiko" bash scripts/git-ci-smoke.sh
+```
+
+The optional Git lane proves a one-record change in one canonical entity shard,
+semantic review parity inside and outside Git, canonical/package consistency,
+a normal branch commit, and CI rejection of the same
+`iron_sword.attack_interval = 0` fault. Its deliberate invalid-tree injection
+is test-only evidence that CI fails closed; it is not an authoring procedure.
+
 ## CLI workflow
 
 Build the CLI from the repository root, then run this complete journey:

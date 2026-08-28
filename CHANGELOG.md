@@ -39,6 +39,13 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- The Game Dev Alpha acceptance journey now starts from the durable Moonfall
+  canonical `.roproj`, edits it semantically without touching internal files,
+  materializes a distinct accepted tree, proves deterministic review,
+  calculation, validation, and export, and rejects an invalid formula input
+  locally. The same fixture now drives the optional ordinary-Git branch/CI
+  proof, including localized raw diff, semantic parity, package consistency,
+  and fail-closed invalid-state validation.
 - A provisional provider-facing `tachiko-ai-api::security_boundary` now keeps
   system/developer/user instructions, trusted semantic metadata, and untrusted
   document/import/plugin/model content explicitly separated. Untrusted typed

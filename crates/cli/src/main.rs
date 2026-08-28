@@ -50,6 +50,7 @@ enum Commands {
     },
     /// Create a changed document from one schema-typed field edit
     Set {
+        /// Supported .ro source or exact canonical .roproj tree
         input: PathBuf,
         /// Human field address in entity.field form
         field: String,
