@@ -201,6 +201,22 @@ as a supported direct or packaged `.ro` file. Directory inputs cross the same
 canonical project reader and workspace validation boundaries whether or not a
 `.git/` directory exists.
 
+Scalar `set` also accepts an exact canonical `.roproj/v1` source. It preserves
+that tree, refuses outputs inside it, and writes the reviewed candidate through
+the existing direct `.ro` writer. Explicitly materialize that candidate to a
+new canonical tree when it is accepted:
+
+```sh
+tachiko set balance.roproj iron_sword.damage 45 --output buffed-direct.ro
+tachiko roproj materialize buffed-direct.ro buffed.roproj
+tachiko diff balance.roproj buffed.roproj
+tachiko roproj validate buffed.roproj
+```
+
+This bridge does not silently synchronize representations or make Git a
+runtime requirement. The source, direct candidate, and accepted canonical tree
+remain distinct first-party states.
+
 ## Review canonical projects in Git and CI
 
 Track the canonical `.roproj` tree as source. Add these attributes to the

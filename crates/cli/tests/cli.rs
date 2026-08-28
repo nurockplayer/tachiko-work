@@ -1225,6 +1225,61 @@ fn set_writes_a_new_valid_document_and_prints_semantic_impact() {
 }
 
 #[test]
+fn set_accepts_an_exact_roproj_source_without_mutating_its_tree() {
+    let temp = TempDir::new();
+    let input = temp.path().join("balance.roproj");
+    let output_path = temp.path().join("buffed.ro");
+    materialize_roproj(&input, &balance_document(100.0)).unwrap();
+    let input_before = snapshot_tree(&input);
+
+    let output = run(&[
+        "set",
+        input.to_str().unwrap(),
+        "sword.damage",
+        "120",
+        "--output",
+        output_path.to_str().unwrap(),
+    ]);
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(snapshot_tree(&input), input_before);
+    assert_eq!(
+        field_value_by_key(&load(&output_path).unwrap(), "sword", "damage"),
+        &number(120.0)
+    );
+}
+
+#[test]
+fn set_refuses_to_write_inside_a_roproj_source() {
+    let temp = TempDir::new();
+    let input = temp.path().join("balance.roproj");
+    materialize_roproj(&input, &balance_document(100.0)).unwrap();
+    let input_before = snapshot_tree(&input);
+    let output_path = input.join("buffed.ro");
+
+    let output = run(&[
+        "set",
+        input.to_str().unwrap(),
+        "sword.damage",
+        "120",
+        "--output",
+        output_path.to_str().unwrap(),
+    ]);
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("inside directory input"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(snapshot_tree(&input), input_before);
+}
+
+#[test]
 fn set_refuses_invalid_field_syntax_formula_edits_and_existing_outputs() {
     let temp = TempDir::new();
     let input = temp.path().join("balance.ro");

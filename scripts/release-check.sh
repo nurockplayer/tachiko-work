@@ -79,7 +79,7 @@ trap - EXIT
 echo "==> Cargo source packages"
 cargo package --workspace --locked --no-verify
 
-echo "==> first-user workflow"
+echo "==> standalone Game Dev Alpha workflow"
 bash scripts/first-user-smoke.sh
 
 echo "==> semantic collaboration workflow"
@@ -91,7 +91,7 @@ bash scripts/entity-lifecycle-smoke.sh
 echo "==> computational formula authoring workflow"
 bash scripts/formula-authoring-smoke.sh
 
-echo "==> optional Git and CI adapter workflow"
+echo "==> optional Git-native Game Dev Alpha workflow"
 bash scripts/git-ci-smoke.sh
 
 native_target="$(rustc -vV | awk '/^host: / { print $2 }')"
