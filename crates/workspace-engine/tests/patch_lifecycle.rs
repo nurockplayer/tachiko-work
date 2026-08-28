@@ -1420,6 +1420,40 @@ fn provision_grant_rejects_a_manually_malformed_query_mutation_requirement() {
 }
 
 #[test]
+fn delegated_principal_cannot_issue_or_delegate_grants() {
+    let mut lifecycle = lifecycle();
+    let cases = [
+        ("delegated-self-grant", principal("agent")),
+        ("delegated-transitive-grant", principal("other-agent")),
+    ];
+
+    for (id, subject) in &cases {
+        let error = lifecycle
+            .provision_grant(Grant::new(
+                GrantId::from(*id),
+                principal("agent"),
+                subject.clone(),
+                vec![query_requirement()],
+                None,
+            ))
+            .unwrap_err();
+        assert!(matches!(error, PatchLifecycleError::InvalidGrant));
+    }
+
+    for (id, subject) in cases {
+        lifecycle
+            .provision_grant(Grant::new(
+                GrantId::from(id),
+                principal("authority"),
+                subject,
+                vec![query_requirement()],
+                None,
+            ))
+            .unwrap();
+    }
+}
+
+#[test]
 fn principal_occurrence_identity_and_kind_are_immutable() {
     let mut lifecycle = lifecycle();
 

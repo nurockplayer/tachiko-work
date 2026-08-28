@@ -824,8 +824,8 @@ impl PatchLifecycle {
     ///
     /// # Errors
     ///
-    /// Rejects reused IDs, empty or malformed Grants, or unresolved
-    /// issuer/subject occurrences.
+    /// Rejects reused IDs, empty or malformed Grants, Delegated issuers, or
+    /// unresolved issuer/subject occurrences.
     pub fn provision_grant(&mut self, grant: Grant) -> Result<(), PatchLifecycleError> {
         if self.grants.contains_key(&grant.id) {
             return Err(PatchLifecycleError::GrantIdAlreadyExists);
@@ -840,7 +840,10 @@ impl PatchLifecycle {
                     }
                 )
             })
-            || !self.principals.contains_key(&grant.issuer)
+            || self
+                .principals
+                .get(&grant.issuer)
+                .is_none_or(|issuer| issuer.kind == PrincipalKind::Delegated)
             || !self.principals.contains_key(&grant.subject)
         {
             return Err(PatchLifecycleError::InvalidGrant);
