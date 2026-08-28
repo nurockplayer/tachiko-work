@@ -8,9 +8,18 @@ else
   cargo build --manifest-path "${repo_root}/Cargo.toml" -p tachiko-cli
   tachiko_bin="${repo_root}/target/debug/tachiko"
 fi
+if [[ "${tachiko_bin}" != */* ]]; then
+  tachiko_bin="$(command -v "${tachiko_bin}")"
+fi
+tachiko_bin="$(cd "$(dirname "${tachiko_bin}")" && pwd)/$(basename "${tachiko_bin}")"
 
 smoke_dir="$(mktemp -d "${TMPDIR:-/tmp}/tachiko-first-user.XXXXXX")"
 trap 'rm -rf "${smoke_dir}"' EXIT
+cd "${smoke_dir}"
+if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "first-user smoke: standalone lane must execute outside a Git worktree" >&2
+  exit 1
+fi
 
 base_direct="${repo_root}/examples/game-balance/game-balance.ro"
 base_project="${smoke_dir}/game-balance.roproj"
