@@ -77,17 +77,18 @@ A delivery agent may start repository mutation only when all of these
 conditions hold:
 
 1. current live repository authority and the Product Roadmap have been checked;
-2. durable architecture or product decisions required by the Issue are already
-   Accepted, or the Project Steward has explicitly supplied a clearly scoped
-   Provisional implementation choice permitted by current Accepted authority;
+2. durable architecture or product decisions required for production are
+   Accepted; any Steward-supplied Provisional choice is limited to a non-durable
+   implementation detail permitted by current Accepted authority;
 3. scope and acceptance criteria are sufficient for focused delivery; and
 4. no conflicting open implementation PR owns the same work.
 
 A Decision or Research Issue with unresolved durable choices is not Ready for
-production implementation. When the Project Steward explicitly marks its
-resolution **Decision-Ready**, it may produce a focused authority or
-specification PR. Production implementation must wait for that authority to be
-Accepted and for a separate implementation Issue to become Ready.
+production implementation. **Decision-Ready** is an Issue workflow state, not
+Accepted authority. When the Project Steward explicitly marks a resolution
+Decision-Ready, it authorizes only a focused authority or specification PR.
+Production implementation must wait for that authority to be Accepted and for a
+separate implementation Issue to become Ready.
 
 ### One-Issue delivery loop
 
