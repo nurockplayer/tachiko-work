@@ -56,6 +56,9 @@ git -C "${repository_dir}" add .gitattributes game-balance.roproj game-balance.r
 git -C "${repository_dir}" \
   -c user.name="Tachiko CI" -c user.email="ci@tachiko.invalid" \
   commit --quiet -m "Track canonical balance project"
+"${tachiko_bin}" roproj compare-package \
+  "${repository_dir}/game-balance.ro" \
+  "${repository_dir}/game-balance.roproj" >/dev/null
 git -C "${repository_dir}" switch --quiet -c buffed-sword
 
 rm -rf -- "${repository_dir}/game-balance.roproj"

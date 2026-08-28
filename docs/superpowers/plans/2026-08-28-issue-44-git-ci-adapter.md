@@ -82,7 +82,7 @@
 ### Task 5: Repository gates, review, and delivery
 
 - [x] Run focused CLI tests and the Git/CI smoke while iterating, including direct/package regressions and negative canonicality/validity/drift cases.
-- [ ] Run formatting, warnings-as-errors Clippy, all workspace/all-target tests, exact Rust 1.85, native/WASM conformance, documentation checks, packaging, and `scripts/release-check.sh` from a clean commit.
+- [x] Run formatting, warnings-as-errors Clippy, all workspace/all-target tests, exact Rust 1.85, native/WASM conformance, documentation checks, packaging, and `scripts/release-check.sh` from a clean commit.
 - [ ] Review the complete diff against Issue #44 and Accepted authority, then request independent review and address every actionable finding with focused regression coverage.
 - [ ] Open one Issue #44 PR, monitor all required checks and review threads, merge with head-match protection, and verify live `main`, Issue closure, and Project status.
 - [ ] Recalibrate live `main` and the Product Roadmap before selecting the next genuinely Ready critical-path Issue.
