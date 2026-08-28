@@ -510,27 +510,32 @@ fn every_external_effect_is_denied_by_the_semantic_ai_boundary() {
 fn missing_trusted_identity_or_time_fails_before_lifecycle_admission() {
     let document = security_document("ordinary data");
     let mut lifecycle = lifecycle();
-    let request = AiProposalRequest::new(
-        ProposalId::from("proposal-no-context"),
-        revision("r1"),
-        field_body(number(20.0)),
-        Vec::new(),
-    );
-    let context = TestContext {
-        principal: None,
-        now: Some(NOW),
-    };
-
-    let error = submit_semantic_proposal(
-        &mut lifecycle,
-        &context,
-        &document_scope_id(),
-        &document,
-        &revision("r1"),
-        request,
-    )
-    .expect_err("the request cannot supply its own effective identity");
-    assert_eq!(error.code(), boundary_codes::TRUSTED_CONTEXT_UNAVAILABLE);
+    for context in [
+        TestContext {
+            principal: None,
+            now: Some(NOW),
+        },
+        TestContext {
+            principal: Some(principal("agent")),
+            now: None,
+        },
+    ] {
+        let error = submit_semantic_proposal(
+            &mut lifecycle,
+            &context,
+            &document_scope_id(),
+            &document,
+            &revision("r1"),
+            AiProposalRequest::new(
+                ProposalId::from("proposal-no-context"),
+                revision("r1"),
+                field_body(number(20.0)),
+                Vec::new(),
+            ),
+        )
+        .expect_err("the request cannot supply its own trusted identity or time");
+        assert_eq!(error.code(), boundary_codes::TRUSTED_CONTEXT_UNAVAILABLE);
+    }
 }
 
 #[test]
