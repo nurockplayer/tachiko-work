@@ -28,7 +28,7 @@ The semantic model owns meaning. Physical formats are representations. ADR-0017 
 
 | Document | Read it for |
 | --- | --- |
-| [`semantic-api.md`](semantic-api.md) | ADR-0020 first-class transport-neutral Semantic API, including #32's Accepted logical formula-reasoning Query, read-only scenario Query, and formula-update Command; ADR-0024 SemanticPatch, ADR-0026 authorization/approval, and ADR-0022 runtime-host constraints still apply; exact DTO/session/transport mechanics remain Deferred |
+| [`semantic-api.md`](semantic-api.md) | ADR-0020 first-class transport-neutral Semantic API, including #32's Accepted logical formula-reasoning Query, read-only scenario Query, and formula-update Command plus #33's Accepted bounded typed semantic Analysis Query, exact Count/Number Min/Max, complete-result disclosure, and reproducibility lineage; ADR-0024 SemanticPatch, ADR-0026 authorization/approval, and ADR-0022 runtime-host constraints still apply; exact DTO/session/transport mechanics remain Deferred |
 | [`semantic-authorization.md`](semantic-authorization.md) | ADR-0026 principal, capability, stable-ID scope, trusted footprint, Grant, exact Human Approval, expiry/replay/revocation, provenance, and effect-domain contract |
 | [`semantic-data-model.md`](semantic-data-model.md) | Semantic data-model contract and terminology |
 | [`schema-system.md`](schema-system.md) | Durable schema declaration behavior and the boundary from runtime validation policy |
@@ -62,6 +62,13 @@ ADR-0020's #32 amendment additionally accepts logical structured formula
 reasoning, exact-snapshot read-only scenarios, and the typed formula-update
 Command. Issue #144 implements their first Provisional provider-neutral
 workspace/CLI slice; public wire/SDK and AI-facing mappings remain deferred.
+ADR-0020's #33 amendment accepts the bounded typed semantic Analysis Query,
+exact selected membership/Count/Number Min/Max and per-member Number
+observations, same-definition two-context evaluation, reproducibility lineage,
+and complete-or-denied aggregate disclosure. Sum/Mean, ranking/statistics,
+general predicate ASTs, joins/UDFs, persisted analysis, analytics storage,
+concrete Rust/CLI/DTO/wire shapes, and production analysis implementation remain
+Deferred or Provisional as marked in `semantic-api.md`.
 
 ## AI, security, and extensibility
 
