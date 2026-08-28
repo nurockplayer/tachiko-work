@@ -1000,6 +1000,16 @@ impl PatchLifecycle {
             now,
         )?;
         record.propose_grants = propose_grants;
+        // Proposal identity is now issued. An invalid candidate may not yield a
+        // safe semantic diff/impact projection, so retain exact writes with a
+        // conservative complete disclosure boundary. Successful evaluation
+        // replaces this with the precise derived footprint below.
+        record.footprint = Some(AuthorizationFootprint {
+            disclosure_requirements: self.document_disclosure(),
+            associated_write_requirements: provisional_footprint
+                .associated_write_requirements
+                .clone(),
+        });
 
         let evaluated = match self.finalize_evaluation(
             document,

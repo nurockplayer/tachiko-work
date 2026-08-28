@@ -6,13 +6,14 @@ use common::game_balance_document;
 use tachiko_workspace_engine::{
     Document, DocumentId, Expression, FieldRef, Number, SemanticChange, Value, diagnostic_codes,
     patch_lifecycle::{
-        ApprovalId, ApprovalRequest, ApprovalStatus, AuthorizationAction, AuthorizationDomainId,
-        AuthorizationPolicyVersion, DocumentScopeId, ExecutionReceipt, Grant, GrantId,
-        GrantRequirement, MutationClass, OperationFamily, PatchLifecycle, PatchLifecycleError,
-        PatchLifecycleState, PatchPreview, PolicyMeaningId, PrincipalId, PrincipalKind, ProposalId,
-        ProposalRequest, ScopedSemanticSubject, SemanticApiContract, SemanticCommand,
-        SemanticPatchBody, SemanticPublicationAuthority, SemanticPublicationError,
-        SemanticRevision, SemanticScope, TrustedInstant,
+        ApprovalId, ApprovalRequest, ApprovalStatus, AssociatedWriteRequirement,
+        AuthorizationAction, AuthorizationDomainId, AuthorizationPolicyVersion,
+        DisclosureRequirement, DocumentScopeId, ExecutionReceipt, Grant, GrantId, GrantRequirement,
+        MutationClass, OperationFamily, PatchLifecycle, PatchLifecycleError, PatchLifecycleState,
+        PatchPreview, PolicyMeaningId, PrincipalId, PrincipalKind, ProposalId, ProposalRequest,
+        ScopedSemanticSubject, SemanticApiContract, SemanticCommand, SemanticPatchBody,
+        SemanticPublicationAuthority, SemanticPublicationError, SemanticRevision, SemanticScope,
+        TrustedInstant,
     },
 };
 
@@ -595,10 +596,26 @@ fn final_validation_failure_records_failure_without_publication() {
         ),
         Err(PatchLifecycleError::ProposalNotExecutable)
     ));
-    assert!(matches!(
-        lifecycle.proposal_provenance(&proposal, &principal("reviewer"), NOW),
-        Err(PatchLifecycleError::ProposalNotExecutable)
-    ));
+    let provenance = lifecycle
+        .proposal_provenance(&proposal, &principal("reviewer"), NOW)
+        .unwrap();
+    assert_eq!(
+        provenance.authorization_footprint.disclosure_requirements,
+        BTreeSet::from([DisclosureRequirement {
+            family: OperationFamily::SetFieldValue,
+            scope: document_scope(),
+        }])
+    );
+    assert_eq!(
+        provenance
+            .authorization_footprint
+            .associated_write_requirements,
+        BTreeSet::from([AssociatedWriteRequirement {
+            family: OperationFamily::SetFieldValue,
+            mutation_class: MutationClass::Value,
+            scope: field_scope("iron_sword", "weapons", "attack_interval"),
+        }])
+    );
 }
 
 #[test]
