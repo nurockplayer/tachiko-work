@@ -411,6 +411,9 @@ pub enum PatchLifecycleState {
     Rejected,
     ValidationFailed,
     Stale,
+    /// Proved no-publication host conflict; retry remains possible.
+    RetryableConflict,
+    /// Terminal integrity or post-publication verification conflict.
     Conflict,
     Expired,
 }
@@ -1715,9 +1718,10 @@ impl PatchLifecycle {
             SemanticPublicationError::Stale => {
                 (PatchLifecycleState::Stale, PatchLifecycleError::Stale)
             }
-            SemanticPublicationError::Conflict => {
-                (PatchLifecycleState::Conflict, PatchLifecycleError::Conflict)
-            }
+            SemanticPublicationError::Conflict => (
+                PatchLifecycleState::RetryableConflict,
+                PatchLifecycleError::Conflict,
+            ),
             SemanticPublicationError::AuthorizationDenied => {
                 return boundary_error.unwrap_or(PatchLifecycleError::AuthorizationDenied);
             }

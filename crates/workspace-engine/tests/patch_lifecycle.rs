@@ -2674,7 +2674,30 @@ fn publisher_conflict_does_not_consume_approval_or_install_candidate() {
     );
     assert_eq!(
         lifecycle.proposal_history(&proposal).unwrap().last(),
-        Some(&PatchLifecycleState::Conflict)
+        Some(&PatchLifecycleState::RetryableConflict)
+    );
+
+    publication.mode = PublishMode::Normal;
+    let receipt = lifecycle
+        .execute(
+            &proposal,
+            Some(&approval),
+            &principal("agent"),
+            &mut publication,
+            TrustedInstant::new(12),
+        )
+        .unwrap();
+
+    assert!(receipt.verified);
+    assert_eq!(publication.publish_calls, 2);
+    assert_ne!(publication.document, original);
+    assert_eq!(
+        lifecycle.approval_status(&approval).unwrap(),
+        ApprovalStatus::Consumed
+    );
+    assert_eq!(
+        lifecycle.proposal_history(&proposal).unwrap().last(),
+        Some(&PatchLifecycleState::Verified)
     );
 }
 
@@ -2746,7 +2769,7 @@ fn query_expiry_at_failed_publication_hides_the_semantic_conflict() {
     );
     assert_eq!(
         lifecycle.proposal_history(&proposal).unwrap().last(),
-        Some(&PatchLifecycleState::Conflict)
+        Some(&PatchLifecycleState::RetryableConflict)
     );
 }
 

@@ -675,8 +675,12 @@ Active -> Consumed | Revoked | Expired
   verification failure remains in trusted history/receipt state but is returned
   only when that fresh boundary Query decision permits the detail; otherwise
   the executor receives authorization denial. Concrete revision concurrency and
-  state installation remain #93 work; broader
-  transaction/recovery and history protocols remain with #11/#12.
+  state installation remain #93 work; broader transaction/recovery and history
+  protocols remain with #11/#12.
+- A host-proved no-publication conflict leaves Approval Active and records the
+  current nonterminal `RetryableConflict` lifecycle evidence so a retry repeats
+  every live authorization and semantic check. Terminal `Conflict` remains
+  reserved for integrity or post-publication verification failures.
 - If a failure leaves the trusted boundary unable to prove whether publication
   occurred, it MUST fail closed and MUST NOT permit retry until authoritative
   state is reconciled.

@@ -76,7 +76,7 @@
 - [x] Implement approval-gated and direct-Human Execute through one common path with exact binding, stale, live principal/Grant/policy, footprint, validation, and gate rechecks.
 - [x] Hold exclusive lifecycle state while the host invokes a fresh trusted-time live-authorization callback and compares/publishes the complete final candidate, then mark Approval Consumed immediately after the infallible successful publication result; never consume on a proved no-publication failure.
 - [x] Capture and return the exact installed occurrence/document/revision snapshot before releasing the publication guard, validate that immutable result even if a later writer advances the live head, and return a machine-readable execution receipt with diff, validation, base/result revisions, Grant references, principals, policy, and truthful Approval evidence.
-- [x] Preserve machine-distinguishable stale, validation, capability, approval mismatch/expiry/revocation/replay, conflict, and verification outcomes without exposing host-effect authority.
+- [x] Preserve machine-distinguishable stale, validation, capability, approval mismatch/expiry/revocation/replay, retryable proved-no-publication conflict, terminal integrity/verification conflict, and verification outcomes without exposing host-effect authority.
 
 ### Task 5: Documentation, validation, review, and delivery
 
