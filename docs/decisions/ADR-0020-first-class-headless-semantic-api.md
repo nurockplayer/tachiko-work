@@ -218,13 +218,18 @@ one exact source semantic revision/context
 + one bounded set of requested stable result/inspection targets
 ```
 
-Before resolving or classifying the source context or any override target, the
-trusted application boundary derives and enforces the applicable ADR-0026 Query
-disclosure scope from the request's stable identities. If sufficient source or
-override scope cannot be established, it denies the scenario as a whole without
-source- or override-specific facts and before admission or candidate derivation.
-It must not reveal whether an unauthorized override target exists or which
-semantic kind it has.
+Before semantic classification or external exposure, the trusted application
+boundary performs internal, non-disclosing resolution against the exact source
+snapshot only as needed to derive the actual document-scope occurrence and
+applicable ADR-0026 disclosure-scope atoms, including actual `EntityField`
+schema membership. It derives and enforces Query authority from those trusted
+facts; request identities or caller-supplied membership never establish scope.
+If the document-scope occurrence cannot be proven, the boundary fails closed.
+If that occurrence is proven but a narrower actual scope cannot be derived
+safely, it fails closed or requires broader explicit scope within that same
+occurrence. Without sufficient actual or broader source and override coverage,
+it denies the scenario as a whole without source- or override-specific facts and
+before semantic admission or candidate derivation.
 
 Each override targets by stable semantic identity one existing field whose
 current semantic value is a Number, not a Formula. An override target occurs at
@@ -239,17 +244,19 @@ occurrences normalize to one member, and target request order is not semantic.
 
 The source context pins the effective deterministic ADR-0019 validator
 configuration used for both baseline and candidate validation. After the
-scenario envelope is admitted, the trusted application boundary first derives
-and enforces the applicable ADR-0026 Query disclosure scope for each normalized
-requested target. With sufficient scope, the target resolves only against the
-exact source snapshot and yields the applicable requested facts or structured
-missing, stale, or unsupported-kind failure evidence preserving the requested
-stable identity and expected/actual kind where applicable. If sufficient scope
-cannot be established, the target instead yields one disclosure-safe denial
-without target-specific facts. Each target therefore has exactly one outcome;
-one unsuccessful target does not suppress outcomes for independently resolvable
-targets. The application authority must not silently omit, retarget, or resolve
-a requested target against another revision.
+scenario envelope is admitted, each normalized requested target follows the
+same internal non-disclosing resolution, actual-scope derivation, and Query
+authorization order above. Only sufficient actual scope, or broader explicit
+scope within the same proven document occurrence when narrower actual target
+scope cannot be derived safely, permits target classification or exposure. The
+target then yields the applicable requested facts or structured missing, stale,
+or unsupported-kind failure evidence preserving the requested stable identity
+and expected/actual kind where applicable. Without that coverage, it yields one
+disclosure-safe denial without target-specific facts.
+Each target therefore has exactly one outcome; one unsuccessful target does not
+suppress outcomes for independently resolvable targets. The application
+authority must not silently omit, retarget, or resolve a requested target
+against another revision.
 
 The result preserves enough structured meaning to identify:
 

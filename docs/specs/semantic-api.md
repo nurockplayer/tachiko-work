@@ -232,13 +232,19 @@ exact source semantic revision/context, including deterministic validation conte
 + bounded set of requested stable result/inspection targets
 ```
 
-Before resolving or classifying the source context or any override target, the
-trusted application boundary derives and enforces the applicable ADR-0026 Query
-disclosure scope from the request's stable identities. If sufficient source or
-override scope cannot be established, it returns one disclosure-safe scenario
-denial without source- or override-specific facts and before semantic admission,
-candidate derivation, calculation, or validation. It MUST NOT reveal whether an
-unauthorized override target exists or which semantic kind it has.
+Before semantic classification or external exposure, the trusted application
+boundary performs internal, non-disclosing resolution against the exact source
+snapshot only as needed to derive the actual document-scope occurrence and
+applicable ADR-0026 disclosure-scope atoms, including actual `EntityField`
+schema membership. It derives and enforces Query authority from those trusted
+facts; request identities or caller-supplied membership MUST NOT establish
+scope. If the document-scope occurrence cannot be proven, the boundary fails
+closed. If that occurrence is proven but a narrower actual scope cannot be
+derived safely, it fails closed or requires broader explicit scope within that
+same occurrence. Without sufficient actual or broader source and override
+coverage, it returns one disclosure-safe scenario denial without source- or
+override-specific facts and before semantic admission, candidate derivation,
+calculation, or validation.
 
 Each override identifies by stable semantic identity one existing field whose
 current semantic value is a Number, not a Formula, and supplies one ADR-0018
@@ -252,16 +258,19 @@ requested-target occurrences normalize to one member, and target request order
 has no semantic meaning. Exact result ordering is a Provisional projection
 detail.
 
-After the scenario envelope is admitted, the trusted application boundary first
-derives and enforces the applicable ADR-0026 Query disclosure scope for each
-normalized requested target. With sufficient scope, the target is resolved only
-against the exact source snapshot. If it resolves to an existing semantic
-subject and supported M04 formula-reasoning result/inspection facet, it yields
-the applicable requested structured facts; otherwise it yields structured
-missing, stale, or unsupported-kind failure evidence preserving the requested
-stable identity and expected/actual kind where applicable. If sufficient scope
-cannot be established, the target instead yields one disclosure-safe denial
-without target-specific facts. Each target therefore has exactly one outcome;
+After the scenario envelope is admitted, each normalized requested target
+follows the same internal non-disclosing resolution, actual-scope derivation,
+and Query-authorization order above. Only sufficient actual scope, or broader
+explicit scope within the same proven document occurrence when narrower actual
+target scope cannot be derived safely, permits semantic classification or
+external exposure. The target may then be classified against the exact source
+snapshot. If it resolves to an existing semantic subject and supported M04
+formula-reasoning result/inspection facet, it yields the applicable requested
+structured facts; otherwise it yields structured missing, stale, or
+unsupported-kind failure evidence preserving the requested stable identity and
+expected/actual kind where applicable. Without sufficient actual or broader
+coverage, the target instead yields one disclosure-safe denial without
+target-specific facts. Each target therefore has exactly one outcome;
 one unsuccessful target does not suppress outcomes for independently resolvable
 targets. The application authority MUST NOT silently omit, retarget, or resolve
 a requested target against another revision.
@@ -942,10 +951,13 @@ domain must demonstrate:
 7. invalid, rebound/stale-target, and cycle-inducing formula updates failing
    through the existing admission, validation, or gate families;
 8. Query disclosure limits applying independently to reasoning, scenarios, and
-   proposal preview evidence, including an unauthorized scenario source or
-   override being denied before resolution/classification or candidate
-   derivation and an unauthorized requested target yielding only its
-   disclosure-safe denial; and
+   proposal preview evidence, including trusted non-disclosing resolution of
+   actual document occurrence and `EntityField` membership before scenario
+   authorization; caller-supplied membership granting nothing; an unprovable
+   document occurrence failing closed; broader scope applying only within the
+   same proven occurrence; insufficient source/override coverage denying before
+   classification, exposure, or candidate derivation; and an insufficiently
+   covered requested target yielding only its disclosure-safe denial; and
 9. Delegated formula Execute using ADR-0026's existing exact finite Human
    Approval and Formula-class footprint without new formula-specific evidence.
 
