@@ -42,9 +42,13 @@ ADR-0023 fixes the `.roproj/v1` durable representation contract. ADR-0025
 fixes the deterministic portable-package v1 envelope and integrity root over
 that exact tree. Issue #3 implements the packaged `.ro` pure codec, bounded
 native pack/unpack and comparison workflows, fail-closed content framing, and
-CLI composition. Optional Git/CI integration remains #44; broader hostile-
-container/security and durability work retain their existing owners and
-Deferred status.
+CLI composition. Issue #44 adds the optional provider-neutral Git/CI adapter:
+existing read-only semantic commands accept exact canonical `.roproj` trees,
+repository attributes preserve LF text diffs, and CI composes canonical and
+workspace validation with read-only package/source comparison. It installs no
+Git driver or configuration and introduces no Git identity into semantics.
+Broader hostile-container/security and durability work retain their existing
+owners and Deferred status.
 
 ## Canonical Git working representation
 

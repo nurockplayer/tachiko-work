@@ -34,10 +34,10 @@
 - Existing read-only `validate`, `calculate`, `show`, `explain`, `analyze`, `diff`, and `export` commands accept either a supported `.ro` file or an exact canonical `.roproj/v1` directory.
 - No new public semantic/storage DTO or output protocol.
 
-- [ ] Add failing CLI tests proving direct/package `.ro` behavior remains unchanged while exact `.roproj` sources produce the same validation, human semantic diff, and fixed-label structured analysis.
-- [ ] Add one CLI-host source loader that dispatches only on filesystem node kind, calls the existing `load` or `load_roproj` boundary, and performs no repository discovery.
-- [ ] Route only read-only semantic consumers through that helper; keep mutation/materialization inputs and output/no-overwrite behavior unchanged.
-- [ ] Prove a noncanonical `.roproj` directory fails as a representation error without direct-file fallback or mutation.
+- [x] Add failing CLI tests proving direct/package `.ro` behavior remains unchanged while exact `.roproj` sources produce the same validation, human semantic diff, and fixed-label structured analysis.
+- [x] Add one CLI-host source loader that dispatches only on filesystem node kind, calls the existing `load` or `load_roproj` boundary, and performs no repository discovery.
+- [x] Route only read-only semantic consumers through that helper; keep mutation/materialization inputs and output/no-overwrite behavior unchanged.
+- [x] Prove a noncanonical `.roproj` directory fails as a representation error without direct-file fallback or mutation.
 
 ### Task 2: Portable raw-diff attributes without Git configuration
 
@@ -45,10 +45,10 @@
 - Create: `.gitattributes`
 - Add coverage in: `scripts/git-ci-smoke.sh`
 
-- [ ] Pin only canonical `.roproj/v1` JSON/JSONL members as text with LF endings and ordinary text diff behavior.
-- [ ] Do not apply a blanket text or binary policy to `*.ro`, because direct JSON and packaged artifacts share that provisional extension.
-- [ ] Prove `git check-attr` resolves the expected attributes and a representative scalar edit produces exactly one added and one removed JSONL record in one canonical entity shard.
-- [ ] Prove raw diff evidence exposes the changed record while the independently authoritative semantic diff exposes the field change and derived formula impact.
+- [x] Pin only canonical `.roproj/v1` JSON/JSONL members as text with LF endings and ordinary text diff behavior.
+- [x] Do not apply a blanket text or binary policy to `*.ro`, because direct JSON and packaged artifacts share that provisional extension.
+- [x] Prove `git check-attr` resolves the expected attributes and a representative scalar edit produces exactly one added and one removed JSONL record in one canonical entity shard.
+- [x] Prove raw diff evidence exposes the changed record while the independently authoritative semantic diff exposes the field change and derived formula impact.
 
 ### Task 3: Provider-neutral Git and CI acceptance journey
 
@@ -57,12 +57,12 @@
 - Modify: `.github/workflows/ci.yml`
 - Modify: `scripts/release-check.sh`
 
-- [ ] Add a failing executable journey that first produces fixed-label structured validation/review evidence outside Git, then repeats it inside an ordinary temporary Git repository and requires byte-identical semantic output.
-- [ ] Create the Git branch change only through supported semantic edit and canonical materialization commands; never hand-edit the successful project state.
-- [ ] Exercise exact canonical/workspace validation on the tracked tree and fail closed on a noncanonical and a semantically invalid candidate.
-- [ ] Track a verified package beside its source, prove consistency before the project change, then prove the stale package/source root mismatch fails explicitly without mutating either side.
-- [ ] Use ordinary local Git only; do not require credentials, a remote, GitHub APIs, or persistent user/repository configuration for semantic checks.
-- [ ] Add the journey to both CI and the release-equivalent local gate.
+- [x] Add a failing executable journey that first produces fixed-label structured validation/review evidence outside Git, then repeats it inside an ordinary temporary Git repository and requires byte-identical semantic output.
+- [x] Create the Git branch change only through supported semantic edit and canonical materialization commands; never hand-edit the successful project state.
+- [x] Exercise exact canonical/workspace validation on the tracked tree and fail closed on a noncanonical and a semantically invalid candidate.
+- [x] Track a verified package beside its source, prove consistency before the project change, then prove the stale package/source root mismatch fails explicitly without mutating either side.
+- [x] Use ordinary local Git only; do not require credentials, a remote, GitHub APIs, or persistent user/repository configuration for semantic checks.
+- [x] Add the journey to both CI and the release-equivalent local gate.
 
 ### Task 4: User workflow and implementation-status documentation
 
@@ -74,14 +74,14 @@
 - Modify: `docs/governance/canonical-reconciliation-register.md`
 - Modify: `CHANGELOG.md`
 
-- [ ] Document the copy-paste Git/CI command sequence: canonical validation, ordinary raw diff, semantic diff/structured analysis, and optional package/source comparison.
-- [ ] Document the exact `.gitattributes` snippet and why generated packaged `.ro` paths need an explicit path-specific binary rule when tracked.
-- [ ] State that Git refs may be caller-owned analysis labels/evidence only, not semantic revision or identity.
-- [ ] Reconcile only implementation-status prose; do not amend Accepted ADR/spec contracts or mark Issue #119 complete.
+- [x] Document the copy-paste Git/CI command sequence: canonical validation, ordinary raw diff, semantic diff/structured analysis, and optional package/source comparison.
+- [x] Document the exact `.gitattributes` snippet and why generated packaged `.ro` paths need an explicit path-specific binary rule when tracked.
+- [x] State that Git refs may be caller-owned analysis labels/evidence only, not semantic revision or identity.
+- [x] Reconcile only implementation-status prose; do not amend Accepted ADR/spec contracts or mark Issue #119 complete.
 
 ### Task 5: Repository gates, review, and delivery
 
-- [ ] Run focused CLI tests and the Git/CI smoke while iterating, including direct/package regressions and negative canonicality/validity/drift cases.
+- [x] Run focused CLI tests and the Git/CI smoke while iterating, including direct/package regressions and negative canonicality/validity/drift cases.
 - [ ] Run formatting, warnings-as-errors Clippy, all workspace/all-target tests, exact Rust 1.85, native/WASM conformance, documentation checks, packaging, and `scripts/release-check.sh` from a clean commit.
 - [ ] Review the complete diff against Issue #44 and Accepted authority, then request independent review and address every actionable finding with focused regression coverage.
 - [ ] Open one Issue #44 PR, monitor all required checks and review threads, merge with head-match protection, and verify live `main`, Issue closure, and Project status.

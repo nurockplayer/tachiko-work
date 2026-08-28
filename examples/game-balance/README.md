@@ -169,12 +169,25 @@ Quote `--expression` values in the shell. Tachiko refuses invalid syntax,
 references, cycles, calculation failures, unchanged formulas, and bounded
 complexity violations before creating an output.
 
-## Why `.ro` in Git
+## Why `.roproj` in Git
 
-`.ro` is canonical UTF-8 JSON: stable map ordering and formatting make
-equivalent documents byte-identical, while each change remains reviewable as a
-field-level Git diff. Typed references and formulas preserve intent that a CSV
-or spreadsheet export would lose. The CLI can validate the document in CI,
-calculate derived values deterministically, and render a semantic diff that
-calls out downstream impact. Export is available when an engine or other tool
-needs plain evaluated data, without making that export the source of truth.
+The two checked-in `.ro` files remain direct-JSON compatibility examples for
+the CLI journey above. A Git working project should materialize the same
+semantic document as canonical `.roproj/v1` without hand-editing its internal
+files:
+
+```sh
+./target/debug/tachiko roproj materialize \
+  examples/game-balance/game-balance.ro \
+  "$moonfall_demo/game-balance.roproj"
+./target/debug/tachiko validate "$moonfall_demo/game-balance.roproj"
+./target/debug/tachiko show "$moonfall_demo/game-balance.roproj"
+```
+
+The fixed JSONL shards make a scalar entity edit one removed and one added
+record in one stable file. Ordinary Git shows that physical change, while
+`tachiko diff` and `tachiko analyze changes` reconstruct both trees and report
+the authoritative field/formula meaning. CI can run the same canonical and
+workspace validation outside Git, then optionally use `roproj compare-package`
+when a repository deliberately tracks a generated portable `.ro` artifact.
+See the root README's Git/CI section for the exact attributes and commands.

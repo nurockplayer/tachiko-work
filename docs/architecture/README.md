@@ -72,7 +72,7 @@ Use these broad cues together with the reconciliation register:
 | Semantic-first platform direction | Accepted |
 | First-class Headless Semantic API boundary | Accepted under ADR-0020; exact Rust API and transports remain Provisional/Deferred |
 | Progressive semantic strengthening | Accepted under ADR-0021; concrete freeform object/runtime/UI mechanics Deferred |
-| `.roproj` source / `.ro` portable-artifact relationship | Accepted under ADR-0003; exact `.roproj/v1` tree/DTO contract Accepted under ADR-0023 and production pure codec/native explicit host workflow implemented by #123; exact portable-package v1 contract Accepted under ADR-0025 with production codec/native host/CLI workflow implemented by #3; optional Git/CI remains #44 |
+| `.roproj` source / `.ro` portable-artifact relationship | Accepted under ADR-0003; exact `.roproj/v1` tree/DTO contract Accepted under ADR-0023 and production pure codec/native explicit host workflow implemented by #123; exact portable-package v1 contract Accepted under ADR-0025 with production codec/native host/CLI workflow implemented by #3; optional provider-neutral Git/CI composition implemented by #44 |
 | Current `.ro` v0.1 encoding details | Provisional implemented baseline |
 | Rust crate graph | Accepted Milestone 02 boundary implemented; exact Rust API remains Provisional |
 | AI as delegated semantic client | Accepted under amended ADR-0007; scoped authorization and exact Human Approval Accepted under ADR-0026; implementation pending #29/#30/#93 |

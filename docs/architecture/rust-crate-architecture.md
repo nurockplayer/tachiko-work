@@ -442,9 +442,10 @@ does not implicitly grant filesystem/network/Git/plugin/deployment authority.
   version-owned wire contract; #123 implements the production pure codec plus
   current native exact-tree materialize/canonical-only-validate/explicit-
   canonicalize host workflow. Storage also owns #3's packaged `.ro` pure codec
-  and native pack/unpack/compare boundary; optional Git/CI integration remains
-  #44. Broader hostile source/path races, full durability/recovery, and host
-  work remain Deferred.
+  and native pack/unpack/compare boundary; #44 composes those standalone
+  boundaries into optional provider-neutral Git/CI review and consistency
+  checks at the CLI/repository edge. Broader hostile source/path races, full
+  durability/recovery, and host work remain Deferred.
 - A dedicated stable public Rust SDK/facade crate is Deferred until downstream
   pressure justifies it.
 

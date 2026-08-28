@@ -28,6 +28,9 @@ The current product provides a complete, safe CLI-first game-balance workflow:
   canonicalization as an exact 18-file project tree;
 - deterministic portable-package/v1 pack, verified unpack, and read-only
   package/tracked-source comparison over those exact project bytes;
+- an optional provider-neutral Git/CI adapter with canonical LF text
+  attributes, `.roproj` semantic review, validation, and package/source drift
+  checks;
 - deterministic formula calculation and dependency tracking;
 - semantic diff with derived formula impact;
 - guided starter creation, browsing, explanation, and typed edits;
@@ -191,6 +194,62 @@ configuration. Direct `.ro` remains a supported compatibility representation,
 and the direct-JSON writer remains unchanged. Readers select a portable package
 only from its exact initial ZIP signature and never silently convert or rewrite
 either representation as `.roproj`.
+
+The read-only `validate`, `calculate`, `show`, `explain`, `analyze`, `diff`,
+and `export` commands accept an exact canonical `.roproj/v1` directory as well
+as a supported direct or packaged `.ro` file. Directory inputs cross the same
+canonical project reader and workspace validation boundaries whether or not a
+`.git/` directory exists.
+
+## Review canonical projects in Git and CI
+
+Track the canonical `.roproj` tree as source. Add these attributes to the
+repository so canonical project members stay LF text and ordinary Git always
+uses a line diff:
+
+```gitattributes
+**/*.roproj/manifest.json text eol=lf diff
+**/*.roproj/schemas.json text eol=lf diff
+**/*.roproj/entities/*.jsonl text eol=lf diff
+```
+
+Do not classify every `*.ro` path as text or binary: direct JSON and portable
+packages currently share that provisional extension. If a repository chooses
+to track one generated package, mark that exact generated path instead:
+
+```gitattributes
+artifacts/game-balance.ro binary
+```
+
+Raw Git diff and Tachiko semantic review are complementary. Given a fetched
+base revision, a provider-neutral branch or CI job can extract the historical
+tree and run the same semantic commands used outside Git:
+
+```sh
+project=game-data/game-balance.roproj
+base_ref=origin/main
+base_tree=$(mktemp -d "${TMPDIR:-/tmp}/tachiko-base.XXXXXX")
+
+git diff -- "$project"
+git archive --format=tar "$base_ref" -- "$project" | tar -xf - -C "$base_tree"
+
+tachiko diff "$base_tree/$project" "$project"
+tachiko analyze changes "$base_tree/$project" "$project" \
+  --before-state "$base_ref" --after-state working
+tachiko roproj validate "$project"
+tachiko analyze validation "$project" --source-state working
+
+# Run this only when the repository deliberately tracks the generated package.
+tachiko roproj compare-package artifacts/game-balance.ro "$project"
+```
+
+The Git ref strings above are caller-owned evidence labels, not semantic
+revision or object identity. Validation admits each filesystem snapshot through
+the exact `.roproj/v1` reader before semantic checks. Package disagreement is a
+CI failure: the tracked `.roproj` remains authoritative, and the command changes
+neither side. The repository release gate exercises this flow in a temporary
+ordinary Git repository without a remote, credentials, host APIs, or persistent
+Git configuration.
 
 ## Grow the balance roster
 

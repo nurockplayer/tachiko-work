@@ -38,7 +38,10 @@ Features:
 Current release boundary: this is CLI-first with direct `.ro` as the ordinary
 persistence path plus Issue #123's explicit standalone `.roproj/v1`
 materialize, canonical-only validate, and bounded canonicalize workflow, and
-Issue #3's portable package pack/unpack/compare workflow.
+Issue #3's portable package pack/unpack/compare workflow. Issue #44 adds
+optional `.roproj` raw Git review, semantic review, canonical validation, and
+generated-package consistency composition for provider-neutral CI without
+changing the standalone product boundary.
 
 ## Long Term Expansion
 
@@ -55,7 +58,6 @@ The same foundation can expand into:
 Non-implemented work in this release remains:
 
 - spreadsheet-native GUI editing
-- optional `.roproj` Git/CI integration (#44)
 - broader hostile source/path hardening, full durability/recovery, and host work
 - realtime/online collaboration
 - engine plugins and hosted multiplayer pipelines
