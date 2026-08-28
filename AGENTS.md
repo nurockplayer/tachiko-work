@@ -15,6 +15,11 @@ Use a DX-driven, tooling-minimalist, automation-first approach:
 
 Tachiko Work is currently Rust-first. Preserve the checked-in Cargo workflow, lockfile, crate boundaries, and validation gates documented in `CONTRIBUTING.md`.
 
+For issue-driven repository work, follow the canonical
+[`Repository delivery workflow`](docs/governance/project-governance.md#repository-delivery-workflow).
+It defines the Ready gate, provider-neutral Steward/delivery-agent split,
+single-PR handoff, review discipline, and post-merge stop conditions.
+
 ## JavaScript and TypeScript
 
 Node.js is used by parts of the release and WASM validation workflow. If package-managed JavaScript or TypeScript tooling is introduced or modified:

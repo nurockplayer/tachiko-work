@@ -51,6 +51,117 @@ When artifacts conflict, reconcile them explicitly. Do not let chronology, imple
 
 The project follows a one-hop traceability rule for material decisions: a contributor should not need repository-wide archaeology merely to discover the next relevant authority or evidence link. This traceability records provenance and relationships; it does not alter the authority hierarchy above.
 
+## Repository delivery workflow
+
+This section is the canonical operating contract for issue-driven repository
+delivery. The role names describe responsibilities and do not depend on a
+particular person, AI provider, or implementation tool.
+
+Origin: [Issue #141](https://github.com/nurockplayer/tachiko-work/issues/141)
+
+### Responsibilities
+
+- The **Project Steward** owns roadmap state, Issue readiness, durable
+  architecture and product decisions, GitHub governance, escalation, and
+  cross-PR drift review.
+- The **delivery agent** owns repository mutation after one concrete Issue is
+  genuinely Ready: focused implementation, tests, necessary documentation,
+  pull-request creation, review fixes, exact-head validation, merge, and
+  post-merge recalibration.
+- GitHub Issues, pull requests, reviews, and Projects remain the shared
+  coordination and audit surface.
+
+### Ready gate
+
+A delivery agent may start repository mutation only when all of these
+conditions hold:
+
+1. current live repository authority and the Product Roadmap have been checked;
+2. durable architecture or product decisions required by the Issue are already
+   Accepted or have been explicitly supplied by the Project Steward;
+3. scope and acceptance criteria are sufficient for focused delivery; and
+4. no conflicting open implementation PR owns the same work.
+
+A Decision or Research Issue with unresolved durable choices is not Ready for
+production implementation. When the Project Steward explicitly marks its
+resolution **Decision-Ready**, it may produce a focused authority or
+specification PR. Production implementation must wait for that authority to be
+Accepted and for a separate implementation Issue to become Ready.
+
+### One-Issue delivery loop
+
+Each Ready Issue uses one independently reviewable PR:
+
+```text
+live main + Ready Issue
+  -> focused branch
+  -> implement / test
+  -> local review + repository gates
+  -> one PR
+  -> hosted review / CI
+  -> fix actionable findings
+  -> exact-head validation
+  -> merge
+  -> live-state recalibration
+```
+
+Do not bundle unrelated Issues merely to continue a delivery run.
+
+### Canonical PR handoff
+
+Every agent-owned PR must have exactly one top-level comment containing this
+marker:
+
+```text
+<!-- agent-handoff:v1 -->
+```
+
+Create the comment immediately after opening the PR. Thereafter, locate that
+comment and PATCH it in place; do not add replacement status comments. The
+handoff records, at minimum:
+
+- Issue;
+- current status;
+- exact head commit;
+- last checked `main` commit;
+- scope boundary;
+- validation evidence;
+- unresolved review state;
+- next action; and
+- escalation or human-decision requirement.
+
+The handoff is operational state. It is not architectural or product authority,
+and durable rationale must remain in the appropriate Issue, policy, ADR,
+specification, or repository documentation.
+
+### Review and merge discipline
+
+Verify and fix valid correctness, security, data-integrity, Accepted-authority,
+and scope findings. P0/P1/P2-equivalent substantive findings block merge.
+P3, nitpick, and pure-maintainability suggestions do not create an endless
+review loop unless they expose a real repository-gate failure, correctness
+risk, or durable-contract problem.
+
+Do not change Accepted authority merely to satisfy reviewer preference.
+Escalate genuine authority contradictions to the Project Steward. Never force
+push. Merge only the exact reviewed and validated head under repository policy.
+
+### Post-merge recalibration and stop conditions
+
+After every merge, refresh live `main` and re-read the Product Roadmap, open
+Issues and PRs, dependencies, and relevant Accepted authority before selecting
+successor work. Continue only with the next genuinely Ready Issue.
+
+Stop and return to the Project Steward instead of speculating when:
+
+- no genuinely Ready Issue remains;
+- a durable architecture or product decision is unresolved;
+- Accepted authority conflicts; or
+- an external permission or service requires human action.
+
+Do not silently activate a future roadmap horizon merely because the previous
+implementation work finished.
+
 ## Decision Discussion Workflow
 
 Major unresolved architecture, product-foundation, security, format, or governance questions should begin as a dedicated GitHub **Decision Issue** before becoming an ADR.
