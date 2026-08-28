@@ -368,26 +368,29 @@ typed predicate evaluation, grouping, or aggregate reduction outside the
 shared Rust application authority. This is a bounded Semantic API Query family,
 not SQL compatibility or a general analytics language.
 
-The minimum normalized analysis definition contains:
+An Analysis Query supplies one context-independent normalized analysis
+definition and one exact semantic context as its execution input. The normalized
+definition contains:
 
 ```text
-one exact semantic context
-+ one schema/type entity domain
+one schema/type entity domain
 + optional bounded explicit stable-EntityId narrowing set
 + bounded AND-only typed field predicates
 + zero or one stable FieldId grouping key
 + one or more supported analysis result requests
 ```
 
-A caller-supplied EntityId set only narrows the trusted schema/type domain. It
-never grants membership, scope, or Query authority. Predicates are typed
-field/operator/operand constraints evaluated by the shared semantic authority
-after trusted target resolution and authorization. M04 accepts only a bounded
-conjunction shape; general OR/NOT predicate trees, joins, subqueries, windows,
-and arbitrary expressions are Deferred. The exact finite supported predicate
-operator catalogue and request limits remain Provisional until the first
-implementation slice, but an implementation may not introduce coercive or
-representation-path semantics that bypass the typed semantic model.
+The exact semantic context is therefore not part of normalized analysis
+definition identity. A caller-supplied EntityId set only narrows the trusted
+schema/type domain. It never grants membership, scope, or Query authority.
+Predicates are typed field/operator/operand constraints evaluated by the shared
+semantic authority after trusted target resolution and authorization. M04
+accepts only a bounded conjunction shape; general OR/NOT predicate trees,
+joins, subqueries, windows, and arbitrary expressions are Deferred. The exact
+finite supported predicate operator catalogue and request limits remain
+Provisional until the first implementation slice, but an implementation may
+not introduce coercive or representation-path semantics that bypass the typed
+semantic model.
 
 The optional grouping key is one stable FieldId within the selected domain.
 Grouping uses the authoritative typed semantic value/equality meaning for that
@@ -418,24 +421,27 @@ percentiles, optimization, and other higher analytics likewise remain
 Deferred. Per-member observations do not make ranking itself authoritative
 analysis behavior.
 
-The same normalized analysis definition MAY be evaluated independently over
-two explicitly supplied exact semantic contexts and returned as paired A/B
-results. Both contexts are explicit Query inputs. This comparison performs no
-history lookup, rebasing, branch resolution, revision-token interpretation, or
-implicit change attribution. When the question is what semantically changed,
-the existing semantic-diff authority remains the source of change facts.
+The same context-independent normalized analysis definition MAY be evaluated
+independently over two explicitly supplied exact semantic contexts and returned
+as paired A/B results. A/B evaluation substitutes only the execution context;
+it does not rewrite or renormalize the analysis definition. Both contexts are
+explicit Query inputs. This comparison performs no history lookup, rebasing,
+branch resolution, revision-token interpretation, or implicit change
+attribution. When the question is what semantically changed, the existing
+semantic-diff authority remains the source of change facts.
 
 #### Reproducibility and lineage
 
 Before ADR-0026 disclosure projection, equal exact semantic context(s), equal
-normalized typed analysis definition, and equal deterministic configuration
-that can change requested facts MUST produce equal underlying analysis results.
+context-independent normalized typed analysis definition, and equal
+deterministic configuration that can change requested facts MUST produce equal
+underlying analysis results.
 
 Logical lineage preserves enough structured provenance to reproduce and review
 the result, including:
 
-- the exact source semantic context or A/B contexts;
-- the normalized typed analysis definition;
+- the exact source semantic context or A/B contexts as execution provenance;
+- the context-independent normalized typed analysis definition;
 - stable schema, field, and explicitly targeted entity identities required by
   that definition;
 - the derivation meaning of each returned membership, group, aggregate, or
