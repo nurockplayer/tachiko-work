@@ -410,6 +410,14 @@ impl PatchLifecycle {
         let (current_revision, validator_configuration) = trusted_source;
         let context =
             FormulaQueryContext::trusted(current_revision.clone(), validator_configuration);
+        self.require_scenario_source_query(
+            document_scope,
+            document,
+            &normalized_overrides,
+            &requested_targets,
+            principal,
+            now,
+        )?;
 
         let override_failures = self.authorize_and_classify_overrides(
             document_scope,
@@ -617,6 +625,49 @@ impl PatchLifecycle {
                 }),
             })
             .collect())
+    }
+
+    fn require_scenario_source_query(
+        &self,
+        document_scope: &DocumentScopeId,
+        document: &Document,
+        overrides: &[NormalizedNumberOverride],
+        requested_targets: &[FieldRef],
+        principal: &PrincipalId,
+        now: TrustedInstant,
+    ) -> Result<(), FormulaOperationError> {
+        if !overrides.is_empty() {
+            return Ok(());
+        }
+        let requirements = if requested_targets.is_empty() {
+            document_requirements(
+                document_scope,
+                document,
+                OperationFamily::NumberOverrideScenario,
+            )
+        } else {
+            requested_targets
+                .iter()
+                .map(|target| {
+                    self.field_or_document_requirement(
+                        document_scope,
+                        document,
+                        OperationFamily::NumberOverrideScenario,
+                        target,
+                    )
+                })
+                .collect()
+        };
+        if requirements.iter().any(|requirement| {
+            self.authorize_query(principal, &BTreeSet::from([requirement.clone()]), now)
+                .is_ok()
+        }) {
+            Ok(())
+        } else {
+            Err(FormulaOperationError::Lifecycle(
+                PatchLifecycleError::DisclosureDenied,
+            ))
+        }
     }
 
     fn scenario_target_outcome(

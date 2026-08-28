@@ -338,6 +338,29 @@ fn scenario_envelope_rejects_duplicates_and_non_finite_values_before_lookup() {
 }
 
 #[test]
+fn scenario_without_source_query_returns_no_evaluated_source_context() {
+    let document = game_balance_document("game", "Game");
+    let lifecycle = lifecycle();
+
+    let error = lifecycle
+        .query_number_override_scenario(
+            &document_scope_id(),
+            &document,
+            (&revision("r1"), ValidatorConfiguration::WorkspaceFull),
+            &ScenarioRequest::new(vec![], vec![FieldRef::new("iron_sword", "dps")]),
+            &principal("agent"),
+            NOW,
+        )
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        FormulaOperationError::Lifecycle(PatchLifecycleError::DisclosureDenied)
+    ));
+    assert!(lifecycle.execution_receipts().is_empty());
+}
+
+#[test]
 fn scenario_returns_structured_override_and_target_outcomes_without_publication() {
     let document = game_balance_document("game", "Game");
     let mut lifecycle = lifecycle();

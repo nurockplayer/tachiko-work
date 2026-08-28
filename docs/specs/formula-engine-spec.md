@@ -15,7 +15,8 @@ only its compatibility projection.
 
 Authority: ADR-0014, ADR-0015, ADR-0016, ADR-0017, and ADR-0018. Decision
 record: #24. ADR-0020's Issue #32 amendment owns the M04 Semantic API
-composition over this engine; that API composition is not yet implemented.
+composition over this engine; Issue #144 implements its first Provisional
+provider-neutral workspace/CLI slice without changing this engine's authority.
 
 ## Purpose and scope
 
@@ -400,9 +401,9 @@ boundary. It does not create new formula-engine meaning.
   ADR-0024 proposal identity is issued.
 
 Scenario provenance, authorization, proposal lifecycle, and result projection
-belong to the Semantic API/application boundary, not this pure engine. The
-first provider-neutral implementation and conformance evidence require a
-separate implementation Issue.
+belong to the Semantic API/application boundary, not this pure engine. Issue
+#144 supplies the first provider-neutral implementation and conformance
+evidence at that boundary.
 
 ## Function and capability boundary
 

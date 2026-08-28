@@ -31,9 +31,10 @@ be reused as an AI credential. Raw semantic/storage mutation and host effects
 are explicitly denied. The current Rust DTOs and code spellings are not the
 public Semantic API/wire contract. No general schema-inference, freeform-
 promotion, authentication/session/transport, or host-effect capability pipeline
-is implemented. The M04 formula-reasoning, scenario, and formula-update
-Semantic API operations are also not yet implemented; their first
-provider-neutral workspace/CLI slice requires a separate implementation Issue.
+is implemented. Issue #144 implements the first Provisional provider-neutral
+workspace/CLI slice of the M04 formula-reasoning, scenario, and formula-update
+Semantic API operations. An AI-facing mapping of those operations, public DTOs,
+and wire/transport behavior remain unimplemented.
 
 ## Principle
 

@@ -20,8 +20,9 @@ shapes remain Provisional or Deferred as marked below.
 
 Implementation state: partially implemented through `workspace-engine` as the
 shared first-party application authority. Its provisional `patch_lifecycle`
-module now implements Issue #29's immutable SemanticPatch envelope, one current
-stable-ID field-value Command family, ordered non-empty AtomicBatch evaluation,
+module now implements Issue #29's immutable SemanticPatch envelope, the current
+stable-ID field-value and FormulaUpdate Command families, ordered non-empty
+AtomicBatch evaluation,
 scoped preview, exact finite Human Approval, atomic publication/consumption,
 verification against the immutable installed snapshot captured by the guarded
 publication result, and receipts. Current Rust functions and result structures
