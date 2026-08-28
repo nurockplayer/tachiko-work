@@ -455,10 +455,15 @@ one schema/type entity domain
 ```
 
 The exact semantic context is not part of normalized analysis definition
-identity. The explicit EntityId set MAY narrow the trusted schema/type
-population but MUST NOT establish membership, semantic scope, or Query
-authority. The shared application boundary resolves the source domain and stable
-targets from the supplied exact semantic context.
+identity. The explicit EntityId set is optional. When supplied, it MUST narrow
+the trusted schema/type population to the intersection with those stable
+identities. The shared application boundary resolves every supplied identity
+against the supplied exact semantic context and verifies that it belongs to the
+declared schema/type domain. After sufficient Query authority, an unresolved
+identity or an identity outside that domain yields the applicable structured
+target/domain failure and MUST NOT be ignored as a non-match. Without sufficient
+Query authority, the caller receives only a disclosure-safe denial. The
+narrowing set MUST NOT establish membership, semantic scope, or Query authority.
 
 Each predicate is a typed field/operator/operand constraint. It is evaluated
 against authoritative effective semantic values only after the preauthorization
@@ -485,12 +490,15 @@ to a typed operand, exposed as a synthetic value, or treated as an error for
 predicate selection.
 
 The optional grouping key is one stable FieldId from the selected domain.
-Grouping follows the authoritative typed semantic value/equality meaning of
-that field. If any selected entity omits the grouping field, the grouped
-analysis returns a structured missing-group-value failure; it MUST NOT drop the
-entity, synthesize a null/absent group key, or silently place it in another
-group. Multi-key grouping, grouping sets, query-defined bucketing, joins,
-subqueries, and windows are Deferred.
+M04 grouping uses present, supported, non-Formula typed semantic values and
+their authoritative equality meaning. A grouping field that stores a Formula
+is unsupported: the grouped analysis returns a structured unsupported-grouping
+failure and MUST NOT group by formula structure or by its calculated Number.
+If any selected entity omits the grouping field, the grouped analysis returns a
+structured missing-group-value failure; it MUST NOT drop the entity, synthesize
+a null/absent group key, or silently place it in another group. Multi-key
+grouping, grouping sets, query-defined bucketing, formula-valued grouping,
+joins, subqueries, and windows are Deferred.
 
 When a grouping key is present, grouping partitions the complete selected
 population before result reduction. Every requested result primitive is then
@@ -517,9 +525,15 @@ The Accepted M04 result primitives are:
 A requested Number metric may consume a stored Number field or an authoritative
 calculated Number field. Formula-backed metrics MUST use ADR-0018 calculation
 meaning and its deterministic failure semantics. Analysis MUST NOT introduce a
-second expression or formula evaluator. Missing, wrong-typed, unsupported, or
-failed calculated observations produce structured analysis failure rather than
-being silently discarded from selection or reduction.
+second expression or formula evaluator. Requested metric completeness is
+operation-wide for one normalized Analysis Query. If any selected member or
+group cannot supply a complete requested metric because the value is missing,
+wrong-typed, unsupported, or calculation-failed, the entire operation returns
+one structured analysis failure and no successful membership, group, `Count`,
+`Min`, `Max`, or per-member observation payload. The member or group MUST NOT be
+silently discarded from selection or reduction. This failure is distinct from
+the separately defined empty-aggregate outcome for a valid zero-observation
+selection.
 
 `Count`, `Min`, and `Max` are Accepted in M04. `Sum`, `Mean`, weighted mean, and
 other floating reductions remain Deferred until a deterministic reduction law
@@ -559,6 +573,13 @@ revision token, or current-state lookup.
 Two-context analysis performs no rebasing, history traversal, or implicit change
 attribution. If a consumer asks what changed semantically between contexts, the
 existing semantic-diff authority remains the source of change facts.
+
+The trusted boundary derives and checks the complete Query/disclosure footprint
+independently in context A and context B, then checks the combined paired
+lineage/result projection. If either context or the combined paired projection
+lacks sufficient Query authority, the entire paired operation returns one
+disclosure-safe denial. It MUST NOT return a one-sided result or reveal which
+context failed authorization.
 
 ### Reproducibility and lineage
 
@@ -652,8 +673,11 @@ The logical family distinguishes at least:
 
 - malformed, oversized, or unsupported analysis request;
 - unresolved or wrong-typed field, predicate, group, or metric target;
+- unresolved or wrong-domain explicit EntityId narrowing target;
 - selected entity missing a required grouping value;
+- unsupported formula-valued grouping key;
 - authoritative formula/calculation failure in a predicate or metric;
+- operation-wide requested-metric incompleteness with no successful payload;
 - invalid aggregate/type combination;
 - empty aggregate for requested `Min`/`Max` with zero Number observations;
 - complete bounded membership/group/per-member result exceeding the finite
@@ -1224,7 +1248,9 @@ without promoting incidental Rust/CLI/wire shapes, at least:
 
 1. bounded typed selection/filter over a schema/type domain with stable
    semantic targeting, including a candidate entity that omits an optional
-   predicate field and therefore does not match that predicate;
+   predicate field and therefore does not match that predicate, plus an
+   explicit bounded EntityId set that is applied as the required narrowing
+   intersection rather than ignored;
 2. one formula-backed Number predicate that consumes the ADR-0018 calculated
    value and turns an authoritative calculation failure into structured analysis
    failure rather than non-match;
@@ -1233,7 +1259,9 @@ without promoting incidental Rust/CLI/wire shapes, at least:
 4. grouped `Count`, Number `Min`, and Number `Max` evaluated per group, with no
    implicit simultaneous global reduction;
 5. a selected entity missing the grouping field producing a structured
-   missing-group-value failure rather than omission or a synthetic null group;
+   missing-group-value failure rather than omission or a synthetic null group,
+   and a Formula-valued grouping key producing an unsupported-grouping failure
+   rather than grouping by formula structure or calculated Number;
 6. exact ungrouped `Count`, Number `Min`, and Number `Max` over supported
    observations;
 7. an empty selection returning `Count = 0`, a structured empty-aggregate
@@ -1245,7 +1273,8 @@ without promoting incidental Rust/CLI/wire shapes, at least:
    underlying results, including paired A/B evaluation that changes only the
    supplied execution contexts and does not renormalize the definition;
 10. missing, wrong-typed, unsupported metric/group/predicate and calculation
-    failure cases preserving structured failure meaning;
+    failure cases preserving structured failure meaning, including operation-
+    wide metric failure with no successful group or `Count` payload;
 11. a complete selected membership, grouped result, or per-member observation
     collection exceeding the finite result profile producing a structured
     result-too-large outcome with no truncation, sampling, partial-success claim,
@@ -1254,14 +1283,19 @@ without promoting incidental Rust/CLI/wire shapes, at least:
     cannot use post-filter membership to bootstrap authority: the complete
     candidate domain and requested predicate/group/metric/calculation scopes are
     covered before predicate evaluation, while an explicit bounded EntityId
-    narrowing set can reduce that candidate domain without granting authority;
+    narrowing set is applied as the candidate-domain intersection without
+    granting authority, and unresolved or wrong-domain supplied IDs are not
+    silently ignored after authorized classification;
 13. a disclosure case where membership, group existence, count, aggregate,
     per-member observations, result-size classification, missing-group-value
     classification, or lineage would otherwise reveal unauthorized facts,
     proving complete-or-denied behavior rather than a visible-subset aggregate;
 14. the same context-independent normalized analysis definition evaluated over
     two explicit exact semantic contexts, with no history lookup, definition
-    renormalization, or parallel revision semantics; and
+    renormalization, or parallel revision semantics, including independent
+    complete authorization in A and B plus authorization of the combined paired
+    projection, and one whole-operation disclosure-safe denial when any check
+    fails; and
 15. lineage sufficient for a consumer to explain and reproduce the deterministic
     result without an LLM reconstructing selection or aggregation semantics.
 
