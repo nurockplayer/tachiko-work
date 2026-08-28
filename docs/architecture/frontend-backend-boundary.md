@@ -1,6 +1,6 @@
 # Frontend and Backend Boundary
 
-Decision state: Accepted direction. ADR-0020 makes the Headless Semantic API the mandatory first-party semantic product boundary. ADR-0024 defines immutable revision-pinned SemanticPatch proposal meaning. ADR-0026 defines trusted footprint derivation, scoped authorization, exact Human Approval, and semantic/external-effect separation. ADR-0022 accepts the resident shared Rust semantic/application runtime and host separation as the preferred interactive topology. Issue #29 implements the current provisional snapshot lifecycle/publication seam; hostile-client security plus concrete resident revision/session/transport mechanics remain Deferred to #30/#93 and later runtime work.
+Decision state: Accepted direction. ADR-0020 makes the Headless Semantic API the mandatory first-party semantic product boundary. ADR-0024 defines immutable revision-pinned SemanticPatch proposal meaning. ADR-0026 defines trusted footprint derivation, scoped authorization, exact Human Approval, and semantic/external-effect separation. ADR-0022 accepts the resident shared Rust semantic/application runtime and host separation as the preferred interactive topology. Issue #29 implements the current provisional snapshot lifecycle/publication seam, and #30 composes it through a provider-facing instruction/data, raw-bypass, and host-effect-denial boundary. Concrete authentication, resident revision/session/transport, and external capability mechanics remain Deferred to #93 and later host/runtime work.
 
 ## Principle
 
@@ -77,9 +77,12 @@ equality, same-ID immutability, rederived authorization footprints, live Grant
 coverage, and exact Human Approval for Delegated-origin or Delegated-authority
 publication. Approval is consumed only atomically with successful semantic
 publication through a host-supplied opaque-revision compare-and-publish seam.
-Public authorization/Approval DTOs, concrete host identity, resident session
-handles, concurrency/state installation, and projection/redaction delivery
-remain #30/#93/#94 work.
+The #30 `ai-api` seam obtains identity/time only from trusted host context,
+delegates typed proposal/execution to this lifecycle, and returns stable safe
+denials for raw mutation and host effects. Public authorization/Approval wire
+DTOs, concrete authentication, resident session handles, concurrency/state
+installation, and broader projection delivery remain #93/#94 and later host/
+transport work.
 
 ## Snapshot boundaries
 
@@ -134,8 +137,11 @@ The current workspace-engine operation surface remains substantially
 snapshot-style. Issue #29 now supplies a provisional SemanticPatch/AtomicBatch
 lifecycle for the stable-ID typed field-value Command family, including scoped
 review, exact Approval, atomic publication/consumption, verification, and
-receipts. The complete Command catalogue, public/client adapters,
-hostile-boundary enforcement, and resident runtime remain #30/#93–#95 work.
+receipts. Issue #30 adds a provisional AI-facing typed proposal/execution
+adapter with trusted-context lookup, instruction/data treatment, safe denials,
+and raw-mutation/host-effect rejection. The complete Command catalogue, public
+transport/client adapters, concrete authentication, and resident runtime remain
+#93–#95 and later host work.
 
 Separately, #123 implements `.roproj/v1` at the storage/native host boundary
 without moving filesystem authority into workspace-engine or the interactive

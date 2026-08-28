@@ -1,6 +1,6 @@
 [package]
 name = "tachiko-ai-api"
-description = "Read, explain, and approval-gated suggestion APIs for Tachiko Work"
+description = "Provider-free semantic AI queries, proposals, and security boundary for Tachiko Work"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

@@ -49,8 +49,9 @@ footprint derivation, Value/Formula/Structure/Schema/Destructive classes, exact
 finite Human Approval for Delegated-origin or Delegated-authority publication,
 replay/revocation rules, minimum provenance, and separation from host/external
 effects. Issue #29 implements the current provisional workspace-engine
-lifecycle/state/publication seam; hostile-boundary enforcement and concrete
-resident revision/session mechanics remain #30/#93. ADR-0022 accepts the resident shared Rust runtime,
+lifecycle/state/publication seam, and #30 adds the provisional provider-facing
+instruction/data, trusted-context, bypass-denial, and host-effect-denial seam.
+Concrete resident revision/session mechanics remain #93. ADR-0022 accepts the resident shared Rust runtime,
 no-second-canonical-client-model rule, host separation, explicit snapshot
 boundaries, and native/WASM semantic parity while leaving exact
 session/revision/Worker/ABI/persistence mechanics Deferred to #93–#95 and future
@@ -62,7 +63,7 @@ ADR-0018; stable identity by ADR-0015; storage representation by ADR-0017.
 
 | Document | Read it for |
 | --- | --- |
-| [`ai-agent-api.md`](ai-agent-api.md) | Implemented AI-facing read/explain/suggest adapter over ADR-0007 delegated authority, ADR-0020 Semantic API behavior, ADR-0024 proposal rules, and ADR-0026 authorization/approval; current `Suggestion` is not SemanticPatch or Approval |
+| [`ai-agent-api.md`](ai-agent-api.md) | Implemented AI-facing read/explain/suggest adapter plus provisional typed Propose/Execute hostile boundary over ADR-0007 delegated authority, ADR-0020 Semantic API behavior, ADR-0024 proposal rules, and ADR-0026 authorization/approval; current `Suggestion` remains neither SemanticPatch nor Approval |
 | [`security-model.md`](security-model.md) | Security constraints and model |
 | [`plugin-system.md`](plugin-system.md) | Accepted extensibility direction plus still-open runtime/sandbox design |
 | [`migration-framework.md`](migration-framework.md) | Progressive migration direction and future adapter framework |
@@ -71,9 +72,10 @@ Concrete AI mutation lifecycle and enforcement remain narrower implementation
 work. ADR-0026 resolves #28's principal/capability/scope/Grant/Approval,
 footprint, provenance, and structural exact-binding contract without selecting
 canonical bytes, a digest profile, public DTOs, or enterprise IAM. #29 now
-implements the provisional preview/apply lifecycle and Approval-state/atomic-consumption seam; #30
-owns trusted enforcement, prompt/data separation, bypass prevention, and
-external-effect denial; #93 owns concrete semantic revision/session mechanics.
+implements the provisional preview/apply lifecycle and Approval-state/atomic-
+consumption seam; #30 implements the current provider-facing trusted-context,
+prompt/data separation, bypass prevention, safe-code projection, and external-
+effect denial seam; #93 owns concrete semantic revision/session mechanics.
 ADR-0019 allows deterministic read-only domain/extension validators to share
 diagnostic semantics without deciding plugin runtime mechanics.
 

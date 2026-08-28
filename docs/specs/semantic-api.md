@@ -26,8 +26,12 @@ are implementation evidence, not the versioned public product contract. The
 lifecycle remains snapshot-style and receives opaque revision/current-state
 publication mechanics from a trusted host seam; the concrete resident runtime,
 revision token, concurrency, and state-installation implementation remains
-later work under #93–#95. The complete operation catalogue, transports, and
-wire/SDK contract remain Provisional or Deferred.
+later work under #93–#95. Issue #30's provisional `ai-api` boundary now obtains
+effective identity/time only from trusted host context, delegates typed
+proposal/execution to this lifecycle, and projects disclosure-safe machine
+outcomes while rejecting raw mutation and host effects. The complete operation
+catalogue, authentication, transports, and wire/SDK contract remain Provisional
+or Deferred.
 
 Decision issues: [#10](https://github.com/nurockplayer/tachiko-work/issues/10),
 [#27](https://github.com/nurockplayer/tachiko-work/issues/27),
@@ -523,8 +527,10 @@ be returned. This detect-versus-disclose ordering does not delay ADR-0024's
 internal base comparison, re-evaluate a stale proposal, or permit candidate
 construction against a changed base.
 
-Exact error codes, integrity verification, digest, and transport behavior remain
-Provisional/Deferred under ADR-0026, #30, and future transport profiles.
+The #30 in-process adapter now supplies provisional stable code meanings for
+its current failure families. Exact external code/DTO mapping, integrity
+verification, digest, and transport behavior remain Provisional/Deferred under
+ADR-0026 and future transport profiles.
 
 ### Authorization / Approval / host-effect denial
 
@@ -534,8 +540,9 @@ preserve the machine meaning defined by
 [`semantic-authorization.md`](semantic-authorization.md), including
 principal/capability/scope denial, approval required or unusable, lost live
 authority, and separately denied host effects, without disclosing semantic
-content outside authorized Query scope. Exact codes and transport mappings
-remain Provisional under #30 and later transport work.
+content outside authorized Query scope. #30 implements the current in-process
+safe code projection; public code catalogues and transport mappings remain
+Provisional under later transport work.
 
 ### Stale base
 

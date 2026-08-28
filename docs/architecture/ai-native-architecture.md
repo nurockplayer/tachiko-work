@@ -7,10 +7,13 @@ Decision state: Accepted direction under
 Reviewable semantic proposals use the immutable revision-pinned SemanticPatch
 contract Accepted by
 [ADR-0024](../decisions/ADR-0024-revision-pinned-semantic-patch.md).
-Issue #29 now implements a provisional provider-neutral lifecycle/registry in
+Issue #29 implements a provisional provider-neutral lifecycle/registry in
 workspace-engine for the current typed field-value Command family and ordered
-AtomicBatch. Provider-facing hostile-client/security-boundary enforcement
-remains #30, and concrete resident revision/session mechanics remain #93.
+AtomicBatch. Issue #30 now composes that authority through a provisional
+provider-facing `ai-api` hostile-client boundary with explicit instruction/data
+treatment, trusted-host identity/time, stable safe denials, and unconditional
+raw-mutation/host-effect rejection. Concrete authentication, resident revision/
+session/transport mechanics remain #93 and later host work.
 
 ## Principle
 
@@ -81,9 +84,11 @@ ADR-0026 defines the current MVP boundary:
   overridden by approval.
 
 Current `Suggestion.requires_approval` remains an inert adapter safety marker,
-not an implementation or wire precedent for this contract. The Issue #29
-workspace-engine lifecycle is independently exercisable without an LLM and is
-not yet wired as an `ai-api` Execute operation.
+not an implementation or wire precedent for this contract. The #30
+`security_boundary` accepts typed proposal/execution intent without accepting
+principal, time, validation, Approval, or trust claims from the request and
+delegates those operations to the Issue #29 lifecycle. The seam remains
+provider-free and independently exercisable without an LLM.
 
 ## Effect separation
 
@@ -102,8 +107,11 @@ Semantic Query/Propose/Approve/Execute does not authorize:
 - credentials/secrets access.
 
 A host may materialize or externally publish an already-authorized semantic
-result only under separate host authority. Provider-facing AI adapters must not
-expose raw storage or host effects as alternate semantic mutation paths.
+result only under separate host authority. The current provider-facing AI
+boundary admits only typed semantic proposal/execution and returns stable
+denials for raw semantic/storage mutation or persistence, filesystem, network,
+process, Git, plugin, deployment, and credential effects. It does not implement
+or grant those separate host capabilities.
 
 ## Provenance
 

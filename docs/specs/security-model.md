@@ -1,11 +1,13 @@
 # Security Model
 
 Decision state: Mixed. The semantic authorization laws summarized from
-ADR-0007 and ADR-0026 are Accepted. Plugin isolation, migration sandboxing,
-instruction/data enforcement, durable authorization state, diagnostic codes,
-and external-effect mechanisms remain Provisional, Deferred, or separately
-owned by #17/#30/#93. Issue #29 supplies the current provisional trusted
-in-process authorization/Approval lifecycle seam.
+ADR-0007 and ADR-0026 are Accepted. Issue #29 supplies the provisional trusted
+in-process authorization/Approval lifecycle seam, and #30 supplies a
+provisional provider-facing instruction/data, bypass-denial, safe-code, and
+host-effect-denial adapter over it. Plugin isolation, migration sandboxing,
+durable authorization/audit state, public wire codes, authentication/transport
+integrity, and actual external-effect mechanisms remain Provisional, Deferred,
+or separately owned by #17/#93 and their domain decisions.
 
 ## Principles
 
@@ -66,3 +68,11 @@ client-supplied identity/Grant/Approval claims are untrusted input.
 Importers must validate data before entering the semantic core. No untrusted
 content may select its Principal, declare authoritative scope, mint a Grant or
 Approval, bypass the Semantic API, or authorize an external effect.
+
+The current `ai-api` boundary makes this executable for provider-facing calls:
+untrusted request evidence cannot carry effective Principal or trusted time;
+typed proposal/execution delegates to the workspace lifecycle; raw semantic or
+storage mutation and durable-persistence/filesystem/network/process/Git/plugin/
+deployment/credential requests return separate stable denial codes. Concrete
+transports must preserve this boundary rather than serialize trusted host
+context as a client credential.

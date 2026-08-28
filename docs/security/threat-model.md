@@ -1,10 +1,19 @@
 # Threat Model
 
 Decision state: Mixed. The semantic authorization threats and laws summarized
-from ADR-0007 and ADR-0026 are Accepted. Supply-chain controls, exact trust
-labels, instruction/data handling, bypass enforcement, diagnostics, and
-host-effect enforcement remain Provisional, Deferred, or separately owned by
-Issue #30 and their domain decisions.
+from ADR-0007 and ADR-0026 are Accepted. The current `ai-api` context labels,
+host-context trait, denial-code spelling, and adapter shapes implemented by #30
+are Provisional. Supply-chain controls, concrete authentication/transport
+integrity, durable audit, and actual host-effect capability mechanisms remain
+Deferred or separately owned by their domain decisions.
+
+Implementation state: `tachiko-ai-api::security_boundary` now treats document,
+import, plugin, model, and client-request content as untrusted data; excludes
+identity/time/validation/Approval claims from untrusted proposal DTOs; delegates
+typed Propose/Execute to the trusted workspace lifecycle; and rejects raw
+semantic/storage mutation plus every currently named host-effect family with
+stable machine codes. This in-process seam is not a public wire/authentication
+contract and does not implement external capabilities.
 
 ## Security Philosophy
 
