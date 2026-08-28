@@ -9,8 +9,9 @@ trusted in-process lifecycle registry for domain-scoped principals, relational
 Grants, trusted footprint derivation, disclosure-gated preview, exact finite
 Human Approval, expiry/revocation/replay checks, transition-aware policy
 binding, exclusive Approval reservation, atomic semantic publication/
-consumption, verification, and receipts for the current stable-ID field-value
-Command family and ordered AtomicBatch. Concrete identity provisioning,
+consumption, verification, trusted receipts, and Query-reduced execution
+responses for the current stable-ID field-value Command family and ordered
+AtomicBatch. Concrete identity provisioning,
 durable registry/receipt storage, public DTOs/wire integrity, #30's hostile-
 client and external-effect security boundary, and #93's resident revision/
 session/concurrency/state-installation mechanics remain unimplemented. Current
@@ -661,9 +662,12 @@ Active -> Consumed | Revoked | Expired
   nothing.
 - Issue #29 implements current exclusive in-process Approval reservation and
   consume-with-successful-publication coordination over a host-supplied
-  compare-and-publish seam. Concrete revision concurrency and state
-  installation remain #93 work; broader transaction/recovery and history
-  protocols remain with #11/#12.
+  compare-and-publish seam. The host invokes a fresh trusted-time lifecycle
+  authorization callback inside the same exclusive publication guard, so
+  principal, Approval, Grant, policy, expiry, and Query-result disclosure are
+  rechecked at the actual install decision. Concrete revision concurrency and
+  state installation remain #93 work; broader transaction/recovery and
+  history protocols remain with #11/#12.
 - If a failure leaves the trusted boundary unable to prove whether publication
   occurred, it MUST fail closed and MUST NOT permit retry until authoritative
   state is reconciled.

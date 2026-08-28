@@ -248,6 +248,7 @@ struct TestPublication {
     next_revision: SemanticRevision,
     publish_calls: usize,
     mode: PublishMode,
+    publication_time: TrustedInstant,
 }
 
 impl TestPublication {
@@ -258,11 +259,17 @@ impl TestPublication {
             next_revision: revision(next),
             publish_calls: 0,
             mode: PublishMode::Normal,
+            publication_time: TrustedInstant::new(11),
         }
     }
 
     fn with_mode(mut self, mode: PublishMode) -> Self {
         self.mode = mode;
+        self
+    }
+
+    fn with_publication_time(mut self, publication_time: TrustedInstant) -> Self {
+        self.publication_time = publication_time;
         self
     }
 }
@@ -272,11 +279,12 @@ impl SemanticPublicationAuthority for TestPublication {
         (self.document.clone(), self.revision.clone())
     }
 
-    fn publish_if_current(
+    fn publish_if_current<Authorization>(
         &mut self,
         expected_revision: &SemanticRevision,
         candidate: Document,
-    ) -> Result<SemanticRevision, SemanticPublicationError> {
+        authorize: impl FnOnce(TrustedInstant) -> Option<Authorization>,
+    ) -> Result<(SemanticRevision, Authorization), SemanticPublicationError> {
         self.publish_calls += 1;
         match self.mode {
             PublishMode::RaceStale => {
@@ -288,12 +296,14 @@ impl SemanticPublicationAuthority for TestPublication {
                 if &self.revision != expected_revision {
                     return Err(SemanticPublicationError::Stale);
                 }
+                let authorization = authorize(self.publication_time)
+                    .ok_or(SemanticPublicationError::AuthorizationDenied)?;
                 self.document = candidate;
                 if self.mode == PublishMode::TamperAfterSuccess {
                     self.document.title.push_str(" (tampered)");
                 }
                 self.revision = self.next_revision.clone();
-                Ok(self.next_revision.clone())
+                Ok((self.next_revision.clone(), authorization))
             }
         }
     }
@@ -1065,8 +1075,20 @@ fn executor_without_query_publishes_but_receives_no_semantic_projection() {
         number(45.0)
     );
     assert!(receipt.verified);
+    assert!(receipt.authorization_footprint.is_none());
     assert!(receipt.semantic_changes.is_empty());
     assert!(receipt.formula_impacts.is_empty());
+    assert!(receipt.validation_report.is_none());
+    assert!(
+        lifecycle.execution_receipts()[0]
+            .authorization_footprint
+            .is_some()
+    );
+    assert!(
+        !lifecycle.execution_receipts()[0]
+            .semantic_changes
+            .is_empty()
+    );
     assert!(matches!(
         lifecycle.proposal_provenance(&proposal, &principal("agent"), NOW),
         Err(PatchLifecycleError::DisclosureDenied)
@@ -1428,6 +1450,135 @@ fn expired_and_revoked_approvals_never_publish() {
         assert_eq!(publication.document, original);
         assert_eq!(publication.publish_calls, 0);
     }
+}
+
+#[test]
+fn approval_expiring_inside_the_publication_guard_never_publishes() {
+    let document = game_balance_document("game", "Game");
+    let original = document.clone();
+    let mut lifecycle = lifecycle();
+    provision_standard_authority(&mut lifecycle);
+    let proposal = propose(
+        &mut lifecycle,
+        &document,
+        "proposal-boundary-approval-expiry",
+        SemanticPatchBody::command(field_command("iron_sword", "damage", number(45.0))),
+        "agent",
+    );
+    lifecycle
+        .preview(
+            &document,
+            &revision("r1"),
+            &proposal,
+            &principal("reviewer"),
+            NOW,
+        )
+        .unwrap();
+    let approval = ApprovalId::from("approval-boundary-expiry");
+    lifecycle
+        .approve(
+            &document,
+            &revision("r1"),
+            ApprovalRequest::new(
+                approval.clone(),
+                proposal.clone(),
+                principal("reviewer"),
+                principal("agent"),
+                TrustedInstant::new(12),
+            ),
+            NOW,
+        )
+        .unwrap();
+    let mut publication =
+        TestPublication::new(document, "r1", "r2").with_publication_time(TrustedInstant::new(12));
+
+    let error = lifecycle
+        .execute(
+            &proposal,
+            Some(&approval),
+            &principal("agent"),
+            &mut publication,
+            TrustedInstant::new(11),
+        )
+        .unwrap_err();
+
+    assert!(matches!(error, PatchLifecycleError::ApprovalExpired));
+    assert_eq!(publication.document, original);
+    assert_eq!(publication.publish_calls, 1);
+    assert_eq!(
+        lifecycle.approval_status(&approval).unwrap(),
+        ApprovalStatus::Expired
+    );
+    assert!(lifecycle.execution_receipts().is_empty());
+}
+
+#[test]
+fn execute_grant_expiring_inside_the_publication_guard_never_publishes() {
+    let document = game_balance_document("game", "Game");
+    let original = document.clone();
+    let mut lifecycle = lifecycle();
+    lifecycle
+        .provision_grant(Grant::new(
+            GrantId::from("agent-expiring-authority"),
+            principal("authority"),
+            principal("agent"),
+            vec![
+                query_requirement(),
+                mutation_requirement(AuthorizationAction::Propose, MutationClass::Value),
+                mutation_requirement(AuthorizationAction::Execute, MutationClass::Value),
+            ],
+            Some(TrustedInstant::new(12)),
+        ))
+        .unwrap();
+    grant(
+        &mut lifecycle,
+        "reviewer-boundary-authority",
+        "reviewer",
+        vec![
+            query_requirement(),
+            mutation_requirement(AuthorizationAction::Approve, MutationClass::Value),
+        ],
+    );
+    let proposal = propose(
+        &mut lifecycle,
+        &document,
+        "proposal-boundary-grant-expiry",
+        SemanticPatchBody::command(field_command("iron_sword", "damage", number(45.0))),
+        "agent",
+    );
+    let approval = preview_and_approve(
+        &mut lifecycle,
+        &document,
+        &proposal,
+        "approval-boundary-grant-expiry",
+        "agent",
+    );
+    let mut publication =
+        TestPublication::new(document, "r1", "r2").with_publication_time(TrustedInstant::new(12));
+
+    let error = lifecycle
+        .execute(
+            &proposal,
+            Some(&approval),
+            &principal("agent"),
+            &mut publication,
+            TrustedInstant::new(11),
+        )
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        PatchLifecycleError::InsufficientCapability {
+            action: AuthorizationAction::Execute
+        }
+    ));
+    assert_eq!(publication.document, original);
+    assert_eq!(publication.publish_calls, 1);
+    assert_eq!(
+        lifecycle.approval_status(&approval).unwrap(),
+        ApprovalStatus::Active
+    );
+    assert!(lifecycle.execution_receipts().is_empty());
 }
 
 #[test]

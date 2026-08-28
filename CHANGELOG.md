@@ -45,9 +45,10 @@ All notable changes to Tachiko Work are documented in this file.
   semantic-diff path. It derives relational scoped capabilities, gates review
   evidence with independent Query authority, binds finite one-shot Human
   Approval to the exact proposal/base/executor/policy context, publishes only
-  through an opaque revision compare-and-publish seam, consumes Approval with
-  successful publication, verifies installed state, and retains execution
-  receipts. Concrete resident sessions/revisions remain #93, and hostile-
+  through an opaque revision compare-and-publish seam with a fresh trusted-time
+  authorization callback, consumes Approval with successful publication,
+  verifies installed state, and retains disclosure-safe execution receipts.
+  Concrete resident sessions/revisions remain #93, and hostile-
   boundary/external-effect security remains #30.
 - An optional provider-neutral Git/CI adapter now keeps canonical `.roproj/v1`
   members as LF text, accepts exact project trees in existing read-only

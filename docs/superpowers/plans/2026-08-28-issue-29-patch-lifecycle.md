@@ -74,7 +74,7 @@
 
 - [x] Define the abstract `SemanticPublicationAuthority` seam over caller-supplied opaque revisions, with errors contractually proving no publication.
 - [x] Implement approval-gated and direct-Human Execute through one common path with exact binding, stale, live principal/Grant/policy, footprint, validation, and gate rechecks.
-- [x] Hold exclusive lifecycle state while comparing/publishing the complete final candidate, then mark Approval Consumed immediately after the infallible successful publication result; never consume on a proved no-publication failure.
+- [x] Hold exclusive lifecycle state while the host invokes a fresh trusted-time live-authorization callback and compares/publishes the complete final candidate, then mark Approval Consumed immediately after the infallible successful publication result; never consume on a proved no-publication failure.
 - [x] Re-read and validate the installed state, prove the resulting revision/candidate, and return a machine-readable execution receipt with diff, validation, base/result revisions, Grant references, principals, policy, and truthful Approval evidence.
 - [x] Preserve machine-distinguishable stale, validation, capability, approval mismatch/expiry/revocation/replay, conflict, and verification outcomes without exposing host-effect authority.
 
@@ -88,7 +88,7 @@
 - Modify: `CHANGELOG.md`
 
 - [x] Update implementation-status prose only: identify the provisional snapshot/publication seam now implemented by #29 and retain #30/#93 ownership boundaries unchanged.
-- [ ] Run focused workspace-engine tests, formatting, warnings-as-errors Clippy, workspace/all-target tests, exact Rust 1.85 compatibility, native/WASM conformance, and the clean-commit `scripts/release-check.sh` gate.
+- [x] Run focused workspace-engine tests, formatting, warnings-as-errors Clippy, workspace/all-target tests, exact Rust 1.85 compatibility, native/WASM conformance, and the clean-commit `scripts/release-check.sh` gate.
 - [ ] Review the complete diff against Issue #29 and Accepted authority, request independent review, and address every actionable finding with focused regression coverage.
 - [ ] Open one Issue #29 PR, monitor all required checks/review threads, merge with head-match protection, and verify live `main`, Issue closure, and Project status.
 - [ ] Recalibrate live `main` and the Product Roadmap before selecting the next genuinely Ready critical-path Issue.

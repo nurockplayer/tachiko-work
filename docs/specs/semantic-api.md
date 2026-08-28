@@ -348,7 +348,7 @@ disclosure policy without acquiring an Approval requirement from this rule.
 
 Re-proposing against a newer base re-runs command construction/binding and
 authoritative Propose evaluation and receives a new proposal identity. Issue
-#29's provisional lifecycle now returns an internal stale outcome over a
+Issue #29's provisional lifecycle now returns an internal stale outcome over a
 host-supplied opaque revision reference. Exact revision-token types, equality
 mechanics, session scope, persistence, concurrency algorithms, and public
 stale-result DTOs remain #93 or later transport work.

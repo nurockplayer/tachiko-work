@@ -541,7 +541,7 @@ pub struct ApprovalExecutionEvidence {
     pub status: ApprovalStatus,
 }
 
-/// Verified result and minimum execution provenance.
+/// Verified trusted receipt or disclosure-reduced execution response.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExecutionReceipt {
     pub proposal_id: ProposalId,
@@ -551,14 +551,14 @@ pub struct ExecutionReceipt {
     pub propose_grants: BTreeSet<GrantId>,
     pub approve_grants: BTreeSet<GrantId>,
     pub execute_grants: BTreeSet<GrantId>,
-    pub authorization_footprint: AuthorizationFootprint,
+    pub authorization_footprint: Option<AuthorizationFootprint>,
     pub policy_version: AuthorizationPolicyVersion,
     pub base_revision: SemanticRevision,
     pub resulting_revision: SemanticRevision,
     pub verified: bool,
     pub semantic_changes: Vec<SemanticChange>,
     pub formula_impacts: Vec<FormulaImpactEvidence>,
-    pub validation_report: ValidationReport,
+    pub validation_report: Option<ValidationReport>,
 }
 
 /// Host/runtime seam that owns concrete revision and state-install mechanics.
@@ -571,16 +571,22 @@ pub trait SemanticPublicationAuthority {
     fn current_snapshot(&self) -> (Document, SemanticRevision);
 
     /// Atomically install `candidate` only while `expected_revision` remains
-    /// current and return the distinct resulting revision.
+    /// current and `authorize` accepts a fresh trusted instant, then return the
+    /// distinct resulting revision and the authorization evidence produced by
+    /// that callback. The callback must run exactly once inside the same
+    /// exclusive publication guard immediately before installation.
     ///
     /// # Errors
     ///
-    /// Every error must prove that `candidate` was not published.
-    fn publish_if_current(
+    /// Every error must prove that `candidate` was not published. In
+    /// particular, a callback returning `None` must produce
+    /// [`SemanticPublicationError::AuthorizationDenied`].
+    fn publish_if_current<Authorization>(
         &mut self,
         expected_revision: &SemanticRevision,
         candidate: Document,
-    ) -> Result<SemanticRevision, SemanticPublicationError>;
+        authorize: impl FnOnce(TrustedInstant) -> Option<Authorization>,
+    ) -> Result<(SemanticRevision, Authorization), SemanticPublicationError>;
 }
 
 /// Proved no-publication result from the host publication boundary.
@@ -590,6 +596,8 @@ pub enum SemanticPublicationError {
     Stale,
     #[error("semantic publication conflicted")]
     Conflict,
+    #[error("publication-boundary authorization was denied")]
+    AuthorizationDenied,
 }
 
 /// Machine-distinguishable lifecycle outcomes. Exact Rust names are
@@ -707,6 +715,29 @@ struct EvaluatedPatch {
     validation_report: ValidationReport,
     footprint: AuthorizationFootprint,
 }
+
+struct PublicationAuthorization {
+    approve_grants: BTreeSet<GrantId>,
+    execute_grants: BTreeSet<GrantId>,
+    can_disclose: bool,
+}
+
+struct PublicationAttempt<'a> {
+    proposal_id: &'a ProposalId,
+    proposal: &'a ProposalRecord,
+    approval: Option<StoredApproval>,
+    executor: &'a PrincipalId,
+    footprint: &'a AuthorizationFootprint,
+    current_revision: &'a SemanticRevision,
+    candidate: Document,
+    can_disclose: bool,
+}
+
+type PublishedCandidate = (
+    SemanticRevision,
+    Option<ApprovalExecutionEvidence>,
+    PublicationAuthorization,
+);
 
 /// Provisional trusted in-process proposal and Approval lifecycle registry.
 pub struct PatchLifecycle {
@@ -1184,54 +1215,63 @@ impl PatchLifecycle {
         if evaluated.footprint != footprint {
             return Err(PatchLifecycleError::ApprovalBindingMismatch);
         }
-        let (approve_grants, execute_grants) =
-            self.authorize_execution(approval.as_ref(), executor, &footprint, now)?;
-        let candidate = evaluated.document.clone();
-        let (resulting_revision, approval_evidence) = self.publish_candidate(
-            proposal_id,
-            approval,
-            publication,
-            &current_revision,
-            evaluated.document,
-            can_disclose,
+        self.authorize_publication_boundary(
+            &proposal,
+            approval.as_ref(),
+            executor,
+            &footprint,
+            now,
         )?;
+        let candidate = evaluated.document.clone();
+        let (resulting_revision, approval_evidence, publication_authorization) = self
+            .publish_candidate(
+                publication,
+                PublicationAttempt {
+                    proposal_id,
+                    proposal: &proposal,
+                    approval,
+                    executor,
+                    footprint: &footprint,
+                    current_revision: &current_revision,
+                    candidate: evaluated.document,
+                    can_disclose,
+                },
+            )?;
         let mut receipt = ExecutionReceipt {
             proposal_id: proposal_id.clone(),
             originator: proposal.originator.clone(),
             executor: executor.clone(),
             approval: approval_evidence,
             propose_grants: proposal.propose_grants.clone(),
-            approve_grants,
-            execute_grants,
-            authorization_footprint: footprint,
+            approve_grants: publication_authorization.approve_grants,
+            execute_grants: publication_authorization.execute_grants,
+            authorization_footprint: Some(footprint),
             policy_version: self.effective_policy.clone(),
             base_revision: current_revision.clone(),
             resulting_revision: resulting_revision.clone(),
             verified: false,
-            semantic_changes: if can_disclose {
-                evaluated.semantic_changes
-            } else {
-                Vec::new()
-            },
-            formula_impacts: if can_disclose {
-                evaluated.formula_impacts
-            } else {
-                Vec::new()
-            },
-            validation_report: evaluated.validation_report,
+            semantic_changes: evaluated.semantic_changes,
+            formula_impacts: evaluated.formula_impacts,
+            validation_report: Some(evaluated.validation_report),
         };
         self.execution_receipts.push(receipt.clone());
-        receipt.validation_report = self.verify_publication(
+        receipt.validation_report = Some(self.verify_publication(
             proposal_id,
             publication,
             &current_revision,
             &resulting_revision,
             &candidate,
-        )?;
+        )?);
         receipt.verified = true;
         self.append_state(proposal_id, PatchLifecycleState::Verified);
         if let Some(stored) = self.execution_receipts.last_mut() {
             *stored = receipt.clone();
+        }
+        if !publication_authorization.can_disclose {
+            receipt.authorization_footprint = None;
+            receipt.semantic_changes.clear();
+            receipt.formula_impacts.clear();
+            receipt.validation_report = None;
         }
         Ok(receipt)
     }
@@ -1340,15 +1380,80 @@ impl PatchLifecycle {
         Ok((approve_grants, execute_grants))
     }
 
+    fn authorize_publication_boundary(
+        &self,
+        proposal: &ProposalRecord,
+        approval: Option<&StoredApproval>,
+        executor: &PrincipalId,
+        footprint: &AuthorizationFootprint,
+        now: TrustedInstant,
+    ) -> Result<(BTreeSet<GrantId>, BTreeSet<GrantId>), PatchLifecycleError> {
+        let executor_kind = self.require_active_principal(executor)?;
+        let originator_kind = self.require_active_principal(&proposal.originator)?;
+        let approval_required = executor_kind == PrincipalKind::Delegated
+            || originator_kind == PrincipalKind::Delegated;
+        match (approval_required, approval) {
+            (true, None) => return Err(PatchLifecycleError::ApprovalRequired),
+            (false, Some(_)) => return Err(PatchLifecycleError::ApprovalBindingMismatch),
+            (false, None) => {}
+            (true, Some(stored)) => {
+                if stored.approval.binding.executor != *executor {
+                    return Err(PatchLifecycleError::AuthorizationDenied);
+                }
+                let binding = &stored.approval.binding;
+                if binding.authorization_domain != self.authorization_domain
+                    || binding.proposal_id != proposal.patch.id
+                    || binding.exact_change != proposal.patch.exact_change
+                    || binding.originator != proposal.originator
+                    || binding.associated_write_requirements
+                        != footprint.associated_write_requirements
+                {
+                    return Err(PatchLifecycleError::ApprovalBindingMismatch);
+                }
+                match stored.status {
+                    ApprovalStatus::Active => {}
+                    ApprovalStatus::Consumed => {
+                        return Err(PatchLifecycleError::ApprovalConsumed);
+                    }
+                    ApprovalStatus::Revoked => {
+                        return Err(PatchLifecycleError::ApprovalRevoked);
+                    }
+                    ApprovalStatus::Expired => {
+                        return Err(PatchLifecycleError::ApprovalExpired);
+                    }
+                }
+                if binding.policy_version != self.effective_policy
+                    || stored.policy_selection != self.policy_selection
+                {
+                    return Err(PatchLifecycleError::AuthorizationPolicyChanged);
+                }
+                if now >= stored.approval.expires_at {
+                    return Err(PatchLifecycleError::ApprovalExpired);
+                }
+                if self.require_active_principal(&stored.approval.approver)? != PrincipalKind::Human
+                {
+                    return Err(PatchLifecycleError::AuthorizationDenied);
+                }
+            }
+        }
+        self.authorize_execution(approval, executor, footprint, now)
+    }
+
     fn publish_candidate(
         &mut self,
-        proposal_id: &ProposalId,
-        approval: Option<StoredApproval>,
         publication: &mut impl SemanticPublicationAuthority,
-        current_revision: &SemanticRevision,
-        candidate: Document,
-        can_disclose: bool,
-    ) -> Result<(SemanticRevision, Option<ApprovalExecutionEvidence>), PatchLifecycleError> {
+        attempt: PublicationAttempt<'_>,
+    ) -> Result<PublishedCandidate, PatchLifecycleError> {
+        let PublicationAttempt {
+            proposal_id,
+            proposal,
+            approval,
+            executor,
+            footprint,
+            current_revision,
+            candidate,
+            can_disclose,
+        } = attempt;
         let mut reserved = if let Some(stored) = approval {
             let approval = self
                 .approvals
@@ -1359,27 +1464,38 @@ impl PatchLifecycle {
             None
         };
 
-        let resulting_revision = match publication.publish_if_current(current_revision, candidate) {
-            Ok(revision) => revision,
-            Err(error) => {
-                if let Some(approval) = reserved {
-                    self.approvals
-                        .insert(approval.approval.id.clone(), approval);
+        let mut boundary_error = None;
+        let publication_result =
+            publication.publish_if_current(current_revision, candidate, |boundary_now| match self
+                .authorize_publication_boundary(
+                    proposal,
+                    reserved.as_ref(),
+                    executor,
+                    footprint,
+                    boundary_now,
+                ) {
+                Ok((approve_grants, execute_grants)) => Some(PublicationAuthorization {
+                    approve_grants,
+                    execute_grants,
+                    can_disclose: self
+                        .authorize_query(executor, &footprint.disclosure_requirements, boundary_now)
+                        .is_ok(),
+                }),
+                Err(error) => {
+                    boundary_error = Some(error);
+                    None
                 }
-                let (state, disclosed_error) = match error {
-                    SemanticPublicationError::Stale => {
-                        (PatchLifecycleState::Stale, PatchLifecycleError::Stale)
-                    }
-                    SemanticPublicationError::Conflict => {
-                        (PatchLifecycleState::Conflict, PatchLifecycleError::Conflict)
-                    }
-                };
-                self.append_state(proposal_id, state);
-                return Err(if can_disclose {
-                    disclosed_error
-                } else {
-                    PatchLifecycleError::AuthorizationDenied
-                });
+            });
+        let (resulting_revision, publication_authorization) = match publication_result {
+            Ok(success) => success,
+            Err(error) => {
+                return Err(self.restore_after_publication_failure(
+                    proposal_id,
+                    reserved,
+                    boundary_error,
+                    error,
+                    can_disclose,
+                ));
             }
         };
 
@@ -1396,7 +1512,54 @@ impl PatchLifecycle {
                 .insert(approval.approval.id.clone(), approval);
         }
         self.append_state(proposal_id, PatchLifecycleState::Applied);
-        Ok((resulting_revision, approval_evidence))
+        Ok((
+            resulting_revision,
+            approval_evidence,
+            publication_authorization,
+        ))
+    }
+
+    fn restore_after_publication_failure(
+        &mut self,
+        proposal_id: &ProposalId,
+        mut reserved: Option<StoredApproval>,
+        boundary_error: Option<PatchLifecycleError>,
+        publication_error: SemanticPublicationError,
+        can_disclose: bool,
+    ) -> PatchLifecycleError {
+        let approval_expired = matches!(
+            boundary_error.as_ref(),
+            Some(PatchLifecycleError::ApprovalExpired)
+        );
+        if approval_expired {
+            if let Some(stored) = reserved.as_mut() {
+                stored.status = ApprovalStatus::Expired;
+            }
+        }
+        if let Some(approval) = reserved {
+            self.approvals
+                .insert(approval.approval.id.clone(), approval);
+        }
+        if approval_expired {
+            self.append_state(proposal_id, PatchLifecycleState::Expired);
+        }
+        let (state, disclosed_error) = match publication_error {
+            SemanticPublicationError::Stale => {
+                (PatchLifecycleState::Stale, PatchLifecycleError::Stale)
+            }
+            SemanticPublicationError::Conflict => {
+                (PatchLifecycleState::Conflict, PatchLifecycleError::Conflict)
+            }
+            SemanticPublicationError::AuthorizationDenied => {
+                return boundary_error.unwrap_or(PatchLifecycleError::AuthorizationDenied);
+            }
+        };
+        self.append_state(proposal_id, state);
+        if can_disclose {
+            disclosed_error
+        } else {
+            PatchLifecycleError::AuthorizationDenied
+        }
     }
 
     fn verify_publication(
@@ -1420,6 +1583,11 @@ impl PatchLifecycle {
         Ok(report)
     }
 
+    /// Read the unredacted trusted in-process receipt store.
+    ///
+    /// This is host-side provenance, not an executor/client projection. The
+    /// value returned directly from [`Self::execute`] is independently reduced
+    /// when the executor lacks Query authority.
     #[must_use]
     pub fn execution_receipts(&self) -> &[ExecutionReceipt] {
         &self.execution_receipts
