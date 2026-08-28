@@ -660,6 +660,93 @@ fn validation_failure_details_require_independent_query_authority() {
 }
 
 #[test]
+fn finalization_error_details_require_independent_query_authority() {
+    let mut document = game_balance_document("game", "Game");
+    document
+        .entities
+        .get_mut("iron_sword")
+        .unwrap()
+        .fields
+        .insert(
+            "dps".into(),
+            Value::Formula(Expression::Reference(FieldRef::new(
+                "shop",
+                "matches_for_sword",
+            ))),
+        );
+    document.entities.get_mut("shop").unwrap().fields.insert(
+        "matches_for_sword".into(),
+        Value::Formula(Expression::Reference(FieldRef::new("iron_sword", "dps"))),
+    );
+    let mut lifecycle = lifecycle();
+    grant(
+        &mut lifecycle,
+        "agent-repair-without-query",
+        "agent",
+        vec![mutation_requirement(
+            AuthorizationAction::Propose,
+            MutationClass::Formula,
+        )],
+    );
+    let proposal = proposal_id("proposal-private-finalization-error");
+    let repair = SemanticPatchBody::command(field_command(
+        "iron_sword",
+        "dps",
+        Value::Formula(Expression::Reference(FieldRef::new("iron_sword", "damage"))),
+    ));
+
+    let error = lifecycle
+        .propose(
+            &document_scope_id(),
+            &document,
+            &revision("r1"),
+            ProposalRequest::new(
+                proposal.clone(),
+                revision("r1"),
+                repair.clone(),
+                principal("agent"),
+            ),
+            NOW,
+        )
+        .unwrap_err();
+
+    assert!(matches!(error, PatchLifecycleError::DisclosureDenied));
+    assert_eq!(
+        lifecycle.proposal_history(&proposal).unwrap().last(),
+        Some(&PatchLifecycleState::Rejected)
+    );
+    assert!(matches!(
+        lifecycle.proposal_provenance(&proposal, &principal("agent"), NOW),
+        Err(PatchLifecycleError::DisclosureDenied)
+    ));
+
+    grant(
+        &mut lifecycle,
+        "agent-query-after-private-finalization-error",
+        "agent",
+        vec![query_requirement()],
+    );
+    let disclosed = lifecycle
+        .propose(
+            &document_scope_id(),
+            &document,
+            &revision("r1"),
+            ProposalRequest::new(
+                proposal_id("proposal-disclosed-finalization-error"),
+                revision("r1"),
+                repair,
+                principal("agent"),
+            ),
+            NOW,
+        )
+        .unwrap_err();
+    assert!(matches!(
+        disclosed,
+        PatchLifecycleError::CommandRejected { .. }
+    ));
+}
+
+#[test]
 fn disclosure_gated_entry_points_hide_proposal_registry_state() {
     let document = game_balance_document("game", "Game");
     let mut lifecycle = lifecycle();

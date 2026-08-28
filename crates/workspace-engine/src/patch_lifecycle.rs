@@ -1018,9 +1018,15 @@ impl PatchLifecycle {
             provisional_footprint.associated_write_requirements.clone(),
         ) {
             Ok(evaluated) => evaluated,
-            Err(PatchLifecycleError::ValidationFailed { report }) => {
+            Err(error) => {
                 let originator = record.originator.clone();
-                record.history.push(PatchLifecycleState::ValidationFailed);
+                record.history.push(
+                    if matches!(&error, PatchLifecycleError::ValidationFailed { .. }) {
+                        PatchLifecycleState::ValidationFailed
+                    } else {
+                        PatchLifecycleState::Rejected
+                    },
+                );
                 self.proposals.insert(patch.id.clone(), record);
                 if self
                     .authorize_query(&originator, &self.document_disclosure(), now)
@@ -1028,11 +1034,6 @@ impl PatchLifecycle {
                 {
                     return Err(PatchLifecycleError::DisclosureDenied);
                 }
-                return Err(PatchLifecycleError::ValidationFailed { report });
-            }
-            Err(error) => {
-                record.history.push(PatchLifecycleState::Rejected);
-                self.proposals.insert(patch.id.clone(), record);
                 return Err(error);
             }
         };
