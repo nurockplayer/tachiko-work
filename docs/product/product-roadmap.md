@@ -18,6 +18,10 @@ The roadmap uses one repository-level planning axis:
 Milestones are dependency and maturity horizons, not calendar promises. They do
 not imply due dates or release commitments.
 
+In this index, `Completed horizon` means a stage has no open Issues and is no
+longer current; the underlying GitHub Milestone may remain open for historical
+classification.
+
 The milestone policy and original classification audit are recorded in
 [Issue #56](https://github.com/nurockplayer/tachiko-work/issues/56). The live
 [GitHub Milestones](https://github.com/nurockplayer/tachiko-work/milestones) and
