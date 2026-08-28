@@ -479,10 +479,9 @@ pub fn set_formula_document(
     output: &Path,
 ) -> Result<String, CommandError> {
     ensure_distinct_paths(input, output)?;
-    ensure_output_outside_directory_source(input, output)?;
     let document = load(input)?;
-    let address = parse_field_ref(field)?;
-    let preview = set_formula(&document, &address, expression)?;
+    let field = parse_field_ref(field)?;
+    let preview = set_formula(&document, &field, expression)?;
     write_edit_preview(&preview, output)?;
 
     Ok(format!(
@@ -490,7 +489,7 @@ pub fn set_formula_document(
         preview.diff.render_text(),
         output.display(),
         output.display(),
-        address
+        field
     ))
 }
 

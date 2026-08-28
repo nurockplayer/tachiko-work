@@ -190,6 +190,37 @@ fn formula_reasoning_requires_query_coverage_for_every_exposed_fact() {
 }
 
 #[test]
+fn formula_reasoning_hides_undeclared_field_state_without_query_authority() {
+    let mut document = game_balance_document("game", "Game");
+    document
+        .entities
+        .get_mut("iron_sword")
+        .unwrap()
+        .fields
+        .insert(
+            FieldId::from("undeclared"),
+            Value::Formula(Expression::Number(Number::new(1.0).unwrap())),
+        );
+    let lifecycle = lifecycle();
+
+    let error = lifecycle
+        .query_formula_reasoning(
+            &document_scope_id(),
+            &document,
+            (&revision("r1"), ValidatorConfiguration::WorkspaceFull),
+            &FieldRef::new("iron_sword", "undeclared"),
+            &principal("agent"),
+            NOW,
+        )
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        FormulaOperationError::Lifecycle(PatchLifecycleError::DisclosureDenied)
+    ));
+}
+
+#[test]
 fn scenario_is_repeatable_and_leaves_exact_source_state_unchanged() {
     let document = game_balance_document("game", "Game");
     let original = document.clone();

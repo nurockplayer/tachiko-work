@@ -330,9 +330,12 @@ impl PatchLifecycle {
             });
         };
 
-        let mut requirements = BTreeSet::from([self
-            .field_requirement(document, OperationFamily::FormulaReasoning, target)
-            .map_err(|_| PatchLifecycleError::ScopeDerivationFailed)?]);
+        let mut requirements = BTreeSet::from([self.field_or_document_requirement(
+            document_scope,
+            document,
+            OperationFamily::FormulaReasoning,
+            target,
+        )]);
         let outcome = match value {
             Value::Formula(expression) => {
                 let calculation = calculate_complete(document);

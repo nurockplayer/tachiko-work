@@ -402,7 +402,7 @@ boundary. It does not create new formula-engine meaning.
 
 Scenario provenance, authorization, proposal lifecycle, and result projection
 belong to the Semantic API/application boundary, not this pure engine. Issue
-#144 supplies the first provider-neutral implementation and conformance
+`#144` supplies the first provider-neutral implementation and conformance
 evidence at that boundary.
 
 ## Function and capability boundary
@@ -493,8 +493,10 @@ stable IDs, and bound AST on rejection.
 - The portable conformance corpus executes the same production implementation
   natively and as `wasm32-unknown-unknown` and compares complete stable formula
   observations. It is not an independent second-language implementation.
-- No production Semantic API formula-reasoning, scenario, or formula-update
-  operation is implemented by the Issue #32 authority amendment.
+- Issue `#144` implements the first Provisional provider-neutral workspace
+  formula-reasoning, scenario, and formula-update lifecycle slice, plus CLI
+  read projections and native/WASM conformance evidence. Public wire/SDK DTOs,
+  AI-facing mappings, and transport remain Deferred.
 
 ## Deferred language features
 

@@ -1575,16 +1575,14 @@ fn formula_inspect_emits_structured_exact_snapshot_reasoning() {
     let temp = TempDir::new();
     let input = temp.path().join("balance.ro");
     save(&input, &balance_document(50.0)).unwrap();
+    let arguments = ["formula", "inspect", input.to_str().unwrap(), "sword.dps"];
 
-    let output = run(&["formula", "inspect", input.to_str().unwrap(), "sword.dps"]);
-
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let first = successful_stdout(&arguments);
+    let second = successful_stdout(&arguments);
+    let result: serde_json::Value = serde_json::from_slice(&first).unwrap();
+    let repeated: serde_json::Value = serde_json::from_slice(&second).unwrap();
     assert_eq!(result["document"], "balance");
+    assert_eq!(result["source_revision"], repeated["source_revision"]);
     assert!(
         result["source_revision"]
             .as_str()
@@ -1605,6 +1603,18 @@ fn formula_inspect_emits_structured_exact_snapshot_reasoning() {
         ])
     );
     assert_eq!(result["outcome"]["validation"]["is_valid"], true);
+
+    let changed_input = temp.path().join("changed.ro");
+    save(&changed_input, &balance_document(60.0)).unwrap();
+    let changed_arguments = [
+        "formula",
+        "inspect",
+        changed_input.to_str().unwrap(),
+        "sword.dps",
+    ];
+    let changed: serde_json::Value =
+        serde_json::from_slice(&successful_stdout(&changed_arguments)).unwrap();
+    assert_ne!(result["source_revision"], changed["source_revision"]);
 }
 
 #[test]
