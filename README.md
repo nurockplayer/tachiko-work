@@ -31,7 +31,9 @@ On current `main`, Tachiko already provides an end-to-end game-balance proof wit
 - typed schemas, entities, fields, stable semantic IDs, and references;
 - deterministic formulas, dependency tracking, validation, semantic diff/impact,
   and typed three-way merge;
-- canonical editable `.roproj/v1` plus deterministic portable `.ro` packaging;
+- canonical editable `.roproj/v1`; deterministic portable package profile
+  `tachiko.portable-package/v1` as the current Provisional `.ro` filename form, with
+  distinct supported direct representation `direct-ro/v2`;
 - standalone local workflows plus optional provider-neutral Git/CI review;
 - provider-free semantic inspection, formula/scenario reasoning, and bounded
   Analysis Query results with reproducibility lineage;
