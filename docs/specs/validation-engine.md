@@ -373,7 +373,7 @@ The current runtime/API surface retains snapshot validation inside the #93
 resident state owner. Under ADR-0022, Issue #94 selectively projects
 stable-subject diagnostics and exact-publication invalidation derived from
 fresh dependency oracles while retaining full validation/calculation oracles;
-#95 retains incremental implementation.
+Issue #95 retains incremental implementation.
 
 Incremental scheduling/caching, concrete external wire mapping, invalid-draft
 lifecycle, extension registration, mixed-content runtime, and resident-runtime

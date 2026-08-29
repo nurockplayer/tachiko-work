@@ -46,10 +46,11 @@ All notable changes to Tachiko Work are documented in this file.
   human addresses remain distinct. Each exact guarded publication derives
   occurrence/revision-paired stale entity and field projections plus
   deterministic downstream calculated projections from fresh full-oracle
-  dependency facts, including renames and output-equal dependents. Clients can
-  discard stale revision-keyed caches without recreating semantic meaning.
-  Native/WASM conformance covers the same bounded query/mutation corpus; no
-  retained cache, UI, persistence, or public wire DTO is introduced.
+  dependency facts, including renames and output-equal dependents. Internal
+  consumers can identify stale revision-keyed projections without recreating
+  semantic meaning; no public cache contract is introduced. Native/WASM
+  conformance covers the same bounded query/mutation corpus; no retained cache,
+  UI, persistence, or public wire DTO is introduced.
 - A provisional `tachiko-workspace-engine` resident workspace session now owns
   one authoritative semantic `Document` occurrence and an internal monotonic
   `SemanticRevision`. Validation and calculation queries are revision-pinned

@@ -975,7 +975,7 @@ fn value_kind(value: &Value) -> SemanticValueKind {
     }
 }
 
-fn calculation_dependencies(
+pub(crate) fn calculation_dependencies(
     outcome: &CalculationOutcome,
 ) -> &BTreeMap<FieldRef, BTreeSet<FieldRef>> {
     match outcome {
@@ -1031,7 +1031,14 @@ fn affected_by(
     dependencies: &BTreeMap<FieldRef, BTreeSet<FieldRef>>,
     target: &FieldRef,
 ) -> Vec<FieldRef> {
-    let mut frontier = BTreeSet::from([target.clone()]);
+    affected_by_all(dependencies, &BTreeSet::from([target.clone()]))
+}
+
+pub(crate) fn affected_by_all(
+    dependencies: &BTreeMap<FieldRef, BTreeSet<FieldRef>>,
+    changed: &BTreeSet<FieldRef>,
+) -> Vec<FieldRef> {
+    let mut frontier = changed.clone();
     let mut affected = BTreeSet::new();
     loop {
         let next = dependencies
@@ -1047,7 +1054,7 @@ fn affected_by(
         frontier.clone_from(&next);
         affected.extend(next);
     }
-    affected.remove(target);
+    affected.retain(|field| !changed.contains(field));
     affected.into_iter().collect()
 }
 

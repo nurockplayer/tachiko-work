@@ -6,14 +6,16 @@
 //! host adapters must enforce ADR-0026 Query authorization before projecting
 //! their observations outside the trusted composition boundary.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
-use tachiko_formula_engine::{CalculationOutcome, calculate_complete};
+use tachiko_formula_engine::calculate_complete;
 
 use super::{
     CalculatedField, Diagnostic, Document, EntityId, EntityInspection, Expression, FieldAddress,
     FieldRef, SemanticSubject, ValidationReport, Value, WorkspaceError, calculate_fields,
-    formula_operations::{FormulaCalculationOutcome, calculation_for},
+    formula_operations::{
+        FormulaCalculationOutcome, affected_by_all, calculation_dependencies, calculation_for,
+    },
     patch_lifecycle::{
         DocumentScopeId, SemanticPublicationAuthority, SemanticPublicationError, SemanticRevision,
         TrustedInstant,
@@ -431,13 +433,13 @@ fn projection_invalidation(
 
     let before_calculation = calculate_complete(before);
     let after_calculation = calculate_complete(after);
-    let affected_calculations = affected_by(
-        dependencies(&before_calculation),
+    let affected_calculations = affected_by_all(
+        calculation_dependencies(&before_calculation),
         &changes.calculation_roots,
     )
     .into_iter()
-    .chain(affected_by(
-        dependencies(&after_calculation),
+    .chain(affected_by_all(
+        calculation_dependencies(&after_calculation),
         &changes.calculation_roots,
     ))
     .collect::<BTreeSet<_>>()
@@ -586,37 +588,6 @@ fn collect_schema_projection_changes(
             }
         }
     }
-}
-
-fn dependencies(calculation: &CalculationOutcome) -> &BTreeMap<FieldRef, BTreeSet<FieldRef>> {
-    match calculation {
-        CalculationOutcome::Complete(calculation) => calculation.dependencies(),
-        CalculationOutcome::Failed(failures) => failures.dependencies(),
-    }
-}
-
-fn affected_by(
-    dependencies: &BTreeMap<FieldRef, BTreeSet<FieldRef>>,
-    changed: &BTreeSet<FieldRef>,
-) -> Vec<FieldRef> {
-    let mut frontier = changed.clone();
-    let mut affected = BTreeSet::new();
-    loop {
-        let next = dependencies
-            .iter()
-            .filter(|(formula, inputs)| {
-                !affected.contains(*formula) && !inputs.is_disjoint(&frontier)
-            })
-            .map(|(formula, _)| formula.clone())
-            .collect::<BTreeSet<_>>();
-        if next.is_empty() {
-            break;
-        }
-        frontier.clone_from(&next);
-        affected.extend(next);
-    }
-    affected.retain(|field| !changed.contains(field));
-    affected.into_iter().collect()
 }
 
 #[cfg(test)]

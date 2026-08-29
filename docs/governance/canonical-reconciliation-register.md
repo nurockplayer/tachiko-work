@@ -243,10 +243,10 @@ without redesigning ADR-0024/ADR-0026, and #30 implements the current hostile-
 client AI boundary over it. Issue #93 supplies the internal resident revision/
 session implementation, and Issue #94 adds internal selective projections plus
 occurrence/revision-paired exact-publication invalidation facts derived from
-fresh oracles. Public authentication/wire and later #95 retained performance
-implementation remain host/runtime work and must not
-retroactively block Milestone 02. #104 remains a later read-only-first Project
-Memory reference/dogfood research track rather than current core scope.
+fresh oracles. Public authentication/wire remain host/runtime work and must not
+retroactively block Milestone 02; Issue #95 retains later incremental engine-
+state implementation. #104 remains a later read-only-first Project Memory
+reference/dogfood research track rather than current core scope.
 
 If implementation discovers pressure that contradicts an Accepted ADR, return to an explicit amendment/reconciliation rather than hiding the change in code.
 
