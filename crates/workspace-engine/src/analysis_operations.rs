@@ -505,10 +505,13 @@ impl PatchLifecycle {
             &document_requirement,
             &mut requirements,
         );
-        if candidates.is_empty()
-            && deferred_failure.is_none()
-            && document.schemas.contains_key(&definition.schema)
+        if document.schemas.contains_key(&definition.schema)
+            && (definition.narrowing.is_none()
+                || (candidates.is_empty() && deferred_failure.is_none()))
         {
+            // An unbounded result asserts complete membership of the requested
+            // schema domain. Grants over every currently discovered entity do
+            // not authorize that schema-wide completeness claim.
             requirements.insert(analysis_schema_requirement(
                 document_scope,
                 document,
@@ -660,6 +663,14 @@ fn resolve_candidate_domain(
         if entity.schema == definition.schema {
             candidates.push(entity.id.clone());
         } else {
+            // Exposing the wrong-domain distinction reveals that the requested
+            // schema exists. Require that schema's Query disclosure authority
+            // in addition to the already-required actual entity authority.
+            requirements.insert(analysis_schema_requirement(
+                document_scope,
+                document,
+                &definition.schema,
+            ));
             deferred_failure.get_or_insert_with(|| AnalysisFailure::WrongDomainNarrowingEntity {
                 entity: entity.id.clone(),
                 expected: definition.schema.clone(),

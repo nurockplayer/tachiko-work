@@ -172,12 +172,16 @@ fn document_scope() -> ScopedSemanticSubject {
 }
 
 fn entity_scope(entity: &str) -> ScopedSemanticSubject {
+    entity_scope_in_schema(entity, "weapons")
+}
+
+fn entity_scope_in_schema(entity: &str, schema: &str) -> ScopedSemanticSubject {
     ScopedSemanticSubject::new(
         scope_id(),
         DocumentId::from("game"),
         SemanticScope::Entity {
             entity: EntityId::from(entity),
-            schema: SchemaId::from("weapons"),
+            schema: SchemaId::from(schema),
         },
     )
 }
@@ -959,6 +963,20 @@ fn complete_candidate_domain_is_authorized_before_filtering_and_narrowing_grants
         ))
     ));
 
+    let empty_narrowing = AnalysisDefinition::new(
+        SchemaId::from("weapons"),
+        Some(vec![]),
+        vec![],
+        None,
+        vec![AnalysisResultRequest::Count],
+    );
+    assert!(matches!(
+        run(&no_grant, &document, &empty_narrowing),
+        Err(AnalysisOperationError::Lifecycle(
+            PatchLifecycleError::DisclosureDenied
+        ))
+    ));
+
     let mut empty_domain = document.clone();
     empty_domain.entities.clear();
     let count_empty = AnalysisDefinition::new(
@@ -981,9 +999,119 @@ fn complete_candidate_domain_is_authorized_before_filtering_and_narrowing_grants
         vec![schema_scope()],
     );
     assert_eq!(
+        complete_values(run(&empty_authorized, &document, &empty_narrowing).unwrap()),
+        vec![AnalysisResultValue::Count(0)]
+    );
+    assert_eq!(
         complete_values(run(&empty_authorized, &empty_domain, &count_empty).unwrap()),
         vec![AnalysisResultValue::Count(0)]
     );
+}
+
+#[test]
+fn unbounded_schema_membership_requires_schema_authority_despite_complete_entity_grants() {
+    let document = analysis_document();
+    let definition = AnalysisDefinition::new(
+        SchemaId::from("weapons"),
+        None,
+        vec![],
+        None,
+        vec![
+            AnalysisResultRequest::Membership,
+            AnalysisResultRequest::Count,
+        ],
+    );
+    let mut entity_authorized = lifecycle();
+    grant_query(
+        &mut entity_authorized,
+        "all-current-entities",
+        vec![
+            entity_scope("alpha"),
+            entity_scope("beta"),
+            entity_scope("gamma"),
+        ],
+    );
+
+    assert!(matches!(
+        run(&entity_authorized, &document, &definition),
+        Err(AnalysisOperationError::Lifecycle(
+            PatchLifecycleError::DisclosureDenied
+        ))
+    ));
+
+    let mut schema_authorized = lifecycle();
+    grant_query(
+        &mut schema_authorized,
+        "weapons-schema",
+        vec![schema_scope()],
+    );
+    assert_eq!(
+        complete_values(run(&schema_authorized, &document, &definition).unwrap()),
+        vec![
+            AnalysisResultValue::Membership(vec![
+                EntityId::from("alpha"),
+                EntityId::from("beta"),
+                EntityId::from("gamma"),
+            ]),
+            AnalysisResultValue::Count(3),
+        ]
+    );
+}
+
+#[test]
+fn wrong_domain_narrowing_requires_requested_schema_authority_before_classification() {
+    let document = analysis_document_with_wrong_schema_reference();
+    let definition = AnalysisDefinition::new(
+        SchemaId::from("weapons"),
+        Some(vec![EntityId::from("wrong-category")]),
+        vec![],
+        None,
+        vec![AnalysisResultRequest::Count],
+    );
+    let mut requested_schema_authorized = lifecycle();
+    grant_query(
+        &mut requested_schema_authorized,
+        "requested-weapons-schema-only",
+        vec![schema_scope()],
+    );
+    assert!(matches!(
+        run(&requested_schema_authorized, &document, &definition),
+        Err(AnalysisOperationError::Lifecycle(
+            PatchLifecycleError::DisclosureDenied
+        ))
+    ));
+
+    let mut actual_entity_authorized = lifecycle();
+    grant_query(
+        &mut actual_entity_authorized,
+        "outsider-only",
+        vec![entity_scope_in_schema("wrong-category", "characters")],
+    );
+
+    assert!(matches!(
+        run(&actual_entity_authorized, &document, &definition),
+        Err(AnalysisOperationError::Lifecycle(
+            PatchLifecycleError::DisclosureDenied
+        ))
+    ));
+
+    grant_query(
+        &mut actual_entity_authorized,
+        "requested-weapons-schema",
+        vec![schema_scope()],
+    );
+    assert!(matches!(
+        run(&actual_entity_authorized, &document, &definition)
+            .unwrap()
+            .outcome,
+        AnalysisOutcome::Failure(AnalysisFailure::WrongDomainNarrowingEntity {
+            entity,
+            expected,
+            actual,
+        }) if entity == EntityId::from("wrong-category")
+            && expected == SchemaId::from("weapons")
+            && actual == SchemaId::from("characters")
+    ));
 }
 
 #[test]
