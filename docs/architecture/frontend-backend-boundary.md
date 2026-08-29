@@ -1,6 +1,6 @@
 # Frontend and Backend Boundary
 
-Decision state: Accepted direction. ADR-0020 makes the Headless Semantic API the mandatory first-party semantic product boundary. ADR-0024 defines immutable revision-pinned SemanticPatch proposal meaning. ADR-0026 defines trusted footprint derivation, scoped authorization, exact Human Approval, and semantic/external-effect separation. ADR-0022 accepts the resident shared Rust semantic/application runtime and host separation as the preferred interactive topology. Issue #29 implements the provisional lifecycle/publication seam, #30 composes it through a provider-facing denial boundary, and #93 supplies the current internal resident revision/session mechanics. Concrete authentication, public transport, projection delivery, and external capability mechanics remain Deferred to #94 and later host/runtime work.
+Decision state: Accepted direction. ADR-0020 makes the Headless Semantic API the mandatory first-party semantic product boundary. ADR-0024 defines immutable revision-pinned SemanticPatch proposal meaning. ADR-0026 defines trusted footprint derivation, scoped authorization, exact Human Approval, and semantic/external-effect separation. ADR-0022 accepts the resident shared Rust semantic/application runtime and host separation as the preferred interactive topology. Issue #29 implements the provisional lifecycle/publication seam, #30 composes it through a provider-facing denial boundary, #93 supplies the current internal resident revision/session mechanics, and #94 adds internal revision-pinned selective projections and invalidation facts. Concrete authentication, public transport/delivery, and external capability mechanics remain Deferred to later host/runtime work.
 
 ## Principle
 
@@ -82,9 +82,10 @@ requires that lifecycle to prove an active Delegated occurrence, delegates
 typed proposal/execution to it, and returns stable safe denials for raw mutation
 and host effects. A Human session principal is not accepted as an AI credential.
 Public authorization/Approval wire DTOs, concrete authentication, public
-session handles, cross-host concurrency, and broader projection delivery remain
-#94 and later host/transport work. Issue #93 supplies the current internal
-monotonic revision and guarded state installation.
+session handles, cross-host concurrency, and transport/delivery remain later
+host work. Issue #93 supplies the current internal monotonic revision and
+guarded state installation; Issue #94 supplies internal selective projections
+and revision-keyed invalidation facts without freezing their public shape.
 
 ## Snapshot boundaries
 
@@ -143,9 +144,10 @@ receipts. Issue #30 adds a provisional AI-facing typed proposal/execution
 adapter with trusted-context lookup, instruction/data treatment, safe denials,
 and raw-mutation/host-effect rejection. Issue #93 adds one authoritative
 resident `Document`, internal monotonic revision, explicit snapshots, and
-guarded installation through the same publication seam. The complete Command
-catalogue, public transport/client adapters, concrete authentication,
-projection delivery, and retained incremental state remain #94–#95 and later
+guarded installation through the same publication seam. Issue #94 adds bounded
+entity/field projections and fresh dependency-derived invalidation facts. The
+complete Command catalogue, public transport/client adapters, concrete
+authentication/delivery, and retained incremental state remain #95 and later
 host work.
 
 Separately, #123 implements `.roproj/v1` at the storage/native host boundary
@@ -156,7 +158,8 @@ composition is implemented by #44 at the CLI/repository edge without moving Git
 into workspace-engine; broader hostile source/path handling, full durability/
 recovery, browser persistence, and host mechanisms remain Deferred.
 
-No Web UI, resident session API, projection patch protocol, or browser persistence mechanism is introduced by this documentation decision.
+No Web UI, public resident-session/transport projection protocol, or browser
+persistence mechanism is introduced by this documentation decision.
 
 ## Why
 

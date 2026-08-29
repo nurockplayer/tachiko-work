@@ -56,8 +56,9 @@ ADR-0022 accepts the resident shared Rust runtime,
 no-second-canonical-client-model rule, host separation, explicit snapshot
 boundaries, and native/WASM semantic parity while leaving public session,
 cross-host concurrency, Worker/ABI, and persistence mechanics Deferred to
-future host/transport implementation. Issue #94 retains selective-query and
-projection work; Issue #95 retains incremental-state work. ADR-0019 resolves the validation/diagnostics
+future host/transport implementation. Issue #94 implements the current internal
+selective-query/projection-invalidation slice without stabilizing its public
+shape; Issue #95 retains incremental-state work. ADR-0019 resolves the validation/diagnostics
 architecture; formula binding/failure/numeric semantics remain governed by
 ADR-0018; stable identity by ADR-0015; storage representation by ADR-0017.
 ADR-0020's #32 amendment additionally accepts logical structured formula

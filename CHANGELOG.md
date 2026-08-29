@@ -39,6 +39,16 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- The provisional resident workspace session now exposes revision-pinned,
+  stable-ID-selective entity and field projections without returning the whole
+  semantic `Document`. Stored literals, bound formula definitions, calculated
+  outcomes, stable-subject diagnostics, and mutable human addresses remain
+  distinct. Fresh full-oracle dependency facts identify changed fields and
+  deterministic downstream calculated projections, including output-equal
+  dependents, so clients can discard stale revision-keyed caches without
+  recreating semantic meaning. Native/WASM conformance covers the same bounded
+  query/mutation corpus; no retained cache, UI, persistence, or public wire DTO
+  is introduced.
 - A provisional `tachiko-workspace-engine` resident workspace session now owns
   one authoritative semantic `Document` occurrence and an internal monotonic
   `SemanticRevision`. Validation and calculation queries are revision-pinned

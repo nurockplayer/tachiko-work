@@ -4,8 +4,15 @@
 //! define a public session, revision, result, serialization, or transport
 //! contract.
 
+use std::collections::{BTreeMap, BTreeSet};
+
+use tachiko_formula_engine::{CalculationOutcome, calculate_complete};
+
 use super::{
-    CalculatedField, Document, ValidationReport, WorkspaceError, calculate_fields,
+    AddressIndex, CalculatedField, Diagnostic, Document, EntityId, EntityInspection, Expression,
+    FieldAddress, FieldRef, SemanticSubject, ValidationReport, Value, WorkspaceError,
+    calculate_fields,
+    formula_operations::FormulaCalculationOutcome,
     patch_lifecycle::{
         DocumentScopeId, SemanticPublicationAuthority, SemanticPublicationError, SemanticRevision,
         TrustedInstant,
@@ -63,6 +70,134 @@ impl ResidentWorkspaceSession {
         })
     }
 
+    /// Project only the requested entities in stable-ID order.
+    ///
+    /// The projection contains semantic identity and presentation metadata,
+    /// but never clones field values or the complete document.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError::MissingEntityId`] when any requested stable
+    /// entity subject is absent from the resident revision.
+    pub fn query_entities(
+        &self,
+        requested: &[EntityId],
+    ) -> Result<ResidentQueryResult<Vec<EntityInspection>>, WorkspaceError> {
+        let requested = requested.iter().cloned().collect::<BTreeSet<_>>();
+        let entities = requested
+            .into_iter()
+            .map(|id| {
+                let entity = self
+                    .document
+                    .entities
+                    .get(&id)
+                    .ok_or_else(|| WorkspaceError::MissingEntityId { entity: id.clone() })?;
+                Ok(EntityInspection {
+                    id,
+                    key: entity.key.clone(),
+                    schema: entity.schema.clone(),
+                    fields: entity.fields.keys().cloned().collect(),
+                })
+            })
+            .collect::<Result<Vec<_>, WorkspaceError>>()?;
+
+        Ok(ResidentQueryResult {
+            revision: self.revision.clone(),
+            value: entities,
+        })
+    }
+
+    /// Project only the requested stable field subjects in deterministic order.
+    ///
+    /// Stored literals, bound formula definitions, calculated outcomes,
+    /// stable-subject diagnostics, and mutable human addresses remain separate
+    /// so clients cannot confuse presentation or derived state with meaning.
+    /// Full validation and calculation remain the correctness oracle; this
+    /// method only bounds the returned projection.
+    ///
+    /// # Errors
+    ///
+    /// Returns the existing typed field lookup or address-projection failure.
+    pub fn query_fields(
+        &self,
+        requested: &[FieldRef],
+    ) -> Result<ResidentQueryResult<Vec<ResidentFieldProjection>>, WorkspaceError> {
+        let requested = requested.iter().cloned().collect::<BTreeSet<_>>();
+        let calculation = calculate_complete(&self.document);
+        let report = validation_report(&self.document);
+        let addresses = AddressIndex::build(&self.document)?;
+        let fields = requested
+            .into_iter()
+            .map(|field| {
+                let value = self
+                    .document
+                    .entities
+                    .get(&field.entity)
+                    .and_then(|entity| entity.fields.get(&field.field))
+                    .ok_or_else(|| WorkspaceError::MissingField {
+                        field: field.clone(),
+                    })?;
+                let presentation_address = addresses.field_address(&self.document, &field)?;
+                let subject = SemanticSubject::EntityField(field.clone());
+                let diagnostics = report
+                    .diagnostics()
+                    .iter()
+                    .filter(|diagnostic| diagnostic.subjects.contains(&subject))
+                    .cloned()
+                    .collect();
+                let (stored_value, formula_definition, calculated_value) = match value {
+                    Value::Formula(expression) => (
+                        None,
+                        Some(expression.clone()),
+                        Some(formula_calculation(&calculation, &field)),
+                    ),
+                    scalar => (Some(scalar.clone()), None, None),
+                };
+
+                Ok(ResidentFieldProjection {
+                    field,
+                    stored_value,
+                    formula_definition,
+                    calculated_value,
+                    diagnostics,
+                    presentation_address,
+                })
+            })
+            .collect::<Result<Vec<_>, WorkspaceError>>()?;
+
+        Ok(ResidentQueryResult {
+            revision: self.revision.clone(),
+            value: fields,
+        })
+    }
+
+    /// Derive revision-tagged projection invalidation from changed stable fields.
+    ///
+    /// This performs a fresh full-oracle dependency extraction and retains no
+    /// engine state. A client may pair the result with an execution receipt
+    /// only when both identify the same resulting revision.
+    #[must_use]
+    pub fn projection_invalidation(
+        &self,
+        changed: &[FieldRef],
+    ) -> ResidentQueryResult<ResidentProjectionInvalidation> {
+        let changed = changed.iter().cloned().collect::<BTreeSet<_>>();
+        let calculation = calculate_complete(&self.document);
+        let dependencies = match &calculation {
+            CalculationOutcome::Complete(calculation) => calculation.dependencies(),
+            CalculationOutcome::Failed(failures) => failures.dependencies(),
+        };
+        let affected_calculations = affected_by(dependencies, &changed);
+
+        ResidentQueryResult {
+            revision: self.revision.clone(),
+            value: ResidentProjectionInvalidation {
+                changed_fields: changed.into_iter().collect(),
+                affected_calculations,
+            },
+        }
+    }
+
     /// Clone the full semantic state at an explicit host snapshot boundary.
     #[must_use]
     pub fn export_snapshot(&self) -> ResidentSnapshot {
@@ -99,6 +234,24 @@ pub struct ResidentQueryResult<T> {
     value: T,
 }
 
+/// Bounded facts for one stable field at one resident revision.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResidentFieldProjection {
+    pub field: FieldRef,
+    pub stored_value: Option<Value>,
+    pub formula_definition: Option<Expression>,
+    pub calculated_value: Option<FormulaCalculationOutcome>,
+    pub diagnostics: Vec<Diagnostic>,
+    pub presentation_address: FieldAddress,
+}
+
+/// Stable subjects whose cached projections are stale at one resident revision.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResidentProjectionInvalidation {
+    pub changed_fields: Vec<FieldRef>,
+    pub affected_calculations: Vec<FieldRef>,
+}
+
 impl<T> ResidentQueryResult<T> {
     #[must_use]
     pub fn revision(&self) -> &SemanticRevision {
@@ -113,6 +266,12 @@ impl<T> ResidentQueryResult<T> {
     #[must_use]
     pub fn into_value(self) -> T {
         self.value
+    }
+
+    /// Report whether this detached query observation predates a revision.
+    #[must_use]
+    pub fn is_stale_against(&self, current: &SemanticRevision) -> bool {
+        &self.revision != current
     }
 }
 
@@ -212,6 +371,48 @@ where
 
 fn revision_for(generation: u64) -> SemanticRevision {
     SemanticRevision::from(format!("resident/{generation}"))
+}
+
+fn formula_calculation(
+    calculation: &CalculationOutcome,
+    field: &FieldRef,
+) -> FormulaCalculationOutcome {
+    match calculation {
+        CalculationOutcome::Complete(calculation) => calculation.value(field).map_or(
+            FormulaCalculationOutcome::Unavailable,
+            FormulaCalculationOutcome::Value,
+        ),
+        CalculationOutcome::Failed(failures) => failures
+            .failures()
+            .get(field)
+            .map_or(FormulaCalculationOutcome::Unavailable, |failure| {
+                FormulaCalculationOutcome::Failure(failure.clone())
+            }),
+    }
+}
+
+fn affected_by(
+    dependencies: &BTreeMap<FieldRef, BTreeSet<FieldRef>>,
+    changed: &BTreeSet<FieldRef>,
+) -> Vec<FieldRef> {
+    let mut frontier = changed.clone();
+    let mut affected = BTreeSet::new();
+    loop {
+        let next = dependencies
+            .iter()
+            .filter(|(formula, inputs)| {
+                !affected.contains(*formula) && !inputs.is_disjoint(&frontier)
+            })
+            .map(|(formula, _)| formula.clone())
+            .collect::<BTreeSet<_>>();
+        if next.is_empty() {
+            break;
+        }
+        frontier.clone_from(&next);
+        affected.extend(next);
+    }
+    affected.retain(|field| !changed.contains(field));
+    affected.into_iter().collect()
 }
 
 #[cfg(test)]
