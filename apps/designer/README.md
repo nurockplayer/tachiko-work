@@ -17,7 +17,10 @@ project arena. Rust `tachiko-storage` performs exact canonical admission and the
 workspace performs complete validation before a fresh occurrence replaces the
 current one. The browser host supplies a fresh cryptographic occurrence token
 for every demo or Open, so document-scope authority is not reused across Worker
-or page lifetimes. Failed Open leaves the current occurrence unchanged.
+or page lifetimes. Rejected admission leaves the current occurrence unchanged;
+if projection transfer fails after successful replacement, the unusable new
+occurrence is closed and the failure remains visible. If teardown cannot be
+confirmed, the client is stopped and the UI fails closed until reload.
 
 Save As captures one exact `ResidentWorkspaceSession::export_snapshot()`
 revision and encodes it through the existing canonical `.roproj/v1` codec.

@@ -220,8 +220,22 @@ export function mountDesigner(
     };
   };
 
+  const confirmDiscardDirtyOccurrence = (action: string): boolean =>
+    !durability.snapshot().dirty ||
+    window.confirm(
+      `${action} will discard unsaved changes in the current project. Continue?`,
+    );
+
+  const projectFailureMessage = (error: unknown): string =>
+    error instanceof DesignerRuntimeError
+      ? error.failure.message
+      : error instanceof Error
+        ? error.message
+        : String(error);
+
   const openSavedProject = async (): Promise<void> => {
     if (busy || selectedSavedProject === "") return;
+    if (!confirmDiscardDirtyOccurrence("Open")) return;
     busy = true;
     notice = null;
     render();
@@ -250,18 +264,37 @@ export function mountDesigner(
       await installOccurrence(candidate, true);
     } catch (error) {
       if (replaced) {
-        await client.closeProject();
         bootstrap = null;
         store = null;
-        occurrenceClosed = true;
         durability.close();
+        try {
+          await client.closeProject();
+        } catch {
+          occurrenceClosed = false;
+          startupFailure = `${projectFailureMessage(
+            error,
+          )} The Designer runtime was stopped because cleanup failed; reload to recover.`;
+          try {
+            await client.close();
+          } catch {
+            // The UI remains failed closed even if client termination reports an error.
+          }
+          throw error;
+        }
+        occurrenceClosed = true;
       }
       throw error;
     }
   };
 
-  const importProjectDirectory = async (files: FileList): Promise<void> => {
+  const importProjectDirectory = async (input: HTMLInputElement): Promise<void> => {
     if (busy) return;
+    if (!confirmDiscardDirtyOccurrence("Open")) {
+      input.value = "";
+      return;
+    }
+    const files = input.files;
+    if (files === null) return;
     busy = true;
     notice = null;
     render();
@@ -323,6 +356,7 @@ export function mountDesigner(
 
   const closeOccurrence = async (): Promise<void> => {
     if (busy) return;
+    if (!confirmDiscardDirtyOccurrence("Close")) return;
     busy = true;
     notice = null;
     render();
@@ -386,7 +420,7 @@ export function mountDesigner(
       ?.addEventListener("change", (event) => {
         const input = event.currentTarget;
         if (input instanceof HTMLInputElement && input.files !== null) {
-          void importProjectDirectory(input.files);
+          void importProjectDirectory(input);
         }
       });
   };

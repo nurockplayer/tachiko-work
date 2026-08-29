@@ -233,6 +233,29 @@ class RejectingOpenClient extends FakeClient {
   }
 }
 
+class ProjectionFailingOpenClient extends FakeClient {
+  private opened = false;
+  closed = false;
+
+  override async openProject(): Promise<BootstrapProjection> {
+    this.opened = true;
+    return bootstrap;
+  }
+
+  override async queryTable(): Promise<TableProjection> {
+    if (this.opened) throw new Error("Initial projection transfer failed.");
+    return super.queryTable();
+  }
+
+  override async closeProject(): Promise<void> {
+    throw new Error("Injected teardown failure.");
+  }
+
+  override close(): void {
+    this.closed = true;
+  }
+}
+
 class RefreshFailingClient extends FakeClient {
   override async queryFields(
     revision: string,
@@ -383,6 +406,8 @@ describe("Designer application seam", () => {
     if (root === null) throw new Error("test root is required");
     const memoryHost = new MemoryHost();
     memoryHost.projects.set("corrupt.roproj", new ArrayBuffer(8));
+    const confirm = vi.fn<Window["confirm"]>().mockReturnValue(true);
+    vi.stubGlobal("confirm", confirm);
     const app = mountDesigner(root, new RejectingOpenClient(), memoryHost);
     await app.ready;
 
@@ -400,6 +425,33 @@ describe("Designer application seam", () => {
       root.querySelector<HTMLInputElement>('input[aria-label="Damage for Iron Sword"]')
         ?.value,
     ).toBe("36");
+    app.destroy();
+    vi.unstubAllGlobals();
+  });
+
+  it("preserves the Open failure when cleanup also fails", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const memoryHost = new MemoryHost();
+    memoryHost.projects.set("candidate.roproj", new ArrayBuffer(8));
+    vi.stubGlobal("confirm", vi.fn<Window["confirm"]>().mockReturnValue(true));
+    const client = new ProjectionFailingOpenClient();
+    const app = mountDesigner(root, client, memoryHost);
+    await app.ready;
+
+    root.querySelector<HTMLButtonElement>("[data-open-project]")?.click();
+    await vi.waitFor(() => {
+      expect(root.querySelector('[role="alert"]')?.textContent).toContain(
+        "Initial projection transfer failed.",
+      );
+    });
+    expect(root.textContent).not.toContain("Injected teardown failure.");
+    expect(root.textContent).toContain("reload to recover");
+    expect(root.textContent).not.toContain("No project open");
+    expect(client.closed).toBe(true);
+    app.destroy();
+    vi.unstubAllGlobals();
   });
 
   it("keeps stale edit controls disabled after a post-publication refresh failure", async () => {
@@ -547,6 +599,47 @@ describe("Designer application seam", () => {
     expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
       "Saved",
     );
+    vi.unstubAllGlobals();
+  });
+
+  it("requires confirmation before Open or Close discards a dirty occurrence", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const memoryHost = new MemoryHost();
+    memoryHost.projects.set("saved.roproj", new ArrayBuffer(8));
+    const client = new FakeClient();
+    const openProject = vi.spyOn(client, "openProject");
+    const closeProject = vi.spyOn(client, "closeProject");
+    const confirm = vi.fn<Window["confirm"]>().mockReturnValue(false);
+    vi.stubGlobal("confirm", confirm);
+    const app = mountDesigner(root, client, memoryHost);
+    await app.ready;
+
+    root.querySelector<HTMLButtonElement>("[data-open-project]")?.click();
+    root.querySelector<HTMLButtonElement>("[data-close-project]")?.click();
+    const importInput = root.querySelector<HTMLInputElement>("[data-import-project]");
+    if (importInput === null) throw new Error("project import input is required");
+    Object.defineProperty(importInput, "value", {
+      configurable: true,
+      value: "saved.roproj",
+      writable: true,
+    });
+    Object.defineProperty(importInput, "files", {
+      configurable: true,
+      value: [],
+    });
+    importInput.dispatchEvent(new Event("change"));
+
+    expect(confirm).toHaveBeenCalledTimes(3);
+    expect(openProject).not.toHaveBeenCalled();
+    expect(closeProject).not.toHaveBeenCalled();
+    expect(importInput.value).toBe("");
+    expect(root.getElementsByTagName("h1")[0]?.textContent).toBe("Moonfall Balance");
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+      "Unsaved changes",
+    );
+    app.destroy();
     vi.unstubAllGlobals();
   });
 

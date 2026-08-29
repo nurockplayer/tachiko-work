@@ -43,8 +43,9 @@ All notable changes to Tachiko Work are documented in this file.
   through the existing Rust storage/workspace authorities, edit it in a fresh
   resident occurrence, and Save As an exact revision to an absent-only
   IndexedDB destination. Browser projects reopen cleanly after occurrence
-  teardown or page reload; failed/cancelled Open and Save As preserve the
-  current occurrence and existing durable destinations. Canonical project
+  teardown or page reload; rejected/cancelled admission and failed Save As
+  preserve the current occurrence and existing durable destinations. Dirty
+  occurrences require confirmation before Open or Close can discard them. Canonical project
   transfer is independently bounded at 64 MiB and remains a private host/WASM
   mechanism, not a public storage or wire contract.
 - A first-party browser Designer vertical slice now runs the Rust-authoritative

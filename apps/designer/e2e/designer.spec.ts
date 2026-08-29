@@ -86,6 +86,7 @@ test("canonical Save As survives close and reload while existing destinations re
   await expect(page.getByRole("alert")).toContainText("never overwrites");
   await expect(page.getByTestId("durability")).toContainText("Unsaved changes");
 
+  page.once("dialog", async (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Close" }).click();
   await expect(page.getByRole("heading", { name: "No project open" })).toBeVisible();
   await page.getByLabel("Saved project").selectOption("edited.roproj");
@@ -98,6 +99,7 @@ test("canonical Save As survives close and reload while existing destinations re
 
   await page.reload();
   await page.getByLabel("Saved project").selectOption("edited.roproj");
+  page.once("dialog", async (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Open", exact: true }).click();
   await expect(page.getByLabel("Damage for Iron Sword")).toHaveValue("45");
   await expect(page.locator('[data-field="iron_sword.dps"] output')).toHaveText("50");
