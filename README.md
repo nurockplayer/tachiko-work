@@ -1,12 +1,64 @@
 # Tachiko Work
 
-A Rust-native, Git-native, and AI-native workspace for semantic structured data
-and computation.
+**A semantic workspace for structured data and computation, built so humans, Git,
+and AI can work on the same meaning instead of reverse-engineering files.**
 
-> **Public pre-alpha:** this repository is intentionally public so users,
-> reviewers, AI tools, and future contributors can inspect the implementation,
-> architecture, and decision history. Public source does not mean the product,
-> APIs, formats, or licensing policy are stable or formally released.
+Tachiko Work targets workflows where structured work drifts across spreadsheets,
+CSV exports, scripts, Git diffs, and AI prompts. Instead of treating cell
+positions, file layout, or UI state as the source of meaning, Tachiko keeps typed
+schemas, entities, references, formulas, validation, and semantic changes in one
+deterministic model.
+
+The first product wedge is **game-balance data for technical designers and
+developers**. The current usable product is CLI-first. The active roadmap horizon
+is [`05 · Designer MVP`](docs/product/product-roadmap.md), which is building the
+first graphical workspace without moving semantic authority into the frontend.
+
+> **Public pre-alpha:** the repository is intentionally public for inspection and
+> early feedback. There is no tagged binary release yet, the graphical Designer
+> workflow is not shipped yet, and APIs, formats, contribution policy, and the
+> long-term licensing boundary are still evolving.
+
+## What works today
+
+On current `main`, Tachiko already provides an end-to-end game-balance proof with:
+
+- typed schemas, entities, fields, stable semantic IDs, and references;
+- deterministic formulas, dependency tracking, validation, semantic diff/impact,
+  and typed three-way merge;
+- canonical editable `.roproj/v1` plus deterministic portable `.ro` packaging;
+- standalone local workflows plus optional provider-neutral Git/CI review;
+- provider-free semantic inspection, formula/scenario reasoning, and bounded
+  Analysis Query results with reproducibility lineage;
+- approval-gated semantic proposals rather than raw AI file mutation;
+- a Rust-authoritative resident runtime with revision-safe commands, bounded
+  projections/invalidation, retained incremental state, and native/WASM
+  conformance evidence.
+
+The current product deliberately does **not** claim a completed spreadsheet UI,
+Office compatibility, realtime collaboration, cloud SaaS, or production game-
+engine plugins.
+
+## Why this is different
+
+| Common workflow problem | Tachiko approach |
+| --- | --- |
+| A spreadsheet quietly becomes a database plus business/game rules | Schema, values, references, formulas, and validation have explicit typed meaning |
+| Review is reduced to raw text/binary file changes | Semantic diff and dependency/impact facts are computed by deterministic engines |
+| CSV/export glue becomes part of the unofficial workflow | Canonical project state, deterministic export, and optional Git/CI adapters share the same semantic source |
+| AI must infer meaning from raw files or simulate UI actions | AI consumes semantic queries and proposes typed operations; deterministic Rust engines remain authoritative |
+
+Git is a first-class optional storage/review protocol, not the semantic model or
+the user interface. AI is a semantic client, not an alternate source of truth.
+
+## Start here
+
+- **Run the proof:** [Try it in five minutes](#try-it-in-five-minutes)
+- **See the durable example:** [`examples/game-balance/`](examples/game-balance/README.md)
+- **See where the product is going:** [Product Roadmap](docs/product/product-roadmap.md)
+- **Understand the system:** [Architecture overview](#architecture-overview)
+- **Understand contribution status:** [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- **Understand decision authority:** [`docs/README.md`](docs/README.md)
 
 ## Vision
 
