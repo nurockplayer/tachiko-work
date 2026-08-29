@@ -8,7 +8,7 @@
 
 use std::collections::BTreeSet;
 
-use tachiko_formula_engine::calculate_complete;
+use tachiko_formula_engine::{CalculationOutcome, calculate_complete};
 
 use super::{
     CalculatedField, Diagnostic, Document, EntityId, EntityInspection, Expression, FieldAddress,
@@ -428,7 +428,7 @@ fn projection_invalidation(
 
     let before_calculation = calculate_complete(before);
     let after_calculation = calculate_complete(after);
-    let affected_calculations = affected_by_all(
+    let mut affected_calculations = affected_by_all(
         calculation_dependencies(&before_calculation),
         &changes.calculation_roots,
     )
@@ -437,9 +437,13 @@ fn projection_invalidation(
         calculation_dependencies(&after_calculation),
         &changes.calculation_roots,
     ))
-    .collect::<BTreeSet<_>>()
-    .into_iter()
-    .collect();
+    .collect::<BTreeSet<_>>();
+    affected_calculations.extend(changed_calculation_projections(
+        before,
+        after,
+        &before_calculation,
+        &after_calculation,
+    ));
 
     ResidentProjectionInvalidation {
         document_scope,
@@ -447,7 +451,7 @@ fn projection_invalidation(
         resulting_revision,
         entities: changes.entities.into_iter().collect(),
         fields: changes.fields.into_iter().collect(),
-        affected_calculations,
+        affected_calculations: affected_calculations.into_iter().collect(),
     }
 }
 
@@ -628,6 +632,37 @@ fn diagnostics_for_field(report: &ValidationReport, field: &FieldRef) -> Vec<Dia
         .iter()
         .filter(|diagnostic| diagnostic.subjects.contains(&subject))
         .cloned()
+        .collect()
+}
+
+fn changed_calculation_projections(
+    before: &Document,
+    after: &Document,
+    before_calculation: &CalculationOutcome,
+    after_calculation: &CalculationOutcome,
+) -> BTreeSet<FieldRef> {
+    before
+        .entities
+        .iter()
+        .flat_map(|(entity_id, entity)| {
+            entity
+                .fields
+                .iter()
+                .filter(|(_, value)| matches!(value, Value::Formula(_)))
+                .map(|(field_id, _)| FieldRef::new(entity_id.clone(), field_id.clone()))
+        })
+        .chain(after.entities.iter().flat_map(|(entity_id, entity)| {
+            entity
+                .fields
+                .iter()
+                .filter(|(_, value)| matches!(value, Value::Formula(_)))
+                .map(|(field_id, _)| FieldRef::new(entity_id.clone(), field_id.clone()))
+        }))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .filter(|field| {
+            calculation_for(before_calculation, field) != calculation_for(after_calculation, field)
+        })
         .collect()
 }
 

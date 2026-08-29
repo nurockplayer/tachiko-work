@@ -336,6 +336,66 @@ fn scalar_mutation_invalidates_changed_field_and_downstream_projection_at_new_re
 }
 
 #[test]
+fn global_calculation_failure_invalidates_independent_formula_projections() {
+    let mut session =
+        ResidentWorkspaceSession::new(document_scope_id(), game_balance_document("game", "Game"));
+    let attack_interval = FieldRef::new("iron_sword", "attack_interval");
+    let independent_formula = FieldRef::new("shop", "upgrade_cost");
+    let before = session
+        .query_fields(std::slice::from_ref(&independent_formula))
+        .unwrap();
+    assert_eq!(
+        before.value()[0].calculated_value,
+        Some(FormulaCalculationOutcome::Value(
+            Number::new(200.0).unwrap()
+        ))
+    );
+
+    let snapshot = session.export_snapshot();
+    let mut candidate = snapshot.document().clone();
+    candidate
+        .entities
+        .get_mut("iron_sword")
+        .unwrap()
+        .fields
+        .insert(attack_interval.field.clone(), value(0.0));
+    let mut time = FixedTrustedTime { calls: 0 };
+    let invalidation = {
+        let mut publication = session.publication_authority(&mut time);
+        let resulting_revision = publication
+            .publish_if_current(
+                snapshot.document_scope(),
+                snapshot.revision(),
+                candidate,
+                |_| Some(()),
+            )
+            .unwrap()
+            .2;
+        publication
+            .projection_invalidation_for(
+                snapshot.document_scope(),
+                snapshot.revision(),
+                &resulting_revision,
+            )
+            .unwrap()
+            .clone()
+    };
+
+    let after = session
+        .query_fields(std::slice::from_ref(&independent_formula))
+        .unwrap();
+    assert_eq!(
+        after.value()[0].calculated_value,
+        Some(FormulaCalculationOutcome::Unavailable)
+    );
+    assert!(
+        invalidation
+            .affected_calculations
+            .contains(&independent_formula)
+    );
+}
+
+#[test]
 fn target_removal_invalidates_fields_whose_reference_diagnostics_change() {
     let mut session =
         ResidentWorkspaceSession::new(document_scope_id(), game_balance_document("game", "Game"));
