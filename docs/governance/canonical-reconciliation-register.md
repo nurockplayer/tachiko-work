@@ -67,7 +67,7 @@ When this register marks a document as mixed-state, readers must respect the nar
 | `docs/architecture/frontend-backend-boundary.md` | Accepted Semantic API client boundary under ADR-0020, revision-pinned proposal authority under ADR-0024, scoped authorization/Approval under ADR-0026, and resident runtime/host separation under ADR-0022; concrete mechanisms Deferred | Projection/UI boundary partially implemented; #29 snapshot lifecycle and #30 AI hostile-client composition exist, while public frontend transport and resident runtime/session implementation remain #93–#95 | ADR-0020, ADR-0022, ADR-0024, ADR-0026; #29/#30 implementation evidence; #93–#95 completion |
 | `docs/architecture/wasm-strategy.md` | Accepted runtime direction under ADR-0022; Worker/session/ABI/persistence mechanics Deferred | Portable/native-WASM conformance and PR #91 topology evidence exist; production browser runtime not implemented | ADR-0022; #93–#95 and future transport/host implementation |
 | `docs/architecture/distributed-collaboration.md` | Hypothesis / Open Question | Not implemented | #12, #45, #46, #48-#50 |
-| `docs/architecture/rendering-system.md` | Hypothesis | Current Designer MVP research/decision surface; not implemented | #67 and Designer MVP evidence/decision work |
+| `docs/architecture/rendering-system.md` | Hypothesis | Not current milestone | Designer MVP future work |
 | `docs/architecture/performance-model.md` | Provisional guidance | Mixed | Evidence-driven future work; ADR-0022 benchmark is topology evidence, not SLA |
 | `docs/specs/semantic-api.md` | Mixed: ADR-0020 first-class boundary and semantic laws Accepted, including #32's logical formula-reasoning Query, read-only scenario Query, formula-update Command, and #33's bounded typed semantic Analysis Query with exact Count/Number Min/Max, reproducibility lineage, and complete-result disclosure; ADR-0024 immutable proposal/exact-base laws and ADR-0026 authorization/Approval still apply; exact Rust API, complete catalogue, encodings, result shapes, predicate catalogue, request limits, session, and wire mappings Provisional/Deferred | Partially implemented by workspace-engine, including #29's lifecycle and #30's typed AI adapter; #144 implements the first provider-neutral formula reasoning/scenario/formula-update workspace/CLI slice and #150 implements the first bounded Analysis Query workspace/CLI slice with native/WASM evidence | ADR-0020, ADR-0022, ADR-0024, ADR-0026; #32/#33 authority; #29/#30/#144/#150 evidence; #93–#95 runtime completion |
 | `docs/specs/semantic-authorization.md` | Normative Accepted Principal/capability/scope/Grant/AuthorizationFootprint/exact-Approval/expiry-replay-revocation/provenance/effect-separation contract under ADR-0026; exact identifiers, DTOs, storage, clocks, codes, and wire formats Provisional; canonical bytes/digest/signature/MAC/token Deferred | #29 trusted in-process lifecycle/state/receipt implementation plus #30 provider-facing trusted-context/safe-denial/raw-bypass/host-effect-denial seam exist; concrete identity, durable registry, public DTO/wire, and #93 revision/concurrency remain | ADR-0026; #29/#30 implementation evidence; #93 and later identity/transport completion |
@@ -162,7 +162,7 @@ A GitHub Issue is never automatically an Accepted decision. The table below clas
 
 ### Later runtime, reasoning, migration, collaboration, and standardization
 
-- #93: current Designer-MVP resident workspace session + revision-safe command implementation under ADR-0022.
+- #93: later Designer-MVP resident workspace session + revision-safe command implementation under ADR-0022.
 - #94: later selective semantic query/projection invalidation implementation under ADR-0022.
 - #95: later retained incremental engine-state implementation constrained by full-oracle equivalence.
 - #32: resolved by ADR-0020's M04 amendment and `semantic-api.md`; #144 provides
@@ -240,8 +240,8 @@ provider-neutral Git/CI adapter over those standalone boundaries. Issue #29
 implements the provider-neutral SemanticPatch/authorization lifecycle seam
 without redesigning ADR-0024/ADR-0026, and #30 implements the current hostile-
 client AI boundary over it. Public authentication/wire and resident revision/
-session completion remain #93 and later host/transport work. #93–#95 are the current
-Designer-MVP runtime/performance implementation sequence and must not
+session completion remain #93 and later host/transport work. #93–#95 remain
+later Designer-MVP runtime/performance implementation and must not
 retroactively block Milestone 02. #104 remains a later read-only-first Project
 Memory reference/dogfood research track rather than current core scope.
 

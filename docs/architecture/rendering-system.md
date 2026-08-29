@@ -1,6 +1,6 @@
 # Rendering System Direction
 
-Decision state: Hypothesis; current Designer MVP research/decision direction
+Decision state: Hypothesis; future Designer MVP direction
 
 Implementation state: Not implemented
 
@@ -31,7 +31,7 @@ Semantic Knowledge / Document Graph
 
 These projections do not imply that every visual property or application-specific feature belongs in the semantic core.
 
-The exact generic projection abstraction, if any, remains an Open Question for current Designer MVP design work. Do not infer Accepted presentation, layout, or renderer primitives from this Hypothesis document.
+The exact generic projection abstraction, if any, remains an Open Question for later design work. Do not freeze presentation, layout, or renderer primitives during Core & Format Hardening.
 
 ## Research-to-Presentation Dogfooding Case
 
@@ -113,7 +113,7 @@ Semantic Model
              +-- external presentation-system adapter
 ```
 
-Target selection is not decided here. Issue #67 owns the current Designer MVP validation and decision work for presentation projection.
+Target selection is not decided here. Issue #67 owns the future validation work for presentation projection.
 
 ## Provenance and Citations
 
@@ -162,16 +162,16 @@ This direction does not mean:
 
 ## Relationship to Core & Format Hardening
 
-Presentation projection is current Designer MVP research/decision work, but it builds on foundations already hardened earlier in the roadmap.
+Presentation projection is future product work, but it explains why several current foundation decisions matter beyond game-development tables.
 
-In particular, trustworthy cross-view projection depends on the foundations established through:
+In particular, trustworthy cross-view projection depends on the foundations being hardened by:
 
 - #21 semantic identity / document graph;
 - #25 storage DTO / serialization boundary;
 - #37 format/version envelope;
 - #38 canonical value encoding / deterministic ordering.
 
-Those earlier milestones preserved the architectural seams needed for projection work without prematurely accepting presentation-specific contracts. Designer MVP may now gather evidence and make focused decisions without retroactively changing those foundations.
+Milestone 02 should preserve the architectural seams needed by future projections without prematurely designing presentation-specific contracts.
 
 ## Long-Term Goal
 

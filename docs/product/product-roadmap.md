@@ -33,10 +33,10 @@ The current repository planning horizon is:
 
 > **05 · Designer MVP**
 
-Game Studio Beta is complete. Designer MVP turns the established semantic,
-formula, analysis, authorization, storage, and runtime-boundary foundations into
-a non-CLI-first workspace for designers without creating a second semantic
-authority in the UI.
+The Game Studio Beta planning horizon is complete and no longer current.
+Designer MVP is the active planning horizon for enabling non-CLI-first use
+through a graphical workspace, table/spreadsheet projections, visual authoring,
+progressive typing, and designer-grade diagnostics.
 
 - [Open work in the current horizon](https://github.com/nurockplayer/tachiko-work/issues?q=is%3Aissue+is%3Aopen+milestone%3A%2205+%C2%B7+Designer+MVP%22)
 - [All open Issues](https://github.com/nurockplayer/tachiko-work/issues?q=is%3Aissue+is%3Aopen)

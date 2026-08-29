@@ -63,10 +63,10 @@ host-effect-denial adapter. Concrete authentication, public wire DTOs, broader
 projection delivery, and resident revision mechanics remain #93 and later host
 work.
 
-### Collaboration and presentation research
+### Collaboration and future presentation
 
 - [`distributed-collaboration.md`](distributed-collaboration.md) — future collaboration hypothesis/Open Question beyond the implemented semantic merge baseline.
-- [`rendering-system.md`](rendering-system.md) — current Designer MVP rendering and semantic-projection Hypothesis, including the research → Git-reviewed knowledge → presentation use case tracked in #67. #67 owns evidence/decision work; this status does not make renderer or projection primitives Accepted.
+- [`rendering-system.md`](rendering-system.md) — future rendering and semantic-projection hypothesis, including the research → Git-reviewed knowledge → presentation use case tracked in #67, for later Designer MVP work.
 
 ## Maturity map
 
@@ -84,7 +84,7 @@ Use these broad cues together with the reconciliation register:
 | Revision-pinned SemanticPatch proposal | Accepted under ADR-0024; ADR-0026 consumes its structural binding without selecting canonical bytes/digest/token; #29 provisional Rust lifecycle implemented while wire and #93 resident revision mechanics remain Deferred |
 | Resident Native/WASM runtime and host separation | Accepted under ADR-0022; current snapshot-style implementation may lag; concrete session/transport/persistence mechanics Deferred |
 | Distributed collaboration beyond semantic merge | Hypothesis / Open Question |
-| Rendering/UI and cross-view projection architecture | Hypothesis / current Designer MVP research surface |
+| Rendering/UI and cross-view projection architecture | Future hypothesis |
 
 ## Reading rule for architecture work
 
