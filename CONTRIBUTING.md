@@ -30,7 +30,9 @@ rustup toolchain install stable --profile minimal
 rustup component add --toolchain stable rustfmt clippy
 rustup target add --toolchain stable wasm32-unknown-unknown
 rustup toolchain install 1.85.0 --profile minimal
+rustup target add --toolchain 1.85.0 wasm32-unknown-unknown
 rustup run 1.85.0 cargo check --workspace --all-targets --locked
+rustup run 1.85.0 cargo check --manifest-path apps/designer/runtime/Cargo.toml --target wasm32-unknown-unknown --all-targets --locked
 ```
 
 Use the checked-in `Cargo.lock`. The project does not require a global install;

@@ -165,6 +165,18 @@ class StartupFailingClient extends FakeClient {
   }
 }
 
+class RefreshFailingClient extends FakeClient {
+  override async queryFields(
+    revision: string,
+    fields: FieldTarget[],
+  ): Promise<FieldBatchProjection> {
+    if (fields.length === 1 && fields[0]?.entity === "shop") {
+      return super.queryFields(revision, fields);
+    }
+    throw new Error("Selective refresh is temporarily unavailable.");
+  }
+}
+
 describe("Designer application seam", () => {
   it("renders the bounded table and selectively refreshes a derived result", async () => {
     document.body.innerHTML = '<div id="app"></div>';
@@ -256,5 +268,38 @@ describe("Designer application seam", () => {
       "Designer runtime could not be loaded (404).",
     );
     expect(root.textContent).not.toContain("Starting the Rust workspace");
+  });
+
+  it("keeps stale edit controls disabled after a post-publication refresh failure", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const client = new RefreshFailingClient();
+    const app = mountDesigner(root, client);
+    await app.ready;
+
+    const damage = root.querySelector<HTMLInputElement>(
+      'input[aria-label="Damage for Iron Sword"]',
+    );
+    if (damage === null || damage.form === null) {
+      throw new Error("damage edit form is required");
+    }
+    damage.value = "45";
+    damage.form.requestSubmit();
+
+    await vi.waitFor(() => {
+      expect(root.querySelector('[role="alert"]')?.textContent).toContain(
+        "Selective refresh is temporarily unavailable.",
+      );
+    });
+    const staleDamage = root.querySelector<HTMLInputElement>(
+      'input[aria-label="Damage for Iron Sword"]',
+    );
+    expect(staleDamage?.disabled).toBe(true);
+    expect(staleDamage?.value).toBe("36");
+    expect(root.querySelector('[data-testid="revision"]')?.textContent).toContain(
+      "resident/1",
+    );
+    expect(client.editRequests).toHaveLength(1);
   });
 });

@@ -80,7 +80,7 @@ export function mountDesigner(
     target: FieldTarget,
     input: string,
   ): Promise<void> => {
-    if (store === null || busy) return;
+    if (store === null || busy || store.snapshot().currentness !== "current") return;
     busy = true;
     notice = null;
     render();
@@ -304,7 +304,9 @@ function designerMarkup(
                 </tr>
               </thead>
               <tbody>
-                ${table.rows.map((row) => rowMarkup(row, table, busy)).join("")}
+                ${table.rows
+                  .map((row) => rowMarkup(row, table, busy || currentness !== "current"))
+                  .join("")}
               </tbody>
             </table>
           </div>
