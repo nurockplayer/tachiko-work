@@ -42,7 +42,7 @@ Maps should distinguish durable authority from implementation evidence.
 
 An Accepted boundary may exist before production code implements it. Conversely, implementation may change inside an Accepted boundary without changing the architecture decision. Maps and deltas should label that distinction rather than converting implementation progress into a fictitious authority change.
 
-For example, ADR-0022 accepts resident Rust runtime ownership while concrete resident session/revision mechanics remain separately implemented under #93. A map must not present those mechanics as production-real until its pinned revision proves them.
+For example, ADR-0022 accepts resident Rust runtime ownership while concrete resident session/revision mechanics remain separately owned by #93. A map must not present those mechanics as production-real until its pinned revision proves them.
 
 ## Persistence policy
 
