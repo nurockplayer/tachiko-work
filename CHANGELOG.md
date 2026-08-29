@@ -39,6 +39,14 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- A repository-local read-only live project dashboard now projects current
+  GitHub and repository authority into source-linked executive, delivery,
+  current-work, recent-merge, and attention surfaces. Exact-head checks,
+  required-check state, reviews, canonical handoff consistency, authority
+  drift, independent lanes, and partial/unknown source failures remain
+  explicit. The localhost-only server exposes no write/control endpoints and
+  introduces no Tachiko product semantics or public API.
+
 - A first-party browser Designer vertical slice now runs the Rust-authoritative
   resident Moonfall workspace inside a Web Worker/WASM host. It renders a
   bounded typed table, publishes directly stored Number edits against the

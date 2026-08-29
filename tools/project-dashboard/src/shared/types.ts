@@ -1,0 +1,205 @@
+export type SourceClass = "direct" | "derived" | "heuristic" | "historical";
+
+export interface SourceRef {
+  class: SourceClass;
+  label: string;
+  url: string;
+  observedAt: string;
+  observedIdentity: string | null;
+}
+
+export type FetchHealth = "healthy" | "partial" | "unavailable";
+export type DeliveryPhase =
+  | "ready"
+  | "implementing"
+  | "validating"
+  | "review_fix"
+  | "rereview"
+  | "merge_gate"
+  | "human_required"
+  | "blocked"
+  | "parked"
+  | "completed"
+  | "unknown";
+
+export interface RawComment {
+  id: string;
+  body: string;
+  url: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RawIssue {
+  number: number;
+  title: string;
+  url: string;
+  body: string;
+  updatedAt: string;
+  milestone: string | null;
+  blockedBy: Array<{ number: number; title: string; url: string }> | null;
+  comments: RawComment[];
+}
+
+export interface RawCheck {
+  name: string;
+  integrationId: number | null;
+  status: "queued" | "in_progress" | "completed" | "unknown";
+  conclusion: "success" | "failure" | "cancelled" | "neutral" | "skipped" | "stale" | null;
+  url: string | null;
+}
+
+export interface RawRequiredCheck {
+  name: string;
+  integrationId: number | null;
+}
+
+export interface RawReview {
+  state: "approved" | "changes_requested" | "commented" | "dismissed" | "pending" | "unknown";
+  headSha: string | null;
+  url: string;
+  submittedAt: string;
+}
+
+export interface RawReviewThread {
+  resolved: boolean;
+  outdated: boolean;
+  body: string;
+  url: string;
+}
+
+export interface RawPullRequest {
+  number: number;
+  title: string;
+  url: string;
+  body: string;
+  headSha: string;
+  baseRefName: string;
+  baseSha: string | null;
+  mergeBaseSha: string | null;
+  relationToMain: "current" | "behind" | "diverged" | "unknown";
+  authorityPathsChangedOnMain: string[] | null;
+  issueNumbers: number[];
+  comments: RawComment[];
+  checksObservedHeadSha: string | null;
+  checks: RawCheck[] | null;
+  requiredChecks: RawRequiredCheck[] | null;
+  reviewDecision: "approved" | "changes_requested" | "review_required" | "unknown";
+  reviews: RawReview[] | null;
+  reviewThreads: RawReviewThread[] | null;
+  updatedAt: string;
+}
+
+export interface RawCompletion {
+  number: number;
+  title: string;
+  url: string;
+  mergedAt: string;
+  mergeSha: string | null;
+  author: string;
+}
+
+export interface RawRepositorySnapshot {
+  repoName: string;
+  repoUrl: string;
+  observedAt: string;
+  mainSha: string | null;
+  productHorizon: string | null;
+  productHorizonUrl: string;
+  fetchHealth: FetchHealth;
+  failures: string[];
+  issues: RawIssue[] | null;
+  pullRequests: RawPullRequest[] | null;
+  recentCompletions: RawCompletion[] | null;
+}
+
+export interface HandoffProjection {
+  condition: "current" | "stale" | "inconsistent" | "missing" | "unknown";
+  claimedOwner: string | null;
+  claimedState: string | null;
+  claimedHeadSha: string | null;
+  lastCheckedMainSha: string | null;
+  updatedAt: string | null;
+  sourceRefs: SourceRef[];
+}
+
+export interface CheckProjection {
+  status: "success" | "failure" | "pending" | "unknown";
+  requiredStatus: "satisfied" | "unsatisfied" | "unknown";
+  observedHeadSha: string | null;
+  summary: string;
+  requiredSummary: string;
+  sourceRefs: SourceRef[];
+}
+
+export interface ReviewProjection {
+  decision: RawPullRequest["reviewDecision"];
+  status: "current" | "stale" | "unknown";
+  reviewedHeadSha: string | null;
+  unresolvedThreadCount: number | null;
+  substantiveUnresolvedCount: number | null;
+  sourceRefs: SourceRef[];
+}
+
+export interface DeliveryLane {
+  id: string;
+  issue: {
+    number: number;
+    title: string;
+    url: string;
+    readiness: "ready" | "active" | "blocked" | "parked" | "unknown";
+    milestone: string | null;
+    blockedBy: Array<{ number: number; title: string; url: string }> | null;
+  };
+  owner: string;
+  phase: DeliveryPhase;
+  pr: null | {
+    number: number;
+    title: string;
+    url: string;
+    headSha: string;
+    baseRefName: string;
+    baseSha: string | null;
+    mergeBaseSha: string | null;
+    liveMainSha: string | null;
+    relationToMain: RawPullRequest["relationToMain"];
+    authorityPathsChangedOnMain: string[] | null;
+  };
+  checks: CheckProjection;
+  reviews: ReviewProjection;
+  handoff: HandoffProjection;
+  authorityDrift: "none" | "suspected" | "confirmed" | "unknown";
+  blockers: string[];
+  action: {
+    owner: "none" | "codex" | "chatgpt" | "human" | "unknown";
+    reason: string;
+  };
+  sourceRefs: SourceRef[];
+}
+
+export interface RepositoryProjection {
+  repo: {
+    name: string;
+    observedAt: string;
+    fetchHealth: FetchHealth;
+    failures: string[];
+    mainSha: string | null;
+    productHorizon: string | null;
+    sourceRefs: SourceRef[];
+  };
+  deliveries: DeliveryLane[];
+  currentWork: {
+    currentHorizon: DeliveryLane["id"][];
+    independent: DeliveryLane["id"][];
+    unclassified: DeliveryLane["id"][];
+    horizonStatus: "current" | "unknown";
+    dependencyHealth: "healthy" | "partial" | "unknown";
+    sourceRefs: SourceRef[];
+  };
+  recentCompletions: Array<RawCompletion & { sourceRefs: SourceRef[] }>;
+  attention: {
+    humanActionRequired: boolean | null;
+    reasons: string[];
+    sourceRefs: SourceRef[];
+  };
+}

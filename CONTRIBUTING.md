@@ -47,6 +47,15 @@ pnpm --dir apps/designer exec playwright install chromium
 bash scripts/designer-check.sh
 ```
 
+The repository-local read-only project dashboard uses the same pinned pnpm and
+Node.js versions, but remains a separate tooling package with its own lockfile:
+
+```sh
+pnpm --dir tools/project-dashboard install --frozen-lockfile
+pnpm --dir tools/project-dashboard exec playwright install chromium
+bash scripts/project-dashboard-check.sh
+```
+
 ## Work in focused loops
 
 Run the smallest affected crate or test while iterating:

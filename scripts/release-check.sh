@@ -45,6 +45,9 @@ bash scripts/portable-conformance-check.sh
 echo "==> first-party Web Designer vertical slice"
 bash scripts/designer-check.sh
 
+echo "==> read-only live project dashboard"
+bash scripts/project-dashboard-check.sh
+
 echo "==> warning-free documentation"
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 

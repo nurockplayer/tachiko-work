@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="description" content="Read-only live operational projection for Tachiko Work" />
+    <title>Tachiko Work · Live Control Room</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#dashboard">Skip to dashboard</a>
+    <div id="dashboard-status" class="visually-hidden" role="status" aria-live="polite"></div>
+    <div id="app">
+      <p class="boot-message">Acquiring repository projection…</p>
+    </div>
+    <noscript>This read-only dashboard requires JavaScript to render its source-linked projection.</noscript>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
