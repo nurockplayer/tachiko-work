@@ -169,8 +169,9 @@ A GitHub Issue is never automatically an Accepted decision. The table below clas
   the first provider-neutral formula reasoning/scenario/formula-update
   workspace/CLI implementation evidence.
 - #33: resolved by ADR-0020's bounded M04 semantic analysis amendment and
-  `semantic-api.md`; production analysis remains a separate bounded
-  implementation Issue.
+  `semantic-api.md`; #150 provides the first bounded provider-neutral
+  workspace/CLI implementation evidence, while broader production-analysis
+  surfaces beyond #150 remain separate.
 - #34: Hypothesis/Open Question for post-MVP migration assistant; ADR-0021 constrains any future promotion/mapping semantics.
 - #35: Epic/index only; not decision authority.
 - #36: Hypothesis/Open Question for collaboration assistant.

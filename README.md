@@ -163,8 +163,9 @@ Number values use the same calculator as the rest of the workspace, and a
 failure or disclosure denial never returns a partial aggregate.
 
 This command syntax and JSON shape are Provisional implementation evidence for
-#150, not a stabilized public wire or SDK contract. Broader production-analysis
-surfaces remain Deferred under the governing Analysis Query contract.
+Issue #150, not a stabilized public wire or SDK contract. Broader
+production-analysis surfaces remain Deferred under the governing Analysis Query
+contract.
 
 The command targets the opaque stable IDs shown by `tachiko show` and
 `tachiko analyze document`, not mutable human keys. The checked-in Moonfall
