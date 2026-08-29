@@ -1674,6 +1674,7 @@ fn analysis_paired_authorization_record() -> Record {
             &SemanticRevision::from("portable-analysis-pair-r1"),
             ValidatorConfiguration::WorkspaceFull,
         ),
+        &lifecycle,
         &scope,
         &second,
         (
@@ -1681,6 +1682,7 @@ fn analysis_paired_authorization_record() -> Record {
             ValidatorConfiguration::WorkspaceFull,
         ),
         &definition,
+        &principal,
         &principal,
         TrustedInstant::new(1),
     ) else {

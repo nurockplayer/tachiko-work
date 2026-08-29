@@ -2267,7 +2267,9 @@ fn analyze_query_compare_emits_two_exact_outcomes() {
     let before = temp.path().join("before.ro");
     let after = temp.path().join("after.ro");
     save(&before, &balance_document(100.0)).unwrap();
-    save(&after, &balance_document(120.0)).unwrap();
+    let mut comparison = balance_document(120.0);
+    comparison.id = DocumentId::from("comparison-balance");
+    save(&after, &comparison).unwrap();
 
     let output = run(&[
         "analyze",

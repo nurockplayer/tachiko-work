@@ -345,7 +345,6 @@ struct PreparedAnalysis {
     candidates: Vec<EntityId>,
     requirements: BTreeSet<DisclosureRequirement>,
     deferred_failure: Option<AnalysisFailure>,
-    formula_calculation_used: bool,
 }
 
 struct EvaluatedAnalysis {
@@ -395,10 +394,10 @@ impl PatchLifecycle {
 
     /// Evaluate one normalized definition over two explicit exact contexts.
     ///
-    /// The definition is normalized exactly once. Each context is authorized
-    /// independently, then the combined result/lineage footprint is checked as
-    /// one whole projection. No history, diff, or resident revision lookup is
-    /// performed.
+    /// The definition is normalized exactly once. Each independently bound
+    /// lifecycle authorizes its context, then both halves of the combined
+    /// result/lineage footprint are rechecked before one whole projection is
+    /// returned. No history, diff, or resident revision lookup is performed.
     ///
     /// # Errors
     ///
@@ -410,11 +409,13 @@ impl PatchLifecycle {
         first_scope: &DocumentScopeId,
         first_document: &Document,
         first_source: (&SemanticRevision, ValidatorConfiguration),
+        second_lifecycle: &PatchLifecycle,
         second_scope: &DocumentScopeId,
         second_document: &Document,
         second_source: (&SemanticRevision, ValidatorConfiguration),
         definition: &AnalysisDefinition,
-        principal: &PrincipalId,
+        first_principal: &PrincipalId,
+        second_principal: &PrincipalId,
         now: TrustedInstant,
     ) -> Result<PairedAnalysisQueryResult, AnalysisOperationError> {
         let normalized = definition.admit_envelope()?;
@@ -423,23 +424,23 @@ impl PatchLifecycle {
             first_document,
             first_source,
             &normalized,
-            principal,
+            first_principal,
             now,
         )?;
-        let second = self.evaluate_analysis(
+        let second = second_lifecycle.evaluate_analysis(
             second_scope,
             second_document,
             second_source,
             &normalized,
-            principal,
+            second_principal,
             now,
         )?;
-        let combined = first
-            .requirements
-            .union(&second.requirements)
-            .cloned()
-            .collect();
-        self.require_analysis_query(principal, &combined, now)?;
+        // A paired projection may span independently bound document
+        // occurrences. Rechecking both complete halves is the cross-context
+        // conjunction of the combined disclosure footprint; neither half is
+        // projected unless both authorities still cover it.
+        self.require_analysis_query(first_principal, &first.requirements, now)?;
+        second_lifecycle.require_analysis_query(second_principal, &second.requirements, now)?;
         Ok(PairedAnalysisQueryResult {
             lineage: analysis_lineage(
                 vec![
@@ -468,8 +469,8 @@ impl PatchLifecycle {
         let prepared = self.prepare_analysis(document_scope, document, definition);
         self.require_analysis_query(principal, &prepared.requirements, now)?;
 
-        let outcome = if let Some(failure) = prepared.deferred_failure {
-            AnalysisOutcome::Failure(failure)
+        let (outcome, formula_calculation_used) = if let Some(failure) = prepared.deferred_failure {
+            (AnalysisOutcome::Failure(failure), false)
         } else {
             evaluate_authorized(document, definition, &prepared.candidates)
         };
@@ -481,7 +482,7 @@ impl PatchLifecycle {
         Ok(EvaluatedAnalysis {
             outcome,
             requirements: prepared.requirements,
-            formula_calculation_used: prepared.formula_calculation_used,
+            formula_calculation_used,
         })
     }
 
@@ -559,11 +560,17 @@ impl PatchLifecycle {
             &document_requirement,
             &mut requirements,
         );
+        if !formula_roots.is_empty() {
+            // ADR-0018's current oracle is atomic across the complete
+            // document. Any formula failure can therefore change the query
+            // outcome even when it is outside the requested dependency
+            // closure, so calculation requires complete document coverage.
+            requirements.insert(document_requirement);
+        }
         PreparedAnalysis {
             candidates,
             requirements,
             deferred_failure,
-            formula_calculation_used: !formula_roots.is_empty(),
         }
     }
 
@@ -761,9 +768,9 @@ fn evaluate_authorized(
     document: &Document,
     definition: &NormalizedAnalysisDefinition,
     candidates: &[EntityId],
-) -> AnalysisOutcome {
+) -> (AnalysisOutcome, bool) {
     if let Some(failure) = validate_targets(document, definition) {
-        return AnalysisOutcome::Failure(failure);
+        return (AnalysisOutcome::Failure(failure), false);
     }
 
     let formula_calculation_used = candidates.iter().any(|entity_id| {
@@ -785,11 +792,11 @@ fn evaluate_authorized(
         requested_failure.as_ref(),
     ) {
         Ok(selected) => selected,
-        Err(failure) => return AnalysisOutcome::Failure(failure),
+        Err(failure) => return (AnalysisOutcome::Failure(failure), formula_calculation_used),
     };
     let groups = match group_entities(document, definition, &selected) {
         Ok(groups) => groups,
-        Err(failure) => return AnalysisOutcome::Failure(failure),
+        Err(failure) => return (AnalysisOutcome::Failure(failure), formula_calculation_used),
     };
     let metrics = match collect_metrics(
         document,
@@ -799,12 +806,12 @@ fn evaluate_authorized(
         requested_failure.as_ref(),
     ) {
         Ok(metrics) => metrics,
-        Err(failure) => return AnalysisOutcome::Failure(failure),
+        Err(failure) => return (AnalysisOutcome::Failure(failure), formula_calculation_used),
     };
     if let Some(failure) = collection_limit_failure(definition, &selected, &groups) {
-        return AnalysisOutcome::Failure(failure);
+        return (AnalysisOutcome::Failure(failure), formula_calculation_used);
     }
-    AnalysisOutcome::Complete(if definition.group_by.is_some() {
+    let projection = if definition.group_by.is_some() {
         AnalysisProjection::Grouped(
             groups
                 .into_iter()
@@ -816,7 +823,11 @@ fn evaluate_authorized(
         )
     } else {
         AnalysisProjection::Ungrouped(build_bucket(definition, &selected, &metrics))
-    })
+    };
+    (
+        AnalysisOutcome::Complete(projection),
+        formula_calculation_used,
+    )
 }
 
 fn requested_formula_failure(

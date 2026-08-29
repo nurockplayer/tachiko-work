@@ -1322,9 +1322,12 @@ membership, requested field facts, and static formula-dependency scopes are
 covered before target classification, calculation, or predicate truth; that an
 explicit narrowing set grants nothing; that empty-domain existence is not
 revealed without scope; and that final projection or result-size facts are
-complete-or-denied. The portable production-semantic corpus executes fixed
-successful, structured-failure, authorization, and paired-context Analysis
-records natively and under `wasm32-unknown-unknown`.
+complete-or-denied. Because the current ADR-0018 calculation oracle is atomic
+over the complete document, a formula-backed analysis conservatively requires
+document coverage before invoking it; an unrelated protected formula failure
+cannot become an inference oracle. The portable production-semantic corpus
+executes fixed successful, structured-failure, authorization, and
+paired-context Analysis records natively and under `wasm32-unknown-unknown`.
 
 The current finite limits, equality/Number-ordering predicate catalogue,
 stable-ID output order, Rust types, CLI grammar, and JSON projection are

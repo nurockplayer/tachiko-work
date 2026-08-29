@@ -387,16 +387,19 @@ pub fn analyze_query(
     let source = (&revision, ValidatorConfiguration::WorkspaceFull);
     let output = if let Some(compare_path) = compare {
         let comparison = load_read_source(compare_path)?;
-        let comparison_revision = semantic_revision_for(&comparison)?;
+        let (comparison_lifecycle, comparison_scope, comparison_principal, comparison_revision) =
+            local_formula_query(&comparison, OperationFamily::AnalysisQuery)?;
         let result = lifecycle.query_analysis_pair(
             &scope,
             &document,
             source,
-            &scope,
+            &comparison_lifecycle,
+            &comparison_scope,
             &comparison,
             (&comparison_revision, ValidatorConfiguration::WorkspaceFull),
             &definition,
             &principal,
+            &comparison_principal,
             TrustedInstant::new(1),
         )?;
         analysis_pair_output(&result)

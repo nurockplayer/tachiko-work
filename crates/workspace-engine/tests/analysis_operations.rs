@@ -178,6 +178,43 @@ fn grant_query(lifecycle: &mut PatchLifecycle, id: &str, scopes: Vec<ScopedSeman
         .unwrap();
 }
 
+fn query_lifecycle(
+    document: &Document,
+    scope: &DocumentScopeId,
+    principal: &PrincipalId,
+    suffix: &str,
+    grant_scope: SemanticScope,
+) -> PatchLifecycle {
+    let authority = PrincipalId::from(format!("{suffix}-authority"));
+    let mut lifecycle = PatchLifecycle::new(
+        AuthorizationDomainId::from(format!("{suffix}-domain")),
+        scope.clone(),
+        document.id.clone(),
+        SemanticApiContract::from("tachiko-sem-v1"),
+        AuthorizationPolicyVersion::from("policy-v1"),
+        PolicyMeaningId::from("policy-v1-meaning"),
+    );
+    lifecycle
+        .register_principal(authority.clone(), PrincipalKind::Human)
+        .unwrap();
+    lifecycle
+        .register_principal(principal.clone(), PrincipalKind::Delegated)
+        .unwrap();
+    lifecycle
+        .provision_grant(Grant::new(
+            GrantId::from(format!("{suffix}-query")),
+            authority,
+            principal.clone(),
+            vec![GrantRequirement::query(
+                OperationFamily::AnalysisQuery,
+                ScopedSemanticSubject::new(scope.clone(), document.id.clone(), grant_scope),
+            )],
+            None,
+        ))
+        .unwrap();
+    lifecycle
+}
+
 fn revision(value: &str) -> SemanticRevision {
     SemanticRevision::from(value)
 }
@@ -481,11 +518,36 @@ fn formula_failure_evidence_never_names_an_unrequested_ungranted_target() {
     grant_query(&mut lifecycle, "alpha-only", vec![entity_scope("alpha")]);
 
     assert!(matches!(
-        run(&lifecycle, &document, &definition).unwrap().outcome,
-        AnalysisOutcome::Failure(AnalysisFailure::CalculationFailed {
-            field,
-            failure: None,
-        }) if field == FieldRef::new("alpha", "dps")
+        run(&lifecycle, &document, &definition),
+        Err(AnalysisOperationError::Lifecycle(
+            PatchLifecycleError::DisclosureDenied
+        ))
+    ));
+}
+
+#[test]
+fn lineage_records_formula_calculation_only_after_the_oracle_runs() {
+    let document = analysis_document();
+    let definition = AnalysisDefinition::new(
+        SchemaId::from("weapons"),
+        None,
+        vec![AnalysisPredicate::new(
+            FieldId::from("dps"),
+            AnalysisPredicateOperator::Equal,
+            PredicateOperand::Text("not-a-number".to_owned()),
+        )],
+        None,
+        vec![AnalysisResultRequest::Count],
+    );
+    let mut lifecycle = lifecycle();
+    grant_query(&mut lifecycle, "document-query", vec![document_scope()]);
+
+    let result = run(&lifecycle, &document, &definition).unwrap();
+    assert!(!result.lineage.formula_calculation_used);
+    assert!(matches!(
+        result.outcome,
+        AnalysisOutcome::Failure(AnalysisFailure::InvalidPredicateType { field, .. })
+            if field == FieldId::from("dps")
     ));
 }
 
@@ -771,6 +833,7 @@ fn paired_contexts_reuse_one_normalized_definition_and_deny_the_whole_pair() {
         .entities
         .retain(|entity, _| entity == &EntityId::from("alpha"));
     let mut second = first.clone();
+    second.id = DocumentId::from("comparison-game");
     second
         .entities
         .get_mut("alpha")
@@ -790,16 +853,27 @@ fn paired_contexts_reuse_one_normalized_definition_and_deny_the_whole_pair() {
 
     let mut authorized = lifecycle();
     grant_query(&mut authorized, "document-query", vec![document_scope()]);
+    let second_scope = DocumentScopeId::from("comparison-occurrence");
+    let second_principal = PrincipalId::from("comparison-agent");
+    let second_authorized = query_lifecycle(
+        &second,
+        &second_scope,
+        &second_principal,
+        "comparison",
+        SemanticScope::Document,
+    );
     let paired = authorized
         .query_analysis_pair(
             &scope_id(),
             &first,
             (&revision("r1"), ValidatorConfiguration::WorkspaceFull),
-            &scope_id(),
+            &second_authorized,
+            &second_scope,
             &second,
             (&revision("r2"), ValidatorConfiguration::WorkspaceFull),
             &definition,
             &principal(),
+            &second_principal,
             NOW,
         )
         .unwrap();
@@ -815,23 +889,40 @@ fn paired_contexts_reuse_one_normalized_definition_and_deny_the_whole_pair() {
     );
     assert_ne!(paired.first, paired.second);
 
-    let mut one_sided = lifecycle();
-    grant_query(&mut one_sided, "alpha-only", vec![entity_scope("alpha")]);
     let mut wider_second = second.clone();
     wider_second.entities.insert(
         EntityId::from("beta"),
         weapon("beta", "ranged", None, 30.0, 2.0),
     );
+    let second_limited = query_lifecycle(
+        &wider_second,
+        &second_scope,
+        &second_principal,
+        "comparison-limited",
+        SemanticScope::Entity {
+            entity: EntityId::from("alpha"),
+            schema: SchemaId::from("weapons"),
+        },
+    );
+    let count_definition = AnalysisDefinition::new(
+        SchemaId::from("weapons"),
+        None,
+        vec![],
+        None,
+        vec![AnalysisResultRequest::Count],
+    );
     assert!(matches!(
-        one_sided.query_analysis_pair(
+        authorized.query_analysis_pair(
             &scope_id(),
             &first,
             (&revision("r1"), ValidatorConfiguration::WorkspaceFull),
-            &scope_id(),
+            &second_limited,
+            &second_scope,
             &wider_second,
             (&revision("r2"), ValidatorConfiguration::WorkspaceFull),
-            &definition,
+            &count_definition,
             &principal(),
+            &second_principal,
             NOW,
         ),
         Err(AnalysisOperationError::Lifecycle(
