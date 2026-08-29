@@ -1465,12 +1465,20 @@ fn analysis_operation_lifecycle(
     document: &Document,
     family: OperationFamily,
 ) -> Result<(PatchLifecycle, DocumentScopeId, PrincipalId), ()> {
-    let scope = DocumentScopeId::from("portable-analysis-occurrence");
-    let principal = PrincipalId::from("portable-analysis-principal");
+    analysis_operation_lifecycle_named(document, family, "primary")
+}
+
+fn analysis_operation_lifecycle_named(
+    document: &Document,
+    family: OperationFamily,
+    name: &str,
+) -> Result<(PatchLifecycle, DocumentScopeId, PrincipalId), ()> {
+    let scope = DocumentScopeId::from(format!("portable-analysis-{name}-occurrence"));
+    let principal = PrincipalId::from(format!("portable-analysis-{name}-principal"));
     let document_subject =
         ScopedSemanticSubject::new(scope.clone(), document.id.clone(), SemanticScope::Document);
     let mut lifecycle = PatchLifecycle::new(
-        AuthorizationDomainId::from("portable-analysis-domain"),
+        AuthorizationDomainId::from(format!("portable-analysis-{name}-domain")),
         scope.clone(),
         document.id.clone(),
         SemanticApiContract::from("portable-analysis-api"),
@@ -1482,7 +1490,7 @@ fn analysis_operation_lifecycle(
         .map_err(|_| ())?;
     lifecycle
         .provision_grant(Grant::new(
-            GrantId::from("portable-analysis-query-grant"),
+            GrantId::from(format!("portable-analysis-{name}-query-grant")),
             principal.clone(),
             principal.clone(),
             vec![GrantRequirement::query(family, document_subject)],
@@ -1643,6 +1651,7 @@ fn analysis_paired_authorization_record() -> Record {
         .entities
         .retain(|entity, _| entity == &EntityId::from("alpha"));
     let mut second = first.clone();
+    second.id = DocumentId::from("comparison-analysis-document");
     second
         .entities
         .get_mut("alpha")
@@ -1667,6 +1676,11 @@ fn analysis_paired_authorization_record() -> Record {
     else {
         return Record::failure(UNEXPECTED, (53_u64 << 32) | 1);
     };
+    let Ok((second_lifecycle, second_scope, second_principal)) =
+        analysis_operation_lifecycle_named(&second, OperationFamily::AnalysisQuery, "comparison")
+    else {
+        return Record::failure(UNEXPECTED, (53_u64 << 32) | 2);
+    };
     let Ok(result) = lifecycle.query_analysis_pair(
         &scope,
         &first,
@@ -1674,8 +1688,8 @@ fn analysis_paired_authorization_record() -> Record {
             &SemanticRevision::from("portable-analysis-pair-r1"),
             ValidatorConfiguration::WorkspaceFull,
         ),
-        &lifecycle,
-        &scope,
+        &second_lifecycle,
+        &second_scope,
         &second,
         (
             &SemanticRevision::from("portable-analysis-pair-r2"),
@@ -1683,10 +1697,10 @@ fn analysis_paired_authorization_record() -> Record {
         ),
         &definition,
         &principal,
-        &principal,
+        &second_principal,
         TrustedInstant::new(1),
     ) else {
-        return Record::failure(UNEXPECTED, (53_u64 << 32) | 2);
+        return Record::failure(UNEXPECTED, (53_u64 << 32) | 3);
     };
     let first_outcome = AnalysisOutcome::Complete(AnalysisProjection::Ungrouped(AnalysisBucket {
         values: vec![
@@ -1719,29 +1733,40 @@ fn analysis_paired_authorization_record() -> Record {
         && result.second == second_outcome
         && result.first != result.second;
     if !exact {
-        return Record::failure(UNEXPECTED, (53_u64 << 32) | 3);
+        return Record::failure(UNEXPECTED, (53_u64 << 32) | 4);
     }
 
-    let Ok((wrong_family, wrong_scope, wrong_principal)) =
-        analysis_operation_lifecycle(&first, OperationFamily::FormulaReasoning)
+    let Ok((wrong_family, wrong_scope, wrong_principal)) = analysis_operation_lifecycle_named(
+        &second,
+        OperationFamily::FormulaReasoning,
+        "comparison-denied",
+    )
     else {
-        return Record::failure(UNEXPECTED, (53_u64 << 32) | 4);
+        return Record::failure(UNEXPECTED, (53_u64 << 32) | 5);
     };
     if !matches!(
-        wrong_family.query_analysis(
-            &wrong_scope,
+        lifecycle.query_analysis_pair(
+            &scope,
             &first,
             (
                 &SemanticRevision::from("portable-analysis-pair-r1"),
                 ValidatorConfiguration::WorkspaceFull,
             ),
+            &wrong_family,
+            &wrong_scope,
+            &second,
+            (
+                &SemanticRevision::from("portable-analysis-pair-r2"),
+                ValidatorConfiguration::WorkspaceFull,
+            ),
             &definition,
+            &principal,
             &wrong_principal,
             TrustedInstant::new(1),
         ),
         Err(AnalysisOperationError::Lifecycle(PatchLifecycleError::DisclosureDenied))
     ) {
-        return Record::failure(UNEXPECTED, (53_u64 << 32) | 5);
+        return Record::failure(UNEXPECTED, (53_u64 << 32) | 6);
     }
     Record {
         class: ANALYSIS_PAIRED_AUTHORIZATION,
@@ -1815,8 +1840,14 @@ fn analysis_hash_lineage(hash: &mut u64, lineage: &AnalysisLineage) {
         );
     }
     analysis_hash_text(hash, lineage.normalized_definition.schema.as_str());
-    for entity in &lineage.normalized_definition.narrowing {
-        analysis_hash_text(hash, entity.as_str());
+    match &lineage.normalized_definition.narrowing {
+        Some(entities) => {
+            analysis_hash_text(hash, "explicit-narrowing");
+            for entity in entities {
+                analysis_hash_text(hash, entity.as_str());
+            }
+        }
+        None => analysis_hash_text(hash, "unbounded-domain"),
     }
     for predicate in &lineage.normalized_definition.predicates {
         analysis_hash_predicate(hash, predicate);
@@ -1991,6 +2022,11 @@ fn analysis_hash_failure(hash: &mut u64, failure: &AnalysisFailure) {
             analysis_hash_text(hash, expected.as_str());
             analysis_hash_text(hash, actual.as_str());
         }
+        AnalysisFailure::IncoherentCandidateIdentity { key, entity } => {
+            analysis_hash_text(hash, "incoherent-candidate-identity");
+            analysis_hash_text(hash, key.as_str());
+            analysis_hash_text(hash, entity.as_str());
+        }
         AnalysisFailure::InvalidPredicateType { field, declared }
         | AnalysisFailure::InvalidMetricType { field, declared } => {
             analysis_hash_text(hash, "invalid-declared-type");
@@ -2100,7 +2136,10 @@ fn analysis_pair_fingerprint(result: &PairedAnalysisQueryResult) -> u64 {
     analysis_hash_lineage(&mut hash, &result.lineage);
     analysis_hash_outcome(&mut hash, &result.first);
     analysis_hash_outcome(&mut hash, &result.second);
-    analysis_hash_text(&mut hash, "formula-reasoning-grant-denied-analysis-query");
+    analysis_hash_text(
+        &mut hash,
+        "independent-second-family-denied-analysis-pair",
+    );
     hash
 }
 

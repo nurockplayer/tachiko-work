@@ -1158,7 +1158,7 @@ fn normalized_analysis_definition_output(
 ) -> serde_json::Value {
     json!({
         "schema": definition.schema,
-        "narrowing": definition.narrowing.iter().collect::<Vec<_>>(),
+        "narrowing": definition.narrowing.as_ref().map(|entities| entities.iter().collect::<Vec<_>>()),
         "predicates": definition.predicates.iter().map(|p| json!({ "field": p.field, "operator": analysis_operator_name(p.operator), "operand": analysis_operand_output(&p.operand) })).collect::<Vec<_>>(),
         "group_by": definition.group_by,
         "results": definition.results.iter().map(analysis_result_request_output).collect::<Vec<_>>(),
@@ -1273,6 +1273,9 @@ fn analysis_failure_output(failure: &AnalysisFailure) -> serde_json::Value {
             actual,
         } => {
             json!({ "kind": "wrong_domain_narrowing_entity", "entity": entity, "expected": expected, "actual": actual })
+        }
+        AnalysisFailure::IncoherentCandidateIdentity { key, entity } => {
+            json!({ "kind": "incoherent_candidate_identity", "key": key, "entity": entity })
         }
         AnalysisFailure::InvalidPredicateType { field, declared } => {
             json!({ "kind": "invalid_predicate_type", "field": field, "declared": declared })

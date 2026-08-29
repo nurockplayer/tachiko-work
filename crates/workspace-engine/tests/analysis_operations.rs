@@ -6,7 +6,7 @@ use tachiko_workspace_engine::{
     analysis_operations::{
         AnalysisCollectionKind, AnalysisDefinition, AnalysisFailure, AnalysisGroupKey,
         AnalysisOperationError, AnalysisOutcome, AnalysisPredicate, AnalysisPredicateOperator,
-        AnalysisProjection, AnalysisResultRequest, AnalysisResultValue,
+        AnalysisProjection, AnalysisResultRequest, AnalysisResultValue, AnalysisValueKind,
         MAX_ANALYSIS_COLLECTION_RESULTS, NumericAggregateOutcome, PredicateOperand,
     },
     formula_operations::ValidatorConfiguration,
@@ -108,6 +108,51 @@ fn analysis_document() -> Document {
             ),
         ]),
     }
+}
+
+fn analysis_document_with_wrong_schema_reference() -> Document {
+    let mut document = analysis_document();
+    document.schemas.insert(
+        SchemaId::from("categories"),
+        Schema {
+            id: SchemaId::from("categories"),
+            key: SchemaKey::from("categories"),
+            fields: BTreeMap::new(),
+        },
+    );
+    document.schemas.insert(
+        SchemaId::from("characters"),
+        Schema {
+            id: SchemaId::from("characters"),
+            key: SchemaKey::from("characters"),
+            fields: BTreeMap::new(),
+        },
+    );
+    document.schemas.get_mut("weapons").unwrap().fields.insert(
+        FieldId::from("category_ref"),
+        FieldDefinition {
+            id: FieldId::from("category_ref"),
+            key: FieldKey::from("category_ref"),
+            field_type: FieldType::Reference {
+                schema: SchemaId::from("categories"),
+            },
+            required: false,
+        },
+    );
+    document.entities.insert(
+        EntityId::from("wrong-category"),
+        Entity {
+            id: EntityId::from("wrong-category"),
+            key: EntityKey::from("wrong-category"),
+            schema: SchemaId::from("characters"),
+            fields: BTreeMap::new(),
+        },
+    );
+    document.entities.get_mut("alpha").unwrap().fields.insert(
+        FieldId::from("category_ref"),
+        Value::Reference(EntityId::from("wrong-category")),
+    );
+    document
 }
 
 fn principal() -> PrincipalId {
@@ -271,7 +316,16 @@ fn typed_filter_uses_optional_missing_as_false_and_stable_ids_as_a_narrowing_int
 
     let result = run(&lifecycle, &document, &definition).unwrap();
     assert_eq!(result.lineage.sources[0].source_revision, revision("r1"));
-    assert_eq!(result.lineage.normalized_definition.narrowing.len(), 2);
+    assert_eq!(
+        result
+            .lineage
+            .normalized_definition
+            .narrowing
+            .as_ref()
+            .unwrap()
+            .len(),
+        2
+    );
     assert!(result.lineage.formula_calculation_used);
     let values = complete_values(result);
     assert_eq!(
@@ -292,6 +346,36 @@ fn typed_filter_uses_optional_missing_as_false_and_stable_ids_as_a_narrowing_int
                 values: vec![(EntityId::from("alpha"), number(50.0))],
             },
         ]
+    );
+}
+
+#[test]
+fn explicit_empty_narrowing_is_an_empty_intersection_not_an_unbounded_domain() {
+    let document = analysis_document();
+    let mut lifecycle = lifecycle();
+    grant_query(&mut lifecycle, "document-query", vec![document_scope()]);
+    let definition = AnalysisDefinition::new(
+        SchemaId::from("weapons"),
+        Some(vec![]),
+        vec![],
+        None,
+        vec![
+            AnalysisResultRequest::Membership,
+            AnalysisResultRequest::Count,
+        ],
+    );
+
+    let result = run(&lifecycle, &document, &definition).unwrap();
+    assert_eq!(
+        complete_values(result.clone()),
+        vec![
+            AnalysisResultValue::Membership(vec![]),
+            AnalysisResultValue::Count(0),
+        ]
+    );
+    assert_eq!(
+        result.lineage.normalized_definition.narrowing,
+        Some(BTreeSet::new())
     );
 }
 
@@ -442,47 +526,7 @@ fn grouping_missing_value_and_formula_value_are_structured_failures() {
 
 #[test]
 fn grouping_rejects_reference_values_from_the_wrong_schema() {
-    let mut document = analysis_document();
-    document.schemas.insert(
-        SchemaId::from("categories"),
-        Schema {
-            id: SchemaId::from("categories"),
-            key: SchemaKey::from("categories"),
-            fields: BTreeMap::new(),
-        },
-    );
-    document.schemas.insert(
-        SchemaId::from("characters"),
-        Schema {
-            id: SchemaId::from("characters"),
-            key: SchemaKey::from("characters"),
-            fields: BTreeMap::new(),
-        },
-    );
-    document.schemas.get_mut("weapons").unwrap().fields.insert(
-        FieldId::from("category_ref"),
-        FieldDefinition {
-            id: FieldId::from("category_ref"),
-            key: FieldKey::from("category_ref"),
-            field_type: FieldType::Reference {
-                schema: SchemaId::from("categories"),
-            },
-            required: false,
-        },
-    );
-    document.entities.insert(
-        EntityId::from("wrong-category"),
-        Entity {
-            id: EntityId::from("wrong-category"),
-            key: EntityKey::from("wrong-category"),
-            schema: SchemaId::from("characters"),
-            fields: BTreeMap::new(),
-        },
-    );
-    document.entities.get_mut("alpha").unwrap().fields.insert(
-        FieldId::from("category_ref"),
-        Value::Reference(EntityId::from("wrong-category")),
-    );
+    let document = analysis_document_with_wrong_schema_reference();
     let definition = AnalysisDefinition::new(
         SchemaId::from("weapons"),
         Some(vec![EntityId::from("alpha")]),
@@ -498,7 +542,34 @@ fn grouping_rejects_reference_values_from_the_wrong_schema() {
         AnalysisOutcome::Failure(AnalysisFailure::InvalidGroupValue {
             entity,
             field,
-            actual: tachiko_workspace_engine::analysis_operations::AnalysisValueKind::Reference,
+            actual: AnalysisValueKind::Reference,
+        }) if entity == EntityId::from("alpha") && field == FieldId::from("category_ref")
+    ));
+}
+
+#[test]
+fn predicate_rejects_reference_values_from_the_wrong_schema() {
+    let document = analysis_document_with_wrong_schema_reference();
+    let definition = AnalysisDefinition::new(
+        SchemaId::from("weapons"),
+        Some(vec![EntityId::from("alpha")]),
+        vec![AnalysisPredicate::new(
+            FieldId::from("category_ref"),
+            AnalysisPredicateOperator::Equal,
+            PredicateOperand::Reference(EntityId::from("wrong-category")),
+        )],
+        None,
+        vec![AnalysisResultRequest::Count],
+    );
+    let mut lifecycle = lifecycle();
+    grant_query(&mut lifecycle, "document-query", vec![document_scope()]);
+
+    assert!(matches!(
+        run(&lifecycle, &document, &definition).unwrap().outcome,
+        AnalysisOutcome::Failure(AnalysisFailure::InvalidPredicateValue {
+            entity,
+            field,
+            actual: AnalysisValueKind::Reference,
         }) if entity == EntityId::from("alpha") && field == FieldId::from("category_ref")
     ));
 }
@@ -554,6 +625,45 @@ fn formula_predicate_failure_and_metric_incompleteness_return_no_partial_payload
         run(&lifecycle, &incomplete, &metric).unwrap().outcome,
         AnalysisOutcome::Failure(AnalysisFailure::MetricIncomplete { entity, field, .. })
             if entity == EntityId::from("alpha") && field == FieldId::from("damage")
+    ));
+}
+
+#[test]
+fn formula_predicate_failure_is_not_masked_by_an_earlier_false_predicate() {
+    let mut document = analysis_document();
+    document
+        .entities
+        .get_mut("alpha")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("attack_interval"), Value::Number(number(0.0)));
+    let definition = AnalysisDefinition::new(
+        SchemaId::from("weapons"),
+        None,
+        vec![
+            AnalysisPredicate::new(
+                FieldId::from("category"),
+                AnalysisPredicateOperator::Equal,
+                PredicateOperand::Text("ranged".to_owned()),
+            ),
+            AnalysisPredicate::new(
+                FieldId::from("dps"),
+                AnalysisPredicateOperator::GreaterThan,
+                PredicateOperand::Number(number(10.0)),
+            ),
+        ],
+        None,
+        vec![AnalysisResultRequest::Count],
+    );
+    let mut lifecycle = lifecycle();
+    grant_query(&mut lifecycle, "document-query", vec![document_scope()]);
+
+    assert!(matches!(
+        run(&lifecycle, &document, &definition).unwrap().outcome,
+        AnalysisOutcome::Failure(AnalysisFailure::CalculationFailed {
+            field,
+            failure: Some(tachiko_workspace_engine::CalculationFailure::DivisionByZero),
+        }) if field == FieldRef::new("alpha", "dps")
     ));
 }
 
@@ -744,6 +854,30 @@ fn malformed_runtime_predicate_value_is_not_silently_filtered_out() {
             field,
             ..
         }) if entity == EntityId::from("alpha") && field == FieldId::from("damage")
+    ));
+}
+
+#[test]
+fn incoherent_candidate_map_identity_fails_closed_without_panicking() {
+    let mut document = analysis_document();
+    let alpha = document.entities.remove("alpha").unwrap();
+    document.entities.insert(EntityId::from("map-key"), alpha);
+    let definition = AnalysisDefinition::new(
+        SchemaId::from("weapons"),
+        None,
+        vec![],
+        None,
+        vec![AnalysisResultRequest::Count],
+    );
+    let mut lifecycle = lifecycle();
+    grant_query(&mut lifecycle, "document-query", vec![document_scope()]);
+
+    assert!(matches!(
+        run(&lifecycle, &document, &definition).unwrap().outcome,
+        AnalysisOutcome::Failure(AnalysisFailure::IncoherentCandidateIdentity {
+            key,
+            entity,
+        }) if key == EntityId::from("map-key") && entity == EntityId::from("alpha")
     ));
 }
 
@@ -1019,7 +1153,10 @@ fn repeated_equal_query_is_exactly_reproducible_with_structured_lineage() {
     assert_eq!(first, second);
     assert_eq!(
         first.lineage.normalized_definition.narrowing,
-        BTreeSet::from([EntityId::from("alpha"), EntityId::from("gamma")])
+        Some(BTreeSet::from([
+            EntityId::from("alpha"),
+            EntityId::from("gamma")
+        ]))
     );
     assert!(!first.lineage.derivations.is_empty());
 }

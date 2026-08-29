@@ -70,7 +70,7 @@ impl AnalysisDefinition {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NormalizedAnalysisDefinition {
     pub schema: SchemaId,
-    pub narrowing: BTreeSet<EntityId>,
+    pub narrowing: Option<BTreeSet<EntityId>>,
     pub predicates: Vec<AnalysisPredicate>,
     pub group_by: Option<FieldId>,
     pub results: Vec<AnalysisResultRequest>,
@@ -201,6 +201,10 @@ pub enum AnalysisFailure {
         entity: EntityId,
         expected: SchemaId,
         actual: SchemaId,
+    },
+    IncoherentCandidateIdentity {
+        key: EntityId,
+        entity: EntityId,
     },
     InvalidPredicateType {
         field: FieldId,
@@ -607,21 +611,31 @@ fn resolve_candidate_domain(
             }),
         );
     }
-    if definition.narrowing.is_empty() {
-        return (
-            document
-                .entities
-                .values()
-                .filter(|entity| entity.schema == definition.schema)
-                .map(|entity| entity.id.clone())
-                .collect(),
-            None,
-        );
-    }
+    let Some(narrowing) = &definition.narrowing else {
+        let mut candidates = Vec::new();
+        let mut deferred_failure = None;
+        for (key, entity) in &document.entities {
+            if entity.schema != definition.schema {
+                continue;
+            }
+            if key == &entity.id {
+                candidates.push(key.clone());
+            } else {
+                requirements.insert(document_requirement.clone());
+                deferred_failure.get_or_insert_with(|| {
+                    AnalysisFailure::IncoherentCandidateIdentity {
+                        key: key.clone(),
+                        entity: entity.id.clone(),
+                    }
+                });
+            }
+        }
+        return (candidates, deferred_failure);
+    };
 
     let mut candidates = Vec::new();
     let mut deferred_failure = None;
-    for entity_id in &definition.narrowing {
+    for entity_id in narrowing {
         let Some(entity) = document.entities.get(entity_id) else {
             requirements.insert(document_requirement.clone());
             deferred_failure.get_or_insert_with(|| AnalysisFailure::UnresolvedNarrowingEntity {
@@ -629,6 +643,14 @@ fn resolve_candidate_domain(
             });
             continue;
         };
+        if entity_id != &entity.id {
+            requirements.insert(document_requirement.clone());
+            deferred_failure.get_or_insert_with(|| AnalysisFailure::IncoherentCandidateIdentity {
+                key: entity_id.clone(),
+                entity: entity.id.clone(),
+            });
+            continue;
+        }
         requirements.insert(analysis_entity_requirement(
             document_scope,
             document,
@@ -677,10 +699,8 @@ fn normalize_definition(
         schema: definition.schema.clone(),
         narrowing: definition
             .narrowing
-            .clone()
-            .unwrap_or_default()
-            .into_iter()
-            .collect(),
+            .as_ref()
+            .map(|ids| ids.iter().cloned().collect()),
         predicates,
         group_by: definition.group_by.clone(),
         results,
@@ -784,6 +804,15 @@ fn evaluate_authorized(
     let calculation = formula_calculation_used.then(|| calculate_complete(document));
     let requested_failure =
         requested_formula_failure(document, definition, candidates, calculation.as_ref());
+    if let Err(failure) = validate_formula_predicates(
+        document,
+        definition,
+        candidates,
+        calculation.as_ref(),
+        requested_failure.as_ref(),
+    ) {
+        return (AnalysisOutcome::Failure(failure), formula_calculation_used);
+    }
     let selected = match select_entities(
         document,
         definition,
@@ -932,6 +961,7 @@ fn select_entities(
     calculation: Option<&CalculationOutcome>,
     requested_failure: Option<&(FieldRef, CalculationFailure)>,
 ) -> Result<Vec<EntityId>, AnalysisFailure> {
+    let schema = &document.schemas[&definition.schema];
     let mut selected = Vec::new();
     for entity_id in candidates {
         let entity = &document.entities[entity_id];
@@ -941,6 +971,17 @@ fn select_entities(
                 matched = false;
                 break;
             };
+            if let (FieldType::Reference { schema }, Value::Reference(reference)) =
+                (&schema.fields[&predicate.field].field_type, value)
+            {
+                if !reference_value_is_typed(document, schema, reference) {
+                    return Err(AnalysisFailure::InvalidPredicateValue {
+                        entity: entity_id.clone(),
+                        field: predicate.field.clone(),
+                        actual: AnalysisValueKind::Reference,
+                    });
+                }
+            }
             let effective = effective_predicate_value(
                 entity_id,
                 &predicate.field,
@@ -965,6 +1006,31 @@ fn select_entities(
         }
     }
     Ok(selected)
+}
+
+fn validate_formula_predicates(
+    document: &Document,
+    definition: &NormalizedAnalysisDefinition,
+    candidates: &[EntityId],
+    calculation: Option<&CalculationOutcome>,
+    requested_failure: Option<&(FieldRef, CalculationFailure)>,
+) -> Result<(), AnalysisFailure> {
+    let schema = &document.schemas[&definition.schema];
+    for entity_id in candidates {
+        let entity = &document.entities[entity_id];
+        for predicate in &definition.predicates {
+            if schema.fields[&predicate.field].field_type == FieldType::Number
+                && matches!(entity.fields.get(&predicate.field), Some(Value::Formula(_)))
+            {
+                effective_formula_number(
+                    &FieldRef::new(entity_id.clone(), predicate.field.clone()),
+                    calculation,
+                    requested_failure,
+                )?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn effective_predicate_value(
@@ -1041,14 +1107,7 @@ fn group_entities(
             (FieldType::Text, Value::Text(value)) => AnalysisGroupKey::Text(value.clone()),
             (FieldType::Boolean, Value::Boolean(value)) => AnalysisGroupKey::Boolean(*value),
             (FieldType::Reference { schema }, Value::Reference(value)) => {
-                let Some(referenced) = document.entities.get(value) else {
-                    return Err(AnalysisFailure::InvalidGroupValue {
-                        entity: entity_id.clone(),
-                        field: field.clone(),
-                        actual: AnalysisValueKind::Reference,
-                    });
-                };
-                if &referenced.schema != schema {
+                if !reference_value_is_typed(document, schema, value) {
                     return Err(AnalysisFailure::InvalidGroupValue {
                         entity: entity_id.clone(),
                         field: field.clone(),
@@ -1068,6 +1127,17 @@ fn group_entities(
         groups.entry(key).or_default().push(entity_id.clone());
     }
     Ok(groups)
+}
+
+fn reference_value_is_typed(
+    document: &Document,
+    expected_schema: &SchemaId,
+    reference: &EntityId,
+) -> bool {
+    document
+        .entities
+        .get(reference)
+        .is_some_and(|entity| &entity.schema == expected_schema)
 }
 
 fn collect_metrics(
