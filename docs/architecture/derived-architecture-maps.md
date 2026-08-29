@@ -77,7 +77,9 @@ Generation should remain reproducible and optional:
 - correct material composition or visual defects before treating the output as reviewable evidence; and
 - keep generated artifacts outside the repository unless a deliberate checkpoint policy says otherwise.
 
-The exact generator, renderer version, local paths, screenshots, and validation receipt format are tooling details, not Tachiko semantic or architecture contracts.
+A durable checkpoint must also preserve enough tooling provenance to reproduce the reviewed artifact: the generator identity and version, any independently versioned renderer/delivery tool, the quality/profile selection, and the invocation or equivalent options that materially affect generation. This provenance may live in the typed source or adjacent repository-managed metadata; its exact schema is not fixed here.
+
+Tool versions and invocation metadata are reproducibility evidence, not Tachiko semantic or architecture authority. Local temporary paths, screenshots, and validation-receipt encoding remain replaceable tooling details.
 
 ## Architecture review use
 
