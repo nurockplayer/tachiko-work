@@ -2,8 +2,8 @@ mod common;
 
 use common::game_balance_document;
 use tachiko_workspace_engine::{
-    CalculationFailure, DocumentId, EntityId, EntityKey, Expression, FieldAddress, FieldRef,
-    Number, Value, diagnostic_codes,
+    CalculationFailure, DiagnosticCode, DocumentId, EntityId, EntityKey, Expression, FieldAddress,
+    FieldRef, Number, Value, diagnostic_codes,
     formula_operations::FormulaCalculationOutcome,
     patch_lifecycle::{
         AuthorizationAction, AuthorizationDomainId, AuthorizationPolicyVersion, DocumentScopeId,
@@ -333,6 +333,61 @@ fn scalar_mutation_invalidates_changed_field_and_downstream_projection_at_new_re
     assert!(invalidation.entities.is_empty());
     assert_eq!(invalidation.fields, [damage]);
     assert_eq!(invalidation.affected_calculations, [dps]);
+}
+
+#[test]
+fn target_removal_invalidates_fields_whose_reference_diagnostics_change() {
+    let mut session =
+        ResidentWorkspaceSession::new(document_scope_id(), game_balance_document("game", "Game"));
+    let referencing_fields = [
+        FieldRef::new("alric", "weapon"),
+        FieldRef::new("tempered_blade", "grants_weapon"),
+    ];
+    let before = session.query_fields(&referencing_fields).unwrap();
+    assert!(
+        before
+            .value()
+            .iter()
+            .all(|projection| projection.diagnostics.is_empty())
+    );
+
+    let snapshot = session.export_snapshot();
+    let mut candidate = snapshot.document().clone();
+    candidate.entities.remove("iron_sword");
+    let mut time = FixedTrustedTime { calls: 0 };
+    let invalidation = {
+        let mut publication = session.publication_authority(&mut time);
+        let resulting_revision = publication
+            .publish_if_current(
+                snapshot.document_scope(),
+                snapshot.revision(),
+                candidate,
+                |_| Some(()),
+            )
+            .unwrap()
+            .2;
+        publication
+            .projection_invalidation_for(
+                snapshot.document_scope(),
+                snapshot.revision(),
+                &resulting_revision,
+            )
+            .unwrap()
+            .clone()
+    };
+
+    let after = session.query_fields(&referencing_fields).unwrap();
+    assert!(after.value().iter().all(|projection| {
+        projection
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == DiagnosticCode::MISSING_REFERENCE)
+    }));
+    assert!(
+        referencing_fields
+            .iter()
+            .all(|field| invalidation.fields.contains(field))
+    );
 }
 
 #[test]

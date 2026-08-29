@@ -156,13 +156,7 @@ impl ResidentWorkspaceSession {
                 })?;
                 let presentation_address =
                     FieldAddress::new(entity.key.clone(), definition.key.clone());
-                let subject = SemanticSubject::EntityField(field.clone());
-                let diagnostics = report
-                    .diagnostics()
-                    .iter()
-                    .filter(|diagnostic| diagnostic.subjects.contains(&subject))
-                    .cloned()
-                    .collect();
+                let diagnostics = diagnostics_for_field(&report, &field);
                 let (stored_value, formula_definition, calculated_value) = match value {
                     Value::Formula(expression) => (
                         None,
@@ -430,6 +424,7 @@ fn projection_invalidation(
     let mut changes = ProjectionChanges::default();
     collect_entity_projection_changes(before, after, &entity_ids, &mut changes);
     collect_schema_projection_changes(before, after, &entity_ids, &mut changes);
+    collect_diagnostic_projection_changes(before, after, &entity_ids, &mut changes);
 
     let before_calculation = calculate_complete(before);
     let after_calculation = calculate_complete(after);
@@ -588,6 +583,52 @@ fn collect_schema_projection_changes(
             }
         }
     }
+}
+
+fn collect_diagnostic_projection_changes(
+    before: &Document,
+    after: &Document,
+    entity_ids: &BTreeSet<EntityId>,
+    changes: &mut ProjectionChanges,
+) {
+    let before_report = validation_report(before);
+    let after_report = validation_report(after);
+
+    for entity_id in entity_ids {
+        let field_ids = before
+            .entities
+            .get(entity_id)
+            .into_iter()
+            .flat_map(|entity| entity.fields.keys())
+            .chain(
+                after
+                    .entities
+                    .get(entity_id)
+                    .into_iter()
+                    .flat_map(|entity| entity.fields.keys()),
+            )
+            .cloned()
+            .collect::<BTreeSet<_>>();
+
+        for field_id in field_ids {
+            let field = FieldRef::new(entity_id.clone(), field_id);
+            if diagnostics_for_field(&before_report, &field)
+                != diagnostics_for_field(&after_report, &field)
+            {
+                changes.fields.insert(field);
+            }
+        }
+    }
+}
+
+fn diagnostics_for_field(report: &ValidationReport, field: &FieldRef) -> Vec<Diagnostic> {
+    let subject = SemanticSubject::EntityField(field.clone());
+    report
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| diagnostic.subjects.contains(&subject))
+        .cloned()
+        .collect()
 }
 
 #[cfg(test)]
