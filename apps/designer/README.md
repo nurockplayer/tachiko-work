@@ -21,6 +21,7 @@ pnpm --dir apps/designer lint
 pnpm --dir apps/designer typecheck
 pnpm --dir apps/designer test
 pnpm --dir apps/designer build
+pnpm --dir apps/designer exec playwright install chromium
 pnpm --dir apps/designer test:browser
 ```
 

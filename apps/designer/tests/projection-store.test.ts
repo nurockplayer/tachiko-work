@@ -137,4 +137,47 @@ describe("revision-keyed projection store", () => {
       value: 45,
     });
   });
+
+  it("does not mark an invalidated unavailable control projection current", () => {
+    const store = createProjectionStore(table, {
+      target: { entity: "shop", field: "upgrade_cost" },
+      value: 200,
+      revision: "resident/0",
+    });
+    store.beginPublication({
+      ...publication,
+      affected_calculations: [
+        { entity: "iron_sword", field: "dps" },
+        { entity: "shop", field: "upgrade_cost" },
+      ],
+    });
+
+    expect(() => {
+      store.finishRefresh({
+        revision: "resident/1",
+        fields: [
+          { ...table.rows[0]!.fields[0]!, stored: { kind: "number", value: 45 } },
+          {
+            ...table.rows[0]!.fields[1]!,
+            calculated: { status: "value", value: 50 },
+          },
+          {
+            target: { entity: "shop", field: "upgrade_cost" },
+            address: "shop.upgrade_cost",
+            stored: null,
+            formula: { source: "[tempered_blade.price]" },
+            calculated: { status: "unavailable" },
+            diagnostics: [],
+            editable_number: false,
+          },
+        ],
+      });
+    }).toThrow("invalidated control projection is unavailable");
+    expect(store.snapshot().currentness).toBe("refreshing");
+    expect(store.snapshot().control).toEqual({
+      target: { entity: "shop", field: "upgrade_cost" },
+      value: 200,
+      revision: "resident/0",
+    });
+  });
 });

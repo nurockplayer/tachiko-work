@@ -177,6 +177,45 @@ class RefreshFailingClient extends FakeClient {
   }
 }
 
+class ControlRecoveryClient extends FakeClient {
+  private refreshFailed = false;
+
+  override async queryTable(): Promise<TableProjection> {
+    const projected = structuredClone(table);
+    if (this.editRequests.length > 0) {
+      projected.revision = "resident/1";
+      projected.rows[0]!.fields[1]!.stored = { kind: "number", value: 45 };
+      projected.rows[0]!.fields[2]!.calculated = { status: "value", value: 50 };
+    }
+    return projected;
+  }
+
+  override async queryFields(
+    revision: string,
+    fields: FieldTarget[],
+  ): Promise<FieldBatchProjection> {
+    if (fields.some((field) => field.entity === "iron_sword")) {
+      this.refreshFailed = true;
+      throw new Error("Selective refresh is temporarily unavailable.");
+    }
+    const batch = await super.queryFields(revision, fields);
+    if (this.refreshFailed && batch.fields[0]?.calculated?.status === "value") {
+      batch.fields[0].calculated.value = 220;
+    }
+    return batch;
+  }
+
+  override async editNumber(
+    expectedRevision: string,
+    target: FieldTarget,
+    input: string,
+  ): Promise<PublicationProjection> {
+    const publication = await super.editNumber(expectedRevision, target, input);
+    publication.affected_calculations.push(bootstrap.control_field);
+    return publication;
+  }
+}
+
 describe("Designer application seam", () => {
   it("renders the bounded table and selectively refreshes a derived result", async () => {
     document.body.innerHTML = '<div id="app"></div>';
@@ -301,5 +340,45 @@ describe("Designer application seam", () => {
       "resident/1",
     );
     expect(client.editRequests).toHaveLength(1);
+  });
+
+  it("recovers a failed invalidated control through a fresh collection query", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const client = new ControlRecoveryClient();
+    const app = mountDesigner(root, client);
+    await app.ready;
+
+    const damage = root.querySelector<HTMLInputElement>(
+      'input[aria-label="Damage for Iron Sword"]',
+    );
+    if (damage === null || damage.form === null) {
+      throw new Error("damage edit form is required");
+    }
+    damage.value = "45";
+    damage.form.requestSubmit();
+    await vi.waitFor(() => {
+      expect(root.querySelector('[data-currentness="refresh_failed"]')).not.toBeNull();
+    });
+
+    const collection = root.querySelector<HTMLSelectElement>(
+      "[data-collection-select]",
+    );
+    if (collection === null) throw new Error("collection selector is required");
+    collection.value = "economy";
+    collection.dispatchEvent(new Event("change"));
+
+    await vi.waitFor(() => {
+      expect(root.querySelector('[data-currentness="current"]')).not.toBeNull();
+    });
+    expect(root.querySelector('[data-testid="control-value"]')?.textContent).toBe(
+      "220",
+    );
+    expect(
+      root.querySelector<HTMLInputElement>(
+        'input[aria-label="Damage for Iron Sword"]',
+      )?.disabled,
+    ).toBe(false);
   });
 });

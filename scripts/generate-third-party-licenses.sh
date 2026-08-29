@@ -23,6 +23,7 @@ cleanup() {
 trap cleanup EXIT
 
 vendor_dir="${work_dir}/vendor"
+designer_vendor_dir="${work_dir}/designer-vendor"
 tree_inventory="${work_dir}/tree-inventory.txt"
 lock_inventory="${work_dir}/lock-inventory.txt"
 package_inventory="${work_dir}/package-inventory.txt"
@@ -41,14 +42,34 @@ if ! cargo +stable vendor --locked --versioned-dirs "${vendor_dir}" >/dev/null 2
   cat "${vendor_log}" >&2
   fail "cargo vendor failed"
 fi
-cargo +stable tree \
-  -p tachiko-cli \
-  --edges normal \
-  --target all \
+designer_vendor_log="${work_dir}/designer-cargo-vendor.log"
+if ! cargo +stable vendor \
+  --manifest-path apps/designer/runtime/Cargo.toml \
   --locked \
-  --no-dedupe \
-  --prefix none \
-  --format '{p}|{l}|{r}' |
+  --versioned-dirs \
+  "${designer_vendor_dir}" >/dev/null 2>"${designer_vendor_log}"; then
+  cat "${designer_vendor_log}" >&2
+  fail "Designer cargo vendor failed"
+fi
+{
+  cargo +stable tree \
+    -p tachiko-cli \
+    --edges normal \
+    --target all \
+    --locked \
+    --no-dedupe \
+    --prefix none \
+    --format '{p}|{l}|{r}'
+  cargo +stable tree \
+    --manifest-path apps/designer/runtime/Cargo.toml \
+    -p tachiko-designer-runtime \
+    --edges normal \
+    --target all \
+    --locked \
+    --no-dedupe \
+    --prefix none \
+    --format '{p}|{l}|{r}'
+} |
   awk -F '|' '
     {
       package = $1
@@ -73,7 +94,7 @@ cargo +stable tree \
   ' |
   LC_ALL=C sort -u >"${tree_inventory}"
 
-[[ -s "${tree_inventory}" ]] || fail "the tachiko-cli runtime dependency inventory is empty"
+[[ -s "${tree_inventory}" ]] || fail "the shipped runtime dependency inventory is empty"
 
 # Cargo.lock retains the immutable registry or Git source for each package.
 # Fail on an ambiguous name/version pair rather than silently attributing the
@@ -120,7 +141,7 @@ awk '
   END {
     emit_package()
   }
-' Cargo.lock | LC_ALL=C sort -u >"${lock_inventory}"
+' Cargo.lock apps/designer/runtime/Cargo.lock | LC_ALL=C sort -u >"${lock_inventory}"
 
 awk -F '|' '
   NR == FNR {
@@ -148,6 +169,9 @@ while IFS='|' read -r package version _license _source _repository; do
   [[ "${version}" =~ ^[0-9A-Za-z.+-]+$ ]] || fail "unsafe package version in inventory: ${version}"
 
   package_dir="${vendor_dir}/${package}-${version}"
+  if [[ ! -d "${package_dir}" ]]; then
+    package_dir="${designer_vendor_dir}/${package}-${version}"
+  fi
   [[ -d "${package_dir}" ]] ||
     fail "locked runtime package was not found in cargo vendor output: ${package} ${version}"
 
@@ -186,8 +210,9 @@ cat <<'EOF'
 # Third-Party Licenses
 
 This file inventories the locked, all-target normal dependency closure of the
-`tachiko` CLI. Package metadata comes from Cargo's dependency graph and
-`Cargo.lock`; license and notice text comes byte-for-byte from `cargo vendor`.
+`tachiko` CLI and first-party Web Designer runtime. Package metadata comes from
+Cargo's dependency graphs and lockfiles; license and notice text comes
+byte-for-byte from `cargo vendor`.
 Regenerate it with `bash scripts/generate-third-party-licenses.sh`.
 
 ## Package inventory

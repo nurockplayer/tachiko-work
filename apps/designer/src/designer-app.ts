@@ -118,12 +118,23 @@ export function mountDesigner(
     notice = null;
     render();
     try {
-      const table = await client.queryTable(collection);
-      const control = store.snapshot().control;
-      if (table.revision !== control.revision) {
+      const expectedRevision = store.snapshot().table.revision;
+      const [table, controlBatch] = await Promise.all([
+        client.queryTable(collection),
+        client.queryFields(expectedRevision, [bootstrap.control_field]),
+      ]);
+      if (table.revision !== expectedRevision || controlBatch.revision !== expectedRevision) {
         throw new Error("Collection query returned a different semantic revision.");
       }
-      store = createProjectionStore(table, control);
+      const controlField = controlBatch.fields[0];
+      if (controlField?.calculated?.status !== "value") {
+        throw new Error("The unrelated control projection is unavailable.");
+      }
+      store = createProjectionStore(table, {
+        target: bootstrap.control_field,
+        value: controlField.calculated.value,
+        revision: expectedRevision,
+      });
       selectedCollection = collection;
     } catch (error) {
       showFailure(error, false);

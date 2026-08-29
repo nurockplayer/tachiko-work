@@ -79,6 +79,13 @@ export function createProjectionStore(
           throw new Error(`Refresh omitted invalidated field '${target}'.`);
         }
       }
+      const controlReplacement = replacements.get(fieldTargetKey(control.target));
+      if (
+        controlReplacement !== undefined &&
+        controlReplacement.calculated?.status !== "value"
+      ) {
+        throw new Error("The invalidated control projection is unavailable after refresh.");
+      }
       table = {
         ...table,
         rows: table.rows.map((row) => ({
@@ -88,7 +95,6 @@ export function createProjectionStore(
           ),
         })),
       };
-      const controlReplacement = replacements.get(fieldTargetKey(control.target));
       if (controlReplacement?.calculated?.status === "value") {
         control = {
           ...control,

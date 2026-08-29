@@ -3,8 +3,9 @@
 # Third-Party Licenses
 
 This file inventories the locked, all-target normal dependency closure of the
-`tachiko` CLI. Package metadata comes from Cargo's dependency graph and
-`Cargo.lock`; license and notice text comes byte-for-byte from `cargo vendor`.
+`tachiko` CLI and first-party Web Designer runtime. Package metadata comes from
+Cargo's dependency graphs and lockfiles; license and notice text comes
+byte-for-byte from `cargo vendor`.
 Regenerate it with `bash scripts/generate-third-party-licenses.sh`.
 
 ## Package inventory
@@ -46,6 +47,7 @@ Regenerate it with `bash scripts/generate-third-party-licenses.sh`.
 | `sha2` | `0.11.0` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/RustCrypto/hashes |
 | `strsim` | `0.11.1` | MIT | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/rapidfuzz/strsim-rs |
 | `syn` | `3.0.3` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/dtolnay/syn |
+| `syn` | `3.0.4` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/dtolnay/syn |
 | `thiserror-impl` | `2.0.20` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/dtolnay/thiserror |
 | `thiserror` | `2.0.20` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/dtolnay/thiserror |
 | `typenum` | `1.20.1` | MIT OR Apache-2.0 | `registry+https://github.com/rust-lang/crates.io-index` | https://github.com/paholg/typenum |
@@ -134,6 +136,8 @@ attribution is retained.
 | `strsim 0.11.1` | `LICENSE` | `1e697ce8d21401fbf1bddd9b5c3fd4c4c79ae1e3bdf51f81761c85e11d5a89cd` |
 | `syn 3.0.3` | `LICENSE-APACHE` | `62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a` |
 | `syn 3.0.3` | `LICENSE-MIT` | `23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3` |
+| `syn 3.0.4` | `LICENSE-APACHE` | `62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a` |
+| `syn 3.0.4` | `LICENSE-MIT` | `23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3` |
 | `thiserror-impl 2.0.20` | `LICENSE-APACHE` | `62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a` |
 | `thiserror-impl 2.0.20` | `LICENSE-MIT` | `23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3` |
 | `thiserror 2.0.20` | `LICENSE-APACHE` | `62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a` |
@@ -283,6 +287,7 @@ Used by:
 - `serde_json 1.0.151 — LICENSE-MIT`
 - `serde 1.0.229 — LICENSE-MIT`
 - `syn 3.0.3 — LICENSE-MIT`
+- `syn 3.0.4 — LICENSE-MIT`
 - `thiserror-impl 2.0.20 — LICENSE-MIT`
 - `thiserror 2.0.20 — LICENSE-MIT`
 - `unicode-ident 1.0.24 — LICENSE-MIT`
@@ -978,6 +983,7 @@ Used by:
 - `serde_json 1.0.151 — LICENSE-APACHE`
 - `serde 1.0.229 — LICENSE-APACHE`
 - `syn 3.0.3 — LICENSE-APACHE`
+- `syn 3.0.4 — LICENSE-APACHE`
 - `thiserror-impl 2.0.20 — LICENSE-APACHE`
 - `thiserror 2.0.20 — LICENSE-APACHE`
 - `unicode-ident 1.0.24 — LICENSE-APACHE`
