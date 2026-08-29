@@ -15,13 +15,15 @@ and AI operates through semantic queries and typed proposals rather than raw fil
 or UI mutation.
 
 The first product wedge is **game-balance data for technical designers and
-developers**. The current usable product is CLI-first. The active roadmap horizon
-is [`05 · Designer MVP`](docs/product/product-roadmap.md), which is building the
-first graphical workspace without moving semantic authority into the frontend.
+developers**. The complete workflow remains CLI-first, and the repository now
+also contains the first browser Designer vertical slice: a bounded typed table
+over the resident Rust runtime. The active roadmap horizon is
+[`05 · Designer MVP`](docs/product/product-roadmap.md), which is expanding that
+graphical workspace without moving semantic authority into the frontend.
 
 > **Public pre-alpha:** the repository is intentionally public for inspection and
 > early feedback. There is no tagged binary release yet, the graphical Designer
-> workflow is not shipped yet, and APIs, formats, contribution policy, and the
+> is not packaged or released yet, and APIs, formats, contribution policy, and the
 > long-term licensing boundary are still evolving.
 
 ## What works today
@@ -40,7 +42,10 @@ On current `main`, Tachiko already provides an end-to-end game-balance proof wit
 - approval-gated semantic proposals rather than raw AI file mutation;
 - a Rust-authoritative resident runtime with revision-safe commands, bounded
   projections/invalidation, retained incremental state, and native/WASM
-  conformance evidence.
+  conformance evidence;
+- a first-party browser/Worker/WASM Designer slice that browses the Moonfall
+  weapons table, applies a revision-safe Number edit, selectively refreshes DPS,
+  and shows structured rejection without treating frontend state as canonical.
 
 The current product deliberately does **not** claim a completed spreadsheet UI,
 Office compatibility, realtime collaboration, cloud SaaS, or production
@@ -61,6 +66,7 @@ the user interface. AI is a semantic client, not an alternate source of truth.
 ## Start here
 
 - **Run the proof:** [Try it in five minutes](#try-it-in-five-minutes)
+- **Run the Designer slice:** [`apps/designer/`](apps/designer/README.md)
 - **See the durable example:** [`examples/game-balance/`](examples/game-balance/README.md)
 - **See where the product is going:** [Product Roadmap](docs/product/product-roadmap.md)
 - **Understand the system:** [Architecture overview](#architecture-overview)
@@ -106,7 +112,7 @@ The current product provides a complete, safe CLI-first game-balance workflow:
   Min/Max, bounded Number observations, paired exact contexts, and structured
   reproducibility lineage.
 
-It deliberately does not include a spreadsheet UI, Office compatibility,
+It deliberately does not include a completed/general spreadsheet UI, Office compatibility,
 realtime collaboration, cloud infrastructure, or game-engine plugins.
 
 ## Installation status

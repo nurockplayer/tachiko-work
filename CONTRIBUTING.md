@@ -36,6 +36,15 @@ rustup run 1.85.0 cargo check --workspace --all-targets --locked
 Use the checked-in `Cargo.lock`. The project does not require a global install;
 run the CLI with `cargo run -p tachiko-cli -- <command>` while developing.
 
+The first-party Web Designer additionally requires pnpm 11.13.0 and Chromium
+for its browser journey. Keep its app-local lockfile and use pnpm exclusively:
+
+```sh
+pnpm --dir apps/designer install --frozen-lockfile
+pnpm --dir apps/designer exec playwright install chromium
+bash scripts/designer-check.sh
+```
+
 ## Work in focused loops
 
 Run the smallest affected crate or test while iterating:
@@ -68,7 +77,8 @@ bash scripts/release-check.sh
 The clean commit is required because Cargo source packaging rejects dirty
 package inputs. The full gate selects stable for bare and nested Rust commands,
 regardless of an inherited `RUSTUP_TOOLCHAIN`, and separately checks exact Rust
-1.85 compatibility. It also checks documentation, deterministic audited
+1.85 compatibility. It also checks the app-local Designer Rust/WASM adapter,
+pnpm-only lint/typecheck/tests/build, and the Chromium journey. It checks documentation, deterministic audited
 dependency notices, Cargo packages, executable product journeys, and a native
 release archive. It also executes the same production-semantic conformance
 records natively and under `wasm32-unknown-unknown`. Do not claim a change is

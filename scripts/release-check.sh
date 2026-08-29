@@ -42,6 +42,9 @@ cargo test --workspace --all-targets --locked
 echo "==> executed native/WASM portable semantic conformance"
 bash scripts/portable-conformance-check.sh
 
+echo "==> first-party Web Designer vertical slice"
+bash scripts/designer-check.sh
+
 echo "==> warning-free documentation"
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 

@@ -1,0 +1,6 @@
+node_modules/
+dist/
+public/designer_runtime.wasm
+runtime/target/
+playwright-report/
+test-results/
