@@ -236,7 +236,8 @@ serialization/version negotiation, public resident session delivery, push/pull
 updates, and transport projection patches remain Deferred to future
 host/transport implementation as applicable. Issue #94 provides only the
 current internal stable-subject diagnostic projection and fresh invalidation
-facts; #95 retains incremental diagnostic/runtime state.
+facts derived for one exact guarded publication; #95 retains incremental
+diagnostic/runtime state.
 
 ## Storage failures
 

@@ -13,8 +13,10 @@ use tachiko_workspace_engine::{
         SemanticPatchBody, SemanticPublicationAuthority, SemanticPublicationError,
         SemanticRevision, SemanticScope, TrustedInstant,
     },
-    rename_entity,
-    resident_session::{ResidentWorkspaceSession, TrustedPublicationTimeSource},
+    rename_entity, rename_field,
+    resident_session::{
+        ResidentProjectionInvalidation, ResidentWorkspaceSession, TrustedPublicationTimeSource,
+    },
 };
 
 const NOW: TrustedInstant = TrustedInstant::new(10);
@@ -101,7 +103,7 @@ fn execute_damage(
     session: &mut ResidentWorkspaceSession,
     proposal: &str,
     damage: f64,
-) -> (ExecutionReceipt, usize) {
+) -> (ExecutionReceipt, ResidentProjectionInvalidation, usize) {
     let before = session.export_snapshot();
     let mut lifecycle = lifecycle();
     let proposal = ProposalId::from(proposal);
@@ -130,13 +132,18 @@ fn execute_damage(
         )
         .unwrap();
     let mut time = FixedTrustedTime { calls: 0 };
-    let receipt = {
+    let (receipt, invalidation) = {
         let mut publication = session.publication_authority(&mut time);
-        lifecycle
+        let receipt = lifecycle
             .execute(&proposal, None, &principal(), &mut publication, NOW)
+            .unwrap();
+        let invalidation = publication
+            .projection_invalidation_for(&receipt.base_revision, &receipt.resulting_revision)
             .unwrap()
+            .clone();
+        (receipt, invalidation)
     };
-    (receipt, time.calls)
+    (receipt, invalidation, time.calls)
 }
 
 #[test]
@@ -242,6 +249,23 @@ fn field_query_preserves_formula_failure_and_stable_subject_diagnostics() {
 }
 
 #[test]
+fn field_query_ignores_unrelated_ambiguous_presentation_keys() {
+    let mut document = game_balance_document("game", "Game");
+    document.entities.get_mut("tempered_blade").unwrap().key = "iron_sword".into();
+    let session = ResidentWorkspaceSession::new(document_scope_id(), document);
+    let damage = FieldRef::new("iron_sword", "damage");
+
+    let query = session.query_fields(std::slice::from_ref(&damage)).unwrap();
+
+    assert_eq!(query.value().len(), 1);
+    assert_eq!(query.value()[0].field, damage);
+    assert_eq!(
+        query.value()[0].presentation_address,
+        FieldAddress::new("iron_sword", "damage")
+    );
+}
+
+#[test]
 fn explicit_snapshot_is_detached_from_resident_state() {
     let session = ResidentWorkspaceSession::new(
         DocumentScopeId::from("game-occurrence"),
@@ -267,7 +291,8 @@ fn successful_mutation_installs_once_and_advances_one_revision() {
     let mut session =
         ResidentWorkspaceSession::new(document_scope_id(), game_balance_document("game", "Game"));
     let before = session.export_snapshot();
-    let (receipt, publication_time_calls) = execute_damage(&mut session, "resident-success", 45.0);
+    let (receipt, _, publication_time_calls) =
+        execute_damage(&mut session, "resident-success", 45.0);
 
     let after = session.export_snapshot();
     assert_eq!(publication_time_calls, 1);
@@ -290,13 +315,14 @@ fn scalar_mutation_invalidates_changed_field_and_downstream_projection_at_new_re
         .query_fields(&[damage.clone(), dps.clone()])
         .unwrap();
 
-    let (receipt, _) = execute_damage(&mut session, "resident-invalidation", 45.0);
-    let invalidation = session.projection_invalidation(std::slice::from_ref(&damage));
+    let (receipt, invalidation, _) = execute_damage(&mut session, "resident-invalidation", 45.0);
 
-    assert_eq!(receipt.resulting_revision, *invalidation.revision());
-    assert_ne!(cached.revision(), invalidation.revision());
-    assert_eq!(invalidation.value().changed_fields, [damage]);
-    assert_eq!(invalidation.value().affected_calculations, [dps]);
+    assert_eq!(receipt.base_revision, invalidation.base_revision);
+    assert_eq!(receipt.resulting_revision, invalidation.resulting_revision);
+    assert_ne!(cached.revision(), &invalidation.resulting_revision);
+    assert!(invalidation.entities.is_empty());
+    assert_eq!(invalidation.fields, [damage]);
+    assert_eq!(invalidation.affected_calculations, [dps]);
 }
 
 #[test]
@@ -325,16 +351,23 @@ fn rename_projection_preserves_stable_subject_and_changes_presentation_address()
         .document;
     let mut time = FixedTrustedTime { calls: 0 };
 
-    let resulting_revision = session
-        .publication_authority(&mut time)
-        .publish_if_current(
-            snapshot.document_scope(),
-            snapshot.revision(),
-            candidate,
-            |_| Some(()),
-        )
-        .unwrap()
-        .2;
+    let (resulting_revision, invalidation) = {
+        let mut publication = session.publication_authority(&mut time);
+        let resulting_revision = publication
+            .publish_if_current(
+                snapshot.document_scope(),
+                snapshot.revision(),
+                candidate,
+                |_| Some(()),
+            )
+            .unwrap()
+            .2;
+        let invalidation = publication
+            .projection_invalidation_for(snapshot.revision(), &resulting_revision)
+            .unwrap()
+            .clone();
+        (resulting_revision, invalidation)
+    };
     let after = session.query_fields(std::slice::from_ref(&dps)).unwrap();
 
     assert_eq!(before.value()[0].field, dps);
@@ -347,8 +380,63 @@ fn rename_projection_preserves_stable_subject_and_changes_presentation_address()
         after.value()[0].presentation_address,
         FieldAddress::new("moonblade", "dps")
     );
+    assert_eq!(invalidation.base_revision, *snapshot.revision());
+    assert_eq!(invalidation.resulting_revision, resulting_revision);
+    assert_eq!(invalidation.entities, [EntityId::from("iron_sword")]);
+    assert_eq!(
+        invalidation.fields,
+        [
+            FieldRef::new("iron_sword", "attack_interval"),
+            FieldRef::new("iron_sword", "damage"),
+            FieldRef::new("iron_sword", "dps"),
+            FieldRef::new("iron_sword", "name"),
+            FieldRef::new("iron_sword", "price"),
+        ]
+    );
+    assert!(invalidation.affected_calculations.is_empty());
     assert!(before.is_stale_against(&resulting_revision));
     assert_eq!(after.revision(), &resulting_revision);
+}
+
+#[test]
+fn field_rename_invalidates_schema_bound_presentations_without_recomputing_dependents() {
+    let mut session =
+        ResidentWorkspaceSession::new(document_scope_id(), game_balance_document("game", "Game"));
+    let damage = FieldRef::new("iron_sword", "damage");
+    let snapshot = session.export_snapshot();
+    let candidate = rename_field(snapshot.document(), "weapons", "damage", "power")
+        .unwrap()
+        .document;
+    let mut time = FixedTrustedTime { calls: 0 };
+
+    let (resulting_revision, invalidation) = {
+        let mut publication = session.publication_authority(&mut time);
+        let resulting_revision = publication
+            .publish_if_current(
+                snapshot.document_scope(),
+                snapshot.revision(),
+                candidate,
+                |_| Some(()),
+            )
+            .unwrap()
+            .2;
+        let invalidation = publication
+            .projection_invalidation_for(snapshot.revision(), &resulting_revision)
+            .unwrap()
+            .clone();
+        (resulting_revision, invalidation)
+    };
+    let after = session.query_fields(std::slice::from_ref(&damage)).unwrap();
+
+    assert_eq!(invalidation.base_revision, *snapshot.revision());
+    assert_eq!(invalidation.resulting_revision, resulting_revision);
+    assert!(invalidation.entities.is_empty());
+    assert_eq!(invalidation.fields, [damage]);
+    assert!(invalidation.affected_calculations.is_empty());
+    assert_eq!(
+        after.value()[0].presentation_address,
+        FieldAddress::new("iron_sword", "power")
+    );
 }
 
 #[test]
@@ -378,11 +466,11 @@ fn invalidation_follows_transitive_graph_when_calculated_outputs_do_not_change()
     );
     let mut session = ResidentWorkspaceSession::new(document_scope_id(), document);
 
-    let (receipt, _) = execute_damage(&mut session, "resident-equal-output", 45.0);
-    let invalidation = session.projection_invalidation(std::slice::from_ref(&damage));
+    let (receipt, invalidation, _) = execute_damage(&mut session, "resident-equal-output", 45.0);
 
     assert!(receipt.formula_impacts.is_empty());
-    assert_eq!(invalidation.value().affected_calculations, [dps, matches]);
+    assert_eq!(invalidation.fields, [damage]);
+    assert_eq!(invalidation.affected_calculations, [dps, matches]);
 }
 
 #[test]

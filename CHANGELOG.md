@@ -43,9 +43,10 @@ All notable changes to Tachiko Work are documented in this file.
   stable-ID-selective entity and field projections without returning the whole
   semantic `Document`. Stored literals, bound formula definitions, calculated
   outcomes, stable-subject diagnostics, and mutable human addresses remain
-  distinct. Fresh full-oracle dependency facts identify changed fields and
-  deterministic downstream calculated projections, including output-equal
-  dependents, so clients can discard stale revision-keyed caches without
+  distinct. Each exact guarded publication derives revision-paired stale entity
+  and field projections plus deterministic downstream calculated projections
+  from fresh full-oracle dependency facts, including renames and output-equal
+  dependents. Clients can discard stale revision-keyed caches without
   recreating semantic meaning. Native/WASM conformance covers the same bounded
   query/mutation corpus; no retained cache, UI, persistence, or public wire DTO
   is introduced.

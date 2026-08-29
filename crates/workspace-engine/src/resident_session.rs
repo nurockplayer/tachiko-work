@@ -9,10 +9,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use tachiko_formula_engine::{CalculationOutcome, calculate_complete};
 
 use super::{
-    AddressIndex, CalculatedField, Diagnostic, Document, EntityId, EntityInspection, Expression,
-    FieldAddress, FieldRef, SemanticSubject, ValidationReport, Value, WorkspaceError,
-    calculate_fields,
-    formula_operations::FormulaCalculationOutcome,
+    CalculatedField, Diagnostic, Document, EntityId, EntityInspection, Expression, FieldAddress,
+    FieldRef, SemanticSubject, ValidationReport, Value, WorkspaceError, calculate_fields,
+    formula_operations::{FormulaCalculationOutcome, calculation_for},
     patch_lifecycle::{
         DocumentScopeId, SemanticPublicationAuthority, SemanticPublicationError, SemanticRevision,
         TrustedInstant,
@@ -117,7 +116,7 @@ impl ResidentWorkspaceSession {
     ///
     /// # Errors
     ///
-    /// Returns the existing typed field lookup or address-projection failure.
+    /// Returns the existing typed field or schema lookup failure.
     pub fn query_fields(
         &self,
         requested: &[FieldRef],
@@ -125,19 +124,31 @@ impl ResidentWorkspaceSession {
         let requested = requested.iter().cloned().collect::<BTreeSet<_>>();
         let calculation = calculate_complete(&self.document);
         let report = validation_report(&self.document);
-        let addresses = AddressIndex::build(&self.document)?;
         let fields = requested
             .into_iter()
             .map(|field| {
-                let value = self
-                    .document
-                    .entities
-                    .get(&field.entity)
-                    .and_then(|entity| entity.fields.get(&field.field))
-                    .ok_or_else(|| WorkspaceError::MissingField {
+                let entity = self.document.entities.get(&field.entity).ok_or_else(|| {
+                    WorkspaceError::MissingField {
                         field: field.clone(),
-                    })?;
-                let presentation_address = addresses.field_address(&self.document, &field)?;
+                    }
+                })?;
+                let value = entity.fields.get(&field.field).ok_or_else(|| {
+                    WorkspaceError::MissingField {
+                        field: field.clone(),
+                    }
+                })?;
+                let schema = self.document.schemas.get(&entity.schema).ok_or_else(|| {
+                    WorkspaceError::MissingSchema {
+                        schema: entity.schema.clone(),
+                    }
+                })?;
+                let definition = schema.fields.get(&field.field).ok_or_else(|| {
+                    WorkspaceError::MissingField {
+                        field: field.clone(),
+                    }
+                })?;
+                let presentation_address =
+                    FieldAddress::new(entity.key.clone(), definition.key.clone());
                 let subject = SemanticSubject::EntityField(field.clone());
                 let diagnostics = report
                     .diagnostics()
@@ -149,7 +160,7 @@ impl ResidentWorkspaceSession {
                     Value::Formula(expression) => (
                         None,
                         Some(expression.clone()),
-                        Some(formula_calculation(&calculation, &field)),
+                        Some(calculation_for(&calculation, &field)),
                     ),
                     scalar => (Some(scalar.clone()), None, None),
                 };
@@ -169,33 +180,6 @@ impl ResidentWorkspaceSession {
             revision: self.revision.clone(),
             value: fields,
         })
-    }
-
-    /// Derive revision-tagged projection invalidation from changed stable fields.
-    ///
-    /// This performs a fresh full-oracle dependency extraction and retains no
-    /// engine state. A client may pair the result with an execution receipt
-    /// only when both identify the same resulting revision.
-    #[must_use]
-    pub fn projection_invalidation(
-        &self,
-        changed: &[FieldRef],
-    ) -> ResidentQueryResult<ResidentProjectionInvalidation> {
-        let changed = changed.iter().cloned().collect::<BTreeSet<_>>();
-        let calculation = calculate_complete(&self.document);
-        let dependencies = match &calculation {
-            CalculationOutcome::Complete(calculation) => calculation.dependencies(),
-            CalculationOutcome::Failed(failures) => failures.dependencies(),
-        };
-        let affected_calculations = affected_by(dependencies, &changed);
-
-        ResidentQueryResult {
-            revision: self.revision.clone(),
-            value: ResidentProjectionInvalidation {
-                changed_fields: changed.into_iter().collect(),
-                affected_calculations,
-            },
-        }
     }
 
     /// Clone the full semantic state at an explicit host snapshot boundary.
@@ -223,6 +207,7 @@ impl ResidentWorkspaceSession {
         ResidentPublicationAuthority {
             session: self,
             time,
+            projection_invalidation: None,
         }
     }
 }
@@ -245,10 +230,13 @@ pub struct ResidentFieldProjection {
     pub presentation_address: FieldAddress,
 }
 
-/// Stable subjects whose cached projections are stale at one resident revision.
+/// Stable subjects whose projections became stale across one publication.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResidentProjectionInvalidation {
-    pub changed_fields: Vec<FieldRef>,
+    pub base_revision: SemanticRevision,
+    pub resulting_revision: SemanticRevision,
+    pub entities: Vec<EntityId>,
+    pub fields: Vec<FieldRef>,
     pub affected_calculations: Vec<FieldRef>,
 }
 
@@ -314,6 +302,28 @@ pub trait TrustedPublicationTimeSource {
 pub struct ResidentPublicationAuthority<'session, Time> {
     session: &'session mut ResidentWorkspaceSession,
     time: &'session mut Time,
+    projection_invalidation: Option<ResidentProjectionInvalidation>,
+}
+
+impl<Time> ResidentPublicationAuthority<'_, Time> {
+    /// Return invalidation derived from this authority's exact successful
+    /// publication when both revision tokens match that publication.
+    ///
+    /// The observation is ephemeral: a new publication attempt clears it,
+    /// and dropping this exclusive authority discards it.
+    #[must_use]
+    pub fn projection_invalidation_for(
+        &self,
+        base_revision: &SemanticRevision,
+        resulting_revision: &SemanticRevision,
+    ) -> Option<&ResidentProjectionInvalidation> {
+        self.projection_invalidation
+            .as_ref()
+            .filter(|invalidation| {
+                &invalidation.base_revision == base_revision
+                    && &invalidation.resulting_revision == resulting_revision
+            })
+    }
 }
 
 impl<Time> SemanticPublicationAuthority for ResidentPublicationAuthority<'_, Time>
@@ -338,6 +348,7 @@ where
         (DocumentScopeId, Document, SemanticRevision, Authorization),
         SemanticPublicationError,
     > {
+        self.projection_invalidation = None;
         if expected_document_scope != &self.session.document_scope {
             return Err(SemanticPublicationError::DocumentScopeMismatch);
         }
@@ -355,10 +366,17 @@ where
             .checked_add(1)
             .ok_or(SemanticPublicationError::Conflict)?;
         let resulting_revision = revision_for(next_generation);
+        let projection_invalidation = projection_invalidation(
+            &self.session.document,
+            &candidate,
+            expected_revision.clone(),
+            resulting_revision.clone(),
+        );
 
         self.session.document = candidate;
         self.session.generation = next_generation;
         self.session.revision = resulting_revision.clone();
+        self.projection_invalidation = Some(projection_invalidation);
 
         Ok((
             self.session.document_scope.clone(),
@@ -373,21 +391,184 @@ fn revision_for(generation: u64) -> SemanticRevision {
     SemanticRevision::from(format!("resident/{generation}"))
 }
 
-fn formula_calculation(
-    calculation: &CalculationOutcome,
-    field: &FieldRef,
-) -> FormulaCalculationOutcome {
+fn projection_invalidation(
+    before: &Document,
+    after: &Document,
+    base_revision: SemanticRevision,
+    resulting_revision: SemanticRevision,
+) -> ResidentProjectionInvalidation {
+    let entity_ids = before
+        .entities
+        .keys()
+        .chain(after.entities.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let mut changes = ProjectionChanges::default();
+    collect_entity_projection_changes(before, after, &entity_ids, &mut changes);
+    collect_schema_projection_changes(before, after, &entity_ids, &mut changes);
+
+    let before_calculation = calculate_complete(before);
+    let after_calculation = calculate_complete(after);
+    let affected_calculations = affected_by(
+        dependencies(&before_calculation),
+        &changes.calculation_roots,
+    )
+    .into_iter()
+    .chain(affected_by(
+        dependencies(&after_calculation),
+        &changes.calculation_roots,
+    ))
+    .collect::<BTreeSet<_>>()
+    .into_iter()
+    .collect();
+
+    ResidentProjectionInvalidation {
+        base_revision,
+        resulting_revision,
+        entities: changes.entities.into_iter().collect(),
+        fields: changes.fields.into_iter().collect(),
+        affected_calculations,
+    }
+}
+
+#[derive(Default)]
+struct ProjectionChanges {
+    entities: BTreeSet<EntityId>,
+    fields: BTreeSet<FieldRef>,
+    calculation_roots: BTreeSet<FieldRef>,
+}
+
+fn collect_entity_projection_changes(
+    before: &Document,
+    after: &Document,
+    entity_ids: &BTreeSet<EntityId>,
+    changes: &mut ProjectionChanges,
+) {
+    for entity_id in entity_ids {
+        match (
+            before.entities.get(entity_id),
+            after.entities.get(entity_id),
+        ) {
+            (Some(before_entity), Some(after_entity)) => {
+                let field_ids = before_entity
+                    .fields
+                    .keys()
+                    .chain(after_entity.fields.keys())
+                    .cloned()
+                    .collect::<BTreeSet<_>>();
+                let presentation_changed = before_entity.key != after_entity.key;
+                let schema_changed = before_entity.schema != after_entity.schema;
+
+                if presentation_changed || schema_changed {
+                    changes.entities.insert(entity_id.clone());
+                    changes.fields.extend(
+                        field_ids
+                            .iter()
+                            .cloned()
+                            .map(|field_id| FieldRef::new(entity_id.clone(), field_id)),
+                    );
+                }
+                if schema_changed {
+                    changes.calculation_roots.extend(
+                        field_ids
+                            .iter()
+                            .cloned()
+                            .map(|field_id| FieldRef::new(entity_id.clone(), field_id)),
+                    );
+                }
+
+                for field_id in field_ids {
+                    if before_entity.fields.get(&field_id) != after_entity.fields.get(&field_id) {
+                        let field = FieldRef::new(entity_id.clone(), field_id);
+                        changes.fields.insert(field.clone());
+                        changes.calculation_roots.insert(field);
+                    }
+                }
+                if before_entity.fields.keys().ne(after_entity.fields.keys()) {
+                    changes.entities.insert(entity_id.clone());
+                }
+            }
+            (Some(entity), None) | (None, Some(entity)) => {
+                changes.entities.insert(entity_id.clone());
+                let entity_fields = entity
+                    .fields
+                    .keys()
+                    .cloned()
+                    .map(|field_id| FieldRef::new(entity_id.clone(), field_id))
+                    .collect::<BTreeSet<_>>();
+                changes.fields.extend(entity_fields.iter().cloned());
+                changes.calculation_roots.extend(entity_fields);
+            }
+            (None, None) => unreachable!("entity ID came from one document"),
+        }
+    }
+}
+
+fn collect_schema_projection_changes(
+    before: &Document,
+    after: &Document,
+    entity_ids: &BTreeSet<EntityId>,
+    changes: &mut ProjectionChanges,
+) {
+    let schema_ids = before
+        .schemas
+        .keys()
+        .chain(after.schemas.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    for schema_id in schema_ids {
+        let before_schema = before.schemas.get(&schema_id);
+        let after_schema = after.schemas.get(&schema_id);
+        let field_ids = before_schema
+            .into_iter()
+            .flat_map(|schema| schema.fields.keys())
+            .chain(
+                after_schema
+                    .into_iter()
+                    .flat_map(|schema| schema.fields.keys()),
+            )
+            .cloned()
+            .collect::<BTreeSet<_>>();
+
+        for field_id in field_ids {
+            let before_definition = before_schema.and_then(|schema| schema.fields.get(&field_id));
+            let after_definition = after_schema.and_then(|schema| schema.fields.get(&field_id));
+            if before_definition == after_definition {
+                continue;
+            }
+            let semantic_definition_changed = match (before_definition, after_definition) {
+                (Some(before), Some(after)) => {
+                    before.id != after.id
+                        || before.field_type != after.field_type
+                        || before.required != after.required
+                }
+                (Some(_), None) | (None, Some(_)) => true,
+                (None, None) => false,
+            };
+
+            for entity_id in entity_ids {
+                let before_has_field = before.entities.get(entity_id).is_some_and(|entity| {
+                    entity.schema == schema_id && entity.fields.contains_key(&field_id)
+                });
+                let after_has_field = after.entities.get(entity_id).is_some_and(|entity| {
+                    entity.schema == schema_id && entity.fields.contains_key(&field_id)
+                });
+                if before_has_field || after_has_field {
+                    let field = FieldRef::new(entity_id.clone(), field_id.clone());
+                    changes.fields.insert(field.clone());
+                    if semantic_definition_changed {
+                        changes.calculation_roots.insert(field);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn dependencies(calculation: &CalculationOutcome) -> &BTreeMap<FieldRef, BTreeSet<FieldRef>> {
     match calculation {
-        CalculationOutcome::Complete(calculation) => calculation.value(field).map_or(
-            FormulaCalculationOutcome::Unavailable,
-            FormulaCalculationOutcome::Value,
-        ),
-        CalculationOutcome::Failed(failures) => failures
-            .failures()
-            .get(field)
-            .map_or(FormulaCalculationOutcome::Unavailable, |failure| {
-                FormulaCalculationOutcome::Failure(failure.clone())
-            }),
+        CalculationOutcome::Complete(calculation) => calculation.dependencies(),
+        CalculationOutcome::Failed(failures) => failures.dependencies(),
     }
 }
 

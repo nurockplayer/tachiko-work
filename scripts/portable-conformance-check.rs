@@ -2487,7 +2487,7 @@ fn resident_session_record() -> Record {
         return Record::failure(UNEXPECTED, (54_u64 << 32) | 5);
     };
     let mut time = PortableTrustedTime { calls: 0 };
-    let receipt = {
+    let (receipt, invalidation) = {
         let mut publication = session.publication_authority(&mut time);
         let Ok(receipt) = lifecycle.execute(
             patch.id(),
@@ -2498,12 +2498,19 @@ fn resident_session_record() -> Record {
         ) else {
             return Record::failure(UNEXPECTED, (54_u64 << 32) | 6);
         };
-        receipt
+        let Some(invalidation) = publication
+            .projection_invalidation_for(&receipt.base_revision, &receipt.resulting_revision)
+            .cloned()
+        else {
+            return Record::failure(UNEXPECTED, (54_u64 << 32) | 7);
+        };
+        (receipt, invalidation)
     };
-    let invalidation = session.projection_invalidation(std::slice::from_ref(&input));
-    if invalidation.revision() != &receipt.resulting_revision
-        || invalidation.value().changed_fields != [input.clone()]
-        || invalidation.value().affected_calculations != [output.clone()]
+    if invalidation.base_revision != receipt.base_revision
+        || invalidation.resulting_revision != receipt.resulting_revision
+        || !invalidation.entities.is_empty()
+        || invalidation.fields != [input.clone()]
+        || invalidation.affected_calculations != [output.clone()]
     {
         return Record::failure(UNEXPECTED, (54_u64 << 32) | 7);
     }
@@ -2540,7 +2547,7 @@ fn resident_session_record() -> Record {
         class: RESIDENT_SESSION,
         bits: value.to_bits(),
         auxiliary: (time.calls << 32)
-            | ((invalidation.value().affected_calculations.len() as u64) << 16)
+            | ((invalidation.affected_calculations.len() as u64) << 16)
             | receipt.semantic_changes.len() as u64,
     }
 }

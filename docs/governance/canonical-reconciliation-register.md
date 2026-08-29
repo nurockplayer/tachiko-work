@@ -242,8 +242,9 @@ implements the provider-neutral SemanticPatch/authorization lifecycle seam
 without redesigning ADR-0024/ADR-0026, and #30 implements the current hostile-
 client AI boundary over it. Issue #93 supplies the internal resident revision/
 session implementation, and Issue #94 adds internal selective projections plus
-fresh invalidation facts. Public authentication/wire and later #95 retained
-performance implementation remain host/runtime work and must not
+exact-publication invalidation facts derived from fresh oracles. Public
+authentication/wire and later #95 retained performance implementation remain
+host/runtime work and must not
 retroactively block Milestone 02. #104 remains a later read-only-first Project
 Memory reference/dogfood research track rather than current core scope.
 

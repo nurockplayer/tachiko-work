@@ -984,7 +984,10 @@ fn calculation_dependencies(
     }
 }
 
-fn calculation_for(outcome: &CalculationOutcome, target: &FieldRef) -> FormulaCalculationOutcome {
+pub(crate) fn calculation_for(
+    outcome: &CalculationOutcome,
+    target: &FieldRef,
+) -> FormulaCalculationOutcome {
     match outcome {
         CalculationOutcome::Complete(calculation) => calculation.value(target).map_or(
             FormulaCalculationOutcome::Unavailable,
