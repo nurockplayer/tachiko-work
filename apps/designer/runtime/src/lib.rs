@@ -66,10 +66,25 @@ pub enum DesignerRequest {
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum DesignerResponse {
     Bootstrap(BootstrapProjection),
+    Opened(Box<OpenedProjection>),
     Table(TableProjection),
     Fields(FieldBatchProjection),
     Published(PublicationProjection),
     ProjectExported(ProjectExportProjection),
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct OpenedProjection {
+    pub bootstrap: BootstrapProjection,
+    pub table: TableProjection,
+    pub control: ControlProjection,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ControlProjection {
+    pub target: FieldTarget,
+    pub value: f64,
+    pub revision: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -720,13 +735,36 @@ pub fn open_project(
     runtime: &mut Option<DesignerRuntime>,
     input: &[u8],
     occurrence_id: &str,
-) -> Result<BootstrapProjection, DesignerError> {
+) -> Result<OpenedProjection, DesignerError> {
     let tree = decode_project_bundle(input)?;
     let document = decode_roproj_v1(&tree)?;
     let candidate = DesignerRuntime::from_document(document, occurrence_id)?;
     let bootstrap = candidate.bootstrap_projection();
+    let table = candidate.query_table(&bootstrap.default_collection)?;
+    let control_batch = candidate.query_fields(
+        &bootstrap.revision,
+        std::slice::from_ref(&bootstrap.control_field),
+    )?;
+    let control_value = control_batch
+        .fields
+        .first()
+        .and_then(|field| field.calculated.as_ref())
+        .and_then(CalculationProjection::number)
+        .ok_or_else(|| DesignerError::UnsupportedProject {
+            message: "the required shop.upgrade_cost control formula is unavailable".to_owned(),
+        })?;
+    let control = ControlProjection {
+        target: bootstrap.control_field.clone(),
+        value: control_value,
+        revision: bootstrap.revision.clone(),
+    };
+    let opened = OpenedProjection {
+        bootstrap,
+        table,
+        control,
+    };
     *runtime = Some(candidate);
-    Ok(bootstrap)
+    Ok(opened)
 }
 
 /// Destroy the current semantic occurrence without touching durable host data.

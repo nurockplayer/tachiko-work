@@ -17,6 +17,16 @@ export type BootstrapProjection = {
   control_field: FieldTarget;
 };
 
+export type OpenedProjection = {
+  bootstrap: BootstrapProjection;
+  table: TableProjection;
+  control: {
+    target: FieldTarget;
+    value: number;
+    revision: string;
+  };
+};
+
 export type StoredValueProjection =
   | { kind: "number"; value: number }
   | { kind: "text"; value: string }
@@ -98,6 +108,7 @@ export type DesignerRequest =
 
 export type DesignerResponse =
   | { type: "bootstrap"; payload: BootstrapProjection }
+  | { type: "opened"; payload: OpenedProjection }
   | { type: "table"; payload: TableProjection }
   | { type: "fields"; payload: FieldBatchProjection }
   | { type: "published"; payload: PublicationProjection }

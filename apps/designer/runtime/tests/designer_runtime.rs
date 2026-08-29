@@ -353,7 +353,10 @@ fn canonical_open_is_candidate_first_and_starts_a_fresh_revision_domain() {
 
     let reopened =
         open_project(&mut runtime, &bundle, OCCURRENCE_ONE).expect("canonical open should succeed");
-    assert_eq!(reopened.revision, "resident/0");
+    assert_eq!(reopened.bootstrap.revision, "resident/0");
+    assert_eq!(reopened.table.revision, "resident/0");
+    assert_eq!(reopened.control.revision, "resident/0");
+    assert!((reopened.control.value - 200.0).abs() < f64::EPSILON);
     assert_ne!(runtime.as_ref().unwrap().occurrence_scope(), original_scope);
     let DesignerResponse::Fields(reopened_fields) = runtime
         .as_mut()
@@ -414,9 +417,9 @@ fn exact_revision_export_does_not_capture_or_mark_a_later_edit() {
     );
 
     let mut reopened = None;
-    let bootstrap = open_project(&mut reopened, &revision_zero.bytes, OCCURRENCE_ONE)
+    let opened = open_project(&mut reopened, &revision_zero.bytes, OCCURRENCE_ONE)
         .expect("the already-exported revision remains a complete candidate");
-    assert_eq!(bootstrap.revision, "resident/0");
+    assert_eq!(opened.bootstrap.revision, "resident/0");
     let DesignerResponse::Fields(fields) = reopened
         .as_mut()
         .unwrap()
@@ -468,7 +471,7 @@ fn close_destroys_the_occurrence_and_saved_output_reopens_without_git() {
     assert!(occurrence.is_none());
     let reopened = open_project(&mut occurrence, &saved.bytes, OCCURRENCE_TWO)
         .expect("opaque durable bytes should open in a fresh occurrence");
-    assert_eq!(reopened.revision, "resident/0");
+    assert_eq!(reopened.bootstrap.revision, "resident/0");
     assert_ne!(
         occurrence.as_ref().unwrap().occurrence_scope(),
         original_scope

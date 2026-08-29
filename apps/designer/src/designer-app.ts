@@ -18,6 +18,7 @@ import type {
   DiagnosticProjection,
   FieldProjection,
   FieldTarget,
+  OpenedProjection,
   TableProjection,
 } from "./runtime/protocol.ts";
 
@@ -195,6 +196,15 @@ export function mountDesigner(
     durability.install(candidate.revision, durable);
   };
 
+  const installOpenedOccurrence = (opened: OpenedProjection): void => {
+    const nextStore = createProjectionStore(opened.table, opened.control);
+    bootstrap = opened.bootstrap;
+    store = nextStore;
+    selectedCollection = opened.bootstrap.default_collection;
+    occurrenceClosed = false;
+    durability.install(opened.bootstrap.revision, true);
+  };
+
   const refreshSavedProjects = async (preferred?: string): Promise<void> => {
     savedProjects = await host.list();
     if (preferred !== undefined && savedProjects.some(({ name }) => name === preferred)) {
@@ -226,13 +236,6 @@ export function mountDesigner(
       `${action} will discard unsaved changes in the current project. Continue?`,
     );
 
-  const projectFailureMessage = (error: unknown): string =>
-    error instanceof DesignerRuntimeError
-      ? error.failure.message
-      : error instanceof Error
-        ? error.message
-        : String(error);
-
   const openSavedProject = async (): Promise<void> => {
     if (busy || selectedSavedProject === "") return;
     if (!confirmDiscardDirtyOccurrence("Open")) return;
@@ -257,34 +260,8 @@ export function mountDesigner(
   };
 
   const installProjectBytes = async (bytes: ArrayBuffer): Promise<void> => {
-    let replaced = false;
-    try {
-      const candidate = await client.openProject(bytes);
-      replaced = true;
-      await installOccurrence(candidate, true);
-    } catch (error) {
-      if (replaced) {
-        bootstrap = null;
-        store = null;
-        durability.close();
-        try {
-          await client.closeProject();
-        } catch {
-          occurrenceClosed = false;
-          startupFailure = `${projectFailureMessage(
-            error,
-          )} The Designer runtime was stopped because cleanup failed; reload to recover.`;
-          try {
-            await client.close();
-          } catch {
-            // The UI remains failed closed even if client termination reports an error.
-          }
-          throw error;
-        }
-        occurrenceClosed = true;
-      }
-      throw error;
-    }
+    const opened = await client.openProject(bytes);
+    installOpenedOccurrence(opened);
   };
 
   const importProjectDirectory = async (input: HTMLInputElement): Promise<void> => {

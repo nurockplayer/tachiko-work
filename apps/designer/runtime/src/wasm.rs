@@ -106,8 +106,8 @@ pub extern "C" fn tachiko_designer_project_open() {
                 };
                 PROJECT.with(|project| {
                     match open_project(&mut runtime, &project.borrow(), occurrence_id) {
-                        Ok(bootstrap) => DesignerWireReply::Ok {
-                            response: DesignerResponse::Bootstrap(bootstrap),
+                        Ok(opened) => DesignerWireReply::Ok {
+                            response: DesignerResponse::Opened(Box::new(opened)),
                         },
                         Err(error) => DesignerWireReply::Error {
                             error: error.failure_projection(current_revision(runtime.as_ref())),

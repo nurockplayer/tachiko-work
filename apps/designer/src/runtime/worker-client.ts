@@ -8,6 +8,7 @@ import type {
   DesignerResponse,
   FieldBatchProjection,
   FieldTarget,
+  OpenedProjection,
   PublicationProjection,
   ProjectExport,
   TableProjection,
@@ -57,7 +58,7 @@ export class WorkerDesignerClient implements DesignerClient {
     );
   }
 
-  async openProject(bytes: ArrayBuffer): Promise<BootstrapProjection> {
+  async openProject(bytes: ArrayBuffer): Promise<OpenedProjection> {
     const reply = await this.#send(
       {
         id: this.#claimId(),
@@ -70,7 +71,7 @@ export class WorkerDesignerClient implements DesignerClient {
     if (reply.status !== "ok") {
       throw new Error(`Expected project open response, received '${reply.status}'.`);
     }
-    return expectResponse("bootstrap", reply.response);
+    return expectResponse("opened", reply.response);
   }
 
   async exportProject(expectedRevision: string): Promise<ProjectExport> {
@@ -165,6 +166,10 @@ function expectResponse(
   type: "bootstrap",
   response: DesignerResponse,
 ): BootstrapProjection;
+function expectResponse(
+  type: "opened",
+  response: DesignerResponse,
+): OpenedProjection;
 function expectResponse(
   type: "table",
   response: DesignerResponse,

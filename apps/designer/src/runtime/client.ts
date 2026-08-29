@@ -2,6 +2,7 @@ import type {
   BootstrapProjection,
   FieldBatchProjection,
   FieldTarget,
+  OpenedProjection,
   ProjectExport,
   PublicationProjection,
   TableProjection,
@@ -10,7 +11,7 @@ import type {
 
 export interface DesignerClient {
   bootstrap(): Promise<BootstrapProjection>;
-  openProject(bytes: ArrayBuffer): Promise<BootstrapProjection>;
+  openProject(bytes: ArrayBuffer): Promise<OpenedProjection>;
   exportProject(expectedRevision: string): Promise<ProjectExport>;
   closeProject(): Promise<void>;
   queryTable(collection: string): Promise<TableProjection>;

@@ -9,6 +9,7 @@ import type {
   BootstrapProjection,
   FieldBatchProjection,
   FieldTarget,
+  OpenedProjection,
   PublicationProjection,
   ProjectExport,
   TableProjection,
@@ -73,6 +74,16 @@ const table: TableProjection = {
   ],
 };
 
+const openedProjection = (): OpenedProjection => ({
+  bootstrap: structuredClone(bootstrap),
+  table: structuredClone(table),
+  control: {
+    target: structuredClone(bootstrap.control_field),
+    value: 200,
+    revision: "resident/0",
+  },
+});
+
 class FakeClient implements DesignerClient {
   queryRequests: FieldTarget[][] = [];
   editRequests: Array<{
@@ -85,8 +96,8 @@ class FakeClient implements DesignerClient {
     return bootstrap;
   }
 
-  async openProject(): Promise<BootstrapProjection> {
-    return bootstrap;
+  async openProject(): Promise<OpenedProjection> {
+    return openedProjection();
   }
 
   async exportProject(expectedRevision: string): Promise<ProjectExport> {
@@ -223,36 +234,13 @@ class StartupFailingClient extends FakeClient {
 }
 
 class RejectingOpenClient extends FakeClient {
-  override async openProject(): Promise<BootstrapProjection> {
+  override async openProject(): Promise<OpenedProjection> {
     throw new DesignerRuntimeError({
       code: "invalid_project",
       message: "Canonical project admission rejected corrupt bytes.",
       current_revision: "resident/0",
       diagnostics: [],
     });
-  }
-}
-
-class ProjectionFailingOpenClient extends FakeClient {
-  private opened = false;
-  closed = false;
-
-  override async openProject(): Promise<BootstrapProjection> {
-    this.opened = true;
-    return bootstrap;
-  }
-
-  override async queryTable(): Promise<TableProjection> {
-    if (this.opened) throw new Error("Initial projection transfer failed.");
-    return super.queryTable();
-  }
-
-  override async closeProject(): Promise<void> {
-    throw new Error("Injected teardown failure.");
-  }
-
-  override close(): void {
-    this.closed = true;
   }
 }
 
@@ -425,31 +413,6 @@ describe("Designer application seam", () => {
       root.querySelector<HTMLInputElement>('input[aria-label="Damage for Iron Sword"]')
         ?.value,
     ).toBe("36");
-    app.destroy();
-    vi.unstubAllGlobals();
-  });
-
-  it("preserves the Open failure when cleanup also fails", async () => {
-    document.body.innerHTML = '<div id="app"></div>';
-    const root = document.querySelector<HTMLElement>("#app");
-    if (root === null) throw new Error("test root is required");
-    const memoryHost = new MemoryHost();
-    memoryHost.projects.set("candidate.roproj", new ArrayBuffer(8));
-    vi.stubGlobal("confirm", vi.fn<Window["confirm"]>().mockReturnValue(true));
-    const client = new ProjectionFailingOpenClient();
-    const app = mountDesigner(root, client, memoryHost);
-    await app.ready;
-
-    root.querySelector<HTMLButtonElement>("[data-open-project]")?.click();
-    await vi.waitFor(() => {
-      expect(root.querySelector('[role="alert"]')?.textContent).toContain(
-        "Initial projection transfer failed.",
-      );
-    });
-    expect(root.textContent).not.toContain("Injected teardown failure.");
-    expect(root.textContent).toContain("reload to recover");
-    expect(root.textContent).not.toContain("No project open");
-    expect(client.closed).toBe(true);
     app.destroy();
     vi.unstubAllGlobals();
   });
