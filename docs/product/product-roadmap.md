@@ -20,7 +20,8 @@ not imply due dates or release commitments.
 
 In this index, `Completed horizon` means a stage has no open Issues and is no
 longer current; the underlying GitHub Milestone may remain open for historical
-classification.
+classification. It is a planning-state statement, not a claim that every
+aspirational product outcome named for that stage has been implemented.
 
 The milestone policy and original classification audit are recorded in
 [Issue #56](https://github.com/nurockplayer/tachiko-work/issues/56). The live
