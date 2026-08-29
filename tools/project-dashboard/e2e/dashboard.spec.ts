@@ -16,6 +16,7 @@ test("renders the five source-linked control-room surfaces without false merge-r
   await expect(page.getByRole("article", { name: /issue 169/i })).not.toContainText("merge ready");
   await expect(page.getByRole("article", { name: /issue 163/i })).toContainText(/review fix/i);
   await expect(page.getByRole("list", { name: /current work sequence/i })).toContainText("Independent tooling / research lane");
+  await expect(page.locator(".attention-panel > .section-heading .status-badge")).toHaveClass(/cyber-badge--green/);
   await expect(page.getByRole("button", { name: /merge|run agent|dispatch/i })).toHaveCount(0);
 
   const refresh = page.getByRole("button", { name: /refresh projection/i });

@@ -392,7 +392,7 @@ function projectLane(
   }
 
   return {
-    id: `issue-${issue.number}`,
+    id: pr === null ? `issue-${issue.number}` : `issue-${issue.number}-pr-${pr.number}`,
     issue: {
       number: issue.number,
       title: issue.title,

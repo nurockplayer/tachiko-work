@@ -61,7 +61,7 @@ interface GithubCheckContext {
   state?: string;
   detailsUrl?: string | null;
   targetUrl?: string | null;
-  app?: { databaseId: number } | null;
+  checkSuite?: { app: { databaseId: number } | null } | null;
 }
 
 interface GithubReview {
@@ -164,7 +164,7 @@ const dashboardQuery = `
                   contexts(first: 100) {
                     nodes {
                       __typename
-                      ... on CheckRun { name status conclusion detailsUrl app { databaseId } }
+                      ... on CheckRun { name status conclusion detailsUrl checkSuite { app { databaseId } } }
                       ... on StatusContext { context state targetUrl }
                     }
                   }
@@ -235,7 +235,7 @@ function asCheck(context: GithubCheckContext): RawCheck {
   }
   return {
     name: context.name ?? "check run",
-    integrationId: context.app?.databaseId ?? null,
+    integrationId: context.checkSuite?.app?.databaseId ?? null,
     status: normalizeCheckStatus(context.status),
     conclusion: normalizeConclusion(context.conclusion),
     url: context.detailsUrl ?? null,
@@ -404,7 +404,11 @@ export async function loadGithubSnapshot(
       if (mergeBaseSha !== null && mergeBaseSha !== mainSha) {
         try {
           const mainChanges = await api.compare(options.owner, options.repo, mergeBaseSha, mainSha);
-          authorityPathsChangedOnMain = mainChanges.files.filter(isAuthorityPath).toSorted();
+          if (mainChanges.files.length >= 300) {
+            failures.push(`PR #${pr.number} authority-change observation failed.`);
+          } else {
+            authorityPathsChangedOnMain = mainChanges.files.filter(isAuthorityPath).toSorted();
+          }
         } catch {
           failures.push(`PR #${pr.number} authority-change observation failed.`);
         }
@@ -506,22 +510,53 @@ export class GithubApiClient implements ReadonlyGithubApi {
   }
 
   async requiredStatusChecks(owner: string, repo: string, branch: string): Promise<RawRequiredCheck[]> {
-    const path = `/repos/${owner}/${repo}/rules/branches/${encodeURIComponent(branch)}`;
-    const response = await this.#fetch(`https://api.github.com${path}`, {
-      method: "GET",
-      headers: this.#headers("application/vnd.github+json"),
-    });
-    const rules = (await this.#readJson(response)) as Array<{
+    const encodedBranch = encodeURIComponent(branch);
+    const rulesResponse = await this.#fetch(
+      `https://api.github.com/repos/${owner}/${repo}/rules/branches/${encodedBranch}`,
+      {
+        method: "GET",
+        headers: this.#headers("application/vnd.github+json"),
+      },
+    );
+    const rules = (await this.#readJson(rulesResponse)) as Array<{
       type?: string;
       parameters?: { required_status_checks?: Array<{ context?: string; integration_id?: number | null }> };
     }>;
-    return rules
+    const required = rules
       .filter((rule) => rule.type === "required_status_checks")
       .flatMap((rule) => rule.parameters?.required_status_checks ?? [])
       .flatMap((check) => check.context === undefined
         ? []
-        : [{ name: check.context, integrationId: check.integration_id ?? null }])
-      .toSorted((left, right) => left.name.localeCompare(right.name) || (left.integrationId ?? 0) - (right.integrationId ?? 0));
+        : [{ name: check.context, integrationId: check.integration_id ?? null }]);
+
+    const classicResponse = await this.#fetch(
+      `https://api.github.com/repos/${owner}/${repo}/branches/${encodedBranch}/protection/required_status_checks`,
+      {
+        method: "GET",
+        headers: this.#headers("application/vnd.github+json"),
+      },
+    );
+    if (classicResponse.status !== 404) {
+      const classic = (await this.#readJson(classicResponse)) as {
+        checks?: Array<{ context?: string; app_id?: number | null }>;
+        contexts?: string[];
+      };
+      required.push(
+        ...(classic.checks ?? []).flatMap((check) => check.context === undefined
+          ? []
+          : [{ name: check.context, integrationId: check.app_id ?? null }]),
+      );
+      for (const context of classic.contexts ?? []) {
+        if (!required.some((check) => check.name === context)) {
+          required.push({ name: context, integrationId: null });
+        }
+      }
+    }
+
+    const unique = new Map(required.map((check) => [`${check.name}\u0000${check.integrationId ?? ""}`, check]));
+    return [...unique.values()].toSorted(
+      (left, right) => left.name.localeCompare(right.name) || (left.integrationId ?? 0) - (right.integrationId ?? 0),
+    );
   }
 
   async compare(

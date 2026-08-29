@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { loadGithubSnapshot, type ReadonlyGithubApi } from "../src/server/github.ts";
+import { GithubApiClient, loadGithubSnapshot, type ReadonlyGithubApi } from "../src/server/github.ts";
 
 const mainSha = "a".repeat(40);
 const headSha = "b".repeat(40);
@@ -52,7 +52,7 @@ function githubPage() {
                             status: "COMPLETED",
                             conclusion: "SUCCESS",
                             detailsUrl: null,
-                            app: { databaseId: 42 },
+                            checkSuite: { app: { databaseId: 42 } },
                           },
                         ],
                       },
@@ -114,6 +114,7 @@ describe("loadGithubSnapshot", () => {
         authorityPathsChangedOnMain: [],
         requiredChecks: [{ name: "test", integrationId: 42 }],
         checksObservedHeadSha: headSha,
+        checks: [{ name: "test", integrationId: 42, status: "completed", conclusion: "success" }],
       }],
       recentCompletions: [{ number: 186 }],
     });
@@ -123,7 +124,7 @@ describe("loadGithubSnapshot", () => {
   it("preserves the PR base tip and observes changed authority paths from merge-base to live main", async () => {
     const oldBase = "d".repeat(40);
     const page = githubPage();
-    page.repository.pullRequests.nodes[0]!.baseRefOid = mainSha;
+    page.repository.pullRequests.nodes[0]!.baseRefOid = oldBase;
     const comparisons: string[] = [];
     const api: ReadonlyGithubApi = {
       graphql: async () => page,
@@ -149,11 +150,62 @@ describe("loadGithubSnapshot", () => {
 
     expect(comparisons).toEqual([`${mainSha}...${headSha}`, `${oldBase}...${mainSha}`]);
     expect(result.pullRequests?.[0]).toMatchObject({
-      baseSha: mainSha,
+      baseSha: oldBase,
       mergeBaseSha: oldBase,
       relationToMain: "diverged",
       authorityPathsChangedOnMain: ["docs/decisions/ADR-0029-dashboard-boundary.md"],
     });
+  });
+
+  it("keeps authority drift unknown when GitHub caps a compare at 300 files", async () => {
+    const oldBase = "d".repeat(40);
+    const api: ReadonlyGithubApi = {
+      graphql: async () => githubPage(),
+      rawText: async () => "## Current horizon\n\n> **05 · Designer MVP**",
+      requiredStatusChecks: async () => [],
+      compare: async (_owner, _repo, base) => base === mainSha
+        ? { status: "diverged", mergeBaseSha: oldBase, files: [] }
+        : { status: "ahead", mergeBaseSha: oldBase, files: Array.from({ length: 300 }, (_, index) => `src/file-${index}.rs`) },
+    };
+
+    const result = await loadGithubSnapshot(api, {
+      owner: "nurockplayer",
+      repo: "tachiko-work",
+      observedAt: "2026-08-30T00:00:00.000Z",
+    });
+
+    expect(result.fetchHealth).toBe("partial");
+    expect(result.pullRequests?.[0]?.authorityPathsChangedOnMain).toBeNull();
+    expect(result.failures).toContain("PR #200 authority-change observation failed.");
+  });
+
+  it("combines required checks from active rulesets and classic branch protection", async () => {
+    const fetchImplementation = vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes("/rules/branches/main")) {
+        return new Response(JSON.stringify([
+          {
+            type: "required_status_checks",
+            parameters: { required_status_checks: [{ context: "ruleset-check", integration_id: 42 }] },
+          },
+        ]), { status: 200 });
+      }
+      if (url.includes("/branches/main/protection/required_status_checks")) {
+        return new Response(JSON.stringify({
+          checks: [{ context: "classic-check", app_id: 7 }],
+          contexts: ["legacy-context"],
+        }), { status: 200 });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const client = new GithubApiClient("test-token", fetchImplementation);
+
+    await expect(client.requiredStatusChecks("nurockplayer", "tachiko-work", "main")).resolves.toEqual([
+      { name: "classic-check", integrationId: 7 },
+      { name: "legacy-context", integrationId: null },
+      { name: "ruleset-check", integrationId: 42 },
+    ]);
+    expect(fetchImplementation).toHaveBeenCalledTimes(2);
   });
 
   it("degrades a failed compare observation to partial/unknown rather than healthy", async () => {

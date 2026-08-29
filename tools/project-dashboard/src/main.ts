@@ -55,6 +55,7 @@ function shortIdentity(value: string | null): string {
 }
 
 function statusTone(value: string): string {
+  if (value === "no human action") return "green";
   if (/healthy|success|current|approved|none|ready|\bsatisfied\b/.test(value)) return "green";
   if (/failure|blocked|inconsistent|review_fix|changes_requested|human|unsatisfied/.test(value)) return "magenta";
   if (/partial|pending|stale|suspected|validating|rereview|unknown/.test(value)) return "yellow";

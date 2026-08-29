@@ -269,6 +269,26 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.currentWork.independent).toEqual(["issue-169"]);
   });
 
+  it("keeps stacked pull requests for one Issue in distinct delivery lanes", () => {
+    const first = pullRequest();
+    const second = pullRequest();
+    second.number = 201;
+    second.url = "https://github.com/nurockplayer/tachiko-work/pull/201";
+    second.headSha = "c".repeat(40);
+    second.checksObservedHeadSha = second.headSha;
+    second.comments[0]!.body = second.comments[0]!.body.replaceAll(headSha, second.headSha);
+
+    const projection = normalizeRepositorySnapshot(
+      snapshot({ issues: [issue()], pullRequests: [first, second] }),
+    );
+
+    expect(projection.deliveries.map((lane) => lane.id)).toEqual([
+      "issue-169-pr-200",
+      "issue-169-pr-201",
+    ]);
+    expect(new Set(projection.deliveries.map((lane) => lane.id)).size).toBe(2);
+  });
+
   it("marks main movement as suspected authority drift until the handoff reconciles it", () => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace(mainSha, "d".repeat(40));

@@ -47,8 +47,9 @@ pnpm --dir apps/designer exec playwright install chromium
 bash scripts/designer-check.sh
 ```
 
-The repository-local read-only project dashboard uses the same pinned pnpm and
-Node.js versions, but remains a separate tooling package with its own lockfile:
+The repository-local read-only project dashboard requires Node.js 24 or newer
+and uses the same pinned pnpm version, but remains a separate tooling package
+with its own lockfile:
 
 ```sh
 pnpm --dir tools/project-dashboard install --frozen-lockfile
