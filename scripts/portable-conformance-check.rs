@@ -44,10 +44,11 @@ use tachiko_workspace_engine::{
         SemanticPublicationAuthority, SemanticPublicationError, SemanticRevision, SemanticScope,
         TrustedInstant,
     },
+    resident_session::{ResidentWorkspaceSession, TrustedPublicationTimeSource},
     validation_report,
 };
 
-const CASE_COUNT: u32 = 54;
+const CASE_COUNT: u32 = 55;
 const VALUE: u32 = 0;
 const DIVISION_BY_ZERO: u32 = 1;
 const NON_FINITE: u32 = 2;
@@ -63,6 +64,7 @@ const PORTABLE_PACKAGE_V1_EXACT_BYTES: u32 = 11;
 const ANALYSIS_COMPLETE: u32 = 12;
 const ANALYSIS_FAILURE: u32 = 13;
 const ANALYSIS_PAIRED_AUTHORIZATION: u32 = 14;
+const RESIDENT_SESSION: u32 = 15;
 const UNEXPECTED: u32 = 255;
 
 const VALIDATION_ACCUMULATION_COUNT: usize = 16;
@@ -2394,6 +2396,101 @@ fn formula_update_record() -> Record {
     Record::value(value, receipt.semantic_changes.len() as u64)
 }
 
+struct PortableTrustedTime {
+    calls: u64,
+}
+
+impl TrustedPublicationTimeSource for PortableTrustedTime {
+    fn now(&mut self) -> TrustedInstant {
+        self.calls += 1;
+        TrustedInstant::new(self.calls + 2)
+    }
+}
+
+fn resident_session_record() -> Record {
+    let document = formula_document(number(42.0), input_reference());
+    let Ok((mut lifecycle, scope, principal)) = formula_operation_lifecycle(
+        &document,
+        OperationFamily::FormulaUpdate,
+        &[AuthorizationAction::Propose, AuthorizationAction::Execute],
+    ) else {
+        return Record::failure(UNEXPECTED, 54_u64 << 32);
+    };
+    let mut session = ResidentWorkspaceSession::new(scope, document);
+    let initial = session.export_snapshot();
+    let query = session.validation_report();
+    if !query.value().is_valid()
+        || query.revision() != initial.revision()
+        || session.revision() != initial.revision()
+    {
+        return Record::failure(UNEXPECTED, (54_u64 << 32) | 1);
+    }
+    let Ok(patch) = lifecycle.propose_formula_update(
+        initial.document_scope(),
+        initial.document(),
+        initial.revision(),
+        FormulaUpdateRequest::new(
+            ProposalId::from("resident-formula-update"),
+            initial.revision().clone(),
+            FieldRef::new("entity-stable", "output-stable"),
+            "[source.input-stable] + 1",
+            principal.clone(),
+        ),
+        TrustedInstant::new(1),
+    ) else {
+        return Record::failure(UNEXPECTED, (54_u64 << 32) | 2);
+    };
+    let mut time = PortableTrustedTime { calls: 0 };
+    let receipt = {
+        let mut publication = session.publication_authority(&mut time);
+        let Ok(receipt) = lifecycle.execute(
+            patch.id(),
+            None,
+            &principal,
+            &mut publication,
+            TrustedInstant::new(2),
+        ) else {
+            return Record::failure(UNEXPECTED, (54_u64 << 32) | 3);
+        };
+        receipt
+    };
+    let installed = session.export_snapshot();
+    let mut stale_candidate = installed.document().clone();
+    stale_candidate.title = "must not install".to_owned();
+    let stale = session
+        .publication_authority(&mut time)
+        .publish_if_current(
+            installed.document_scope(),
+            initial.revision(),
+            stale_candidate,
+            |_| Some(()),
+        );
+    if !matches!(stale, Err(SemanticPublicationError::Stale))
+        || session.export_snapshot() != installed
+        || receipt.base_revision != *initial.revision()
+        || receipt.resulting_revision != *installed.revision()
+        || initial.revision() == installed.revision()
+        || time.calls != 2
+    {
+        return Record::failure(UNEXPECTED, (54_u64 << 32) | 4);
+    }
+    let outcome = calculate_complete(installed.document());
+    let CalculationOutcome::Complete(calculation) = outcome else {
+        return Record::failure(UNEXPECTED, (54_u64 << 32) | 5);
+    };
+    let Some(value) = calculation.value(&FieldRef::new("entity-stable", "output-stable")) else {
+        return Record::failure(UNEXPECTED, (54_u64 << 32) | 6);
+    };
+    if value != number(43.0) || !receipt.verified {
+        return Record::failure(UNEXPECTED, (54_u64 << 32) | 7);
+    }
+    Record {
+        class: RESIDENT_SESSION,
+        bits: value.to_bits(),
+        auxiliary: (time.calls << 32) | receipt.semantic_changes.len() as u64,
+    }
+}
+
 fn case_record(index: u32) -> Record {
     match index {
         0 => Record::value(number(-0.0), 0),
@@ -2537,6 +2634,7 @@ fn case_record(index: u32) -> Record {
         51 => analysis_success_record(),
         52 => analysis_failure_record(),
         53 => analysis_paired_authorization_record(),
+        54 => resident_session_record(),
         _ => Record::failure(UNEXPECTED, 0),
     }
 }

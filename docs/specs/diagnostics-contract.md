@@ -232,8 +232,8 @@ The semantic diagnostic observations and gate relationship follow ADR-0019 and
 ADR-0020. ADR-0022 requires equivalent Stable semantic diagnostic observations
 where native and WASM expose the same semantic capability, and places
 interactive authoritative state in the shared Rust runtime. Exact transport
-serialization/version negotiation, resident session delivery, push/pull
-updates, and projection patches remain Deferred to #93–#95 and future
+serialization/version negotiation, public resident session delivery, push/pull
+updates, and projection patches remain Deferred to #94–#95 and future
 host/transport implementation as applicable.
 
 ## Storage failures

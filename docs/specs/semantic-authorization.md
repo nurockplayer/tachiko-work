@@ -676,9 +676,10 @@ Active -> Consumed | Revoked | Expired
   Stale/Conflict result to authorization denial. A genuine post-install
   verification failure remains in trusted history/receipt state but is returned
   only when that fresh boundary Query decision permits the detail; otherwise
-  the executor receives authorization denial. Concrete revision concurrency and
-  state installation remain #93 work; broader transaction/recovery and history
-  protocols remain with #11/#12.
+  the executor receives authorization denial. Issue #93 supplies the current
+  in-process revision and guarded state installation; broader cross-host
+  concurrency, transaction/recovery, and history protocols remain with
+  #11/#12.
 - The current direct-Human path resolves the proposal originator's retained
   immutable PrincipalKind without making originator activity a common
   publication condition; the executor must remain an active Human with live
@@ -806,8 +807,9 @@ complete conjunction MUST prevent publication. Direct Human Execute uses the
 effective current policy without an Approval or historical policy binding.
 Approval-gated Execute adds its proposal/Approval conditions to this common
 law; it does not replace or weaken it. Issue #29 supplies current in-process
-reservation/retry orchestration. Concrete resident locking, transaction,
-revision, and state-installation mechanics remain #93 work.
+reservation/retry orchestration, and #93 supplies exclusive resident revision
+comparison and state installation. Broader locking/transaction mechanics remain
+Deferred.
 
 ### Authorize approval-gated Execute
 
@@ -1248,8 +1250,8 @@ disclosure scope.
 - #30 implements the current provider-facing trusted-context, instruction/data
   separation, bypass prevention, disclosure-safe code projection, host-effect
   denial, and security regression seam.
-- #93 owns concrete resident session/revision/concurrency/state-installation
-  mechanics.
+- #93 implements current internal resident session/revision/state-installation
+  mechanics; broader cross-host concurrency remains Deferred.
 - #11 owns broader team/enterprise permissions, reusable policy questions, and
   transaction/recovery architecture.
 - #12/history work owns persisted history, event sourcing, undo, and retention.

@@ -46,7 +46,7 @@ For implementable format contracts, continue to [`../specs/README.md`](../specs/
 - [`frontend-backend-boundary.md`](frontend-backend-boundary.md) — frontend projection/workflow state, shared runtime authority, explicit snapshot boundaries, and host composition.
 - [`performance-model.md`](performance-model.md) — provisional performance guidance that should be refined by evidence.
 
-ADR-0022 accepts resident Rust runtime ownership, the no-second-canonical-client-model rule, host separation, explicit snapshot boundaries, and native/WASM semantic parity. Exact session handles, revision/concurrency, Worker lifecycle, IPC/FFI/network mapping, projection invalidation, persistence/recovery, and serialization/ABI remain Deferred to #93–#95 and related host work.
+ADR-0022 accepts resident Rust runtime ownership, the no-second-canonical-client-model rule, host separation, explicit snapshot boundaries, and native/WASM semantic parity. Issue #93 implements the current provisional in-process resident session, monotonic revision, and guarded installation seam. Public session handles, cross-host concurrency, Worker lifecycle, IPC/FFI/network mapping, projection invalidation, persistence/recovery, and serialization/ABI remain Deferred to #94–#95 and related host work.
 
 ### AI
 
@@ -60,8 +60,9 @@ provenance, and external-effect boundary. Issue #29 implements the current
 provisional workspace-engine lifecycle/state seam, and #30 adds the provisional
 provider-facing instruction/data, trusted-context, raw-bypass, safe-denial, and
 host-effect-denial adapter. Concrete authentication, public wire DTOs, broader
-projection delivery, and resident revision mechanics remain #93 and later host
-work.
+projection delivery, and transport remain later host work. Issue #93 supplies
+the internal resident revision/session mechanics; public authentication and
+transport remain deferred.
 
 ### Collaboration and future presentation
 
@@ -80,9 +81,9 @@ Use these broad cues together with the reconciliation register:
 | `.roproj` source / `.ro` portable-artifact relationship | Accepted under ADR-0003; exact `.roproj/v1` tree/DTO contract Accepted under ADR-0023 and production pure codec/native explicit host workflow implemented by #123; exact portable-package v1 contract Accepted under ADR-0025 with production codec/native host/CLI workflow implemented by #3; optional provider-neutral Git/CI composition implemented by #44 |
 | Current `.ro` v0.1 encoding details | Provisional implemented baseline |
 | Rust crate graph | Accepted Milestone 02 boundary implemented; exact Rust API remains Provisional |
-| AI as delegated semantic client | Accepted under amended ADR-0007; scoped authorization and exact Human Approval Accepted under ADR-0026; #29 provisional provider-neutral lifecycle plus #30 provider-facing hostile boundary implemented, while public transport/authentication and #93 resident mechanics remain Deferred |
-| Revision-pinned SemanticPatch proposal | Accepted under ADR-0024; ADR-0026 consumes its structural binding without selecting canonical bytes/digest/token; #29 provisional Rust lifecycle implemented while wire and #93 resident revision mechanics remain Deferred |
-| Resident Native/WASM runtime and host separation | Accepted under ADR-0022; current snapshot-style implementation may lag; concrete session/transport/persistence mechanics Deferred |
+| AI as delegated semantic client | Accepted under amended ADR-0007; scoped authorization and exact Human Approval Accepted under ADR-0026; #29 provider-neutral lifecycle, #30 provider-facing hostile boundary, and #93 resident publication composition implemented, while public transport/authentication remain Deferred |
+| Revision-pinned SemanticPatch proposal | Accepted under ADR-0024; ADR-0026 consumes its structural binding without selecting canonical bytes/digest/token; #29 provisional Rust lifecycle and #93 internal resident revision mechanics implemented while public wire remains Deferred |
+| Resident Native/WASM runtime and host separation | Accepted under ADR-0022; #93 implements the first production in-process resident session with native/WASM evidence; public transport/persistence mechanics remain Deferred |
 | Distributed collaboration beyond semantic merge | Hypothesis / Open Question |
 | Rendering/UI and cross-view projection architecture | Future hypothesis |
 

@@ -39,6 +39,15 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- A provisional `tachiko-workspace-engine` resident workspace session now owns
+  one authoritative semantic `Document` occurrence and an internal monotonic
+  `SemanticRevision`. Validation and calculation queries are revision-pinned
+  without publication; approved `SemanticPatch` execution installs only
+  through the existing guarded `SemanticPublicationAuthority`, advances once,
+  and rejects stale, failed, unauthorized, or wrong-occurrence attempts without
+  changing state. Full snapshots remain explicit detached exports, trusted time
+  stays host-supplied, and the production session has matching native/WASM and
+  `ai-api` composition evidence without defining a public wire/session DTO.
 - A provisional provider-neutral bounded semantic Analysis Query now runs
   through the shared workspace authority and structured CLI. It implements
   stable-ID schema selection and optional narrowing, typed AND predicates,
@@ -76,8 +85,8 @@ All notable changes to Tachiko Work are documented in this file.
   filesystem/network/process/Git/plugin/deployment/credential effects are
   rejected with stable machine codes.
   Model explanations and validation claims remain inert evidence. Concrete
-  authentication/session/revision/transport mechanics remain #93, and actual
-  host/plugin capability mechanisms remain separately owned.
+  public authentication/session/revision/transport mechanics remain deferred,
+  and actual host/plugin capability mechanisms remain separately owned.
 - A provisional provider-neutral SemanticPatch lifecycle in
   `tachiko-workspace-engine` now evaluates stable-ID typed field-value Commands
   and ordered AtomicBatch proposals through the shared validation, formula, and
@@ -87,9 +96,10 @@ All notable changes to Tachiko Work are documented in this file.
   through an opaque revision compare-and-publish seam with a fresh trusted-time
   authorization callback, consumes Approval with successful publication,
   verifies installed state, and retains disclosure-safe execution receipts.
-  Concrete resident sessions/revisions remain #93; the provider-facing hostile
-  boundary now composes this lifecycle through `tachiko-ai-api`, while actual
-  external-effect capabilities remain separate host/plugin work.
+  Issue #93 now supplies the provisional resident session/revision mechanics;
+  the provider-facing hostile boundary composes this lifecycle through
+  `tachiko-ai-api`, while actual external-effect capabilities remain separate
+  host/plugin work.
 - An optional provider-neutral Git/CI adapter now keeps canonical `.roproj/v1`
   members as LF text, accepts exact project trees in existing read-only
   semantic commands, and composes canonical/workspace validation with
@@ -100,7 +110,8 @@ All notable changes to Tachiko Work are documented in this file.
   at-most-once successful publication. Issue #29 now provides the provisional
   in-process lifecycle implementation, and #30 adds the provisional hostile-
   client adapter plus safe denial projection. Public authorization/wire DTOs
-  and concrete resident revision/session mechanics remain deferred.
+  Public resident revision/session transport mechanics remain deferred; Issue
+  #93 supplies the current provisional in-process implementation.
 - A provider-free, read-only Semantic Analyst slice now exposes deterministic
   document inspection, formula and dependency analysis, semantic change and
   affected-area analysis, and validation findings through shared Rust queries

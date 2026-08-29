@@ -367,9 +367,10 @@ The current implementation has no general freeform/progressive-strengthening
 runtime surface. ADR-0021 is architecture non-exclusion and does not create an
 implementation gap that blocks the strongly typed Game Development MVP.
 
-The current runtime/API surface also remains substantially snapshot-style.
-ADR-0022 accepts resident runtime ownership while #93–#95 retain later session,
-selective-query/invalidation, and retained-incremental implementation.
+The current runtime/API surface retains snapshot validation inside the #93
+resident state owner. ADR-0022 accepts resident runtime ownership while #94–#95
+retain later selective-query/invalidation and retained-incremental
+implementation.
 
 Incremental scheduling/caching, concrete external wire mapping, invalid-draft
 lifecycle, extension registration, mixed-content runtime, and resident-runtime
