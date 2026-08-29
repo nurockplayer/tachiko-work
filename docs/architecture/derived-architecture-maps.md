@@ -29,7 +29,7 @@ A map may summarize or visualize those sources, but it cannot amend them. Archit
 
 ## Revision pinning and staleness
 
-Every repository-backed map intended for review or durable reference should identify the exact 40-character Git commit SHA it describes.
+Every repository-backed map intended for review or durable reference must identify the exact 40-character Git commit SHA it describes.
 
 The pinned SHA defines the map's observation boundary. If `main` advances later, the map remains valid only as historical evidence for its pinned revision. It should not silently be presented as current architecture.
 
