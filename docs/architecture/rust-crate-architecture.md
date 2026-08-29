@@ -16,9 +16,9 @@ validation/report composition implemented by Issue #89. Current workspace-engine
 operations remain substantially snapshot-style; resident runtime mechanics remain
 unimplemented, with #93–#95 now the current Designer MVP planning/implementation
 sequence. Current one-field inert proposal validation does not implement ADR-0024
-proposal occurrence identity, base/compatibility binding, or AtomicBatch. Issue
-#123 implements the storage-owned `.roproj/v1` pure codec, native exact-tree host
-workflow, and CLI composition without changing the Accepted crate DAG.
+proposal occurrence identity, base/compatibility binding, or AtomicBatch.
+Issue `#123` implements the storage-owned `.roproj/v1` pure codec, native exact-tree
+host workflow, and CLI composition without changing the Accepted crate DAG.
 
 Architecture authority: ADR-0016 for crate ownership; ADR-0020 for the
 first-class Semantic API product boundary; ADR-0024 for SemanticPatch proposal
@@ -344,7 +344,7 @@ validation inside Rust as implementation mechanisms.
 | Host persistence and safe writes | CLI/storage | CLI/storage/host composition, unchanged |
 | AI proposal envelope | One-field inert `Suggestion` only | Issue #29 implements a provider-neutral provisional SemanticPatch/AtomicBatch lifecycle in workspace-engine; #30 adds typed `ai-api` proposal/execution delegation with inert untrusted evidence, while #93 owns resident revision/session mechanics |
 | Semantic authorization/Approval | Not implemented | Issue #29 implements provisional trusted in-process relational Grants, scoped preview, exact finite Approval state, atomic consumption/publication, and receipts; #30 adds hostile-client admission and safe denials; public wire/authentication/host/runtime completion remains Deferred/#93 |
-| ID generation mechanism | CLI through workflow seam | CLI through workspace-engine seam |
+| ID generation mechanism | CLI through workspace-engine seam |
 | Product-semantic client contract | Provisional/internal | First-class transport-neutral Semantic API under ADR-0020 |
 | Interactive authoritative state ownership | Open under #26 | Shared Rust semantic/application runtime under ADR-0022 |
 | Resident interactive topology | PR #91 spike evidence | Accepted under ADR-0022; implementation pending #93–#95 |
