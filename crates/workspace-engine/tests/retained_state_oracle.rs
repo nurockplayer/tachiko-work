@@ -206,7 +206,10 @@ fn apply_specific_check(
 
 fn assert_scripted_measurements(measurements: ResidentRuntimeMeasurements, revisions: usize) {
     assert_eq!(measurements.derived_state_rebuilds, revisions + 1);
-    assert_eq!(measurements.retained_before_state_reuses, revisions);
+    assert_eq!(
+        measurements.retained_before_state_reuses,
+        revisions - measurements.calculation_fallbacks
+    );
     assert_eq!(measurements.full_calculation_rebuilds, 3);
     assert_eq!(measurements.calculation_fallbacks, 2);
     assert_eq!(

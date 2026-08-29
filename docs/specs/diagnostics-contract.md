@@ -236,8 +236,10 @@ serialization/version negotiation, public resident session delivery, push/pull
 updates, and transport projection patches remain Deferred to future
 host/transport implementation as applicable. Issue #94 provides the current
 internal stable-subject diagnostic projection and exact-publication invalidation
-facts; #95 retains their rebuildable revision-scoped diagnostic/runtime state
-without defining a transport contract.
+facts. Issue #95 retains their revision-scoped diagnostic cache only as
+runtime-only, rebuildable, nonserialized implementation evidence. That cache is
+not a second validation authority, public contract, or transport contract, and
+the full validation oracle remains authoritative.
 
 ## Storage failures
 

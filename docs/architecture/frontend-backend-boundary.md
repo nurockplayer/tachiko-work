@@ -150,9 +150,9 @@ guarded installation through the same publication seam. Issue #94 adds bounded
 entity/field projections and fresh dependency-derived invalidation facts. The
 complete Command catalogue, public transport/client adapters, concrete
 authentication/delivery, and broader host mechanics remain later work. Issue
-#95 retains rebuildable calculation and supporting query state inside the same
-resident occurrence, with conservative full-oracle fallback and no durable
-cache meaning.
+The Issue #95 implementation retains rebuildable calculation and supporting
+query state inside the same resident occurrence, with conservative full-oracle
+fallback and no durable cache meaning.
 
 Separately, #123 implements `.roproj/v1` at the storage/native host boundary
 without moving filesystem authority into workspace-engine or the interactive

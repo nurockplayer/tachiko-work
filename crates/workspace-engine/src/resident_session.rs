@@ -402,7 +402,9 @@ impl ResidentRuntimeMeasurements {
 
     fn record_transition(&mut self, work: DerivedStateTransitionWork) {
         self.derived_state_rebuilds = self.derived_state_rebuilds.saturating_add(1);
-        self.retained_before_state_reuses = self.retained_before_state_reuses.saturating_add(1);
+        if !work.fell_back_to_full_calculation {
+            self.retained_before_state_reuses = self.retained_before_state_reuses.saturating_add(1);
+        }
         self.full_calculation_rebuilds = self
             .full_calculation_rebuilds
             .saturating_add(work.calculation.full_rebuilds);

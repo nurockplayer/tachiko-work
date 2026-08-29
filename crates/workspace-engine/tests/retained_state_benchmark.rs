@@ -36,7 +36,9 @@ fn repeated_local_edits_reuse_material_calculation_work() {
     for entity_count in ENTITY_COUNTS {
         let (retained_micros, fresh_micros, work) = run_case(entity_count);
         let initial_nodes = entity_count * 3;
-        let recomputed_edit_nodes = work.calculation_nodes_recomputed - initial_nodes;
+        let recomputed_edit_nodes = work
+            .calculation_nodes_recomputed
+            .saturating_sub(initial_nodes);
         println!(
             "{entity_count},{EDITS},{retained_micros},{fresh_micros},{initial_nodes},{recomputed_edit_nodes},{},{},{}",
             work.calculation_nodes_reused,
