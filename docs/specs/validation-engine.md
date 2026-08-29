@@ -369,16 +369,16 @@ The current implementation has no general freeform/progressive-strengthening
 runtime surface. ADR-0021 is architecture non-exclusion and does not create an
 implementation gap that blocks the strongly typed Game Development MVP.
 
-The current runtime/API surface retains snapshot validation inside the #93
-resident state owner. Under ADR-0022, Issue #94 selectively projects
-stable-subject diagnostics and exact-publication invalidation derived from
-fresh dependency oracles while retaining full validation/calculation oracles;
-Issue #95 retains incremental implementation.
+The current runtime/API surface retains validation inside the #93 resident
+state owner. Under ADR-0022, Issue #94 selectively projects stable-subject
+diagnostics and exact-publication invalidation. Issue #95 retains rebuildable
+revision-scoped reports and incrementally maintained formula outcomes while
+mechanically checking both against fresh full validation/calculation oracles.
 
-Incremental scheduling/caching, concrete external wire mapping, invalid-draft
-lifecycle, extension registration, mixed-content runtime, and resident-runtime
-delivery remain owned by their existing Deferred classifications rather than
-this implementation.
+Further incremental scheduling/caching, concrete external wire mapping,
+invalid-draft lifecycle, extension registration, mixed-content runtime, and
+resident-runtime delivery remain owned by their existing Deferred
+classifications rather than this implementation.
 
 ## Explicitly not defined here
 

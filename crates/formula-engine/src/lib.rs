@@ -300,6 +300,330 @@ pub enum CalculationOutcome {
     Failed(CalculationFailures),
 }
 
+/// Runtime-only formula state retained by a resident semantic workspace.
+///
+/// Successful values may remain present internally while another independent
+/// component is failed so a later local edit can reuse unaffected work. They
+/// are never exposed through [`Self::outcome`] while any failure exists.
+/// This state is derived entirely from one [`Document`] and is not canonical
+/// semantic state, a cache key contract, or a serialization surface.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RetainedCalculationState {
+    nodes: BTreeSet<FieldRef>,
+    values: BTreeMap<FieldRef, Number>,
+    failures: FailureMap,
+    dependencies: DependencyMap,
+    reverse_dependents: DependencyMap,
+}
+
+/// Deterministic work evidence for one retained calculation transition.
+///
+/// These counters describe the current provisional algorithm. They are
+/// runtime/benchmark evidence, not semantic identity or a performance SLA.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct IncrementalCalculationWork {
+    pub full_rebuilds: usize,
+    pub incremental_updates: usize,
+    pub nodes_recomputed: usize,
+    pub nodes_reused: usize,
+    pub reverse_edges_traversed: usize,
+}
+
+/// Runtime-only transition evidence consumed by resident projection
+/// invalidation. Both field lists are deterministic and exclude dirty roots
+/// from `affected_calculations` while retaining changed root projections in
+/// `changed_calculation_projections` when applicable.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct IncrementalCalculationTransition {
+    pub work: IncrementalCalculationWork,
+    pub affected_calculations: Vec<FieldRef>,
+    pub changed_calculation_projections: Vec<FieldRef>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum RetainedNodeProjection {
+    Value(Number),
+    Failure(CalculationFailure),
+    Unavailable,
+}
+
+struct DirtyCalculationImpact {
+    dirty: BTreeSet<FieldRef>,
+    old_dependents: BTreeSet<FieldRef>,
+    new_dependents: BTreeSet<FieldRef>,
+    reverse_edges_traversed: usize,
+}
+
+impl RetainedCalculationState {
+    /// Rebuild all retained formula state through the full ADR-0018 oracle
+    /// phases.
+    #[must_use]
+    pub fn rebuild(document: &Document) -> (Self, IncrementalCalculationWork) {
+        let (nodes, formulas, dependencies) = collect_calculation_nodes(document);
+        let mut failures = pregraph_failures(document, &nodes, &formulas, &dependencies);
+        assign_cycle_failures(&formulas, &dependencies, &mut failures);
+        let mut values = initial_values(&nodes, &failures);
+        evaluate_remaining_formulas(&formulas, &dependencies, &mut failures, &mut values);
+        let node_ids = nodes.keys().cloned().collect::<BTreeSet<_>>();
+        let reverse_dependents = reverse_dependency_index(&dependencies);
+        let work = IncrementalCalculationWork {
+            full_rebuilds: 1,
+            nodes_recomputed: node_ids.len(),
+            ..IncrementalCalculationWork::default()
+        };
+        (
+            Self {
+                nodes: node_ids,
+                values,
+                failures,
+                dependencies,
+                reverse_dependents,
+            },
+            work,
+        )
+    }
+
+    /// Recompute dirty roots and their old/new-graph reverse dependent closure.
+    ///
+    /// The caller owns conservative impact classification. When that cannot be
+    /// proved, discard this state and call [`Self::rebuild`] instead.
+    #[must_use]
+    pub fn update(
+        &mut self,
+        document: &Document,
+        dirty_roots: &BTreeSet<FieldRef>,
+    ) -> IncrementalCalculationTransition {
+        if dirty_roots.is_empty() {
+            return IncrementalCalculationTransition {
+                work: IncrementalCalculationWork {
+                    incremental_updates: 1,
+                    nodes_reused: self.nodes.len(),
+                    ..IncrementalCalculationWork::default()
+                },
+                ..IncrementalCalculationTransition::default()
+            };
+        }
+
+        let before_failed = self.is_failed();
+        let before_formulas = self.dependencies.keys().cloned().collect::<BTreeSet<_>>();
+        let impact = self.update_dependency_impact(document, dirty_roots);
+        let before_projections = impact
+            .dirty
+            .iter()
+            .map(|field| (field.clone(), self.node_projection(field)))
+            .collect::<BTreeMap<_, _>>();
+        self.recompute_dirty(document, dirty_roots, &impact.dirty);
+
+        let nodes_recomputed = impact
+            .dirty
+            .iter()
+            .filter(|field| self.nodes.contains(*field))
+            .count();
+        let work = IncrementalCalculationWork {
+            incremental_updates: 1,
+            nodes_recomputed,
+            nodes_reused: self.nodes.len().saturating_sub(nodes_recomputed),
+            reverse_edges_traversed: impact.reverse_edges_traversed,
+            ..IncrementalCalculationWork::default()
+        };
+        let after_failed = self.is_failed();
+        let formula_fields = before_formulas
+            .into_iter()
+            .chain(self.dependencies.keys().cloned())
+            .collect::<BTreeSet<_>>();
+        let changed_calculation_projections = if before_failed == after_failed {
+            formula_fields
+                .intersection(&impact.dirty)
+                .filter(|field| {
+                    before_projections.get(*field) != Some(&self.node_projection(field))
+                })
+                .cloned()
+                .collect()
+        } else {
+            formula_fields.into_iter().collect()
+        };
+        IncrementalCalculationTransition {
+            work,
+            affected_calculations: impact
+                .old_dependents
+                .into_iter()
+                .chain(impact.new_dependents)
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect(),
+            changed_calculation_projections,
+        }
+    }
+
+    fn update_dependency_impact(
+        &mut self,
+        document: &Document,
+        dirty_roots: &BTreeSet<FieldRef>,
+    ) -> DirtyCalculationImpact {
+        let (old_dependents, old_edges) =
+            reverse_dependent_closure(&self.reverse_dependents, dirty_roots);
+        for root in dirty_roots {
+            replace_root_dependencies(
+                &mut self.dependencies,
+                &mut self.reverse_dependents,
+                root,
+                formula_dependencies(document, root),
+            );
+        }
+        let (new_dependents, new_edges) =
+            reverse_dependent_closure(&self.reverse_dependents, dirty_roots);
+        let dirty = dirty_roots
+            .iter()
+            .chain(old_dependents.iter())
+            .chain(new_dependents.iter())
+            .cloned()
+            .collect();
+        DirtyCalculationImpact {
+            dirty,
+            old_dependents,
+            new_dependents,
+            reverse_edges_traversed: old_edges.saturating_add(new_edges),
+        }
+    }
+
+    fn recompute_dirty(
+        &mut self,
+        document: &Document,
+        dirty_roots: &BTreeSet<FieldRef>,
+        dirty: &BTreeSet<FieldRef>,
+    ) {
+        for root in dirty_roots {
+            if calculation_value(document, root).is_some() {
+                self.nodes.insert(root.clone());
+            } else {
+                self.nodes.remove(root);
+            }
+        }
+        let dirty_nodes = dirty
+            .iter()
+            .filter_map(|field| {
+                calculation_value(document, field).map(|value| (field.clone(), value))
+            })
+            .collect::<ValueNodes<'_>>();
+        let dirty_formulas = dirty_nodes
+            .iter()
+            .filter_map(|(field, value)| match value {
+                Value::Formula(expression) => Some((field.clone(), expression)),
+                Value::Number(_) | Value::Text(_) | Value::Boolean(_) | Value::Reference(_) => None,
+            })
+            .collect::<FormulaNodes<'_>>();
+
+        for field in dirty {
+            self.failures.remove(field);
+            self.values.remove(field);
+        }
+        self.failures.extend(pregraph_failures(
+            document,
+            &dirty_nodes,
+            &dirty_formulas,
+            &self.dependencies,
+        ));
+        assign_cycle_failures(&dirty_formulas, &self.dependencies, &mut self.failures);
+        self.values
+            .extend(initial_values(&dirty_nodes, &self.failures));
+        evaluate_remaining_formulas(
+            &dirty_formulas,
+            &self.dependencies,
+            &mut self.failures,
+            &mut self.values,
+        );
+    }
+
+    /// Project the Accepted atomic calculation outcome for this revision.
+    #[must_use]
+    pub fn outcome(&self) -> CalculationOutcome {
+        if self.failures.is_empty() {
+            CalculationOutcome::Complete(Calculation {
+                values: self.values.clone(),
+                dependencies: self.dependencies.clone(),
+            })
+        } else {
+            CalculationOutcome::Failed(CalculationFailures {
+                failures: self.failures.clone(),
+                dependencies: self.dependencies.clone(),
+            })
+        }
+    }
+
+    /// Return whether the atomic calculation outcome is failed.
+    #[must_use]
+    pub fn is_failed(&self) -> bool {
+        !self.failures.is_empty()
+    }
+
+    /// Return a published value only when the complete calculation is atomic.
+    #[must_use]
+    pub fn value(&self, field: &FieldRef) -> Option<Number> {
+        self.failures
+            .is_empty()
+            .then(|| self.values.get(field).copied())
+            .flatten()
+    }
+
+    /// Return the complete published value map only for an atomic successful
+    /// outcome.
+    #[must_use]
+    pub fn complete_values(&self) -> Option<&BTreeMap<FieldRef, Number>> {
+        self.failures.is_empty().then_some(&self.values)
+    }
+
+    /// Return one primary failure only while the atomic outcome is failed.
+    #[must_use]
+    pub fn failure(&self, field: &FieldRef) -> Option<&CalculationFailure> {
+        self.failures.get(field)
+    }
+
+    /// Return all primary failures retained for the current revision.
+    #[must_use]
+    pub fn failures(&self) -> &BTreeMap<FieldRef, CalculationFailure> {
+        &self.failures
+    }
+
+    /// Return every current static formula dependency set.
+    #[must_use]
+    pub fn dependencies(&self) -> &BTreeMap<FieldRef, BTreeSet<FieldRef>> {
+        &self.dependencies
+    }
+
+    fn node_projection(&self, field: &FieldRef) -> RetainedNodeProjection {
+        if self.is_failed() {
+            self.failures
+                .get(field)
+                .map_or(RetainedNodeProjection::Unavailable, |failure| {
+                    RetainedNodeProjection::Failure(failure.clone())
+                })
+        } else {
+            self.values
+                .get(field)
+                .map_or(RetainedNodeProjection::Unavailable, |value| {
+                    RetainedNodeProjection::Value(*value)
+                })
+        }
+    }
+
+    /// Return the retained reverse dependency index used for bounded impact
+    /// traversal.
+    #[must_use]
+    pub fn reverse_dependents(&self) -> &BTreeMap<FieldRef, BTreeSet<FieldRef>> {
+        &self.reverse_dependents
+    }
+
+    /// Return the deterministic reverse transitive closure, excluding the
+    /// supplied dirty roots themselves.
+    #[must_use]
+    pub fn affected_by_all(&self, dirty_roots: &BTreeSet<FieldRef>) -> Vec<FieldRef> {
+        reverse_dependent_closure(&self.reverse_dependents, dirty_roots)
+            .0
+            .into_iter()
+            .collect()
+    }
+}
+
 /// Every primary semantic failure from one failed full recomputation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CalculationFailures {
@@ -615,6 +939,88 @@ fn collect_calculation_nodes(
         }
     }
     (nodes, formulas, dependencies)
+}
+
+fn calculation_value<'document>(
+    document: &'document Document,
+    field: &FieldRef,
+) -> Option<&'document Value> {
+    document
+        .entities
+        .get(&field.entity)
+        .and_then(|entity| entity.fields.get(&field.field))
+        .filter(|value| matches!(value, Value::Number(_) | Value::Formula(_)))
+}
+
+fn formula_dependencies(document: &Document, field: &FieldRef) -> Option<BTreeSet<FieldRef>> {
+    match calculation_value(document, field) {
+        Some(Value::Formula(expression)) => Some(extract_dependencies(expression)),
+        Some(Value::Number(_) | Value::Text(_) | Value::Boolean(_) | Value::Reference(_))
+        | None => None,
+    }
+}
+
+fn reverse_dependency_index(dependencies: &DependencyMap) -> DependencyMap {
+    let mut reverse = BTreeMap::<FieldRef, BTreeSet<FieldRef>>::new();
+    for (formula, inputs) in dependencies {
+        for input in inputs {
+            reverse
+                .entry(input.clone())
+                .or_default()
+                .insert(formula.clone());
+        }
+    }
+    reverse
+}
+
+fn replace_root_dependencies(
+    dependencies: &mut DependencyMap,
+    reverse_dependents: &mut DependencyMap,
+    root: &FieldRef,
+    replacement: Option<BTreeSet<FieldRef>>,
+) {
+    if let Some(previous) = dependencies.remove(root) {
+        for input in previous {
+            let remove_entry = reverse_dependents
+                .get_mut(&input)
+                .is_some_and(|dependents| {
+                    dependents.remove(root);
+                    dependents.is_empty()
+                });
+            if remove_entry {
+                reverse_dependents.remove(&input);
+            }
+        }
+    }
+    let Some(replacement) = replacement else {
+        return;
+    };
+    for input in &replacement {
+        reverse_dependents
+            .entry(input.clone())
+            .or_default()
+            .insert(root.clone());
+    }
+    dependencies.insert(root.clone(), replacement);
+}
+
+fn reverse_dependent_closure(
+    reverse_dependents: &DependencyMap,
+    roots: &BTreeSet<FieldRef>,
+) -> (BTreeSet<FieldRef>, usize) {
+    let mut queue = roots.iter().cloned().collect::<VecDeque<_>>();
+    let mut affected = BTreeSet::new();
+    let mut traversed = 0_usize;
+    while let Some(field) = queue.pop_front() {
+        for dependent in reverse_dependents.get(&field).into_iter().flatten() {
+            traversed = traversed.saturating_add(1);
+            if roots.contains(dependent) || !affected.insert(dependent.clone()) {
+                continue;
+            }
+            queue.push_back(dependent.clone());
+        }
+    }
+    (affected, traversed)
 }
 
 fn pregraph_failures(

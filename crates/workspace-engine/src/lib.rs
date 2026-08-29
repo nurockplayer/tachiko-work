@@ -9,7 +9,7 @@ use serde::Serialize;
 use tachiko_diff_engine::diff;
 pub use tachiko_diff_engine::{DiffError, SemanticChange, SemanticDiff};
 use tachiko_formula_engine::{
-    Calculation, CalculationFailures, CalculationOutcome, FormulaBindError, FormulaParseError,
+    Calculation, CalculationOutcome, FormulaBindError, FormulaParseError, RetainedCalculationState,
     bind_expression, calculate_complete, parse_expression, project_expression,
     validate_expression_structure,
 };
@@ -1530,21 +1530,46 @@ pub fn validation_report(document: &Document) -> ValidationReport {
 }
 
 fn semantic_validation(document: &Document) -> (ValidationReport, Option<Calculation>) {
+    let calculation_outcome = calculate_complete(document);
+    let report = validation_report_for_calculation(document, &calculation_outcome);
+    let calculation = match calculation_outcome {
+        CalculationOutcome::Complete(calculation) if report.is_valid() => Some(calculation),
+        CalculationOutcome::Complete(_) | CalculationOutcome::Failed(_) => None,
+    };
+    (report, calculation)
+}
+
+pub(crate) fn validation_report_for_calculation(
+    document: &Document,
+    calculation: &CalculationOutcome,
+) -> ValidationReport {
+    let failures = match calculation {
+        CalculationOutcome::Complete(_) => None,
+        CalculationOutcome::Failed(failures) => Some(failures.failures()),
+    };
+    validation_report_for_failures(document, failures)
+}
+
+pub(crate) fn validation_report_for_retained_calculation(
+    document: &Document,
+    calculation: &RetainedCalculationState,
+) -> ValidationReport {
+    validation_report_for_failures(
+        document,
+        calculation.is_failed().then_some(calculation.failures()),
+    )
+}
+
+fn validation_report_for_failures(
+    document: &Document,
+    failures: Option<&BTreeMap<FieldRef, CalculationFailure>>,
+) -> ValidationReport {
     let mut diagnostics = validate_document_core(document);
     let core_diagnostics = diagnostics.clone();
-    let calculation = match calculate_complete(document) {
-        CalculationOutcome::Complete(calculation) => Some(calculation),
-        CalculationOutcome::Failed(failures) => {
-            diagnostics.extend(formula_diagnostics(document, &failures, &core_diagnostics));
-            None
-        }
-    };
-    let report = ValidationReport::new(diagnostics);
-    if report.is_valid() {
-        (report, calculation)
-    } else {
-        (report, None)
+    if let Some(failures) = failures {
+        diagnostics.extend(formula_diagnostics(document, failures, &core_diagnostics));
     }
+    ValidationReport::new(diagnostics)
 }
 
 fn require_validated_calculation(document: &Document) -> Result<Calculation, WorkspaceError> {
@@ -1574,7 +1599,7 @@ const FORMULA_PROVIDER: DiagnosticProvider = DiagnosticProvider::new("tachiko.fo
 
 fn formula_diagnostics(
     document: &Document,
-    report: &CalculationFailures,
+    failures: &BTreeMap<FieldRef, CalculationFailure>,
     core_diagnostics: &[Diagnostic],
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
@@ -1582,7 +1607,7 @@ fn formula_diagnostics(
     let mut pending_failed_dependencies = Vec::new();
     let blockers = formula_prerequisite_blockers(core_diagnostics);
     let address_index = AddressIndex::build(document).ok();
-    for (formula, failure) in report.failures() {
+    for (formula, failure) in failures {
         if is_noncanonical_cycle(formula, failure) {
             continue;
         }

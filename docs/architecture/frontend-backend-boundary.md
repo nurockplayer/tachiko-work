@@ -1,6 +1,6 @@
 # Frontend and Backend Boundary
 
-Decision state: Accepted direction. ADR-0020 makes the Headless Semantic API the mandatory first-party semantic product boundary. ADR-0024 defines immutable revision-pinned SemanticPatch proposal meaning. ADR-0026 defines trusted footprint derivation, scoped authorization, exact Human Approval, and semantic/external-effect separation. ADR-0022 accepts the resident shared Rust semantic/application runtime and host separation as the preferred interactive topology. Issue #29 implements the provisional lifecycle/publication seam, #30 composes it through a provider-facing denial boundary, #93 supplies the current internal resident revision/session mechanics, and #94 adds internal occurrence-and-revision-pinned selective projections and invalidation facts. Concrete authentication, public transport/delivery, and external capability mechanics remain Deferred to later host/runtime work.
+Decision state: Accepted direction. ADR-0020 makes the Headless Semantic API the mandatory first-party semantic product boundary. ADR-0024 defines immutable revision-pinned SemanticPatch proposal meaning. ADR-0026 defines trusted footprint derivation, scoped authorization, exact Human Approval, and semantic/external-effect separation. ADR-0022 accepts the resident shared Rust semantic/application runtime and host separation as the preferred interactive topology. Issue #29 implements the provisional lifecycle/publication seam, #30 composes it through a provider-facing denial boundary, #93 supplies the current internal resident revision/session mechanics, #94 adds internal occurrence-and-revision-pinned selective projections and invalidation facts, and #95 retains rebuildable full-oracle-equivalent state across resident revisions. Concrete authentication, public transport/delivery, and external capability mechanics remain Deferred to later host/runtime work.
 
 ## Principle
 
@@ -86,7 +86,8 @@ session handles, cross-host concurrency, and transport/delivery remain later
 host work. Issue #93 supplies the current internal monotonic revision and
 guarded state installation; Issue #94 supplies internal selective projections
 and occurrence/revision-keyed invalidation facts without freezing their public
-shape.
+shape; Issue #95 consumes those facts to retain formula and supporting query
+state without creating another invalidation or semantic authority.
 
 ## Snapshot boundaries
 
@@ -148,8 +149,10 @@ resident `Document`, internal monotonic revision, explicit snapshots, and
 guarded installation through the same publication seam. Issue #94 adds bounded
 entity/field projections and fresh dependency-derived invalidation facts. The
 complete Command catalogue, public transport/client adapters, concrete
-authentication/delivery, and retained incremental state remain #95 and later
-host work.
+authentication/delivery, and broader host mechanics remain later work. Issue
+#95 retains rebuildable calculation and supporting query state inside the same
+resident occurrence, with conservative full-oracle fallback and no durable
+cache meaning.
 
 Separately, #123 implements `.roproj/v1` at the storage/native host boundary
 without moving filesystem authority into workspace-engine or the interactive

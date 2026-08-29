@@ -67,9 +67,13 @@ ADR-0022 does not freeze:
 Issue `#93` implements the current internal resident session/revision mechanics,
 and Issue `#94` adds occurrence-and-revision-pinned selective projections plus
 fresh dependency-derived invalidation facts with production native/WASM semantic
-parity evidence. Issue `#95` retains incremental performance work. Public
-Worker/ABI/persistence mechanics may evolve while preserving
-ADR-0020/ADR-0022 semantic and runtime-ownership laws.
+parity evidence. Issue `#95` retains rebuildable formula values/failures,
+dependency indexes, validation diagnostics, and address indexes across resident
+revisions. Its dirty-root plus old/new reverse-closure calculation path is
+checked against the same full oracle and falls back to full reconstruction when
+impact classification is unsafe. This state remains runtime-only and
+non-serialized. Public Worker/ABI/persistence mechanics may evolve while
+preserving ADR-0020/ADR-0022 semantic and runtime-ownership laws.
 
 ## Related
 

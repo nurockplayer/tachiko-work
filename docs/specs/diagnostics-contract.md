@@ -234,10 +234,10 @@ where native and WASM expose the same semantic capability, and places
 interactive authoritative state in the shared Rust runtime. Exact transport
 serialization/version negotiation, public resident session delivery, push/pull
 updates, and transport projection patches remain Deferred to future
-host/transport implementation as applicable. Issue #94 provides only the
-current internal stable-subject diagnostic projection and fresh invalidation
-facts derived for one exact guarded publication; #95 retains incremental
-diagnostic/runtime state.
+host/transport implementation as applicable. Issue #94 provides the current
+internal stable-subject diagnostic projection and exact-publication invalidation
+facts; #95 retains their rebuildable revision-scoped diagnostic/runtime state
+without defining a transport contract.
 
 ## Storage failures
 
