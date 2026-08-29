@@ -1,8 +1,10 @@
 # Derived architecture maps
 
-Status: explanatory architecture/tooling policy. This document does not create product, semantic, runtime, storage, or release authority.
+Decision state: **Provisional** developer/tooling policy.
 
-Tracking decision/evidence: [Issue #128](https://github.com/nurockplayer/tachiko-work/issues/128)
+Governing authority: [`../governance/knowledge-authority.md`](../governance/knowledge-authority.md). [Issue #128](https://github.com/nurockplayer/tachiko-work/issues/128) records the evaluation evidence and current Steward decision, but does not outrank the repository authority hierarchy.
+
+This document does not create product, semantic, runtime, storage, authorization, or release authority. Its tooling choices remain reversible unless promoted through the normal decision process.
 
 ## Purpose
 
@@ -12,29 +14,31 @@ These maps are **derived projections of repository state**. They help reviewers 
 
 ## Authority
 
-When a generated map and repository material disagree, use the normal repository authority order:
+When a generated map and repository material disagree, use the repository hierarchy defined by the governing knowledge-authority policy:
 
 1. Product Constitution and foundational principles;
-2. Accepted governance and ADRs;
-3. normative specifications;
-4. architecture and product documentation;
-5. implementation and tests;
-6. Issues, research, and discussion evidence.
+2. Accepted ADRs and accepted governance policies;
+3. normative specifications, according to their own decision state;
+4. architecture and product documents, according to their attached decision state;
+5. shipped implementation, tests, release artifacts, and README as current-behavior evidence;
+6. GitHub Decision Issues;
+7. implementation Issues and Epics;
+8. research and discussion history.
 
 A map may summarize or visualize those sources, but it cannot amend them. Architecture reachability or diagram topology must not be treated as proof of runtime impact, blast radius, risk, semantic equivalence, security, mergeability, or authorization.
 
 ## Revision pinning and staleness
 
-Every repository-backed map intended for review or durable reference must identify the exact 40-character Git commit SHA it describes.
+Every repository-backed map intended for review or durable reference should identify the exact 40-character Git commit SHA it describes.
 
-The pinned SHA defines the map's observation boundary. If `main` advances later, the map remains valid only as historical evidence for its pinned revision. It must not silently be presented as current architecture.
+The pinned SHA defines the map's observation boundary. If `main` advances later, the map remains valid only as historical evidence for its pinned revision. It should not silently be presented as current architecture.
 
 Do not rewrite an old checkpoint to make it appear current. When a newer view is useful, either:
 
 - generate a new map pinned to the newer revision; or
 - generate an explicit Before/Delta/After comparison between two pinned revisions.
 
-A later merge during map generation does not invalidate a correctly frozen run. Evidence from an unmerged PR must not be represented as implementation-real state in a map pinned to `main`.
+A later merge during map generation does not invalidate a correctly frozen run. Evidence from an unmerged PR should not be represented as implementation-real state in a map pinned to `main`.
 
 ## Accepted architecture versus implementation state
 
@@ -42,11 +46,11 @@ Maps should distinguish durable authority from implementation evidence.
 
 An Accepted boundary may exist before production code implements it. Conversely, implementation may change inside an Accepted boundary without changing the architecture decision. Maps and deltas should label that distinction rather than converting implementation progress into a fictitious authority change.
 
-For example, ADR-0022 accepts resident Rust runtime ownership while concrete resident session/revision mechanics remain separately owned by #93. A map must not present those mechanics as production-real until its pinned revision proves them.
+For example, ADR-0022 accepts resident Rust runtime ownership while concrete resident session/revision mechanics remain separately owned by #93. A map should not present those mechanics as production-real until its pinned revision proves them.
 
 ## Persistence policy
 
-The v0 durable strategy is **source in Git, generated artifacts on demand**.
+The v0 Provisional persistence strategy is **source in Git, generated artifacts on demand**.
 
 When an architecture checkpoint is worth preserving, prefer committing the small revision-pinned typed map source. Do not routinely commit self-contained generated HTML, screenshots, visual-check captures, or other renderer intermediates.
 
@@ -91,12 +95,12 @@ Do not generate architecture deltas for ordinary local refactors, tests, copy ch
 
 ## CI policy
 
-Architecture-map generation is not required CI.
+Architecture-map generation is not required CI under this Provisional policy.
 
 Manual use has demonstrated review value, but required-tooling maintenance cost is not yet justified. Reconsider CI only after repeated use across materially different changes shows consistently high signal and low churn.
 
 ## Removal boundary
 
-Archify and its map IR must remain removable without affecting Tachiko semantic correctness, storage correctness, runtime behavior, Git interoperability, product behavior, or Accepted authority.
+Archify and its map IR should remain removable without affecting Tachiko semantic correctness, storage correctness, runtime behavior, Git interoperability, product behavior, or Accepted authority.
 
 No canonical Tachiko contract should be changed merely to fit a diagramming tool.
