@@ -145,10 +145,13 @@ This specification does not freeze a new public `Workspace`, `Project`, session,
 or revision type. Milestone 02 semantic references remain document-local where
 ADR-0015 says they are document-local. ADR-0024 requires every reviewable
 proposal to bind one exact semantic context revision, while ADR-0022 accepts a
-resident shared Rust runtime as the preferred interactive topology. The exact
-session handle, revision/precondition representation, concurrency/conflict
-policy, cancellation, and runtime state-installation mechanics remain Deferred
-to #93 and related runtime work.
+resident shared Rust runtime as the preferred interactive topology. Issue #93
+supplies the current internal resident session occurrence, opaque monotonic
+revision and equality, explicit snapshot, and guarded in-process state
+installation. Exact public session handles, revision/precondition encoding,
+broader cross-host concurrency mechanisms, cancellation, and public
+commit/swap/locking/transport contracts remain Deferred to later runtime and
+host work.
 
 ## Stable targeting
 
