@@ -6,7 +6,7 @@ designer_dir="${repo_root}/apps/designer"
 runtime_manifest="${designer_dir}/runtime/Cargo.toml"
 
 command -v pnpm >/dev/null 2>&1 || {
-  echo "designer-check: pnpm 11.13.0 is required" >&2
+  echo "designer-check: pnpm 11.25.0 is required" >&2
   exit 1
 }
 

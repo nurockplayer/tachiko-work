@@ -36,7 +36,7 @@ rustup run 1.85.0 cargo check --workspace --all-targets --locked
 Use the checked-in `Cargo.lock`. The project does not require a global install;
 run the CLI with `cargo run -p tachiko-cli -- <command>` while developing.
 
-The first-party Web Designer additionally requires pnpm 11.13.0 and Chromium
+The first-party Web Designer additionally requires pnpm 11.25.0 and Chromium
 for its browser journey. Keep its app-local lockfile and use pnpm exclusively:
 
 ```sh
