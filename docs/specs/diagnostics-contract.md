@@ -233,8 +233,11 @@ ADR-0020. ADR-0022 requires equivalent Stable semantic diagnostic observations
 where native and WASM expose the same semantic capability, and places
 interactive authoritative state in the shared Rust runtime. Exact transport
 serialization/version negotiation, public resident session delivery, push/pull
-updates, and projection patches remain Deferred to #94–#95 and future
-host/transport implementation as applicable.
+updates, and transport projection patches remain Deferred to future
+host/transport implementation as applicable. Issue #94 provides only the
+current internal stable-subject diagnostic projection and fresh invalidation
+facts derived for one exact guarded publication; #95 retains incremental
+diagnostic/runtime state.
 
 ## Storage failures
 

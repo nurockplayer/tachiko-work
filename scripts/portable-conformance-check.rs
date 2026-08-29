@@ -40,9 +40,9 @@ use tachiko_workspace_engine::{
         AuthorizationAction, AuthorizationDomainId, AuthorizationPolicyVersion, DocumentScopeId,
         Grant, GrantId, GrantRequirement, MutationClass, OperationFamily, PatchLifecycle,
         PatchLifecycleError, PolicyMeaningId, PrincipalId, PrincipalKind, ProposalId,
-        ScopedSemanticSubject, SemanticApiContract, SemanticCommand, SemanticPatchBody,
-        SemanticPublicationAuthority, SemanticPublicationError, SemanticRevision, SemanticScope,
-        TrustedInstant,
+        ProposalRequest, ScopedSemanticSubject, SemanticApiContract, SemanticCommand,
+        SemanticPatchBody, SemanticPublicationAuthority, SemanticPublicationError,
+        SemanticRevision, SemanticScope, TrustedInstant,
     },
     resident_session::{ResidentWorkspaceSession, TrustedPublicationTimeSource},
     validation_report,
@@ -2148,6 +2148,7 @@ fn analysis_pair_fingerprint(result: &PairedAnalysisQueryResult) -> u64 {
 fn formula_operation_lifecycle(
     document: &Document,
     family: OperationFamily,
+    mutation_class: MutationClass,
     mutation_actions: &[AuthorizationAction],
 ) -> Result<(PatchLifecycle, DocumentScopeId, PrincipalId), ()> {
     let scope = DocumentScopeId::from("portable-document-occurrence");
@@ -2171,7 +2172,7 @@ fn formula_operation_lifecycle(
             GrantRequirement::mutation(
                 *action,
                 family,
-                MutationClass::Formula,
+                mutation_class,
                 document_subject.clone(),
             )
             .map_err(|_| ())?,
@@ -2192,7 +2193,12 @@ fn formula_operation_lifecycle(
 fn formula_query_record() -> Record {
     let document = formula_document(number(42.0), input_reference());
     let Ok((lifecycle, scope, principal)) =
-        formula_operation_lifecycle(&document, OperationFamily::FormulaReasoning, &[])
+        formula_operation_lifecycle(
+            &document,
+            OperationFamily::FormulaReasoning,
+            MutationClass::Formula,
+            &[],
+        )
     else {
         return Record::failure(UNEXPECTED, 48_u64 << 32);
     };
@@ -2232,7 +2238,12 @@ fn formula_scenario_record() -> Record {
     let document = formula_document(number(42.0), input_reference());
     let original = document.clone();
     let Ok((lifecycle, scope, principal)) =
-        formula_operation_lifecycle(&document, OperationFamily::NumberOverrideScenario, &[])
+        formula_operation_lifecycle(
+            &document,
+            OperationFamily::NumberOverrideScenario,
+            MutationClass::Formula,
+            &[],
+        )
     else {
         return Record::failure(UNEXPECTED, 49_u64 << 32);
     };
@@ -2339,6 +2350,7 @@ fn formula_update_record() -> Record {
     let Ok((mut lifecycle, scope, principal)) = formula_operation_lifecycle(
         &document,
         OperationFamily::FormulaUpdate,
+        MutationClass::Formula,
         &[AuthorizationAction::Propose, AuthorizationAction::Execute],
     ) else {
         return Record::failure(UNEXPECTED, 50_u64 << 32);
@@ -2411,49 +2423,103 @@ fn resident_session_record() -> Record {
     let document = formula_document(number(42.0), input_reference());
     let Ok((mut lifecycle, scope, principal)) = formula_operation_lifecycle(
         &document,
-        OperationFamily::FormulaUpdate,
+        OperationFamily::SetFieldValue,
+        MutationClass::Value,
         &[AuthorizationAction::Propose, AuthorizationAction::Execute],
     ) else {
         return Record::failure(UNEXPECTED, 54_u64 << 32);
     };
     let mut session = ResidentWorkspaceSession::new(scope, document);
     let initial = session.export_snapshot();
-    let query = session.validation_report();
-    if !query.value().is_valid()
+    let input = FieldRef::new("entity-stable", "input-stable");
+    let output = FieldRef::new("entity-stable", "output-stable");
+    let Ok(query) = session.query_fields(&[output.clone(), input.clone()]) else {
+        return Record::failure(UNEXPECTED, (54_u64 << 32) | 1);
+    };
+    let [input_projection, output_projection] = query.value().as_slice() else {
+        return Record::failure(UNEXPECTED, (54_u64 << 32) | 2);
+    };
+    if query.document_scope() != initial.document_scope()
         || query.revision() != initial.revision()
         || session.revision() != initial.revision()
+        || input_projection.field != input
+        || input_projection.stored_value != Some(Value::Number(number(42.0)))
+        || input_projection.formula_definition.is_some()
+        || input_projection.calculated_value.is_some()
+        || output_projection.field != output
+        || output_projection.stored_value.is_some()
+        || output_projection.formula_definition.as_ref() != Some(&input_reference())
+        || output_projection.calculated_value
+            != Some(FormulaCalculationOutcome::Value(number(42.0)))
+        || !input_projection.diagnostics.is_empty()
+        || !output_projection.diagnostics.is_empty()
     {
-        return Record::failure(UNEXPECTED, (54_u64 << 32) | 1);
+        return Record::failure(UNEXPECTED, (54_u64 << 32) | 3);
     }
-    let Ok(patch) = lifecycle.propose_formula_update(
+    let proposal = ProposalId::from("resident-set-input");
+    let Ok(patch) = lifecycle.propose(
         initial.document_scope(),
         initial.document(),
         initial.revision(),
-        FormulaUpdateRequest::new(
-            ProposalId::from("resident-formula-update"),
+        ProposalRequest::new(
+            proposal.clone(),
             initial.revision().clone(),
-            FieldRef::new("entity-stable", "output-stable"),
-            "[source.input-stable] + 1",
+            SemanticPatchBody::command(SemanticCommand::set_field_value(
+                input.clone(),
+                Value::Number(number(43.0)),
+            )),
             principal.clone(),
         ),
         TrustedInstant::new(1),
     ) else {
-        return Record::failure(UNEXPECTED, (54_u64 << 32) | 2);
+        return Record::failure(UNEXPECTED, (54_u64 << 32) | 4);
+    };
+    if lifecycle
+        .preview(
+            initial.document_scope(),
+            initial.document(),
+            initial.revision(),
+            &proposal,
+            &principal,
+            TrustedInstant::new(2),
+        )
+        .is_err()
+    {
+        return Record::failure(UNEXPECTED, (54_u64 << 32) | 5);
     };
     let mut time = PortableTrustedTime { calls: 0 };
-    let receipt = {
+    let (receipt, invalidation) = {
         let mut publication = session.publication_authority(&mut time);
         let Ok(receipt) = lifecycle.execute(
             patch.id(),
             None,
             &principal,
             &mut publication,
-            TrustedInstant::new(2),
+            TrustedInstant::new(3),
         ) else {
-            return Record::failure(UNEXPECTED, (54_u64 << 32) | 3);
+            return Record::failure(UNEXPECTED, (54_u64 << 32) | 6);
         };
-        receipt
+        let Some(invalidation) = publication
+            .projection_invalidation_for(
+                initial.document_scope(),
+                &receipt.base_revision,
+                &receipt.resulting_revision,
+            )
+            .cloned()
+        else {
+            return Record::failure(UNEXPECTED, (54_u64 << 32) | 7);
+        };
+        (receipt, invalidation)
     };
+    if invalidation.document_scope != *initial.document_scope()
+        || invalidation.base_revision != receipt.base_revision
+        || invalidation.resulting_revision != receipt.resulting_revision
+        || !invalidation.entities.is_empty()
+        || invalidation.fields != [input.clone()]
+        || invalidation.affected_calculations != [output.clone()]
+    {
+        return Record::failure(UNEXPECTED, (54_u64 << 32) | 7);
+    }
     let installed = session.export_snapshot();
     let mut stale_candidate = installed.document().clone();
     stale_candidate.title = "must not install".to_owned();
@@ -2472,22 +2538,23 @@ fn resident_session_record() -> Record {
         || initial.revision() == installed.revision()
         || time.calls != 2
     {
-        return Record::failure(UNEXPECTED, (54_u64 << 32) | 4);
+        return Record::failure(UNEXPECTED, (54_u64 << 32) | 8);
     }
-    let outcome = calculate_complete(installed.document());
-    let CalculationOutcome::Complete(calculation) = outcome else {
-        return Record::failure(UNEXPECTED, (54_u64 << 32) | 5);
+    let Ok(current) = session.query_fields(std::slice::from_ref(&output)) else {
+        return Record::failure(UNEXPECTED, (54_u64 << 32) | 9);
     };
-    let Some(value) = calculation.value(&FieldRef::new("entity-stable", "output-stable")) else {
-        return Record::failure(UNEXPECTED, (54_u64 << 32) | 6);
+    let Some(FormulaCalculationOutcome::Value(value)) = current.value()[0].calculated_value else {
+        return Record::failure(UNEXPECTED, (54_u64 << 32) | 10);
     };
     if value != number(43.0) || !receipt.verified {
-        return Record::failure(UNEXPECTED, (54_u64 << 32) | 7);
+        return Record::failure(UNEXPECTED, (54_u64 << 32) | 11);
     }
     Record {
         class: RESIDENT_SESSION,
         bits: value.to_bits(),
-        auxiliary: (time.calls << 32) | receipt.semantic_changes.len() as u64,
+        auxiliary: (time.calls << 32)
+            | ((invalidation.affected_calculations.len() as u64) << 16)
+            | receipt.semantic_changes.len() as u64,
     }
 }
 

@@ -46,7 +46,7 @@ For implementable format contracts, continue to [`../specs/README.md`](../specs/
 - [`frontend-backend-boundary.md`](frontend-backend-boundary.md) — frontend projection/workflow state, shared runtime authority, explicit snapshot boundaries, and host composition.
 - [`performance-model.md`](performance-model.md) — provisional performance guidance that should be refined by evidence.
 
-ADR-0022 accepts resident Rust runtime ownership, the no-second-canonical-client-model rule, host separation, explicit snapshot boundaries, and native/WASM semantic parity. Issue #93 implements the current provisional in-process resident session, monotonic revision, and guarded installation seam. Public session handles, cross-host concurrency, Worker lifecycle, IPC/FFI/network mapping, projection invalidation, persistence/recovery, and serialization/ABI remain Deferred to #94–#95 and related host work.
+ADR-0022 accepts resident Rust runtime ownership, the no-second-canonical-client-model rule, host separation, explicit snapshot boundaries, and native/WASM semantic parity. Issue #93 implements the current provisional in-process resident session, monotonic revision, and guarded installation seam; Issue #94 adds its internal selective entity/field projections and fresh occurrence/revision-keyed invalidation facts. Public session handles, cross-host concurrency, Worker lifecycle, IPC/FFI/network mapping, persistence/recovery, serialization/ABI, and retained incremental state remain Deferred to #95 and related host work.
 
 ### AI
 
@@ -83,7 +83,7 @@ Use these broad cues together with the reconciliation register:
 | Rust crate graph | Accepted Milestone 02 boundary implemented; exact Rust API remains Provisional |
 | AI as delegated semantic client | Accepted under amended ADR-0007; scoped authorization and exact Human Approval Accepted under ADR-0026; #29 provider-neutral lifecycle, #30 provider-facing hostile boundary, and #93 resident publication composition implemented, while public transport/authentication remain Deferred |
 | Revision-pinned SemanticPatch proposal | Accepted under ADR-0024; ADR-0026 consumes its structural binding without selecting canonical bytes/digest/token; #29 provisional Rust lifecycle and #93 internal resident revision mechanics implemented while public wire remains Deferred |
-| Resident Native/WASM runtime and host separation | Accepted under ADR-0022; #93 implements the first production in-process resident session with native/WASM evidence; public transport/persistence mechanics remain Deferred |
+| Resident Native/WASM runtime and host separation | Accepted under ADR-0022; #93 implements the first production in-process resident session and #94 its internal selective projections/invalidation facts with native/WASM evidence; public transport/persistence mechanics remain Deferred |
 | Distributed collaboration beyond semantic merge | Hypothesis / Open Question |
 | Rendering/UI and cross-view projection architecture | Future hypothesis |
 

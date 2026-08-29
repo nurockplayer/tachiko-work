@@ -148,8 +148,12 @@ proposal to bind one exact semantic context revision, while ADR-0022 accepts a
 resident shared Rust runtime as the preferred interactive topology. Issue #93
 supplies the current internal resident session occurrence, opaque monotonic
 revision and equality, explicit snapshot, and guarded in-process state
-installation. Exact public session handles, revision/precondition encoding,
-broader cross-host concurrency mechanisms, cancellation, and public
+installation. Issue #94 adds current internal occurrence-and-revision-pinned
+selective entity/field projections and exact-publication invalidation facts
+paired to that occurrence and its base/result revisions, derived from fresh
+dependency oracles. Exact public session handles,
+result shapes, revision/precondition encoding, broader
+cross-host concurrency mechanisms, cancellation, and public
 commit/swap/locking/transport contracts remain Deferred to later runtime and
 host work.
 
@@ -1421,8 +1425,8 @@ proposal identity with different content, generated-ID binding, and equivalent
 Stable native/WASM outcomes where the same capability is exposed. Issue #29
 implements current field-value/batch lifecycle fixtures. Issue #144 adds
 formula reasoning, scenario, and formula-update conformance; complete catalogue
-and transport conformance remains later work. Issue #93 adds production
-resident session/revision conformance on native and WASM.
+and transport conformance remains later work. Issues #93–#94 add production
+resident session/revision/selective-projection conformance on native and WASM.
 
 ## Stability classification
 
@@ -1509,11 +1513,15 @@ equivalent Stable semantic meaning where capabilities overlap.
 
 Issue #93 implements the current provisional in-process resident session,
 monotonic revision precondition, explicit snapshot, and guarded installation
-mechanics in `workspace-engine`, with native/WASM equivalence evidence. Public
-session handles, cross-host concurrency, Worker lifecycle,
+mechanics in `workspace-engine`. Issue #94 implements current internal
+occurrence-and-revision-pinned selective entity/field projections, stale-result
+comparison, and exact-publication invalidation of entity, field, and
+dependency-derived calculation projections, with native/WASM equivalence
+evidence. Public session handles, exact public result/invalidation shapes,
+cross-host concurrency, Worker lifecycle,
 IPC/FFI/network serialization/ABI, and native/browser persistence/recovery
-remain Deferred to future host/transport work. Issue #94 owns selective queries
-and projection invalidation; Issue #95 owns retained incremental runtime state;
+remain Deferred to future host/transport work. Issue #95 owns retained
+incremental runtime state;
 Issue #11 retains broader transaction/recovery architecture, and Issue #12
 retains persisted history/event-sourcing work.
 
