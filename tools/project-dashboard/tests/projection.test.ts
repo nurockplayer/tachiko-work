@@ -317,6 +317,30 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.blockers).toContain("Live-main and authority-drift reconciliation could not be observed.");
   });
 
+  it("blocks PR lanes that claim the same secondary Issue", () => {
+    const first = pullRequest();
+    first.issueNumbers = [169, 170];
+    const second = pullRequest();
+    second.number = 201;
+    second.url = "https://github.com/nurockplayer/tachiko-work/pull/201";
+    second.issueNumbers = [171, 170];
+    second.headSha = "c".repeat(40);
+    second.checksObservedHeadSha = second.headSha;
+    second.comments[0]!.body = second.comments[0]!.body.replaceAll(headSha, second.headSha);
+
+    const projection = normalizeRepositorySnapshot(snapshot({
+      issues: [issue(169), issue(170), issue(171)],
+      pullRequests: [first, second],
+    }));
+
+    expect(projection.deliveries).toHaveLength(2);
+    expect(projection.deliveries.map((lane) => lane.issue.number).toSorted()).toEqual([169, 171]);
+    for (const lane of projection.deliveries) {
+      expect(lane.phase).toBe("blocked");
+      expect(lane.blockers).toContain("Multiple open pull requests claim Issue #170: #200, #201.");
+    }
+  });
+
   it("marks main movement as suspected authority drift until the handoff reconciles it", () => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace(mainSha, "d".repeat(40));

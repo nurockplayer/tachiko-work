@@ -312,7 +312,7 @@ function projectLane(
   issue: RawIssue,
   pr: RawPullRequest | null,
   snapshot: RawRepositorySnapshot,
-  conflictingPrNumbers: number[] = [],
+  ownershipConflicts: Array<{ issueNumber: number; prNumbers: number[] }> = [],
 ): DeliveryLane {
   const comments = pr?.comments ?? issue.comments;
   const handoff = projectHandoff(comments, snapshot.observedAt, pr?.headSha ?? null, snapshot.mainSha);
@@ -343,7 +343,7 @@ function projectLane(
         }
       : projectReviews(pr, snapshot.observedAt);
   const drift = pr === null ? "none" : authorityDrift(pr, handoff, snapshot.mainSha);
-  const ownershipConflict = conflictingPrNumbers.length > 1;
+  const ownershipConflict = ownershipConflicts.length > 0;
   const blockers: string[] = [];
 
   if ((issue.blockedBy?.length ?? 0) > 0) {
@@ -367,8 +367,8 @@ function projectLane(
   }
   if (drift === "suspected") blockers.push("Authority or live-main drift requires explicit reconciliation.");
   if (drift === "unknown") blockers.push("Live-main and authority-drift reconciliation could not be observed.");
-  if (ownershipConflict) {
-    blockers.push(`Multiple open pull requests claim Issue #${issue.number}: ${conflictingPrNumbers.map((number) => `#${number}`).join(", ")}.`);
+  for (const conflict of ownershipConflicts) {
+    blockers.push(`Multiple open pull requests claim Issue #${conflict.issueNumber}: ${conflict.prNumbers.map((number) => `#${number}`).join(", ")}.`);
   }
 
   const phase = derivePhase(readiness, pr, checks, reviews, handoff, drift, ownershipConflict);
@@ -459,10 +459,11 @@ export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): Re
   const issuesByNumber = new Map(issues.map((issue) => [issue.number, issue]));
   const pullRequestsByIssue = new Map<number, number[]>();
   for (const pr of pullRequests) {
-    const issueNumber = pr.issueNumbers[0] ?? pr.number;
-    const numbers = pullRequestsByIssue.get(issueNumber) ?? [];
-    numbers.push(pr.number);
-    pullRequestsByIssue.set(issueNumber, numbers);
+    for (const issueNumber of pr.issueNumbers.length === 0 ? [pr.number] : pr.issueNumbers) {
+      const numbers = pullRequestsByIssue.get(issueNumber) ?? [];
+      numbers.push(pr.number);
+      pullRequestsByIssue.set(issueNumber, numbers);
+    }
   }
   for (const numbers of pullRequestsByIssue.values()) numbers.sort((left, right) => left - right);
   const ownedIssueNumbers = new Set<number>();
@@ -471,8 +472,13 @@ export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): Re
   for (const pr of pullRequests) {
     const number = pr.issueNumbers[0];
     const issue = number === undefined ? placeholderIssue(pr, snapshot.observedAt) : issuesByNumber.get(number) ?? placeholderIssue(pr, snapshot.observedAt);
-    ownedIssueNumbers.add(issue.number);
-    deliveries.push(projectLane(issue, pr, snapshot, pullRequestsByIssue.get(issue.number) ?? []));
+    const claimedIssueNumbers = pr.issueNumbers.length === 0 ? [issue.number] : pr.issueNumbers;
+    for (const issueNumber of claimedIssueNumbers) ownedIssueNumbers.add(issueNumber);
+    const ownershipConflicts = claimedIssueNumbers.flatMap((issueNumber) => {
+      const prNumbers = pullRequestsByIssue.get(issueNumber) ?? [];
+      return prNumbers.length > 1 ? [{ issueNumber, prNumbers }] : [];
+    });
+    deliveries.push(projectLane(issue, pr, snapshot, ownershipConflicts));
   }
 
   for (const issue of issues) {
