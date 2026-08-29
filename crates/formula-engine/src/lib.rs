@@ -354,26 +354,33 @@ struct DirtyCalculationImpact {
     reverse_edges_traversed: usize,
 }
 
+struct FullCalculationParts {
+    nodes: BTreeSet<FieldRef>,
+    values: BTreeMap<FieldRef, Number>,
+    failures: FailureMap,
+    dependencies: DependencyMap,
+}
+
 impl RetainedCalculationState {
     /// Rebuild all retained formula state through the full ADR-0018 oracle
     /// phases.
     #[must_use]
     pub fn rebuild(document: &Document) -> (Self, IncrementalCalculationWork) {
-        let (nodes, formulas, dependencies) = collect_calculation_nodes(document);
-        let mut failures = pregraph_failures(document, &nodes, &formulas, &dependencies);
-        assign_cycle_failures(&formulas, &dependencies, &mut failures);
-        let mut values = initial_values(&nodes, &failures);
-        evaluate_remaining_formulas(&formulas, &dependencies, &mut failures, &mut values);
-        let node_ids = nodes.keys().cloned().collect::<BTreeSet<_>>();
+        let FullCalculationParts {
+            nodes,
+            values,
+            failures,
+            dependencies,
+        } = full_calculation_parts(document);
         let reverse_dependents = reverse_dependency_index(&dependencies);
         let work = IncrementalCalculationWork {
             full_rebuilds: 1,
-            nodes_recomputed: node_ids.len(),
+            nodes_recomputed: nodes.len(),
             ..IncrementalCalculationWork::default()
         };
         (
             Self {
-                nodes: node_ids,
+                nodes,
                 values,
                 failures,
                 dependencies,
@@ -896,11 +903,12 @@ pub fn calculate(document: &Document) -> Result<Calculation, CalculationError> {
 /// failed outcome publishes no partial [`Calculation`].
 #[must_use]
 pub fn calculate_complete(document: &Document) -> CalculationOutcome {
-    let (nodes, formulas, dependencies) = collect_calculation_nodes(document);
-    let mut failures = pregraph_failures(document, &nodes, &formulas, &dependencies);
-    assign_cycle_failures(&formulas, &dependencies, &mut failures);
-    let mut values = initial_values(&nodes, &failures);
-    evaluate_remaining_formulas(&formulas, &dependencies, &mut failures, &mut values);
+    let FullCalculationParts {
+        values,
+        failures,
+        dependencies,
+        ..
+    } = full_calculation_parts(document);
 
     if failures.is_empty() {
         CalculationOutcome::Complete(Calculation {
@@ -919,6 +927,20 @@ type ValueNodes<'document> = BTreeMap<FieldRef, &'document Value>;
 type FormulaNodes<'document> = BTreeMap<FieldRef, &'document Expression>;
 type DependencyMap = BTreeMap<FieldRef, BTreeSet<FieldRef>>;
 type FailureMap = BTreeMap<FieldRef, CalculationFailure>;
+
+fn full_calculation_parts(document: &Document) -> FullCalculationParts {
+    let (nodes, formulas, dependencies) = collect_calculation_nodes(document);
+    let mut failures = pregraph_failures(document, &nodes, &formulas, &dependencies);
+    assign_cycle_failures(&formulas, &dependencies, &mut failures);
+    let mut values = initial_values(&nodes, &failures);
+    evaluate_remaining_formulas(&formulas, &dependencies, &mut failures, &mut values);
+    FullCalculationParts {
+        nodes: nodes.into_keys().collect(),
+        values,
+        failures,
+        dependencies,
+    }
+}
 
 fn collect_calculation_nodes(
     document: &Document,
