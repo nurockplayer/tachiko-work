@@ -344,7 +344,7 @@ validation inside Rust as implementation mechanisms.
 | Host persistence and safe writes | CLI/storage | CLI/storage/host composition, unchanged |
 | AI proposal envelope | One-field inert `Suggestion` only | Issue #29 implements a provider-neutral provisional SemanticPatch/AtomicBatch lifecycle in workspace-engine; #30 adds typed `ai-api` proposal/execution delegation with inert untrusted evidence, while #93 owns resident revision/session mechanics |
 | Semantic authorization/Approval | Not implemented | Issue #29 implements provisional trusted in-process relational Grants, scoped preview, exact finite Approval state, atomic consumption/publication, and receipts; #30 adds hostile-client admission and safe denials; public wire/authentication/host/runtime completion remains Deferred/#93 |
-| ID generation mechanism | CLI through workspace-engine seam |
+| ID generation mechanism | CLI through workflow seam | CLI through workspace-engine seam |
 | Product-semantic client contract | Provisional/internal | First-class transport-neutral Semantic API under ADR-0020 |
 | Interactive authoritative state ownership | Open under #26 | Shared Rust semantic/application runtime under ADR-0022 |
 | Resident interactive topology | PR #91 spike evidence | Accepted under ADR-0022; implementation pending #93–#95 |
