@@ -236,4 +236,25 @@ fn wire_bridge_returns_bounded_results_and_structured_failures() {
     };
     assert_eq!(error.code, "invalid_number");
     assert_eq!(error.current_revision, "resident/0");
+
+    let oversized = process_wire_request(&mut runtime, &vec![b' '; 65_537]);
+    let DesignerWireReply::Error { error } =
+        serde_json::from_slice(&oversized).expect("oversized failure should decode")
+    else {
+        panic!("expected structured oversized-request failure reply");
+    };
+    assert_eq!(error.code, "request_too_large");
+    assert_eq!(error.current_revision, "resident/0");
+
+    let mut bounded_runtime = DesignerRuntime::moonfall().expect("fixture should be valid");
+    let too_many_fields = bounded_runtime
+        .handle(DesignerRequest::QueryFields {
+            expected_revision: "resident/0".to_owned(),
+            fields: vec!["iron_sword.damage".into(); 1_025],
+        })
+        .expect_err("oversized selective field query must fail");
+    assert_eq!(
+        too_many_fields.failure_projection("resident/0").code,
+        "query_too_large"
+    );
 }

@@ -73,6 +73,11 @@ const table: TableProjection = {
 
 class FakeClient implements DesignerClient {
   queryRequests: FieldTarget[][] = [];
+  editRequests: Array<{
+    expectedRevision: string;
+    target: FieldTarget;
+    input: string;
+  }> = [];
 
   async bootstrap(): Promise<BootstrapProjection> {
     return bootstrap;
@@ -115,7 +120,16 @@ class FakeClient implements DesignerClient {
     };
   }
 
-  async editNumber(): Promise<PublicationProjection> {
+  async editNumber(
+    expectedRevision: string,
+    target: FieldTarget,
+    input: string,
+  ): Promise<PublicationProjection> {
+    this.editRequests.push({
+      expectedRevision,
+      target: structuredClone(target),
+      input,
+    });
     return {
       base_revision: "resident/0",
       resulting_revision: "resident/1",
@@ -142,6 +156,12 @@ class RejectingClient extends FakeClient {
         },
       ],
     });
+  }
+}
+
+class StartupFailingClient extends FakeClient {
+  override async bootstrap(): Promise<BootstrapProjection> {
+    throw new Error("Designer runtime could not be loaded (404).");
   }
 }
 
@@ -180,6 +200,13 @@ describe("Designer application seam", () => {
       { entity: "iron_sword", field: "damage" },
       { entity: "iron_sword", field: "dps" },
     ]);
+    expect(client.editRequests).toEqual([
+      {
+        expectedRevision: "resident/0",
+        target: { entity: "iron_sword", field: "damage" },
+        input: "45",
+      },
+    ]);
     expect(root.querySelector('[data-testid="control-value"]')?.textContent).toBe(
       "200",
     );
@@ -215,5 +242,19 @@ describe("Designer application seam", () => {
     expect(root.querySelector('[data-field="iron_sword.dps"]')?.textContent).toContain(
       "40",
     );
+  });
+
+  it("renders initialization failures instead of leaving the loading state visible", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const app = mountDesigner(root, new StartupFailingClient());
+
+    await app.ready;
+
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain(
+      "Designer runtime could not be loaded (404).",
+    );
+    expect(root.textContent).not.toContain("Starting the Rust workspace");
   });
 });

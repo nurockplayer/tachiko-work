@@ -28,6 +28,8 @@ const DOCUMENT_SCOPE: &str = "designer-moonfall-occurrence";
 const DEFAULT_COLLECTION: &str = "weapons";
 const MAX_TABLE_FIELDS: usize = 32;
 const MAX_TABLE_ROWS: usize = 32;
+const MAX_FIELD_QUERY_TARGETS: usize = MAX_TABLE_FIELDS * MAX_TABLE_ROWS;
+pub(crate) const MAX_WIRE_REQUEST_BYTES: usize = 65_536;
 const DESIGNER_PRINCIPAL: &str = "designer-human";
 
 /// App-private requests accepted by the Designer runtime adapter.
@@ -219,6 +221,8 @@ pub enum DesignerError {
     MissingCollection { collection: String },
     #[error("collection '{collection}' exceeds the bounded table profile")]
     CollectionTooLarge { collection: String },
+    #[error("field query requested {requested} targets; the bounded maximum is {maximum}")]
+    FieldQueryTooLarge { requested: usize, maximum: usize },
     #[error("formula projection is unavailable for '{field}'")]
     MissingFormulaProjection { field: FieldRef },
     #[error("Designer lifecycle failed: {0}")]
@@ -254,7 +258,9 @@ impl DesignerError {
             Self::InvalidNumberInput { .. } => ("invalid_number", Vec::new()),
             Self::UnsupportedNumberEdit { .. } => ("unsupported_edit", Vec::new()),
             Self::MissingCollection { .. } => ("missing_collection", Vec::new()),
-            Self::CollectionTooLarge { .. } => ("query_too_large", Vec::new()),
+            Self::CollectionTooLarge { .. } | Self::FieldQueryTooLarge { .. } => {
+                ("query_too_large", Vec::new())
+            }
             Self::Fixture(_)
             | Self::MissingFormulaProjection { .. }
             | Self::Lifecycle(_)
@@ -469,6 +475,12 @@ impl DesignerRuntime {
         expected_revision: &str,
         fields: &[FieldTarget],
     ) -> Result<FieldBatchProjection, DesignerError> {
+        if fields.len() > MAX_FIELD_QUERY_TARGETS {
+            return Err(DesignerError::FieldQueryTooLarge {
+                requested: fields.len(),
+                maximum: MAX_FIELD_QUERY_TARGETS,
+            });
+        }
         let current = self.session.revision().as_str();
         if current != expected_revision {
             return Err(DesignerError::StaleQuery {
@@ -581,6 +593,9 @@ impl DesignerRuntime {
 /// Process one complete private adapter message without exposing Rust layouts.
 #[must_use]
 pub fn process_wire_request(runtime: &mut Option<DesignerRuntime>, input: &[u8]) -> Vec<u8> {
+    if input.len() > MAX_WIRE_REQUEST_BYTES {
+        return request_too_large_reply(runtime.as_ref());
+    }
     let reply = match serde_json::from_slice::<DesignerRequest>(input) {
         Ok(request) => {
             if runtime.is_none() {
@@ -624,6 +639,22 @@ pub fn process_wire_request(runtime: &mut Option<DesignerRuntime>, input: &[u8])
         },
     };
     encode_reply(&reply)
+}
+
+fn request_too_large_reply(runtime: Option<&DesignerRuntime>) -> Vec<u8> {
+    encode_reply(&DesignerWireReply::Error {
+        error: FailureProjection {
+            code: "request_too_large".to_owned(),
+            message: format!(
+                "The Designer request exceeds the private {MAX_WIRE_REQUEST_BYTES}-byte bridge limit."
+            ),
+            current_revision: runtime.map_or_else(
+                || "unavailable".to_owned(),
+                |runtime| runtime.current_revision().to_owned(),
+            ),
+            diagnostics: Vec::new(),
+        },
+    })
 }
 
 fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {

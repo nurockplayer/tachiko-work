@@ -97,4 +97,44 @@ describe("revision-keyed projection store", () => {
     });
     expect(store.snapshot().control.value).toBe(200);
   });
+
+  it("retains failed invalidations until a later refresh resolves every stale field", () => {
+    const store = createProjectionStore(table, {
+      target: { entity: "shop", field: "upgrade_cost" },
+      value: 200,
+      revision: "resident/0",
+    });
+
+    store.beginPublication(publication);
+    store.failRefresh("temporary query failure");
+    expect(store.snapshot().currentness).toBe("refresh_failed");
+
+    const retryTargets = store.beginPublication({
+      base_revision: "resident/1",
+      resulting_revision: "resident/2",
+      entities: [],
+      fields: [],
+      affected_calculations: [{ entity: "iron_sword", field: "dps" }],
+    });
+    expect(retryTargets).toEqual([
+      { entity: "iron_sword", field: "damage" },
+      { entity: "iron_sword", field: "dps" },
+    ]);
+
+    store.finishRefresh({
+      revision: "resident/2",
+      fields: [
+        { ...table.rows[0]!.fields[0]!, stored: { kind: "number", value: 45 } },
+        {
+          ...table.rows[0]!.fields[1]!,
+          calculated: { status: "value", value: 50 },
+        },
+      ],
+    });
+    expect(store.snapshot().currentness).toBe("current");
+    expect(store.field("iron_sword.damage")?.stored).toEqual({
+      kind: "number",
+      value: 45,
+    });
+  });
 });

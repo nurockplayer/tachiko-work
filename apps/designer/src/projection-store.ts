@@ -41,7 +41,7 @@ export function createProjectionStore(
   let control = structuredClone(initialControl);
   let currentness: ProjectionCurrentness = "current";
   let failure: string | null = null;
-  let pending = new Set<string>();
+  const pending = new Map<string, FieldTarget>();
 
   const allFields = (): FieldProjection[] =>
     table.rows.flatMap((row) => row.fields);
@@ -53,21 +53,19 @@ export function createProjectionStore(
       if (publication.base_revision !== table.revision) {
         throw new Error("Publication does not match the visible table revision.");
       }
-      const targets = new Map<string, FieldTarget>();
       for (const target of [
         ...publication.fields,
         ...publication.affected_calculations,
       ]) {
-        targets.set(fieldTargetKey(target), target);
+        pending.set(fieldTargetKey(target), target);
       }
-      pending = new Set(targets.keys());
       table = { ...table, revision: publication.resulting_revision };
       if (!pending.has(fieldTargetKey(control.target))) {
         control = { ...control, revision: publication.resulting_revision };
       }
       currentness = "refreshing";
       failure = null;
-      return [...targets.values()];
+      return [...pending.values()];
     },
     finishRefresh: (refresh) => {
       if (refresh.revision !== table.revision) {
@@ -76,7 +74,7 @@ export function createProjectionStore(
       const replacements = new Map(
         refresh.fields.map((field) => [fieldTargetKey(field.target), field]),
       );
-      for (const target of pending) {
+      for (const target of pending.keys()) {
         if (!replacements.has(target)) {
           throw new Error(`Refresh omitted invalidated field '${target}'.`);
         }

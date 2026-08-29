@@ -25,5 +25,7 @@ pnpm --dir apps/designer test:browser
 ```
 
 `build` compiles the private Rust adapter for `wasm32-unknown-unknown` before
-Vite assembles the application. Persistence, schema/entity authoring, formula
+Vite assembles the application. `dev` performs the same runtime build before
+starting Vite, so a clean checkout never serves without its Worker artifact.
+Persistence, schema/entity authoring, formula
 authoring, and public transport/SDK stabilization are outside this slice.

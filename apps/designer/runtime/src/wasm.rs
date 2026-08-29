@@ -1,18 +1,27 @@
 //! Browser-only private byte bridge for the app-local Designer Worker.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
-use crate::{DesignerRuntime, process_wire_request};
+use crate::{
+    DesignerRuntime, MAX_WIRE_REQUEST_BYTES, process_wire_request, request_too_large_reply,
+};
 
 thread_local! {
     static REQUEST: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     static RESPONSE: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     static RUNTIME: RefCell<Option<DesignerRuntime>> = const { RefCell::new(None) };
+    static REQUEST_TOO_LARGE: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Resize the private request arena and return its linear-memory offset.
 #[unsafe(no_mangle)]
 pub extern "C" fn tachiko_designer_request_reserve(length: u32) -> u32 {
+    if length as usize > MAX_WIRE_REQUEST_BYTES {
+        REQUEST_TOO_LARGE.set(true);
+        REQUEST.with(|request| request.borrow_mut().clear());
+        return 0;
+    }
+    REQUEST_TOO_LARGE.set(false);
     REQUEST.with(|request| {
         let mut request = request.borrow_mut();
         request.resize(length as usize, 0);
@@ -25,7 +34,12 @@ pub extern "C" fn tachiko_designer_request_reserve(length: u32) -> u32 {
 pub extern "C" fn tachiko_designer_request_run() {
     REQUEST.with(|request| {
         RUNTIME.with(|runtime| {
-            let response = process_wire_request(&mut runtime.borrow_mut(), &request.borrow());
+            let mut runtime = runtime.borrow_mut();
+            let response = if REQUEST_TOO_LARGE.replace(false) {
+                request_too_large_reply(runtime.as_ref())
+            } else {
+                process_wire_request(&mut runtime, &request.borrow())
+            };
             RESPONSE.with(|slot| *slot.borrow_mut() = response);
         });
     });

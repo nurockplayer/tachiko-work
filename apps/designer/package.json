@@ -8,7 +8,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "dev": "vite",
+    "dev": "pnpm run build:runtime && vite",
     "build:runtime": "bash ../../scripts/designer-runtime-build.sh",
     "build": "pnpm run build:runtime && tsc --noEmit && vite build",
     "lint": "eslint .",

@@ -34,13 +34,15 @@ export function mountDesigner(
   let store: ProjectionStore | null = null;
   let selectedCollection = "";
   let notice: Notice | null = null;
+  let startupFailure: string | null = null;
   let busy = false;
   let destroyed = false;
 
   const render = (): void => {
     if (destroyed) return;
     if (bootstrap === null || store === null) {
-      root.innerHTML = loadingMarkup();
+      root.innerHTML =
+        startupFailure === null ? loadingMarkup() : startupFailureMarkup(startupFailure);
       return;
     }
     const snapshot = store.snapshot();
@@ -175,6 +177,12 @@ export function mountDesigner(
       });
     } catch (error) {
       showFailure(error, false);
+      startupFailure =
+        error instanceof DesignerRuntimeError
+          ? error.failure.message
+          : error instanceof Error
+            ? error.message
+            : String(error);
     } finally {
       render();
     }
@@ -195,6 +203,15 @@ function loadingMarkup(): string {
     <main class="loading-shell" aria-live="polite">
       <div class="loading-mark" aria-hidden="true">T</div>
       <p>Starting the Rust workspace…</p>
+    </main>
+  `;
+}
+
+function startupFailureMarkup(message: string): string {
+  return `
+    <main class="loading-shell" role="alert">
+      <div class="loading-mark" aria-hidden="true">!</div>
+      <p>${escapeHtml(message)}</p>
     </main>
   `;
 }
