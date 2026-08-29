@@ -113,7 +113,7 @@ async function materializeBrowserProject(
   const bundle = await page.evaluate(
     async (projectName) =>
       new Promise<number[]>((resolve, reject) => {
-        const open = indexedDB.open("tachiko-designer-projects", 1);
+        const open = indexedDB.open("tachiko-designer-projects");
         open.addEventListener("error", () => {
           reject(new Error("Could not open the browser project store.", { cause: open.error }));
         });

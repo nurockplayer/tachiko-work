@@ -1,6 +1,7 @@
 const DATABASE_NAME = "tachiko-designer-projects";
-const DATABASE_VERSION = 1;
+const DATABASE_VERSION = 2;
 const PROJECT_STORE = "projects";
+const PROJECT_SUMMARY_STORE = "project_summaries";
 
 type ProjectRecord = {
   name: string;
@@ -48,21 +49,15 @@ export class BrowserProjectHost implements DesignerProjectHost {
 
   async list(): Promise<SavedProjectSummary[]> {
     const database = await this.#database;
-    const transaction = database.transaction(PROJECT_STORE, "readonly");
-    const request = transaction.objectStore(PROJECT_STORE).getAll() as IDBRequest<
-      ProjectRecord[]
-    >;
+    const transaction = database.transaction(PROJECT_SUMMARY_STORE, "readonly");
+    const request = transaction
+      .objectStore(PROJECT_SUMMARY_STORE)
+      .getAll() as IDBRequest<SavedProjectSummary[]>;
     const [records] = await Promise.all([
-      requestResult<ProjectRecord[]>(request),
+      requestResult<SavedProjectSummary[]>(request),
       transactionComplete(transaction),
     ]);
-    return records
-      .map((record) => ({
-        name: record.name,
-        byte_length: record.bytes.byteLength,
-        saved_at: record.saved_at,
-      }))
-      .sort((left, right) => left.name.localeCompare(right.name));
+    return records.sort((left, right) => left.name.localeCompare(right.name));
   }
 
   async read(name: string): Promise<ArrayBuffer> {
@@ -88,19 +83,27 @@ export class BrowserProjectHost implements DesignerProjectHost {
   async publish(name: string, bytes: ArrayBuffer): Promise<void> {
     const canonicalName = projectName(name);
     const database = await this.#database;
-    const transaction = database.transaction(PROJECT_STORE, "readwrite");
-    const request = transaction.objectStore(PROJECT_STORE).add({
+    const transaction = database.transaction(
+      [PROJECT_STORE, PROJECT_SUMMARY_STORE],
+      "readwrite",
+    );
+    const savedAt = new Date().toISOString();
+    const projectRequest = transaction.objectStore(PROJECT_STORE).add({
       name: canonicalName,
       bytes: bytes.slice(0),
-      saved_at: new Date().toISOString(),
+      saved_at: savedAt,
     } satisfies ProjectRecord);
-    const requestFailure = new Promise<never>((_resolve, reject) => {
-      request.addEventListener("error", () => {
-        reject(request.error ?? new Error("IndexedDB create-only publication failed."));
-      });
-    });
+    const summaryRequest = transaction.objectStore(PROJECT_SUMMARY_STORE).add({
+      name: canonicalName,
+      byte_length: bytes.byteLength,
+      saved_at: savedAt,
+    } satisfies SavedProjectSummary);
     try {
-      await Promise.race([transactionComplete(transaction), requestFailure]);
+      await Promise.all([
+        requestResult(projectRequest),
+        requestResult(summaryRequest),
+        transactionComplete(transaction),
+      ]);
     } catch (error) {
       if (error instanceof DOMException && error.name === "ConstraintError") {
         throw new ProjectHostError(
@@ -140,9 +143,32 @@ function projectName(input: string): string {
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
-    request.addEventListener("upgradeneeded", () => {
-      if (!request.result.objectStoreNames.contains(PROJECT_STORE)) {
-        request.result.createObjectStore(PROJECT_STORE, { keyPath: "name" });
+    request.addEventListener("upgradeneeded", (event) => {
+      const transaction = request.transaction;
+      if (transaction === null) {
+        throw new Error("IndexedDB upgrade transaction is unavailable.");
+      }
+      const projectStore = request.result.objectStoreNames.contains(PROJECT_STORE)
+        ? transaction.objectStore(PROJECT_STORE)
+        : request.result.createObjectStore(PROJECT_STORE, { keyPath: "name" });
+      if (!request.result.objectStoreNames.contains(PROJECT_SUMMARY_STORE)) {
+        const summaryStore = request.result.createObjectStore(PROJECT_SUMMARY_STORE, {
+          keyPath: "name",
+        });
+        if (event.oldVersion > 0) {
+          const cursorRequest = projectStore.openCursor();
+          cursorRequest.addEventListener("success", () => {
+            const cursor = cursorRequest.result;
+            if (cursor === null) return;
+            const record = cursor.value as ProjectRecord;
+            summaryStore.add({
+              name: record.name,
+              byte_length: record.bytes.byteLength,
+              saved_at: record.saved_at,
+            } satisfies SavedProjectSummary);
+            cursor.continue();
+          });
+        }
       }
     });
     request.addEventListener("success", () => { resolve(request.result); });
