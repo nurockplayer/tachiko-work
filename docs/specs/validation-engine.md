@@ -299,11 +299,13 @@ schema declarations, identities, mappings, and relationship changes together,
 but ADR-0021 does not freeze the command catalogue, source selectors, or
 temporary-object reference mechanism.
 
-The batch contract does not define resident transaction sessions, concurrency,
-revision conflict resolution, persistence rollback, or the runtime state
-commit/swap algorithm. ADR-0022 keeps these concrete mechanics Deferred; #93
-owns the later resident-session/revision-safe command implementation and
-persistence remains a host/representation concern.
+The batch contract does not define broader resident transaction sessions,
+cross-host concurrency, revision conflict resolution beyond exact in-process
+comparison, persistence rollback, or a durable runtime state commit/swap
+algorithm. Issue #93 supplies the current in-process resident session and
+revision-safe command publication through the existing lifecycle; ADR-0022
+keeps those broader mechanics Deferred, and persistence remains a
+host/representation concern.
 
 ## Deterministic domain/extension validator boundary
 

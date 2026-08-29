@@ -15,11 +15,13 @@ families and ordered AtomicBatch. Issue #30's provisional `ai-api` seam now
 obtains identity/time only from trusted host context, requires this lifecycle to prove an active
 Delegated occurrence, delegates typed Propose/Execute to it, returns disclosure-
 safe stable codes, and rejects raw mutation and host effects. A Human session
-principal is not an AI credential. Concrete identity provisioning, durable
-registry/receipt storage, public DTO/wire integrity, and #93's resident revision/
-session/concurrency/state-installation mechanics remain unimplemented. Current convenience
-`Suggestion` remains inert and is not a SemanticPatch, Grant, Approval,
-execution credential, or public protocol.
+principal is not an AI credential. Issue #93 now supplies the current internal
+resident session, opaque monotonic revision, and guarded in-process state
+installation through that existing publication seam. Concrete identity
+provisioning, durable registry/receipt storage, public DTO/wire integrity,
+broader cross-host concurrency, and transaction/recovery mechanics remain
+unimplemented. Current convenience `Suggestion` remains inert and is not a
+SemanticPatch, Grant, Approval, execution credential, or public protocol.
 
 Decision issue: [#28](https://github.com/nurockplayer/tachiko-work/issues/28)
 
