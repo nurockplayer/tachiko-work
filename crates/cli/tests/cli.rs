@@ -6,6 +6,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+use serde_json::Value as JsonValue;
 use tachiko_storage::{load, materialize_roproj, pack_roproj, save};
 use tachiko_workspace_engine::{
     Document, DocumentId, DocumentOverview, Entity, EntityId, Expression, FieldAddress,
@@ -2202,4 +2203,219 @@ fn formula_help_makes_computational_authoring_discoverable() {
     ] {
         assert!(text.contains(phrase), "missing help text: {phrase}\n{text}");
     }
+}
+
+const GROUPED_ANALYSIS_QUERY_JSON: &str = concat!(
+    r#"{
+  "derivations": [
+    {
+      "field": "damage",
+      "kind": "predicate"
+    },
+    {
+      "field": "name",
+      "kind": "grouped_by"
+    },
+    {
+      "kind": "count"
+    },
+    {
+      "field": "dps",
+      "kind": "observations"
+    }
+  ],
+  "formula_calculation_used": true,
+  "normalized_definition": {
+    "group_by": "name",
+    "narrowing": [
+      "sword"
+    ],
+    "predicates": [
+      {
+        "field": "damage",
+        "operand": {
+          "type": "number",
+          "value": 90.0
+        },
+        "operator": "greater_than_or_equal"
+      }
+    ],
+    "results": [
+      {
+        "kind": "count"
+      },
+      {
+        "field": "dps",
+        "kind": "observations"
+      }
+    ],
+    "schema": "weapon"
+  },
+  "outcome": {
+    "kind": "complete",
+    "projection": {
+      "groups": [
+        {
+          "bucket": {
+            "values": [
+              {
+                "kind": "count",
+                "value": 1
+              },
+              {
+                "field": "dps",
+                "kind": "observations",
+                "values": [
+                  {
+                    "entity": "sword",
+                    "value": 80.0
+                  }
+                ]
+              }
+            ]
+          },
+          "key": {
+            "type": "text",
+            "value": "Sword"
+          }
+        }
+      ],
+      "kind": "grouped"
+    }
+  },
+  "sources": [
+    {
+      "document": "balance",
+      "source_revision": "cli-semantic-sha256:e576dd1dd4c939463f6e9958b0ebbf0e2a16aef6758788fc4195295ea8f0d0c3",
+      "validator_configuration": "workspace_full"
+    }
+  ]
+}"#,
+    "\n"
+);
+
+#[test]
+fn analyze_query_emits_typed_grouped_formula_lineage() {
+    let temp = TempDir::new();
+    let path = temp.path().join("analysis.ro");
+    save(&path, &balance_document(100.0)).unwrap();
+
+    let output = run(&[
+        "analyze",
+        "query",
+        path.to_str().unwrap(),
+        "--schema",
+        "weapon",
+        "--entity",
+        "sword",
+        "--predicate",
+        "damage:>=:number:90",
+        "--group-by",
+        "name",
+        "--result",
+        "count",
+        "--result",
+        "observations:dps",
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout.clone()).unwrap(),
+        GROUPED_ANALYSIS_QUERY_JSON
+    );
+    let json: JsonValue = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["formula_calculation_used"], true);
+    assert_eq!(json["normalized_definition"]["schema"], "weapon");
+    assert_eq!(
+        json["normalized_definition"]["predicates"][0]["operand"]["type"],
+        "number"
+    );
+    assert_eq!(json["outcome"]["kind"], "complete");
+    assert_eq!(json["outcome"]["projection"]["kind"], "grouped");
+    assert_eq!(
+        json["outcome"]["projection"]["groups"][0]["bucket"]["values"][0]["kind"],
+        "count"
+    );
+    assert!(
+        json["derivations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["kind"] == "grouped_by")
+    );
+    assert!(
+        json["sources"][0]["source_revision"]
+            .as_str()
+            .unwrap()
+            .starts_with("cli-semantic-sha256:")
+    );
+}
+
+#[test]
+fn analyze_query_compare_emits_two_exact_outcomes() {
+    let temp = TempDir::new();
+    let before = temp.path().join("before.ro");
+    let after = temp.path().join("after.ro");
+    save(&before, &balance_document(100.0)).unwrap();
+    let mut comparison = balance_document(120.0);
+    comparison.id = DocumentId::from("comparison-balance");
+    save(&after, &comparison).unwrap();
+
+    let output = run(&[
+        "analyze",
+        "query",
+        before.to_str().unwrap(),
+        "--schema",
+        "weapon",
+        "--result",
+        "count",
+        "--compare",
+        after.to_str().unwrap(),
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: JsonValue = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["sources"].as_array().unwrap().len(), 2);
+    assert_eq!(json["first"]["kind"], "complete");
+    assert_eq!(json["second"]["kind"], "complete");
+    assert_ne!(
+        json["sources"][0]["source_revision"],
+        json["sources"][1]["source_revision"]
+    );
+}
+
+#[test]
+fn analyze_query_semantic_failure_has_no_partial_projection() {
+    let temp = TempDir::new();
+    let path = temp.path().join("analysis.ro");
+    save(&path, &balance_document(100.0)).unwrap();
+
+    let output = run(&[
+        "analyze",
+        "query",
+        path.to_str().unwrap(),
+        "--schema",
+        "weapon",
+        "--entity",
+        "missing",
+        "--result",
+        "count",
+    ]);
+    assert!(
+        output.status.success(),
+        "semantic failures should be structured JSON"
+    );
+    let json: JsonValue = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["outcome"]["kind"], "failure");
+    assert!(json["outcome"]["projection"].is_null());
+    assert_eq!(
+        json["outcome"]["failure"]["kind"],
+        "unresolved_narrowing_entity"
+    );
 }

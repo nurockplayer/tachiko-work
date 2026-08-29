@@ -186,6 +186,9 @@ The engine owns real application behavior:
 - authoritative `ValidationReport` plus complete calculation orchestration;
 - calculated values projected through current human addresses;
 - overview, human-addressed field explanation, and stable formula analysis;
+- bounded typed semantic Analysis Query selection, grouping, Count/Number
+  Min/Max, per-member observations, exact-context pairing, lineage, and
+  complete-result Query authorization;
 - scalar/formula edits and entity lifecycle candidate transitions;
 - inert typed field-proposal validation shared with the AI adapter;
 - a provisional snapshot-style SemanticPatch lifecycle for stable-ID typed
@@ -382,7 +385,9 @@ targets and compares stable observations for normalized Number bits, typed
 failures, dependency/cycle behavior, binding/projection continuity, storage
 numeric bytes, the production `.roproj/v1` exact 18-path encode/decode/re-encode
 record, workspace-engine calculated queries, AI formula explanation, and inert
-approval-required AI proposal validation.
+approval-required AI proposal validation. Issue #150 adds fixed bounded
+Analysis Query success, structured-failure, authorization, and paired-context
+records through the same native/WASM corpus.
 
 Storage is also present in existing conformance coverage for portable codec
 behavior. Its fixed `.roproj/v1` record proves native/WASM exact-tree parity for

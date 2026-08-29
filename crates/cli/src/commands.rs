@@ -15,6 +15,11 @@ use tachiko_storage::{
     publish_portable_package_from_roproj, publish_unpacked_roproj, read_portable_package,
     read_portable_package_source, to_canonical_string,
 };
+use tachiko_workspace_engine::analysis_operations::{
+    AnalysisDefinition, AnalysisDerivation, AnalysisFailure, AnalysisGroupKey, AnalysisOutcome,
+    AnalysisPredicate, AnalysisPredicateOperator, AnalysisProjection, AnalysisResultRequest,
+    AnalysisResultValue, MetricIncompleteReason, NumericAggregateOutcome, PredicateOperand,
+};
 use tachiko_workspace_engine::{
     CalculationFailure, Document, EditPreview, ExpressionComplexityError, FieldAddress, FieldKind,
     FieldRef, IdGenerator, MergeConflict, ReferenceFailure, SemanticChange, SemanticIdKind,
@@ -75,10 +80,20 @@ pub enum CommandError {
     InvalidFieldReference { value: String },
     #[error("analysis target '{value}' does not exist")]
     MissingAnalysisTarget { value: String },
+    #[error("invalid analysis {kind} '{value}'; expected {expected}")]
+    InvalidAnalysisSyntax {
+        kind: &'static str,
+        value: String,
+        expected: &'static str,
+    },
     #[error("invalid scenario override '{value}'; expected entity-id.field-id=number")]
     InvalidScenarioOverride { value: String },
     #[error(transparent)]
     FormulaOperation(#[from] FormulaOperationError),
+    #[error(transparent)]
+    AnalysisOperation(
+        #[from] tachiko_workspace_engine::analysis_operations::AnalysisOperationError,
+    ),
     #[error(transparent)]
     PatchLifecycle(#[from] PatchLifecycleError),
     #[error("output '{}' is the same as the input; choose a new path", path.display())]
@@ -344,6 +359,112 @@ pub fn analyze_validation(
         &document,
         analysis_source_label(path, source_state),
     ))
+}
+
+/// Run the provisional bounded typed Analysis Query adapter.
+///
+/// All request syntax and the disclosure-independent envelope are admitted
+/// before either source is loaded. Semantic failures returned by the engine
+/// remain successful structured JSON so callers never receive a partial
+/// projection.
+pub fn analyze_query(
+    path: &Path,
+    schema: &str,
+    entities: &[String],
+    predicates: &[String],
+    group_by: Option<&str>,
+    results: &[String],
+    compare: Option<&Path>,
+) -> Result<String, CommandError> {
+    let definition = parse_analysis_definition(schema, entities, predicates, group_by, results)?;
+    definition
+        .admit_envelope()
+        .map_err(tachiko_workspace_engine::analysis_operations::AnalysisOperationError::from)?;
+
+    let document = load_read_source(path)?;
+    let (lifecycle, scope, principal, revision) =
+        local_formula_query(&document, OperationFamily::AnalysisQuery)?;
+    let source = (&revision, ValidatorConfiguration::WorkspaceFull);
+    let output = if let Some(compare_path) = compare {
+        let comparison = load_read_source(compare_path)?;
+        let (comparison_lifecycle, comparison_scope, comparison_principal, comparison_revision) =
+            local_formula_query(&comparison, OperationFamily::AnalysisQuery)?;
+        let result = lifecycle.query_analysis_pair(
+            &scope,
+            &document,
+            source,
+            &comparison_lifecycle,
+            &comparison_scope,
+            &comparison,
+            (&comparison_revision, ValidatorConfiguration::WorkspaceFull),
+            &definition,
+            &principal,
+            &comparison_principal,
+            TrustedInstant::new(1),
+        )?;
+        analysis_pair_output(&result)
+    } else {
+        let result = lifecycle.query_analysis(
+            &scope,
+            &document,
+            source,
+            &definition,
+            &principal,
+            TrustedInstant::new(1),
+        )?;
+        analysis_result_output(&result)
+    };
+    canonical_output(&output)
+}
+
+fn parse_analysis_definition(
+    schema: &str,
+    entities: &[String],
+    predicates: &[String],
+    group_by: Option<&str>,
+    results: &[String],
+) -> Result<AnalysisDefinition, CommandError> {
+    let schema = tachiko_workspace_engine::SchemaId::from(parse_analysis_id("schema", schema)?);
+    let narrowing = if entities.is_empty() {
+        None
+    } else {
+        Some(
+            entities
+                .iter()
+                .map(|entity| {
+                    parse_analysis_id("entity", entity)
+                        .map(tachiko_workspace_engine::EntityId::from)
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        )
+    };
+    let predicates = predicates
+        .iter()
+        .map(|predicate| parse_analysis_predicate(predicate))
+        .collect::<Result<Vec<_>, _>>()?;
+    let group_by = group_by
+        .map(|field| {
+            parse_analysis_id("group-by", field).map(tachiko_workspace_engine::FieldId::from)
+        })
+        .transpose()?;
+    let results = results
+        .iter()
+        .map(|result| parse_analysis_result(result))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(AnalysisDefinition::new(
+        schema, narrowing, predicates, group_by, results,
+    ))
+}
+
+fn parse_analysis_id(kind: &'static str, value: &str) -> Result<String, CommandError> {
+    if value.is_empty() {
+        return Err(CommandError::InvalidAnalysisSyntax {
+            kind,
+            value: value.to_owned(),
+            expected: "a non-empty stable ID",
+        });
+    }
+    Ok(value.to_owned())
 }
 
 pub fn set_document(
@@ -895,6 +1016,360 @@ fn validation_output(report: Option<&ValidationReport>) -> serde_json::Value {
             "diagnostics": report.diagnostics(),
         })
     })
+}
+
+fn parse_analysis_predicate(value: &str) -> Result<AnalysisPredicate, CommandError> {
+    let parts = value.splitn(4, ':').collect::<Vec<_>>();
+    if parts.len() != 4 || parts.iter().any(|part| part.is_empty()) {
+        return Err(CommandError::InvalidAnalysisSyntax {
+            kind: "predicate",
+            value: value.to_owned(),
+            expected: "field:operator:type:value",
+        });
+    }
+    let field = tachiko_workspace_engine::FieldId::from(parts[0]);
+    let operator = match parts[1] {
+        "=" | "==" | "eq" => AnalysisPredicateOperator::Equal,
+        "!=" | "ne" => AnalysisPredicateOperator::NotEqual,
+        "<" | "lt" => AnalysisPredicateOperator::LessThan,
+        "<=" | "lte" => AnalysisPredicateOperator::LessThanOrEqual,
+        ">" | "gt" => AnalysisPredicateOperator::GreaterThan,
+        ">=" | "gte" => AnalysisPredicateOperator::GreaterThanOrEqual,
+        _ => {
+            return Err(CommandError::InvalidAnalysisSyntax {
+                kind: "predicate",
+                value: value.to_owned(),
+                expected: "field:operator:type:value (operator: =, !=, <, <=, >, >=)",
+            });
+        }
+    };
+    let operand = match parts[2] {
+        "number" => parts[3]
+            .parse::<f64>()
+            .ok()
+            .and_then(|n| tachiko_workspace_engine::Number::new(n).ok())
+            .map(PredicateOperand::Number)
+            .ok_or_else(|| CommandError::InvalidAnalysisSyntax {
+                kind: "predicate",
+                value: value.to_owned(),
+                expected: "a finite number operand",
+            })?,
+        "text" => PredicateOperand::Text(parts[3].to_owned()),
+        "boolean" => match parts[3] {
+            "true" => PredicateOperand::Boolean(true),
+            "false" => PredicateOperand::Boolean(false),
+            _ => {
+                return Err(CommandError::InvalidAnalysisSyntax {
+                    kind: "predicate",
+                    value: value.to_owned(),
+                    expected: "boolean value true or false",
+                });
+            }
+        },
+        "reference" => {
+            PredicateOperand::Reference(tachiko_workspace_engine::EntityId::from(parts[3]))
+        }
+        _ => {
+            return Err(CommandError::InvalidAnalysisSyntax {
+                kind: "predicate",
+                value: value.to_owned(),
+                expected: "type number, text, boolean, or reference",
+            });
+        }
+    };
+    Ok(AnalysisPredicate::new(field, operator, operand))
+}
+
+fn parse_analysis_result(value: &str) -> Result<AnalysisResultRequest, CommandError> {
+    Ok(match value {
+        "membership" => AnalysisResultRequest::Membership,
+        "count" => AnalysisResultRequest::Count,
+        value if value.starts_with("min:") => {
+            AnalysisResultRequest::Minimum(parse_analysis_result_field(value, "min:")?)
+        }
+        value if value.starts_with("max:") => {
+            AnalysisResultRequest::Maximum(parse_analysis_result_field(value, "max:")?)
+        }
+        value if value.starts_with("observations:") => AnalysisResultRequest::Observations(
+            parse_analysis_result_field(value, "observations:")?,
+        ),
+        _ => {
+            return Err(CommandError::InvalidAnalysisSyntax {
+                kind: "result",
+                value: value.to_owned(),
+                expected: "membership, count, min:FIELD, max:FIELD, or observations:FIELD",
+            });
+        }
+    })
+}
+
+fn parse_analysis_result_field(
+    value: &str,
+    prefix: &str,
+) -> Result<tachiko_workspace_engine::FieldId, CommandError> {
+    let field = value.strip_prefix(prefix).unwrap_or_default();
+    if field.is_empty() {
+        return Err(CommandError::InvalidAnalysisSyntax {
+            kind: "result",
+            value: value.to_owned(),
+            expected: "a non-empty stable field ID",
+        });
+    }
+    Ok(tachiko_workspace_engine::FieldId::from(field))
+}
+
+fn analysis_result_output(
+    result: &tachiko_workspace_engine::analysis_operations::AnalysisQueryResult,
+) -> serde_json::Value {
+    let mut output = analysis_lineage_output(&result.lineage);
+    if let serde_json::Value::Object(fields) = &mut output {
+        fields.insert(
+            "outcome".to_owned(),
+            analysis_outcome_output(&result.outcome),
+        );
+    }
+    output
+}
+
+fn analysis_pair_output(
+    result: &tachiko_workspace_engine::analysis_operations::PairedAnalysisQueryResult,
+) -> serde_json::Value {
+    let mut output = analysis_lineage_output(&result.lineage);
+    if let serde_json::Value::Object(fields) = &mut output {
+        fields.insert("first".to_owned(), analysis_outcome_output(&result.first));
+        fields.insert("second".to_owned(), analysis_outcome_output(&result.second));
+    }
+    output
+}
+
+fn analysis_lineage_output(
+    lineage: &tachiko_workspace_engine::analysis_operations::AnalysisLineage,
+) -> serde_json::Value {
+    json!({
+        "sources": lineage.sources.iter().map(|source| json!({ "document": source.document, "source_revision": source.source_revision.as_str(), "validator_configuration": validator_name(source.validator_configuration) })).collect::<Vec<_>>(),
+        "normalized_definition": normalized_analysis_definition_output(&lineage.normalized_definition),
+        "formula_calculation_used": lineage.formula_calculation_used,
+        "derivations": lineage.derivations.iter().map(analysis_derivation_output).collect::<Vec<_>>(),
+    })
+}
+
+fn normalized_analysis_definition_output(
+    definition: &tachiko_workspace_engine::analysis_operations::NormalizedAnalysisDefinition,
+) -> serde_json::Value {
+    json!({
+        "schema": definition.schema,
+        "narrowing": definition.narrowing.as_ref().map(|entities| entities.iter().collect::<Vec<_>>()),
+        "predicates": definition.predicates.iter().map(|p| json!({ "field": p.field, "operator": analysis_operator_name(p.operator), "operand": analysis_operand_output(&p.operand) })).collect::<Vec<_>>(),
+        "group_by": definition.group_by,
+        "results": definition.results.iter().map(analysis_result_request_output).collect::<Vec<_>>(),
+    })
+}
+
+fn analysis_operand_output(operand: &PredicateOperand) -> serde_json::Value {
+    match operand {
+        PredicateOperand::Number(v) => json!({ "type": "number", "value": v }),
+        PredicateOperand::Text(v) => json!({ "type": "text", "value": v }),
+        PredicateOperand::Boolean(v) => json!({ "type": "boolean", "value": v }),
+        PredicateOperand::Reference(v) => json!({ "type": "reference", "value": v }),
+    }
+}
+
+fn analysis_result_request_output(request: &AnalysisResultRequest) -> serde_json::Value {
+    match request {
+        AnalysisResultRequest::Membership => json!({ "kind": "membership" }),
+        AnalysisResultRequest::Count => json!({ "kind": "count" }),
+        AnalysisResultRequest::Minimum(f) => json!({ "kind": "minimum", "field": f }),
+        AnalysisResultRequest::Maximum(f) => json!({ "kind": "maximum", "field": f }),
+        AnalysisResultRequest::Observations(f) => json!({ "kind": "observations", "field": f }),
+    }
+}
+
+fn analysis_derivation_output(derivation: &AnalysisDerivation) -> serde_json::Value {
+    match derivation {
+        AnalysisDerivation::Predicate(f) => json!({ "kind": "predicate", "field": f }),
+        AnalysisDerivation::GroupedBy(f) => json!({ "kind": "grouped_by", "field": f }),
+        AnalysisDerivation::Membership => json!({ "kind": "membership" }),
+        AnalysisDerivation::Count => json!({ "kind": "count" }),
+        AnalysisDerivation::Minimum(f) => json!({ "kind": "minimum", "field": f }),
+        AnalysisDerivation::Maximum(f) => json!({ "kind": "maximum", "field": f }),
+        AnalysisDerivation::Observations(f) => json!({ "kind": "observations", "field": f }),
+    }
+}
+
+fn analysis_outcome_output(outcome: &AnalysisOutcome) -> serde_json::Value {
+    match outcome {
+        AnalysisOutcome::Complete(p) => {
+            json!({ "kind": "complete", "projection": analysis_projection_output(p) })
+        }
+        AnalysisOutcome::Failure(f) => {
+            json!({ "kind": "failure", "failure": analysis_failure_output(f) })
+        }
+    }
+}
+
+fn analysis_projection_output(projection: &AnalysisProjection) -> serde_json::Value {
+    match projection {
+        AnalysisProjection::Ungrouped(b) => {
+            json!({ "kind": "ungrouped", "bucket": analysis_bucket_output(b) })
+        }
+        AnalysisProjection::Grouped(groups) => {
+            json!({ "kind": "grouped", "groups": groups.iter().map(|g| json!({ "key": analysis_group_key_output(&g.key), "bucket": analysis_bucket_output(&g.bucket) })).collect::<Vec<_>>() })
+        }
+    }
+}
+
+fn analysis_group_key_output(key: &AnalysisGroupKey) -> serde_json::Value {
+    match key {
+        AnalysisGroupKey::Number(v) => json!({ "type": "number", "value": v }),
+        AnalysisGroupKey::Text(v) => json!({ "type": "text", "value": v }),
+        AnalysisGroupKey::Boolean(v) => json!({ "type": "boolean", "value": v }),
+        AnalysisGroupKey::Reference(v) => json!({ "type": "reference", "value": v }),
+    }
+}
+
+fn analysis_bucket_output(
+    bucket: &tachiko_workspace_engine::analysis_operations::AnalysisBucket,
+) -> serde_json::Value {
+    json!({ "values": bucket.values.iter().map(analysis_result_value_output).collect::<Vec<_>>() })
+}
+
+fn analysis_result_value_output(value: &AnalysisResultValue) -> serde_json::Value {
+    match value {
+        AnalysisResultValue::Membership(es) => json!({ "kind": "membership", "entities": es }),
+        AnalysisResultValue::Count(n) => json!({ "kind": "count", "value": n }),
+        AnalysisResultValue::Minimum { field, outcome } => {
+            json!({ "kind": "minimum", "field": field, "outcome": numeric_aggregate_output(outcome) })
+        }
+        AnalysisResultValue::Maximum { field, outcome } => {
+            json!({ "kind": "maximum", "field": field, "outcome": numeric_aggregate_output(outcome) })
+        }
+        AnalysisResultValue::Observations { field, values } => {
+            json!({ "kind": "observations", "field": field, "values": values.iter().map(|(e, v)| json!({ "entity": e, "value": v })).collect::<Vec<_>>() })
+        }
+    }
+}
+
+fn numeric_aggregate_output(outcome: &NumericAggregateOutcome) -> serde_json::Value {
+    match outcome {
+        NumericAggregateOutcome::Value(v) => json!({ "kind": "value", "value": v }),
+        NumericAggregateOutcome::Empty => json!({ "kind": "empty" }),
+    }
+}
+
+fn analysis_failure_output(failure: &AnalysisFailure) -> serde_json::Value {
+    match failure {
+        AnalysisFailure::UnresolvedSchema { schema } => {
+            json!({ "kind": "unresolved_schema", "schema": schema })
+        }
+        AnalysisFailure::UnresolvedField { role, field } => {
+            json!({ "kind": "unresolved_field", "role": analysis_field_role_name(*role), "field": field })
+        }
+        AnalysisFailure::UnresolvedNarrowingEntity { entity } => {
+            json!({ "kind": "unresolved_narrowing_entity", "entity": entity })
+        }
+        AnalysisFailure::WrongDomainNarrowingEntity {
+            entity,
+            expected,
+            actual,
+        } => {
+            json!({ "kind": "wrong_domain_narrowing_entity", "entity": entity, "expected": expected, "actual": actual })
+        }
+        AnalysisFailure::IncoherentCandidateIdentity { key, entity } => {
+            json!({ "kind": "incoherent_candidate_identity", "key": key, "entity": entity })
+        }
+        AnalysisFailure::InvalidPredicateType { field, declared } => {
+            json!({ "kind": "invalid_predicate_type", "field": field, "declared": declared })
+        }
+        AnalysisFailure::InvalidMetricType { field, declared } => {
+            json!({ "kind": "invalid_metric_type", "field": field, "declared": declared })
+        }
+        AnalysisFailure::InvalidPredicateValue {
+            entity,
+            field,
+            actual,
+        } => {
+            json!({ "kind": "invalid_predicate_value", "entity": entity, "field": field, "actual": analysis_value_kind_name(*actual) })
+        }
+        AnalysisFailure::MissingGroupValue { entity, field } => {
+            json!({ "kind": "missing_group_value", "entity": entity, "field": field })
+        }
+        AnalysisFailure::FormulaGroupingUnsupported { field } => {
+            json!({ "kind": "formula_grouping_unsupported", "field": field })
+        }
+        AnalysisFailure::InvalidGroupValue {
+            entity,
+            field,
+            actual,
+        } => {
+            json!({ "kind": "invalid_group_value", "entity": entity, "field": field, "actual": analysis_value_kind_name(*actual) })
+        }
+        AnalysisFailure::CalculationFailed { field, failure } => {
+            json!({ "kind": "calculation_failed", "field": field, "failure": failure.as_ref().map(calculation_failure_output) })
+        }
+        AnalysisFailure::MetricIncomplete {
+            entity,
+            field,
+            reason,
+        } => {
+            json!({ "kind": "metric_incomplete", "entity": entity, "field": field, "reason": metric_incomplete_reason_output(reason) })
+        }
+        AnalysisFailure::ResultTooLarge { collection, limit } => {
+            json!({ "kind": "result_too_large", "collection": analysis_collection_kind_name(*collection), "limit": limit })
+        }
+    }
+}
+
+fn metric_incomplete_reason_output(reason: &MetricIncompleteReason) -> serde_json::Value {
+    match reason {
+        MetricIncompleteReason::Missing => json!({ "kind": "missing" }),
+        MetricIncompleteReason::WrongKind(k) => {
+            json!({ "kind": "wrong_kind", "actual": analysis_value_kind_name(*k) })
+        }
+    }
+}
+
+const fn analysis_operator_name(operator: AnalysisPredicateOperator) -> &'static str {
+    match operator {
+        AnalysisPredicateOperator::Equal => "equal",
+        AnalysisPredicateOperator::NotEqual => "not_equal",
+        AnalysisPredicateOperator::LessThan => "less_than",
+        AnalysisPredicateOperator::LessThanOrEqual => "less_than_or_equal",
+        AnalysisPredicateOperator::GreaterThan => "greater_than",
+        AnalysisPredicateOperator::GreaterThanOrEqual => "greater_than_or_equal",
+    }
+}
+const fn analysis_field_role_name(
+    role: tachiko_workspace_engine::analysis_operations::AnalysisFieldRole,
+) -> &'static str {
+    match role {
+        tachiko_workspace_engine::analysis_operations::AnalysisFieldRole::Predicate => "predicate",
+        tachiko_workspace_engine::analysis_operations::AnalysisFieldRole::Group => "group",
+        tachiko_workspace_engine::analysis_operations::AnalysisFieldRole::Metric => "metric",
+    }
+}
+const fn analysis_value_kind_name(
+    kind: tachiko_workspace_engine::analysis_operations::AnalysisValueKind,
+) -> &'static str {
+    match kind {
+        tachiko_workspace_engine::analysis_operations::AnalysisValueKind::Number => "number",
+        tachiko_workspace_engine::analysis_operations::AnalysisValueKind::Formula => "formula",
+        tachiko_workspace_engine::analysis_operations::AnalysisValueKind::Text => "text",
+        tachiko_workspace_engine::analysis_operations::AnalysisValueKind::Boolean => "boolean",
+        tachiko_workspace_engine::analysis_operations::AnalysisValueKind::Reference => "reference",
+    }
+}
+const fn analysis_collection_kind_name(
+    kind: tachiko_workspace_engine::analysis_operations::AnalysisCollectionKind,
+) -> &'static str {
+    match kind {
+        tachiko_workspace_engine::analysis_operations::AnalysisCollectionKind::Membership => {
+            "membership"
+        }
+        tachiko_workspace_engine::analysis_operations::AnalysisCollectionKind::Groups => "groups",
+        tachiko_workspace_engine::analysis_operations::AnalysisCollectionKind::Observations => {
+            "observations"
+        }
+    }
 }
 
 const fn validator_name(configuration: ValidatorConfiguration) -> &'static str {

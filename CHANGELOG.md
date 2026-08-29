@@ -39,6 +39,17 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- A provisional provider-neutral bounded semantic Analysis Query now runs
+  through the shared workspace authority and structured CLI. It implements
+  stable-ID schema selection and optional narrowing, typed AND predicates,
+  zero/one non-Formula grouping field, exact membership and Count, Number
+  Min/Max, bounded per-member Number observations, same-definition paired
+  exact contexts, and reproducible lineage. Formula-backed values reuse the
+  ADR-0018 calculation oracle; candidate-domain and complete-result disclosure
+  reuse ADR-0026 Grants and deny the whole assertion rather than aggregating a
+  visible subset. Results remain ephemeral, native/WASM conformance is
+  exercised, and no public wire/SDK, persistence, Sum/Mean, ranking,
+  statistics, or runtime/history contract is introduced.
 - A provisional provider-neutral M04 vertical slice now exposes structured
   formula-reasoning and exact-snapshot read-only Number-override scenario
   Queries through the workspace and CLI. Typed formula updates now bind their

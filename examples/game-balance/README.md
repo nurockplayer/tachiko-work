@@ -130,6 +130,21 @@ moonfall_demo=$(mktemp -d "${TMPDIR:-/tmp}/tachiko-moonfall.XXXXXX")
   "$moonfall_demo/moonfall.ro" "$moonfall_demo/moonfall-buffed.ro" \
   --before-state starter --after-state buffed
 
+# Run one bounded normalized query over both explicit exact contexts. These are
+# the stable IDs printed by `tachiko show` and `tachiko analyze document` for
+# weapons, iron_sword, damage, name, and dps; DPS remains formula-backed.
+./target/debug/tachiko analyze query \
+  examples/game-balance/game-balance.ro \
+  --schema 6e594d33-70eb-5755-8b9f-f19b948d39ce \
+  --entity 24ab8d17-bff2-53fc-9632-45617effe270 \
+  --predicate fa616e90-705e-5fa8-b735-2a6e84d03354:gte:number:35 \
+  --group-by 866dded6-ba9f-542c-b328-bea19ee0f80f \
+  --result membership --result count \
+  --result min:fa616e90-705e-5fa8-b735-2a6e84d03354 \
+  --result max:89f0fd5e-dfc9-53bf-b008-85f78c403420 \
+  --result observations:89f0fd5e-dfc9-53bf-b008-85f78c403420 \
+  --compare examples/game-balance/buffed-sword.ro
+
 # Produce evaluated entity data for downstream tooling.
 ./target/debug/tachiko export \
   "$moonfall_demo/moonfall-buffed.ro" "$moonfall_demo/moonfall-export.json"
@@ -142,6 +157,13 @@ Weapons Iron Sword
 damage: 36 -> 45
 affected dps: 40 -> 50
 ```
+
+The Analysis Query result contains the same normalized definition for both
+sources, one `Iron Sword` group in each outcome, exact membership and Count,
+`damage` minimum 36 then 45, and formula-backed `dps` maximum/observation 40
+then 50. Its structured lineage records both semantic source revisions and the
+workspace validator configuration; it does not infer history or persist an
+analytics object.
 
 ## Collaborate on independent balance changes
 

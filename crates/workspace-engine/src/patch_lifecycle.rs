@@ -99,6 +99,7 @@ pub enum OperationFamily {
     FormulaReasoning,
     NumberOverrideScenario,
     FormulaUpdate,
+    AnalysisQuery,
 }
 
 /// Accepted MVP semantic mutation classes.

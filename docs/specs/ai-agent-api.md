@@ -33,8 +33,10 @@ public Semantic API/wire contract. No general schema-inference, freeform-
 promotion, authentication/session/transport, or host-effect capability pipeline
 is implemented. Issue #144 implements the first Provisional provider-neutral
 workspace/CLI slice of the M04 formula-reasoning, scenario, and formula-update
-Semantic API operations. An AI-facing mapping of those operations, public DTOs,
-and wire/transport behavior remain unimplemented.
+Semantic API operations. Issue #150 implements the equivalent first
+provider-neutral bounded Analysis Query workspace/CLI slice. AI-facing mappings
+of those operations, public DTOs, and wire/transport behavior remain
+unimplemented.
 
 ## Principle
 
