@@ -34,7 +34,7 @@ The current repository planning horizon is:
 > **05 · Designer MVP**
 
 Game Studio Beta is complete. Designer MVP turns the established semantic,
-formula, analysis, authorization, storage, and resident-runtime foundations into
+formula, analysis, authorization, storage, and runtime-boundary foundations into
 a non-CLI-first workspace for designers without creating a second semantic
 authority in the UI.
 
