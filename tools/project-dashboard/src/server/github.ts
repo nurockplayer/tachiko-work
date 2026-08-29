@@ -116,6 +116,11 @@ interface GithubPage {
     defaultBranchRef: null | { name: string; target: { oid: string } };
     issues: { nodes: GithubIssue[]; pageInfo: PageInfo };
     pullRequests: { nodes: GithubPullRequest[]; pageInfo: PageInfo };
+  };
+}
+
+interface GithubMergedPage {
+  repository: null | {
     mergedPullRequests: { nodes: GithubMergedPullRequest[]; pageInfo: PageInfo };
   };
 }
@@ -186,7 +191,14 @@ const dashboardQuery = `
         }
         pageInfo { hasNextPage endCursor }
       }
-      mergedPullRequests: pullRequests(first: 8, states: MERGED, orderBy: { field: UPDATED_AT, direction: DESC }) {
+    }
+  }
+`;
+
+const recentCompletionsQuery = `
+  query RecentCompletions($owner: String!, $repo: String!, $mergedCursor: String) {
+    repository(owner: $owner, name: $repo) {
+      mergedPullRequests: pullRequests(first: 100, after: $mergedCursor, states: MERGED) {
         nodes { number title url mergedAt mergeCommit { oid } author { login } }
         pageInfo { hasNextPage endCursor }
       }
@@ -320,7 +332,6 @@ export async function loadGithubSnapshot(
       repository = response.repository;
       for (const issue of repository.issues.nodes) issues.set(issue.number, issue);
       for (const pr of repository.pullRequests.nodes) pullRequests.set(pr.number, pr);
-      for (const pr of repository.mergedPullRequests.nodes) mergedPullRequests.set(pr.number, pr);
 
       const issueMore = repository.issues.pageInfo.hasNextPage;
       const prMore = repository.pullRequests.pageInfo.hasNextPage;
@@ -346,6 +357,25 @@ export async function loadGithubSnapshot(
 
   const repoUrl = repository.url;
   const mainSha = repository.defaultBranchRef?.target.oid ?? null;
+  let recentCompletionsAvailable = true;
+  let mergedCursor: string | null = null;
+  try {
+    for (;;) {
+      const response = (await api.graphql(recentCompletionsQuery, {
+        owner: options.owner,
+        repo: options.repo,
+        mergedCursor,
+      })) as GithubMergedPage;
+      if (response.repository === null) throw new Error("repository not found");
+      for (const pr of response.repository.mergedPullRequests.nodes) mergedPullRequests.set(pr.number, pr);
+      if (!response.repository.mergedPullRequests.pageInfo.hasNextPage) break;
+      mergedCursor = response.repository.mergedPullRequests.pageInfo.endCursor;
+      if (mergedCursor === null) throw new Error("missing merged pull-request cursor");
+    }
+  } catch {
+    recentCompletionsAvailable = false;
+    failures.push("Recent completion observation failed.");
+  }
   let productHorizon: string | null = null;
   const productHorizonUrl = `${repoUrl}/blob/${mainSha ?? "main"}/docs/product/product-roadmap.md`;
   if (mainSha === null) {
@@ -478,7 +508,7 @@ export async function loadGithubSnapshot(
     failures,
     issues: rawIssues,
     pullRequests: rawPullRequests,
-    recentCompletions,
+    recentCompletions: recentCompletionsAvailable ? recentCompletions : null,
   };
 }
 
@@ -511,23 +541,28 @@ export class GithubApiClient implements ReadonlyGithubApi {
 
   async requiredStatusChecks(owner: string, repo: string, branch: string): Promise<RawRequiredCheck[]> {
     const encodedBranch = encodeURIComponent(branch);
-    const rulesResponse = await this.#fetch(
-      `https://api.github.com/repos/${owner}/${repo}/rules/branches/${encodedBranch}`,
-      {
-        method: "GET",
-        headers: this.#headers("application/vnd.github+json"),
-      },
-    );
-    const rules = (await this.#readJson(rulesResponse)) as Array<{
+    const rules: Array<{
       type?: string;
       parameters?: { required_status_checks?: Array<{ context?: string; integration_id?: number | null }> };
-    }>;
+    }> = [];
+    for (let page = 1;; page += 1) {
+      const rulesResponse = await this.#fetch(
+        `https://api.github.com/repos/${owner}/${repo}/rules/branches/${encodedBranch}?per_page=100&page=${page}`,
+        {
+          method: "GET",
+          headers: this.#headers("application/vnd.github+json"),
+        },
+      );
+      const pageRules = (await this.#readJson(rulesResponse)) as typeof rules;
+      rules.push(...pageRules);
+      if (pageRules.length < 100) break;
+    }
     const required = rules
       .filter((rule) => rule.type === "required_status_checks")
       .flatMap((rule) => rule.parameters?.required_status_checks ?? [])
       .flatMap((check) => check.context === undefined
         ? []
-        : [{ name: check.context, integrationId: check.integration_id ?? null }]);
+        : [{ name: check.context, integrationId: check.integration_id === -1 ? null : check.integration_id ?? null }]);
 
     const classicResponse = await this.#fetch(
       `https://api.github.com/repos/${owner}/${repo}/branches/${encodedBranch}/protection/required_status_checks`,
@@ -544,7 +579,7 @@ export class GithubApiClient implements ReadonlyGithubApi {
       required.push(
         ...(classic.checks ?? []).flatMap((check) => check.context === undefined
           ? []
-          : [{ name: check.context, integrationId: check.app_id ?? null }]),
+          : [{ name: check.context, integrationId: check.app_id === -1 ? null : check.app_id ?? null }]),
       );
       for (const context of classic.contexts ?? []) {
         if (!required.some((check) => check.name === context)) {

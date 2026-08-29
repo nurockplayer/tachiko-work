@@ -120,6 +120,7 @@ function issueReadiness(issue: RawIssue, handoff: HandoffProjection): DeliveryLa
   const statusSection = issue.body.match(/## Status\s*([\s\S]*?)(?=\n## |$)/i)?.[1] ?? issue.body.slice(0, 600);
   const currentHandoffState = handoff.condition === "current" ? handoff.claimedState : null;
   const statusText = (currentHandoffState ?? statusSection).toLowerCase();
+  if (/\bdecision[_ -]?ready\b/.test(statusText)) return "unknown";
   if (/\bpark(?:ed)?\b/.test(statusText)) return "parked";
   if (/\bblock(?:ed)?\b/.test(statusText) && !statusText.includes("not blocked")) return "blocked";
   if (/\bactive\b|\bimplementing\b|\bin progress\b|\bvalidating\b|\breview[_ -]?fix\b|\bhuman[_ -]?required\b/.test(statusText)) return "active";
@@ -288,10 +289,13 @@ function derivePhase(
   checks: CheckProjection,
   reviews: ReviewProjection,
   handoff: HandoffProjection,
+  drift: DeliveryLane["authorityDrift"],
+  ownershipConflict: boolean,
 ): DeliveryPhase {
   const claimedState = handoff.condition === "current" ? handoff.claimedState?.toLowerCase() ?? "" : "";
   if (readiness === "parked" || claimedState.includes("parked")) return "parked";
   if (claimedState.includes("human_required") || claimedState.includes("human required")) return "human_required";
+  if (ownershipConflict) return "blocked";
   if (readiness === "blocked") return "blocked";
   if (pr === null) return readiness === "ready" ? "ready" : readiness === "active" ? "implementing" : "unknown";
   if ((reviews.substantiveUnresolvedCount ?? 0) > 0) return "review_fix";
@@ -300,6 +304,7 @@ function derivePhase(
   if (checks.status !== "success" || checks.requiredStatus !== "satisfied") return "validating";
   if (reviews.decision !== "approved") return "rereview";
   if (handoff.condition !== "current") return "validating";
+  if (drift !== "none") return "validating";
   return "merge_gate";
 }
 
@@ -307,6 +312,7 @@ function projectLane(
   issue: RawIssue,
   pr: RawPullRequest | null,
   snapshot: RawRepositorySnapshot,
+  conflictingPrNumbers: number[] = [],
 ): DeliveryLane {
   const comments = pr?.comments ?? issue.comments;
   const handoff = projectHandoff(comments, snapshot.observedAt, pr?.headSha ?? null, snapshot.mainSha);
@@ -337,6 +343,7 @@ function projectLane(
         }
       : projectReviews(pr, snapshot.observedAt);
   const drift = pr === null ? "none" : authorityDrift(pr, handoff, snapshot.mainSha);
+  const ownershipConflict = conflictingPrNumbers.length > 1;
   const blockers: string[] = [];
 
   if ((issue.blockedBy?.length ?? 0) > 0) {
@@ -359,12 +366,16 @@ function projectLane(
     blockers.push(`Accepted-authority candidates changed on main: ${changedAuthorityPaths.join(", ")}.`);
   }
   if (drift === "suspected") blockers.push("Authority or live-main drift requires explicit reconciliation.");
+  if (drift === "unknown") blockers.push("Live-main and authority-drift reconciliation could not be observed.");
+  if (ownershipConflict) {
+    blockers.push(`Multiple open pull requests claim Issue #${issue.number}: ${conflictingPrNumbers.map((number) => `#${number}`).join(", ")}.`);
+  }
 
-  const phase = derivePhase(readiness, pr, checks, reviews, handoff);
+  const phase = derivePhase(readiness, pr, checks, reviews, handoff, drift, ownershipConflict);
   const requiresHuman = humanActionRequested(comments, handoff);
   const action: DeliveryLane["action"] = requiresHuman || phase === "human_required"
     ? { owner: "human", reason: "The canonical coordination state requests human or Steward action." }
-    : phase === "review_fix" || checks.status === "failure"
+    : phase === "review_fix" || checks.status === "failure" || ownershipConflict
       ? { owner: "codex", reason: blockers[0] ?? "Delivery-agent action is required." }
       : { owner: "none", reason: "No human action is currently evidenced." };
   const issueRef = source("direct", `Issue #${issue.number}`, issue.url, snapshot.observedAt, `issue-${issue.number}`);
@@ -446,6 +457,14 @@ export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): Re
   const issues = snapshot.issues ?? [];
   const pullRequests = snapshot.pullRequests ?? [];
   const issuesByNumber = new Map(issues.map((issue) => [issue.number, issue]));
+  const pullRequestsByIssue = new Map<number, number[]>();
+  for (const pr of pullRequests) {
+    const issueNumber = pr.issueNumbers[0] ?? pr.number;
+    const numbers = pullRequestsByIssue.get(issueNumber) ?? [];
+    numbers.push(pr.number);
+    pullRequestsByIssue.set(issueNumber, numbers);
+  }
+  for (const numbers of pullRequestsByIssue.values()) numbers.sort((left, right) => left - right);
   const ownedIssueNumbers = new Set<number>();
   const deliveries: DeliveryLane[] = [];
 
@@ -453,7 +472,7 @@ export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): Re
     const number = pr.issueNumbers[0];
     const issue = number === undefined ? placeholderIssue(pr, snapshot.observedAt) : issuesByNumber.get(number) ?? placeholderIssue(pr, snapshot.observedAt);
     ownedIssueNumbers.add(issue.number);
-    deliveries.push(projectLane(issue, pr, snapshot));
+    deliveries.push(projectLane(issue, pr, snapshot, pullRequestsByIssue.get(issue.number) ?? []));
   }
 
   for (const issue of issues) {

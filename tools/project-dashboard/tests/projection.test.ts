@@ -146,6 +146,16 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.blockers).toContain("Live Issue dependencies block this lane: #187.");
   });
 
+  it("does not treat Decision-Ready authority work as production implementation readiness", () => {
+    const decision = issue(190);
+    decision.body = "## Status\n\n**DECISION-READY**\n\nOwner: `agent:chatgpt`";
+    decision.comments[0]!.body = "<!-- agent-handoff:v1 -->\nOWNER: agent:chatgpt\nSTATE: Decision-Ready";
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [decision] }));
+
+    expect(projection.deliveries).toEqual([]);
+  });
+
   it("invalidates checks and a merge-ready handoff when the PR head moves", () => {
     const pr = pullRequest();
     pr.headSha = "c".repeat(40);
@@ -287,6 +297,24 @@ describe("normalizeRepositorySnapshot", () => {
       "issue-169-pr-201",
     ]);
     expect(new Set(projection.deliveries.map((lane) => lane.id)).size).toBe(2);
+    expect(projection.deliveries.map((lane) => lane.phase)).toEqual(["blocked", "blocked"]);
+    for (const lane of projection.deliveries) {
+      expect(lane.blockers).toContain("Multiple open pull requests claim Issue #169: #200, #201.");
+    }
+  });
+
+  it("keeps merge readiness validating while live-main reconciliation is unknown", () => {
+    const pr = pullRequest();
+    pr.relationToMain = "unknown";
+    pr.mergeBaseSha = null;
+    pr.authorityPathsChangedOnMain = null;
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.authorityDrift).toBe("unknown");
+    expect(lane?.phase).toBe("validating");
+    expect(lane?.blockers).toContain("Live-main and authority-drift reconciliation could not be observed.");
   });
 
   it("marks main movement as suspected authority drift until the handoff reconciles it", () => {

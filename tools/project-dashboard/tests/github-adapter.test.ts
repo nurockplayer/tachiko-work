@@ -157,6 +157,43 @@ describe("loadGithubSnapshot", () => {
     });
   });
 
+  it("fetches every merged pull-request page before selecting recent completions by merge time", async () => {
+    const api: ReadonlyGithubApi = {
+      graphql: async (query, variables) => {
+        if (!query.includes("RecentCompletions")) return githubPage();
+        const secondPage = variables.mergedCursor !== null;
+        return {
+          repository: {
+            mergedPullRequests: {
+              nodes: [
+                {
+                  number: secondPage ? 202 : 100,
+                  title: secondPage ? "Newest merge" : "Old merge with recent activity",
+                  url: `https://github.com/nurockplayer/tachiko-work/pull/${secondPage ? 202 : 100}`,
+                  mergedAt: secondPage ? "2026-08-30T01:00:00Z" : "2025-01-01T00:00:00Z",
+                  mergeCommit: { oid: (secondPage ? "e" : "d").repeat(40) },
+                  author: { login: "nurockplayer" },
+                },
+              ],
+              pageInfo: { hasNextPage: !secondPage, endCursor: secondPage ? null : "merged-page-2" },
+            },
+          },
+        };
+      },
+      rawText: async () => "## Current horizon\n\n> **05 · Designer MVP**",
+      requiredStatusChecks: async () => [],
+      compare: async () => ({ status: "ahead", mergeBaseSha: mainSha, files: [] }),
+    };
+
+    const result = await loadGithubSnapshot(api, {
+      owner: "nurockplayer",
+      repo: "tachiko-work",
+      observedAt: "2026-08-30T00:00:00.000Z",
+    });
+
+    expect(result.recentCompletions?.map((completion) => completion.number)).toEqual([202, 100]);
+  });
+
   it("keeps authority drift unknown when GitHub caps a compare at 300 files", async () => {
     const oldBase = "d".repeat(40);
     const api: ReadonlyGithubApi = {
@@ -206,6 +243,49 @@ describe("loadGithubSnapshot", () => {
       { name: "ruleset-check", integrationId: 42 },
     ]);
     expect(fetchImplementation).toHaveBeenCalledTimes(2);
+  });
+
+  it("paginates active rules before declaring the required-check set complete", async () => {
+    const fetchImplementation = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+      if (url.pathname.endsWith("/rules/branches/main")) {
+        const page = url.searchParams.get("page");
+        const count = page === "1" ? 100 : 1;
+        return new Response(JSON.stringify(Array.from({ length: count }, (_, index) => ({
+          type: "required_status_checks",
+          parameters: {
+            required_status_checks: [{ context: `ruleset-${page}-${index}`, integration_id: 42 }],
+          },
+        }))), { status: 200 });
+      }
+      if (url.pathname.endsWith("/branches/main/protection/required_status_checks")) {
+        return new Response("{}", { status: 404 });
+      }
+      throw new Error(`Unexpected request: ${url.href}`);
+    });
+    const client = new GithubApiClient("test-token", fetchImplementation);
+
+    const checks = await client.requiredStatusChecks("nurockplayer", "tachiko-work", "main");
+
+    expect(checks).toHaveLength(101);
+    expect(checks).toContainEqual({ name: "ruleset-2-0", integrationId: 42 });
+    expect(fetchImplementation).toHaveBeenCalledTimes(3);
+  });
+
+  it("treats classic branch-protection app_id -1 as any app", async () => {
+    const fetchImplementation = vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes("/rules/branches/main")) return new Response("[]", { status: 200 });
+      if (url.includes("/branches/main/protection/required_status_checks")) {
+        return new Response(JSON.stringify({ checks: [{ context: "build", app_id: -1 }] }), { status: 200 });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const client = new GithubApiClient("test-token", fetchImplementation);
+
+    await expect(client.requiredStatusChecks("nurockplayer", "tachiko-work", "main")).resolves.toEqual([
+      { name: "build", integrationId: null },
+    ]);
   });
 
   it("degrades a failed compare observation to partial/unknown rather than healthy", async () => {
