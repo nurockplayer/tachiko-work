@@ -134,6 +134,18 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries).toEqual([]);
   });
 
+  it("treats live blocked-by dependencies as blocked even when Issue prose says Ready", () => {
+    const dependent = issue();
+    dependent.blockedBy = [{ number: 187, title: "Open canonical project", url: "https://github.com/nurockplayer/tachiko-work/issues/187" }];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [dependent] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.issue.readiness).toBe("blocked");
+    expect(lane?.phase).toBe("blocked");
+    expect(lane?.blockers).toContain("Live Issue dependencies block this lane: #187.");
+  });
+
   it("invalidates checks and a merge-ready handoff when the PR head moves", () => {
     const pr = pullRequest();
     pr.headSha = "c".repeat(40);
@@ -216,6 +228,33 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.phase).toBe("validating");
     expect(lane?.issue.readiness).toBe("active");
     expect(lane?.action.owner).toBe("none");
+  });
+
+  it("preserves a current blocked handoff state for an open PR", () => {
+    const pr = pullRequest();
+    pr.comments[0]!.body = pr.comments[0]!.body.replace("STATE: merge-ready", "STATE: blocked");
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.handoff.condition).toBe("current");
+    expect(lane?.issue.readiness).toBe("blocked");
+    expect(lane?.phase).toBe("blocked");
+    expect(lane?.blockers).toContain("The current canonical handoff reports this lane blocked.");
+  });
+
+  it("does not block the merge gate on P3-only review threads", () => {
+    const pr = pullRequest();
+    pr.reviewThreads = [
+      { resolved: false, outdated: false, body: "[P3] Consider a shorter label", url: "https://github.com/thread" },
+    ];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.reviews.unresolvedThreadCount).toBe(1);
+    expect(lane?.reviews.substantiveUnresolvedCount).toBe(0);
+    expect(lane?.phase).toBe("merge_gate");
   });
 
   it("keeps independent simultaneous work in separate lanes", () => {

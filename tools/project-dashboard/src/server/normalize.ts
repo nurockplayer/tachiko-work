@@ -116,6 +116,7 @@ function issueOwner(issue: RawIssue, handoff: HandoffProjection): string {
 }
 
 function issueReadiness(issue: RawIssue, handoff: HandoffProjection): DeliveryLane["issue"]["readiness"] {
+  if ((issue.blockedBy?.length ?? 0) > 0) return "blocked";
   const statusSection = issue.body.match(/## Status\s*([\s\S]*?)(?=\n## |$)/i)?.[1] ?? issue.body.slice(0, 600);
   const currentHandoffState = handoff.condition === "current" ? handoff.claimedState : null;
   const statusText = (currentHandoffState ?? statusSection).toLowerCase();
@@ -297,7 +298,7 @@ function derivePhase(
   if (reviews.status === "stale") return "rereview";
   if (reviews.decision === "changes_requested") return "review_fix";
   if (checks.status !== "success" || checks.requiredStatus !== "satisfied") return "validating";
-  if (reviews.decision !== "approved" || (reviews.unresolvedThreadCount ?? 0) > 0) return "rereview";
+  if (reviews.decision !== "approved") return "rereview";
   if (handoff.condition !== "current") return "validating";
   return "merge_gate";
 }
@@ -309,7 +310,10 @@ function projectLane(
 ): DeliveryLane {
   const comments = pr?.comments ?? issue.comments;
   const handoff = projectHandoff(comments, snapshot.observedAt, pr?.headSha ?? null, snapshot.mainSha);
-  const readiness = pr === null ? issueReadiness(issue, handoff) : "active";
+  const observedReadiness = issueReadiness(issue, handoff);
+  const readiness = pr === null || observedReadiness === "blocked" || observedReadiness === "parked"
+    ? observedReadiness
+    : "active";
   const checks =
     pr === null
       ? {
@@ -335,6 +339,12 @@ function projectLane(
   const drift = pr === null ? "none" : authorityDrift(pr, handoff, snapshot.mainSha);
   const blockers: string[] = [];
 
+  if ((issue.blockedBy?.length ?? 0) > 0) {
+    blockers.push(`Live Issue dependencies block this lane: ${issue.blockedBy?.map((dependency) => `#${dependency.number}`).join(", ") ?? "Unknown"}.`);
+  }
+  if (handoff.condition === "current" && observedReadiness === "blocked" && (issue.blockedBy?.length ?? 0) === 0) {
+    blockers.push("The current canonical handoff reports this lane blocked.");
+  }
   if (pr !== null && checks.status === "unknown") blockers.push("Checks were not observed for the current PR head.");
   if (pr !== null && checks.requiredStatus !== "satisfied") blockers.push(checks.requiredSummary);
   if (checks.status === "failure") blockers.push(checks.summary);
