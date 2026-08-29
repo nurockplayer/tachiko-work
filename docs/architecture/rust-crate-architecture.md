@@ -16,8 +16,9 @@ validation/report composition implemented by Issue #89. Issue #29 implements
 the provisional SemanticPatch lifecycle, Issue #30 its `ai-api` security
 composition, and Issue #93 the first production resident session with internal
 monotonic revision, explicit snapshots, and guarded state installation. Issue
-#94 adds internal revision-pinned selective entity/field projections and fresh
-full-oracle invalidation facts; #95 retains incremental-state work. Issue #123
+#94 adds internal occurrence-and-revision-pinned selective entity/field
+projections and fresh full-oracle invalidation facts; #95 retains incremental-
+state work. Issue #123
 implements the storage-owned `.roproj/v1` pure codec, native exact-tree host
 workflow, and CLI composition without changing the Accepted crate DAG.
 
@@ -201,10 +202,10 @@ The engine owns real application behavior:
   occurrence, an internal monotonic `SemanticRevision`, revision-pinned
   validation/calculation queries, explicit detached snapshots, and guarded
   compare-and-publish through that same publication seam;
-- revision-pinned selective entity/field projections that keep stable subjects,
-  stored literals, bound formula definitions, calculated outcomes, diagnostics,
-  and mutable human addresses distinct, plus fresh deterministic downstream
-  projection invalidation without retained caches;
+- occurrence-and-revision-pinned selective entity/field projections that keep
+  stable subjects, stored literals, bound formula definitions, calculated
+  outcomes, diagnostics, and mutable human addresses distinct, plus fresh
+  deterministic downstream projection invalidation without retained caches;
 - semantic comparison and merge-plus-impact orchestration; and
 - deterministic runtime-export projection independent of filesystem and
   terminal rendering.

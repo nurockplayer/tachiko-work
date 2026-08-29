@@ -2,7 +2,9 @@
 //!
 //! These Rust types are workspace-internal implementation details. They do not
 //! define a public session, revision, result, serialization, or transport
-//! contract.
+//! contract. They are trusted runtime primitives rather than client endpoints;
+//! host adapters must enforce ADR-0026 Query authorization before projecting
+//! their observations outside the trusted composition boundary.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -49,6 +51,7 @@ impl ResidentWorkspaceSession {
     #[must_use]
     pub fn validation_report(&self) -> ResidentQueryResult<ValidationReport> {
         ResidentQueryResult {
+            document_scope: self.document_scope.clone(),
             revision: self.revision.clone(),
             value: validation_report(&self.document),
         }
@@ -64,6 +67,7 @@ impl ResidentWorkspaceSession {
         &self,
     ) -> Result<ResidentQueryResult<Vec<CalculatedField>>, WorkspaceError> {
         Ok(ResidentQueryResult {
+            document_scope: self.document_scope.clone(),
             revision: self.revision.clone(),
             value: calculate_fields(&self.document)?,
         })
@@ -101,6 +105,7 @@ impl ResidentWorkspaceSession {
             .collect::<Result<Vec<_>, WorkspaceError>>()?;
 
         Ok(ResidentQueryResult {
+            document_scope: self.document_scope.clone(),
             revision: self.revision.clone(),
             value: entities,
         })
@@ -177,6 +182,7 @@ impl ResidentWorkspaceSession {
             .collect::<Result<Vec<_>, WorkspaceError>>()?;
 
         Ok(ResidentQueryResult {
+            document_scope: self.document_scope.clone(),
             revision: self.revision.clone(),
             value: fields,
         })
@@ -212,9 +218,10 @@ impl ResidentWorkspaceSession {
     }
 }
 
-/// One query observation pinned to the resident revision it read.
+/// One query observation pinned to the resident occurrence and revision it read.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResidentQueryResult<T> {
+    document_scope: DocumentScopeId,
     revision: SemanticRevision,
     value: T,
 }
@@ -230,9 +237,10 @@ pub struct ResidentFieldProjection {
     pub presentation_address: FieldAddress,
 }
 
-/// Stable subjects whose projections became stale across one publication.
+/// Stable subjects whose projections became stale across one scoped publication.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResidentProjectionInvalidation {
+    pub document_scope: DocumentScopeId,
     pub base_revision: SemanticRevision,
     pub resulting_revision: SemanticRevision,
     pub entities: Vec<EntityId>,
@@ -241,6 +249,11 @@ pub struct ResidentProjectionInvalidation {
 }
 
 impl<T> ResidentQueryResult<T> {
+    #[must_use]
+    pub fn document_scope(&self) -> &DocumentScopeId {
+        &self.document_scope
+    }
+
     #[must_use]
     pub fn revision(&self) -> &SemanticRevision {
         &self.revision
@@ -256,10 +269,15 @@ impl<T> ResidentQueryResult<T> {
         self.value
     }
 
-    /// Report whether this detached query observation predates a revision.
+    /// Report whether this detached observation belongs to another occurrence
+    /// or predates the supplied revision in the same occurrence.
     #[must_use]
-    pub fn is_stale_against(&self, current: &SemanticRevision) -> bool {
-        &self.revision != current
+    pub fn is_stale_against(
+        &self,
+        document_scope: &DocumentScopeId,
+        current: &SemanticRevision,
+    ) -> bool {
+        &self.document_scope != document_scope || &self.revision != current
     }
 }
 
@@ -314,13 +332,15 @@ impl<Time> ResidentPublicationAuthority<'_, Time> {
     #[must_use]
     pub fn projection_invalidation_for(
         &self,
+        document_scope: &DocumentScopeId,
         base_revision: &SemanticRevision,
         resulting_revision: &SemanticRevision,
     ) -> Option<&ResidentProjectionInvalidation> {
         self.projection_invalidation
             .as_ref()
             .filter(|invalidation| {
-                &invalidation.base_revision == base_revision
+                &invalidation.document_scope == document_scope
+                    && &invalidation.base_revision == base_revision
                     && &invalidation.resulting_revision == resulting_revision
             })
     }
@@ -369,6 +389,7 @@ where
         let projection_invalidation = projection_invalidation(
             &self.session.document,
             &candidate,
+            self.session.document_scope.clone(),
             expected_revision.clone(),
             resulting_revision.clone(),
         );
@@ -394,6 +415,7 @@ fn revision_for(generation: u64) -> SemanticRevision {
 fn projection_invalidation(
     before: &Document,
     after: &Document,
+    document_scope: DocumentScopeId,
     base_revision: SemanticRevision,
     resulting_revision: SemanticRevision,
 ) -> ResidentProjectionInvalidation {
@@ -423,6 +445,7 @@ fn projection_invalidation(
     .collect();
 
     ResidentProjectionInvalidation {
+        document_scope,
         base_revision,
         resulting_revision,
         entities: changes.entities.into_iter().collect(),

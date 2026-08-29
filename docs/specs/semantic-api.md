@@ -148,9 +148,10 @@ proposal to bind one exact semantic context revision, while ADR-0022 accepts a
 resident shared Rust runtime as the preferred interactive topology. Issue #93
 supplies the current internal resident session occurrence, opaque monotonic
 revision and equality, explicit snapshot, and guarded in-process state
-installation. Issue #94 adds current internal revision-pinned selective
-entity/field projections and exact-publication, revision-paired invalidation
-facts derived from fresh dependency oracles. Exact public session handles,
+installation. Issue #94 adds current internal occurrence-and-revision-pinned
+selective entity/field projections and exact-publication invalidation facts
+paired to that occurrence and its base/result revisions, derived from fresh
+dependency oracles. Exact public session handles,
 result shapes, revision/precondition encoding, broader
 cross-host concurrency mechanisms, cancellation, and public
 commit/swap/locking/transport contracts remain Deferred to later runtime and
@@ -1513,11 +1514,11 @@ equivalent Stable semantic meaning where capabilities overlap.
 Issue #93 implements the current provisional in-process resident session,
 monotonic revision precondition, explicit snapshot, and guarded installation
 mechanics in `workspace-engine`. Issue #94 implements current internal
-revision-pinned selective entity/field projections, stale-result comparison,
-and exact-publication invalidation of entity, field, and dependency-derived
-calculation projections, with native/WASM equivalence evidence. Public session
-handles, exact public result/invalidation
-shapes, cross-host concurrency, Worker lifecycle,
+occurrence-and-revision-pinned selective entity/field projections, stale-result
+comparison, and exact-publication invalidation of entity, field, and
+dependency-derived calculation projections, with native/WASM equivalence
+evidence. Public session handles, exact public result/invalidation shapes,
+cross-host concurrency, Worker lifecycle,
 IPC/FFI/network serialization/ABI, and native/browser persistence/recovery
 remain Deferred to future host/transport work. Issue #95 owns retained
 incremental runtime state;

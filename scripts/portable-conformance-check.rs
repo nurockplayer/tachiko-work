@@ -2439,7 +2439,8 @@ fn resident_session_record() -> Record {
     let [input_projection, output_projection] = query.value().as_slice() else {
         return Record::failure(UNEXPECTED, (54_u64 << 32) | 2);
     };
-    if query.revision() != initial.revision()
+    if query.document_scope() != initial.document_scope()
+        || query.revision() != initial.revision()
         || session.revision() != initial.revision()
         || input_projection.field != input
         || input_projection.stored_value != Some(Value::Number(number(42.0)))
@@ -2499,14 +2500,19 @@ fn resident_session_record() -> Record {
             return Record::failure(UNEXPECTED, (54_u64 << 32) | 6);
         };
         let Some(invalidation) = publication
-            .projection_invalidation_for(&receipt.base_revision, &receipt.resulting_revision)
+            .projection_invalidation_for(
+                initial.document_scope(),
+                &receipt.base_revision,
+                &receipt.resulting_revision,
+            )
             .cloned()
         else {
             return Record::failure(UNEXPECTED, (54_u64 << 32) | 7);
         };
         (receipt, invalidation)
     };
-    if invalidation.base_revision != receipt.base_revision
+    if invalidation.document_scope != *initial.document_scope()
+        || invalidation.base_revision != receipt.base_revision
         || invalidation.resulting_revision != receipt.resulting_revision
         || !invalidation.entities.is_empty()
         || invalidation.fields != [input.clone()]

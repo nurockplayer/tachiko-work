@@ -46,7 +46,7 @@ For implementable format contracts, continue to [`../specs/README.md`](../specs/
 - [`frontend-backend-boundary.md`](frontend-backend-boundary.md) — frontend projection/workflow state, shared runtime authority, explicit snapshot boundaries, and host composition.
 - [`performance-model.md`](performance-model.md) — provisional performance guidance that should be refined by evidence.
 
-ADR-0022 accepts resident Rust runtime ownership, the no-second-canonical-client-model rule, host separation, explicit snapshot boundaries, and native/WASM semantic parity. Issue #93 implements the current provisional in-process resident session, monotonic revision, and guarded installation seam; Issue #94 adds its internal selective entity/field projections and fresh revision-keyed invalidation facts. Public session handles, cross-host concurrency, Worker lifecycle, IPC/FFI/network mapping, persistence/recovery, serialization/ABI, and retained incremental state remain Deferred to #95 and related host work.
+ADR-0022 accepts resident Rust runtime ownership, the no-second-canonical-client-model rule, host separation, explicit snapshot boundaries, and native/WASM semantic parity. Issue #93 implements the current provisional in-process resident session, monotonic revision, and guarded installation seam; Issue #94 adds its internal selective entity/field projections and fresh occurrence/revision-keyed invalidation facts. Public session handles, cross-host concurrency, Worker lifecycle, IPC/FFI/network mapping, persistence/recovery, serialization/ABI, and retained incremental state remain Deferred to #95 and related host work.
 
 ### AI
 

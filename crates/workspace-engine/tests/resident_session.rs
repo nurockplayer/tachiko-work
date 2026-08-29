@@ -138,7 +138,11 @@ fn execute_damage(
             .execute(&proposal, None, &principal(), &mut publication, NOW)
             .unwrap();
         let invalidation = publication
-            .projection_invalidation_for(&receipt.base_revision, &receipt.resulting_revision)
+            .projection_invalidation_for(
+                before.document_scope(),
+                &receipt.base_revision,
+                &receipt.resulting_revision,
+            )
             .unwrap()
             .clone();
         (receipt, invalidation)
@@ -157,6 +161,10 @@ fn validation_query_is_revision_pinned_without_advancing_session() {
     let query = session.validation_report();
 
     assert!(query.value().is_valid());
+    assert_eq!(
+        query.document_scope(),
+        &DocumentScopeId::from("game-occurrence")
+    );
     assert_eq!(query.revision(), &before);
     assert_eq!(session.revision(), &before);
 }
@@ -171,6 +179,7 @@ fn selective_entity_query_returns_only_requested_stable_subjects() {
         .query_entities(&[EntityId::from("iron_sword")])
         .unwrap();
 
+    assert_eq!(query.document_scope(), &document_scope_id());
     assert_eq!(query.revision(), &before);
     assert_eq!(session.revision(), &before);
     assert_eq!(query.value().len(), 1);
@@ -319,6 +328,7 @@ fn scalar_mutation_invalidates_changed_field_and_downstream_projection_at_new_re
 
     assert_eq!(receipt.base_revision, invalidation.base_revision);
     assert_eq!(receipt.resulting_revision, invalidation.resulting_revision);
+    assert_eq!(invalidation.document_scope, document_scope_id());
     assert_ne!(cached.revision(), &invalidation.resulting_revision);
     assert!(invalidation.entities.is_empty());
     assert_eq!(invalidation.fields, [damage]);
@@ -335,8 +345,26 @@ fn revision_tag_deterministically_identifies_stale_cached_projection() {
     execute_damage(&mut session, "resident-stale-projection", 45.0);
     let current = session.query_fields(std::slice::from_ref(&damage)).unwrap();
 
-    assert!(cached.is_stale_against(session.revision()));
-    assert!(!current.is_stale_against(session.revision()));
+    assert!(cached.is_stale_against(current.document_scope(), current.revision()));
+    assert!(!current.is_stale_against(current.document_scope(), current.revision()));
+}
+
+#[test]
+fn equal_generation_from_a_different_document_occurrence_is_stale() {
+    let left = ResidentWorkspaceSession::new(
+        DocumentScopeId::from("left-occurrence"),
+        game_balance_document("game", "Game"),
+    );
+    let right = ResidentWorkspaceSession::new(
+        DocumentScopeId::from("right-occurrence"),
+        game_balance_document("game", "Game"),
+    );
+    let damage = FieldRef::new("iron_sword", "damage");
+    let left_query = left.query_fields(std::slice::from_ref(&damage)).unwrap();
+    let right_snapshot = right.export_snapshot();
+
+    assert_eq!(left.revision(), right.revision());
+    assert!(left_query.is_stale_against(right_snapshot.document_scope(), right.revision()));
 }
 
 #[test]
@@ -362,8 +390,21 @@ fn rename_projection_preserves_stable_subject_and_changes_presentation_address()
             )
             .unwrap()
             .2;
+        assert!(
+            publication
+                .projection_invalidation_for(
+                    &DocumentScopeId::from("other-occurrence"),
+                    snapshot.revision(),
+                    &resulting_revision,
+                )
+                .is_none()
+        );
         let invalidation = publication
-            .projection_invalidation_for(snapshot.revision(), &resulting_revision)
+            .projection_invalidation_for(
+                snapshot.document_scope(),
+                snapshot.revision(),
+                &resulting_revision,
+            )
             .unwrap()
             .clone();
         (resulting_revision, invalidation)
@@ -380,6 +421,7 @@ fn rename_projection_preserves_stable_subject_and_changes_presentation_address()
         after.value()[0].presentation_address,
         FieldAddress::new("moonblade", "dps")
     );
+    assert_eq!(invalidation.document_scope, *snapshot.document_scope());
     assert_eq!(invalidation.base_revision, *snapshot.revision());
     assert_eq!(invalidation.resulting_revision, resulting_revision);
     assert_eq!(invalidation.entities, [EntityId::from("iron_sword")]);
@@ -394,7 +436,7 @@ fn rename_projection_preserves_stable_subject_and_changes_presentation_address()
         ]
     );
     assert!(invalidation.affected_calculations.is_empty());
-    assert!(before.is_stale_against(&resulting_revision));
+    assert!(before.is_stale_against(snapshot.document_scope(), &resulting_revision));
     assert_eq!(after.revision(), &resulting_revision);
 }
 
@@ -421,13 +463,18 @@ fn field_rename_invalidates_schema_bound_presentations_without_recomputing_depen
             .unwrap()
             .2;
         let invalidation = publication
-            .projection_invalidation_for(snapshot.revision(), &resulting_revision)
+            .projection_invalidation_for(
+                snapshot.document_scope(),
+                snapshot.revision(),
+                &resulting_revision,
+            )
             .unwrap()
             .clone();
         (resulting_revision, invalidation)
     };
     let after = session.query_fields(std::slice::from_ref(&damage)).unwrap();
 
+    assert_eq!(invalidation.document_scope, *snapshot.document_scope());
     assert_eq!(invalidation.base_revision, *snapshot.revision());
     assert_eq!(invalidation.resulting_revision, resulting_revision);
     assert!(invalidation.entities.is_empty());

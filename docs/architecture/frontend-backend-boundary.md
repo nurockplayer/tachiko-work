@@ -1,6 +1,6 @@
 # Frontend and Backend Boundary
 
-Decision state: Accepted direction. ADR-0020 makes the Headless Semantic API the mandatory first-party semantic product boundary. ADR-0024 defines immutable revision-pinned SemanticPatch proposal meaning. ADR-0026 defines trusted footprint derivation, scoped authorization, exact Human Approval, and semantic/external-effect separation. ADR-0022 accepts the resident shared Rust semantic/application runtime and host separation as the preferred interactive topology. Issue #29 implements the provisional lifecycle/publication seam, #30 composes it through a provider-facing denial boundary, #93 supplies the current internal resident revision/session mechanics, and #94 adds internal revision-pinned selective projections and invalidation facts. Concrete authentication, public transport/delivery, and external capability mechanics remain Deferred to later host/runtime work.
+Decision state: Accepted direction. ADR-0020 makes the Headless Semantic API the mandatory first-party semantic product boundary. ADR-0024 defines immutable revision-pinned SemanticPatch proposal meaning. ADR-0026 defines trusted footprint derivation, scoped authorization, exact Human Approval, and semantic/external-effect separation. ADR-0022 accepts the resident shared Rust semantic/application runtime and host separation as the preferred interactive topology. Issue #29 implements the provisional lifecycle/publication seam, #30 composes it through a provider-facing denial boundary, #93 supplies the current internal resident revision/session mechanics, and #94 adds internal occurrence-and-revision-pinned selective projections and invalidation facts. Concrete authentication, public transport/delivery, and external capability mechanics remain Deferred to later host/runtime work.
 
 ## Principle
 
@@ -85,7 +85,8 @@ Public authorization/Approval wire DTOs, concrete authentication, public
 session handles, cross-host concurrency, and transport/delivery remain later
 host work. Issue #93 supplies the current internal monotonic revision and
 guarded state installation; Issue #94 supplies internal selective projections
-and revision-keyed invalidation facts without freezing their public shape.
+and occurrence/revision-keyed invalidation facts without freezing their public
+shape.
 
 ## Snapshot boundaries
 
