@@ -44,8 +44,10 @@ On current `main`, Tachiko already provides an end-to-end game-balance proof wit
   projections/invalidation, retained incremental state, and native/WASM
   conformance evidence;
 - a first-party browser/Worker/WASM Designer slice that browses the Moonfall
-  weapons table, applies a revision-safe Number edit, selectively refreshes DPS,
-  and shows structured rejection without treating frontend state as canonical.
+  weapons table, opens canonical `.roproj/v1` directories, applies a
+  revision-safe Number edit, selectively refreshes DPS, atomically Saves As a
+  new browser-local project, and reopens that exact state after resident
+  teardown without treating frontend state as canonical.
 
 The current product deliberately does **not** claim a completed spreadsheet UI,
 Office compatibility, realtime collaboration, cloud SaaS, or production

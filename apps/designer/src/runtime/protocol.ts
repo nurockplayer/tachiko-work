@@ -64,6 +64,16 @@ export type PublicationProjection = {
   affected_calculations: FieldTarget[];
 };
 
+export type ProjectExportProjection = {
+  revision: string;
+  byte_length: number;
+};
+
+export type ProjectExport = {
+  revision: string;
+  bytes: ArrayBuffer;
+};
+
 export type FailureProjection = {
   code: string;
   message: string;
@@ -72,7 +82,7 @@ export type FailureProjection = {
 };
 
 export type DesignerRequest =
-  | { type: "bootstrap" }
+  | { type: "bootstrap"; occurrence_id: string }
   | { type: "query_table"; collection: string }
   | {
       type: "query_fields";
@@ -90,19 +100,28 @@ export type DesignerResponse =
   | { type: "bootstrap"; payload: BootstrapProjection }
   | { type: "table"; payload: TableProjection }
   | { type: "fields"; payload: FieldBatchProjection }
-  | { type: "published"; payload: PublicationProjection };
+  | { type: "published"; payload: PublicationProjection }
+  | { type: "project_exported"; payload: ProjectExportProjection };
 
 export type DesignerWireReply =
   | { status: "ok"; response: DesignerResponse }
   | { status: "error"; error: FailureProjection };
 
-export type WorkerRequest = {
-  id: number;
-  request: DesignerRequest;
-};
+export type WorkerRequest =
+  | { id: number; kind: "command"; request: DesignerRequest }
+  | {
+      id: number;
+      kind: "open_project";
+      occurrence_id: string;
+      bytes: ArrayBuffer;
+    }
+  | { id: number; kind: "export_project"; expected_revision: string }
+  | { id: number; kind: "close_project" };
 
 export type WorkerReply =
   | { id: number; status: "ok"; response: DesignerResponse }
+  | { id: number; status: "project_exported"; export: ProjectExport }
+  | { id: number; status: "closed" }
   | { id: number; status: "error"; error: FailureProjection };
 
 export const fieldTargetKey = (target: FieldTarget): string =>

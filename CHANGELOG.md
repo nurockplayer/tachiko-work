@@ -39,6 +39,14 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- The browser Designer can now admit a user-selected canonical `.roproj/v1`
+  through the existing Rust storage/workspace authorities, edit it in a fresh
+  resident occurrence, and Save As an exact revision to an absent-only
+  IndexedDB destination. Browser projects reopen cleanly after occurrence
+  teardown or page reload; failed/cancelled Open and Save As preserve the
+  current occurrence and existing durable destinations. Canonical project
+  transfer is independently bounded at 64 MiB and remains a private host/WASM
+  mechanism, not a public storage or wire contract.
 - A first-party browser Designer vertical slice now runs the Rust-authoritative
   resident Moonfall workspace inside a Web Worker/WASM host. It renders a
   bounded typed table, publishes directly stored Number edits against the

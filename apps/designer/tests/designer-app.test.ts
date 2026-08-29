@@ -10,8 +10,10 @@ import type {
   FieldBatchProjection,
   FieldTarget,
   PublicationProjection,
+  ProjectExport,
   TableProjection,
 } from "../src/runtime/protocol.ts";
+import type { DesignerProjectHost } from "../src/host/browser-project-host.ts";
 
 const bootstrap: BootstrapProjection = {
   title: "Moonfall Balance",
@@ -83,6 +85,16 @@ class FakeClient implements DesignerClient {
     return bootstrap;
   }
 
+  async openProject(): Promise<BootstrapProjection> {
+    return bootstrap;
+  }
+
+  async exportProject(expectedRevision: string): Promise<ProjectExport> {
+    return { revision: expectedRevision, bytes: new ArrayBuffer(8) };
+  }
+
+  async closeProject(): Promise<void> {}
+
   async queryTable(): Promise<TableProjection> {
     return structuredClone(table);
   }
@@ -142,6 +154,51 @@ class FakeClient implements DesignerClient {
   close(): void {}
 }
 
+class FakeHost implements DesignerProjectHost {
+  async list() {
+    return [];
+  }
+
+  async read(): Promise<ArrayBuffer> {
+    throw new Error("No saved project exists in this fixture.");
+  }
+
+  async publish(): Promise<void> {}
+}
+
+const host = new FakeHost();
+
+class MemoryHost implements DesignerProjectHost {
+  readonly projects = new Map<string, ArrayBuffer>();
+
+  async list() {
+    return [...this.projects].map(([name, bytes]) => ({
+      name,
+      byte_length: bytes.byteLength,
+      saved_at: "2026-08-30T00:00:00.000Z",
+    }));
+  }
+
+  async read(name: string): Promise<ArrayBuffer> {
+    const bytes = this.projects.get(name);
+    if (bytes === undefined) throw new Error("Project is missing.");
+    return bytes.slice(0);
+  }
+
+  async publish(name: string, bytes: ArrayBuffer): Promise<void> {
+    if (this.projects.has(name)) {
+      throw new Error(`'${name}' already exists. Save As never overwrites a project.`);
+    }
+    this.projects.set(name, bytes.slice(0));
+  }
+}
+
+class RejectingPublishHost extends MemoryHost {
+  override async publish(): Promise<void> {
+    throw new Error("Injected host commit failure.");
+  }
+}
+
 class RejectingClient extends FakeClient {
   override async editNumber(): Promise<PublicationProjection> {
     throw new DesignerRuntimeError({
@@ -162,6 +219,17 @@ class RejectingClient extends FakeClient {
 class StartupFailingClient extends FakeClient {
   override async bootstrap(): Promise<BootstrapProjection> {
     throw new Error("Designer runtime could not be loaded (404).");
+  }
+}
+
+class RejectingOpenClient extends FakeClient {
+  override async openProject(): Promise<BootstrapProjection> {
+    throw new DesignerRuntimeError({
+      code: "invalid_project",
+      message: "Canonical project admission rejected corrupt bytes.",
+      current_revision: "resident/0",
+      diagnostics: [],
+    });
   }
 }
 
@@ -222,7 +290,7 @@ describe("Designer application seam", () => {
     const root = document.querySelector<HTMLElement>("#app");
     if (root === null) throw new Error("test root is required");
     const client = new FakeClient();
-    const app = mountDesigner(root, client);
+    const app = mountDesigner(root, client, host);
     await app.ready;
 
     const damage = root.querySelector<HTMLInputElement>(
@@ -270,7 +338,7 @@ describe("Designer application seam", () => {
     document.body.innerHTML = '<div id="app"></div>';
     const root = document.querySelector<HTMLElement>("#app");
     if (root === null) throw new Error("test root is required");
-    const app = mountDesigner(root, new RejectingClient());
+    const app = mountDesigner(root, new RejectingClient(), host);
     await app.ready;
 
     const interval = root.querySelector<HTMLInputElement>(
@@ -299,7 +367,7 @@ describe("Designer application seam", () => {
     document.body.innerHTML = '<div id="app"></div>';
     const root = document.querySelector<HTMLElement>("#app");
     if (root === null) throw new Error("test root is required");
-    const app = mountDesigner(root, new StartupFailingClient());
+    const app = mountDesigner(root, new StartupFailingClient(), host);
 
     await app.ready;
 
@@ -309,12 +377,37 @@ describe("Designer application seam", () => {
     expect(root.textContent).not.toContain("Starting the Rust workspace");
   });
 
+  it("keeps the current valid occurrence visible after failed Open admission", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const memoryHost = new MemoryHost();
+    memoryHost.projects.set("corrupt.roproj", new ArrayBuffer(8));
+    const app = mountDesigner(root, new RejectingOpenClient(), memoryHost);
+    await app.ready;
+
+    root.querySelector<HTMLButtonElement>("[data-open-project]")?.click();
+    await vi.waitFor(() => {
+      expect(root.querySelector('[role="alert"]')?.textContent).toContain(
+        "admission rejected",
+      );
+    });
+    expect(root.getElementsByTagName("h1")[0]?.textContent).toBe("Moonfall Balance");
+    expect(root.querySelector('[data-testid="revision"]')?.textContent).toContain(
+      "resident/0",
+    );
+    expect(
+      root.querySelector<HTMLInputElement>('input[aria-label="Damage for Iron Sword"]')
+        ?.value,
+    ).toBe("36");
+  });
+
   it("keeps stale edit controls disabled after a post-publication refresh failure", async () => {
     document.body.innerHTML = '<div id="app"></div>';
     const root = document.querySelector<HTMLElement>("#app");
     if (root === null) throw new Error("test root is required");
     const client = new RefreshFailingClient();
-    const app = mountDesigner(root, client);
+    const app = mountDesigner(root, client, host);
     await app.ready;
 
     const damage = root.querySelector<HTMLInputElement>(
@@ -350,7 +443,7 @@ describe("Designer application seam", () => {
     const root = document.querySelector<HTMLElement>("#app");
     if (root === null) throw new Error("test root is required");
     const client = new ControlRecoveryClient();
-    const app = mountDesigner(root, client);
+    const app = mountDesigner(root, client, host);
     await app.ready;
 
     const damage = root.querySelector<HTMLInputElement>(
@@ -383,5 +476,101 @@ describe("Designer application seam", () => {
         'input[aria-label="Damage for Iron Sword"]',
       )?.disabled,
     ).toBe(false);
+  });
+
+  it("marks only confirmed host revisions durable and reopens after occurrence teardown", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const memoryHost = new MemoryHost();
+    const prompt = vi.fn<Window["prompt"]>();
+    vi.stubGlobal("prompt", prompt);
+    prompt.mockReturnValueOnce("source.roproj");
+    const app = mountDesigner(root, new FakeClient(), memoryHost);
+    await app.ready;
+
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+      "Unsaved changes",
+    );
+    root.querySelector<HTMLButtonElement>("[data-save-as]")?.click();
+    await vi.waitFor(() => {
+      expect(memoryHost.projects.has("source.roproj")).toBe(true);
+    });
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+      "Saved",
+    );
+
+    const damage = root.querySelector<HTMLInputElement>(
+      'input[aria-label="Damage for Iron Sword"]',
+    );
+    if (damage === null || damage.form === null) throw new Error("damage form is required");
+    damage.value = "45";
+    damage.form.requestSubmit();
+    await vi.waitFor(() => {
+      expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+        "Unsaved changes",
+      );
+    });
+
+    prompt.mockReturnValueOnce("source.roproj");
+    root.querySelector<HTMLButtonElement>("[data-save-as]")?.click();
+    await vi.waitFor(() => {
+      expect(root.querySelector('[role="alert"]')?.textContent).toContain(
+        "never overwrites",
+      );
+    });
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+      "Unsaved changes",
+    );
+
+    prompt.mockReturnValueOnce("edited.roproj");
+    root.querySelector<HTMLButtonElement>("[data-save-as]")?.click();
+    await vi.waitFor(() => {
+      expect(memoryHost.projects.has("edited.roproj")).toBe(true);
+    });
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+      "Saved",
+    );
+
+    root.querySelector<HTMLButtonElement>("[data-close-project]")?.click();
+    await vi.waitFor(() => {
+      expect(root.getElementsByTagName("h1")[0]?.textContent).toBe("No project open");
+    });
+    const saved = root.querySelector<HTMLSelectElement>("[data-saved-project-select]");
+    if (saved === null) throw new Error("saved project picker is required");
+    saved.value = "edited.roproj";
+    saved.dispatchEvent(new Event("change"));
+    root.querySelector<HTMLButtonElement>("[data-open-project]")?.click();
+    await vi.waitFor(() => {
+      expect(root.getElementsByTagName("h1")[0]?.textContent).toBe("Moonfall Balance");
+    });
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+      "Saved",
+    );
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps an absent destination and the current revision unsaved when host commit fails", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const rejectingHost = new RejectingPublishHost();
+    const prompt = vi.fn<Window["prompt"]>().mockReturnValue("failed.roproj");
+    vi.stubGlobal("prompt", prompt);
+    const app = mountDesigner(root, new FakeClient(), rejectingHost);
+    await app.ready;
+
+    root.querySelector<HTMLButtonElement>("[data-save-as]")?.click();
+    await vi.waitFor(() => {
+      expect(root.querySelector('[role="alert"]')?.textContent).toContain(
+        "Injected host commit failure",
+      );
+    });
+    expect(rejectingHost.projects.has("failed.roproj")).toBe(false);
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+      "Unsaved changes",
+    );
+    app.destroy();
+    vi.unstubAllGlobals();
   });
 });

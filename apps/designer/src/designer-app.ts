@@ -3,6 +3,12 @@ import {
   type ControlProjection,
   type ProjectionStore,
 } from "./projection-store.ts";
+import { createDurabilityState } from "./durability-state.ts";
+import type {
+  DesignerProjectHost,
+  SavedProjectSummary,
+} from "./host/browser-project-host.ts";
+import { projectTransferFromFiles } from "./host/project-transfer.ts";
 import {
   DesignerRuntimeError,
   type DesignerClient,
@@ -30,6 +36,7 @@ export type MountedDesigner = {
 export function mountDesigner(
   root: HTMLElement,
   client: DesignerClient,
+  host: DesignerProjectHost,
 ): MountedDesigner {
   let bootstrap: BootstrapProjection | null = null;
   let store: ProjectionStore | null = null;
@@ -38,12 +45,21 @@ export function mountDesigner(
   let startupFailure: string | null = null;
   let busy = false;
   let destroyed = false;
+  let occurrenceClosed = false;
+  let savedProjects: SavedProjectSummary[] = [];
+  let selectedSavedProject = "";
+  const durability = createDurabilityState();
 
   const render = (): void => {
     if (destroyed) return;
     if (bootstrap === null || store === null) {
-      root.innerHTML =
-        startupFailure === null ? loadingMarkup() : startupFailureMarkup(startupFailure);
+      if (occurrenceClosed) {
+        root.innerHTML = closedMarkup(savedProjects, selectedSavedProject, busy, notice);
+        bindInteractions();
+      } else {
+        root.innerHTML =
+          startupFailure === null ? loadingMarkup() : startupFailureMarkup(startupFailure);
+      }
       return;
     }
     const snapshot = store.snapshot();
@@ -55,6 +71,10 @@ export function mountDesigner(
       selectedCollection,
       notice,
       busy,
+      durability.snapshot().dirty,
+      durability.snapshot().durable_revision,
+      savedProjects,
+      selectedSavedProject,
     );
     bindInteractions();
   };
@@ -95,6 +115,7 @@ export function mountDesigner(
       );
       published = true;
       const requested = store.beginPublication(publication);
+      durability.observe(publication.resulting_revision);
       render();
       const refresh = await client.queryFields(
         publication.resulting_revision,
@@ -147,6 +168,185 @@ export function mountDesigner(
     }
   };
 
+  const installOccurrence = async (
+    candidate: BootstrapProjection,
+    durable: boolean,
+  ): Promise<void> => {
+    const [table, controlBatch] = await Promise.all([
+      client.queryTable(candidate.default_collection),
+      client.queryFields(candidate.revision, [candidate.control_field]),
+    ]);
+    if (table.revision !== candidate.revision || controlBatch.revision !== candidate.revision) {
+      throw new Error("Initial projections do not share one semantic revision.");
+    }
+    const controlField = controlBatch.fields[0];
+    if (controlField?.calculated?.status !== "value") {
+      throw new Error("The unrelated control projection is unavailable.");
+    }
+    const nextStore = createProjectionStore(table, {
+      target: candidate.control_field,
+      value: controlField.calculated.value,
+      revision: candidate.revision,
+    });
+    bootstrap = candidate;
+    store = nextStore;
+    selectedCollection = candidate.default_collection;
+    occurrenceClosed = false;
+    durability.install(candidate.revision, durable);
+  };
+
+  const refreshSavedProjects = async (preferred?: string): Promise<void> => {
+    savedProjects = await host.list();
+    if (preferred !== undefined && savedProjects.some(({ name }) => name === preferred)) {
+      selectedSavedProject = preferred;
+    } else if (!savedProjects.some(({ name }) => name === selectedSavedProject)) {
+      selectedSavedProject = savedProjects[0]?.name ?? "";
+    }
+  };
+
+  const showProjectFailure = (title: string, error: unknown): void => {
+    const failure =
+      error instanceof DesignerRuntimeError
+        ? error.failure
+        : {
+            message: error instanceof Error ? error.message : String(error),
+            diagnostics: [],
+          };
+    notice = {
+      tone: "error",
+      title,
+      message: failure.message,
+      diagnostics: failure.diagnostics,
+    };
+  };
+
+  const openSavedProject = async (): Promise<void> => {
+    if (busy || selectedSavedProject === "") return;
+    busy = true;
+    notice = null;
+    render();
+    try {
+      const bytes = await host.read(selectedSavedProject);
+      await installProjectBytes(bytes);
+      notice = {
+        tone: "success",
+        title: "Project opened",
+        message: `${selectedSavedProject} is current in a fresh Rust occurrence.`,
+        diagnostics: [],
+      };
+    } catch (error) {
+      showProjectFailure("Project not opened", error);
+    } finally {
+      busy = false;
+      render();
+    }
+  };
+
+  const installProjectBytes = async (bytes: ArrayBuffer): Promise<void> => {
+    let replaced = false;
+    try {
+      const candidate = await client.openProject(bytes);
+      replaced = true;
+      await installOccurrence(candidate, true);
+    } catch (error) {
+      if (replaced) {
+        await client.closeProject();
+        bootstrap = null;
+        store = null;
+        occurrenceClosed = true;
+        durability.close();
+      }
+      throw error;
+    }
+  };
+
+  const importProjectDirectory = async (files: FileList): Promise<void> => {
+    if (busy) return;
+    busy = true;
+    notice = null;
+    render();
+    try {
+      const bytes = await projectTransferFromFiles(files);
+      await installProjectBytes(bytes);
+      notice = {
+        tone: "success",
+        title: "Project opened",
+        message: "The selected canonical .roproj/v1 is current in a fresh Rust occurrence.",
+        diagnostics: [],
+      };
+    } catch (error) {
+      showProjectFailure("Project not opened", error);
+    } finally {
+      busy = false;
+      render();
+    }
+  };
+
+  const saveAs = async (): Promise<void> => {
+    if (store === null || busy) return;
+    const requestedName = window.prompt(
+      "Save As a new browser project (existing destinations are never overwritten):",
+      `${bootstrap?.title.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-").replaceAll(/^-|-$/g, "") || "project"}.roproj`,
+    );
+    if (requestedName === null) return;
+    busy = true;
+    notice = null;
+    render();
+    try {
+      const expectedRevision = store.snapshot().table.revision;
+      const project = await client.exportProject(expectedRevision);
+      await host.publish(requestedName, project.bytes);
+      durability.published(project.revision);
+      let refreshWarning = "";
+      try {
+        await refreshSavedProjects(requestedName.trim());
+      } catch (error) {
+        refreshWarning = ` The project list could not refresh: ${
+          error instanceof Error ? error.message : String(error)
+        }`;
+      }
+      notice = {
+        tone: "success",
+        title: "Save As complete",
+        message: `${requestedName.trim()} durably committed revision ${
+          project.revision
+        }.${refreshWarning}`,
+        diagnostics: [],
+      };
+    } catch (error) {
+      showProjectFailure("Project not saved", error);
+    } finally {
+      busy = false;
+      render();
+    }
+  };
+
+  const closeOccurrence = async (): Promise<void> => {
+    if (busy) return;
+    busy = true;
+    notice = null;
+    render();
+    try {
+      await client.closeProject();
+      bootstrap = null;
+      store = null;
+      selectedCollection = "";
+      occurrenceClosed = true;
+      durability.close();
+      notice = {
+        tone: "success",
+        title: "Project closed",
+        message: "The Rust resident occurrence was destroyed. Durable projects are unchanged.",
+        diagnostics: [],
+      };
+    } catch (error) {
+      showProjectFailure("Project not closed", error);
+    } finally {
+      busy = false;
+      render();
+    }
+  };
+
   const bindInteractions = (): void => {
     root.querySelectorAll<HTMLFormElement>("[data-edit-form]").forEach((form) => {
       form.addEventListener("submit", (event) => {
@@ -166,29 +366,41 @@ export function mountDesigner(
           void selectCollection(select.value);
         }
       });
+    root.querySelector<HTMLButtonElement>("[data-open-project]")?.addEventListener("click", () => {
+      void openSavedProject();
+    });
+    root.querySelector<HTMLButtonElement>("[data-save-as]")?.addEventListener("click", () => {
+      void saveAs();
+    });
+    root.querySelector<HTMLButtonElement>("[data-close-project]")?.addEventListener("click", () => {
+      void closeOccurrence();
+    });
+    root
+      .querySelector<HTMLSelectElement>("[data-saved-project-select]")
+      ?.addEventListener("change", (event) => {
+        const select = event.currentTarget;
+        if (select instanceof HTMLSelectElement) selectedSavedProject = select.value;
+      });
+    root
+      .querySelector<HTMLInputElement>("[data-import-project]")
+      ?.addEventListener("change", (event) => {
+        const input = event.currentTarget;
+        if (input instanceof HTMLInputElement && input.files !== null) {
+          void importProjectDirectory(input.files);
+        }
+      });
   };
 
   render();
   const ready = (async () => {
     try {
-      bootstrap = await client.bootstrap();
-      selectedCollection = bootstrap.default_collection;
-      const [table, controlBatch] = await Promise.all([
-        client.queryTable(selectedCollection),
-        client.queryFields(bootstrap.revision, [bootstrap.control_field]),
-      ]);
-      if (table.revision !== bootstrap.revision || controlBatch.revision !== bootstrap.revision) {
-        throw new Error("Initial projections do not share one semantic revision.");
+      const candidate = await client.bootstrap();
+      await installOccurrence(candidate, false);
+      try {
+        await refreshSavedProjects();
+      } catch (error) {
+        showProjectFailure("Browser persistence unavailable", error);
       }
-      const controlField = controlBatch.fields[0];
-      if (controlField?.calculated?.status !== "value") {
-        throw new Error("The unrelated control projection is unavailable.");
-      }
-      store = createProjectionStore(table, {
-        target: bootstrap.control_field,
-        value: controlField.calculated.value,
-        revision: bootstrap.revision,
-      });
     } catch (error) {
       showFailure(error, false);
       startupFailure =
@@ -238,6 +450,10 @@ function designerMarkup(
   selectedCollection: string,
   notice: Notice | null,
   busy: boolean,
+  dirty: boolean,
+  durableRevision: string | null,
+  savedProjects: SavedProjectSummary[],
+  selectedSavedProject: string,
 ): string {
   const statusLabel = {
     current: "Semantic current",
@@ -258,6 +474,31 @@ function designerMarkup(
         <div class="revision-chip" data-currentness="${currentness}">
           <span>${statusLabel}</span>
           <code data-testid="revision">${escapeHtml(table.revision)}</code>
+        </div>
+        <div class="workspace-actions">
+          <div class="durability-chip" data-testid="durability" data-dirty="${String(dirty)}">
+            <span>${dirty ? "Unsaved changes" : "Saved"}</span>
+            <code>${durableRevision === null ? "No durable revision" : escapeHtml(durableRevision)}</code>
+          </div>
+          <label class="saved-project-picker">
+            <span>Browser projects</span>
+            <select data-saved-project-select aria-label="Saved project" ${busy ? "disabled" : ""}>
+              ${savedProjectOptions(savedProjects, selectedSavedProject)}
+            </select>
+          </label>
+          <div class="project-buttons">
+            <label class="project-button" data-import-label>
+              Open .roproj
+              <input type="file" data-import-project webkitdirectory multiple ${
+                busy ? "disabled" : ""
+              } />
+            </label>
+            <button type="button" data-open-project ${
+              busy || selectedSavedProject === "" ? "disabled" : ""
+            }>Open</button>
+            <button type="button" data-save-as ${busy ? "disabled" : ""}>Save As</button>
+            <button type="button" data-close-project ${busy ? "disabled" : ""}>Close</button>
+          </div>
         </div>
       </header>
 
@@ -329,6 +570,52 @@ function designerMarkup(
       </main>
     </div>
   `;
+}
+
+function closedMarkup(
+  savedProjects: SavedProjectSummary[],
+  selectedSavedProject: string,
+  busy: boolean,
+  notice: Notice | null,
+): string {
+  return `
+    <main class="closed-shell">
+      <div class="loading-mark" aria-hidden="true">T</div>
+      <p class="eyebrow">Resident occurrence destroyed</p>
+      <h1>No project open</h1>
+      <p>Choose a durable browser project to create a fresh Rust-authoritative occurrence.</p>
+      ${noticeMarkup(notice)}
+      <label class="saved-project-picker">
+        <span>Browser projects</span>
+        <select data-saved-project-select aria-label="Saved project" ${busy ? "disabled" : ""}>
+          ${savedProjectOptions(savedProjects, selectedSavedProject)}
+        </select>
+      </label>
+      <label class="project-button" data-import-label>
+        Open .roproj folder
+        <input type="file" data-import-project webkitdirectory multiple ${
+          busy ? "disabled" : ""
+        } />
+      </label>
+      <button type="button" data-open-project ${
+        busy || selectedSavedProject === "" ? "disabled" : ""
+      }>Open project</button>
+    </main>
+  `;
+}
+
+function savedProjectOptions(
+  projects: SavedProjectSummary[],
+  selected: string,
+): string {
+  if (projects.length === 0) return '<option value="">No saved projects</option>';
+  return projects
+    .map(
+      (project) => `<option value="${escapeHtml(project.name)}" ${
+        project.name === selected ? "selected" : ""
+      }>${escapeHtml(project.name)} · ${formatBytes(project.byte_length)}</option>`,
+    )
+    .join("");
 }
 
 function rowMarkup(
@@ -450,6 +737,11 @@ function humanize(value: string): string {
 
 function formatNumber(value: number): string {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 }).format(value);
+}
+
+function formatBytes(value: number): string {
+  if (value < 1_024) return `${String(value)} B`;
+  return `${(value / 1_024).toFixed(1)} KiB`;
 }
 
 function escapeHtml(value: string): string {

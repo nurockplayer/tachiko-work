@@ -1,14 +1,24 @@
 use tachiko_designer_runtime::{
     CalculationProjection, DesignerRequest, DesignerResponse, DesignerRuntime, DesignerWireReply,
-    StoredValueProjection, process_wire_request,
+    StoredValueProjection, close_project, open_project, process_wire_request,
 };
+
+const OCCURRENCE_ZERO: &str = "00000000-0000-4000-8000-000000000000";
+const OCCURRENCE_ONE: &str = "00000000-0000-4000-8000-000000000001";
+const OCCURRENCE_TWO: &str = "00000000-0000-4000-8000-000000000002";
+
+fn moonfall() -> DesignerRuntime {
+    DesignerRuntime::moonfall(OCCURRENCE_ZERO).expect("fixture should be valid")
+}
 
 #[test]
 fn bootstrap_exposes_fixture_collections_without_a_document_snapshot() {
-    let mut runtime = DesignerRuntime::moonfall().expect("fixture should be valid");
+    let mut runtime = moonfall();
 
     let DesignerResponse::Bootstrap(bootstrap) = runtime
-        .handle(DesignerRequest::Bootstrap)
+        .handle(DesignerRequest::Bootstrap {
+            occurrence_id: OCCURRENCE_ZERO.to_owned(),
+        })
         .expect("bootstrap should succeed")
     else {
         panic!("expected bootstrap response");
@@ -31,7 +41,7 @@ fn bootstrap_exposes_fixture_collections_without_a_document_snapshot() {
 
 #[test]
 fn table_query_keeps_stored_formula_and_calculated_values_distinct() {
-    let mut runtime = DesignerRuntime::moonfall().expect("fixture should be valid");
+    let mut runtime = moonfall();
 
     let DesignerResponse::Table(table) = runtime
         .handle(DesignerRequest::QueryTable {
@@ -84,7 +94,7 @@ fn table_query_keeps_stored_formula_and_calculated_values_distinct() {
 
 #[test]
 fn number_edit_publishes_once_and_refreshes_only_direct_and_dependent_fields() {
-    let mut runtime = DesignerRuntime::moonfall().expect("fixture should be valid");
+    let mut runtime = moonfall();
 
     let DesignerResponse::Published(publication) = runtime
         .handle(DesignerRequest::EditNumber {
@@ -137,7 +147,7 @@ fn number_edit_publishes_once_and_refreshes_only_direct_and_dependent_fields() {
 
 #[test]
 fn stale_and_calculation_failing_edits_leave_the_published_projection_unchanged() {
-    let mut runtime = DesignerRuntime::moonfall().expect("fixture should be valid");
+    let mut runtime = moonfall();
     runtime
         .handle(DesignerRequest::EditNumber {
             expected_revision: "resident/0".to_owned(),
@@ -214,7 +224,22 @@ fn stale_and_calculation_failing_edits_leave_the_published_projection_unchanged(
 fn wire_bridge_returns_bounded_results_and_structured_failures() {
     let mut runtime = None;
 
-    let bootstrap = process_wire_request(&mut runtime, br#"{"type":"bootstrap"}"#);
+    let invalid_occurrence = process_wire_request(
+        &mut runtime,
+        br#"{"type":"bootstrap","occurrence_id":"reused-or-untrusted"}"#,
+    );
+    let DesignerWireReply::Error { error } =
+        serde_json::from_slice(&invalid_occurrence).expect("failure should decode")
+    else {
+        panic!("invalid host occurrence must fail closed");
+    };
+    assert_eq!(error.code, "invalid_occurrence");
+    assert!(runtime.is_none());
+
+    let bootstrap = process_wire_request(
+        &mut runtime,
+        br#"{"type":"bootstrap","occurrence_id":"00000000-0000-4000-8000-000000000000"}"#,
+    );
     let bootstrap_text = String::from_utf8(bootstrap.clone()).expect("JSON should be UTF-8");
     assert!(!bootstrap_text.contains("\"schemas\""));
     assert!(!bootstrap_text.contains("\"entities\""));
@@ -246,7 +271,7 @@ fn wire_bridge_returns_bounded_results_and_structured_failures() {
     assert_eq!(error.code, "request_too_large");
     assert_eq!(error.current_revision, "resident/0");
 
-    let mut bounded_runtime = DesignerRuntime::moonfall().expect("fixture should be valid");
+    let mut bounded_runtime = moonfall();
     let too_many_fields = bounded_runtime
         .handle(DesignerRequest::QueryFields {
             expected_revision: "resident/0".to_owned(),
@@ -256,5 +281,196 @@ fn wire_bridge_returns_bounded_results_and_structured_failures() {
     assert_eq!(
         too_many_fields.failure_projection("resident/0").code,
         "query_too_large"
+    );
+}
+
+#[test]
+fn canonical_open_is_candidate_first_and_starts_a_fresh_revision_domain() {
+    let initial = moonfall();
+    let original_scope = initial.occurrence_scope().to_owned();
+    let bundle = initial
+        .export_project("resident/0")
+        .expect("initial snapshot should encode")
+        .bytes;
+    let mut runtime = Some(initial);
+    runtime
+        .as_mut()
+        .unwrap()
+        .handle(DesignerRequest::EditNumber {
+            expected_revision: "resident/0".to_owned(),
+            target: "iron_sword.damage".into(),
+            input: "45".to_owned(),
+        })
+        .expect("current occurrence should advance");
+
+    let mut corrupt = bundle.clone();
+    *corrupt.last_mut().expect("bundle is not empty") ^= 1;
+    let mut unsupported = bundle.clone();
+    replace_ascii(
+        &mut unsupported,
+        b"\"format_version\": 1",
+        b"\"format_version\": 2",
+    );
+    let mut noncanonical = bundle.clone();
+    replace_ascii(
+        &mut noncanonical,
+        b"\"format_version\": 1",
+        b"\"format_version\":1 ",
+    );
+    for (label, rejected) in [
+        ("corrupt transfer", corrupt),
+        ("unsupported version", unsupported),
+        ("noncanonical bytes", noncanonical),
+    ] {
+        let Err(failure) = open_project(&mut runtime, &rejected, OCCURRENCE_ONE) else {
+            panic!("{label} open must fail");
+        };
+        assert_eq!(
+            failure.failure_projection("resident/1").code,
+            "invalid_project",
+            "{label}"
+        );
+        assert_eq!(runtime.as_ref().unwrap().occurrence_scope(), original_scope);
+    }
+    let DesignerResponse::Fields(current) = runtime
+        .as_mut()
+        .unwrap()
+        .handle(DesignerRequest::QueryFields {
+            expected_revision: "resident/1".to_owned(),
+            fields: vec!["iron_sword.damage".into()],
+        })
+        .expect("failed open must preserve the current occurrence")
+    else {
+        panic!("expected fields response");
+    };
+    assert_eq!(
+        current.fields[0]
+            .stored
+            .as_ref()
+            .and_then(StoredValueProjection::number),
+        Some(45.0)
+    );
+
+    let reopened =
+        open_project(&mut runtime, &bundle, OCCURRENCE_ONE).expect("canonical open should succeed");
+    assert_eq!(reopened.revision, "resident/0");
+    assert_ne!(runtime.as_ref().unwrap().occurrence_scope(), original_scope);
+    let DesignerResponse::Fields(reopened_fields) = runtime
+        .as_mut()
+        .unwrap()
+        .handle(DesignerRequest::QueryFields {
+            expected_revision: "resident/0".to_owned(),
+            fields: vec!["iron_sword.damage".into(), "iron_sword.dps".into()],
+        })
+        .expect("fresh occurrence should be queryable")
+    else {
+        panic!("expected fields response");
+    };
+    assert_eq!(
+        reopened_fields.fields[0]
+            .stored
+            .as_ref()
+            .and_then(StoredValueProjection::number),
+        Some(36.0)
+    );
+    assert_eq!(
+        reopened_fields.fields[1]
+            .calculated
+            .as_ref()
+            .and_then(CalculationProjection::number),
+        Some(40.0)
+    );
+}
+
+fn replace_ascii(bytes: &mut [u8], from: &[u8], to: &[u8]) {
+    assert_eq!(from.len(), to.len());
+    let offset = bytes
+        .windows(from.len())
+        .position(|candidate| candidate == from)
+        .expect("expected canonical ASCII fragment");
+    bytes[offset..offset + from.len()].copy_from_slice(to);
+}
+
+#[test]
+fn exact_revision_export_does_not_capture_or_mark_a_later_edit() {
+    let mut runtime = moonfall();
+    let revision_zero = runtime
+        .export_project("resident/0")
+        .expect("revision zero should export");
+    runtime
+        .handle(DesignerRequest::EditNumber {
+            expected_revision: "resident/0".to_owned(),
+            target: "iron_sword.damage".into(),
+            input: "45".to_owned(),
+        })
+        .expect("later edit should publish");
+
+    let stale = runtime
+        .export_project("resident/0")
+        .expect_err("a later snapshot must not be mislabeled as revision zero");
+    assert_eq!(
+        stale.failure_projection("resident/1").code,
+        "stale_revision"
+    );
+
+    let mut reopened = None;
+    let bootstrap = open_project(&mut reopened, &revision_zero.bytes, OCCURRENCE_ONE)
+        .expect("the already-exported revision remains a complete candidate");
+    assert_eq!(bootstrap.revision, "resident/0");
+    let DesignerResponse::Fields(fields) = reopened
+        .as_mut()
+        .unwrap()
+        .handle(DesignerRequest::QueryFields {
+            expected_revision: "resident/0".to_owned(),
+            fields: vec!["iron_sword.damage".into(), "iron_sword.dps".into()],
+        })
+        .expect("saved candidate should preserve its meaning")
+    else {
+        panic!("expected fields response");
+    };
+    assert_eq!(
+        fields.fields[0]
+            .stored
+            .as_ref()
+            .and_then(StoredValueProjection::number),
+        Some(36.0)
+    );
+    assert_eq!(
+        fields.fields[1]
+            .calculated
+            .as_ref()
+            .and_then(CalculationProjection::number),
+        Some(40.0)
+    );
+}
+
+#[test]
+fn close_destroys_the_occurrence_and_saved_output_reopens_without_git() {
+    let runtime = moonfall();
+    let original_scope = runtime.occurrence_scope().to_owned();
+    let saved = runtime
+        .export_project("resident/0")
+        .expect("fixture should export");
+    let mut occurrence = Some(runtime);
+
+    close_project(&mut occurrence);
+    assert!(occurrence.is_none());
+    let closed_query = process_wire_request(
+        &mut occurrence,
+        br#"{"type":"query_table","collection":"weapons"}"#,
+    );
+    let DesignerWireReply::Error { error } =
+        serde_json::from_slice(&closed_query).expect("closed failure should decode")
+    else {
+        panic!("closed occurrence must not silently recreate the demo");
+    };
+    assert_eq!(error.code, "no_project_open");
+    assert!(occurrence.is_none());
+    let reopened = open_project(&mut occurrence, &saved.bytes, OCCURRENCE_TWO)
+        .expect("opaque durable bytes should open in a fresh occurrence");
+    assert_eq!(reopened.revision, "resident/0");
+    assert_ne!(
+        occurrence.as_ref().unwrap().occurrence_scope(),
+        original_scope
     );
 }

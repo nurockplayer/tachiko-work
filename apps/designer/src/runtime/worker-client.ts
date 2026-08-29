@@ -9,13 +9,14 @@ import type {
   FieldBatchProjection,
   FieldTarget,
   PublicationProjection,
+  ProjectExport,
   TableProjection,
   WorkerReply,
   WorkerRequest,
 } from "./protocol.ts";
 
 type PendingRequest = {
-  resolve(response: DesignerResponse): void;
+  resolve(response: Exclude<WorkerReply, { status: "error" }>): void;
   reject(error: Error): void;
 };
 
@@ -33,10 +34,10 @@ export class WorkerDesignerClient implements DesignerClient {
       const pending = this.#pending.get(event.data.id);
       if (pending === undefined) return;
       this.#pending.delete(event.data.id);
-      if (event.data.status === "ok") {
-        pending.resolve(event.data.response);
-      } else {
+      if (event.data.status === "error") {
         pending.reject(new DesignerRuntimeError(event.data.error));
+      } else {
+        pending.resolve(event.data);
       }
     });
     this.#worker.addEventListener("error", (event) => {
@@ -47,13 +48,54 @@ export class WorkerDesignerClient implements DesignerClient {
   }
 
   async bootstrap(): Promise<BootstrapProjection> {
-    return expectResponse("bootstrap", await this.#request({ type: "bootstrap" }));
+    return expectResponse(
+      "bootstrap",
+      await this.#command({
+        type: "bootstrap",
+        occurrence_id: crypto.randomUUID(),
+      }),
+    );
+  }
+
+  async openProject(bytes: ArrayBuffer): Promise<BootstrapProjection> {
+    const reply = await this.#send(
+      {
+        id: this.#claimId(),
+        kind: "open_project",
+        occurrence_id: crypto.randomUUID(),
+        bytes,
+      },
+      [bytes],
+    );
+    if (reply.status !== "ok") {
+      throw new Error(`Expected project open response, received '${reply.status}'.`);
+    }
+    return expectResponse("bootstrap", reply.response);
+  }
+
+  async exportProject(expectedRevision: string): Promise<ProjectExport> {
+    const reply = await this.#send({
+      id: this.#claimId(),
+      kind: "export_project",
+      expected_revision: expectedRevision,
+    });
+    if (reply.status !== "project_exported") {
+      throw new Error(`Expected project export, received '${reply.status}'.`);
+    }
+    return reply.export;
+  }
+
+  async closeProject(): Promise<void> {
+    const reply = await this.#send({ id: this.#claimId(), kind: "close_project" });
+    if (reply.status !== "closed") {
+      throw new Error(`Expected project close, received '${reply.status}'.`);
+    }
   }
 
   async queryTable(collection: string): Promise<TableProjection> {
     return expectResponse(
       "table",
-      await this.#request({ type: "query_table", collection }),
+      await this.#command({ type: "query_table", collection }),
     );
   }
 
@@ -63,7 +105,7 @@ export class WorkerDesignerClient implements DesignerClient {
   ): Promise<FieldBatchProjection> {
     return expectResponse(
       "fields",
-      await this.#request({
+      await this.#command({
         type: "query_fields",
         expected_revision: expectedRevision,
         fields,
@@ -78,7 +120,7 @@ export class WorkerDesignerClient implements DesignerClient {
   ): Promise<PublicationProjection> {
     return expectResponse(
       "published",
-      await this.#request({
+      await this.#command({
         type: "edit_number",
         expected_revision: expectedRevision,
         target,
@@ -94,16 +136,29 @@ export class WorkerDesignerClient implements DesignerClient {
     this.#pending.clear();
   }
 
-  #request(request: DesignerRequest): Promise<DesignerResponse> {
-    const id = this.#nextId;
-    this.#nextId += 1;
-    const message: WorkerRequest = { id, request };
-    return new Promise((resolve, reject) => {
-      this.#pending.set(id, { resolve, reject });
-      this.#worker.postMessage(message);
-    });
+  async #command(request: DesignerRequest): Promise<DesignerResponse> {
+    const reply = await this.#send({ id: this.#claimId(), kind: "command", request });
+    if (reply.status !== "ok") {
+      throw new Error(`Expected command response, received '${reply.status}'.`);
+    }
+    return reply.response;
   }
 
+  #claimId(): number {
+    const id = this.#nextId;
+    this.#nextId += 1;
+    return id;
+  }
+
+  #send(
+    message: WorkerRequest,
+    transfer: Transferable[] = [],
+  ): Promise<Exclude<WorkerReply, { status: "error" }>> {
+    return new Promise((resolve, reject) => {
+      this.#pending.set(message.id, { resolve, reject });
+      this.#worker.postMessage(message, transfer);
+    });
+  }
 }
 
 function expectResponse(
