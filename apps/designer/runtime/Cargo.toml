@@ -1,0 +1,26 @@
+[package]
+name = "tachiko-designer-runtime"
+version = "0.1.0"
+edition = "2024"
+publish = false
+rust-version = "1.85"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tachiko-workspace-engine = { path = "../../../crates/workspace-engine" }
+thiserror = "2.0"
+
+[workspace]
+
+[lints.rust]
+# The browser-only module uses four private C ABI symbol exports. It contains
+# no unsafe blocks and does not expose Rust memory layouts as product meaning.
+unsafe_code = "allow"
+
+[lints.clippy]
+all = "deny"
+pedantic = "warn"

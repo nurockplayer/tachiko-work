@@ -42,6 +42,9 @@ cargo test --workspace --all-targets --locked
 echo "==> executed native/WASM portable semantic conformance"
 bash scripts/portable-conformance-check.sh
 
+echo "==> first-party Web Designer vertical slice"
+bash scripts/designer-check.sh
+
 echo "==> warning-free documentation"
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 
@@ -55,6 +58,8 @@ if [[ "${msrv_description}" != rustc\ 1.85.0\ * ]]; then
   exit 1
 fi
 rustup run 1.85.0 cargo check --workspace --all-targets --locked
+rustup run 1.85.0 cargo check --manifest-path apps/designer/runtime/Cargo.toml \
+  --target wasm32-unknown-unknown --all-targets --locked
 
 echo "==> audited third-party license notices"
 notice_check_dir="$(mktemp -d "${TMPDIR:-/tmp}/tachiko-notice-check.XXXXXX")"

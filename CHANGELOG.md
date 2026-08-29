@@ -39,6 +39,15 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- A first-party browser Designer vertical slice now runs the Rust-authoritative
+  resident Moonfall workspace inside a Web Worker/WASM host. It renders a
+  bounded typed table, publishes directly stored Number edits against the
+  expected semantic revision, consumes publication-derived invalidation to
+  refresh only changed and dependent formula fields, carries unrelated
+  projections forward, and exposes structured stale/validation failures without
+  frontend canonical drift. Its app-local DTOs and WASM ABI remain private,
+  Provisional delivery mechanics rather than public SDK, storage, or Semantic
+  API authority.
 - The provisional resident workspace session now retains rebuildable,
   revision-scoped formula values/failures, dependency and reverse-dependency
   indexes, validation diagnostics, and the address index. Publications reuse

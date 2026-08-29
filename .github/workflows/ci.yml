@@ -74,6 +74,42 @@ jobs:
       - name: Exercise the optional Git-native Game Dev Alpha journey
         run: bash scripts/git-ci-smoke.sh
 
+  designer:
+    name: Web Designer runtime and browser journey
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+          targets: wasm32-unknown-unknown
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 11.25.0
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/designer/pnpm-lock.yaml
+
+      - name: Install Designer dependencies
+        run: pnpm --dir apps/designer install --frozen-lockfile
+
+      - name: Install Chromium
+        run: pnpm --dir apps/designer exec playwright install --with-deps chromium
+
+      - name: Validate Designer runtime, application, and browser journey
+        run: bash scripts/designer-check.sh
+
   minimum-rust:
     name: Minimum supported Rust 1.85.0
     runs-on: ubuntu-24.04
@@ -85,9 +121,13 @@ jobs:
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
           toolchain: 1.85.0
+          targets: wasm32-unknown-unknown
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       - name: Check all targets with Rust 1.85.0
         run: cargo check --workspace --all-targets --locked
+
+      - name: Check Designer runtime with Rust 1.85.0
+        run: cargo check --manifest-path apps/designer/runtime/Cargo.toml --target wasm32-unknown-unknown --all-targets --locked
