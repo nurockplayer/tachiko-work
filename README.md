@@ -9,6 +9,11 @@ positions, file layout, or UI state as the source of meaning, Tachiko keeps type
 schemas, entities, references, formulas, validation, and semantic changes in one
 deterministic model.
 
+Under the hood, Tachiko is **Rust-native, Git-native, and AI-native**: deterministic
+Rust engines own semantic facts, Git remains an optional review/storage protocol,
+and AI operates through semantic queries and typed proposals rather than raw file
+or UI mutation.
+
 The first product wedge is **game-balance data for technical designers and
 developers**. The current usable product is CLI-first. The active roadmap horizon
 is [`05 · Designer MVP`](docs/product/product-roadmap.md), which is building the
@@ -36,14 +41,14 @@ On current `main`, Tachiko already provides an end-to-end game-balance proof wit
   conformance evidence.
 
 The current product deliberately does **not** claim a completed spreadsheet UI,
-Office compatibility, realtime collaboration, cloud SaaS, or production game-
-engine plugins.
+Office compatibility, realtime collaboration, cloud SaaS, or production
+ game-engine plugins.
 
 ## Why this is different
 
 | Common workflow problem | Tachiko approach |
 | --- | --- |
-| A spreadsheet quietly becomes a database plus business/game rules | Schema, values, references, formulas, and validation have explicit typed meaning |
+| A spreadsheet quietly becomes a database plus domain rules | Schema, values, references, formulas, and validation have explicit typed meaning |
 | Review is reduced to raw text/binary file changes | Semantic diff and dependency/impact facts are computed by deterministic engines |
 | CSV/export glue becomes part of the unofficial workflow | Canonical project state, deterministic export, and optional Git/CI adapters share the same semantic source |
 | AI must infer meaning from raw files or simulate UI actions | AI consumes semantic queries and proposes typed operations; deterministic Rust engines remain authoritative |
