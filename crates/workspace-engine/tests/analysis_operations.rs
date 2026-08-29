@@ -441,6 +441,69 @@ fn grouping_missing_value_and_formula_value_are_structured_failures() {
 }
 
 #[test]
+fn grouping_rejects_reference_values_from_the_wrong_schema() {
+    let mut document = analysis_document();
+    document.schemas.insert(
+        SchemaId::from("categories"),
+        Schema {
+            id: SchemaId::from("categories"),
+            key: SchemaKey::from("categories"),
+            fields: BTreeMap::new(),
+        },
+    );
+    document.schemas.insert(
+        SchemaId::from("characters"),
+        Schema {
+            id: SchemaId::from("characters"),
+            key: SchemaKey::from("characters"),
+            fields: BTreeMap::new(),
+        },
+    );
+    document.schemas.get_mut("weapons").unwrap().fields.insert(
+        FieldId::from("category_ref"),
+        FieldDefinition {
+            id: FieldId::from("category_ref"),
+            key: FieldKey::from("category_ref"),
+            field_type: FieldType::Reference {
+                schema: SchemaId::from("categories"),
+            },
+            required: false,
+        },
+    );
+    document.entities.insert(
+        EntityId::from("wrong-category"),
+        Entity {
+            id: EntityId::from("wrong-category"),
+            key: EntityKey::from("wrong-category"),
+            schema: SchemaId::from("characters"),
+            fields: BTreeMap::new(),
+        },
+    );
+    document.entities.get_mut("alpha").unwrap().fields.insert(
+        FieldId::from("category_ref"),
+        Value::Reference(EntityId::from("wrong-category")),
+    );
+    let definition = AnalysisDefinition::new(
+        SchemaId::from("weapons"),
+        Some(vec![EntityId::from("alpha")]),
+        vec![],
+        Some(FieldId::from("category_ref")),
+        vec![AnalysisResultRequest::Count],
+    );
+    let mut lifecycle = lifecycle();
+    grant_query(&mut lifecycle, "document-query", vec![document_scope()]);
+
+    assert!(matches!(
+        run(&lifecycle, &document, &definition).unwrap().outcome,
+        AnalysisOutcome::Failure(AnalysisFailure::InvalidGroupValue {
+            entity,
+            field,
+            actual: tachiko_workspace_engine::analysis_operations::AnalysisValueKind::Reference,
+        }) if entity == EntityId::from("alpha") && field == FieldId::from("category_ref")
+    ));
+}
+
+#[test]
 fn formula_predicate_failure_and_metric_incompleteness_return_no_partial_payload() {
     let mut failed_formula = analysis_document();
     failed_formula

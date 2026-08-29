@@ -1040,7 +1040,21 @@ fn group_entities(
             (FieldType::Number, Value::Number(value)) => AnalysisGroupKey::Number(*value),
             (FieldType::Text, Value::Text(value)) => AnalysisGroupKey::Text(value.clone()),
             (FieldType::Boolean, Value::Boolean(value)) => AnalysisGroupKey::Boolean(*value),
-            (FieldType::Reference { .. }, Value::Reference(value)) => {
+            (FieldType::Reference { schema }, Value::Reference(value)) => {
+                let Some(referenced) = document.entities.get(value) else {
+                    return Err(AnalysisFailure::InvalidGroupValue {
+                        entity: entity_id.clone(),
+                        field: field.clone(),
+                        actual: AnalysisValueKind::Reference,
+                    });
+                };
+                if &referenced.schema != schema {
+                    return Err(AnalysisFailure::InvalidGroupValue {
+                        entity: entity_id.clone(),
+                        field: field.clone(),
+                        actual: AnalysisValueKind::Reference,
+                    });
+                }
                 AnalysisGroupKey::Reference(value.clone())
             }
             (_, other) => {

@@ -2205,6 +2205,95 @@ fn formula_help_makes_computational_authoring_discoverable() {
     }
 }
 
+const GROUPED_ANALYSIS_QUERY_JSON: &str = concat!(
+    r#"{
+  "derivations": [
+    {
+      "field": "damage",
+      "kind": "predicate"
+    },
+    {
+      "field": "name",
+      "kind": "grouped_by"
+    },
+    {
+      "kind": "count"
+    },
+    {
+      "field": "dps",
+      "kind": "observations"
+    }
+  ],
+  "formula_calculation_used": true,
+  "normalized_definition": {
+    "group_by": "name",
+    "narrowing": [
+      "sword"
+    ],
+    "predicates": [
+      {
+        "field": "damage",
+        "operand": {
+          "type": "number",
+          "value": 90.0
+        },
+        "operator": "greater_than_or_equal"
+      }
+    ],
+    "results": [
+      {
+        "kind": "count"
+      },
+      {
+        "field": "dps",
+        "kind": "observations"
+      }
+    ],
+    "schema": "weapon"
+  },
+  "outcome": {
+    "kind": "complete",
+    "projection": {
+      "groups": [
+        {
+          "bucket": {
+            "values": [
+              {
+                "kind": "count",
+                "value": 1
+              },
+              {
+                "field": "dps",
+                "kind": "observations",
+                "values": [
+                  {
+                    "entity": "sword",
+                    "value": 80.0
+                  }
+                ]
+              }
+            ]
+          },
+          "key": {
+            "type": "text",
+            "value": "Sword"
+          }
+        }
+      ],
+      "kind": "grouped"
+    }
+  },
+  "sources": [
+    {
+      "document": "balance",
+      "source_revision": "cli-semantic-sha256:e576dd1dd4c939463f6e9958b0ebbf0e2a16aef6758788fc4195295ea8f0d0c3",
+      "validator_configuration": "workspace_full"
+    }
+  ]
+}"#,
+    "\n"
+);
+
 #[test]
 fn analyze_query_emits_typed_grouped_formula_lineage() {
     let temp = TempDir::new();
@@ -2232,6 +2321,10 @@ fn analyze_query_emits_typed_grouped_formula_lineage() {
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout.clone()).unwrap(),
+        GROUPED_ANALYSIS_QUERY_JSON
     );
     let json: JsonValue = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(json["formula_calculation_used"], true);
