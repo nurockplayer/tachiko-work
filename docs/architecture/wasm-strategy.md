@@ -64,7 +64,7 @@ ADR-0022 does not freeze:
 - browser/native persistence and recovery; or
 - multi-document/branch/history residency.
 
-#93 implements the current internal resident session/revision mechanics with
+Issue `#93` implements the current internal resident session/revision mechanics with
 production native/WASM semantic parity evidence. #94–#95 retain later
 projection/performance work. Public Worker/ABI/persistence mechanics may evolve
 while preserving ADR-0020/ADR-0022 semantic and runtime-ownership laws.

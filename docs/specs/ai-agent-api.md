@@ -74,7 +74,7 @@ authorization/approval enforcement. ADR-0024 makes a reviewable AI proposal the
 same immutable base-bound SemanticPatch available to any semantic client; it
 does not make AI provenance or model output part of command meaning. The
 provisional workspace-engine lifecycle/state implementation is present under
-#29. Issue #93 supplies the current internal resident session, revision-safe
+Issue `#29`. Issue #93 supplies the current internal resident session, revision-safe
 publication, and composition evidence for this adapter through the same
 `SemanticPublicationAuthority` seam. The #30 AI adapter enforces provider-facing
 instruction/data, raw-bypass, trusted-context, and host-effect-denial boundaries

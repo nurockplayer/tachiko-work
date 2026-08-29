@@ -939,8 +939,9 @@ API contract binding, semantic-base pinning, and fail-closed stale meaning.
 ADR-0026 fixes structural exact Approval, live authorization, and
 consume-with-successful-publication laws without selecting a public token or
 DTO. Issue #29 supplies the current provisional in-process Approval lifecycle
-types, and #93 the current internal resident commit mechanics.
-Proposal-ID/revision encoding and public Approval/session DTOs remain
+types and ProposalId issuance. Issue #93 supplies the current internal resident
+SemanticRevision ownership, equality, and commit mechanics. Exact public
+proposal-ID/revision-token encodings and public Approval/session DTOs remain
 Provisional or Deferred to transport work.
 
 ## Semantic atomicity
@@ -1440,7 +1441,9 @@ resident session/revision conformance on native and WASM.
 | Representation-neutral `ExactChangeBinding` law | Accepted under ADR-0024 |
 | Semantic API compatibility binding with no independent patch-operation version | Accepted under ADR-0024 |
 | Exact semantic-base pinning and fail-closed stale behavior | Accepted under ADR-0024 |
-| Proposal-ID, revision-token, and transport encoding | Internal resident revision implementation by #93; public encoding Provisional |
+| ProposalId issuance mechanism | Internal / Provisional under #29 |
+| Resident SemanticRevision ownership and equality implementation | Internal / Provisional under #93 |
+| Proposal-ID, revision-token, and transport encoding | Public encoding Provisional or Deferred to transport work |
 | Hash/digest/signature/MAC/canonical proposal bytes | Deferred under ADR-0026 |
 | Preview is proposal projection, not independent canonical state | Accepted |
 | Finalization is operation-gate meaning, not mandatory stateful two-phase protocol | Accepted |
@@ -1504,9 +1507,12 @@ equivalent Stable semantic meaning where capabilities overlap.
 Issue #93 implements the current provisional in-process resident session,
 monotonic revision precondition, explicit snapshot, and guarded installation
 mechanics in `workspace-engine`, with native/WASM equivalence evidence. Public
-session handles, cross-host concurrency, Worker lifecycle, projection delivery,
-IPC/FFI/network serialization/ABI, and persistence/recovery remain Deferred to
-#94–#95 and future host/transport implementation as applicable.
+session handles, cross-host concurrency, Worker lifecycle,
+IPC/FFI/network serialization/ABI, and native/browser persistence/recovery
+remain Deferred to future host/transport work. Issue #94 owns selective queries
+and projection invalidation; Issue #95 owns retained incremental runtime state;
+Issue #11 retains broader transaction/recovery architecture, and Issue #12
+retains persisted history/event-sourcing work.
 
 Every mapping MUST preserve the Semantic API Stable laws and outcomes. Runtime
 or transport topology is not independent semantic authority. A mapping of

@@ -15,7 +15,7 @@ treatment, trusted-host identity/time, lifecycle proof of an active Delegated
 occurrence, stable safe denials, and unconditional raw-mutation/host-effect
 rejection. A Human session principal is not an AI credential. Concrete
 authentication and public transport mechanics remain later host work. Issue
-#93 supplies the current internal resident revision/session publication
+Issue `#93` supplies the current internal resident revision/session publication
 composition without changing the AI authority boundary.
 
 ## Principle

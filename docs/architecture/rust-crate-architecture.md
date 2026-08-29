@@ -460,12 +460,13 @@ does not implicitly grant filesystem/network/Git/plugin/deployment authority.
   current replaceable in-process implementation, while #30 supplies provisional
   provider-facing context/error shapes and stable internal code meanings;
   canonical bytes/digest/signature/MAC/portable tokens remain Deferred.
-- ADR-0022 owns resident runtime/state and host-separation laws, while session
-  handle shape, revision/concurrency, cancellation, state commit/swap/locking/
-  cloning mechanics, Web Worker lifecycle, IPC/FFI/network mapping, projection
-  delivery, and persistence/recovery implementations remain Deferred.
-- #93 implements the current provisional resident workspace session and
-  revision-safe command publication mechanics.
+- ADR-0022 owns resident runtime/state and host-separation laws. Issue #93
+  supplies current Provisional evidence for the internal resident workspace
+  session, opaque monotonic revision, exact in-process comparison, and guarded
+  state installation. Public session-handle shape, broader cross-host
+  concurrency, cancellation, public commit/swap/locking/cloning contracts, Web
+  Worker lifecycle, IPC/FFI/network mapping, projection delivery, and
+  persistence/recovery implementations remain Deferred.
 - #94 owns later selective semantic queries and projection invalidation.
 - #95 owns later retained incremental engine state with full-oracle equivalence.
 - ADR-0023 and the `.roproj/v1` specifications own the Accepted layout and

@@ -140,7 +140,7 @@ A GitHub Issue is never automatically an Accepted decision. The table below clas
 - #26 native/WASM runtime boundary — resolved by Accepted ADR-0022 and PR #91 evidence; resident runtime ownership, host separation, explicit snapshot boundaries, and native/WASM semantic parity are Accepted. #93 supplies current internal session/revision mechanics while Worker/ABI/persistence remain Deferred.
 - #72 workflow-to-workspace-engine migration — implementation of ADR-0016 completed by PR #85; it provides implementation evidence for ADR-0020/ADR-0022 without defining a public source/session/transport contract.
 
-#40 is a completed implementation/evidence task that consumed ADR-0015, ADR-0017, and Accepted ADR-0018 without inventing format semantics.
+Issue `#40` is a completed implementation/evidence task that consumed ADR-0015, ADR-0017, and Accepted ADR-0018 without inventing format semantics.
 
 ### Game Dev Alpha / AI-safe mutation work
 
