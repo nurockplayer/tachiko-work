@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use tachiko_formula_engine::{
     CalculationFailure, CalculationFailures, CalculationOutcome, ExpressionComplexityError,
-    ReferenceFailure, calculate, calculate_complete,
+    ReferenceFailure, RetainedCalculationState, calculate, calculate_complete,
 };
 use tachiko_semantic_core::{
     Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
@@ -677,4 +677,85 @@ fn compatibility_projection_of_a_long_failed_chain_is_stack_safe() {
         Err(tachiko_formula_engine::CalculationError::DivisionByZero { formula })
             if formula == node("field-19999")
     ));
+}
+
+#[test]
+fn retained_state_matches_the_full_oracle_across_dependent_multi_revision_mutations() {
+    let mut current = document(vec![
+        (
+            "a",
+            FieldType::Number,
+            Value::Number(Number::new(2.0).unwrap()),
+        ),
+        ("b", FieldType::Number, formula(reference("a"))),
+        ("c", FieldType::Number, formula(reference("b"))),
+        (
+            "independent",
+            FieldType::Number,
+            Value::Number(Number::new(7.0).unwrap()),
+        ),
+        (
+            "independent-formula",
+            FieldType::Number,
+            formula(reference("independent")),
+        ),
+    ]);
+    let (mut retained, initial_work) = RetainedCalculationState::rebuild(&current);
+    assert_eq!(retained.outcome(), calculate_complete(&current));
+    assert_eq!(initial_work.full_rebuilds, 1);
+
+    let revisions = [
+        (
+            "normalized-zero",
+            node("a"),
+            Value::Number(Number::new(-0.0).unwrap()),
+            None,
+        ),
+        ("introduce-cycle", node("b"), formula(reference("c")), None),
+        ("break-cycle", node("b"), formula(reference("a")), None),
+        (
+            "delete-target",
+            node("a"),
+            Value::Number(Number::new(0.0).unwrap()),
+            Some(false),
+        ),
+        (
+            "restore-target",
+            node("a"),
+            Value::Number(Number::new(f64::from_bits(1)).unwrap()),
+            Some(true),
+        ),
+        (
+            "output-equal-replacement",
+            node("b"),
+            formula(Expression::Multiply {
+                left: Box::new(reference("a")),
+                right: Box::new(numeric(0.0)),
+            }),
+            None,
+        ),
+    ];
+
+    for (revision, root, replacement, presence) in revisions {
+        let fields = &mut current.entities.get_mut("entity-stable").unwrap().fields;
+        match presence {
+            Some(false) => {
+                fields.remove(&root.field);
+            }
+            Some(true) | None => {
+                fields.insert(root.field.clone(), replacement);
+            }
+        }
+        let transition = retained.update(&current, &BTreeSet::from([root]));
+        assert_eq!(
+            retained.outcome(),
+            calculate_complete(&current),
+            "revision {revision}"
+        );
+        assert_eq!(
+            transition.work.incremental_updates, 1,
+            "revision {revision}"
+        );
+        assert!(transition.work.nodes_reused >= 2, "revision {revision}");
+    }
 }

@@ -17,8 +17,9 @@ the provisional SemanticPatch lifecycle, Issue #30 its `ai-api` security
 composition, and Issue #93 the first production resident session with internal
 monotonic revision, explicit snapshots, and guarded state installation. Issue
 Issue #94 adds internal occurrence-and-revision-pinned selective entity/field
-projections and fresh full-oracle invalidation facts; #95 retains incremental-
-state work. Issue #123
+projections and full-oracle invalidation facts; Issue #95 retains rebuildable
+formula and supporting query state across resident revisions with generated
+full-oracle equivalence checks. Issue #123
 implements the storage-owned `.roproj/v1` pure codec, native exact-tree host
 workflow, and CLI composition without changing the Accepted crate DAG.
 
@@ -204,8 +205,12 @@ The engine owns real application behavior:
   compare-and-publish through that same publication seam;
 - occurrence-and-revision-pinned selective entity/field projections that keep
   stable subjects, stored literals, bound formula definitions, calculated
-  outcomes, diagnostics, and mutable human addresses distinct, plus fresh
-  deterministic downstream projection invalidation without retained caches;
+  outcomes, diagnostics, and mutable human addresses distinct, plus
+  deterministic downstream projection invalidation;
+- revision-scoped, rebuildable formula values/failures, dependency and reverse-
+  dependency indexes, validation diagnostics, and address indexes, with
+  dirty-root plus old/new reverse-closure updates checked against fresh full
+  oracles and conservative full-rebuild fallback;
 - semantic comparison and merge-plus-impact orchestration; and
 - deterministic runtime-export projection independent of filesystem and
   terminal rendering.
@@ -259,9 +264,9 @@ without repeatedly reconstructing the complete document across the
 client/runtime boundary.
 
 The current resident session remains an internal Provisional Rust surface, not
-a public session/transport contract. Issue #94 implements the current internal
-selective-query/projection-invalidation slice; #95 owns retained-incremental
-implementation.
+a public session/transport contract. Issue #94 implements the internal
+selective-query/projection-invalidation slice; Issue #95 supplies retained,
+runtime-only incremental state without changing that invalidation authority.
 
 ADR-0022 requires one authoritative runtime state and ADR-0020 semantic
 atomicity, but does not define an exact runtime commit/swap/locking/cloning
@@ -356,7 +361,7 @@ validation inside Rust as implementation mechanisms.
 | ID generation mechanism | CLI through workflow seam | CLI through workspace-engine seam |
 | Product-semantic client contract | Provisional/internal | First-class transport-neutral Semantic API under ADR-0020 |
 | Interactive authoritative state ownership | Open under #26 | Shared Rust semantic/application runtime under ADR-0022 |
-| Resident interactive topology | PR #91 spike evidence | Accepted under ADR-0022; #93 implements the resident session and #94 its current selective projection/invalidation surface, while #95 retains incremental work |
+| Resident interactive topology | PR #91 spike evidence | Accepted under ADR-0022; #93 implements the resident session, #94 its selective projection/invalidation surface, and #95 full-oracle-equivalent retained runtime state |
 | Concrete session/revision/transport mechanics | Open under #26 | Internal in-process session/revision mechanics implemented by #93; public transport shapes remain Deferred |
 
 Low-level diff and merge algorithms still validate or calculate where their own
@@ -474,9 +479,10 @@ does not implicitly grant filesystem/network/Git/plugin/deployment authority.
   concurrency, cancellation, public commit/swap/locking/cloning contracts, Web
   Worker lifecycle, IPC/FFI/network mapping, projection delivery, and
   persistence/recovery implementations remain Deferred.
-- #94 implements the current internal selective semantic query and fresh
-  full-oracle projection-invalidation surface without stabilizing transport.
-- #95 owns later retained incremental engine state with full-oracle equivalence.
+- #94 implements the current internal selective semantic query and projection-
+  invalidation surface without stabilizing transport.
+- #95 implements retained incremental engine state with full-oracle
+  equivalence and no durable cache meaning.
 - ADR-0023 and the `.roproj/v1` specifications own the Accepted layout and
   version-owned wire contract; #123 implements the production pure codec plus
   current native exact-tree materialize/canonical-only-validate/explicit-

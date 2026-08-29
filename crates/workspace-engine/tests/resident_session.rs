@@ -17,6 +17,7 @@ use tachiko_workspace_engine::{
     resident_session::{
         ResidentProjectionInvalidation, ResidentWorkspaceSession, TrustedPublicationTimeSource,
     },
+    validation_report,
 };
 
 const NOW: TrustedInstant = TrustedInstant::new(10);
@@ -167,6 +168,42 @@ fn validation_query_is_revision_pinned_without_advancing_session() {
     );
     assert_eq!(query.revision(), &before);
     assert_eq!(session.revision(), &before);
+}
+
+#[test]
+fn repeated_resident_queries_reuse_revision_scoped_oracles_and_rebuild_once_per_publication() {
+    let mut session =
+        ResidentWorkspaceSession::new(document_scope_id(), game_balance_document("game", "Game"));
+    let initial_work = session.runtime_measurements();
+    assert_eq!(initial_work.derived_state_rebuilds, 1);
+    assert_eq!(initial_work.retained_before_state_reuses, 0);
+
+    let damage = FieldRef::new("iron_sword", "damage");
+    let dps = FieldRef::new("iron_sword", "dps");
+    let initial_snapshot = session.export_snapshot();
+    for _ in 0..3 {
+        assert_eq!(
+            session.validation_report().into_value(),
+            validation_report(initial_snapshot.document())
+        );
+        session
+            .query_fields(&[damage.clone(), dps.clone()])
+            .unwrap();
+        session.calculate_fields().unwrap();
+    }
+    assert_eq!(session.runtime_measurements(), initial_work);
+
+    execute_damage(&mut session, "resident-retained-work", 45.0);
+
+    let after_work = session.runtime_measurements();
+    assert_eq!(after_work.derived_state_rebuilds, 2);
+    assert_eq!(after_work.retained_before_state_reuses, 1);
+    let after = session.export_snapshot();
+    assert_eq!(
+        session.validation_report().into_value(),
+        validation_report(after.document())
+    );
+    assert_eq!(session.runtime_measurements(), after_work);
 }
 
 #[test]

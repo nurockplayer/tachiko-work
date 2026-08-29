@@ -9,9 +9,11 @@ to stable IDs, typed bound ASTs, partial round-trip-proven authoring projection,
 rename preflight, finite binary64 `Number` normalization, static dependency
 extraction, and the complete atomic node-keyed full-recompute oracle with SCC
 membership, direct failed-dependency sets, phase precedence, and all-or-nothing
-full-document calculation. Incremental recomputation remains unimplemented; the
-full outcome is the correctness oracle and legacy fail-first calculation is
-only its compatibility projection.
+full-document calculation. Issue #95 adds rebuildable retained formula state
+whose dirty roots and old/new reverse-dependent closures reuse those exact
+oracle phases. Generated multi-revision mutation tests compare it after every
+publication; the full outcome remains the correctness oracle and legacy fail-
+first calculation is only its compatibility projection.
 
 Authority: ADR-0014, ADR-0015, ADR-0016, ADR-0017, and ADR-0018. Decision
 record: #24. ADR-0020's Issue #32 amendment owns the M04 Semantic API
@@ -459,8 +461,8 @@ Implementation and remaining ownership under Accepted ADR-0018:
   independent corpus expansion.
 - Formula-engine owns the complete failure oracle implemented by #90 under
   ADR-0018; #89 consumes it in the workspace validation report under ADR-0019.
-  Later formula-engine work owns incremental recomputation and mutation-sequence
-  equivalence tests against that oracle.
+  #95 implements retained incremental recomputation and generated mutation-
+  sequence equivalence tests against that oracle.
 - Runtime-export JSON has an independent version contract. Existing
   `runtime-export-v1` bytes/meaning remain frozen; the stable-identity transition
   deliberately bumps current output to runtime-export/v2 for normalized Number
@@ -485,8 +487,10 @@ stable IDs, and bound AST on rejection.
 
 ## Current implementation limits
 
-- Calculation intentionally traverses the full document; `affected_by` reports
-  a closure but is not an incremental evaluator.
+- `calculate_complete` intentionally remains the full-document oracle.
+  `RetainedCalculationState` is a Provisional runtime-only evaluator used by
+  the resident workspace; it is rebuildable, non-serialized, and falls back to
+  the full oracle when its caller cannot classify impact safely.
 - The full outcome implements the Accepted structural → binding/type/stale
   target → cycle → failed dependency → local evaluation precedence. A failed
   outcome publishes no partial `Calculation`.

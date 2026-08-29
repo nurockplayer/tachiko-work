@@ -6,40 +6,48 @@
 //! host adapters must enforce ADR-0026 Query authorization before projecting
 //! their observations outside the trusted composition boundary.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-use tachiko_formula_engine::{CalculationOutcome, calculate_complete};
+use tachiko_formula_engine::{
+    CalculationOutcome, IncrementalCalculationTransition, IncrementalCalculationWork,
+    RetainedCalculationState,
+};
 
 use super::{
-    CalculatedField, Diagnostic, Document, EntityId, EntityInspection, Expression, FieldAddress,
-    FieldRef, SemanticSubject, ValidationReport, Value, WorkspaceError, calculate_fields,
-    formula_operations::{
-        FormulaCalculationOutcome, affected_by_all, calculation_dependencies, calculation_for,
-    },
+    AddressIndex, AddressIndexError, CalculatedField, Diagnostic, Document, EntityId,
+    EntityInspection, Expression, FieldAddress, FieldRef, SemanticSubject, ValidationReport,
+    ValidationRole, Value, WorkspaceError,
+    formula_operations::{FormulaCalculationOutcome, calculation_dependencies, calculation_for},
+    invalid_document,
     patch_lifecycle::{
         DocumentScopeId, SemanticPublicationAuthority, SemanticPublicationError, SemanticRevision,
         TrustedInstant,
     },
-    validation_report,
+    validation_report_for_retained_calculation,
 };
 
 /// One Rust-authoritative semantic document occurrence retained across calls.
 pub struct ResidentWorkspaceSession {
     document_scope: DocumentScopeId,
     document: Document,
+    retained: ResidentDerivedState,
     revision: SemanticRevision,
     generation: u64,
+    measurements: ResidentRuntimeMeasurements,
 }
 
 impl ResidentWorkspaceSession {
     /// Start a resident occurrence at its initial internal revision.
     #[must_use]
     pub fn new(document_scope: DocumentScopeId, document: Document) -> Self {
+        let (retained, calculation_work) = ResidentDerivedState::rebuild(&document);
         Self {
             document_scope,
             document,
+            retained,
             revision: revision_for(0),
             generation: 0,
+            measurements: ResidentRuntimeMeasurements::initial(calculation_work),
         }
     }
 
@@ -55,7 +63,7 @@ impl ResidentWorkspaceSession {
         ResidentQueryResult {
             document_scope: self.document_scope.clone(),
             revision: self.revision.clone(),
-            value: validation_report(&self.document),
+            value: self.retained.validation_report.clone(),
         }
     }
 
@@ -71,8 +79,16 @@ impl ResidentWorkspaceSession {
         Ok(ResidentQueryResult {
             document_scope: self.document_scope.clone(),
             revision: self.revision.clone(),
-            value: calculate_fields(&self.document)?,
+            value: self.retained.calculate_fields(&self.document)?,
         })
+    }
+
+    /// Return deterministic runtime work evidence accumulated by this
+    /// occurrence. Counters are implementation measurements only; they are not
+    /// semantic identity, a cache protocol, or a performance guarantee.
+    #[must_use]
+    pub const fn runtime_measurements(&self) -> ResidentRuntimeMeasurements {
+        self.measurements
     }
 
     /// Project only the requested entities in stable-ID order.
@@ -129,8 +145,6 @@ impl ResidentWorkspaceSession {
         requested: &[FieldRef],
     ) -> Result<ResidentQueryResult<Vec<ResidentFieldProjection>>, WorkspaceError> {
         let requested = requested.iter().cloned().collect::<BTreeSet<_>>();
-        let calculation = calculate_complete(&self.document);
-        let report = validation_report(&self.document);
         let fields = requested
             .into_iter()
             .map(|field| {
@@ -156,12 +170,15 @@ impl ResidentWorkspaceSession {
                 })?;
                 let presentation_address =
                     FieldAddress::new(entity.key.clone(), definition.key.clone());
-                let diagnostics = diagnostics_for_field(&report, &field);
+                let diagnostics = self.retained.diagnostics_for_field(&field);
                 let (stored_value, formula_definition, calculated_value) = match value {
                     Value::Formula(expression) => (
                         None,
                         Some(expression.clone()),
-                        Some(calculation_for(&calculation, &field)),
+                        Some(retained_calculation_for(
+                            &self.retained.calculation_state,
+                            &field,
+                        )),
                     ),
                     scalar => (Some(scalar.clone()), None, None),
                 };
@@ -212,6 +229,222 @@ impl ResidentWorkspaceSession {
             projection_invalidation: None,
         }
     }
+}
+
+#[derive(Clone, Debug)]
+struct ResidentDerivedState {
+    calculation_state: RetainedCalculationState,
+    validation_report: ValidationReport,
+    address_index: Result<AddressIndex, AddressIndexError>,
+    diagnostics_by_field: BTreeMap<FieldRef, Vec<Diagnostic>>,
+}
+
+impl ResidentDerivedState {
+    fn rebuild(document: &Document) -> (Self, IncrementalCalculationWork) {
+        let (calculation_state, calculation_work) = RetainedCalculationState::rebuild(document);
+        (
+            Self::from_calculation(document, calculation_state, AddressIndex::build(document)),
+            calculation_work,
+        )
+    }
+
+    fn update(
+        &mut self,
+        document: &Document,
+        changes: &ProjectionChanges,
+    ) -> DerivedStateTransition {
+        let previous_address_index_valid = self.address_index.is_ok();
+        if changes.address_index_changed {
+            self.address_index = AddressIndex::build(document);
+        }
+        let incremental_safe = previous_address_index_valid && self.address_index.is_ok();
+        let calculation = if incremental_safe {
+            self.calculation_state
+                .update(document, &changes.calculation_roots)
+        } else {
+            let before = self.calculation_state.outcome();
+            let old_affected = self
+                .calculation_state
+                .affected_by_all(&changes.calculation_roots);
+            let (rebuilt, work) = RetainedCalculationState::rebuild(document);
+            let new_affected = rebuilt.affected_by_all(&changes.calculation_roots);
+            let after = rebuilt.outcome();
+            self.calculation_state = rebuilt;
+            IncrementalCalculationTransition {
+                work,
+                affected_calculations: old_affected
+                    .into_iter()
+                    .chain(new_affected)
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect(),
+                changed_calculation_projections: changed_calculation_outcomes(&before, &after),
+            }
+        };
+        self.validation_report =
+            validation_report_for_retained_calculation(document, &self.calculation_state);
+        self.diagnostics_by_field = index_field_diagnostics(&self.validation_report);
+        DerivedStateTransition {
+            work: DerivedStateTransitionWork {
+                calculation: calculation.work,
+                address_index_rebuilt: changes.address_index_changed,
+                fell_back_to_full_calculation: !incremental_safe,
+            },
+            affected_calculations: calculation.affected_calculations,
+            changed_calculation_projections: calculation.changed_calculation_projections,
+        }
+    }
+
+    fn from_calculation(
+        document: &Document,
+        calculation_state: RetainedCalculationState,
+        address_index: Result<AddressIndex, AddressIndexError>,
+    ) -> Self {
+        let validation_report =
+            validation_report_for_retained_calculation(document, &calculation_state);
+        let diagnostics_by_field = index_field_diagnostics(&validation_report);
+        Self {
+            calculation_state,
+            validation_report,
+            address_index,
+            diagnostics_by_field,
+        }
+    }
+
+    fn calculate_fields(
+        &self,
+        document: &Document,
+    ) -> Result<Vec<CalculatedField>, WorkspaceError> {
+        if !self.validation_report.is_valid() {
+            return Err(invalid_document(
+                self.validation_report.clone(),
+                ValidationRole::Current,
+            ));
+        }
+        let values = self
+            .calculation_state
+            .complete_values()
+            .expect("a diagnostic-free formula outcome is complete");
+        let index = self
+            .address_index
+            .as_ref()
+            .map_err(|source| WorkspaceError::from(source.clone()))?;
+        let mut fields = values
+            .iter()
+            .map(|(field, value)| {
+                Ok(CalculatedField {
+                    field: field.clone(),
+                    address: index.field_address(document, field)?,
+                    value: *value,
+                })
+            })
+            .collect::<Result<Vec<_>, WorkspaceError>>()?;
+        fields.sort_by(|left, right| left.address.cmp(&right.address));
+        Ok(fields)
+    }
+
+    fn diagnostics_for_field(&self, field: &FieldRef) -> Vec<Diagnostic> {
+        self.diagnostics_by_field
+            .get(field)
+            .cloned()
+            .unwrap_or_default()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct DerivedStateTransitionWork {
+    calculation: IncrementalCalculationWork,
+    address_index_rebuilt: bool,
+    fell_back_to_full_calculation: bool,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct DerivedStateTransition {
+    work: DerivedStateTransitionWork,
+    affected_calculations: Vec<FieldRef>,
+    changed_calculation_projections: Vec<FieldRef>,
+}
+
+/// Cumulative deterministic work evidence for one resident occurrence.
+///
+/// This provisional runtime-only measurement surface supports oracle and
+/// benchmark tests. It is not serialized and does not define semantic identity,
+/// client invalidation, a cache protocol, or a product SLA.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ResidentRuntimeMeasurements {
+    pub derived_state_rebuilds: usize,
+    pub retained_before_state_reuses: usize,
+    pub full_calculation_rebuilds: usize,
+    pub incremental_calculation_updates: usize,
+    pub calculation_nodes_recomputed: usize,
+    pub calculation_nodes_reused: usize,
+    pub reverse_edges_traversed: usize,
+    pub validation_report_rebuilds: usize,
+    pub address_index_rebuilds: usize,
+    pub address_index_reuses: usize,
+    pub calculation_fallbacks: usize,
+}
+
+impl ResidentRuntimeMeasurements {
+    fn initial(calculation: IncrementalCalculationWork) -> Self {
+        Self {
+            derived_state_rebuilds: 1,
+            full_calculation_rebuilds: calculation.full_rebuilds,
+            incremental_calculation_updates: calculation.incremental_updates,
+            calculation_nodes_recomputed: calculation.nodes_recomputed,
+            calculation_nodes_reused: calculation.nodes_reused,
+            reverse_edges_traversed: calculation.reverse_edges_traversed,
+            validation_report_rebuilds: 1,
+            address_index_rebuilds: 1,
+            ..Self::default()
+        }
+    }
+
+    fn record_transition(&mut self, work: DerivedStateTransitionWork) {
+        self.derived_state_rebuilds = self.derived_state_rebuilds.saturating_add(1);
+        if !work.fell_back_to_full_calculation {
+            self.retained_before_state_reuses = self.retained_before_state_reuses.saturating_add(1);
+        }
+        self.full_calculation_rebuilds = self
+            .full_calculation_rebuilds
+            .saturating_add(work.calculation.full_rebuilds);
+        self.incremental_calculation_updates = self
+            .incremental_calculation_updates
+            .saturating_add(work.calculation.incremental_updates);
+        self.calculation_nodes_recomputed = self
+            .calculation_nodes_recomputed
+            .saturating_add(work.calculation.nodes_recomputed);
+        self.calculation_nodes_reused = self
+            .calculation_nodes_reused
+            .saturating_add(work.calculation.nodes_reused);
+        self.reverse_edges_traversed = self
+            .reverse_edges_traversed
+            .saturating_add(work.calculation.reverse_edges_traversed);
+        self.validation_report_rebuilds = self.validation_report_rebuilds.saturating_add(1);
+        if work.address_index_rebuilt {
+            self.address_index_rebuilds = self.address_index_rebuilds.saturating_add(1);
+        } else {
+            self.address_index_reuses = self.address_index_reuses.saturating_add(1);
+        }
+        if work.fell_back_to_full_calculation {
+            self.calculation_fallbacks = self.calculation_fallbacks.saturating_add(1);
+        }
+    }
+}
+
+fn index_field_diagnostics(report: &ValidationReport) -> BTreeMap<FieldRef, Vec<Diagnostic>> {
+    let mut by_field = BTreeMap::<FieldRef, Vec<Diagnostic>>::new();
+    for diagnostic in report.diagnostics() {
+        for subject in &diagnostic.subjects {
+            if let SemanticSubject::EntityField(field) = subject {
+                by_field
+                    .entry(field.clone())
+                    .or_default()
+                    .push(diagnostic.clone());
+            }
+        }
+    }
+    by_field
 }
 
 /// One query observation pinned to the resident occurrence and revision it read.
@@ -382,8 +615,9 @@ where
             .checked_add(1)
             .ok_or(SemanticPublicationError::Conflict)?;
         let resulting_revision = revision_for(next_generation);
-        let projection_invalidation = projection_invalidation(
+        let (projection_invalidation, transition_work) = projection_invalidation(
             &self.session.document,
+            &mut self.session.retained,
             &candidate,
             self.session.document_scope.clone(),
             expected_revision.clone(),
@@ -393,6 +627,7 @@ where
         self.session.document = candidate;
         self.session.generation = next_generation;
         self.session.revision = resulting_revision.clone();
+        self.session.measurements.record_transition(transition_work);
         self.projection_invalidation = Some(projection_invalidation);
 
         Ok((
@@ -410,11 +645,12 @@ fn revision_for(generation: u64) -> SemanticRevision {
 
 fn projection_invalidation(
     before: &Document,
+    retained: &mut ResidentDerivedState,
     after: &Document,
     document_scope: DocumentScopeId,
     base_revision: SemanticRevision,
     resulting_revision: SemanticRevision,
-) -> ResidentProjectionInvalidation {
+) -> (ResidentProjectionInvalidation, DerivedStateTransitionWork) {
     let entity_ids = before
         .entities
         .keys()
@@ -424,35 +660,34 @@ fn projection_invalidation(
     let mut changes = ProjectionChanges::default();
     collect_entity_projection_changes(before, after, &entity_ids, &mut changes);
     collect_schema_projection_changes(before, after, &entity_ids, &mut changes);
-    collect_diagnostic_projection_changes(before, after, &entity_ids, &mut changes);
-
-    let before_calculation = calculate_complete(before);
-    let after_calculation = calculate_complete(after);
-    let mut affected_calculations = affected_by_all(
-        calculation_dependencies(&before_calculation),
-        &changes.calculation_roots,
-    )
-    .into_iter()
-    .chain(affected_by_all(
-        calculation_dependencies(&after_calculation),
-        &changes.calculation_roots,
-    ))
-    .collect::<BTreeSet<_>>();
-    affected_calculations.extend(changed_calculation_projections(
+    let before_diagnostics = std::mem::take(&mut retained.diagnostics_by_field);
+    let transition = retained.update(after, &changes);
+    collect_diagnostic_projection_changes(
         before,
+        &before_diagnostics,
         after,
-        &before_calculation,
-        &after_calculation,
-    ));
+        &retained.diagnostics_by_field,
+        &entity_ids,
+        &mut changes,
+    );
 
-    ResidentProjectionInvalidation {
-        document_scope,
-        base_revision,
-        resulting_revision,
-        entities: changes.entities.into_iter().collect(),
-        fields: changes.fields.into_iter().collect(),
-        affected_calculations: affected_calculations.into_iter().collect(),
-    }
+    let affected_calculations = transition
+        .affected_calculations
+        .into_iter()
+        .chain(transition.changed_calculation_projections)
+        .collect::<BTreeSet<_>>();
+
+    (
+        ResidentProjectionInvalidation {
+            document_scope,
+            base_revision,
+            resulting_revision,
+            entities: changes.entities.into_iter().collect(),
+            fields: changes.fields.into_iter().collect(),
+            affected_calculations: affected_calculations.into_iter().collect(),
+        },
+        transition.work,
+    )
 }
 
 #[derive(Default)]
@@ -460,6 +695,7 @@ struct ProjectionChanges {
     entities: BTreeSet<EntityId>,
     fields: BTreeSet<FieldRef>,
     calculation_roots: BTreeSet<FieldRef>,
+    address_index_changed: bool,
 }
 
 fn collect_entity_projection_changes(
@@ -482,6 +718,9 @@ fn collect_entity_projection_changes(
                     .collect::<BTreeSet<_>>();
                 let presentation_changed = before_entity.key != after_entity.key;
                 let schema_changed = before_entity.schema != after_entity.schema;
+                if presentation_changed || schema_changed || before_entity.id != after_entity.id {
+                    changes.address_index_changed = true;
+                }
 
                 if presentation_changed || schema_changed {
                     changes.entities.insert(entity_id.clone());
@@ -513,6 +752,7 @@ fn collect_entity_projection_changes(
                 }
             }
             (Some(entity), None) | (None, Some(entity)) => {
+                changes.address_index_changed = true;
                 changes.entities.insert(entity_id.clone());
                 let entity_fields = entity
                     .fields
@@ -543,6 +783,11 @@ fn collect_schema_projection_changes(
     for schema_id in schema_ids {
         let before_schema = before.schemas.get(&schema_id);
         let after_schema = after.schemas.get(&schema_id);
+        if before_schema.map(|schema| (&schema.id, &schema.key))
+            != after_schema.map(|schema| (&schema.id, &schema.key))
+        {
+            changes.address_index_changed = true;
+        }
         let field_ids = before_schema
             .into_iter()
             .flat_map(|schema| schema.fields.keys())
@@ -560,6 +805,12 @@ fn collect_schema_projection_changes(
             if before_definition == after_definition {
                 continue;
             }
+            let address_definition_changed = match (before_definition, after_definition) {
+                (Some(before), Some(after)) => before.id != after.id || before.key != after.key,
+                (Some(_), None) | (None, Some(_)) => true,
+                (None, None) => false,
+            };
+            changes.address_index_changed |= address_definition_changed;
             let semantic_definition_changed = match (before_definition, after_definition) {
                 (Some(before), Some(after)) => {
                     before.id != after.id
@@ -591,13 +842,12 @@ fn collect_schema_projection_changes(
 
 fn collect_diagnostic_projection_changes(
     before: &Document,
+    before_diagnostics: &BTreeMap<FieldRef, Vec<Diagnostic>>,
     after: &Document,
+    after_diagnostics: &BTreeMap<FieldRef, Vec<Diagnostic>>,
     entity_ids: &BTreeSet<EntityId>,
     changes: &mut ProjectionChanges,
 ) {
-    let before_report = validation_report(before);
-    let after_report = validation_report(after);
-
     for entity_id in entity_ids {
         let field_ids = before
             .entities
@@ -616,54 +866,43 @@ fn collect_diagnostic_projection_changes(
 
         for field_id in field_ids {
             let field = FieldRef::new(entity_id.clone(), field_id);
-            if diagnostics_for_field(&before_report, &field)
-                != diagnostics_for_field(&after_report, &field)
-            {
+            if before_diagnostics.get(&field) != after_diagnostics.get(&field) {
                 changes.fields.insert(field);
             }
         }
     }
 }
 
-fn diagnostics_for_field(report: &ValidationReport, field: &FieldRef) -> Vec<Diagnostic> {
-    let subject = SemanticSubject::EntityField(field.clone());
-    report
-        .diagnostics()
-        .iter()
-        .filter(|diagnostic| diagnostic.subjects.contains(&subject))
+fn changed_calculation_outcomes(
+    before: &CalculationOutcome,
+    after: &CalculationOutcome,
+) -> Vec<FieldRef> {
+    calculation_dependencies(before)
+        .keys()
+        .chain(calculation_dependencies(after).keys())
         .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .filter(|field| calculation_for(before, field) != calculation_for(after, field))
         .collect()
 }
 
-fn changed_calculation_projections(
-    before: &Document,
-    after: &Document,
-    before_calculation: &CalculationOutcome,
-    after_calculation: &CalculationOutcome,
-) -> BTreeSet<FieldRef> {
-    before
-        .entities
-        .iter()
-        .flat_map(|(entity_id, entity)| {
-            entity
-                .fields
-                .iter()
-                .filter(|(_, value)| matches!(value, Value::Formula(_)))
-                .map(|(field_id, _)| FieldRef::new(entity_id.clone(), field_id.clone()))
-        })
-        .chain(after.entities.iter().flat_map(|(entity_id, entity)| {
-            entity
-                .fields
-                .iter()
-                .filter(|(_, value)| matches!(value, Value::Formula(_)))
-                .map(|(field_id, _)| FieldRef::new(entity_id.clone(), field_id.clone()))
-        }))
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .filter(|field| {
-            calculation_for(before_calculation, field) != calculation_for(after_calculation, field)
-        })
-        .collect()
+fn retained_calculation_for(
+    calculation: &RetainedCalculationState,
+    target: &FieldRef,
+) -> FormulaCalculationOutcome {
+    if calculation.is_failed() {
+        calculation
+            .failure(target)
+            .map_or(FormulaCalculationOutcome::Unavailable, |failure| {
+                FormulaCalculationOutcome::Failure(failure.clone())
+            })
+    } else {
+        calculation.value(target).map_or(
+            FormulaCalculationOutcome::Unavailable,
+            FormulaCalculationOutcome::Value,
+        )
+    }
 }
 
 #[cfg(test)]

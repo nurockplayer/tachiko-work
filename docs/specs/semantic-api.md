@@ -1517,12 +1517,13 @@ mechanics in `workspace-engine`. Issue #94 implements current internal
 occurrence-and-revision-pinned selective entity/field projections, stale-result
 comparison, and exact-publication invalidation of entity, field, and
 dependency-derived calculation projections, with native/WASM equivalence
-evidence. Public session handles, exact public result/invalidation shapes,
-cross-host concurrency, Worker lifecycle,
+evidence. Issue #95 retains rebuildable formula and supporting query state
+across those revisions, consumes the same invalidation derivation, and falls
+back to full recomputation when impact is unsafe. Public session handles,
+exact public result/invalidation shapes, cross-host concurrency, Worker lifecycle,
 IPC/FFI/network serialization/ABI, and native/browser persistence/recovery
-remain Deferred to future host/transport work. Issue #95 owns retained
-incremental runtime state;
-Issue #11 retains broader transaction/recovery architecture, and Issue #12
+remain Deferred to future host/transport work. Issue #11 retains broader
+transaction/recovery architecture, and Issue #12
 retains persisted history/event-sourcing work.
 
 Every mapping MUST preserve the Semantic API Stable laws and outcomes. Runtime

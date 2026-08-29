@@ -39,6 +39,17 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- The provisional resident workspace session now retains rebuildable,
+  revision-scoped formula values/failures, dependency and reverse-dependency
+  indexes, validation diagnostics, and the address index. Publications reuse
+  Issue #94's exact projection-change classification, recompute formula dirty
+  roots plus old/new reverse-dependent closures, and fall back to the full
+  ADR-0018 oracle when retained impact cannot be trusted. Generated native
+  multi-revision oracle tests cover mutations, failures, cycles, renames,
+  deletion/restoration, and fallback recovery; the production resident
+  publication corpus continues to match natively and under WASM. The retained
+  state is runtime-only, is never serialized, and defines neither semantic
+  identity nor a public cache protocol or performance SLA.
 - The provisional resident workspace session now exposes occurrence-and-
   revision-pinned, stable-ID-selective entity and field projections without
   returning the whole semantic `Document`. Stored literals, bound formula
