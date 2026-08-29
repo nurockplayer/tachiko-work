@@ -13,12 +13,12 @@ selecting crate placement or public Rust/wire types.
 
 Implementation state: ADR-0016 boundary implemented by Issue #72; authoritative
 validation/report composition implemented by Issue #89. Current workspace-engine
-operations remain substantially snapshot-style; resident runtime implementation
-is deferred to #93–#95. Current one-field inert proposal validation does not
-implement ADR-0024 proposal occurrence identity, base/compatibility binding, or
-AtomicBatch. Issue #123 implements the storage-owned `.roproj/v1` pure codec,
-native exact-tree host workflow, and CLI composition without changing the
-Accepted crate DAG.
+operations remain substantially snapshot-style; resident runtime mechanics remain
+unimplemented, with #93–#95 now the current Designer MVP planning/implementation
+sequence. Current one-field inert proposal validation does not implement ADR-0024
+proposal occurrence identity, base/compatibility binding, or AtomicBatch. Issue
+#123 implements the storage-owned `.roproj/v1` pure codec, native exact-tree host
+workflow, and CLI composition without changing the Accepted crate DAG.
 
 Architecture authority: ADR-0016 for crate ownership; ADR-0020 for the
 first-class Semantic API product boundary; ADR-0024 for SemanticPatch proposal
@@ -248,8 +248,11 @@ without repeatedly reconstructing the complete document across the
 client/runtime boundary.
 
 The current snapshot-style surface is implementation state, not competing
-architecture authority. #93–#95 own later resident-session, selective-query/
-projection-invalidation, and retained-incremental implementation.
+architecture authority. #93–#95 are the current Designer MVP implementation
+sequence for resident-session, selective-query/projection-invalidation, and
+retained-incremental mechanics. Their current planning ownership does not imply
+those mechanics are already implemented or change their Provisional/Deferred
+status before the corresponding Issue lands.
 
 ADR-0022 requires one authoritative runtime state and ADR-0020 semantic
 atomicity, but does not define an exact runtime commit/swap/locking/cloning
@@ -453,10 +456,12 @@ does not implicitly grant filesystem/network/Git/plugin/deployment authority.
   handle shape, revision/concurrency, cancellation, state commit/swap/locking/
   cloning mechanics, Web Worker lifecycle, IPC/FFI/network mapping, projection
   delivery, and persistence/recovery implementations remain Deferred.
-- #93 owns later resident workspace session and revision-safe command
-  implementation.
-- #94 owns later selective semantic queries and projection invalidation.
-- #95 owns later retained incremental engine state with full-oracle equivalence.
+- #93 is the current Designer MVP owner for resident workspace session and
+  revision-safe command implementation; those mechanics remain unimplemented
+  until #93 lands.
+- #94 follows #93 with selective semantic queries and projection invalidation.
+- #95 follows #93 with retained incremental engine state and full-oracle
+  equivalence.
 - ADR-0023 and the `.roproj/v1` specifications own the Accepted layout and
   version-owned wire contract; #123 implements the production pure codec plus
   current native exact-tree materialize/canonical-only-validate/explicit-
