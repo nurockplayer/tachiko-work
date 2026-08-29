@@ -12,13 +12,13 @@ Principal/capability/scope/Grant/footprint/Approval/provenance laws without
 selecting crate placement or public Rust/wire types.
 
 Implementation state: ADR-0016 boundary implemented by Issue #72; authoritative
-validation/report composition implemented by Issue #89. Current workspace-engine
-operations remain substantially snapshot-style; resident runtime implementation
-is deferred to #93–#95. Current one-field inert proposal validation does not
-implement ADR-0024 proposal occurrence identity, base/compatibility binding, or
-AtomicBatch. Issue #123 implements the storage-owned `.roproj/v1` pure codec,
-native exact-tree host workflow, and CLI composition without changing the
-Accepted crate DAG.
+validation/report composition implemented by Issue #89. Issue #29 implements
+the provisional SemanticPatch lifecycle, Issue #30 its `ai-api` security
+composition, and Issue #93 the first production resident session with internal
+monotonic revision, explicit snapshots, and guarded state installation. #94–#95
+retain selective-query/projection and incremental-state work. Issue #123
+implements the storage-owned `.roproj/v1` pure codec, native exact-tree host
+workflow, and CLI composition without changing the Accepted crate DAG.
 
 Architecture authority: ADR-0016 for crate ownership; ADR-0020 for the
 first-class Semantic API product boundary; ADR-0024 for SemanticPatch proposal
@@ -177,8 +177,9 @@ recovery, and concrete durable commit mechanisms remain host concerns.
 ### workspace-engine
 
 `tachiko-workspace-engine` evolved in place from the former workflow crate; no
-parallel orchestration crate or semantic workspace aggregate exists. Current
-operations remain document-local and substantially snapshot-style.
+parallel orchestration crate or semantic workspace aggregate exists. Semantic
+operations remain document-local, with snapshot evaluation retained inside one
+production resident state owner.
 
 The engine owns real application behavior:
 
@@ -195,6 +196,10 @@ The engine owns real application behavior:
   field-value Commands and ordered AtomicBatch evaluation, including scoped
   Grants/preview, exact Human Approval, atomic publication/consumption,
   verification, and receipts through a host-supplied revision/publication seam;
+- a provisional resident session owning one authoritative `Document`
+  occurrence, an internal monotonic `SemanticRevision`, revision-pinned
+  validation/calculation queries, explicit detached snapshots, and guarded
+  compare-and-publish through that same publication seam;
 - semantic comparison and merge-plus-impact orchestration; and
 - deterministic runtime-export projection independent of filesystem and
   terminal rendering.
@@ -223,9 +228,9 @@ It does not add another engine, crate, mutation primitive, operation vocabulary,
 or storage dependency. ADR-0026 consumes its exact binding structurally and
 deliberately selects no canonical bytes, digest, public DTO, or crate. Exact
 proposal/revision Rust types, ID generation, and transport remain Provisional.
-Issue #29 now supplies one provisional snapshot/publication lifecycle
-implementation without selecting #93's concrete resident revision/session
-mechanics.
+Issue #29 supplies the provisional snapshot/publication lifecycle. Issue #93
+composes its unchanged command, patch, stale/conflict, authorization, Approval,
+and publication meanings with the concrete resident revision/state owner.
 
 ADR-0026 adds the **authorization law** beside that application boundary. The
 trusted semantic/application authority derives operation-family/disclosure-
@@ -247,9 +252,9 @@ mirror. Normal interactive clients should use Semantic API intent/results
 without repeatedly reconstructing the complete document across the
 client/runtime boundary.
 
-The current snapshot-style surface is implementation state, not competing
-architecture authority. #93–#95 own later resident-session, selective-query/
-projection-invalidation, and retained-incremental implementation.
+The current resident session remains an internal Provisional Rust surface, not
+a public session/transport contract. #94–#95 own later selective-query/
+projection-invalidation and retained-incremental implementation.
 
 ADR-0022 requires one authoritative runtime state and ADR-0020 semantic
 atomicity, but does not define an exact runtime commit/swap/locking/cloning
@@ -339,13 +344,13 @@ validation inside Rust as implementation mechanisms.
 | Merge plus base-to-result impact | CLI over merge and diff engines | Workspace-engine |
 | Runtime export semantic projection | CLI | Workspace-engine |
 | Host persistence and safe writes | CLI/storage | CLI/storage/host composition, unchanged |
-| AI proposal envelope | One-field inert `Suggestion` only | Issue #29 implements a provider-neutral provisional SemanticPatch/AtomicBatch lifecycle in workspace-engine; #30 adds typed `ai-api` proposal/execution delegation with inert untrusted evidence, while #93 owns resident revision/session mechanics |
-| Semantic authorization/Approval | Not implemented | Issue #29 implements provisional trusted in-process relational Grants, scoped preview, exact finite Approval state, atomic consumption/publication, and receipts; #30 adds hostile-client admission and safe denials; public wire/authentication/host/runtime completion remains Deferred/#93 |
+| AI proposal envelope | One-field inert `Suggestion` only | Issue #29 implements a provider-neutral provisional SemanticPatch/AtomicBatch lifecycle in workspace-engine; #30 adds typed `ai-api` proposal/execution delegation with inert untrusted evidence; #93 supplies resident revision/session mechanics |
+| Semantic authorization/Approval | Not implemented | Issue #29 implements provisional trusted in-process relational Grants, scoped preview, exact finite Approval state, atomic consumption/publication, and receipts; #30 adds hostile-client admission and safe denials; #93 supplies guarded resident publication while public wire/authentication remains Deferred |
 | ID generation mechanism | CLI through workflow seam | CLI through workspace-engine seam |
 | Product-semantic client contract | Provisional/internal | First-class transport-neutral Semantic API under ADR-0020 |
 | Interactive authoritative state ownership | Open under #26 | Shared Rust semantic/application runtime under ADR-0022 |
-| Resident interactive topology | PR #91 spike evidence | Accepted under ADR-0022; implementation pending #93–#95 |
-| Concrete session/revision/transport mechanics | Open under #26 | Deferred; not frozen by ADR-0022 |
+| Resident interactive topology | PR #91 spike evidence | Accepted under ADR-0022; first production resident session implemented by #93, with #94–#95 retaining projection/incremental work |
+| Concrete session/revision/transport mechanics | Open under #26 | Internal in-process session/revision mechanics implemented by #93; public transport shapes remain Deferred |
 
 Low-level diff and merge algorithms still validate or calculate where their own
 pure correctness contracts require it. That is algorithm ownership below the
@@ -399,8 +404,14 @@ PR #91 adds executable topology evidence that a TypeScript → Node Worker → W
 `Document`, preserve equivalent exercised native/WASM semantic outcomes, and
 avoid repeated whole-document request/result traffic.
 
+Issue #93 adds production evidence through the same corpus: the resident
+workspace-engine session retains one `Document`, pins queries to its current
+opaque revision, installs an existing typed FormulaUpdate through the guarded
+publication seam, advances once, and rejects a stale precondition identically
+on native and WASM.
+
 This evidence supports semantic portability and ADR-0022 runtime ownership. It
-does not define a public WASM ABI, Web Worker lifecycle, resident session type,
+does not define a public WASM ABI, Web Worker lifecycle, public resident session type,
 browser persistence mechanism, wire DTO, memory budget, or browser/device
 latency SLA.
 
@@ -440,21 +451,22 @@ does not implicitly grant filesystem/network/Git/plugin/deployment authority.
   operation catalogue and exact Rust/wire shapes remain Provisional.
 - ADR-0024 owns proposal occurrence immutability, exact-change and Semantic API
   compatibility binding, semantic-base pinning, and stale meaning; Issue #29
-  supplies the current provisional Rust lifecycle while wire encodings and
-  concrete resident revision mechanics remain Provisional/#93.
+  supplies the current provisional Rust lifecycle and #93 the internal resident
+  revision mechanics, while public wire encodings remain Provisional.
 - ADR-0026 owns Principal, capability, stable-ID scope, Grant, trusted
   AuthorizationFootprint, exact Approval, expiry/replay/revocation, provenance,
   and external-effect separation. Exact crate/module placement, DTOs, storage,
-  clocks and wire formats remain Provisional/#93; Issue #29 supplies the
+  clocks and wire formats remain Provisional; Issue #29 supplies the
   current replaceable in-process implementation, while #30 supplies provisional
   provider-facing context/error shapes and stable internal code meanings;
   canonical bytes/digest/signature/MAC/portable tokens remain Deferred.
-- ADR-0022 owns resident runtime/state and host-separation laws, while session
-  handle shape, revision/concurrency, cancellation, state commit/swap/locking/
-  cloning mechanics, Web Worker lifecycle, IPC/FFI/network mapping, projection
-  delivery, and persistence/recovery implementations remain Deferred.
-- #93 owns later resident workspace session and revision-safe command
-  implementation.
+- ADR-0022 owns resident runtime/state and host-separation laws. Issue #93
+  supplies current Provisional evidence for the internal resident workspace
+  session, opaque monotonic revision, exact in-process comparison, and guarded
+  state installation. Public session-handle shape, broader cross-host
+  concurrency, cancellation, public commit/swap/locking/cloning contracts, Web
+  Worker lifecycle, IPC/FFI/network mapping, projection delivery, and
+  persistence/recovery implementations remain Deferred.
 - #94 owns later selective semantic queries and projection invalidation.
 - #95 owns later retained incremental engine state with full-oracle equivalence.
 - ADR-0023 and the `.roproj/v1` specifications own the Accepted layout and

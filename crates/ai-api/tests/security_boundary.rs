@@ -17,6 +17,7 @@ use tachiko_workspace_engine::{
         SemanticCommand, SemanticPatchBody, SemanticPublicationAuthority, SemanticPublicationError,
         SemanticRevision, SemanticScope, TrustedInstant,
     },
+    resident_session::{ResidentWorkspaceSession, TrustedPublicationTimeSource},
 };
 
 const NOW: TrustedInstant = TrustedInstant::new(10);
@@ -231,6 +232,14 @@ impl SemanticPublicationAuthority for TestPublication {
             self.revision.clone(),
             authorization,
         ))
+    }
+}
+
+struct FixedTrustedTime;
+
+impl TrustedPublicationTimeSource for FixedTrustedTime {
+    fn now(&mut self) -> TrustedInstant {
+        TrustedInstant::new(11)
     }
 }
 
@@ -541,6 +550,8 @@ fn missing_trusted_identity_or_time_fails_before_lifecycle_admission() {
 #[test]
 fn approved_delegated_execution_uses_the_trusted_lifecycle() {
     let document = security_document("ordinary data");
+    let mut session = ResidentWorkspaceSession::new(document_scope_id(), document);
+    let initial = session.export_snapshot();
     let mut lifecycle = lifecycle();
     grant(
         &mut lifecycle,
@@ -568,12 +579,12 @@ fn approved_delegated_execution_uses_the_trusted_lifecycle() {
     let submitted = submit_semantic_proposal(
         &mut lifecycle,
         &TestContext::agent(),
-        &document_scope_id(),
-        &document,
-        &revision("r1"),
+        initial.document_scope(),
+        initial.document(),
+        initial.revision(),
         AiProposalRequest::new(
             ProposalId::from("proposal-approved"),
-            revision("r1"),
+            initial.revision().clone(),
             field_body(number(20.0)),
             vec![evidence.clone()],
         ),
@@ -583,9 +594,9 @@ fn approved_delegated_execution_uses_the_trusted_lifecycle() {
 
     lifecycle
         .preview(
-            &document_scope_id(),
-            &document,
-            &revision("r1"),
+            initial.document_scope(),
+            initial.document(),
+            initial.revision(),
             submitted.patch().id(),
             &principal("reviewer"),
             NOW,
@@ -594,9 +605,9 @@ fn approved_delegated_execution_uses_the_trusted_lifecycle() {
     let approval_id = ApprovalId::from("approval-1");
     lifecycle
         .approve(
-            &document_scope_id(),
-            &document,
-            &revision("r1"),
+            initial.document_scope(),
+            initial.document(),
+            initial.revision(),
             ApprovalRequest::new(
                 approval_id.clone(),
                 submitted.patch().id().clone(),
@@ -608,19 +619,24 @@ fn approved_delegated_execution_uses_the_trusted_lifecycle() {
         )
         .unwrap();
 
-    let mut publication = TestPublication::new(document);
-    let receipt = execute_semantic_proposal(
-        &mut lifecycle,
-        &TestContext::agent(),
-        &AiExecutionRequest::new(submitted.patch().id().clone(), Some(approval_id)),
-        &mut publication,
-    )
-    .expect("the exact approved execution should delegate to the lifecycle");
+    let mut time = FixedTrustedTime;
+    let receipt = {
+        let mut publication = session.publication_authority(&mut time);
+        execute_semantic_proposal(
+            &mut lifecycle,
+            &TestContext::agent(),
+            &AiExecutionRequest::new(submitted.patch().id().clone(), Some(approval_id)),
+            &mut publication,
+        )
+        .expect("the exact approved execution should delegate to the lifecycle")
+    };
+    let installed = session.export_snapshot();
 
     assert!(receipt.verified);
-    assert_eq!(receipt.resulting_revision, revision("r2"));
+    assert_ne!(installed.revision(), initial.revision());
+    assert_eq!(receipt.resulting_revision, *installed.revision());
     assert_eq!(
-        publication.document.entities["goblin"].fields["damage"],
+        installed.document().entities["goblin"].fields["damage"],
         number(20.0)
     );
 }

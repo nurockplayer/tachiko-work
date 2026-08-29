@@ -14,8 +14,9 @@ provider-facing `ai-api` hostile-client boundary with explicit instruction/data
 treatment, trusted-host identity/time, lifecycle proof of an active Delegated
 occurrence, stable safe denials, and unconditional raw-mutation/host-effect
 rejection. A Human session principal is not an AI credential. Concrete
-authentication, resident revision/session/transport mechanics remain #93 and
-later host work.
+authentication and public transport mechanics remain later host work. Issue
+Issue `#93` supplies the current internal resident revision/session publication
+composition without changing the AI authority boundary.
 
 ## Principle
 

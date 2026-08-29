@@ -33,6 +33,7 @@ use thiserror::Error;
 pub mod analysis_operations;
 pub mod formula_operations;
 pub mod patch_lifecycle;
+pub mod resident_session;
 
 /// Symbolic codes emitted by workspace composition of formula-engine outcomes.
 ///

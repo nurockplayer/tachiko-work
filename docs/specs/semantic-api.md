@@ -27,10 +27,14 @@ scoped preview, exact finite Human Approval, atomic publication/consumption,
 verification against the immutable installed snapshot captured by the guarded
 publication result, and receipts. Current Rust functions and result structures
 are implementation evidence, not the versioned public product contract. The
-lifecycle remains snapshot-style and receives opaque revision/current-state
-publication mechanics from a trusted host seam; the concrete resident runtime,
-revision token, concurrency, and state-installation implementation remains
-later work under #93–#95. Issue #30's provisional `ai-api` boundary now obtains
+lifecycle still evaluates immutable snapshots internally. Issue #93's
+provisional `resident_session` now owns one authoritative Rust `Document`
+occurrence plus internal monotonic `SemanticRevision`, exposes revision-pinned
+validation/calculation queries and explicit detached snapshot export, and
+implements guarded compare-and-publish/state installation behind the existing
+`SemanticPublicationAuthority`. Its Rust shapes and revision encoding remain
+internal implementation evidence rather than a public session or transport
+contract. Issue #30's provisional `ai-api` boundary now obtains
 effective identity/time only from trusted host context, requires the lifecycle
 to prove an active Delegated occurrence, delegates typed proposal/execution to
 it, and projects disclosure-safe machine outcomes while rejecting raw mutation
@@ -141,10 +145,13 @@ This specification does not freeze a new public `Workspace`, `Project`, session,
 or revision type. Milestone 02 semantic references remain document-local where
 ADR-0015 says they are document-local. ADR-0024 requires every reviewable
 proposal to bind one exact semantic context revision, while ADR-0022 accepts a
-resident shared Rust runtime as the preferred interactive topology. The exact
-session handle, revision/precondition representation, concurrency/conflict
-policy, cancellation, and runtime state-installation mechanics remain Deferred
-to #93 and related runtime work.
+resident shared Rust runtime as the preferred interactive topology. Issue #93
+supplies the current internal resident session occurrence, opaque monotonic
+revision and equality, explicit snapshot, and guarded in-process state
+installation. Exact public session handles, revision/precondition encoding,
+broader cross-host concurrency mechanisms, cancellation, and public
+commit/swap/locking/transport contracts remain Deferred to later runtime and
+host work.
 
 ## Stable targeting
 
@@ -867,9 +874,10 @@ disclosure policy without acquiring an Approval requirement from this rule.
 Re-proposing against a newer base re-runs command construction/binding and
 authoritative Propose evaluation and receives a new proposal identity.
 Issue #29's provisional lifecycle now returns an internal stale outcome over a
-host-supplied opaque revision reference. Exact revision-token types, equality
-mechanics, session scope, persistence, concurrency algorithms, and public
-stale-result DTOs remain #93 or later transport work.
+host-supplied opaque revision reference. Exact revision-token encoding, public
+session scope, persistence, concurrency algorithms, and public stale-result
+DTOs remain later transport work; #93 supplies the current internal
+token/equality implementation.
 
 ### Preconditions
 
@@ -934,9 +942,10 @@ API contract binding, semantic-base pinning, and fail-closed stale meaning.
 ADR-0026 fixes structural exact Approval, live authorization, and
 consume-with-successful-publication laws without selecting a public token or
 DTO. Issue #29 supplies the current provisional in-process Approval lifecycle
-types. Proposal-ID/revision encoding, public Approval DTOs, and concrete
-session/commit mechanics remain Provisional or Deferred to #93 and transport
-work.
+types and ProposalId issuance. Issue #93 supplies the current internal resident
+SemanticRevision ownership, equality, and commit mechanics. Exact public
+proposal-ID/revision-token encodings and public Approval/session DTOs remain
+Provisional or Deferred to transport work.
 
 ## Semantic atomicity
 
@@ -1411,8 +1420,9 @@ Conformance also covers unsupported Semantic API compatibility, reuse of one
 proposal identity with different content, generated-ID binding, and equivalent
 Stable native/WASM outcomes where the same capability is exposed. Issue #29
 implements current field-value/batch lifecycle fixtures. Issue #144 adds
-formula reasoning, scenario, and formula-update conformance; complete catalogue,
-runtime, and transport conformance remains #93 and later work.
+formula reasoning, scenario, and formula-update conformance; complete catalogue
+and transport conformance remains later work. Issue #93 adds production
+resident session/revision conformance on native and WASM.
 
 ## Stability classification
 
@@ -1434,7 +1444,9 @@ runtime, and transport conformance remains #93 and later work.
 | Representation-neutral `ExactChangeBinding` law | Accepted under ADR-0024 |
 | Semantic API compatibility binding with no independent patch-operation version | Accepted under ADR-0024 |
 | Exact semantic-base pinning and fail-closed stale behavior | Accepted under ADR-0024 |
-| Proposal-ID, revision-token, and transport encoding | Provisional / #93 |
+| ProposalId issuance mechanism | Internal / Provisional under #29 |
+| Resident SemanticRevision ownership and equality implementation | Internal / Provisional under #93 |
+| Proposal-ID, revision-token, and transport encoding | Public encoding Provisional or Deferred to transport work |
 | Hash/digest/signature/MAC/canonical proposal bytes | Deferred under ADR-0026 |
 | Preview is proposal projection, not independent canonical state | Accepted |
 | Finalization is operation-gate meaning, not mandatory stateful two-phase protocol | Accepted |
@@ -1467,7 +1479,7 @@ runtime, and transport conformance remains #93 and later work.
 | Complete externally Stable operation catalogue | Provisional, promote operation-by-operation |
 | Exact semantic result tagged union / field spelling | Provisional |
 | Exact effect/diff projection shape | Provisional |
-| Revision/concurrency/precondition token | #93 / Provisional |
+| Revision/concurrency/precondition token | Internal monotonic precondition implemented by #93; public/concurrent transport contract Provisional |
 | Intra-batch temporary-object handle syntax | Provisional |
 | Public embedded Rust SDK / dedicated API crate | Deferred |
 | Native/WASM/IPC/FFI/network serialization | ADR-0022-constrained future transport work / Deferred |
@@ -1495,10 +1507,15 @@ runtime; resident topology is preferred; frontends do not own a second semantic
 authority; full snapshots are explicit boundaries; and native/WASM preserve
 equivalent Stable semantic meaning where capabilities overlap.
 
-Concrete resident session handles, revision/concurrency mechanics, Worker
-lifecycle, projection delivery, IPC/FFI/network serialization/ABI, and
-persistence/recovery remain Deferred to #93–#95 and future host/transport
-implementation as applicable.
+Issue #93 implements the current provisional in-process resident session,
+monotonic revision precondition, explicit snapshot, and guarded installation
+mechanics in `workspace-engine`, with native/WASM equivalence evidence. Public
+session handles, cross-host concurrency, Worker lifecycle,
+IPC/FFI/network serialization/ABI, and native/browser persistence/recovery
+remain Deferred to future host/transport work. Issue #94 owns selective queries
+and projection invalidation; Issue #95 owns retained incremental runtime state;
+Issue #11 retains broader transaction/recovery architecture, and Issue #12
+retains persisted history/event-sourcing work.
 
 Every mapping MUST preserve the Semantic API Stable laws and outcomes. Runtime
 or transport topology is not independent semantic authority. A mapping of

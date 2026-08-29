@@ -51,11 +51,13 @@ replay/revocation rules, minimum provenance, and separation from host/external
 effects. Issue #29 implements the current provisional workspace-engine
 lifecycle/state/publication seam, and #30 adds the provisional provider-facing
 instruction/data, trusted-context, bypass-denial, and host-effect-denial seam.
-Concrete resident revision/session mechanics remain #93. ADR-0022 accepts the resident shared Rust runtime,
+Issue #93 implements the current internal resident revision/session mechanics.
+ADR-0022 accepts the resident shared Rust runtime,
 no-second-canonical-client-model rule, host separation, explicit snapshot
-boundaries, and native/WASM semantic parity while leaving exact
-session/revision/Worker/ABI/persistence mechanics Deferred to #93–#95 and future
-host/transport implementation. ADR-0019 resolves the validation/diagnostics
+boundaries, and native/WASM semantic parity while leaving public session,
+cross-host concurrency, Worker/ABI, and persistence mechanics Deferred to
+future host/transport implementation. Issue #94 retains selective-query and
+projection work; Issue #95 retains incremental-state work. ADR-0019 resolves the validation/diagnostics
 architecture; formula binding/failure/numeric semantics remain governed by
 ADR-0018; stable identity by ADR-0015; storage representation by ADR-0017.
 ADR-0020's #32 amendment additionally accepts logical structured formula
@@ -87,7 +89,8 @@ canonical bytes, a digest profile, public DTOs, or enterprise IAM. #29 now
 implements the provisional preview/apply lifecycle and Approval-state/atomic-
 consumption seam; #30 implements the current provider-facing trusted-context,
 prompt/data separation, bypass prevention, safe-code projection, and external-
-effect denial seam; #93 owns concrete semantic revision/session mechanics.
+effect denial seam; #93 supplies the internal semantic revision/session
+mechanics. Public authentication and wire mapping remain deferred.
 ADR-0019 allows deterministic read-only domain/extension validators to share
 diagnostic semantics without deciding plugin runtime mechanics.
 
