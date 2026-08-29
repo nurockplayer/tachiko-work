@@ -17,6 +17,7 @@ import type {
 
 type Notice = {
   tone: "error" | "success";
+  title: string;
   message: string;
   diagnostics: DiagnosticProjection[];
 };
@@ -68,6 +69,7 @@ export function mountDesigner(
           };
     notice = {
       tone: "error",
+      title: published ? "Edit published; refresh incomplete" : "Edit not published",
       message: failure.message,
       diagnostics: failure.diagnostics,
     };
@@ -101,6 +103,7 @@ export function mountDesigner(
       store.finishRefresh(refresh);
       notice = {
         tone: "success",
+        title: "Publication complete",
         message: `${humanize(target.field)} published. Dependent calculations are current.`,
         diagnostics: [],
       };
@@ -404,7 +407,7 @@ function noticeMarkup(notice: Notice | null): string {
   if (notice === null) return '<div class="notice-slot" aria-live="polite"></div>';
   return `
     <div class="notice ${notice.tone}" role="${notice.tone === "error" ? "alert" : "status"}">
-      <strong>${notice.tone === "error" ? "Edit not published" : "Publication complete"}</strong>
+      <strong>${escapeHtml(notice.title)}</strong>
       <span>${escapeHtml(notice.message)}</span>
       ${notice.diagnostics
         .map(

@@ -331,6 +331,9 @@ describe("Designer application seam", () => {
         "Selective refresh is temporarily unavailable.",
       );
     });
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain(
+      "Edit published; refresh incomplete",
+    );
     const staleDamage = root.querySelector<HTMLInputElement>(
       'input[aria-label="Damage for Iron Sword"]',
     );
