@@ -20,7 +20,8 @@ not imply due dates or release commitments.
 
 In this index, `Completed horizon` means a stage has no open Issues and is no
 longer current; the underlying GitHub Milestone may remain open for historical
-classification.
+classification. It is a planning-state statement, not a claim that every
+aspirational product outcome named for that stage has been implemented.
 
 The milestone policy and original classification audit are recorded in
 [Issue #56](https://github.com/nurockplayer/tachiko-work/issues/56). The live
@@ -33,10 +34,10 @@ The current repository planning horizon is:
 
 > **05 · Designer MVP**
 
-Game Studio Beta is complete. Designer MVP turns the established semantic,
-formula, analysis, authorization, storage, and runtime-boundary foundations into
-a non-CLI-first workspace for designers without creating a second semantic
-authority in the UI.
+Game Studio Beta is a completed planning horizon. Designer MVP turns the
+established semantic, formula, analysis, authorization, storage, and
+runtime-boundary foundations into a non-CLI-first workspace for designers
+without creating a second semantic authority in the UI.
 
 - [Open work in the current horizon](https://github.com/nurockplayer/tachiko-work/issues?q=is%3Aissue+is%3Aopen+milestone%3A%2205+%C2%B7+Designer+MVP%22)
 - [All open Issues](https://github.com/nurockplayer/tachiko-work/issues?q=is%3Aissue+is%3Aopen)
@@ -53,7 +54,7 @@ authority in the UI.
 | `05 · Designer MVP` | **Active** | Enable non-CLI-first use through a graphical workspace, table/spreadsheet projections, visual authoring, progressive typing, and designer-grade diagnostics. | [Issues](https://github.com/nurockplayer/tachiko-work/issues?q=is%3Aissue+milestone%3A%2205+%C2%B7+Designer+MVP%22) |
 | `06 · Team Workspace Beta` | Future horizon | Make semantic work reviewable and collaborative through machine deltas, deterministic merge/conflicts, history policy, permissions, and team review workflows. | [Issues](https://github.com/nurockplayer/tachiko-work/issues?q=is%3Aissue+milestone%3A%2206+%C2%B7+Team+Workspace+Beta%22) |
 | `07 · Migration & Enterprise Beta` | Future horizon | Support gradual adoption through evidence-backed Office/ODF/CSV interoperability, explicit migration, private extensions, and validated enterprise workflows. | [Issues](https://github.com/nurockplayer/tachiko-work/issues?q=is%3Aissue+milestone%3A%2207+%C2%B7+Migration+%26+Enterprise+Beta%22) |
-| `08 · Tachiko Work 1.0` | Future horizon | Establish the stable public platform promise: supported API/format commitments, conformance and security evidence, extension compatibility, licensing, distribution, and support boundaries. | [Issues](https://github.com/nurockplayer/tachiko-work/issues?q=is%3Aissue+milestone%3A%2208+%C2%B7+Tachiko+Work+1.0%22) |
+| `08 · Tachiko Work 1.0` | Future horizon | Establish the stable public platform promise: supported API/format commitments, conformance and security evidence, extension compatibility, licensing, distribution, and support boundaries required for release. | [Issues](https://github.com/nurockplayer/tachiko-work/issues?q=is%3Aissue+milestone%3A%2208+%C2%B7+Tachiko+Work+1.0%22) |
 
 ## Workstream roadmaps
 
