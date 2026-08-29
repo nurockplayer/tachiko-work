@@ -10,6 +10,8 @@ Before treating an architecture detail as permanent, read [`../governance/knowle
 
 The diagrams show product architecture direction. Internal crate boundaries, runtime seams, and semantic-model details may evolve where the repository classifies them as Provisional or Open Questions.
 
+For repository-derived, revision-pinned architecture maps and Architecture Delta use, read [`derived-architecture-maps.md`](derived-architecture-maps.md). Those maps are derived review/documentation evidence, not a replacement for Accepted ADR/spec authority.
+
 ## Read by subsystem
 
 ### Semantic core and Semantic API
