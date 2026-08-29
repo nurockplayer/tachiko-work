@@ -9,6 +9,11 @@ command -v pnpm >/dev/null 2>&1 || {
   echo "designer-check: pnpm 11.25.0 is required" >&2
   exit 1
 }
+designer_pnpm_version="$(pnpm --dir "${designer_dir}" --version)"
+if [[ "${designer_pnpm_version}" != "11.25.0" ]]; then
+  echo "designer-check: pnpm 11.25.0 is required; found ${designer_pnpm_version}" >&2
+  exit 1
+fi
 
 pnpm --dir "${designer_dir}" install --frozen-lockfile
 pnpm --dir "${designer_dir}" peers check
