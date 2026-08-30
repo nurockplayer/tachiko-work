@@ -175,6 +175,9 @@ impl SpineScan {
 const SIDECAR_FORMAT: &str = "tachiko.issue-175.spine-sidecar";
 const SIDECAR_VERSION: u32 = 1;
 const SIDECAR_ALGORITHM: &str = "roproj-v1-structural-index/sha256-framed-v1";
+const SIDECAR_MAX_SOURCE_MULTIPLIER: usize = 8;
+const SIDECAR_MAX_FIXED_OVERHEAD: usize = 1024 * 1024;
+const SIDECAR_MAX_BYTES: usize = 512 * 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -1114,7 +1117,14 @@ fn sidecar_integrity_sha256(
 fn decode_sidecar(
     bytes: &[u8],
     expected_binding: &SourceBinding,
+    trusted_source_bytes: usize,
 ) -> Result<StructuralIndex, String> {
+    let byte_budget = sidecar_byte_budget(trusted_source_bytes);
+    if bytes.len() > byte_budget {
+        return Err(format!(
+            "sidecar exceeds source-derived {byte_budget} byte budget"
+        ));
+    }
     let source = std::str::from_utf8(bytes).map_err(|error| error.to_string())?;
     inspect_roproj(source, ROPROJ_V1_MAX_JSON_NESTING)
         .map_err(|error| format!("sidecar strict JSON failure: {error:?}"))?;
@@ -1156,6 +1166,13 @@ fn decode_sidecar(
     }
 }
 
+fn sidecar_byte_budget(trusted_source_bytes: usize) -> usize {
+    trusted_source_bytes
+        .saturating_mul(SIDECAR_MAX_SOURCE_MULTIPLIER)
+        .saturating_add(SIDECAR_MAX_FIXED_OVERHEAD)
+        .min(SIDECAR_MAX_BYTES)
+}
+
 fn require_sidecar_matches_trusted_index(
     decoded: StructuralIndex,
     trusted: &StructuralIndex,
@@ -1193,7 +1210,7 @@ fn open_sidecar_or_fallback(
                 .map(|(document, _, _)| SidecarOpen::FellBackToExactAdmission(document));
         }
     };
-    match decode_sidecar(bytes, &current_binding)
+    match decode_sidecar(bytes, &current_binding, pinned.source_bytes)
         .and_then(|decoded| require_sidecar_matches_trusted_index(decoded, &trusted))
     {
         Ok(index) => Ok(SidecarOpen::Reused {
@@ -1238,8 +1255,27 @@ fn pin_git_bound_snapshot(
     let identity_started = Instant::now();
     let object_format = git_output(repo, &["rev-parse", "--show-object-format"]);
     let commit = git_output(repo, &["rev-parse", "HEAD"]);
-    let tree = git_output(repo, &["rev-parse", "HEAD:project.roproj"]);
-    let listing = git_output(repo, &["ls-tree", "-r", "HEAD", "--", "project.roproj"]);
+    pin_git_bound_snapshot_at_commit(repo, object_format, commit, identity_started)
+}
+
+fn pin_git_bound_snapshot_for_commit(
+    repo: &Path,
+    commit: &str,
+) -> (PinnedSourceSnapshot, SourceBinding, Duration, Duration) {
+    let identity_started = Instant::now();
+    let object_format = git_output(repo, &["rev-parse", "--show-object-format"]);
+    pin_git_bound_snapshot_at_commit(repo, object_format, commit.to_owned(), identity_started)
+}
+
+fn pin_git_bound_snapshot_at_commit(
+    repo: &Path,
+    object_format: String,
+    commit: String,
+    identity_started: Instant,
+) -> (PinnedSourceSnapshot, SourceBinding, Duration, Duration) {
+    let tree_spec = format!("{commit}:project.roproj");
+    let tree = git_output(repo, &["rev-parse", &tree_spec]);
+    let listing = git_output(repo, &["ls-tree", "-r", &commit, "--", "project.roproj"]);
     let blobs = listing
         .lines()
         .map(|line| {
@@ -3314,13 +3350,27 @@ fn issue_175_dirty_sidecar_reuse_is_bound_and_fails_closed() {
     let expected = mixed_document(257, 37);
     super::super::host::materialize_roproj(&root, &expected).unwrap();
     let scan = scan_spine_host(&root, true).unwrap();
+    let source_bytes = scan.work.source_bytes;
     let index = scan.structural.unwrap();
     let binding = SourceBinding::DirtyFilesystem {
         source_sha256: fingerprint_source(&root).unwrap().0,
     };
     let sidecar = encode_sidecar(&index, binding.clone()).unwrap();
 
-    assert_eq!(decode_sidecar(&sidecar, &binding).unwrap(), index);
+    assert_eq!(
+        decode_sidecar(&sidecar, &binding, source_bytes).unwrap(),
+        index
+    );
+    let oversized = vec![b'x'; sidecar_byte_budget(source_bytes) + 1];
+    assert!(
+        decode_sidecar(&oversized, &binding, source_bytes)
+            .unwrap_err()
+            .contains("sidecar exceeds source-derived")
+    );
+    assert!(matches!(
+        open_sidecar_or_fallback(&root, &oversized, &binding).unwrap(),
+        SidecarOpen::FellBackToExactAdmission(document) if document == expected
+    ));
     assert!(matches!(
         open_sidecar_or_fallback(&root, &sidecar, &binding).unwrap(),
         SidecarOpen::Reused { index: reused, source }
@@ -3330,7 +3380,7 @@ fn issue_175_dirty_sidecar_reuse_is_bound_and_fails_closed() {
     let mut fabricated_index = index.clone();
     fabricated_index.directory.entities[0].key = "fabricated_sidecar_key".to_owned();
     let fabricated = encode_sidecar(&fabricated_index, binding.clone()).unwrap();
-    assert!(decode_sidecar(&fabricated, &binding).is_ok());
+    assert!(decode_sidecar(&fabricated, &binding, source_bytes).is_ok());
     assert!(matches!(
         open_sidecar_or_fallback(&root, &fabricated, &binding).unwrap(),
         SidecarOpen::FellBackToExactAdmission(document) if document == expected
@@ -3416,23 +3466,26 @@ fn issue_175_git_sidecar_binds_exact_immutable_snapshot_objects() {
     );
     assert!(blobs.iter().all(|blob| blob.mode == "100644"));
     let sidecar = encode_sidecar(&index, binding.clone()).unwrap();
-    assert_eq!(decode_sidecar(&sidecar, &binding).unwrap(), index);
+    assert_eq!(
+        decode_sidecar(&sidecar, &binding, pinned.source_bytes).unwrap(),
+        index
+    );
 
     let mut fabricated_index = index.clone();
     fabricated_index.field_presence.pop();
     let fabricated = encode_sidecar(&fabricated_index, binding.clone()).unwrap();
-    let decoded = decode_sidecar(&fabricated, &binding).unwrap();
+    let decoded = decode_sidecar(&fabricated, &binding, pinned.source_bytes).unwrap();
     assert!(require_sidecar_matches_trusted_index(decoded, &index).is_err());
 
     let mut mismatched_payload = index.clone();
     mismatched_payload.directory.source_fingerprint = "00".repeat(32);
     let mismatched_sidecar = encode_sidecar(&mismatched_payload, binding.clone()).unwrap();
-    assert!(decode_sidecar(&mismatched_sidecar, &binding).is_err());
+    assert!(decode_sidecar(&mismatched_sidecar, &binding, pinned.source_bytes).is_err());
 
     let dirty_binding = SourceBinding::DirtyFilesystem {
         source_sha256: index.directory.source_fingerprint.clone(),
     };
-    assert!(decode_sidecar(&sidecar, &dirty_binding).is_err());
+    assert!(decode_sidecar(&sidecar, &dirty_binding, pinned.source_bytes).is_err());
     assert!(matches!(
         open_sidecar_or_fallback(&project, &sidecar, &binding).unwrap(),
         SidecarOpen::FellBackToExactAdmission(document) if document == expected
@@ -3444,10 +3497,61 @@ fn issue_175_git_sidecar_binds_exact_immutable_snapshot_objects() {
         .unwrap()
         .structural
         .unwrap();
-    let decoded = decode_sidecar(&sidecar, &dirty_independent_binding).unwrap();
+    let decoded = decode_sidecar(
+        &sidecar,
+        &dirty_independent_binding,
+        dirty_independent_pin.source_bytes,
+    )
+    .unwrap();
     assert_eq!(
         require_sidecar_matches_trusted_index(decoded, &dirty_independent_index).unwrap(),
         index
+    );
+}
+
+#[test]
+fn issue_175_git_snapshot_pin_uses_one_captured_commit() {
+    let temp = ResearchTempDirectory::new();
+    let repo = temp.path().join("repo");
+    let expected = mixed_document(17, 37);
+    let project = initialize_git_snapshot(&repo, &expected);
+    let captured_commit = git_output(&repo, &["rev-parse", "HEAD"]);
+
+    let mut changed = expected.clone();
+    changed.title.push_str(" at revision B");
+    let replacement = temp.path().join("replacement.roproj");
+    super::super::host::materialize_roproj(&replacement, &changed).unwrap();
+    std::fs::copy(
+        replacement.join("manifest.json"),
+        project.join("manifest.json"),
+    )
+    .unwrap();
+    run_git(&repo, &["add", "project.roproj/manifest.json"]);
+    run_git(
+        &repo,
+        &[
+            "-c",
+            "user.name=Tachiko Research",
+            "-c",
+            "user.email=research@tachiko.invalid",
+            "commit",
+            "-qm",
+            "move issue 175 snapshot head",
+        ],
+    );
+    assert_ne!(git_output(&repo, &["rev-parse", "HEAD"]), captured_commit);
+
+    let (captured, binding, _, _) = pin_git_bound_snapshot_for_commit(&repo, &captured_commit);
+    let SourceBinding::GitSnapshot { commit, .. } = &binding else {
+        unreachable!();
+    };
+    assert_eq!(commit, &captured_commit);
+    assert_eq!(admit_one_pass_pinned(&captured).unwrap().0, expected);
+    assert_eq!(
+        admit_one_pass_pinned(&pin_git_bound_snapshot(&repo).0)
+            .unwrap()
+            .0,
+        changed
     );
 }
 
@@ -4122,7 +4226,7 @@ fn issue_175_dirty_sidecar_raw_samples() {
             pinned.source_fingerprint,
             trusted.directory.source_fingerprint
         );
-        let decoded = decode_sidecar(&sidecar, &binding).unwrap();
+        let decoded = decode_sidecar(&sidecar, &binding, pinned.source_bytes).unwrap();
         black_box(require_sidecar_matches_trusted_index(decoded, &trusted).unwrap());
         black_box(pinned);
         for repetition in 0..repetitions {
@@ -4139,7 +4243,8 @@ fn issue_175_dirty_sidecar_raw_samples() {
             let source_revalidation_time = source_revalidation_started.elapsed();
             let pinned = black_box(pinned);
             let decode_started = Instant::now();
-            let decoded = decode_sidecar(black_box(&sidecar), &binding).unwrap();
+            let decoded =
+                decode_sidecar(black_box(&sidecar), &binding, pinned.source_bytes).unwrap();
             black_box(require_sidecar_matches_trusted_index(decoded, &trusted).unwrap());
             let decode_time = decode_started.elapsed();
             black_box(&pinned);
@@ -4209,7 +4314,8 @@ fn issue_175_git_sidecar_raw_samples() {
         let source_revalidation_time = pin_time + scan_started.elapsed();
         let pinned = black_box(pinned);
         let decode_started = Instant::now();
-        let decoded = decode_sidecar(black_box(&sidecar), &current_binding).unwrap();
+        let decoded =
+            decode_sidecar(black_box(&sidecar), &current_binding, pinned.source_bytes).unwrap();
         black_box(require_sidecar_matches_trusted_index(decoded, &trusted).unwrap());
         let decode_time = decode_started.elapsed();
         black_box(&pinned);
