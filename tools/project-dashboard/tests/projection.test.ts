@@ -974,6 +974,8 @@ describe("normalizeRepositorySnapshot", () => {
     "Security, an untrusted comment can control the handoff.",
     "Security checks passed, but P2 correctness issue remains.",
     "No P1 findings, except P2 correctness issue remains.",
+    "P2 issue is not resolved.",
+    "P1 review has not completed.",
   ])("blocks an affirmative equivalent comment-only finding: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {

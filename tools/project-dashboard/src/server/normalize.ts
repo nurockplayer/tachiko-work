@@ -21,6 +21,7 @@ const explicitlyPrioritizedFinding = /(?:\[|\b)(?:p[0-2]|sev(?:erity)?[ -]?[0-2]
 const explicitlySubstantiveFinding = /(?:\[|\b)(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness)(?:\]|\b)/i;
 const negatedReviewFinding = /\b(?:no|not|none|without|zero|0)\b[^.!?;\n]{0,80}\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|findings?|issues?|concerns?|problems?)\b/i;
 const clearedReviewFinding = /\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|security|correctness|blocking|data[- ]integrity)\b[^.!?;\n]{0,80}\b(?:checks?|review|findings?|issues?)?\s*(?:passed|complete(?:d)?|clean|resolved)\b(?:\s*\([^)]*\))?\s*$/i;
+const negatedReviewResolution = /\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|security|correctness|blocking|data[- ]integrity)\b[^.!?;\n]{0,80}\b(?:not|never)\s+(?:passed|complete(?:d)?|clean|resolved)\b/i;
 const postposedClearedReviewFinding = /\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|data[- ]integrity)(?:\s+(?:findings?|issues?|concerns?|problems?)(?:\s+found)?)?\s*(?::|=|\bare\b)\s*(?:none|zero|0)\b(?:\s*\([^)]*\))?\s*$/i;
 const equivalentReviewFindingLabel = /(?:^|\s)(?:blocking|security|correctness|data[- ]integrity)\s*[:,]/i;
 const equivalentReviewFindingContext = /\b(?:blocking|security|correctness|data[- ]integrity)\b[^.!?;\n]{0,80}\b(?:finding|issue|bug|risk|failure|regression|vulnerab\w*|flaw|problem|concern|break\w*|corrupt\w*|overwrit\w*|data[- ]loss)\b|\b(?:finding|issue|bug|risk|failure|regression|vulnerab\w*|flaw|problem|concern|break\w*|corrupt\w*|overwrit\w*|data[- ]loss)\b[^.!?;\n]{0,80}\b(?:blocking|security|correctness|data[- ]integrity)\b/i;
@@ -89,7 +90,8 @@ function isSubstantiveReviewBody(body: string): boolean {
   return stripMarkdown(body).split(reviewClauseBoundary).some((segment) => {
     const normalized = segment.trim();
     if (
-      normalized === "" || negatedReviewFinding.test(normalized) || clearedReviewFinding.test(normalized) ||
+      normalized === "" || negatedReviewFinding.test(normalized) ||
+      (clearedReviewFinding.test(normalized) && !negatedReviewResolution.test(normalized)) ||
       postposedClearedReviewFinding.test(normalized)
     ) {
       return false;
