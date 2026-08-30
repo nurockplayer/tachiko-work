@@ -312,6 +312,19 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.phase).toBe("merge_gate");
   });
 
+  it("lets substantive severity evidence override non-substantive wording", () => {
+    const pr = pullRequest();
+    pr.reviewThreads = [
+      { resolved: false, outdated: false, body: "[P1] This trivial-looking bug loses data.", url: "https://github.com/thread" },
+    ];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.reviews.substantiveUnresolvedCount).toBe(1);
+    expect(lane?.phase).toBe("review_fix");
+  });
+
   it("keeps unresolved substantive findings blocking after their code location is outdated", () => {
     const pr = pullRequest();
     pr.reviewThreads = [
@@ -325,9 +338,36 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.phase).toBe("review_fix");
   });
 
+  it("treats unlabeled unresolved correctness findings as substantive", () => {
+    const pr = pullRequest();
+    pr.reviewThreads = [
+      { resolved: false, outdated: false, body: "This returns the wrong result and loses user data.", url: "https://github.com/thread" },
+    ];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.reviews.substantiveUnresolvedCount).toBe(1);
+    expect(lane?.phase).toBe("review_fix");
+  });
+
   it("keeps an incomplete canonical PR handoff out of the merge gate", () => {
     const pr = pullRequest();
     pr.comments[0]!.body = `<!-- agent-handoff:v1 -->\nOWNER: agent:codex\nSTATE: merge-ready\nHEAD: ${headSha}\nLAST CHECKED MAIN: ${mainSha}`;
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.handoff.condition).toBe("inconsistent");
+    expect(lane?.phase).toBe("validating");
+  });
+
+  it("rejects formatting-only mandatory handoff values", () => {
+    const pr = pullRequest();
+    pr.comments[0]!.body = pr.comments[0]!.body.replace(
+      "VALIDATION EVIDENCE: exact-head gates passed",
+      "VALIDATION EVIDENCE: **",
+    );
 
     const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
     const lane = projection.deliveries[0];

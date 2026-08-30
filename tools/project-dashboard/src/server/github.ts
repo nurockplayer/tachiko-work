@@ -49,7 +49,7 @@ interface GithubIssue {
   updatedAt: string;
   lastEditedAt: string | null;
   milestone: { title: string } | null;
-  blockedBy: { nodes: Array<{ number: number; title: string; url: string }>; pageInfo: PageInfo };
+  blockedBy: { nodes: Array<{ number: number; title: string; url: string; state: string }>; pageInfo: PageInfo };
   comments: { nodes: GithubComment[]; pageInfo: PageInfo };
 }
 
@@ -147,7 +147,7 @@ const dashboardQuery = `
           number title url body updatedAt lastEditedAt
           milestone { title }
           blockedBy(first: 25) {
-            nodes { number title url }
+            nodes { number title url state }
             pageInfo { hasNextPage }
           }
           comments(last: 100) {
@@ -428,7 +428,11 @@ export async function loadGithubSnapshot(
       updatedAt: issue.updatedAt,
       lastEditedAt: issue.lastEditedAt,
       milestone: issue.milestone?.title ?? null,
-      blockedBy: dependenciesComplete ? issue.blockedBy.nodes : null,
+      blockedBy: dependenciesComplete
+        ? issue.blockedBy.nodes
+          .filter((dependency) => dependency.state.toLowerCase() !== "closed")
+          .map(({ number, title, url }) => ({ number, title, url }))
+        : null,
       commentsComplete,
       comments: issue.comments.nodes.map(asComment),
     });

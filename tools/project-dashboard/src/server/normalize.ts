@@ -14,7 +14,8 @@ import type {
 } from "../shared/types.ts";
 
 const handoffMarker = "<!-- agent-handoff:v1 -->";
-const substantiveFinding = /(?:\[|\b)(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness)(?:\]|\b)/i;
+const explicitlySubstantiveFinding = /(?:\[|\b)(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness)(?:\]|\b)/i;
+const explicitlyNonSubstantiveFinding = /^(?:[_*]+\s*)?(?:\[(?:p3|sev(?:erity)?[ -]?3)\]|(?:p3|sev(?:erity)?[ -]?3|nit(?:pick)?|trivial)\b)/i;
 
 function source(
   className: SourceClass,
@@ -37,7 +38,9 @@ function stripMarkdown(value: string): string {
 function labeledValue(body: string, label: string): string | null {
   const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = body.match(new RegExp(`^\\s*(?:[-*]\\s*)?(?:\\*\\*)?${escaped}(?:\\*\\*)?\\s*:\\s*(.+?)\\s*$`, "im"));
-  return match?.[1] === undefined ? null : stripMarkdown(match[1]);
+  if (match?.[1] === undefined) return null;
+  const value = stripMarkdown(match[1]);
+  return value === "" ? null : value;
 }
 
 function normalizedSha(value: string | null): string | null {
@@ -53,6 +56,11 @@ function shaMatches(claimed: string | null, actual: string | null): boolean {
 
 function canonicalComments(comments: RawComment[]): RawComment[] {
   return comments.filter((comment) => comment.body.includes(handoffMarker));
+}
+
+function isSubstantiveFinding(body: string): boolean {
+  if (explicitlySubstantiveFinding.test(body)) return true;
+  return !explicitlyNonSubstantiveFinding.test(stripMarkdown(body));
 }
 
 function claimedIssueNumber(body: string): number | null {
@@ -340,7 +348,7 @@ function projectReviews(pr: RawPullRequest, observedAt: string): ReviewProjectio
     status,
     reviewedHeadSha,
     unresolvedThreadCount: unresolved.length,
-    substantiveUnresolvedCount: unresolved.filter((thread) => substantiveFinding.test(thread.body)).length,
+    substantiveUnresolvedCount: unresolved.filter((thread) => isSubstantiveFinding(thread.body)).length,
     sourceRefs: refs,
   };
 }

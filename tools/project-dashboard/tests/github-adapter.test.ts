@@ -20,7 +20,23 @@ function githubPage() {
             updatedAt: "2026-08-30T00:00:00Z",
             lastEditedAt: null,
             milestone: null,
-            blockedBy: { nodes: [], pageInfo: { hasNextPage: false } },
+            blockedBy: {
+              nodes: [
+                {
+                  number: 170,
+                  title: "Open dependency",
+                  url: "https://github.com/nurockplayer/tachiko-work/issues/170",
+                  state: "OPEN",
+                },
+                {
+                  number: 171,
+                  title: "Closed dependency",
+                  url: "https://github.com/nurockplayer/tachiko-work/issues/171",
+                  state: "CLOSED",
+                },
+              ],
+              pageInfo: { hasNextPage: false },
+            },
             comments: { nodes: [], pageInfo: { hasPreviousPage: false } },
           },
         ],
@@ -109,7 +125,15 @@ describe("loadGithubSnapshot", () => {
       fetchHealth: "healthy",
       mainSha,
       productHorizon: "05 · Designer MVP",
-      issues: [{ number: 169, blockedBy: [], commentsComplete: true }],
+      issues: [{
+        number: 169,
+        blockedBy: [{
+          number: 170,
+          title: "Open dependency",
+          url: "https://github.com/nurockplayer/tachiko-work/issues/170",
+        }],
+        commentsComplete: true,
+      }],
       pullRequests: [{
         number: 200,
         isDraft: false,
