@@ -139,6 +139,16 @@ describe("normalizeRepositorySnapshot", () => {
     },
   );
 
+  it("does not treat unrelated negation as negated readiness", () => {
+    const ready = issue();
+    ready.body = "## Status\n\nNot blocked; Ready for bounded implementation.\n\nOwner: `agent:codex`";
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [ready] }));
+
+    expect(projection.deliveries[0]?.issue.readiness).toBe("ready");
+    expect(projection.deliveries[0]?.phase).toBe("ready");
+  });
+
   it("does not let an operational handoff elevate an unrecognized Issue status", () => {
     const backlog = issue();
     backlog.body = "## Status\n\nBacklog\n\nOwner: `agent:codex`";
@@ -311,6 +321,18 @@ describe("normalizeRepositorySnapshot", () => {
     const projection = normalizeRepositorySnapshot(snapshot({ issues: [decision], pullRequests: [pr] }));
 
     expect(projection.deliveries[0]?.issue.readiness).toBe("active");
+    expect(projection.deliveries[0]?.phase).toBe("merge_gate");
+  });
+
+  it("does not treat unrelated negation as negated Decision-Ready authority", () => {
+    const decision = issue();
+    decision.title = "[Decision][M05 P1] Choose the dashboard delivery boundary";
+    decision.body = "## Status\n\nNot blocked; Decision-Ready.\n\nOwner: `agent:codex`";
+    const pr = pullRequest();
+    pr.changedPaths = ["docs/decisions/ADR-0029-dashboard-boundary.md"];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [decision], pullRequests: [pr] }));
+
     expect(projection.deliveries[0]?.phase).toBe("merge_gate");
   });
 

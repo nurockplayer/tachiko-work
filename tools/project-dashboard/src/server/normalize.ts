@@ -220,7 +220,8 @@ function issueStatusText(issue: RawIssue): string {
 
 function statusClaimsDecisionReady(statusText: string): boolean {
   if (!/\bdecision[_ -]?ready\b/.test(statusText)) return false;
-  return !/\b(?:not|never)\b[^\n]{0,40}\bdecision[_ -]?ready\b/.test(statusText) &&
+  return !/\bnot(?:[_ -]+(?:yet|currently|now|presently|quite))?[_ -]+decision[_ -]?ready\b/.test(statusText) &&
+    !/\b(?:never|no[_ -]+longer)[_ -]+decision[_ -]?ready\b/.test(statusText) &&
     !/\bnon[_ -]+decision[_ -]?ready\b/.test(statusText) &&
     !/\bdecision[_ -]?ready\b\s*(?:(?:is\s+)?not\b|[:=-]\s*(?:false|no)\b)/.test(statusText);
 }
@@ -240,7 +241,8 @@ function statusClaimsReady(statusText: string): boolean {
 }
 
 function statusClaimsNotReady(statusText: string): boolean {
-  return /\b(?:not|never)\b[^\n]{0,40}\bready\b/.test(statusText) ||
+  return /\bnot(?:[_ -]+(?:yet|currently|now|presently|quite))?[_ -]+ready\b/.test(statusText) ||
+    /\b(?:never|no[_ -]+longer)[_ -]+ready\b/.test(statusText) ||
     /\bnon[_ -]+ready\b/.test(statusText) ||
     /\bready\b\s*(?:(?:is\s+)?not\b|[:=-]\s*(?:false|no)\b)/.test(statusText);
 }
