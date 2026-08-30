@@ -1224,6 +1224,10 @@ describe("normalizeRepositorySnapshot", () => {
     "This has an unbounded loop.",
     "This loop is unbounded.",
     "This never converges.",
+    "This is an unbounded cycle.",
+    "This is an infinite cycle.",
+    "This remains stuck in a cycle.",
+    "This is trapped in a cycle.",
   ])("blocks an unlabeled comment-only runtime failure on the current head: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1331,6 +1335,8 @@ describe("normalizeRepositorySnapshot", () => {
     "This does not have an unbounded loop.",
     "This loop is not unbounded.",
     "This does not fail to converge.",
+    "This is not a cycle.",
+    "Could you rename this local for clarity?",
   ])("does not infer a substantive finding from a clean comment-only review summary: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1772,6 +1778,10 @@ describe("normalizeRepositorySnapshot", () => {
     "This has an unbounded loop.",
     "This loop is unbounded.",
     "This never converges.",
+    "This is an unbounded cycle.",
+    "This is an infinite cycle.",
+    "This remains stuck in a cycle.",
+    "This is trapped in a cycle.",
   ])("fails closed on an unlabeled correctness finding: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
@@ -1869,6 +1879,7 @@ describe("normalizeRepositorySnapshot", () => {
     "This does not have an unbounded loop.",
     "This loop is not unbounded.",
     "This does not fail to converge.",
+    "This is not a cycle.",
   ])("does not promote a negated unlabeled impact statement: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
@@ -2333,7 +2344,7 @@ describe("normalizeRepositorySnapshot", () => {
     const pr = pullRequest();
     pr.reviews = [
       { state: "commented", author: "reviewer", body: "[P2] Clarify the current behavior", headSha, url: "https://github.com/review/finding", submittedAt: "2026-08-29T23:00:00.000Z" },
-      { state: "approved", author: "reviewer", body: "", headSha, url: "https://github.com/review/approval", submittedAt: observedAt },
+      { state: "approved", author: "reviewer", body: "Looks good.", headSha, url: "https://github.com/review/approval", submittedAt: observedAt },
     ];
 
     const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
