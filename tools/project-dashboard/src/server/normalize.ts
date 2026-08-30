@@ -80,6 +80,27 @@ function hasDuplicateLabeledValue(body: string, label: string): boolean {
   return [...body.matchAll(pattern)].filter((match) => stripMarkdown(match[1] ?? "") !== "").length > 1;
 }
 
+function hasDuplicateCanonicalHandoffValue(body: string): boolean {
+  return [
+    "ISSUE",
+    "OWNER",
+    "STATE",
+    "STATUS",
+    "HEAD",
+    "EXACT HEAD",
+    "LAST CHECKED MAIN",
+    "MAIN",
+    "SCOPE BOUNDARY",
+    "VALIDATION EVIDENCE",
+    "UNRESOLVED REVIEW STATE",
+    "NEXT ACTION",
+    "HUMAN ACTION",
+    "FOUNDER / STEWARD ACTION",
+    "STEWARD ACTION",
+    "ESCALATION",
+  ].some((label) => hasDuplicateLabeledValue(body, label));
+}
+
 function labeledBlockValue(body: string, label: string): string | null {
   const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const lines = body.split(/\r?\n/);
@@ -307,9 +328,9 @@ function handoffReportsFailedValidation(body: string, currentHeadSha: string | n
   if (validation === null) return false;
 
   if (currentHeadSha !== null) {
-    const evidenceSha = /\b(?:(?:commit|head|sha)\s*[:=#]?\s*|(?:on|at|against|from|for)\s+(?:(?:(?:an?|the)\s+)?(?:old|previous|prior|current|exact|reviewed)\s+)?(?:(?:commit|head|sha)\s+)?)([0-9a-f]{7,40})\b/gi;
+    const evidenceSha = /\b(?:(?:validation|validated|tested|checked|reviewed|exact)\s+(?:commit|head|sha)\s*[:=#]?\s*([0-9a-f]{7,40})|(?:passed|succeeded|completed|ran|executed|validated|tested|checked)\b[^.;\n]{0,40}\b(?:on|at|against|for)\s+(?:(?:an?|the)\s+)?(?:(?:old|previous|prior|current|exact|reviewed)\s+)?(?:commit|head|sha)\s*[:=#]?\s*([0-9a-f]{7,40}))\b/gi;
     for (const match of validation.matchAll(evidenceSha)) {
-      if (!shaMatches(match[1] ?? null, currentHeadSha)) return true;
+      if (!shaMatches(match[1] ?? match[2] ?? null, currentHeadSha)) return true;
     }
   }
 
@@ -411,8 +432,7 @@ function projectHandoff(
 
   if (canonical.length !== 1) {
     condition = "inconsistent";
-  } else if (hasDuplicateLabeledValue(latest.body, "STATE") || hasDuplicateLabeledValue(latest.body, "STATUS") ||
-    conflictingStateAliases) {
+  } else if (hasDuplicateCanonicalHandoffValue(latest.body) || conflictingStateAliases) {
     condition = "inconsistent";
   } else if (currentHeadSha !== null && !hasRequiredPrHandoffRecords(latest.body)) {
     condition = "inconsistent";

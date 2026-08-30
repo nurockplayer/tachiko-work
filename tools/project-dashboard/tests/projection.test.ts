@@ -2241,6 +2241,17 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.blockers).toContain("Canonical handoff conflicts with live PR identity or is duplicated.");
   });
 
+  it("keeps duplicate canonical Issue claims out of the merge gate", () => {
+    const pr = pullRequest();
+    pr.comments[0]!.body += "\nISSUE: #170";
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.handoff.condition).toBe("inconsistent");
+    expect(lane?.phase).toBe("validating");
+  });
+
   it.each(["blocked", "validating", "human_required"])("keeps conflicting canonical STATE/STATUS aliases out of the merge gate: %s", (status) => {
     const pr = pullRequest();
     pr.comments[0]!.body += `\nSTATUS: ${status}`;
@@ -2533,6 +2544,7 @@ describe("normalizeRepositorySnapshot", () => {
     "release-check was aborted",
     `release-check passed on old commit ${"c".repeat(40)}`,
     "release-check passed on commit ccccccc",
+    "validation head ccccccc",
   ])("does not accept merge-ready while canonical validation evidence reports: %s", (validation) => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace(
@@ -2573,6 +2585,12 @@ describe("normalizeRepositorySnapshot", () => {
     `release-check passed on exact head ${headSha.slice(0, 8)}`,
     "1234567 tests passed",
     "build 20260831 passed",
+    "job for 1234567 passed",
+    "passed at 1234567 tests",
+    "tests passed from 1234567",
+    "checksum deadbeef verified; release-check passed",
+    `base main commit ${"c".repeat(40)}; release-check passed`,
+    `validation head ${headSha}`,
   ])("does not invent failed validation evidence from a clean summary: %s", (validation) => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace(
