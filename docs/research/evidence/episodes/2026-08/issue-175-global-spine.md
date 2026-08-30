@@ -162,9 +162,12 @@ were accepted where they matched Issue and Accepted authority.
   foreground timing began. Final B alternates order, waits until at least 64
   entity records have completed, asserts the worker is still active, and
   records the observed boundary per row. After the final bounded-token recapture its
-  p95 paired ratio is `1.638`, with 5/20 runs above `1.10`, and therefore
-  still fails the 10% foreground-regression gate. One scheduler-overshoot row
-  observed 136 records before foreground start; it is retained, not filtered.
+  combined p95 paired ratio is `1.638`, with 5/20 runs above `1.10`. All five
+  occur in `background_then_baseline` (p95 `1.683`), while
+  `baseline_then_background` has p95 `1.039`; the regression magnitude is
+  therefore order-confounded and not attributable to background work. One
+  scheduler-overshoot row observed 136 records before foreground start; it is
+  retained, not filtered.
 - The first corrected E2 still derived trusted facts and pinned bytes from the
   mutable worktree. Final E2 binds object format, commit, tree, modes, paths,
   blob IDs, and reads the exact blob objects before independently re-deriving
@@ -209,9 +212,13 @@ were accepted where they matched Issue and Accepted authority.
 - A second HOLD review found that after an entity record read completed,
   strict inspection, DTO decode, work counting, canonical rendering, and
   semantic conversion could run without another cancellation boundary. The
-  final controlled path fails closed above a 64 KiB post-read work budget and
-  checks after every named phase. Deterministic post-read and per-phase tests
-  prove cancellation with zero completed records and no SemanticCurrent.
+  final controlled path checks after every named phase. A closure review then
+  caught that its above-budget result misclassified canonical input as an
+  invalid representation. The final research fast path returns typed
+  `RequiresForegroundExactAdmission` above a 64 KiB post-read budget, and the
+  regression proves ordinary exact A1 admits the same canonical source to
+  SemanticCurrent. Deterministic post-read and per-phase tests prove
+  cancellation with zero completed records and no SemanticCurrent.
 - Initial raw A0 rows doubled parser-byte work but not decoded record, AST,
   reference, or dependency counters for the second logical decode. Final rows
   aggregate every decode-work counter symmetrically. A fixture manifest now
@@ -253,6 +260,13 @@ cancellation and fresh-process comparator isolation. HOLD-era unpushed
 final correction does not materially change their timed non-cancelled paths
 or evidence contracts; the manifest retains exact per-artifact base/head
 provenance.
+
+The closure-only typed large-record outcome and ordinary exact-A1 fallback
+proof landed at `3faece0fcbc8c7ef7e2734f404afb8d00c2a2ed4`. Focused validation
+at that exact head (`cargo test -p tachiko-storage issue_175_ --locked`)
+reported 26 passed, 0 failed, 11 ignored, and 16 filtered out. No raw benchmark
+or summary was regenerated: the closure does not materially change a timed
+measured path or raw evidence contract.
 Cold-cache cells remain absent and explicitly unavailable rather than
 relabeled.
 
@@ -266,14 +280,17 @@ and A1 outputs for all four cases into `calculate_complete` and
 oracle. C/D still publish no semantic result and return
 `RequiresFullAdmission` where the full oracle is required.
 
-## Provisional outcome withheld under Steward HOLD
+## Research outcome withheld from architecture publication
 
 The historical provisional result was **Outcome A — reject/defer Global
 Spine**, with **B — progressive UX only** as
 an optional bounded shell/source-preview technique over optimized exact A1.
-The measured background-admission schedule is rejected because it fails the
-10% foreground-regression gate. It remains withdrawn and is not republished to
-#174 by this correction.
+The measured background-admission schedule is quantitatively inconclusive:
+all `>1.10` ratios occur in one arm order, so the combined p95 cannot be
+attributed to concurrent background work rather than second-arm/cache
+carryover. This does not satisfy the preregistered no-regression condition and
+therefore cannot advance Global Spine, but it is not reported as a proven
+regression. The result is not republished to #174 by this correction.
 
 A1 materially improves current A0, but C does not beat A1 at the `>=2x` gate.
 Structural size is compact only in payload/constant-AST shapes and expands

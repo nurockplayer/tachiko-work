@@ -15,7 +15,9 @@ wiring plus cancellable metadata loading at
 `d3edb03b0e2d1bd1fb7690aa09d5a23f92926666`; cancellation-polled accepted
 semantic validation at `b31d1429b96d98427631a1eaab8a39f79232bdb1`; and its
 research-feature isolation plus host-path formula-node regression at
-`878e62c836cb06fd3cf58061567b989c64451213`. The final B/E1/E2 captures are
+`878e62c836cb06fd3cf58061567b989c64451213`; and the typed large-record
+fast-path closure plus exact-A1 fallback proof at
+`3faece0fcbc8c7ef7e2734f404afb8d00c2a2ed4`. The final B/E1/E2 captures are
 mechanically reconciled with `main@c3b5ad2aad04e6b79594dbc7f79199591997bdc4`;
 the unaffected A0/A1/C/D/F artifacts retain their exact pre-reconciliation
 measurement/base heads in the evidence manifest because #193 changed only the
@@ -23,9 +25,10 @@ disjoint Designer lane.
 
 ## Outcome
 
-**Historical provisional result (withheld): outcome A — reject/defer Global
-Spine, with B only as a bounded progressive-UX option over optimized exact
-eager admission; do not advance C or D.**
+**Research result: outcome A — reject/defer Global Spine, with B only as a
+bounded progressive-UX observation over optimized exact eager admission; do
+not advance C or D.** This does not change Accepted authority or publish an
+architecture decision for #174.
 
 The experiment falsified a universal Global Spine benefit:
 
@@ -41,9 +44,10 @@ The experiment falsified a universal Global Spine benefit:
 - exact dirty-source sidecar open is `2.13x` slower than A1 at p95,
   while Git validation is `2.20x` slower than an exact A1 that independently
   pays the same Git identity and object-pinning costs;
-- counterbalanced, progress-synchronized background admission fails the
-  foreground-interference gate: p95 of paired p95 ratios is `1.638`, the
-  maximum is `1.683`, and 5/20 runs exceed `1.10`; and
+- background-admission interference is inconclusive: all five ratios above
+  `1.10` occur in `background_then_baseline`, whose p95 is `1.683`, while
+  `baseline_then_background` has p95 `1.039`, so the combined `1.638` cannot
+  be attributed to concurrent background work rather than order/carryover;
 - exact bounded source payload access is fast, but formula meaning and
   validation still require complete admission. The prototype correctly
   returns `requires_full_admission` rather than guessing.
@@ -59,7 +63,7 @@ justify a Global Spine.
 | Full-oracle equivalence | Pass for the research paths tested | The actual A0 and A1 admitted outputs under success, cold numeric mutation, cross-cold SCC, and division-by-zero pressure exactly match the source `Document`, `calculate_complete` outcome, and workspace stable observations; late-invalid A0/A1/C rejection parity; formula oracle 10/10 and workspace validation 19/19 |
 | `>=2x` p95 benefit over A1 in two realistic large classes | Fail | At 64k, C Structural is only `1.07x` faster than A1 for payload and is `1.41x` slower for references and `1.43x` slower for mixed |
 | Benefit not limited to payload-heavy data | Fail | Payload Structural Index is `0.07x` source, but mixed is `1.38x` and references `2.83x` |
-| No `>10%` foreground regression | Fail | Progress-synchronized counterbalanced p95 of per-run foreground p95 ratios is `1.638`; maximum is `1.683`; 5/20 runs exceed `1.10` |
+| No `>10%` foreground regression | Inconclusive / not attributable | All five ratios above `1.10` are in `background_then_baseline` (p95 `1.683`), while `baseline_then_background` has p95 `1.039`; the combined p95 `1.638` is confounded by arm order/carryover and cannot establish background-attributable regression |
 | `>=40%` peak-RSS reduction, without hidden eventual peak | Fail | A1 p50 peak is `30.4 MB`; Structural is `71.8 MB`; Structural + `Document` is `79.4 MB`; pinned Structural + `Document` is `91.2 MB` |
 | Sidecar validation preserves material reuse benefit | Fail | E1 full-open p95 is `719 ms` versus A1 `338 ms`; E2 full-open p95 is `1,042 ms` versus independently Git-pinned A1 `473 ms` |
 
@@ -176,7 +180,7 @@ navigation, not source I/O or generic search.
 
 At 16k entities, 20 runs of 200 foreground batches × 256 exact operations
 alternated `baseline_then_background` and `background_then_baseline`. The
-foreground timer began only after the admission worker had completed exactly
+foreground timer began only after the admission worker had completed at least
 64 entity records and while that worker was still active:
 
 - baseline per-run request p95: p50 `63 us`, p95 `4,161 us`;
@@ -194,10 +198,13 @@ overshoot reached 136 records in one interference row and is retained rather
 than filtered. The large p95 tails are likewise preserved as recorded noisy
 samples.
 
-This background-admission contract fails the 10% regression gate. B remains
-supported only as a non-authoritative bounded shell/source-preview technique;
-the measured background A1 schedule is not recommended without a separately
-proven foreground-pressure policy. Correctness authority stays complete and
+This capture does not establish a background-attributable regression: the
+entire `>1.10` tail is confined to `background_then_baseline`, consistent with
+a systematic second-arm/cache carryover effect. The gate is therefore
+inconclusive, which is insufficient to advance Global Spine under the
+preregistered no-regression requirement. B remains only a non-authoritative
+bounded shell/source-preview observation; background scheduling would require
+a separately controlled experiment. Correctness authority stays complete and
 eager.
 
 ## D — pinned source and bounded materialization
@@ -290,9 +297,14 @@ Lexical canonical proof retains number-token evidence rather than relying on
 decoded `f64` equality. Directory/Structural scans cannot publish merely after
 structural parsing: they run the required document-level coverage checks.
 
-Validation at measurement HEAD:
+Focused validation at closure implementation HEAD
+`3faece0fcbc8c7ef7e2734f404afb8d00c2a2ed4`:
 
-- Issue #175 storage tests: 22 passed, 10 ignored measurement entrypoints;
+- `cargo test -p tachiko-storage issue_175_ --locked`: 26 passed, 11 ignored
+  measurement/internal-child entrypoints, 16 filtered out;
+
+Prior unaffected validation retained by the evidence bundle:
+
 - cross-crate admitted-output full-oracle test: 1 passed;
 - storage `.roproj/v1` and host suites: 66 passed;
 - formula complete-oracle suite: 10 passed;
@@ -318,9 +330,11 @@ Validation at measurement HEAD:
 - Background A1 polls cancellation inside a research-feature-only copy of the
   accepted semantic validator at schema, entity, field, and formula-node
   boundaries before SemanticCurrent. Entity records also poll during bounded
-  reads, fail closed above a 64 KiB post-read work budget, and check after each
-  strict/decode/count/render/conversion phase. Ordinary production validation
-  remains exactly on its pre-experiment implementation path.
+  reads and check after each strict/decode/count/render/conversion phase. The
+  research fast path returns typed `RequiresForegroundExactAdmission` above a
+  64 KiB post-read work budget; the same canonical source succeeds through
+  ordinary exact A1 fallback and reaches SemanticCurrent. Ordinary production
+  validation remains exactly on its pre-experiment implementation path.
 - D pins the complete source snapshot, so its timing cannot be interpreted as
   a source-RSS reduction.
 - No UI render or WASM compile/JIT timing is included. E1/E2 raw rows disclose
