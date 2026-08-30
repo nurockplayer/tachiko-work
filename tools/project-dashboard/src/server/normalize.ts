@@ -18,8 +18,9 @@ import { isDecisionAuthorityPath } from "../shared/authority.ts";
 const handoffMarker = "<!-- agent-handoff:v1 -->";
 const explicitlyPrioritizedFinding = /(?:\[|\b)(?:p[0-2]|sev(?:erity)?[ -]?[0-2])(?:\]|\b)/i;
 const explicitlySubstantiveFinding = /(?:\[|\b)(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness)(?:\]|\b)/i;
-const negatedReviewFinding = /\b(?:no|not|none|without|zero)\b[^.!?;\n]{0,80}\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|findings?|issues?|concerns?|problems?)\b/i;
+const negatedReviewFinding = /\b(?:no|not|none|without|zero|0)\b[^.!?;\n]{0,80}\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|findings?|issues?|concerns?|problems?)\b/i;
 const clearedReviewFinding = /\b(?:security|correctness|blocking)\b[^.!?;\n]{0,80}\b(?:checks?|review|findings?|issues?)?\s*(?:passed|complete(?:d)?|clean|resolved)\b/i;
+const postposedClearedReviewFinding = /\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness)(?:\s+(?:findings?|issues?|concerns?|problems?))?\s*(?::|=|\bare\b)\s*(?:none|zero|0)\s*$/i;
 const equivalentReviewFindingLabel = /(?:^|\s)(?:blocking|security|correctness|data[- ]integrity)\s*:/i;
 const equivalentReviewFindingContext = /\b(?:blocking|security|correctness|data[- ]integrity)\b[^.!?;\n]{0,80}\b(?:finding|issue|bug|risk|failure|regression|vulnerab\w*|flaw|problem|concern|break\w*|corrupt\w*|overwrit\w*|data[- ]loss)\b|\b(?:finding|issue|bug|risk|failure|regression|vulnerab\w*|flaw|problem|concern|break\w*|corrupt\w*|overwrit\w*|data[- ]loss)\b[^.!?;\n]{0,80}\b(?:blocking|security|correctness|data[- ]integrity)\b/i;
 const explicitlyNonSubstantiveFinding = /^(?:[_*]+\s*)?(?:\[(?:p3|sev(?:erity)?[ -]?3)\]|(?:p3|sev(?:erity)?[ -]?3|nit(?:pick)?|trivial)\b)/i;
@@ -83,9 +84,12 @@ function isSubstantiveFinding(body: string): boolean {
 }
 
 function isSubstantiveReviewBody(body: string): boolean {
-  return stripMarkdown(body).split(/[.!?;\n]+/).some((segment) => {
+  return stripMarkdown(body).split(/[.!?;,\n]+|\b(?:but|except|however|although|yet)\b/i).some((segment) => {
     const normalized = segment.trim();
-    if (normalized === "" || negatedReviewFinding.test(normalized) || clearedReviewFinding.test(normalized)) {
+    if (
+      normalized === "" || negatedReviewFinding.test(normalized) || clearedReviewFinding.test(normalized) ||
+      postposedClearedReviewFinding.test(normalized)
+    ) {
       return false;
     }
     return explicitlyPrioritizedFinding.test(normalized) ||

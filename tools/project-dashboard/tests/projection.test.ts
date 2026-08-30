@@ -919,6 +919,10 @@ describe("normalizeRepositorySnapshot", () => {
     "Security and correctness checks passed; no blocking issues.",
     "No P1/P2 findings.",
     "No blocking correctness issues.",
+    "P2 findings: none.",
+    "P0: 0.",
+    "Security: none.",
+    "Blocking issues: none.",
   ])("does not infer a substantive finding from a clean comment-only review summary: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -941,6 +945,8 @@ describe("normalizeRepositorySnapshot", () => {
     "Blocking: this save path can overwrite user data.",
     "Correctness issue: the projection can report a stale head as current.",
     "Security risk: an untrusted comment can control the handoff.",
+    "Security checks passed, but P2 correctness issue remains.",
+    "No P1 findings, except P2 correctness issue remains.",
   ])("blocks an affirmative equivalent comment-only finding: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
