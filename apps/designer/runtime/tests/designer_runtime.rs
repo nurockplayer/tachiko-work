@@ -949,6 +949,34 @@ fn oversized_text_edit_is_rejected_before_publication() {
 }
 
 #[test]
+fn stale_scalar_edits_are_rejected_before_candidate_preflight() {
+    let mut runtime = moonfall();
+    runtime
+        .handle(DesignerRequest::EditScalar {
+            expected_revision: "resident/0".to_owned(),
+            target: "iron_sword.damage".into(),
+            input: ScalarEditInput::Number {
+                input: "45".to_owned(),
+            },
+        })
+        .expect("first edit should advance the resident revision");
+
+    let error = runtime
+        .handle(DesignerRequest::EditScalar {
+            expected_revision: "resident/0".to_owned(),
+            target: "iron_sword.name".into(),
+            input: ScalarEditInput::Text {
+                value: "x".repeat(65_500),
+            },
+        })
+        .expect_err("stale edits must not construct a candidate");
+    assert_eq!(
+        error.failure_projection("resident/1").code,
+        "stale_revision"
+    );
+}
+
+#[test]
 fn stale_and_calculation_failing_edits_leave_the_published_projection_unchanged() {
     let mut runtime = moonfall();
     runtime

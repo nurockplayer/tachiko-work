@@ -721,6 +721,13 @@ impl DesignerRuntime {
         target: &FieldTarget,
         input: &ScalarEditInput,
     ) -> Result<PublicationProjection, DesignerError> {
+        let current_revision = self.current_revision();
+        if current_revision != expected_revision {
+            return Err(DesignerError::StaleQuery {
+                requested: expected_revision.to_owned(),
+                current: current_revision.to_owned(),
+            });
+        }
         let field = target.as_field_ref();
         let current = self.session.query_fields(std::slice::from_ref(&field))?;
         let value = match (current.value()[0].stored_value.as_ref(), input) {
