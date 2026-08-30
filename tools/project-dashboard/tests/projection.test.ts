@@ -54,6 +54,7 @@ function pullRequest(): RawPullRequest {
     title: "Dashboard v0",
     url: "https://github.com/nurockplayer/tachiko-work/pull/200",
     body: "Closes #169",
+    author: { login: "nurockplayer", type: "user" },
     isDraft: false,
     headSha,
     baseRefName: "main",
@@ -594,6 +595,7 @@ describe("normalizeRepositorySnapshot", () => {
     "Ready = when the dependency closes.",
     "Ready - pending Steward approval.",
     "Pending Steward approval — Ready.",
+    "Pending review is complete, but scope is pending — Ready.",
   ])("does not treat a future conditional Ready reference as authoritative readiness: %s", (status) => {
     const backlog = issue();
     backlog.body = `## Status\n\n${status}\n\nOwner: \`agent:codex\``;
@@ -696,6 +698,36 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.phase).toBe("merge_gate");
     expect(lane?.blockers).not.toContain("Canonical handoff is missing for pull request #200.");
     expect(lane?.action.owner).toBe("none");
+  });
+
+  it.each([
+    { label: "unobserved", author: null },
+    { label: "bot-authored", author: { login: "codex[bot]", type: "bot" as const } },
+    { label: "mismatched user", author: { login: "contributor", type: "user" as const } },
+  ])("requires a handoff when a human Issue has $label PR authorship", ({ author }) => {
+    const humanOwned = issue();
+    humanOwned.body = "## Status\n\nReady\n\nOwner: `nurockplayer`";
+    const pr = pullRequest();
+    pr.author = author;
+    pr.comments = [];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [humanOwned], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.phase).toBe("validating");
+    expect(lane?.blockers).toContain("Canonical handoff is missing for pull request #200.");
+  });
+
+  it("requires a handoff when Issue ownership is absent", () => {
+    const unowned = issue();
+    unowned.body = "## Status\n\nReady";
+    const pr = pullRequest();
+    pr.comments = [];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [unowned], pullRequests: [pr] }));
+
+    expect(projection.deliveries[0]?.phase).toBe("validating");
+    expect(projection.deliveries[0]?.blockers).toContain("Canonical handoff is missing for pull request #200.");
   });
 
   it("still blocks an inconsistent optional handoff on a human-owned pull request", () => {

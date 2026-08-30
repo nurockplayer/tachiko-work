@@ -237,8 +237,15 @@ function statusClaimIsConditional(statusText: string, match: RegExpExecArray): b
     .slice(Math.max(before.lastIndexOf("\n"), before.lastIndexOf("."), before.lastIndexOf(";")) + 1)
     .replace(/[-—–,:=]\s*$/, "")
     .trim();
-  const unresolvedPrefix = /^(?:pending\b|subject\s+to\b|(?:only\s+)?(?:once|when|if|after)\b)/i.test(prefixClause) &&
-    !/\b(?:is|are|was|were|has|have)\s+(?:now\s+)?(?:been\s+)?(?:complete|completed|resolved|satisfied|approved|cleared|closed)\b/i.test(prefixClause);
+  const prefixSegments = prefixClause.split(/\s*(?:,|\bbut\b)\s*/i).filter(Boolean);
+  const unresolvedPrefix = prefixSegments.some((segment) => {
+    if (/^(?:subject\s+to\b|(?:only\s+)?(?:once|when|if|after)\b)/i.test(segment)) return true;
+    if (/^pending\b/i.test(segment)) {
+      return !/\b(?:is|are|was|were|has|have)\s+(?:now\s+)?(?:been\s+)?(?:complete|completed|resolved|satisfied|approved|cleared|closed)\b/i.test(segment);
+    }
+    return !/^(?:no|none|nothing)\b/i.test(segment) &&
+      /\b(?:is|are|remain|remains)\s+pending\b/i.test(segment);
+  });
   return /\b(?:(?:future|become|mark|set|move|declare|consider)(?:\s+(?:as|to))?|(?:will|would|should|can|could|may|might)(?:\s+be|\s+become)?)\s*$/i.test(before) ||
     unresolvedPrefix ||
     /^\s*(?:(?:[:=-])\s*)?(?:only\s+)?(?:(?:once|when|if|after|pending)\b|subject\s+to\b)/i.test(after);
@@ -603,8 +610,11 @@ function projectLane(
   const commentsComplete = pr === null ? issue.commentsComplete : pr.commentsComplete;
   const handoff = projectHandoff(comments, commentsComplete, snapshot.observedAt, pr?.headSha ?? null, snapshot.mainSha);
   const owner = issueOwner(issue, handoff);
-  const agentOwnedPr = pr !== null && /^agent:/i.test(owner.trim());
-  const handoffRequired = agentOwnedPr || (pr !== null && handoff.condition !== "missing");
+  const normalizedOwner = owner.trim().toLowerCase();
+  const alignedHumanPr = pr !== null && pr.author?.type === "user" && normalizedOwner !== "unknown" &&
+    !/^agent:/i.test(normalizedOwner) && pr.author.login.trim().toLowerCase() === normalizedOwner;
+  const missingHandoffRequiresDelivery = pr !== null && !alignedHumanPr;
+  const handoffRequired = pr !== null && (handoff.condition !== "missing" || missingHandoffRequiresDelivery);
   const decisionReadyAuthority = isDecisionReadyAuthorityIssue(issue);
   const decisionReadyScopeReconciled = !decisionReadyAuthority || (pr !== null && isFocusedAuthorityPullRequest(pr));
   const observedReadiness = decisionReadyScopeReconciled ? issueReadiness(issue, handoff) : "unknown";
@@ -704,7 +714,7 @@ function projectLane(
   } else if (pr !== null && reviews.decision === "unknown") {
     blockers.push("GitHub review decision could not be observed.");
   }
-  if (agentOwnedPr && handoff.condition === "missing") {
+  if (missingHandoffRequiresDelivery && handoff.condition === "missing") {
     blockers.push(`Canonical handoff is missing for pull request #${pr.number}.`);
   }
   if (pr !== null && handoff.condition === "unknown") {
@@ -786,7 +796,7 @@ function projectLane(
         (pr !== null && checks.requiredStatus !== "satisfied") || ownershipConflict ||
         !githubMergeReady || drift !== "none" || handoff.condition === "inconsistent" || handoff.condition === "stale" ||
         (pr !== null && handoff.condition === "unknown") ||
-        (agentOwnedPr && handoff.condition === "missing") || !issueScopeReconciled ||
+        (missingHandoffRequiresDelivery && handoff.condition === "missing") || !issueScopeReconciled ||
         handoffMergeReadinessRequiresDelivery || pr?.isDraft === true || !targetsDefaultBranch || !ownershipObservationComplete
         || !decisionReadyScopeReconciled
       ? { owner: deliveryActionOwner(owner), reason: blockers[0] ?? "Delivery-agent action is required." }

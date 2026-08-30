@@ -49,6 +49,7 @@ function githubPage() {
             title: "Dashboard v0",
             url: "https://github.com/nurockplayer/tachiko-work/pull/200",
             body: "Closes #169",
+            author: { __typename: "User", login: "nurockplayer" },
             isDraft: false,
             headRefOid: headSha,
             baseRefOid: mainSha,
@@ -168,6 +169,7 @@ describe("loadGithubSnapshot", () => {
       }],
       pullRequests: [{
         number: 200,
+        author: { login: "nurockplayer", type: "user" },
         isDraft: false,
         headSha,
         baseSha: mainSha,
@@ -205,6 +207,7 @@ describe("loadGithubSnapshot", () => {
     });
     expect(result.productHorizonUrl).toContain(mainSha);
     expect(projectionQuery).toContain("pullRequests(first: 25");
+    expect(projectionQuery).toContain("author { __typename login }");
     expect(projectionQuery).toContain("reviewThreads(first: 50)");
     expect(projectionQuery).toContain("detailsUrl startedAt checkSuite { app { databaseId }");
     expect(projectionQuery).toContain("targetUrl createdAt updatedAt");

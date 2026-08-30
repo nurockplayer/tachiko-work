@@ -76,6 +76,7 @@ export interface RawPullRequest {
   title: string;
   url: string;
   body: string;
+  author: { login: string; type: "user" | "bot" | "organization" | "unknown" } | null;
   isDraft: boolean;
   headSha: string;
   baseRefName: string;

@@ -87,6 +87,7 @@ interface GithubPullRequest {
   title: string;
   url: string;
   body: string;
+  author: { __typename: string; login: string } | null;
   isDraft: boolean;
   headRefOid: string;
   baseRefOid: string;
@@ -165,7 +166,7 @@ const dashboardQuery = `
       }
       pullRequests(first: 25, after: $prCursor, states: OPEN, orderBy: { field: UPDATED_AT, direction: DESC }) @include(if: $includePullRequests) {
         nodes {
-          number title url body isDraft headRefOid baseRefOid baseRefName mergeable mergeStateStatus updatedAt
+          number title url body author { __typename login } isDraft headRefOid baseRefOid baseRefName mergeable mergeStateStatus updatedAt
           closingIssuesReferences(first: 100) {
             nodes { number }
             pageInfo { hasNextPage }
@@ -551,6 +552,16 @@ export async function loadGithubSnapshot(
       title: pr.title,
       url: pr.url,
       body: pr.body,
+      author: pr.author === null ? null : {
+        login: pr.author.login,
+        type: pr.author.__typename === "User"
+          ? "user"
+          : pr.author.__typename === "Bot"
+            ? "bot"
+            : pr.author.__typename === "Organization"
+              ? "organization"
+              : "unknown",
+      },
       isDraft: pr.isDraft,
       headSha: pr.headRefOid,
       baseRefName: pr.baseRefName,
