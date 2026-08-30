@@ -317,6 +317,27 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.phase).toBe("validating");
   });
 
+  it("does not count empty handoff sections as mandatory evidence", () => {
+    const pr = pullRequest();
+    pr.comments[0]!.body = [
+      "<!-- agent-handoff:v1 -->",
+      "ISSUE: #169",
+      "STATE: merge-ready",
+      `HEAD: ${headSha}`,
+      `LAST CHECKED MAIN: ${mainSha}`,
+      "HUMAN ACTION: none",
+      "## Scope",
+      "## Validation",
+      "## Unresolved Review",
+      "## Next",
+    ].join("\n");
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+
+    expect(projection.deliveries[0]?.handoff.condition).toBe("inconsistent");
+    expect(projection.deliveries[0]?.phase).toBe("validating");
+  });
+
   it("keeps draft pull requests out of the merge gate", () => {
     const pr = pullRequest();
     pr.isDraft = true;
@@ -482,5 +503,27 @@ describe("normalizeRepositorySnapshot", () => {
 
     expect(projection.attention.humanActionRequired).toBe(true);
     expect(projection.attention.reasons).toContain("#169: The canonical coordination state requests human or Steward action.");
+  });
+
+  it("preserves a no-PR human escalation when dependency observation is incomplete", () => {
+    const truncated = issue();
+    truncated.blockedBy = null;
+    truncated.comments[0]!.body = [
+      "<!-- agent-handoff:v1 -->",
+      "OWNER: agent:codex",
+      "STATE: human_required",
+      `LAST CHECKED MAIN: ${mainSha}`,
+      "HUMAN ACTION: required",
+    ].join("\n");
+
+    const projection = normalizeRepositorySnapshot(snapshot({
+      fetchHealth: "partial",
+      failures: ["Issue #169 dependency observation was truncated."],
+      issues: [truncated],
+    }));
+
+    expect(projection.deliveries).toHaveLength(1);
+    expect(projection.deliveries[0]?.issue.readiness).toBe("unknown");
+    expect(projection.attention.humanActionRequired).toBe(true);
   });
 });

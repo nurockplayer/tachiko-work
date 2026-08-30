@@ -55,13 +55,29 @@ function canonicalComments(comments: RawComment[]): RawComment[] {
   return comments.filter((comment) => comment.body.includes(handoffMarker));
 }
 
+function hasNonemptyMarkdownSection(body: string, headingPattern: RegExp): boolean {
+  const lines = body.split(/\r?\n/);
+  for (const [index, line] of lines.entries()) {
+    const heading = line.match(/^#{1,6}\s+(.+?)\s*$/)?.[1];
+    if (heading === undefined || !headingPattern.test(heading)) continue;
+
+    const content: string[] = [];
+    for (const following of lines.slice(index + 1)) {
+      if (/^#{1,6}\s+/.test(following)) break;
+      content.push(following);
+    }
+    if (stripMarkdown(content.join("\n")) !== "") return true;
+  }
+  return false;
+}
+
 function hasRequiredPrHandoffRecords(body: string): boolean {
   const hasIssue = labeledValue(body, "ISSUE") !== null || /\bIssue\s*#\d+\b/i.test(body) || /#\d+\s*\/\s*PR\s*#\d+/i.test(body);
   const hasStatus = labeledValue(body, "STATUS") !== null || labeledValue(body, "STATE") !== null;
-  const hasScope = labeledValue(body, "SCOPE BOUNDARY") !== null || /^#{1,6}\s+.*\bscope\b/im.test(body);
-  const hasValidation = labeledValue(body, "VALIDATION EVIDENCE") !== null || /^#{1,6}\s+.*\bvalidation\b/im.test(body);
-  const hasReviewState = labeledValue(body, "UNRESOLVED REVIEW STATE") !== null || /\bunresolved review\b/i.test(body);
-  const hasNextAction = labeledValue(body, "NEXT ACTION") !== null || /^#{1,6}\s+Next\b/im.test(body);
+  const hasScope = labeledValue(body, "SCOPE BOUNDARY") !== null || hasNonemptyMarkdownSection(body, /\bscope\b/i);
+  const hasValidation = labeledValue(body, "VALIDATION EVIDENCE") !== null || hasNonemptyMarkdownSection(body, /\b(?:validation|evidence)\b/i);
+  const hasReviewState = labeledValue(body, "UNRESOLVED REVIEW STATE") !== null || hasNonemptyMarkdownSection(body, /\b(?:unresolved review|review state)\b/i);
+  const hasNextAction = labeledValue(body, "NEXT ACTION") !== null || hasNonemptyMarkdownSection(body, /^next\b/i);
   const hasEscalation = ["HUMAN ACTION", "FOUNDER / STEWARD ACTION", "STEWARD ACTION", "ESCALATION"]
     .some((label) => labeledValue(body, label) !== null);
   return hasIssue && hasStatus && hasScope && hasValidation && hasReviewState && hasNextAction && hasEscalation;
@@ -508,7 +524,7 @@ export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): Re
     const hasCanonicalHandoff = canonicalComments(issue.comments).length > 0;
     const owner = issueOwner(issue, handoff).toLowerCase();
     if (!hasCanonicalHandoff && !owner.includes("agent:")) continue;
-    if (issueReadiness(issue, handoff) === "unknown") continue;
+    if (issueReadiness(issue, handoff) === "unknown" && !humanActionRequested(issue.comments, handoff)) continue;
     deliveries.push(projectLane(issue, null, snapshot));
   }
 
