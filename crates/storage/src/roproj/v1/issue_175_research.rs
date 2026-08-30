@@ -55,6 +55,29 @@ struct HostAdmissionTimings {
     semantic_current: Duration,
 }
 
+#[derive(Debug)]
+enum ControlledHostAdmissionOutcome {
+    SemanticCurrent((Document, AdmissionWork, HostAdmissionTimings)),
+    RequiresForegroundExactAdmission {
+        record_bytes: usize,
+        post_read_budget_bytes: usize,
+    },
+}
+
+impl ControlledHostAdmissionOutcome {
+    fn expect_semantic_current(self) -> (Document, AdmissionWork, HostAdmissionTimings) {
+        match self {
+            Self::SemanticCurrent(result) => result,
+            Self::RequiresForegroundExactAdmission {
+                record_bytes,
+                post_read_budget_bytes,
+            } => panic!(
+                "background fixture unexpectedly requires foreground exact admission: {record_bytes} record bytes exceed {post_read_budget_bytes} byte budget"
+            ),
+        }
+    }
+}
+
 struct ResearchTempDirectory(PathBuf);
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -296,7 +319,9 @@ fn admit_one_pass_host(
     root: &Path,
     collect_work: bool,
 ) -> Result<(Document, AdmissionWork, HostAdmissionTimings), FormatError> {
-    admit_one_pass_host_controlled(root, collect_work, None, None, None, None, None, None)
+    let outcome =
+        admit_one_pass_host_controlled(root, collect_work, None, None, None, None, None, None)?;
+    Ok(outcome.expect_semantic_current())
 }
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
@@ -309,7 +334,7 @@ fn admit_one_pass_host_controlled(
     validation_cancel_at_poll: Option<usize>,
     post_read_probe: Option<PostReadCancellationProbe<'_>>,
     semantic_current_published: Option<&AtomicBool>,
-) -> Result<(Document, AdmissionWork, HostAdmissionTimings), FormatError> {
+) -> Result<ControlledHostAdmissionOutcome, FormatError> {
     let started = Instant::now();
     super::super::host::require_directory(root, "canonical .roproj root")?;
     super::super::host::require_exact_root_entries(root)?;
@@ -375,9 +400,12 @@ fn admit_one_pass_host_controlled(
             }
             post_read_checkpoint(cancel, post_read_probe, PostReadStage::RecordRead)?;
             if cancel.is_some() && record_bytes.len() > MAX_CANCELLABLE_POST_READ_RECORD_BYTES {
-                return invalid_representation(format!(
-                    "research background admission record exceeds {MAX_CANCELLABLE_POST_READ_RECORD_BYTES} byte post-read work budget; exact foreground admission required"
-                ));
+                return Ok(
+                    ControlledHostAdmissionOutcome::RequiresForegroundExactAdmission {
+                        record_bytes: record_bytes.len(),
+                        post_read_budget_bytes: MAX_CANCELLABLE_POST_READ_RECORD_BYTES,
+                    },
+                );
             }
             record_index += 1;
             strict_input_bytes += record_bytes.len();
@@ -474,7 +502,7 @@ fn admit_one_pass_host_controlled(
     if let Some(published) = semantic_current_published {
         published.store(true, Ordering::Release);
     }
-    Ok((
+    Ok(ControlledHostAdmissionOutcome::SemanticCurrent((
         document,
         AdmissionWork {
             source_bytes,
@@ -491,7 +519,7 @@ fn admit_one_pass_host_controlled(
             first_source_preview,
             semantic_current,
         },
-    ))
+    )))
 }
 
 fn check_cancel(cancel: Option<&AtomicBool>) -> Result<(), FormatError> {
@@ -3309,15 +3337,16 @@ fn issue_175_large_record_cancels_after_read_without_semantic_publication() {
 }
 
 #[test]
-fn issue_175_large_record_background_path_fails_closed_to_foreground_admission() {
+fn issue_175_large_record_fast_path_requires_foreground_exact_admission() {
     let temp = ResearchTempDirectory::new();
     let root = temp.path().join("large-post-read-budget.roproj");
-    super::super::host::materialize_roproj(&root, &mixed_document(1, 70_000)).unwrap();
+    let expected = mixed_document(1, 70_000);
+    super::super::host::materialize_roproj(&root, &expected).unwrap();
     let cancel = AtomicBool::new(false);
     let records = AtomicUsize::new(0);
     let semantic_current_published = AtomicBool::new(false);
 
-    let error = admit_one_pass_host_controlled(
+    let outcome = admit_one_pass_host_controlled(
         &root,
         true,
         Some(&cancel),
@@ -3327,20 +3356,21 @@ fn issue_175_large_record_background_path_fails_closed_to_foreground_admission()
         None,
         Some(&semantic_current_published),
     )
-    .unwrap_err();
+    .unwrap();
     assert!(matches!(
-        error,
-        FormatError::InvalidRoProjectRepresentation { message }
-            if message.contains("post-read work budget")
-                && message.contains("exact foreground admission required")
+        outcome,
+        ControlledHostAdmissionOutcome::RequiresForegroundExactAdmission {
+            record_bytes,
+            post_read_budget_bytes: MAX_CANCELLABLE_POST_READ_RECORD_BYTES,
+        } if record_bytes > MAX_CANCELLABLE_POST_READ_RECORD_BYTES
     ));
     assert_eq!(records.load(Ordering::Acquire), 0);
     assert!(!semantic_current_published.load(Ordering::Acquire));
 
-    assert_eq!(
-        admit_one_pass_host(&root, true).unwrap().0.entities.len(),
-        1
-    );
+    let (fallback, work, timings) = admit_one_pass_host(&root, true).unwrap();
+    assert_eq!(fallback, expected);
+    assert_eq!(work.entity_records, 1);
+    assert!(timings.source_known < timings.semantic_current);
 }
 
 #[test]
@@ -4269,7 +4299,7 @@ fn issue_175_progressive_background_interference_and_cancellation() {
                 foreground_batch_ops,
             );
             let elapsed = interfered_started.elapsed();
-            let background = worker.join().unwrap().unwrap();
+            let background = worker.join().unwrap().unwrap().expect_semantic_current();
             (
                 samples,
                 elapsed,
