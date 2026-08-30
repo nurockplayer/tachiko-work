@@ -4013,7 +4013,7 @@ fn issue_175_progressive_background_interference_and_cancellation() {
         foreground_batch_ops,
     ));
     println!(
-        "arm,foreground_contract,cache_state,entities,source_sha256,repetition,arm_order,foreground_samples,operations_per_sample,baseline_p50_us,baseline_p95_us,baseline_p99_us,baseline_min_us,baseline_max_us,background_p50_us,background_p95_us,background_p99_us,background_min_us,background_max_us,foreground_p95_ratio_ppm,baseline_elapsed_us,background_foreground_elapsed_us,background_semantic_current_us,background_join_wall_us,cancelled_after_records,cancellation_outcome,cancellation_latency_us"
+        "arm,foreground_contract,cache_state,entities,source_sha256,repetition,arm_order,foreground_samples,operations_per_sample,background_started_after_records,baseline_p50_us,baseline_p95_us,baseline_p99_us,baseline_min_us,baseline_max_us,background_p50_us,background_p95_us,background_p99_us,background_min_us,background_max_us,foreground_p95_ratio_ppm,baseline_elapsed_us,background_foreground_elapsed_us,background_semantic_current_us,background_join_wall_us,cancelled_after_records,cancellation_outcome,cancellation_latency_us"
     );
     for repetition in 0..repetitions {
         let run_baseline = || {
@@ -4026,9 +4026,30 @@ fn issue_175_progressive_background_interference_and_cancellation() {
             (samples, started.elapsed())
         };
         let run_interfered = || {
+            const BACKGROUND_START_RECORDS: usize = 64;
             let worker_root = root.clone();
+            let background_records = Arc::new(AtomicUsize::new(0));
+            let worker_records = Arc::clone(&background_records);
             let background_started = Instant::now();
-            let worker = std::thread::spawn(move || admit_one_pass_host(&worker_root, false));
+            let worker = std::thread::spawn(move || {
+                admit_one_pass_host_controlled(
+                    &worker_root,
+                    false,
+                    None,
+                    Some(&worker_records),
+                    None,
+                )
+            });
+            while background_records.load(Ordering::Acquire) < BACKGROUND_START_RECORDS
+                && !worker.is_finished()
+            {
+                std::thread::yield_now();
+            }
+            assert!(
+                !worker.is_finished(),
+                "background admission completed before the synchronized foreground sample"
+            );
+            let background_started_after_records = background_records.load(Ordering::Acquire);
             let interfered_started = Instant::now();
             let samples = foreground_exact_navigation_samples(
                 &resident,
@@ -4037,7 +4058,13 @@ fn issue_175_progressive_background_interference_and_cancellation() {
             );
             let elapsed = interfered_started.elapsed();
             let background = worker.join().unwrap().unwrap();
-            (samples, elapsed, background, background_started.elapsed())
+            (
+                samples,
+                elapsed,
+                background,
+                background_started.elapsed(),
+                background_started_after_records,
+            )
         };
         let (
             arm_order,
@@ -4047,9 +4074,16 @@ fn issue_175_progressive_background_interference_and_cancellation() {
             interfered_elapsed,
             background,
             background_time,
+            background_started_after_records,
         ) = if repetition % 2 == 0 {
             let (baseline, baseline_elapsed) = run_baseline();
-            let (interfered, interfered_elapsed, background, background_time) = run_interfered();
+            let (
+                interfered,
+                interfered_elapsed,
+                background,
+                background_time,
+                background_started_after_records,
+            ) = run_interfered();
             (
                 "baseline_then_background",
                 baseline,
@@ -4058,9 +4092,16 @@ fn issue_175_progressive_background_interference_and_cancellation() {
                 interfered_elapsed,
                 background,
                 background_time,
+                background_started_after_records,
             )
         } else {
-            let (interfered, interfered_elapsed, background, background_time) = run_interfered();
+            let (
+                interfered,
+                interfered_elapsed,
+                background,
+                background_time,
+                background_started_after_records,
+            ) = run_interfered();
             let (baseline, baseline_elapsed) = run_baseline();
             (
                 "background_then_baseline",
@@ -4070,6 +4111,7 @@ fn issue_175_progressive_background_interference_and_cancellation() {
                 interfered_elapsed,
                 background,
                 background_time,
+                background_started_after_records,
             )
         };
         let baseline_distribution = latency_distribution(&baseline);
@@ -4115,7 +4157,7 @@ fn issue_175_progressive_background_interference_and_cancellation() {
             (true, Err(error)) => panic!("completed worker returned an error: {error}"),
         };
         println!(
-            "B-progressive,resident_exact_id_field_navigation,not_source_io,{entity_count},{source_sha256},{repetition},{arm_order},{foreground_count},{foreground_batch_ops},{},{},{},{},{},{},{},{},{},{},{regression_ppm},{},{},{},{},{},{cancellation_outcome},{}",
+            "B-progressive,resident_exact_id_field_navigation,not_source_io,{entity_count},{source_sha256},{repetition},{arm_order},{foreground_count},{foreground_batch_ops},{background_started_after_records},{},{},{},{},{},{},{},{},{},{},{regression_ppm},{},{},{},{},{},{cancellation_outcome},{}",
             baseline_distribution.0.as_micros(),
             baseline_distribution.1.as_micros(),
             baseline_distribution.2.as_micros(),
