@@ -69,6 +69,7 @@ function githubPage() {
                           {
                             __typename: "CheckRun",
                             name: "test",
+                            startedAt: "2026-08-30T00:00:00Z",
                             status: "COMPLETED",
                             conclusion: "SUCCESS",
                             detailsUrl: null,
@@ -167,7 +168,13 @@ describe("loadGithubSnapshot", () => {
         commentsComplete: true,
         requiredChecks: [{ name: "test", integrationId: 42 }],
         checksObservedHeadSha: headSha,
-        checks: [{ name: "test", integrationId: 42, status: "completed", conclusion: "success" }],
+        checks: [{
+          name: "test",
+          integrationId: 42,
+          attemptAt: "2026-08-30T00:00:00Z",
+          status: "completed",
+          conclusion: "success",
+        }],
         reviewThreads: [{
           resolved: false,
           outdated: false,
@@ -180,6 +187,8 @@ describe("loadGithubSnapshot", () => {
     expect(result.productHorizonUrl).toContain(mainSha);
     expect(projectionQuery).toContain("pullRequests(first: 25");
     expect(projectionQuery).toContain("reviewThreads(first: 50)");
+    expect(projectionQuery).toContain("detailsUrl startedAt");
+    expect(projectionQuery).toContain("targetUrl createdAt updatedAt");
     expect(projectionQuery).toMatch(/reviewThreads\(first: 50\)[\s\S]*comments\(first: 50\)/);
   });
 

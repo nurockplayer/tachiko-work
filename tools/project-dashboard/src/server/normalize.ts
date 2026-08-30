@@ -3,6 +3,7 @@ import type {
   DeliveryLane,
   DeliveryPhase,
   HandoffProjection,
+  RawCheck,
   RawComment,
   RawIssue,
   RawPullRequest,
@@ -348,6 +349,24 @@ function deliveryActionOwner(owner: string): DeliveryLane["action"]["owner"] {
   return "unknown";
 }
 
+function latestCheckAttempts(checks: RawCheck[]): RawCheck[] {
+  const attemptsByIdentity = new Map<string, RawCheck[]>();
+  for (const check of checks) {
+    const identity = `${check.name}\u0000${check.integrationId ?? ""}`;
+    const attempts = attemptsByIdentity.get(identity) ?? [];
+    attempts.push(check);
+    attemptsByIdentity.set(identity, attempts);
+  }
+
+  return [...attemptsByIdentity.values()].flatMap((attempts) => {
+    if (attempts.length === 1 || attempts.some((attempt) => attempt.attemptAt === null)) return attempts;
+    const latestAt = attempts.toSorted((left, right) =>
+      (right.attemptAt ?? "").localeCompare(left.attemptAt ?? "")
+    )[0]?.attemptAt;
+    return attempts.filter((attempt) => attempt.attemptAt === latestAt);
+  });
+}
+
 function projectChecks(pr: RawPullRequest, observedAt: string): CheckProjection {
   const refs = [
     source("direct", `PR #${pr.number} exact-head checks`, `${pr.url}/checks`, observedAt, pr.checksObservedHeadSha),
@@ -363,8 +382,9 @@ function projectChecks(pr: RawPullRequest, observedAt: string): CheckProjection 
       sourceRefs: refs,
     };
   }
-  const required = projectRequiredChecks(pr);
-  if (pr.checks.length === 0) {
+  const checks = latestCheckAttempts(pr.checks);
+  const required = projectRequiredChecks(pr, checks);
+  if (checks.length === 0) {
     return {
       status: "unknown",
       ...required,
@@ -374,7 +394,7 @@ function projectChecks(pr: RawPullRequest, observedAt: string): CheckProjection 
     };
   }
 
-  const failure = pr.checks.find(
+  const failure = checks.find(
     (check) => check.status === "completed" && check.conclusion !== null && !["success", "neutral", "skipped"].includes(check.conclusion),
   );
   if (failure !== undefined) {
@@ -387,7 +407,7 @@ function projectChecks(pr: RawPullRequest, observedAt: string): CheckProjection 
     };
   }
 
-  const pending = pr.checks.find((check) => check.status !== "completed" || check.conclusion === null);
+  const pending = checks.find((check) => check.status !== "completed" || check.conclusion === null);
   if (pending !== undefined) {
     return {
       status: "pending",
@@ -402,13 +422,14 @@ function projectChecks(pr: RawPullRequest, observedAt: string): CheckProjection 
     status: "success",
     ...required,
     observedHeadSha: pr.checksObservedHeadSha,
-    summary: `${pr.checks.length} exact-head check${pr.checks.length === 1 ? "" : "s"} passed.`,
+    summary: `${checks.length} exact-head check${checks.length === 1 ? "" : "s"} passed.`,
     sourceRefs: refs,
   };
 }
 
 function projectRequiredChecks(
   pr: RawPullRequest,
+  checks: RawCheck[],
 ): Pick<CheckProjection, "requiredStatus" | "requiredSummary"> {
   if (pr.requiredChecks === null) {
     return { requiredStatus: "unknown", requiredSummary: "The required-check set could not be observed." };
@@ -418,7 +439,7 @@ function projectRequiredChecks(
   }
 
   for (const required of pr.requiredChecks) {
-    const observed = pr.checks?.find(
+    const observed = checks.find(
       (check) => check.name === required.name &&
         (required.integrationId === null || check.integrationId === required.integrationId),
     );

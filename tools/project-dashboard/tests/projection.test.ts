@@ -90,7 +90,7 @@ function pullRequest(): RawPullRequest {
       },
     ],
     checksObservedHeadSha: headSha,
-    checks: [{ name: "test", integrationId: null, status: "completed", conclusion: "success", url: null }],
+    checks: [{ name: "test", integrationId: null, attemptAt: null, status: "completed", conclusion: "success", url: null }],
     reviewDecision: "approved",
     reviews: [{ state: "approved", headSha, url: "https://github.com/review", submittedAt: observedAt }],
     reviewThreads: [],
@@ -773,8 +773,8 @@ describe("normalizeRepositorySnapshot", () => {
     const pr = pullRequest();
     pr.requiredChecks = [{ name: "test", integrationId: null }];
     pr.checks = [
-      { name: "test", integrationId: null, status: "completed", conclusion: "success", url: null },
-      { name: "optional-smoke", integrationId: null, status: "in_progress", conclusion: null, url: null },
+      { name: "test", integrationId: null, attemptAt: null, status: "completed", conclusion: "success", url: null },
+      { name: "optional-smoke", integrationId: null, attemptAt: null, status: "in_progress", conclusion: null, url: null },
     ];
 
     const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
@@ -787,10 +787,50 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.action.owner).toBe("codex");
   });
 
+  it.each([
+    { status: "completed" as const, conclusion: "failure" as const },
+    { status: "in_progress" as const, conclusion: null },
+  ])("ignores a superseded $status attempt after a successful rerun", (superseded) => {
+    const pr = pullRequest();
+    pr.requiredChecks = [{ name: "test", integrationId: null }];
+    pr.checks = [
+      {
+        name: "test",
+        integrationId: null,
+        attemptAt: "2026-08-30T00:01:00Z",
+        status: "completed",
+        conclusion: "success",
+        url: null,
+      },
+      {
+        name: "test",
+        integrationId: null,
+        attemptAt: "2026-08-30T00:00:00Z",
+        status: superseded.status,
+        conclusion: superseded.conclusion,
+        url: null,
+      },
+    ];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.checks.status).toBe("success");
+    expect(lane?.checks.requiredStatus).toBe("satisfied");
+    expect(lane?.phase).toBe("merge_gate");
+  });
+
   it("never treats an optional green check as satisfying an unobserved required check", () => {
     const pr = pullRequest();
     pr.requiredChecks = [{ name: "release", integrationId: null }];
-    pr.checks = [{ name: "optional-smoke", integrationId: null, status: "completed", conclusion: "success", url: null }];
+    pr.checks = [{
+      name: "optional-smoke",
+      integrationId: null,
+      attemptAt: null,
+      status: "completed",
+      conclusion: "success",
+      url: null,
+    }];
 
     const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
     const lane = projection.deliveries[0];

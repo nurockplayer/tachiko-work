@@ -63,6 +63,9 @@ interface GithubCheckContext {
   state?: string;
   detailsUrl?: string | null;
   targetUrl?: string | null;
+  startedAt?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
   checkSuite?: { app: { databaseId: number } | null } | null;
 }
 
@@ -179,8 +182,8 @@ const dashboardQuery = `
                   contexts(first: 100) {
                     nodes {
                       __typename
-                      ... on CheckRun { name status conclusion detailsUrl checkSuite { app { databaseId } } }
-                      ... on StatusContext { context state targetUrl }
+                      ... on CheckRun { name status conclusion detailsUrl startedAt checkSuite { app { databaseId } } }
+                      ... on StatusContext { context state targetUrl createdAt updatedAt }
                     }
                     pageInfo { hasNextPage }
                   }
@@ -258,6 +261,7 @@ function asCheck(context: GithubCheckContext): RawCheck {
     return {
       name: context.context ?? "commit status",
       integrationId: null,
+      attemptAt: context.updatedAt ?? context.createdAt ?? null,
       status: state === "PENDING" || state === "EXPECTED" ? "in_progress" : "completed",
       conclusion: state === "SUCCESS" ? "success" : state === "PENDING" || state === "EXPECTED" ? null : "failure",
       url: context.targetUrl ?? null,
@@ -266,6 +270,7 @@ function asCheck(context: GithubCheckContext): RawCheck {
   return {
     name: context.name ?? "check run",
     integrationId: context.checkSuite?.app?.databaseId ?? null,
+    attemptAt: context.startedAt ?? null,
     status: normalizeCheckStatus(context.status),
     conclusion: normalizeConclusion(context.conclusion),
     url: context.detailsUrl ?? null,

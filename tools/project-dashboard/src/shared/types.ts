@@ -46,6 +46,7 @@ export interface RawIssue {
 export interface RawCheck {
   name: string;
   integrationId: number | null;
+  attemptAt: string | null;
   status: "queued" | "in_progress" | "completed" | "unknown";
   conclusion: "success" | "failure" | "cancelled" | "neutral" | "skipped" | "stale" | null;
   url: string | null;

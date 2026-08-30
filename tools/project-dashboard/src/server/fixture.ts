@@ -63,7 +63,7 @@ function staleDashboardPr(): RawPullRequest {
       },
     ],
     checksObservedHeadSha: "a".repeat(40),
-    checks: [{ name: "project-dashboard", integrationId: null, status: "completed", conclusion: "success", url: null }],
+    checks: [{ name: "project-dashboard", integrationId: null, attemptAt: null, status: "completed", conclusion: "success", url: null }],
     requiredChecks: [],
     reviewDecision: "review_required",
     reviews: [],
@@ -101,7 +101,7 @@ function reviewFixPr(): RawPullRequest {
       },
     ],
     checksObservedHeadSha: reviewHead,
-    checks: [{ name: "research-probe", integrationId: null, status: "completed", conclusion: "success", url: null }],
+    checks: [{ name: "research-probe", integrationId: null, attemptAt: null, status: "completed", conclusion: "success", url: null }],
     requiredChecks: [],
     reviewDecision: "changes_requested",
     reviews: [
