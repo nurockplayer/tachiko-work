@@ -1058,6 +1058,54 @@ describe("Designer application seam", () => {
     vi.unstubAllGlobals();
   });
 
+  it("removes pending scalar drafts that return to their projected values", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const memoryHost = new MemoryHost();
+    const prompt = vi.fn<Window["prompt"]>().mockReturnValue("baseline.roproj");
+    const removeEventListener = vi.spyOn(window, "removeEventListener");
+    vi.stubGlobal("prompt", prompt);
+    const app = mountDesigner(root, new FakeClient(), memoryHost);
+    await app.ready;
+
+    root.querySelector<HTMLButtonElement>("[data-save-as]")?.click();
+    await vi.waitFor(() => {
+      expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+        "Saved",
+      );
+    });
+
+    const name = root.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Name for Iron Sword"]',
+    );
+    const enabled = root.querySelector<HTMLInputElement>(
+      'input[aria-label="Enabled for Iron Sword"]',
+    );
+    if (name === null || enabled === null) throw new Error("scalar controls are required");
+
+    name.value = "Draft";
+    name.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    name.value = "Leading\nMiddle\nTail";
+    name.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    enabled.checked = false;
+    enabled.dispatchEvent(new Event("change", { bubbles: true }));
+    enabled.checked = true;
+    enabled.dispatchEvent(new Event("change", { bubbles: true }));
+
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+      "Saved",
+    );
+    expect(removeEventListener).toHaveBeenCalledWith(
+      "beforeunload",
+      expect.any(Function),
+    );
+
+    app.destroy();
+    removeEventListener.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
   it("requires confirmation before Open or Close discards a dirty occurrence", async () => {
     document.body.innerHTML = '<div id="app"></div>';
     const root = document.querySelector<HTMLElement>("#app");

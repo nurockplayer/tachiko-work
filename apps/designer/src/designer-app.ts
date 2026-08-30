@@ -74,13 +74,14 @@ export function mountDesigner(
     }
   };
 
-  const reflectPendingDraftState = (): void => {
+  const reflectUnsavedState = (): void => {
     syncBeforeUnloadGuard();
     const durabilityChip = root.querySelector<HTMLElement>('[data-testid="durability"]');
     if (durabilityChip !== null) {
-      durabilityChip.dataset.dirty = "true";
+      const dirty = durability.snapshot().dirty || hasPendingScalarDrafts();
+      durabilityChip.dataset.dirty = String(dirty);
       const label = durabilityChip.querySelector("span");
-      if (label !== null) label.textContent = "Unsaved changes";
+      if (label !== null) label.textContent = dirty ? "Unsaved changes" : "Saved";
     }
   };
 
@@ -432,19 +433,28 @@ export function mountDesigner(
       const draftEntity = decodeOpaqueAttribute(form.dataset.entity);
       const draftField = decodeOpaqueAttribute(form.dataset.field);
       if (draftControl !== null && draftEntity !== undefined && draftField !== undefined) {
-        draftControl.addEventListener("input", () => {
-          pendingTextBuffers.set(textBufferKey({ entity: draftEntity, field: draftField }), draftControl.value);
-          reflectPendingDraftState();
-        });
+        const recordDraft = (): void => {
+          const key = textBufferKey({ entity: draftEntity, field: draftField });
+          if (draftControl.value === draftControl.dataset.initialNormalized) {
+            pendingTextBuffers.delete(key);
+          } else {
+            pendingTextBuffers.set(key, draftControl.value);
+          }
+          reflectUnsavedState();
+        };
+        draftControl.addEventListener("input", recordDraft);
       }
       if (draftBoolean !== null && draftEntity !== undefined && draftField !== undefined) {
-        draftBoolean.addEventListener("change", () => {
-          pendingBooleanBuffers.set(
-            textBufferKey({ entity: draftEntity, field: draftField }),
-            draftBoolean.checked,
-          );
-          reflectPendingDraftState();
-        });
+        const recordDraft = (): void => {
+          const key = textBufferKey({ entity: draftEntity, field: draftField });
+          if (String(draftBoolean.checked) === draftBoolean.dataset.initialChecked) {
+            pendingBooleanBuffers.delete(key);
+          } else {
+            pendingBooleanBuffers.set(key, draftBoolean.checked);
+          }
+          reflectUnsavedState();
+        };
+        draftBoolean.addEventListener("change", recordDraft);
       }
       form.addEventListener("submit", (event) => {
         event.preventDefault();
@@ -477,17 +487,28 @@ export function mountDesigner(
               render();
               return;
             }
-            pendingTextBuffers.set(textBufferKey({ entity, field }), control.value);
-            syncBeforeUnloadGuard();
+            const textKey = textBufferKey({ entity, field });
+            if (control.value === initialNormalized) {
+              pendingTextBuffers.delete(textKey);
+            } else {
+              pendingTextBuffers.set(textKey, control.value);
+            }
+            reflectUnsavedState();
             void commitText({ entity, field }, value);
             break;
           }
-          case "boolean":
+          case "boolean": {
             if (!(control instanceof HTMLInputElement)) return;
-            pendingBooleanBuffers.set(textBufferKey({ entity, field }), control.checked);
-            syncBeforeUnloadGuard();
+            const booleanKey = textBufferKey({ entity, field });
+            if (String(control.checked) === control.dataset.initialChecked) {
+              pendingBooleanBuffers.delete(booleanKey);
+            } else {
+              pendingBooleanBuffers.set(booleanKey, control.checked);
+            }
+            reflectUnsavedState();
             void commitBoolean({ entity, field }, control.checked);
             break;
+          }
         }
       });
     });
@@ -535,7 +556,7 @@ export function mountDesigner(
             entity !== undefined && field !== undefined
               ? (pendingTextBuffers.get(textBufferKey({ entity, field })) ?? initialText)
               : initialText;
-          textarea.dataset.initialNormalized = normalizeLineEndings(textarea.value);
+          textarea.dataset.initialNormalized = normalizeLineEndings(initialText);
         }
       },
     );
@@ -860,6 +881,7 @@ function fieldMarkup(
         )}" data-field="${encodeOpaqueAttribute(field.target.field)}" data-edit-kind="boolean">
           <input
             type="checkbox"
+            data-initial-checked="${String(field.stored.value)}"
             ${field.stored.value ? "checked" : ""}
             aria-label="${escapeHtml(humanize(field.target.field))} for ${escapeHtml(
               humanize(entityKey),
