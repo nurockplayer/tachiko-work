@@ -214,6 +214,31 @@ describe("loadGithubSnapshot", () => {
     expect(projectionQuery).toMatch(/reviewThreads\(first: 50\)[\s\S]*comments\(first: 50\)/);
   });
 
+  it.each([
+    ["the exact section is absent", "## Roadmap note\n\n> **05 · Designer MVP**"],
+    [
+      "only a nested subsection has a quoted value",
+      "## Current horizon\n\nNo current value.\n\n### Historical note\n\n> **05 · Designer MVP**",
+    ],
+  ])("fails closed when %s", async (_case, roadmap) => {
+    const api: ReadonlyGithubApi = {
+      graphql: async () => githubPage(),
+      rawText: async () => roadmap,
+      requiredStatusChecks: async () => [],
+      compare: async () => ({ status: "ahead", mergeBaseSha: mainSha, files: [] }),
+    };
+
+    const result = await loadGithubSnapshot(api, {
+      owner: "nurockplayer",
+      repo: "tachiko-work",
+      observedAt: "2026-08-30T00:00:00.000Z",
+    });
+
+    expect(result.productHorizon).toBeNull();
+    expect(result.fetchHealth).toBe("partial");
+    expect(result.failures).toContain("Product Roadmap current horizon could not be parsed.");
+  });
+
   it("preserves the PR base tip and observes changed authority paths from merge-base to live main", async () => {
     const oldBase = "d".repeat(40);
     const page = githubPage();

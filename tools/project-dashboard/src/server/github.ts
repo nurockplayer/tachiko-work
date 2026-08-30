@@ -334,7 +334,10 @@ function asReviewThread(thread: GithubReviewThread): RawReviewThread {
 }
 
 function extractHorizon(markdown: string): string | null {
-  const currentSection = markdown.match(/## Current horizon([\s\S]*?)(?:\n## |$)/i)?.[1] ?? markdown;
+  const currentSection = markdown.match(
+    /^##[ \t]+Current horizon[ \t]*(?:\r?\n|$)([\s\S]*?)(?=^#{1,6}[ \t]+|$(?![\s\S]))/im,
+  )?.[1];
+  if (currentSection === undefined) return null;
   return currentSection.match(/>\s*\*\*(.+?)\*\*/)?.[1]?.trim() ?? null;
 }
 
