@@ -129,7 +129,7 @@ interface GithubPage {
 
 interface GithubMergedPage {
   repository: null | {
-    mergedPullRequests: { nodes: GithubMergedPullRequest[] };
+    mergedPullRequests: { nodes: GithubMergedPullRequest[]; pageInfo: PageInfo };
   };
 }
 
@@ -222,6 +222,7 @@ const recentCompletionsQuery = `
         orderBy: { field: UPDATED_AT, direction: DESC }
       ) {
         nodes { number title url mergedAt mergeCommit { oid } mergedBy { login } }
+        pageInfo { hasNextPage endCursor }
       }
     }
   }
@@ -418,7 +419,13 @@ export async function loadGithubSnapshot(
       repo: options.repo,
     })) as GithubMergedPage;
     if (response.repository === null) throw new Error("repository not found");
-    for (const pr of response.repository.mergedPullRequests.nodes) mergedPullRequests.set(pr.number, pr);
+    const connection = response.repository.mergedPullRequests;
+    if (connection.pageInfo.hasNextPage) {
+      recentCompletionsAvailable = false;
+      failures.push("Recent completion observation was truncated.");
+    } else {
+      for (const pr of connection.nodes) mergedPullRequests.set(pr.number, pr);
+    }
   } catch {
     recentCompletionsAvailable = false;
     failures.push("Recent completion observation failed.");

@@ -234,7 +234,7 @@ function statusClaimIsConditional(statusText: string, match: RegExpExecArray): b
   const before = statusText.slice(0, match.index);
   const after = statusText.slice(match.index + match[0].length);
   return /\b(?:(?:future|become|mark|set|move|declare|consider)(?:\s+(?:as|to))?|(?:will|would|should|can|could|may|might)(?:\s+be|\s+become)?)\s*$/i.test(before) ||
-    /^\s+(?:only\s+)?(?:once|when|if|after|pending)\b/i.test(after);
+    /^\s*(?:(?:[:=-])\s*)?(?:only\s+)?(?:(?:once|when|if|after|pending)\b|subject\s+to\b)/i.test(after);
 }
 
 function statusHasAffirmativeClaim(statusText: string, claim: RegExp): boolean {

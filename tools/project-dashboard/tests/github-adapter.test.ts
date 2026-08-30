@@ -306,18 +306,25 @@ describe("loadGithubSnapshot", () => {
     expect(result.failures).toContain("PR #200 closing-Issue observation was truncated.");
   });
 
-  it("bounds the recent-completion window and sorts its sample by merge time", async () => {
+  it("selects the latest eight by merge time from a complete bounded source window", async () => {
     let recentQuery = "";
     let recentCalls = 0;
     const api: ReadonlyGithubApi = {
       graphql: async (query) => {
         if (!query.includes("RecentCompletions")) return githubPage();
-        recentCalls += 1;
         recentQuery = query;
+        recentCalls += 1;
         return {
           repository: {
             mergedPullRequests: {
-              nodes: Array.from({ length: 9 }, (_, index) => {
+              nodes: [{
+                number: 99,
+                title: "Recently updated older merge",
+                url: "https://github.com/nurockplayer/tachiko-work/pull/99",
+                mergedAt: "2026-08-29T23:59:00Z",
+                mergeCommit: { oid: "f".repeat(40) },
+                mergedBy: { login: "maintainer" },
+              }, ...Array.from({ length: 9 }, (_, index) => {
                 const number = 100 + index;
                 return {
                   number,
@@ -327,7 +334,8 @@ describe("loadGithubSnapshot", () => {
                   mergeCommit: { oid: index.toString(16).repeat(40) },
                   mergedBy: { login: "maintainer" },
                 };
-              }),
+              })],
+              pageInfo: { hasNextPage: false, endCursor: null },
             },
           },
         };
@@ -346,8 +354,38 @@ describe("loadGithubSnapshot", () => {
     expect(recentCalls).toBe(1);
     expect(recentQuery).toMatch(/pullRequests\(\s*first:\s*100/);
     expect(recentQuery).toMatch(/states:\s*MERGED/);
-    expect(recentQuery).toMatch(/orderBy:\s*\{\s*field:\s*UPDATED_AT,\s*direction:\s*DESC\s*\}/);
     expect(result.recentCompletions?.map((completion) => completion.number)).toEqual([108, 107, 106, 105, 104, 103, 102, 101]);
+  });
+
+  it("fails recent completions closed when the bounded source window is truncated", async () => {
+    let recentCalls = 0;
+    const api: ReadonlyGithubApi = {
+      graphql: async (query) => {
+        const page = githubPage();
+        if (query.includes("RecentCompletions")) {
+          recentCalls += 1;
+          page.repository.mergedPullRequests.pageInfo = {
+            hasNextPage: true,
+            endCursor: "more-merged-pull-requests",
+          };
+        }
+        return page;
+      },
+      rawText: async () => "## Current horizon\n\n> **05 · Designer MVP**",
+      requiredStatusChecks: async () => [],
+      compare: async () => ({ status: "ahead", mergeBaseSha: mainSha, files: [] }),
+    };
+
+    const result = await loadGithubSnapshot(api, {
+      owner: "nurockplayer",
+      repo: "tachiko-work",
+      observedAt: "2026-08-30T00:00:00.000Z",
+    });
+
+    expect(recentCalls).toBe(1);
+    expect(result.recentCompletions).toBeNull();
+    expect(result.fetchHealth).toBe("partial");
+    expect(result.failures).toContain("Recent completion observation was truncated.");
   });
 
   it("stops querying a repository connection after that connection is exhausted", async () => {
