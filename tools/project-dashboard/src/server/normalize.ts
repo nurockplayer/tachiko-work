@@ -18,6 +18,10 @@ import { isDecisionAuthorityPath } from "../shared/authority.ts";
 const handoffMarker = "<!-- agent-handoff:v1 -->";
 const explicitlyPrioritizedFinding = /(?:\[|\b)(?:p[0-2]|sev(?:erity)?[ -]?[0-2])(?:\]|\b)/i;
 const explicitlySubstantiveFinding = /(?:\[|\b)(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness)(?:\]|\b)/i;
+const negatedReviewFinding = /\b(?:no|not|none|without|zero)\b[^.!?;\n]{0,80}\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|findings?|issues?|concerns?|problems?)\b/i;
+const clearedReviewFinding = /\b(?:security|correctness|blocking)\b[^.!?;\n]{0,80}\b(?:checks?|review|findings?|issues?)?\s*(?:passed|complete(?:d)?|clean|resolved)\b/i;
+const equivalentReviewFindingLabel = /(?:^|\s)(?:blocking|security|correctness|data[- ]integrity)\s*:/i;
+const equivalentReviewFindingContext = /\b(?:blocking|security|correctness|data[- ]integrity)\b[^.!?;\n]{0,80}\b(?:finding|issue|bug|risk|failure|regression|vulnerab\w*|flaw|problem|concern|break\w*|corrupt\w*|overwrit\w*|data[- ]loss)\b|\b(?:finding|issue|bug|risk|failure|regression|vulnerab\w*|flaw|problem|concern|break\w*|corrupt\w*|overwrit\w*|data[- ]loss)\b[^.!?;\n]{0,80}\b(?:blocking|security|correctness|data[- ]integrity)\b/i;
 const explicitlyNonSubstantiveFinding = /^(?:[_*]+\s*)?(?:\[(?:p3|sev(?:erity)?[ -]?3)\]|(?:p3|sev(?:erity)?[ -]?3|nit(?:pick)?|trivial)\b)/i;
 const explicitlyNonSubstantiveBadge = /^(?:<sub>\s*)+!\[(?:p3|sev(?:erity)?[ -]?3)\s+badge\]\([^)]*\)(?:<\/sub>\s*)+/i;
 const explicitlyNonSubstantiveAcknowledgment = /^(?:done|fixed(?:\s+in\s+(?:commit\s+)?[0-9a-f]{7,40})?|thanks,\s+applied this suggestion)[.!]?$/i;
@@ -76,6 +80,18 @@ function isSubstantiveFinding(body: string): boolean {
   if (explicitlyNonSubstantiveBadge.test(normalized)) return false;
   if (explicitlyNonSubstantiveAcknowledgment.test(normalized)) return false;
   return !explicitlyNonSubstantiveFinding.test(normalized);
+}
+
+function isSubstantiveReviewBody(body: string): boolean {
+  return stripMarkdown(body).split(/[.!?;\n]+/).some((segment) => {
+    const normalized = segment.trim();
+    if (normalized === "" || negatedReviewFinding.test(normalized) || clearedReviewFinding.test(normalized)) {
+      return false;
+    }
+    return explicitlyPrioritizedFinding.test(normalized) ||
+      equivalentReviewFindingLabel.test(normalized) ||
+      equivalentReviewFindingContext.test(normalized);
+  });
 }
 
 function claimedIssueNumber(body: string): number | null {
@@ -538,16 +554,22 @@ function projectReviews(pr: RawPullRequest, observedAt: string): ReviewProjectio
     };
   }
 
-  const relevantReviews = pr.reviews
+  const opinionatedReviews = pr.reviews
     .filter((review) => review.state === "approved" || review.state === "changes_requested")
     .toSorted((left, right) => right.submittedAt.localeCompare(left.submittedAt));
+  const latestOpinionByReviewer = new Map<string, (typeof opinionatedReviews)[number]>();
+  for (const review of opinionatedReviews) {
+    const reviewer = review.author ?? review.url;
+    if (!latestOpinionByReviewer.has(reviewer)) latestOpinionByReviewer.set(reviewer, review);
+  }
+  const relevantReviews = [...latestOpinionByReviewer.values()];
   const reviewedHeads = new Set(relevantReviews.map((review) => review.headSha));
   const reviewedHeadSha = reviewedHeads.size === 1 ? relevantReviews[0]?.headSha ?? null : null;
   const unresolved = pr.reviewThreads.filter((thread) => !thread.resolved);
   const substantiveReviewBodies = pr.reviews.filter(
     (review) => !["dismissed", "pending"].includes(review.state) &&
       review.headSha !== null && shaMatches(review.headSha, pr.headSha) &&
-      explicitlyPrioritizedFinding.test(review.body),
+      isSubstantiveReviewBody(review.body),
   );
   const allReviewsCoverHead = relevantReviews.length > 0 && relevantReviews.every(
     (review) => review.headSha !== null && shaMatches(review.headSha, pr.headSha),

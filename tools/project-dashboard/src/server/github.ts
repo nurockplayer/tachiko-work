@@ -73,6 +73,7 @@ interface GithubCheckContext {
 
 interface GithubReview {
   state: string;
+  author: { login: string } | null;
   body: string;
   submittedAt: string | null;
   url: string;
@@ -197,7 +198,7 @@ const dashboardQuery = `
           }
           reviewDecision
           reviews(first: 100) {
-            nodes { state body submittedAt url commit { oid } }
+            nodes { state author { login } body submittedAt url commit { oid } }
             pageInfo { hasNextPage }
           }
           reviewThreads(first: 50) {
@@ -319,6 +320,7 @@ function normalizeMergeStateStatus(value: string): RawPullRequest["mergeStateSta
 function asReview(review: GithubReview): RawReview {
   return {
     state: normalizeReviewState(review.state),
+    author: review.author?.login ?? null,
     body: review.body,
     headSha: review.commit?.oid ?? null,
     url: review.url,

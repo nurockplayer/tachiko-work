@@ -112,6 +112,7 @@ function githubPage() {
             reviews: {
               nodes: [{
                 state: "COMMENTED",
+                author: { login: "codex" },
                 body: "[P2] Comment-only current-head finding",
                 submittedAt: "2026-08-30T00:00:00Z",
                 url: "https://github.com/review/comment-only",
@@ -226,6 +227,7 @@ describe("loadGithubSnapshot", () => {
         }],
         reviews: [{
           state: "commented",
+          author: "codex",
           body: "[P2] Comment-only current-head finding",
           headSha,
           url: "https://github.com/review/comment-only",
@@ -241,7 +243,7 @@ describe("loadGithubSnapshot", () => {
     expect(projectionQuery).toContain("reviewThreads(first: 50)");
     expect(projectionQuery).toContain("reviews(first: 100)");
     expect(projectionQuery).not.toContain("latestOpinionatedReviews");
-    expect(projectionQuery).toMatch(/reviews\(first: 100\)[\s\S]*nodes \{ state body submittedAt url commit \{ oid \} \}/);
+    expect(projectionQuery).toMatch(/reviews\(first: 100\)[\s\S]*nodes \{ state author \{ login \} body submittedAt url commit \{ oid \} \}/);
     expect(projectionQuery).toContain("detailsUrl startedAt checkSuite { app { databaseId }");
     expect(projectionQuery).toContain("targetUrl createdAt updatedAt");
     expect(projectionQuery).toMatch(/reviewThreads\(first: 50\)[\s\S]*comments\(first: 50\)/);

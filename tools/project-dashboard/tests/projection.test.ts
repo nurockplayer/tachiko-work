@@ -96,7 +96,7 @@ function pullRequest(): RawPullRequest {
     checksObservedHeadSha: headSha,
     checks: [{ name: "test", integrationId: null, attemptAt: null, status: "completed", conclusion: "success", url: null }],
     reviewDecision: "approved",
-    reviews: [{ state: "approved", body: "", headSha, url: "https://github.com/review", submittedAt: observedAt }],
+    reviews: [{ state: "approved", author: "reviewer", body: "", headSha, url: "https://github.com/review", submittedAt: observedAt }],
     reviewThreads: [],
     updatedAt: observedAt,
   };
@@ -876,6 +876,7 @@ describe("normalizeRepositorySnapshot", () => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
       state: "commented",
+      author: "codex",
       body: "[P2] Preserve comment-only review evidence",
       headSha,
       url: "https://github.com/review/comment-only",
@@ -899,6 +900,7 @@ describe("normalizeRepositorySnapshot", () => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
       state: "commented",
+      author: "codex",
       body: "[P2] Finding from the preceding head",
       headSha: "c".repeat(40),
       url: "https://github.com/review/old-comment-only",
@@ -915,10 +917,13 @@ describe("normalizeRepositorySnapshot", () => {
   it.each([
     "Automated review completed without inline findings.",
     "Security and correctness checks passed; no blocking issues.",
+    "No P1/P2 findings.",
+    "No blocking correctness issues.",
   ])("does not infer a substantive finding from a clean comment-only review summary: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
       state: "commented",
+      author: "codex",
       body,
       headSha,
       url: "https://github.com/review/summary",
@@ -930,6 +935,27 @@ describe("normalizeRepositorySnapshot", () => {
 
     expect(lane?.reviews.substantiveUnresolvedCount).toBe(0);
     expect(lane?.phase).toBe("merge_gate");
+  });
+
+  it.each([
+    "Blocking: this save path can overwrite user data.",
+    "Correctness issue: the projection can report a stale head as current.",
+    "Security risk: an untrusted comment can control the handoff.",
+  ])("blocks an affirmative equivalent comment-only finding: %s", (body) => {
+    const pr = pullRequest();
+    pr.reviews = [...(pr.reviews ?? []), {
+      state: "commented",
+      author: "codex",
+      body,
+      headSha,
+      url: "https://github.com/review/equivalent",
+      submittedAt: observedAt,
+    }];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+
+    expect(projection.deliveries[0]?.reviews.substantiveUnresolvedCount).toBe(1);
+    expect(projection.deliveries[0]?.phase).toBe("review_fix");
   });
 
   it("routes delivery reconciliation to the claimed ChatGPT agent", () => {
@@ -997,6 +1023,7 @@ describe("normalizeRepositorySnapshot", () => {
     pr.reviewDecision = "changes_requested";
     pr.reviews = [{
       state: "changes_requested",
+      author: "reviewer",
       body: "",
       headSha,
       url: "https://github.com/review",
@@ -1680,8 +1707,8 @@ describe("normalizeRepositorySnapshot", () => {
   it("keeps an approved decision stale until every counted approval covers the exact head", () => {
     const pr = pullRequest();
     pr.reviews = [
-      { state: "approved", body: "", headSha, url: "https://github.com/review/current", submittedAt: observedAt },
-      { state: "approved", body: "", headSha: "c".repeat(40), url: "https://github.com/review/stale", submittedAt: "2026-08-29T23:00:00.000Z" },
+      { state: "approved", author: "current-reviewer", body: "", headSha, url: "https://github.com/review/current", submittedAt: observedAt },
+      { state: "approved", author: "stale-reviewer", body: "", headSha: "c".repeat(40), url: "https://github.com/review/stale", submittedAt: "2026-08-29T23:00:00.000Z" },
     ];
 
     const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
@@ -1689,6 +1716,20 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries[0]?.reviews.status).toBe("stale");
     expect(projection.deliveries[0]?.reviews.reviewedHeadSha).toBeNull();
     expect(projection.deliveries[0]?.phase).toBe("rereview");
+  });
+
+  it("uses only each reviewer's latest opinion for exact-head coverage", () => {
+    const pr = pullRequest();
+    pr.reviews = [
+      { state: "approved", author: "reviewer", body: "", headSha, url: "https://github.com/review/current", submittedAt: observedAt },
+      { state: "approved", author: "reviewer", body: "", headSha: "c".repeat(40), url: "https://github.com/review/stale", submittedAt: "2026-08-29T23:00:00.000Z" },
+    ];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+
+    expect(projection.deliveries[0]?.reviews.status).toBe("current");
+    expect(projection.deliveries[0]?.reviews.reviewedHeadSha).toBe(headSha);
+    expect(projection.deliveries[0]?.phase).toBe("merge_gate");
   });
 
   it("keeps an approved decision out of merge gate without observed exact-head approval", () => {
