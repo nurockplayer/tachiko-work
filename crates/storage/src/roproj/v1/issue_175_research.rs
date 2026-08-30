@@ -29,6 +29,24 @@ use super::issue_175_oracle_bridge::{AdmissionWork, admit_one_pass_exact, dto_wo
 use super::*;
 
 static NEXT_RESEARCH_TEMP: AtomicU64 = AtomicU64::new(0);
+const MAX_CANCELLABLE_POST_READ_RECORD_BYTES: usize = 64 * 1024;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PostReadStage {
+    RecordRead,
+    Utf8Checked,
+    StrictInspectionComplete,
+    DtoDecoded,
+    WorkCounted,
+    CanonicalRenderingComplete,
+    SemanticConversionComplete,
+}
+
+#[derive(Clone, Copy)]
+struct PostReadCancellationProbe<'a> {
+    pause_at: PostReadStage,
+    reached: &'a AtomicBool,
+}
 
 #[derive(Clone, Copy, Debug)]
 struct HostAdmissionTimings {
@@ -278,10 +296,10 @@ fn admit_one_pass_host(
     root: &Path,
     collect_work: bool,
 ) -> Result<(Document, AdmissionWork, HostAdmissionTimings), FormatError> {
-    admit_one_pass_host_controlled(root, collect_work, None, None, None, None)
+    admit_one_pass_host_controlled(root, collect_work, None, None, None, None, None, None)
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn admit_one_pass_host_controlled(
     root: &Path,
     collect_work: bool,
@@ -289,6 +307,8 @@ fn admit_one_pass_host_controlled(
     records_completed: Option<&AtomicUsize>,
     pause_before_final_validation: Option<&AtomicBool>,
     validation_cancel_at_poll: Option<usize>,
+    post_read_probe: Option<PostReadCancellationProbe<'_>>,
+    semantic_current_published: Option<&AtomicBool>,
 ) -> Result<(Document, AdmissionWork, HostAdmissionTimings), FormatError> {
     let started = Instant::now();
     super::super::host::require_directory(root, "canonical .roproj root")?;
@@ -353,19 +373,33 @@ fn admit_one_pass_host_controlled(
                     "entity shard '{relative}' contains a blank JSONL record"
                 ));
             }
+            post_read_checkpoint(cancel, post_read_probe, PostReadStage::RecordRead)?;
+            if cancel.is_some() && record_bytes.len() > MAX_CANCELLABLE_POST_READ_RECORD_BYTES {
+                return invalid_representation(format!(
+                    "research background admission record exceeds {MAX_CANCELLABLE_POST_READ_RECORD_BYTES} byte post-read work budget; exact foreground admission required"
+                ));
+            }
             record_index += 1;
             strict_input_bytes += record_bytes.len();
             let record_path = format!("{relative}:{record_index}");
             let record = utf8(&record_path, record_bytes)?;
+            post_read_checkpoint(cancel, post_read_probe, PostReadStage::Utf8Checked)?;
             inspect_roproj(record, ROPROJ_V1_MAX_JSON_NESTING)
                 .map_err(|error| map_frontend_error(&record_path, error))?;
+            post_read_checkpoint(
+                cancel,
+                post_read_probe,
+                PostReadStage::StrictInspectionComplete,
+            )?;
             let dto: EntityV1 = deserialize_roproj(&record_path, record)?;
+            post_read_checkpoint(cancel, post_read_probe, PostReadStage::DtoDecoded)?;
             if collect_work {
                 let (nodes, references, dependencies) = dto_work_counts(&dto);
                 formula_ast_nodes += nodes;
                 reference_edges += references;
                 formula_dependency_edges += dependencies;
             }
+            post_read_checkpoint(cancel, post_read_probe, PostReadStage::WorkCounted)?;
             require_id("entity id", &dto.id)?;
             ensure_increasing("entity", previous_id.as_deref(), &dto.id)?;
             previous_id = Some(dto.id.clone());
@@ -377,6 +411,11 @@ fn admit_one_pass_host_controlled(
             }
             let mut canonical_record = String::with_capacity(record.len());
             write_entity(&mut canonical_record, &dto)?;
+            post_read_checkpoint(
+                cancel,
+                post_read_probe,
+                PostReadStage::CanonicalRenderingComplete,
+            )?;
             if canonical_record != record {
                 return invalid_representation(format!(
                     "entity record '{record_path}' is not canonical .roproj/v1"
@@ -386,7 +425,13 @@ fn admit_one_pass_host_controlled(
 
             let id_text = dto.id.clone();
             let id = EntityId::from(id_text.clone());
-            if entities.insert(id, dto.into_semantic()?).is_some() {
+            let semantic = dto.into_semantic()?;
+            post_read_checkpoint(
+                cancel,
+                post_read_probe,
+                PostReadStage::SemanticConversionComplete,
+            )?;
+            if entities.insert(id, semantic).is_some() {
                 return invalid_representation(format!("duplicate entity id '{id_text}'"));
             }
             entity_records += 1;
@@ -426,6 +471,9 @@ fn admit_one_pass_host_controlled(
     validate_semantic_expression_limits_cancellable(&document, cancel)?;
     check_cancel(cancel)?;
     let semantic_current = started.elapsed();
+    if let Some(published) = semantic_current_published {
+        published.store(true, Ordering::Release);
+    }
     Ok((
         document,
         AdmissionWork {
@@ -452,6 +500,20 @@ fn check_cancel(cancel: Option<&AtomicBool>) -> Result<(), FormatError> {
     } else {
         Ok(())
     }
+}
+
+fn post_read_checkpoint(
+    cancel: Option<&AtomicBool>,
+    probe: Option<PostReadCancellationProbe<'_>>,
+    stage: PostReadStage,
+) -> Result<(), FormatError> {
+    if let Some(probe) = probe.filter(|probe| probe.pause_at == stage) {
+        probe.reached.store(true, Ordering::Release);
+        while !cancel.is_some_and(|token| token.load(Ordering::Acquire)) {
+            std::thread::yield_now();
+        }
+    }
+    check_cancel(cancel)
 }
 
 fn check_document_cancellable(
@@ -3020,9 +3082,17 @@ fn issue_175_progressive_source_preview_is_non_authoritative_and_cancellable() {
             if message.contains("cancelled before SemanticCurrent")
     ));
     let records = AtomicUsize::new(0);
-    let error =
-        admit_one_pass_host_controlled(&root, false, Some(&cancel), Some(&records), None, None)
-            .unwrap_err();
+    let error = admit_one_pass_host_controlled(
+        &root,
+        false,
+        Some(&cancel),
+        Some(&records),
+        None,
+        None,
+        None,
+        None,
+    )
+    .unwrap_err();
     assert!(matches!(
         error,
         FormatError::InvalidRoProjectRepresentation { message }
@@ -3111,15 +3181,166 @@ fn issue_175_background_admission_cancels_before_large_metadata_parse() {
     let cancel = AtomicBool::new(true);
     let records = AtomicUsize::new(0);
 
-    let error =
-        admit_one_pass_host_controlled(&root, false, Some(&cancel), Some(&records), None, None)
-            .unwrap_err();
+    let error = admit_one_pass_host_controlled(
+        &root,
+        false,
+        Some(&cancel),
+        Some(&records),
+        None,
+        None,
+        None,
+        None,
+    )
+    .unwrap_err();
     assert!(matches!(
         error,
         FormatError::InvalidRoProjectRepresentation { message }
             if message.contains("cancelled before SemanticCurrent")
     ));
     assert_eq!(records.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn issue_175_post_read_phases_have_deterministic_cancellation_checkpoints() {
+    let temp = ResearchTempDirectory::new();
+    let root = temp.path().join("post-read-stage-cancel.roproj");
+    super::super::host::materialize_roproj(&root, &mixed_document(1, 37)).unwrap();
+
+    for stage in [
+        PostReadStage::RecordRead,
+        PostReadStage::Utf8Checked,
+        PostReadStage::StrictInspectionComplete,
+        PostReadStage::DtoDecoded,
+        PostReadStage::WorkCounted,
+        PostReadStage::CanonicalRenderingComplete,
+        PostReadStage::SemanticConversionComplete,
+    ] {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let reached = Arc::new(AtomicBool::new(false));
+        let records = Arc::new(AtomicUsize::new(0));
+        let semantic_current_published = Arc::new(AtomicBool::new(false));
+        let worker_root = root.clone();
+        let worker_cancel = Arc::clone(&cancel);
+        let worker_reached = Arc::clone(&reached);
+        let worker_records = Arc::clone(&records);
+        let worker_published = Arc::clone(&semantic_current_published);
+        let worker = std::thread::spawn(move || {
+            admit_one_pass_host_controlled(
+                &worker_root,
+                true,
+                Some(&worker_cancel),
+                Some(&worker_records),
+                None,
+                None,
+                Some(PostReadCancellationProbe {
+                    pause_at: stage,
+                    reached: &worker_reached,
+                }),
+                Some(&worker_published),
+            )
+        });
+        while !reached.load(Ordering::Acquire) {
+            assert!(
+                !worker.is_finished(),
+                "worker exited before reaching {stage:?}"
+            );
+            std::thread::yield_now();
+        }
+        cancel.store(true, Ordering::Release);
+        let error = worker.join().unwrap().unwrap_err();
+        assert!(matches!(
+            error,
+            FormatError::InvalidRoProjectRepresentation { message }
+                if message.contains("cancelled before SemanticCurrent")
+        ));
+        assert_eq!(records.load(Ordering::Acquire), 0, "stage {stage:?}");
+        assert!(
+            !semantic_current_published.load(Ordering::Acquire),
+            "stage {stage:?} published SemanticCurrent"
+        );
+    }
+}
+
+#[test]
+fn issue_175_large_record_cancels_after_read_without_semantic_publication() {
+    let temp = ResearchTempDirectory::new();
+    let root = temp.path().join("large-post-read-cancel.roproj");
+    super::super::host::materialize_roproj(&root, &mixed_document(1, 70_000)).unwrap();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let record_read = Arc::new(AtomicBool::new(false));
+    let records = Arc::new(AtomicUsize::new(0));
+    let semantic_current_published = Arc::new(AtomicBool::new(false));
+    let worker_root = root.clone();
+    let worker_cancel = Arc::clone(&cancel);
+    let worker_record_read = Arc::clone(&record_read);
+    let worker_records = Arc::clone(&records);
+    let worker_published = Arc::clone(&semantic_current_published);
+    let worker = std::thread::spawn(move || {
+        admit_one_pass_host_controlled(
+            &worker_root,
+            true,
+            Some(&worker_cancel),
+            Some(&worker_records),
+            None,
+            None,
+            Some(PostReadCancellationProbe {
+                pause_at: PostReadStage::RecordRead,
+                reached: &worker_record_read,
+            }),
+            Some(&worker_published),
+        )
+    });
+    while !record_read.load(Ordering::Acquire) {
+        assert!(
+            !worker.is_finished(),
+            "worker exited before the record read"
+        );
+        std::thread::yield_now();
+    }
+    cancel.store(true, Ordering::Release);
+    let error = worker.join().unwrap().unwrap_err();
+    assert!(matches!(
+        error,
+        FormatError::InvalidRoProjectRepresentation { message }
+            if message.contains("cancelled before SemanticCurrent")
+    ));
+    assert_eq!(records.load(Ordering::Acquire), 0);
+    assert!(!semantic_current_published.load(Ordering::Acquire));
+}
+
+#[test]
+fn issue_175_large_record_background_path_fails_closed_to_foreground_admission() {
+    let temp = ResearchTempDirectory::new();
+    let root = temp.path().join("large-post-read-budget.roproj");
+    super::super::host::materialize_roproj(&root, &mixed_document(1, 70_000)).unwrap();
+    let cancel = AtomicBool::new(false);
+    let records = AtomicUsize::new(0);
+    let semantic_current_published = AtomicBool::new(false);
+
+    let error = admit_one_pass_host_controlled(
+        &root,
+        true,
+        Some(&cancel),
+        Some(&records),
+        None,
+        None,
+        None,
+        Some(&semantic_current_published),
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        FormatError::InvalidRoProjectRepresentation { message }
+            if message.contains("post-read work budget")
+                && message.contains("exact foreground admission required")
+    ));
+    assert_eq!(records.load(Ordering::Acquire), 0);
+    assert!(!semantic_current_published.load(Ordering::Acquire));
+
+    assert_eq!(
+        admit_one_pass_host(&root, true).unwrap().0.entities.len(),
+        1
+    );
 }
 
 #[test]
@@ -3164,7 +3385,8 @@ fn issue_175_host_validation_cancels_at_formula_node_checkpoint() {
     // poll 12 is the 64-node formula checkpoint. This exercises the real host
     // decode/admission path rather than cancelling in an earlier key scan.
     let error =
-        admit_one_pass_host_controlled(&root, false, None, None, None, Some(12)).unwrap_err();
+        admit_one_pass_host_controlled(&root, false, None, None, None, Some(12), None, None)
+            .unwrap_err();
 
     assert!(matches!(
         error,
@@ -3190,6 +3412,8 @@ fn issue_175_cancellation_after_decode_never_publishes_semantic_current() {
             Some(&worker_cancel),
             None,
             Some(&worker_reached),
+            None,
+            None,
             None,
         )
     });
@@ -4012,14 +4236,18 @@ fn issue_175_progressive_background_interference_and_cancellation() {
             const BACKGROUND_START_RECORDS: usize = 64;
             let worker_root = root.clone();
             let background_records = Arc::new(AtomicUsize::new(0));
+            let background_cancel = Arc::new(AtomicBool::new(false));
             let worker_records = Arc::clone(&background_records);
+            let worker_cancel = Arc::clone(&background_cancel);
             let background_started = Instant::now();
             let worker = std::thread::spawn(move || {
                 admit_one_pass_host_controlled(
                     &worker_root,
                     false,
-                    None,
+                    Some(&worker_cancel),
                     Some(&worker_records),
+                    None,
+                    None,
                     None,
                     None,
                 )
@@ -4120,6 +4348,8 @@ fn issue_175_progressive_background_interference_and_cancellation() {
                 Some(&worker_records),
                 None,
                 None,
+                None,
+                None,
             )
         });
         let cancellation_threshold = entity_count.min(64);
@@ -4217,47 +4447,258 @@ fn issue_175_directory_structural_raw_samples() {
     }
 }
 
-/// Complete every exact-A1 comparator sample before any per-sample sidecar
-/// reuse state is constructed. This makes the arm lifetime boundary structural:
-/// a reuse closure cannot coexist with a comparator timer.
-fn run_isolated_comparator_then_reuse(
-    repetitions: usize,
-    mut comparator: impl FnMut() -> Duration,
-    mut reuse: impl FnMut(usize, Duration),
-) {
-    let comparator_samples: Vec<_> = (0..repetitions).map(|_| comparator()).collect();
-    for (repetition, comparator_time) in comparator_samples.into_iter().enumerate() {
-        reuse(repetition, comparator_time);
-    }
+const SIDECAR_CHILD_ACTION: &str = "TACHIKO_ISSUE_175_SIDECAR_CHILD_ACTION";
+const SIDECAR_CHILD_SOURCE: &str = "TACHIKO_ISSUE_175_SIDECAR_CHILD_SOURCE";
+const SIDECAR_CHILD_PATH: &str = "TACHIKO_ISSUE_175_SIDECAR_CHILD_PATH";
+const SIDECAR_CHILD_MARKER: &str = "issue_175_sidecar_child=";
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+struct SidecarChildSample {
+    action: String,
+    pid: u32,
+    source_sha256: String,
+    source_bytes: usize,
+    sidecar_bytes: usize,
+    sidecar_read_us: u64,
+    first_scan_us: u64,
+    first_git_identity_us: u64,
+    first_source_revalidation_us: u64,
+    first_sidecar_encode_us: u64,
+    git_identity_us: u64,
+    source_revalidation_us: u64,
+    sidecar_decode_us: u64,
+    identity_only_untrusted_decode_us: u64,
+    total_validated_reuse_us: u64,
+    full_sidecar_open_us: u64,
+    full_a1_us: u64,
+}
+
+fn duration_us(duration: Duration) -> u64 {
+    u64::try_from(duration.as_micros()).unwrap()
 }
 
 #[test]
-fn issue_175_sidecar_comparator_samples_finish_before_reuse_state_exists() {
-    let events = std::cell::RefCell::new(Vec::new());
-    run_isolated_comparator_then_reuse(
-        3,
-        || {
-            events.borrow_mut().push("a1");
-            Duration::from_micros(1)
-        },
-        |repetition, comparator_time| {
-            let prior_events = events.borrow();
-            assert_eq!(&prior_events[..3], &["a1", "a1", "a1"]);
-            assert_eq!(prior_events.len(), 3 + repetition);
-            drop(prior_events);
-            assert_eq!(comparator_time, Duration::from_micros(1));
-            events.borrow_mut().push(match repetition {
-                0 => "reuse-0",
-                1 => "reuse-1",
-                2 => "reuse-2",
-                _ => unreachable!(),
-            });
-        },
+#[ignore = "internal fresh-process child for Issue #175 sidecar evidence"]
+#[allow(clippy::too_many_lines)]
+fn issue_175_sidecar_child() {
+    let action = std::env::var(SIDECAR_CHILD_ACTION).unwrap();
+    let source = PathBuf::from(std::env::var(SIDECAR_CHILD_SOURCE).unwrap());
+    let sidecar_path = std::env::var_os(SIDECAR_CHILD_PATH).map(PathBuf::from);
+    let mut sample = SidecarChildSample {
+        action: action.clone(),
+        pid: std::process::id(),
+        ..SidecarChildSample::default()
+    };
+
+    match action.as_str() {
+        "setup_e1" => {
+            let sidecar_path = sidecar_path.as_deref().unwrap();
+            let scan = scan_spine_host(&source, true).unwrap();
+            sample.first_scan_us = duration_us(scan.scan_time);
+            sample.source_bytes = scan.work.source_bytes;
+            let index = scan.structural.unwrap();
+            sample.source_sha256 = index.directory.source_fingerprint.clone();
+            let binding = SourceBinding::DirtyFilesystem {
+                source_sha256: sample.source_sha256.clone(),
+            };
+            let encode_started = Instant::now();
+            let sidecar = encode_sidecar(&index, binding).unwrap();
+            sample.first_sidecar_encode_us = duration_us(encode_started.elapsed());
+            sample.sidecar_bytes = sidecar.len();
+            std::fs::write(sidecar_path, sidecar).unwrap();
+        }
+        "a1_e1" => {
+            assert!(
+                sidecar_path.is_none(),
+                "A1 child must not receive a sidecar"
+            );
+            let full_started = Instant::now();
+            let full = admit_one_pass_host(black_box(&source), false).unwrap();
+            sample.full_a1_us = duration_us(full_started.elapsed());
+            let (fingerprint, source_bytes, _) = fingerprint_source(&source).unwrap();
+            sample.source_sha256 = fingerprint;
+            sample.source_bytes = full.1.source_bytes;
+            assert_eq!(sample.source_bytes, source_bytes);
+            black_box(full);
+        }
+        "reuse_e1" => {
+            let sidecar_path = sidecar_path.as_deref().unwrap();
+            let full_sidecar_open_started = Instant::now();
+            let sidecar_read_started = Instant::now();
+            let sidecar = std::fs::read(sidecar_path).unwrap();
+            sample.sidecar_read_us = duration_us(sidecar_read_started.elapsed());
+            sample.sidecar_bytes = sidecar.len();
+            let validated_reuse_started = Instant::now();
+            let source_revalidation_started = Instant::now();
+            let (pinned, _) = pin_source_snapshot(&source).unwrap();
+            let trusted = scan_spine_host(&source, true).unwrap().structural.unwrap();
+            assert_eq!(
+                pinned.source_fingerprint,
+                trusted.directory.source_fingerprint
+            );
+            sample.source_revalidation_us = duration_us(source_revalidation_started.elapsed());
+            sample.source_sha256 = pinned.source_fingerprint.clone();
+            sample.source_bytes = pinned.source_bytes;
+            let binding = SourceBinding::DirtyFilesystem {
+                source_sha256: sample.source_sha256.clone(),
+            };
+            let decode_started = Instant::now();
+            let decoded = decode_sidecar(&sidecar, &binding, pinned.source_bytes).unwrap();
+            black_box(require_sidecar_matches_trusted_index(decoded, &trusted).unwrap());
+            sample.sidecar_decode_us = duration_us(decode_started.elapsed());
+            sample.total_validated_reuse_us = duration_us(validated_reuse_started.elapsed());
+            sample.full_sidecar_open_us = duration_us(full_sidecar_open_started.elapsed());
+            black_box((&sidecar, &pinned, &trusted));
+        }
+        "setup_e2" => {
+            let sidecar_path = sidecar_path.as_deref().unwrap();
+            let (pinned, binding, identity_time, pin_time) = pin_git_bound_snapshot(&source);
+            let scan_started = Instant::now();
+            let scan = scan_spine_pinned(&pinned, true).unwrap();
+            sample.first_scan_us = duration_us(scan.scan_time);
+            sample.first_git_identity_us = duration_us(identity_time);
+            sample.first_source_revalidation_us = duration_us(pin_time + scan_started.elapsed());
+            sample.source_bytes = pinned.source_bytes;
+            let index = scan.structural.unwrap();
+            sample.source_sha256 = index.directory.source_fingerprint.clone();
+            assert_eq!(pinned.source_fingerprint, sample.source_sha256);
+            let encode_started = Instant::now();
+            let sidecar = encode_sidecar(&index, binding).unwrap();
+            sample.first_sidecar_encode_us = duration_us(encode_started.elapsed());
+            sample.sidecar_bytes = sidecar.len();
+            std::fs::write(sidecar_path, sidecar).unwrap();
+        }
+        "a1_e2" => {
+            assert!(
+                sidecar_path.is_none(),
+                "A1 child must not receive a sidecar"
+            );
+            let full_started = Instant::now();
+            let (pinned, _binding, _, _) = pin_git_bound_snapshot(&source);
+            sample.source_sha256 = pinned.source_fingerprint.clone();
+            sample.source_bytes = pinned.source_bytes;
+            let full = black_box(admit_one_pass_pinned(black_box(&pinned)).unwrap());
+            sample.full_a1_us = duration_us(full_started.elapsed());
+            black_box(full);
+        }
+        "reuse_e2" => {
+            let sidecar_path = sidecar_path.as_deref().unwrap();
+            let full_sidecar_open_started = Instant::now();
+            let sidecar_read_started = Instant::now();
+            let sidecar = std::fs::read(sidecar_path).unwrap();
+            sample.sidecar_read_us = duration_us(sidecar_read_started.elapsed());
+            sample.sidecar_bytes = sidecar.len();
+            let validated_reuse_started = Instant::now();
+            let (pinned, binding, identity_time, pin_time) = pin_git_bound_snapshot(&source);
+            let scan_started = Instant::now();
+            let trusted = scan_spine_pinned(&pinned, true)
+                .unwrap()
+                .structural
+                .unwrap();
+            sample.source_sha256 = pinned.source_fingerprint.clone();
+            sample.source_bytes = pinned.source_bytes;
+            assert_eq!(trusted.directory.source_fingerprint, sample.source_sha256);
+            sample.git_identity_us = duration_us(identity_time);
+            sample.source_revalidation_us = duration_us(pin_time + scan_started.elapsed());
+            let decode_started = Instant::now();
+            let decoded = decode_sidecar(&sidecar, &binding, pinned.source_bytes).unwrap();
+            black_box(require_sidecar_matches_trusted_index(decoded, &trusted).unwrap());
+            sample.sidecar_decode_us = duration_us(decode_started.elapsed());
+            sample.identity_only_untrusted_decode_us = sample
+                .git_identity_us
+                .saturating_add(sample.sidecar_decode_us);
+            sample.total_validated_reuse_us = duration_us(validated_reuse_started.elapsed());
+            sample.full_sidecar_open_us = duration_us(full_sidecar_open_started.elapsed());
+            black_box((&sidecar, &pinned, &trusted));
+        }
+        _ => panic!("unknown Issue #175 sidecar child action '{action}'"),
+    }
+
+    println!(
+        "{SIDECAR_CHILD_MARKER}{}",
+        serde_json::to_string(&sample).unwrap()
     );
-    assert_eq!(
-        events.into_inner(),
-        ["a1", "a1", "a1", "reuse-0", "reuse-1", "reuse-2"]
+}
+
+fn run_sidecar_child(
+    executable: &Path,
+    action: &str,
+    source: &Path,
+    sidecar_path: Option<&Path>,
+) -> (SidecarChildSample, Duration) {
+    let mut command = Command::new(executable);
+    command
+        .args([
+            "--exact",
+            "roproj::v1::issue_175_research::issue_175_sidecar_child",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env(SIDECAR_CHILD_ACTION, action)
+        .env(SIDECAR_CHILD_SOURCE, source);
+    if let Some(sidecar_path) = sidecar_path {
+        command.env(SIDECAR_CHILD_PATH, sidecar_path);
+    } else {
+        command.env_remove(SIDECAR_CHILD_PATH);
+    }
+    let wall_started = Instant::now();
+    let output = command.output().unwrap();
+    let wall_time = wall_started.elapsed();
+    assert!(
+        output.status.success(),
+        "sidecar child '{action}' failed: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let sample = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix(SIDECAR_CHILD_MARKER))
+        .map_or_else(
+            || panic!("sidecar child '{action}' emitted no sample: {stdout}"),
+            |json| serde_json::from_str::<SidecarChildSample>(json).unwrap(),
+        );
+    assert_eq!(sample.action, action);
+    assert_ne!(sample.pid, std::process::id());
+    (sample, wall_time)
+}
+
+#[test]
+fn issue_175_sidecar_children_isolate_setup_a1_and_reuse_processes() {
+    let temp = ResearchTempDirectory::new();
+    let executable = std::env::current_exe().unwrap();
+    let document = mixed_document(17, 64);
+
+    let dirty_root = temp.path().join("dirty.roproj");
+    let dirty_sidecar = temp.path().join("dirty.sidecar.json");
+    super::super::host::materialize_roproj(&dirty_root, &document).unwrap();
+    let (dirty_setup, _) =
+        run_sidecar_child(&executable, "setup_e1", &dirty_root, Some(&dirty_sidecar));
+    let (dirty_a1, _) = run_sidecar_child(&executable, "a1_e1", &dirty_root, None);
+    let (dirty_reuse, _) =
+        run_sidecar_child(&executable, "reuse_e1", &dirty_root, Some(&dirty_sidecar));
+    assert_eq!(dirty_setup.source_sha256, dirty_a1.source_sha256);
+    assert_eq!(dirty_setup.source_sha256, dirty_reuse.source_sha256);
+    assert_eq!(dirty_a1.sidecar_bytes, 0);
+    assert_eq!(dirty_a1.sidecar_read_us, 0);
+    assert_eq!(dirty_setup.sidecar_bytes, dirty_reuse.sidecar_bytes);
+    assert_ne!(dirty_setup.pid, dirty_a1.pid);
+    assert_ne!(dirty_setup.pid, dirty_reuse.pid);
+    assert_ne!(dirty_a1.pid, dirty_reuse.pid);
+
+    let repo = temp.path().join("repo");
+    let git_sidecar = temp.path().join("git.sidecar.json");
+    initialize_git_snapshot(&repo, &document);
+    let (git_setup, _) = run_sidecar_child(&executable, "setup_e2", &repo, Some(&git_sidecar));
+    let (git_a1, _) = run_sidecar_child(&executable, "a1_e2", &repo, None);
+    let (git_reuse, _) = run_sidecar_child(&executable, "reuse_e2", &repo, Some(&git_sidecar));
+    assert_eq!(git_setup.source_sha256, git_a1.source_sha256);
+    assert_eq!(git_setup.source_sha256, git_reuse.source_sha256);
+    assert_eq!(git_a1.sidecar_bytes, 0);
+    assert_eq!(git_a1.sidecar_read_us, 0);
+    assert_eq!(git_setup.sidecar_bytes, git_reuse.sidecar_bytes);
+    assert_ne!(git_setup.pid, git_a1.pid);
+    assert_ne!(git_setup.pid, git_reuse.pid);
+    assert_ne!(git_a1.pid, git_reuse.pid);
 }
 
 #[test]
@@ -4271,7 +4712,7 @@ fn issue_175_dirty_sidecar_raw_samples() {
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(30);
     println!(
-        "arm,workload,cache_state,entities,source_sha256,source_bytes,sidecar_bytes,first_scan_us,first_sidecar_encode_us,repetition,source_revalidation_us,sidecar_decode_us,total_validated_reuse_us,full_a1_us"
+        "arm,workload,cache_state,entities,source_sha256,source_bytes,sidecar_bytes,first_scan_us,first_sidecar_encode_us,repetition,source_revalidation_us,sidecar_decode_us,total_validated_reuse_us,full_a1_us,process_state,arm_order,setup_pid,a1_pid,reuse_pid,a1_process_wall_us,reuse_process_wall_us,sidecar_read_us,full_sidecar_open_us"
     );
     for entity_count in entity_counts
         .split(',')
@@ -4282,70 +4723,51 @@ fn issue_175_dirty_sidecar_raw_samples() {
         let expected = mixed_document(entity_count, 64);
         super::super::host::materialize_roproj(&root, &expected).unwrap();
         drop(expected);
-        let scan = scan_spine_host(&root, true).unwrap();
-        let source_sha256 = scan.directory().source_fingerprint.clone();
-        let source_bytes = scan.work.source_bytes;
-        let first_scan_time = scan.scan_time;
-        let index = scan.structural.unwrap();
-        let binding = SourceBinding::DirtyFilesystem {
-            source_sha256: source_sha256.clone(),
-        };
-        let encode_started = Instant::now();
-        let sidecar = encode_sidecar(&index, binding.clone()).unwrap();
-        let encode_time = encode_started.elapsed();
-        drop(index);
-        {
-            let (pinned, _) = pin_source_snapshot(&root).unwrap();
-            let trusted = scan_spine_host(&root, true).unwrap().structural.unwrap();
-            assert_eq!(
-                pinned.source_fingerprint,
-                trusted.directory.source_fingerprint
+        let executable = std::env::current_exe().unwrap();
+        let sidecar_path = temp.path().join("dirty.sidecar.json");
+        let (setup, _) = run_sidecar_child(&executable, "setup_e1", &root, Some(&sidecar_path));
+        for repetition in 0..repetitions {
+            let (a1, a1_wall, reuse, reuse_wall, arm_order) = if repetition % 2 == 0 {
+                let (a1, a1_wall) = run_sidecar_child(&executable, "a1_e1", &root, None);
+                let (reuse, reuse_wall) =
+                    run_sidecar_child(&executable, "reuse_e1", &root, Some(&sidecar_path));
+                (a1, a1_wall, reuse, reuse_wall, "a1_then_reuse")
+            } else {
+                let (reuse, reuse_wall) =
+                    run_sidecar_child(&executable, "reuse_e1", &root, Some(&sidecar_path));
+                let (a1, a1_wall) = run_sidecar_child(&executable, "a1_e1", &root, None);
+                (a1, a1_wall, reuse, reuse_wall, "reuse_then_a1")
+            };
+            assert_eq!(setup.source_sha256, a1.source_sha256);
+            assert_eq!(setup.source_sha256, reuse.source_sha256);
+            assert_eq!(setup.source_bytes, a1.source_bytes);
+            assert_eq!(setup.source_bytes, reuse.source_bytes);
+            assert_eq!(setup.sidecar_bytes, reuse.sidecar_bytes);
+            assert_eq!(a1.sidecar_bytes, 0);
+            assert_eq!(a1.sidecar_read_us, 0);
+            assert_ne!(setup.pid, a1.pid);
+            assert_ne!(setup.pid, reuse.pid);
+            assert_ne!(a1.pid, reuse.pid);
+            println!(
+                "E1-dirty-sidecar,mixed_smoke,os_cache_warm,{entity_count},{},{},{},{},{},{repetition},{},{},{},{},fresh_exec_per_arm,{arm_order},{},{},{},{},{},{},{}",
+                setup.source_sha256,
+                setup.source_bytes,
+                setup.sidecar_bytes,
+                setup.first_scan_us,
+                setup.first_sidecar_encode_us,
+                reuse.source_revalidation_us,
+                reuse.sidecar_decode_us,
+                reuse.total_validated_reuse_us,
+                a1.full_a1_us,
+                setup.pid,
+                a1.pid,
+                reuse.pid,
+                duration_us(a1_wall),
+                duration_us(reuse_wall),
+                reuse.sidecar_read_us,
+                reuse.full_sidecar_open_us,
             );
-            let decoded = decode_sidecar(&sidecar, &binding, pinned.source_bytes).unwrap();
-            black_box(require_sidecar_matches_trusted_index(decoded, &trusted).unwrap());
-            black_box((&pinned, &trusted));
         }
-        run_isolated_comparator_then_reuse(
-            repetitions,
-            || {
-                let full_started = Instant::now();
-                let full = black_box(admit_one_pass_host(black_box(&root), false).unwrap());
-                let full_time = full_started.elapsed();
-                black_box(full);
-                full_time
-            },
-            |repetition, full_time| {
-                let source_revalidation_started = Instant::now();
-                let (pinned, _) = pin_source_snapshot(black_box(&root)).unwrap();
-                let trusted = scan_spine_host(black_box(&root), true)
-                    .unwrap()
-                    .structural
-                    .unwrap();
-                assert_eq!(
-                    pinned.source_fingerprint,
-                    trusted.directory.source_fingerprint
-                );
-                let source_revalidation_time = source_revalidation_started.elapsed();
-                let pinned = black_box(pinned);
-                let decode_started = Instant::now();
-                let decoded =
-                    decode_sidecar(black_box(&sidecar), &binding, pinned.source_bytes).unwrap();
-                black_box(require_sidecar_matches_trusted_index(decoded, &trusted).unwrap());
-                let decode_time = decode_started.elapsed();
-                black_box((&pinned, &trusted));
-                println!(
-                    "E1-dirty-sidecar,mixed_smoke,os_cache_warm,{entity_count},{source_sha256},{},{},{},{},{repetition},{},{},{},{}",
-                    source_bytes,
-                    sidecar.len(),
-                    first_scan_time.as_micros(),
-                    encode_time.as_micros(),
-                    source_revalidation_time.as_micros(),
-                    decode_time.as_micros(),
-                    (source_revalidation_time + decode_time).as_micros(),
-                    full_time.as_micros(),
-                );
-            },
-        );
     }
 }
 
@@ -4366,73 +4788,58 @@ fn issue_175_git_sidecar_raw_samples() {
     let document = mixed_document(entity_count, 64);
     let _project = initialize_git_snapshot(&repo, &document);
     drop(document);
-    let (first_pinned, binding, first_identity_time, first_pin_time) =
-        pin_git_bound_snapshot(&repo);
-    let first_scan_started = Instant::now();
-    let scan = scan_spine_pinned(&first_pinned, true).unwrap();
-    let first_source_revalidation_time = first_pin_time + first_scan_started.elapsed();
-    let source_bytes = scan.work.source_bytes;
-    let first_scan_time = scan.scan_time;
-    let index = scan.structural.unwrap();
-    let source_sha256 = index.directory.source_fingerprint.clone();
-    assert_eq!(first_pinned.source_bytes, source_bytes);
-    assert_eq!(first_pinned.source_fingerprint, source_sha256);
-    drop(first_pinned);
-    let encode_started = Instant::now();
-    let sidecar = encode_sidecar(&index, binding.clone()).unwrap();
-    let encode_time = encode_started.elapsed();
-    drop(index);
+    let executable = std::env::current_exe().unwrap();
+    let sidecar_path = temp.path().join("git.sidecar.json");
+    let (setup, _) = run_sidecar_child(&executable, "setup_e2", &repo, Some(&sidecar_path));
     println!(
-        "arm,workload,cache_state,entities,source_sha256,source_bytes,sidecar_bytes,first_scan_us,first_git_identity_us,first_source_revalidation_us,first_sidecar_encode_us,repetition,git_identity_us,source_revalidation_us,sidecar_decode_us,identity_only_untrusted_decode_us,total_validated_reuse_us,full_git_snapshot_a1_us"
+        "arm,workload,cache_state,entities,source_sha256,source_bytes,sidecar_bytes,first_scan_us,first_git_identity_us,first_source_revalidation_us,first_sidecar_encode_us,repetition,git_identity_us,source_revalidation_us,sidecar_decode_us,identity_only_untrusted_decode_us,total_validated_reuse_us,full_git_snapshot_a1_us,process_state,arm_order,setup_pid,a1_pid,reuse_pid,a1_process_wall_us,reuse_process_wall_us,sidecar_read_us,full_sidecar_open_us"
     );
-    run_isolated_comparator_then_reuse(
-        repetitions,
-        || {
-            let full_started = Instant::now();
-            let (full_pinned, full_binding, _, _) = pin_git_bound_snapshot(black_box(&repo));
-            assert_eq!(full_binding, binding);
-            assert_eq!(full_pinned.source_fingerprint, source_sha256);
-            let full = black_box(admit_one_pass_pinned(black_box(&full_pinned)).unwrap());
-            let full_time = full_started.elapsed();
-            black_box(full);
-            full_time
-        },
-        |repetition, full_time| {
-            let (pinned, current_binding, identity_time, pin_time) =
-                pin_git_bound_snapshot(black_box(&repo));
-            assert_eq!(current_binding, binding);
-            let scan_started = Instant::now();
-            let trusted = scan_spine_pinned(&pinned, true)
-                .unwrap()
-                .structural
-                .unwrap();
-            assert_eq!(trusted.directory.source_fingerprint, source_sha256);
-            assert_eq!(pinned.source_fingerprint, source_sha256);
-            let source_revalidation_time = pin_time + scan_started.elapsed();
-            let pinned = black_box(pinned);
-            let decode_started = Instant::now();
-            let decoded =
-                decode_sidecar(black_box(&sidecar), &current_binding, pinned.source_bytes).unwrap();
-            black_box(require_sidecar_matches_trusted_index(decoded, &trusted).unwrap());
-            let decode_time = decode_started.elapsed();
-            black_box((&pinned, &trusted));
-            println!(
-                "E2-git-sidecar,mixed_smoke,os_cache_warm,{entity_count},{source_sha256},{},{},{},{},{},{},{repetition},{},{},{},{},{},{}",
-                source_bytes,
-                sidecar.len(),
-                first_scan_time.as_micros(),
-                first_identity_time.as_micros(),
-                first_source_revalidation_time.as_micros(),
-                encode_time.as_micros(),
-                identity_time.as_micros(),
-                source_revalidation_time.as_micros(),
-                decode_time.as_micros(),
-                (identity_time + decode_time).as_micros(),
-                (identity_time + source_revalidation_time + decode_time).as_micros(),
-                full_time.as_micros(),
-            );
-        },
-    );
+    for repetition in 0..repetitions {
+        let (a1, a1_wall, reuse, reuse_wall, arm_order) = if repetition % 2 == 0 {
+            let (a1, a1_wall) = run_sidecar_child(&executable, "a1_e2", &repo, None);
+            let (reuse, reuse_wall) =
+                run_sidecar_child(&executable, "reuse_e2", &repo, Some(&sidecar_path));
+            (a1, a1_wall, reuse, reuse_wall, "a1_then_reuse")
+        } else {
+            let (reuse, reuse_wall) =
+                run_sidecar_child(&executable, "reuse_e2", &repo, Some(&sidecar_path));
+            let (a1, a1_wall) = run_sidecar_child(&executable, "a1_e2", &repo, None);
+            (a1, a1_wall, reuse, reuse_wall, "reuse_then_a1")
+        };
+        assert_eq!(setup.source_sha256, a1.source_sha256);
+        assert_eq!(setup.source_sha256, reuse.source_sha256);
+        assert_eq!(setup.source_bytes, a1.source_bytes);
+        assert_eq!(setup.source_bytes, reuse.source_bytes);
+        assert_eq!(setup.sidecar_bytes, reuse.sidecar_bytes);
+        assert_eq!(a1.sidecar_bytes, 0);
+        assert_eq!(a1.sidecar_read_us, 0);
+        assert_ne!(setup.pid, a1.pid);
+        assert_ne!(setup.pid, reuse.pid);
+        assert_ne!(a1.pid, reuse.pid);
+        println!(
+            "E2-git-sidecar,mixed_smoke,os_cache_warm,{entity_count},{},{},{},{},{},{},{},{repetition},{},{},{},{},{},{},fresh_exec_per_arm,{arm_order},{},{},{},{},{},{},{}",
+            setup.source_sha256,
+            setup.source_bytes,
+            setup.sidecar_bytes,
+            setup.first_scan_us,
+            setup.first_git_identity_us,
+            setup.first_source_revalidation_us,
+            setup.first_sidecar_encode_us,
+            reuse.git_identity_us,
+            reuse.source_revalidation_us,
+            reuse.sidecar_decode_us,
+            reuse.identity_only_untrusted_decode_us,
+            reuse.total_validated_reuse_us,
+            a1.full_a1_us,
+            setup.pid,
+            a1.pid,
+            reuse.pid,
+            duration_us(a1_wall),
+            duration_us(reuse_wall),
+            reuse.sidecar_read_us,
+            reuse.full_sidecar_open_us,
+        );
+    }
 }
 
 #[test]
