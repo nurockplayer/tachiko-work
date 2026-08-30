@@ -49,6 +49,7 @@ export function mountDesigner(
   let destroyed = false;
   let occurrenceClosed = false;
   const pendingTextBuffers = new Map<string, string>();
+  const pendingBooleanBuffers = new Map<string, boolean>();
   let savedProjects: SavedProjectSummary[] = [];
   let selectedSavedProject = "";
   const durability = createDurabilityState();
@@ -96,7 +97,7 @@ export function mountDesigner(
       savedProjects,
       selectedSavedProject,
     );
-    hydrateTextareas();
+    hydrateDraftControls();
     bindInteractions();
   };
 
@@ -122,6 +123,7 @@ export function mountDesigner(
   const commitScalar = async (
     target: FieldTarget,
     publish: (expectedRevision: string) => Promise<PublicationProjection>,
+    onPublished?: () => void,
   ): Promise<void> => {
     if (store === null || busy || store.snapshot().currentness !== "current") return;
     busy = true;
@@ -131,6 +133,7 @@ export function mountDesigner(
     try {
       const publication = await publish(store.snapshot().table.revision);
       published = true;
+      onPublished?.();
       const requested = store.beginPublication(publication);
       durability.observe(publication.resulting_revision);
       syncBeforeUnloadGuard();
@@ -157,14 +160,18 @@ export function mountDesigner(
   const commitNumber = (target: FieldTarget, input: string): Promise<void> =>
     commitScalar(target, (expectedRevision) => client.editNumber(expectedRevision, target, input));
 
-  const commitText = (target: FieldTarget, value: string): Promise<void> => {
-    pendingTextBuffers.delete(textBufferKey(target));
-    return commitScalar(target, (expectedRevision) => client.editText(expectedRevision, target, value));
-  };
+  const commitText = (target: FieldTarget, value: string): Promise<void> =>
+    commitScalar(
+      target,
+      (expectedRevision) => client.editText(expectedRevision, target, value),
+      () => pendingTextBuffers.delete(textBufferKey(target)),
+    );
 
   const commitBoolean = (target: FieldTarget, value: boolean): Promise<void> =>
-    commitScalar(target, (expectedRevision) =>
-      client.editBoolean(expectedRevision, target, value),
+    commitScalar(
+      target,
+      (expectedRevision) => client.editBoolean(expectedRevision, target, value),
+      () => pendingBooleanBuffers.delete(textBufferKey(target)),
     );
 
   const selectCollection = async (collection: string): Promise<void> => {
@@ -220,6 +227,7 @@ export function mountDesigner(
       revision: candidate.revision,
     });
     pendingTextBuffers.clear();
+    pendingBooleanBuffers.clear();
     bootstrap = candidate;
     store = nextStore;
     selectedCollection = candidate.default_collection;
@@ -231,6 +239,7 @@ export function mountDesigner(
   const installOpenedOccurrence = (opened: OpenedProjection): void => {
     const nextStore = createProjectionStore(opened.table, opened.control);
     pendingTextBuffers.clear();
+    pendingBooleanBuffers.clear();
     bootstrap = opened.bootstrap;
     store = nextStore;
     selectedCollection = opened.bootstrap.default_collection;
@@ -376,6 +385,7 @@ export function mountDesigner(
     try {
       await client.closeProject();
       pendingTextBuffers.clear();
+      pendingBooleanBuffers.clear();
       bootstrap = null;
       store = null;
       selectedCollection = "";
@@ -399,11 +409,20 @@ export function mountDesigner(
   const bindInteractions = (): void => {
     root.querySelectorAll<HTMLFormElement>("[data-edit-form]").forEach((form) => {
       const draftControl = form.querySelector<HTMLTextAreaElement>("textarea");
+      const draftBoolean = form.querySelector<HTMLInputElement>('input[type="checkbox"]');
       const draftEntity = decodeOpaqueAttribute(form.dataset.entity);
       const draftField = decodeOpaqueAttribute(form.dataset.field);
       if (draftControl !== null && draftEntity !== undefined && draftField !== undefined) {
         draftControl.addEventListener("input", () => {
           pendingTextBuffers.set(textBufferKey({ entity: draftEntity, field: draftField }), draftControl.value);
+        });
+      }
+      if (draftBoolean !== null && draftEntity !== undefined && draftField !== undefined) {
+        draftBoolean.addEventListener("change", () => {
+          pendingBooleanBuffers.set(
+            textBufferKey({ entity: draftEntity, field: draftField }),
+            draftBoolean.checked,
+          );
         });
       }
       form.addEventListener("submit", (event) => {
@@ -437,11 +456,13 @@ export function mountDesigner(
               render();
               return;
             }
+            pendingTextBuffers.set(textBufferKey({ entity, field }), control.value);
             void commitText({ entity, field }, value);
             break;
           }
           case "boolean":
             if (!(control instanceof HTMLInputElement)) return;
+            pendingBooleanBuffers.set(textBufferKey({ entity, field }), control.checked);
             void commitBoolean({ entity, field }, control.checked);
             break;
         }
@@ -480,7 +501,7 @@ export function mountDesigner(
       });
   };
 
-  const hydrateTextareas = (): void => {
+  const hydrateDraftControls = (): void => {
     root.querySelectorAll<HTMLTextAreaElement>("textarea[data-initial-text]").forEach(
       (textarea) => {
         const initialText = decodeOpaqueAttribute(textarea.dataset.initialText);
@@ -495,6 +516,14 @@ export function mountDesigner(
         }
       },
     );
+    root.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((checkbox) => {
+      const entity = decodeOpaqueAttribute(checkbox.form?.dataset.entity);
+      const field = decodeOpaqueAttribute(checkbox.form?.dataset.field);
+      if (entity !== undefined && field !== undefined) {
+        const pending = pendingBooleanBuffers.get(textBufferKey({ entity, field }));
+        if (pending !== undefined) checkbox.checked = pending;
+      }
+    });
   };
 
   render();

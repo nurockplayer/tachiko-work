@@ -564,6 +564,93 @@ describe("Designer application seam", () => {
     app.destroy();
   });
 
+  it("preserves a rejected Text draft without advancing the revision", async () => {
+    class RejectingTextClient extends ScalarClient {
+      override async editText(
+        expectedRevision: string,
+        target: FieldTarget,
+        value: string,
+      ): Promise<PublicationProjection> {
+        this.textEditRequests.push({
+          expectedRevision,
+          target: structuredClone(target),
+          value,
+        });
+        throw new DesignerRuntimeError({
+          code: "invalid_request",
+          message: "Text edit rejected for test.",
+          current_revision: "resident/0",
+          diagnostics: [],
+        });
+      }
+    }
+
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const client = new RejectingTextClient();
+    const app = mountDesigner(root, client, host);
+    await app.ready;
+
+    const name = root.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Name for Iron Sword"]',
+    );
+    if (name === null || name.form === null) throw new Error("Text control is required");
+    name.value = "Rejected draft";
+    name.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    name.form.requestSubmit();
+
+    await vi.waitFor(() => {
+      expect(root.querySelector('[role="alert"]')?.textContent).toContain(
+        "Text edit rejected for test.",
+      );
+    });
+    expect(
+      root.querySelector<HTMLTextAreaElement>('textarea[aria-label="Name for Iron Sword"]')
+        ?.value,
+    ).toBe("Rejected draft");
+    expect(root.querySelector('[data-testid="revision"]')?.textContent).toContain(
+      "resident/0",
+    );
+    app.destroy();
+  });
+
+  it("preserves an unsubmitted Boolean draft across an unrelated scalar publication", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const client = new ScalarClient();
+    const app = mountDesigner(root, client, host);
+    await app.ready;
+
+    const enabled = root.querySelector<HTMLInputElement>(
+      'input[aria-label="Enabled for Iron Sword"]',
+    );
+    const name = root.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Name for Iron Sword"]',
+    );
+    if (enabled === null || name === null || name.form === null) {
+      throw new Error("scalar controls are required");
+    }
+    enabled.checked = false;
+    enabled.dispatchEvent(new Event("change", { bubbles: true }));
+    name.value = "Published name";
+    name.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    name.form.requestSubmit();
+
+    await vi.waitFor(() => {
+      expect(root.querySelector('[data-testid="revision"]')?.textContent).toContain(
+        "resident/1",
+      );
+    });
+    expect(
+      root.querySelector<HTMLInputElement>('input[aria-label="Enabled for Iron Sword"]')
+        ?.checked,
+    ).toBe(false);
+    expect(client.booleanEditRequests).toHaveLength(0);
+    app.destroy();
+  });
+
   it("preserves opaque edit targets across HTML parsing", async () => {
     const target = { entity: "entity\u0000id", field: "field\rid" };
     const opaqueTable = structuredClone(table);
