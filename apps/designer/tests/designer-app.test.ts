@@ -34,6 +34,8 @@ const table: TableProjection = {
     { id: "attack_interval", key: "attack_interval", field_type: "number" },
     { id: "damage", key: "damage", field_type: "number" },
     { id: "dps", key: "dps", field_type: "number" },
+    { id: "enabled", key: "enabled", field_type: "boolean" },
+    { id: "name", key: "name", field_type: "text" },
   ],
   rows: [
     {
@@ -47,7 +49,7 @@ const table: TableProjection = {
           formula: null,
           calculated: null,
           diagnostics: [],
-          editable_number: true,
+          editable_scalar: "number",
         },
         {
           target: { entity: "iron_sword", field: "damage" },
@@ -56,7 +58,7 @@ const table: TableProjection = {
           formula: null,
           calculated: null,
           diagnostics: [],
-          editable_number: true,
+          editable_scalar: "number",
         },
         {
           target: { entity: "iron_sword", field: "dps" },
@@ -67,7 +69,25 @@ const table: TableProjection = {
           },
           calculated: { status: "value", value: 40 },
           diagnostics: [],
-          editable_number: false,
+          editable_scalar: null,
+        },
+        {
+          target: { entity: "iron_sword", field: "enabled" },
+          address: "iron_sword.enabled",
+          stored: { kind: "boolean", value: true },
+          formula: null,
+          calculated: null,
+          diagnostics: [],
+          editable_scalar: "boolean",
+        },
+        {
+          target: { entity: "iron_sword", field: "name" },
+          address: "iron_sword.name",
+          stored: { kind: "text", value: "Iron Sword" },
+          formula: null,
+          calculated: null,
+          diagnostics: [],
+          editable_scalar: "text",
         },
       ],
     },
@@ -90,6 +110,16 @@ class FakeClient implements DesignerClient {
     expectedRevision: string;
     target: FieldTarget;
     input: string;
+  }> = [];
+  textEditRequests: Array<{
+    expectedRevision: string;
+    target: FieldTarget;
+    value: string;
+  }> = [];
+  booleanEditRequests: Array<{
+    expectedRevision: string;
+    target: FieldTarget;
+    value: boolean;
   }> = [];
 
   async bootstrap(): Promise<BootstrapProjection> {
@@ -126,7 +156,7 @@ class FakeClient implements DesignerClient {
             formula: { source: "[tempered_blade.price]" },
             calculated: { status: "value", value: 200 },
             diagnostics: [],
-            editable_number: false,
+            editable_scalar: null,
           },
         ],
       };
@@ -162,7 +192,75 @@ class FakeClient implements DesignerClient {
     };
   }
 
+  async editText(
+    expectedRevision: string,
+    target: FieldTarget,
+    value: string,
+  ): Promise<PublicationProjection> {
+    this.textEditRequests.push({
+      expectedRevision,
+      target: structuredClone(target),
+      value,
+    });
+    return {
+      base_revision: expectedRevision,
+      resulting_revision: "resident/1",
+      entities: [],
+      fields: [structuredClone(target)],
+      affected_calculations: [],
+    };
+  }
+
+  async editBoolean(
+    expectedRevision: string,
+    target: FieldTarget,
+    value: boolean,
+  ): Promise<PublicationProjection> {
+    this.booleanEditRequests.push({
+      expectedRevision,
+      target: structuredClone(target),
+      value,
+    });
+    return {
+      base_revision: expectedRevision,
+      resulting_revision: "resident/2",
+      entities: [],
+      fields: [structuredClone(target)],
+      affected_calculations: [],
+    };
+  }
+
   close(): void {}
+}
+
+class ScalarClient extends FakeClient {
+  override async queryFields(
+    revision: string,
+    fields: FieldTarget[],
+  ): Promise<FieldBatchProjection> {
+    if (fields.length === 1 && fields[0]?.entity === "shop") {
+      return super.queryFields(revision, fields);
+    }
+    this.queryRequests.push(structuredClone(fields));
+    return {
+      revision,
+      fields: fields.map((target) => {
+        const field = table.rows[0]!.fields.find(
+          (candidate) =>
+            candidate.target.entity === target.entity && candidate.target.field === target.field,
+        );
+        if (field === undefined) throw new Error(`Missing test field '${target.field}'.`);
+        const refreshed = structuredClone(field);
+        if (target.field === "name" && this.textEditRequests.length > 0) {
+          refreshed.stored = { kind: "text", value: "Longsword" };
+        }
+        if (target.field === "enabled" && this.booleanEditRequests.length > 0) {
+          refreshed.stored = { kind: "boolean", value: false };
+        }
+        return refreshed;
+      }),
+    };
+  }
 }
 
 class FakeHost implements DesignerProjectHost {
@@ -296,6 +394,63 @@ class ControlRecoveryClient extends FakeClient {
 }
 
 describe("Designer application seam", () => {
+  it("publishes Rust-authorized Text and Boolean controls against their visible revisions", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const client = new ScalarClient();
+    const app = mountDesigner(root, client, host);
+    await app.ready;
+
+    const name = root.querySelector<HTMLInputElement>(
+      'input[aria-label="Name for Iron Sword"]',
+    );
+    if (name === null || name.form === null) throw new Error("text edit form is required");
+    name.value = "Longsword";
+    name.form.requestSubmit();
+    await vi.waitFor(() => {
+      expect(root.querySelector('[data-testid="revision"]')?.textContent).toContain(
+        "resident/1",
+      );
+    });
+    expect(client.textEditRequests).toEqual([
+      {
+        expectedRevision: "resident/0",
+        target: { entity: "iron_sword", field: "name" },
+        value: "Longsword",
+      },
+    ]);
+    expect(
+      root.querySelector<HTMLInputElement>('input[aria-label="Name for Iron Sword"]')?.value,
+    ).toBe("Longsword");
+
+    const enabled = root.querySelector<HTMLInputElement>(
+      'input[aria-label="Enabled for Iron Sword"]',
+    );
+    if (enabled === null || enabled.form === null) {
+      throw new Error("boolean edit form is required");
+    }
+    enabled.checked = false;
+    enabled.form.requestSubmit();
+    await vi.waitFor(() => {
+      expect(root.querySelector('[data-testid="revision"]')?.textContent).toContain(
+        "resident/2",
+      );
+    });
+    expect(client.booleanEditRequests).toEqual([
+      {
+        expectedRevision: "resident/1",
+        target: { entity: "iron_sword", field: "enabled" },
+        value: false,
+      },
+    ]);
+    expect(
+      root.querySelector<HTMLInputElement>('input[aria-label="Enabled for Iron Sword"]')
+        ?.checked,
+    ).toBe(false);
+    app.destroy();
+  });
+
   it("preserves opaque edit targets across HTML parsing", async () => {
     const target = { entity: "entity\u0000id", field: "field\rid" };
     const opaqueTable = structuredClone(table);

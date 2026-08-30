@@ -19,6 +19,7 @@ import type {
   FieldProjection,
   FieldTarget,
   OpenedProjection,
+  PublicationProjection,
   TableProjection,
 } from "./runtime/protocol.ts";
 
@@ -116,9 +117,9 @@ export function mountDesigner(
     }
   };
 
-  const commitNumber = async (
+  const commitScalar = async (
     target: FieldTarget,
-    input: string,
+    publish: (expectedRevision: string) => Promise<PublicationProjection>,
   ): Promise<void> => {
     if (store === null || busy || store.snapshot().currentness !== "current") return;
     busy = true;
@@ -126,11 +127,7 @@ export function mountDesigner(
     render();
     let published = false;
     try {
-      const publication = await client.editNumber(
-        store.snapshot().table.revision,
-        target,
-        input,
-      );
+      const publication = await publish(store.snapshot().table.revision);
       published = true;
       const requested = store.beginPublication(publication);
       durability.observe(publication.resulting_revision);
@@ -154,6 +151,17 @@ export function mountDesigner(
       render();
     }
   };
+
+  const commitNumber = (target: FieldTarget, input: string): Promise<void> =>
+    commitScalar(target, (expectedRevision) => client.editNumber(expectedRevision, target, input));
+
+  const commitText = (target: FieldTarget, value: string): Promise<void> =>
+    commitScalar(target, (expectedRevision) => client.editText(expectedRevision, target, value));
+
+  const commitBoolean = (target: FieldTarget, value: boolean): Promise<void> =>
+    commitScalar(target, (expectedRevision) =>
+      client.editBoolean(expectedRevision, target, value),
+    );
 
   const selectCollection = async (collection: string): Promise<void> => {
     if (bootstrap === null || store === null || busy) return;
@@ -389,7 +397,17 @@ export function mountDesigner(
         const entity = decodeOpaqueAttribute(form.dataset.entity);
         const field = decodeOpaqueAttribute(form.dataset.field);
         if (input === null || entity === undefined || field === undefined) return;
-        void commitNumber({ entity, field }, input.value);
+        switch (form.dataset.editKind) {
+          case "number":
+            void commitNumber({ entity, field }, input.value);
+            break;
+          case "text":
+            void commitText({ entity, field }, input.value);
+            break;
+          case "boolean":
+            void commitBoolean({ entity, field }, input.checked);
+            break;
+        }
       });
     });
     root
@@ -572,7 +590,7 @@ function designerMarkup(
           </div>
 
           <ol class="calculation-thread" aria-label="Edit publication path">
-            <li><span>1</span><strong>Stored value</strong><small>Editable Number</small></li>
+            <li><span>1</span><strong>Stored value</strong><small>Editable scalar</small></li>
             <li><span>2</span><strong>Rust authority</strong><small>Expected revision</small></li>
             <li><span>3</span><strong>Formula refresh</strong><small>Affected fields only</small></li>
           </ol>
@@ -682,12 +700,12 @@ function fieldMarkup(
   const diagnostics = field.diagnostics
     .map((diagnostic) => `<small class="field-error">${escapeHtml(diagnostic.message)}</small>`)
     .join("");
-  if (field.editable_number && field.stored?.kind === "number") {
+  if (field.editable_scalar === "number" && field.stored?.kind === "number") {
     return `
       <td data-field="${escapeHtml(key)}" class="stored-cell">
         <form data-edit-form data-entity="${encodeOpaqueAttribute(
           field.target.entity,
-        )}" data-field="${encodeOpaqueAttribute(field.target.field)}">
+        )}" data-field="${encodeOpaqueAttribute(field.target.field)}" data-edit-kind="number">
           <input
             type="number"
             step="any"
@@ -700,6 +718,48 @@ function fieldMarkup(
           <button type="submit" ${busy ? "disabled" : ""}>Apply</button>
         </form>
         <small class="value-kind">Stored · Number</small>
+        ${diagnostics}
+      </td>
+    `;
+  }
+  if (field.editable_scalar === "text" && field.stored?.kind === "text") {
+    return `
+      <td data-field="${escapeHtml(key)}" class="stored-cell">
+        <form data-edit-form data-entity="${encodeOpaqueAttribute(
+          field.target.entity,
+        )}" data-field="${encodeOpaqueAttribute(field.target.field)}" data-edit-kind="text">
+          <input
+            type="text"
+            value="${escapeHtml(field.stored.value)}"
+            aria-label="${escapeHtml(humanize(field.target.field))} for ${escapeHtml(
+              humanize(entityKey),
+            )}"
+            ${busy ? "disabled" : ""}
+          />
+          <button type="submit" ${busy ? "disabled" : ""}>Apply</button>
+        </form>
+        <small class="value-kind">Stored · Text</small>
+        ${diagnostics}
+      </td>
+    `;
+  }
+  if (field.editable_scalar === "boolean" && field.stored?.kind === "boolean") {
+    return `
+      <td data-field="${escapeHtml(key)}" class="stored-cell">
+        <form data-edit-form data-entity="${encodeOpaqueAttribute(
+          field.target.entity,
+        )}" data-field="${encodeOpaqueAttribute(field.target.field)}" data-edit-kind="boolean">
+          <input
+            type="checkbox"
+            ${field.stored.value ? "checked" : ""}
+            aria-label="${escapeHtml(humanize(field.target.field))} for ${escapeHtml(
+              humanize(entityKey),
+            )}"
+            ${busy ? "disabled" : ""}
+          />
+          <button type="submit" ${busy ? "disabled" : ""}>Apply</button>
+        </form>
+        <small class="value-kind">Stored · Boolean</small>
         ${diagnostics}
       </td>
     `;

@@ -3,8 +3,9 @@
 This is the first production graphical projection and persistence composition
 over the resident Rust workspace runtime. It intentionally supports one narrow
 product path: open one canonical Moonfall-shaped `.roproj/v1`, browse a typed
-collection, edit a directly stored Number, publish against the expected
-revision, selectively refresh affected fields and dependent formulas, Save As
+collection, edit directly stored Text, Number, and Boolean values, publish
+against the expected revision, selectively refresh affected fields and
+dependent formulas, Save As
 to a new browser-local destination, then destroy and reopen the occurrence.
 
 The Worker retains the Rust-authoritative workspace occurrence. Browser state
