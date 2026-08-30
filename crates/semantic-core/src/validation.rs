@@ -80,11 +80,39 @@ pub fn validate_document_core(document: &Document) -> Vec<Diagnostic> {
     validate_document_internal(document, false)
 }
 
+/// Run the accepted semantic validator with a research-only cancellation poll.
+///
+/// Returns `None` when `cancelled` requests cancellation. A completed result is
+/// byte-for-byte the same ordered diagnostic set as [`validate_document`].
+#[cfg(feature = "issue-175-research")]
+#[must_use]
+pub fn validate_document_cancellable(
+    document: &Document,
+    mut cancelled: impl FnMut() -> bool,
+) -> Option<Vec<Diagnostic>> {
+    validate_document_controlled(document, true, &mut cancelled).ok()
+}
+
+#[derive(Debug)]
+struct ValidationCancelled;
+
+type ValidationControl = Result<(), ValidationCancelled>;
+
 fn validate_document_internal(
     document: &Document,
     include_formula_references: bool,
 ) -> Vec<Diagnostic> {
+    validate_document_controlled(document, include_formula_references, &mut || false)
+        .expect("the non-cancellable validator never cancels")
+}
+
+fn validate_document_controlled(
+    document: &Document,
+    include_formula_references: bool,
+    cancelled: &mut impl FnMut() -> bool,
+) -> Result<Vec<Diagnostic>, ValidationCancelled> {
     let mut diagnostics = Vec::new();
+    poll_cancellation(cancelled)?;
 
     validate_stable_id(
         document.id.as_str(),
@@ -102,17 +130,36 @@ fn validate_document_internal(
         ));
     }
 
-    validate_schema_keys(document, &mut diagnostics);
-    validate_entity_keys(document, &mut diagnostics);
-    validate_schemas(document, &mut diagnostics);
-    validate_entities(document, include_formula_references, &mut diagnostics);
+    validate_schema_keys(document, &mut diagnostics, cancelled)?;
+    validate_entity_keys(document, &mut diagnostics, cancelled)?;
+    validate_schemas(document, &mut diagnostics, cancelled)?;
+    validate_entities(
+        document,
+        include_formula_references,
+        &mut diagnostics,
+        cancelled,
+    )?;
 
+    poll_cancellation(cancelled)?;
     diagnostics.sort();
-    diagnostics
+    Ok(diagnostics)
 }
 
-fn validate_schemas(document: &Document, diagnostics: &mut Vec<Diagnostic>) {
+fn poll_cancellation(cancelled: &mut impl FnMut() -> bool) -> ValidationControl {
+    if cancelled() {
+        Err(ValidationCancelled)
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_schemas(
+    document: &Document,
+    diagnostics: &mut Vec<Diagnostic>,
+    cancelled: &mut impl FnMut() -> bool,
+) -> ValidationControl {
     for (schema_id, schema) in &document.schemas {
+        poll_cancellation(cancelled)?;
         let schema_path = format!("schemas.{schema_id}");
         if schema_id != &schema.id {
             diagnostics.push(key_mismatch_diagnostic(
@@ -143,9 +190,10 @@ fn validate_schemas(document: &Document, diagnostics: &mut Vec<Diagnostic>) {
             SemanticSubject::Schema(schema_id.clone()),
             diagnostics,
         );
-        validate_field_keys(schema_id, schema, &schema_path, diagnostics);
+        validate_field_keys(schema_id, schema, &schema_path, diagnostics, cancelled)?;
 
         for (field_id, definition) in &schema.fields {
+            poll_cancellation(cancelled)?;
             let field_path = format!("{schema_path}.fields.{field_id}");
             let field_subject = SemanticSubject::SchemaField {
                 schema: schema_id.clone(),
@@ -198,14 +246,17 @@ fn validate_schemas(document: &Document, diagnostics: &mut Vec<Diagnostic>) {
             }
         }
     }
+    Ok(())
 }
 
 fn validate_entities(
     document: &Document,
     include_formula_references: bool,
     diagnostics: &mut Vec<Diagnostic>,
-) {
+    cancelled: &mut impl FnMut() -> bool,
+) -> ValidationControl {
     for (entity_id, entity) in &document.entities {
+        poll_cancellation(cancelled)?;
         let entity_path = format!("entities.{entity_id}");
         let entity_subject = SemanticSubject::Entity(entity_id.clone());
         if entity_id != &entity.id {
@@ -251,9 +302,10 @@ fn validate_entities(
             continue;
         };
 
-        validate_required_fields(schema, entity_id, entity, diagnostics);
+        validate_required_fields(schema, entity_id, entity, diagnostics, cancelled)?;
 
         for (field, value) in &entity.fields {
+            poll_cancellation(cancelled)?;
             let field_path = format!("{entity_path}.fields.{field}");
             let field_ref = FieldRef::new(entity_id.clone(), field.clone());
             let Some(definition) = schema.fields.get(field) else {
@@ -281,20 +333,28 @@ fn validate_entities(
                 &field_path,
                 include_formula_references,
                 diagnostics,
-            );
+                cancelled,
+            )?;
         }
     }
+    Ok(())
 }
 
-fn validate_schema_keys(document: &Document, diagnostics: &mut Vec<Diagnostic>) {
+fn validate_schema_keys(
+    document: &Document,
+    diagnostics: &mut Vec<Diagnostic>,
+    cancelled: &mut impl FnMut() -> bool,
+) -> ValidationControl {
     let mut groups = BTreeMap::<_, Vec<_>>::new();
     for (schema_id, schema) in &document.schemas {
+        poll_cancellation(cancelled)?;
         groups
             .entry(schema.key.clone())
             .or_default()
             .push(schema_id.clone());
     }
     for (key, ids) in groups.into_iter().filter(|(_, ids)| ids.len() > 1) {
+        poll_cancellation(cancelled)?;
         diagnostics.push(core_diagnostic(
             format!("schema_keys.{key}"),
             DiagnosticCode::DUPLICATE_KEY,
@@ -302,17 +362,24 @@ fn validate_schema_keys(document: &Document, diagnostics: &mut Vec<Diagnostic>) 
             ids.into_iter().map(SemanticSubject::Schema).collect(),
         ));
     }
+    Ok(())
 }
 
-fn validate_entity_keys(document: &Document, diagnostics: &mut Vec<Diagnostic>) {
+fn validate_entity_keys(
+    document: &Document,
+    diagnostics: &mut Vec<Diagnostic>,
+    cancelled: &mut impl FnMut() -> bool,
+) -> ValidationControl {
     let mut groups = BTreeMap::<_, Vec<_>>::new();
     for (entity_id, entity) in &document.entities {
+        poll_cancellation(cancelled)?;
         groups
             .entry(entity.key.clone())
             .or_default()
             .push(entity_id.clone());
     }
     for (key, ids) in groups.into_iter().filter(|(_, ids)| ids.len() > 1) {
+        poll_cancellation(cancelled)?;
         diagnostics.push(core_diagnostic(
             format!("entity_keys.{key}"),
             DiagnosticCode::DUPLICATE_KEY,
@@ -320,6 +387,7 @@ fn validate_entity_keys(document: &Document, diagnostics: &mut Vec<Diagnostic>) 
             ids.into_iter().map(SemanticSubject::Entity).collect(),
         ));
     }
+    Ok(())
 }
 
 fn validate_field_keys(
@@ -327,15 +395,18 @@ fn validate_field_keys(
     schema: &Schema,
     schema_path: &str,
     diagnostics: &mut Vec<Diagnostic>,
-) {
+    cancelled: &mut impl FnMut() -> bool,
+) -> ValidationControl {
     let mut groups = BTreeMap::<_, Vec<_>>::new();
     for (field_id, field) in &schema.fields {
+        poll_cancellation(cancelled)?;
         groups
             .entry(field.key.clone())
             .or_default()
             .push(field_id.clone());
     }
     for (key, ids) in groups.into_iter().filter(|(_, ids)| ids.len() > 1) {
+        poll_cancellation(cancelled)?;
         diagnostics.push(core_diagnostic(
             format!("{schema_path}.field_keys.{key}"),
             DiagnosticCode::DUPLICATE_KEY,
@@ -348,6 +419,7 @@ fn validate_field_keys(
                 .collect(),
         ));
     }
+    Ok(())
 }
 
 fn validate_stable_id(
@@ -398,8 +470,10 @@ fn validate_required_fields(
     entity_id: &crate::EntityId,
     entity: &crate::Entity,
     diagnostics: &mut Vec<Diagnostic>,
-) {
+    cancelled: &mut impl FnMut() -> bool,
+) -> ValidationControl {
     for (field, definition) in &schema.fields {
+        poll_cancellation(cancelled)?;
         if definition.required && !entity.fields.contains_key(field) {
             diagnostics.push(core_diagnostic(
                 format!("entities.{entity_id}.fields.{field}"),
@@ -412,8 +486,10 @@ fn validate_required_fields(
             ));
         }
     }
+    Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_value(
     document: &Document,
     field: &FieldRef,
@@ -422,14 +498,16 @@ fn validate_value(
     path: &str,
     include_formula_references: bool,
     diagnostics: &mut Vec<Diagnostic>,
-) {
+    cancelled: &mut impl FnMut() -> bool,
+) -> ValidationControl {
+    poll_cancellation(cancelled)?;
     match (expected, value) {
         (FieldType::Number, Value::Number(_))
         | (FieldType::Text, Value::Text(_))
         | (FieldType::Boolean, Value::Boolean(_)) => {}
         (FieldType::Number, Value::Formula(expression)) => {
             if include_formula_references {
-                validate_expression(document, field, expression, path, diagnostics);
+                validate_expression(document, field, expression, path, diagnostics, cancelled)?;
             }
         }
         (FieldType::Reference { schema }, Value::Reference(entity_id)) => {
@@ -443,7 +521,7 @@ fn validate_value(
                     )
                     .with_related_subjects(vec![SemanticSubject::Entity(entity_id.clone())]),
                 );
-                return;
+                return Ok(());
             };
             if &target.schema != schema {
                 diagnostics.push(
@@ -480,6 +558,7 @@ fn validate_value(
             .with_fact(DiagnosticFact::new("actual_kind", value_type_name(value))),
         ),
     }
+    Ok(())
 }
 
 fn validate_expression(
@@ -488,9 +567,15 @@ fn validate_expression(
     expression: &Expression,
     path: &str,
     diagnostics: &mut Vec<Diagnostic>,
-) {
+    cancelled: &mut impl FnMut() -> bool,
+) -> ValidationControl {
     let mut stack = vec![expression];
+    let mut nodes = 0_usize;
     while let Some(node) = stack.pop() {
+        if nodes % 64 == 0 {
+            poll_cancellation(cancelled)?;
+        }
+        nodes += 1;
         match node {
             Expression::Number(_) => {}
             Expression::Reference(reference) => {
@@ -507,6 +592,7 @@ fn validate_expression(
             }
         }
     }
+    Ok(())
 }
 
 fn validate_formula_reference(

@@ -22,6 +22,7 @@ use sha2::Digest as ShaDigest;
 use tachiko_semantic_core::{
     Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldDefinition, FieldId,
     FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value, is_valid_identifier,
+    validate_document_cancellable,
 };
 
 use super::issue_175_oracle_bridge::{AdmissionWork, admit_one_pass_exact, dto_work_counts};
@@ -411,7 +412,7 @@ fn admit_one_pass_host_controlled(
         }
     }
     check_cancel(cancel)?;
-    super::super::super::check_document(&document)?;
+    check_document_cancellable(&document, cancel)?;
     check_cancel(cancel)?;
     validate_semantic_expression_limits_cancellable(&document, cancel)?;
     check_cancel(cancel)?;
@@ -441,6 +442,32 @@ fn check_cancel(cancel: Option<&AtomicBool>) -> Result<(), FormatError> {
         invalid_representation("research A1 admission cancelled before SemanticCurrent".to_owned())
     } else {
         Ok(())
+    }
+}
+
+fn check_document_cancellable(
+    document: &Document,
+    cancel: Option<&AtomicBool>,
+) -> Result<(), FormatError> {
+    let Some(cancel) = cancel else {
+        return super::super::super::check_document(document);
+    };
+    check_document_with_cancel_probe(document, || cancel.load(Ordering::Relaxed))
+}
+
+fn check_document_with_cancel_probe(
+    document: &Document,
+    cancelled: impl FnMut() -> bool,
+) -> Result<(), FormatError> {
+    let Some(diagnostics) = validate_document_cancellable(document, cancelled) else {
+        return invalid_representation(
+            "research A1 admission cancelled before SemanticCurrent".to_owned(),
+        );
+    };
+    if diagnostics.is_empty() {
+        Ok(())
+    } else {
+        Err(FormatError::InvalidDocument { diagnostics })
     }
 }
 
@@ -3082,6 +3109,24 @@ fn issue_175_background_admission_cancels_before_large_metadata_parse() {
             if message.contains("cancelled before SemanticCurrent")
     ));
     assert_eq!(records.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn issue_175_background_document_validation_polls_cancellation() {
+    let document = dependency_chain_document(16_000, false);
+    let mut polls = 0_usize;
+    let error = check_document_with_cancel_probe(&document, || {
+        polls += 1;
+        polls == 128
+    })
+    .unwrap_err();
+
+    assert!(matches!(
+        error,
+        FormatError::InvalidRoProjectRepresentation { message }
+            if message.contains("cancelled before SemanticCurrent")
+    ));
+    assert_eq!(polls, 128);
 }
 
 #[test]
