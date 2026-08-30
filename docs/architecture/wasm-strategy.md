@@ -75,6 +75,14 @@ impact classification is unsafe. This state remains runtime-only and
 non-serialized. Public Worker/ABI/persistence mechanics may evolve while
 preserving ADR-0020/ADR-0022 semantic and runtime-ownership laws.
 
+Issues #171 and #187 compose the first production browser Designer over that
+runtime: the private Worker/WASM adapter retains the occurrence, canonical Open
+and exact snapshot encoding reuse Rust storage authority, and an app-private
+IndexedDB host performs create-only Save As. The separately bounded project
+arena, Worker messages, revision spelling, and IndexedDB record schema remain
+replaceable implementation evidence rather than public contracts. Generic
+replacement/recovery and public browser persistence mechanics remain Deferred.
+
 ## Related
 
 - ADR-0016
@@ -83,5 +91,5 @@ preserving ADR-0020/ADR-0022 semantic and runtime-ownership laws.
 - ADR-0020
 - ADR-0022
 - Issue #26
-- Issues #93, #94, #95
+- Issues #93, #94, #95, #171, #187
 - PR #91

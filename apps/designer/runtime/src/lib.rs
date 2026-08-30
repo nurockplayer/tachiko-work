@@ -3,12 +3,20 @@
 //! This crate is app-local composition code. Its DTOs and WASM ABI are
 //! provisional delivery mechanics, not a public Semantic API or SDK contract.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::{
+    collections::{BTreeMap, BTreeSet, VecDeque},
+    mem::{size_of, size_of_val},
+};
 
 use serde::{Deserialize, Serialize};
+use tachiko_storage::{
+    CanonicalRoProjectAdmissionError, CanonicalRoProjectV1, FormatError, ROPROJ_V1_PATHS,
+    encode_roproj_v1,
+};
 use tachiko_workspace_engine::{
-    CalculationFailure, Document, FieldId, FieldRef, FieldType, IdGenerator, Number,
-    SemanticIdKind, StarterTemplate, Value, WorkspaceError, analyze_field, create_document,
+    CalculationFailure, Document, Expression, FieldAddress, FieldId, FieldRef, FieldType,
+    IdGenerator, Number, SemanticIdKind, StarterTemplate, Value, WorkspaceError, analyze_field,
+    create_document,
     formula_operations::FormulaCalculationOutcome,
     patch_lifecycle::{
         AuthorizationAction, AuthorizationDomainId, AuthorizationPolicyVersion, DocumentScopeId,
@@ -18,25 +26,36 @@ use tachiko_workspace_engine::{
         SemanticPatchBody, SemanticRevision, SemanticScope, TrustedInstant,
     },
     resident_session::{ResidentWorkspaceSession, TrustedPublicationTimeSource},
+    validate,
 };
 use thiserror::Error;
 
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 
-const DOCUMENT_SCOPE: &str = "designer-moonfall-occurrence";
 const DEFAULT_COLLECTION: &str = "weapons";
+const MAX_COLLECTIONS: usize = 32;
 const MAX_TABLE_FIELDS: usize = 32;
 const MAX_TABLE_ROWS: usize = 32;
+const MAX_TOTAL_ENTITIES: usize = MAX_COLLECTIONS * MAX_TABLE_ROWS;
 const MAX_FIELD_QUERY_TARGETS: usize = MAX_TABLE_FIELDS * MAX_TABLE_ROWS;
+const MAX_FORMULAS: usize = 32;
+const MAX_FORMULA_PROFILE_NODES: usize = 256;
+const MAX_PROFILE_STRING_BYTES: usize = 4_096;
+const MAX_PROJECTION_BYTES: usize = 65_536;
+const MAX_WIDTH_FINITE_JSON_NUMBER: f64 = -f64::MIN_POSITIVE;
 pub(crate) const MAX_WIRE_REQUEST_BYTES: usize = 65_536;
+pub(crate) const MAX_PROJECT_TRANSFER_BYTES: usize = 64 * 1024 * 1024;
 const DESIGNER_PRINCIPAL: &str = "designer-human";
+const PROJECT_BUNDLE_MAGIC: &[u8; 8] = b"TWDPROJ1";
 
 /// App-private requests accepted by the Designer runtime adapter.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum DesignerRequest {
-    Bootstrap,
+    Bootstrap {
+        occurrence_id: String,
+    },
     QueryTable {
         collection: String,
     },
@@ -56,9 +75,25 @@ pub enum DesignerRequest {
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum DesignerResponse {
     Bootstrap(BootstrapProjection),
+    Opened(Box<OpenedProjection>),
     Table(TableProjection),
     Fields(FieldBatchProjection),
     Published(PublicationProjection),
+    ProjectExported(ProjectExportProjection),
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct OpenedProjection {
+    pub bootstrap: BootstrapProjection,
+    pub table: TableProjection,
+    pub control: ControlProjection,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ControlProjection {
+    pub target: FieldTarget,
+    pub value: f64,
+    pub revision: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -213,16 +248,48 @@ pub struct PublicationProjection {
     pub affected_calculations: Vec<FieldTarget>,
 }
 
+/// One exact-revision canonical project prepared for a host durability commit.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectExport {
+    pub revision: String,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ProjectExportProjection {
+    pub revision: String,
+    pub byte_length: usize,
+}
+
 #[derive(Debug, Error)]
 pub enum DesignerError {
-    #[error("could not create the built-in Moonfall fixture: {0}")]
-    Fixture(#[from] WorkspaceError),
+    #[error("Designer workspace operation failed: {0}")]
+    Workspace(#[from] WorkspaceError),
+    #[error("canonical project failed complete workspace validation: {source}")]
+    InvalidProjectWorkspace {
+        #[source]
+        source: WorkspaceError,
+    },
+    #[error("canonical project admission failed: {0}")]
+    Storage(#[from] FormatError),
+    #[error("project transfer is invalid: {message}")]
+    InvalidProjectTransfer { message: String },
+    #[error(
+        "project transfer exceeds the private {maximum}-byte host boundary (received {actual} bytes)"
+    )]
+    ProjectTransferTooLarge { actual: usize, maximum: usize },
+    #[error("this canonical project is outside the bounded Moonfall Designer profile: {message}")]
+    UnsupportedProject { message: String },
+    #[error("the trusted host occurrence identity is invalid")]
+    InvalidOccurrenceIdentity,
     #[error("collection '{collection}' is not available in this Designer slice")]
     MissingCollection { collection: String },
     #[error("collection '{collection}' exceeds the bounded table profile")]
     CollectionTooLarge { collection: String },
     #[error("field query requested {requested} targets; the bounded maximum is {maximum}")]
     FieldQueryTooLarge { requested: usize, maximum: usize },
+    #[error("projection is {actual} bytes; the bounded maximum is {maximum}")]
+    ProjectionTooLarge { actual: usize, maximum: usize },
     #[error("formula projection is unavailable for '{field}'")]
     MissingFormulaProjection { field: FieldRef },
     #[error("Designer lifecycle failed: {0}")]
@@ -257,11 +324,17 @@ impl DesignerError {
             }
             Self::InvalidNumberInput { .. } => ("invalid_number", Vec::new()),
             Self::UnsupportedNumberEdit { .. } => ("unsupported_edit", Vec::new()),
+            Self::Storage(_)
+            | Self::InvalidProjectWorkspace { .. }
+            | Self::InvalidProjectTransfer { .. } => ("invalid_project", Vec::new()),
+            Self::ProjectTransferTooLarge { .. } => ("project_too_large", Vec::new()),
+            Self::UnsupportedProject { .. } => ("unsupported_project", Vec::new()),
+            Self::InvalidOccurrenceIdentity => ("invalid_occurrence", Vec::new()),
             Self::MissingCollection { .. } => ("missing_collection", Vec::new()),
-            Self::CollectionTooLarge { .. } | Self::FieldQueryTooLarge { .. } => {
-                ("query_too_large", Vec::new())
-            }
-            Self::Fixture(_)
+            Self::CollectionTooLarge { .. }
+            | Self::FieldQueryTooLarge { .. }
+            | Self::ProjectionTooLarge { .. } => ("query_too_large", Vec::new()),
+            Self::Workspace(_)
             | Self::MissingFormulaProjection { .. }
             | Self::Lifecycle(_)
             | Self::MissingInvalidation => ("runtime_failure", Vec::new()),
@@ -278,6 +351,8 @@ impl DesignerError {
 /// One Rust-authoritative occurrence composed for the first-party Web Designer.
 pub struct DesignerRuntime {
     title: String,
+    document_scope: DocumentScopeId,
+    control_field: FieldTarget,
     collections: Vec<CollectionSummary>,
     collection_specs: BTreeMap<String, CollectionSpec>,
     formula_sources: BTreeMap<FieldRef, String>,
@@ -309,26 +384,50 @@ impl DesignerRuntime {
     ///
     /// Returns the shared workspace failure if the deterministic fixture does
     /// not satisfy current semantic and calculation authority.
-    pub fn moonfall() -> Result<Self, DesignerError> {
+    pub fn moonfall(occurrence_id: &str) -> Result<Self, DesignerError> {
         let mut generator = MoonfallIds::new();
         let document = create_document(
             StarterTemplate::GameBalance,
             "Moonfall Balance",
             &mut generator,
         )?;
+        Self::from_document(document, occurrence_id)
+    }
+
+    /// Construct a fresh bounded Designer occurrence from an already-admitted
+    /// semantic document. Storage admission remains outside this constructor.
+    ///
+    /// # Errors
+    ///
+    /// Returns an app-profile or shared workspace failure before any existing
+    /// occurrence is replaced.
+    pub fn from_document(document: Document, occurrence_id: &str) -> Result<Self, DesignerError> {
+        ensure_cheap_document_profile(&document)?;
+        validate(&document).map_err(|source| DesignerError::InvalidProjectWorkspace { source })?;
+        let control_field = document
+            .resolve_field(&FieldAddress::new("shop", "upgrade_cost"))
+            .map(|field| field_target(&field))
+            .map_err(|error| DesignerError::UnsupportedProject {
+                message: format!(
+                    "the required shop.upgrade_cost control formula is unavailable: {error}"
+                ),
+            })?;
         let collection_specs = collection_specs(&document);
         let collections = collection_specs
             .values()
             .map(|collection| collection.summary.clone())
-            .collect();
-        let formula_sources = formula_sources(&document)?;
+            .collect::<Vec<_>>();
         let title = document.title.clone();
+        let document_scope = document_scope(occurrence_id, &document)?;
+        ensure_static_profile(&title, &control_field, &collections, &collection_specs)?;
+        let formula_sources = formula_sources(&document)?;
         let principal = PrincipalId::from(DESIGNER_PRINCIPAL);
-        let document_scope = DocumentScopeId::from(DOCUMENT_SCOPE);
         let lifecycle = designer_lifecycle(&document_scope, &document, &principal)?;
-        let session = ResidentWorkspaceSession::new(document_scope, document);
-        Ok(Self {
+        let session = ResidentWorkspaceSession::new(document_scope.clone(), document);
+        let runtime = Self {
             title,
+            document_scope,
+            control_field,
             collections,
             collection_specs,
             formula_sources,
@@ -337,7 +436,9 @@ impl DesignerRuntime {
             principal,
             clock: DesignerClock::default(),
             proposal_serial: 0,
-        })
+        };
+        runtime.ensure_supported_project()?;
+        Ok(runtime)
     }
 
     /// Execute one private adapter request without exposing the canonical document.
@@ -347,16 +448,9 @@ impl DesignerRuntime {
     /// Returns a typed adapter or workspace failure.
     pub fn handle(&mut self, request: DesignerRequest) -> Result<DesignerResponse, DesignerError> {
         match request {
-            DesignerRequest::Bootstrap => Ok(DesignerResponse::Bootstrap(BootstrapProjection {
-                title: self.title.clone(),
-                revision: self.session.revision().as_str().to_owned(),
-                default_collection: DEFAULT_COLLECTION.to_owned(),
-                collections: self.collections.clone(),
-                control_field: FieldTarget {
-                    entity: "shop".to_owned(),
-                    field: "upgrade_cost".to_owned(),
-                },
-            })),
+            DesignerRequest::Bootstrap { .. } => {
+                Ok(DesignerResponse::Bootstrap(self.bootstrap_projection()))
+            }
             DesignerRequest::QueryTable { collection } => {
                 Ok(DesignerResponse::Table(self.query_table(&collection)?))
             }
@@ -376,6 +470,100 @@ impl DesignerRuntime {
                 &input,
             )?)),
         }
+    }
+
+    fn bootstrap_projection(&self) -> BootstrapProjection {
+        BootstrapProjection {
+            title: self.title.clone(),
+            revision: self.session.revision().as_str().to_owned(),
+            default_collection: DEFAULT_COLLECTION.to_owned(),
+            collections: self.collections.clone(),
+            control_field: self.control_field.clone(),
+        }
+    }
+
+    fn ensure_supported_project(&self) -> Result<(), DesignerError> {
+        let mut post_edit_fields = BTreeSet::new();
+        for collection in &self.collections {
+            let table = self.query_table(&collection.key).map_err(|error| {
+                DesignerError::UnsupportedProject {
+                    message: error.to_string(),
+                }
+            })?;
+            post_edit_fields.extend(
+                table
+                    .rows
+                    .iter()
+                    .flat_map(|row| &row.fields)
+                    .filter(|field| field.editable_number || field.formula.is_some())
+                    .map(|field| field.target.clone()),
+            );
+        }
+        let mut post_edit_refresh = self
+            .query_fields(
+                self.current_revision(),
+                &post_edit_fields.into_iter().collect::<Vec<_>>(),
+            )
+            .map_err(|error| DesignerError::UnsupportedProject {
+                message: format!("the worst-case post-edit refresh is not bounded: {error}"),
+            })?;
+        "resident/18446744073709551615".clone_into(&mut post_edit_refresh.revision);
+        for field in &mut post_edit_refresh.fields {
+            if let Some(StoredValueProjection::Number { value }) = &mut field.stored {
+                *value = MAX_WIDTH_FINITE_JSON_NUMBER;
+            }
+            if let Some(CalculationProjection::Value { value }) = &mut field.calculated {
+                *value = MAX_WIDTH_FINITE_JSON_NUMBER;
+            }
+        }
+        ensure_projection_size(&post_edit_refresh).map_err(|error| {
+            DesignerError::UnsupportedProject {
+                message: format!("the worst-case post-edit refresh is not bounded: {error}"),
+            }
+        })?;
+        let control = self
+            .query_fields(
+                self.current_revision(),
+                std::slice::from_ref(&self.control_field),
+            )
+            .map_err(|error| DesignerError::UnsupportedProject {
+                message: error.to_string(),
+            })?;
+        if !matches!(
+            control
+                .fields
+                .first()
+                .and_then(|field| field.calculated.as_ref()),
+            Some(CalculationProjection::Value { .. })
+        ) {
+            return Err(DesignerError::UnsupportedProject {
+                message: "the required shop.upgrade_cost control formula is unavailable".to_owned(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Prepare the exact current resident snapshot as a canonical project.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stale-revision, storage, or bounded-transfer failure without
+    /// mutating the resident occurrence.
+    pub fn export_project(&self, expected_revision: &str) -> Result<ProjectExport, DesignerError> {
+        let current = self.current_revision();
+        if current != expected_revision {
+            return Err(DesignerError::StaleQuery {
+                requested: expected_revision.to_owned(),
+                current: current.to_owned(),
+            });
+        }
+        let snapshot = self.session.export_snapshot();
+        let tree = encode_roproj_v1(snapshot.document())?;
+        let bytes = encode_project_bundle(&tree)?;
+        Ok(ProjectExport {
+            revision: snapshot.revision().as_str().to_owned(),
+            bytes,
+        })
     }
 
     fn query_table(&self, collection: &str) -> Result<TableProjection, DesignerError> {
@@ -424,7 +612,7 @@ impl DesignerRuntime {
                     .collect(),
             })
             .collect();
-        Ok(TableProjection {
+        let projection = TableProjection {
             revision: field_query.revision().as_str().to_owned(),
             collection: spec.summary.clone(),
             columns: spec
@@ -437,7 +625,9 @@ impl DesignerRuntime {
                 })
                 .collect(),
             rows,
-        })
+        };
+        ensure_projection_size(&projection)?;
+        Ok(projection)
     }
 
     fn project_field(
@@ -493,14 +683,16 @@ impl DesignerRuntime {
             .map(FieldTarget::as_field_ref)
             .collect::<Vec<_>>();
         let query = self.session.query_fields(&requested)?;
-        Ok(FieldBatchProjection {
+        let projection = FieldBatchProjection {
             revision: query.revision().as_str().to_owned(),
             fields: query
                 .value()
                 .iter()
                 .map(|field| self.project_field(field))
                 .collect(),
-        })
+        };
+        ensure_projection_size(&projection)?;
+        Ok(projection)
     }
 
     fn edit_number(
@@ -588,6 +780,238 @@ impl DesignerRuntime {
     fn current_revision(&self) -> &str {
         self.session.revision().as_str()
     }
+
+    /// Return the trusted occurrence identity for adapter-level authority tests.
+    #[must_use]
+    pub fn occurrence_scope(&self) -> &str {
+        self.document_scope.as_str()
+    }
+}
+
+/// Fully admit a canonical project candidate before replacing the occurrence.
+///
+/// # Errors
+///
+/// Returns transfer, storage, or Designer-profile failures while leaving the
+/// existing occurrence unchanged.
+pub fn open_project(
+    runtime: &mut Option<DesignerRuntime>,
+    input: &[u8],
+    occurrence_id: &str,
+) -> Result<OpenedProjection, DesignerError> {
+    let document = decode_project_bundle(input)?;
+    let candidate = DesignerRuntime::from_document(document, occurrence_id)?;
+    let bootstrap = candidate.bootstrap_projection();
+    let table = candidate.query_table(&bootstrap.default_collection)?;
+    let control_batch = candidate.query_fields(
+        &bootstrap.revision,
+        std::slice::from_ref(&bootstrap.control_field),
+    )?;
+    let control_value = control_batch
+        .fields
+        .first()
+        .and_then(|field| field.calculated.as_ref())
+        .and_then(CalculationProjection::number)
+        .ok_or_else(|| DesignerError::UnsupportedProject {
+            message: "the required shop.upgrade_cost control formula is unavailable".to_owned(),
+        })?;
+    let control = ControlProjection {
+        target: bootstrap.control_field.clone(),
+        value: control_value,
+        revision: bootstrap.revision.clone(),
+    };
+    let opened = OpenedProjection {
+        bootstrap,
+        table,
+        control,
+    };
+    ensure_projection_size(&opened)?;
+    *runtime = Some(candidate);
+    Ok(opened)
+}
+
+/// Destroy the current semantic occurrence without touching durable host data.
+pub fn close_project(runtime: &mut Option<DesignerRuntime>) {
+    *runtime = None;
+}
+
+fn ensure_projection_size(projection: &impl Serialize) -> Result<(), DesignerError> {
+    let actual = serde_json::to_vec(projection)
+        .map_err(|error| DesignerError::UnsupportedProject {
+            message: format!("a Designer projection could not be encoded: {error}"),
+        })?
+        .len();
+    if actual > MAX_PROJECTION_BYTES {
+        return Err(DesignerError::ProjectionTooLarge {
+            actual,
+            maximum: MAX_PROJECTION_BYTES,
+        });
+    }
+    Ok(())
+}
+
+fn encode_project_bundle(tree: &CanonicalRoProjectV1) -> Result<Vec<u8>, DesignerError> {
+    let total = tree.files().iter().try_fold(
+        PROJECT_BUNDLE_MAGIC.len() + size_of::<u32>(),
+        |total, file| {
+            let path_length = u16::try_from(file.path().len()).map_err(|_| {
+                DesignerError::InvalidProjectTransfer {
+                    message: "a canonical path exceeds the private transfer profile".to_owned(),
+                }
+            })?;
+            let byte_length = u32::try_from(file.bytes().len()).map_err(|_| {
+                DesignerError::ProjectTransferTooLarge {
+                    actual: file.bytes().len(),
+                    maximum: MAX_PROJECT_TRANSFER_BYTES,
+                }
+            })?;
+            Ok::<usize, DesignerError>(
+                total
+                    .saturating_add(size_of_val(&path_length))
+                    .saturating_add(size_of_val(&byte_length))
+                    .saturating_add(file.path().len())
+                    .saturating_add(file.bytes().len()),
+            )
+        },
+    )?;
+    enforce_project_transfer_limit(total)?;
+    let mut output = Vec::with_capacity(total);
+    output.extend_from_slice(PROJECT_BUNDLE_MAGIC);
+    output.extend_from_slice(
+        &u32::try_from(tree.files().len())
+            .expect("canonical project file count fits u32")
+            .to_le_bytes(),
+    );
+    for file in tree.files() {
+        output.extend_from_slice(
+            &u16::try_from(file.path().len())
+                .expect("canonical project paths fit u16")
+                .to_le_bytes(),
+        );
+        output.extend_from_slice(
+            &u32::try_from(file.bytes().len())
+                .expect("bounded project file lengths fit u32")
+                .to_le_bytes(),
+        );
+        output.extend_from_slice(file.path().as_bytes());
+        output.extend_from_slice(file.bytes());
+    }
+    Ok(output)
+}
+
+fn decode_project_bundle(input: &[u8]) -> Result<Document, DesignerError> {
+    enforce_project_transfer_limit(input.len())?;
+    let mut cursor = ProjectBundleCursor::new(input);
+    if cursor.take(PROJECT_BUNDLE_MAGIC.len())? != PROJECT_BUNDLE_MAGIC {
+        return Err(DesignerError::InvalidProjectTransfer {
+            message: "missing TWDPROJ1 transfer discriminator".to_owned(),
+        });
+    }
+    let file_count = cursor.read_u32()? as usize;
+    if file_count > 1_024 {
+        return Err(DesignerError::InvalidProjectTransfer {
+            message: format!("file count {file_count} exceeds the private transfer profile"),
+        });
+    }
+    let mut files_by_path = BTreeMap::new();
+    for _ in 0..file_count {
+        let path_length = cursor.read_u16()? as usize;
+        let byte_length = cursor.read_u32()? as usize;
+        let path = std::str::from_utf8(cursor.take(path_length)?)
+            .map_err(|_| DesignerError::InvalidProjectTransfer {
+                message: "project path is not UTF-8".to_owned(),
+            })?
+            .to_owned();
+        let bytes = cursor.take(byte_length)?.to_vec();
+        if files_by_path.insert(path.clone(), bytes).is_some() {
+            return Err(DesignerError::InvalidProjectTransfer {
+                message: format!("duplicate project path '{path}'"),
+            });
+        }
+    }
+    if !cursor.is_finished() {
+        return Err(DesignerError::InvalidProjectTransfer {
+            message: "project transfer contains trailing bytes".to_owned(),
+        });
+    }
+    let mut files = Vec::with_capacity(ROPROJ_V1_PATHS.len());
+    for path in ROPROJ_V1_PATHS {
+        let bytes =
+            files_by_path
+                .remove(path)
+                .ok_or_else(|| DesignerError::InvalidProjectTransfer {
+                    message: format!("project transfer is missing '{path}'"),
+                })?;
+        files.push((path.to_owned(), bytes));
+    }
+    if let Some(extra) = files_by_path.keys().next() {
+        return Err(DesignerError::InvalidProjectTransfer {
+            message: format!("project transfer contains unexpected path '{extra}'"),
+        });
+    }
+    match CanonicalRoProjectV1::try_from_files_with_profile(files, ensure_cheap_document_profile) {
+        Ok((_, document)) => Ok(document),
+        Err(CanonicalRoProjectAdmissionError::Format(error)) => Err(error.into()),
+        Err(CanonicalRoProjectAdmissionError::Profile(error)) => Err(error),
+    }
+}
+
+fn enforce_project_transfer_limit(actual: usize) -> Result<(), DesignerError> {
+    if actual > MAX_PROJECT_TRANSFER_BYTES {
+        return Err(DesignerError::ProjectTransferTooLarge {
+            actual,
+            maximum: MAX_PROJECT_TRANSFER_BYTES,
+        });
+    }
+    Ok(())
+}
+
+struct ProjectBundleCursor<'input> {
+    input: &'input [u8],
+    offset: usize,
+}
+
+impl<'input> ProjectBundleCursor<'input> {
+    const fn new(input: &'input [u8]) -> Self {
+        Self { input, offset: 0 }
+    }
+
+    fn take(&mut self, length: usize) -> Result<&'input [u8], DesignerError> {
+        let end = self.offset.checked_add(length).ok_or_else(|| {
+            DesignerError::InvalidProjectTransfer {
+                message: "project transfer length overflowed".to_owned(),
+            }
+        })?;
+        let bytes = self.input.get(self.offset..end).ok_or_else(|| {
+            DesignerError::InvalidProjectTransfer {
+                message: "project transfer ended before its declared lengths".to_owned(),
+            }
+        })?;
+        self.offset = end;
+        Ok(bytes)
+    }
+
+    fn read_u16(&mut self) -> Result<u16, DesignerError> {
+        let bytes: [u8; 2] = self.take(size_of::<u16>())?.try_into().map_err(|_| {
+            DesignerError::InvalidProjectTransfer {
+                message: "invalid project path length".to_owned(),
+            }
+        })?;
+        Ok(u16::from_le_bytes(bytes))
+    }
+
+    fn read_u32(&mut self) -> Result<u32, DesignerError> {
+        let bytes: [u8; 4] = self.take(size_of::<u32>())?.try_into().map_err(|_| {
+            DesignerError::InvalidProjectTransfer {
+                message: "invalid project transfer length".to_owned(),
+            }
+        })?;
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    const fn is_finished(&self) -> bool {
+        self.offset == self.input.len()
+    }
 }
 
 /// Process one complete private adapter message without exposing Rust layouts.
@@ -599,12 +1023,14 @@ pub fn process_wire_request(runtime: &mut Option<DesignerRuntime>, input: &[u8])
     let reply = match serde_json::from_slice::<DesignerRequest>(input) {
         Ok(request) => {
             if runtime.is_none() {
-                match DesignerRuntime::moonfall() {
-                    Ok(created) => *runtime = Some(created),
-                    Err(error) => {
-                        return encode_reply(&DesignerWireReply::Error {
-                            error: error.failure_projection("unavailable"),
-                        });
+                if let DesignerRequest::Bootstrap { occurrence_id } = &request {
+                    match DesignerRuntime::moonfall(occurrence_id) {
+                        Ok(created) => *runtime = Some(created),
+                        Err(error) => {
+                            return encode_reply(&DesignerWireReply::Error {
+                                error: error.failure_projection("unavailable"),
+                            });
+                        }
                     }
                 }
             }
@@ -618,8 +1044,8 @@ pub fn process_wire_request(runtime: &mut Option<DesignerRuntime>, input: &[u8])
             } else {
                 DesignerWireReply::Error {
                     error: FailureProjection {
-                        code: "runtime_failure".to_owned(),
-                        message: "The Designer runtime could not be initialized.".to_owned(),
+                        code: "no_project_open".to_owned(),
+                        message: "No Designer project is open.".to_owned(),
                         current_revision: "unavailable".to_owned(),
                         diagnostics: Vec::new(),
                     },
@@ -657,6 +1083,33 @@ fn request_too_large_reply(runtime: Option<&DesignerRuntime>) -> Vec<u8> {
     })
 }
 
+fn document_scope(
+    occurrence_id: &str,
+    document: &Document,
+) -> Result<DocumentScopeId, DesignerError> {
+    if !is_canonical_uuid_v4(occurrence_id) {
+        return Err(DesignerError::InvalidOccurrenceIdentity);
+    }
+    Ok(DocumentScopeId::from(format!(
+        "designer-occurrence/{occurrence_id}/{}",
+        document.id
+    )))
+}
+
+fn is_canonical_uuid_v4(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 36
+        && bytes[8] == b'-'
+        && bytes[13] == b'-'
+        && bytes[18] == b'-'
+        && bytes[23] == b'-'
+        && bytes[14] == b'4'
+        && matches!(bytes[19], b'8' | b'9' | b'a' | b'b')
+        && bytes.iter().enumerate().all(|(index, byte)| {
+            matches!(index, 8 | 13 | 18 | 23) || matches!(byte, b'0'..=b'9' | b'a'..=b'f')
+        })
+}
+
 fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
     document
         .schemas
@@ -691,6 +1144,314 @@ fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
             )
         })
         .collect()
+}
+
+fn ensure_cheap_document_profile(document: &Document) -> Result<(), DesignerError> {
+    let mut profile_string_bytes = 0usize;
+    ensure_profile_string(
+        &mut profile_string_bytes,
+        "document identity",
+        document.id.as_str(),
+    )?;
+    ensure_profile_string(&mut profile_string_bytes, "document title", &document.title)?;
+    if document.schemas.len() > MAX_COLLECTIONS {
+        return Err(DesignerError::UnsupportedProject {
+            message: format!(
+                "the project advertises {} collections; the bounded maximum is {MAX_COLLECTIONS}",
+                document.schemas.len()
+            ),
+        });
+    }
+    if !document
+        .schemas
+        .values()
+        .any(|schema| schema.key.as_str() == DEFAULT_COLLECTION)
+    {
+        return Err(DesignerError::UnsupportedProject {
+            message: format!("the required '{DEFAULT_COLLECTION}' collection is unavailable"),
+        });
+    }
+    for (schema_id, schema) in &document.schemas {
+        ensure_profile_string(
+            &mut profile_string_bytes,
+            "schema map identity",
+            schema_id.as_str(),
+        )?;
+        ensure_profile_string(
+            &mut profile_string_bytes,
+            "schema identity",
+            schema.id.as_str(),
+        )?;
+        ensure_profile_string(&mut profile_string_bytes, "schema key", schema.key.as_str())?;
+        if schema.fields.len() > MAX_TABLE_FIELDS {
+            return Err(DesignerError::UnsupportedProject {
+                message: DesignerError::CollectionTooLarge {
+                    collection: schema.key.to_string(),
+                }
+                .to_string(),
+            });
+        }
+        for (field_id, field) in &schema.fields {
+            ensure_profile_string(
+                &mut profile_string_bytes,
+                "field map identity",
+                field_id.as_str(),
+            )?;
+            ensure_profile_string(
+                &mut profile_string_bytes,
+                "field identity",
+                field.id.as_str(),
+            )?;
+            ensure_profile_string(&mut profile_string_bytes, "field key", field.key.as_str())?;
+            if let FieldType::Reference { schema } = &field.field_type {
+                ensure_profile_string(
+                    &mut profile_string_bytes,
+                    "reference schema identity",
+                    schema.as_str(),
+                )?;
+            }
+        }
+    }
+    ensure_cheap_entity_profile(document, &mut profile_string_bytes)
+}
+
+fn ensure_cheap_entity_profile(
+    document: &Document,
+    profile_string_bytes: &mut usize,
+) -> Result<(), DesignerError> {
+    if document.entities.len() > MAX_TOTAL_ENTITIES {
+        return Err(DesignerError::UnsupportedProject {
+            message: format!(
+                "the project contains {} entities; the bounded maximum is {MAX_TOTAL_ENTITIES}",
+                document.entities.len()
+            ),
+        });
+    }
+    let mut collection_profiles = BTreeMap::new();
+    for (entity_id, entity) in &document.entities {
+        ensure_profile_string(
+            profile_string_bytes,
+            "entity map identity",
+            entity_id.as_str(),
+        )?;
+        ensure_profile_string(profile_string_bytes, "entity identity", entity.id.as_str())?;
+        ensure_profile_string(profile_string_bytes, "entity key", entity.key.as_str())?;
+        ensure_profile_string(
+            profile_string_bytes,
+            "entity schema identity",
+            entity.schema.as_str(),
+        )?;
+        if entity.fields.len() > MAX_TABLE_FIELDS {
+            return Err(DesignerError::UnsupportedProject {
+                message: format!(
+                    "entity '{}' contains {} stored fields; the bounded maximum is {MAX_TABLE_FIELDS}",
+                    entity.id,
+                    entity.fields.len()
+                ),
+            });
+        }
+        let profile = collection_profiles
+            .entry(entity.schema.clone())
+            .or_insert((0usize, 0usize));
+        for (field_id, value) in &entity.fields {
+            ensure_profile_string(
+                profile_string_bytes,
+                "stored field identity",
+                field_id.as_str(),
+            )?;
+            match value {
+                Value::Reference(entity) => {
+                    ensure_profile_string(
+                        profile_string_bytes,
+                        "stored reference identity",
+                        entity.as_str(),
+                    )?;
+                }
+                Value::Formula(expression) => {
+                    ensure_formula_reference_profile(expression, profile_string_bytes)?;
+                }
+                Value::Text(text) => {
+                    ensure_stored_text_profile(text)?;
+                    profile.1 = profile.1.saturating_add(text.len());
+                    if profile.1 > MAX_PROJECTION_BYTES {
+                        return Err(DesignerError::UnsupportedProject {
+                            message: format!(
+                                "a collection contains more than the bounded {MAX_PROJECTION_BYTES}-byte stored-text projection maximum"
+                            ),
+                        });
+                    }
+                }
+                Value::Number(_) | Value::Boolean(_) => {}
+            }
+        }
+        profile.0 = profile.0.saturating_add(1);
+        if profile.0 > MAX_TABLE_ROWS {
+            return Err(DesignerError::UnsupportedProject {
+                message: format!(
+                    "a collection exceeds the bounded maximum of {MAX_TABLE_ROWS} entities"
+                ),
+            });
+        }
+    }
+    let formula_count = document
+        .entities
+        .values()
+        .flat_map(|entity| entity.fields.values())
+        .filter(|value| matches!(value, Value::Formula(_)))
+        .count();
+    if formula_count > MAX_FORMULAS {
+        return Err(DesignerError::UnsupportedProject {
+            message: format!(
+                "the project contains {formula_count} formulas; the bounded maximum is {MAX_FORMULAS}"
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn ensure_profile_string(
+    profile_string_bytes: &mut usize,
+    label: &str,
+    value: &str,
+) -> Result<(), DesignerError> {
+    if value.len() > MAX_PROFILE_STRING_BYTES {
+        return Err(DesignerError::UnsupportedProject {
+            message: format!(
+                "the {label} exceeds the bounded {MAX_PROFILE_STRING_BYTES}-byte maximum"
+            ),
+        });
+    }
+    *profile_string_bytes = profile_string_bytes.saturating_add(value.len());
+    if *profile_string_bytes > MAX_PROJECTION_BYTES {
+        return Err(DesignerError::UnsupportedProject {
+            message: format!(
+                "aggregate project profile strings exceed the bounded {MAX_PROJECTION_BYTES}-byte projection maximum"
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn ensure_stored_text_profile(value: &str) -> Result<(), DesignerError> {
+    if value.len() > MAX_PROJECTION_BYTES {
+        return Err(DesignerError::UnsupportedProject {
+            message: format!(
+                "stored text exceeds the bounded {MAX_PROJECTION_BYTES}-byte projection maximum"
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn ensure_formula_reference_profile(
+    expression: &Expression,
+    profile_string_bytes: &mut usize,
+) -> Result<(), DesignerError> {
+    let mut pending = vec![expression];
+    let mut visited = 0usize;
+    while let Some(expression) = pending.pop() {
+        visited = visited.saturating_add(1);
+        if visited > MAX_FORMULA_PROFILE_NODES {
+            return Err(DesignerError::UnsupportedProject {
+                message: format!(
+                    "a formula exceeds the bounded {MAX_FORMULA_PROFILE_NODES}-node maximum"
+                ),
+            });
+        }
+        match expression {
+            Expression::Reference(reference) => {
+                ensure_profile_string(
+                    profile_string_bytes,
+                    "formula reference entity identity",
+                    reference.entity.as_str(),
+                )?;
+                ensure_profile_string(
+                    profile_string_bytes,
+                    "formula reference field identity",
+                    reference.field.as_str(),
+                )?;
+            }
+            Expression::Add { left, right }
+            | Expression::Subtract { left, right }
+            | Expression::Multiply { left, right }
+            | Expression::Divide { left, right }
+            | Expression::Minimum { left, right }
+            | Expression::Maximum { left, right } => {
+                pending.push(right);
+                pending.push(left);
+            }
+            Expression::Number(_) => {}
+        }
+    }
+    Ok(())
+}
+
+fn ensure_static_profile(
+    title: &str,
+    control_field: &FieldTarget,
+    collections: &[CollectionSummary],
+    collection_specs: &BTreeMap<String, CollectionSpec>,
+) -> Result<(), DesignerError> {
+    if collections.len() > MAX_COLLECTIONS {
+        return Err(DesignerError::UnsupportedProject {
+            message: format!(
+                "the project advertises {} collections; the bounded maximum is {MAX_COLLECTIONS}",
+                collections.len()
+            ),
+        });
+    }
+    if !collection_specs.contains_key(DEFAULT_COLLECTION) {
+        return Err(DesignerError::UnsupportedProject {
+            message: format!("the required '{DEFAULT_COLLECTION}' collection is unavailable"),
+        });
+    }
+    for collection in collection_specs.values() {
+        if collection.columns.len() > MAX_TABLE_FIELDS || collection.entities.len() > MAX_TABLE_ROWS
+        {
+            return Err(DesignerError::UnsupportedProject {
+                message: DesignerError::CollectionTooLarge {
+                    collection: collection.summary.key.clone(),
+                }
+                .to_string(),
+            });
+        }
+    }
+    let bootstrap = BootstrapProjection {
+        title: title.to_owned(),
+        revision: "resident/0".to_owned(),
+        default_collection: DEFAULT_COLLECTION.to_owned(),
+        collections: collections.to_vec(),
+        control_field: control_field.clone(),
+    };
+    ensure_projection_size(&bootstrap).map_err(|error| DesignerError::UnsupportedProject {
+        message: error.to_string(),
+    })?;
+
+    let entities = collection_specs
+        .values()
+        .flat_map(|collection| collection.entities.iter().map(ToString::to_string))
+        .collect::<Vec<_>>();
+    let fields = collection_specs
+        .values()
+        .flat_map(|collection| {
+            collection.entities.iter().flat_map(|entity| {
+                collection
+                    .columns
+                    .iter()
+                    .map(|column| field_target(&FieldRef::new(entity.clone(), column.id.clone())))
+            })
+        })
+        .collect::<Vec<_>>();
+    let publication = PublicationProjection {
+        base_revision: "resident/18446744073709551615".to_owned(),
+        resulting_revision: "resident/18446744073709551615".to_owned(),
+        entities,
+        fields: fields.clone(),
+        affected_calculations: fields,
+    };
+    ensure_projection_size(&publication).map_err(|error| DesignerError::UnsupportedProject {
+        message: format!("the worst-case publication projection is not bounded: {error}"),
+    })
 }
 
 fn formula_sources(document: &Document) -> Result<BTreeMap<FieldRef, String>, DesignerError> {
@@ -760,7 +1521,7 @@ fn designer_lifecycle(
     Ok(lifecycle)
 }
 
-fn encode_reply(reply: &DesignerWireReply) -> Vec<u8> {
+pub(crate) fn encode_reply(reply: &DesignerWireReply) -> Vec<u8> {
     serde_json::to_vec(reply).unwrap_or_else(|_| {
         br#"{"status":"error","error":{"code":"runtime_failure","message":"The Designer reply could not be encoded.","current_revision":"unavailable","diagnostics":[]}}"#
             .to_vec()
@@ -917,5 +1678,20 @@ impl IdGenerator for MoonfallIds {
             SemanticIdKind::Entity => self.entities.pop_front(),
         }
         .expect("Moonfall fixture IDs cover every generated semantic subject")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MAX_WIDTH_FINITE_JSON_NUMBER;
+
+    #[test]
+    fn worst_case_refresh_number_uses_the_maximum_finite_json_width() {
+        assert_eq!(
+            serde_json::to_string(&MAX_WIDTH_FINITE_JSON_NUMBER)
+                .expect("finite Number must serialize")
+                .len(),
+            24
+        );
     }
 }

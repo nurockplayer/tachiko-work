@@ -53,6 +53,43 @@ const publication: PublicationProjection = {
 };
 
 describe("revision-keyed projection store", () => {
+  it("keeps opaque field-target tuples distinct when their dotted forms collide", () => {
+    const collisionTable = structuredClone(table);
+    const first = collisionTable.rows[0]!.fields[0]!;
+    const second = collisionTable.rows[0]!.fields[1]!;
+    first.target = { entity: "a.b", field: "c" };
+    first.address = "first";
+    second.target = { entity: "a", field: "b.c" };
+    second.address = "second";
+    const store = createProjectionStore(collisionTable, {
+      target: { entity: "control", field: "value" },
+      value: 200,
+      revision: "resident/0",
+    });
+
+    const requested = store.beginPublication({
+      base_revision: "resident/0",
+      resulting_revision: "resident/1",
+      entities: [],
+      fields: [first.target, second.target],
+      affected_calculations: [],
+    });
+    expect(requested).toEqual([first.target, second.target]);
+
+    store.finishRefresh({
+      revision: "resident/1",
+      fields: [
+        { ...first, stored: { kind: "number", value: 45 } },
+        { ...second, calculated: { status: "value", value: 50 } },
+      ],
+    });
+    expect(store.field("first")?.stored).toEqual({ kind: "number", value: 45 });
+    expect(store.field("second")?.calculated).toEqual({
+      status: "value",
+      value: 50,
+    });
+  });
+
   it("refreshes only invalidated fields and carries an unrelated control forward", () => {
     const store = createProjectionStore(table, {
       target: { entity: "shop", field: "upgrade_cost" },

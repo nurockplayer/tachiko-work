@@ -154,13 +154,27 @@ The Issue #95 implementation retains rebuildable calculation and supporting
 query state inside the same resident occurrence, with conservative full-oracle
 fallback and no durable cache meaning.
 
+Issues #171 and #187 provide the first production Web Designer composition over
+that internal authority. A private Worker/WASM adapter retains one occurrence,
+returns revision-keyed bounded projections, admits user-selected canonical
+`.roproj/v1` path/byte candidates through `tachiko-storage`, and exports one
+exact resident snapshot for a create-only IndexedDB Save As commit. The trusted
+browser host issues a fresh cryptographic document-occurrence token for every
+runtime creation or Open rather than deriving reusable authority from semantic
+document identity. These
+app-local transfer DTOs, arenas, IndexedDB schema, and revision spellings remain
+Provisional implementation mechanics; they do not define a public client,
+storage, session, or wire contract.
+
 Separately, #123 implements `.roproj/v1` at the storage/native host boundary
 without moving filesystem authority into workspace-engine or the interactive
 runtime. #3 implements packaged `.ro` codec/pack/unpack/compare at that same
 boundary, including atomic no-replace destination publication. Optional Git/CI
 composition is implemented by #44 at the CLI/repository edge without moving Git
-into workspace-engine; broader hostile source/path handling, full durability/
-recovery, browser persistence, and host mechanisms remain Deferred.
+into workspace-engine. Issue #187 adds one bounded app-private browser host for
+canonical Open and absent-only Save As; broader hostile source/path handling,
+replacement, crash recovery, public browser persistence, and general host
+mechanisms remain Deferred.
 
 No Web UI, public resident-session/transport projection protocol, or browser
 persistence mechanism is introduced by this documentation decision.

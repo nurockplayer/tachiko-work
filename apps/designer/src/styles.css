@@ -56,6 +56,26 @@ code {
   color: var(--muted);
 }
 
+.closed-shell {
+  width: min(560px, calc(100% - 36px));
+  min-height: 100vh;
+  display: grid;
+  place-content: center;
+  justify-items: start;
+  gap: 14px;
+  margin: 0 auto;
+}
+
+.closed-shell h1,
+.closed-shell p {
+  margin: 0;
+}
+
+.closed-shell > p:not(.eyebrow) {
+  color: var(--muted);
+  line-height: 1.55;
+}
+
 .loading-mark,
 .brand-mark {
   display: grid;
@@ -84,6 +104,101 @@ code {
   background: rgb(251 252 255 / 92%);
   border-bottom: 1px solid var(--line);
   backdrop-filter: blur(18px);
+}
+
+.workspace-actions {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: auto minmax(220px, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.durability-chip {
+  display: grid;
+  gap: 3px;
+  min-width: 150px;
+  padding: 8px 11px;
+  border: 1px solid #b8dacf;
+  border-radius: 8px;
+  background: #f1faf7;
+}
+
+.durability-chip[data-dirty="true"] {
+  border-color: #edcfaa;
+  background: #fff8ed;
+}
+
+.durability-chip span,
+.saved-project-picker > span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.durability-chip code {
+  color: var(--ink);
+  font-size: 10px;
+}
+
+.saved-project-picker {
+  display: grid;
+  gap: 5px;
+}
+
+.saved-project-picker select {
+  width: 100%;
+  padding: 9px 32px 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+}
+
+.project-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.project-buttons button,
+.project-button,
+.closed-shell > button {
+  padding: 9px 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  color: var(--ink);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.project-button {
+  display: inline-flex;
+  align-items: center;
+}
+
+.project-button input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.project-buttons [data-save-as],
+.closed-shell > button {
+  border-color: var(--indigo);
+  background: var(--indigo);
+  color: white;
+}
+
+.project-buttons button:disabled,
+.closed-shell > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .brand-lockup {
@@ -526,6 +641,14 @@ td {
     grid-column: 2;
     grid-row: 1 / span 2;
     margin: 0;
+  }
+
+  .workspace-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .project-buttons {
+    flex-wrap: wrap;
   }
 }
 

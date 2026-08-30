@@ -6,7 +6,8 @@ use tachiko_semantic_core::{
     Value,
 };
 use tachiko_storage::{
-    CanonicalRoProjectV1, FormatError, ROPROJ_V1_PATHS, decode_roproj_v1, encode_roproj_v1,
+    CanonicalRoProjectAdmissionError, CanonicalRoProjectV1, FormatError, ROPROJ_V1_PATHS,
+    decode_roproj_v1, encode_roproj_v1,
 };
 
 const EXPECTED_EMPTY_MANIFEST: &[u8] = br#"{
@@ -128,6 +129,43 @@ fn full_shape_round_trip_is_exact() {
     assert_eq!(reencoded.files(), encoded.files());
     assert!(!encoded.file("entities/6.jsonl").unwrap().is_empty());
     assert!(!encoded.file("entities/b.jsonl").unwrap().is_empty());
+}
+
+#[test]
+fn profiled_canonical_admission_returns_the_once_decoded_document() {
+    let document = character_document();
+    let encoded = encode_roproj_v1(&document).unwrap();
+    let (tree, decoded) =
+        CanonicalRoProjectV1::try_from_files_with_profile(owned_files(&encoded), |_| {
+            Ok::<(), &'static str>(())
+        })
+        .unwrap();
+
+    assert_eq!(tree, encoded);
+    assert_eq!(decoded, document);
+}
+
+#[test]
+fn profiled_canonical_admission_runs_before_semantic_validation() {
+    let encoded = encode_roproj_v1(&character_document()).unwrap();
+    let mut files = owned_files(&encoded);
+    let entity = files
+        .iter_mut()
+        .find(|(path, _)| path == "entities/6.jsonl")
+        .unwrap();
+    let source = String::from_utf8(entity.1.clone()).unwrap();
+    entity.1 = source
+        .replace(
+            "\"schema\":\"schema-character\"",
+            "\"schema\":\"missing-schema\"",
+        )
+        .into_bytes();
+
+    let result = CanonicalRoProjectV1::try_from_files_with_profile(files, |_| Err("profile"));
+    assert!(matches!(
+        result,
+        Err(CanonicalRoProjectAdmissionError::Profile("profile"))
+    ));
 }
 
 #[test]
