@@ -3,8 +3,9 @@
 Decision state: Research evidence for [#174](https://github.com/nurockplayer/tachiko-work/issues/174). This report does not change Accepted architecture.
 
 Measurement implementations: A0/A1/C/F at
-`4ed7f994825edb8a3bb6f1ac4a5cc5d940f74387`; final counterbalanced B at
-`be4d80146242eda5fc2258d82d6baf3ce7a19aa3`; resampled D at
+`4ed7f994825edb8a3bb6f1ac4a5cc5d940f74387`; final counterbalanced and
+progress-synchronized B at `58a2c47ea110c6a1a6d0617da0d805c14940b631`;
+resampled D at
 `8ce554191e36496dedb57322fc1ab059a205ab07`; bounded E1 and atomic
 immutable-Git-object E2 with an independently pinned exact-A1 comparator at
 `f2912ff58d5a5f22e240be6e8c63686ad22cefc8`; full-oracle and aggregate two-pass
@@ -32,8 +33,9 @@ The experiment falsified a universal Global Spine benefit:
 - exact dirty-source sidecar validation is `2.16x` slower than A1 at p95,
   while Git validation is `2.17x` slower than an exact A1 that independently
   pays the same Git identity and object-pinning costs;
-- counterbalanced background admission fails the foreground-interference gate:
-  p95 of paired p95 ratios is `1.103` and the maximum is `5.224`; and
+- counterbalanced, progress-synchronized background admission fails the
+  foreground-interference gate: p95 of paired p95 ratios is `1.401`, the
+  maximum is `1.451`, and 6/20 runs exceed `1.10`; and
 - exact bounded source payload access is fast, but formula meaning and
   validation still require complete admission. The prototype correctly
   returns `requires_full_admission` rather than guessing.
@@ -49,7 +51,7 @@ justify a Global Spine.
 | Full-oracle equivalence | Pass for the research paths tested | Exact A0/A1 `Document` equality under success, cold numeric mutation, cross-cold SCC, and division-by-zero pressure; the same shapes independently preserve complete-calculation and workspace stable observations; late-invalid A0/A1/C rejection parity; formula oracle 10/10 and workspace validation 19/19 |
 | `>=2x` p95 benefit over A1 in two realistic large classes | Fail | At 64k, C Structural is only `1.07x` faster than A1 for payload and is `1.41x` slower for references and `1.43x` slower for mixed |
 | Benefit not limited to payload-heavy data | Fail | Payload Structural Index is `0.07x` source, but mixed is `1.38x` and references `2.83x` |
-| No `>10%` foreground regression | Fail | Counterbalanced p95 of per-run foreground p95 ratios is `1.103`; maximum is `5.224`; 2/20 runs exceed `1.10` |
+| No `>10%` foreground regression | Fail | Progress-synchronized counterbalanced p95 of per-run foreground p95 ratios is `1.401`; maximum is `1.451`; 6/20 runs exceed `1.10` |
 | `>=40%` peak-RSS reduction, without hidden eventual peak | Fail | A1 p50 peak is `30.4 MB`; Structural is `71.8 MB`; Structural + `Document` is `79.4 MB`; pinned Structural + `Document` is `91.2 MB` |
 | Sidecar validation preserves material reuse benefit | Fail | E1 validated p95 is `643 ms` versus A1 `298 ms`; E2 validated p95 is `907 ms` versus independently Git-pinned A1 `418 ms` |
 
@@ -163,18 +165,19 @@ SemanticCurrent. Foreground measurements perform exact resident ID/field
 navigation, not source I/O or generic search.
 
 At 16k entities, 20 runs of 200 foreground batches × 256 exact operations
-alternated `baseline_then_background` and `background_then_baseline`:
+alternated `baseline_then_background` and `background_then_baseline`. The
+foreground timer began only after the admission worker had completed exactly
+64 entity records and while that worker was still active:
 
-- baseline per-run request p95: p50 `62 us`, p95 `89 us`;
-- with background A1: p50 `54 us`, p95 `68 us`;
-- foreground p95 ratio: p50 `0.840`, p95 `1.103`, max `5.224`; 2/20
+- baseline per-run request p95: p50 `55 us`, p95 `63 us`;
+- with background A1: p50 `48 us`, p95 `65 us`;
+- foreground p95 ratio: p50 `0.994`, p95 `1.401`, max `1.451`; 6/20
   runs exceeded the `1.10` gate;
-- order-stratified ratio p95 is `0.924` for baseline-first and `5.224` for
-  background-first, exposing the order sensitivity hidden by the original
-  fixed ordering;
-- background SemanticCurrent: p50 `233 ms`, p95 `326 ms`;
-- cancellation: all 20 cancelled, with p95 `65` and maximum `67` completed
-  records; cleanup/join latency p95 is `160 us` and maximum is `1.21 ms`.
+- order-stratified ratio p95 is `1.451` for baseline-first and `1.174` for
+  background-first;
+- background SemanticCurrent: p50 `221 ms`, p95 `230 ms`;
+- cancellation: all 20 cancelled, with p95 `65` and maximum `65` completed
+  records; cleanup/join latency p95 is `75 us` and maximum is `78 us`.
 
 This background-admission contract fails the 10% regression gate. B remains
 supported only as a non-authoritative bounded shell/source-preview technique;

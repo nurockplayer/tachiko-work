@@ -156,9 +156,12 @@ were accepted where they matched Issue and Accepted authority.
   scan. Final E reuse pins the exact 18-file snapshot, independently derives
   the index, and requires complete equality while retaining the pinned source.
 - The first B interference capture always ran baseline first, warming the
-  deterministic resident navigation path before the background arm. Final B
-  alternates order and records it per row; its p95 paired ratio is `1.103` and
-  therefore fails the 10% foreground-regression gate.
+  deterministic resident navigation path before the background arm. The next
+  capture alternated order but did not prove that the worker was active when
+  foreground timing began. Final B alternates order, waits until exactly 64
+  entity records have completed, asserts the worker is still active, and
+  records that boundary per row. Its p95 paired ratio is `1.401`, with 6/20
+  runs above `1.10`, and therefore fails the 10% foreground-regression gate.
 - The first corrected E2 still derived trusted facts and pinned bytes from the
   mutable worktree. Final E2 binds object format, commit, tree, modes, paths,
   blob IDs, and reads the exact blob objects before independently re-deriving
@@ -210,7 +213,8 @@ source snapshot and returns `RequiresFullAdmission` for unsupported semantic
 proof.
 
 A0/A1/C/F captures were regenerated at `4ed7f994` after the cancellation and
-edge-accounting corrections. Final B was regenerated at `be4d801`; D was
+edge-accounting corrections. Final progress-synchronized B was regenerated at
+`58a2c47`; D was
 regenerated at `8ce55419` after per-observation pinning. E1/E2 were regenerated
 at `f2912ff5` after exact-A1 lifetime correction, a pre-parse sidecar byte cap,
 single-resolution Git identity, immutable-object trust, and an independently
