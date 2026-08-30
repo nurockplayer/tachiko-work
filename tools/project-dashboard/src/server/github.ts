@@ -90,7 +90,7 @@ interface GithubPullRequest {
   mergeable: string;
   mergeStateStatus: string;
   updatedAt: string;
-  closingIssuesReferences: { nodes: Array<{ number: number }> };
+  closingIssuesReferences: { nodes: Array<{ number: number }>; pageInfo: PageInfo };
   comments: { nodes: GithubComment[]; pageInfo: PageInfo };
   commits: {
     nodes: Array<{
@@ -162,7 +162,10 @@ const dashboardQuery = `
       pullRequests(first: 50, after: $prCursor, states: OPEN, orderBy: { field: UPDATED_AT, direction: DESC }) @include(if: $includePullRequests) {
         nodes {
           number title url body isDraft headRefOid baseRefOid baseRefName mergeable mergeStateStatus updatedAt
-          closingIssuesReferences(first: 20) { nodes { number } }
+          closingIssuesReferences(first: 100) {
+            nodes { number }
+            pageInfo { hasNextPage }
+          }
           comments(last: 100) {
             nodes { id body url createdAt updatedAt }
             pageInfo { hasPreviousPage }
@@ -389,6 +392,7 @@ export async function loadGithubSnapshot(
       repoUrl: fallbackRepoUrl,
       observedAt,
       mainSha: null,
+      defaultBranchName: null,
       productHorizon: null,
       productHorizonUrl: `${fallbackRepoUrl}/blob/main/docs/product/product-roadmap.md`,
       fetchHealth: "unavailable",
@@ -401,6 +405,7 @@ export async function loadGithubSnapshot(
 
   const repoUrl = repository.url;
   const mainSha = repository.defaultBranchRef?.target.oid ?? null;
+  const defaultBranchName = repository.defaultBranchRef?.name ?? null;
   let recentCompletionsAvailable = true;
   let mergedCursor: string | null = null;
   try {
@@ -510,10 +515,12 @@ export async function loadGithubSnapshot(
       }
     }
     const commentsComplete = !pr.comments.pageInfo.hasPreviousPage;
+    const issueNumbersComplete = !pr.closingIssuesReferences.pageInfo.hasNextPage;
     const reviewsComplete = !pr.reviews.pageInfo.hasNextPage;
     const reviewThreadsComplete = !(pr.reviewThreads.pageInfo?.hasNextPage ?? false) &&
       pr.reviewThreads.nodes.every((thread) => !thread.comments.pageInfo.hasNextPage);
     if (!commentsComplete) failures.push(`PR #${pr.number} handoff observation was truncated.`);
+    if (!issueNumbersComplete) failures.push(`PR #${pr.number} closing-Issue observation was truncated.`);
     if (!reviewsComplete) failures.push(`PR #${pr.number} review observation was truncated.`);
     if (!reviewThreadsComplete) failures.push(`PR #${pr.number} review-thread observation was truncated.`);
     rawPullRequests.push({
@@ -531,6 +538,7 @@ export async function loadGithubSnapshot(
       mergeable: normalizeMergeable(pr.mergeable),
       mergeStateStatus: normalizeMergeStateStatus(pr.mergeStateStatus),
       issueNumbers: pr.closingIssuesReferences.nodes.map((issue) => issue.number),
+      issueNumbersComplete,
       commentsComplete,
       comments: pr.comments.nodes.map(asComment),
       checksObservedHeadSha: commit?.oid ?? null,
@@ -561,6 +569,7 @@ export async function loadGithubSnapshot(
     repoUrl,
     observedAt,
     mainSha,
+    defaultBranchName,
     productHorizon,
     productHorizonUrl,
     fetchHealth: failures.length === 0 ? "healthy" : "partial",

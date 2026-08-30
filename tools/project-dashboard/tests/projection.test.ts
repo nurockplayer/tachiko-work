@@ -13,6 +13,7 @@ function snapshot(overrides: Partial<RawRepositorySnapshot> = {}): RawRepository
     repoUrl: "https://github.com/nurockplayer/tachiko-work",
     observedAt,
     mainSha,
+    defaultBranchName: "main",
     productHorizon: "05 · Designer MVP",
     productHorizonUrl: `https://github.com/nurockplayer/tachiko-work/blob/${mainSha}/docs/product/product-roadmap.md`,
     fetchHealth: "healthy",
@@ -64,6 +65,7 @@ function pullRequest(): RawPullRequest {
     mergeStateStatus: "clean",
     requiredChecks: [],
     issueNumbers: [169],
+    issueNumbersComplete: true,
     commentsComplete: true,
     comments: [
       {
@@ -422,6 +424,24 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.action.owner).toBe("none");
   });
 
+  it.each([
+    "Escalation is not required",
+    "Human escalation is not needed",
+  ])("does not escalate a negated escalation-section claim: %s", (claim) => {
+    const pr = pullRequest();
+    pr.comments[0]!.body = pr.comments[0]!.body.replace(
+      "HUMAN ACTION: none",
+      `## Escalation\n\n${claim}`,
+    );
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.handoff.condition).toBe("current");
+    expect(lane?.phase).toBe("merge_gate");
+    expect(lane?.action.owner).toBe("none");
+  });
+
   it("projects a requested action from an escalation section", () => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace(
@@ -703,6 +723,52 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.authorityDrift).toBe("unknown");
     expect(lane?.phase).toBe("validating");
     expect(lane?.blockers).toContain("Live-main and authority-drift reconciliation could not be observed.");
+  });
+
+  it("keeps a PR targeting a non-default branch out of the merge gate", () => {
+    const pr = pullRequest();
+    pr.baseRefName = "release";
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.phase).toBe("validating");
+    expect(lane?.blockers).toContain("Pull request #200 targets release instead of the live default branch main.");
+    expect(lane?.action.owner).toBe("codex");
+  });
+
+  it("fails the merge gate closed when the default branch identity is unknown", () => {
+    const pr = pullRequest();
+
+    const projection = normalizeRepositorySnapshot(snapshot({
+      defaultBranchName: null,
+      issues: [issue()],
+      pullRequests: [pr],
+    }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.phase).toBe("validating");
+    expect(lane?.blockers).toContain("Default branch identity could not be observed.");
+    expect(lane?.action.owner).toBe("codex");
+  });
+
+  it("keeps omitted closing-Issue ownership out of standalone Ready and merge gates", () => {
+    const pr = pullRequest();
+    pr.issueNumbersComplete = false;
+
+    const projection = normalizeRepositorySnapshot(snapshot({
+      fetchHealth: "partial",
+      failures: ["PR #200 closing-Issue observation was truncated."],
+      issues: [issue(169), issue(170)],
+      pullRequests: [pr],
+    }));
+
+    expect(projection.deliveries.map((lane) => lane.issue.number).toSorted()).toEqual([169, 170]);
+    for (const lane of projection.deliveries) {
+      expect(lane.phase).toBe("validating");
+      expect(lane.blockers).toContain("Pull-request Issue ownership could not be fully observed.");
+      expect(lane.action.owner).toBe("codex");
+    }
   });
 
   it("blocks PR lanes that claim the same secondary Issue", () => {

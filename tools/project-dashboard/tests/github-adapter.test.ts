@@ -56,7 +56,7 @@ function githubPage() {
             mergeable: "MERGEABLE",
             mergeStateStatus: "CLEAN",
             updatedAt: "2026-08-30T00:00:00Z",
-            closingIssuesReferences: { nodes: [{ number: 169 }] },
+            closingIssuesReferences: { nodes: [{ number: 169 }], pageInfo: { hasNextPage: false } },
             comments: { nodes: [], pageInfo: { hasPreviousPage: false } },
             commits: {
               nodes: [
@@ -137,6 +137,7 @@ describe("loadGithubSnapshot", () => {
     expect(result).toMatchObject({
       fetchHealth: "healthy",
       mainSha,
+      defaultBranchName: "main",
       productHorizon: "05 · Designer MVP",
       issues: [{
         number: 169,
@@ -157,6 +158,7 @@ describe("loadGithubSnapshot", () => {
         authorityPathsChangedOnMain: [],
         mergeable: "mergeable",
         mergeStateStatus: "clean",
+        issueNumbersComplete: true,
         commentsComplete: true,
         requiredChecks: [{ name: "test", integrationId: 42 }],
         checksObservedHeadSha: headSha,
@@ -229,6 +231,30 @@ describe("loadGithubSnapshot", () => {
     expect(result.fetchHealth).toBe("partial");
     expect(result.pullRequests?.[0]).toMatchObject({ isDraft: true, checks: null });
     expect(result.failures).toContain("PR #200 exact-head check observation was truncated.");
+  });
+
+  it("fails closed when closing-Issue ownership is truncated", async () => {
+    const page = githubPage();
+    page.repository.pullRequests.nodes[0]!.closingIssuesReferences.pageInfo.hasNextPage = true;
+    const api: ReadonlyGithubApi = {
+      graphql: async () => page,
+      rawText: async () => "## Current horizon\n\n> **05 · Designer MVP**",
+      requiredStatusChecks: async () => [],
+      compare: async () => ({ status: "ahead", mergeBaseSha: mainSha, files: [] }),
+    };
+
+    const result = await loadGithubSnapshot(api, {
+      owner: "nurockplayer",
+      repo: "tachiko-work",
+      observedAt: "2026-08-30T00:00:00.000Z",
+    });
+
+    expect(result.fetchHealth).toBe("partial");
+    expect(result.pullRequests?.[0]).toMatchObject({
+      issueNumbers: [169],
+      issueNumbersComplete: false,
+    });
+    expect(result.failures).toContain("PR #200 closing-Issue observation was truncated.");
   });
 
   it("fetches every merged pull-request page before selecting recent completions by merge time", async () => {

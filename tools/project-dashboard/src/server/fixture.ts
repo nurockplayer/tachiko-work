@@ -50,6 +50,7 @@ function staleDashboardPr(): RawPullRequest {
     mergeable: "mergeable",
     mergeStateStatus: "blocked",
     issueNumbers: [169],
+    issueNumbersComplete: true,
     commentsComplete: true,
     comments: [
       {
@@ -86,6 +87,7 @@ function reviewFixPr(): RawPullRequest {
     mergeable: "mergeable",
     mergeStateStatus: "blocked",
     issueNumbers: [163],
+    issueNumbersComplete: true,
     commentsComplete: true,
     comments: [
       {
@@ -126,6 +128,7 @@ export function fixtureProjection(): RepositoryProjection {
     repoUrl: "https://github.com/nurockplayer/tachiko-work",
     observedAt,
     mainSha,
+    defaultBranchName: "main",
     productHorizon: "05 · Designer MVP",
     productHorizonUrl: `https://github.com/nurockplayer/tachiko-work/blob/${mainSha}/docs/product/product-roadmap.md`,
     fetchHealth: "healthy",

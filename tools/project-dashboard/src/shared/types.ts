@@ -85,6 +85,7 @@ export interface RawPullRequest {
   mergeable: "mergeable" | "conflicting" | "unknown";
   mergeStateStatus: "clean" | "blocked" | "behind" | "dirty" | "draft" | "unstable" | "unknown";
   issueNumbers: number[];
+  issueNumbersComplete: boolean;
   commentsComplete: boolean;
   comments: RawComment[];
   checksObservedHeadSha: string | null;
@@ -110,6 +111,7 @@ export interface RawRepositorySnapshot {
   repoUrl: string;
   observedAt: string;
   mainSha: string | null;
+  defaultBranchName: string | null;
   productHorizon: string | null;
   productHorizonUrl: string;
   fetchHealth: FetchHealth;
@@ -195,6 +197,7 @@ export interface RepositoryProjection {
     fetchHealth: FetchHealth;
     failures: string[];
     mainSha: string | null;
+    defaultBranchName: string | null;
     productHorizon: string | null;
     sourceRefs: SourceRef[];
   };

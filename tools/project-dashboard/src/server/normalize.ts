@@ -228,7 +228,7 @@ function humanActionRequested(comments: RawComment[], handoff: HandoffProjection
   if (
     claim === null ||
     /^(?:none|no|not (?:required|needed)|n\/a)\b/i.test(claim) ||
-    /\b(?:(?:human|steward)\s+)?(?:action|decision)\s+(?:is\s+)?not\s+(?:required|needed)\b/i.test(claim)
+    /\b(?:(?:human|steward)\s+)?(?:action|decision|escalation)\s+(?:is\s+)?not\s+(?:required|needed)\b/i.test(claim)
   ) return false;
   return /\b(?:required|needed|decision|action)\b/i.test(claim);
 }
@@ -401,6 +401,7 @@ function derivePhase(
   handoff: HandoffProjection,
   drift: DeliveryLane["authorityDrift"],
   ownershipConflict: boolean,
+  ownershipObservationComplete: boolean,
   githubMergeReady: boolean,
   issueScopeReconciled: boolean,
   horizonObserved: boolean,
@@ -411,6 +412,7 @@ function derivePhase(
   if (humanActionRequested || claimedState.includes("human_required") || claimedState.includes("human required")) return "human_required";
   if (ownershipConflict) return "blocked";
   if (readiness === "blocked") return "blocked";
+  if (!ownershipObservationComplete) return "validating";
   if (!issueScopeReconciled || !horizonObserved) return "validating";
   if (pr === null) return readiness === "ready" ? "ready" : readiness === "active" ? "implementing" : "unknown";
   if (readiness === "unknown" || pr.isDraft) return "validating";
@@ -431,6 +433,7 @@ function projectLane(
   pr: RawPullRequest | null,
   snapshot: RawRepositorySnapshot,
   ownershipConflicts: Array<{ issueNumber: number; prNumbers: number[] }> = [],
+  ownershipObservationComplete = true,
 ): DeliveryLane {
   const comments = pr === null ? issue.comments : pr.comments;
   const commentsComplete = pr === null ? issue.commentsComplete : pr.commentsComplete;
@@ -466,7 +469,12 @@ function projectLane(
   const issueHorizonClass = horizonClass(issue.milestone, snapshot.productHorizon);
   const outsideCurrentHorizon = issueHorizonClass === "other";
   const horizonObserved = issueHorizonClass !== "unknown";
-  const githubMergeReady = pr === null || (pr.mergeable === "mergeable" && pr.mergeStateStatus === "clean");
+  const targetsDefaultBranch = pr === null || (
+    snapshot.defaultBranchName !== null && pr.baseRefName === snapshot.defaultBranchName
+  );
+  const githubMergeReady = pr === null || (
+    targetsDefaultBranch && pr.mergeable === "mergeable" && pr.mergeStateStatus === "clean"
+  );
   const issueScopeReconciled = issue.lastEditedAt === null || handoff.condition === "missing" || (
     handoff.updatedAt !== null && handoff.updatedAt.localeCompare(issue.lastEditedAt) >= 0
   );
@@ -492,6 +500,12 @@ function projectLane(
   if (reviews.status === "stale") blockers.push("The latest substantive review does not describe the current PR head.");
   if (handoff.condition === "inconsistent") blockers.push("Canonical handoff conflicts with live PR identity or is duplicated.");
   if (handoff.condition === "stale") blockers.push("Canonical handoff has not reconciled the observed live main.");
+  if (pr !== null && snapshot.defaultBranchName === null) {
+    blockers.push("Default branch identity could not be observed.");
+  } else if (pr !== null && !targetsDefaultBranch) {
+    blockers.push(`Pull request #${pr.number} targets ${pr.baseRefName} instead of the live default branch ${snapshot.defaultBranchName ?? "Unknown"}.`);
+  }
+  if (!ownershipObservationComplete) blockers.push("Pull-request Issue ownership could not be fully observed.");
   const changedAuthorityPaths = pr?.authorityPathsChangedOnMain ?? [];
   if (drift === "suspected" && changedAuthorityPaths.length > 0) {
     blockers.push(`Accepted-authority candidates changed on main: ${changedAuthorityPaths.join(", ")}.`);
@@ -534,6 +548,7 @@ function projectLane(
         handoff,
         drift,
         ownershipConflict,
+        ownershipObservationComplete,
         githubMergeReady,
         issueScopeReconciled,
         horizonObserved,
@@ -544,7 +559,7 @@ function projectLane(
     : phase === "review_fix" || checks.status === "failure" || ownershipConflict ||
         pr?.mergeable === "conflicting" || pr?.mergeStateStatus === "dirty" ||
         drift === "suspected" || handoff.condition === "inconsistent" || handoff.condition === "stale" ||
-        !issueScopeReconciled
+        !issueScopeReconciled || !targetsDefaultBranch || !ownershipObservationComplete
       ? { owner: "codex", reason: blockers[0] ?? "Delivery-agent action is required." }
       : { owner: "none", reason: "No human action is currently evidenced." };
   const issueRef = source(
@@ -650,6 +665,8 @@ export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): Re
       : pr;
   });
   const issuesByNumber = new Map(issues.map((issue) => [issue.number, issue]));
+  const ownershipObservationComplete = snapshot.pullRequests !== null &&
+    pullRequests.every((pr) => pr.issueNumbersComplete);
   const pullRequestsByIssue = new Map<number, number[]>();
   for (const pr of pullRequests) {
     for (const issueNumber of pr.issueNumbers.length === 0 ? [pr.number] : pr.issueNumbers) {
@@ -671,7 +688,7 @@ export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): Re
       const prNumbers = pullRequestsByIssue.get(issueNumber) ?? [];
       return prNumbers.length > 1 ? [{ issueNumber, prNumbers }] : [];
     });
-    deliveries.push(projectLane(issue, pr, snapshot, ownershipConflicts));
+    deliveries.push(projectLane(issue, pr, snapshot, ownershipConflicts, ownershipObservationComplete));
   }
 
   for (const issue of issues) {
@@ -687,7 +704,7 @@ export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): Re
     const owner = issueOwner(issue, handoff).toLowerCase();
     if (!hasCanonicalHandoff && !owner.includes("agent:")) continue;
     if (issueReadiness(issue, handoff) === "unknown" && !humanActionRequested(issue.comments, handoff)) continue;
-    deliveries.push(projectLane(issue, null, snapshot));
+    deliveries.push(projectLane(issue, null, snapshot, [], ownershipObservationComplete));
   }
 
   deliveries.sort((left, right) => {
@@ -712,6 +729,7 @@ export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): Re
       fetchHealth: snapshot.fetchHealth,
       failures: snapshot.failures,
       mainSha: snapshot.mainSha,
+      defaultBranchName: snapshot.defaultBranchName,
       productHorizon: snapshot.productHorizon,
       sourceRefs: [repoRef, horizonRef],
     },
