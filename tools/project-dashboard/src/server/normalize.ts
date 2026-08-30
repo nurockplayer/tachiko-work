@@ -40,8 +40,8 @@ const affirmativeDestructiveDataImpact = /\b(?:(?:user\s+)?data\s+(?:(?:is|are|w
 const negatedDestructiveDataImpact = /\b(?:no\s+(?:(?:user\s+)?data\s+(?:(?:is|are|was|were)\s+(?:being\s+)?|gets?\s+|got\s+)?(?:delet(?:ed|ing)|eras(?:ed|ing))|(?:deletion|erasure)\s+of\s+(?:user\s+)?data)|(?:user\s+)?data\s+(?:is|are|was|were)\s+not\s+(?:being\s+)?(?:delet(?:ed|ing)|eras(?:ed|ing)))\b/i;
 const affirmativeBuildOrTestFailure = /\b(?:(?:fails?|failed|failing|breaks?|broke|broken)\s+(?:to\s+)?(?:compile|build|tests?|typecheck|lint|ci)\b|(?:compilation|build|tests?|typecheck|lint|ci)\s+(?:(?:(?:is|are|was|were)\s+)?(?:fails?|failed|failing|breaks?|broke|broken)\b|(?:(?:do|does|did|can|could|will|would|should|is|are|was|were)\s+not|(?:do|does|did|can|could|will|would|should|is|are|was|were)n['’]?t)\s+pass(?:es|ed|ing)?\b))/i;
 const unlabeledPureMaintainabilitySuggestion = /^(?:could|would|can|please|consider|maybe|perhaps)\b[^.!?;\n]{0,120}\b(?:rename|naming|clarity|readability|style|format(?:ting)?|wording|comments?|documentation|docs|simplif\w*|clean\s*up|refactor\w*)\b/i;
-const missingSafeguardImpact = /\b(?:no\s+(?:(?:(?:authorization|authentication|permission|access[- ]control|security)\s+(?:check|guard|safeguard|control)\w*|input\s+validation)\b[^.!?;\n]{0,80}\b(?:prevents?|blocks?|stops?)\b[^.!?;\n]{0,80}\b(?:bypass|inject|leak|corrupt|overwrit|delet|eras)\w*\b|(?:mutex(?:es)?|locks?|locking|synchroni[sz]ation)\b[^.!?;\n]{0,80}\b(?:prevents?|blocks?|stops?)\b[^.!?;\n]{0,80}\b(?:race\s+conditions?|deadlocks?|data\s+races?)\b)|(?:(?:an?|the)\s+)?(?:mutex(?:es)?|locks?|locking|synchroni[sz]ation)\b[^.!?;\n]{0,80}\b(?:(?:does|do|did|can|could|will|would|should)\s+not|(?:does|do|did|can|could|will|would|should)n['’]?t|cannot|never)\s+(?:prevent|block|stop)\w*\b[^.!?;\n]{0,80}\b(?:race\s+conditions?|deadlocks?|data\s+races?)\b)/i;
-const satisfiedSafeguardImpact = /\b(?:(?:(?:an?|the)\s+)?(?:authorization|authentication|permission|access[- ]control|security)\s+(?:checks?|guards?|safeguards?|controls?)\s+(?:prevents?|blocks?|stops?)\b[^.!?;\n]{0,80}\b(?:bypass|inject|leak|corrupt|overwrit|delet|eras)\w*\b|(?:(?:an?|the)\s+)?(?:mutex(?:es)?|locks?|locking|synchroni[sz]ation)\b[^.!?;\n]{0,80}\b(?:prevents?|blocks?|stops?)\b[^.!?;\n]{0,80}\b(?:race\s+conditions?|deadlocks?|data\s+races?)\b)/i;
+const missingSafeguardImpact = /\b(?:no\s+(?:(?:(?:authorization|authentication|permission|access[- ]control|security)\s+(?:check|guard|safeguard|control)\w*|input\s+validation|csrf\s+(?:tokens?|protection|checks?|guards?)|session\s+(?:tokens?|validation|checks?|guards?))\b[^.!?;\n]{0,80}\b(?:prevents?|blocks?|stops?)\b[^.!?;\n]{0,80}\b(?:bypass|inject|leak|corrupt|overwrit|delet|eras|unauthori[sz])\w*\b|(?:mutex(?:es)?|locks?|locking|synchroni[sz]ation)\b[^.!?;\n]{0,80}\b(?:prevents?|blocks?|stops?)\b[^.!?;\n]{0,80}\b(?:race\s+conditions?|deadlocks?|data\s+races?)\b)|(?:(?:(?:an?|the)\s+)?(?:mutex(?:es)?|locks?|locking|synchroni[sz]ation)\b[^.!?;\n]{0,80}\b)?(?:(?:does|do|did|can|could|will|would|should)\s+not|(?:does|do|did|can|could|will|would|should)n['’]?t|cannot|never)\s+(?:prevent|block|stop)\w*\b[^.!?;\n]{0,80}\b(?:race\s+conditions?|deadlocks?|data\s+races?)\b)/i;
+const satisfiedSafeguardImpact = /\b(?:(?:(?:(?:an?|the)\s+)?(?:authorization|authentication|permission|access[- ]control|security)\s+(?:checks?|guards?|safeguards?|controls?)|(?:(?:an?|the)\s+)?(?:csrf\s+(?:tokens?|protection|checks?|guards?)|session\s+(?:tokens?|validation|checks?|guards?)))\s+(?:prevents?|blocks?|stops?)\b[^.!?;\n]{0,80}\b(?:bypass|inject|leak|corrupt|overwrit|delet|eras|unauthori[sz])\w*\b|(?:(?:an?|the)\s+)?(?:mutex(?:es)?|locks?|locking|synchroni[sz]ation)\b[^.!?;\n]{0,80}\b(?:prevents?|blocks?|stops?)\b[^.!?;\n]{0,80}\b(?:race\s+conditions?|deadlocks?|data\s+races?)\b)/i;
 const injectionImpact = /\b(?:sql|command|code)\s+injection\b/i;
 const negatedInjectionImpact = /(?:\b(?:(?:no|without)\s+(?:\w+\s+){0,3}|(?:(?:does|do|did|can|could|would|should|will|is|are|was|were)\s+not|(?:does|do|did|can|could|would|should|wo|is|are|was|were)n['’]?t|cannot|never)\s+(?:\w+\s+){0,3})(?:sql|command|code)\s+injection\b|\b(?:sql|command|code)\s+injection\b\s+(?:(?:is|was)\s+(?:prevented|blocked|mitigated|rejected|impossible|disallowed|disabled|ruled\s+out)|(?:is|was)\s+(?:not|never)\s+(?:possible|permitted|enabled|observed|detected)|(?:is|was)n['’]?t\s+(?:possible|permitted|enabled)|(?:has|have|had)\s+(?:not|never)\s+(?:occur|happen)\w*|(?:can(?:not|['’]?t)|(?:does|did)\s+not|never)\s+(?:occur|happen|succeed)\w*|(?:checks?|tests?)\s+passed)\b)/i;
 const satisfiedInjectionSafeguard = /\b(?:(?:the\s+)?(?:system|application|service|implementation|validation|sanitization|escaping|parameteri[sz]ation)|(?:(?:an?|the)\s+)?(?:authorization|authentication|permission|access[- ]control|security)\s+(?:checks?|guards?|safeguards?|controls?))\s+(?:prevents?|blocks?|stops?|disallows?|disables?|rules?\s+out)\s+(?:sql|command|code)\s+injection\b/i;
@@ -456,6 +456,18 @@ function statusDecisionReadyClaim(statusText: string): { polarity: "affirmative"
   return latest;
 }
 
+function statusActiveClaim(statusText: string): { polarity: "affirmative" | "negated"; index: number } | null {
+  let latest: { polarity: "affirmative" | "negated"; index: number } | null = null;
+  for (const match of statusText.matchAll(/\b(?:inactive|active|implementing|in progress|validating|review[_ -]?fix)\b/gi)) {
+    const negated = statusClaimIsNegated(statusText, match) || /^inactive$/i.test(match[0]);
+    latest = {
+      polarity: negated || statusClaimIsConditional(statusText, match, true) ? "negated" : "affirmative",
+      index: match.index,
+    };
+  }
+  return latest;
+}
+
 type StatusDeliveryState =
   | "ready"
   | "not_ready"
@@ -474,12 +486,7 @@ function statusDeliveryClaim(statusText: string): { state: StatusDeliveryState; 
   const decisionReady = statusDecisionReadyClaim(statusText);
   const blocked = statusLatestClaim(statusText, /\b(?:unblocked|block(?:ed)?)\b/i, false, /^unblocked$/i);
   const parked = statusLatestClaim(statusText, /\b(?:unparked|park(?:ed)?)\b/i, false, /^unparked$/i);
-  const active = statusLatestClaim(
-    statusText,
-    /\b(?:inactive|active|implementing|in progress|validating|review[_ -]?fix)\b/i,
-    true,
-    /^inactive$/i,
-  );
+  const active = statusActiveClaim(statusText);
   const candidates = [
     ready === null ? null : { state: ready.polarity === "affirmative" ? "ready" as const : "not_ready" as const, index: ready.index },
     backlog === null || backlog.polarity !== "affirmative"

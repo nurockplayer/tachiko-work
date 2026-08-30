@@ -748,6 +748,24 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.action.owner).toBe("human");
   });
 
+  it("lets a conditional Active claim supersede an earlier Ready claim", () => {
+    const delivery = issue();
+    delivery.body = [
+      "## Status",
+      "",
+      "Ready.",
+      "",
+      "Active only after Steward approval.",
+      "",
+      "Owner: `agent:codex`",
+    ].join("\n");
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [delivery], pullRequests: [pullRequest()] }));
+
+    expect(projection.deliveries[0]?.issue.readiness).toBe("unknown");
+    expect(projection.deliveries[0]?.phase).toBe("validating");
+  });
+
   it.each(["Decision", "Research"])(
     "keeps a Decision-Ready %s authority Issue without a focused PR outside delivery",
     (kind) => {
@@ -1338,6 +1356,8 @@ describe("normalizeRepositorySnapshot", () => {
     "No mutexes prevent race conditions.",
     "The lock does not prevent a deadlock.",
     "Synchronization does not prevent data races.",
+    "A mutex prevents this race condition but does not prevent deadlock.",
+    "No CSRF token prevents unauthorized requests.",
     "This permits SQL injection for crafted input.",
     "SQL injection permits data loss and checks passed.",
     "SQL injection is prevented and code injection permits data loss.",
@@ -1481,6 +1501,7 @@ describe("normalizeRepositorySnapshot", () => {
     "The lock prevents deadlocks.",
     "Mutexes prevent race conditions.",
     "Synchronization prevents data races.",
+    "A CSRF token prevents unauthorized requests.",
     "This does not permit SQL injection.",
     "SQL injection is prevented.",
     "SQL injection was blocked.",
@@ -1974,6 +1995,8 @@ describe("normalizeRepositorySnapshot", () => {
     "No mutexes prevent race conditions.",
     "The lock does not prevent a deadlock.",
     "Synchronization does not prevent data races.",
+    "A mutex prevents this race condition but does not prevent deadlock.",
+    "No CSRF token prevents unauthorized requests.",
     "This permits SQL injection for crafted input.",
     "SQL injection permits data loss and checks passed.",
     "SQL injection is prevented and code injection permits data loss.",
@@ -2088,6 +2111,7 @@ describe("normalizeRepositorySnapshot", () => {
     "The lock prevents deadlocks.",
     "Mutexes prevent race conditions.",
     "Synchronization prevents data races.",
+    "A CSRF token prevents unauthorized requests.",
     "This does not permit SQL injection.",
     "SQL injection is prevented.",
     "SQL injection was blocked.",
