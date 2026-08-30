@@ -134,6 +134,8 @@ describe("normalizeRepositorySnapshot", () => {
 
     expect(lane?.issue.readiness).toBe("unknown");
     expect(lane?.phase).toBe("validating");
+    expect(lane?.blockers).toContain("The authoritative Issue status does not affirm that this lane is Ready or active.");
+    expect(lane?.action.owner).toBe("human");
   });
 
   it("does not let a stale no-PR handoff override live Issue readiness but preserves human action", () => {
@@ -603,6 +605,7 @@ describe("normalizeRepositorySnapshot", () => {
   it.each([
     "Escalation is not required",
     "Human escalation is not needed",
+    "Steward approval is not required",
   ])("does not escalate a negated escalation-section claim: %s", (claim) => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace(
@@ -616,6 +619,49 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.handoff.condition).toBe("current");
     expect(lane?.phase).toBe("merge_gate");
     expect(lane?.action.owner).toBe("none");
+  });
+
+  it.each([
+    "Steward approval",
+    "Founder review",
+    "Escalate to the Steward",
+  ])("projects affirmative authority requests from escalation records: %s", (claim) => {
+    const pr = pullRequest();
+    pr.comments[0]!.body = pr.comments[0]!.body.replace(
+      "HUMAN ACTION: none",
+      `## Escalation\n\n${claim}`,
+    );
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.phase).toBe("human_required");
+    expect(lane?.action.owner).toBe("human");
+  });
+
+  it("does not let a negative human-action label mask a positive escalation record", () => {
+    const pr = pullRequest();
+    pr.comments[0]!.body += "\n## Escalation\n\nSteward approval";
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.phase).toBe("human_required");
+    expect(lane?.action.owner).toBe("human");
+  });
+
+  it("assigns an operational Not Ready handoff to the delivery agent when the Issue is Ready", () => {
+    const pr = pullRequest();
+    pr.comments[0]!.body = pr.comments[0]!.body.replace("STATE: merge-ready", "STATE: Not Ready");
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.issue.readiness).toBe("unknown");
+    expect(lane?.phase).toBe("validating");
+    expect(lane?.blockers).not.toContain("The authoritative Issue status does not affirm that this lane is Ready or active.");
+    expect(lane?.blockers).toContain("The current canonical handoff does not affirm an active delivery state.");
+    expect(lane?.action.owner).toBe("codex");
   });
 
   it("projects a requested action from an escalation section", () => {
@@ -929,6 +975,7 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.authorityDrift).toBe("unknown");
     expect(lane?.phase).toBe("validating");
     expect(lane?.blockers).toContain("Live-main and authority-drift reconciliation could not be observed.");
+    expect(lane?.action.owner).toBe("codex");
   });
 
   it("keeps a PR targeting a non-default branch out of the merge gate", () => {

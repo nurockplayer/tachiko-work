@@ -211,6 +211,14 @@ function statusClaimsBlocked(statusText: string): boolean {
   return /\bblock(?:ed)?\b/.test(statusText) && !statusText.includes("not blocked");
 }
 
+function statusClaimsActive(statusText: string): boolean {
+  return /\bactive\b|\bimplementing\b|\bin progress\b|\bvalidating\b|\breview[_ -]?fix\b|\bhuman[_ -]?required\b/.test(statusText);
+}
+
+function statusClaimsReady(statusText: string): boolean {
+  return /\bready\b/.test(statusText) && !/not ready for (?:production )?implementation/.test(statusText);
+}
+
 function issueReadiness(issue: RawIssue, handoff: HandoffProjection): DeliveryLane["issue"]["readiness"] {
   if (issue.blockedBy === null) return "unknown";
   if (issue.blockedBy.length > 0) return "blocked";
@@ -219,9 +227,7 @@ function issueReadiness(issue: RawIssue, handoff: HandoffProjection): DeliveryLa
   if (/\bdecision[_ -]?ready\b/.test(issueStatus) || /\bnot[_ -]+ready\b/.test(issueStatus)) return "unknown";
   if (/\bpark(?:ed)?\b/.test(issueStatus)) return "parked";
   if (statusClaimsBlocked(issueStatus)) return "blocked";
-  const issueClaimsActive = /\bactive\b|\bimplementing\b|\bin progress\b|\bvalidating\b|\breview[_ -]?fix\b|\bhuman[_ -]?required\b/.test(issueStatus);
-  const issueClaimsReady = /\bready\b/.test(issueStatus) && !/not ready for (?:production )?implementation/.test(issueStatus);
-  if (!issueClaimsActive && !issueClaimsReady) return "unknown";
+  if (!statusClaimsActive(issueStatus) && !statusClaimsReady(issueStatus)) return "unknown";
   const handoffState = handoff.claimedState?.toLowerCase() ?? "";
   const staleHandoffClaimsBlocked = handoff.condition === "stale" &&
     statusClaimsBlocked(handoffState);
@@ -243,18 +249,21 @@ function humanActionRequested(comments: RawComment[], handoff: HandoffProjection
   if (/human[_ -]?required/i.test(handoff.claimedState ?? "")) return true;
   const latest = canonicalComments(comments).toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
   if (latest === undefined) return false;
-  const claim =
-    labeledValue(latest.body, "HUMAN ACTION") ??
-    labeledValue(latest.body, "FOUNDER / STEWARD ACTION") ??
-    labeledValue(latest.body, "STEWARD ACTION") ??
-    labeledValue(latest.body, "ESCALATION") ??
-    markdownSectionValue(latest.body, /\bescalation\b/i);
-  if (
-    claim === null ||
-    /^(?:none|no|not (?:required|needed)|n\/a)\b/i.test(claim) ||
-    /\b(?:(?:human|steward)\s+)?(?:action|decision|escalation)\s+(?:is\s+)?not\s+(?:required|needed)\b/i.test(claim)
-  ) return false;
-  return /\b(?:required|needed|decision|action)\b/i.test(claim);
+  const claims = [
+    labeledValue(latest.body, "HUMAN ACTION"),
+    labeledValue(latest.body, "FOUNDER / STEWARD ACTION"),
+    labeledValue(latest.body, "STEWARD ACTION"),
+    labeledValue(latest.body, "ESCALATION"),
+    markdownSectionValue(latest.body, /\bescalation\b/i),
+  ].filter((claim): claim is string => claim !== null);
+  return claims.some((claim) => {
+    if (
+      /^(?:none|no|not (?:required|needed)|n\/a)\b/i.test(claim) ||
+      /\b(?:(?:human|steward)\s+)?(?:action|decision|escalation|approval|review)\s+(?:is\s+)?not\s+(?:required|needed)\b/i.test(claim) ||
+      /\bdo not escalate\b/i.test(claim)
+    ) return false;
+    return /\b(?:required|needed|decision|action|approval|review|escalat(?:e|ion))\b/i.test(claim);
+  });
 }
 
 function deliveryActionOwner(owner: string): DeliveryLane["action"]["owner"] {
@@ -514,7 +523,13 @@ function projectLane(
     handoff.claimedIssueNumber !== pr.issueNumbers[0];
   const ownershipConflict = ownershipConflicts.length > 0 || multipleIssueClaim || handoffIssueMismatch;
   const blockers: string[] = [];
-  const issueStatusBlocked = statusClaimsBlocked(issueStatusText(issue));
+  const authoritativeIssueStatus = issueStatusText(issue);
+  const issueStatusBlocked = statusClaimsBlocked(authoritativeIssueStatus);
+  const issueStatusAffirmsDelivery = statusClaimsActive(authoritativeIssueStatus) || statusClaimsReady(authoritativeIssueStatus);
+  const issueReadinessRequiresSteward = pr !== null && issue.blockedBy !== null && issue.blockedBy.length === 0 &&
+    !authorityOnlyIssue.test(issue.title) && observedReadiness === "unknown" && !issueStatusAffirmsDelivery;
+  const handoffReadinessRequiresDelivery = pr !== null && handoff.condition === "current" &&
+    observedReadiness === "unknown" && issueStatusAffirmsDelivery;
 
   if ((issue.blockedBy?.length ?? 0) > 0) {
     blockers.push(`Live Issue dependencies block this lane: ${issue.blockedBy?.map((dependency) => `#${dependency.number}`).join(", ") ?? "Unknown"}.`);
@@ -526,6 +541,12 @@ function projectLane(
     blockers.push("The current canonical handoff reports this lane blocked.");
   } else if (handoff.condition === "stale" && observedReadiness === "blocked" && (issue.blockedBy?.length ?? 0) === 0) {
     blockers.push("The stale canonical handoff reports this lane blocked pending reconciliation.");
+  }
+  if (issueReadinessRequiresSteward) {
+    blockers.push("The authoritative Issue status does not affirm that this lane is Ready or active.");
+  }
+  if (handoffReadinessRequiresDelivery) {
+    blockers.push("The current canonical handoff does not affirm an active delivery state.");
   }
   if (pr !== null && checks.status === "unknown") blockers.push("Checks were not observed for the current PR head.");
   if (pr !== null && checks.requiredStatus !== "satisfied") blockers.push(checks.requiredSummary);
@@ -599,12 +620,14 @@ function projectLane(
       );
   const action: DeliveryLane["action"] = requiresHuman || phase === "human_required"
     ? { owner: "human", reason: "The canonical coordination state requests human or Steward action." }
+    : issueReadinessRequiresSteward
+      ? { owner: "human", reason: "The authoritative Issue status requires Steward readiness action." }
     : phase === "review_fix" || phase === "rereview" || checks.status === "failure" ||
         (pr !== null && checks.requiredStatus !== "satisfied") || ownershipConflict ||
-        !githubMergeReady || drift === "suspected" || handoff.condition === "inconsistent" || handoff.condition === "stale" ||
+        !githubMergeReady || drift !== "none" || handoff.condition === "inconsistent" || handoff.condition === "stale" ||
         (pr !== null && handoff.condition === "unknown") ||
         (pr !== null && handoff.condition === "missing") || !issueScopeReconciled ||
-        pr?.isDraft === true || !targetsDefaultBranch || !ownershipObservationComplete
+        handoffReadinessRequiresDelivery || pr?.isDraft === true || !targetsDefaultBranch || !ownershipObservationComplete
       ? { owner: deliveryActionOwner(owner), reason: blockers[0] ?? "Delivery-agent action is required." }
       : { owner: "none", reason: "No human action is currently evidenced." };
   const issueRef = source(
