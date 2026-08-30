@@ -725,6 +725,14 @@ export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): Re
     const issue = number === undefined ? placeholderIssue(pr, snapshot.observedAt) : issuesByNumber.get(number) ?? placeholderIssue(pr, snapshot.observedAt);
     const claimedIssueNumbers = pr.issueNumbers.length === 0 ? [issue.number] : pr.issueNumbers;
     for (const issueNumber of claimedIssueNumbers) ownedIssueNumbers.add(issueNumber);
+    const handoff = projectHandoff(
+      pr.comments,
+      pr.commentsComplete,
+      snapshot.observedAt,
+      pr.headSha,
+      snapshot.mainSha,
+    );
+    if (hasUsableIssueClaim(handoff)) ownedIssueNumbers.add(handoff.claimedIssueNumber);
     const ownershipConflicts = claimedIssueNumbers.flatMap((issueNumber) => {
       const prNumbers = pullRequestsByIssue.get(issueNumber) ?? [];
       return prNumbers.length > 1 ? [{ issueNumber, prNumbers }] : [];
