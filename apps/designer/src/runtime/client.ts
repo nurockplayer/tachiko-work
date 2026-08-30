@@ -24,6 +24,16 @@ export interface DesignerClient {
     target: FieldTarget,
     input: string,
   ): Promise<PublicationProjection>;
+  editText(
+    expectedRevision: string,
+    target: FieldTarget,
+    value: string,
+  ): Promise<PublicationProjection>;
+  editBoolean(
+    expectedRevision: string,
+    target: FieldTarget,
+    value: boolean,
+  ): Promise<PublicationProjection>;
   close(): void | Promise<void>;
 }
 

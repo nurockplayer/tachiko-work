@@ -19,6 +19,7 @@ import type {
   FieldProjection,
   FieldTarget,
   OpenedProjection,
+  PublicationProjection,
   TableProjection,
 } from "./runtime/protocol.ts";
 
@@ -47,6 +48,10 @@ export function mountDesigner(
   let busy = false;
   let destroyed = false;
   let occurrenceClosed = false;
+  const pendingTextBuffers = new Map<string, string>();
+  const pendingBooleanBuffers = new Map<string, boolean>();
+  const hasPendingScalarDrafts = (): boolean =>
+    pendingTextBuffers.size > 0 || pendingBooleanBuffers.size > 0;
   let savedProjects: SavedProjectSummary[] = [];
   let selectedSavedProject = "";
   const durability = createDurabilityState();
@@ -58,13 +63,25 @@ export function mountDesigner(
   };
 
   const syncBeforeUnloadGuard = (): void => {
-    const shouldGuard = !destroyed && durability.snapshot().dirty;
+    const shouldGuard =
+      !destroyed && (durability.snapshot().dirty || hasPendingScalarDrafts());
     if (shouldGuard && !beforeUnloadGuarded) {
       window.addEventListener("beforeunload", warnBeforeDirtyUnload);
       beforeUnloadGuarded = true;
     } else if (!shouldGuard && beforeUnloadGuarded) {
       window.removeEventListener("beforeunload", warnBeforeDirtyUnload);
       beforeUnloadGuarded = false;
+    }
+  };
+
+  const reflectUnsavedState = (): void => {
+    syncBeforeUnloadGuard();
+    const durabilityChip = root.querySelector<HTMLElement>('[data-testid="durability"]');
+    if (durabilityChip !== null) {
+      const dirty = durability.snapshot().dirty || hasPendingScalarDrafts();
+      durabilityChip.dataset.dirty = String(dirty);
+      const label = durabilityChip.querySelector("span");
+      if (label !== null) label.textContent = dirty ? "Unsaved changes" : "Saved";
     }
   };
 
@@ -89,11 +106,12 @@ export function mountDesigner(
       selectedCollection,
       notice,
       busy,
-      durability.snapshot().dirty,
+      durability.snapshot().dirty || hasPendingScalarDrafts(),
       durability.snapshot().durable_revision,
       savedProjects,
       selectedSavedProject,
     );
+    hydrateDraftControls();
     bindInteractions();
   };
 
@@ -116,9 +134,10 @@ export function mountDesigner(
     }
   };
 
-  const commitNumber = async (
+  const commitScalar = async (
     target: FieldTarget,
-    input: string,
+    publish: (expectedRevision: string) => Promise<PublicationProjection>,
+    onPublished?: () => void,
   ): Promise<void> => {
     if (store === null || busy || store.snapshot().currentness !== "current") return;
     busy = true;
@@ -126,12 +145,9 @@ export function mountDesigner(
     render();
     let published = false;
     try {
-      const publication = await client.editNumber(
-        store.snapshot().table.revision,
-        target,
-        input,
-      );
+      const publication = await publish(store.snapshot().table.revision);
       published = true;
+      onPublished?.();
       const requested = store.beginPublication(publication);
       durability.observe(publication.resulting_revision);
       syncBeforeUnloadGuard();
@@ -154,6 +170,29 @@ export function mountDesigner(
       render();
     }
   };
+
+  const commitNumber = (target: FieldTarget, input: string): Promise<void> =>
+    commitScalar(target, (expectedRevision) => client.editNumber(expectedRevision, target, input));
+
+  const commitText = (target: FieldTarget, value: string): Promise<void> =>
+    commitScalar(
+      target,
+      (expectedRevision) => client.editText(expectedRevision, target, value),
+      () => {
+        pendingTextBuffers.delete(textBufferKey(target));
+        syncBeforeUnloadGuard();
+      },
+    );
+
+  const commitBoolean = (target: FieldTarget, value: boolean): Promise<void> =>
+    commitScalar(
+      target,
+      (expectedRevision) => client.editBoolean(expectedRevision, target, value),
+      () => {
+        pendingBooleanBuffers.delete(textBufferKey(target));
+        syncBeforeUnloadGuard();
+      },
+    );
 
   const selectCollection = async (collection: string): Promise<void> => {
     if (bootstrap === null || store === null || busy) return;
@@ -207,6 +246,8 @@ export function mountDesigner(
       value: controlField.calculated.value,
       revision: candidate.revision,
     });
+    pendingTextBuffers.clear();
+    pendingBooleanBuffers.clear();
     bootstrap = candidate;
     store = nextStore;
     selectedCollection = candidate.default_collection;
@@ -217,6 +258,8 @@ export function mountDesigner(
 
   const installOpenedOccurrence = (opened: OpenedProjection): void => {
     const nextStore = createProjectionStore(opened.table, opened.control);
+    pendingTextBuffers.clear();
+    pendingBooleanBuffers.clear();
     bootstrap = opened.bootstrap;
     store = nextStore;
     selectedCollection = opened.bootstrap.default_collection;
@@ -251,7 +294,7 @@ export function mountDesigner(
   };
 
   const confirmDiscardDirtyOccurrence = (action: string): boolean =>
-    !durability.snapshot().dirty ||
+    (!durability.snapshot().dirty && !hasPendingScalarDrafts()) ||
     window.confirm(
       `${action} will discard unsaved changes in the current project. Continue?`,
     );
@@ -361,6 +404,8 @@ export function mountDesigner(
     render();
     try {
       await client.closeProject();
+      pendingTextBuffers.clear();
+      pendingBooleanBuffers.clear();
       bootstrap = null;
       store = null;
       selectedCollection = "";
@@ -383,13 +428,88 @@ export function mountDesigner(
 
   const bindInteractions = (): void => {
     root.querySelectorAll<HTMLFormElement>("[data-edit-form]").forEach((form) => {
+      const draftControl = form.querySelector<HTMLTextAreaElement>("textarea");
+      const draftBoolean = form.querySelector<HTMLInputElement>('input[type="checkbox"]');
+      const draftEntity = decodeOpaqueAttribute(form.dataset.entity);
+      const draftField = decodeOpaqueAttribute(form.dataset.field);
+      if (draftControl !== null && draftEntity !== undefined && draftField !== undefined) {
+        const recordDraft = (): void => {
+          const key = textBufferKey({ entity: draftEntity, field: draftField });
+          if (draftControl.value === draftControl.dataset.initialNormalized) {
+            pendingTextBuffers.delete(key);
+          } else {
+            pendingTextBuffers.set(key, draftControl.value);
+          }
+          reflectUnsavedState();
+        };
+        draftControl.addEventListener("input", recordDraft);
+      }
+      if (draftBoolean !== null && draftEntity !== undefined && draftField !== undefined) {
+        const recordDraft = (): void => {
+          const key = textBufferKey({ entity: draftEntity, field: draftField });
+          if (String(draftBoolean.checked) === draftBoolean.dataset.initialChecked) {
+            pendingBooleanBuffers.delete(key);
+          } else {
+            pendingBooleanBuffers.set(key, draftBoolean.checked);
+          }
+          reflectUnsavedState();
+        };
+        draftBoolean.addEventListener("change", recordDraft);
+      }
       form.addEventListener("submit", (event) => {
         event.preventDefault();
-        const input = form.querySelector<HTMLInputElement>("input");
+        const control = form.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+          "input, textarea",
+        );
         const entity = decodeOpaqueAttribute(form.dataset.entity);
         const field = decodeOpaqueAttribute(form.dataset.field);
-        if (input === null || entity === undefined || field === undefined) return;
-        void commitNumber({ entity, field }, input.value);
+        if (control === null || entity === undefined || field === undefined) return;
+        switch (form.dataset.editKind) {
+          case "number":
+            void commitNumber({ entity, field }, control.value);
+            break;
+          case "text": {
+            const initialText =
+              control instanceof HTMLTextAreaElement
+                ? decodeOpaqueAttribute(control.dataset.initialText)
+                : undefined;
+            const initialNormalized =
+              control instanceof HTMLTextAreaElement
+                ? control.dataset.initialNormalized
+                : undefined;
+            let value = control.value;
+            try {
+              if (initialText !== undefined && initialNormalized !== undefined && control instanceof HTMLTextAreaElement) {
+                value = reconcileTextEdit(initialText, initialNormalized, control.value);
+              }
+            } catch (error) {
+              notice = { tone: "error", title: "Text edit not applied", message: error instanceof Error ? error.message : "Text edit reconciliation failed.", diagnostics: [] };
+              render();
+              return;
+            }
+            const textKey = textBufferKey({ entity, field });
+            if (control.value === initialNormalized) {
+              pendingTextBuffers.delete(textKey);
+            } else {
+              pendingTextBuffers.set(textKey, control.value);
+            }
+            reflectUnsavedState();
+            void commitText({ entity, field }, value);
+            break;
+          }
+          case "boolean": {
+            if (!(control instanceof HTMLInputElement)) return;
+            const booleanKey = textBufferKey({ entity, field });
+            if (String(control.checked) === control.dataset.initialChecked) {
+              pendingBooleanBuffers.delete(booleanKey);
+            } else {
+              pendingBooleanBuffers.set(booleanKey, control.checked);
+            }
+            reflectUnsavedState();
+            void commitBoolean({ entity, field }, control.checked);
+            break;
+          }
+        }
       });
     });
     root
@@ -425,6 +545,31 @@ export function mountDesigner(
       });
   };
 
+  const hydrateDraftControls = (): void => {
+    root.querySelectorAll<HTMLTextAreaElement>("textarea[data-initial-text]").forEach(
+      (textarea) => {
+        const initialText = decodeOpaqueAttribute(textarea.dataset.initialText);
+        if (initialText !== undefined) {
+          const entity = decodeOpaqueAttribute(textarea.form?.dataset.entity);
+          const field = decodeOpaqueAttribute(textarea.form?.dataset.field);
+          textarea.value =
+            entity !== undefined && field !== undefined
+              ? (pendingTextBuffers.get(textBufferKey({ entity, field })) ?? initialText)
+              : initialText;
+          textarea.dataset.initialNormalized = normalizeLineEndings(initialText);
+        }
+      },
+    );
+    root.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((checkbox) => {
+      const entity = decodeOpaqueAttribute(checkbox.form?.dataset.entity);
+      const field = decodeOpaqueAttribute(checkbox.form?.dataset.field);
+      if (entity !== undefined && field !== undefined) {
+        const pending = pendingBooleanBuffers.get(textBufferKey({ entity, field }));
+        if (pending !== undefined) checkbox.checked = pending;
+      }
+    });
+  };
+
   render();
   const ready = (async () => {
     try {
@@ -457,6 +602,10 @@ export function mountDesigner(
       void client.close();
     },
   };
+}
+
+function textBufferKey(target: FieldTarget): string {
+  return JSON.stringify([target.entity, target.field]);
 }
 
 function loadingMarkup(): string {
@@ -572,7 +721,7 @@ function designerMarkup(
           </div>
 
           <ol class="calculation-thread" aria-label="Edit publication path">
-            <li><span>1</span><strong>Stored value</strong><small>Editable Number</small></li>
+            <li><span>1</span><strong>Stored value</strong><small>Editable scalar</small></li>
             <li><span>2</span><strong>Rust authority</strong><small>Expected revision</small></li>
             <li><span>3</span><strong>Formula refresh</strong><small>Affected fields only</small></li>
           </ol>
@@ -682,12 +831,12 @@ function fieldMarkup(
   const diagnostics = field.diagnostics
     .map((diagnostic) => `<small class="field-error">${escapeHtml(diagnostic.message)}</small>`)
     .join("");
-  if (field.editable_number && field.stored?.kind === "number") {
+  if (field.editable_scalar === "number" && field.stored?.kind === "number") {
     return `
       <td data-field="${escapeHtml(key)}" class="stored-cell">
         <form data-edit-form data-entity="${encodeOpaqueAttribute(
           field.target.entity,
-        )}" data-field="${encodeOpaqueAttribute(field.target.field)}">
+        )}" data-field="${encodeOpaqueAttribute(field.target.field)}" data-edit-kind="number">
           <input
             type="number"
             step="any"
@@ -700,6 +849,48 @@ function fieldMarkup(
           <button type="submit" ${busy ? "disabled" : ""}>Apply</button>
         </form>
         <small class="value-kind">Stored · Number</small>
+        ${diagnostics}
+      </td>
+    `;
+  }
+  if (field.editable_scalar === "text" && field.stored?.kind === "text") {
+    return `
+      <td data-field="${escapeHtml(key)}" class="stored-cell">
+        <form data-edit-form data-entity="${encodeOpaqueAttribute(
+          field.target.entity,
+        )}" data-field="${encodeOpaqueAttribute(field.target.field)}" data-edit-kind="text">
+          <textarea
+            data-initial-text="${encodeOpaqueAttribute(field.stored.value)}"
+            aria-label="${escapeHtml(humanize(field.target.field))} for ${escapeHtml(
+              humanize(entityKey),
+            )}"
+            ${busy ? "disabled" : ""}
+          ></textarea>
+          <button type="submit" ${busy ? "disabled" : ""}>Apply</button>
+        </form>
+        <small class="value-kind">Stored · Text</small>
+        ${diagnostics}
+      </td>
+    `;
+  }
+  if (field.editable_scalar === "boolean" && field.stored?.kind === "boolean") {
+    return `
+      <td data-field="${escapeHtml(key)}" class="stored-cell">
+        <form data-edit-form data-entity="${encodeOpaqueAttribute(
+          field.target.entity,
+        )}" data-field="${encodeOpaqueAttribute(field.target.field)}" data-edit-kind="boolean">
+          <input
+            type="checkbox"
+            data-initial-checked="${String(field.stored.value)}"
+            ${field.stored.value ? "checked" : ""}
+            aria-label="${escapeHtml(humanize(field.target.field))} for ${escapeHtml(
+              humanize(entityKey),
+            )}"
+            ${busy ? "disabled" : ""}
+          />
+          <button type="submit" ${busy ? "disabled" : ""}>Apply</button>
+        </form>
+        <small class="value-kind">Stored · Boolean</small>
         ${diagnostics}
       </td>
     `;
@@ -804,4 +995,20 @@ function decodeOpaqueAttribute(value: string | undefined): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function reconcileTextEdit(
+  original: string,
+  normalizedOriginal: string,
+  edited: string,
+): string {
+  if (!original.includes("\r")) return edited;
+  if (normalizeLineEndings(original) === normalizedOriginal && edited === normalizedOriginal) {
+    return original;
+  }
+  throw new Error("Text containing CR or CRLF line endings cannot be edited yet; its original bytes remain unchanged.");
+}
+
+function normalizeLineEndings(value: string): string {
+  return value.replace(/\r\n|\r/g, "\n");
 }

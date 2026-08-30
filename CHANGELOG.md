@@ -46,6 +46,12 @@ All notable changes to Tachiko Work are documented in this file.
   drift, independent lanes, and partial/unknown source failures remain
   explicit. The localhost-only server exposes no write/control endpoints and
   introduces no Tachiko product semantics or public API.
+- The first-party browser Designer table now edits directly stored Text,
+  Number, and Boolean values through the same Rust-authoritative,
+  expected-revision publication path. Typed controls remain projection-derived,
+  preserve publication-derived selective refresh and diagnostics, and the
+  supported Save As / teardown / reopen journey preserves the resulting typed
+  values without adding a frontend canonical model or public wire contract.
 - The browser Designer can now admit a user-selected canonical `.roproj/v1`
   through the existing Rust storage/workspace authorities, edit it in a fresh
   resident occurrence, and Save As an exact revision to an absent-only
