@@ -223,9 +223,13 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries[0]?.phase).toBe("ready");
   });
 
-  it("honors a current Not Ready claim after an earlier Ready claim", () => {
+  it.each([
+    "Ready; now Not Ready.",
+    "Ready; now Not Ready pending approval.",
+    "Ready; Not Ready after approval.",
+  ])("honors a current Not Ready claim after an earlier Ready claim: %s", (status) => {
     const notReady = issue();
-    notReady.body = "## Status\n\nReady; now Not Ready.\n\nOwner: `agent:codex`";
+    notReady.body = `## Status\n\n${status}\n\nOwner: \`agent:codex\``;
 
     const projection = normalizeRepositorySnapshot(snapshot({ issues: [notReady] }));
 

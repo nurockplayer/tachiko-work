@@ -324,8 +324,10 @@ function statusReadyClaim(statusText: string): "affirmative" | "negated" | null 
   let latest: "affirmative" | "negated" | null = null;
   for (const match of statusText.matchAll(/\bready\b/gi)) {
     const before = statusText.slice(0, match.index);
-    if (/\bdecision[_ -]?$/i.test(before) || statusClaimIsConditional(statusText, match, true)) continue;
-    if (!statusClaimIsNegated(statusText, match)) {
+    if (/\bdecision[_ -]?$/i.test(before)) continue;
+    const negated = statusClaimIsNegated(statusText, match);
+    if (!negated && statusClaimIsConditional(statusText, match, true)) continue;
+    if (!negated) {
       latest = "affirmative";
       continue;
     }
