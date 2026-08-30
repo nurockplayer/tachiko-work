@@ -268,7 +268,7 @@ function hasRequiredPrHandoffRecords(body: string): boolean {
 function handoffReportsSubstantiveUnresolvedReview(body: string): boolean {
   const reviewState = labeledValue(body, "UNRESOLVED REVIEW STATE") ??
     markdownSectionValue(body, /\b(?:unresolved review|review state)\b/i);
-  if (reviewState === null || /^(?:none|clean|resolved|all\s+(?:clear|clean|resolved))\b/i.test(reviewState)) {
+  if (reviewState === null || /^(?:none|clean|resolved|all\s+(?:clear|clean|resolved))[.!]?$/i.test(reviewState)) {
     return false;
   }
   return isSubstantiveFinding(reviewState);

@@ -2392,11 +2392,15 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.action.owner).toBe("codex");
   });
 
-  it("does not accept merge-ready while the canonical handoff reports a substantive unresolved review", () => {
+  it.each([
+    "[P1] Missing synchronization still permits a race condition.",
+    "none; [P1] Missing synchronization still permits a race condition.",
+    "clean, but [P1] Missing synchronization still permits a race condition.",
+  ])("does not accept merge-ready while the canonical handoff reports a substantive unresolved review: %s", (reviewState) => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace(
       "UNRESOLVED REVIEW STATE: none",
-      "UNRESOLVED REVIEW STATE: [P1] Missing synchronization still permits a race condition.",
+      `UNRESOLVED REVIEW STATE: ${reviewState}`,
     );
 
     const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
