@@ -1248,6 +1248,8 @@ describe("normalizeRepositorySnapshot", () => {
     "No security checks and data is not erased.",
     "No infinite loops occur.",
     "This does not hang on empty input.",
+    "The parser never hangs.",
+    "This never enters an infinite loop.",
   ])("does not infer a substantive finding from a clean comment-only review summary: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1703,6 +1705,8 @@ describe("normalizeRepositorySnapshot", () => {
     "No security checks and data is not erased.",
     "No infinite loops occur.",
     "This does not hang on empty input.",
+    "The parser never hangs.",
+    "This never enters an infinite loop.",
   ])("does not promote a negated unlabeled impact statement: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
