@@ -94,12 +94,27 @@ function canonicalComments(comments: RawComment[]): RawComment[] {
   );
 }
 
+function hasCausalSubstantiveImpact(clause: string): boolean {
+  const marker = /\b(?:means?|causes?|so|therefore|thus|hence)\b/i.exec(clause);
+  if (marker?.index === undefined) return false;
+  const premise = clause.slice(0, marker.index);
+  const consequence = clause.slice(marker.index + marker[0].length);
+  if (/(?:\b(?:not|never|cannot)|n['’]?t)\s*$/i.test(premise)) return false;
+  if (negatedUnlabeledSubstantiveImpact.test(consequence) ||
+    negatedDestructiveDataImpact.test(consequence) || negatedInjectionImpact.test(consequence)) return false;
+  return affirmativeUnlabeledSubstantiveImpact.test(consequence) ||
+    affirmativeDestructiveDataImpact.test(consequence) ||
+    affirmativeBuildOrTestFailure.test(consequence) ||
+    (injectionImpact.test(consequence) && !negatedInjectionImpact.test(consequence));
+}
+
 function isSubstantiveFinding(body: string): boolean {
   const normalized = stripMarkdown(body).replace(explicitlyNonSubstantiveBadge, "[P3] ");
   return reviewBodyClauses(normalized).some((clause) => {
     if (explicitlyNonSubstantiveAcknowledgment.test(clause)) return false;
     if (isSubstantiveReviewClause(clause)) return true;
     if (missingSafeguardImpact.test(clause)) return true;
+    if (hasCausalSubstantiveImpact(clause)) return true;
     if (isClearedReviewClause(clause) || negatedUnlabeledSubstantiveImpact.test(clause) ||
       negatedDestructiveDataImpact.test(clause) || satisfiedSafeguardImpact.test(clause) ||
       satisfiedInjectionSafeguard.test(clause) ||
@@ -159,6 +174,7 @@ function isSubstantiveReviewBody(body: string): boolean {
     if (explicitlyNonSubstantiveAcknowledgment.test(clause)) return false;
     if (isSubstantiveReviewClause(clause)) return true;
     if (missingSafeguardImpact.test(clause)) return true;
+    if (hasCausalSubstantiveImpact(clause)) return true;
     if (isClearedReviewClause(clause) || negatedUnlabeledSubstantiveImpact.test(clause) ||
       negatedDestructiveDataImpact.test(clause) || satisfiedSafeguardImpact.test(clause) ||
       satisfiedInjectionSafeguard.test(clause) ||
@@ -1208,7 +1224,8 @@ export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): Re
     if (isDecisionReadyAuthorityIssue(issue) && !requiresHuman) continue;
     const hasCanonicalHandoff = canonicalComments(issue.comments).length > 0;
     const owner = issueOwner(issue, handoff).toLowerCase();
-    if (!requiresHuman && !hasCanonicalHandoff && !owner.includes("agent:")) continue;
+    const hasDeliveryOwner = deliveryActionOwner(owner) !== "unknown" || owner.includes("agent:");
+    if (!requiresHuman && !hasCanonicalHandoff && !hasDeliveryOwner) continue;
     if (issueReadiness(issue, handoff) === "unknown" && !requiresHuman) continue;
     deliveries.push(projectLane(issue, null, snapshot, [], ownershipObservationComplete));
   }

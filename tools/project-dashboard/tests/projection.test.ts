@@ -1113,6 +1113,19 @@ describe("normalizeRepositorySnapshot", () => {
     });
   });
 
+  it.each(["codex", "chatgpt"])("admits a Ready pre-PR Issue with recognized bare owner %s", (owner) => {
+    const ready = issue();
+    ready.body = `## Status\n\nReady\n\nOwner: \`${owner}\``;
+    ready.comments = [];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [ready] }));
+
+    expect(projection.deliveries).toHaveLength(1);
+    expect(projection.deliveries[0]?.issue.readiness).toBe("ready");
+    expect(projection.deliveries[0]?.phase).toBe("ready");
+    expect(projection.attention.humanActionRequired).toBe(false);
+  });
+
   it("still blocks an inconsistent optional handoff on a human-owned pull request", () => {
     const humanOwned = issue();
     humanOwned.body = "## Status\n\nReady\n\nOwner: `nurockplayer`";
@@ -1200,6 +1213,7 @@ describe("normalizeRepositorySnapshot", () => {
 
   it.each([
     "There is no null check, so this crashes on empty input.",
+    "No null check means this crashes on empty input.",
     "This throws for an empty input.",
     "This deletes user data.",
     "This erases data on retry.",
@@ -1351,6 +1365,7 @@ describe("normalizeRepositorySnapshot", () => {
     "No user data is deleted, and data is not erased.",
     "No user data is deleted and data is not erased.",
     "No crashes occur and this causes no data loss.",
+    "No crashes means this works as expected.",
     "No security issues and data is not erased.",
     "No security checks and data is not erased.",
     "No infinite loops occur.",
@@ -1820,6 +1835,7 @@ describe("normalizeRepositorySnapshot", () => {
     "Please update docs because this is incorrect.",
     "This fails to compile on Windows.",
     "There is no null check, so this crashes on empty input.",
+    "No null check means this crashes on empty input.",
     "This throws for an empty input.",
     "This deletes user data.",
     "User data is deleted.",
