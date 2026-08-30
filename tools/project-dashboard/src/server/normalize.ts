@@ -23,6 +23,7 @@ const directlyClearedBracketedFinding = /(?:\b(?:no|not\s+(?:an?\s+)?)\s*\[(?:p[
 const negatedReviewFinding = /(?:\b(?:no|none|without|zero|0)\b[^.!?;\n]{0,80}\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|findings?|issues?|concerns?|problems?|failures?|bugs?|errors?|defects?|breakages?)\b|\bnot\s+(?:an?\s+)?\[?(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness)(?:\]|\b)|\b(?:(?:is|are|was|were)\s+not|(?:is|are|was|were)n['’]?t)\s+(?:wrong|incorrect|unsafe|invalid|stale|unauthori[sz]ed)\b)/i;
 const clearedReviewFinding = /\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|security|correctness|blocking|data[- ]integrity)\b[^.!?;\n]{0,80}\b(?:checks?|review|findings?|issues?)?\s*(?:passed|complete(?:d)?|clean|resolved)\b(?:\s*\([^)]*\))?\s*$/i;
 const negatedReviewResolution = /\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|security|correctness|blocking|data[- ]integrity)\b[^.!?;\n]{0,80}(?:\b(?:not|never|cannot)\b|\b(?:is|are|was|were|has|have|had|do|does|did|can|could|would|should|will|wo)n['’]?t\b)(?:\s+\w+){0,3}\s+(?:passed|complete(?:d)?|clean|resolved)\b/i;
+const unresolvedReviewResolution = /\bno\s+(?:(?:p[0-2]|sev(?:erity)?[ -]?[0-2])\s+)?(?:findings?|issues?|concerns?|problems?)\b[^.!?;\n]{0,80}\b(?:resolved|fixed|cleared|closed)\b/i;
 const postposedClearedReviewFinding = /\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|data[- ]integrity)(?:\s+(?:findings?|issues?|concerns?|problems?)(?:\s+found)?)?\s*(?::|=|\bare\b)\s*(?:none|zero|0|absent|not\s+(?:found|present|observed|identified|detected))\b(?:\s*\([^)]*\))?\s*$/i;
 const equivalentReviewFindingLabel = /(?:^|\s)(?:blocking|security|correctness|data[- ]integrity)\s*[:,]/i;
 const equivalentReviewFindingContext = /\b(?:blocking|security|correctness|data[- ]integrity)\b[^.!?;\n]{0,80}\b(?:finding|issue|bug|risk|failure|regression|vulnerab\w*|flaw|problem|concern|break\w*|corrupt\w*|overwrit\w*|data[- ]loss)\b|\b(?:finding|issue|bug|risk|failure|regression|vulnerab\w*|flaw|problem|concern|break\w*|corrupt\w*|overwrit\w*|data[- ]loss)\b[^.!?;\n]{0,80}\b(?:blocking|security|correctness|data[- ]integrity)\b/i;
@@ -40,8 +41,8 @@ const affirmativeDestructiveDataImpact = /\b(?:(?:user\s+)?data\s+(?:(?:is|are|w
 const negatedDestructiveDataImpact = /\b(?:no\s+(?:(?:user\s+)?data\s+(?:(?:is|are|was|were)\s+(?:being\s+)?|gets?\s+|got\s+)?(?:delet(?:ed|ing)|eras(?:ed|ing))|(?:deletion|erasure)\s+of\s+(?:user\s+)?data)|(?:user\s+)?data\s+(?:is|are|was|were)\s+not\s+(?:being\s+)?(?:delet(?:ed|ing)|eras(?:ed|ing)))\b/i;
 const affirmativeBuildOrTestFailure = /\b(?:(?:fails?|failed|failing|breaks?|broke|broken)\s+(?:to\s+)?(?:compile|build|tests?|typecheck|lint|ci)\b|(?:compilation|build|tests?|typecheck|lint|ci)\s+(?:(?:(?:is|are|was|were)\s+)?(?:fails?|failed|failing|breaks?|broke|broken)\b|(?:(?:do|does|did|can|could|will|would|should|is|are|was|were)\s+not|(?:do|does|did|can|could|will|would|should|is|are|was|were)n['’]?t)\s+pass(?:es|ed|ing)?\b))/i;
 const unlabeledPureMaintainabilitySuggestion = /^(?:could|would|can|please|consider|maybe|perhaps)\b[^.!?;\n]{0,120}\b(?:rename|naming|clarity|readability|style|format(?:ting)?|wording|comments?|documentation|docs|simplif\w*|clean\s*up|refactor\w*)\b/i;
-const missingSafeguardImpact = /\b(?:no\s+(?:(?:(?:authorization|authentication|permission|access[- ]control|security)\s+(?:check|guard|safeguard|control)\w*|input\s+validation|csrf\s+(?:tokens?|protection|checks?|guards?)|session\s+(?:tokens?|validation|checks?|guards?))\b[^.!?;\n]{0,80}\b(?:prevents?|blocks?|stops?|allows?|permits?|enables?)\b[^.!?;\n]{0,80}\b(?:bypass|inject|leak|corrupt|overwrit|delet|eras|unauthori[sz])\w*\b|(?:error|exception)\s+(?:handlers?|handling|guards?|checks?)\b[^.!?;\n]{0,80}\b(?:prevent(?:s|ed|ing)?|block(?:s|ed|ing)?|stop(?:s|ped|ping)?|allow(?:s|ed|ing)?|permit(?:s|ted|ting)?|enable(?:s|d|ing)?|catch(?:es|ing)?|handle(?:s|d|ing)?)\b[^.!?;\n]{0,80}\b(?:crash|panic|throw|exception)\w*\b|(?:mutex(?:es)?|locks?|locking|synchroni[sz]ation)\b[^.!?;\n]{0,80}\b(?:prevents?|blocks?|stops?)\b[^.!?;\n]{0,80}\b(?:race\s+conditions?|deadlocks?|data\s+races?)\b)|(?:(?:(?:an?|the)\s+)?(?:mutex(?:es)?|locks?|locking|synchroni[sz]ation)\b[^.!?;\n]{0,80}\b)?(?:(?:does|do|did|can|could|will|would|should)\s+not|(?:does|do|did|can|could|will|would|should)n['’]?t|cannot|never)\s+(?:prevent|block|stop)\w*\b[^.!?;\n]{0,80}\b(?:race\s+conditions?|deadlocks?|data\s+races?)\b|(?:(?:(?:an?|the)\s+)?(?:error|exception)\s+(?:handlers?|handling|guards?|checks?)\b[^.!?;\n]{0,80}\b)?(?:(?:does|do|did|can|could|will|would|should)\s+not|(?:does|do|did|can|could|will|would|should)n['’]?t|cannot|never)\s+(?:prevent|block|stop|catch|handle)\w*\b[^.!?;\n]{0,80}\b(?:crash|panic|throw|exception)\w*\b)/i;
-const satisfiedSafeguardImpact = /\b(?:(?:(?:(?:an?|the)\s+)?(?:authorization|authentication|permission|access[- ]control|security)\s+(?:checks?|guards?|safeguards?|controls?)|(?:(?:an?|the)\s+)?(?:csrf\s+(?:tokens?|protection|checks?|guards?)|session\s+(?:tokens?|validation|checks?|guards?)))\s+(?:prevents?|blocks?|stops?)\b[^.!?;\n]{0,80}\b(?:bypass|inject|leak|corrupt|overwrit|delet|eras|unauthori[sz])\w*\b|(?:(?:an?|the)\s+)?(?:csrf\s+(?:tokens?|protection|checks?|guards?)|session\s+(?:tokens?|validation|checks?|guards?))\b[^.!?;\n]{0,80}\b(?:(?:does|do|did|can|could|will|would|should)\s+not|(?:does|do|did|can|could|will|would|should)n['’]?t|cannot|never)\s+(?:allow|permit|enable)\w*\b[^.!?;\n]{0,80}\b(?:bypass|inject|leak|corrupt|overwrit|delet|eras|unauthori[sz])\w*\b|(?:(?:an?|the)\s+)?(?:error|exception)\s+(?:handlers?|handling|guards?|checks?)\b[^.!?;\n]{0,80}\b(?:prevent(?:s|ed|ing)?|block(?:s|ed|ing)?|stop(?:s|ped|ping)?|catch(?:es|ing)?|handle(?:s|d|ing)?)\b[^.!?;\n]{0,80}\b(?:crash|panic|throw|exception)\w*\b|(?:(?:an?|the)\s+)?(?:error|exception)\s+(?:handlers?|handling|guards?|checks?)\b[^.!?;\n]{0,80}\b(?:(?:does|do|did|can|could|will|would|should)\s+not|(?:does|do|did|can|could|will|would|should)n['’]?t|cannot|never)\s+(?:allow|permit|enable)\w*\b[^.!?;\n]{0,80}\b(?:crash|panic|throw|exception)\w*\b|(?:(?:an?|the)\s+)?(?:mutex(?:es)?|locks?|locking|synchroni[sz]ation)\b[^.!?;\n]{0,80}\b(?:prevents?|blocks?|stops?)\b[^.!?;\n]{0,80}\b(?:race\s+conditions?|deadlocks?|data\s+races?)\b)/i;
+const missingSafeguardImpact = /\b(?:no\s+(?:(?:(?:authorization|authentication|permission|access[- ]control|security)\s+(?:check|guard|safeguard|control)\w*|input\s+validation|csrf\s+(?:tokens?|protection|checks?|guards?)|session\s+(?:tokens?|validation|checks?|guards?))\b[^.!?;\n]{0,80}\b(?:prevents?|blocks?|stops?|allows?|permits?|enables?)\b[^.!?;\n]{0,80}\b(?:bypass|inject|leak|corrupt|overwrit|delet|eras|unauthori[sz])\w*\b|(?:error|exception)\s+(?:handlers?|handling|guards?|checks?)\b[^.!?;\n]{0,80}\b(?:prevent(?:s|ed|ing)?|block(?:s|ed|ing)?|stop(?:s|ped|ping)?|allow(?:s|ed|ing)?|permit(?:s|ted|ting)?|enable(?:s|d|ing)?|catch(?:es|ing)?|caught|handle(?:s|d|ing)?)\b[^.!?;\n]{0,80}\b(?:crash|panic|throw|exception)\w*\b|(?:mutex(?:es)?|locks?|locking|synchroni[sz]ation)\b[^.!?;\n]{0,80}\b(?:prevents?|blocks?|stops?)\b[^.!?;\n]{0,80}\b(?:race\s+conditions?|deadlocks?|data\s+races?)\b)|(?:(?:(?:an?|the)\s+)?(?:mutex(?:es)?|locks?|locking|synchroni[sz]ation)\b[^.!?;\n]{0,80}\b)?(?:(?:does|do|did|can|could|will|would|should)\s+not|(?:does|do|did|can|could|will|would|should)n['’]?t|cannot|never)\s+(?:prevent|block|stop)\w*\b[^.!?;\n]{0,80}\b(?:race\s+conditions?|deadlocks?|data\s+races?)\b|(?:(?:(?:an?|the)\s+)?(?:error|exception)\s+(?:handlers?|handling|guards?|checks?)\b[^.!?;\n]{0,80}\b)?(?:(?:does|do|did|can|could|will|would|should)\s+not|(?:does|do|did|can|could|will|would|should)n['’]?t|cannot|never)\s+(?:prevent|block|stop|catch|handle)\w*\b[^.!?;\n]{0,80}\b(?:crash|panic|throw|exception)\w*\b)/i;
+const satisfiedSafeguardImpact = /\b(?:(?:(?:(?:an?|the)\s+)?(?:authorization|authentication|permission|access[- ]control|security)\s+(?:checks?|guards?|safeguards?|controls?)|(?:(?:an?|the)\s+)?(?:csrf\s+(?:tokens?|protection|checks?|guards?)|session\s+(?:tokens?|validation|checks?|guards?)))\s+(?:prevents?|blocks?|stops?)\b[^.!?;\n]{0,80}\b(?:bypass|inject|leak|corrupt|overwrit|delet|eras|unauthori[sz])\w*\b|(?:(?:an?|the)\s+)?(?:csrf\s+(?:tokens?|protection|checks?|guards?)|session\s+(?:tokens?|validation|checks?|guards?))\b[^.!?;\n]{0,80}\b(?:(?:does|do|did|can|could|will|would|should)\s+not|(?:does|do|did|can|could|will|would|should)n['’]?t|cannot|never)\s+(?:allow|permit|enable)\w*\b[^.!?;\n]{0,80}\b(?:bypass|inject|leak|corrupt|overwrit|delet|eras|unauthori[sz])\w*\b|(?:(?:an?|the)\s+)?(?:error|exception)\s+(?:handlers?|handling|guards?|checks?)\b[^.!?;\n]{0,80}\b(?:prevent(?:s|ed|ing)?|block(?:s|ed|ing)?|stop(?:s|ped|ping)?|catch(?:es|ing)?|caught|handle(?:s|d|ing)?)\b[^.!?;\n]{0,80}\b(?:crash|panic|throw|exception)\w*\b|(?:(?:an?|the)\s+)?(?:error|exception)\s+(?:handlers?|handling|guards?|checks?)\b[^.!?;\n]{0,80}\b(?:(?:does|do|did|can|could|will|would|should)\s+not|(?:does|do|did|can|could|will|would|should)n['’]?t|cannot|never)\s+(?:allow|permit|enable)\w*\b[^.!?;\n]{0,80}\b(?:crash|panic|throw|exception)\w*\b|(?:(?:an?|the)\s+)?(?:mutex(?:es)?|locks?|locking|synchroni[sz]ation)\b[^.!?;\n]{0,80}\b(?:prevents?|blocks?|stops?)\b[^.!?;\n]{0,80}\b(?:race\s+conditions?|deadlocks?|data\s+races?)\b)/i;
 const injectionImpact = /\b(?:sql|command|code)\s+injection\b/i;
 const negatedInjectionImpact = /(?:\b(?:(?:no|without)\s+(?:\w+\s+){0,3}|(?:(?:does|do|did|can|could|would|should|will|is|are|was|were)\s+not|(?:does|do|did|can|could|would|should|wo|is|are|was|were)n['’]?t|cannot|never)\s+(?:\w+\s+){0,3})(?:sql|command|code)\s+injection\b|\b(?:sql|command|code)\s+injection\b\s+(?:(?:is|was)\s+(?:prevented|blocked|mitigated|rejected|impossible|disallowed|disabled|ruled\s+out)|(?:is|was)\s+(?:not|never)\s+(?:possible|permitted|enabled|observed|detected)|(?:is|was)n['’]?t\s+(?:possible|permitted|enabled)|(?:has|have|had)\s+(?:not|never)\s+(?:occur|happen)\w*|(?:can(?:not|['’]?t)|(?:does|did)\s+not|never)\s+(?:occur|happen|succeed)\w*|(?:checks?|tests?)\s+passed)\b)/i;
 const satisfiedInjectionSafeguard = /\b(?:(?:the\s+)?(?:system|application|service|implementation|validation|sanitization|escaping|parameteri[sz]ation)|(?:(?:an?|the)\s+)?(?:authorization|authentication|permission|access[- ]control|security)\s+(?:checks?|guards?|safeguards?|controls?))\s+(?:prevents?|blocks?|stops?|disallows?|disables?|rules?\s+out)\s+(?:sql|command|code)\s+injection\b/i;
@@ -83,6 +84,7 @@ function labeledBlockValue(body: string, label: string): string | null {
     const content = [match[1] ?? ""];
     for (const following of lines.slice(index + 1)) {
       if (/^\s*(?:[-*]\s*)?(?:\*\*)?(?:ISSUE|STATUS|STATE|OWNER|HEAD|EXACT HEAD|LAST CHECKED MAIN|MAIN|SCOPE BOUNDARY|VALIDATION EVIDENCE|UNRESOLVED REVIEW STATE|REVIEW HISTORY|OVERLAP STATE|NEXT ACTION|HUMAN ACTION|FOUNDER \/ STEWARD ACTION|STEWARD ACTION|ESCALATION|HANDOFF COMMENT)(?:\*\*)?\s*:/i.test(following)) break;
+      if (/^#{1,6}\s+(?:Issue|Status|State|Owner|Head|Exact Head|Last Checked Main|Main|Scope(?: Boundary)?|Validation(?: Evidence)?|Evidence|Unresolved Review(?: State)?|Review History|Overlap(?: State)?|Next(?: Action)?|Human Action|Founder \/ Steward Action|Steward Action|Escalation|Handoff(?: Comment)?)\b/i.test(following)) break;
       content.push(following);
     }
     const value = stripMarkdown(content.join("\n"));
@@ -191,8 +193,9 @@ function reviewBodyClauses(body: string): string[] {
 }
 
 function isClearedReviewClause(clause: string): boolean {
+  if (negatedReviewResolution.test(clause) || unresolvedReviewResolution.test(clause)) return false;
   return negatedReviewFinding.test(clause) ||
-    (clearedReviewFinding.test(clause) && !negatedReviewResolution.test(clause)) ||
+    clearedReviewFinding.test(clause) ||
     postposedClearedReviewFinding.test(clause);
 }
 
@@ -292,6 +295,14 @@ function handoffReportsSubstantiveUnresolvedReview(body: string): boolean {
   return isSubstantiveFinding(reviewState);
 }
 
+function handoffReportsFailedValidation(body: string): boolean {
+  const validation = labeledBlockValue(body, "VALIDATION EVIDENCE") ??
+    markdownSectionValue(body, /\b(?:validation|evidence)\b/i);
+  if (validation === null) return false;
+  return /(?:^|[;,.]\s*|\n\s*)(?:(?:release[- ]?check|validation|tests?|checks?|gates?)\s+)?(?:failed|not\s+run)\b/i
+    .test(validation);
+}
+
 function projectHandoff(
   comments: RawComment[],
   commentsComplete: boolean,
@@ -309,6 +320,7 @@ function projectHandoff(
       claimedHeadSha: null,
       lastCheckedMainSha: null,
       substantiveUnresolvedReview: false,
+      failedValidationEvidence: false,
       updatedAt: null,
       sourceRefs: [],
     };
@@ -324,6 +336,7 @@ function projectHandoff(
       claimedHeadSha: null,
       lastCheckedMainSha: null,
       substantiveUnresolvedReview: false,
+      failedValidationEvidence: false,
       updatedAt: null,
       sourceRefs: [],
     };
@@ -369,6 +382,7 @@ function projectHandoff(
     claimedHeadSha,
     lastCheckedMainSha,
     substantiveUnresolvedReview: handoffReportsSubstantiveUnresolvedReview(latest.body),
+    failedValidationEvidence: handoffReportsFailedValidation(latest.body),
     updatedAt: latest.updatedAt,
     sourceRefs: [source("direct", "Canonical handoff", latest.url, observedAt, latest.id)],
   };
@@ -578,7 +592,7 @@ function statusClaimsNotReady(statusText: string): boolean {
 }
 
 function handoffClaimsMergeReady(handoff: HandoffProjection): boolean {
-  return handoff.condition === "current" && !handoff.substantiveUnresolvedReview &&
+  return handoff.condition === "current" && !handoff.substantiveUnresolvedReview && !handoff.failedValidationEvidence &&
     /^merge[_ -]ready$/i.test(handoff.claimedState?.trim() ?? "");
 }
 

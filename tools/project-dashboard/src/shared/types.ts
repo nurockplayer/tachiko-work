@@ -137,6 +137,7 @@ export interface HandoffProjection {
   claimedHeadSha: string | null;
   lastCheckedMainSha: string | null;
   substantiveUnresolvedReview: boolean;
+  failedValidationEvidence: boolean;
   updatedAt: string | null;
   sourceRefs: SourceRef[];
 }

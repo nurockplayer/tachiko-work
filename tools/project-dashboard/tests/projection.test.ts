@@ -1369,7 +1369,9 @@ describe("normalizeRepositorySnapshot", () => {
     "No error handler allows a panic.",
     "No error handler is preventing panics.",
     "No error handler catches panics.",
+    "No error handler caught this panic.",
     "No error handling handles crashes.",
+    "No P1 findings have been resolved.",
     "This permits SQL injection for crafted input.",
     "SQL injection permits data loss and checks passed.",
     "SQL injection is prevented and code injection permits data loss.",
@@ -1519,6 +1521,7 @@ describe("normalizeRepositorySnapshot", () => {
     "An error handler does not allow a panic.",
     "An error handler is preventing panics.",
     "Error handler catches panics.",
+    "An error handler caught this panic.",
     "Error handling handles crashes.",
     "This does not permit SQL injection.",
     "SQL injection is prevented.",
@@ -2025,7 +2028,9 @@ describe("normalizeRepositorySnapshot", () => {
     "No error handler allows a panic.",
     "No error handler is preventing panics.",
     "No error handler catches panics.",
+    "No error handler caught this panic.",
     "No error handling handles crashes.",
+    "No P1 findings have been resolved.",
     "This permits SQL injection for crafted input.",
     "SQL injection permits data loss and checks passed.",
     "SQL injection is prevented and code injection permits data loss.",
@@ -2146,6 +2151,7 @@ describe("normalizeRepositorySnapshot", () => {
     "An error handler does not allow a panic.",
     "An error handler is preventing panics.",
     "Error handler catches panics.",
+    "An error handler caught this panic.",
     "Error handling handles crashes.",
     "This does not permit SQL injection.",
     "SQL injection is prevented.",
@@ -2440,6 +2446,38 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.handoff.substantiveUnresolvedReview).toBe(true);
     expect(lane?.phase).toBe("validating");
     expect(lane?.blockers).toContain("The current canonical handoff does not affirm merge-ready delivery state.");
+  });
+
+  it.each([
+    "release-check failed",
+    "not run",
+  ])("does not accept merge-ready while canonical validation evidence reports: %s", (validation) => {
+    const pr = pullRequest();
+    pr.comments[0]!.body = pr.comments[0]!.body.replace(
+      "VALIDATION EVIDENCE: exact-head gates passed",
+      `VALIDATION EVIDENCE: ${validation}`,
+    );
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.handoff.failedValidationEvidence).toBe(true);
+    expect(lane?.phase).toBe("validating");
+    expect(lane?.blockers).toContain("The current canonical handoff does not affirm merge-ready delivery state.");
+  });
+
+  it("stops unresolved-review continuation parsing at a canonical Markdown heading", () => {
+    const pr = pullRequest();
+    pr.comments[0]!.body = pr.comments[0]!.body.replace(
+      "UNRESOLVED REVIEW STATE: none",
+      "UNRESOLVED REVIEW STATE: none\n## Review History\nAll prior findings are resolved.",
+    );
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.handoff.substantiveUnresolvedReview).toBe(false);
+    expect(lane?.phase).toBe("merge_gate");
   });
 
   it("accepts the canonical underscore merge-ready handoff spelling", () => {
