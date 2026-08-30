@@ -28,9 +28,10 @@ pub use portable_package::{
 };
 
 pub use roproj::{
-    CanonicalRoProjectFile, CanonicalRoProjectV1, ROPROJ_V1_FORMAT_VERSION, ROPROJ_V1_PATHS,
-    canonicalize_roproj, decode_roproj_v1, encode_roproj_v1, load_roproj, materialize_roproj,
-    publish_canonicalized_roproj, publish_roproj, read_canonical_roproj,
+    CanonicalRoProjectAdmissionError, CanonicalRoProjectFile, CanonicalRoProjectV1,
+    ROPROJ_V1_FORMAT_VERSION, ROPROJ_V1_PATHS, canonicalize_roproj, decode_roproj_v1,
+    encode_roproj_v1, load_roproj, materialize_roproj, publish_canonicalized_roproj,
+    publish_roproj, read_canonical_roproj,
 };
 
 pub const LEGACY_FORMAT_VERSION: u32 = 1;

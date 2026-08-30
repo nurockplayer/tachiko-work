@@ -65,7 +65,7 @@ When this register marks a document as mixed-state, readers must respect the nar
 | `docs/architecture/ro-and-roproj-format.md` | Accepted source/artifact direction plus exact `.roproj/v1` materialization under ADR-0023 and portable package v1 under ADR-0025 | Direct `.ro` JSON, production `.roproj/v1`, #3 packaged `.ro` codec/native host/CLI workflows, and #44 optional Git/CI composition implemented | ADR-0003, ADR-0017, ADR-0023, ADR-0025; #123/#3/#44 implementation evidence; #52/#53 broader hostile-container/trust work |
 | `docs/architecture/ai-native-architecture.md` | Accepted direction constrained by ADR-0007/ADR-0020/ADR-0021/ADR-0024/ADR-0026 | Partially implemented; #29 workspace lifecycle, #30 provider-facing typed Propose/Execute hostile boundary, and #93 resident publication composition exist; concrete authentication, transport, and external capability remain | ADR-0007, ADR-0020, ADR-0021, ADR-0024, ADR-0026; #29/#30/#93 evidence; later host/transport completion |
 | `docs/architecture/frontend-backend-boundary.md` | Accepted Semantic API client boundary under ADR-0020, revision-pinned proposal authority under ADR-0024, scoped authorization/Approval under ADR-0026, and resident runtime/host separation under ADR-0022; concrete mechanisms Deferred | Projection/UI boundary partially implemented; #29 lifecycle, #30 AI hostile-client composition, #93 internal resident session, #94 internal selective projections/invalidation, and #95 retained state exist, while public frontend transport/delivery remains later host work | ADR-0020, ADR-0022, ADR-0024, ADR-0026; #29/#30/#93/#94/#95 evidence; future host completion |
-| `docs/architecture/wasm-strategy.md` | Accepted runtime direction under ADR-0022; Worker/ABI/persistence mechanics Deferred | Portable/native-WASM conformance, PR #91 topology evidence, #93 resident-session parity, #94 selective projection/invalidation parity, and #95 retained-state parity exist; production browser runtime not implemented | ADR-0022; future transport/host implementation |
+| `docs/architecture/wasm-strategy.md` | Accepted runtime direction under ADR-0022; public Worker/ABI/persistence mechanics Deferred | Portable/native-WASM conformance, PR #91 topology evidence, #93 resident-session parity, #94 selective projection/invalidation parity, #95 retained-state parity, #171's private Designer Worker/WASM projection, and #187's app-private canonical Open/IndexedDB Save As composition exist | ADR-0022; #171/#187 implementation evidence; future public transport/host work |
 | `docs/architecture/distributed-collaboration.md` | Hypothesis / Open Question | Not implemented | #12, #45, #46, #48-#50 |
 | `docs/architecture/rendering-system.md` | Hypothesis | Not current milestone | Designer MVP future work |
 | `docs/architecture/performance-model.md` | Provisional guidance | Mixed | Evidence-driven future work; ADR-0022 benchmark is topology evidence, not SLA |
@@ -166,6 +166,12 @@ Issue `#40` is a completed implementation/evidence task that consumed ADR-0015, 
 - #94: implements the current internal selective semantic query/projection
   invalidation slice under ADR-0022 without public transport stabilization.
 - #95: implements retained incremental engine state constrained by full-oracle equivalence, without durable cache meaning or a second invalidation authority.
+- #171: implements the bounded first-party Designer table/edit/selective-refresh
+  projection over the Rust-authoritative Worker/WASM occurrence without a
+  public client or wire contract.
+- #187: composes canonical `.roproj/v1` Open and exact-revision, create-only
+  IndexedDB Save As around that occurrence, with private bounded project
+  transfer and no overwrite/recovery/public storage contract.
 - #32: resolved by ADR-0020's M04 amendment and `semantic-api.md`; #144 provides
   the first provider-neutral formula reasoning/scenario/formula-update
   workspace/CLI implementation evidence.

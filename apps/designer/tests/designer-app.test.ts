@@ -9,9 +9,12 @@ import type {
   BootstrapProjection,
   FieldBatchProjection,
   FieldTarget,
+  OpenedProjection,
   PublicationProjection,
+  ProjectExport,
   TableProjection,
 } from "../src/runtime/protocol.ts";
+import type { DesignerProjectHost } from "../src/host/browser-project-host.ts";
 
 const bootstrap: BootstrapProjection = {
   title: "Moonfall Balance",
@@ -71,6 +74,16 @@ const table: TableProjection = {
   ],
 };
 
+const openedProjection = (): OpenedProjection => ({
+  bootstrap: structuredClone(bootstrap),
+  table: structuredClone(table),
+  control: {
+    target: structuredClone(bootstrap.control_field),
+    value: 200,
+    revision: "resident/0",
+  },
+});
+
 class FakeClient implements DesignerClient {
   queryRequests: FieldTarget[][] = [];
   editRequests: Array<{
@@ -82,6 +95,16 @@ class FakeClient implements DesignerClient {
   async bootstrap(): Promise<BootstrapProjection> {
     return bootstrap;
   }
+
+  async openProject(): Promise<OpenedProjection> {
+    return openedProjection();
+  }
+
+  async exportProject(expectedRevision: string): Promise<ProjectExport> {
+    return { revision: expectedRevision, bytes: new ArrayBuffer(8) };
+  }
+
+  async closeProject(): Promise<void> {}
 
   async queryTable(): Promise<TableProjection> {
     return structuredClone(table);
@@ -142,6 +165,51 @@ class FakeClient implements DesignerClient {
   close(): void {}
 }
 
+class FakeHost implements DesignerProjectHost {
+  async list() {
+    return [];
+  }
+
+  async read(): Promise<ArrayBuffer> {
+    throw new Error("No saved project exists in this fixture.");
+  }
+
+  async publish(): Promise<void> {}
+}
+
+const host = new FakeHost();
+
+class MemoryHost implements DesignerProjectHost {
+  readonly projects = new Map<string, ArrayBuffer>();
+
+  async list() {
+    return [...this.projects].map(([name, bytes]) => ({
+      name,
+      byte_length: bytes.byteLength,
+      saved_at: "2026-08-30T00:00:00.000Z",
+    }));
+  }
+
+  async read(name: string): Promise<ArrayBuffer> {
+    const bytes = this.projects.get(name);
+    if (bytes === undefined) throw new Error("Project is missing.");
+    return bytes.slice(0);
+  }
+
+  async publish(name: string, bytes: ArrayBuffer): Promise<void> {
+    if (this.projects.has(name)) {
+      throw new Error(`'${name}' already exists. Save As never overwrites a project.`);
+    }
+    this.projects.set(name, bytes.slice(0));
+  }
+}
+
+class RejectingPublishHost extends MemoryHost {
+  override async publish(): Promise<void> {
+    throw new Error("Injected host commit failure.");
+  }
+}
+
 class RejectingClient extends FakeClient {
   override async editNumber(): Promise<PublicationProjection> {
     throw new DesignerRuntimeError({
@@ -162,6 +230,17 @@ class RejectingClient extends FakeClient {
 class StartupFailingClient extends FakeClient {
   override async bootstrap(): Promise<BootstrapProjection> {
     throw new Error("Designer runtime could not be loaded (404).");
+  }
+}
+
+class RejectingOpenClient extends FakeClient {
+  override async openProject(): Promise<OpenedProjection> {
+    throw new DesignerRuntimeError({
+      code: "invalid_project",
+      message: "Canonical project admission rejected corrupt bytes.",
+      current_revision: "resident/0",
+      diagnostics: [],
+    });
   }
 }
 
@@ -217,12 +296,80 @@ class ControlRecoveryClient extends FakeClient {
 }
 
 describe("Designer application seam", () => {
+  it("preserves opaque edit targets across HTML parsing", async () => {
+    const target = { entity: "entity\u0000id", field: "field\rid" };
+    const opaqueTable = structuredClone(table);
+    opaqueTable.columns[1]!.id = target.field;
+    opaqueTable.rows[0]!.fields[1]!.target = target;
+
+    class OpaqueTargetClient extends FakeClient {
+      override async queryTable(): Promise<TableProjection> {
+        return structuredClone(opaqueTable);
+      }
+
+      override async editNumber(
+        expectedRevision: string,
+        editedTarget: FieldTarget,
+        input: string,
+      ): Promise<PublicationProjection> {
+        this.editRequests.push({
+          expectedRevision,
+          target: structuredClone(editedTarget),
+          input,
+        });
+        return {
+          base_revision: "resident/0",
+          resulting_revision: "resident/1",
+          entities: [],
+          fields: [target],
+          affected_calculations: [],
+        };
+      }
+
+      override async queryFields(
+        revision: string,
+        fields: FieldTarget[],
+      ): Promise<FieldBatchProjection> {
+        if (fields.length === 1 && fields[0]?.entity === "shop") {
+          return super.queryFields(revision, fields);
+        }
+        this.queryRequests.push(structuredClone(fields));
+        return {
+          revision,
+          fields: [
+            {
+              ...opaqueTable.rows[0]!.fields[1]!,
+              stored: { kind: "number", value: 45 },
+            },
+          ],
+        };
+      }
+    }
+
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const client = new OpaqueTargetClient();
+    const app = mountDesigner(root, client, host);
+    await app.ready;
+
+    const damage = root.querySelector<HTMLInputElement>('input[value="36"]');
+    if (damage === null) throw new Error("opaque target input is required");
+    damage.value = "45";
+    damage.form?.requestSubmit();
+
+    await vi.waitFor(() => {
+      expect(client.editRequests).toHaveLength(1);
+    });
+    expect(client.editRequests[0]?.target).toEqual(target);
+  });
+
   it("renders the bounded table and selectively refreshes a derived result", async () => {
     document.body.innerHTML = '<div id="app"></div>';
     const root = document.querySelector<HTMLElement>("#app");
     if (root === null) throw new Error("test root is required");
     const client = new FakeClient();
-    const app = mountDesigner(root, client);
+    const app = mountDesigner(root, client, host);
     await app.ready;
 
     const damage = root.querySelector<HTMLInputElement>(
@@ -270,7 +417,7 @@ describe("Designer application seam", () => {
     document.body.innerHTML = '<div id="app"></div>';
     const root = document.querySelector<HTMLElement>("#app");
     if (root === null) throw new Error("test root is required");
-    const app = mountDesigner(root, new RejectingClient());
+    const app = mountDesigner(root, new RejectingClient(), host);
     await app.ready;
 
     const interval = root.querySelector<HTMLInputElement>(
@@ -299,7 +446,7 @@ describe("Designer application seam", () => {
     document.body.innerHTML = '<div id="app"></div>';
     const root = document.querySelector<HTMLElement>("#app");
     if (root === null) throw new Error("test root is required");
-    const app = mountDesigner(root, new StartupFailingClient());
+    const app = mountDesigner(root, new StartupFailingClient(), host);
 
     await app.ready;
 
@@ -309,12 +456,41 @@ describe("Designer application seam", () => {
     expect(root.textContent).not.toContain("Starting the Rust workspace");
   });
 
+  it("keeps the current valid occurrence visible after failed Open admission", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const memoryHost = new MemoryHost();
+    memoryHost.projects.set("corrupt.roproj", new ArrayBuffer(8));
+    const confirm = vi.fn<Window["confirm"]>().mockReturnValue(true);
+    vi.stubGlobal("confirm", confirm);
+    const app = mountDesigner(root, new RejectingOpenClient(), memoryHost);
+    await app.ready;
+
+    root.querySelector<HTMLButtonElement>("[data-open-project]")?.click();
+    await vi.waitFor(() => {
+      expect(root.querySelector('[role="alert"]')?.textContent).toContain(
+        "admission rejected",
+      );
+    });
+    expect(root.getElementsByTagName("h1")[0]?.textContent).toBe("Moonfall Balance");
+    expect(root.querySelector('[data-testid="revision"]')?.textContent).toContain(
+      "resident/0",
+    );
+    expect(
+      root.querySelector<HTMLInputElement>('input[aria-label="Damage for Iron Sword"]')
+        ?.value,
+    ).toBe("36");
+    app.destroy();
+    vi.unstubAllGlobals();
+  });
+
   it("keeps stale edit controls disabled after a post-publication refresh failure", async () => {
     document.body.innerHTML = '<div id="app"></div>';
     const root = document.querySelector<HTMLElement>("#app");
     if (root === null) throw new Error("test root is required");
     const client = new RefreshFailingClient();
-    const app = mountDesigner(root, client);
+    const app = mountDesigner(root, client, host);
     await app.ready;
 
     const damage = root.querySelector<HTMLInputElement>(
@@ -350,7 +526,7 @@ describe("Designer application seam", () => {
     const root = document.querySelector<HTMLElement>("#app");
     if (root === null) throw new Error("test root is required");
     const client = new ControlRecoveryClient();
-    const app = mountDesigner(root, client);
+    const app = mountDesigner(root, client, host);
     await app.ready;
 
     const damage = root.querySelector<HTMLInputElement>(
@@ -383,5 +559,158 @@ describe("Designer application seam", () => {
         'input[aria-label="Damage for Iron Sword"]',
       )?.disabled,
     ).toBe(false);
+  });
+
+  it("marks only confirmed host revisions durable and reopens after occurrence teardown", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const memoryHost = new MemoryHost();
+    const prompt = vi.fn<Window["prompt"]>();
+    vi.stubGlobal("prompt", prompt);
+    const addEventListener = vi.spyOn(window, "addEventListener");
+    const removeEventListener = vi.spyOn(window, "removeEventListener");
+    prompt.mockReturnValueOnce("source.roproj");
+    const app = mountDesigner(root, new FakeClient(), memoryHost);
+    await app.ready;
+
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+      "Unsaved changes",
+    );
+    expect(addEventListener).toHaveBeenCalledWith("beforeunload", expect.any(Function));
+    root.querySelector<HTMLButtonElement>("[data-save-as]")?.click();
+    await vi.waitFor(() => {
+      expect(memoryHost.projects.has("source.roproj")).toBe(true);
+    });
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+      "Saved",
+    );
+    expect(removeEventListener).toHaveBeenCalledWith(
+      "beforeunload",
+      expect.any(Function),
+    );
+
+    const damage = root.querySelector<HTMLInputElement>(
+      'input[aria-label="Damage for Iron Sword"]',
+    );
+    if (damage === null || damage.form === null) throw new Error("damage form is required");
+    damage.value = "45";
+    damage.form.requestSubmit();
+    await vi.waitFor(() => {
+      expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+        "Unsaved changes",
+      );
+    });
+
+    prompt.mockReturnValueOnce("source.roproj");
+    root.querySelector<HTMLButtonElement>("[data-save-as]")?.click();
+    await vi.waitFor(() => {
+      expect(root.querySelector('[role="alert"]')?.textContent).toContain(
+        "never overwrites",
+      );
+    });
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+      "Unsaved changes",
+    );
+
+    prompt.mockReturnValueOnce("edited.roproj");
+    root.querySelector<HTMLButtonElement>("[data-save-as]")?.click();
+    await vi.waitFor(() => {
+      expect(memoryHost.projects.has("edited.roproj")).toBe(true);
+    });
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+      "Saved",
+    );
+
+    root.querySelector<HTMLButtonElement>("[data-close-project]")?.click();
+    await vi.waitFor(() => {
+      expect(root.getElementsByTagName("h1")[0]?.textContent).toBe("No project open");
+    });
+    const saved = root.querySelector<HTMLSelectElement>("[data-saved-project-select]");
+    if (saved === null) throw new Error("saved project picker is required");
+    saved.value = "edited.roproj";
+    saved.dispatchEvent(new Event("change"));
+    root.querySelector<HTMLButtonElement>("[data-open-project]")?.click();
+    await vi.waitFor(() => {
+      expect(root.getElementsByTagName("h1")[0]?.textContent).toBe("Moonfall Balance");
+    });
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+      "Saved",
+    );
+    app.destroy();
+    addEventListener.mockRestore();
+    removeEventListener.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  it("requires confirmation before Open or Close discards a dirty occurrence", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const memoryHost = new MemoryHost();
+    memoryHost.projects.set("saved.roproj", new ArrayBuffer(8));
+    const client = new FakeClient();
+    const openProject = vi.spyOn(client, "openProject");
+    const closeProject = vi.spyOn(client, "closeProject");
+    const confirm = vi.fn<Window["confirm"]>().mockReturnValue(false);
+    vi.stubGlobal("confirm", confirm);
+    const app = mountDesigner(root, client, memoryHost);
+    await app.ready;
+
+    root.querySelector<HTMLButtonElement>("[data-open-project]")?.click();
+    root.querySelector<HTMLButtonElement>("[data-close-project]")?.click();
+    const importInput = root.querySelector<HTMLInputElement>("[data-import-project]");
+    if (importInput === null) throw new Error("project import input is required");
+    Object.defineProperty(importInput, "value", {
+      configurable: true,
+      value: "saved.roproj",
+      writable: true,
+    });
+    Object.defineProperty(importInput, "files", {
+      configurable: true,
+      value: [],
+    });
+    importInput.dispatchEvent(new Event("change"));
+
+    expect(confirm).toHaveBeenCalledTimes(3);
+    expect(openProject).not.toHaveBeenCalled();
+    expect(closeProject).not.toHaveBeenCalled();
+    expect(importInput.value).toBe("");
+    confirm.mockReturnValue(true);
+    importInput.value = "saved.roproj";
+    importInput.dispatchEvent(new Event("change"));
+    await vi.waitFor(() => {
+      expect(importInput.value).toBe("");
+    });
+    expect(root.getElementsByTagName("h1")[0]?.textContent).toBe("Moonfall Balance");
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+      "Unsaved changes",
+    );
+    app.destroy();
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps an absent destination and the current revision unsaved when host commit fails", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const rejectingHost = new RejectingPublishHost();
+    const prompt = vi.fn<Window["prompt"]>().mockReturnValue("failed.roproj");
+    vi.stubGlobal("prompt", prompt);
+    const app = mountDesigner(root, new FakeClient(), rejectingHost);
+    await app.ready;
+
+    root.querySelector<HTMLButtonElement>("[data-save-as]")?.click();
+    await vi.waitFor(() => {
+      expect(root.querySelector('[role="alert"]')?.textContent).toContain(
+        "Injected host commit failure",
+      );
+    });
+    expect(rejectingHost.projects.has("failed.roproj")).toBe(false);
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+      "Unsaved changes",
+    );
+    app.destroy();
+    vi.unstubAllGlobals();
   });
 });
