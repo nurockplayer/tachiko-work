@@ -152,6 +152,45 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries[0]?.phase).toBe("ready");
   });
 
+  it.each([
+    "Not parked; Ready for bounded implementation.",
+    "Not currently parked; Ready.",
+    "Never parked. Ready.",
+  ])("does not treat a negated parked claim as parked: %s", (status) => {
+    const ready = issue();
+    ready.body = `## Status\n\n${status}\n\nOwner: \`agent:codex\``;
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [ready] }));
+
+    expect(projection.deliveries[0]?.issue.readiness).toBe("ready");
+    expect(projection.deliveries[0]?.phase).toBe("ready");
+  });
+
+  it("uses claim-bounded parked parsing for handoff-derived status", () => {
+    const ready = issue();
+    ready.comments[0]!.body = [
+      "<!-- agent-handoff:v1 -->",
+      "OWNER: agent:codex",
+      "STATE: Not parked; Ready",
+      `LAST CHECKED MAIN: ${mainSha}`,
+    ].join("\n");
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [ready] }));
+
+    expect(projection.deliveries[0]?.issue.readiness).toBe("ready");
+    expect(projection.deliveries[0]?.phase).toBe("ready");
+  });
+
+  it("preserves an affirmative parked Issue status", () => {
+    const parked = issue();
+    parked.body = "## Status\n\nParked\n\nOwner: `agent:codex`";
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [parked] }));
+
+    expect(projection.deliveries[0]?.issue.readiness).toBe("parked");
+    expect(projection.deliveries[0]?.phase).toBe("parked");
+  });
+
   it("uses claim-bounded blocked negation for handoff-derived status", () => {
     const ready = issue();
     ready.comments[0]!.body = [

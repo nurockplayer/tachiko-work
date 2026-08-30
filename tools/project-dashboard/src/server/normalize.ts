@@ -243,6 +243,10 @@ function statusClaimsBlocked(statusText: string): boolean {
   return statusHasAffirmativeClaim(statusText, /\bblock(?:ed)?\b/i);
 }
 
+function statusClaimsParked(statusText: string): boolean {
+  return statusHasAffirmativeClaim(statusText, /\bpark(?:ed)?\b/i);
+}
+
 function statusClaimsActive(statusText: string): boolean {
   return statusHasAffirmativeClaim(
     statusText,
@@ -274,7 +278,7 @@ function issueReadiness(issue: RawIssue, handoff: HandoffProjection): DeliveryLa
   if (decisionIssue.test(issue.title) && statusClaimsDecisionReady(issueStatus)) return "ready";
   if (authorityOnlyIssue.test(issue.title)) return "unknown";
   if (/\bdecision[_ -]?ready\b/.test(issueStatus) || statusClaimsNotReady(issueStatus)) return "unknown";
-  if (/\bpark(?:ed)?\b/.test(issueStatus)) return "parked";
+  if (statusClaimsParked(issueStatus)) return "parked";
   if (statusClaimsBlocked(issueStatus)) return "blocked";
   if (!statusClaimsActive(issueStatus) && !statusClaimsReady(issueStatus)) return "unknown";
   const handoffState = handoff.claimedState?.toLowerCase() ?? "";
@@ -286,7 +290,7 @@ function issueReadiness(issue: RawIssue, handoff: HandoffProjection): DeliveryLa
   const statusText = (currentHandoffState ?? issueStatus).toLowerCase();
   if (/\bdecision[_ -]?ready\b/.test(statusText)) return "unknown";
   if (statusClaimsNotReady(statusText)) return "unknown";
-  if (/\bpark(?:ed)?\b/.test(statusText)) return "parked";
+  if (statusClaimsParked(statusText)) return "parked";
   if (statusClaimsBlocked(statusText)) return "blocked";
   if (statusClaimsActive(statusText)) return "active";
   if (statusClaimsReady(statusText)) return "ready";
@@ -505,7 +509,7 @@ function derivePhase(
   humanActionRequested: boolean,
 ): DeliveryPhase {
   const claimedState = handoff.condition === "current" ? handoff.claimedState?.toLowerCase() ?? "" : "";
-  if (readiness === "parked" || claimedState.includes("parked")) return "parked";
+  if (readiness === "parked" || statusClaimsParked(claimedState)) return "parked";
   if (humanActionRequested || claimedState.includes("human_required") || claimedState.includes("human required")) return "human_required";
   if (ownershipConflict) return "blocked";
   if (readiness === "blocked") return "blocked";
