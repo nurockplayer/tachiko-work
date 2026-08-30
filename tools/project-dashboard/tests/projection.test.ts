@@ -1390,6 +1390,12 @@ describe("normalizeRepositorySnapshot", () => {
     "No P3 findings.",
     "No bugs found.",
     "No errors found.",
+    "No failure observed.",
+    "No failures found.",
+    "No defects detected.",
+    "No breakage.",
+    "This is not wrong.",
+    "This isn't unsafe.",
   ])("does not promote a negated unlabeled impact statement: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
