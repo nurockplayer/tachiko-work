@@ -12,6 +12,9 @@ keywords.workspace = true
 categories.workspace = true
 rust-version.workspace = true
 
+[features]
+issue-175-research = []
+
 [dependencies]
 serde.workspace = true
 tachiko-diff-engine = { version = "0.1.0", path = "../diff-engine" }

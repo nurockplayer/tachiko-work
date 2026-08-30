@@ -24,21 +24,10 @@ use tachiko_semantic_core::{
     FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value, is_valid_identifier,
 };
 
+use super::issue_175_oracle_bridge::{AdmissionWork, admit_one_pass_exact, dto_work_counts};
 use super::*;
 
 static NEXT_RESEARCH_TEMP: AtomicU64 = AtomicU64::new(0);
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct AdmissionWork {
-    source_bytes: usize,
-    nesting_scan_bytes: usize,
-    json_parser_deserializer_bytes: usize,
-    canonical_render_bytes: usize,
-    entity_records: usize,
-    formula_ast_nodes: usize,
-    reference_edges: usize,
-    formula_dependency_edges: usize,
-}
 
 #[derive(Clone, Copy, Debug)]
 struct HostAdmissionTimings {
@@ -280,117 +269,6 @@ impl Drop for ResearchTempDirectory {
     }
 }
 
-/// Research A1: prove exact v1 bytes incrementally and construct one complete
-/// semantic document directly. Unlike A0 it neither retains a canonical tree
-/// in its result nor re-encodes or decodes the complete document a second time.
-fn admit_one_pass_exact(
-    files: &[(String, Vec<u8>)],
-    collect_work: bool,
-) -> Result<(Document, AdmissionWork), FormatError> {
-    require_exact_paths(files)?;
-    let source_bytes = files.iter().map(|(_, bytes)| bytes.len()).sum();
-    let mut strict_input_bytes = files[0].1.len() + files[1].1.len();
-
-    // ADR-0017/0023: manifest selection precedes all body interpretation.
-    let manifest = decode_manifest(&files[0].1)?;
-    if render_manifest(&manifest)?.as_bytes() != files[0].1 {
-        return invalid_representation("manifest.json is not canonical .roproj/v1".to_owned());
-    }
-
-    let schema_dtos: Vec<SchemaV1> = decode_json_file(ROPROJ_V1_PATHS[1], &files[1].1)?;
-    if render_schemas(&schema_dtos)?.as_bytes() != files[1].1 {
-        return invalid_representation("schemas.json is not canonical .roproj/v1".to_owned());
-    }
-    let schemas = schemas_into_semantic(schema_dtos)?;
-
-    let mut entities = BTreeMap::new();
-    let mut entity_records = 0;
-    let mut formula_ast_nodes = 0;
-    let mut reference_edges = 0;
-    let mut formula_dependency_edges = 0;
-    for (shard, (path, bytes)) in files.iter().enumerate().skip(2) {
-        if bytes.is_empty() {
-            continue;
-        }
-        let source = utf8(path, bytes)?;
-        let records = source.strip_suffix('\n').ok_or_else(|| {
-            FormatError::InvalidRoProjectRepresentation {
-                message: format!("nonempty entity shard '{path}' must end with one LF"),
-            }
-        })?;
-        let mut previous_id: Option<String> = None;
-        for (record_index, record) in records.split('\n').enumerate() {
-            if record.is_empty() {
-                return invalid_representation(format!(
-                    "entity shard '{path}' contains a blank JSONL record"
-                ));
-            }
-            let record_path = format!("{path}:{}", record_index + 1);
-            strict_input_bytes += record.len();
-            inspect_roproj(record, ROPROJ_V1_MAX_JSON_NESTING)
-                .map_err(|error| map_frontend_error(&record_path, error))?;
-            let dto: EntityV1 = deserialize_roproj(&record_path, record)?;
-            if collect_work {
-                let (nodes, references, dependencies) = dto_work_counts(&dto);
-                formula_ast_nodes += nodes;
-                reference_edges += references;
-                formula_dependency_edges += dependencies;
-            }
-            require_id("entity id", &dto.id)?;
-            ensure_increasing("entity", previous_id.as_deref(), &dto.id)?;
-            previous_id = Some(dto.id.clone());
-            if shard_index(&dto.id) != shard - 2 {
-                return invalid_representation(format!(
-                    "entity '{}' is in wrong shard '{path}'",
-                    dto.id
-                ));
-            }
-
-            let mut canonical_record = String::with_capacity(record.len());
-            write_entity(&mut canonical_record, &dto)?;
-            if canonical_record != record {
-                return invalid_representation(format!(
-                    "entity record '{record_path}' is not canonical .roproj/v1"
-                ));
-            }
-
-            let id_text = dto.id.clone();
-            let id = EntityId::from(id_text.clone());
-            if entities.insert(id, dto.into_semantic()?).is_some() {
-                return invalid_representation(format!("duplicate entity id '{id_text}'"));
-            }
-            entity_records += 1;
-        }
-    }
-
-    let document = Document {
-        id: DocumentId::from(manifest.document.id),
-        title: manifest.document.title,
-        schemas,
-        entities,
-    };
-    super::super::super::check_document(&document)?;
-    validate_semantic_expression_limits(&document)?;
-
-    Ok((
-        document,
-        AdmissionWork {
-            source_bytes,
-            // `inspect_roproj` performs one explicit nesting preflight plus
-            // syntax and duplicate-member parser passes. DTO deserialization
-            // is a third parser traversal. JSONL separator LFs are layout
-            // checks, not JSON input.
-            nesting_scan_bytes: strict_input_bytes,
-            json_parser_deserializer_bytes: strict_input_bytes * 3,
-            canonical_render_bytes: source_bytes,
-            entity_records,
-            formula_ast_nodes,
-            reference_edges,
-            formula_dependency_edges,
-        },
-    ))
-}
-
 /// Research A1 host path: start from the same exact filesystem tree as A0,
 /// retain only manifest/schema bytes and one entity record at a time, and
 /// publish semantic authority only after complete exact admission.
@@ -413,20 +291,28 @@ fn admit_one_pass_host_controlled(
     let started = Instant::now();
     super::super::host::require_directory(root, "canonical .roproj root")?;
     super::super::host::require_exact_root_entries(root)?;
+    check_cancel(cancel)?;
 
-    let manifest_bytes = super::super::host::read_file(&root.join(ROPROJ_V1_PATHS[0]))?;
+    let manifest_bytes = read_file_cancellable(&root.join(ROPROJ_V1_PATHS[0]), cancel)?;
+    check_cancel(cancel)?;
     let manifest = decode_manifest(&manifest_bytes)?;
+    check_cancel(cancel)?;
     if render_manifest(&manifest)?.as_bytes() != manifest_bytes {
         return invalid_representation("manifest.json is not canonical .roproj/v1".to_owned());
     }
+    check_cancel(cancel)?;
     let source_known = started.elapsed();
 
     super::super::host::require_exact_entity_entries(&root.join("entities"))?;
-    let schemas_bytes = super::super::host::read_file(&root.join(ROPROJ_V1_PATHS[1]))?;
+    check_cancel(cancel)?;
+    let schemas_bytes = read_file_cancellable(&root.join(ROPROJ_V1_PATHS[1]), cancel)?;
+    check_cancel(cancel)?;
     let schema_dtos: Vec<SchemaV1> = decode_json_file(ROPROJ_V1_PATHS[1], &schemas_bytes)?;
+    check_cancel(cancel)?;
     if render_schemas(&schema_dtos)?.as_bytes() != schemas_bytes {
         return invalid_representation("schemas.json is not canonical .roproj/v1".to_owned());
     }
+    check_cancel(cancel)?;
     let schemas = schemas_into_semantic(schema_dtos)?;
 
     let mut source_bytes = manifest_bytes.len() + schemas_bytes.len();
@@ -680,6 +566,18 @@ fn read_file_cancellable_with_limit(
     cancel: Option<&AtomicBool>,
     limit: usize,
 ) -> Result<Vec<u8>, FormatError> {
+    read_file_cancellable_inner(path, cancel, Some(limit))
+}
+
+fn read_file_cancellable(path: &Path, cancel: Option<&AtomicBool>) -> Result<Vec<u8>, FormatError> {
+    read_file_cancellable_inner(path, cancel, None)
+}
+
+fn read_file_cancellable_inner(
+    path: &Path,
+    cancel: Option<&AtomicBool>,
+    limit: Option<usize>,
+) -> Result<Vec<u8>, FormatError> {
     let mut reader = BufReader::new(File::open(path).map_err(|source| FormatError::Read {
         path: path.to_owned(),
         source,
@@ -699,9 +597,10 @@ fn read_file_cancellable_with_limit(
             if available.is_empty() {
                 return Ok(bytes);
             }
-            if bytes.len().saturating_add(available.len()) > limit {
+            if limit.is_some_and(|limit| bytes.len().saturating_add(available.len()) > limit) {
                 return invalid_representation(format!(
-                    "non-authoritative source preview manifest exceeds {limit} byte budget"
+                    "non-authoritative source preview manifest exceeds {} byte budget",
+                    limit.unwrap()
                 ));
             }
             bytes.extend_from_slice(available);
@@ -2046,42 +1945,6 @@ fn kind_matches_type(kind: &ValueKindFact, field_type: &FieldTypeFact) -> bool {
     )
 }
 
-fn require_exact_paths(files: &[(String, Vec<u8>)]) -> Result<(), FormatError> {
-    if files.len() != ROPROJ_V1_PATHS.len() {
-        return invalid_representation(format!(
-            "canonical tree requires {} files, found {}",
-            ROPROJ_V1_PATHS.len(),
-            files.len()
-        ));
-    }
-    for (index, ((path, _), expected)) in files.iter().zip(ROPROJ_V1_PATHS).enumerate() {
-        if path != expected {
-            return invalid_representation(format!(
-                "canonical path {index} must be '{expected}', found '{path}'"
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn dto_work_counts(entity: &EntityV1) -> (usize, usize, usize) {
-    let mut formula_ast_nodes = 0;
-    let mut reference_edges = 0;
-    let mut formula_dependency_edges = 0;
-    for value in entity.fields.values() {
-        match value {
-            ValueV1::Reference(_) => reference_edges += 1,
-            ValueV1::Formula(expression) => {
-                let (dependencies, nodes) = expression_dependencies(expression);
-                formula_ast_nodes += nodes;
-                formula_dependency_edges += dependencies.len();
-            }
-            ValueV1::Number(_) | ValueV1::Text(_) | ValueV1::Boolean(_) => {}
-        }
-    }
-    (formula_ast_nodes, reference_edges, formula_dependency_edges)
-}
-
 fn owned_files(tree: &CanonicalRoProjectV1) -> Vec<(String, Vec<u8>)> {
     tree.files()
         .iter()
@@ -3200,6 +3063,25 @@ fn issue_175_progressive_source_preview_has_an_explicit_record_budget() {
         FormatError::InvalidRoProjectRepresentation { message }
             if message.contains("non-authoritative source preview exceeds 65536 byte budget")
     ));
+}
+
+#[test]
+fn issue_175_background_admission_cancels_before_large_metadata_parse() {
+    let temp = ResearchTempDirectory::new();
+    let root = temp.path().join("large-metadata-cancel.roproj");
+    super::super::host::materialize_roproj(&root, &mixed_document(17, 37)).unwrap();
+    std::fs::write(root.join(ROPROJ_V1_PATHS[1]), vec![b' '; 1_000_000]).unwrap();
+    let cancel = AtomicBool::new(true);
+    let records = AtomicUsize::new(0);
+
+    let error = admit_one_pass_host_controlled(&root, false, Some(&cancel), Some(&records), None)
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        FormatError::InvalidRoProjectRepresentation { message }
+            if message.contains("cancelled before SemanticCurrent")
+    ));
+    assert_eq!(records.load(Ordering::Relaxed), 0);
 }
 
 #[test]

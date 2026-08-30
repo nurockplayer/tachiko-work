@@ -8,6 +8,8 @@ use std::{
 use serde::Serialize;
 use tachiko_diff_engine::diff;
 pub use tachiko_diff_engine::{DiffError, SemanticChange, SemanticDiff};
+#[cfg(feature = "issue-175-research")]
+pub use tachiko_formula_engine::CalculationOutcome as Issue175CalculationOutcome;
 use tachiko_formula_engine::{
     Calculation, CalculationOutcome, FormulaBindError, FormulaParseError, RetainedCalculationState,
     bind_expression, calculate_complete, parse_expression, project_expression,
@@ -34,6 +36,14 @@ pub mod analysis_operations;
 pub mod formula_operations;
 pub mod patch_lifecycle;
 pub mod resident_session;
+
+/// Research-only access to the accepted complete calculation oracle for Issue
+/// #175 cross-crate admission parity tests.
+#[cfg(feature = "issue-175-research")]
+#[must_use]
+pub fn issue_175_calculate_complete(document: &Document) -> Issue175CalculationOutcome {
+    calculate_complete(document)
+}
 
 /// Symbolic codes emitted by workspace composition of formula-engine outcomes.
 ///

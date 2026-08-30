@@ -5,6 +5,8 @@ pub use host::{
     canonicalize_roproj, load_roproj, materialize_roproj, publish_canonicalized_roproj,
     publish_roproj, read_canonical_roproj,
 };
+#[cfg(feature = "issue-175-research")]
+pub use v1::issue_175_admit_a0_a1;
 pub use v1::{
     CanonicalRoProjectAdmissionError, CanonicalRoProjectFile, CanonicalRoProjectV1,
     ROPROJ_V1_FORMAT_VERSION, ROPROJ_V1_PATHS, decode as decode_roproj_v1,
