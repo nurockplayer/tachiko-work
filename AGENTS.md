@@ -20,6 +20,26 @@ For issue-driven repository work, follow the canonical
 It defines the Ready gate, provider-neutral Steward/delivery-agent split,
 single-PR handoff, review discipline, and post-merge stop conditions.
 
+## Delivery continuity
+
+For a Ready Issue with an active agent-owned PR, continue the bounded one-Issue
+delivery loop autonomously until a canonical stop or escalation condition is
+actually reached.
+
+A pending non-terminal sub-agent result, CI job, hosted review, or other
+asynchronous validation is **not** a completion, handoff, or stop condition. The
+delivery agent must wait or poll for the result, consume it when available, and
+continue the same review-fix / exact-head validation loop without requiring a
+human or Steward prompt merely to resume.
+
+Intermediate progress may update the single canonical `agent-handoff:v1`, but
+do not present intermediate progress as task completion solely because an
+asynchronous gate is still running. Return control only for the stop/escalation
+conditions defined by the canonical repository delivery workflow, including a
+genuine durable decision or authority contradiction, an external/human-only
+permission requirement, or the bounded delivery reaching its intended terminal
+handoff state.
+
 ## JavaScript and TypeScript
 
 Node.js is used by parts of the release and WASM validation workflow. If package-managed JavaScript or TypeScript tooling is introduced or modified:
