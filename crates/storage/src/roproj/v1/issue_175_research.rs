@@ -184,6 +184,7 @@ enum SourceBinding {
     },
     GitSnapshot {
         source_sha256: String,
+        object_format: String,
         commit: String,
         tree: String,
         blobs: Vec<GitBlobBinding>,
@@ -395,7 +396,7 @@ fn admit_one_pass_host(
     root: &Path,
     collect_work: bool,
 ) -> Result<(Document, AdmissionWork, HostAdmissionTimings), FormatError> {
-    admit_one_pass_host_controlled(root, collect_work, None, None)
+    admit_one_pass_host_controlled(root, collect_work, None, None, None)
 }
 
 #[allow(clippy::too_many_lines)]
@@ -404,8 +405,10 @@ fn admit_one_pass_host_controlled(
     collect_work: bool,
     cancel: Option<&AtomicBool>,
     records_completed: Option<&AtomicUsize>,
+    pause_before_final_validation: Option<&AtomicBool>,
 ) -> Result<(Document, AdmissionWork, HostAdmissionTimings), FormatError> {
     let started = Instant::now();
+    super::super::host::require_directory(root, "canonical .roproj root")?;
     super::super::host::require_exact_root_entries(root)?;
 
     let manifest_bytes = super::super::host::read_file(&root.join(ROPROJ_V1_PATHS[0]))?;
@@ -511,8 +514,18 @@ fn admit_one_pass_host_controlled(
         schemas,
         entities,
     };
+    check_cancel(cancel)?;
+    if let Some(reached) = pause_before_final_validation {
+        reached.store(true, Ordering::Release);
+        while !cancel.is_some_and(|token| token.load(Ordering::Acquire)) {
+            std::thread::yield_now();
+        }
+    }
+    check_cancel(cancel)?;
     super::super::super::check_document(&document)?;
-    validate_semantic_expression_limits(&document)?;
+    check_cancel(cancel)?;
+    validate_semantic_expression_limits_cancellable(&document, cancel)?;
+    check_cancel(cancel)?;
     let semantic_current = started.elapsed();
     Ok((
         document,
@@ -534,15 +547,84 @@ fn admit_one_pass_host_controlled(
     ))
 }
 
+fn check_cancel(cancel: Option<&AtomicBool>) -> Result<(), FormatError> {
+    if cancel.is_some_and(|token| token.load(Ordering::Acquire)) {
+        invalid_representation("research A1 admission cancelled before SemanticCurrent".to_owned())
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_semantic_expression_limits_cancellable(
+    document: &Document,
+    cancel: Option<&AtomicBool>,
+) -> Result<(), FormatError> {
+    if cancel.is_none() {
+        return validate_semantic_expression_limits(document);
+    }
+    for (entity_index, entity) in document.entities.values().enumerate() {
+        if entity_index % 64 == 0 {
+            check_cancel(cancel)?;
+            std::thread::yield_now();
+        }
+        for value in entity.fields.values() {
+            let Value::Formula(expression) = value else {
+                continue;
+            };
+            let mut nodes = 0_usize;
+            let mut stack = vec![(expression, 1_usize)];
+            while let Some((node, depth)) = stack.pop() {
+                if nodes % 64 == 0 {
+                    check_cancel(cancel)?;
+                }
+                if depth > MAX_EXPRESSION_DEPTH {
+                    return invalid_representation(format!(
+                        "formula expression exceeds {MAX_EXPRESSION_DEPTH}-depth limit"
+                    ));
+                }
+                nodes += 1;
+                if nodes > MAX_EXPRESSION_NODES {
+                    return invalid_representation(format!(
+                        "formula expression exceeds {MAX_EXPRESSION_NODES}-node limit"
+                    ));
+                }
+                match node {
+                    Expression::Add { left, right }
+                    | Expression::Subtract { left, right }
+                    | Expression::Multiply { left, right }
+                    | Expression::Divide { left, right }
+                    | Expression::Minimum { left, right }
+                    | Expression::Maximum { left, right } => {
+                        stack.push((right, depth + 1));
+                        stack.push((left, depth + 1));
+                    }
+                    Expression::Number(_) | Expression::Reference(_) => {}
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn read_record_cancellable<R: BufRead>(
     reader: &mut R,
     line: &mut Vec<u8>,
     path: &Path,
     cancel: Option<&AtomicBool>,
 ) -> Result<usize, FormatError> {
+    read_record_cancellable_with_limit(reader, line, path, cancel, None)
+}
+
+fn read_record_cancellable_with_limit<R: BufRead>(
+    reader: &mut R,
+    line: &mut Vec<u8>,
+    path: &Path,
+    cancel: Option<&AtomicBool>,
+    max_record_bytes: Option<usize>,
+) -> Result<usize, FormatError> {
     const MAX_CHUNK_BYTES: usize = 64 * 1024;
 
-    if cancel.is_none() {
+    if cancel.is_none() && max_record_bytes.is_none() {
         return reader
             .read_until(b'\n', line)
             .map_err(|source| FormatError::Read {
@@ -572,6 +654,14 @@ fn read_record_cancellable<R: BufRead>(
                 .position(|byte| *byte == b'\n')
                 .map_or(bounded.len(), |index| index + 1);
             let record_complete = bounded[consumed - 1] == b'\n';
+            if max_record_bytes
+                .is_some_and(|limit| line.len().saturating_sub(initial_len) + consumed > limit)
+            {
+                return invalid_representation(format!(
+                    "non-authoritative source preview exceeds {limit} byte budget",
+                    limit = max_record_bytes.unwrap()
+                ));
+            }
             line.extend_from_slice(&bounded[..consumed]);
             (consumed, record_complete)
         };
@@ -582,7 +672,14 @@ fn read_record_cancellable<R: BufRead>(
     }
 }
 
-fn source_preview(root: &Path) -> Result<(String, String, String), FormatError> {
+fn source_preview(
+    root: &Path,
+    cancel: Option<&AtomicBool>,
+) -> Result<(String, String, String), FormatError> {
+    const MAX_PREVIEW_RECORD_BYTES: usize = 64 * 1024;
+    super::super::host::require_directory(root, "canonical .roproj root")?;
+    super::super::host::require_exact_root_entries(root)?;
+    super::super::host::require_exact_entity_entries(&root.join("entities"))?;
     for relative in ROPROJ_V1_PATHS.iter().skip(2) {
         let path = root.join(relative);
         let mut reader = BufReader::new(File::open(&path).map_err(|source| FormatError::Read {
@@ -590,13 +687,13 @@ fn source_preview(root: &Path) -> Result<(String, String, String), FormatError> 
             source,
         })?);
         let mut line = Vec::new();
-        if reader
-            .read_until(b'\n', &mut line)
-            .map_err(|source| FormatError::Read {
-                path: path.clone(),
-                source,
-            })?
-            == 0
+        if read_record_cancellable_with_limit(
+            &mut reader,
+            &mut line,
+            &path,
+            cancel,
+            Some(MAX_PREVIEW_RECORD_BYTES),
+        )? == 0
         {
             continue;
         }
@@ -691,6 +788,7 @@ fn parse_child_rss(stdout: &[u8], stderr: &[u8]) -> (usize, usize) {
 #[allow(clippy::too_many_lines)]
 fn scan_spine_host(root: &Path, retain_structural: bool) -> Result<SpineScan, FormatError> {
     let started = Instant::now();
+    super::super::host::require_directory(root, "canonical .roproj root")?;
     super::super::host::require_exact_root_entries(root)?;
     let mut fingerprint = sha2::Sha256::new();
 
@@ -908,6 +1006,7 @@ fn hash_frame(hasher: &mut sha2::Sha256, path: &str, bytes: &[u8]) {
 
 fn fingerprint_source(root: &Path) -> Result<(String, usize, Duration), FormatError> {
     let started = Instant::now();
+    super::super::host::require_directory(root, "canonical .roproj root")?;
     super::super::host::require_exact_root_entries(root)?;
     let manifest = super::super::host::read_file(&root.join(ROPROJ_V1_PATHS[0]))?;
     dispatch_manifest(&manifest)?;
@@ -1068,6 +1167,7 @@ fn open_sidecar_or_fallback(
 
 fn pin_source_snapshot(root: &Path) -> Result<(PinnedSourceSnapshot, Duration), FormatError> {
     let started = Instant::now();
+    super::super::host::require_directory(root, "canonical .roproj root")?;
     super::super::host::require_exact_root_entries(root)?;
     super::super::host::require_exact_entity_entries(&root.join("entities"))?;
     let mut hasher = sha2::Sha256::new();
@@ -1090,6 +1190,101 @@ fn pin_source_snapshot(root: &Path) -> Result<(PinnedSourceSnapshot, Duration), 
         },
         started.elapsed(),
     ))
+}
+
+fn pin_git_bound_snapshot(
+    repo: &Path,
+) -> (PinnedSourceSnapshot, SourceBinding, Duration, Duration) {
+    let identity_started = Instant::now();
+    let object_format = git_output(repo, &["rev-parse", "--show-object-format"]);
+    let commit = git_output(repo, &["rev-parse", "HEAD"]);
+    let tree = git_output(repo, &["rev-parse", "HEAD:project.roproj"]);
+    let listing = git_output(repo, &["ls-tree", "-r", "HEAD", "--", "project.roproj"]);
+    let blobs = listing
+        .lines()
+        .map(|line| {
+            let (metadata, path) = line.split_once('\t').unwrap();
+            let mut metadata = metadata.split_whitespace();
+            let mode = metadata.next().unwrap().to_owned();
+            assert_eq!(metadata.next(), Some("blob"));
+            let object_id = metadata.next().unwrap().to_owned();
+            GitBlobBinding {
+                path: path.strip_prefix("project.roproj/").unwrap().to_owned(),
+                mode,
+                object_id,
+            }
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(blobs.len(), ROPROJ_V1_PATHS.len());
+    assert_eq!(
+        blobs
+            .iter()
+            .map(|blob| blob.path.as_str())
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(ROPROJ_V1_PATHS)
+    );
+    assert!(blobs.iter().all(|blob| blob.mode == "100644"));
+    let identity_time = identity_started.elapsed();
+
+    let pin_started = Instant::now();
+    let blobs_by_path = blobs
+        .iter()
+        .map(|blob| (blob.path.as_str(), blob))
+        .collect::<BTreeMap<_, _>>();
+    let mut hasher = sha2::Sha256::new();
+    let mut files = BTreeMap::new();
+    let mut source_bytes = 0;
+    for relative in ROPROJ_V1_PATHS {
+        let object_id = &blobs_by_path[relative].object_id;
+        let bytes = git_bytes(repo, &["cat-file", "blob", object_id]);
+        source_bytes += bytes.len();
+        hash_frame(&mut hasher, relative, &bytes);
+        files.insert(relative.to_owned(), bytes);
+    }
+    let snapshot = PinnedSourceSnapshot {
+        source_fingerprint: hex_digest(&hasher.finalize()),
+        files,
+        source_bytes,
+    };
+    let binding = SourceBinding::GitSnapshot {
+        source_sha256: snapshot.source_fingerprint.clone(),
+        object_format,
+        commit,
+        tree,
+        blobs,
+    };
+    (snapshot, binding, identity_time, pin_started.elapsed())
+}
+
+fn scan_spine_pinned(
+    snapshot: &PinnedSourceSnapshot,
+    retain_structural: bool,
+) -> Result<SpineScan, FormatError> {
+    let temp = ResearchTempDirectory::new();
+    let root = temp.path().join("git-snapshot.roproj");
+    let entities = root.join("entities");
+    std::fs::create_dir(&root).map_err(|source| FormatError::Write {
+        path: root.clone(),
+        source,
+    })?;
+    std::fs::create_dir(&entities).map_err(|source| FormatError::Write {
+        path: entities,
+        source,
+    })?;
+    for relative in ROPROJ_V1_PATHS {
+        let path = root.join(relative);
+        std::fs::write(&path, &snapshot.files[relative])
+            .map_err(|source| FormatError::Write { path, source })?;
+    }
+    let scan = scan_spine_host(&root, retain_structural)?;
+    if scan.directory().source_fingerprint != snapshot.source_fingerprint
+        || scan.work.source_bytes != snapshot.source_bytes
+    {
+        return invalid_representation(
+            "Git-object snapshot changed while deriving trusted Structural Index".to_owned(),
+        );
+    }
+    Ok(scan)
 }
 
 fn materialize_entities_from_pin(
@@ -1311,55 +1506,6 @@ fn initialize_git_snapshot(repo: &Path, document: &Document) -> PathBuf {
         ],
     );
     project
-}
-
-fn git_snapshot_binding(repo: &Path, source_sha256: String) -> (SourceBinding, Duration) {
-    let started = Instant::now();
-    let commit = git_output(repo, &["rev-parse", "HEAD"]);
-    let tree = git_output(repo, &["rev-parse", "HEAD:project.roproj"]);
-    let listing = git_output(repo, &["ls-tree", "-r", "HEAD", "--", "project.roproj"]);
-    let blobs = listing
-        .lines()
-        .map(|line| {
-            let (metadata, path) = line.split_once('\t').unwrap();
-            let mut metadata = metadata.split_whitespace();
-            let mode = metadata.next().unwrap().to_owned();
-            assert_eq!(metadata.next(), Some("blob"));
-            let object_id = metadata.next().unwrap().to_owned();
-            GitBlobBinding {
-                path: path.strip_prefix("project.roproj/").unwrap().to_owned(),
-                mode,
-                object_id,
-            }
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(blobs.len(), ROPROJ_V1_PATHS.len());
-    (
-        SourceBinding::GitSnapshot {
-            source_sha256,
-            commit,
-            tree,
-            blobs,
-        },
-        started.elapsed(),
-    )
-}
-
-fn fingerprint_git_snapshot(repo: &Path) -> (String, usize, Duration) {
-    let started = Instant::now();
-    let mut hasher = sha2::Sha256::new();
-    let mut bytes_read = 0;
-    for relative in ROPROJ_V1_PATHS {
-        let object = format!("HEAD:project.roproj/{relative}");
-        let bytes = git_bytes(repo, &["show", &object]);
-        bytes_read += bytes.len();
-        hash_frame(&mut hasher, relative, &bytes);
-    }
-    (
-        hex_digest(&hasher.finalize()),
-        bytes_read,
-        started.elapsed(),
-    )
 }
 
 fn run_git(repo: &Path, arguments: &[&str]) {
@@ -2859,19 +3005,88 @@ fn issue_175_progressive_source_preview_is_non_authoritative_and_cancellable() {
     let root = temp.path().join("progressive.roproj");
     let expected = mixed_document(257, 37);
     super::super::host::materialize_roproj(&root, &expected).unwrap();
-    let preview = source_preview(&root).unwrap();
+    let preview = source_preview(&root, None).unwrap();
     assert!(expected.entities.contains_key(preview.0.as_str()));
 
     let cancel = AtomicBool::new(true);
+    let preview_error = source_preview(&root, Some(&cancel)).unwrap_err();
+    assert!(matches!(
+        preview_error,
+        FormatError::InvalidRoProjectRepresentation { message }
+            if message.contains("cancelled before SemanticCurrent")
+    ));
     let records = AtomicUsize::new(0);
-    let error =
-        admit_one_pass_host_controlled(&root, false, Some(&cancel), Some(&records)).unwrap_err();
+    let error = admit_one_pass_host_controlled(&root, false, Some(&cancel), Some(&records), None)
+        .unwrap_err();
     assert!(matches!(
         error,
         FormatError::InvalidRoProjectRepresentation { message }
             if message.contains("cancelled before SemanticCurrent")
     ));
     assert_eq!(records.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn issue_175_progressive_source_preview_has_an_explicit_record_budget() {
+    let temp = ResearchTempDirectory::new();
+    let root = temp.path().join("oversized-preview.roproj");
+    super::super::host::materialize_roproj(&root, &mixed_document(1, 70_000)).unwrap();
+    let error = source_preview(&root, None).unwrap_err();
+    assert!(matches!(
+        error,
+        FormatError::InvalidRoProjectRepresentation { message }
+            if message.contains("non-authoritative source preview exceeds 65536 byte budget")
+    ));
+}
+
+#[test]
+fn issue_175_cancellation_after_decode_never_publishes_semantic_current() {
+    let temp = ResearchTempDirectory::new();
+    let root = temp.path().join("final-validation-cancel.roproj");
+    super::super::host::materialize_roproj(&root, &mixed_document(257, 37)).unwrap();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let final_validation_reached = Arc::new(AtomicBool::new(false));
+    let worker_root = root.clone();
+    let worker_cancel = Arc::clone(&cancel);
+    let worker_reached = Arc::clone(&final_validation_reached);
+    let worker = std::thread::spawn(move || {
+        admit_one_pass_host_controlled(
+            &worker_root,
+            false,
+            Some(&worker_cancel),
+            None,
+            Some(&worker_reached),
+        )
+    });
+    while !final_validation_reached.load(Ordering::Acquire) {
+        std::thread::yield_now();
+    }
+    cancel.store(true, Ordering::Release);
+    let error = worker.join().unwrap().unwrap_err();
+    assert!(matches!(
+        error,
+        FormatError::InvalidRoProjectRepresentation { message }
+            if message.contains("cancelled before SemanticCurrent")
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn issue_175_research_open_paths_reject_a_symlink_root_like_production() {
+    use std::os::unix::fs::symlink;
+
+    let temp = ResearchTempDirectory::new();
+    let root = temp.path().join("ordinary.roproj");
+    let linked = temp.path().join("linked.roproj");
+    super::super::host::materialize_roproj(&root, &mixed_document(17, 37)).unwrap();
+    symlink(&root, &linked).unwrap();
+
+    assert!(super::super::host::read_canonical_roproj(&linked).is_err());
+    assert!(admit_one_pass_host(&linked, false).is_err());
+    assert!(scan_spine_host(&linked, true).is_err());
+    assert!(fingerprint_source(&linked).is_err());
+    assert!(pin_source_snapshot(&linked).is_err());
+    assert!(source_preview(&linked, None).is_err());
 }
 
 #[test]
@@ -3063,12 +3278,14 @@ fn issue_175_git_sidecar_binds_exact_immutable_snapshot_objects() {
     let repo = temp.path().join("repo");
     let expected = mixed_document(257, 37);
     let project = initialize_git_snapshot(&repo, &expected);
-    let scan = scan_spine_host(&project, true).unwrap();
+    let (pinned, binding, _, _) = pin_git_bound_snapshot(&repo);
+    let scan = scan_spine_pinned(&pinned, true).unwrap();
     let index = scan.structural.unwrap();
-    let (git_source_sha256, git_source_bytes, _) = fingerprint_git_snapshot(&repo);
-    assert_eq!(git_source_bytes, scan.work.source_bytes);
-    assert_eq!(git_source_sha256, index.directory.source_fingerprint);
-    let (binding, _) = git_snapshot_binding(&repo, git_source_sha256);
+    assert_eq!(pinned.source_bytes, scan.work.source_bytes);
+    assert_eq!(
+        pinned.source_fingerprint,
+        index.directory.source_fingerprint
+    );
     let SourceBinding::GitSnapshot { blobs, .. } = &binding else {
         unreachable!();
     };
@@ -3102,6 +3319,18 @@ fn issue_175_git_sidecar_binds_exact_immutable_snapshot_objects() {
         open_sidecar_or_fallback(&project, &sidecar, &binding).unwrap(),
         SidecarOpen::FellBackToExactAdmission(document) if document == expected
     ));
+
+    std::fs::write(project.join("manifest.json"), b"dirty worktree\n").unwrap();
+    let (dirty_independent_pin, dirty_independent_binding, _, _) = pin_git_bound_snapshot(&repo);
+    let dirty_independent_index = scan_spine_pinned(&dirty_independent_pin, true)
+        .unwrap()
+        .structural
+        .unwrap();
+    let decoded = decode_sidecar(&sidecar, &dirty_independent_binding).unwrap();
+    assert_eq!(
+        require_sidecar_matches_trusted_index(decoded, &dirty_independent_index).unwrap(),
+        index
+    );
 }
 
 #[test]
@@ -3555,25 +3784,72 @@ fn issue_175_progressive_background_interference_and_cancellation() {
     let resident = mixed_document(entity_count, 64);
     super::super::host::materialize_roproj(&root, &resident).unwrap();
     let source_sha256 = fingerprint_source(&root).unwrap().0;
-    black_box(source_preview(&root).unwrap());
+    black_box(source_preview(&root, None).unwrap());
+    black_box(foreground_exact_navigation_samples(
+        &resident,
+        1,
+        foreground_batch_ops,
+    ));
     println!(
-        "arm,foreground_contract,cache_state,entities,source_sha256,repetition,foreground_samples,operations_per_sample,baseline_p50_us,baseline_p95_us,baseline_p99_us,baseline_min_us,baseline_max_us,background_p50_us,background_p95_us,background_p99_us,background_min_us,background_max_us,foreground_p95_ratio_ppm,baseline_elapsed_us,background_foreground_elapsed_us,background_semantic_current_us,background_join_wall_us,cancelled_after_records,cancellation_outcome,cancellation_latency_us"
+        "arm,foreground_contract,cache_state,entities,source_sha256,repetition,arm_order,foreground_samples,operations_per_sample,baseline_p50_us,baseline_p95_us,baseline_p99_us,baseline_min_us,baseline_max_us,background_p50_us,background_p95_us,background_p99_us,background_min_us,background_max_us,foreground_p95_ratio_ppm,baseline_elapsed_us,background_foreground_elapsed_us,background_semantic_current_us,background_join_wall_us,cancelled_after_records,cancellation_outcome,cancellation_latency_us"
     );
     for repetition in 0..repetitions {
-        let baseline_started = Instant::now();
-        let baseline =
-            foreground_exact_navigation_samples(&resident, foreground_count, foreground_batch_ops);
-        let baseline_elapsed = baseline_started.elapsed();
-
-        let worker_root = root.clone();
-        let background_started = Instant::now();
-        let worker = std::thread::spawn(move || admit_one_pass_host(&worker_root, false));
-        let interfered_started = Instant::now();
-        let interfered =
-            foreground_exact_navigation_samples(&resident, foreground_count, foreground_batch_ops);
-        let interfered_elapsed = interfered_started.elapsed();
-        let background = worker.join().unwrap().unwrap();
-        let background_time = background_started.elapsed();
+        let run_baseline = || {
+            let started = Instant::now();
+            let samples = foreground_exact_navigation_samples(
+                &resident,
+                foreground_count,
+                foreground_batch_ops,
+            );
+            (samples, started.elapsed())
+        };
+        let run_interfered = || {
+            let worker_root = root.clone();
+            let background_started = Instant::now();
+            let worker = std::thread::spawn(move || admit_one_pass_host(&worker_root, false));
+            let interfered_started = Instant::now();
+            let samples = foreground_exact_navigation_samples(
+                &resident,
+                foreground_count,
+                foreground_batch_ops,
+            );
+            let elapsed = interfered_started.elapsed();
+            let background = worker.join().unwrap().unwrap();
+            (samples, elapsed, background, background_started.elapsed())
+        };
+        let (
+            arm_order,
+            baseline,
+            baseline_elapsed,
+            interfered,
+            interfered_elapsed,
+            background,
+            background_time,
+        ) = if repetition % 2 == 0 {
+            let (baseline, baseline_elapsed) = run_baseline();
+            let (interfered, interfered_elapsed, background, background_time) = run_interfered();
+            (
+                "baseline_then_background",
+                baseline,
+                baseline_elapsed,
+                interfered,
+                interfered_elapsed,
+                background,
+                background_time,
+            )
+        } else {
+            let (interfered, interfered_elapsed, background, background_time) = run_interfered();
+            let (baseline, baseline_elapsed) = run_baseline();
+            (
+                "background_then_baseline",
+                baseline,
+                baseline_elapsed,
+                interfered,
+                interfered_elapsed,
+                background,
+                background_time,
+            )
+        };
         let baseline_distribution = latency_distribution(&baseline);
         let interfered_distribution = latency_distribution(&interfered);
         let regression_ppm = interfered_distribution
@@ -3594,6 +3870,7 @@ fn issue_175_progressive_background_interference_and_cancellation() {
                 false,
                 Some(&worker_cancel),
                 Some(&worker_records),
+                None,
             )
         });
         let cancellation_threshold = entity_count.min(64);
@@ -3616,7 +3893,7 @@ fn issue_175_progressive_background_interference_and_cancellation() {
             (true, Err(error)) => panic!("completed worker returned an error: {error}"),
         };
         println!(
-            "B-progressive,resident_exact_id_field_navigation,not_source_io,{entity_count},{source_sha256},{repetition},{foreground_count},{foreground_batch_ops},{},{},{},{},{},{},{},{},{},{},{regression_ppm},{},{},{},{},{},{cancellation_outcome},{}",
+            "B-progressive,resident_exact_id_field_navigation,not_source_io,{entity_count},{source_sha256},{repetition},{arm_order},{foreground_count},{foreground_batch_ops},{},{},{},{},{},{},{},{},{},{},{regression_ppm},{},{},{},{},{},{cancellation_outcome},{}",
             baseline_distribution.0.as_micros(),
             baseline_distribution.1.as_micros(),
             baseline_distribution.2.as_micros(),
@@ -3782,17 +4059,18 @@ fn issue_175_git_sidecar_raw_samples() {
     let repo = temp.path().join("repo");
     let document = mixed_document(entity_count, 64);
     let project = initialize_git_snapshot(&repo, &document);
-    let scan = scan_spine_host(&project, true).unwrap();
+    let (first_pinned, binding, first_identity_time, first_pin_time) =
+        pin_git_bound_snapshot(&repo);
+    let first_scan_started = Instant::now();
+    let scan = scan_spine_pinned(&first_pinned, true).unwrap();
+    let first_source_revalidation_time = first_pin_time + first_scan_started.elapsed();
     let index = scan.structural.unwrap();
-    let (git_source_sha256, git_source_bytes, first_source_proof_time) =
-        fingerprint_git_snapshot(&repo);
-    assert_eq!(git_source_bytes, scan.work.source_bytes);
-    assert_eq!(git_source_sha256, index.directory.source_fingerprint);
-    let (first_pinned, first_pin_time) = pin_source_snapshot(&project).unwrap();
-    assert_eq!(first_pinned.source_fingerprint, git_source_sha256);
+    assert_eq!(first_pinned.source_bytes, scan.work.source_bytes);
+    assert_eq!(
+        first_pinned.source_fingerprint,
+        index.directory.source_fingerprint
+    );
     black_box(first_pinned);
-    let first_source_revalidation_time = first_source_proof_time + scan.scan_time + first_pin_time;
-    let (binding, first_identity_time) = git_snapshot_binding(&repo, git_source_sha256);
     let encode_started = Instant::now();
     let sidecar = encode_sidecar(&index, binding.clone()).unwrap();
     let encode_time = encode_started.elapsed();
@@ -3800,21 +4078,17 @@ fn issue_175_git_sidecar_raw_samples() {
         "arm,workload,cache_state,entities,source_sha256,source_bytes,sidecar_bytes,first_scan_us,first_git_identity_us,first_source_revalidation_us,first_sidecar_encode_us,repetition,git_identity_us,source_revalidation_us,sidecar_decode_us,identity_only_untrusted_decode_us,total_validated_reuse_us,full_a1_us"
     );
     for repetition in 0..repetitions {
-        let source_revalidation_started = Instant::now();
-        let (current_source_sha256, current_source_bytes, _) =
-            fingerprint_git_snapshot(black_box(&repo));
-        assert_eq!(current_source_bytes, scan.work.source_bytes);
-        let (pinned, _) = pin_source_snapshot(black_box(&project)).unwrap();
-        let trusted = scan_spine_host(black_box(&project), true)
+        let (pinned, current_binding, identity_time, pin_time) =
+            pin_git_bound_snapshot(black_box(&repo));
+        let scan_started = Instant::now();
+        let trusted = scan_spine_pinned(&pinned, true)
             .unwrap()
             .structural
             .unwrap();
+        let current_source_sha256 = pinned.source_fingerprint.clone();
         assert_eq!(trusted.directory.source_fingerprint, current_source_sha256);
-        assert_eq!(pinned.source_fingerprint, current_source_sha256);
-        let source_revalidation_time = source_revalidation_started.elapsed();
+        let source_revalidation_time = pin_time + scan_started.elapsed();
         let pinned = black_box(pinned);
-        let (current_binding, identity_time) =
-            git_snapshot_binding(black_box(&repo), current_source_sha256);
         let decode_started = Instant::now();
         let decoded = decode_sidecar(black_box(&sidecar), &current_binding).unwrap();
         black_box(require_sidecar_matches_trusted_index(decoded, &trusted).unwrap());

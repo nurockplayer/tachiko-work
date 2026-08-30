@@ -467,7 +467,7 @@ fn append_jsonl_records(
     Ok(())
 }
 
-fn require_directory(path: &Path, kind: &str) -> Result<(), FormatError> {
+pub(super) fn require_directory(path: &Path, kind: &str) -> Result<(), FormatError> {
     let metadata = fs::symlink_metadata(path).map_err(|source| FormatError::Read {
         path: path.to_owned(),
         source,
