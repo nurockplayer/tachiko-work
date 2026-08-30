@@ -1214,6 +1214,11 @@ describe("normalizeRepositorySnapshot", () => {
     "This stalls forever.",
     "This never reaches completion.",
     "This cannot be terminated.",
+    "This recurses infinitely.",
+    "This loops without end.",
+    "This runs without end.",
+    "This is an infinite recursion.",
+    "This has infinite recursion.",
   ])("blocks an unlabeled comment-only runtime failure on the current head: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1314,6 +1319,9 @@ describe("normalizeRepositorySnapshot", () => {
     "This does not deadlock.",
     "This does not wait forever.",
     "This does not stall forever.",
+    "This is not an infinite recursion.",
+    "This does not loop without end.",
+    "This does not run without end.",
   ])("does not infer a substantive finding from a clean comment-only review summary: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1745,6 +1753,11 @@ describe("normalizeRepositorySnapshot", () => {
     "This stalls forever.",
     "This never reaches completion.",
     "This cannot be terminated.",
+    "This recurses infinitely.",
+    "This loops without end.",
+    "This runs without end.",
+    "This is an infinite recursion.",
+    "This has infinite recursion.",
   ])("fails closed on an unlabeled correctness finding: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
@@ -1835,6 +1848,9 @@ describe("normalizeRepositorySnapshot", () => {
     "This does not deadlock.",
     "This does not wait forever.",
     "This does not stall forever.",
+    "This is not an infinite recursion.",
+    "This does not loop without end.",
+    "This does not run without end.",
   ])("does not promote a negated unlabeled impact statement: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
