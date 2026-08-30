@@ -5,8 +5,9 @@ use tachiko_designer_runtime::{
     StoredValueProjection, close_project, open_project, process_wire_request,
 };
 use tachiko_workspace_engine::{
-    EntityId, EntityKey, FieldAddress, FieldDefinition, FieldId, FieldKey, FieldType, IdGenerator,
-    Number, Schema, SchemaId, SchemaKey, SemanticIdKind, StarterTemplate, Value, create_document,
+    DocumentId, EntityId, EntityKey, FieldAddress, FieldDefinition, FieldId, FieldKey, FieldType,
+    IdGenerator, Number, Schema, SchemaId, SchemaKey, SemanticIdKind, StarterTemplate, Value,
+    create_document,
 };
 
 const OCCURRENCE_ZERO: &str = "00000000-0000-4000-8000-000000000000";
@@ -161,6 +162,24 @@ fn admission_rejects_an_unbounded_collection_catalog() {
     let failure = error.failure_projection("unavailable");
     assert_eq!(failure.code, "unsupported_project");
     assert!(failure.message.contains("bounded maximum is 32"));
+}
+
+#[test]
+fn admission_bounds_document_identity_before_authority_construction() {
+    let mut document = create_document(
+        StarterTemplate::GameBalance,
+        "Oversized identity",
+        &mut TestIds::default(),
+    )
+    .expect("fixture should be valid");
+    document.id = DocumentId::from("d".repeat(4_097));
+
+    let Err(error) = DesignerRuntime::from_document(document, OCCURRENCE_ONE) else {
+        panic!("authority scope construction must receive a bounded document identity");
+    };
+    let failure = error.failure_projection("unavailable");
+    assert_eq!(failure.code, "unsupported_project");
+    assert!(failure.message.contains("4096-byte maximum"));
 }
 
 #[test]

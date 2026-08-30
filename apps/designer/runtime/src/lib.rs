@@ -39,6 +39,7 @@ const MAX_TABLE_ROWS: usize = 32;
 const MAX_TOTAL_ENTITIES: usize = MAX_COLLECTIONS * MAX_TABLE_ROWS;
 const MAX_FIELD_QUERY_TARGETS: usize = MAX_TABLE_FIELDS * MAX_TABLE_ROWS;
 const MAX_FORMULAS: usize = 32;
+const MAX_DOCUMENT_ID_BYTES: usize = 4_096;
 const MAX_PROJECTION_BYTES: usize = 65_536;
 pub(crate) const MAX_WIRE_REQUEST_BYTES: usize = 65_536;
 pub(crate) const MAX_PROJECT_TRANSFER_BYTES: usize = 64 * 1024 * 1024;
@@ -1112,6 +1113,13 @@ fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
 }
 
 fn ensure_cheap_document_profile(document: &Document) -> Result<(), DesignerError> {
+    if document.id.as_str().len() > MAX_DOCUMENT_ID_BYTES {
+        return Err(DesignerError::UnsupportedProject {
+            message: format!(
+                "the document identity exceeds the bounded {MAX_DOCUMENT_ID_BYTES}-byte maximum"
+            ),
+        });
+    }
     if document.schemas.len() > MAX_COLLECTIONS {
         return Err(DesignerError::UnsupportedProject {
             message: format!(
