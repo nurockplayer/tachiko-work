@@ -224,6 +224,39 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries).toEqual([]);
   });
 
+  it.each([
+    "[Decision][M05 P1] Choose the delivery boundary",
+    "[Research][M05 P1] Evaluate the delivery boundary",
+  ])("keeps ordinary Ready %s work outside production delivery", (title) => {
+    const authorityWork = issue();
+    authorityWork.title = title;
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [authorityWork] }));
+
+    expect(projection.deliveries).toEqual([]);
+  });
+
+  it("keeps a linked Decision Issue out of the merge gate", () => {
+    const decision = issue();
+    decision.title = "[Decision][M05 P1] Choose the delivery boundary";
+    const pr = pullRequest();
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [decision], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.issue.readiness).toBe("unknown");
+    expect(lane?.phase).toBe("validating");
+  });
+
+  it("does not treat a near-match Issue title as authority-only work", () => {
+    const delivery = issue();
+    delivery.title = "[Researching] Improve dashboard evidence";
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [delivery] }));
+
+    expect(projection.deliveries[0]?.phase).toBe("ready");
+  });
+
   it("invalidates checks and a merge-ready handoff when the PR head moves", () => {
     const pr = pullRequest();
     pr.headSha = "c".repeat(40);
@@ -369,6 +402,23 @@ describe("normalizeRepositorySnapshot", () => {
     pr.reviewThreads = [
       { resolved: false, outdated: false, comments: ["[P3] Consider a shorter label"], url: "https://github.com/thread" },
     ];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.reviews.unresolvedThreadCount).toBe(1);
+    expect(lane?.reviews.substantiveUnresolvedCount).toBe(0);
+    expect(lane?.phase).toBe("merge_gate");
+  });
+
+  it("recognizes a badge-prefixed P3 review as non-substantive", () => {
+    const pr = pullRequest();
+    pr.reviewThreads = [{
+      resolved: false,
+      outdated: false,
+      comments: ["**<sub><sub>![P3 Badge](https://img.shields.io/badge/P3-yellow?style=flat)</sub></sub>  Consider a shorter label"],
+      url: "https://github.com/thread",
+    }];
 
     const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
     const lane = projection.deliveries[0];
@@ -833,6 +883,21 @@ describe("normalizeRepositorySnapshot", () => {
       expect(lane.blockers).toContain("Pull-request Issue ownership could not be fully observed.");
       expect(lane.action.owner).toBe("codex");
     }
+  });
+
+  it("fails closed when a reference-less PR handoff may be outside the observed comments", () => {
+    const pr = pullRequest();
+    pr.issueNumbers = [];
+    pr.commentsComplete = false;
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const issueLane = projection.deliveries.find((lane) => lane.issue.number === 169);
+    const prLane = projection.deliveries.find((lane) => lane.pr?.number === 200);
+
+    expect(issueLane?.phase).toBe("validating");
+    expect(issueLane?.blockers).toContain("Pull-request Issue ownership could not be fully observed.");
+    expect(issueLane?.action.owner).toBe("codex");
+    expect(prLane?.phase).not.toBe("merge_gate");
   });
 
   it("blocks PR lanes that claim the same secondary Issue", () => {

@@ -16,6 +16,8 @@ import type {
 const handoffMarker = "<!-- agent-handoff:v1 -->";
 const explicitlySubstantiveFinding = /(?:\[|\b)(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness)(?:\]|\b)/i;
 const explicitlyNonSubstantiveFinding = /^(?:[_*]+\s*)?(?:\[(?:p3|sev(?:erity)?[ -]?3)\]|(?:p3|sev(?:erity)?[ -]?3|nit(?:pick)?|trivial)\b)/i;
+const explicitlyNonSubstantiveBadge = /^(?:<sub>\s*)+!\[(?:p3|sev(?:erity)?[ -]?3)\s+badge\]\([^)]*\)(?:<\/sub>\s*)+/i;
+const authorityOnlyIssue = /^\s*\[(?:decision|research)\](?:\s|\[|$)/i;
 
 function source(
   className: SourceClass,
@@ -60,7 +62,9 @@ function canonicalComments(comments: RawComment[]): RawComment[] {
 
 function isSubstantiveFinding(body: string): boolean {
   if (explicitlySubstantiveFinding.test(body)) return true;
-  return !explicitlyNonSubstantiveFinding.test(stripMarkdown(body));
+  const normalized = stripMarkdown(body);
+  if (explicitlyNonSubstantiveBadge.test(normalized)) return false;
+  return !explicitlyNonSubstantiveFinding.test(normalized);
 }
 
 function claimedIssueNumber(body: string): number | null {
@@ -202,6 +206,7 @@ function hasUsableIssueClaim(
 function issueReadiness(issue: RawIssue, handoff: HandoffProjection): DeliveryLane["issue"]["readiness"] {
   if (issue.blockedBy === null) return "unknown";
   if (issue.blockedBy.length > 0) return "blocked";
+  if (authorityOnlyIssue.test(issue.title)) return "unknown";
   const statusSection = issue.body.match(/## Status\s*([\s\S]*?)(?=\n## |$)/i)?.[1] ?? issue.body.slice(0, 600);
   const handoffState = handoff.claimedState?.toLowerCase() ?? "";
   const staleHandoffClaimsBlocked = handoff.condition === "stale" &&
@@ -683,7 +688,9 @@ export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): Re
   });
   const issuesByNumber = new Map(issues.map((issue) => [issue.number, issue]));
   const ownershipObservationComplete = snapshot.pullRequests !== null &&
-    pullRequests.every((pr) => pr.issueNumbersComplete);
+    pullRequests.every((pr) =>
+      pr.issueNumbersComplete && (pr.issueNumbers.length > 0 || pr.commentsComplete)
+    );
   const pullRequestsByIssue = new Map<number, number[]>();
   for (const pr of pullRequests) {
     for (const issueNumber of pr.issueNumbers.length === 0 ? [pr.number] : pr.issueNumbers) {
