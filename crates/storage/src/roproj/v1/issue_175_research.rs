@@ -18,10 +18,10 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use sha2::Digest as _;
+use sha2::Digest as ShaDigest;
 use tachiko_semantic_core::{
     Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldDefinition, FieldId,
-    FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
+    FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value, is_valid_identifier,
 };
 
 use super::*;
@@ -171,6 +171,7 @@ enum SourceBinding {
         source_sha256: String,
     },
     GitSnapshot {
+        source_sha256: String,
         commit: String,
         tree: String,
         blobs: Vec<GitBlobBinding>,
@@ -194,6 +195,17 @@ struct SidecarEnvelope {
     binding: SourceBinding,
     payload_sha256: String,
     payload_json: String,
+    envelope_sha256: String,
+}
+
+#[derive(Serialize)]
+struct SidecarIntegrityInput<'a> {
+    format: &'a str,
+    version: u32,
+    algorithm: &'a str,
+    binding: &'a SourceBinding,
+    payload_sha256: &'a str,
+    payload_json: &'a str,
 }
 
 enum SidecarOpen {
@@ -206,6 +218,12 @@ struct BoundedMaterialization {
     entities: BTreeMap<EntityId, Entity>,
     materialized_payload_bytes: usize,
     full_fingerprint_bytes: usize,
+}
+
+struct PinnedSourceSnapshot {
+    source_fingerprint: String,
+    files: BTreeMap<String, Vec<u8>>,
+    source_bytes: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -553,11 +571,21 @@ fn shard_index_from_path(path: &str) -> Result<usize, FormatError> {
         })
 }
 
-fn foreground_preview_samples(root: &Path, count: usize) -> Vec<Duration> {
+fn foreground_exact_navigation_samples(
+    document: &Document,
+    count: usize,
+    operations_per_sample: usize,
+) -> Vec<Duration> {
+    let ids = document.entities.keys().cloned().collect::<Vec<_>>();
+    let base = FieldId::from("base");
     (0..count)
-        .map(|_| {
+        .map(|sample| {
             let started = Instant::now();
-            black_box(source_preview(black_box(root)).unwrap());
+            for operation in 0..operations_per_sample {
+                let id = &ids[(sample * operations_per_sample + operation) % ids.len()];
+                let entity = document.entities.get(id).unwrap();
+                black_box(entity.fields.get(&base).unwrap());
+            }
             started.elapsed()
         })
         .collect()
@@ -622,6 +650,7 @@ fn scan_spine_host(root: &Path, retain_structural: bool) -> Result<SpineScan, Fo
     }
     let schemas = schemas_into_semantic(schema_dtos)?;
     let directory_schemas = directory_schemas(&schemas);
+    validate_directory_keys(&directory_schemas)?;
     let schema_fields = schema_field_lookup(&directory_schemas);
 
     let mut source_bytes = manifest_bytes.len() + schemas_bytes.len();
@@ -706,10 +735,16 @@ fn scan_spine_host(root: &Path, retain_structural: bool) -> Result<SpineScan, Fo
             formula_ast_nodes += nodes;
             reference_edges += entity_references;
             formula_dependency_edges += dependencies;
-            if !entity_keys.insert((dto.schema.clone(), dto.key.clone())) {
+            if !is_valid_identifier(&dto.key) {
                 return invalid_representation(format!(
-                    "duplicate entity key '{}' in schema '{}'",
-                    dto.key, dto.schema
+                    "entity key '{}' is not a valid human key",
+                    dto.key
+                ));
+            }
+            if !entity_keys.insert(dto.key.clone()) {
+                return invalid_representation(format!(
+                    "duplicate entity key '{}' across the document",
+                    dto.key
                 ));
             }
             if entity_schemas
@@ -729,14 +764,15 @@ fn scan_spine_host(root: &Path, retain_structural: bool) -> Result<SpineScan, Fo
                     record_sha256: sha256_hex(record_bytes),
                 },
             });
-            if retain_structural {
-                retain_structural_facts(
-                    &dto,
-                    &mut field_presence,
-                    &mut references,
-                    &mut formula_dependencies,
-                );
-            }
+            // Directory output does not retain these facts, but exact source
+            // admission still needs them temporarily to reject missing fields,
+            // type/reference errors, and malformed formula coverage.
+            retain_structural_facts(
+                &dto,
+                &mut field_presence,
+                &mut references,
+                &mut formula_dependencies,
+            );
             // Conversion validates stable IDs, finite Number values, and the
             // complete bound formula depth/node contract before payload drop.
             drop(dto.into_semantic()?);
@@ -758,15 +794,16 @@ fn scan_spine_host(root: &Path, retain_structural: bool) -> Result<SpineScan, Fo
         schemas: directory_schemas,
         entities: directory_entities,
     };
+    validate_directory_coverage(&directory)?;
+    validate_structural_coverage(
+        &directory,
+        &schema_fields,
+        &entity_schemas,
+        &field_presence,
+        &references,
+        &formula_dependencies,
+    )?;
     let structural = if retain_structural {
-        validate_structural_coverage(
-            &directory,
-            &schema_fields,
-            &entity_schemas,
-            &field_presence,
-            &references,
-            &formula_dependencies,
-        )?;
         let reverse_formula_dependencies = reverse_edges(&formula_dependencies);
         Some(StructuralIndex {
             directory: directory.clone(),
@@ -832,15 +869,44 @@ fn fingerprint_source(root: &Path) -> Result<(String, usize, Duration), FormatEr
 
 fn encode_sidecar(index: &StructuralIndex, binding: SourceBinding) -> Result<Vec<u8>, FormatError> {
     let payload_json = serde_json::to_string(index)?;
+    let payload_sha256 = sha256_hex(payload_json.as_bytes());
+    let envelope_sha256 = sidecar_integrity_sha256(
+        SIDECAR_FORMAT,
+        SIDECAR_VERSION,
+        SIDECAR_ALGORITHM,
+        &binding,
+        &payload_sha256,
+        &payload_json,
+    );
     let envelope = SidecarEnvelope {
         format: SIDECAR_FORMAT.to_owned(),
         version: SIDECAR_VERSION,
         algorithm: SIDECAR_ALGORITHM.to_owned(),
         binding,
-        payload_sha256: sha256_hex(payload_json.as_bytes()),
+        payload_sha256,
         payload_json,
+        envelope_sha256,
     };
     Ok(serde_json::to_vec(&envelope)?)
+}
+
+fn sidecar_integrity_sha256(
+    format: &str,
+    version: u32,
+    algorithm: &str,
+    binding: &SourceBinding,
+    payload_sha256: &str,
+    payload_json: &str,
+) -> String {
+    let input = SidecarIntegrityInput {
+        format,
+        version,
+        algorithm,
+        binding,
+        payload_sha256,
+        payload_json,
+    };
+    sha256_hex(&serde_json::to_vec(&input).unwrap())
 }
 
 fn decode_sidecar(
@@ -861,16 +927,27 @@ fn decode_sidecar(
     if &envelope.binding != expected_binding {
         return Err("sidecar source binding is stale or mismatched".to_owned());
     }
+    if sidecar_integrity_sha256(
+        &envelope.format,
+        envelope.version,
+        &envelope.algorithm,
+        &envelope.binding,
+        &envelope.payload_sha256,
+        &envelope.payload_json,
+    ) != envelope.envelope_sha256
+    {
+        return Err("sidecar envelope integrity mismatch".to_owned());
+    }
     if sha256_hex(envelope.payload_json.as_bytes()) != envelope.payload_sha256 {
         return Err("sidecar payload integrity mismatch".to_owned());
     }
     let index: StructuralIndex =
         serde_json::from_str(&envelope.payload_json).map_err(|error| error.to_string())?;
-    if &(SourceBinding::DirtyFilesystem {
-        source_sha256: index.directory.source_fingerprint.clone(),
-    }) == expected_binding
-        || matches!(expected_binding, SourceBinding::GitSnapshot { .. })
-    {
+    let expected_source_sha256 = match expected_binding {
+        SourceBinding::DirtyFilesystem { source_sha256 }
+        | SourceBinding::GitSnapshot { source_sha256, .. } => source_sha256,
+    };
+    if &index.directory.source_fingerprint == expected_source_sha256 {
         Ok(index)
     } else {
         Err("sidecar payload/source fingerprint mismatch".to_owned())
@@ -889,7 +966,96 @@ fn open_sidecar_or_fallback(
     }
 }
 
-fn materialize_entities_pinned_dirty(
+fn pin_source_snapshot(root: &Path) -> Result<(PinnedSourceSnapshot, Duration), FormatError> {
+    let started = Instant::now();
+    super::super::host::require_exact_root_entries(root)?;
+    super::super::host::require_exact_entity_entries(&root.join("entities"))?;
+    let mut hasher = sha2::Sha256::new();
+    let mut files = BTreeMap::new();
+    let mut source_bytes = 0;
+    for relative in ROPROJ_V1_PATHS {
+        let bytes = super::super::host::read_file(&root.join(relative))?;
+        if relative == ROPROJ_V1_PATHS[0] {
+            dispatch_manifest(&bytes)?;
+        }
+        source_bytes += bytes.len();
+        hash_frame(&mut hasher, relative, &bytes);
+        files.insert(relative.to_owned(), bytes);
+    }
+    Ok((
+        PinnedSourceSnapshot {
+            source_fingerprint: hex_digest(&hasher.finalize()),
+            files,
+            source_bytes,
+        },
+        started.elapsed(),
+    ))
+}
+
+fn materialize_entities_from_pin(
+    snapshot: &PinnedSourceSnapshot,
+    index: &StructuralIndex,
+    entity_ids: &BTreeSet<String>,
+) -> Result<BoundedMaterialization, FormatError> {
+    if snapshot.source_fingerprint != index.directory.source_fingerprint {
+        return invalid_representation("pinned source/index fingerprint mismatch".to_owned());
+    }
+    let locators = index
+        .directory
+        .entities
+        .iter()
+        .map(|entity| (entity.id.as_str(), entity))
+        .collect::<BTreeMap<_, _>>();
+    let mut entities = BTreeMap::new();
+    let mut materialized_payload_bytes = 0;
+    for id in entity_ids {
+        let entry = locators.get(id.as_str()).ok_or_else(|| {
+            FormatError::InvalidRoProjectRepresentation {
+                message: format!("Directory has no locator for entity '{id}'"),
+            }
+        })?;
+        let file = &snapshot.files[&entry.locator.path];
+        let start = usize::try_from(entry.locator.offset).unwrap();
+        let length = usize::try_from(entry.locator.length).unwrap();
+        let end = start.checked_add(length).ok_or_else(|| {
+            FormatError::InvalidRoProjectRepresentation {
+                message: format!("bounded locator overflows for entity '{id}'"),
+            }
+        })?;
+        if end >= file.len() || file.get(end) != Some(&b'\n') {
+            return invalid_representation(format!(
+                "bounded locator is out of pinned source bounds for entity '{id}'"
+            ));
+        }
+        let record_bytes = &file[start..end];
+        if sha256_hex(record_bytes) != entry.locator.record_sha256 {
+            return invalid_representation(format!(
+                "bounded pinned record digest mismatch for entity '{id}'"
+            ));
+        }
+        let record_path = format!("{}@{}", entry.locator.path, entry.locator.offset);
+        let record = utf8(&record_path, record_bytes)?;
+        inspect_roproj(record, ROPROJ_V1_MAX_JSON_NESTING)
+            .map_err(|error| map_frontend_error(&record_path, error))?;
+        let dto: EntityV1 = deserialize_roproj(&record_path, record)?;
+        let mut canonical_record = String::with_capacity(record.len());
+        write_entity(&mut canonical_record, &dto)?;
+        if canonical_record != record || dto.id != *id {
+            return invalid_representation(format!(
+                "bounded locator does not resolve exact pinned entity '{id}'"
+            ));
+        }
+        entities.insert(EntityId::from(id.clone()), dto.into_semantic()?);
+        materialized_payload_bytes += record_bytes.len();
+    }
+    Ok(BoundedMaterialization {
+        entities,
+        materialized_payload_bytes,
+        full_fingerprint_bytes: 0,
+    })
+}
+
+fn materialize_entities_dirty_change_detected(
     root: &Path,
     index: &StructuralIndex,
     entity_ids: &BTreeSet<String>,
@@ -1047,7 +1213,7 @@ fn initialize_git_snapshot(repo: &Path, document: &Document) -> PathBuf {
     project
 }
 
-fn git_snapshot_binding(repo: &Path) -> (SourceBinding, Duration) {
+fn git_snapshot_binding(repo: &Path, source_sha256: String) -> (SourceBinding, Duration) {
     let started = Instant::now();
     let commit = git_output(repo, &["rev-parse", "HEAD"]);
     let tree = git_output(repo, &["rev-parse", "HEAD:project.roproj"]);
@@ -1070,10 +1236,28 @@ fn git_snapshot_binding(repo: &Path) -> (SourceBinding, Duration) {
     assert_eq!(blobs.len(), ROPROJ_V1_PATHS.len());
     (
         SourceBinding::GitSnapshot {
+            source_sha256,
             commit,
             tree,
             blobs,
         },
+        started.elapsed(),
+    )
+}
+
+fn fingerprint_git_snapshot(repo: &Path) -> (String, usize, Duration) {
+    let started = Instant::now();
+    let mut hasher = sha2::Sha256::new();
+    let mut bytes_read = 0;
+    for relative in ROPROJ_V1_PATHS {
+        let object = format!("HEAD:project.roproj/{relative}");
+        let bytes = git_bytes(repo, &["show", &object]);
+        bytes_read += bytes.len();
+        hash_frame(&mut hasher, relative, &bytes);
+    }
+    (
+        hex_digest(&hasher.finalize()),
+        bytes_read,
         started.elapsed(),
     )
 }
@@ -1093,6 +1277,13 @@ fn run_git(repo: &Path, arguments: &[&str]) {
 }
 
 fn git_output(repo: &Path, arguments: &[&str]) -> String {
+    String::from_utf8(git_bytes(repo, arguments))
+        .unwrap()
+        .trim()
+        .to_owned()
+}
+
+fn git_bytes(repo: &Path, arguments: &[&str]) -> Vec<u8> {
     let output = Command::new("git")
         .arg("-C")
         .arg(repo)
@@ -1104,7 +1295,7 @@ fn git_output(repo: &Path, arguments: &[&str]) -> String {
         "git command failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    output.stdout
 }
 
 fn id_navigation_proof(index: &StructuralIndex, id: &str) -> BoundedProof<bool> {
@@ -1117,6 +1308,33 @@ fn id_navigation_proof(index: &StructuralIndex, id: &str) -> BoundedProof<bool> 
     )
 }
 
+fn key_navigation_proof(
+    index: &StructuralIndex,
+    schema: &str,
+    key: &str,
+) -> BoundedProof<Option<String>> {
+    BoundedProof::Exact(
+        index
+            .directory
+            .entities
+            .iter()
+            .find(|entity| entity.schema == schema && entity.key == key)
+            .map(|entity| entity.id.clone()),
+    )
+}
+
+fn structural_field_presence_proof(
+    index: &StructuralIndex,
+    field: &IndexedFieldRef,
+) -> BoundedProof<bool> {
+    BoundedProof::Exact(
+        index
+            .field_presence
+            .iter()
+            .any(|presence| &presence.field == field),
+    )
+}
+
 fn hash_frame_header(hasher: &mut sha2::Sha256, path: &str, length: u64) {
     hasher.update(u64::try_from(path.len()).unwrap().to_be_bytes());
     hasher.update(path.as_bytes());
@@ -1124,7 +1342,7 @@ fn hash_frame_header(hasher: &mut sha2::Sha256, path: &str, length: u64) {
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
-    hex_digest(&sha2::Sha256::digest(bytes))
+    hex_digest(&<sha2::Sha256 as ShaDigest>::digest(bytes))
 }
 
 fn hex_digest(bytes: &[u8]) -> String {
@@ -1154,6 +1372,69 @@ fn directory_schemas(schemas: &BTreeMap<SchemaId, Schema>) -> Vec<DirectorySchem
                 .collect(),
         })
         .collect()
+}
+
+fn validate_directory_keys(schemas: &[DirectorySchema]) -> Result<(), FormatError> {
+    let mut schema_keys = BTreeSet::new();
+    for schema in schemas {
+        if !is_valid_identifier(&schema.key) {
+            return invalid_representation(format!(
+                "schema key '{}' is not a valid human key",
+                schema.key
+            ));
+        }
+        if !schema_keys.insert(schema.key.clone()) {
+            return invalid_representation(format!(
+                "duplicate schema key '{}' across the document",
+                schema.key
+            ));
+        }
+        let mut field_keys = BTreeSet::new();
+        for field in &schema.fields {
+            if !is_valid_identifier(&field.key) {
+                return invalid_representation(format!(
+                    "field key '{}.{}' is not a valid human key",
+                    schema.key, field.key
+                ));
+            }
+            if !field_keys.insert(field.key.clone()) {
+                return invalid_representation(format!(
+                    "duplicate field key '{}' in schema '{}'",
+                    field.key, schema.key
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_directory_coverage(directory: &Directory) -> Result<(), FormatError> {
+    let schema_ids = directory
+        .schemas
+        .iter()
+        .map(|schema| schema.id.as_str())
+        .collect::<BTreeSet<_>>();
+    for schema in &directory.schemas {
+        for field in &schema.fields {
+            if let FieldTypeFact::Reference { schema: target } = &field.field_type {
+                if !schema_ids.contains(target.as_str()) {
+                    return invalid_representation(format!(
+                        "reference field '{}.{}' targets missing schema '{target}'",
+                        schema.id, field.id
+                    ));
+                }
+            }
+        }
+    }
+    for entity in &directory.entities {
+        if !schema_ids.contains(entity.schema.as_str()) {
+            return invalid_representation(format!(
+                "entity '{}' references missing schema '{}'",
+                entity.id, entity.schema
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn field_type_fact(field_type: &FieldType) -> FieldTypeFact {
@@ -2275,6 +2556,29 @@ fn assert_rejection_parity(label: &str, files: &[(String, Vec<u8>)]) {
             "unexpected A0/A1 rejection detail drift for {label}: A0={a0}; A1={a1}"
         );
     }
+
+    let temp = ResearchTempDirectory::new();
+    let root = temp.path().join("invalid.roproj");
+    write_research_tree(&root, files);
+    assert!(
+        scan_spine_host(&root, false).is_err(),
+        "Directory scan admitted invalid pressure case {label}"
+    );
+    assert!(
+        scan_spine_host(&root, true).is_err(),
+        "Structural Index scan admitted invalid pressure case {label}"
+    );
+}
+
+fn write_research_tree(root: &Path, files: &[(String, Vec<u8>)]) {
+    std::fs::create_dir_all(root.join("entities")).unwrap();
+    for (relative, bytes) in files {
+        let path = root.join(relative);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, bytes).unwrap();
+    }
 }
 
 fn mutate_first_entity_record(
@@ -2470,6 +2774,14 @@ fn issue_175_dirty_sidecar_reuse_is_bound_and_fails_closed() {
         SidecarOpen::FellBackToExactAdmission(document) if document == expected
     ));
 
+    let mut unknown_version: SidecarEnvelope = serde_json::from_slice(&sidecar).unwrap();
+    unknown_version.version += 1;
+    let unknown_version = serde_json::to_vec(&unknown_version).unwrap();
+    assert!(matches!(
+        open_sidecar_or_fallback(&root, &unknown_version, &binding).unwrap(),
+        SidecarOpen::FellBackToExactAdmission(document) if document == expected
+    ));
+
     let other_root = temp.path().join("other.roproj");
     let other = mixed_document(258, 37);
     super::super::host::materialize_roproj(&other_root, &other).unwrap();
@@ -2490,7 +2802,10 @@ fn issue_175_git_sidecar_binds_exact_immutable_snapshot_objects() {
     let project = initialize_git_snapshot(&repo, &expected);
     let scan = scan_spine_host(&project, true).unwrap();
     let index = scan.structural.unwrap();
-    let (binding, _) = git_snapshot_binding(&repo);
+    let (git_source_sha256, git_source_bytes, _) = fingerprint_git_snapshot(&repo);
+    assert_eq!(git_source_bytes, scan.work.source_bytes);
+    assert_eq!(git_source_sha256, index.directory.source_fingerprint);
+    let (binding, _) = git_snapshot_binding(&repo, git_source_sha256);
     let SourceBinding::GitSnapshot { blobs, .. } = &binding else {
         unreachable!();
     };
@@ -2504,6 +2819,11 @@ fn issue_175_git_sidecar_binds_exact_immutable_snapshot_objects() {
     assert!(blobs.iter().all(|blob| blob.mode == "100644"));
     let sidecar = encode_sidecar(&index, binding.clone()).unwrap();
     assert_eq!(decode_sidecar(&sidecar, &binding).unwrap(), index);
+
+    let mut mismatched_payload = index.clone();
+    mismatched_payload.directory.source_fingerprint = "00".repeat(32);
+    let mismatched_sidecar = encode_sidecar(&mismatched_payload, binding.clone()).unwrap();
+    assert!(decode_sidecar(&mismatched_sidecar, &binding).is_err());
 
     let dirty_binding = SourceBinding::DirtyFilesystem {
         source_sha256: index.directory.source_fingerprint.clone(),
@@ -2528,6 +2848,14 @@ fn issue_175_bounded_materialization_is_revision_pinned_and_never_guesses_formul
         BoundedProof::Exact(true)
     );
     assert_eq!(
+        key_navigation_proof(&index, "issue-175-chain-schema", "chain_00000256",),
+        BoundedProof::Exact(Some(requested.entity.clone()))
+    );
+    assert_eq!(
+        structural_field_presence_proof(&index, &requested),
+        BoundedProof::Exact(true)
+    );
+    assert_eq!(
         exact_scalar_search_proof(),
         BoundedProof::RequiresFullAdmission(
             "exact scalar/full-text search values are absent from the Structural Index"
@@ -2535,7 +2863,12 @@ fn issue_175_bounded_materialization_is_revision_pinned_and_never_guesses_formul
     );
     let closure = dependency_entity_closure(&index, &requested);
     assert_eq!(closure.len(), 257);
-    let bounded = materialize_entities_pinned_dirty(&root, &index, &closure).unwrap();
+    let (snapshot, _) = pin_source_snapshot(&root).unwrap();
+    assert_eq!(
+        snapshot.source_fingerprint,
+        index.directory.source_fingerprint
+    );
+    let bounded = materialize_entities_from_pin(&snapshot, &index, &closure).unwrap();
     assert_eq!(bounded.entities.len(), complete.entities.len());
     for (id, entity) in &bounded.entities {
         assert_eq!(entity, &complete.entities[id]);
@@ -2549,7 +2882,8 @@ fn issue_175_bounded_materialization_is_revision_pinned_and_never_guesses_formul
         bounded_formula_proof(),
         BoundedProof::RequiresFullAdmission(_)
     ));
-    assert!(bounded.full_fingerprint_bytes >= index.directory.entities.len());
+    assert_eq!(bounded.full_fingerprint_bytes, 0);
+    assert_eq!(snapshot.source_bytes, fingerprint_source(&root).unwrap().1);
     assert!(bounded.materialized_payload_bytes > 0);
 
     let cycle_root = temp.path().join("cycle.roproj");
@@ -2577,9 +2911,15 @@ fn issue_175_bounded_materialization_is_revision_pinned_and_never_guesses_formul
         root.join("manifest.json"),
     )
     .unwrap();
-    let error =
-        materialize_entities_pinned_dirty(&root, &index, &BTreeSet::from([requested.entity]))
-            .unwrap_err();
+    let pinned_after_external_change =
+        materialize_entities_from_pin(&snapshot, &index, &closure).unwrap();
+    assert_eq!(pinned_after_external_change.entities, complete.entities);
+    let error = materialize_entities_dirty_change_detected(
+        &root,
+        &index,
+        &BTreeSet::from([requested.entity]),
+    )
+    .unwrap_err();
     assert!(matches!(
         error,
         FormatError::InvalidRoProjectRepresentation { message }
@@ -2626,7 +2966,7 @@ fn issue_175_a0_a1_release_baseline() {
 
 #[test]
 #[ignore = "run explicitly in release mode to record Issue #175 host-open evidence"]
-fn issue_175_a0_a1_host_open_warm_raw_samples() {
+fn issue_175_a0_a1_host_open_raw_samples() {
     require_release_profile();
     let entity_counts = std::env::var("TACHIKO_ISSUE_175_ENTITY_COUNTS")
         .unwrap_or_else(|_| "1000,10000".to_owned());
@@ -2634,8 +2974,15 @@ fn issue_175_a0_a1_host_open_warm_raw_samples() {
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(30);
+    let purge_before_sample =
+        std::env::var("TACHIKO_ISSUE_175_PURGE_BEFORE_SAMPLE").is_ok_and(|value| value == "1");
+    let cache_state = if purge_before_sample {
+        "os_cache_purged_process_warm"
+    } else {
+        "os_cache_warm"
+    };
     println!(
-        "arm,workload,cache_state,entities,fields,source_bytes,physical_read_bytes,nesting_scan_bytes,strict_json_bytes,canonical_render_bytes,entity_records,formula_ast_nodes,reference_edges,formula_dependency_edges,repetition,order,source_known_us,first_source_preview_us,semantic_current_us"
+        "arm,workload,cache_state,entities,fields,source_sha256,source_bytes,physical_read_bytes,nesting_scan_bytes,strict_json_bytes,canonical_render_bytes,entity_records,formula_ast_nodes,reference_edges,formula_dependency_edges,repetition,order,source_known_us,first_source_preview_us,semantic_current_us"
     );
     for entity_count in entity_counts
         .split(',')
@@ -2645,23 +2992,79 @@ fn issue_175_a0_a1_host_open_warm_raw_samples() {
         let root = temp.path().join("mixed-smoke.roproj");
         let expected = mixed_document(entity_count, 64);
         super::super::host::materialize_roproj(&root, &expected).unwrap();
+        let source_sha256 = fingerprint_source(&root).unwrap().0;
         let (_, work, _) = admit_one_pass_host(&root, true).unwrap();
 
-        // Explicit warmup. This test reports OS-cache-warm evidence only; it
-        // makes no claim about controlled cold page-cache behavior.
-        black_box(super::super::host::load_roproj(&root).unwrap());
-        black_box(admit_one_pass_host(&root, false).unwrap());
+        if !purge_before_sample {
+            // Explicit warmup. The cold mode instead invokes macOS `purge`
+            // immediately before every paired arm sample.
+            black_box(super::super::host::load_roproj(&root).unwrap());
+            black_box(admit_one_pass_host(&root, false).unwrap());
+        }
 
         for repetition in 0..repetitions {
             if repetition % 2 == 0 {
-                run_a0_host_sample(&root, &expected, entity_count, repetition, "A0-first", work);
-                run_a1_host_sample(&root, &expected, entity_count, repetition, "A0-first", work);
+                if purge_before_sample {
+                    purge_os_cache();
+                }
+                run_a0_host_sample(
+                    &root,
+                    &expected,
+                    entity_count,
+                    repetition,
+                    "A0-first",
+                    cache_state,
+                    &source_sha256,
+                    work,
+                );
+                if purge_before_sample {
+                    purge_os_cache();
+                }
+                run_a1_host_sample(
+                    &root,
+                    &expected,
+                    entity_count,
+                    repetition,
+                    "A0-first",
+                    cache_state,
+                    &source_sha256,
+                    work,
+                );
             } else {
-                run_a1_host_sample(&root, &expected, entity_count, repetition, "A1-first", work);
-                run_a0_host_sample(&root, &expected, entity_count, repetition, "A1-first", work);
+                if purge_before_sample {
+                    purge_os_cache();
+                }
+                run_a1_host_sample(
+                    &root,
+                    &expected,
+                    entity_count,
+                    repetition,
+                    "A1-first",
+                    cache_state,
+                    &source_sha256,
+                    work,
+                );
+                if purge_before_sample {
+                    purge_os_cache();
+                }
+                run_a0_host_sample(
+                    &root,
+                    &expected,
+                    entity_count,
+                    repetition,
+                    "A1-first",
+                    cache_state,
+                    &source_sha256,
+                    work,
+                );
             }
         }
     }
+}
+
+fn purge_os_cache() {
+    let status = Command::new("/usr/sbin/purge").status().unwrap();
+    assert!(status.success(), "macOS cache purge failed");
 }
 
 #[test]
@@ -2674,6 +3077,12 @@ fn issue_175_full_workload_matrix_raw_samples() {
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(20);
+    let workload_filter = std::env::var("TACHIKO_ISSUE_175_MATRIX_WORKLOADS")
+        .ok()
+        .map(|value| value.split(',').map(str::to_owned).collect::<BTreeSet<_>>());
+    let arm_filter = std::env::var("TACHIKO_ISSUE_175_MATRIX_ARMS")
+        .ok()
+        .map(|value| value.split(',').map(str::to_owned).collect::<BTreeSet<_>>());
     println!(
         "arm,workload,cache_state,entities,fields,source_sha256,source_bytes,nesting_scan_bytes,strict_json_bytes,canonical_render_bytes,entity_records,formula_ast_nodes,reference_edges,formula_dependency_edges,serialized_spine_bytes,repetition,source_known_us,first_preview_us,semantic_or_scan_current_us"
     );
@@ -2682,6 +3091,12 @@ fn issue_175_full_workload_matrix_raw_samples() {
         .map(|value| value.parse::<usize>().unwrap())
     {
         for shape in WorkloadShape::ALL {
+            if workload_filter
+                .as_ref()
+                .is_some_and(|filter| !filter.contains(shape.name()))
+            {
+                continue;
+            }
             let temp = ResearchTempDirectory::new();
             let root = temp.path().join("matrix.roproj");
             let document = shape.document(entity_count);
@@ -2698,8 +3113,15 @@ fn issue_175_full_workload_matrix_raw_samples() {
                 // Deterministically rotate arm order to distribute filesystem
                 // and allocator order effects across paired warm samples.
                 for slot in 0..4 {
+                    let arm = (slot + repetition) % 4;
+                    if arm_filter
+                        .as_ref()
+                        .is_some_and(|filter| !filter.contains(matrix_arm_name(arm)))
+                    {
+                        continue;
+                    }
                     run_matrix_arm(
-                        (slot + repetition) % 4,
+                        arm,
                         &root,
                         shape,
                         entity_count,
@@ -2711,6 +3133,16 @@ fn issue_175_full_workload_matrix_raw_samples() {
                 }
             }
         }
+    }
+}
+
+fn matrix_arm_name(arm: usize) -> &'static str {
+    match arm {
+        0 => "A0",
+        1 => "A1",
+        2 => "C-directory",
+        3 => "C-structural",
+        _ => unreachable!(),
     }
 }
 
@@ -2835,27 +3267,35 @@ fn issue_175_progressive_background_interference_and_cancellation() {
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(200);
+    let foreground_batch_ops = std::env::var("TACHIKO_ISSUE_175_FOREGROUND_BATCH_OPS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(256);
     let repetitions = std::env::var("TACHIKO_ISSUE_175_REPETITIONS")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(20);
     let temp = ResearchTempDirectory::new();
     let root = temp.path().join("progressive.roproj");
-    super::super::host::materialize_roproj(&root, &mixed_document(entity_count, 64)).unwrap();
+    let resident = mixed_document(entity_count, 64);
+    super::super::host::materialize_roproj(&root, &resident).unwrap();
+    let source_sha256 = fingerprint_source(&root).unwrap().0;
     black_box(source_preview(&root).unwrap());
     println!(
-        "arm,workload,cache_state,entities,repetition,foreground_requests,baseline_p50_us,baseline_p95_us,baseline_p99_us,baseline_min_us,baseline_max_us,background_p50_us,background_p95_us,background_p99_us,background_min_us,background_max_us,foreground_p95_ratio_ppm,baseline_elapsed_us,background_foreground_elapsed_us,background_semantic_current_us,cancelled_after_records,cancellation_latency_us"
+        "arm,foreground_contract,cache_state,entities,source_sha256,repetition,foreground_samples,operations_per_sample,baseline_p50_us,baseline_p95_us,baseline_p99_us,baseline_min_us,baseline_max_us,background_p50_us,background_p95_us,background_p99_us,background_min_us,background_max_us,foreground_p95_ratio_ppm,baseline_elapsed_us,background_foreground_elapsed_us,background_semantic_current_us,cancelled_after_records,cancellation_latency_us"
     );
     for repetition in 0..repetitions {
         let baseline_started = Instant::now();
-        let baseline = foreground_preview_samples(&root, foreground_count);
+        let baseline =
+            foreground_exact_navigation_samples(&resident, foreground_count, foreground_batch_ops);
         let baseline_elapsed = baseline_started.elapsed();
 
         let worker_root = root.clone();
         let background_started = Instant::now();
         let worker = std::thread::spawn(move || admit_one_pass_host(&worker_root, false));
         let interfered_started = Instant::now();
-        let interfered = foreground_preview_samples(&root, foreground_count);
+        let interfered =
+            foreground_exact_navigation_samples(&resident, foreground_count, foreground_batch_ops);
         let interfered_elapsed = interfered_started.elapsed();
         let background = worker.join().unwrap().unwrap();
         let background_time = background_started.elapsed();
@@ -2890,7 +3330,7 @@ fn issue_175_progressive_background_interference_and_cancellation() {
         let cancellation_time = cancellation_started.elapsed();
         assert!(cancellation.is_err());
         println!(
-            "B-progressive,mixed_smoke,os_cache_warm,{entity_count},{repetition},{foreground_count},{},{},{},{},{},{},{},{},{},{},{regression_ppm},{},{},{},{},{}",
+            "B-progressive,resident_exact_id_field_navigation,not_source_io,{entity_count},{source_sha256},{repetition},{foreground_count},{foreground_batch_ops},{},{},{},{},{},{},{},{},{},{},{regression_ppm},{},{},{},{},{}",
             baseline_distribution.0.as_micros(),
             baseline_distribution.1.as_micros(),
             baseline_distribution.2.as_micros(),
@@ -2979,7 +3419,7 @@ fn issue_175_dirty_sidecar_raw_samples() {
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(30);
     println!(
-        "arm,workload,cache_state,entities,source_bytes,sidecar_bytes,repetition,hash_us,sidecar_decode_us,total_validated_reuse_us,full_a1_us"
+        "arm,workload,cache_state,entities,source_sha256,source_bytes,sidecar_bytes,first_scan_us,first_sidecar_encode_us,repetition,hash_us,sidecar_decode_us,total_validated_reuse_us,full_a1_us"
     );
     for entity_count in entity_counts
         .split(',')
@@ -2991,10 +3431,13 @@ fn issue_175_dirty_sidecar_raw_samples() {
         super::super::host::materialize_roproj(&root, &expected).unwrap();
         let scan = scan_spine_host(&root, true).unwrap();
         let index = scan.structural.unwrap();
+        let source_sha256 = scan.directory.source_fingerprint.clone();
         let binding = SourceBinding::DirtyFilesystem {
-            source_sha256: scan.directory.source_fingerprint,
+            source_sha256: source_sha256.clone(),
         };
+        let encode_started = Instant::now();
         let sidecar = encode_sidecar(&index, binding.clone()).unwrap();
+        let encode_time = encode_started.elapsed();
         black_box(fingerprint_source(&root).unwrap());
         black_box(decode_sidecar(&sidecar, &binding).unwrap());
         for repetition in 0..repetitions {
@@ -3006,9 +3449,11 @@ fn issue_175_dirty_sidecar_raw_samples() {
             black_box(admit_one_pass_host(black_box(&root), false).unwrap());
             let full_time = full_started.elapsed();
             println!(
-                "E1-dirty-sidecar,mixed_smoke,os_cache_warm,{entity_count},{},{},{repetition},{},{},{},{}",
+                "E1-dirty-sidecar,mixed_smoke,os_cache_warm,{entity_count},{source_sha256},{},{},{},{},{repetition},{},{},{},{}",
                 scan.work.source_bytes,
                 sidecar.len(),
+                scan.scan_time.as_micros(),
+                encode_time.as_micros(),
                 hash_time.as_micros(),
                 decode_time.as_micros(),
                 (hash_time + decode_time).as_micros(),
@@ -3036,26 +3481,43 @@ fn issue_175_git_sidecar_raw_samples() {
     let project = initialize_git_snapshot(&repo, &document);
     let scan = scan_spine_host(&project, true).unwrap();
     let index = scan.structural.unwrap();
-    let (binding, _) = git_snapshot_binding(&repo);
+    let (git_source_sha256, git_source_bytes, first_source_proof_time) =
+        fingerprint_git_snapshot(&repo);
+    assert_eq!(git_source_bytes, scan.work.source_bytes);
+    assert_eq!(git_source_sha256, index.directory.source_fingerprint);
+    let (binding, first_identity_time) = git_snapshot_binding(&repo, git_source_sha256);
+    let encode_started = Instant::now();
     let sidecar = encode_sidecar(&index, binding.clone()).unwrap();
+    let encode_time = encode_started.elapsed();
     println!(
-        "arm,workload,cache_state,entities,source_bytes,sidecar_bytes,repetition,git_identity_us,sidecar_decode_us,total_validated_reuse_us,full_a1_us"
+        "arm,workload,cache_state,entities,source_sha256,source_bytes,sidecar_bytes,first_scan_us,first_git_identity_us,first_source_proof_us,first_sidecar_encode_us,repetition,git_identity_us,source_proof_us,sidecar_decode_us,identity_only_validated_reuse_us,total_with_source_reproof_us,full_a1_us"
     );
     for repetition in 0..repetitions {
-        let (_, identity_time) = git_snapshot_binding(black_box(&repo));
+        let (current_source_sha256, current_source_bytes, source_proof_time) =
+            fingerprint_git_snapshot(black_box(&repo));
+        assert_eq!(current_source_bytes, scan.work.source_bytes);
+        let (current_binding, identity_time) =
+            git_snapshot_binding(black_box(&repo), current_source_sha256);
         let decode_started = Instant::now();
-        black_box(decode_sidecar(black_box(&sidecar), &binding).unwrap());
+        black_box(decode_sidecar(black_box(&sidecar), &current_binding).unwrap());
         let decode_time = decode_started.elapsed();
         let full_started = Instant::now();
         black_box(admit_one_pass_host(black_box(&project), false).unwrap());
         let full_time = full_started.elapsed();
         println!(
-            "E2-git-sidecar,mixed_smoke,os_cache_warm,{entity_count},{},{},{repetition},{},{},{},{}",
+            "E2-git-sidecar,mixed_smoke,os_cache_warm,{entity_count},{},{},{},{},{},{},{},{repetition},{},{},{},{},{},{}",
+            index.directory.source_fingerprint,
             scan.work.source_bytes,
             sidecar.len(),
+            scan.scan_time.as_micros(),
+            first_identity_time.as_micros(),
+            first_source_proof_time.as_micros(),
+            encode_time.as_micros(),
             identity_time.as_micros(),
+            source_proof_time.as_micros(),
             decode_time.as_micros(),
             (identity_time + decode_time).as_micros(),
+            (identity_time + source_proof_time + decode_time).as_micros(),
             full_time.as_micros(),
         );
     }
@@ -3072,7 +3534,7 @@ fn issue_175_bounded_materialization_raw_samples() {
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(30);
     println!(
-        "arm,workload,cache_state,entities,closure_entities,source_bytes,materialized_payload_bytes,full_fingerprint_bytes,repetition,materialize_us,proof"
+        "arm,request_contract,workload,cache_state,entities,source_sha256,closure_entities,source_bytes,pinned_source_bytes,pin_us,materialized_payload_bytes,repetition,repeated_materialize_us,first_exact_bounded_us,proof"
     );
     for entity_count in entity_counts
         .split(',')
@@ -3084,24 +3546,69 @@ fn issue_175_bounded_materialization_raw_samples() {
         super::super::host::materialize_roproj(&root, &document).unwrap();
         let scan = scan_spine_host(&root, true).unwrap();
         let index = scan.structural.unwrap();
-        let requested = IndexedFieldRef {
-            entity: format!("issue-175-chain-{:08}", entity_count - 1),
+        let (snapshot, pin_time) = pin_source_snapshot(&root).unwrap();
+        assert_eq!(
+            snapshot.source_fingerprint,
+            index.directory.source_fingerprint
+        );
+        let requests = [
+            ("random_entity_lookup", 0),
+            ("near_dependency", 1.min(entity_count - 1)),
+            ("random_mid_dependency", entity_count / 2),
+            ("far_dependency", entity_count - 1),
+        ];
+        for (contract, requested_index) in requests {
+            let proof = if contract == "random_entity_lookup" {
+                "exact_source_payload_semantic_not_current"
+            } else {
+                "requires_full_admission_for_formula"
+            };
+            let requested = IndexedFieldRef {
+                entity: format!("issue-175-chain-{requested_index:08}"),
+                field: "value".to_owned(),
+            };
+            let closure = dependency_entity_closure(&index, &requested);
+            black_box(materialize_entities_from_pin(&snapshot, &index, &closure).unwrap());
+            for repetition in 0..repetitions {
+                let started = Instant::now();
+                let bounded = materialize_entities_from_pin(&snapshot, &index, &closure).unwrap();
+                let duration = started.elapsed();
+                println!(
+                    "D-bounded,{contract},deep_dependency_chain,os_cache_warm,{entity_count},{},{},{},{},{},{},{repetition},{},{},{proof}",
+                    index.directory.source_fingerprint,
+                    closure.len(),
+                    scan.work.source_bytes,
+                    snapshot.source_bytes,
+                    pin_time.as_micros(),
+                    bounded.materialized_payload_bytes,
+                    duration.as_micros(),
+                    (pin_time + duration).as_micros(),
+                );
+            }
+        }
+
+        let changed = IndexedFieldRef {
+            entity: "issue-175-chain-00000000".to_owned(),
             field: "value".to_owned(),
         };
-        let closure = dependency_entity_closure(&index, &requested);
-        black_box(materialize_entities_pinned_dirty(&root, &index, &closure).unwrap());
+        let affected = reverse_dependent_closure(&index, &changed)
+            .into_iter()
+            .map(|field| field.entity)
+            .collect::<BTreeSet<_>>();
         for repetition in 0..repetitions {
             let started = Instant::now();
-            let bounded =
-                materialize_entities_pinned_dirty(black_box(&root), &index, &closure).unwrap();
+            let bounded = materialize_entities_from_pin(&snapshot, &index, &affected).unwrap();
             let duration = started.elapsed();
             println!(
-                "D-bounded,deep_dependency_chain,os_cache_warm,{entity_count},{},{},{},{},{repetition},{},requires_full_admission",
-                closure.len(),
+                "D-bounded,cold_reverse_dependents,deep_dependency_chain,os_cache_warm,{entity_count},{},{},{},{},{},{},{repetition},{},{},requires_full_admission",
+                index.directory.source_fingerprint,
+                affected.len(),
                 scan.work.source_bytes,
+                snapshot.source_bytes,
+                pin_time.as_micros(),
                 bounded.materialized_payload_bytes,
-                bounded.full_fingerprint_bytes,
                 duration.as_micros(),
+                (pin_time + duration).as_micros(),
             );
         }
     }
@@ -3135,20 +3642,34 @@ fn issue_175_rss_child() {
             emit_steady_rss();
             black_box(&structural);
         }
-        "structural_hot_payload" => {
+        "structural_pinned_source" => {
+            let structural = scan_spine_host(&root, true).unwrap();
+            let snapshot = pin_source_snapshot(&root).unwrap().0;
+            emit_steady_rss();
+            black_box((&structural, &snapshot));
+        }
+        "structural_pinned_hot_payload" => {
             let structural = scan_spine_host(&root, true).unwrap();
             let index = structural.structural.as_ref().unwrap();
             let first = index.directory.entities.first().unwrap().id.clone();
+            let snapshot = pin_source_snapshot(&root).unwrap().0;
             let hot =
-                materialize_entities_pinned_dirty(&root, index, &BTreeSet::from([first])).unwrap();
+                materialize_entities_from_pin(&snapshot, index, &BTreeSet::from([first])).unwrap();
             emit_steady_rss();
-            black_box((&structural, &hot));
+            black_box((&structural, &snapshot, &hot));
         }
         "structural_plus_document" => {
             let structural = scan_spine_host(&root, true).unwrap();
             let document = admit_one_pass_host(&root, false).unwrap();
             emit_steady_rss();
             black_box((&structural, &document));
+        }
+        "structural_pinned_plus_document" => {
+            let structural = scan_spine_host(&root, true).unwrap();
+            let snapshot = pin_source_snapshot(&root).unwrap().0;
+            let document = admit_one_pass_host(&root, false).unwrap();
+            emit_steady_rss();
+            black_box((&structural, &snapshot, &document));
         }
         _ => panic!("unknown Issue #175 RSS arm '{arm}'"),
     }
@@ -3171,7 +3692,10 @@ fn issue_175_fresh_process_rss_samples() {
     let root = temp.path().join("rss.roproj");
     super::super::host::materialize_roproj(&root, &mixed_document(entity_count, 64)).unwrap();
     let executable = std::env::current_exe().unwrap();
-    println!("arm,workload,cache_state,entities,repetition,steady_rss_bytes,peak_rss_bytes");
+    let source_sha256 = fingerprint_source(&root).unwrap().0;
+    println!(
+        "arm,workload,cache_state,entities,source_sha256,repetition,steady_rss_bytes,peak_rss_bytes"
+    );
     for repetition in 0..repetitions {
         for arm in [
             "baseline",
@@ -3179,8 +3703,10 @@ fn issue_175_fresh_process_rss_samples() {
             "A1",
             "directory",
             "structural",
-            "structural_hot_payload",
+            "structural_pinned_source",
+            "structural_pinned_hot_payload",
             "structural_plus_document",
+            "structural_pinned_plus_document",
         ] {
             let output = Command::new("/usr/bin/time")
                 .arg("-l")
@@ -3201,17 +3727,22 @@ fn issue_175_fresh_process_rss_samples() {
                 String::from_utf8_lossy(&output.stderr)
             );
             let (steady, peak) = parse_child_rss(&output.stdout, &output.stderr);
-            println!("{arm},mixed_smoke,os_cache_warm,{entity_count},{repetition},{steady},{peak}");
+            println!(
+                "{arm},mixed_smoke,os_cache_warm,{entity_count},{source_sha256},{repetition},{steady},{peak}"
+            );
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_a0_host_sample(
     root: &Path,
     expected: &Document,
     entity_count: usize,
     repetition: usize,
     order: &str,
+    cache_state: &str,
+    source_sha256: &str,
     work: AdmissionWork,
 ) {
     let started = Instant::now();
@@ -3223,6 +3754,8 @@ fn run_a0_host_sample(
         entity_count,
         repetition,
         order,
+        cache_state,
+        source_sha256,
         work,
         None,
         None,
@@ -3230,12 +3763,15 @@ fn run_a0_host_sample(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_a1_host_sample(
     root: &Path,
     expected: &Document,
     entity_count: usize,
     repetition: usize,
     order: &str,
+    cache_state: &str,
+    source_sha256: &str,
     work: AdmissionWork,
 ) {
     let (document, _, timings) = admit_one_pass_host(black_box(root), false).unwrap();
@@ -3245,6 +3781,8 @@ fn run_a1_host_sample(
         entity_count,
         repetition,
         order,
+        cache_state,
+        source_sha256,
         work,
         Some(timings.source_known),
         timings.first_source_preview,
@@ -3258,6 +3796,8 @@ fn emit_host_sample(
     entity_count: usize,
     repetition: usize,
     order: &str,
+    cache_state: &str,
+    source_sha256: &str,
     work: AdmissionWork,
     source_known: Option<Duration>,
     first_source_preview: Option<Duration>,
@@ -3274,7 +3814,7 @@ fn emit_host_sample(
         work.nesting_scan_bytes
     };
     println!(
-        "{arm},mixed_smoke_host,os_cache_warm,{entity_count},{},{},{},{nesting_scan_bytes},{strict_json_bytes},{},{},{},{},{},{repetition},{order},{},{},{}",
+        "{arm},mixed_smoke_host,{cache_state},{entity_count},{},{source_sha256},{},{},{nesting_scan_bytes},{strict_json_bytes},{},{},{},{},{},{repetition},{order},{},{},{}",
         entity_count * 5,
         work.source_bytes,
         work.source_bytes,
