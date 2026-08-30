@@ -1655,6 +1655,9 @@ fn validate_directory_keys(schemas: &[DirectorySchema]) -> Result<(), FormatErro
 }
 
 fn validate_directory_coverage(directory: &Directory) -> Result<(), FormatError> {
+    if directory.document_id.is_empty() {
+        return invalid_representation("document id must not be empty".to_owned());
+    }
     if directory.document_title.trim().is_empty() {
         return invalid_representation("document title must not be empty".to_owned());
     }
@@ -2705,6 +2708,12 @@ fn issue_175_a1_preserves_a0_rejection_classes() {
             .insert("computed".to_owned(), ValueV1::Formula(balanced_formula(8)));
     });
     assert_rejection_parity("formula node limit", &formula_limit);
+
+    let mut empty_id = owned_files(&encode(&mixed_document(257, 37)).unwrap());
+    let mut manifest = decode_manifest(&empty_id[0].1).unwrap();
+    manifest.document.id.clear();
+    empty_id[0].1 = render_manifest(&manifest).unwrap().into_bytes();
+    assert_rejection_parity("empty document id", &empty_id);
 
     let mut empty_title = owned_files(&encode(&mixed_document(257, 37)).unwrap());
     let mut manifest = decode_manifest(&empty_title[0].1).unwrap();
@@ -4026,8 +4035,9 @@ fn issue_175_dirty_sidecar_raw_samples() {
             let decode_time = decode_started.elapsed();
             black_box(&pinned);
             let full_started = Instant::now();
-            black_box(admit_one_pass_host(black_box(&root), false).unwrap());
+            let full = black_box(admit_one_pass_host(black_box(&root), false).unwrap());
             let full_time = full_started.elapsed();
+            black_box(full);
             println!(
                 "E1-dirty-sidecar,mixed_smoke,os_cache_warm,{entity_count},{source_sha256},{},{},{},{},{repetition},{},{},{},{}",
                 scan.work.source_bytes,
@@ -4095,8 +4105,9 @@ fn issue_175_git_sidecar_raw_samples() {
         let decode_time = decode_started.elapsed();
         black_box(&pinned);
         let full_started = Instant::now();
-        black_box(admit_one_pass_host(black_box(&project), false).unwrap());
+        let full = black_box(admit_one_pass_host(black_box(&project), false).unwrap());
         let full_time = full_started.elapsed();
+        black_box(full);
         println!(
             "E2-git-sidecar,mixed_smoke,os_cache_warm,{entity_count},{},{},{},{},{},{},{},{repetition},{},{},{},{},{},{}",
             index.directory.source_fingerprint,
@@ -4139,7 +4150,7 @@ fn issue_175_bounded_materialization_raw_samples() {
         super::super::host::materialize_roproj(&root, &document).unwrap();
         let scan = scan_spine_host(&root, true).unwrap();
         let index = scan.structural.unwrap();
-        let (snapshot, pin_time) = pin_source_snapshot(&root).unwrap();
+        let (snapshot, _) = pin_source_snapshot(&root).unwrap();
         assert_eq!(
             snapshot.source_fingerprint,
             index.directory.source_fingerprint
@@ -4163,19 +4174,26 @@ fn issue_175_bounded_materialization_raw_samples() {
             let closure = dependency_entity_closure(&index, &requested);
             black_box(materialize_entities_from_pin(&snapshot, &index, &closure).unwrap());
             for repetition in 0..repetitions {
-                let started = Instant::now();
-                let bounded = materialize_entities_from_pin(&snapshot, &index, &closure).unwrap();
-                let duration = started.elapsed();
+                let (sample_snapshot, pin_time) = pin_source_snapshot(&root).unwrap();
+                let first_started = Instant::now();
+                let bounded =
+                    materialize_entities_from_pin(&sample_snapshot, &index, &closure).unwrap();
+                let first_duration = first_started.elapsed();
+                let repeated_started = Instant::now();
+                black_box(
+                    materialize_entities_from_pin(&sample_snapshot, &index, &closure).unwrap(),
+                );
+                let repeated_duration = repeated_started.elapsed();
                 println!(
                     "D-bounded,{contract},deep_dependency_chain,os_cache_warm,{entity_count},{},{},{},{},{},{},{repetition},{},{},{proof}",
                     index.directory.source_fingerprint,
                     closure.len(),
                     scan.work.source_bytes,
-                    snapshot.source_bytes,
+                    sample_snapshot.source_bytes,
                     pin_time.as_micros(),
                     bounded.materialized_payload_bytes,
-                    duration.as_micros(),
-                    (pin_time + duration).as_micros(),
+                    repeated_duration.as_micros(),
+                    (pin_time + first_duration).as_micros(),
                 );
             }
         }
@@ -4189,19 +4207,24 @@ fn issue_175_bounded_materialization_raw_samples() {
             .map(|field| field.entity)
             .collect::<BTreeSet<_>>();
         for repetition in 0..repetitions {
-            let started = Instant::now();
-            let bounded = materialize_entities_from_pin(&snapshot, &index, &affected).unwrap();
-            let duration = started.elapsed();
+            let (sample_snapshot, pin_time) = pin_source_snapshot(&root).unwrap();
+            let first_started = Instant::now();
+            let bounded =
+                materialize_entities_from_pin(&sample_snapshot, &index, &affected).unwrap();
+            let first_duration = first_started.elapsed();
+            let repeated_started = Instant::now();
+            black_box(materialize_entities_from_pin(&sample_snapshot, &index, &affected).unwrap());
+            let repeated_duration = repeated_started.elapsed();
             println!(
                 "D-bounded,cold_reverse_dependents,deep_dependency_chain,os_cache_warm,{entity_count},{},{},{},{},{},{},{repetition},{},{},requires_full_admission",
                 index.directory.source_fingerprint,
                 affected.len(),
                 scan.work.source_bytes,
-                snapshot.source_bytes,
+                sample_snapshot.source_bytes,
                 pin_time.as_micros(),
                 bounded.materialized_payload_bytes,
-                duration.as_micros(),
-                (pin_time + duration).as_micros(),
+                repeated_duration.as_micros(),
+                (pin_time + first_duration).as_micros(),
             );
         }
     }

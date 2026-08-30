@@ -1,8 +1,10 @@
 metric,n,p50,p95,p99,min,max,unit
-baseline_request_p95,20,54,60,65,52,65,us
-background_request_p95,20,33,51,63,26,63,us
-foreground_p95_ratio,20,631535,879608,972446,496148,972446,ppm
-background_semantic_current,20,224750,251992,350356,221193,350356,us
-background_join_wall,20,224823,252056,350444,221264,350444,us
-cancelled_after_records,20,64,65,68,64,68,records
-cancellation_latency,20,62,77,117,51,117,us
+baseline_request_p95,20,62,89,132,41,132,us
+background_request_p95,20,54,68,309,30,309,us
+foreground_p95_ratio,20,839917,1102654,5224040,468133,5224040,ppm
+foreground_p95_ratio_baseline_then_background,10,691155,924471,924471,468133,924471,ppm
+foreground_p95_ratio_background_then_baseline,10,894187,5224040,5224040,839917,5224040,ppm
+background_semantic_current,20,232667,325787,395833,225320,395833,us
+background_join_wall,20,232745,325848,395928,225398,395928,us
+cancelled_after_records,20,64,65,67,64,67,records
+cancellation_latency,20,65,160,1212,54,1212,us

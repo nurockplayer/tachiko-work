@@ -155,6 +155,19 @@ were accepted where they matched Issue and Accepted authority.
   re-derived the index, and a second audit caught a live-tree race after that
   scan. Final E reuse pins the exact 18-file snapshot, independently derives
   the index, and requires complete equality while retaining the pinned source.
+- The first B interference capture always ran baseline first, warming the
+  deterministic resident navigation path before the background arm. Final B
+  alternates order and records it per row; its p95 paired ratio is `1.103` and
+  therefore fails the 10% foreground-regression gate.
+- The first corrected E2 still derived trusted facts and pinned bytes from the
+  mutable worktree. Final E2 binds object format, commit, tree, modes, paths,
+  blob IDs, and reads the exact blob objects before independently re-deriving
+  every Structural Index fact. A dirty-worktree test proves reuse is sourced
+  from the immutable objects.
+- Progressive preview originally used an unbounded, uncancellable record read,
+  and final semantic validation could publish after a late cancellation. Final
+  preview is exact-layout checked, cancellable, and capped at 64 KiB; admission
+  checks cancellation before, between, and after final validation passes.
 - Initial raw A0 rows doubled parser-byte work but not decoded record, AST,
   reference, or dependency counters for the second logical decode. Final rows
   aggregate every decode-work counter symmetrically. A fixture manifest now
@@ -182,9 +195,10 @@ source identity, mismatch tests, and fail-closed fallback. D moved to a pinned
 source snapshot and returns `RequiresFullAdmission` for unsupported semantic
 proof.
 
-A0/A1/B/C/D/F captures were regenerated at `4ed7f994` after the cancellation
-and edge-accounting corrections. E1/E2 were replaced again at `6644115` after
-the source-derived and pinned-snapshot trust corrections. The earlier
+A0/A1/C/D/F captures were regenerated at `4ed7f994` after the cancellation
+and edge-accounting corrections. E1 was replaced at `6644115`; final B and E2
+were regenerated at `be4d801` after counterbalancing and immutable-object trust
+corrections. The earlier
 `1b3d75de`, `bd115c8`, and interrupted exploratory E2 files were discarded.
 Cold-cache cells remain absent and explicitly unavailable rather than
 relabeled.
@@ -198,7 +212,9 @@ result and return `RequiresFullAdmission` where the full oracle is required.
 ## Final outcome
 
 **Outcome A — reject/defer Global Spine**, with **B — progressive UX only** as
-an optional bounded technique over optimized exact A1.
+an optional bounded shell/source-preview technique over optimized exact A1.
+The measured background-admission schedule is rejected because it fails the
+10% foreground-regression gate.
 
 A1 materially improves current A0, but C does not beat A1 at the `>=2x` gate.
 Structural size is compact only in payload/constant-AST shapes and expands
@@ -206,7 +222,7 @@ mixed, reference, field, chain, and cycle classes. Fresh-process RSS shows no
 40% reduction and exposes higher spine-plus-eventual-full peaks. D is useful
 for exact source payload navigation but cannot publish complete formula or
 validation truth. Exact E1 is 1.58x slower than A1 at p95 on 16k mixed data;
-exact E2 is 2.70x slower. The faster E2 identity-plus-decode cell is explicitly
+exact E2 is 2.39x slower. The faster E2 identity-plus-decode cell is explicitly
 non-authoritative because it does not prove source-derived facts.
 
 No ADR, `.roproj/v2`, public protocol, canonical sidecar, or production

@@ -2,9 +2,10 @@
 
 Decision state: Research evidence for [#174](https://github.com/nurockplayer/tachiko-work/issues/174). This report does not change Accepted architecture.
 
-Measurement implementations: A0/A1/B/C/D/F at
-`4ed7f994825edb8a3bb6f1ac4a5cc5d940f74387`; corrected E1/E2 at
-`664411545009b152d94f8a7554c37d344b994172`; full-oracle and aggregate
+Measurement implementations: A0/A1/C/D/F at
+`4ed7f994825edb8a3bb6f1ac4a5cc5d940f74387`; corrected E1 at
+`664411545009b152d94f8a7554c37d344b994172`; final counterbalanced B and
+immutable-Git-object E2 at `be4d80146242eda5fc2258d82d6baf3ce7a19aa3`; full-oracle and aggregate
 two-pass counter corrections at
 `607e9208da2fdf71e0741d7ff7efceec890ac6fc`; all on
 `main@022a14d18503477aa7e20f6fca102f9e85dce740`.
@@ -27,7 +28,9 @@ The experiment falsified a universal Global Spine benefit:
 - at 16,000 mixed entities, Structural Index peak RSS is higher than A0 and
   more than twice A1; spine plus eventual `Document` raises peak further;
 - exact dirty-source sidecar validation is `1.58x` slower than A1 at p95,
-  while Git validation is `2.70x` slower; and
+  while Git validation is `2.39x` slower;
+- counterbalanced background admission fails the foreground-interference gate:
+  p95 of paired p95 ratios is `1.103` and the maximum is `5.224`; and
 - exact bounded source payload access is fast, but formula meaning and
   validation still require complete admission. The prototype correctly
   returns `requires_full_admission` rather than guessing.
@@ -43,9 +46,9 @@ justify a Global Spine.
 | Full-oracle equivalence | Pass for the research paths tested | Exact A0/A1 `Document` equality under success, cold numeric mutation, cross-cold SCC, and division-by-zero pressure; the same shapes independently preserve complete-calculation and workspace stable observations; late-invalid A0/A1/C rejection parity; formula oracle 10/10 and workspace validation 19/19 |
 | `>=2x` p95 benefit over A1 in two realistic large classes | Fail | At 64k, C Structural is only `1.07x` faster than A1 for payload and is `1.41x` slower for references and `1.43x` slower for mixed |
 | Benefit not limited to payload-heavy data | Fail | Payload Structural Index is `0.07x` source, but mixed is `1.38x` and references `2.83x` |
-| No `>10%` foreground regression | Pass for the bounded B contract | p95 of per-run foreground p95 ratios is `0.880`; maximum is `0.972` |
+| No `>10%` foreground regression | Fail | Counterbalanced p95 of per-run foreground p95 ratios is `1.103`; maximum is `5.224`; 2/20 runs exceed `1.10` |
 | `>=40%` peak-RSS reduction, without hidden eventual peak | Fail | A1 p50 peak is `30.4 MB`; Structural is `71.8 MB`; Structural + `Document` is `79.4 MB`; pinned Structural + `Document` is `91.2 MB` |
-| Sidecar validation preserves material reuse benefit | Fail | E1 validated p95 is `2.02 s` versus A1 `1.28 s`; E2 validated p95 is `846 ms` versus A1 `313 ms` |
+| Sidecar validation preserves material reuse benefit | Fail | E1 validated p95 is `2.02 s` versus A1 `1.28 s`; E2 validated p95 is `896 ms` versus A1 `375 ms` |
 
 ## Method
 
@@ -155,17 +158,24 @@ SemanticCurrent. Foreground measurements perform exact resident ID/field
 navigation, not source I/O or generic search.
 
 At 16k entities, 20 runs of 200 foreground batches × 256 exact operations
-produced:
+alternated `baseline_then_background` and `background_then_baseline`:
 
-- baseline per-run request p95: p50 `54 us`, p95 `60 us`;
-- with background A1: p50 `33 us`, p95 `51 us`;
-- foreground p95 ratio: p50 `0.632`, p95 `0.880`, max `0.972`;
-- background SemanticCurrent: p50 `225 ms`, p95 `252 ms`;
-- cancellation: all 20 cancelled after 64–65 records, p95 cleanup/join latency
-  `77 us` and maximum `117 us`.
+- baseline per-run request p95: p50 `62 us`, p95 `89 us`;
+- with background A1: p50 `54 us`, p95 `68 us`;
+- foreground p95 ratio: p50 `0.840`, p95 `1.103`, max `5.224`; 2/20
+  runs exceeded the `1.10` gate;
+- order-stratified ratio p95 is `0.924` for baseline-first and `5.224` for
+  background-first, exposing the order sensitivity hidden by the original
+  fixed ordering;
+- background SemanticCurrent: p50 `233 ms`, p95 `326 ms`;
+- cancellation: all 20 cancelled, with p95 `65` and maximum `67` completed
+  records; cleanup/join latency p95 is `160 us` and maximum is `1.21 ms`.
 
-This bounded contract stays below the 10% regression gate. It supports B as an
-optional UX approach, while keeping correctness authority complete and eager.
+This background-admission contract fails the 10% regression gate. B remains
+supported only as a non-authoritative bounded shell/source-preview technique;
+the measured background A1 schedule is not recommended without a separately
+proven foreground-pressure policy. Correctness authority stays complete and
+eager.
 
 ## D — pinned source and bounded materialization
 
@@ -207,8 +217,8 @@ At 16k mixed entities:
 | Case | Source | Sidecar | Reuse p95 | A1 p95 | Interpretation |
 | --- | ---: | ---: | ---: | ---: | --- |
 | E1 dirty filesystem, validated | 9.63 MB | 18.83 MB | 2.02 s | 1.28 s | Includes 1.20 s pinned source revalidation + 818 ms decode; slower than A1 |
-| E2 identity + decode only | 9.63 MB | 18.83 MB | 257 ms | 313 ms | Non-authoritative diagnostic; source-derived facts are not proven |
-| E2 Git + pinned source-derived validation | 9.63 MB | 18.83 MB | 846 ms | 313 ms | Exact validation is 2.70x slower than A1 |
+| E2 identity + decode only | 9.63 MB | 18.83 MB | 344 ms | 375 ms | Non-authoritative diagnostic; source-derived facts are not proven |
+| E2 Git-object + pinned source-derived validation | 9.63 MB | 18.83 MB | 896 ms | 375 ms | Exact validation is 2.39x slower than A1 |
 
 E1 first build also costs a 323 ms scan plus 70 ms encode. The mixed sidecar is
 `1.96x` source size. Integrity detects accidental corruption; it is not an
@@ -258,7 +268,7 @@ structural parsing: they run the required document-level coverage checks.
 
 Validation at measurement HEAD:
 
-- Issue #175 focused tests: 13 passed, 10 ignored measurement entrypoints;
+- Issue #175 focused tests: 16 passed, 10 ignored measurement entrypoints;
 - storage `.roproj/v1` and host suites: 66 passed;
 - formula complete-oracle suite: 10 passed;
 - workspace validation-report suite: 19 passed; and
@@ -275,9 +285,9 @@ Validation at measurement HEAD:
 - A1 is a research implementation inside the storage test module. It still
   performs strict syntax, duplicate-member, nesting, and DTO traversals and
   allocates temporary per-record canonical spelling evidence.
-- Source preview is non-authoritative. The B foreground contract begins from an
-  already resident exact `Document` and is not evidence for cold payload
-  search.
+- Source preview is non-authoritative, capped at a 64 KiB record, cancellable,
+  and exact-layout checked. The B foreground contract begins from an already
+  resident exact `Document` and is not evidence for cold payload search.
 - D pins the complete source snapshot, so its timing cannot be interpreted as
   a source-RSS reduction.
 - No UI render, WASM compile/JIT, or process startup timing is included.
@@ -304,13 +314,15 @@ committed. Retained-runtime RSS is in
    decision.
 2. Carry optimized exact eager A1 forward only through a separately authorized
    production issue; this research PR does not productionize it.
-3. Allow **B — progressive UX only** as an optional shell/source-preview
-   technique, with SemanticCurrent remaining the authority boundary.
+3. Allow **B — progressive UX only** as an optional bounded shell/source-preview
+   technique, with SemanticCurrent remaining the authority boundary. Do not
+   adopt the measured background-admission schedule: it fails the 10% gate.
 4. Treat payload-only compactness as evidence for a narrow locator/payload
    optimization if future product measurements require it.
 5. Do not advance **C**: the exact derived spine is not broadly compact, is not
    faster than A1, and raises RSS.
 6. Do not advance **D**: durable representation is not the remaining proven
-   bottleneck; E2 source proof and sidecar decode do not beat A1 materially.
+   bottleneck; E2 Git-object proof and sidecar decode are `2.39x` slower than
+   A1 at p95.
 7. Do not create an ADR, `.roproj/v2`, public readiness/cache protocol, or
    production successor from #175 automatically.
