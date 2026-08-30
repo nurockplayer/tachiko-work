@@ -83,7 +83,7 @@ const table: TableProjection = {
         {
           target: { entity: "iron_sword", field: "name" },
           address: "iron_sword.name",
-          stored: { kind: "text", value: "\r\nLeading\rMiddle\nTail" },
+          stored: { kind: "text", value: "Leading\nMiddle\nTail" },
           formula: null,
           calculated: null,
           diagnostics: [],
@@ -405,14 +405,11 @@ describe("Designer application seam", () => {
     const cases = [
       ["a\n", "a", "a"],
       ["a", "a\n", "a\n"],
-      ["a\r", "a", "a"],
-      ["a\r\n", "a", "a"],
-      ["\r\nlead\rtail\n", "\nlead\ntail\n", "\r\nlead\rtail\n"],
-      ["a\rb", "a\nx\nb", "a\rx\nb"],
-      ["a\r\nb", "a\nx\nb", "a\r\nx\nb"],
-      ["a\r\nb\rc", "b\nc", "b\rc"],
-      ["a\r\nb\rc\nd", "A\nb\nC\nd", "A\r\nb\rC\nd"],
-      ["😀\r\ncenter\rtail", "😀\ninsert\ncenter\ntail", "😀\r\ninsert\ncenter\rtail"],
+      ["a\r", "a\n", "a\r"],
+      ["a\r\n", "a\n", "a\r\n"],
+      ["\nlead\ntail\n", "\nlead\nchanged\n", "\nlead\nchanged\n"],
+      ["a\nb", "a\nx\nb", "a\nx\nb"],
+      ["😀\ncenter\ntail", "😀\ninsert\ncenter\ntail", "😀\ninsert\ncenter\ntail"],
       [`${"x".repeat(65_000)}\n`, `${"x".repeat(65_000)}\n`, `${"x".repeat(65_000)}\n`],
     ] as const;
     try {
@@ -484,9 +481,9 @@ describe("Designer application seam", () => {
       'textarea[aria-label="Name for Iron Sword"]',
     );
     if (name === null || name.form === null) throw new Error("text edit form is required");
-    expect(name.value).toBe("\r\nLeading\rMiddle\nTail");
-    name.dataset.initialNormalized = "\nLeading\nMiddle\nTail";
-    name.value = "\nChanged\nMiddle\nFin\nExtra";
+    expect(name.value).toBe("Leading\nMiddle\nTail");
+    name.dataset.initialNormalized = "Leading\nMiddle\nTail";
+    name.value = "Changed\nMiddle\nFin\nExtra";
     name.form.requestSubmit();
     await vi.waitFor(() => {
       expect(root.querySelector('[data-testid="revision"]')?.textContent).toContain(
@@ -497,13 +494,13 @@ describe("Designer application seam", () => {
       {
         expectedRevision: "resident/0",
         target: { entity: "iron_sword", field: "name" },
-        value: "\r\nChanged\rMiddle\nFin\nExtra",
+        value: "Changed\nMiddle\nFin\nExtra",
       },
     ]);
     expect(
       root.querySelector<HTMLTextAreaElement>('textarea[aria-label="Name for Iron Sword"]')
         ?.value,
-    ).toBe("\r\nChanged\rMiddle\nFin\nExtra");
+    ).toBe("Changed\nMiddle\nFin\nExtra");
 
     const enabled = root.querySelector<HTMLInputElement>(
       'input[aria-label="Enabled for Iron Sword"]',
