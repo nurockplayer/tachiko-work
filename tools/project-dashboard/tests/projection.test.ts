@@ -1156,6 +1156,8 @@ describe("normalizeRepositorySnapshot", () => {
   it.each([
     "There is no null check, so this crashes on empty input.",
     "This throws for an empty input.",
+    "This deletes user data.",
+    "This erases data on retry.",
   ])("blocks an unlabeled comment-only runtime failure on the current head: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1213,6 +1215,7 @@ describe("normalizeRepositorySnapshot", () => {
     "Tests don't fail on Windows.",
     "Tests are not failing on Windows.",
     "This does not throw for an empty input.",
+    "This does not delete user data.",
   ])("does not infer a substantive finding from a clean comment-only review summary: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1600,6 +1603,7 @@ describe("normalizeRepositorySnapshot", () => {
     "This fails to compile on Windows.",
     "There is no null check, so this crashes on empty input.",
     "This throws for an empty input.",
+    "This deletes user data.",
   ])("fails closed on an unlabeled correctness finding: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
