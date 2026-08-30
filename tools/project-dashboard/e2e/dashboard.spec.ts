@@ -92,6 +92,24 @@ test("distinguishes a known-empty queue from unknown observation", async ({ page
   await expect(page.getByText("Delivery observation is Unknown.", { exact: true })).toHaveCount(0);
 });
 
+test("keeps the queue known when only recent completion history is partial", async ({ page }) => {
+  await page.route("**/api/projection", async (route) => {
+    const response = await route.fetch();
+    const projection = (await response.json()) as RepositoryProjection;
+    projection.deliveries = [];
+    projection.repo.fetchHealth = "partial";
+    projection.repo.failures = ["Recent completion observation failed."];
+    projection.attention.humanActionRequired = true;
+    projection.attention.reasons = ["No Ready work remains; Steward selection is required."];
+    await route.fulfill({ response, json: projection });
+  });
+  await page.goto("/");
+
+  await expect(page.getByText("Delivery queue is exhausted; no qualifying delivery lanes were observed.", { exact: true }))
+    .toBeVisible();
+  await expect(page.getByText("Delivery observation is Unknown.", { exact: true })).toHaveCount(0);
+});
+
 test("does not color an explicit Not Ready handoff green", async ({ page }) => {
   await page.route("**/api/projection", async (route) => {
     const response = await route.fetch();

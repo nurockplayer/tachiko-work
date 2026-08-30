@@ -201,7 +201,9 @@ function deliveryCenter(projection: RepositoryProjection): HTMLElement {
   ]);
   const grid = element("div", { class: "delivery-grid" });
   if (projection.deliveries.length === 0) {
-    grid.append(projection.repo.fetchHealth === "healthy"
+    const deliveryObservationKnown = projection.repo.fetchHealth === "healthy" ||
+      projection.attention.humanActionRequired === true;
+    grid.append(deliveryObservationKnown
       ? element("p", { class: "quiet" }, ["Delivery queue is exhausted; no qualifying delivery lanes were observed."])
       : element("p", { class: "unknown" }, ["Delivery observation is Unknown."]));
   }

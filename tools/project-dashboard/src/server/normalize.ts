@@ -43,7 +43,7 @@ const unlabeledPureMaintainabilitySuggestion = /^(?:could|would|can|please|consi
 const missingSafeguardImpact = /\bno\s+(?:(?:authorization|authentication|permission|access[- ]control|security)\s+(?:check|guard|safeguard|control)\w*|input\s+validation)\b[^.!?;\n]{0,80}\b(?:prevents?|blocks?|stops?)\b[^.!?;\n]{0,80}\b(?:bypass|inject|leak|corrupt|overwrit|delet|eras)\w*\b/i;
 const satisfiedSafeguardImpact = /\b(?:(?:an?|the)\s+)?(?:authorization|authentication|permission|access[- ]control|security)\s+(?:checks?|guards?|safeguards?|controls?)\s+(?:prevents?|blocks?|stops?)\b[^.!?;\n]{0,80}\b(?:bypass|inject|leak|corrupt|overwrit|delet|eras)\w*\b/i;
 const injectionImpact = /\b(?:sql|command|code)\s+injection\b/i;
-const negatedInjectionImpact = /(?:\b(?:(?:no|without)\s+(?:\w+\s+){0,3}|(?:(?:does|do|did|can|could|would|should|will|is|are|was|were)\s+not|(?:does|do|did|can|could|would|should|wo|is|are|was|were)n['’]?t|cannot|never)\s+(?:\w+\s+){0,3})(?:sql|command|code)\s+injection\b|\b(?:sql|command|code)\s+injection\b\s+(?:(?:is|was)\s+(?:prevented|blocked|mitigated|rejected|impossible|disallowed|disabled|ruled\s+out)|(?:is|was)\s+(?:not|never)\s+(?:possible|permitted|enabled|observed|detected)|(?:is|was)n['’]?t\s+(?:possible|permitted|enabled)|(?:has|have|had)\s+not\s+(?:occur|happen)\w*|(?:can(?:not|['’]?t)|(?:does|did)\s+not|never)\s+(?:occur|happen|succeed)\w*|(?:checks?|tests?)\s+passed)\b)/i;
+const negatedInjectionImpact = /(?:\b(?:(?:no|without)\s+(?:\w+\s+){0,3}|(?:(?:does|do|did|can|could|would|should|will|is|are|was|were)\s+not|(?:does|do|did|can|could|would|should|wo|is|are|was|were)n['’]?t|cannot|never)\s+(?:\w+\s+){0,3})(?:sql|command|code)\s+injection\b|\b(?:sql|command|code)\s+injection\b\s+(?:(?:is|was)\s+(?:prevented|blocked|mitigated|rejected|impossible|disallowed|disabled|ruled\s+out)|(?:is|was)\s+(?:not|never)\s+(?:possible|permitted|enabled|observed|detected)|(?:is|was)n['’]?t\s+(?:possible|permitted|enabled)|(?:has|have|had)\s+(?:not|never)\s+(?:occur|happen)\w*|(?:can(?:not|['’]?t)|(?:does|did)\s+not|never)\s+(?:occur|happen|succeed)\w*|(?:checks?|tests?)\s+passed)\b)/i;
 const satisfiedInjectionSafeguard = /\b(?:(?:the\s+)?(?:system|application|service|implementation|validation|sanitization|escaping|parameteri[sz]ation)|(?:(?:an?|the)\s+)?(?:authorization|authentication|permission|access[- ]control|security)\s+(?:checks?|guards?|safeguards?|controls?))\s+(?:prevents?|blocks?|stops?|disallows?|disables?|rules?\s+out)\s+(?:sql|command|code)\s+injection\b/i;
 const authorityOnlyIssue = /^\s*\[(?:decision|research)\](?:\s|\[|$)/i;
 
@@ -119,7 +119,9 @@ function reviewBodyClauses(body: string): string[] {
     let current = coordinated.shift()?.trim() ?? "";
     for (const candidate of coordinated) {
       const next = candidate.trim();
-      const negatedImpact = negatedUnlabeledSubstantiveImpact.test(current) || negatedDestructiveDataImpact.test(current);
+      const negatedImpact = negatedUnlabeledSubstantiveImpact.test(current) ||
+        negatedDestructiveDataImpact.test(current) || negatedInjectionImpact.test(current) ||
+        satisfiedSafeguardImpact.test(current) || satisfiedInjectionSafeguard.test(current);
       const completedClear = isClearedReviewClause(current) && completedClearedReviewFinding.test(current);
       const affirmativeImpact = isSubstantiveReviewClause(next) || affirmativeUnlabeledSubstantiveImpact.test(next) ||
         affirmativeDestructiveDataImpact.test(next) || affirmativeBuildOrTestFailure.test(next) ||

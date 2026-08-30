@@ -1234,6 +1234,7 @@ describe("normalizeRepositorySnapshot", () => {
     "SQL injection is prevented and code injection permits data loss.",
     "SQL injection is impossible and command injection occurs.",
     "No input validation prevents SQL injection.",
+    "No SQL injection and command injection occurs.",
   ])("blocks an unlabeled comment-only runtime failure on the current head: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1365,6 +1366,7 @@ describe("normalizeRepositorySnapshot", () => {
     "Input validation prevents SQL injection.",
     "Looks good.",
     "LGTM",
+    "SQL injection has never occurred.",
   ])("does not infer a substantive finding from a clean comment-only review summary: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1396,6 +1398,7 @@ describe("normalizeRepositorySnapshot", () => {
     "P1 review hasn't completed.",
     "Not fixed: [P2] this path overwrites data.",
     "No test covers this [P1] regression.",
+    "No SQL injection and command injection occurs.",
   ])("blocks an affirmative equivalent comment-only finding: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1938,6 +1941,7 @@ describe("normalizeRepositorySnapshot", () => {
     "Input validation prevents SQL injection.",
     "Looks good.",
     "LGTM",
+    "SQL injection has never occurred.",
   ])("does not promote a negated unlabeled impact statement: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
