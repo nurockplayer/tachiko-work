@@ -964,6 +964,7 @@ describe("normalizeRepositorySnapshot", () => {
     "P2 findings: none (all checks passed).",
     "P2 findings resolved.",
     "P1 review complete.",
+    "Not a [P2] issue.",
   ])("does not infer a substantive finding from a clean comment-only review summary: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -993,6 +994,7 @@ describe("normalizeRepositorySnapshot", () => {
     "P1 review has not completed.",
     "P2 issue is not yet resolved.",
     "P1 review hasn't completed.",
+    "Not fixed: [P2] this path overwrites data.",
   ])("blocks an affirmative equivalent comment-only finding: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {

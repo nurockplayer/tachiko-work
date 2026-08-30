@@ -19,7 +19,7 @@ import { isDecisionAuthorityPath } from "../shared/authority.ts";
 const handoffMarker = "<!-- agent-handoff:v1 -->";
 const explicitlyPrioritizedFinding = /(?:\[|\b)(?:p[0-2]|sev(?:erity)?[ -]?[0-2])(?:\]|\b)/i;
 const explicitlySubstantiveFinding = /(?:\[|\b)(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness)(?:\]|\b)/i;
-const negatedReviewFinding = /\b(?:no|not|none|without|zero|0)\b[^.!?;\n]{0,80}\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|findings?|issues?|concerns?|problems?)\b/i;
+const negatedReviewFinding = /(?:\b(?:no|none|without|zero|0)\b[^.!?;\n]{0,80}\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|findings?|issues?|concerns?|problems?)\b|\bnot\s+(?:an?\s+)?\[?(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness)(?:\]|\b))/i;
 const clearedReviewFinding = /\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|security|correctness|blocking|data[- ]integrity)\b[^.!?;\n]{0,80}\b(?:checks?|review|findings?|issues?)?\s*(?:passed|complete(?:d)?|clean|resolved)\b(?:\s*\([^)]*\))?\s*$/i;
 const negatedReviewResolution = /\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|security|correctness|blocking|data[- ]integrity)\b[^.!?;\n]{0,80}(?:\b(?:not|never|cannot)\b|\b(?:is|are|was|were|has|have|had|do|does|did|can|could|would|should|will|wo)n['’]?t\b)(?:\s+\w+){0,3}\s+(?:passed|complete(?:d)?|clean|resolved)\b/i;
 const postposedClearedReviewFinding = /\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|data[- ]integrity)(?:\s+(?:findings?|issues?|concerns?|problems?)(?:\s+found)?)?\s*(?::|=|\bare\b)\s*(?:none|zero|0)\b(?:\s*\([^)]*\))?\s*$/i;
