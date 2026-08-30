@@ -69,11 +69,14 @@ function githubPage() {
                           {
                             __typename: "CheckRun",
                             name: "test",
-                            startedAt: "2026-08-30T00:00:00Z",
+                            startedAt: null,
                             status: "COMPLETED",
                             conclusion: "SUCCESS",
                             detailsUrl: null,
-                            checkSuite: { app: { databaseId: 42 } },
+                            checkSuite: {
+                              createdAt: "2026-08-30T00:00:00Z",
+                              app: { databaseId: 42 },
+                            },
                           },
                         ],
                         pageInfo: { hasNextPage: false },
@@ -187,7 +190,7 @@ describe("loadGithubSnapshot", () => {
     expect(result.productHorizonUrl).toContain(mainSha);
     expect(projectionQuery).toContain("pullRequests(first: 25");
     expect(projectionQuery).toContain("reviewThreads(first: 50)");
-    expect(projectionQuery).toContain("detailsUrl startedAt");
+    expect(projectionQuery).toContain("detailsUrl startedAt checkSuite { createdAt");
     expect(projectionQuery).toContain("targetUrl createdAt updatedAt");
     expect(projectionQuery).toMatch(/reviewThreads\(first: 50\)[\s\S]*comments\(first: 50\)/);
   });

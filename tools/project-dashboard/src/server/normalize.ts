@@ -234,7 +234,7 @@ function statusClaimIsConditional(statusText: string, match: RegExpExecArray): b
   const before = statusText.slice(0, match.index);
   const after = statusText.slice(match.index + match[0].length);
   return /\b(?:(?:future|become|mark|set|move|declare|consider)(?:\s+(?:as|to))?|(?:will|would|should|can|could|may|might)(?:\s+be|\s+become)?)\s*$/i.test(before) ||
-    /^\s+(?:once|when|if|after|pending)\b/i.test(after);
+    /^\s+(?:only\s+)?(?:once|when|if|after|pending)\b/i.test(after);
 }
 
 function statusHasAffirmativeClaim(statusText: string, claim: RegExp): boolean {
@@ -627,6 +627,7 @@ function projectLane(
   const authoritativeIssueStatus = issueStatusText(issue);
   const issueStatusBlocked = statusClaimsBlocked(authoritativeIssueStatus);
   const issueStatusAffirmsDelivery = statusClaimsActive(authoritativeIssueStatus) || statusClaimsReady(authoritativeIssueStatus);
+  const dependencyObservationRequiresSteward = pr !== null && issue.blockedBy === null;
   const authorityReadinessRequiresSteward = pr !== null && authorityOnlyIssue.test(issue.title) &&
     !decisionReadyAuthority;
   const issueReadinessRequiresSteward = issue.blockedBy !== null && issue.blockedBy.length === 0 &&
@@ -747,6 +748,8 @@ function projectLane(
       ? { owner: "human", reason: "Multiple open pull requests claim the same Issue; Project Steward reconciliation is required." }
     : nonCurrentPrRequiresSteward
       ? { owner: "human", reason: "A non-current milestone pull request requires Project Steward roadmap activation." }
+    : dependencyObservationRequiresSteward
+      ? { owner: "human", reason: "Issue dependency state requires Project Steward reconciliation." }
     : issueReadinessRequiresSteward
       ? { owner: "human", reason: "The authoritative Issue status requires Steward readiness action." }
     : phase === "review_fix" || phase === "rereview" || checks.status === "failure" || checks.status === "pending" ||

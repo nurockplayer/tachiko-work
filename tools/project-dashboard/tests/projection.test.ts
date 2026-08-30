@@ -338,6 +338,8 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.issue.readiness).toBe("unknown");
     expect(lane?.phase).toBe("validating");
     expect(lane?.blockers).toContain("Issue dependency state could not be fully observed.");
+    expect(lane?.action.owner).toBe("human");
+    expect(projection.attention.humanActionRequired).toBe(true);
   });
 
   it("does not let a merge-ready handoff override an authoritative Not Ready Issue", () => {
@@ -585,6 +587,8 @@ describe("normalizeRepositorySnapshot", () => {
     "Future Ready.",
     "Ready after approval.",
     "Ready pending approval.",
+    "Ready only after the Steward approves scope.",
+    "Ready only when the dependency closes.",
   ])("does not treat a future conditional Ready reference as authoritative readiness: %s", (status) => {
     const backlog = issue();
     backlog.body = `## Status\n\n${status}\n\nOwner: \`agent:codex\``;
@@ -818,6 +822,37 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.checks.status).toBe("success");
     expect(lane?.checks.requiredStatus).toBe("satisfied");
     expect(lane?.phase).toBe("merge_gate");
+  });
+
+  it("uses a queued rerun's creation fallback to supersede an older failure", () => {
+    const pr = pullRequest();
+    pr.requiredChecks = [{ name: "test", integrationId: null }];
+    pr.checks = [
+      {
+        name: "test",
+        integrationId: null,
+        attemptAt: "2026-08-30T00:00:00Z",
+        status: "completed",
+        conclusion: "failure",
+        url: null,
+      },
+      {
+        name: "test",
+        integrationId: null,
+        attemptAt: "2026-08-30T00:01:00Z",
+        status: "queued",
+        conclusion: null,
+        url: null,
+      },
+    ];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.checks.status).toBe("pending");
+    expect(lane?.checks.requiredStatus).toBe("unsatisfied");
+    expect(lane?.phase).toBe("validating");
+    expect(lane?.blockers).toContain("test is queued.");
   });
 
   it("never treats an optional green check as satisfying an unobserved required check", () => {
