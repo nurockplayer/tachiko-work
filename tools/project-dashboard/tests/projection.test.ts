@@ -725,6 +725,29 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries[0]?.phase).toBe("merge_gate");
   });
 
+  it("lets a conditional Decision-Ready claim supersede an earlier affirmative claim", () => {
+    const decision = issue();
+    decision.title = "[Decision][M05 P1] Choose the dashboard delivery boundary";
+    decision.body = [
+      "## Status",
+      "",
+      "Decision-Ready.",
+      "",
+      "Decision-Ready only after Steward approval.",
+      "",
+      "Owner: `agent:codex`",
+    ].join("\n");
+    const pr = pullRequest();
+    pr.changedPaths = ["docs/decisions/ADR-0029-dashboard-boundary.md"];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [decision], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.issue.readiness).toBe("unknown");
+    expect(lane?.phase).toBe("validating");
+    expect(lane?.action.owner).toBe("human");
+  });
+
   it.each(["Decision", "Research"])(
     "keeps a Decision-Ready %s authority Issue without a focused PR outside delivery",
     (kind) => {
@@ -1310,6 +1333,7 @@ describe("normalizeRepositorySnapshot", () => {
     "This remains stuck in a cycle.",
     "This is trapped in a cycle.",
     "No authorization check prevents users from bypassing access control.",
+    "No mutex prevents this race condition.",
     "This permits SQL injection for crafted input.",
     "SQL injection permits data loss and checks passed.",
     "SQL injection is prevented and code injection permits data loss.",
@@ -1449,6 +1473,7 @@ describe("normalizeRepositorySnapshot", () => {
     "This is not a cycle.",
     "Could you rename this local for clarity?",
     "An authorization check prevents users from bypassing access control.",
+    "A mutex prevents this race condition.",
     "This does not permit SQL injection.",
     "SQL injection is prevented.",
     "SQL injection was blocked.",
@@ -1937,6 +1962,7 @@ describe("normalizeRepositorySnapshot", () => {
     "This remains stuck in a cycle.",
     "This is trapped in a cycle.",
     "No authorization check prevents users from bypassing access control.",
+    "No mutex prevents this race condition.",
     "This permits SQL injection for crafted input.",
     "SQL injection permits data loss and checks passed.",
     "SQL injection is prevented and code injection permits data loss.",
@@ -2047,6 +2073,7 @@ describe("normalizeRepositorySnapshot", () => {
     "This does not fail to converge.",
     "This is not a cycle.",
     "An authorization check prevents users from bypassing access control.",
+    "A mutex prevents this race condition.",
     "This does not permit SQL injection.",
     "SQL injection is prevented.",
     "SQL injection was blocked.",
