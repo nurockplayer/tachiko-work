@@ -1203,6 +1203,8 @@ describe("normalizeRepositorySnapshot", () => {
     "This spins indefinitely.",
     "This is stuck in a loop.",
     "This never ends.",
+    "This loops endlessly.",
+    "This runs endlessly.",
   ])("blocks an unlabeled comment-only runtime failure on the current head: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1294,6 +1296,10 @@ describe("normalizeRepositorySnapshot", () => {
     "This does not spin indefinitely.",
     "This is not stuck in a loop.",
     "This does not fail to end.",
+    "This is not an infinite loop.",
+    "This does not loop endlessly.",
+    "This does not run endlessly.",
+    "This is not endlessly looping.",
   ])("does not infer a substantive finding from a clean comment-only review summary: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1714,6 +1720,8 @@ describe("normalizeRepositorySnapshot", () => {
     "This spins indefinitely.",
     "This is stuck in a loop.",
     "This never ends.",
+    "This loops endlessly.",
+    "This runs endlessly.",
   ])("fails closed on an unlabeled correctness finding: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
@@ -1795,6 +1803,10 @@ describe("normalizeRepositorySnapshot", () => {
     "This does not spin indefinitely.",
     "This is not stuck in a loop.",
     "This does not fail to end.",
+    "This is not an infinite loop.",
+    "This does not loop endlessly.",
+    "This does not run endlessly.",
+    "This is not endlessly looping.",
   ])("does not promote a negated unlabeled impact statement: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
