@@ -31,6 +31,7 @@ const explicitlyNonSubstantiveBadge = /^(?:<sub>\s*)+!\[(?:p3|sev(?:erity)?[ -]?
 const explicitlyNonSubstantiveAcknowledgment = /^(?:done|fixed(?:\s+in\s+(?:commit\s+)?[0-9a-f]{7,40})?|thanks,\s+applied this suggestion)[.!]?$/i;
 const negatedUnlabeledSubstantiveImpact = /(?:\b(?:no|none|without|zero|0)\b[^.!?;\n]{0,80}\b(?:p3|sev(?:erity)?[ -]?3|bugs?|errors?|wrong|incorrect|stale|invalid|unsafe|unauthori[sz]ed|data[- ]loss(?:es)?|regressions?|race\s+condition|deadlock|vulnerab\w*|security\s+flaw|crash(?:es|ed|ing)?|panic(?:s|ked|king)?|corrupt\w*|overwrit\w*|bypass\w*|leak\w*|los(?:e|es|ing|t)\s+(?:user\s+)?data)\b|\b(?:does|do|did|can|could|would|should|will|is|are|was|were|has|have|had)\s+not\s+(?:\w+\s+){0,3}(?:return\s+(?:a\s+)?wrong|produc\w*\s+(?:an?\s+)?incorrect|los(?:e|es|ing|t)\s+(?:user\s+)?data|corrupt\w*|overwrit\w*|bypass\w*|leak\w*|crash\w*|panic\w*|break\w*|fail\w*)\b|\b(?:data[- ]loss(?:es)?|regressions?|race\s+condition|deadlock|vulnerab\w*|security\s+flaw|crash(?:es|ed|ing)?|panic(?:s|ked|king)?|corrupt\w*|overwrit\w*|bypass\w*|leak\w*)\b[^.!?;\n]{0,80}\b(?:not\s+(?:found|present|observed|identified|detected)|absent)\b)/i;
 const affirmativeUnlabeledSubstantiveImpact = /\b(?:wrong|incorrect|unsafe|unauthori[sz]ed|data[- ]loss(?:es)?|regressions?|race\s+condition|deadlock|vulnerab\w*|security\s+flaw|crash(?:es|ed|ing)?|panic(?:s|ked|king)?|corrupt\w*|overwrit\w*|bypass\w*|leak\w*|los(?:e|es|ing|t)\s+(?:user\s+)?data)\b/i;
+const affirmativeBuildOrTestFailure = /\b(?:(?:fails?|failed|failing|breaks?|broke|broken)\s+(?:to\s+)?(?:compile|build|tests?|typecheck|lint|ci)\b|(?:compilation|build|tests?|typecheck|lint|ci)\s+(?:fails?|failed|failing|breaks?|broke|broken)\b)/i;
 const unlabeledPureMaintainabilitySuggestion = /^(?:could|would|can|please|consider|maybe|perhaps)\b[^.!?;\n]{0,120}\b(?:rename|naming|clarity|readability|style|format(?:ting)?|wording|comments?|documentation|docs|simplif\w*|clean\s*up|refactor\w*)\b/i;
 const authorityOnlyIssue = /^\s*\[(?:decision|research)\](?:\s|\[|$)/i;
 
@@ -111,7 +112,14 @@ function isSubstantiveReviewClause(clause: string): boolean {
 }
 
 function isSubstantiveReviewBody(body: string): boolean {
-  return reviewBodyClauses(body).some(isSubstantiveReviewClause);
+  return reviewBodyClauses(body).some((clause) => {
+    if (explicitlyNonSubstantiveBadge.test(clause)) return false;
+    if (explicitlyNonSubstantiveAcknowledgment.test(clause)) return false;
+    if (explicitlyNonSubstantiveFinding.test(clause)) return false;
+    if (isSubstantiveReviewClause(clause)) return true;
+    if (isClearedReviewClause(clause) || negatedUnlabeledSubstantiveImpact.test(clause)) return false;
+    return affirmativeUnlabeledSubstantiveImpact.test(clause) || affirmativeBuildOrTestFailure.test(clause);
+  });
 }
 
 function clearsSubstantiveReviewBody(body: string): boolean {
@@ -475,7 +483,7 @@ function humanActionRequested(comments: RawComment[], handoff: HandoffProjection
     /\bdo not escalate\b/i.test(claim);
   return canonicalComments(comments).some((comment) => {
     const claimedState = labeledValue(comment.body, "STATE") ?? labeledValue(comment.body, "STATUS");
-    if (/human[_ -]?required/i.test(claimedState ?? "")) return true;
+    if (statusClaimsHumanRequired(claimedState ?? "")) return true;
     const labeledClaims = [
       labeledValue(comment.body, "HUMAN ACTION"),
       labeledValue(comment.body, "FOUNDER / STEWARD ACTION"),
@@ -756,7 +764,7 @@ function derivePhase(
 ): DeliveryPhase {
   const claimedState = handoff.condition === "current" ? handoff.claimedState?.toLowerCase() ?? "" : "";
   if (readiness === "parked" || statusClaimsParked(claimedState)) return "parked";
-  if (humanActionRequested || claimedState.includes("human_required") || claimedState.includes("human required")) return "human_required";
+  if (humanActionRequested || statusClaimsHumanRequired(claimedState)) return "human_required";
   if (ownershipConflict) return "blocked";
   if (readiness === "blocked") return "blocked";
   if (!ownershipObservationComplete) return "validating";

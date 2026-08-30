@@ -395,6 +395,24 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.attention.humanActionRequired).toBe(true);
   });
 
+  it("honors a cleared Human-Required transition in the canonical handoff state", () => {
+    const cleared = issue();
+    cleared.comments[0]!.body = [
+      "<!-- agent-handoff:v1 -->",
+      "OWNER: agent:codex",
+      "STATE: Human-Required; now no longer Human-Required; Ready",
+      `LAST CHECKED MAIN: ${mainSha}`,
+    ].join("\n");
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [cleared] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.issue.readiness).toBe("ready");
+    expect(lane?.phase).toBe("ready");
+    expect(lane?.action.owner).toBe("none");
+    expect(projection.attention.humanActionRequired).toBe(false);
+  });
+
   it("does not let an operational handoff elevate an unrecognized Issue status", () => {
     const backlog = issue();
     backlog.body = "## Status\n\nBacklog\n\nOwner: `agent:codex`";
@@ -1051,6 +1069,25 @@ describe("normalizeRepositorySnapshot", () => {
       url: "https://github.com/review/comment-only",
       observedIdentity: headSha,
     }));
+  });
+
+  it("blocks an unlabeled comment-only build failure on the current head", () => {
+    const pr = pullRequest();
+    pr.reviews = [...(pr.reviews ?? []), {
+      state: "commented",
+      author: "codex",
+      body: "This fails to compile on Windows.",
+      headSha,
+      url: "https://github.com/review/comment-only-build-failure",
+      submittedAt: observedAt,
+    }];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.reviews.substantiveUnresolvedCount).toBe(1);
+    expect(lane?.phase).toBe("review_fix");
+    expect(lane?.blockers).toContain("1 substantive review finding(s) remain unresolved.");
   });
 
   it("does not block on a substantive comment-only review body from an old head", () => {
