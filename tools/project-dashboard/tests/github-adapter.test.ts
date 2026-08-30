@@ -357,17 +357,27 @@ describe("loadGithubSnapshot", () => {
     expect(result.recentCompletions?.map((completion) => completion.number)).toEqual([108, 107, 106, 105, 104, 103, 102, 101]);
   });
 
-  it("fails recent completions closed when the bounded source window is truncated", async () => {
+  it("paginates the merged-PR source before selecting the latest completions", async () => {
     let recentCalls = 0;
     const api: ReadonlyGithubApi = {
-      graphql: async (query) => {
+      graphql: async (query, variables) => {
         const page = githubPage();
         if (query.includes("RecentCompletions")) {
           recentCalls += 1;
-          page.repository.mergedPullRequests.pageInfo = {
-            hasNextPage: true,
-            endCursor: "more-merged-pull-requests",
-          };
+          const secondPage = variables.cursor === "more-merged-pull-requests";
+          page.repository.mergedPullRequests.nodes = secondPage
+            ? [{
+                number: 187,
+                title: "Newer merge from the next page",
+                url: "https://github.com/nurockplayer/tachiko-work/pull/187",
+                mergedAt: "2026-08-30T00:00:00Z",
+                mergeCommit: { oid: "d".repeat(40) },
+                mergedBy: { login: "maintainer" },
+              }]
+            : page.repository.mergedPullRequests.nodes;
+          page.repository.mergedPullRequests.pageInfo = secondPage
+            ? { hasNextPage: false, endCursor: null }
+            : { hasNextPage: true, endCursor: "more-merged-pull-requests" };
         }
         return page;
       },
@@ -382,10 +392,9 @@ describe("loadGithubSnapshot", () => {
       observedAt: "2026-08-30T00:00:00.000Z",
     });
 
-    expect(recentCalls).toBe(1);
-    expect(result.recentCompletions).toBeNull();
-    expect(result.fetchHealth).toBe("partial");
-    expect(result.failures).toContain("Recent completion observation was truncated.");
+    expect(recentCalls).toBe(2);
+    expect(result.recentCompletions?.map((completion) => completion.number)).toEqual([187, 186]);
+    expect(result.failures).not.toContain("Recent completion observation was truncated.");
   });
 
   it("stops querying a repository connection after that connection is exhausted", async () => {

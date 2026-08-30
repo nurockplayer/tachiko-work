@@ -535,6 +535,7 @@ function derivePhase(
   checks: CheckProjection,
   reviews: ReviewProjection,
   handoff: HandoffProjection,
+  handoffRequired: boolean,
   drift: DeliveryLane["authorityDrift"],
   ownershipConflict: boolean,
   ownershipObservationComplete: boolean,
@@ -558,8 +559,8 @@ function derivePhase(
   if (checks.status !== "success" || checks.requiredStatus !== "satisfied") return "validating";
   if (reviews.status !== "current") return "rereview";
   if (reviews.decision !== "approved") return "rereview";
-  if (handoff.condition !== "current") return "validating";
-  if (!handoffClaimsMergeReady(handoff)) return "validating";
+  if (handoffRequired && handoff.condition !== "current") return "validating";
+  if (handoffRequired && !handoffClaimsMergeReady(handoff)) return "validating";
   if (drift !== "none") return "validating";
   if (!githubMergeReady) return "validating";
   return "merge_gate";
@@ -575,6 +576,9 @@ function projectLane(
   const comments = pr === null ? issue.comments : pr.comments;
   const commentsComplete = pr === null ? issue.commentsComplete : pr.commentsComplete;
   const handoff = projectHandoff(comments, commentsComplete, snapshot.observedAt, pr?.headSha ?? null, snapshot.mainSha);
+  const owner = issueOwner(issue, handoff);
+  const agentOwnedPr = pr !== null && /^agent:/i.test(owner.trim());
+  const handoffRequired = agentOwnedPr || (pr !== null && handoff.condition !== "missing");
   const decisionReadyAuthority = isDecisionReadyAuthorityIssue(issue);
   const decisionReadyScopeReconciled = !decisionReadyAuthority || (pr !== null && isFocusedAuthorityPullRequest(pr));
   const observedReadiness = decisionReadyScopeReconciled ? issueReadiness(issue, handoff) : "unknown";
@@ -634,7 +638,7 @@ function projectLane(
     (issueStatusBlocked || authorityReadinessRequiresSteward || (
       !authorityOnlyIssue.test(issue.title) && pr !== null && observedReadiness === "unknown" && !issueStatusAffirmsDelivery
     ));
-  const handoffMergeReadinessRequiresDelivery = pr !== null && handoff.condition === "current" &&
+  const handoffMergeReadinessRequiresDelivery = handoffRequired && handoff.condition === "current" &&
     !handoffClaimsMergeReady(handoff);
 
   if ((issue.blockedBy?.length ?? 0) > 0) {
@@ -674,7 +678,7 @@ function projectLane(
   } else if (pr !== null && reviews.decision === "unknown") {
     blockers.push("GitHub review decision could not be observed.");
   }
-  if (pr !== null && handoff.condition === "missing") {
+  if (agentOwnedPr && handoff.condition === "missing") {
     blockers.push(`Canonical handoff is missing for pull request #${pr.number}.`);
   }
   if (pr !== null && handoff.condition === "unknown") {
@@ -725,7 +729,6 @@ function projectLane(
   }
 
   const requiresHuman = statusClaimsHumanRequired(authoritativeIssueStatus) || humanActionRequested(comments, handoff);
-  const owner = issueOwner(issue, handoff);
   const phase = outsideCurrentHorizon
     ? "parked"
     : derivePhase(
@@ -734,6 +737,7 @@ function projectLane(
         checks,
         reviews,
         handoff,
+        handoffRequired,
         drift,
         ownershipConflict,
         ownershipObservationComplete,
@@ -756,7 +760,7 @@ function projectLane(
         (pr !== null && checks.requiredStatus !== "satisfied") || ownershipConflict ||
         !githubMergeReady || drift !== "none" || handoff.condition === "inconsistent" || handoff.condition === "stale" ||
         (pr !== null && handoff.condition === "unknown") ||
-        (pr !== null && handoff.condition === "missing") || !issueScopeReconciled ||
+        (agentOwnedPr && handoff.condition === "missing") || !issueScopeReconciled ||
         handoffMergeReadinessRequiresDelivery || pr?.isDraft === true || !targetsDefaultBranch || !ownershipObservationComplete
         || !decisionReadyScopeReconciled
       ? { owner: deliveryActionOwner(owner), reason: blockers[0] ?? "Delivery-agent action is required." }

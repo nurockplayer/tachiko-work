@@ -668,6 +668,39 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.action.owner).toBe("codex");
   });
 
+  it("does not require an agent handoff for a human-owned pull request", () => {
+    const humanOwned = issue();
+    humanOwned.body = "## Status\n\nReady\n\nOwner: `nurockplayer`";
+    const pr = pullRequest();
+    pr.comments = [];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [humanOwned], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.handoff.condition).toBe("missing");
+    expect(lane?.phase).toBe("merge_gate");
+    expect(lane?.blockers).not.toContain("Canonical handoff is missing for pull request #200.");
+    expect(lane?.action.owner).toBe("none");
+  });
+
+  it("still blocks an inconsistent optional handoff on a human-owned pull request", () => {
+    const humanOwned = issue();
+    humanOwned.body = "## Status\n\nReady\n\nOwner: `nurockplayer`";
+    const pr = pullRequest();
+    pr.comments.push({
+      ...pr.comments[0]!,
+      id: "duplicate-human-handoff",
+      url: "https://github.com/nurockplayer/tachiko-work/pull/200#issuecomment-duplicate",
+    });
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [humanOwned], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.handoff.condition).toBe("inconsistent");
+    expect(lane?.phase).not.toBe("merge_gate");
+    expect(lane?.blockers).toContain("Canonical handoff conflicts with live PR identity or is duplicated.");
+  });
+
   it("projects a current substantive review finding as review-fix without founder escalation", () => {
     const pr = pullRequest();
     pr.reviewDecision = "changes_requested";
