@@ -912,11 +912,14 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.phase).toBe("merge_gate");
   });
 
-  it("does not infer a substantive finding from an unlabelled comment-only review summary", () => {
+  it.each([
+    "Automated review completed without inline findings.",
+    "Security and correctness checks passed; no blocking issues.",
+  ])("does not infer a substantive finding from a clean comment-only review summary: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
       state: "commented",
-      body: "Automated review completed without inline findings.",
+      body,
       headSha,
       url: "https://github.com/review/summary",
       submittedAt: observedAt,

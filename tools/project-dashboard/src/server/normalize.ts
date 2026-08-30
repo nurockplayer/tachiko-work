@@ -16,6 +16,7 @@ import type {
 import { isDecisionAuthorityPath } from "../shared/authority.ts";
 
 const handoffMarker = "<!-- agent-handoff:v1 -->";
+const explicitlyPrioritizedFinding = /(?:\[|\b)(?:p[0-2]|sev(?:erity)?[ -]?[0-2])(?:\]|\b)/i;
 const explicitlySubstantiveFinding = /(?:\[|\b)(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness)(?:\]|\b)/i;
 const explicitlyNonSubstantiveFinding = /^(?:[_*]+\s*)?(?:\[(?:p3|sev(?:erity)?[ -]?3)\]|(?:p3|sev(?:erity)?[ -]?3|nit(?:pick)?|trivial)\b)/i;
 const explicitlyNonSubstantiveBadge = /^(?:<sub>\s*)+!\[(?:p3|sev(?:erity)?[ -]?3)\s+badge\]\([^)]*\)(?:<\/sub>\s*)+/i;
@@ -546,7 +547,7 @@ function projectReviews(pr: RawPullRequest, observedAt: string): ReviewProjectio
   const substantiveReviewBodies = pr.reviews.filter(
     (review) => !["dismissed", "pending"].includes(review.state) &&
       review.headSha !== null && shaMatches(review.headSha, pr.headSha) &&
-      explicitlySubstantiveFinding.test(review.body),
+      explicitlyPrioritizedFinding.test(review.body),
   );
   const allReviewsCoverHead = relevantReviews.length > 0 && relevantReviews.every(
     (review) => review.headSha !== null && shaMatches(review.headSha, pr.headSha),
