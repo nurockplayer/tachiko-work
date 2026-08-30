@@ -29,7 +29,8 @@ const reviewClauseBoundary = /[.!?;\n]+|\b(?:but|except|however|although|yet)\b|
 const explicitlyNonSubstantiveFinding = /^(?:[_*]+\s*)?(?:\[(?:p3|sev(?:erity)?[ -]?3)\]|(?:p3|sev(?:erity)?[ -]?3|nit(?:pick)?|trivial)\b)/i;
 const explicitlyNonSubstantiveBadge = /^(?:<sub>\s*)+!\[(?:p3|sev(?:erity)?[ -]?3)\s+badge\]\([^)]*\)(?:<\/sub>\s*)+/i;
 const explicitlyNonSubstantiveAcknowledgment = /^(?:done|fixed(?:\s+in\s+(?:commit\s+)?[0-9a-f]{7,40})?|thanks,\s+applied this suggestion)[.!]?$/i;
-const unlabeledSubstantiveImpact = /\b(?:wrong|incorrect|stale|invalid|unsafe|unauthori[sz]ed|data[- ]loss|regression|race\s+condition|deadlock|vulnerab\w*|security\s+flaw|crash(?:es|ed|ing)?|panic(?:s|ked|king)?|corrupt\w*|overwrit\w*|bypass\w*|leak(?:s|ed|ing)?\s+(?:data|credentials?|secrets?)|los(?:e|es|ing|t)\s+(?:user\s+)?data)\b/i;
+const negatedUnlabeledSubstantiveImpact = /(?:\b(?:no|none|without|zero|0)\b[^.!?;\n]{0,80}\b(?:wrong|incorrect|stale|invalid|unsafe|unauthori[sz]ed|data[- ]loss|regression|race\s+condition|deadlock|vulnerab\w*|security\s+flaw|crash(?:es|ed|ing)?|panic(?:s|ked|king)?|corrupt\w*|overwrit\w*|bypass\w*|leak\w*|los(?:e|es|ing|t)\s+(?:user\s+)?data)\b|\b(?:does|do|did|can|could|would|should|will|is|are|was|were|has|have|had)\s+not\s+(?:\w+\s+){0,3}(?:return\s+(?:a\s+)?wrong|produc\w*\s+(?:an?\s+)?incorrect|los(?:e|es|ing|t)\s+(?:user\s+)?data|corrupt\w*|overwrit\w*|bypass\w*|leak\w*|crash\w*|panic\w*|break\w*|fail\w*)\b|\b(?:data[- ]loss|regression|race\s+condition|deadlock|vulnerab\w*|security\s+flaw|crash(?:es|ed|ing)?|panic(?:s|ked|king)?|corrupt\w*|overwrit\w*|bypass\w*|leak\w*)\b[^.!?;\n]{0,80}\b(?:not\s+(?:found|present|observed|identified|detected)|absent)\b)/i;
+const unlabeledPureMaintainabilitySuggestion = /^(?:could|would|can|please|consider|maybe|perhaps)\b[^.!?;\n]{0,120}\b(?:rename|naming|clarity|readability|style|format(?:ting)?|wording|comments?|documentation|docs|simplif\w*|clean\s*up|refactor\w*)\b/i;
 const authorityOnlyIssue = /^\s*\[(?:decision|research)\](?:\s|\[|$)/i;
 
 function source(
@@ -80,11 +81,15 @@ function canonicalComments(comments: RawComment[]): RawComment[] {
 }
 
 function isSubstantiveFinding(body: string): boolean {
-  const normalized = stripMarkdown(body);
-  if (explicitlyNonSubstantiveBadge.test(normalized)) return false;
-  if (explicitlyNonSubstantiveAcknowledgment.test(normalized)) return false;
-  if (explicitlyNonSubstantiveFinding.test(normalized)) return false;
-  return isSubstantiveReviewBody(normalized) || unlabeledSubstantiveImpact.test(normalized);
+  const normalized = stripMarkdown(body).replace(explicitlyNonSubstantiveBadge, "[P3] ");
+  return reviewBodyClauses(normalized).some((clause) => {
+    if (explicitlyNonSubstantiveBadge.test(clause)) return false;
+    if (explicitlyNonSubstantiveAcknowledgment.test(clause)) return false;
+    if (explicitlyNonSubstantiveFinding.test(clause)) return false;
+    if (isSubstantiveReviewClause(clause)) return true;
+    if (isClearedReviewClause(clause) || negatedUnlabeledSubstantiveImpact.test(clause)) return false;
+    return !unlabeledPureMaintainabilitySuggestion.test(clause);
+  });
 }
 
 function reviewBodyClauses(body: string): string[] {

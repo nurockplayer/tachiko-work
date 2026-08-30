@@ -1345,10 +1345,31 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.phase).toBe("review_fix");
   });
 
+  it.each([
+    "The parser fails to reject stale approvals.",
+    "This breaks exact-head validation.",
+    "[P3] rename suggestion; [P2] this loses data.",
+  ])("fails closed on an unlabeled correctness finding: %s", (body) => {
+    const pr = pullRequest();
+    pr.reviewThreads = [
+      { resolved: false, outdated: false, comments: [body], url: "https://github.com/thread" },
+    ];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+
+    expect(projection.deliveries[0]?.reviews.substantiveUnresolvedCount).toBe(1);
+    expect(projection.deliveries[0]?.phase).toBe("review_fix");
+  });
+
   it("does not promote an unlabeled pure-maintainability suggestion to a substantive finding", () => {
     const pr = pullRequest();
     pr.reviewThreads = [
-      { resolved: false, outdated: false, comments: ["Could you rename this local for clarity?"], url: "https://github.com/thread" },
+      {
+        resolved: false,
+        outdated: false,
+        comments: ["Could you rename this local for clarity?", "Please update this stale comment."],
+        url: "https://github.com/thread",
+      },
     ];
 
     const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
@@ -1357,6 +1378,23 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.reviews.unresolvedThreadCount).toBe(1);
     expect(lane?.reviews.substantiveUnresolvedCount).toBe(0);
     expect(lane?.phase).toBe("merge_gate");
+  });
+
+  it.each([
+    "No data loss.",
+    "No regression observed.",
+    "No wrong result.",
+    "This does not lose user data.",
+  ])("does not promote a negated unlabeled impact statement: %s", (body) => {
+    const pr = pullRequest();
+    pr.reviewThreads = [
+      { resolved: false, outdated: false, comments: [body], url: "https://github.com/thread" },
+    ];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+
+    expect(projection.deliveries[0]?.reviews.substantiveUnresolvedCount).toBe(0);
+    expect(projection.deliveries[0]?.phase).toBe("merge_gate");
   });
 
   it("lets a later unlabeled substantive reply override an initial P3", () => {
