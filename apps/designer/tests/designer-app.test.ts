@@ -451,6 +451,22 @@ describe("Designer application seam", () => {
       expect(client.textEditRequests).toHaveLength(0);
       expect(root.textContent).toContain("Text edit not applied");
       app.destroy();
+
+      nameField.stored = { kind: "text", value: "a\r" };
+      document.body.innerHTML = '<div id="app"></div>';
+      const coalescingRoot = document.querySelector<HTMLElement>("#app");
+      if (coalescingRoot === null) throw new Error("test root is required");
+      const coalescingClient = new ScalarClient();
+      const coalescingApp = mountDesigner(coalescingRoot, coalescingClient, host);
+      await coalescingApp.ready;
+      const coalescingText = coalescingRoot.querySelector<HTMLTextAreaElement>('textarea[aria-label="Name for Iron Sword"]');
+      if (coalescingText === null || coalescingText.form === null) throw new Error("text control required");
+      coalescingText.dataset.initialNormalized = "a\n";
+      coalescingText.value = "a\n\n";
+      coalescingText.form.requestSubmit();
+      expect(coalescingClient.textEditRequests).toHaveLength(0);
+      expect(coalescingRoot.textContent).toContain("Text edit not applied");
+      coalescingApp.destroy();
     } finally {
       nameField.stored = { kind: "text", value: original };
     }

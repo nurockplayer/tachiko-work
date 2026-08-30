@@ -934,7 +934,15 @@ function reconcileTextEdit(
     originalStart = anchor.originalIndex + 1;
     editedStart = anchor.editedIndex + 1;
   }
-  return `${reconciled}${reconcileRegion(originalTokens.slice(originalStart), editedTokens.slice(editedStart), originalCounts)}`;
+  const result = `${reconciled}${reconcileRegion(
+    originalTokens.slice(originalStart),
+    editedTokens.slice(editedStart),
+    originalCounts,
+  )}`;
+  if (normalizeLineEndings(result) !== edited) {
+    throw new Error("This Text edit cannot preserve existing line endings without changing its logical newlines.");
+  }
+  return result;
 }
 
 type LogicalLine = { raw: string; normalized: string };
