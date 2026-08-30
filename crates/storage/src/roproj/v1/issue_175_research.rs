@@ -278,7 +278,7 @@ fn admit_one_pass_host(
     root: &Path,
     collect_work: bool,
 ) -> Result<(Document, AdmissionWork, HostAdmissionTimings), FormatError> {
-    admit_one_pass_host_controlled(root, collect_work, None, None, None)
+    admit_one_pass_host_controlled(root, collect_work, None, None, None, None)
 }
 
 #[allow(clippy::too_many_lines)]
@@ -288,6 +288,7 @@ fn admit_one_pass_host_controlled(
     cancel: Option<&AtomicBool>,
     records_completed: Option<&AtomicUsize>,
     pause_before_final_validation: Option<&AtomicBool>,
+    validation_cancel_at_poll: Option<usize>,
 ) -> Result<(Document, AdmissionWork, HostAdmissionTimings), FormatError> {
     let started = Instant::now();
     super::super::host::require_directory(root, "canonical .roproj root")?;
@@ -412,7 +413,15 @@ fn admit_one_pass_host_controlled(
         }
     }
     check_cancel(cancel)?;
-    check_document_cancellable(&document, cancel)?;
+    if let Some(cancel_at_poll) = validation_cancel_at_poll {
+        let mut polls = 0_usize;
+        check_document_with_cancel_probe(&document, || {
+            polls += 1;
+            polls == cancel_at_poll
+        })?;
+    } else {
+        check_document_cancellable(&document, cancel)?;
+    }
     check_cancel(cancel)?;
     validate_semantic_expression_limits_cancellable(&document, cancel)?;
     check_cancel(cancel)?;
@@ -3011,8 +3020,9 @@ fn issue_175_progressive_source_preview_is_non_authoritative_and_cancellable() {
             if message.contains("cancelled before SemanticCurrent")
     ));
     let records = AtomicUsize::new(0);
-    let error = admit_one_pass_host_controlled(&root, false, Some(&cancel), Some(&records), None)
-        .unwrap_err();
+    let error =
+        admit_one_pass_host_controlled(&root, false, Some(&cancel), Some(&records), None, None)
+            .unwrap_err();
     assert!(matches!(
         error,
         FormatError::InvalidRoProjectRepresentation { message }
@@ -3101,8 +3111,9 @@ fn issue_175_background_admission_cancels_before_large_metadata_parse() {
     let cancel = AtomicBool::new(true);
     let records = AtomicUsize::new(0);
 
-    let error = admit_one_pass_host_controlled(&root, false, Some(&cancel), Some(&records), None)
-        .unwrap_err();
+    let error =
+        admit_one_pass_host_controlled(&root, false, Some(&cancel), Some(&records), None, None)
+            .unwrap_err();
     assert!(matches!(
         error,
         FormatError::InvalidRoProjectRepresentation { message }
@@ -3112,21 +3123,54 @@ fn issue_175_background_admission_cancels_before_large_metadata_parse() {
 }
 
 #[test]
-fn issue_175_background_document_validation_polls_cancellation() {
-    let document = dependency_chain_document(16_000, false);
-    let mut polls = 0_usize;
-    let error = check_document_with_cancel_probe(&document, || {
-        polls += 1;
-        polls == 128
-    })
-    .unwrap_err();
+fn issue_175_host_validation_cancels_at_formula_node_checkpoint() {
+    let schema_id = SchemaId::from("issue-175-formula-poll-schema");
+    let field_id = FieldId::from("computed");
+    let entity_id = EntityId::from("issue-175-formula-poll-entity");
+    let expression = balanced_sum(
+        (0..128)
+            .map(|_| Expression::Number(Number::new(1.0).unwrap()))
+            .collect(),
+    );
+    let document = Document {
+        id: DocumentId::from("issue-175-formula-poll-document"),
+        title: "Issue 175 formula polling fixture".to_owned(),
+        schemas: BTreeMap::from([(
+            schema_id.clone(),
+            Schema {
+                id: schema_id.clone(),
+                key: SchemaKey::from("formula_poll"),
+                fields: BTreeMap::from([(
+                    field_id.clone(),
+                    field(&field_id, "computed", FieldType::Number),
+                )]),
+            },
+        )]),
+        entities: BTreeMap::from([(
+            entity_id.clone(),
+            Entity {
+                id: entity_id,
+                key: EntityKey::from("formula_poll_entity"),
+                schema: schema_id,
+                fields: BTreeMap::from([(field_id, Value::Formula(expression))]),
+            },
+        )]),
+    };
+    let temp = ResearchTempDirectory::new();
+    let root = temp.path().join("formula-validation-cancel.roproj");
+    super::super::host::materialize_roproj(&root, &document).unwrap();
+
+    // With one schema, field, entity, and formula, poll 11 enters the AST and
+    // poll 12 is the 64-node formula checkpoint. This exercises the real host
+    // decode/admission path rather than cancelling in an earlier key scan.
+    let error =
+        admit_one_pass_host_controlled(&root, false, None, None, None, Some(12)).unwrap_err();
 
     assert!(matches!(
         error,
         FormatError::InvalidRoProjectRepresentation { message }
             if message.contains("cancelled before SemanticCurrent")
     ));
-    assert_eq!(polls, 128);
 }
 
 #[test]
@@ -3146,6 +3190,7 @@ fn issue_175_cancellation_after_decode_never_publishes_semantic_current() {
             Some(&worker_cancel),
             None,
             Some(&worker_reached),
+            None,
         )
     });
     while !final_validation_reached.load(Ordering::Acquire) {
@@ -3976,6 +4021,7 @@ fn issue_175_progressive_background_interference_and_cancellation() {
                     None,
                     Some(&worker_records),
                     None,
+                    None,
                 )
             });
             while background_records.load(Ordering::Acquire) < BACKGROUND_START_RECORDS
@@ -4072,6 +4118,7 @@ fn issue_175_progressive_background_interference_and_cancellation() {
                 false,
                 Some(&worker_cancel),
                 Some(&worker_records),
+                None,
                 None,
             )
         });
