@@ -594,6 +594,26 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries[0]?.action.owner).toBe("human");
   });
 
+  it("does not let a nested follow-up heading override authoritative readiness", () => {
+    const ready = issue();
+    ready.body = [
+      "## Status",
+      "",
+      "Ready",
+      "",
+      "### Blocked follow-ups",
+      "",
+      "This old follow-up is blocked.",
+      "",
+      "Owner: `agent:codex`",
+    ].join("\n");
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [ready] }));
+
+    expect(projection.deliveries[0]?.issue.readiness).toBe("ready");
+    expect(projection.deliveries[0]?.phase).toBe("ready");
+  });
+
   it("invalidates checks and a merge-ready handoff when the PR head moves", () => {
     const pr = pullRequest();
     pr.headSha = "c".repeat(40);

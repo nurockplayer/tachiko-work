@@ -218,7 +218,7 @@ function hasUsableIssueClaim(
 
 function issueStatusText(issue: RawIssue): string {
   return (
-    issue.body.match(/^##[ \t]+Status[ \t]*(?:\r?\n|$)([\s\S]*?)(?=^##[ \t]+|$(?![\s\S]))/im)?.[1] ?? ""
+    issue.body.match(/^##[ \t]+Status[ \t]*(?:\r?\n|$)([\s\S]*?)(?=^#{1,6}[ \t]+|$(?![\s\S]))/im)?.[1] ?? ""
   ).toLowerCase();
 }
 
