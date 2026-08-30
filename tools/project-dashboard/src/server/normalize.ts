@@ -585,7 +585,9 @@ function projectLane(
   const multipleIssueClaim = (pr?.issueNumbers.length ?? 0) > 1;
   const handoffIssueMismatch = pr !== null && pr.issueNumbers.length === 1 && hasUsableIssueClaim(handoff) &&
     handoff.claimedIssueNumber !== pr.issueNumbers[0];
-  const ownershipConflict = ownershipConflicts.length > 0 || multipleIssueClaim || handoffIssueMismatch;
+  const crossPrOwnershipConflict = ownershipConflicts.length > 0;
+  const ownershipConflict = crossPrOwnershipConflict || multipleIssueClaim || handoffIssueMismatch;
+  const nonCurrentPrRequiresSteward = outsideCurrentHorizon && pr !== null;
   const blockers: string[] = [];
   const authoritativeIssueStatus = issueStatusText(issue);
   const issueStatusBlocked = statusClaimsBlocked(authoritativeIssueStatus);
@@ -690,6 +692,10 @@ function projectLane(
       );
   const action: DeliveryLane["action"] = requiresHuman || phase === "human_required"
     ? { owner: "human", reason: "The canonical coordination state requests human or Steward action." }
+    : crossPrOwnershipConflict
+      ? { owner: "human", reason: "Multiple open pull requests claim the same Issue; Project Steward reconciliation is required." }
+    : nonCurrentPrRequiresSteward
+      ? { owner: "human", reason: "A non-current milestone pull request requires Project Steward roadmap activation." }
     : issueReadinessRequiresSteward
       ? { owner: "human", reason: "The authoritative Issue status requires Steward readiness action." }
     : phase === "review_fix" || phase === "rereview" || checks.status === "failure" ||

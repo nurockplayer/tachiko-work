@@ -1124,6 +1124,22 @@ describe("normalizeRepositorySnapshot", () => {
     );
     expect(projection.currentWork.independent).toEqual([]);
     expect(projection.currentWork.otherHorizon).toEqual(["issue-206"]);
+    expect(projection.deliveries[0]?.action.owner).toBe("none");
+  });
+
+  it("routes a non-current product-milestone pull request to the Project Steward", () => {
+    const future = issue();
+    future.milestone = "06 · Team Workspace Beta";
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [future], pullRequests: [pullRequest()] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.phase).toBe("parked");
+    expect(lane?.action.owner).toBe("human");
+    expect(lane?.blockers).toContain(
+      "Issue #169 belongs to non-current product milestone 06 · Team Workspace Beta; the live current horizon is 05 · Designer MVP.",
+    );
+    expect(projection.attention.humanActionRequired).toBe(true);
   });
 
   it("keeps an approved decision stale until every counted approval covers the exact head", () => {
@@ -1276,7 +1292,9 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries.map((lane) => lane.phase)).toEqual(["blocked", "blocked"]);
     for (const lane of projection.deliveries) {
       expect(lane.blockers).toContain("Multiple open pull requests claim Issue #169: #200, #201.");
+      expect(lane.action.owner).toBe("human");
     }
+    expect(projection.attention.humanActionRequired).toBe(true);
   });
 
   it("includes mismatched handoff claims in cross-PR ownership conflicts", () => {
@@ -1462,6 +1480,7 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries).toHaveLength(1);
     expect(lane?.phase).toBe("blocked");
     expect(lane?.blockers).toContain("Pull request #200 claims multiple Issues (#169, #170), violating the one-Issue delivery boundary.");
+    expect(lane?.action.owner).toBe("codex");
   });
 
   it("marks main movement as suspected authority drift until the handoff reconciles it", () => {
