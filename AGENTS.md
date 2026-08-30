@@ -27,18 +27,25 @@ delivery loop autonomously until a canonical stop or escalation condition is
 actually reached.
 
 A pending non-terminal sub-agent result, CI job, hosted review, or other
-asynchronous validation is **not** a completion, handoff, or stop condition. The
-delivery agent must wait or poll for the result, consume it when available, and
-continue the same review-fix / exact-head validation loop without requiring a
-human or Steward prompt merely to resume.
+asynchronous validation is **not** a completion, handoff, or stop condition.
+When the current execution environment can remain active, wait or poll for the
+result, consume it when available, and continue the same review-fix /
+exact-head-validation loop.
+
+Runtime liveness is a separate concern from agent behavior. If an individual
+agent run terminates before a canonical stop condition is reached, persist the
+exact continuation state in the single canonical `agent-handoff:v1`. The
+scheduler or orchestrator is then responsible for automatically re-entering the
+same Issue/PR from that handoff. A human copying and pasting a "continue" prompt
+is not part of the intended delivery workflow.
 
 Intermediate progress may update the single canonical `agent-handoff:v1`, but
 do not present intermediate progress as task completion solely because an
-asynchronous gate is still running. Return control only for the stop/escalation
-conditions defined by the canonical repository delivery workflow, including a
-genuine durable decision or authority contradiction, an external/human-only
-permission requirement, or the bounded delivery reaching its intended terminal
-handoff state.
+asynchronous gate is still running or because one agent runtime ended. Return
+control only for the stop/escalation conditions defined by the canonical
+repository delivery workflow, including a genuine durable decision or authority
+contradiction, an external/human-only permission requirement, or no genuinely
+Ready work remaining after the required live-state recalibration.
 
 ## JavaScript and TypeScript
 
