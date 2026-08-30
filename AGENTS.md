@@ -33,11 +33,16 @@ result, consume it when available, and continue the same review-fix /
 exact-head-validation loop.
 
 Runtime liveness is a separate concern from agent behavior. If an individual
-agent run terminates before a canonical stop condition is reached, persist the
-exact continuation state in the single canonical `agent-handoff:v1`. The
-scheduler or orchestrator is then responsible for automatically re-entering the
-same Issue/PR from that handoff. A human copying and pasting a "continue" prompt
-is not part of the intended delivery workflow.
+agent run may terminate before a canonical stop condition is reached, first
+make the continuation state recoverable outside ephemeral local state. Keep the
+single canonical `agent-handoff:v1` exact and persist meaningful active work to
+Git or another repository-approved durable artifact when necessary; do not leave
+the only copy of progress as an uncommitted local diff.
+
+If a run terminates before a canonical stop condition is reached, the scheduler
+or orchestrator is responsible for automatically re-entering the same Issue/PR
+from that durable handoff/checkpoint. A human copying and pasting a "continue"
+prompt is not part of the intended delivery workflow.
 
 Intermediate progress may update the single canonical `agent-handoff:v1`, but
 do not present intermediate progress as task completion solely because an
