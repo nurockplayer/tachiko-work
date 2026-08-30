@@ -28,6 +28,7 @@ const explicitReviewClearingSignal = /(?:\[|\b)(?:p[0-2]|sev(?:erity)?[ -]?[0-2]
 const reviewClauseBoundary = /[.!?;\n]+|\b(?:but|except|however|although|yet)\b|,\s+and\s+|,\s*(?=(?:so|therefore|thus|hence|causing|which|p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|data[- ]integrity)\b)/i;
 const coordinatedReviewPredicate = /\b(?:is|are|was|were|do|does|did|can|could|would|should|will|has|have|had|gets?|got|fails?|failed|failing|breaks?|broke|broken|passes?|passed|passing|throws?|throwing|thrown|exceptions?|crash(?:es|ed|ing)?|panic(?:s|ked|king)?|delet(?:e|es|ed|ing)|eras(?:e|es|ed|ing)|corrupt\w*|overwrit\w*|bypass\w*|leak\w*)\b/i;
 const coordinatedReviewClauseStart = /^(?:\S+\s+){0,4}(?:is|are|was|were|do|does|did|can|could|would|should|will|has|have|had|gets?|got|fails?|failed|failing|breaks?|broke|broken|passes?|passed|passing|throws?|throwing|thrown|exceptions?|crash(?:es|ed|ing)?|panic(?:s|ked|king)?|delet(?:e|es|ed|ing)|eras(?:e|es|ed|ing)|corrupt\w*|overwrit\w*|bypass\w*|leak\w*)\b/i;
+const completedClearedReviewFinding = /(?:\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2])\]?|\b(?:findings?|issues?|concerns?|problems?|failures?|bugs?|errors?|defects?|breakages?))\s*$/i;
 const explicitlyNonSubstantiveFinding = /^(?:[_*]+\s*)?(?:\[(?:p3|sev(?:erity)?[ -]?3)\]|(?:p3|sev(?:erity)?[ -]?3|nit(?:pick)?|trivial)\b)/i;
 const explicitlyNonSubstantiveBadge = /^(?:<sub>\s*)+!\[(?:p3|sev(?:erity)?[ -]?3)\s+badge\]\([^)]*\)(?:<\/sub>\s*)+/i;
 const explicitlyNonSubstantiveAcknowledgment = /^(?:done|fixed(?:\s+in\s+(?:commit\s+)?[0-9a-f]{7,40})?|thanks,\s+applied this suggestion)[.!]?$/i;
@@ -108,10 +109,11 @@ function reviewBodyClauses(body: string): string[] {
     for (const candidate of coordinated) {
       const next = candidate.trim();
       const negatedImpact = negatedUnlabeledSubstantiveImpact.test(current) || negatedDestructiveDataImpact.test(current);
+      const completedClear = isClearedReviewClause(current) && completedClearedReviewFinding.test(current);
       const affirmativeImpact = isSubstantiveReviewClause(next) || affirmativeUnlabeledSubstantiveImpact.test(next) ||
         affirmativeDestructiveDataImpact.test(next) || affirmativeBuildOrTestFailure.test(next);
       if ((coordinatedReviewPredicate.test(current) && coordinatedReviewClauseStart.test(next)) ||
-        (negatedImpact && affirmativeImpact)) {
+        ((negatedImpact || completedClear) && affirmativeImpact)) {
         clauses.push(current);
         current = next;
       } else {
