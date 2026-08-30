@@ -1179,6 +1179,8 @@ describe("normalizeRepositorySnapshot", () => {
     "No security checks and data is erased.",
     "This enters an infinite loop on empty input.",
     "This hangs forever.",
+    "This never terminates.",
+    "This loops forever.",
   ])("blocks an unlabeled comment-only runtime failure on the current head: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1250,6 +1252,7 @@ describe("normalizeRepositorySnapshot", () => {
     "This does not hang on empty input.",
     "The parser never hangs.",
     "This never enters an infinite loop.",
+    "This does not loop forever.",
   ])("does not infer a substantive finding from a clean comment-only review summary: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1646,6 +1649,8 @@ describe("normalizeRepositorySnapshot", () => {
     "No security checks and data is erased.",
     "This enters an infinite loop on empty input.",
     "This hangs forever.",
+    "This never terminates.",
+    "This loops forever.",
   ])("fails closed on an unlabeled correctness finding: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
@@ -1707,6 +1712,7 @@ describe("normalizeRepositorySnapshot", () => {
     "This does not hang on empty input.",
     "The parser never hangs.",
     "This never enters an infinite loop.",
+    "This does not loop forever.",
   ])("does not promote a negated unlabeled impact statement: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
