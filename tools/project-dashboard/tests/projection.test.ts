@@ -1081,6 +1081,24 @@ describe("normalizeRepositorySnapshot", () => {
     });
   });
 
+  it("routes a Ready pre-PR Issue with a malformed agent owner to the Steward", () => {
+    const unowned = issue();
+    unowned.body = "## Status\n\nReady\n\nOwner: `agent:`";
+    unowned.comments = [];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [unowned] }));
+
+    expect(projection.deliveries[0]?.phase).toBe("ready");
+    expect(projection.deliveries[0]?.action).toEqual({
+      owner: "human",
+      reason: "Required delivery work has no recognized owner; Project Steward reconciliation is required.",
+    });
+    expect(projection.attention).toMatchObject({
+      humanActionRequired: true,
+      reasons: ["#169: Required delivery work has no recognized owner; Project Steward reconciliation is required."],
+    });
+  });
+
   it("still blocks an inconsistent optional handoff on a human-owned pull request", () => {
     const humanOwned = issue();
     humanOwned.body = "## Status\n\nReady\n\nOwner: `nurockplayer`";

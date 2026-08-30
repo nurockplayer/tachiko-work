@@ -1031,6 +1031,11 @@ function projectLane(
       ? { owner: "human", reason: "Product Roadmap authority requires Project Steward reconciliation." }
     : issueReadinessRequiresSteward
       ? { owner: "human", reason: "The authoritative Issue status requires Steward readiness action." }
+    : unknownActionOwner
+      ? {
+          owner: "human",
+          reason: "Required delivery work has no recognized owner; Project Steward reconciliation is required.",
+        }
     : phase === "review_fix" || phase === "rereview" || checks.status === "failure" || checks.status === "pending" ||
         (pr !== null && checks.requiredStatus !== "satisfied") || ownershipConflict ||
         !githubMergeReady || drift !== "none" || handoff.condition === "inconsistent" || handoff.condition === "stale" ||
@@ -1040,10 +1045,8 @@ function projectLane(
         !targetsDefaultBranch || !ownershipObservationComplete
         || !decisionReadyScopeReconciled
       ? {
-          owner: alignedHumanPr || unknownActionOwner ? "human" : projectedDeliveryOwner,
-          reason: unknownActionOwner
-            ? "Required delivery work has no recognized owner; Project Steward reconciliation is required."
-            : blockers[0] ?? "Delivery-owner action is required.",
+          owner: alignedHumanPr ? "human" : projectedDeliveryOwner,
+          reason: blockers[0] ?? "Delivery-owner action is required.",
         }
       : { owner: "none", reason: "No human action is currently evidenced." };
   const issueRef = source(
