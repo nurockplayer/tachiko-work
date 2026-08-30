@@ -190,6 +190,13 @@ enum SourceBinding {
     },
 }
 
+fn binding_source_sha256(binding: &SourceBinding) -> &str {
+    match binding {
+        SourceBinding::DirtyFilesystem { source_sha256 }
+        | SourceBinding::GitSnapshot { source_sha256, .. } => source_sha256,
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct GitBlobBinding {
@@ -221,7 +228,10 @@ struct SidecarIntegrityInput<'a> {
 }
 
 enum SidecarOpen {
-    Reused(StructuralIndex),
+    Reused {
+        index: StructuralIndex,
+        source: PinnedSourceSnapshot,
+    },
     FellBackToExactAdmission(Document),
 }
 
@@ -1023,20 +1033,23 @@ fn open_sidecar_or_fallback(
     bytes: &[u8],
     expected_binding: &SourceBinding,
 ) -> Result<SidecarOpen, FormatError> {
+    let (pinned, _) = pin_source_snapshot(root)?;
     let trusted = scan_spine_host(root, true)?
         .structural
         .expect("structural scan requested");
     let trusted_source_sha256 = trusted.directory.source_fingerprint.clone();
+    if pinned.source_fingerprint != trusted_source_sha256 {
+        return admit_one_pass_host(root, false)
+            .map(|(document, _, _)| SidecarOpen::FellBackToExactAdmission(document));
+    }
     let current_binding = match expected_binding {
         SourceBinding::DirtyFilesystem { .. } => SourceBinding::DirtyFilesystem {
             source_sha256: trusted_source_sha256,
         },
-        SourceBinding::GitSnapshot { source_sha256, .. }
-            if source_sha256 == &trusted_source_sha256 =>
-        {
-            expected_binding.clone()
-        }
         SourceBinding::GitSnapshot { .. } => {
+            // This generic filesystem opener cannot independently recompute
+            // repository commit/tree/blob identity. The dedicated E2 path
+            // below does so and binds its derived index to a pinned snapshot.
             return admit_one_pass_host(root, false)
                 .map(|(document, _, _)| SidecarOpen::FellBackToExactAdmission(document));
         }
@@ -1044,7 +1057,10 @@ fn open_sidecar_or_fallback(
     match decode_sidecar(bytes, &current_binding)
         .and_then(|decoded| require_sidecar_matches_trusted_index(decoded, &trusted))
     {
-        Ok(index) => Ok(SidecarOpen::Reused(index)),
+        Ok(index) => Ok(SidecarOpen::Reused {
+            index,
+            source: pinned,
+        }),
         Err(_) => admit_one_pass_host(root, false)
             .map(|(document, _, _)| SidecarOpen::FellBackToExactAdmission(document)),
     }
@@ -2926,7 +2942,8 @@ fn issue_175_dirty_sidecar_reuse_is_bound_and_fails_closed() {
     assert_eq!(decode_sidecar(&sidecar, &binding).unwrap(), index);
     assert!(matches!(
         open_sidecar_or_fallback(&root, &sidecar, &binding).unwrap(),
-        SidecarOpen::Reused(reused) if reused == index
+        SidecarOpen::Reused { index: reused, source }
+            if reused == index && source.source_fingerprint == binding_source_sha256(&binding)
     ));
 
     let mut fabricated_index = index.clone();
@@ -3031,6 +3048,10 @@ fn issue_175_git_sidecar_binds_exact_immutable_snapshot_objects() {
         source_sha256: index.directory.source_fingerprint.clone(),
     };
     assert!(decode_sidecar(&sidecar, &dirty_binding).is_err());
+    assert!(matches!(
+        open_sidecar_or_fallback(&project, &sidecar, &binding).unwrap(),
+        SidecarOpen::FellBackToExactAdmission(document) if document == expected
+    ));
 }
 
 #[test]
@@ -3652,20 +3673,33 @@ fn issue_175_dirty_sidecar_raw_samples() {
         let encode_started = Instant::now();
         let sidecar = encode_sidecar(&index, binding.clone()).unwrap();
         let encode_time = encode_started.elapsed();
+        let (pinned, _) = pin_source_snapshot(&root).unwrap();
         let trusted = scan_spine_host(&root, true).unwrap().structural.unwrap();
+        assert_eq!(
+            pinned.source_fingerprint,
+            trusted.directory.source_fingerprint
+        );
         let decoded = decode_sidecar(&sidecar, &binding).unwrap();
         black_box(require_sidecar_matches_trusted_index(decoded, &trusted).unwrap());
+        black_box(pinned);
         for repetition in 0..repetitions {
             let source_revalidation_started = Instant::now();
+            let (pinned, _) = pin_source_snapshot(black_box(&root)).unwrap();
             let trusted = scan_spine_host(black_box(&root), true)
                 .unwrap()
                 .structural
                 .unwrap();
+            assert_eq!(
+                pinned.source_fingerprint,
+                trusted.directory.source_fingerprint
+            );
             let source_revalidation_time = source_revalidation_started.elapsed();
+            let pinned = black_box(pinned);
             let decode_started = Instant::now();
             let decoded = decode_sidecar(black_box(&sidecar), &binding).unwrap();
             black_box(require_sidecar_matches_trusted_index(decoded, &trusted).unwrap());
             let decode_time = decode_started.elapsed();
+            black_box(&pinned);
             let full_started = Instant::now();
             black_box(admit_one_pass_host(black_box(&root), false).unwrap());
             let full_time = full_started.elapsed();
@@ -3706,6 +3740,10 @@ fn issue_175_git_sidecar_raw_samples() {
         fingerprint_git_snapshot(&repo);
     assert_eq!(git_source_bytes, scan.work.source_bytes);
     assert_eq!(git_source_sha256, index.directory.source_fingerprint);
+    let (first_pinned, first_pin_time) = pin_source_snapshot(&project).unwrap();
+    assert_eq!(first_pinned.source_fingerprint, git_source_sha256);
+    black_box(first_pinned);
+    let first_source_revalidation_time = first_source_proof_time + scan.scan_time + first_pin_time;
     let (binding, first_identity_time) = git_snapshot_binding(&repo, git_source_sha256);
     let encode_started = Instant::now();
     let sidecar = encode_sidecar(&index, binding.clone()).unwrap();
@@ -3718,18 +3756,22 @@ fn issue_175_git_sidecar_raw_samples() {
         let (current_source_sha256, current_source_bytes, _) =
             fingerprint_git_snapshot(black_box(&repo));
         assert_eq!(current_source_bytes, scan.work.source_bytes);
+        let (pinned, _) = pin_source_snapshot(black_box(&project)).unwrap();
         let trusted = scan_spine_host(black_box(&project), true)
             .unwrap()
             .structural
             .unwrap();
         assert_eq!(trusted.directory.source_fingerprint, current_source_sha256);
+        assert_eq!(pinned.source_fingerprint, current_source_sha256);
         let source_revalidation_time = source_revalidation_started.elapsed();
+        let pinned = black_box(pinned);
         let (current_binding, identity_time) =
             git_snapshot_binding(black_box(&repo), current_source_sha256);
         let decode_started = Instant::now();
         let decoded = decode_sidecar(black_box(&sidecar), &current_binding).unwrap();
         black_box(require_sidecar_matches_trusted_index(decoded, &trusted).unwrap());
         let decode_time = decode_started.elapsed();
+        black_box(&pinned);
         let full_started = Instant::now();
         black_box(admit_one_pass_host(black_box(&project), false).unwrap());
         let full_time = full_started.elapsed();
@@ -3740,7 +3782,7 @@ fn issue_175_git_sidecar_raw_samples() {
             sidecar.len(),
             scan.scan_time.as_micros(),
             first_identity_time.as_micros(),
-            first_source_proof_time.as_micros(),
+            first_source_revalidation_time.as_micros(),
             encode_time.as_micros(),
             identity_time.as_micros(),
             source_revalidation_time.as_micros(),
