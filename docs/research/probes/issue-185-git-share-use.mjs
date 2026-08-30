@@ -32,7 +32,6 @@ const TACHIKO_BINARY = process.env.TACHIKO_BIN
   : join(REPOSITORY_ROOT, 'target/debug/tachiko');
 
 const PAYLOAD_PATH = 'asset/game-balance.ro';
-const SOURCE_REFERENCE = 'ordinary-git:issue-185-runtime-publisher';
 const COMMIT_ENVIRONMENT = Object.freeze({
   GIT_AUTHOR_NAME: 'Tachiko E9 Probe',
   GIT_AUTHOR_EMAIL: 'issue-185@tachiko.invalid',
@@ -40,15 +39,26 @@ const COMMIT_ENVIRONMENT = Object.freeze({
   GIT_COMMITTER_EMAIL: 'issue-185@tachiko.invalid',
 });
 
-const {
-  GIT_DIR: _gitDirectory,
-  GIT_WORK_TREE: _gitWorkTree,
-  GIT_COMMON_DIR: _gitCommonDirectory,
-  GIT_INDEX_FILE: _gitIndexFile,
-  GIT_OBJECT_DIRECTORY: _gitObjectDirectory,
-  GIT_ALTERNATE_OBJECT_DIRECTORIES: _gitAlternateObjectDirectories,
-  ...CLEAN_PROCESS_ENVIRONMENT
-} = process.env;
+const CLEAN_PROCESS_ENVIRONMENT = Object.freeze(
+  Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')),
+  ),
+);
+const ISOLATED_GIT_ENVIRONMENT = Object.freeze({
+  ...CLEAN_PROCESS_ENVIRONMENT,
+  GIT_CONFIG_GLOBAL: '/dev/null',
+  GIT_CONFIG_NOSYSTEM: '1',
+  GIT_CONFIG_SYSTEM: '/dev/null',
+  GIT_TERMINAL_PROMPT: '0',
+});
+const ISOLATED_GIT_OPTIONS = Object.freeze([
+  '-c',
+  'commit.gpgSign=false',
+  '-c',
+  'tag.gpgSign=false',
+  '-c',
+  'core.hooksPath=/dev/null',
+]);
 
 function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
@@ -70,15 +80,15 @@ function runBytes(command, args, options = {}) {
 }
 
 function git(repository, args, options = {}) {
-  return run('git', ['-C', repository, ...args], {
-    env: CLEAN_PROCESS_ENVIRONMENT,
+  return run('git', [...ISOLATED_GIT_OPTIONS, '-C', repository, ...args], {
+    env: ISOLATED_GIT_ENVIRONMENT,
     ...options,
   });
 }
 
 function gitBytes(repository, args, options = {}) {
-  return runBytes('git', ['-C', repository, ...args], {
-    env: CLEAN_PROCESS_ENVIRONMENT,
+  return runBytes('git', [...ISOLATED_GIT_OPTIONS, '-C', repository, ...args], {
+    env: ISOLATED_GIT_ENVIRONMENT,
     ...options,
   });
 }
@@ -89,9 +99,9 @@ function tachiko(args) {
 
 function commit(repository, message, timestamp) {
   git(repository, ['add', '--all']);
-  git(repository, ['commit', '--quiet', '-m', message], {
+  git(repository, ['commit', '--quiet', '--no-gpg-sign', '--no-verify', '-m', message], {
     env: {
-      ...CLEAN_PROCESS_ENVIRONMENT,
+      ...ISOLATED_GIT_ENVIRONMENT,
       ...COMMIT_ENVIRONMENT,
       GIT_AUTHOR_DATE: timestamp,
       GIT_COMMITTER_DATE: timestamp,
@@ -116,8 +126,14 @@ function resolveTuple(tuple) {
   assert.match(tuple.payloadDigest, /^[0-9a-f]{64}$/);
   const result = spawnSync(
     'git',
-    ['-C', tuple.repository, 'show', `${tuple.commitSha}:${tuple.payloadPath}`],
-    { env: CLEAN_PROCESS_ENVIRONMENT, maxBuffer: 16 * 1024 * 1024 },
+    [
+      ...ISOLATED_GIT_OPTIONS,
+      '-C',
+      tuple.sourceRepositoryReference,
+      'show',
+      `${tuple.commitSha}:${tuple.payloadPath}`,
+    ],
+    { env: ISOLATED_GIT_ENVIRONMENT, maxBuffer: 16 * 1024 * 1024 },
   );
 
   if (result.status !== 0) {
@@ -143,7 +159,7 @@ async function surfaceDiscoveryHint(tuple, destination) {
   await writeFile(
     destination,
     `EXPERIMENT-ONLY DISCOVERY HINT (NON-AUTHORITATIVE)
-source repository reference: ${tuple.sourceReference}
+source repository reference: ${tuple.sourceRepositoryReference}
 exact Git commit SHA: ${tuple.commitSha}
 payload path: ${tuple.payloadPath}
 payload SHA-256: ${tuple.payloadDigest}
@@ -166,13 +182,28 @@ function assertContains(haystack, needle, label) {
 
 async function main() {
   await access(TACHIKO_BINARY);
-  const sourceBefore = await readFile(MOONFALL_SOURCE);
   const sourceStatusBefore = git(REPOSITORY_ROOT, [
     'status',
     '--porcelain',
     '--',
     'examples/game-balance/game-balance.ro',
   ]);
+  assert.equal(
+    sourceStatusBefore,
+    '',
+    'checked-in Moonfall source must be clean before the experiment',
+  );
+  const repositoryHead = git(REPOSITORY_ROOT, ['rev-parse', 'HEAD']).trim();
+  assert.match(repositoryHead, /^[0-9a-f]{40}$/);
+  const sourceBefore = gitBytes(REPOSITORY_ROOT, [
+    'show',
+    `${repositoryHead}:examples/game-balance/game-balance.ro`,
+  ]);
+  assert.equal(
+    (await readFile(MOONFALL_SOURCE)).compare(sourceBefore),
+    0,
+    'working Moonfall bytes must equal the exact checked-in HEAD blob',
+  );
 
   const probeRoot = await mkdtemp(join(tmpdir(), 'tachiko-issue-185-'));
   const keepTemporaryArea = process.env.KEEP_E9_TMP === '1';
@@ -217,7 +248,7 @@ async function main() {
     // Export only the explicit allowlist. The publisher workspace itself is
     // never copied recursively into the share repository.
     await mkdir(join(publisherRepository, 'asset'), { recursive: true });
-    await cp(MOONFALL_SOURCE, join(publisherRepository, PAYLOAD_PATH));
+    await writeFile(join(publisherRepository, PAYLOAD_PATH), sourceBefore);
     await cp(join(REPOSITORY_ROOT, 'LICENSE-APACHE'), join(publisherRepository, 'LICENSE-APACHE'));
     await cp(join(REPOSITORY_ROOT, 'LICENSE-MIT'), join(publisherRepository, 'LICENSE-MIT'));
     await writeFile(
@@ -275,7 +306,7 @@ license applicability, redistribution rights, provenance policy, or support.
         '--object-format=sha1',
         publisherRepository,
       ],
-      { env: CLEAN_PROCESS_ENVIRONMENT },
+      { env: ISOLATED_GIT_ENVIRONMENT },
     );
     git(publisherRepository, ['config', 'core.autocrlf', 'false']);
     const commitA = commit(
@@ -313,8 +344,7 @@ license applicability, redistribution rights, provenance policy, or support.
     }
 
     const tupleA = Object.freeze({
-      sourceReference: SOURCE_REFERENCE,
-      repository: publisherRepository,
+      sourceRepositoryReference: publisherRepository,
       commitSha: commitA,
       payloadPath: PAYLOAD_PATH,
       payloadDigest: digestA,
@@ -323,6 +353,12 @@ license applicability, redistribution rights, provenance policy, or support.
     assert.equal(resolvedA.available, true);
     assert.equal(resolvedA.actualDigest, digestA);
     assert.equal(resolvedA.bytes.compare(sourceBefore), 0);
+    const wrongSourceA = resolveTuple({
+      ...tupleA,
+      sourceRepositoryReference: join(probeRoot, 'missing-source-repository'),
+    });
+    assert.equal(wrongSourceA.available, false);
+    assert.equal(wrongSourceA.reason, 'immutable_payload_unresolvable');
 
     // Inspection happens from the exact commit before the consumer asset area
     // exists. The moving branch is mentioned only as a discovery hint.
@@ -338,7 +374,7 @@ license applicability, redistribution rights, provenance policy, or support.
     const inspectionSummary = `# PRE-USE INSPECTION — ISSUE #185 EXPERIMENT
 
 artifact class: whole-project/template-style game-balance example
-source repository reference: ${SOURCE_REFERENCE}
+source repository reference: ${tupleA.sourceRepositoryReference}
 exact Git commit SHA: ${commitA}
 payload path: ${PAYLOAD_PATH}
 payload SHA-256: ${digestA}
@@ -383,7 +419,7 @@ relationship choice: Use/reference unavailable; Copy/Vendor and Fork/Remix are e
       join(vendoredDirectory, 'ORIGIN.md'),
       `# Experiment-only origin record
 
-Copy/Vendor of ${tupleA.sourceReference} at exact commit ${commitA}, path
+Copy/Vendor of ${tupleA.sourceRepositoryReference} at exact commit ${commitA}, path
 ${PAYLOAD_PATH}, payload SHA-256 ${digestA}. This copy has no live update
 relationship and carries no inherited trust, support, approval, or capability.
 `,
@@ -402,7 +438,7 @@ relationship and carries no inherited trust, support, approval, or capability.
         '--object-format=sha1',
         remixRepository,
       ],
-      { env: CLEAN_PROCESS_ENVIRONMENT },
+      { env: ISOLATED_GIT_ENVIRONMENT },
     );
     git(remixRepository, ['config', 'core.autocrlf', 'false']);
     await writeFile(join(remixRepository, PAYLOAD_PATH), resolvedA.bytes);
@@ -410,7 +446,7 @@ relationship and carries no inherited trust, support, approval, or capability.
       join(remixRepository, 'ANCESTRY.md'),
       `# Experiment-only remix ancestry
 
-Derived from ${tupleA.sourceReference}, exact commit ${commitA}, payload path
+Derived from ${tupleA.sourceRepositoryReference}, exact commit ${commitA}, payload path
 ${PAYLOAD_PATH}, payload SHA-256 ${digestA}. This record is transport provenance
 only and grants no trust, support, compatibility, approval, or authority.
 `,
