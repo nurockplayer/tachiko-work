@@ -1553,6 +1553,9 @@ describe("normalizeRepositorySnapshot", () => {
     "Input validation prevents SQL injection.",
     "Looks good.",
     "This looks good to me.",
+    "Approved by reviewer.",
+    "LGTM by reviewer.",
+    "Looks good to the reviewer.",
     "LGTM",
     "SQL injection has never occurred.",
     "[P3] Consider a shorter label.",
@@ -2238,7 +2241,7 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.blockers).toContain("Canonical handoff conflicts with live PR identity or is duplicated.");
   });
 
-  it.each(["blocked", "validating"])("keeps conflicting canonical STATE/STATUS aliases out of the merge gate: %s", (status) => {
+  it.each(["blocked", "validating", "human_required"])("keeps conflicting canonical STATE/STATUS aliases out of the merge gate: %s", (status) => {
     const pr = pullRequest();
     pr.comments[0]!.body += `\nSTATUS: ${status}`;
 
@@ -2568,6 +2571,8 @@ describe("normalizeRepositorySnapshot", () => {
     "No checks were aborted",
     `release-check passed on commit ${headSha}`,
     `release-check passed on exact head ${headSha.slice(0, 8)}`,
+    "1234567 tests passed",
+    "build 20260831 passed",
   ])("does not invent failed validation evidence from a clean summary: %s", (validation) => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace(
@@ -2855,6 +2860,9 @@ describe("normalizeRepositorySnapshot", () => {
 
   it.each([
     "This looks good to me.",
+    "Approved by reviewer.",
+    "LGTM by reviewer.",
+    "Looks good to the reviewer.",
     "Approved after P1 was fixed.",
     "P1 fixed; approved.",
     "P1 was fixed.",

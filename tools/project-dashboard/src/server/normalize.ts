@@ -34,7 +34,7 @@ const coordinatedReviewClauseStart = /^(?:\S+\s+){0,4}(?:is|are|was|were|do|does
 const completedClearedReviewFinding = /(?:\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2])\]?|\b(?:findings?|issues?|concerns?|problems?|failures?|bugs?|errors?|defects?|breakages?))\s*$|^(?:no|none|without|zero|0)\b(?:\s+\S+){2,}\s*$/i;
 const explicitlyNonSubstantiveFinding = /^(?:[_*]+\s*)?(?:\[(?:p3|sev(?:erity)?[ -]?3)\]|(?:p3|sev(?:erity)?[ -]?3|nit(?:pick)?|trivial)\b)/i;
 const explicitlyNonSubstantiveBadge = /^(?:<sub>\s*)+!\[(?:p3|sev(?:erity)?[ -]?3)\s+badge\]\([^)]*\)(?:<\/sub>\s*)+/i;
-const explicitlyNonSubstantiveAcknowledgment = /^(?:approved|done|(?:this\s+)?looks?\s+good(?:\s+to\s+me)?|lgtm|all\s+good|fixed(?:\s+in\s+(?:commit\s+)?[0-9a-f]{7,40})?|thanks,\s+applied this suggestion)[.!]?$/i;
+const explicitlyNonSubstantiveAcknowledgment = /^(?:(?:approved|lgtm|all\s+good)(?:\s+by\s+(?:the\s+)?(?:reviewer|maintainer|steward|owner|team|@[\w-]+))?|done|(?:this\s+)?looks?\s+good(?:\s+(?:to\s+(?:me|the\s+reviewer)|by\s+(?:the\s+)?(?:reviewer|maintainer|steward|owner|team|@[\w-]+)))?|fixed(?:\s+in\s+(?:commit\s+)?[0-9a-f]{7,40})?|thanks,\s+applied this suggestion)[.!]?$/i;
 const negatedUnlabeledSubstantiveImpact = /(?:\b(?:no|none|without|zero|0)\b[^.!?;\n]{0,80}\b(?:p3|sev(?:erity)?[ -]?3|bugs?|errors?|wrong|incorrect|stale|invalid|unsafe|unauthori[sz]ed|data[- ]loss(?:es)?|regressions?|race\s+condition|deadlock\w*|hang(?:s|ing|ed)?|infinite\s+(?:loops?|recursions?)|unbounded\s+(?:loops?|recursions?)|livelock\w*|vulnerab\w*|security\s+flaw|crash(?:es|ed|ing)?|panic(?:s|ked|king)?|throws?|throwing|thrown|exceptions?|corrupt\w*|overwrit\w*|bypass\w*|leak\w*|(?:los(?:e|es|ing|t)|delet(?:e|es|ed|ing)|eras(?:e|es|ed|ing))\s+(?:user\s+)?data)\b|\b(?:(?:does|do|did|can|could|would|should|will|is|are|was|were|has|have|had)\s+not|(?:does|do|did|can|could|would|should|wo|is|are|was|were|has|have|had)n['’]?t|cannot|never)\s+(?:\w+\s+){0,3}(?:return\s+(?:a\s+)?wrong|produc\w*\s+(?:an?\s+)?incorrect|enter\w*\s+(?:an?\s+)?(?:infinite\s+(?:loops?|recursions?)|livelock\w*)|infinite\s+(?:loops?|recursions?)|unbounded\s+(?:loops?|recursions?)|(?:enter\w*\s+(?:an?\s+)?cycle|cycl\w*|loop|run|spin|recurs|wait|stall)\w*\s+(?:forever|indefinitely|endlessly|infinitely|without\s+end)|endlessly\s+(?:loop|run|spin)\w*|keep\w*\s+(?:loop|run|spin)\w*\s+(?:forever|indefinitely|endlessly)|stuck\s+(?:forever|in\s+(?:an?\s+)?loops?)|non[- ]?terminat\w*|deadlock\w*|livelock\w*|cycl\w*|unbounded|endless|(?:los(?:e|es|ing|t)|delet(?:e|es|ed|ing)|eras(?:e|es|ed|ing))\s+(?:user\s+)?data|corrupt\w*|overwrit\w*|bypass\w*|leak\w*|crash\w*|panic\w*|hang\w*|throw\w*|break\w*|fail\w*)\b|\b(?:data[- ]loss(?:es)?|regressions?|race\s+condition|deadlock\w*|hang(?:s|ing|ed)?|infinite\s+(?:loops?|recursions?)|unbounded\s+(?:loops?|recursions?)|livelock\w*|vulnerab\w*|security\s+flaw|crash(?:es|ed|ing)?|panic(?:s|ked|king)?|throws?|throwing|thrown|exceptions?|corrupt\w*|overwrit\w*|bypass\w*|leak\w*)\b[^.!?;\n]{0,80}\b(?:not\s+(?:found|present|observed|identified|detected)|absent)\b)/i;
 const affirmativeUnlabeledSubstantiveImpact = /\b(?:wrong|incorrect|unsafe|unauthori[sz]ed|data[- ]loss(?:es)?|regressions?|race\s+condition|deadlock\w*|hang(?:s|ing|ed)?|infinite\s+(?:loops?|recursions?)|unbounded\s+(?:loops?|recursions?)|(?:loops?|recursions?)\s+(?:is|are)\s+unbounded|(?:(?:fails?|failed|failing)\s+to|never|(?:(?:does|do|did|will|can|is|are|was|were)\s+not|(?:does|do|did|can|wo|is|are|was|were)n['’]?t|cannot))\s+(?:be\s+)?(?:terminat\w*|complet\w*|finish\w*|return\w*|halt\w*|exit\w*|stop\w*|end\w*|converg\w*|reach\w*\s+completion)|(?:enter\w*\s+(?:an?\s+)?cycle|cycl\w*|loop|run|spin|recurs|wait|stall)\w*\s+(?:forever|indefinitely|endlessly|infinitely|without\s+end)|endlessly\s+(?:loop|run|spin)\w*|keep\w*\s+(?:loop|run|spin)\w*\s+(?:forever|indefinitely|endlessly)|stuck\s+(?:forever|in\s+(?:an?\s+)?loops?)|non[- ]?terminat\w*|livelock\w*|endless|vulnerab\w*|security\s+flaw|crash(?:es|ed|ing)?|panic(?:s|ked|king)?|throws?|throwing|thrown|exceptions?|corrupt\w*|overwrit\w*|bypass\w*|leak\w*|(?:los(?:e|es|ing|t)|delet(?:e|es|ed|ing)|eras(?:e|es|ed|ing))\s+(?:user\s+)?data)\b/i;
 const affirmativeDestructiveDataImpact = /\b(?:(?:user\s+)?data\s+(?:(?:is|are|was|were)\s+(?:being\s+)?|gets?\s+|got\s+)(?:delet(?:ed|ing)|eras(?:ed|ing))|(?:deletion|erasure)\s+of\s+(?:user\s+)?data)\b/i;
@@ -307,8 +307,9 @@ function handoffReportsFailedValidation(body: string, currentHeadSha: string | n
   if (validation === null) return false;
 
   if (currentHeadSha !== null) {
-    for (const match of validation.matchAll(/\b[0-9a-f]{7,40}\b/gi)) {
-      if (!shaMatches(match[0], currentHeadSha)) return true;
+    const evidenceSha = /\b(?:(?:commit|head|sha)\s*[:=#]?\s*|(?:on|at|against|from|for)\s+(?:(?:(?:an?|the)\s+)?(?:old|previous|prior|current|exact|reviewed)\s+)?(?:(?:commit|head|sha)\s+)?)([0-9a-f]{7,40})\b/gi;
+    for (const match of validation.matchAll(evidenceSha)) {
+      if (!shaMatches(match[1] ?? null, currentHeadSha)) return true;
     }
   }
 
@@ -404,9 +405,9 @@ function projectHandoff(
   );
   let condition: HandoffProjection["condition"] = "current";
 
-  const stateClaim = statusDeliveryClaim(labeledValue(latest.body, "STATE") ?? "");
-  const statusClaim = statusDeliveryClaim(labeledValue(latest.body, "STATUS") ?? "");
-  const conflictingStateAliases = stateClaim !== null && statusClaim !== null && stateClaim.state !== statusClaim.state;
+  const stateClaim = canonicalHandoffStateClaim(labeledValue(latest.body, "STATE") ?? "");
+  const statusClaim = canonicalHandoffStateClaim(labeledValue(latest.body, "STATUS") ?? "");
+  const conflictingStateAliases = stateClaim !== null && statusClaim !== null && stateClaim !== statusClaim;
 
   if (canonical.length !== 1) {
     condition = "inconsistent";
@@ -638,6 +639,10 @@ function statusClaimsHumanRequired(statusText: string): boolean {
   if (humanRequired?.polarity !== "affirmative") return false;
   const delivery = statusDeliveryClaim(statusText);
   return delivery === null || humanRequired.index > delivery.index;
+}
+
+function canonicalHandoffStateClaim(statusText: string): StatusDeliveryState | "human_required" | null {
+  return statusClaimsHumanRequired(statusText) ? "human_required" : statusDeliveryState(statusText);
 }
 
 function statusClaimsReady(statusText: string): boolean {
