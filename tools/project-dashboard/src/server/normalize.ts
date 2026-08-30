@@ -8,6 +8,7 @@ import type {
   RawIssue,
   RawPullRequest,
   RawRepositorySnapshot,
+  RawReview,
   RepositoryProjection,
   ReviewProjection,
   SourceClass,
@@ -19,7 +20,7 @@ const handoffMarker = "<!-- agent-handoff:v1 -->";
 const explicitlyPrioritizedFinding = /(?:\[|\b)(?:p[0-2]|sev(?:erity)?[ -]?[0-2])(?:\]|\b)/i;
 const explicitlySubstantiveFinding = /(?:\[|\b)(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness)(?:\]|\b)/i;
 const negatedReviewFinding = /\b(?:no|not|none|without|zero|0)\b[^.!?;\n]{0,80}\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|findings?|issues?|concerns?|problems?)\b/i;
-const clearedReviewFinding = /\b(?:security|correctness|blocking|data[- ]integrity)\b[^.!?;\n]{0,80}\b(?:checks?|review|findings?|issues?)?\s*(?:passed|complete(?:d)?|clean|resolved)\b(?:\s*\([^)]*\))?\s*$/i;
+const clearedReviewFinding = /\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|security|correctness|blocking|data[- ]integrity)\b[^.!?;\n]{0,80}\b(?:checks?|review|findings?|issues?)?\s*(?:passed|complete(?:d)?|clean|resolved)\b(?:\s*\([^)]*\))?\s*$/i;
 const postposedClearedReviewFinding = /\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|data[- ]integrity)(?:\s+(?:findings?|issues?|concerns?|problems?)(?:\s+found)?)?\s*(?::|=|\bare\b)\s*(?:none|zero|0)\b(?:\s*\([^)]*\))?\s*$/i;
 const equivalentReviewFindingLabel = /(?:^|\s)(?:blocking|security|correctness|data[- ]integrity)\s*[:,]/i;
 const equivalentReviewFindingContext = /\b(?:blocking|security|correctness|data[- ]integrity)\b[^.!?;\n]{0,80}\b(?:finding|issue|bug|risk|failure|regression|vulnerab\w*|flaw|problem|concern|break\w*|corrupt\w*|overwrit\w*|data[- ]loss)\b|\b(?:finding|issue|bug|risk|failure|regression|vulnerab\w*|flaw|problem|concern|break\w*|corrupt\w*|overwrit\w*|data[- ]loss)\b[^.!?;\n]{0,80}\b(?:blocking|security|correctness|data[- ]integrity)\b/i;
@@ -546,6 +547,15 @@ function projectRequiredChecks(
   };
 }
 
+function latestReviewsByReviewer(reviews: RawReview[]): RawReview[] {
+  const latest = new Map<string, RawReview>();
+  for (const review of reviews.toSorted((left, right) => right.submittedAt.localeCompare(left.submittedAt))) {
+    const reviewer = review.author?.toLowerCase() ?? review.url;
+    if (!latest.has(reviewer)) latest.set(reviewer, review);
+  }
+  return [...latest.values()];
+}
+
 function projectReviews(pr: RawPullRequest, observedAt: string): ReviewProjection {
   const refs = [source("direct", `PR #${pr.number} reviews`, `${pr.url}/reviews`, observedAt, pr.headSha)];
   if (pr.reviews === null || pr.reviewThreads === null) {
@@ -559,23 +569,17 @@ function projectReviews(pr: RawPullRequest, observedAt: string): ReviewProjectio
     };
   }
 
-  const opinionatedReviews = pr.reviews
-    .filter((review) => review.state === "approved" || review.state === "changes_requested")
-    .toSorted((left, right) => right.submittedAt.localeCompare(left.submittedAt));
-  const latestOpinionByReviewer = new Map<string, (typeof opinionatedReviews)[number]>();
-  for (const review of opinionatedReviews) {
-    const reviewer = review.author ?? review.url;
-    if (!latestOpinionByReviewer.has(reviewer)) latestOpinionByReviewer.set(reviewer, review);
-  }
-  const relevantReviews = [...latestOpinionByReviewer.values()];
+  const relevantReviews = latestReviewsByReviewer(
+    pr.reviews.filter((review) => review.state === "approved" || review.state === "changes_requested"),
+  );
   const reviewedHeads = new Set(relevantReviews.map((review) => review.headSha));
   const reviewedHeadSha = reviewedHeads.size === 1 ? relevantReviews[0]?.headSha ?? null : null;
   const unresolved = pr.reviewThreads.filter((thread) => !thread.resolved);
-  const substantiveReviewBodies = pr.reviews.filter(
-    (review) => !["dismissed", "pending"].includes(review.state) &&
-      review.headSha !== null && shaMatches(review.headSha, pr.headSha) &&
-      isSubstantiveReviewBody(review.body),
-  );
+  const substantiveReviewBodies = latestReviewsByReviewer(
+    pr.reviews.filter((review) =>
+      review.state !== "pending" && review.headSha !== null && shaMatches(review.headSha, pr.headSha)
+    ),
+  ).filter((review) => review.state !== "dismissed" && isSubstantiveReviewBody(review.body));
   const allReviewsCoverHead = relevantReviews.length > 0 && relevantReviews.every(
     (review) => review.headSha !== null && shaMatches(review.headSha, pr.headSha),
   );
@@ -739,6 +743,7 @@ function projectLane(
     ));
   const handoffMergeReadinessRequiresDelivery = handoffRequired && handoff.condition === "current" &&
     !handoffClaimsMergeReady(handoff);
+  const currentPrePrHandoffBlocked = pr === null && handoff.condition === "current" && observedReadiness === "blocked";
 
   if ((issue.blockedBy?.length ?? 0) > 0) {
     blockers.push(`Live Issue dependencies block this lane: ${issue.blockedBy?.map((dependency) => `#${dependency.number}`).join(", ") ?? "Unknown"}.`);
@@ -860,7 +865,8 @@ function projectLane(
         !githubMergeReady || drift !== "none" || handoff.condition === "inconsistent" || handoff.condition === "stale" ||
         (pr !== null && handoff.condition === "unknown") ||
         (missingHandoffRequiresDelivery && handoff.condition === "missing") || !issueScopeReconciled ||
-        handoffMergeReadinessRequiresDelivery || pr?.isDraft === true || !targetsDefaultBranch || !ownershipObservationComplete
+        handoffMergeReadinessRequiresDelivery || currentPrePrHandoffBlocked || pr?.isDraft === true ||
+        !targetsDefaultBranch || !ownershipObservationComplete
         || !decisionReadyScopeReconciled
       ? { owner: deliveryActionOwner(owner), reason: blockers[0] ?? "Delivery-agent action is required." }
       : { owner: "none", reason: "No human action is currently evidenced." };

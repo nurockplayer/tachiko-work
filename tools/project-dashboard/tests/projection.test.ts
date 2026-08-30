@@ -339,6 +339,26 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.action.owner).toBe("codex");
   });
 
+  it("routes a current no-PR blocked handoff to its delivery owner", () => {
+    const coordinated = issue();
+    coordinated.comments[0]!.body = [
+      "<!-- agent-handoff:v1 -->",
+      "OWNER: agent:codex",
+      "STATE: blocked",
+      `LAST CHECKED MAIN: ${mainSha}`,
+      "HUMAN ACTION: none",
+    ].join("\n");
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [coordinated] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.handoff.condition).toBe("current");
+    expect(lane?.phase).toBe("blocked");
+    expect(lane?.blockers).toContain("The current canonical handoff reports this lane blocked.");
+    expect(lane?.action.owner).toBe("codex");
+    expect(lane?.action.reason).toBe("The current canonical handoff reports this lane blocked.");
+  });
+
   it("does not turn guardrail prose into parked, blocked, or human-required state", () => {
     const coordinated = issue();
     coordinated.body += "\n\n## Guardrails\nPark on overlap. Blocked work must not race. No human action is required.";
@@ -927,6 +947,8 @@ describe("normalizeRepositorySnapshot", () => {
     "Data-integrity: 0.",
     "Security issues found: 0.",
     "P2 findings: none (all checks passed).",
+    "P2 findings resolved.",
+    "P1 review complete.",
   ])("does not infer a substantive finding from a clean comment-only review summary: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1740,6 +1762,20 @@ describe("normalizeRepositorySnapshot", () => {
 
     expect(projection.deliveries[0]?.reviews.status).toBe("current");
     expect(projection.deliveries[0]?.reviews.reviewedHeadSha).toBe(headSha);
+    expect(projection.deliveries[0]?.phase).toBe("merge_gate");
+  });
+
+  it("does not count a review body superseded by the same reviewer's later approval", () => {
+    const pr = pullRequest();
+    pr.reviews = [
+      { state: "commented", author: "reviewer", body: "[P2] Clarify the current behavior", headSha, url: "https://github.com/review/finding", submittedAt: "2026-08-29T23:00:00.000Z" },
+      { state: "approved", author: "reviewer", body: "", headSha, url: "https://github.com/review/approval", submittedAt: observedAt },
+    ];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+
+    expect(projection.deliveries[0]?.reviews.substantiveUnresolvedCount).toBe(0);
+    expect(projection.deliveries[0]?.reviews.status).toBe("current");
     expect(projection.deliveries[0]?.phase).toBe("merge_gate");
   });
 
