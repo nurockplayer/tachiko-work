@@ -219,6 +219,9 @@ function issueReadiness(issue: RawIssue, handoff: HandoffProjection): DeliveryLa
   if (/\bdecision[_ -]?ready\b/.test(issueStatus) || /\bnot[_ -]+ready\b/.test(issueStatus)) return "unknown";
   if (/\bpark(?:ed)?\b/.test(issueStatus)) return "parked";
   if (statusClaimsBlocked(issueStatus)) return "blocked";
+  const issueClaimsActive = /\bactive\b|\bimplementing\b|\bin progress\b|\bvalidating\b|\breview[_ -]?fix\b|\bhuman[_ -]?required\b/.test(issueStatus);
+  const issueClaimsReady = /\bready\b/.test(issueStatus) && !/not ready for (?:production )?implementation/.test(issueStatus);
+  if (!issueClaimsActive && !issueClaimsReady) return "unknown";
   const handoffState = handoff.claimedState?.toLowerCase() ?? "";
   const staleHandoffClaimsBlocked = handoff.condition === "stale" &&
     statusClaimsBlocked(handoffState);
@@ -598,7 +601,7 @@ function projectLane(
         pr?.mergeable === "conflicting" || pr?.mergeStateStatus === "dirty" ||
         drift === "suspected" || handoff.condition === "inconsistent" || handoff.condition === "stale" ||
         (pr !== null && handoff.condition === "missing") || !issueScopeReconciled ||
-        !targetsDefaultBranch || !ownershipObservationComplete
+        pr?.isDraft === true || !targetsDefaultBranch || !ownershipObservationComplete
       ? { owner: deliveryActionOwner(owner), reason: blockers[0] ?? "Delivery-agent action is required." }
       : { owner: "none", reason: "No human action is currently evidenced." };
   const issueRef = source(
@@ -688,6 +691,20 @@ function placeholderIssue(pr: RawPullRequest, observedAt: string): RawIssue {
   };
 }
 
+function pullRequestIssueClaims(pr: RawPullRequest, snapshot: RawRepositorySnapshot): number[] {
+  const issueNumbers = pr.issueNumbers.length === 0 ? [pr.number] : pr.issueNumbers;
+  const handoff = projectHandoff(
+    pr.comments,
+    pr.commentsComplete,
+    snapshot.observedAt,
+    pr.headSha,
+    snapshot.mainSha,
+  );
+  return hasUsableIssueClaim(handoff)
+    ? [...new Set([...issueNumbers, handoff.claimedIssueNumber])]
+    : issueNumbers;
+}
+
 export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): RepositoryProjection {
   const issues = snapshot.issues ?? [];
   const pullRequests = (snapshot.pullRequests ?? []).map((pr) => {
@@ -710,7 +727,7 @@ export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): Re
     );
   const pullRequestsByIssue = new Map<number, number[]>();
   for (const pr of pullRequests) {
-    for (const issueNumber of pr.issueNumbers.length === 0 ? [pr.number] : pr.issueNumbers) {
+    for (const issueNumber of pullRequestIssueClaims(pr, snapshot)) {
       const numbers = pullRequestsByIssue.get(issueNumber) ?? [];
       numbers.push(pr.number);
       pullRequestsByIssue.set(issueNumber, numbers);
@@ -723,16 +740,8 @@ export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): Re
   for (const pr of pullRequests) {
     const number = pr.issueNumbers[0];
     const issue = number === undefined ? placeholderIssue(pr, snapshot.observedAt) : issuesByNumber.get(number) ?? placeholderIssue(pr, snapshot.observedAt);
-    const claimedIssueNumbers = pr.issueNumbers.length === 0 ? [issue.number] : pr.issueNumbers;
+    const claimedIssueNumbers = pullRequestIssueClaims(pr, snapshot);
     for (const issueNumber of claimedIssueNumbers) ownedIssueNumbers.add(issueNumber);
-    const handoff = projectHandoff(
-      pr.comments,
-      pr.commentsComplete,
-      snapshot.observedAt,
-      pr.headSha,
-      snapshot.mainSha,
-    );
-    if (hasUsableIssueClaim(handoff)) ownedIssueNumbers.add(handoff.claimedIssueNumber);
     const ownershipConflicts = claimedIssueNumbers.flatMap((issueNumber) => {
       const prNumbers = pullRequestsByIssue.get(issueNumber) ?? [];
       return prNumbers.length > 1 ? [{ issueNumber, prNumbers }] : [];

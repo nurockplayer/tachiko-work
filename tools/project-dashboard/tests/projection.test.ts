@@ -125,6 +125,17 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries).toEqual([]);
   });
 
+  it("does not let an operational handoff elevate an unrecognized Issue status", () => {
+    const backlog = issue();
+    backlog.body = "## Status\n\nBacklog\n\nOwner: `agent:codex`";
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [backlog], pullRequests: [pullRequest()] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.issue.readiness).toBe("unknown");
+    expect(lane?.phase).toBe("validating");
+  });
+
   it("does not let a stale no-PR handoff override live Issue readiness but preserves human action", () => {
     const coordinated = issue();
     coordinated.comments[0]!.body = [
@@ -639,6 +650,7 @@ describe("normalizeRepositorySnapshot", () => {
 
     expect(lane?.phase).toBe("validating");
     expect(lane?.blockers).toContain("Pull request #200 is still a draft.");
+    expect(lane?.action.owner).toBe("codex");
   });
 
   it("keeps independent simultaneous work in separate lanes", () => {
@@ -862,6 +874,32 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries.map((lane) => lane.phase)).toEqual(["blocked", "blocked"]);
     for (const lane of projection.deliveries) {
       expect(lane.blockers).toContain("Multiple open pull requests claim Issue #169: #200, #201.");
+    }
+  });
+
+  it("includes mismatched handoff claims in cross-PR ownership conflicts", () => {
+    const first = pullRequest();
+    first.comments[0]!.body = first.comments[0]!.body.replace("ISSUE: #169", "ISSUE: #170");
+    const second = pullRequest();
+    second.number = 201;
+    second.url = "https://github.com/nurockplayer/tachiko-work/pull/201";
+    second.body = "Closes #170";
+    second.issueNumbers = [170];
+    second.headSha = "c".repeat(40);
+    second.checksObservedHeadSha = second.headSha;
+    second.reviews![0]!.headSha = second.headSha;
+    second.comments[0]!.body = second.comments[0]!.body
+      .replace("ISSUE: #169", "ISSUE: #170")
+      .replaceAll(headSha, second.headSha);
+
+    const projection = normalizeRepositorySnapshot(snapshot({
+      issues: [issue(), issue(170)],
+      pullRequests: [first, second],
+    }));
+
+    expect(projection.deliveries.map((lane) => lane.phase)).toEqual(["blocked", "blocked"]);
+    for (const lane of projection.deliveries) {
+      expect(lane.blockers).toContain("Multiple open pull requests claim Issue #170: #200, #201.");
     }
   });
 
