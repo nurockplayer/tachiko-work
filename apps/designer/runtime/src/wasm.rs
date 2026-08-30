@@ -66,7 +66,7 @@ pub extern "C" fn tachiko_designer_response_len() -> u32 {
 pub extern "C" fn tachiko_designer_project_reserve(length: u32) -> u32 {
     if length as usize > MAX_PROJECT_TRANSFER_BYTES {
         PROJECT_TOO_LARGE.set(true);
-        PROJECT.with(|project| project.borrow_mut().clear());
+        PROJECT.with(|project| *project.borrow_mut() = Vec::new());
         return 0;
     }
     PROJECT_TOO_LARGE.set(false);
@@ -80,6 +80,7 @@ pub extern "C" fn tachiko_designer_project_reserve(length: u32) -> u32 {
 /// Fully admit and install one project candidate from the project arena.
 #[unsafe(no_mangle)]
 pub extern "C" fn tachiko_designer_project_open() {
+    let project = PROJECT.with(|project| std::mem::take(&mut *project.borrow_mut()));
     RUNTIME.with(|runtime| {
         let mut runtime = runtime.borrow_mut();
         let reply = if PROJECT_TOO_LARGE.replace(false) {
@@ -104,16 +105,14 @@ pub extern "C" fn tachiko_designer_project_open() {
                             .failure_projection(current_revision(runtime.as_ref())),
                     };
                 };
-                PROJECT.with(|project| {
-                    match open_project(&mut runtime, &project.borrow(), occurrence_id) {
-                        Ok(opened) => DesignerWireReply::Ok {
-                            response: DesignerResponse::Opened(Box::new(opened)),
-                        },
-                        Err(error) => DesignerWireReply::Error {
-                            error: error.failure_projection(current_revision(runtime.as_ref())),
-                        },
-                    }
-                })
+                match open_project(&mut runtime, &project, occurrence_id) {
+                    Ok(opened) => DesignerWireReply::Ok {
+                        response: DesignerResponse::Opened(Box::new(opened)),
+                    },
+                    Err(error) => DesignerWireReply::Error {
+                        error: error.failure_projection(current_revision(runtime.as_ref())),
+                    },
+                }
             })
         };
         set_response(&reply);
@@ -172,10 +171,11 @@ pub extern "C" fn tachiko_designer_project_export() {
     });
 }
 
-/// Destroy the current occurrence without touching the project arena.
+/// Destroy the current occurrence and release transient project bytes.
 #[unsafe(no_mangle)]
 pub extern "C" fn tachiko_designer_project_close() {
     RUNTIME.with(|runtime| *runtime.borrow_mut() = None);
+    PROJECT.with(|project| *project.borrow_mut() = Vec::new());
 }
 
 /// Return the current project-transfer arena offset.
