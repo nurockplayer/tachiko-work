@@ -537,6 +537,9 @@ function projectLane(
   if (pr !== null && handoff.condition === "missing") {
     blockers.push(`Canonical handoff is missing for pull request #${pr.number}.`);
   }
+  if (pr !== null && handoff.condition === "unknown") {
+    blockers.push("Canonical handoff could not be fully reconciled with the observed PR and live main.");
+  }
   if (handoff.condition === "inconsistent") blockers.push("Canonical handoff conflicts with live PR identity or is duplicated.");
   if (handoff.condition === "stale") blockers.push("Canonical handoff has not reconciled the observed live main.");
   if (pr !== null && snapshot.defaultBranchName === null) {
@@ -598,8 +601,8 @@ function projectLane(
     ? { owner: "human", reason: "The canonical coordination state requests human or Steward action." }
     : phase === "review_fix" || phase === "rereview" || checks.status === "failure" ||
         (pr !== null && checks.requiredStatus !== "satisfied") || ownershipConflict ||
-        pr?.mergeable === "conflicting" || pr?.mergeStateStatus === "dirty" ||
-        drift === "suspected" || handoff.condition === "inconsistent" || handoff.condition === "stale" ||
+        !githubMergeReady || drift === "suspected" || handoff.condition === "inconsistent" || handoff.condition === "stale" ||
+        (pr !== null && handoff.condition === "unknown") ||
         (pr !== null && handoff.condition === "missing") || !issueScopeReconciled ||
         pr?.isDraft === true || !targetsDefaultBranch || !ownershipObservationComplete
       ? { owner: deliveryActionOwner(owner), reason: blockers[0] ?? "Delivery-agent action is required." }

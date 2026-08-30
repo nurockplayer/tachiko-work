@@ -543,6 +543,19 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.phase).toBe("validating");
   });
 
+  it("assigns incomplete live-main handoff reconciliation to the delivery agent", () => {
+    const pr = pullRequest();
+    pr.comments[0]!.body = pr.comments[0]!.body.replace(`\nLAST CHECKED MAIN: ${mainSha}`, "");
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.handoff.condition).toBe("unknown");
+    expect(lane?.phase).toBe("validating");
+    expect(lane?.blockers).toContain("Canonical handoff could not be fully reconciled with the observed PR and live main.");
+    expect(lane?.action.owner).toBe("codex");
+  });
+
   it("rejects formatting-only mandatory handoff values", () => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace(
@@ -757,6 +770,7 @@ describe("normalizeRepositorySnapshot", () => {
 
     expect(projection.deliveries[0]?.phase).toBe("validating");
     expect(projection.deliveries[0]?.blockers).toContain("GitHub reports that pull request #200 is blocked from merging.");
+    expect(projection.deliveries[0]?.action.owner).toBe("codex");
   });
 
   it("assigns merge-conflict repair to the delivery agent", () => {
