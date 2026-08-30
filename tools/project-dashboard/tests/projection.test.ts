@@ -1231,6 +1231,8 @@ describe("normalizeRepositorySnapshot", () => {
     "No authorization check prevents users from bypassing access control.",
     "This permits SQL injection for crafted input.",
     "SQL injection permits data loss and checks passed.",
+    "SQL injection is prevented and code injection permits data loss.",
+    "SQL injection is impossible and command injection occurs.",
   ])("blocks an unlabeled comment-only runtime failure on the current head: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1352,6 +1354,13 @@ describe("normalizeRepositorySnapshot", () => {
     "SQL injection was not observed.",
     "SQL injection test passed.",
     "Authorization checks prevent users from bypassing access control.",
+    "SQL injection was never observed.",
+    "SQL injection has not occurred.",
+    "SQL injection is disallowed.",
+    "SQL injection is disabled.",
+    "SQL injection is ruled out.",
+    "The system prevents SQL injection.",
+    "The authorization guard blocks code injection.",
   ])("does not infer a substantive finding from a clean comment-only review summary: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1800,6 +1809,8 @@ describe("normalizeRepositorySnapshot", () => {
     "No authorization check prevents users from bypassing access control.",
     "This permits SQL injection for crafted input.",
     "SQL injection permits data loss and checks passed.",
+    "SQL injection is prevented and code injection permits data loss.",
+    "SQL injection is impossible and command injection occurs.",
   ])("fails closed on an unlabeled correctness finding: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
@@ -1910,6 +1921,13 @@ describe("normalizeRepositorySnapshot", () => {
     "SQL injection was not observed.",
     "SQL injection test passed.",
     "Authorization checks prevent users from bypassing access control.",
+    "SQL injection was never observed.",
+    "SQL injection has not occurred.",
+    "SQL injection is disallowed.",
+    "SQL injection is disabled.",
+    "SQL injection is ruled out.",
+    "The system prevents SQL injection.",
+    "The authorization guard blocks code injection.",
   ])("does not promote a negated unlabeled impact statement: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [

@@ -26,8 +26,8 @@ const equivalentReviewFindingLabel = /(?:^|\s)(?:blocking|security|correctness|d
 const equivalentReviewFindingContext = /\b(?:blocking|security|correctness|data[- ]integrity)\b[^.!?;\n]{0,80}\b(?:finding|issue|bug|risk|failure|regression|vulnerab\w*|flaw|problem|concern|break\w*|corrupt\w*|overwrit\w*|data[- ]loss)\b|\b(?:finding|issue|bug|risk|failure|regression|vulnerab\w*|flaw|problem|concern|break\w*|corrupt\w*|overwrit\w*|data[- ]loss)\b[^.!?;\n]{0,80}\b(?:blocking|security|correctness|data[- ]integrity)\b/i;
 const explicitReviewClearingSignal = /(?:\[|\b)(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|data[- ]integrity)(?:\]|\b)/i;
 const reviewClauseBoundary = /[.!?;\n]+|\b(?:but|except|however|although|yet)\b|,\s+and\s+|,\s*(?=(?:so|therefore|thus|hence|causing|which|p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|data[- ]integrity)\b)/i;
-const coordinatedReviewPredicate = /\b(?:is|are|was|were|do|does|did|can|could|would|should|will|has|have|had|gets?|got|fails?|failed|failing|breaks?|broke|broken|passes?|passed|passing|throws?|throwing|thrown|exceptions?|crash(?:es|ed|ing)?|panic(?:s|ked|king)?|delet(?:e|es|ed|ing)|eras(?:e|es|ed|ing)|corrupt\w*|overwrit\w*|bypass\w*|leak\w*)\b/i;
-const coordinatedReviewClauseStart = /^(?:\S+\s+){0,4}(?:is|are|was|were|do|does|did|can|could|would|should|will|has|have|had|gets?|got|fails?|failed|failing|breaks?|broke|broken|passes?|passed|passing|throws?|throwing|thrown|exceptions?|crash(?:es|ed|ing)?|panic(?:s|ked|king)?|delet(?:e|es|ed|ing)|eras(?:e|es|ed|ing)|corrupt\w*|overwrit\w*|bypass\w*|leak\w*)\b/i;
+const coordinatedReviewPredicate = /\b(?:is|are|was|were|do|does|did|can|could|would|should|will|has|have|had|gets?|got|fails?|failed|failing|breaks?|broke|broken|passes?|passed|passing|occurs?|occurred|occurring|permits?|permitted|permitting|allows?|allowed|allowing|enables?|enabled|enabling|throws?|throwing|thrown|exceptions?|crash(?:es|ed|ing)?|panic(?:s|ked|king)?|delet(?:e|es|ed|ing)|eras(?:e|es|ed|ing)|corrupt\w*|overwrit\w*|bypass\w*|leak\w*)\b/i;
+const coordinatedReviewClauseStart = /^(?:\S+\s+){0,4}(?:is|are|was|were|do|does|did|can|could|would|should|will|has|have|had|gets?|got|fails?|failed|failing|breaks?|broke|broken|passes?|passed|passing|occurs?|occurred|occurring|permits?|permitted|permitting|allows?|allowed|allowing|enables?|enabled|enabling|throws?|throwing|thrown|exceptions?|crash(?:es|ed|ing)?|panic(?:s|ked|king)?|delet(?:e|es|ed|ing)|eras(?:e|es|ed|ing)|corrupt\w*|overwrit\w*|bypass\w*|leak\w*)\b/i;
 const completedClearedReviewFinding = /(?:\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2])\]?|\b(?:findings?|issues?|concerns?|problems?|failures?|bugs?|errors?|defects?|breakages?))\s*$|^(?:no|none|without|zero|0)\b(?:\s+\S+){2,}\s*$/i;
 const explicitlyNonSubstantiveFinding = /^(?:[_*]+\s*)?(?:\[(?:p3|sev(?:erity)?[ -]?3)\]|(?:p3|sev(?:erity)?[ -]?3|nit(?:pick)?|trivial)\b)/i;
 const explicitlyNonSubstantiveBadge = /^(?:<sub>\s*)+!\[(?:p3|sev(?:erity)?[ -]?3)\s+badge\]\([^)]*\)(?:<\/sub>\s*)+/i;
@@ -41,7 +41,8 @@ const unlabeledPureMaintainabilitySuggestion = /^(?:could|would|can|please|consi
 const missingSafeguardImpact = /\bno\s+(?:authorization|authentication|permission|access[- ]control|security)\s+(?:check|guard|safeguard|control)\w*\b[^.!?;\n]{0,80}\b(?:prevents?|blocks?|stops?)\b[^.!?;\n]{0,80}\b(?:bypass|inject|leak|corrupt|overwrit|delet|eras)\w*\b/i;
 const satisfiedSafeguardImpact = /\b(?:(?:an?|the)\s+)?(?:authorization|authentication|permission|access[- ]control|security)\s+(?:checks?|guards?|safeguards?|controls?)\s+(?:prevents?|blocks?|stops?)\b[^.!?;\n]{0,80}\b(?:bypass|inject|leak|corrupt|overwrit|delet|eras)\w*\b/i;
 const injectionImpact = /\b(?:sql|command|code)\s+injection\b/i;
-const negatedInjectionImpact = /(?:\b(?:(?:no|without)\s+(?:\w+\s+){0,3}|(?:(?:does|do|did|can|could|would|should|will|is|are|was|were)\s+not|(?:does|do|did|can|could|would|should|wo|is|are|was|were)n['’]?t|cannot|never)\s+(?:\w+\s+){0,3})(?:sql|command|code)\s+injection\b|\b(?:sql|command|code)\s+injection\b\s+(?:(?:is|was)\s+(?:prevented|blocked|mitigated|rejected|impossible)|(?:is|was)\s+not\s+(?:possible|permitted|enabled|observed|detected)|(?:is|was)n['’]?t\s+(?:possible|permitted|enabled)|(?:can(?:not|['’]?t)|(?:does|did)\s+not|never)\s+(?:occur|happen|succeed)\w*|(?:checks?|tests?)\s+passed)\b)/i;
+const negatedInjectionImpact = /(?:\b(?:(?:no|without)\s+(?:\w+\s+){0,3}|(?:(?:does|do|did|can|could|would|should|will|is|are|was|were)\s+not|(?:does|do|did|can|could|would|should|wo|is|are|was|were)n['’]?t|cannot|never)\s+(?:\w+\s+){0,3})(?:sql|command|code)\s+injection\b|\b(?:sql|command|code)\s+injection\b\s+(?:(?:is|was)\s+(?:prevented|blocked|mitigated|rejected|impossible|disallowed|disabled|ruled\s+out)|(?:is|was)\s+(?:not|never)\s+(?:possible|permitted|enabled|observed|detected)|(?:is|was)n['’]?t\s+(?:possible|permitted|enabled)|(?:has|have|had)\s+not\s+(?:occur|happen)\w*|(?:can(?:not|['’]?t)|(?:does|did)\s+not|never)\s+(?:occur|happen|succeed)\w*|(?:checks?|tests?)\s+passed)\b)/i;
+const satisfiedInjectionSafeguard = /\b(?:(?:the\s+)?(?:system|application|service|implementation|validation|sanitization|escaping|parameteri[sz]ation)|(?:(?:an?|the)\s+)?(?:authorization|authentication|permission|access[- ]control|security)\s+(?:checks?|guards?|safeguards?|controls?))\s+(?:prevents?|blocks?|stops?|disallows?|disables?|rules?\s+out)\s+(?:sql|command|code)\s+injection\b/i;
 const authorityOnlyIssue = /^\s*\[(?:decision|research)\](?:\s|\[|$)/i;
 
 function source(
@@ -101,6 +102,7 @@ function isSubstantiveFinding(body: string): boolean {
     if (missingSafeguardImpact.test(clause)) return true;
     if (isClearedReviewClause(clause) || negatedUnlabeledSubstantiveImpact.test(clause) ||
       negatedDestructiveDataImpact.test(clause) || satisfiedSafeguardImpact.test(clause) ||
+      satisfiedInjectionSafeguard.test(clause) ||
       negatedInjectionImpact.test(clause)) return false;
     if (injectionImpact.test(clause)) return true;
     if (affirmativeUnlabeledSubstantiveImpact.test(clause) || affirmativeDestructiveDataImpact.test(clause)) return true;
@@ -155,6 +157,7 @@ function isSubstantiveReviewBody(body: string): boolean {
     if (missingSafeguardImpact.test(clause)) return true;
     if (isClearedReviewClause(clause) || negatedUnlabeledSubstantiveImpact.test(clause) ||
       negatedDestructiveDataImpact.test(clause) || satisfiedSafeguardImpact.test(clause) ||
+      satisfiedInjectionSafeguard.test(clause) ||
       negatedInjectionImpact.test(clause)) return false;
     if (injectionImpact.test(clause)) return true;
     if (affirmativeUnlabeledSubstantiveImpact.test(clause) || affirmativeDestructiveDataImpact.test(clause) ||
