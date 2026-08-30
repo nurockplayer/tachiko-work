@@ -176,6 +176,11 @@ were accepted where they matched Issue and Accepted authority.
   manifest and schemas. Final A1 polls cancellation while reading both files
   and before and after each metadata parse/canonical-render boundary; a
   pre-cancelled 1 MB schemas case stops before parsing.
+- A later hosted review found that the first accepted semantic validation pass
+  was still monolithic after decode. At `b31d142`, the research feature exposes
+  the accepted validator with cancellation polling inside schema, entity,
+  field, and formula-node loops; background A1 uses it and a 16k-chain test
+  deterministically cancels on the 128th validation poll.
 - Sidecar A1 comparison originally timestamped after dropping the complete
   `Document`, while D added one shared pin duration to every warmed lookup.
   Final E retains A1 through the timestamp; final D resamples pinning and the
