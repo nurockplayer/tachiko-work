@@ -2475,6 +2475,7 @@ describe("normalizeRepositorySnapshot", () => {
     "build never run",
     "Tests have been skipped",
     "build was not successfully run",
+    "release-check timed out",
     "Tests were not executed",
     "Tests were not successfully executed",
     "Test suite was not executed",
@@ -2506,6 +2507,8 @@ describe("normalizeRepositorySnapshot", () => {
     "No builds were not successfully run",
     "No tests were not executed",
     "No tests have not been executed",
+    "No checks timed out",
+    "release-check has not timed out",
   ])("does not invent failed validation evidence from a clean summary: %s", (validation) => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace(
@@ -2796,6 +2799,9 @@ describe("normalizeRepositorySnapshot", () => {
     "P1 fixed; approved.",
     "P1 was fixed.",
     "Approved; P1 was addressed.",
+    "P1 addressed in commit abc1234.",
+    "P1 was fixed in commit abc1234.",
+    "Approved; P1 was fixed in the latest commit.",
   ])("does not retain a resolved finding from an approval body: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [
@@ -2808,10 +2814,14 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries[0]?.phase).toBe("merge_gate");
   });
 
-  it("retains a negated resolution from an approval body", () => {
+  it.each([
+    "Approved, but P1 was not fixed.",
+    "No P1 findings have been addressed.",
+    "No P1 findings were addressed.",
+  ])("retains a negated resolution from an approval body: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [
-      { state: "approved", author: "reviewer", body: "Approved, but P1 was not fixed.", headSha, url: "https://github.com/review/unresolved-approval", submittedAt: observedAt },
+      { state: "approved", author: "reviewer", body, headSha, url: "https://github.com/review/unresolved-approval", submittedAt: observedAt },
     ];
 
     const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
