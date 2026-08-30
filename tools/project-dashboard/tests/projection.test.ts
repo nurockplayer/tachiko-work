@@ -609,6 +609,20 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.action.owner).toBe("human");
   });
 
+  it.each([
+    "No pending blockers — Ready.",
+    "Pending review is complete — Ready.",
+  ])("preserves an affirmatively resolved Ready prefix: %s", (status) => {
+    const ready = issue();
+    ready.body = `## Status\n\n${status}\n\nOwner: \`agent:codex\``;
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [ready] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.issue.readiness).toBe("ready");
+    expect(lane?.phase).toBe("ready");
+  });
+
   it("does not treat a suffixed Status heading as authoritative readiness", () => {
     const rationale = issue();
     rationale.body = "## Status rationale\n\nBuild a production-ready dashboard.\n\nOwner: `agent:codex`";

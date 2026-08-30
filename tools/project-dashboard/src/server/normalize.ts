@@ -233,9 +233,14 @@ function statusClaimIsNegated(statusText: string, match: RegExpExecArray): boole
 function statusClaimIsConditional(statusText: string, match: RegExpExecArray): boolean {
   const before = statusText.slice(0, match.index);
   const after = statusText.slice(match.index + match[0].length);
-  const prefixClause = before.slice(Math.max(before.lastIndexOf("\n"), before.lastIndexOf("."), before.lastIndexOf(";")) + 1);
+  const prefixClause = before
+    .slice(Math.max(before.lastIndexOf("\n"), before.lastIndexOf("."), before.lastIndexOf(";")) + 1)
+    .replace(/[-—–,:=]\s*$/, "")
+    .trim();
+  const unresolvedPrefix = /^(?:pending\b|subject\s+to\b|(?:only\s+)?(?:once|when|if|after)\b)/i.test(prefixClause) &&
+    !/\b(?:is|are|was|were|has|have)\s+(?:now\s+)?(?:been\s+)?(?:complete|completed|resolved|satisfied|approved|cleared|closed)\b/i.test(prefixClause);
   return /\b(?:(?:future|become|mark|set|move|declare|consider)(?:\s+(?:as|to))?|(?:will|would|should|can|could|may|might)(?:\s+be|\s+become)?)\s*$/i.test(before) ||
-    /^(?=[^\n.;]*\b(?:pending|once|when|if|after|subject\s+to)\b)[^\n.;]*?(?:[-—–,:=]\s*)?$/i.test(prefixClause) ||
+    unresolvedPrefix ||
     /^\s*(?:(?:[:=-])\s*)?(?:only\s+)?(?:(?:once|when|if|after|pending)\b|subject\s+to\b)/i.test(after);
 }
 
