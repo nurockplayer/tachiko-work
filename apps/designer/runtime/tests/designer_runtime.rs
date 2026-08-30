@@ -164,6 +164,82 @@ fn admission_rejects_an_unbounded_collection_catalog() {
 }
 
 #[test]
+fn admission_requires_the_default_weapons_collection() {
+    let mut document = create_document(
+        StarterTemplate::GameBalance,
+        "Missing default collection",
+        &mut TestIds::default(),
+    )
+    .expect("fixture should be valid");
+    document
+        .schemas
+        .values_mut()
+        .find(|schema| schema.key.as_str() == "weapons")
+        .expect("weapons schema should exist")
+        .key = SchemaKey::from("armaments");
+
+    let Err(error) = DesignerRuntime::from_document(document, OCCURRENCE_ONE) else {
+        panic!("bootstrap must never advertise an unavailable default collection");
+    };
+    let failure = error.failure_projection("unavailable");
+    assert_eq!(failure.code, "unsupported_project");
+    assert!(failure.message.contains("required 'weapons' collection"));
+}
+
+#[test]
+fn admission_bounds_formula_analysis_before_per_formula_projection() {
+    let mut document = create_document(
+        StarterTemplate::GameBalance,
+        "Too many formulas",
+        &mut TestIds::default(),
+    )
+    .expect("fixture should be valid");
+    let formula_target = document
+        .resolve_field(&FieldAddress::new("shop", "upgrade_cost"))
+        .expect("fixture formula should resolve");
+    let formula = document.entities[&formula_target.entity].fields[&formula_target.field].clone();
+    assert!(matches!(formula, Value::Formula(_)));
+
+    for (template_key, field_key, prefix) in [
+        ("iron_sword", "damage", "weapon_formula"),
+        ("alric", "level", "character_formula"),
+    ] {
+        let target = document
+            .resolve_field(&FieldAddress::new(template_key, field_key))
+            .expect("fixture Number field should resolve");
+        let template = document.entities[&target.entity].clone();
+        for index in 0..17 {
+            let id = format!("{prefix}_entity_{index:02}");
+            let key = format!("{prefix}_{index:02}");
+            let mut entity = template.clone();
+            entity.id = EntityId::from(id.as_str());
+            entity.key = EntityKey::from(key.as_str());
+            entity.fields.insert(target.field.clone(), formula.clone());
+            document.entities.insert(entity.id.clone(), entity);
+        }
+    }
+    let formula_count = document
+        .entities
+        .values()
+        .flat_map(|entity| entity.fields.values())
+        .filter(|value| matches!(value, Value::Formula(_)))
+        .count();
+    assert!(formula_count > 32);
+
+    let Err(error) = DesignerRuntime::from_document(document, OCCURRENCE_ONE) else {
+        panic!("formula analysis must have a cheap aggregate admission bound");
+    };
+    let failure = error.failure_projection("unavailable");
+    assert_eq!(failure.code, "unsupported_project");
+    assert!(
+        failure
+            .message
+            .contains(&format!("contains {formula_count} formulas"))
+    );
+    assert!(failure.message.contains("bounded maximum is 32"));
+}
+
+#[test]
 fn admission_rejects_an_oversized_serialized_table_projection() {
     let mut document = create_document(
         StarterTemplate::GameBalance,

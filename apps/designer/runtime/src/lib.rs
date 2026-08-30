@@ -36,6 +36,7 @@ const MAX_COLLECTIONS: usize = 32;
 const MAX_TABLE_FIELDS: usize = 32;
 const MAX_TABLE_ROWS: usize = 32;
 const MAX_FIELD_QUERY_TARGETS: usize = MAX_TABLE_FIELDS * MAX_TABLE_ROWS;
+const MAX_FORMULAS: usize = 32;
 const MAX_PROJECTION_BYTES: usize = 65_536;
 pub(crate) const MAX_WIRE_REQUEST_BYTES: usize = 65_536;
 pub(crate) const MAX_PROJECT_TRANSFER_BYTES: usize = 64 * 1024 * 1024;
@@ -408,11 +409,24 @@ impl DesignerRuntime {
         let collections = collection_specs
             .values()
             .map(|collection| collection.summary.clone())
-            .collect();
-        let formula_sources = formula_sources(&document)?;
+            .collect::<Vec<_>>();
+        let formula_count = document
+            .entities
+            .values()
+            .flat_map(|entity| entity.fields.values())
+            .filter(|value| matches!(value, Value::Formula(_)))
+            .count();
         let title = document.title.clone();
-        let principal = PrincipalId::from(DESIGNER_PRINCIPAL);
         let document_scope = document_scope(occurrence_id, &document)?;
+        ensure_static_profile(
+            &title,
+            &control_field,
+            &collections,
+            &collection_specs,
+            formula_count,
+        )?;
+        let formula_sources = formula_sources(&document)?;
+        let principal = PrincipalId::from(DESIGNER_PRINCIPAL);
         let lifecycle = designer_lifecycle(&document_scope, &document, &principal)?;
         let session = ResidentWorkspaceSession::new(document_scope.clone(), document);
         let runtime = Self {
@@ -474,16 +488,6 @@ impl DesignerRuntime {
     }
 
     fn ensure_supported_project(&self) -> Result<(), DesignerError> {
-        if self.collections.len() > MAX_COLLECTIONS {
-            return Err(DesignerError::UnsupportedProject {
-                message: format!(
-                    "the project advertises {} collections; the bounded maximum is {MAX_COLLECTIONS}",
-                    self.collections.len()
-                ),
-            });
-        }
-        ensure_projection_size(&self.bootstrap_projection())?;
-        self.ensure_bounded_publication_profile()?;
         for collection in &self.collections {
             self.query_table(&collection.key).map_err(|error| {
                 DesignerError::UnsupportedProject {
@@ -511,35 +515,6 @@ impl DesignerRuntime {
             });
         }
         Ok(())
-    }
-
-    fn ensure_bounded_publication_profile(&self) -> Result<(), DesignerError> {
-        let entities = self
-            .collection_specs
-            .values()
-            .flat_map(|collection| collection.entities.iter().map(ToString::to_string))
-            .collect::<Vec<_>>();
-        let fields = self
-            .collection_specs
-            .values()
-            .flat_map(|collection| {
-                collection.entities.iter().flat_map(|entity| {
-                    collection.columns.iter().map(|column| {
-                        field_target(&FieldRef::new(entity.clone(), column.id.clone()))
-                    })
-                })
-            })
-            .collect::<Vec<_>>();
-        let projection = PublicationProjection {
-            base_revision: "resident/18446744073709551615".to_owned(),
-            resulting_revision: "resident/18446744073709551615".to_owned(),
-            entities,
-            fields: fields.clone(),
-            affected_calculations: fields,
-        };
-        ensure_projection_size(&projection).map_err(|error| DesignerError::UnsupportedProject {
-            message: format!("the worst-case publication projection is not bounded: {error}"),
-        })
     }
 
     /// Prepare the exact current resident snapshot as a canonical project.
@@ -1140,6 +1115,82 @@ fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
             )
         })
         .collect()
+}
+
+fn ensure_static_profile(
+    title: &str,
+    control_field: &FieldTarget,
+    collections: &[CollectionSummary],
+    collection_specs: &BTreeMap<String, CollectionSpec>,
+    formula_count: usize,
+) -> Result<(), DesignerError> {
+    if collections.len() > MAX_COLLECTIONS {
+        return Err(DesignerError::UnsupportedProject {
+            message: format!(
+                "the project advertises {} collections; the bounded maximum is {MAX_COLLECTIONS}",
+                collections.len()
+            ),
+        });
+    }
+    if !collection_specs.contains_key(DEFAULT_COLLECTION) {
+        return Err(DesignerError::UnsupportedProject {
+            message: format!("the required '{DEFAULT_COLLECTION}' collection is unavailable"),
+        });
+    }
+    if formula_count > MAX_FORMULAS {
+        return Err(DesignerError::UnsupportedProject {
+            message: format!(
+                "the project contains {formula_count} formulas; the bounded maximum is {MAX_FORMULAS}"
+            ),
+        });
+    }
+    for collection in collection_specs.values() {
+        if collection.columns.len() > MAX_TABLE_FIELDS || collection.entities.len() > MAX_TABLE_ROWS
+        {
+            return Err(DesignerError::UnsupportedProject {
+                message: DesignerError::CollectionTooLarge {
+                    collection: collection.summary.key.clone(),
+                }
+                .to_string(),
+            });
+        }
+    }
+    let bootstrap = BootstrapProjection {
+        title: title.to_owned(),
+        revision: "resident/0".to_owned(),
+        default_collection: DEFAULT_COLLECTION.to_owned(),
+        collections: collections.to_vec(),
+        control_field: control_field.clone(),
+    };
+    ensure_projection_size(&bootstrap).map_err(|error| DesignerError::UnsupportedProject {
+        message: error.to_string(),
+    })?;
+
+    let entities = collection_specs
+        .values()
+        .flat_map(|collection| collection.entities.iter().map(ToString::to_string))
+        .collect::<Vec<_>>();
+    let fields = collection_specs
+        .values()
+        .flat_map(|collection| {
+            collection.entities.iter().flat_map(|entity| {
+                collection
+                    .columns
+                    .iter()
+                    .map(|column| field_target(&FieldRef::new(entity.clone(), column.id.clone())))
+            })
+        })
+        .collect::<Vec<_>>();
+    let publication = PublicationProjection {
+        base_revision: "resident/18446744073709551615".to_owned(),
+        resulting_revision: "resident/18446744073709551615".to_owned(),
+        entities,
+        fields: fields.clone(),
+        affected_calculations: fields,
+    };
+    ensure_projection_size(&publication).map_err(|error| DesignerError::UnsupportedProject {
+        message: format!("the worst-case publication projection is not bounded: {error}"),
+    })
 }
 
 fn formula_sources(document: &Document) -> Result<BTreeMap<FieldRef, String>, DesignerError> {
