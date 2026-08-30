@@ -901,6 +901,19 @@ function preserveUneditedLineEndings(
   normalizedOriginal: string,
   edited: string,
 ): string {
+  const originalLineEndings = original.match(/\r\n|\r|\n/g) ?? [];
+  const editedLineEndingCount = (edited.match(/\n/g) ?? []).length;
+  if (
+    originalLineEndings.length === editedLineEndingCount &&
+    normalizeLineEndings(original) === normalizedOriginal
+  ) {
+    let lineEndingIndex = 0;
+    return edited.replace(/\n/g, () => {
+      const lineEnding = originalLineEndings[lineEndingIndex++];
+      return lineEnding ?? "\n";
+    });
+  }
+
   let prefixLength = 0;
   const sharedLength = Math.min(normalizedOriginal.length, edited.length);
   while (
@@ -929,6 +942,10 @@ function preserveUneditedLineEndings(
     prefixLength,
     edited.length - suffixLength,
   )}${original.slice(suffixStart)}`;
+}
+
+function normalizeLineEndings(value: string): string {
+  return value.replace(/\r\n|\r/g, "\n");
 }
 
 function originalOffsetForNormalizedLength(original: string, normalizedLength: number): number {
