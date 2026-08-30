@@ -213,6 +213,8 @@ describe("normalizeRepositorySnapshot", () => {
     "Previously blocked; Ready.",
     "Was blocked; Ready.",
     "Blocked (resolved); Ready.",
+    "Blocked but resolved; Ready.",
+    "Blocked, but now resolved; Ready.",
   ])("does not treat a historical blocked claim as a current blocker: %s", (status) => {
     const ready = issue();
     ready.body = `## Status\n\n${status}\n\nOwner: \`agent:codex\``;

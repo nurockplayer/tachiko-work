@@ -278,7 +278,7 @@ function statusClaimIsNegated(statusText: string, match: RegExpExecArray): boole
   const after = statusText.slice(match.index + match[0].length);
   return /(?:^|[^a-z0-9_])(?:not(?:[_ -]+(?:yet|currently|now|presently|quite))?|never|no[_ -]+longer|non)[_ -]*$/i.test(before) ||
     /\b(?:previously|formerly|historically|was|were|had\s+been)\s*$/i.test(before) ||
-    /^\s*(?:(?:is\s+)?not\b|[:=-]\s*(?:false|no)\b|(?:\([^)]*\b(?:resolved|cleared|closed|historical)\b[^)]*\)|[-—,:=]?\s*(?:previously|formerly|historically|resolved|cleared|closed|no\s+longer)\b))/i.test(after);
+    /^\s*(?:(?:is\s+)?not\b|[:=-]\s*(?:false|no)\b|(?:\([^)]*\b(?:resolved|cleared|closed|historical)\b[^)]*\)|[-—,:=]?\s*(?:(?:but|and)\s+(?:now\s+)?)?(?:previously|formerly|historically|resolved|cleared|closed|no\s+longer)\b))/i.test(after);
 }
 
 function statusClaimIsConditional(
