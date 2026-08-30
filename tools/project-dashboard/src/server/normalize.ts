@@ -38,6 +38,10 @@ const affirmativeDestructiveDataImpact = /\b(?:(?:user\s+)?data\s+(?:(?:is|are|w
 const negatedDestructiveDataImpact = /\b(?:no\s+(?:(?:user\s+)?data\s+(?:(?:is|are|was|were)\s+(?:being\s+)?|gets?\s+|got\s+)?(?:delet(?:ed|ing)|eras(?:ed|ing))|(?:deletion|erasure)\s+of\s+(?:user\s+)?data)|(?:user\s+)?data\s+(?:is|are|was|were)\s+not\s+(?:being\s+)?(?:delet(?:ed|ing)|eras(?:ed|ing)))\b/i;
 const affirmativeBuildOrTestFailure = /\b(?:(?:fails?|failed|failing|breaks?|broke|broken)\s+(?:to\s+)?(?:compile|build|tests?|typecheck|lint|ci)\b|(?:compilation|build|tests?|typecheck|lint|ci)\s+(?:(?:(?:is|are|was|were)\s+)?(?:fails?|failed|failing|breaks?|broke|broken)\b|(?:(?:do|does|did|can|could|will|would|should|is|are|was|were)\s+not|(?:do|does|did|can|could|will|would|should|is|are|was|were)n['’]?t)\s+pass(?:es|ed|ing)?\b))/i;
 const unlabeledPureMaintainabilitySuggestion = /^(?:could|would|can|please|consider|maybe|perhaps)\b[^.!?;\n]{0,120}\b(?:rename|naming|clarity|readability|style|format(?:ting)?|wording|comments?|documentation|docs|simplif\w*|clean\s*up|refactor\w*)\b/i;
+const missingSafeguardImpact = /\bno\s+(?:authorization|authentication|permission|access[- ]control|security)\s+(?:check|guard|safeguard|control)\w*\b[^.!?;\n]{0,80}\b(?:prevents?|blocks?|stops?)\b[^.!?;\n]{0,80}\b(?:bypass|inject|leak|corrupt|overwrit|delet|eras)\w*\b/i;
+const satisfiedSafeguardImpact = /\b(?:an?|the)\s+(?:authorization|authentication|permission|access[- ]control|security)\s+(?:check|guard|safeguard|control)\w*\s+(?:prevents?|blocks?|stops?)\b[^.!?;\n]{0,80}\b(?:bypass|inject|leak|corrupt|overwrit|delet|eras)\w*\b/i;
+const injectionImpact = /\b(?:sql|command|code)\s+injection\b/i;
+const negatedInjectionImpact = /(?:\b(?:(?:no|without)\s+(?:\w+\s+){0,3}|(?:(?:does|do|did|can|could|would|should|will|is|are|was|were)\s+not|(?:does|do|did|can|could|would|should|wo|is|are|was|were)n['’]?t|cannot|never)\s+(?:\w+\s+){0,3})(?:sql|command|code)\s+injection\b|\b(?:sql|command|code)\s+injection\b[^.!?;\n]{0,30}\b(?:is|was)\s+not\s+(?:possible|permitted|enabled)\b)/i;
 const authorityOnlyIssue = /^\s*\[(?:decision|research)\](?:\s|\[|$)/i;
 
 function source(
@@ -94,8 +98,11 @@ function isSubstantiveFinding(body: string): boolean {
     if (explicitlyNonSubstantiveAcknowledgment.test(clause)) return false;
     if (explicitlyNonSubstantiveFinding.test(clause)) return false;
     if (isSubstantiveReviewClause(clause)) return true;
+    if (missingSafeguardImpact.test(clause)) return true;
     if (isClearedReviewClause(clause) || negatedUnlabeledSubstantiveImpact.test(clause) ||
-      negatedDestructiveDataImpact.test(clause)) return false;
+      negatedDestructiveDataImpact.test(clause) || satisfiedSafeguardImpact.test(clause) ||
+      negatedInjectionImpact.test(clause)) return false;
+    if (injectionImpact.test(clause)) return true;
     if (affirmativeUnlabeledSubstantiveImpact.test(clause) || affirmativeDestructiveDataImpact.test(clause)) return true;
     return !unlabeledPureMaintainabilitySuggestion.test(clause);
   });
@@ -111,7 +118,9 @@ function reviewBodyClauses(body: string): string[] {
       const negatedImpact = negatedUnlabeledSubstantiveImpact.test(current) || negatedDestructiveDataImpact.test(current);
       const completedClear = isClearedReviewClause(current) && completedClearedReviewFinding.test(current);
       const affirmativeImpact = isSubstantiveReviewClause(next) || affirmativeUnlabeledSubstantiveImpact.test(next) ||
-        affirmativeDestructiveDataImpact.test(next) || affirmativeBuildOrTestFailure.test(next);
+        affirmativeDestructiveDataImpact.test(next) || affirmativeBuildOrTestFailure.test(next) ||
+        missingSafeguardImpact.test(next) ||
+        (injectionImpact.test(next) && !negatedInjectionImpact.test(next));
       if ((coordinatedReviewPredicate.test(current) && coordinatedReviewClauseStart.test(next)) ||
         ((negatedImpact || completedClear) && affirmativeImpact)) {
         clauses.push(current);
@@ -143,8 +152,11 @@ function isSubstantiveReviewBody(body: string): boolean {
     if (explicitlyNonSubstantiveAcknowledgment.test(clause)) return false;
     if (explicitlyNonSubstantiveFinding.test(clause)) return false;
     if (isSubstantiveReviewClause(clause)) return true;
+    if (missingSafeguardImpact.test(clause)) return true;
     if (isClearedReviewClause(clause) || negatedUnlabeledSubstantiveImpact.test(clause) ||
-      negatedDestructiveDataImpact.test(clause)) return false;
+      negatedDestructiveDataImpact.test(clause) || satisfiedSafeguardImpact.test(clause) ||
+      negatedInjectionImpact.test(clause)) return false;
+    if (injectionImpact.test(clause)) return true;
     if (affirmativeUnlabeledSubstantiveImpact.test(clause) || affirmativeDestructiveDataImpact.test(clause) ||
       affirmativeBuildOrTestFailure.test(clause)) return true;
     return !unlabeledPureMaintainabilitySuggestion.test(clause);

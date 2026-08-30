@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import type { RepositoryProjection } from "../src/shared/types.ts";
 
 test("renders the five source-linked control-room surfaces without false merge-ready state", async ({ page }) => {
   await page.goto("/");
@@ -71,4 +72,37 @@ test("renders source failure as explicit partial and unknown state", async ({ pa
   await expect(page.getByTestId("human-action")).toHaveText(/unknown/i);
   await expect(page.getByRole("list", { name: /current work sequence/i })).toContainText("Horizon classification Unknown");
   await expect(page.getByText("GitHub pull-request observation failed", { exact: true })).toBeVisible();
+});
+
+test("distinguishes a known-empty queue from unknown observation", async ({ page }) => {
+  await page.route("**/api/projection", async (route) => {
+    const response = await route.fetch();
+    const projection = (await response.json()) as RepositoryProjection;
+    projection.deliveries = [];
+    projection.currentWork.currentHorizon = [];
+    projection.currentWork.independent = [];
+    projection.currentWork.otherHorizon = [];
+    projection.currentWork.unclassified = [];
+    await route.fulfill({ response, json: projection });
+  });
+  await page.goto("/");
+
+  await expect(page.getByText("Delivery queue is exhausted; no qualifying delivery lanes were observed.", { exact: true }))
+    .toBeVisible();
+  await expect(page.getByText("Delivery observation is Unknown.", { exact: true })).toHaveCount(0);
+});
+
+test("does not color an explicit Not Ready handoff green", async ({ page }) => {
+  await page.route("**/api/projection", async (route) => {
+    const response = await route.fetch();
+    const projection = (await response.json()) as RepositoryProjection;
+    const lane = projection.deliveries.find((candidate) => candidate.issue.number === 169);
+    if (lane === undefined) throw new Error("Issue 169 fixture lane is missing");
+    lane.handoff.claimedState = "Not Ready";
+    await route.fulfill({ response, json: projection });
+  });
+  await page.goto("/");
+
+  const handoffState = page.getByRole("article", { name: /issue 169/i }).locator(".definition").filter({ hasText: "Handoff state" });
+  await expect(handoffState.locator(".status-badge")).toHaveClass(/cyber-badge--magenta/);
 });

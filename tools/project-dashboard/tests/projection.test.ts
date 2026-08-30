@@ -1228,6 +1228,8 @@ describe("normalizeRepositorySnapshot", () => {
     "This is an infinite cycle.",
     "This remains stuck in a cycle.",
     "This is trapped in a cycle.",
+    "No authorization check prevents users from bypassing access control.",
+    "This permits SQL injection for crafted input.",
   ])("blocks an unlabeled comment-only runtime failure on the current head: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1337,6 +1339,8 @@ describe("normalizeRepositorySnapshot", () => {
     "This does not fail to converge.",
     "This is not a cycle.",
     "Could you rename this local for clarity?",
+    "An authorization check prevents users from bypassing access control.",
+    "This does not permit SQL injection.",
   ])("does not infer a substantive finding from a clean comment-only review summary: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1782,6 +1786,8 @@ describe("normalizeRepositorySnapshot", () => {
     "This is an infinite cycle.",
     "This remains stuck in a cycle.",
     "This is trapped in a cycle.",
+    "No authorization check prevents users from bypassing access control.",
+    "This permits SQL injection for crafted input.",
   ])("fails closed on an unlabeled correctness finding: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
@@ -1880,6 +1886,8 @@ describe("normalizeRepositorySnapshot", () => {
     "This loop is not unbounded.",
     "This does not fail to converge.",
     "This is not a cycle.",
+    "An authorization check prevents users from bypassing access control.",
+    "This does not permit SQL injection.",
   ])("does not promote a negated unlabeled impact statement: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [

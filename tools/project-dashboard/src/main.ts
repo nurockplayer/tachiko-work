@@ -55,10 +55,12 @@ function shortIdentity(value: string | null): string {
 }
 
 function statusTone(value: string): string {
-  if (value === "no human action") return "green";
-  if (/healthy|success|current|approved|none|ready|\bsatisfied\b/.test(value)) return "green";
-  if (/failure|blocked|inconsistent|review_fix|changes_requested|human|unsatisfied/.test(value)) return "magenta";
-  if (/partial|pending|stale|suspected|validating|rereview|unknown/.test(value)) return "yellow";
+  const normalized = value.toLowerCase();
+  if (normalized === "no human action") return "green";
+  if (/\bnot[ _-]+ready\b/.test(normalized)) return "magenta";
+  if (/healthy|success|current|approved|none|ready|\bsatisfied\b/.test(normalized)) return "green";
+  if (/failure|blocked|inconsistent|review_fix|changes_requested|human|unsatisfied/.test(normalized)) return "magenta";
+  if (/partial|pending|stale|suspected|validating|rereview|unknown/.test(normalized)) return "yellow";
   return "chrome";
 }
 
@@ -198,7 +200,11 @@ function deliveryCenter(projection: RepositoryProjection): HTMLElement {
     ]),
   ]);
   const grid = element("div", { class: "delivery-grid" });
-  if (projection.deliveries.length === 0) grid.append(element("p", { class: "unknown" }, ["Delivery observation is Unknown."]));
+  if (projection.deliveries.length === 0) {
+    grid.append(projection.repo.fetchHealth === "healthy"
+      ? element("p", { class: "quiet" }, ["Delivery queue is exhausted; no qualifying delivery lanes were observed."])
+      : element("p", { class: "unknown" }, ["Delivery observation is Unknown."]));
+  }
   else for (const lane of projection.deliveries) grid.append(deliveryCard(lane));
   section.append(grid);
   return section;
