@@ -54,6 +54,7 @@ export function mountDesigner(
 
   const warnBeforeDirtyUnload = (event: BeforeUnloadEvent): void => {
     event.preventDefault();
+    Reflect.set(event, "returnValue", true);
   };
 
   const syncBeforeUnloadGuard = (): void => {
@@ -306,6 +307,7 @@ export function mountDesigner(
     } catch (error) {
       showProjectFailure("Project not opened", error);
     } finally {
+      input.value = "";
       busy = false;
       render();
     }

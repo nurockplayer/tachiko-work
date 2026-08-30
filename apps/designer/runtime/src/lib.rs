@@ -460,11 +460,13 @@ impl DesignerRuntime {
     }
 
     fn ensure_supported_project(&self) -> Result<(), DesignerError> {
-        self.query_table(DEFAULT_COLLECTION).map_err(|error| {
-            DesignerError::UnsupportedProject {
-                message: error.to_string(),
-            }
-        })?;
+        for collection in &self.collections {
+            self.query_table(&collection.key).map_err(|error| {
+                DesignerError::UnsupportedProject {
+                    message: error.to_string(),
+                }
+            })?;
+        }
         let control = self
             .query_fields(self.current_revision(), &[control_field()])
             .map_err(|error| DesignerError::UnsupportedProject {

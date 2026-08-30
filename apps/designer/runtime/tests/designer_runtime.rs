@@ -2,6 +2,10 @@ use tachiko_designer_runtime::{
     CalculationProjection, DesignerRequest, DesignerResponse, DesignerRuntime, DesignerWireReply,
     StoredValueProjection, close_project, open_project, process_wire_request,
 };
+use tachiko_workspace_engine::{
+    FieldDefinition, FieldId, FieldKey, FieldType, IdGenerator, SemanticIdKind, StarterTemplate,
+    create_document,
+};
 
 const OCCURRENCE_ZERO: &str = "00000000-0000-4000-8000-000000000000";
 const OCCURRENCE_ONE: &str = "00000000-0000-4000-8000-000000000001";
@@ -9,6 +13,16 @@ const OCCURRENCE_TWO: &str = "00000000-0000-4000-8000-000000000002";
 
 fn moonfall() -> DesignerRuntime {
     DesignerRuntime::moonfall(OCCURRENCE_ZERO).expect("fixture should be valid")
+}
+
+#[derive(Default)]
+struct TestIds(u64);
+
+impl IdGenerator for TestIds {
+    fn generate(&mut self, _kind: SemanticIdKind) -> String {
+        self.0 += 1;
+        format!("test_id_{:03}", self.0)
+    }
 }
 
 #[test]
@@ -37,6 +51,41 @@ fn bootstrap_exposes_fixture_collections_without_a_document_snapshot() {
     );
     assert_eq!(bootstrap.control_field.entity, "shop");
     assert_eq!(bootstrap.control_field.field, "upgrade_cost");
+}
+
+#[test]
+fn admission_rejects_any_collection_that_cannot_be_rendered() {
+    let mut document = create_document(
+        StarterTemplate::GameBalance,
+        "Oversized collection",
+        &mut TestIds::default(),
+    )
+    .expect("fixture should be valid");
+    let items = document
+        .schemas
+        .values_mut()
+        .find(|schema| schema.key.as_str() == "items")
+        .expect("items schema should exist");
+    while items.fields.len() <= 32 {
+        let key = format!("overflow_{:02}", items.fields.len());
+        items.fields.insert(
+            FieldId::from(key.as_str()),
+            FieldDefinition {
+                id: FieldId::from(key.as_str()),
+                key: FieldKey::from(key.as_str()),
+                field_type: FieldType::Number,
+                required: false,
+            },
+        );
+    }
+
+    let Err(error) = DesignerRuntime::from_document(document, OCCURRENCE_ONE) else {
+        panic!("every advertised collection must fit the bounded table profile");
+    };
+    assert_eq!(
+        error.failure_projection("unavailable").code,
+        "unsupported_project"
+    );
 }
 
 #[test]

@@ -608,6 +608,12 @@ describe("Designer application seam", () => {
     expect(openProject).not.toHaveBeenCalled();
     expect(closeProject).not.toHaveBeenCalled();
     expect(importInput.value).toBe("");
+    confirm.mockReturnValue(true);
+    importInput.value = "saved.roproj";
+    importInput.dispatchEvent(new Event("change"));
+    await vi.waitFor(() => {
+      expect(importInput.value).toBe("");
+    });
     expect(root.getElementsByTagName("h1")[0]?.textContent).toBe("Moonfall Balance");
     expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
       "Unsaved changes",
