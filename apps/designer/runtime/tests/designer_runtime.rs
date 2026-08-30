@@ -3,8 +3,8 @@ use tachiko_designer_runtime::{
     StoredValueProjection, close_project, open_project, process_wire_request,
 };
 use tachiko_workspace_engine::{
-    FieldDefinition, FieldId, FieldKey, FieldType, IdGenerator, SemanticIdKind, StarterTemplate,
-    create_document,
+    FieldAddress, FieldDefinition, FieldId, FieldKey, FieldType, IdGenerator, SemanticIdKind,
+    StarterTemplate, create_document,
 };
 
 const OCCURRENCE_ZERO: &str = "00000000-0000-4000-8000-000000000000";
@@ -51,6 +51,50 @@ fn bootstrap_exposes_fixture_collections_without_a_document_snapshot() {
     );
     assert_eq!(bootstrap.control_field.entity, "shop");
     assert_eq!(bootstrap.control_field.field, "upgrade_cost");
+}
+
+#[test]
+fn admission_resolves_the_control_address_to_stable_ids() {
+    let document = create_document(
+        StarterTemplate::GameBalance,
+        "Opaque identities",
+        &mut TestIds::default(),
+    )
+    .expect("fixture should be valid");
+    let expected = document
+        .resolve_field(&FieldAddress::new("shop", "upgrade_cost"))
+        .expect("control address should resolve");
+    assert_ne!(expected.entity.as_str(), "shop");
+    assert_ne!(expected.field.as_str(), "upgrade_cost");
+
+    let mut runtime = DesignerRuntime::from_document(document, OCCURRENCE_ONE)
+        .expect("opaque stable IDs must not change the supported profile");
+    let DesignerResponse::Bootstrap(bootstrap) = runtime
+        .handle(DesignerRequest::Bootstrap {
+            occurrence_id: OCCURRENCE_ONE.to_owned(),
+        })
+        .expect("bootstrap should succeed")
+    else {
+        panic!("expected bootstrap response");
+    };
+    assert_eq!(bootstrap.control_field.entity, expected.entity.as_str());
+    assert_eq!(bootstrap.control_field.field, expected.field.as_str());
+    let DesignerResponse::Fields(control) = runtime
+        .handle(DesignerRequest::QueryFields {
+            expected_revision: bootstrap.revision,
+            fields: vec![bootstrap.control_field],
+        })
+        .expect("resolved control field should remain queryable")
+    else {
+        panic!("expected control field response");
+    };
+    assert_eq!(
+        control.fields[0]
+            .calculated
+            .as_ref()
+            .and_then(CalculationProjection::number),
+        Some(200.0)
+    );
 }
 
 #[test]

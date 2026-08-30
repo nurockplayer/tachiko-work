@@ -13,7 +13,7 @@ use tachiko_storage::{
     CanonicalRoProjectV1, FormatError, ROPROJ_V1_PATHS, decode_roproj_v1, encode_roproj_v1,
 };
 use tachiko_workspace_engine::{
-    CalculationFailure, Document, FieldId, FieldRef, FieldType, IdGenerator, Number,
+    CalculationFailure, Document, FieldAddress, FieldId, FieldRef, FieldType, IdGenerator, Number,
     SemanticIdKind, StarterTemplate, Value, WorkspaceError, analyze_field, create_document,
     formula_operations::FormulaCalculationOutcome,
     patch_lifecycle::{
@@ -341,6 +341,7 @@ impl DesignerError {
 pub struct DesignerRuntime {
     title: String,
     document_scope: DocumentScopeId,
+    control_field: FieldTarget,
     collections: Vec<CollectionSummary>,
     collection_specs: BTreeMap<String, CollectionSpec>,
     formula_sources: BTreeMap<FieldRef, String>,
@@ -391,6 +392,14 @@ impl DesignerRuntime {
     /// occurrence is replaced.
     pub fn from_document(document: Document, occurrence_id: &str) -> Result<Self, DesignerError> {
         validate(&document).map_err(|source| DesignerError::InvalidProjectWorkspace { source })?;
+        let control_field = document
+            .resolve_field(&FieldAddress::new("shop", "upgrade_cost"))
+            .map(|field| field_target(&field))
+            .map_err(|error| DesignerError::UnsupportedProject {
+                message: format!(
+                    "the required shop.upgrade_cost control formula is unavailable: {error}"
+                ),
+            })?;
         let collection_specs = collection_specs(&document);
         let collections = collection_specs
             .values()
@@ -405,6 +414,7 @@ impl DesignerRuntime {
         let runtime = Self {
             title,
             document_scope,
+            control_field,
             collections,
             collection_specs,
             formula_sources,
@@ -455,7 +465,7 @@ impl DesignerRuntime {
             revision: self.session.revision().as_str().to_owned(),
             default_collection: DEFAULT_COLLECTION.to_owned(),
             collections: self.collections.clone(),
-            control_field: control_field(),
+            control_field: self.control_field.clone(),
         }
     }
 
@@ -468,7 +478,10 @@ impl DesignerRuntime {
             })?;
         }
         let control = self
-            .query_fields(self.current_revision(), &[control_field()])
+            .query_fields(
+                self.current_revision(),
+                std::slice::from_ref(&self.control_field),
+            )
             .map_err(|error| DesignerError::UnsupportedProject {
                 message: error.to_string(),
             })?;
@@ -1028,13 +1041,6 @@ fn is_canonical_uuid_v4(value: &str) -> bool {
         && bytes.iter().enumerate().all(|(index, byte)| {
             matches!(index, 8 | 13 | 18 | 23) || matches!(byte, b'0'..=b'9' | b'a'..=b'f')
         })
-}
-
-fn control_field() -> FieldTarget {
-    FieldTarget {
-        entity: "shop".to_owned(),
-        field: "upgrade_cost".to_owned(),
-    }
 }
 
 fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
