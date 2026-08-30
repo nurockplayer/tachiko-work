@@ -660,8 +660,47 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.issue.readiness).toBe("unknown");
     expect(lane?.phase).toBe("validating");
     expect(lane?.blockers).not.toContain("The authoritative Issue status does not affirm that this lane is Ready or active.");
-    expect(lane?.blockers).toContain("The current canonical handoff does not affirm an active delivery state.");
+    expect(lane?.blockers).toContain("The current canonical handoff does not affirm merge-ready delivery state.");
     expect(lane?.action.owner).toBe("codex");
+  });
+
+  it.each(["implementing", "validating", "review_fix"])(
+    "requires merge-ready handoff state before exposing the merge gate: %s",
+    (state) => {
+      const pr = pullRequest();
+      pr.comments[0]!.body = pr.comments[0]!.body.replace("STATE: merge-ready", `STATE: ${state}`);
+
+      const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+      const lane = projection.deliveries[0];
+
+      expect(lane?.phase).toBe("validating");
+      expect(lane?.blockers).toContain("The current canonical handoff does not affirm merge-ready delivery state.");
+      expect(lane?.action.owner).toBe("codex");
+    },
+  );
+
+  it("does not treat a negated merge-ready handoff state as terminal", () => {
+    const pr = pullRequest();
+    pr.comments[0]!.body = pr.comments[0]!.body.replace("STATE: merge-ready", "STATE: not merge-ready");
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.phase).toBe("validating");
+    expect(lane?.blockers).toContain("The current canonical handoff does not affirm merge-ready delivery state.");
+    expect(lane?.action.owner).toBe("codex");
+  });
+
+  it("assigns authoritative blocked Issue readiness to the Steward", () => {
+    const blocked = issue();
+    blocked.body = "## Status\n\nBlocked\n\nOwner: `agent:codex`";
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [blocked], pullRequests: [pullRequest()] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.phase).toBe("blocked");
+    expect(lane?.blockers).toContain("The authoritative Issue status reports this lane blocked.");
+    expect(lane?.action.owner).toBe("human");
   });
 
   it("projects a requested action from an escalation section", () => {

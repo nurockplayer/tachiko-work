@@ -212,11 +212,17 @@ function statusClaimsBlocked(statusText: string): boolean {
 }
 
 function statusClaimsActive(statusText: string): boolean {
-  return /\bactive\b|\bimplementing\b|\bin progress\b|\bvalidating\b|\breview[_ -]?fix\b|\bhuman[_ -]?required\b/.test(statusText);
+  return !/\bnot[_ -]+active\b/.test(statusText) &&
+    /\bactive\b|\bimplementing\b|\bin progress\b|\bvalidating\b|\breview[_ -]?fix\b|\bhuman[_ -]?required\b/.test(statusText);
 }
 
 function statusClaimsReady(statusText: string): boolean {
-  return /\bready\b/.test(statusText) && !/not ready for (?:production )?implementation/.test(statusText);
+  return !/\bdecision[_ -]?ready\b/.test(statusText) && !/\bnot[_ -]+ready\b/.test(statusText) &&
+    /\bready\b/.test(statusText) && !/not ready for (?:production )?implementation/.test(statusText);
+}
+
+function handoffClaimsMergeReady(handoff: HandoffProjection): boolean {
+  return handoff.condition === "current" && /^merge[_ -]ready$/i.test(handoff.claimedState?.trim() ?? "");
 }
 
 function issueReadiness(issue: RawIssue, handoff: HandoffProjection): DeliveryLane["issue"]["readiness"] {
@@ -463,6 +469,7 @@ function derivePhase(
   if (reviews.status !== "current") return "rereview";
   if (reviews.decision !== "approved") return "rereview";
   if (handoff.condition !== "current") return "validating";
+  if (!handoffClaimsMergeReady(handoff)) return "validating";
   if (drift !== "none") return "validating";
   if (!githubMergeReady) return "validating";
   return "merge_gate";
@@ -527,9 +534,10 @@ function projectLane(
   const issueStatusBlocked = statusClaimsBlocked(authoritativeIssueStatus);
   const issueStatusAffirmsDelivery = statusClaimsActive(authoritativeIssueStatus) || statusClaimsReady(authoritativeIssueStatus);
   const issueReadinessRequiresSteward = pr !== null && issue.blockedBy !== null && issue.blockedBy.length === 0 &&
-    !authorityOnlyIssue.test(issue.title) && observedReadiness === "unknown" && !issueStatusAffirmsDelivery;
-  const handoffReadinessRequiresDelivery = pr !== null && handoff.condition === "current" &&
-    observedReadiness === "unknown" && issueStatusAffirmsDelivery;
+    !authorityOnlyIssue.test(issue.title) &&
+    (issueStatusBlocked || (observedReadiness === "unknown" && !issueStatusAffirmsDelivery));
+  const handoffMergeReadinessRequiresDelivery = pr !== null && handoff.condition === "current" &&
+    !handoffClaimsMergeReady(handoff);
 
   if ((issue.blockedBy?.length ?? 0) > 0) {
     blockers.push(`Live Issue dependencies block this lane: ${issue.blockedBy?.map((dependency) => `#${dependency.number}`).join(", ") ?? "Unknown"}.`);
@@ -545,8 +553,8 @@ function projectLane(
   if (issueReadinessRequiresSteward) {
     blockers.push("The authoritative Issue status does not affirm that this lane is Ready or active.");
   }
-  if (handoffReadinessRequiresDelivery) {
-    blockers.push("The current canonical handoff does not affirm an active delivery state.");
+  if (handoffMergeReadinessRequiresDelivery) {
+    blockers.push("The current canonical handoff does not affirm merge-ready delivery state.");
   }
   if (pr !== null && checks.status === "unknown") blockers.push("Checks were not observed for the current PR head.");
   if (pr !== null && checks.requiredStatus !== "satisfied") blockers.push(checks.requiredSummary);
@@ -627,7 +635,7 @@ function projectLane(
         !githubMergeReady || drift !== "none" || handoff.condition === "inconsistent" || handoff.condition === "stale" ||
         (pr !== null && handoff.condition === "unknown") ||
         (pr !== null && handoff.condition === "missing") || !issueScopeReconciled ||
-        handoffReadinessRequiresDelivery || pr?.isDraft === true || !targetsDefaultBranch || !ownershipObservationComplete
+        handoffMergeReadinessRequiresDelivery || pr?.isDraft === true || !targetsDefaultBranch || !ownershipObservationComplete
       ? { owner: deliveryActionOwner(owner), reason: blockers[0] ?? "Delivery-agent action is required." }
       : { owner: "none", reason: "No human action is currently evidenced." };
   const issueRef = source(
