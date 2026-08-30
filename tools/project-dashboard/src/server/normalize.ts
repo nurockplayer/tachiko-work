@@ -83,7 +83,7 @@ function claimedIssueNumber(body: string): number | null {
   return candidates.size === 1 ? [...candidates][0] ?? null : null;
 }
 
-function hasNonemptyMarkdownSection(body: string, headingPattern: RegExp): boolean {
+function markdownSectionValue(body: string, headingPattern: RegExp): string | null {
   const lines = body.split(/\r?\n/);
   for (const [index, line] of lines.entries()) {
     const heading = line.match(/^#{1,6}\s+(.+?)\s*$/)?.[1];
@@ -94,9 +94,14 @@ function hasNonemptyMarkdownSection(body: string, headingPattern: RegExp): boole
       if (/^#{1,6}\s+/.test(following)) break;
       content.push(following);
     }
-    if (stripMarkdown(content.join("\n")) !== "") return true;
+    const value = stripMarkdown(content.join("\n"));
+    if (value !== "") return value;
   }
-  return false;
+  return null;
+}
+
+function hasNonemptyMarkdownSection(body: string, headingPattern: RegExp): boolean {
+  return markdownSectionValue(body, headingPattern) !== null;
 }
 
 function hasRequiredPrHandoffRecords(body: string): boolean {
@@ -107,7 +112,7 @@ function hasRequiredPrHandoffRecords(body: string): boolean {
   const hasReviewState = labeledValue(body, "UNRESOLVED REVIEW STATE") !== null || hasNonemptyMarkdownSection(body, /\b(?:unresolved review|review state)\b/i);
   const hasNextAction = labeledValue(body, "NEXT ACTION") !== null || hasNonemptyMarkdownSection(body, /^next\b/i);
   const hasEscalation = ["HUMAN ACTION", "FOUNDER / STEWARD ACTION", "STEWARD ACTION", "ESCALATION"]
-    .some((label) => labeledValue(body, label) !== null);
+    .some((label) => labeledValue(body, label) !== null) || hasNonemptyMarkdownSection(body, /\bescalation\b/i);
   return hasIssue && hasStatus && hasScope && hasValidation && hasReviewState && hasNextAction && hasEscalation;
 }
 
@@ -212,8 +217,13 @@ function humanActionRequested(comments: RawComment[], handoff: HandoffProjection
     labeledValue(latest.body, "HUMAN ACTION") ??
     labeledValue(latest.body, "FOUNDER / STEWARD ACTION") ??
     labeledValue(latest.body, "STEWARD ACTION") ??
-    labeledValue(latest.body, "ESCALATION");
-  if (claim === null || /^(?:none|no|not required|n\/a)\b/i.test(claim)) return false;
+    labeledValue(latest.body, "ESCALATION") ??
+    markdownSectionValue(latest.body, /\bescalation\b/i);
+  if (
+    claim === null ||
+    /^(?:none|no|not (?:required|needed)|n\/a)\b/i.test(claim) ||
+    /\b(?:(?:human|steward)\s+)?(?:action|decision)\s+(?:is\s+)?not\s+(?:required|needed)\b/i.test(claim)
+  ) return false;
   return /\b(?:required|needed|decision|action)\b/i.test(claim);
 }
 
@@ -386,10 +396,11 @@ function derivePhase(
   githubMergeReady: boolean,
   issueScopeReconciled: boolean,
   horizonObserved: boolean,
+  humanActionRequested: boolean,
 ): DeliveryPhase {
   const claimedState = handoff.condition === "current" ? handoff.claimedState?.toLowerCase() ?? "" : "";
   if (readiness === "parked" || claimedState.includes("parked")) return "parked";
-  if (claimedState.includes("human_required") || claimedState.includes("human required")) return "human_required";
+  if (humanActionRequested || claimedState.includes("human_required") || claimedState.includes("human required")) return "human_required";
   if (ownershipConflict) return "blocked";
   if (readiness === "blocked") return "blocked";
   if (!issueScopeReconciled || !horizonObserved) return "validating";
@@ -504,6 +515,7 @@ function projectLane(
     blockers.push(`Issue #${issue.number} belongs to non-current product milestone ${issue.milestone ?? "Unknown"}; the live current horizon is ${snapshot.productHorizon ?? "Unknown"}.`);
   }
 
+  const requiresHuman = humanActionRequested(comments, handoff);
   const phase = outsideCurrentHorizon
     ? "parked"
     : derivePhase(
@@ -517,8 +529,8 @@ function projectLane(
         githubMergeReady,
         issueScopeReconciled,
         horizonObserved,
+        requiresHuman,
       );
-  const requiresHuman = humanActionRequested(comments, handoff);
   const action: DeliveryLane["action"] = requiresHuman || phase === "human_required"
     ? { owner: "human", reason: "The canonical coordination state requests human or Steward action." }
     : phase === "review_fix" || checks.status === "failure" || ownershipConflict

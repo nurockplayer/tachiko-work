@@ -376,6 +376,51 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.phase).toBe("validating");
   });
 
+  it("accepts a nonempty escalation section as the mandatory handoff record", () => {
+    const pr = pullRequest();
+    pr.comments[0]!.body = pr.comments[0]!.body.replace(
+      "HUMAN ACTION: none",
+      "## Escalation\n\nNone",
+    );
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.handoff.condition).toBe("current");
+    expect(lane?.phase).toBe("merge_gate");
+    expect(lane?.action.owner).toBe("none");
+  });
+
+  it("does not escalate a natural-language negative human-action label", () => {
+    const pr = pullRequest();
+    pr.comments[0]!.body = pr.comments[0]!.body.replace(
+      "HUMAN ACTION: none",
+      "HUMAN ACTION: Human action is not required",
+    );
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.handoff.condition).toBe("current");
+    expect(lane?.phase).toBe("merge_gate");
+    expect(lane?.action.owner).toBe("none");
+  });
+
+  it("projects a requested action from an escalation section", () => {
+    const pr = pullRequest();
+    pr.comments[0]!.body = pr.comments[0]!.body.replace(
+      "HUMAN ACTION: none",
+      "## Escalation\n\nHuman action required",
+    );
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.handoff.condition).toBe("current");
+    expect(lane?.phase).toBe("human_required");
+    expect(lane?.action.owner).toBe("human");
+  });
+
   it("does not count empty handoff sections as mandatory evidence", () => {
     const pr = pullRequest();
     pr.comments[0]!.body = [
