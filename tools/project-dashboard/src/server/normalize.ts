@@ -18,6 +18,7 @@ const handoffMarker = "<!-- agent-handoff:v1 -->";
 const explicitlySubstantiveFinding = /(?:\[|\b)(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness)(?:\]|\b)/i;
 const explicitlyNonSubstantiveFinding = /^(?:[_*]+\s*)?(?:\[(?:p3|sev(?:erity)?[ -]?3)\]|(?:p3|sev(?:erity)?[ -]?3|nit(?:pick)?|trivial)\b)/i;
 const explicitlyNonSubstantiveBadge = /^(?:<sub>\s*)+!\[(?:p3|sev(?:erity)?[ -]?3)\s+badge\]\([^)]*\)(?:<\/sub>\s*)+/i;
+const explicitlyNonSubstantiveAcknowledgment = /^(?:done|fixed(?:\s+in\s+(?:commit\s+)?[0-9a-f]{7,40})?|thanks,\s+applied this suggestion)[.!]?$/i;
 const authorityOnlyIssue = /^\s*\[(?:decision|research)\](?:\s|\[|$)/i;
 const decisionIssue = /^\s*\[decision\](?:\s|\[|$)/i;
 
@@ -66,6 +67,7 @@ function isSubstantiveFinding(body: string): boolean {
   if (explicitlySubstantiveFinding.test(body)) return true;
   const normalized = stripMarkdown(body);
   if (explicitlyNonSubstantiveBadge.test(normalized)) return false;
+  if (explicitlyNonSubstantiveAcknowledgment.test(normalized)) return false;
   return !explicitlyNonSubstantiveFinding.test(normalized);
 }
 
@@ -594,9 +596,12 @@ function projectLane(
   const authoritativeIssueStatus = issueStatusText(issue);
   const issueStatusBlocked = statusClaimsBlocked(authoritativeIssueStatus);
   const issueStatusAffirmsDelivery = statusClaimsActive(authoritativeIssueStatus) || statusClaimsReady(authoritativeIssueStatus);
+  const authorityReadinessRequiresSteward = pr !== null && authorityOnlyIssue.test(issue.title) &&
+    !decisionReadyAuthority;
   const issueReadinessRequiresSteward = issue.blockedBy !== null && issue.blockedBy.length === 0 &&
-    !authorityOnlyIssue.test(issue.title) &&
-    (issueStatusBlocked || (pr !== null && observedReadiness === "unknown" && !issueStatusAffirmsDelivery));
+    (issueStatusBlocked || authorityReadinessRequiresSteward || (
+      !authorityOnlyIssue.test(issue.title) && pr !== null && observedReadiness === "unknown" && !issueStatusAffirmsDelivery
+    ));
   const handoffMergeReadinessRequiresDelivery = pr !== null && handoff.condition === "current" &&
     !handoffClaimsMergeReady(handoff);
 
@@ -612,7 +617,9 @@ function projectLane(
     blockers.push("The stale canonical handoff reports this lane blocked pending reconciliation.");
   }
   if (issueReadinessRequiresSteward) {
-    blockers.push("The authoritative Issue status does not affirm that this lane is Ready or active.");
+    blockers.push(authorityReadinessRequiresSteward
+      ? "The linked Decision or Research Issue is not affirmatively Decision-Ready."
+      : "The authoritative Issue status does not affirm that this lane is Ready or active.");
   }
   if (handoffMergeReadinessRequiresDelivery) {
     blockers.push("The current canonical handoff does not affirm merge-ready delivery state.");

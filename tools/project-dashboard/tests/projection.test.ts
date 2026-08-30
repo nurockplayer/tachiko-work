@@ -540,6 +540,28 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.phase).toBe("validating");
   });
 
+  it.each([
+    "[Decision][M05 P1] Choose the delivery boundary",
+    "[Research][M05 P1] Evaluate the delivery boundary",
+  ])("routes an open PR for non-Decision-Ready authority work to the Steward: %s", (title) => {
+    const authorityWork = issue();
+    authorityWork.title = title;
+
+    const projection = normalizeRepositorySnapshot(snapshot({
+      issues: [authorityWork],
+      pullRequests: [pullRequest()],
+    }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.issue.readiness).toBe("unknown");
+    expect(lane?.phase).toBe("validating");
+    expect(lane?.blockers).toContain(
+      "The linked Decision or Research Issue is not affirmatively Decision-Ready.",
+    );
+    expect(lane?.action.owner).toBe("human");
+    expect(projection.attention.humanActionRequired).toBe(true);
+  });
+
   it("does not treat a near-match Issue title as authority-only work", () => {
     const delivery = issue();
     delivery.title = "[Researching] Improve dashboard evidence";
@@ -745,6 +767,27 @@ describe("normalizeRepositorySnapshot", () => {
       resolved: false,
       outdated: false,
       comments: ["**<sub><sub>![P3 Badge](https://img.shields.io/badge/P3-yellow?style=flat)</sub></sub>  Consider a shorter label"],
+      url: "https://github.com/thread",
+    }];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.reviews.unresolvedThreadCount).toBe(1);
+    expect(lane?.reviews.substantiveUnresolvedCount).toBe(0);
+    expect(lane?.phase).toBe("merge_gate");
+  });
+
+  it.each([
+    "Done.",
+    `Fixed in ${headSha}.`,
+    "Thanks, applied this suggestion.",
+  ])("does not let an acknowledgment promote a P3 thread: %s", (reply) => {
+    const pr = pullRequest();
+    pr.reviewThreads = [{
+      resolved: false,
+      outdated: false,
+      comments: ["[P3] Consider a shorter label", reply],
       url: "https://github.com/thread",
     }];
 
