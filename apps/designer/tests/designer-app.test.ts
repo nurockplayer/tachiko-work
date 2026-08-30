@@ -436,7 +436,7 @@ describe("Designer application seam", () => {
         app.destroy();
       }
 
-      nameField.stored = { kind: "text", value: "same\r\nsame\r\nend" };
+      nameField.stored = { kind: "text", value: "same\nx\r\nsame\n" };
       document.body.innerHTML = '<div id="app"></div>';
       const root = document.querySelector<HTMLElement>("#app");
       if (root === null) throw new Error("test root is required");
@@ -445,8 +445,8 @@ describe("Designer application seam", () => {
       await app.ready;
       const textarea = root.querySelector<HTMLTextAreaElement>('textarea[aria-label="Name for Iron Sword"]');
       if (textarea === null || textarea.form === null) throw new Error("text control required");
-      textarea.dataset.initialNormalized = "same\nsame\nend";
-      textarea.value = "same\nchanged\nend";
+      textarea.dataset.initialNormalized = "same\nx\nsame\n";
+      textarea.value = "same\nX\nsame\n";
       textarea.form.requestSubmit();
       expect(client.textEditRequests).toHaveLength(0);
       expect(root.textContent).toContain("Text edit not applied");

@@ -472,7 +472,7 @@ export function mountDesigner(
         const initialText = decodeOpaqueAttribute(textarea.dataset.initialText);
         if (initialText !== undefined) {
           textarea.value = initialText;
-          textarea.dataset.initialNormalized = textarea.value;
+          textarea.dataset.initialNormalized = normalizeLineEndings(textarea.value);
         }
       },
     );
@@ -980,7 +980,10 @@ function reconcileRegion(original: LogicalLine[], edited: LogicalLine[], counts:
       })
       .join("");
   }
-  if (original.some((token) => token.raw.includes("\r") && (counts.get(token.normalized) ?? 0) > 1)) {
+  if (
+    original.some((token) => token.raw.includes("\r")) &&
+    original.some((token) => (counts.get(token.normalized) ?? 0) > 1)
+  ) {
     throw new Error("This Text edit is ambiguous and cannot preserve existing CR or CRLF line endings safely.");
   }
   return edited.map((token) => token.raw).join("");
