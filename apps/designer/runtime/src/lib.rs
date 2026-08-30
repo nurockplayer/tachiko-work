@@ -1147,8 +1147,13 @@ fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
 }
 
 fn ensure_cheap_document_profile(document: &Document) -> Result<(), DesignerError> {
-    ensure_profile_string("document identity", document.id.as_str())?;
-    ensure_profile_string("document title", &document.title)?;
+    let mut profile_string_bytes = 0usize;
+    ensure_profile_string(
+        &mut profile_string_bytes,
+        "document identity",
+        document.id.as_str(),
+    )?;
+    ensure_profile_string(&mut profile_string_bytes, "document title", &document.title)?;
     if document.schemas.len() > MAX_COLLECTIONS {
         return Err(DesignerError::UnsupportedProject {
             message: format!(
@@ -1167,9 +1172,17 @@ fn ensure_cheap_document_profile(document: &Document) -> Result<(), DesignerErro
         });
     }
     for (schema_id, schema) in &document.schemas {
-        ensure_profile_string("schema map identity", schema_id.as_str())?;
-        ensure_profile_string("schema identity", schema.id.as_str())?;
-        ensure_profile_string("schema key", schema.key.as_str())?;
+        ensure_profile_string(
+            &mut profile_string_bytes,
+            "schema map identity",
+            schema_id.as_str(),
+        )?;
+        ensure_profile_string(
+            &mut profile_string_bytes,
+            "schema identity",
+            schema.id.as_str(),
+        )?;
+        ensure_profile_string(&mut profile_string_bytes, "schema key", schema.key.as_str())?;
         if schema.fields.len() > MAX_TABLE_FIELDS {
             return Err(DesignerError::UnsupportedProject {
                 message: DesignerError::CollectionTooLarge {
@@ -1179,18 +1192,33 @@ fn ensure_cheap_document_profile(document: &Document) -> Result<(), DesignerErro
             });
         }
         for (field_id, field) in &schema.fields {
-            ensure_profile_string("field map identity", field_id.as_str())?;
-            ensure_profile_string("field identity", field.id.as_str())?;
-            ensure_profile_string("field key", field.key.as_str())?;
+            ensure_profile_string(
+                &mut profile_string_bytes,
+                "field map identity",
+                field_id.as_str(),
+            )?;
+            ensure_profile_string(
+                &mut profile_string_bytes,
+                "field identity",
+                field.id.as_str(),
+            )?;
+            ensure_profile_string(&mut profile_string_bytes, "field key", field.key.as_str())?;
             if let FieldType::Reference { schema } = &field.field_type {
-                ensure_profile_string("reference schema identity", schema.as_str())?;
+                ensure_profile_string(
+                    &mut profile_string_bytes,
+                    "reference schema identity",
+                    schema.as_str(),
+                )?;
             }
         }
     }
-    ensure_cheap_entity_profile(document)
+    ensure_cheap_entity_profile(document, &mut profile_string_bytes)
 }
 
-fn ensure_cheap_entity_profile(document: &Document) -> Result<(), DesignerError> {
+fn ensure_cheap_entity_profile(
+    document: &Document,
+    profile_string_bytes: &mut usize,
+) -> Result<(), DesignerError> {
     if document.entities.len() > MAX_TOTAL_ENTITIES {
         return Err(DesignerError::UnsupportedProject {
             message: format!(
@@ -1201,10 +1229,18 @@ fn ensure_cheap_entity_profile(document: &Document) -> Result<(), DesignerError>
     }
     let mut collection_profiles = BTreeMap::new();
     for (entity_id, entity) in &document.entities {
-        ensure_profile_string("entity map identity", entity_id.as_str())?;
-        ensure_profile_string("entity identity", entity.id.as_str())?;
-        ensure_profile_string("entity key", entity.key.as_str())?;
-        ensure_profile_string("entity schema identity", entity.schema.as_str())?;
+        ensure_profile_string(
+            profile_string_bytes,
+            "entity map identity",
+            entity_id.as_str(),
+        )?;
+        ensure_profile_string(profile_string_bytes, "entity identity", entity.id.as_str())?;
+        ensure_profile_string(profile_string_bytes, "entity key", entity.key.as_str())?;
+        ensure_profile_string(
+            profile_string_bytes,
+            "entity schema identity",
+            entity.schema.as_str(),
+        )?;
         if entity.fields.len() > MAX_TABLE_FIELDS {
             return Err(DesignerError::UnsupportedProject {
                 message: format!(
@@ -1218,12 +1254,22 @@ fn ensure_cheap_entity_profile(document: &Document) -> Result<(), DesignerError>
             .entry(entity.schema.clone())
             .or_insert((0usize, 0usize));
         for (field_id, value) in &entity.fields {
-            ensure_profile_string("stored field identity", field_id.as_str())?;
+            ensure_profile_string(
+                profile_string_bytes,
+                "stored field identity",
+                field_id.as_str(),
+            )?;
             match value {
                 Value::Reference(entity) => {
-                    ensure_profile_string("stored reference identity", entity.as_str())?;
+                    ensure_profile_string(
+                        profile_string_bytes,
+                        "stored reference identity",
+                        entity.as_str(),
+                    )?;
                 }
-                Value::Formula(expression) => ensure_formula_reference_profile(expression)?,
+                Value::Formula(expression) => {
+                    ensure_formula_reference_profile(expression, profile_string_bytes)?;
+                }
                 Value::Text(text) => {
                     ensure_stored_text_profile(text)?;
                     profile.1 = profile.1.saturating_add(text.len());
@@ -1263,11 +1309,23 @@ fn ensure_cheap_entity_profile(document: &Document) -> Result<(), DesignerError>
     Ok(())
 }
 
-fn ensure_profile_string(label: &str, value: &str) -> Result<(), DesignerError> {
+fn ensure_profile_string(
+    profile_string_bytes: &mut usize,
+    label: &str,
+    value: &str,
+) -> Result<(), DesignerError> {
     if value.len() > MAX_PROFILE_STRING_BYTES {
         return Err(DesignerError::UnsupportedProject {
             message: format!(
                 "the {label} exceeds the bounded {MAX_PROFILE_STRING_BYTES}-byte maximum"
+            ),
+        });
+    }
+    *profile_string_bytes = profile_string_bytes.saturating_add(value.len());
+    if *profile_string_bytes > MAX_PROJECTION_BYTES {
+        return Err(DesignerError::UnsupportedProject {
+            message: format!(
+                "aggregate project profile strings exceed the bounded {MAX_PROJECTION_BYTES}-byte projection maximum"
             ),
         });
     }
@@ -1285,7 +1343,10 @@ fn ensure_stored_text_profile(value: &str) -> Result<(), DesignerError> {
     Ok(())
 }
 
-fn ensure_formula_reference_profile(expression: &Expression) -> Result<(), DesignerError> {
+fn ensure_formula_reference_profile(
+    expression: &Expression,
+    profile_string_bytes: &mut usize,
+) -> Result<(), DesignerError> {
     let mut pending = vec![expression];
     let mut visited = 0usize;
     while let Some(expression) = pending.pop() {
@@ -1300,10 +1361,12 @@ fn ensure_formula_reference_profile(expression: &Expression) -> Result<(), Desig
         match expression {
             Expression::Reference(reference) => {
                 ensure_profile_string(
+                    profile_string_bytes,
                     "formula reference entity identity",
                     reference.entity.as_str(),
                 )?;
                 ensure_profile_string(
+                    profile_string_bytes,
                     "formula reference field identity",
                     reference.field.as_str(),
                 )?;

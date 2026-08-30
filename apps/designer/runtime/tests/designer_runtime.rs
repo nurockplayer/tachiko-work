@@ -202,6 +202,45 @@ fn admission_bounds_document_title_before_validation_and_projection() {
 }
 
 #[test]
+fn admission_bounds_aggregate_profile_strings_before_projection_construction() {
+    let mut document = create_document(
+        StarterTemplate::GameBalance,
+        "Oversized profile strings",
+        &mut TestIds::default(),
+    )
+    .expect("fixture should be valid");
+    let schema = document
+        .schemas
+        .values_mut()
+        .next()
+        .expect("fixture should contain a schema");
+    for index in 0..16 {
+        let field_id = FieldId::from(format!("aggregate_profile_{index}_{}", "i".repeat(2_500)));
+        schema.fields.insert(
+            field_id.clone(),
+            FieldDefinition {
+                id: field_id,
+                key: FieldKey::from(format!("aggregate_profile_{index}")),
+                field_type: FieldType::Number,
+                required: false,
+            },
+        );
+    }
+
+    let Err(error) = DesignerRuntime::from_document(document, OCCURRENCE_ONE) else {
+        panic!("projection construction must receive bounded aggregate profile strings");
+    };
+    let failure = error.failure_projection("unavailable");
+    assert_eq!(failure.code, "unsupported_project");
+    assert!(
+        failure
+            .message
+            .contains("aggregate project profile strings")
+    );
+    assert!(failure.message.contains("65536-byte projection maximum"));
+}
+
+#[test]
 fn admission_bounds_stored_text_before_validation_and_projection() {
     let mut document = create_document(
         StarterTemplate::GameBalance,
