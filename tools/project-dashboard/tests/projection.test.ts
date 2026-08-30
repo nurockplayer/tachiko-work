@@ -181,6 +181,24 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries).toEqual([]);
   });
 
+  it.each(["Human required", "human_required"])(
+    "routes authoritative %s status to human action without a handoff",
+    (status) => {
+      const escalated = issue();
+      escalated.body = `## Status\n\n${status}\n\nOwner: \`agent:codex\``;
+      escalated.comments = [];
+
+      const projection = normalizeRepositorySnapshot(snapshot({ issues: [escalated] }));
+      const lane = projection.deliveries[0];
+
+      expect(projection.deliveries).toHaveLength(1);
+      expect(lane?.issue.readiness).toBe("unknown");
+      expect(lane?.phase).toBe("human_required");
+      expect(lane?.action.owner).toBe("human");
+      expect(projection.attention.humanActionRequired).toBe(true);
+    },
+  );
+
   it("does not let an operational handoff elevate an unrecognized Issue status", () => {
     const backlog = issue();
     backlog.body = "## Status\n\nBacklog\n\nOwner: `agent:codex`";

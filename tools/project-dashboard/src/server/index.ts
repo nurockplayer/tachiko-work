@@ -1,26 +1,11 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-
 import { fixtureProjection } from "./fixture.ts";
+import { githubToken } from "./credentials.ts";
 import { GithubApiClient, loadGithubSnapshot } from "./github.ts";
 import { normalizeRepositorySnapshot } from "./normalize.ts";
 import { createDashboardServer } from "./server.ts";
 import type { RepositoryProjection } from "../shared/types.ts";
 
-const execFileAsync = promisify(execFile);
 const cacheDurationMs = 30_000;
-
-async function githubToken(): Promise<string> {
-  const environmentToken = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
-  if (environmentToken !== undefined && environmentToken.trim() !== "") return environmentToken.trim();
-  const { stdout } = await execFileAsync("gh", ["auth", "token"], {
-    encoding: "utf8",
-    windowsHide: true,
-  });
-  const token = stdout.trim();
-  if (token === "") throw new Error("No GitHub read credential is available");
-  return token;
-}
 
 function liveProjectionLoader(): () => Promise<RepositoryProjection> {
   let cached: { value: RepositoryProjection; expiresAt: number } | null = null;

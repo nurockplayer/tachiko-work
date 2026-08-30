@@ -246,8 +246,12 @@ function statusClaimsBlocked(statusText: string): boolean {
 function statusClaimsActive(statusText: string): boolean {
   return statusHasAffirmativeClaim(
     statusText,
-    /\b(?:active|implementing|in progress|validating|review[_ -]?fix|human[_ -]?required)\b/i,
+    /\b(?:active|implementing|in progress|validating|review[_ -]?fix)\b/i,
   );
+}
+
+function statusClaimsHumanRequired(statusText: string): boolean {
+  return statusHasAffirmativeClaim(statusText, /\bhuman[_ -]?required\b/i);
 }
 
 function statusClaimsReady(statusText: string): boolean {
@@ -662,7 +666,7 @@ function projectLane(
     blockers.push(`Issue #${issue.number} belongs to non-current product milestone ${issue.milestone ?? "Unknown"}; the live current horizon is ${snapshot.productHorizon ?? "Unknown"}.`);
   }
 
-  const requiresHuman = humanActionRequested(comments, handoff);
+  const requiresHuman = statusClaimsHumanRequired(authoritativeIssueStatus) || humanActionRequested(comments, handoff);
   const owner = issueOwner(issue, handoff);
   const phase = outsideCurrentHorizon
     ? "parked"
@@ -845,11 +849,12 @@ export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): Re
       null,
       snapshot.mainSha,
     );
-    if (isDecisionReadyAuthorityIssue(issue) && !humanActionRequested(issue.comments, handoff)) continue;
+    const requiresHuman = statusClaimsHumanRequired(issueStatusText(issue)) || humanActionRequested(issue.comments, handoff);
+    if (isDecisionReadyAuthorityIssue(issue) && !requiresHuman) continue;
     const hasCanonicalHandoff = canonicalComments(issue.comments).length > 0;
     const owner = issueOwner(issue, handoff).toLowerCase();
     if (!hasCanonicalHandoff && !owner.includes("agent:")) continue;
-    if (issueReadiness(issue, handoff) === "unknown" && !humanActionRequested(issue.comments, handoff)) continue;
+    if (issueReadiness(issue, handoff) === "unknown" && !requiresHuman) continue;
     deliveries.push(projectLane(issue, null, snapshot, [], ownershipObservationComplete));
   }
 
