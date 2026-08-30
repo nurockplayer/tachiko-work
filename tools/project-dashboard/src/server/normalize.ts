@@ -21,7 +21,7 @@ const explicitlyPrioritizedFinding = /(?:\[|\b)(?:p[0-2]|sev(?:erity)?[ -]?[0-2]
 const explicitlySubstantiveFinding = /(?:\[|\b)(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness)(?:\]|\b)/i;
 const negatedReviewFinding = /\b(?:no|not|none|without|zero|0)\b[^.!?;\n]{0,80}\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|findings?|issues?|concerns?|problems?)\b/i;
 const clearedReviewFinding = /\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|security|correctness|blocking|data[- ]integrity)\b[^.!?;\n]{0,80}\b(?:checks?|review|findings?|issues?)?\s*(?:passed|complete(?:d)?|clean|resolved)\b(?:\s*\([^)]*\))?\s*$/i;
-const negatedReviewResolution = /\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|security|correctness|blocking|data[- ]integrity)\b[^.!?;\n]{0,80}\b(?:not|never)\s+(?:passed|complete(?:d)?|clean|resolved)\b/i;
+const negatedReviewResolution = /\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|security|correctness|blocking|data[- ]integrity)\b[^.!?;\n]{0,80}(?:\b(?:not|never|cannot)\b|\b(?:is|are|was|were|has|have|had|do|does|did|can|could|would|should|will|wo)n['’]?t\b)(?:\s+\w+){0,3}\s+(?:passed|complete(?:d)?|clean|resolved)\b/i;
 const postposedClearedReviewFinding = /\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|data[- ]integrity)(?:\s+(?:findings?|issues?|concerns?|problems?)(?:\s+found)?)?\s*(?::|=|\bare\b)\s*(?:none|zero|0)\b(?:\s*\([^)]*\))?\s*$/i;
 const equivalentReviewFindingLabel = /(?:^|\s)(?:blocking|security|correctness|data[- ]integrity)\s*[:,]/i;
 const equivalentReviewFindingContext = /\b(?:blocking|security|correctness|data[- ]integrity)\b[^.!?;\n]{0,80}\b(?:finding|issue|bug|risk|failure|regression|vulnerab\w*|flaw|problem|concern|break\w*|corrupt\w*|overwrit\w*|data[- ]loss)\b|\b(?:finding|issue|bug|risk|failure|regression|vulnerab\w*|flaw|problem|concern|break\w*|corrupt\w*|overwrit\w*|data[- ]loss)\b[^.!?;\n]{0,80}\b(?:blocking|security|correctness|data[- ]integrity)\b/i;
@@ -86,20 +86,29 @@ function isSubstantiveFinding(body: string): boolean {
   return !explicitlyNonSubstantiveFinding.test(normalized);
 }
 
+function reviewBodyClauses(body: string): string[] {
+  return stripMarkdown(body).split(reviewClauseBoundary).map((segment) => segment.trim()).filter(Boolean);
+}
+
+function isClearedReviewClause(clause: string): boolean {
+  return negatedReviewFinding.test(clause) ||
+    (clearedReviewFinding.test(clause) && !negatedReviewResolution.test(clause)) ||
+    postposedClearedReviewFinding.test(clause);
+}
+
+function isSubstantiveReviewClause(clause: string): boolean {
+  if (isClearedReviewClause(clause)) return false;
+  return explicitlyPrioritizedFinding.test(clause) || equivalentReviewFindingLabel.test(clause) ||
+    equivalentReviewFindingContext.test(clause);
+}
+
 function isSubstantiveReviewBody(body: string): boolean {
-  return stripMarkdown(body).split(reviewClauseBoundary).some((segment) => {
-    const normalized = segment.trim();
-    if (
-      normalized === "" || negatedReviewFinding.test(normalized) ||
-      (clearedReviewFinding.test(normalized) && !negatedReviewResolution.test(normalized)) ||
-      postposedClearedReviewFinding.test(normalized)
-    ) {
-      return false;
-    }
-    return explicitlyPrioritizedFinding.test(normalized) ||
-      equivalentReviewFindingLabel.test(normalized) ||
-      equivalentReviewFindingContext.test(normalized);
-  });
+  return reviewBodyClauses(body).some(isSubstantiveReviewClause);
+}
+
+function clearsSubstantiveReviewBody(body: string): boolean {
+  const clauses = reviewBodyClauses(body);
+  return clauses.length > 0 && !clauses.some(isSubstantiveReviewClause) && clauses.some(isClearedReviewClause);
 }
 
 function claimedIssueNumber(body: string): number | null {
@@ -558,6 +567,29 @@ function latestReviewsByReviewer(reviews: RawReview[]): RawReview[] {
   return [...latest.values()];
 }
 
+function activeSubstantiveReviewBodies(reviews: RawReview[]): RawReview[] {
+  const byReviewer = new Map<string, RawReview[]>();
+  for (const review of reviews) {
+    const reviewer = review.author?.toLowerCase() ?? review.url;
+    const history = byReviewer.get(reviewer) ?? [];
+    history.push(review);
+    byReviewer.set(reviewer, history);
+  }
+
+  const active: RawReview[] = [];
+  for (const history of byReviewer.values()) {
+    for (const review of history.toSorted((left, right) => right.submittedAt.localeCompare(left.submittedAt))) {
+      if (review.state === "dismissed") break;
+      if (isSubstantiveReviewBody(review.body)) {
+        active.push(review);
+        break;
+      }
+      if (review.state === "approved" || clearsSubstantiveReviewBody(review.body)) break;
+    }
+  }
+  return active;
+}
+
 function projectReviews(pr: RawPullRequest, observedAt: string): ReviewProjection {
   const refs = [source("direct", `PR #${pr.number} reviews`, `${pr.url}/reviews`, observedAt, pr.headSha)];
   if (pr.reviews === null || pr.reviewThreads === null) {
@@ -577,11 +609,11 @@ function projectReviews(pr: RawPullRequest, observedAt: string): ReviewProjectio
   const reviewedHeads = new Set(relevantReviews.map((review) => review.headSha));
   const reviewedHeadSha = reviewedHeads.size === 1 ? relevantReviews[0]?.headSha ?? null : null;
   const unresolved = pr.reviewThreads.filter((thread) => !thread.resolved);
-  const substantiveReviewBodies = latestReviewsByReviewer(
+  const substantiveReviewBodies = activeSubstantiveReviewBodies(
     pr.reviews.filter((review) =>
       review.state !== "pending" && review.headSha !== null && shaMatches(review.headSha, pr.headSha)
     ),
-  ).filter((review) => review.state !== "dismissed" && isSubstantiveReviewBody(review.body));
+  );
   const allReviewsCoverHead = relevantReviews.length > 0 && relevantReviews.every(
     (review) => review.headSha !== null && shaMatches(review.headSha, pr.headSha),
   );

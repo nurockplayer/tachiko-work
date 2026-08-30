@@ -976,6 +976,8 @@ describe("normalizeRepositorySnapshot", () => {
     "No P1 findings, except P2 correctness issue remains.",
     "P2 issue is not resolved.",
     "P1 review has not completed.",
+    "P2 issue is not yet resolved.",
+    "P1 review hasn't completed.",
   ])("blocks an affirmative equivalent comment-only finding: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1778,6 +1780,34 @@ describe("normalizeRepositorySnapshot", () => {
 
     expect(projection.deliveries[0]?.reviews.substantiveUnresolvedCount).toBe(0);
     expect(projection.deliveries[0]?.reviews.status).toBe("current");
+    expect(projection.deliveries[0]?.phase).toBe("merge_gate");
+  });
+
+  it("retains a review finding across a later unrelated comment by the same reviewer", () => {
+    const pr = pullRequest();
+    pr.reviews = [
+      { state: "commented", author: "reviewer", body: "[P2] Clarify the current behavior", headSha, url: "https://github.com/review/finding", submittedAt: "2026-08-29T23:00:00.000Z" },
+      { state: "commented", author: "reviewer", body: "Additional context for the review.", headSha, url: "https://github.com/review/context", submittedAt: observedAt },
+      { state: "approved", author: "other-reviewer", body: "", headSha, url: "https://github.com/review/approval", submittedAt: observedAt },
+    ];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+
+    expect(projection.deliveries[0]?.reviews.substantiveUnresolvedCount).toBe(1);
+    expect(projection.deliveries[0]?.phase).toBe("review_fix");
+  });
+
+  it("clears an earlier review finding with an explicit later resolution by the same reviewer", () => {
+    const pr = pullRequest();
+    pr.reviews = [
+      { state: "commented", author: "reviewer", body: "[P2] Clarify the current behavior", headSha, url: "https://github.com/review/finding", submittedAt: "2026-08-29T23:00:00.000Z" },
+      { state: "commented", author: "reviewer", body: "P2 findings resolved.", headSha, url: "https://github.com/review/resolved", submittedAt: observedAt },
+      { state: "approved", author: "other-reviewer", body: "", headSha, url: "https://github.com/review/approval", submittedAt: observedAt },
+    ];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+
+    expect(projection.deliveries[0]?.reviews.substantiveUnresolvedCount).toBe(0);
     expect(projection.deliveries[0]?.phase).toBe("merge_gate");
   });
 
