@@ -57,10 +57,22 @@ function canonicalComments(comments: RawComment[]): RawComment[] {
 
 function claimedIssueNumber(body: string): number | null {
   const claim = labeledValue(body, "ISSUE");
-  if (claim === null) return null;
-  const match = claim.match(/^(?:Issue\s*)?#?(\d+)(?:\s*\/\s*PR\s*#?\d+)?$/i);
-  const number = Number.parseInt(match?.[1] ?? "", 10);
-  return Number.isSafeInteger(number) ? number : null;
+  if (claim !== null) {
+    const match = claim.match(/^(?:Issue\s*)?#?(\d+)(?:\s*\/\s*PR\s*#?\d+)?$/i);
+    const number = Number.parseInt(match?.[1] ?? "", 10);
+    return Number.isSafeInteger(number) ? number : null;
+  }
+
+  const candidates = new Set<number>();
+  for (const match of body.matchAll(/\bIssue\s*#(\d+)\b/gi)) {
+    const number = Number.parseInt(match[1] ?? "", 10);
+    if (Number.isSafeInteger(number)) candidates.add(number);
+  }
+  for (const match of body.matchAll(/#(\d+)\s*\/\s*PR\s*#\d+/gi)) {
+    const number = Number.parseInt(match[1] ?? "", 10);
+    if (Number.isSafeInteger(number)) candidates.add(number);
+  }
+  return candidates.size === 1 ? [...candidates][0] ?? null : null;
 }
 
 function hasNonemptyMarkdownSection(body: string, headingPattern: RegExp): boolean {
@@ -80,7 +92,7 @@ function hasNonemptyMarkdownSection(body: string, headingPattern: RegExp): boole
 }
 
 function hasRequiredPrHandoffRecords(body: string): boolean {
-  const hasIssue = labeledValue(body, "ISSUE") !== null || /\bIssue\s*#\d+\b/i.test(body) || /#\d+\s*\/\s*PR\s*#\d+/i.test(body);
+  const hasIssue = claimedIssueNumber(body) !== null;
   const hasStatus = labeledValue(body, "STATUS") !== null || labeledValue(body, "STATE") !== null;
   const hasScope = labeledValue(body, "SCOPE BOUNDARY") !== null || hasNonemptyMarkdownSection(body, /\bscope\b/i);
   const hasValidation = labeledValue(body, "VALIDATION EVIDENCE") !== null || hasNonemptyMarkdownSection(body, /\b(?:validation|evidence)\b/i);
