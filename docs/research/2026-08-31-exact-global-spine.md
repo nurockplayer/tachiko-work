@@ -4,8 +4,10 @@ Decision state: Research evidence for [#174](https://github.com/nurockplayer/tac
 
 Measurement implementations: A0/A1/C/F at
 `4ed7f994825edb8a3bb6f1ac4a5cc5d940f74387`; final counterbalanced B at
-`be4d80146242eda5fc2258d82d6baf3ce7a19aa3`; resampled D and corrected
-E1/immutable-Git-object E2 at `8ce554191e36496dedb57322fc1ab059a205ab07`; full-oracle and aggregate
+`be4d80146242eda5fc2258d82d6baf3ce7a19aa3`; resampled D and corrected E1 at
+`8ce554191e36496dedb57322fc1ab059a205ab07`; immutable-Git-object E2 with an
+independently pinned exact-A1 comparator at
+`e263d34a356d75daa58836ac9598e11037984db0`; full-oracle and aggregate
 two-pass counter corrections at
 `607e9208da2fdf71e0741d7ff7efceec890ac6fc`; all on
 `main@022a14d18503477aa7e20f6fca102f9e85dce740`.
@@ -28,7 +30,8 @@ The experiment falsified a universal Global Spine benefit:
 - at 16,000 mixed entities, Structural Index peak RSS is higher than A0 and
   more than twice A1; spine plus eventual `Document` raises peak further;
 - exact dirty-source sidecar validation is `1.87x` slower than A1 at p95,
-  while Git validation is `2.33x` slower;
+  while Git validation is `1.68x` slower than an exact A1 that independently
+  pays the same Git identity and object-pinning costs;
 - counterbalanced background admission fails the foreground-interference gate:
   p95 of paired p95 ratios is `1.103` and the maximum is `5.224`; and
 - exact bounded source payload access is fast, but formula meaning and
@@ -48,7 +51,7 @@ justify a Global Spine.
 | Benefit not limited to payload-heavy data | Fail | Payload Structural Index is `0.07x` source, but mixed is `1.38x` and references `2.83x` |
 | No `>10%` foreground regression | Fail | Counterbalanced p95 of per-run foreground p95 ratios is `1.103`; maximum is `5.224`; 2/20 runs exceed `1.10` |
 | `>=40%` peak-RSS reduction, without hidden eventual peak | Fail | A1 p50 peak is `30.4 MB`; Structural is `71.8 MB`; Structural + `Document` is `79.4 MB`; pinned Structural + `Document` is `91.2 MB` |
-| Sidecar validation preserves material reuse benefit | Fail | E1 validated p95 is `747 ms` versus A1 `399 ms`; E2 validated p95 is `2.13 s` versus A1 `915 ms` |
+| Sidecar validation preserves material reuse benefit | Fail | E1 validated p95 is `747 ms` versus A1 `399 ms`; E2 validated p95 is `929 ms` versus independently Git-pinned A1 `553 ms` |
 
 ## Method
 
@@ -78,9 +81,11 @@ and oracle status through the bundle manifest's declared row-context mapping.
 Successful rows have `outcome=success`; B cancellation rows retain their
 explicit `cancelled` outcome. No missing metadata is inferred.
 
-Fixture generation and filesystem materialization are outside admission
-timing. Matrix latency is process/allocator-warm inside one release test
-process. RSS launches each arm in a fresh direct child. UI rendering, WASM
+Fixture generation and initial filesystem materialization are outside admission
+timing. E2 is the explicit exception: both validated reuse and exact A1 include
+their own independent Git identity, object pin, and exact-snapshot
+materialization. Matrix latency is process/allocator-warm inside one release
+test process. RSS launches each arm in a fresh direct child. UI rendering, WASM
 compile/JIT, and process startup are outside scope.
 
 The explicit search/navigation contract tested is exact resident ID plus field
@@ -218,8 +223,8 @@ At 16k mixed entities:
 | Case | Source | Sidecar | Reuse p95 | A1 p95 | Interpretation |
 | --- | ---: | ---: | ---: | ---: | --- |
 | E1 dirty filesystem, validated | 9.63 MB | 18.83 MB | 747 ms | 399 ms | Includes 506 ms pinned source revalidation + 261 ms decode; exact reuse is 1.87x slower |
-| E2 identity + decode only | 9.63 MB | 18.83 MB | 422 ms | 915 ms | Non-authoritative diagnostic; source-derived facts are not proven |
-| E2 Git-object + pinned source-derived validation | 9.63 MB | 18.83 MB | 2.13 s | 915 ms | Exact validation is 2.33x slower than A1 |
+| E2 identity + decode only | 9.63 MB | 18.83 MB | 399 ms | 553 ms | Non-authoritative diagnostic; source-derived facts are not proven |
+| E2 Git-object + pinned source-derived validation | 9.63 MB | 18.83 MB | 929 ms | 553 ms | Both arms independently resolve Git identity and pin the same object bytes; exact validation is 1.68x slower than A1 |
 
 E1 first build also costs a 344 ms scan plus 76 ms encode. The mixed sidecar is
 `1.96x` source size. Integrity detects accidental corruption; it is not an
@@ -323,7 +328,7 @@ committed. Retained-runtime RSS is in
 5. Do not advance **C**: the exact derived spine is not broadly compact, is not
    faster than A1, and raises RSS.
 6. Do not advance **D**: durable representation is not the remaining proven
-   bottleneck; E2 Git-object proof and sidecar decode are `2.33x` slower than
-   A1 at p95.
+   bottleneck; E2 Git-object proof and sidecar decode are `1.68x` slower than
+   an equivalently Git-pinned exact A1 at p95.
 7. Do not create an ADR, `.roproj/v2`, public readiness/cache protocol, or
    production successor from #175 automatically.
