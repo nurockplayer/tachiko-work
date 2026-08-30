@@ -526,4 +526,14 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries[0]?.issue.readiness).toBe("unknown");
     expect(projection.attention.humanActionRequired).toBe(true);
   });
+
+  it("keeps aggregate dependency health partial when a truncated no-PR Issue is omitted", () => {
+    const truncated = issue();
+    truncated.blockedBy = null;
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [truncated] }));
+
+    expect(projection.deliveries).toEqual([]);
+    expect(projection.currentWork.dependencyHealth).toBe("partial");
+  });
 });

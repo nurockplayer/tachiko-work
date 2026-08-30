@@ -561,7 +561,7 @@ export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): Re
       horizonStatus: horizonKnown ? "current" : "unknown",
       dependencyHealth: snapshot.issues === null || !horizonKnown
         ? "unknown"
-        : deliveries.some((lane) => lane.issue.blockedBy === null)
+        : issues.some((issue) => issue.blockedBy === null)
           ? "partial"
           : "healthy",
       sourceRefs: [currentWorkRef],
