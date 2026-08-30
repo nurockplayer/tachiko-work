@@ -230,6 +230,8 @@ describe("normalizeRepositorySnapshot", () => {
     "Ready; now Not Ready pending approval.",
     "Ready; Not Ready after approval.",
     "Ready; now Backlog.",
+    "Ready; Ready only after approval.",
+    "Ready; ready to proceed once access is granted.",
   ])("honors a current Not Ready claim after an earlier Ready claim: %s", (status) => {
     const notReady = issue();
     notReady.body = `## Status\n\n${status}\n\nOwner: \`agent:codex\``;
@@ -1214,6 +1216,8 @@ describe("normalizeRepositorySnapshot", () => {
   it.each([
     "There is no null check, so this crashes on empty input.",
     "No null check means this crashes on empty input.",
+    "No null check, which means this crashes on empty input.",
+    "No null check, causing this to crash on empty input.",
     "This throws for an empty input.",
     "This deletes user data.",
     "This erases data on retry.",
@@ -1369,6 +1373,8 @@ describe("normalizeRepositorySnapshot", () => {
     "No crashes occur, so this works as expected.",
     "No null check, so this does not crash.",
     "P2 findings: none, so tests pass.",
+    "No crashes occur, which means this works as expected.",
+    "No crashes occur, causing tests to pass.",
     "No security issues and data is not erased.",
     "No security checks and data is not erased.",
     "No infinite loops occur.",
@@ -1839,6 +1845,8 @@ describe("normalizeRepositorySnapshot", () => {
     "This fails to compile on Windows.",
     "There is no null check, so this crashes on empty input.",
     "No null check means this crashes on empty input.",
+    "No null check, which means this crashes on empty input.",
+    "No null check, causing this to crash on empty input.",
     "This throws for an empty input.",
     "This deletes user data.",
     "User data is deleted.",
@@ -1963,6 +1971,8 @@ describe("normalizeRepositorySnapshot", () => {
     "No crashes occur, so this works as expected.",
     "No null check, so this does not crash.",
     "P2 findings: none, so tests pass.",
+    "No crashes occur, which means this works as expected.",
+    "No crashes occur, causing tests to pass.",
     "No security issues and data is not erased.",
     "No security checks and data is not erased.",
     "No infinite loops occur.",

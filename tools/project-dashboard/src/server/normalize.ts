@@ -27,7 +27,7 @@ const postposedClearedReviewFinding = /\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|block
 const equivalentReviewFindingLabel = /(?:^|\s)(?:blocking|security|correctness|data[- ]integrity)\s*[:,]/i;
 const equivalentReviewFindingContext = /\b(?:blocking|security|correctness|data[- ]integrity)\b[^.!?;\n]{0,80}\b(?:finding|issue|bug|risk|failure|regression|vulnerab\w*|flaw|problem|concern|break\w*|corrupt\w*|overwrit\w*|data[- ]loss)\b|\b(?:finding|issue|bug|risk|failure|regression|vulnerab\w*|flaw|problem|concern|break\w*|corrupt\w*|overwrit\w*|data[- ]loss)\b[^.!?;\n]{0,80}\b(?:blocking|security|correctness|data[- ]integrity)\b/i;
 const explicitReviewClearingSignal = /(?:\[|\b)(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|data[- ]integrity)(?:\]|\b)/i;
-const reviewClauseBoundary = /[.!?;\n]+|\b(?:but|except|however|although|yet)\b|,\s+and\s+|,\s*(?=(?:causing|which|p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|data[- ]integrity)\b)/i;
+const reviewClauseBoundary = /[.!?;\n]+|\b(?:but|except|however|although|yet)\b|,\s+and\s+|,\s*(?=(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|data[- ]integrity)\b)/i;
 const coordinatedReviewPredicate = /\b(?:is|are|was|were|do|does|did|can|could|would|should|will|has|have|had|gets?|got|fails?|failed|failing|breaks?|broke|broken|passes?|passed|passing|occurs?|occurred|occurring|permits?|permitted|permitting|allows?|allowed|allowing|enables?|enabled|enabling|throws?|throwing|thrown|exceptions?|crash(?:es|ed|ing)?|panic(?:s|ked|king)?|delet(?:e|es|ed|ing)|eras(?:e|es|ed|ing)|corrupt\w*|overwrit\w*|bypass\w*|leak\w*)\b/i;
 const coordinatedReviewClauseStart = /^(?:\S+\s+){0,4}(?:is|are|was|were|do|does|did|can|could|would|should|will|has|have|had|gets?|got|fails?|failed|failing|breaks?|broke|broken|passes?|passed|passing|occurs?|occurred|occurring|permits?|permitted|permitting|allows?|allowed|allowing|enables?|enabled|enabling|throws?|throwing|thrown|exceptions?|crash(?:es|ed|ing)?|panic(?:s|ked|king)?|delet(?:e|es|ed|ing)|eras(?:e|es|ed|ing)|corrupt\w*|overwrit\w*|bypass\w*|leak\w*)\b/i;
 const completedClearedReviewFinding = /(?:\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2])\]?|\b(?:findings?|issues?|concerns?|problems?|failures?|bugs?|errors?|defects?|breakages?))\s*$|^(?:no|none|without|zero|0)\b(?:\s+\S+){2,}\s*$/i;
@@ -95,7 +95,7 @@ function canonicalComments(comments: RawComment[]): RawComment[] {
 }
 
 function hasCausalSubstantiveImpact(clause: string): boolean {
-  const marker = /\b(?:means?|causes?|so|therefore|thus|hence)\b/i.exec(clause);
+  const marker = /\b(?:means?|caus(?:e|es|ing)|so|therefore|thus|hence)\b/i.exec(clause);
   if (marker?.index === undefined) return false;
   const premise = clause.slice(0, marker.index);
   const consequence = clause.slice(marker.index + marker[0].length);
@@ -109,11 +109,11 @@ function hasCausalSubstantiveImpact(clause: string): boolean {
 }
 
 function isCleanCausalConsequence(clause: string): boolean {
-  return /^\s*(?:so|therefore|thus|hence)\b[^.!?;\n]{0,80}\b(?:works?(?:\s+as\s+expected)?|pass(?:es)?|succeeds?|is\s+(?:correct|safe|valid)|are\s+(?:correct|safe|valid))\b/i.test(clause);
+  return /^\s*(?:so|therefore|thus|hence|which\s+means?|causing)\b[^.!?;\n]{0,80}\b(?:works?(?:\s+as\s+expected)?|pass(?:es)?|succeeds?|is\s+(?:correct|safe|valid)|are\s+(?:correct|safe|valid))\b/i.test(clause);
 }
 
 function isClearedCausalReviewClause(clause: string): boolean {
-  const marker = /\b(?:so|therefore|thus|hence)\b/i.exec(clause);
+  const marker = /\b(?:so|therefore|thus|hence|which\s+means?|causing)\b/i.exec(clause);
   if (marker?.index === undefined) return false;
   const premise = clause.slice(0, marker.index).replace(/[,\s]+$/, "");
   const consequence = clause.slice(marker.index);
@@ -423,7 +423,10 @@ function statusReadyClaim(statusText: string): { polarity: "affirmative" | "nega
     const before = statusText.slice(0, match.index);
     if (/\bdecision[_ -]?$/i.test(before)) continue;
     const negated = statusClaimIsNegated(statusText, match);
-    if (!negated && statusClaimIsConditional(statusText, match, true)) continue;
+    if (!negated && statusClaimIsConditional(statusText, match, true)) {
+      if (latest?.polarity === "affirmative") latest = { polarity: "negated", index: match.index };
+      continue;
+    }
     if (!negated) {
       latest = { polarity: "affirmative", index: match.index };
       continue;
