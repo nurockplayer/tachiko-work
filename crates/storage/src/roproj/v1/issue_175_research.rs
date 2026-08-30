@@ -714,7 +714,7 @@ fn read_file_cancellable_with_limit(
 fn source_preview(
     root: &Path,
     cancel: Option<&AtomicBool>,
-) -> Result<(String, String, String), FormatError> {
+) -> Result<Option<(String, String, String)>, FormatError> {
     const MAX_PREVIEW_RECORD_BYTES: usize = 64 * 1024;
     super::super::host::require_directory(root, "canonical .roproj root")?;
     super::super::host::require_exact_root_entries(root)?;
@@ -756,9 +756,9 @@ fn source_preview(
                 "source preview record is not exact canonical source".to_owned(),
             );
         }
-        return Ok((dto.id, dto.key, dto.schema));
+        return Ok(Some((dto.id, dto.key, dto.schema)));
     }
-    invalid_representation("source preview found no entity record".to_owned())
+    Ok(None)
 }
 
 fn shard_index_from_path(path: &str) -> Result<usize, FormatError> {
@@ -3110,7 +3110,7 @@ fn issue_175_progressive_source_preview_is_non_authoritative_and_cancellable() {
     let root = temp.path().join("progressive.roproj");
     let expected = mixed_document(257, 37);
     super::super::host::materialize_roproj(&root, &expected).unwrap();
-    let preview = source_preview(&root, None).unwrap();
+    let preview = source_preview(&root, None).unwrap().unwrap();
     assert!(expected.entities.contains_key(preview.0.as_str()));
 
     let cancel = AtomicBool::new(true);
@@ -3129,6 +3129,17 @@ fn issue_175_progressive_source_preview_is_non_authoritative_and_cancellable() {
             if message.contains("cancelled before SemanticCurrent")
     ));
     assert_eq!(records.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn issue_175_progressive_source_preview_allows_canonical_empty_projects() {
+    let temp = ResearchTempDirectory::new();
+    let root = temp.path().join("empty-progressive.roproj");
+    let expected = Document::empty("issue-175-empty", "Issue 175 empty");
+    super::super::host::materialize_roproj(&root, &expected).unwrap();
+
+    assert_eq!(source_preview(&root, None).unwrap(), None);
+    assert_eq!(super::super::host::load_roproj(&root).unwrap(), expected);
 }
 
 #[test]
