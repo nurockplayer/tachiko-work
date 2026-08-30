@@ -26,7 +26,8 @@ links:
     - https://github.com/nurockplayer/tachiko-work/issues/184
     - https://github.com/nurockplayer/tachiko-work/issues/185
     - https://github.com/nurockplayer/tachiko-work/issues/135
-  prs: []
+  prs:
+    - https://github.com/nurockplayer/tachiko-work/pull/201
   adrs: []
   specs:
     - https://github.com/nurockplayer/tachiko-work/blob/c3b5ad2aad04e6b79594dbc7f79199591997bdc4/docs/research/evidence/schema-v0.md
@@ -232,6 +233,7 @@ authority gates are met.
 ## Traceability
 
 - [#185 Research Issue](https://github.com/nurockplayer/tachiko-work/issues/185)
+- [PR #201 executable evidence](https://github.com/nurockplayer/tachiko-work/pull/201)
 - [#176 ecosystem Epic](https://github.com/nurockplayer/tachiko-work/issues/176)
 - [#184 cold-start decision](https://github.com/nurockplayer/tachiko-work/issues/184)
 - [Executable E9 probe](../../../probes/issue-185-git-share-use.mjs)
