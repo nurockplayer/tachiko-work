@@ -32,6 +32,7 @@ function githubPage() {
             title: "Dashboard v0",
             url: "https://github.com/nurockplayer/tachiko-work/pull/200",
             body: "Closes #169",
+            isDraft: false,
             headRefOid: headSha,
             baseRefOid: mainSha,
             baseRefName: "main",
@@ -55,6 +56,7 @@ function githubPage() {
                             checkSuite: { app: { databaseId: 42 } },
                           },
                         ],
+                        pageInfo: { hasNextPage: false },
                       },
                     },
                   },
@@ -107,6 +109,7 @@ describe("loadGithubSnapshot", () => {
       issues: [{ number: 169, blockedBy: [] }],
       pullRequests: [{
         number: 200,
+        isDraft: false,
         headSha,
         baseSha: mainSha,
         mergeBaseSha: mainSha,
@@ -155,6 +158,28 @@ describe("loadGithubSnapshot", () => {
       relationToMain: "diverged",
       authorityPathsChangedOnMain: ["docs/decisions/ADR-0029-dashboard-boundary.md"],
     });
+  });
+
+  it("keeps draft state and truncated exact-head checks explicit", async () => {
+    const page = githubPage();
+    page.repository.pullRequests.nodes[0]!.isDraft = true;
+    page.repository.pullRequests.nodes[0]!.commits.nodes[0]!.commit.statusCheckRollup.contexts.pageInfo.hasNextPage = true;
+    const api: ReadonlyGithubApi = {
+      graphql: async () => page,
+      rawText: async () => "## Current horizon\n\n> **05 · Designer MVP**",
+      requiredStatusChecks: async () => [],
+      compare: async () => ({ status: "ahead", mergeBaseSha: mainSha, files: [] }),
+    };
+
+    const result = await loadGithubSnapshot(api, {
+      owner: "nurockplayer",
+      repo: "tachiko-work",
+      observedAt: "2026-08-30T00:00:00.000Z",
+    });
+
+    expect(result.fetchHealth).toBe("partial");
+    expect(result.pullRequests?.[0]).toMatchObject({ isDraft: true, checks: null });
+    expect(result.failures).toContain("PR #200 exact-head check observation was truncated.");
   });
 
   it("fetches every merged pull-request page before selecting recent completions by merge time", async () => {

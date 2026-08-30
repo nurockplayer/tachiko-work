@@ -82,6 +82,7 @@ interface GithubPullRequest {
   title: string;
   url: string;
   body: string;
+  isDraft: boolean;
   headRefOid: string;
   baseRefOid: string;
   baseRefName: string;
@@ -92,7 +93,7 @@ interface GithubPullRequest {
     nodes: Array<{
       commit: {
         oid: string;
-        statusCheckRollup: null | { contexts: { nodes: GithubCheckContext[] } };
+        statusCheckRollup: null | { contexts: { nodes: GithubCheckContext[]; pageInfo: PageInfo } };
       };
     }>;
   };
@@ -155,7 +156,7 @@ const dashboardQuery = `
       }
       pullRequests(first: 50, after: $prCursor, states: OPEN, orderBy: { field: UPDATED_AT, direction: DESC }) {
         nodes {
-          number title url body headRefOid baseRefOid baseRefName updatedAt
+          number title url body isDraft headRefOid baseRefOid baseRefName updatedAt
           closingIssuesReferences(first: 20) { nodes { number } }
           comments(last: 100) {
             nodes { id body url createdAt updatedAt }
@@ -172,6 +173,7 @@ const dashboardQuery = `
                       ... on CheckRun { name status conclusion detailsUrl checkSuite { app { databaseId } } }
                       ... on StatusContext { context state targetUrl }
                     }
+                    pageInfo { hasNextPage }
                   }
                 }
               }
@@ -446,6 +448,8 @@ export async function loadGithubSnapshot(
     }
 
     const commit = pr.commits.nodes[0]?.commit;
+    const checksComplete = !(commit?.statusCheckRollup?.contexts.pageInfo.hasNextPage ?? false);
+    if (!checksComplete) failures.push(`PR #${pr.number} exact-head check observation was truncated.`);
     if (!requiredChecksByBranch.has(pr.baseRefName)) {
       try {
         requiredChecksByBranch.set(
@@ -466,6 +470,7 @@ export async function loadGithubSnapshot(
       title: pr.title,
       url: pr.url,
       body: pr.body,
+      isDraft: pr.isDraft,
       headSha: pr.headRefOid,
       baseRefName: pr.baseRefName,
       baseSha: pr.baseRefOid,
@@ -475,7 +480,7 @@ export async function loadGithubSnapshot(
       issueNumbers: pr.closingIssuesReferences.nodes.map((issue) => issue.number),
       comments: commentsComplete ? pr.comments.nodes.map(asComment) : [],
       checksObservedHeadSha: commit?.oid ?? null,
-      checks: commit?.statusCheckRollup?.contexts.nodes.map(asCheck) ?? null,
+      checks: checksComplete ? commit?.statusCheckRollup?.contexts.nodes.map(asCheck) ?? null : null,
       requiredChecks: requiredChecksByBranch.get(pr.baseRefName) ?? null,
       reviewDecision: normalizeReviewDecision(pr.reviewDecision),
       reviews: pr.reviews.nodes.map(asReview),

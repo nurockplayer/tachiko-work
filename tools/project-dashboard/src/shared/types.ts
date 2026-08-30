@@ -73,6 +73,7 @@ export interface RawPullRequest {
   title: string;
   url: string;
   body: string;
+  isDraft: boolean;
   headSha: string;
   baseRefName: string;
   baseSha: string | null;
@@ -157,6 +158,7 @@ export interface DeliveryLane {
     number: number;
     title: string;
     url: string;
+    isDraft: boolean;
     headSha: string;
     baseRefName: string;
     baseSha: string | null;

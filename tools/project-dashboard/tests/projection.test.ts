@@ -51,6 +51,7 @@ function pullRequest(): RawPullRequest {
     title: "Dashboard v0",
     url: "https://github.com/nurockplayer/tachiko-work/pull/200",
     body: "Closes #169",
+    isDraft: false,
     headSha,
     baseRefName: "main",
     baseSha: mainSha,
@@ -62,7 +63,19 @@ function pullRequest(): RawPullRequest {
     comments: [
       {
         id: "handoff-pr",
-        body: `<!-- agent-handoff:v1 -->\nOWNER: agent:codex\nSTATE: merge-ready\nHEAD: ${headSha}\nLAST CHECKED MAIN: ${mainSha}`,
+        body: [
+          "<!-- agent-handoff:v1 -->",
+          "ISSUE: #169",
+          "OWNER: agent:codex",
+          "STATE: merge-ready",
+          `HEAD: ${headSha}`,
+          `LAST CHECKED MAIN: ${mainSha}`,
+          "SCOPE BOUNDARY: bounded dashboard tooling",
+          "VALIDATION EVIDENCE: exact-head gates passed",
+          "UNRESOLVED REVIEW STATE: none",
+          "NEXT ACTION: merge gate",
+          "HUMAN ACTION: none",
+        ].join("\n"),
         url: "https://github.com/nurockplayer/tachiko-work/pull/200#issuecomment-2",
         createdAt: observedAt,
         updatedAt: observedAt,
@@ -144,6 +157,19 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.issue.readiness).toBe("blocked");
     expect(lane?.phase).toBe("blocked");
     expect(lane?.blockers).toContain("Live Issue dependencies block this lane: #187.");
+  });
+
+  it("keeps truncated Issue dependency state unknown and out of the merge gate", () => {
+    const truncated = issue();
+    truncated.blockedBy = null;
+    const pr = pullRequest();
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [truncated], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.issue.readiness).toBe("unknown");
+    expect(lane?.phase).toBe("validating");
+    expect(lane?.blockers).toContain("Issue dependency state could not be fully observed.");
   });
 
   it("does not treat Decision-Ready authority work as production implementation readiness", () => {
@@ -267,6 +293,41 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.phase).toBe("merge_gate");
   });
 
+  it("keeps unresolved substantive findings blocking after their code location is outdated", () => {
+    const pr = pullRequest();
+    pr.reviewThreads = [
+      { resolved: false, outdated: true, body: "[P2] Correctness finding still unresolved", url: "https://github.com/thread" },
+    ];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.reviews.substantiveUnresolvedCount).toBe(1);
+    expect(lane?.phase).toBe("review_fix");
+  });
+
+  it("keeps an incomplete canonical PR handoff out of the merge gate", () => {
+    const pr = pullRequest();
+    pr.comments[0]!.body = `<!-- agent-handoff:v1 -->\nOWNER: agent:codex\nSTATE: merge-ready\nHEAD: ${headSha}\nLAST CHECKED MAIN: ${mainSha}`;
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.handoff.condition).toBe("inconsistent");
+    expect(lane?.phase).toBe("validating");
+  });
+
+  it("keeps draft pull requests out of the merge gate", () => {
+    const pr = pullRequest();
+    pr.isDraft = true;
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.phase).toBe("validating");
+    expect(lane?.blockers).toContain("Pull request #200 is still a draft.");
+  });
+
   it("keeps independent simultaneous work in separate lanes", () => {
     const issueTwo = issue(187);
     issueTwo.title = "Open canonical project";
@@ -341,6 +402,21 @@ describe("normalizeRepositorySnapshot", () => {
     }
   });
 
+  it("blocks one PR that claims multiple Issues and suppresses duplicate standalone lanes", () => {
+    const pr = pullRequest();
+    pr.issueNumbers = [169, 170];
+
+    const projection = normalizeRepositorySnapshot(snapshot({
+      issues: [issue(169), issue(170)],
+      pullRequests: [pr],
+    }));
+    const lane = projection.deliveries[0];
+
+    expect(projection.deliveries).toHaveLength(1);
+    expect(lane?.phase).toBe("blocked");
+    expect(lane?.blockers).toContain("Pull request #200 claims multiple Issues (#169, #170), violating the one-Issue delivery boundary.");
+  });
+
   it("marks main movement as suspected authority drift until the handoff reconciles it", () => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace(mainSha, "d".repeat(40));
@@ -389,5 +465,22 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.repo.mainSha).toBeNull();
     expect(projection.attention.humanActionRequired).toBeNull();
     expect(projection.attention.reasons).toContain("GitHub pull-request observation failed");
+  });
+
+  it("preserves a known human-action request when an unrelated observation is partial", () => {
+    const pr = pullRequest();
+    pr.comments[0]!.body = pr.comments[0]!.body
+      .replace("STATE: merge-ready", "STATE: human_required")
+      .replace("HUMAN ACTION: none", "HUMAN ACTION: required");
+
+    const projection = normalizeRepositorySnapshot(snapshot({
+      fetchHealth: "partial",
+      failures: ["Recent completion observation failed."],
+      issues: [issue()],
+      pullRequests: [pr],
+    }));
+
+    expect(projection.attention.humanActionRequired).toBe(true);
+    expect(projection.attention.reasons).toContain("#169: The canonical coordination state requests human or Steward action.");
   });
 });

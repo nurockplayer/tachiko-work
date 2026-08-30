@@ -55,6 +55,18 @@ function canonicalComments(comments: RawComment[]): RawComment[] {
   return comments.filter((comment) => comment.body.includes(handoffMarker));
 }
 
+function hasRequiredPrHandoffRecords(body: string): boolean {
+  const hasIssue = labeledValue(body, "ISSUE") !== null || /\bIssue\s*#\d+\b/i.test(body) || /#\d+\s*\/\s*PR\s*#\d+/i.test(body);
+  const hasStatus = labeledValue(body, "STATUS") !== null || labeledValue(body, "STATE") !== null;
+  const hasScope = labeledValue(body, "SCOPE BOUNDARY") !== null || /^#{1,6}\s+.*\bscope\b/im.test(body);
+  const hasValidation = labeledValue(body, "VALIDATION EVIDENCE") !== null || /^#{1,6}\s+.*\bvalidation\b/im.test(body);
+  const hasReviewState = labeledValue(body, "UNRESOLVED REVIEW STATE") !== null || /\bunresolved review\b/i.test(body);
+  const hasNextAction = labeledValue(body, "NEXT ACTION") !== null || /^#{1,6}\s+Next\b/im.test(body);
+  const hasEscalation = ["HUMAN ACTION", "FOUNDER / STEWARD ACTION", "STEWARD ACTION", "ESCALATION"]
+    .some((label) => labeledValue(body, label) !== null);
+  return hasIssue && hasStatus && hasScope && hasValidation && hasReviewState && hasNextAction && hasEscalation;
+}
+
 function projectHandoff(
   comments: RawComment[],
   observedAt: string,
@@ -87,6 +99,8 @@ function projectHandoff(
 
   if (canonical.length !== 1) {
     condition = "inconsistent";
+  } else if (currentHeadSha !== null && !hasRequiredPrHandoffRecords(latest.body)) {
+    condition = "inconsistent";
   } else if (currentHeadSha !== null && !shaMatches(claimedHeadSha, currentHeadSha)) {
     condition = "inconsistent";
   } else if (
@@ -116,7 +130,8 @@ function issueOwner(issue: RawIssue, handoff: HandoffProjection): string {
 }
 
 function issueReadiness(issue: RawIssue, handoff: HandoffProjection): DeliveryLane["issue"]["readiness"] {
-  if ((issue.blockedBy?.length ?? 0) > 0) return "blocked";
+  if (issue.blockedBy === null) return "unknown";
+  if (issue.blockedBy.length > 0) return "blocked";
   const statusSection = issue.body.match(/## Status\s*([\s\S]*?)(?=\n## |$)/i)?.[1] ?? issue.body.slice(0, 600);
   const currentHandoffState = handoff.condition === "current" ? handoff.claimedState : null;
   const statusText = (currentHandoffState ?? statusSection).toLowerCase();
@@ -257,7 +272,7 @@ function projectReviews(pr: RawPullRequest, observedAt: string): ReviewProjectio
     .filter((review) => review.state === "approved" || review.state === "changes_requested")
     .toSorted((left, right) => right.submittedAt.localeCompare(left.submittedAt));
   const reviewedHeadSha = relevantReviews[0]?.headSha ?? null;
-  const unresolved = pr.reviewThreads.filter((thread) => !thread.resolved && !thread.outdated);
+  const unresolved = pr.reviewThreads.filter((thread) => !thread.resolved);
   const status = reviewedHeadSha === null ? (pr.reviewDecision === "review_required" ? "current" : "unknown") : shaMatches(reviewedHeadSha, pr.headSha) ? "current" : "stale";
 
   return {
@@ -298,6 +313,7 @@ function derivePhase(
   if (ownershipConflict) return "blocked";
   if (readiness === "blocked") return "blocked";
   if (pr === null) return readiness === "ready" ? "ready" : readiness === "active" ? "implementing" : "unknown";
+  if (readiness === "unknown" || pr.isDraft) return "validating";
   if ((reviews.substantiveUnresolvedCount ?? 0) > 0) return "review_fix";
   if (reviews.status === "stale") return "rereview";
   if (reviews.decision === "changes_requested") return "review_fix";
@@ -317,9 +333,7 @@ function projectLane(
   const comments = pr?.comments ?? issue.comments;
   const handoff = projectHandoff(comments, snapshot.observedAt, pr?.headSha ?? null, snapshot.mainSha);
   const observedReadiness = issueReadiness(issue, handoff);
-  const readiness = pr === null || observedReadiness === "blocked" || observedReadiness === "parked"
-    ? observedReadiness
-    : "active";
+  const readiness = pr === null || !["ready", "active"].includes(observedReadiness) ? observedReadiness : "active";
   const checks =
     pr === null
       ? {
@@ -343,12 +357,14 @@ function projectLane(
         }
       : projectReviews(pr, snapshot.observedAt);
   const drift = pr === null ? "none" : authorityDrift(pr, handoff, snapshot.mainSha);
-  const ownershipConflict = ownershipConflicts.length > 0;
+  const multipleIssueClaim = (pr?.issueNumbers.length ?? 0) > 1;
+  const ownershipConflict = ownershipConflicts.length > 0 || multipleIssueClaim;
   const blockers: string[] = [];
 
   if ((issue.blockedBy?.length ?? 0) > 0) {
     blockers.push(`Live Issue dependencies block this lane: ${issue.blockedBy?.map((dependency) => `#${dependency.number}`).join(", ") ?? "Unknown"}.`);
   }
+  if (issue.blockedBy === null) blockers.push("Issue dependency state could not be fully observed.");
   if (handoff.condition === "current" && observedReadiness === "blocked" && (issue.blockedBy?.length ?? 0) === 0) {
     blockers.push("The current canonical handoff reports this lane blocked.");
   }
@@ -370,6 +386,10 @@ function projectLane(
   for (const conflict of ownershipConflicts) {
     blockers.push(`Multiple open pull requests claim Issue #${conflict.issueNumber}: ${conflict.prNumbers.map((number) => `#${number}`).join(", ")}.`);
   }
+  if (multipleIssueClaim && pr !== null) {
+    blockers.push(`Pull request #${pr.number} claims multiple Issues (${pr.issueNumbers.map((number) => `#${number}`).join(", ")}), violating the one-Issue delivery boundary.`);
+  }
+  if (pr?.isDraft === true) blockers.push(`Pull request #${pr.number} is still a draft.`);
 
   const phase = derivePhase(readiness, pr, checks, reviews, handoff, drift, ownershipConflict);
   const requiresHuman = humanActionRequested(comments, handoff);
@@ -421,6 +441,7 @@ function projectLane(
             number: pr.number,
             title: pr.title,
             url: pr.url,
+            isDraft: pr.isDraft,
             headSha: pr.headSha,
             baseRefName: pr.baseRefName,
             baseSha: pr.baseSha,
@@ -534,12 +555,14 @@ export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): Re
       sourceRefs: [source("historical", `Merged PR #${completion.number}`, completion.url, snapshot.observedAt)],
     })),
     attention: {
-      humanActionRequired: observationIncomplete ? null : humanActions.length > 0,
-      reasons: observationIncomplete
+      humanActionRequired: humanActions.length > 0 ? true : observationIncomplete ? null : false,
+      reasons: humanActions.length > 0
+        ? humanActions.map((lane) => `#${lane.issue.number}: ${lane.action.reason}`)
+        : observationIncomplete
         ? snapshot.failures.length > 0
           ? snapshot.failures
           : ["One or more authoritative sources are unavailable."]
-        : humanActions.map((lane) => `#${lane.issue.number}: ${lane.action.reason}`),
+        : [],
       sourceRefs: [source("derived", "Attention classification", snapshot.repoUrl, snapshot.observedAt, snapshot.mainSha)],
     },
   };
