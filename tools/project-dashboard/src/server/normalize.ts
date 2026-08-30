@@ -306,7 +306,7 @@ function handoffReportsFailedValidation(body: string): boolean {
   };
 
   if (/\b(?:no|zero|0)\s+(?:(?!not\b)\w+\s+){0,5}(?:(?:was|were)\s+)?run\b/i.test(validation)) return true;
-  const negativeOutcome = /\b(?:(?:did|does|do|has|have|had)\s+not\s+(?:\w+\s+){0,2}pass(?:ed)?|(?:was|were|is|are|has|have|had)\s+(?:not\s+(?:(?:yet|been)\s+)?run|not\s+yet\s+been\s+run|skipped)|not\s+(?:(?:yet|been)\s+)?run|never\s+ran)\b/gi;
+  const negativeOutcome = /\b(?:(?:did|does|do|has|have|had)\s+not\s+(?:\w+\s+){0,2}pass(?:ed)?|(?:was|were|is|are|has|have|had)\s+(?:not\s+(?:(?:yet|been|successfully)\s+){0,2}run|(?:been\s+)?skipped)|not\s+(?:(?:yet|been|successfully)\s+){0,2}run|never\s+(?:ran|run))\b/gi;
   for (const match of validation.matchAll(negativeOutcome)) {
     if (!quantityNegatesOutcome(match.index)) return true;
   }
@@ -447,7 +447,9 @@ function statusClaimIsConditional(
   const prefixSegments = prefixClause.split(/\s*(?:,|\bbut\b)\s*/i).filter(Boolean);
   const unresolvedPrefix = prefixSegments.some((segment) => {
     if (/^(?:subject\s+to\b|(?:only\s+)?(?:once|when|if|after)\b)/i.test(segment)) return true;
-    if (/^(?:awaiting|waiting\s+for)\b[^.;\n]{0,80}\bbefore$/i.test(segment)) return true;
+    if (/\b(?:awaiting|waiting\s+for|pending)\b[^.;\n]{0,80}\bbefore$/i.test(segment) &&
+      !/\b(?:no\s+longer|not)\s+(?:awaiting|waiting\s+for|pending)\b/i.test(segment) &&
+      !/\b(?:is|are|was|were|has|have)\s+(?:now\s+)?(?:been\s+)?(?:complete|completed|resolved|satisfied|approved|cleared|closed)\b/i.test(segment)) return true;
     if (/^pending\b/i.test(segment)) {
       return pendingIsConditional &&
         !/\b(?:is|are|was|were|has|have)\s+(?:now\s+)?(?:been\s+)?(?:complete|completed|resolved|satisfied|approved|cleared|closed)\b/i.test(segment);

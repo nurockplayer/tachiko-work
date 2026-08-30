@@ -943,6 +943,7 @@ describe("normalizeRepositorySnapshot", () => {
     "Ready criteria are pending Steward approval.",
     "Pending Steward approval — Ready.",
     "Pending review is complete, but scope is pending — Ready.",
+    "Backlog awaiting approval before Ready.",
   ])("does not treat a future conditional Ready reference as authoritative readiness: %s", (status) => {
     const backlog = issue();
     backlog.body = `## Status\n\n${status}\n\nOwner: \`agent:codex\``;
@@ -961,6 +962,9 @@ describe("normalizeRepositorySnapshot", () => {
   it.each([
     "Blocked; ready to proceed once access is granted.",
     "Blocked; awaiting Steward approval before Ready.",
+    "Blocked awaiting Steward approval before Ready.",
+    "Blocked waiting for Steward approval before Ready.",
+    "Blocked pending approval before Ready.",
   ])("does not let a prefix- or suffix-qualified future Ready claim override a current blocker: %s", (status) => {
     const blocked = issue();
     blocked.body = `## Status\n\n${status}\n\nOwner: \`agent:codex\``;
@@ -2468,6 +2472,9 @@ describe("normalizeRepositorySnapshot", () => {
     "build has not yet been run",
     "Not only lint failed",
     "Not just lint failed",
+    "build never run",
+    "Tests have been skipped",
+    "build was not successfully run",
   ])("does not accept merge-ready while canonical validation evidence reports: %s", (validation) => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace(
@@ -2490,6 +2497,8 @@ describe("normalizeRepositorySnapshot", () => {
     "No tests not run",
     "0 tests not run",
     "No validation checks have not run",
+    "No tests have been skipped",
+    "No builds were not successfully run",
   ])("does not invent failed validation evidence from a clean summary: %s", (validation) => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace(
