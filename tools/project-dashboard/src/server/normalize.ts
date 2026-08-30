@@ -31,6 +31,8 @@ const explicitlyNonSubstantiveBadge = /^(?:<sub>\s*)+!\[(?:p3|sev(?:erity)?[ -]?
 const explicitlyNonSubstantiveAcknowledgment = /^(?:done|fixed(?:\s+in\s+(?:commit\s+)?[0-9a-f]{7,40})?|thanks,\s+applied this suggestion)[.!]?$/i;
 const negatedUnlabeledSubstantiveImpact = /(?:\b(?:no|none|without|zero|0)\b[^.!?;\n]{0,80}\b(?:p3|sev(?:erity)?[ -]?3|bugs?|errors?|wrong|incorrect|stale|invalid|unsafe|unauthori[sz]ed|data[- ]loss(?:es)?|regressions?|race\s+condition|deadlock|vulnerab\w*|security\s+flaw|crash(?:es|ed|ing)?|panic(?:s|ked|king)?|throws?|throwing|thrown|exceptions?|corrupt\w*|overwrit\w*|bypass\w*|leak\w*|(?:los(?:e|es|ing|t)|delet(?:e|es|ed|ing)|eras(?:e|es|ed|ing))\s+(?:user\s+)?data)\b|\b(?:does|do|did|can|could|would|should|will|is|are|was|were|has|have|had)\s+not\s+(?:\w+\s+){0,3}(?:return\s+(?:a\s+)?wrong|produc\w*\s+(?:an?\s+)?incorrect|(?:los(?:e|es|ing|t)|delet(?:e|es|ed|ing)|eras(?:e|es|ed|ing))\s+(?:user\s+)?data|corrupt\w*|overwrit\w*|bypass\w*|leak\w*|crash\w*|panic\w*|throw\w*|break\w*|fail\w*)\b|\b(?:data[- ]loss(?:es)?|regressions?|race\s+condition|deadlock|vulnerab\w*|security\s+flaw|crash(?:es|ed|ing)?|panic(?:s|ked|king)?|throws?|throwing|thrown|exceptions?|corrupt\w*|overwrit\w*|bypass\w*|leak\w*)\b[^.!?;\n]{0,80}\b(?:not\s+(?:found|present|observed|identified|detected)|absent)\b)/i;
 const affirmativeUnlabeledSubstantiveImpact = /\b(?:wrong|incorrect|unsafe|unauthori[sz]ed|data[- ]loss(?:es)?|regressions?|race\s+condition|deadlock|vulnerab\w*|security\s+flaw|crash(?:es|ed|ing)?|panic(?:s|ked|king)?|throws?|throwing|thrown|exceptions?|corrupt\w*|overwrit\w*|bypass\w*|leak\w*|(?:los(?:e|es|ing|t)|delet(?:e|es|ed|ing)|eras(?:e|es|ed|ing))\s+(?:user\s+)?data)\b/i;
+const affirmativeDestructiveDataImpact = /\b(?:(?:user\s+)?data\s+(?:(?:is|are|was|were)\s+(?:being\s+)?|gets?\s+|got\s+)(?:delet(?:ed|ing)|eras(?:ed|ing))|(?:deletion|erasure)\s+of\s+(?:user\s+)?data)\b/i;
+const negatedDestructiveDataImpact = /\b(?:no\s+(?:(?:user\s+)?data\s+(?:(?:is|are|was|were)\s+(?:being\s+)?|gets?\s+|got\s+)?(?:delet(?:ed|ing)|eras(?:ed|ing))|(?:deletion|erasure)\s+of\s+(?:user\s+)?data)|(?:user\s+)?data\s+(?:is|are|was|were)\s+not\s+(?:being\s+)?(?:delet(?:ed|ing)|eras(?:ed|ing)))\b/i;
 const affirmativeBuildOrTestFailure = /\b(?:(?:fails?|failed|failing|breaks?|broke|broken)\s+(?:to\s+)?(?:compile|build|tests?|typecheck|lint|ci)\b|(?:compilation|build|tests?|typecheck|lint|ci)\s+(?:(?:(?:is|are|was|were)\s+)?(?:fails?|failed|failing|breaks?|broke|broken)\b|(?:(?:do|does|did|can|could|will|would|should|is|are|was|were)\s+not|(?:do|does|did|can|could|will|would|should|is|are|was|were)n['’]?t)\s+pass(?:es|ed|ing)?\b))/i;
 const unlabeledPureMaintainabilitySuggestion = /^(?:could|would|can|please|consider|maybe|perhaps)\b[^.!?;\n]{0,120}\b(?:rename|naming|clarity|readability|style|format(?:ting)?|wording|comments?|documentation|docs|simplif\w*|clean\s*up|refactor\w*)\b/i;
 const authorityOnlyIssue = /^\s*\[(?:decision|research)\](?:\s|\[|$)/i;
@@ -89,8 +91,9 @@ function isSubstantiveFinding(body: string): boolean {
     if (explicitlyNonSubstantiveAcknowledgment.test(clause)) return false;
     if (explicitlyNonSubstantiveFinding.test(clause)) return false;
     if (isSubstantiveReviewClause(clause)) return true;
-    if (isClearedReviewClause(clause) || negatedUnlabeledSubstantiveImpact.test(clause)) return false;
-    if (affirmativeUnlabeledSubstantiveImpact.test(clause)) return true;
+    if (isClearedReviewClause(clause) || negatedUnlabeledSubstantiveImpact.test(clause) ||
+      negatedDestructiveDataImpact.test(clause)) return false;
+    if (affirmativeUnlabeledSubstantiveImpact.test(clause) || affirmativeDestructiveDataImpact.test(clause)) return true;
     return !unlabeledPureMaintainabilitySuggestion.test(clause);
   });
 }
@@ -117,8 +120,10 @@ function isSubstantiveReviewBody(body: string): boolean {
     if (explicitlyNonSubstantiveAcknowledgment.test(clause)) return false;
     if (explicitlyNonSubstantiveFinding.test(clause)) return false;
     if (isSubstantiveReviewClause(clause)) return true;
-    if (isClearedReviewClause(clause) || negatedUnlabeledSubstantiveImpact.test(clause)) return false;
-    return affirmativeUnlabeledSubstantiveImpact.test(clause) || affirmativeBuildOrTestFailure.test(clause);
+    if (isClearedReviewClause(clause) || negatedUnlabeledSubstantiveImpact.test(clause) ||
+      negatedDestructiveDataImpact.test(clause)) return false;
+    return affirmativeUnlabeledSubstantiveImpact.test(clause) || affirmativeDestructiveDataImpact.test(clause) ||
+      affirmativeBuildOrTestFailure.test(clause);
   });
 }
 

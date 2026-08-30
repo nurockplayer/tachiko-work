@@ -1158,6 +1158,9 @@ describe("normalizeRepositorySnapshot", () => {
     "This throws for an empty input.",
     "This deletes user data.",
     "This erases data on retry.",
+    "User data is deleted.",
+    "Data is erased on retry.",
+    "Deletion of user data occurs here.",
   ])("blocks an unlabeled comment-only runtime failure on the current head: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1216,6 +1219,9 @@ describe("normalizeRepositorySnapshot", () => {
     "Tests are not failing on Windows.",
     "This does not throw for an empty input.",
     "This does not delete user data.",
+    "No user data is deleted.",
+    "No deletion of user data.",
+    "User data is not erased.",
   ])("does not infer a substantive finding from a clean comment-only review summary: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1604,6 +1610,7 @@ describe("normalizeRepositorySnapshot", () => {
     "There is no null check, so this crashes on empty input.",
     "This throws for an empty input.",
     "This deletes user data.",
+    "User data is deleted.",
   ])("fails closed on an unlabeled correctness finding: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
@@ -1652,6 +1659,9 @@ describe("normalizeRepositorySnapshot", () => {
     "No data losses.",
     "This is not wrong.",
     "This isn't unsafe.",
+    "No user data is deleted.",
+    "No deletion of user data.",
+    "User data is not erased.",
   ])("does not promote a negated unlabeled impact statement: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
