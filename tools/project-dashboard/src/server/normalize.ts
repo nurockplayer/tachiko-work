@@ -1087,7 +1087,9 @@ export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): Re
   const observationIncomplete = snapshot.fetchHealth === "unavailable" ||
     (snapshot.fetchHealth !== "healthy" && (snapshot.failures.length === 0 || attentionFailures.length > 0));
   const horizonKnown = snapshot.productHorizon !== null;
-  const emptyDeliveryQueueRequiresSteward = deliveries.length === 0 && !observationIncomplete;
+  const deliveryQueueRequiresSteward = !observationIncomplete && deliveries.every(
+    (lane) => lane.phase === "parked" && lane.action.owner === "none",
+  );
 
   return {
     repo: {
@@ -1119,10 +1121,10 @@ export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): Re
       sourceRefs: [source("historical", `Merged PR #${completion.number}`, completion.url, snapshot.observedAt)],
     })),
     attention: {
-      humanActionRequired: humanActions.length > 0 || emptyDeliveryQueueRequiresSteward ? true : observationIncomplete ? null : false,
+      humanActionRequired: humanActions.length > 0 || deliveryQueueRequiresSteward ? true : observationIncomplete ? null : false,
       reasons: humanActions.length > 0
         ? humanActions.map((lane) => `#${lane.issue.number}: ${lane.action.reason}`)
-        : emptyDeliveryQueueRequiresSteward
+        : deliveryQueueRequiresSteward
         ? ["No Ready delivery remains; the Project Steward must select or ready successor work."]
         : observationIncomplete
         ? attentionFailures.length > 0

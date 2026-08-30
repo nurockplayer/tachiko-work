@@ -1743,6 +1743,10 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.currentWork.independent).toEqual([]);
     expect(projection.currentWork.otherHorizon).toEqual(["issue-206"]);
     expect(projection.deliveries[0]?.action.owner).toBe("none");
+    expect(projection.attention).toMatchObject({
+      humanActionRequired: true,
+      reasons: ["No Ready delivery remains; the Project Steward must select or ready successor work."],
+    });
   });
 
   it("routes a non-current product-milestone pull request to the Project Steward", () => {
