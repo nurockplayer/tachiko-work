@@ -171,11 +171,17 @@ pub extern "C" fn tachiko_designer_project_export() {
     });
 }
 
+/// Release project bytes after the Worker has copied an export receipt.
+#[unsafe(no_mangle)]
+pub extern "C" fn tachiko_designer_project_release() {
+    PROJECT.with(|project| *project.borrow_mut() = Vec::new());
+}
+
 /// Destroy the current occurrence and release transient project bytes.
 #[unsafe(no_mangle)]
 pub extern "C" fn tachiko_designer_project_close() {
     RUNTIME.with(|runtime| *runtime.borrow_mut() = None);
-    PROJECT.with(|project| *project.borrow_mut() = Vec::new());
+    tachiko_designer_project_release();
 }
 
 /// Return the current project-transfer arena offset.

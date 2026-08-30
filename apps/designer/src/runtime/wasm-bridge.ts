@@ -13,6 +13,7 @@ type DesignerWasmExports = {
   tachiko_designer_project_reserve(length: number): number;
   tachiko_designer_project_open(): void;
   tachiko_designer_project_export(): void;
+  tachiko_designer_project_release(): void;
   tachiko_designer_project_close(): void;
   tachiko_designer_project_ptr(): number;
   tachiko_designer_project_len(): number;
@@ -101,26 +102,34 @@ export async function createDesignerWasmBridge(
         return tooLargeReply("The expected revision exceeds the bridge limit.");
       }
       exports.tachiko_designer_project_export();
-      const reply = readReply();
-      if (reply.status === "error") return reply;
-      if (reply.response.type !== "project_exported") {
-        throw new Error(
-          `Expected 'project_exported' response, received '${reply.response.type}'.`,
-        );
+      try {
+        const reply = readReply();
+        if (reply.status === "error") return reply;
+        if (reply.response.type !== "project_exported") {
+          throw new Error(
+            `Expected 'project_exported' response, received '${reply.response.type}'.`,
+          );
+        }
+        const pointer = exports.tachiko_designer_project_ptr();
+        const length = exports.tachiko_designer_project_len();
+        if (length !== reply.response.payload.byte_length) {
+          throw new Error("Designer project export length did not match its receipt.");
+        }
+        const projectBytes = new Uint8Array(
+          exports.memory.buffer,
+          pointer,
+          length,
+        ).slice();
+        return {
+          status: "ok",
+          export: {
+            revision: reply.response.payload.revision,
+            bytes: projectBytes.buffer,
+          },
+        };
+      } finally {
+        exports.tachiko_designer_project_release();
       }
-      const pointer = exports.tachiko_designer_project_ptr();
-      const length = exports.tachiko_designer_project_len();
-      if (length !== reply.response.payload.byte_length) {
-        throw new Error("Designer project export length did not match its receipt.");
-      }
-      const projectBytes = new Uint8Array(exports.memory.buffer, pointer, length).slice();
-      return {
-        status: "ok",
-        export: {
-          revision: reply.response.payload.revision,
-          bytes: projectBytes.buffer,
-        },
-      };
     },
     closeProject: () => {
       exports.tachiko_designer_project_close();
