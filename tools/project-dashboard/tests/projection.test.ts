@@ -2466,6 +2466,8 @@ describe("normalizeRepositorySnapshot", () => {
     "build was skipped",
     "build never ran",
     "build has not yet been run",
+    "Not only lint failed",
+    "Not just lint failed",
   ])("does not accept merge-ready while canonical validation evidence reports: %s", (validation) => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace(

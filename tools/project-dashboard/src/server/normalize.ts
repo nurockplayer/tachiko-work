@@ -313,7 +313,7 @@ function handoffReportsFailedValidation(body: string): boolean {
   for (const match of validation.matchAll(/\bfailed\b/gi)) {
     const prefix = validation.slice(Math.max(0, match.index - 80), match.index);
     if (quantityNegatesOutcome(match.index)) continue;
-    if (/\b(?:not|never)\s+(?:\w+\s+){0,4}$/i.test(prefix)) continue;
+    if (/\b(?:never\s+(?:\w+\s+){0,4}|not\s+(?!only\b|just\b)(?:\w+\s+){0,4})$/i.test(prefix)) continue;
     return true;
   }
   return false;
