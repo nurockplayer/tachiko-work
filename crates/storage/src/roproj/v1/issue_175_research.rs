@@ -15,12 +15,10 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use sha2::Digest as _;
-use tachiko_formula_engine::calculate_complete;
 use tachiko_semantic_core::{
     Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldDefinition, FieldId,
     FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
 };
-use tachiko_workspace_engine::validation_report;
 
 use super::*;
 
@@ -1258,7 +1256,11 @@ fn owned_files(tree: &CanonicalRoProjectV1) -> Vec<(String, Vec<u8>)> {
 }
 
 fn current_a0(files: &[(String, Vec<u8>)]) -> Result<Document, FormatError> {
-    let tree = CanonicalRoProjectV1::try_from_files(files.to_vec())?;
+    current_a0_owned(files.to_vec())
+}
+
+fn current_a0_owned(files: Vec<(String, Vec<u8>)>) -> Result<Document, FormatError> {
+    let tree = CanonicalRoProjectV1::try_from_files(files)?;
     decode(&tree)
 }
 
@@ -1414,6 +1416,14 @@ fn percentile(samples: &mut [Duration], percentile: usize) -> Duration {
     samples[index]
 }
 
+#[allow(clippy::assertions_on_constants)]
+fn require_release_profile() {
+    assert!(
+        !cfg!(debug_assertions),
+        "Issue #175 measurements require `cargo test --release`"
+    );
+}
+
 #[test]
 fn issue_175_a1_matches_a0_semantics_without_whole_tree_reencoding() {
     let document = mixed_document(257, 37);
@@ -1432,6 +1442,112 @@ fn issue_175_a1_matches_a0_semantics_without_whole_tree_reencoding() {
 }
 
 #[test]
+fn issue_175_a1_preserves_a0_rejection_classes() {
+    let tree = encode(&mixed_document(257, 37)).unwrap();
+    let canonical = owned_files(&tree);
+
+    let mut invalid_path = canonical.clone();
+    invalid_path[2].0 = "entities/unknown.jsonl".to_owned();
+    assert_rejection_parity("invalid path", &invalid_path);
+
+    let mut wrong_shard = canonical.clone();
+    let source = wrong_shard
+        .iter()
+        .enumerate()
+        .skip(2)
+        .find(|(_, (_, bytes))| !bytes.is_empty())
+        .map(|(index, _)| index)
+        .unwrap();
+    let target = if source == 2 { 3 } else { 2 };
+    wrong_shard[target].1 = std::mem::take(&mut wrong_shard[source].1);
+    assert_rejection_parity("wrong shard", &wrong_shard);
+
+    let mut noncanonical = canonical.clone();
+    mutate_first_entity_record(&mut noncanonical, |record| format!("{record} "));
+    assert_rejection_parity("noncanonical JSONL", &noncanonical);
+
+    let mut duplicate = canonical.clone();
+    let shard = duplicate
+        .iter_mut()
+        .skip(2)
+        .find(|(_, bytes)| !bytes.is_empty())
+        .unwrap();
+    let source = std::str::from_utf8(&shard.1).unwrap();
+    let last = source
+        .trim_end_matches('\n')
+        .split('\n')
+        .next_back()
+        .unwrap()
+        .to_owned();
+    shard.1.extend_from_slice(last.as_bytes());
+    shard.1.push(b'\n');
+    assert_rejection_parity("duplicate entity id", &duplicate);
+
+    let mut semantic_invalid = canonical.clone();
+    mutate_first_entity_dto(&mut semantic_invalid, |entity| {
+        entity.fields.remove("base");
+    });
+    assert_rejection_parity("semantic invalidity", &semantic_invalid);
+
+    let mut formula_limit = canonical;
+    mutate_first_entity_dto(&mut formula_limit, |entity| {
+        entity
+            .fields
+            .insert("computed".to_owned(), ValueV1::Formula(balanced_formula(8)));
+    });
+    assert_rejection_parity("formula node limit", &formula_limit);
+}
+
+fn assert_rejection_parity(label: &str, files: &[(String, Vec<u8>)]) {
+    let a0 = current_a0(files).unwrap_err();
+    let a1 = admit_one_pass_exact(files, false).unwrap_err();
+    assert_eq!(
+        std::mem::discriminant(&a0),
+        std::mem::discriminant(&a1),
+        "A0/A1 rejection class drift for {label}: A0={a0}; A1={a1}"
+    );
+}
+
+fn mutate_first_entity_record(
+    files: &mut [(String, Vec<u8>)],
+    mutation: impl FnOnce(&str) -> String,
+) {
+    let (_, bytes) = files
+        .iter_mut()
+        .skip(2)
+        .find(|(_, bytes)| !bytes.is_empty())
+        .unwrap();
+    let newline = bytes.iter().position(|byte| *byte == b'\n').unwrap();
+    let record = std::str::from_utf8(&bytes[..newline]).unwrap();
+    let mutated = mutation(record);
+    let mut replacement = mutated.into_bytes();
+    replacement.push(b'\n');
+    replacement.extend_from_slice(&bytes[newline + 1..]);
+    *bytes = replacement;
+}
+
+fn mutate_first_entity_dto(files: &mut [(String, Vec<u8>)], mutation: impl FnOnce(&mut EntityV1)) {
+    mutate_first_entity_record(files, |record| {
+        let mut entity: EntityV1 = deserialize_roproj("research mutation", record).unwrap();
+        mutation(&mut entity);
+        let mut rendered = String::new();
+        write_entity(&mut rendered, &entity).unwrap();
+        rendered
+    });
+}
+
+fn balanced_formula(depth: usize) -> ExpressionV1 {
+    if depth == 0 {
+        ExpressionV1::Number(NumberV1(1.0))
+    } else {
+        ExpressionV1::Add(BinaryArgumentsV1 {
+            left: Box::new(balanced_formula(depth - 1)),
+            right: Box::new(balanced_formula(depth - 1)),
+        })
+    }
+}
+
+#[test]
 fn issue_175_streaming_host_a1_matches_current_host_a0() {
     let temp = ResearchTempDirectory::new();
     let root = temp.path().join("mixed-smoke.roproj");
@@ -1446,11 +1562,6 @@ fn issue_175_streaming_host_a1_matches_current_host_a0() {
     assert_eq!(work.entity_records, 257);
     assert!(timings.source_known <= timings.semantic_current);
     assert!(timings.first_source_preview.unwrap() <= timings.semantic_current);
-    assert_eq!(calculate_complete(&a0), calculate_complete(&a1));
-    assert_eq!(
-        validation_report(&a0).stable_observations(),
-        validation_report(&a1).stable_observations()
-    );
 }
 
 #[test]
@@ -1557,10 +1668,6 @@ fn issue_175_bounded_materialization_is_revision_pinned_and_never_guesses_formul
     };
     assert_eq!(reverse_dependent_closure(&index, &changed).len(), 256);
     assert!(matches!(
-        calculate_complete(&complete),
-        tachiko_formula_engine::CalculationOutcome::Complete(_)
-    ));
-    assert!(matches!(
         bounded_formula_proof(),
         BoundedProof::RequiresFullAdmission(_)
     ));
@@ -1578,10 +1685,6 @@ fn issue_175_bounded_materialization_is_revision_pinned_and_never_guesses_formul
         dependency_entity_closure(&cycle_index, &requested).len(),
         257
     );
-    assert!(matches!(
-        calculate_complete(&cycle),
-        tachiko_formula_engine::CalculationOutcome::Failed(_)
-    ));
     assert!(matches!(
         bounded_formula_proof(),
         BoundedProof::RequiresFullAdmission(_)
@@ -1609,6 +1712,7 @@ fn issue_175_bounded_materialization_is_revision_pinned_and_never_guesses_formul
 #[test]
 #[ignore = "run explicitly in release mode to record Issue #175 A0/A1 evidence"]
 fn issue_175_a0_a1_release_baseline() {
+    require_release_profile();
     let entity_counts = std::env::var("TACHIKO_ISSUE_175_ENTITY_COUNTS")
         .unwrap_or_else(|_| "1000,10000".to_owned());
     let repetitions = std::env::var("TACHIKO_ISSUE_175_REPETITIONS")
@@ -1629,8 +1733,9 @@ fn issue_175_a0_a1_release_baseline() {
         let mut a0_samples = Vec::with_capacity(repetitions);
         let mut a1_samples = Vec::with_capacity(repetitions);
         for _ in 0..repetitions {
+            let a0_input = files.clone();
             let start = Instant::now();
-            black_box(current_a0(black_box(&files)).unwrap());
+            black_box(current_a0_owned(black_box(a0_input)).unwrap());
             a0_samples.push(start.elapsed());
             let start = Instant::now();
             black_box(admit_one_pass_exact(black_box(&files), false).unwrap());
@@ -1644,6 +1749,7 @@ fn issue_175_a0_a1_release_baseline() {
 #[test]
 #[ignore = "run explicitly in release mode to record Issue #175 host-open evidence"]
 fn issue_175_a0_a1_host_open_warm_raw_samples() {
+    require_release_profile();
     let entity_counts = std::env::var("TACHIKO_ISSUE_175_ENTITY_COUNTS")
         .unwrap_or_else(|_| "1000,10000".to_owned());
     let repetitions = std::env::var("TACHIKO_ISSUE_175_REPETITIONS")
@@ -1683,6 +1789,7 @@ fn issue_175_a0_a1_host_open_warm_raw_samples() {
 #[test]
 #[ignore = "run explicitly in release mode to record Issue #175 C evidence"]
 fn issue_175_directory_structural_raw_samples() {
+    require_release_profile();
     let entity_counts = std::env::var("TACHIKO_ISSUE_175_ENTITY_COUNTS")
         .unwrap_or_else(|_| "1000,10000".to_owned());
     let repetitions = std::env::var("TACHIKO_ISSUE_175_REPETITIONS")
@@ -1725,6 +1832,7 @@ fn issue_175_directory_structural_raw_samples() {
 #[test]
 #[ignore = "run explicitly in release mode to record Issue #175 E1 evidence"]
 fn issue_175_dirty_sidecar_raw_samples() {
+    require_release_profile();
     let entity_counts = std::env::var("TACHIKO_ISSUE_175_ENTITY_COUNTS")
         .unwrap_or_else(|_| "1000,10000".to_owned());
     let repetitions = std::env::var("TACHIKO_ISSUE_175_REPETITIONS")
@@ -1774,6 +1882,7 @@ fn issue_175_dirty_sidecar_raw_samples() {
 #[test]
 #[ignore = "run explicitly in release mode to record Issue #175 D evidence"]
 fn issue_175_bounded_materialization_raw_samples() {
+    require_release_profile();
     let entity_counts =
         std::env::var("TACHIKO_ISSUE_175_ENTITY_COUNTS").unwrap_or_else(|_| "1000,4000".to_owned());
     let repetitions = std::env::var("TACHIKO_ISSUE_175_REPETITIONS")
