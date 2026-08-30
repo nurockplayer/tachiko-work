@@ -296,6 +296,74 @@ class ControlRecoveryClient extends FakeClient {
 }
 
 describe("Designer application seam", () => {
+  it("preserves opaque edit targets across HTML parsing", async () => {
+    const target = { entity: "entity\u0000id", field: "field\rid" };
+    const opaqueTable = structuredClone(table);
+    opaqueTable.columns[1]!.id = target.field;
+    opaqueTable.rows[0]!.fields[1]!.target = target;
+
+    class OpaqueTargetClient extends FakeClient {
+      override async queryTable(): Promise<TableProjection> {
+        return structuredClone(opaqueTable);
+      }
+
+      override async editNumber(
+        expectedRevision: string,
+        editedTarget: FieldTarget,
+        input: string,
+      ): Promise<PublicationProjection> {
+        this.editRequests.push({
+          expectedRevision,
+          target: structuredClone(editedTarget),
+          input,
+        });
+        return {
+          base_revision: "resident/0",
+          resulting_revision: "resident/1",
+          entities: [],
+          fields: [target],
+          affected_calculations: [],
+        };
+      }
+
+      override async queryFields(
+        revision: string,
+        fields: FieldTarget[],
+      ): Promise<FieldBatchProjection> {
+        if (fields.length === 1 && fields[0]?.entity === "shop") {
+          return super.queryFields(revision, fields);
+        }
+        this.queryRequests.push(structuredClone(fields));
+        return {
+          revision,
+          fields: [
+            {
+              ...opaqueTable.rows[0]!.fields[1]!,
+              stored: { kind: "number", value: 45 },
+            },
+          ],
+        };
+      }
+    }
+
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const client = new OpaqueTargetClient();
+    const app = mountDesigner(root, client, host);
+    await app.ready;
+
+    const damage = root.querySelector<HTMLInputElement>('input[value="36"]');
+    if (damage === null) throw new Error("opaque target input is required");
+    damage.value = "45";
+    damage.form?.requestSubmit();
+
+    await vi.waitFor(() => {
+      expect(client.editRequests).toHaveLength(1);
+    });
+    expect(client.editRequests[0]?.target).toEqual(target);
+  });
+
   it("renders the bounded table and selectively refreshes a derived result", async () => {
     document.body.innerHTML = '<div id="app"></div>';
     const root = document.querySelector<HTMLElement>("#app");

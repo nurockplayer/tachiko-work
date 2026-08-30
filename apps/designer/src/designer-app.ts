@@ -386,8 +386,8 @@ export function mountDesigner(
       form.addEventListener("submit", (event) => {
         event.preventDefault();
         const input = form.querySelector<HTMLInputElement>("input");
-        const entity = form.dataset.entity;
-        const field = form.dataset.field;
+        const entity = decodeOpaqueAttribute(form.dataset.entity);
+        const field = decodeOpaqueAttribute(form.dataset.field);
         if (input === null || entity === undefined || field === undefined) return;
         void commitNumber({ entity, field }, input.value);
       });
@@ -685,9 +685,9 @@ function fieldMarkup(
   if (field.editable_number && field.stored?.kind === "number") {
     return `
       <td data-field="${escapeHtml(key)}" class="stored-cell">
-        <form data-edit-form data-entity="${escapeHtml(
+        <form data-edit-form data-entity="${encodeOpaqueAttribute(
           field.target.entity,
-        )}" data-field="${escapeHtml(field.target.field)}">
+        )}" data-field="${encodeOpaqueAttribute(field.target.field)}">
           <input
             type="number"
             step="any"
@@ -790,4 +790,18 @@ function escapeHtml(value: string): string {
     };
     return replacements[character] ?? character;
   });
+}
+
+function encodeOpaqueAttribute(value: string): string {
+  return escapeHtml(JSON.stringify(value));
+}
+
+function decodeOpaqueAttribute(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  try {
+    const decoded: unknown = JSON.parse(value);
+    return typeof decoded === "string" ? decoded : undefined;
+  } catch {
+    return undefined;
+  }
 }
