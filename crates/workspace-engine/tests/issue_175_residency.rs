@@ -6,11 +6,77 @@
 
 use std::{collections::BTreeMap, hint::black_box, process::Command};
 
+use tachiko_formula_engine::{CalculationOutcome, calculate_complete};
 use tachiko_workspace_engine::{
     Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldDefinition, FieldId,
     FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
     patch_lifecycle::DocumentScopeId, resident_session::ResidentWorkspaceSession,
+    validation_report,
 };
+
+#[test]
+fn issue_175_full_oracle_is_stable_for_admission_pressure_documents() {
+    let chain = oracle_chain_document(257, false);
+    let (before, before_invalid) = stable_full_oracle(&chain);
+    assert!(matches!(before, CalculationOutcome::Complete(_)));
+    assert!(!before_invalid);
+
+    let mut changed = chain;
+    changed
+        .entities
+        .get_mut(&EntityId::from("issue-175-oracle-chain-00000000"))
+        .unwrap()
+        .fields
+        .insert(
+            FieldId::from("value"),
+            Value::Number(Number::new(7.0).unwrap()),
+        );
+    let (after, after_invalid) = stable_full_oracle(&changed);
+    assert!(matches!(after, CalculationOutcome::Complete(_)));
+    assert!(!after_invalid);
+    assert_ne!(
+        before, after,
+        "cold numeric mutation must change the full outcome"
+    );
+
+    let cycle = oracle_chain_document(257, true);
+    let (cycle_outcome, cycle_invalid) = stable_full_oracle(&cycle);
+    assert!(matches!(cycle_outcome, CalculationOutcome::Failed(_)));
+    assert!(
+        cycle_invalid,
+        "cross-cold SCC must remain in stable diagnostics"
+    );
+
+    let mut division_by_zero = synthetic_document(257);
+    division_by_zero
+        .entities
+        .values_mut()
+        .next()
+        .unwrap()
+        .fields
+        .insert(
+            FieldId::from("computed"),
+            Value::Formula(Expression::Divide {
+                left: Box::new(Expression::Number(Number::new(1.0).unwrap())),
+                right: Box::new(Expression::Number(Number::new(0.0).unwrap())),
+            }),
+        );
+    let (failure, failure_invalid) = stable_full_oracle(&division_by_zero);
+    assert!(matches!(failure, CalculationOutcome::Failed(_)));
+    assert!(
+        failure_invalid,
+        "evaluation failure must remain in stable diagnostics"
+    );
+}
+
+fn stable_full_oracle(document: &Document) -> (CalculationOutcome, bool) {
+    let twin = document.clone();
+    let outcome = calculate_complete(document);
+    assert_eq!(outcome, calculate_complete(&twin));
+    let observations = validation_report(document).stable_observations();
+    assert_eq!(observations, validation_report(&twin).stable_observations());
+    (outcome, !observations.is_empty())
+}
 
 #[test]
 #[ignore = "internal fresh-process child for Issue #175 retained-state RSS evidence"]
@@ -195,6 +261,59 @@ fn synthetic_document(entity_count: usize) -> Document {
                 id: schema_id,
                 key: SchemaKey::from("retained_records"),
                 fields,
+            },
+        )]),
+        entities,
+    }
+}
+
+fn oracle_chain_document(entity_count: usize, cycle: bool) -> Document {
+    let schema_id = SchemaId::from("issue-175-oracle-chain-schema");
+    let value_field = FieldId::from("value");
+    let entities = (0..entity_count)
+        .map(|index| {
+            let id = EntityId::from(format!("issue-175-oracle-chain-{index:08}"));
+            let value = if index == 0 && !cycle {
+                Value::Number(Number::new(1.0).unwrap())
+            } else {
+                let target = if index == 0 {
+                    entity_count - 1
+                } else {
+                    index - 1
+                };
+                Value::Formula(Expression::Reference(FieldRef::new(
+                    format!("issue-175-oracle-chain-{target:08}"),
+                    value_field.clone(),
+                )))
+            };
+            (
+                id.clone(),
+                Entity {
+                    id,
+                    key: EntityKey::from(format!("oracle_chain_{index:08}")),
+                    schema: schema_id.clone(),
+                    fields: BTreeMap::from([(value_field.clone(), value)]),
+                },
+            )
+        })
+        .collect();
+    Document {
+        id: DocumentId::from("issue-175-oracle-chain-document"),
+        title: if cycle {
+            "Issue 175 cross-cold oracle cycle"
+        } else {
+            "Issue 175 oracle dependency chain"
+        }
+        .to_owned(),
+        schemas: BTreeMap::from([(
+            schema_id.clone(),
+            Schema {
+                id: schema_id,
+                key: SchemaKey::from("oracle_chain"),
+                fields: BTreeMap::from([(
+                    value_field.clone(),
+                    number_field(&value_field, "value"),
+                )]),
             },
         )]),
         entities,
