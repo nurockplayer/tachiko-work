@@ -21,7 +21,6 @@ const explicitlyNonSubstantiveFinding = /^(?:[_*]+\s*)?(?:\[(?:p3|sev(?:erity)?[
 const explicitlyNonSubstantiveBadge = /^(?:<sub>\s*)+!\[(?:p3|sev(?:erity)?[ -]?3)\s+badge\]\([^)]*\)(?:<\/sub>\s*)+/i;
 const explicitlyNonSubstantiveAcknowledgment = /^(?:done|fixed(?:\s+in\s+(?:commit\s+)?[0-9a-f]{7,40})?|thanks,\s+applied this suggestion)[.!]?$/i;
 const authorityOnlyIssue = /^\s*\[(?:decision|research)\](?:\s|\[|$)/i;
-const decisionIssue = /^\s*\[decision\](?:\s|\[|$)/i;
 
 function source(
   className: SourceClass,
@@ -315,7 +314,7 @@ function issueReadiness(issue: RawIssue, handoff: HandoffProjection): DeliveryLa
   if (issue.blockedBy === null) return "unknown";
   if (issue.blockedBy.length > 0) return "blocked";
   const issueStatus = issueStatusText(issue);
-  if (decisionIssue.test(issue.title) && statusClaimsDecisionReady(issueStatus)) return "ready";
+  if (authorityOnlyIssue.test(issue.title) && statusClaimsDecisionReady(issueStatus)) return "ready";
   if (authorityOnlyIssue.test(issue.title)) return "unknown";
   if (/\bdecision[_ -]?ready\b/i.test(issueStatus) || statusClaimsNotReady(issueStatus)) return "unknown";
   if (statusClaimsParked(issueStatus)) return "parked";
@@ -338,7 +337,7 @@ function issueReadiness(issue: RawIssue, handoff: HandoffProjection): DeliveryLa
 }
 
 function isDecisionReadyAuthorityIssue(issue: RawIssue): boolean {
-  return decisionIssue.test(issue.title) && statusClaimsDecisionReady(issueStatusText(issue));
+  return authorityOnlyIssue.test(issue.title) && statusClaimsDecisionReady(issueStatusText(issue));
 }
 
 function isFocusedAuthorityPullRequest(pr: RawPullRequest): boolean {
@@ -346,7 +345,7 @@ function isFocusedAuthorityPullRequest(pr: RawPullRequest): boolean {
 }
 
 function humanActionRequested(comments: RawComment[], handoff: HandoffProjection): boolean {
-  if (!["current", "stale", "inconsistent"].includes(handoff.condition)) return false;
+  if (handoff.condition === "missing") return false;
   if (/human[_ -]?required/i.test(handoff.claimedState ?? "")) return true;
   const latest = canonicalComments(comments).toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
   if (latest === undefined) return false;

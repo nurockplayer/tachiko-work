@@ -406,18 +406,21 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries).toEqual([]);
   });
 
-  it("allows a Decision-Ready authority Issue with a focused PR through the merge gate", () => {
-    const decision = issue();
-    decision.title = "[Decision][M05 P1] Choose the dashboard delivery boundary";
-    decision.body = "## Status\n\n**DECISION-READY**\n\nOwner: `agent:codex`";
-    const pr = pullRequest();
-    pr.changedPaths = ["docs/decisions/ADR-0029-dashboard-boundary.md"];
+  it.each(["Decision", "Research"])(
+    "allows a Decision-Ready %s authority Issue with a focused PR through the merge gate",
+    (kind) => {
+      const decision = issue();
+      decision.title = `[${kind}][M05 P1] Choose the dashboard delivery boundary`;
+      decision.body = "## Status\n\n**DECISION-READY**\n\nOwner: `agent:codex`";
+      const pr = pullRequest();
+      pr.changedPaths = ["docs/decisions/ADR-0029-dashboard-boundary.md"];
 
-    const projection = normalizeRepositorySnapshot(snapshot({ issues: [decision], pullRequests: [pr] }));
+      const projection = normalizeRepositorySnapshot(snapshot({ issues: [decision], pullRequests: [pr] }));
 
-    expect(projection.deliveries[0]?.issue.readiness).toBe("active");
-    expect(projection.deliveries[0]?.phase).toBe("merge_gate");
-  });
+      expect(projection.deliveries[0]?.issue.readiness).toBe("active");
+      expect(projection.deliveries[0]?.phase).toBe("merge_gate");
+    },
+  );
 
   it("does not treat unrelated negation as negated Decision-Ready authority", () => {
     const decision = issue();
@@ -431,15 +434,18 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries[0]?.phase).toBe("merge_gate");
   });
 
-  it("keeps a Decision-Ready authority Issue without a focused PR outside delivery", () => {
-    const decision = issue();
-    decision.title = "[Decision][M05 P1] Choose the dashboard delivery boundary";
-    decision.body = "## Status\n\n**DECISION-READY**\n\nOwner: `agent:codex`";
+  it.each(["Decision", "Research"])(
+    "keeps a Decision-Ready %s authority Issue without a focused PR outside delivery",
+    (kind) => {
+      const decision = issue();
+      decision.title = `[${kind}][M05 P1] Choose the dashboard delivery boundary`;
+      decision.body = "## Status\n\n**DECISION-READY**\n\nOwner: `agent:codex`";
 
-    const projection = normalizeRepositorySnapshot(snapshot({ issues: [decision] }));
+      const projection = normalizeRepositorySnapshot(snapshot({ issues: [decision] }));
 
-    expect(projection.deliveries).toEqual([]);
-  });
+      expect(projection.deliveries).toEqual([]);
+    },
+  );
 
   it("preserves human escalation from a Decision-Ready authority Issue without a pull request", () => {
     const decision = issue();
@@ -485,26 +491,29 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries[0]?.phase).toBe("validating");
   });
 
-  it("keeps a Decision-Ready authority Issue paired with implementation changes out of the merge gate", () => {
-    const decision = issue();
-    decision.title = "[Decision][M05 P1] Choose the dashboard delivery boundary";
-    decision.body = "## Status\n\n**DECISION-READY**\n\nOwner: `agent:codex`";
-    const pr = pullRequest();
-    pr.changedPaths = [
-      "docs/decisions/ADR-0029-dashboard-boundary.md",
-      "crates/workspace-engine/src/lib.rs",
-    ];
+  it.each(["Decision", "Research"])(
+    "keeps a Decision-Ready %s authority Issue paired with implementation changes out of the merge gate",
+    (kind) => {
+      const decision = issue();
+      decision.title = `[${kind}][M05 P1] Choose the dashboard delivery boundary`;
+      decision.body = "## Status\n\n**DECISION-READY**\n\nOwner: `agent:codex`";
+      const pr = pullRequest();
+      pr.changedPaths = [
+        "docs/decisions/ADR-0029-dashboard-boundary.md",
+        "crates/workspace-engine/src/lib.rs",
+      ];
 
-    const projection = normalizeRepositorySnapshot(snapshot({ issues: [decision], pullRequests: [pr] }));
-    const lane = projection.deliveries[0];
+      const projection = normalizeRepositorySnapshot(snapshot({ issues: [decision], pullRequests: [pr] }));
+      const lane = projection.deliveries[0];
 
-    expect(lane?.issue.readiness).toBe("unknown");
-    expect(lane?.phase).toBe("validating");
-    expect(lane?.blockers).toContain(
-      "Decision-Ready authorizes only a focused authority or specification pull request.",
-    );
-    expect(lane?.action.owner).toBe("codex");
-  });
+      expect(lane?.issue.readiness).toBe("unknown");
+      expect(lane?.phase).toBe("validating");
+      expect(lane?.blockers).toContain(
+        "Decision-Ready authorizes only a focused authority or specification pull request.",
+      );
+      expect(lane?.action.owner).toBe("codex");
+    },
+  );
 
   it("keeps Decision-Ready scope unknown when changed paths cannot be observed completely", () => {
     const decision = issue();
@@ -1138,6 +1147,21 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.phase).toBe("validating");
     expect(lane?.blockers).toContain("Canonical handoff could not be fully reconciled with the observed PR and live main.");
     expect(lane?.action.owner).toBe("codex");
+  });
+
+  it("preserves affirmative human action from an incompletely reconciled handoff", () => {
+    const pr = pullRequest();
+    pr.comments[0]!.body = pr.comments[0]!.body
+      .replace("HUMAN ACTION: none", "HUMAN ACTION: Steward approval required")
+      .replace(`\nLAST CHECKED MAIN: ${mainSha}`, "");
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.handoff.condition).toBe("unknown");
+    expect(lane?.phase).toBe("human_required");
+    expect(lane?.action.owner).toBe("human");
+    expect(projection.attention.humanActionRequired).toBe(true);
   });
 
   it("rejects formatting-only mandatory handoff values", () => {
