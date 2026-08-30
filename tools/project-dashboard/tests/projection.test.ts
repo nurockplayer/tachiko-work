@@ -145,6 +145,27 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.attention.humanActionRequired).toBe(true);
   });
 
+  it("preserves a stale no-PR blocked handoff while requiring reconciliation", () => {
+    const coordinated = issue();
+    coordinated.comments[0]!.body = [
+      "<!-- agent-handoff:v1 -->",
+      "OWNER: agent:codex",
+      "STATE: blocked",
+      `LAST CHECKED MAIN: ${"d".repeat(40)}`,
+      "HUMAN ACTION: none",
+    ].join("\n");
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [coordinated] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.handoff.condition).toBe("stale");
+    expect(lane?.pr).toBeNull();
+    expect(lane?.issue.readiness).toBe("blocked");
+    expect(lane?.phase).toBe("blocked");
+    expect(lane?.blockers).toContain("Canonical handoff has not reconciled the observed live main.");
+    expect(lane?.action.owner).toBe("codex");
+  });
+
   it("does not turn guardrail prose into parked, blocked, or human-required state", () => {
     const coordinated = issue();
     coordinated.body += "\n\n## Guardrails\nPark on overlap. Blocked work must not race. No human action is required.";
@@ -230,6 +251,36 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.reviews.substantiveUnresolvedCount).toBe(1);
     expect(lane?.action).toMatchObject({ owner: "codex" });
     expect(projection.attention.humanActionRequired).toBe(false);
+  });
+
+  it("routes delivery reconciliation to the claimed ChatGPT agent", () => {
+    const pr = pullRequest();
+    pr.comments[0]!.body = pr.comments[0]!.body.replace("OWNER: agent:codex", "OWNER: agent:chatgpt");
+    pr.reviewThreads = [
+      { resolved: false, outdated: false, comments: ["[P2] Correctness finding"], url: "https://github.com/thread" },
+    ];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.owner).toBe("agent:chatgpt");
+    expect(lane?.phase).toBe("review_fix");
+    expect(lane?.action.owner).toBe("chatgpt");
+  });
+
+  it("does not guess Codex for an unrecognized delivery agent", () => {
+    const pr = pullRequest();
+    pr.comments[0]!.body = pr.comments[0]!.body.replace("OWNER: agent:codex", "OWNER: agent:other-provider");
+    pr.reviewThreads = [
+      { resolved: false, outdated: false, comments: ["[P2] Correctness finding"], url: "https://github.com/thread" },
+    ];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.owner).toBe("agent:other-provider");
+    expect(lane?.phase).toBe("review_fix");
+    expect(lane?.action.owner).toBe("unknown");
   });
 
   it("treats an old-head changes-requested review without a current finding as rereview", () => {

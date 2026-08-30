@@ -203,7 +203,12 @@ function issueReadiness(issue: RawIssue, handoff: HandoffProjection): DeliveryLa
   if (issue.blockedBy === null) return "unknown";
   if (issue.blockedBy.length > 0) return "blocked";
   const statusSection = issue.body.match(/## Status\s*([\s\S]*?)(?=\n## |$)/i)?.[1] ?? issue.body.slice(0, 600);
-  const currentHandoffState = handoff.condition === "current" ? handoff.claimedState : null;
+  const handoffState = handoff.claimedState?.toLowerCase() ?? "";
+  const staleHandoffClaimsBlocked = handoff.condition === "stale" &&
+    /\bblock(?:ed)?\b/.test(handoffState) && !handoffState.includes("not blocked");
+  const currentHandoffState = handoff.condition === "current" || staleHandoffClaimsBlocked
+    ? handoff.claimedState
+    : null;
   const statusText = (currentHandoffState ?? statusSection).toLowerCase();
   if (/\bdecision[_ -]?ready\b/.test(statusText)) return "unknown";
   if (/\bnot[_ -]+ready\b/.test(statusText)) return "unknown";
@@ -231,6 +236,13 @@ function humanActionRequested(comments: RawComment[], handoff: HandoffProjection
     /\b(?:(?:human|steward)\s+)?(?:action|decision|escalation)\s+(?:is\s+)?not\s+(?:required|needed)\b/i.test(claim)
   ) return false;
   return /\b(?:required|needed|decision|action)\b/i.test(claim);
+}
+
+function deliveryActionOwner(owner: string): DeliveryLane["action"]["owner"] {
+  const normalized = owner.trim().toLowerCase();
+  if (normalized === "agent:codex" || normalized === "codex") return "codex";
+  if (normalized === "agent:chatgpt" || normalized === "chatgpt") return "chatgpt";
+  return "unknown";
 }
 
 function projectChecks(pr: RawPullRequest, observedAt: string): CheckProjection {
@@ -538,6 +550,7 @@ function projectLane(
   }
 
   const requiresHuman = humanActionRequested(comments, handoff);
+  const owner = issueOwner(issue, handoff);
   const phase = outsideCurrentHorizon
     ? "parked"
     : derivePhase(
@@ -560,7 +573,7 @@ function projectLane(
         pr?.mergeable === "conflicting" || pr?.mergeStateStatus === "dirty" ||
         drift === "suspected" || handoff.condition === "inconsistent" || handoff.condition === "stale" ||
         !issueScopeReconciled || !targetsDefaultBranch || !ownershipObservationComplete
-      ? { owner: "codex", reason: blockers[0] ?? "Delivery-agent action is required." }
+      ? { owner: deliveryActionOwner(owner), reason: blockers[0] ?? "Delivery-agent action is required." }
       : { owner: "none", reason: "No human action is currently evidenced." };
   const issueRef = source(
     "direct",
@@ -603,7 +616,7 @@ function projectLane(
       lastEditedAt: issue.lastEditedAt,
       blockedBy: issue.blockedBy,
     },
-    owner: issueOwner(issue, handoff),
+    owner,
     phase,
     pr:
       pr === null
