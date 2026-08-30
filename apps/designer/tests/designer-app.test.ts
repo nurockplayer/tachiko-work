@@ -412,7 +412,7 @@ describe("Designer application seam", () => {
     if (name === null || name.form === null) throw new Error("text edit form is required");
     expect(name.value).toBe("\r\nLeading\rTail");
     name.dataset.initialNormalized = "\nLeading\nTail";
-    name.value = "\nLeading\nTail";
+    name.value = "\nLeading\nTail!";
     name.form.requestSubmit();
     await vi.waitFor(() => {
       expect(root.querySelector('[data-testid="revision"]')?.textContent).toContain(
@@ -423,13 +423,13 @@ describe("Designer application seam", () => {
       {
         expectedRevision: "resident/0",
         target: { entity: "iron_sword", field: "name" },
-        value: "\r\nLeading\rTail",
+        value: "\r\nLeading\rTail!",
       },
     ]);
     expect(
       root.querySelector<HTMLTextAreaElement>('textarea[aria-label="Name for Iron Sword"]')
         ?.value,
-    ).toBe("\r\nLeading\rTail");
+    ).toBe("\r\nLeading\rTail!");
 
     const enabled = root.querySelector<HTMLInputElement>(
       'input[aria-label="Enabled for Iron Sword"]',

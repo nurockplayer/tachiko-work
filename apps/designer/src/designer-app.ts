@@ -409,11 +409,15 @@ export function mountDesigner(
               control instanceof HTMLTextAreaElement
                 ? decodeOpaqueAttribute(control.dataset.initialText)
                 : undefined;
+            const initialNormalized =
+              control instanceof HTMLTextAreaElement
+                ? control.dataset.initialNormalized
+                : undefined;
             const value =
               initialText !== undefined &&
-              control instanceof HTMLTextAreaElement &&
-              control.value === control.dataset.initialNormalized
-                ? initialText
+              initialNormalized !== undefined &&
+              control instanceof HTMLTextAreaElement
+                ? preserveUneditedLineEndings(initialText, initialNormalized, control.value)
                 : control.value;
             void commitText({ entity, field }, value);
             break;
@@ -890,4 +894,53 @@ function decodeOpaqueAttribute(value: string | undefined): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function preserveUneditedLineEndings(
+  original: string,
+  normalizedOriginal: string,
+  edited: string,
+): string {
+  let prefixLength = 0;
+  const sharedLength = Math.min(normalizedOriginal.length, edited.length);
+  while (
+    prefixLength < sharedLength &&
+    normalizedOriginal[prefixLength] === edited[prefixLength]
+  ) {
+    prefixLength += 1;
+  }
+
+  let suffixLength = 0;
+  while (
+    suffixLength < normalizedOriginal.length - prefixLength &&
+    suffixLength < edited.length - prefixLength &&
+    normalizedOriginal[normalizedOriginal.length - suffixLength - 1] ===
+      edited[edited.length - suffixLength - 1]
+  ) {
+    suffixLength += 1;
+  }
+
+  const prefixEnd = originalOffsetForNormalizedLength(original, prefixLength);
+  const suffixStart = originalOffsetForNormalizedLength(
+    original,
+    normalizedOriginal.length - suffixLength,
+  );
+  return `${original.slice(0, prefixEnd)}${edited.slice(
+    prefixLength,
+    edited.length - suffixLength,
+  )}${original.slice(suffixStart)}`;
+}
+
+function originalOffsetForNormalizedLength(original: string, normalizedLength: number): number {
+  let originalOffset = 0;
+  let normalizedOffset = 0;
+  while (originalOffset < original.length && normalizedOffset < normalizedLength) {
+    if (original[originalOffset] === "\r") {
+      originalOffset += original[originalOffset + 1] === "\n" ? 2 : 1;
+    } else {
+      originalOffset += 1;
+    }
+    normalizedOffset += 1;
+  }
+  return originalOffset;
 }
