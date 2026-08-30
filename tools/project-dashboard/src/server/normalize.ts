@@ -229,9 +229,18 @@ function statusClaimIsNegated(statusText: string, match: RegExpExecArray): boole
     /^\s*(?:(?:is\s+)?not\b|[:=-]\s*(?:false|no)\b)/i.test(after);
 }
 
+function statusClaimIsConditional(statusText: string, match: RegExpExecArray): boolean {
+  const before = statusText.slice(0, match.index);
+  const after = statusText.slice(match.index + match[0].length);
+  return /\b(?:(?:future|become|mark|set|move|declare|consider)(?:\s+(?:as|to))?|(?:will|would|should|can|could|may|might)(?:\s+be|\s+become)?)\s*$/i.test(before) ||
+    /^\s+(?:once|when|if|after|pending)\b/i.test(after);
+}
+
 function statusHasAffirmativeClaim(statusText: string, claim: RegExp): boolean {
   const matcher = new RegExp(claim.source, `${claim.flags.replaceAll("g", "")}g`);
-  return [...statusText.matchAll(matcher)].some((match) => !statusClaimIsNegated(statusText, match));
+  return [...statusText.matchAll(matcher)].some(
+    (match) => !statusClaimIsNegated(statusText, match) && !statusClaimIsConditional(statusText, match),
+  );
 }
 
 function statusHasNegatedClaim(statusText: string, claim: RegExp): boolean {
@@ -264,7 +273,8 @@ function statusClaimsHumanRequired(statusText: string): boolean {
 
 function statusClaimsReady(statusText: string): boolean {
   return !/\bdecision[_ -]?ready\b/.test(statusText) && !statusClaimsNotReady(statusText) &&
-    /\bready\b/.test(statusText) && !/not ready for (?:production )?implementation/.test(statusText);
+    statusHasAffirmativeClaim(statusText, /\bready\b/i) &&
+    !/not ready for (?:production )?implementation/.test(statusText);
 }
 
 function statusClaimsNotReady(statusText: string): boolean {
@@ -625,12 +635,23 @@ function projectLane(
     blockers.push("The current canonical handoff does not affirm merge-ready delivery state.");
   }
   if (pr !== null && checks.status === "unknown") blockers.push("Checks were not observed for the current PR head.");
+  if (checks.status === "pending") blockers.push(checks.summary);
   if (pr !== null && checks.requiredStatus !== "satisfied") blockers.push(checks.requiredSummary);
   if (checks.status === "failure") blockers.push(checks.summary);
   if ((reviews.substantiveUnresolvedCount ?? 0) > 0) {
     blockers.push(`${reviews.substantiveUnresolvedCount ?? 0} substantive review finding(s) remain unresolved.`);
   }
+  if (pr !== null && reviews.status === "unknown") {
+    blockers.push("Reviews were not fully observed for the current PR head.");
+  }
   if (reviews.status === "stale") blockers.push("The latest substantive review does not describe the current PR head.");
+  if (reviews.decision === "changes_requested") {
+    blockers.push("GitHub reports changes requested for the current PR head.");
+  } else if (reviews.decision === "review_required") {
+    blockers.push("GitHub requires an approving review for the current PR head.");
+  } else if (pr !== null && reviews.decision === "unknown") {
+    blockers.push("GitHub review decision could not be observed.");
+  }
   if (pr !== null && handoff.condition === "missing") {
     blockers.push(`Canonical handoff is missing for pull request #${pr.number}.`);
   }
@@ -707,7 +728,7 @@ function projectLane(
       ? { owner: "human", reason: "A non-current milestone pull request requires Project Steward roadmap activation." }
     : issueReadinessRequiresSteward
       ? { owner: "human", reason: "The authoritative Issue status requires Steward readiness action." }
-    : phase === "review_fix" || phase === "rereview" || checks.status === "failure" ||
+    : phase === "review_fix" || phase === "rereview" || checks.status === "failure" || checks.status === "pending" ||
         (pr !== null && checks.requiredStatus !== "satisfied") || ownershipConflict ||
         !githubMergeReady || drift !== "none" || handoff.condition === "inconsistent" || handoff.condition === "stale" ||
         (pr !== null && handoff.condition === "unknown") ||

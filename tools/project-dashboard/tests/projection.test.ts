@@ -580,6 +580,26 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries).toEqual([]);
   });
 
+  it.each([
+    "Backlog — mark Ready once scope is approved.",
+    "Future Ready.",
+    "Ready after approval.",
+    "Ready pending approval.",
+  ])("does not treat a future conditional Ready reference as authoritative readiness: %s", (status) => {
+    const backlog = issue();
+    backlog.body = `## Status\n\n${status}\n\nOwner: \`agent:codex\``;
+
+    const projection = normalizeRepositorySnapshot(snapshot({
+      issues: [backlog],
+      pullRequests: [pullRequest()],
+    }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.issue.readiness).toBe("unknown");
+    expect(lane?.phase).toBe("validating");
+    expect(lane?.action.owner).toBe("human");
+  });
+
   it("does not treat a suffixed Status heading as authoritative readiness", () => {
     const rationale = issue();
     rationale.body = "## Status rationale\n\nBuild a production-ready dashboard.\n\nOwner: `agent:codex`";
@@ -709,7 +729,62 @@ describe("normalizeRepositorySnapshot", () => {
 
     const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
 
-    expect(projection.deliveries[0]?.phase).toBe("rereview");
+    const lane = projection.deliveries[0];
+
+    expect(lane?.phase).toBe("rereview");
+    expect(lane?.blockers).toContain("GitHub requires an approving review for the current PR head.");
+    expect(lane?.action.owner).toBe("codex");
+  });
+
+  it("surfaces current changes-requested review state without relying on an unresolved thread", () => {
+    const pr = pullRequest();
+    pr.reviewDecision = "changes_requested";
+    pr.reviews = [{
+      state: "changes_requested",
+      headSha,
+      url: "https://github.com/review",
+      submittedAt: observedAt,
+    }];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.phase).toBe("review_fix");
+    expect(lane?.blockers).toContain("GitHub reports changes requested for the current PR head.");
+    expect(lane?.action.owner).toBe("codex");
+  });
+
+  it("surfaces incomplete review observation as a delivery blocker", () => {
+    const pr = pullRequest();
+    pr.reviewDecision = "unknown";
+    pr.reviews = null;
+    pr.reviewThreads = null;
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.phase).toBe("rereview");
+    expect(lane?.blockers).toContain("Reviews were not fully observed for the current PR head.");
+    expect(lane?.blockers).toContain("GitHub review decision could not be observed.");
+    expect(lane?.action.owner).toBe("codex");
+  });
+
+  it("surfaces a pending optional exact-head check as delivery work", () => {
+    const pr = pullRequest();
+    pr.requiredChecks = [{ name: "test", integrationId: null }];
+    pr.checks = [
+      { name: "test", integrationId: null, status: "completed", conclusion: "success", url: null },
+      { name: "optional-smoke", integrationId: null, status: "in_progress", conclusion: null, url: null },
+    ];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.checks.status).toBe("pending");
+    expect(lane?.checks.requiredStatus).toBe("satisfied");
+    expect(lane?.phase).toBe("validating");
+    expect(lane?.blockers).toContain("optional-smoke is in progress.");
+    expect(lane?.action.owner).toBe("codex");
   });
 
   it("never treats an optional green check as satisfying an unobserved required check", () => {
