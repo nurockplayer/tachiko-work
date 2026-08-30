@@ -136,4 +136,4 @@ export type WorkerReply =
   | { id: number; status: "error"; error: FailureProjection };
 
 export const fieldTargetKey = (target: FieldTarget): string =>
-  `${target.entity}.${target.field}`;
+  JSON.stringify([target.entity, target.field]);
