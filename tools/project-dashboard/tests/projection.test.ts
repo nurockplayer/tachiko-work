@@ -1345,6 +1345,20 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.phase).toBe("review_fix");
   });
 
+  it("does not promote an unlabeled pure-maintainability suggestion to a substantive finding", () => {
+    const pr = pullRequest();
+    pr.reviewThreads = [
+      { resolved: false, outdated: false, comments: ["Could you rename this local for clarity?"], url: "https://github.com/thread" },
+    ];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.reviews.unresolvedThreadCount).toBe(1);
+    expect(lane?.reviews.substantiveUnresolvedCount).toBe(0);
+    expect(lane?.phase).toBe("merge_gate");
+  });
+
   it("lets a later unlabeled substantive reply override an initial P3", () => {
     const pr = pullRequest();
     pr.reviewThreads = [{
@@ -1524,10 +1538,11 @@ describe("normalizeRepositorySnapshot", () => {
 
   it("preserves affirmative human action from an inconsistent duplicate handoff", () => {
     const pr = pullRequest();
+    pr.comments[0]!.body = pr.comments[0]!.body.replace("HUMAN ACTION: none", "HUMAN ACTION: required");
     pr.comments.push({
       ...pr.comments[0]!,
       id: "handoff-pr-duplicate",
-      body: pr.comments[0]!.body.replace("HUMAN ACTION: none", "HUMAN ACTION: required"),
+      body: pr.comments[0]!.body.replace("HUMAN ACTION: required", "HUMAN ACTION: none"),
       updatedAt: "2026-08-30T00:01:00.000Z",
     });
 

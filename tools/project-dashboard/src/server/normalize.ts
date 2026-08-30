@@ -18,7 +18,6 @@ import { isDecisionAuthorityPath } from "../shared/authority.ts";
 
 const handoffMarker = "<!-- agent-handoff:v1 -->";
 const explicitlyPrioritizedFinding = /(?:\[|\b)(?:p[0-2]|sev(?:erity)?[ -]?[0-2])(?:\]|\b)/i;
-const explicitlySubstantiveFinding = /(?:\[|\b)(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness)(?:\]|\b)/i;
 const negatedReviewFinding = /(?:\b(?:no|none|without|zero|0)\b[^.!?;\n]{0,80}\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|findings?|issues?|concerns?|problems?)\b|\bnot\s+(?:an?\s+)?\[?(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness)(?:\]|\b))/i;
 const clearedReviewFinding = /\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|security|correctness|blocking|data[- ]integrity)\b[^.!?;\n]{0,80}\b(?:checks?|review|findings?|issues?)?\s*(?:passed|complete(?:d)?|clean|resolved)\b(?:\s*\([^)]*\))?\s*$/i;
 const negatedReviewResolution = /\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|security|correctness|blocking|data[- ]integrity)\b[^.!?;\n]{0,80}(?:\b(?:not|never|cannot)\b|\b(?:is|are|was|were|has|have|had|do|does|did|can|could|would|should|will|wo)n['’]?t\b)(?:\s+\w+){0,3}\s+(?:passed|complete(?:d)?|clean|resolved)\b/i;
@@ -30,6 +29,7 @@ const reviewClauseBoundary = /[.!?;\n]+|\b(?:but|except|however|although|yet)\b|
 const explicitlyNonSubstantiveFinding = /^(?:[_*]+\s*)?(?:\[(?:p3|sev(?:erity)?[ -]?3)\]|(?:p3|sev(?:erity)?[ -]?3|nit(?:pick)?|trivial)\b)/i;
 const explicitlyNonSubstantiveBadge = /^(?:<sub>\s*)+!\[(?:p3|sev(?:erity)?[ -]?3)\s+badge\]\([^)]*\)(?:<\/sub>\s*)+/i;
 const explicitlyNonSubstantiveAcknowledgment = /^(?:done|fixed(?:\s+in\s+(?:commit\s+)?[0-9a-f]{7,40})?|thanks,\s+applied this suggestion)[.!]?$/i;
+const unlabeledSubstantiveImpact = /\b(?:wrong|incorrect|stale|invalid|unsafe|unauthori[sz]ed|data[- ]loss|regression|race\s+condition|deadlock|vulnerab\w*|security\s+flaw|crash(?:es|ed|ing)?|panic(?:s|ked|king)?|corrupt\w*|overwrit\w*|bypass\w*|leak(?:s|ed|ing)?\s+(?:data|credentials?|secrets?)|los(?:e|es|ing|t)\s+(?:user\s+)?data)\b/i;
 const authorityOnlyIssue = /^\s*\[(?:decision|research)\](?:\s|\[|$)/i;
 
 function source(
@@ -80,11 +80,11 @@ function canonicalComments(comments: RawComment[]): RawComment[] {
 }
 
 function isSubstantiveFinding(body: string): boolean {
-  if (explicitlySubstantiveFinding.test(body)) return true;
   const normalized = stripMarkdown(body);
   if (explicitlyNonSubstantiveBadge.test(normalized)) return false;
   if (explicitlyNonSubstantiveAcknowledgment.test(normalized)) return false;
-  return !explicitlyNonSubstantiveFinding.test(normalized);
+  if (explicitlyNonSubstantiveFinding.test(normalized)) return false;
+  return isSubstantiveReviewBody(normalized) || unlabeledSubstantiveImpact.test(normalized);
 }
 
 function reviewBodyClauses(body: string): string[] {
@@ -396,24 +396,25 @@ function isFocusedAuthorityPullRequest(pr: RawPullRequest): boolean {
 
 function humanActionRequested(comments: RawComment[], handoff: HandoffProjection): boolean {
   if (handoff.condition === "missing") return false;
-  if (/human[_ -]?required/i.test(handoff.claimedState ?? "")) return true;
-  const latest = canonicalComments(comments).toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
-  if (latest === undefined) return false;
-  const labeledClaims = [
-    labeledValue(latest.body, "HUMAN ACTION"),
-    labeledValue(latest.body, "FOUNDER / STEWARD ACTION"),
-    labeledValue(latest.body, "STEWARD ACTION"),
-    labeledValue(latest.body, "ESCALATION"),
-  ].filter((claim): claim is string => claim !== null);
   const isNegative = (claim: string) =>
     /^(?:none|no|false|unnecessary|not(?:\s+currently)?\s+(?:required|needed|necessary|applicable)|n\/a)\b/i.test(claim) ||
     /\b(?:(?:human|steward)\s+)?(?:action|decision|escalation|approval|review)\s+(?:(?:is|are)\s+not|isn['’]?t|aren['’]?t)(?:\s+currently)?\s+(?:required|needed|necessary|applicable)\b/i.test(claim) ||
     /\bdo not escalate\b/i.test(claim);
-  if (labeledClaims.some((claim) => !isNegative(claim))) return true;
+  return canonicalComments(comments).some((comment) => {
+    const claimedState = labeledValue(comment.body, "STATE") ?? labeledValue(comment.body, "STATUS");
+    if (/human[_ -]?required/i.test(claimedState ?? "")) return true;
+    const labeledClaims = [
+      labeledValue(comment.body, "HUMAN ACTION"),
+      labeledValue(comment.body, "FOUNDER / STEWARD ACTION"),
+      labeledValue(comment.body, "STEWARD ACTION"),
+      labeledValue(comment.body, "ESCALATION"),
+    ].filter((claim): claim is string => claim !== null);
+    if (labeledClaims.some((claim) => !isNegative(claim))) return true;
 
-  const escalationSection = markdownSectionValue(latest.body, /\bescalation\b/i);
-  return escalationSection !== null && !isNegative(escalationSection) &&
-    /\b(?:required|needed|decision|action|approval|review|escalat(?:e|ion))\b/i.test(escalationSection);
+    const escalationSection = markdownSectionValue(comment.body, /\bescalation\b/i);
+    return escalationSection !== null && !isNegative(escalationSection) &&
+      /\b(?:required|needed|decision|action|approval|review|escalat(?:e|ion))\b/i.test(escalationSection);
+  });
 }
 
 function deliveryActionOwner(owner: string): DeliveryLane["action"]["owner"] {
