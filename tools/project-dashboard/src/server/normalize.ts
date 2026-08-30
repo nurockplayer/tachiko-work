@@ -218,21 +218,36 @@ function issueStatusText(issue: RawIssue): string {
   return (issue.body.match(/## Status\s*([\s\S]*?)(?=\n## |$)/i)?.[1] ?? "").toLowerCase();
 }
 
+function statusClaimIsNegated(statusText: string, match: RegExpExecArray): boolean {
+  const before = statusText.slice(0, match.index);
+  const after = statusText.slice(match.index + match[0].length);
+  return /(?:^|[^a-z0-9_])(?:not(?:[_ -]+(?:yet|currently|now|presently|quite))?|never|no[_ -]+longer|non)[_ -]*$/i.test(before) ||
+    /^\s*(?:(?:is\s+)?not\b|[:=-]\s*(?:false|no)\b)/i.test(after);
+}
+
+function statusHasAffirmativeClaim(statusText: string, claim: RegExp): boolean {
+  const matcher = new RegExp(claim.source, `${claim.flags.replaceAll("g", "")}g`);
+  return [...statusText.matchAll(matcher)].some((match) => !statusClaimIsNegated(statusText, match));
+}
+
+function statusHasNegatedClaim(statusText: string, claim: RegExp): boolean {
+  const matcher = new RegExp(claim.source, `${claim.flags.replaceAll("g", "")}g`);
+  return [...statusText.matchAll(matcher)].some((match) => statusClaimIsNegated(statusText, match));
+}
+
 function statusClaimsDecisionReady(statusText: string): boolean {
-  if (!/\bdecision[_ -]?ready\b/.test(statusText)) return false;
-  return !/\bnot(?:[_ -]+(?:yet|currently|now|presently|quite))?[_ -]+decision[_ -]?ready\b/.test(statusText) &&
-    !/\b(?:never|no[_ -]+longer)[_ -]+decision[_ -]?ready\b/.test(statusText) &&
-    !/\bnon[_ -]+decision[_ -]?ready\b/.test(statusText) &&
-    !/\bdecision[_ -]?ready\b\s*(?:(?:is\s+)?not\b|[:=-]\s*(?:false|no)\b)/.test(statusText);
+  return statusHasAffirmativeClaim(statusText, /\bdecision[_ -]?ready\b/i);
 }
 
 function statusClaimsBlocked(statusText: string): boolean {
-  return /\bblock(?:ed)?\b/.test(statusText) && !statusText.includes("not blocked");
+  return statusHasAffirmativeClaim(statusText, /\bblock(?:ed)?\b/i);
 }
 
 function statusClaimsActive(statusText: string): boolean {
-  return !/\bnot[_ -]+active\b/.test(statusText) &&
-    /\bactive\b|\bimplementing\b|\bin progress\b|\bvalidating\b|\breview[_ -]?fix\b|\bhuman[_ -]?required\b/.test(statusText);
+  return statusHasAffirmativeClaim(
+    statusText,
+    /\b(?:active|implementing|in progress|validating|review[_ -]?fix|human[_ -]?required)\b/i,
+  );
 }
 
 function statusClaimsReady(statusText: string): boolean {
@@ -241,10 +256,7 @@ function statusClaimsReady(statusText: string): boolean {
 }
 
 function statusClaimsNotReady(statusText: string): boolean {
-  return /\bnot(?:[_ -]+(?:yet|currently|now|presently|quite))?[_ -]+ready\b/.test(statusText) ||
-    /\b(?:never|no[_ -]+longer)[_ -]+ready\b/.test(statusText) ||
-    /\bnon[_ -]+ready\b/.test(statusText) ||
-    /\bready\b\s*(?:(?:is\s+)?not\b|[:=-]\s*(?:false|no)\b)/.test(statusText);
+  return statusHasNegatedClaim(statusText, /\bready\b/i);
 }
 
 function handoffClaimsMergeReady(handoff: HandoffProjection): boolean {
@@ -271,9 +283,9 @@ function issueReadiness(issue: RawIssue, handoff: HandoffProjection): DeliveryLa
   if (/\bdecision[_ -]?ready\b/.test(statusText)) return "unknown";
   if (statusClaimsNotReady(statusText)) return "unknown";
   if (/\bpark(?:ed)?\b/.test(statusText)) return "parked";
-  if (/\bblock(?:ed)?\b/.test(statusText) && !statusText.includes("not blocked")) return "blocked";
-  if (/\bactive\b|\bimplementing\b|\bin progress\b|\bvalidating\b|\breview[_ -]?fix\b|\bhuman[_ -]?required\b/.test(statusText)) return "active";
-  if (/\bready\b/.test(statusText) && !/not ready for (?:production )?implementation/.test(statusText)) return "ready";
+  if (statusClaimsBlocked(statusText)) return "blocked";
+  if (statusClaimsActive(statusText)) return "active";
+  if (statusClaimsReady(statusText)) return "ready";
   return "unknown";
 }
 
@@ -826,7 +838,6 @@ export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): Re
 
   for (const issue of issues) {
     if (ownedIssueNumbers.has(issue.number)) continue;
-    if (isDecisionReadyAuthorityIssue(issue)) continue;
     const handoff = projectHandoff(
       issue.comments,
       issue.commentsComplete,
@@ -834,6 +845,7 @@ export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): Re
       null,
       snapshot.mainSha,
     );
+    if (isDecisionReadyAuthorityIssue(issue) && !humanActionRequested(issue.comments, handoff)) continue;
     const hasCanonicalHandoff = canonicalComments(issue.comments).length > 0;
     const owner = issueOwner(issue, handoff).toLowerCase();
     if (!hasCanonicalHandoff && !owner.includes("agent:")) continue;

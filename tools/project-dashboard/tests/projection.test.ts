@@ -139,14 +139,46 @@ describe("normalizeRepositorySnapshot", () => {
     },
   );
 
-  it("does not treat unrelated negation as negated readiness", () => {
+  it.each([
+    "Not blocked; Ready for bounded implementation.",
+    "Never blocked. Ready.",
+  ])("does not treat unrelated negation as negated readiness: %s", (status) => {
     const ready = issue();
-    ready.body = "## Status\n\nNot blocked; Ready for bounded implementation.\n\nOwner: `agent:codex`";
+    ready.body = `## Status\n\n${status}\n\nOwner: \`agent:codex\``;
 
     const projection = normalizeRepositorySnapshot(snapshot({ issues: [ready] }));
 
     expect(projection.deliveries[0]?.issue.readiness).toBe("ready");
     expect(projection.deliveries[0]?.phase).toBe("ready");
+  });
+
+  it("uses claim-bounded blocked negation for handoff-derived status", () => {
+    const ready = issue();
+    ready.comments[0]!.body = [
+      "<!-- agent-handoff:v1 -->",
+      "OWNER: agent:codex",
+      "STATE: Not currently blocked; Ready",
+      `LAST CHECKED MAIN: ${mainSha}`,
+    ].join("\n");
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [ready] }));
+
+    expect(projection.deliveries[0]?.issue.readiness).toBe("ready");
+    expect(projection.deliveries[0]?.phase).toBe("ready");
+  });
+
+  it("does not treat a qualified negated active handoff state as active", () => {
+    const ready = issue();
+    ready.comments[0]!.body = [
+      "<!-- agent-handoff:v1 -->",
+      "OWNER: agent:codex",
+      "STATE: Not currently active",
+      `LAST CHECKED MAIN: ${mainSha}`,
+    ].join("\n");
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [ready] }));
+
+    expect(projection.deliveries).toEqual([]);
   });
 
   it("does not let an operational handoff elevate an unrecognized Issue status", () => {
@@ -344,6 +376,31 @@ describe("normalizeRepositorySnapshot", () => {
     const projection = normalizeRepositorySnapshot(snapshot({ issues: [decision] }));
 
     expect(projection.deliveries).toEqual([]);
+  });
+
+  it("preserves human escalation from a Decision-Ready authority Issue without a pull request", () => {
+    const decision = issue();
+    decision.title = "[Decision][M05 P1] Choose the dashboard delivery boundary";
+    decision.body = "## Status\n\n**DECISION-READY**\n\nOwner: `agent:codex`";
+    decision.comments[0]!.body = [
+      "<!-- agent-handoff:v1 -->",
+      "OWNER: agent:codex",
+      "STATE: human_required",
+      "HUMAN ACTION: Steward approval required",
+      `LAST CHECKED MAIN: ${mainSha}`,
+    ].join("\n");
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [decision] }));
+    const lane = projection.deliveries[0];
+
+    expect(projection.deliveries).toHaveLength(1);
+    expect(lane?.issue.readiness).toBe("unknown");
+    expect(lane?.phase).toBe("human_required");
+    expect(lane?.action.owner).toBe("human");
+    expect(projection.attention.humanActionRequired).toBe(true);
+    expect(projection.attention.reasons).toContain(
+      `#${decision.number}: The canonical coordination state requests human or Steward action.`,
+    );
   });
 
   it.each([
