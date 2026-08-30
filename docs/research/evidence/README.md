@@ -65,5 +65,6 @@ ontology.
 
 ## Episodes
 
+- [#175 — exact Global Spine and progressive `.roproj/v1` open](episodes/2026-08/issue-175-global-spine.md)
 - [#104 — context dogfood benchmark](episodes/2026-08/issue-104-context-dogfood.md)
 - [#33 — semantic analysis query](episodes/2026-08/issue-33-semantic-analysis-query.md)
