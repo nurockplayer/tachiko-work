@@ -1219,6 +1219,11 @@ describe("normalizeRepositorySnapshot", () => {
     "This runs without end.",
     "This is an infinite recursion.",
     "This has infinite recursion.",
+    "This enters a cycle forever.",
+    "This cycles forever.",
+    "This has an unbounded loop.",
+    "This loop is unbounded.",
+    "This never converges.",
   ])("blocks an unlabeled comment-only runtime failure on the current head: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1322,6 +1327,10 @@ describe("normalizeRepositorySnapshot", () => {
     "This is not an infinite recursion.",
     "This does not loop without end.",
     "This does not run without end.",
+    "This does not cycle forever.",
+    "This does not have an unbounded loop.",
+    "This loop is not unbounded.",
+    "This does not fail to converge.",
   ])("does not infer a substantive finding from a clean comment-only review summary: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1758,6 +1767,11 @@ describe("normalizeRepositorySnapshot", () => {
     "This runs without end.",
     "This is an infinite recursion.",
     "This has infinite recursion.",
+    "This enters a cycle forever.",
+    "This cycles forever.",
+    "This has an unbounded loop.",
+    "This loop is unbounded.",
+    "This never converges.",
   ])("fails closed on an unlabeled correctness finding: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
@@ -1851,6 +1865,10 @@ describe("normalizeRepositorySnapshot", () => {
     "This is not an infinite recursion.",
     "This does not loop without end.",
     "This does not run without end.",
+    "This does not cycle forever.",
+    "This does not have an unbounded loop.",
+    "This loop is not unbounded.",
+    "This does not fail to converge.",
   ])("does not promote a negated unlabeled impact statement: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
