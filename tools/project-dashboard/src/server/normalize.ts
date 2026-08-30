@@ -187,6 +187,7 @@ function issueReadiness(issue: RawIssue, handoff: HandoffProjection): DeliveryLa
   const currentHandoffState = handoff.condition === "current" ? handoff.claimedState : null;
   const statusText = (currentHandoffState ?? statusSection).toLowerCase();
   if (/\bdecision[_ -]?ready\b/.test(statusText)) return "unknown";
+  if (/\bnot[_ -]+ready\b/.test(statusText)) return "unknown";
   if (/\bpark(?:ed)?\b/.test(statusText)) return "parked";
   if (/\bblock(?:ed)?\b/.test(statusText) && !statusText.includes("not blocked")) return "blocked";
   if (/\bactive\b|\bimplementing\b|\bin progress\b|\bvalidating\b|\breview[_ -]?fix\b|\bhuman[_ -]?required\b/.test(statusText)) return "active";
@@ -613,7 +614,7 @@ export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): Re
       pr.headSha,
       snapshot.mainSha,
     );
-    return handoff.condition === "current" && handoff.claimedIssueNumber !== null
+    return (handoff.condition === "current" || handoff.condition === "stale") && handoff.claimedIssueNumber !== null
       ? { ...pr, issueNumbers: [handoff.claimedIssueNumber] }
       : pr;
   });

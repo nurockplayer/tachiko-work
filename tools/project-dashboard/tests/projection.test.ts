@@ -109,6 +109,20 @@ describe("normalizeRepositorySnapshot", () => {
     });
   });
 
+  it("does not treat an explicit Not Ready state as Ready", () => {
+    const notReady = issue();
+    notReady.comments[0]!.body = [
+      "<!-- agent-handoff:v1 -->",
+      "OWNER: agent:codex",
+      "STATE: Not Ready",
+      `LAST CHECKED MAIN: ${mainSha}`,
+    ].join("\n");
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [notReady] }));
+
+    expect(projection.deliveries).toEqual([]);
+  });
+
   it("does not let a stale no-PR handoff override live Issue readiness or request human action", () => {
     const coordinated = issue();
     coordinated.comments[0]!.body = [
@@ -375,6 +389,20 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries).toHaveLength(1);
     expect(projection.deliveries[0]?.id).toBe("issue-169-pr-200");
     expect(projection.deliveries[0]?.issue.number).toBe(169);
+  });
+
+  it("keeps a stale canonical handoff Issue claim associated with its PR", () => {
+    const pr = pullRequest();
+    pr.issueNumbers = [];
+    pr.comments[0]!.body = pr.comments[0]!.body.replace(mainSha, "d".repeat(40));
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+
+    expect(projection.deliveries).toHaveLength(1);
+    expect(projection.deliveries[0]?.id).toBe("issue-169-pr-200");
+    expect(projection.deliveries[0]?.issue.number).toBe(169);
+    expect(projection.deliveries[0]?.handoff.condition).toBe("stale");
+    expect(projection.deliveries[0]?.phase).toBe("validating");
   });
 
   it("keeps truncated PR handoff observation unknown", () => {
