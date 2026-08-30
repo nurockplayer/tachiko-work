@@ -1318,6 +1318,18 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.action.owner).toBe("codex");
   });
 
+  it("accepts the canonical underscore merge-ready handoff spelling", () => {
+    const pr = pullRequest();
+    pr.comments[0]!.body = pr.comments[0]!.body.replace("STATE: merge-ready", "STATE: merge_ready");
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.issue.readiness).toBe("active");
+    expect(lane?.phase).toBe("merge_gate");
+    expect(lane?.blockers).not.toContain("The current canonical handoff does not affirm merge-ready delivery state.");
+  });
+
   it("assigns authoritative blocked Issue readiness to the Steward", () => {
     const blocked = issue();
     blocked.body = "## Status\n\nBlocked\n\nOwner: `agent:codex`";
@@ -1891,6 +1903,46 @@ describe("normalizeRepositorySnapshot", () => {
 
     expect(projection.attention.humanActionRequired).toBe(true);
     expect(projection.attention.reasons).toContain("#169: The canonical coordination state requests human or Steward action.");
+  });
+
+  it("keeps independent attention confidence when only recent completion history is unavailable", () => {
+    const projection = normalizeRepositorySnapshot(snapshot({
+      fetchHealth: "partial",
+      failures: ["Recent completion observation failed."],
+      issues: [issue()],
+      pullRequests: [pullRequest()],
+      recentCompletions: null,
+    }));
+
+    expect(projection.repo.fetchHealth).toBe("partial");
+    expect(projection.recentCompletions).toEqual([]);
+    expect(projection.attention).toMatchObject({ humanActionRequired: false, reasons: [] });
+  });
+
+  it.each(["Owner: `tachikoma`", ""])(
+    "retains an explicit human-required Issue without an agent owner: %s",
+    (owner) => {
+      const escalated = issue();
+      escalated.body = `## Status\n\nHuman required\n\n${owner}`;
+      escalated.comments = [];
+
+      const projection = normalizeRepositorySnapshot(snapshot({ issues: [escalated] }));
+
+      expect(projection.deliveries).toHaveLength(1);
+      expect(projection.deliveries[0]?.phase).toBe("human_required");
+      expect(projection.deliveries[0]?.action.owner).toBe("human");
+      expect(projection.attention.humanActionRequired).toBe(true);
+    },
+  );
+
+  it("continues omitting an ordinary human-owned Ready Issue without a pull request", () => {
+    const humanOwned = issue();
+    humanOwned.body = "## Status\n\nReady\n\nOwner: `tachikoma`";
+    humanOwned.comments = [];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [humanOwned] }));
+
+    expect(projection.deliveries).toEqual([]);
   });
 
   it("preserves a no-PR human escalation when dependency observation is incomplete", () => {

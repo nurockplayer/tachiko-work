@@ -327,7 +327,7 @@ function issueReadiness(issue: RawIssue, handoff: HandoffProjection): DeliveryLa
   const currentHandoffState = handoff.condition === "current" || staleHandoffClaimsBlocked
     ? handoff.claimedState
     : null;
-  const statusText = (currentHandoffState ?? issueStatus).toLowerCase();
+  const statusText = (currentHandoffState ?? issueStatus).toLowerCase().replaceAll("_", " ");
   if (/\bdecision[_ -]?ready\b/i.test(statusText)) return "unknown";
   if (statusClaimsNotReady(statusText)) return "unknown";
   if (statusClaimsParked(statusText)) return "parked";
@@ -968,7 +968,7 @@ export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): Re
     if (isDecisionReadyAuthorityIssue(issue) && !requiresHuman) continue;
     const hasCanonicalHandoff = canonicalComments(issue.comments).length > 0;
     const owner = issueOwner(issue, handoff).toLowerCase();
-    if (!hasCanonicalHandoff && !owner.includes("agent:")) continue;
+    if (!requiresHuman && !hasCanonicalHandoff && !owner.includes("agent:")) continue;
     if (issueReadiness(issue, handoff) === "unknown" && !requiresHuman) continue;
     deliveries.push(projectLane(issue, null, snapshot, [], ownershipObservationComplete));
   }
@@ -985,7 +985,11 @@ export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): Re
   const horizonRef = source("direct", "Product Roadmap at observed main", snapshot.productHorizonUrl, snapshot.observedAt, snapshot.mainSha);
   const currentWorkRef = source("derived", "Current-horizon lane projection", snapshot.productHorizonUrl, snapshot.observedAt, snapshot.mainSha);
   const humanActions = deliveries.filter((lane) => lane.action.owner === "human");
-  const observationIncomplete = snapshot.fetchHealth !== "healthy";
+  const attentionFailures = snapshot.failures.filter(
+    (failure) => failure !== "Recent completion observation failed.",
+  );
+  const observationIncomplete = snapshot.fetchHealth === "unavailable" ||
+    (snapshot.fetchHealth !== "healthy" && (snapshot.failures.length === 0 || attentionFailures.length > 0));
   const horizonKnown = snapshot.productHorizon !== null;
 
   return {
@@ -1022,8 +1026,8 @@ export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): Re
       reasons: humanActions.length > 0
         ? humanActions.map((lane) => `#${lane.issue.number}: ${lane.action.reason}`)
         : observationIncomplete
-        ? snapshot.failures.length > 0
-          ? snapshot.failures
+        ? attentionFailures.length > 0
+          ? attentionFailures
           : ["One or more authoritative sources are unavailable."]
         : [],
       sourceRefs: [source("derived", "Attention classification", snapshot.repoUrl, snapshot.observedAt, snapshot.mainSha)],
