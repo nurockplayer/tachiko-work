@@ -1071,12 +1071,17 @@ describe("normalizeRepositorySnapshot", () => {
     }));
   });
 
-  it("blocks an unlabeled comment-only build failure on the current head", () => {
+  it.each([
+    "This fails to compile on Windows.",
+    "Tests don't pass on Windows.",
+    "The build does not pass.",
+    "CI isn't passing.",
+  ])("blocks an unlabeled comment-only build failure on the current head: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
       state: "commented",
       author: "codex",
-      body: "This fails to compile on Windows.",
+      body,
       headSha,
       url: "https://github.com/review/comment-only-build-failure",
       submittedAt: observedAt,
@@ -1126,6 +1131,7 @@ describe("normalizeRepositorySnapshot", () => {
     "Not a [P2] issue.",
     "P2 issue: not found.",
     "P0: absent.",
+    "Tests don't fail on Windows.",
   ])("does not infer a substantive finding from a clean comment-only review summary: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
