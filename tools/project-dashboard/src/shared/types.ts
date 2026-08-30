@@ -192,7 +192,7 @@ export interface DeliveryLane {
   authorityDrift: "none" | "suspected" | "confirmed" | "unknown";
   blockers: string[];
   action: {
-    owner: "none" | "codex" | "chatgpt" | "human" | "unknown";
+    owner: "none" | "codex" | "chatgpt" | "agent" | "human" | "unknown";
     reason: string;
   };
   sourceRefs: SourceRef[];

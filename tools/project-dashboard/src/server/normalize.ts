@@ -277,7 +277,8 @@ function statusClaimIsNegated(statusText: string, match: RegExpExecArray): boole
   const before = statusText.slice(0, match.index);
   const after = statusText.slice(match.index + match[0].length);
   return /(?:^|[^a-z0-9_])(?:not(?:[_ -]+(?:yet|currently|now|presently|quite))?|never|no[_ -]+longer|non)[_ -]*$/i.test(before) ||
-    /^\s*(?:(?:is\s+)?not\b|[:=-]\s*(?:false|no)\b)/i.test(after);
+    /\b(?:previously|formerly|historically|was|were|had\s+been)\s*$/i.test(before) ||
+    /^\s*(?:(?:is\s+)?not\b|[:=-]\s*(?:false|no)\b|(?:\([^)]*\b(?:resolved|cleared|closed|historical)\b[^)]*\)|[-—,:=]?\s*(?:previously|formerly|historically|resolved|cleared|closed|no\s+longer)\b))/i.test(after);
 }
 
 function statusClaimIsConditional(
@@ -428,6 +429,7 @@ function deliveryActionOwner(owner: string): DeliveryLane["action"]["owner"] {
   const normalized = owner.trim().toLowerCase();
   if (normalized === "agent:codex" || normalized === "codex") return "codex";
   if (normalized === "agent:chatgpt" || normalized === "chatgpt") return "chatgpt";
+  if (/^agent:[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/i.test(normalized)) return "agent";
   return "unknown";
 }
 

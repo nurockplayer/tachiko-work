@@ -210,6 +210,20 @@ describe("normalizeRepositorySnapshot", () => {
   });
 
   it.each([
+    "Previously blocked; Ready.",
+    "Was blocked; Ready.",
+    "Blocked (resolved); Ready.",
+  ])("does not treat a historical blocked claim as a current blocker: %s", (status) => {
+    const ready = issue();
+    ready.body = `## Status\n\n${status}\n\nOwner: \`agent:codex\``;
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [ready] }));
+
+    expect(projection.deliveries[0]?.issue.readiness).toBe("ready");
+    expect(projection.deliveries[0]?.phase).toBe("ready");
+  });
+
+  it.each([
     "Not parked; Ready for bounded implementation.",
     "Not currently parked; Ready.",
     "Never parked. Ready.",
@@ -1029,7 +1043,7 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.action.owner).toBe("chatgpt");
   });
 
-  it("does not guess Codex for an unrecognized delivery agent", () => {
+  it("preserves provider-neutral ownership for another recognized delivery agent", () => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace("OWNER: agent:codex", "OWNER: agent:other-provider");
     pr.reviewThreads = [
@@ -1041,7 +1055,7 @@ describe("normalizeRepositorySnapshot", () => {
 
     expect(lane?.owner).toBe("agent:other-provider");
     expect(lane?.phase).toBe("review_fix");
-    expect(lane?.action.owner).toBe("unknown");
+    expect(lane?.action.owner).toBe("agent");
   });
 
   it("treats an old-head changes-requested review without a current finding as rereview", () => {
@@ -1351,6 +1365,7 @@ describe("normalizeRepositorySnapshot", () => {
     "[P3] rename suggestion; [P2] this loses data.",
     "Could you refactor this to prevent data loss?",
     "Please update docs because this is incorrect.",
+    "This fails to compile on Windows.",
   ])("fails closed on an unlabeled correctness finding: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
