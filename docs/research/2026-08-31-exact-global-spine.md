@@ -4,7 +4,9 @@ Decision state: Research evidence for [#174](https://github.com/nurockplayer/tac
 
 Measurement implementations: A0/A1/B/C/D/F at
 `4ed7f994825edb8a3bb6f1ac4a5cc5d940f74387`; corrected E1/E2 at
-`664411545009b152d94f8a7554c37d344b994172`; both on
+`664411545009b152d94f8a7554c37d344b994172`; full-oracle and aggregate
+two-pass counter corrections at
+`607e9208da2fdf71e0741d7ff7efceec890ac6fc`; all on
 `main@022a14d18503477aa7e20f6fca102f9e85dce740`.
 
 ## Outcome
@@ -38,7 +40,7 @@ justify a Global Spine.
 
 | Gate | Result | Evidence |
 | --- | --- | --- |
-| Full-oracle equivalence | Pass for the research paths tested | A0/A1 accepted-document equality; late-invalid A0/A1/C rejection parity; storage 66/66, formula oracle 10/10, workspace validation 19/19 |
+| Full-oracle equivalence | Pass for the research paths tested | Exact A0/A1 `Document` equality under success, cold numeric mutation, cross-cold SCC, and division-by-zero pressure; the same shapes independently preserve complete-calculation and workspace stable observations; late-invalid A0/A1/C rejection parity; formula oracle 10/10 and workspace validation 19/19 |
 | `>=2x` p95 benefit over A1 in two realistic large classes | Fail | At 64k, C Structural is only `1.07x` faster than A1 for payload and is `1.41x` slower for references and `1.43x` slower for mixed |
 | Benefit not limited to payload-heavy data | Fail | Payload Structural Index is `0.07x` source, but mixed is `1.38x` and references `2.83x` |
 | No `>10%` foreground regression | Pass for the bounded B contract | p95 of per-run foreground p95 ratios is `0.880`; maximum is `0.972` |
@@ -65,6 +67,14 @@ Fresh-process RSS uses five repetitions per arm and reports macOS byte units;
 these RSS values are environment-specific high-water evidence, not a product
 SLA.
 
+Every deterministic fixture uses explicit seed `175` and source revision `A`.
+The fixture manifest joins `(experiment, workload, entities, source_sha256)`
+to that seed/revision; the adversarial revision-race row is `A_to_B`. Raw rows
+inherit `schema_version`, experiment, exact base/measurement HEAD, outcome,
+and oracle status through the bundle manifest's declared row-context mapping.
+Successful rows have `outcome=success`; B cancellation rows retain their
+explicit `cancelled` outcome. No missing metadata is inferred.
+
 Fixture generation and filesystem materialization are outside admission
 timing. Matrix latency is process/allocator-warm inside one release test
 process. RSS launches each arm in a fresh direct child. UI rendering, WASM
@@ -86,7 +96,9 @@ tree, or decode the semantic document twice.
 Both arms start from the same filesystem source. `physical_read_bytes` counts
 the source bytes read from the host; A0's second decode is an in-memory parser
 pass. `nesting_scan_bytes` and `json_parser_deserializer_bytes` are separate,
-and A0 reports both logical decodes.
+and every A0 record/AST/reference/dependency counter aggregates both logical
+decodes. `HostReady` is the already-running test process and is outside the
+timed interval; no shell/UI endpoint is claimed.
 
 | Entities | Source | A0 p95 SemanticCurrent | A1 p95 SemanticCurrent | A0/A1 |
 | ---: | ---: | ---: | ---: | ---: |
@@ -220,7 +232,7 @@ Fresh-process p50 peak RSS at 16k mixed entities:
 | Structural + pinned source + complete `Document` | 91.2 MB |
 
 The existing resident runtime separately measured `26.1 MB` for the synthetic
-complete `Document` and `95.2 MB` for Document plus retained address,
+complete `Document` and `93.9 MB` for Document plus retained address,
 calculation, dependency, reverse-dependency, and validation state. A new spine
 would duplicate those structures unless a future production design proved
 replacement rather than coexistence. This research does not prove such a
@@ -246,7 +258,7 @@ structural parsing: they run the required document-level coverage checks.
 
 Validation at measurement HEAD:
 
-- Issue #175 focused tests: 12 passed, 10 ignored measurement entrypoints;
+- Issue #175 focused tests: 13 passed, 10 ignored measurement entrypoints;
 - storage `.roproj/v1` and host suites: 66 passed;
 - formula complete-oracle suite: 10 passed;
 - workspace validation-report suite: 19 passed; and
@@ -275,7 +287,9 @@ Validation at measurement HEAD:
 
 The bundle [manifest](evidence/issue-175/manifest.json) records exact commands,
 environment, source/measurement commits, cache state, percentile definition,
-and SHA-256 for every CSV. Raw and derived tables live under
+row-context inheritance, and SHA-256 for every CSV. The
+[fixture manifest](evidence/issue-175/fixture-manifest.csv) binds seed,
+revision, and source hashes. Raw and derived tables live under
 [`docs/research/evidence/issue-175/`](evidence/issue-175/).
 
 The large fixtures are generated deterministically by the ignored release

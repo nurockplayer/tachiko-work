@@ -3,9 +3,9 @@ schema: research-evidence/v0
 episode: issue-175-global-spine
 capture_mode: prospective
 capture_status: active
-captured_at: "2026-08-30T18:40:07Z"
+captured_at: "2026-08-30T18:52:40Z"
 repository: nurockplayer/tachiko-work
-base_sha: 664411545009b152d94f8a7554c37d344b994172
+base_sha: 022a14d18503477aa7e20f6fca102f9e85dce740
 issue: https://github.com/nurockplayer/tachiko-work/issues/175
 authority_state: Hypothesis
 agent:
@@ -155,6 +155,10 @@ were accepted where they matched Issue and Accepted authority.
   re-derived the index, and a second audit caught a live-tree race after that
   scan. Final E reuse pins the exact 18-file snapshot, independently derives
   the index, and requires complete equality while retaining the pinned source.
+- Initial raw A0 rows doubled parser-byte work but not decoded record, AST,
+  reference, or dependency counters for the second logical decode. Final rows
+  aggregate every decode-work counter symmetrically. A fixture manifest now
+  binds explicit seed `175`, revision, and source hash to every workload cell.
 - Controlled cold-cache evidence was unavailable because macOS denied
   `/usr/sbin/purge`.
 
@@ -184,6 +188,12 @@ the source-derived and pinned-snapshot trust corrections. The earlier
 `1b3d75de`, `bd115c8`, and interrupted exploratory E2 files were discarded.
 Cold-cache cells remain absent and explicitly unavailable rather than
 relabeled.
+
+The final exactness correction at `607e920` proves exact A0/A1 `Document`
+equality across a valid chain, cold numeric mutation, cross-cold SCC, and
+division-by-zero pressure. The same shapes independently preserve complete
+calculation and workspace stable observations. C/D still publish no semantic
+result and return `RequiresFullAdmission` where the full oracle is required.
 
 ## Final outcome
 
