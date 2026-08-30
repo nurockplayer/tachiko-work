@@ -2791,6 +2791,35 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries[0]?.phase).toBe("review_fix");
   });
 
+  it.each([
+    "Approved after P1 was fixed.",
+    "P1 fixed; approved.",
+    "P1 was fixed.",
+    "Approved; P1 was addressed.",
+  ])("does not retain a resolved finding from an approval body: %s", (body) => {
+    const pr = pullRequest();
+    pr.reviews = [
+      { state: "approved", author: "reviewer", body, headSha, url: "https://github.com/review/resolved-approval", submittedAt: observedAt },
+    ];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+
+    expect(projection.deliveries[0]?.reviews.substantiveUnresolvedCount).toBe(0);
+    expect(projection.deliveries[0]?.phase).toBe("merge_gate");
+  });
+
+  it("retains a negated resolution from an approval body", () => {
+    const pr = pullRequest();
+    pr.reviews = [
+      { state: "approved", author: "reviewer", body: "Approved, but P1 was not fixed.", headSha, url: "https://github.com/review/unresolved-approval", submittedAt: observedAt },
+    ];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+
+    expect(projection.deliveries[0]?.reviews.substantiveUnresolvedCount).toBe(1);
+    expect(projection.deliveries[0]?.phase).toBe("review_fix");
+  });
+
   it("retains a review finding across a later unrelated comment by the same reviewer", () => {
     const pr = pullRequest();
     pr.reviews = [
