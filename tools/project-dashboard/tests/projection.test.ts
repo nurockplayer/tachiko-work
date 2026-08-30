@@ -213,6 +213,7 @@ describe("normalizeRepositorySnapshot", () => {
     "Previously Not Ready; now Ready.",
     "Not Ready (resolved); Ready.",
     "Ready. Previously Not Ready.",
+    "Previously Backlog; now Ready.",
   ])("honors the current Ready claim after a historical Not Ready claim: %s", (status) => {
     const ready = issue();
     ready.body = `## Status\n\n${status}\n\nOwner: \`agent:codex\``;
@@ -227,6 +228,7 @@ describe("normalizeRepositorySnapshot", () => {
     "Ready; now Not Ready.",
     "Ready; now Not Ready pending approval.",
     "Ready; Not Ready after approval.",
+    "Ready; now Backlog.",
   ])("honors a current Not Ready claim after an earlier Ready claim: %s", (status) => {
     const notReady = issue();
     notReady.body = `## Status\n\n${status}\n\nOwner: \`agent:codex\``;
@@ -1253,6 +1255,23 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.phase).toBe("review_fix");
   });
 
+  it("does not let a P3 label suppress a concrete comment-only correctness failure", () => {
+    const pr = pullRequest();
+    pr.reviews = [...(pr.reviews ?? []), {
+      state: "commented",
+      author: "codex",
+      body: "[P3] This crashes on empty input.",
+      headSha,
+      url: "https://github.com/review/p3-runtime-failure",
+      submittedAt: observedAt,
+    }];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+
+    expect(projection.deliveries[0]?.reviews.substantiveUnresolvedCount).toBe(1);
+    expect(projection.deliveries[0]?.phase).toBe("review_fix");
+  });
+
   it("does not block on a substantive comment-only review body from an old head", () => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1367,6 +1386,8 @@ describe("normalizeRepositorySnapshot", () => {
     "Looks good.",
     "LGTM",
     "SQL injection has never occurred.",
+    "[P3] Consider a shorter label.",
+    "[P3] This does not crash on empty input.",
   ])("does not infer a substantive finding from a clean comment-only review summary: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1668,6 +1689,18 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.reviews.unresolvedThreadCount).toBe(1);
     expect(lane?.reviews.substantiveUnresolvedCount).toBe(0);
     expect(lane?.phase).toBe("merge_gate");
+  });
+
+  it("does not let a P3 label suppress a concrete inline correctness failure", () => {
+    const pr = pullRequest();
+    pr.reviewThreads = [
+      { resolved: false, outdated: false, comments: ["[P3] This crashes on empty input."], url: "https://github.com/thread" },
+    ];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+
+    expect(projection.deliveries[0]?.reviews.substantiveUnresolvedCount).toBe(1);
+    expect(projection.deliveries[0]?.phase).toBe("review_fix");
   });
 
   it("recognizes a badge-prefixed P3 review as non-substantive", () => {

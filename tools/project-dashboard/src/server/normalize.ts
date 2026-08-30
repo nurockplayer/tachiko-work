@@ -97,9 +97,7 @@ function canonicalComments(comments: RawComment[]): RawComment[] {
 function isSubstantiveFinding(body: string): boolean {
   const normalized = stripMarkdown(body).replace(explicitlyNonSubstantiveBadge, "[P3] ");
   return reviewBodyClauses(normalized).some((clause) => {
-    if (explicitlyNonSubstantiveBadge.test(clause)) return false;
     if (explicitlyNonSubstantiveAcknowledgment.test(clause)) return false;
-    if (explicitlyNonSubstantiveFinding.test(clause)) return false;
     if (isSubstantiveReviewClause(clause)) return true;
     if (missingSafeguardImpact.test(clause)) return true;
     if (isClearedReviewClause(clause) || negatedUnlabeledSubstantiveImpact.test(clause) ||
@@ -107,7 +105,10 @@ function isSubstantiveFinding(body: string): boolean {
       satisfiedInjectionSafeguard.test(clause) ||
       negatedInjectionImpact.test(clause)) return false;
     if (injectionImpact.test(clause)) return true;
-    if (affirmativeUnlabeledSubstantiveImpact.test(clause) || affirmativeDestructiveDataImpact.test(clause)) return true;
+    if (affirmativeUnlabeledSubstantiveImpact.test(clause) || affirmativeDestructiveDataImpact.test(clause) ||
+      affirmativeBuildOrTestFailure.test(clause)) return true;
+    if (explicitlyNonSubstantiveBadge.test(clause)) return false;
+    if (explicitlyNonSubstantiveFinding.test(clause)) return false;
     return !unlabeledPureMaintainabilitySuggestion.test(clause);
   });
 }
@@ -155,9 +156,7 @@ function isSubstantiveReviewClause(clause: string): boolean {
 
 function isSubstantiveReviewBody(body: string): boolean {
   return reviewBodyClauses(body).some((clause) => {
-    if (explicitlyNonSubstantiveBadge.test(clause)) return false;
     if (explicitlyNonSubstantiveAcknowledgment.test(clause)) return false;
-    if (explicitlyNonSubstantiveFinding.test(clause)) return false;
     if (isSubstantiveReviewClause(clause)) return true;
     if (missingSafeguardImpact.test(clause)) return true;
     if (isClearedReviewClause(clause) || negatedUnlabeledSubstantiveImpact.test(clause) ||
@@ -167,6 +166,8 @@ function isSubstantiveReviewBody(body: string): boolean {
     if (injectionImpact.test(clause)) return true;
     if (affirmativeUnlabeledSubstantiveImpact.test(clause) || affirmativeDestructiveDataImpact.test(clause) ||
       affirmativeBuildOrTestFailure.test(clause)) return true;
+    if (explicitlyNonSubstantiveBadge.test(clause)) return false;
+    if (explicitlyNonSubstantiveFinding.test(clause)) return false;
     return !unlabeledPureMaintainabilitySuggestion.test(clause);
   });
 }
@@ -419,6 +420,7 @@ type StatusDeliveryState =
 
 function statusDeliveryState(statusText: string): StatusDeliveryState | null {
   const ready = statusReadyClaim(statusText);
+  const backlog = statusLatestClaim(statusText, /\bbacklog\b/i);
   const decisionReady = statusLatestClaim(statusText, /\bdecision[_ -]?ready\b/i, true);
   const blocked = statusLatestClaim(statusText, /\b(?:unblocked|block(?:ed)?)\b/i, false, /^unblocked$/i);
   const parked = statusLatestClaim(statusText, /\b(?:unparked|park(?:ed)?)\b/i, false, /^unparked$/i);
@@ -430,6 +432,7 @@ function statusDeliveryState(statusText: string): StatusDeliveryState | null {
   );
   const candidates = [
     ready === null ? null : { state: ready.polarity === "affirmative" ? "ready" as const : "not_ready" as const, index: ready.index },
+    backlog === null ? null : { state: "not_ready" as const, index: backlog.index },
     decisionReady === null
       ? null
       : {
