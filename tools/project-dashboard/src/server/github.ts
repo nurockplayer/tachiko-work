@@ -160,7 +160,7 @@ const dashboardQuery = `
         }
         pageInfo { hasNextPage endCursor }
       }
-      pullRequests(first: 50, after: $prCursor, states: OPEN, orderBy: { field: UPDATED_AT, direction: DESC }) @include(if: $includePullRequests) {
+      pullRequests(first: 25, after: $prCursor, states: OPEN, orderBy: { field: UPDATED_AT, direction: DESC }) @include(if: $includePullRequests) {
         nodes {
           number title url body isDraft headRefOid baseRefOid baseRefName mergeable mergeStateStatus updatedAt
           closingIssuesReferences(first: 100) {
@@ -193,10 +193,10 @@ const dashboardQuery = `
             nodes { state submittedAt url commit { oid } }
             pageInfo { hasNextPage }
           }
-          reviewThreads(first: 100) {
+          reviewThreads(first: 50) {
             nodes {
               isResolved isOutdated
-              comments(first: 100) {
+              comments(first: 50) {
                 nodes { body url }
                 pageInfo { hasNextPage }
               }

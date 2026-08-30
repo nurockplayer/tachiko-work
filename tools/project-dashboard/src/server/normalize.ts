@@ -235,8 +235,14 @@ function statusClaimsActive(statusText: string): boolean {
 }
 
 function statusClaimsReady(statusText: string): boolean {
-  return !/\bdecision[_ -]?ready\b/.test(statusText) && !/\bnot[_ -]+ready\b/.test(statusText) &&
+  return !/\bdecision[_ -]?ready\b/.test(statusText) && !statusClaimsNotReady(statusText) &&
     /\bready\b/.test(statusText) && !/not ready for (?:production )?implementation/.test(statusText);
+}
+
+function statusClaimsNotReady(statusText: string): boolean {
+  return /\b(?:not|never)\b[^\n]{0,40}\bready\b/.test(statusText) ||
+    /\bnon[_ -]+ready\b/.test(statusText) ||
+    /\bready\b\s*(?:(?:is\s+)?not\b|[:=-]\s*(?:false|no)\b)/.test(statusText);
 }
 
 function handoffClaimsMergeReady(handoff: HandoffProjection): boolean {
@@ -249,7 +255,7 @@ function issueReadiness(issue: RawIssue, handoff: HandoffProjection): DeliveryLa
   const issueStatus = issueStatusText(issue);
   if (decisionIssue.test(issue.title) && statusClaimsDecisionReady(issueStatus)) return "ready";
   if (authorityOnlyIssue.test(issue.title)) return "unknown";
-  if (/\bdecision[_ -]?ready\b/.test(issueStatus) || /\bnot[_ -]+ready\b/.test(issueStatus)) return "unknown";
+  if (/\bdecision[_ -]?ready\b/.test(issueStatus) || statusClaimsNotReady(issueStatus)) return "unknown";
   if (/\bpark(?:ed)?\b/.test(issueStatus)) return "parked";
   if (statusClaimsBlocked(issueStatus)) return "blocked";
   if (!statusClaimsActive(issueStatus) && !statusClaimsReady(issueStatus)) return "unknown";
@@ -261,7 +267,7 @@ function issueReadiness(issue: RawIssue, handoff: HandoffProjection): DeliveryLa
     : null;
   const statusText = (currentHandoffState ?? issueStatus).toLowerCase();
   if (/\bdecision[_ -]?ready\b/.test(statusText)) return "unknown";
-  if (/\bnot[_ -]+ready\b/.test(statusText)) return "unknown";
+  if (statusClaimsNotReady(statusText)) return "unknown";
   if (/\bpark(?:ed)?\b/.test(statusText)) return "parked";
   if (/\bblock(?:ed)?\b/.test(statusText) && !statusText.includes("not blocked")) return "blocked";
   if (/\bactive\b|\bimplementing\b|\bin progress\b|\bvalidating\b|\breview[_ -]?fix\b|\bhuman[_ -]?required\b/.test(statusText)) return "active";
@@ -562,9 +568,9 @@ function projectLane(
   const authoritativeIssueStatus = issueStatusText(issue);
   const issueStatusBlocked = statusClaimsBlocked(authoritativeIssueStatus);
   const issueStatusAffirmsDelivery = statusClaimsActive(authoritativeIssueStatus) || statusClaimsReady(authoritativeIssueStatus);
-  const issueReadinessRequiresSteward = pr !== null && issue.blockedBy !== null && issue.blockedBy.length === 0 &&
+  const issueReadinessRequiresSteward = issue.blockedBy !== null && issue.blockedBy.length === 0 &&
     !authorityOnlyIssue.test(issue.title) &&
-    (issueStatusBlocked || (observedReadiness === "unknown" && !issueStatusAffirmsDelivery));
+    (issueStatusBlocked || (pr !== null && observedReadiness === "unknown" && !issueStatusAffirmsDelivery));
   const handoffMergeReadinessRequiresDelivery = pr !== null && handoff.condition === "current" &&
     !handoffClaimsMergeReady(handoff);
 

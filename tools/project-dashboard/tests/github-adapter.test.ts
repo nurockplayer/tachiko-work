@@ -121,8 +121,12 @@ function githubPage() {
 
 describe("loadGithubSnapshot", () => {
   it("binds roadmap authority and checks to the exact observed main/head identities", async () => {
+    let projectionQuery = "";
     const api: ReadonlyGithubApi = {
-      graphql: async () => githubPage(),
+      graphql: async (query) => {
+        if (query.includes("query DashboardProjection")) projectionQuery = query;
+        return githubPage();
+      },
       rawText: async () => "## Current horizon\n\n> **05 · Designer MVP**",
       requiredStatusChecks: async () => [{ name: "test", integrationId: 42 }],
       compare: async () => ({ status: "ahead", mergeBaseSha: mainSha, files: [] }),
@@ -174,6 +178,9 @@ describe("loadGithubSnapshot", () => {
       recentCompletions: [{ number: 186, mergedBy: "maintainer" }],
     });
     expect(result.productHorizonUrl).toContain(mainSha);
+    expect(projectionQuery).toContain("pullRequests(first: 25");
+    expect(projectionQuery).toContain("reviewThreads(first: 50)");
+    expect(projectionQuery).toMatch(/reviewThreads\(first: 50\)[\s\S]*comments\(first: 50\)/);
   });
 
   it("preserves the PR base tip and observes changed authority paths from merge-base to live main", async () => {

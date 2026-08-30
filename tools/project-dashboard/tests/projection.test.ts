@@ -126,6 +126,19 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries).toEqual([]);
   });
 
+  it.each(["Not yet Ready", "Not currently Ready"])(
+    "does not let qualified negated readiness reach the merge gate: %s",
+    (status) => {
+      const notReady = issue();
+      notReady.body = `## Status\n\n**${status}**\n\nOwner: \`agent:codex\``;
+
+      const projection = normalizeRepositorySnapshot(snapshot({ issues: [notReady], pullRequests: [pullRequest()] }));
+
+      expect(projection.deliveries[0]?.issue.readiness).toBe("unknown");
+      expect(projection.deliveries[0]?.phase).toBe("validating");
+    },
+  );
+
   it("does not let an operational handoff elevate an unrecognized Issue status", () => {
     const backlog = issue();
     backlog.body = "## Status\n\nBacklog\n\nOwner: `agent:codex`";
@@ -251,6 +264,19 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.issue.readiness).toBe("blocked");
     expect(lane?.phase).toBe("blocked");
     expect(lane?.blockers).toContain("The authoritative Issue status reports this lane blocked.");
+  });
+
+  it("routes an authoritative blocked Issue without a PR to the Steward", () => {
+    const blocked = issue();
+    blocked.body = "## Status\n\n**BLOCKED**\n\nOwner: `agent:codex`";
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [blocked] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.phase).toBe("blocked");
+    expect(lane?.blockers).toContain("The authoritative Issue status reports this lane blocked.");
+    expect(lane?.action.owner).toBe("human");
+    expect(projection.attention.humanActionRequired).toBe(true);
   });
 
   it("does not treat Decision-Ready authority work as production implementation readiness", () => {
