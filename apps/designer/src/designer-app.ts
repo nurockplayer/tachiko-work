@@ -50,6 +50,22 @@ export function mountDesigner(
   let savedProjects: SavedProjectSummary[] = [];
   let selectedSavedProject = "";
   const durability = createDurabilityState();
+  let beforeUnloadGuarded = false;
+
+  const warnBeforeDirtyUnload = (event: BeforeUnloadEvent): void => {
+    event.preventDefault();
+  };
+
+  const syncBeforeUnloadGuard = (): void => {
+    const shouldGuard = !destroyed && durability.snapshot().dirty;
+    if (shouldGuard && !beforeUnloadGuarded) {
+      window.addEventListener("beforeunload", warnBeforeDirtyUnload);
+      beforeUnloadGuarded = true;
+    } else if (!shouldGuard && beforeUnloadGuarded) {
+      window.removeEventListener("beforeunload", warnBeforeDirtyUnload);
+      beforeUnloadGuarded = false;
+    }
+  };
 
   const render = (): void => {
     if (destroyed) return;
@@ -117,6 +133,7 @@ export function mountDesigner(
       published = true;
       const requested = store.beginPublication(publication);
       durability.observe(publication.resulting_revision);
+      syncBeforeUnloadGuard();
       render();
       const refresh = await client.queryFields(
         publication.resulting_revision,
@@ -194,6 +211,7 @@ export function mountDesigner(
     selectedCollection = candidate.default_collection;
     occurrenceClosed = false;
     durability.install(candidate.revision, durable);
+    syncBeforeUnloadGuard();
   };
 
   const installOpenedOccurrence = (opened: OpenedProjection): void => {
@@ -203,6 +221,7 @@ export function mountDesigner(
     selectedCollection = opened.bootstrap.default_collection;
     occurrenceClosed = false;
     durability.install(opened.bootstrap.revision, true);
+    syncBeforeUnloadGuard();
   };
 
   const refreshSavedProjects = async (preferred?: string): Promise<void> => {
@@ -307,6 +326,7 @@ export function mountDesigner(
       const project = await client.exportProject(expectedRevision);
       await host.publish(requestedName, project.bytes);
       durability.published(project.revision);
+      syncBeforeUnloadGuard();
       let refreshWarning = "";
       try {
         await refreshSavedProjects(requestedName.trim());
@@ -344,6 +364,7 @@ export function mountDesigner(
       selectedCollection = "";
       occurrenceClosed = true;
       durability.close();
+      syncBeforeUnloadGuard();
       notice = {
         tone: "success",
         title: "Project closed",
@@ -429,6 +450,7 @@ export function mountDesigner(
     ready,
     destroy: () => {
       destroyed = true;
+      syncBeforeUnloadGuard();
       root.replaceChildren();
       void client.close();
     },

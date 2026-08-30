@@ -45,7 +45,8 @@ All notable changes to Tachiko Work are documented in this file.
   IndexedDB destination. Browser projects reopen cleanly after occurrence
   teardown or page reload; rejected/cancelled admission and failed Save As
   preserve the current occurrence and existing durable destinations. Dirty
-  occurrences require confirmation before Open or Close can discard them. Canonical project
+  occurrences require confirmation before Open or Close can discard them and
+  warn before browser unload. Canonical project
   transfer is independently bounded at 64 MiB and remains a private host/WASM
   mechanism, not a public storage or wire contract.
 - A first-party browser Designer vertical slice now runs the Rust-authoritative

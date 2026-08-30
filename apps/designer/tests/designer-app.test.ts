@@ -500,6 +500,8 @@ describe("Designer application seam", () => {
     const memoryHost = new MemoryHost();
     const prompt = vi.fn<Window["prompt"]>();
     vi.stubGlobal("prompt", prompt);
+    const addEventListener = vi.spyOn(window, "addEventListener");
+    const removeEventListener = vi.spyOn(window, "removeEventListener");
     prompt.mockReturnValueOnce("source.roproj");
     const app = mountDesigner(root, new FakeClient(), memoryHost);
     await app.ready;
@@ -507,12 +509,17 @@ describe("Designer application seam", () => {
     expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
       "Unsaved changes",
     );
+    expect(addEventListener).toHaveBeenCalledWith("beforeunload", expect.any(Function));
     root.querySelector<HTMLButtonElement>("[data-save-as]")?.click();
     await vi.waitFor(() => {
       expect(memoryHost.projects.has("source.roproj")).toBe(true);
     });
     expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
       "Saved",
+    );
+    expect(removeEventListener).toHaveBeenCalledWith(
+      "beforeunload",
+      expect.any(Function),
     );
 
     const damage = root.querySelector<HTMLInputElement>(
@@ -562,6 +569,9 @@ describe("Designer application seam", () => {
     expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
       "Saved",
     );
+    app.destroy();
+    addEventListener.mockRestore();
+    removeEventListener.mockRestore();
     vi.unstubAllGlobals();
   });
 

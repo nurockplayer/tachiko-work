@@ -24,7 +24,9 @@ Save As captures one exact `ResidentWorkspaceSession::export_snapshot()`
 revision and encodes it through the existing canonical `.roproj/v1` codec.
 IndexedDB commits the opaque complete tree as one create-only record, so an
 existing project name is never overwritten and the UI marks only the confirmed
-revision durable. Browser projects survive Worker teardown and page reload, but
+revision durable. Dirty occurrences guard in-app replacement/close and browser
+unload; the unload guard is removed after Save As or occurrence teardown.
+Browser projects survive Worker teardown and page reload, but
 remain browser-origin data and can be removed by clearing site data. Same-name
 replacement, autosave, recovery/history, cloud persistence, and distribution
 remain outside this slice.
