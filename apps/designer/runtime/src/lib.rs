@@ -36,6 +36,7 @@ const MAX_COLLECTIONS: usize = 32;
 const MAX_TABLE_FIELDS: usize = 32;
 const MAX_TABLE_ROWS: usize = 32;
 const MAX_FIELD_QUERY_TARGETS: usize = MAX_TABLE_FIELDS * MAX_TABLE_ROWS;
+const MAX_PROJECTION_BYTES: usize = 65_536;
 pub(crate) const MAX_WIRE_REQUEST_BYTES: usize = 65_536;
 pub(crate) const MAX_PROJECT_TRANSFER_BYTES: usize = 64 * 1024 * 1024;
 const DESIGNER_PRINCIPAL: &str = "designer-human";
@@ -280,6 +281,8 @@ pub enum DesignerError {
     CollectionTooLarge { collection: String },
     #[error("field query requested {requested} targets; the bounded maximum is {maximum}")]
     FieldQueryTooLarge { requested: usize, maximum: usize },
+    #[error("projection is {actual} bytes; the bounded maximum is {maximum}")]
+    ProjectionTooLarge { actual: usize, maximum: usize },
     #[error("formula projection is unavailable for '{field}'")]
     MissingFormulaProjection { field: FieldRef },
     #[error("Designer lifecycle failed: {0}")]
@@ -321,9 +324,9 @@ impl DesignerError {
             Self::UnsupportedProject { .. } => ("unsupported_project", Vec::new()),
             Self::InvalidOccurrenceIdentity => ("invalid_occurrence", Vec::new()),
             Self::MissingCollection { .. } => ("missing_collection", Vec::new()),
-            Self::CollectionTooLarge { .. } | Self::FieldQueryTooLarge { .. } => {
-                ("query_too_large", Vec::new())
-            }
+            Self::CollectionTooLarge { .. }
+            | Self::FieldQueryTooLarge { .. }
+            | Self::ProjectionTooLarge { .. } => ("query_too_large", Vec::new()),
             Self::Workspace(_)
             | Self::MissingFormulaProjection { .. }
             | Self::Lifecycle(_)
@@ -479,6 +482,8 @@ impl DesignerRuntime {
                 ),
             });
         }
+        ensure_projection_size(&self.bootstrap_projection())?;
+        self.ensure_bounded_publication_profile()?;
         for collection in &self.collections {
             self.query_table(&collection.key).map_err(|error| {
                 DesignerError::UnsupportedProject {
@@ -506,6 +511,35 @@ impl DesignerRuntime {
             });
         }
         Ok(())
+    }
+
+    fn ensure_bounded_publication_profile(&self) -> Result<(), DesignerError> {
+        let entities = self
+            .collection_specs
+            .values()
+            .flat_map(|collection| collection.entities.iter().map(ToString::to_string))
+            .collect::<Vec<_>>();
+        let fields = self
+            .collection_specs
+            .values()
+            .flat_map(|collection| {
+                collection.entities.iter().flat_map(|entity| {
+                    collection.columns.iter().map(|column| {
+                        field_target(&FieldRef::new(entity.clone(), column.id.clone()))
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+        let projection = PublicationProjection {
+            base_revision: "resident/18446744073709551615".to_owned(),
+            resulting_revision: "resident/18446744073709551615".to_owned(),
+            entities,
+            fields: fields.clone(),
+            affected_calculations: fields,
+        };
+        ensure_projection_size(&projection).map_err(|error| DesignerError::UnsupportedProject {
+            message: format!("the worst-case publication projection is not bounded: {error}"),
+        })
     }
 
     /// Prepare the exact current resident snapshot as a canonical project.
@@ -577,7 +611,7 @@ impl DesignerRuntime {
                     .collect(),
             })
             .collect();
-        Ok(TableProjection {
+        let projection = TableProjection {
             revision: field_query.revision().as_str().to_owned(),
             collection: spec.summary.clone(),
             columns: spec
@@ -590,7 +624,9 @@ impl DesignerRuntime {
                 })
                 .collect(),
             rows,
-        })
+        };
+        ensure_projection_size(&projection)?;
+        Ok(projection)
     }
 
     fn project_field(
@@ -646,14 +682,16 @@ impl DesignerRuntime {
             .map(FieldTarget::as_field_ref)
             .collect::<Vec<_>>();
         let query = self.session.query_fields(&requested)?;
-        Ok(FieldBatchProjection {
+        let projection = FieldBatchProjection {
             revision: query.revision().as_str().to_owned(),
             fields: query
                 .value()
                 .iter()
                 .map(|field| self.project_field(field))
                 .collect(),
-        })
+        };
+        ensure_projection_size(&projection)?;
+        Ok(projection)
     }
 
     fn edit_number(
@@ -787,6 +825,7 @@ pub fn open_project(
         table,
         control,
     };
+    ensure_projection_size(&opened)?;
     *runtime = Some(candidate);
     Ok(opened)
 }
@@ -794,6 +833,21 @@ pub fn open_project(
 /// Destroy the current semantic occurrence without touching durable host data.
 pub fn close_project(runtime: &mut Option<DesignerRuntime>) {
     *runtime = None;
+}
+
+fn ensure_projection_size(projection: &impl Serialize) -> Result<(), DesignerError> {
+    let actual = serde_json::to_vec(projection)
+        .map_err(|error| DesignerError::UnsupportedProject {
+            message: format!("a Designer projection could not be encoded: {error}"),
+        })?
+        .len();
+    if actual > MAX_PROJECTION_BYTES {
+        return Err(DesignerError::ProjectionTooLarge {
+            actual,
+            maximum: MAX_PROJECTION_BYTES,
+        });
+    }
+    Ok(())
 }
 
 fn encode_project_bundle(tree: &CanonicalRoProjectV1) -> Result<Vec<u8>, DesignerError> {

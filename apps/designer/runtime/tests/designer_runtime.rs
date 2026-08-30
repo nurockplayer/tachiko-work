@@ -5,8 +5,8 @@ use tachiko_designer_runtime::{
     StoredValueProjection, close_project, open_project, process_wire_request,
 };
 use tachiko_workspace_engine::{
-    FieldAddress, FieldDefinition, FieldId, FieldKey, FieldType, IdGenerator, Schema, SchemaId,
-    SchemaKey, SemanticIdKind, StarterTemplate, create_document,
+    EntityId, EntityKey, FieldAddress, FieldDefinition, FieldId, FieldKey, FieldType, IdGenerator,
+    Number, Schema, SchemaId, SchemaKey, SemanticIdKind, StarterTemplate, Value, create_document,
 };
 
 const OCCURRENCE_ZERO: &str = "00000000-0000-4000-8000-000000000000";
@@ -161,6 +161,107 @@ fn admission_rejects_an_unbounded_collection_catalog() {
     let failure = error.failure_projection("unavailable");
     assert_eq!(failure.code, "unsupported_project");
     assert!(failure.message.contains("bounded maximum is 32"));
+}
+
+#[test]
+fn admission_rejects_an_oversized_serialized_table_projection() {
+    let mut document = create_document(
+        StarterTemplate::GameBalance,
+        "Oversized projection",
+        &mut TestIds::default(),
+    )
+    .expect("fixture should be valid");
+    let name = document
+        .resolve_field(&FieldAddress::new("iron_sword", "name"))
+        .expect("fixture name field should resolve");
+    document
+        .entities
+        .get_mut(&name.entity)
+        .expect("fixture entity should exist")
+        .fields
+        .insert(name.field, Value::Text("x".repeat(70_000)));
+
+    let Err(error) = DesignerRuntime::from_document(document, OCCURRENCE_ONE) else {
+        panic!("serialized table projections must remain bounded");
+    };
+    let failure = error.failure_projection("unavailable");
+    assert_eq!(failure.code, "unsupported_project");
+    assert!(failure.message.contains("bounded maximum is 65536"));
+}
+
+#[test]
+fn admission_rejects_an_unbounded_worst_case_publication_projection() {
+    let mut document = create_document(
+        StarterTemplate::GameBalance,
+        "Oversized publication",
+        &mut TestIds::default(),
+    )
+    .expect("fixture should be valid");
+    let items_schema = document
+        .schemas
+        .values_mut()
+        .find(|schema| schema.key.as_str() == "items")
+        .expect("items schema should exist");
+    let schema_id = items_schema.id.clone();
+    while items_schema.fields.len() < 32 {
+        let index = items_schema.fields.len();
+        let id = format!("publication_fanout_field_identifier_{index:02}");
+        let key = format!("fanout_field_{index:02}");
+        items_schema.fields.insert(
+            FieldId::from(id.as_str()),
+            FieldDefinition {
+                id: FieldId::from(id.as_str()),
+                key: FieldKey::from(key.as_str()),
+                field_type: FieldType::Number,
+                required: false,
+            },
+        );
+    }
+    let number_fields = items_schema
+        .fields
+        .values()
+        .filter(|field| matches!(field.field_type, FieldType::Number))
+        .map(|field| field.id.clone())
+        .collect::<Vec<_>>();
+    let template = document
+        .entities
+        .values()
+        .find(|entity| entity.schema == schema_id)
+        .expect("items fixture entity should exist")
+        .clone();
+    while document
+        .entities
+        .values()
+        .filter(|entity| entity.schema == schema_id)
+        .count()
+        < 32
+    {
+        let index = document.entities.len();
+        let id = format!("publication_fanout_entity_identifier_{index:02}");
+        let key = format!("fanout_entity_{index:02}");
+        let mut entity = template.clone();
+        entity.id = EntityId::from(id.as_str());
+        entity.key = EntityKey::from(key.as_str());
+        for field in &number_fields {
+            entity.fields.insert(
+                field.clone(),
+                Value::Number(Number::new(1.0).expect("finite fixture number")),
+            );
+        }
+        document.entities.insert(entity.id.clone(), entity);
+    }
+
+    let Err(error) = DesignerRuntime::from_document(document, OCCURRENCE_ONE) else {
+        panic!("the worst-case publication projection must remain bounded");
+    };
+    let failure = error.failure_projection("unavailable");
+    assert_eq!(failure.code, "unsupported_project");
+    assert!(
+        failure
+            .message
+            .contains("worst-case publication projection")
+    );
+    assert!(failure.message.contains("bounded maximum is 65536"));
 }
 
 #[test]
