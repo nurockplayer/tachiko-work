@@ -331,19 +331,6 @@ function statusLatestClaim(
   return latest;
 }
 
-function statusLatestAffirmativeClaimIndex(
-  statusText: string,
-  claim: RegExp,
-  pendingIsConditional = false,
-): number | null {
-  const matcher = new RegExp(claim.source, `${claim.flags.replaceAll("g", "")}g`);
-  const matches = [...statusText.matchAll(matcher)].filter(
-    (match) => !statusClaimIsNegated(statusText, match) &&
-      !statusClaimIsConditional(statusText, match, pendingIsConditional),
-  );
-  return matches.at(-1)?.index ?? null;
-}
-
 function statusReadyClaim(statusText: string): { polarity: "affirmative" | "negated"; index: number } | null {
   let latest: { polarity: "affirmative" | "negated"; index: number } | null = null;
   for (const match of statusText.matchAll(/\bready\b/gi)) {
@@ -374,13 +361,17 @@ type StatusDeliveryState =
   | "decision_ready"
   | "not_decision_ready"
   | "blocked"
+  | "not_blocked"
   | "parked"
+  | "not_parked"
   | "active"
   | "not_active";
 
 function statusDeliveryState(statusText: string): StatusDeliveryState | null {
   const ready = statusReadyClaim(statusText);
   const decisionReady = statusLatestClaim(statusText, /\bdecision[_ -]?ready\b/i, true);
+  const blocked = statusLatestClaim(statusText, /\bblock(?:ed)?\b/i);
+  const parked = statusLatestClaim(statusText, /\bpark(?:ed)?\b/i);
   const active = statusLatestClaim(
     statusText,
     /\b(?:active|implementing|in progress|validating|review[_ -]?fix)\b/i,
@@ -394,14 +385,16 @@ function statusDeliveryState(statusText: string): StatusDeliveryState | null {
           state: decisionReady.polarity === "affirmative" ? "decision_ready" as const : "not_decision_ready" as const,
           index: decisionReady.index,
         },
-    { state: "blocked" as const, index: statusLatestAffirmativeClaimIndex(statusText, /\bblock(?:ed)?\b/i) },
-    { state: "parked" as const, index: statusLatestAffirmativeClaimIndex(statusText, /\bpark(?:ed)?\b/i) },
+    blocked === null
+      ? null
+      : { state: blocked.polarity === "affirmative" ? "blocked" as const : "not_blocked" as const, index: blocked.index },
+    parked === null
+      ? null
+      : { state: parked.polarity === "affirmative" ? "parked" as const : "not_parked" as const, index: parked.index },
     active === null
       ? null
       : { state: active.polarity === "affirmative" ? "active" as const : "not_active" as const, index: active.index },
-  ].filter((claim): claim is { state: StatusDeliveryState; index: number } =>
-    claim !== null && claim.index !== null,
-  );
+  ].filter((claim): claim is { state: StatusDeliveryState; index: number } => claim !== null);
   return candidates.toSorted((left, right) => right.index - left.index)[0]?.state ?? null;
 }
 

@@ -279,6 +279,33 @@ describe("normalizeRepositorySnapshot", () => {
   });
 
   it.each([
+    "Blocked; now no longer Blocked.",
+    "Parked; now no longer Parked.",
+  ])("fails closed after a current delivery state is explicitly cleared: %s", (status) => {
+    const cleared = issue();
+    cleared.body = `## Status\n\n${status}\n\nOwner: \`agent:codex\``;
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [cleared], pullRequests: [pullRequest()] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.issue.readiness).toBe("unknown");
+    expect(lane?.phase).toBe("validating");
+    expect(lane?.phase).not.toBe("merge_gate");
+  });
+
+  it.each([
+    { status: "No longer Blocked; now Blocked.", readiness: "blocked" },
+    { status: "No longer Parked; now Parked.", readiness: "parked" },
+  ])("honors a reasserted current $readiness state", ({ status, readiness }) => {
+    const changed = issue();
+    changed.body = `## Status\n\n${status}\n\nOwner: \`agent:codex\``;
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [changed] }));
+
+    expect(projection.deliveries[0]?.issue.readiness).toBe(readiness);
+  });
+
+  it.each([
     "Not parked; Ready for bounded implementation.",
     "Not currently parked; Ready.",
     "Never parked. Ready.",
