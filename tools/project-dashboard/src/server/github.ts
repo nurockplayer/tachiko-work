@@ -10,7 +10,7 @@ import type {
 } from "../shared/types.ts";
 
 export interface ReadonlyGithubApi {
-  graphql(query: string, variables: Record<string, string | null>): Promise<unknown>;
+  graphql(query: string, variables: Record<string, string | boolean | null>): Promise<unknown>;
   rawText(path: string): Promise<string>;
   requiredStatusChecks(owner: string, repo: string, branch: string): Promise<RawRequiredCheck[]>;
   compare(
@@ -75,7 +75,7 @@ interface GithubReview {
 interface GithubReviewThread {
   isResolved: boolean;
   isOutdated: boolean;
-  comments: { nodes: Array<{ body: string; url: string }> };
+  comments: { nodes: Array<{ body: string; url: string }>; pageInfo: PageInfo };
 }
 
 interface GithubPullRequest {
@@ -118,8 +118,8 @@ interface GithubPage {
   repository: null | {
     url: string;
     defaultBranchRef: null | { name: string; target: { oid: string } };
-    issues: { nodes: GithubIssue[]; pageInfo: PageInfo };
-    pullRequests: { nodes: GithubPullRequest[]; pageInfo: PageInfo };
+    issues?: { nodes: GithubIssue[]; pageInfo: PageInfo };
+    pullRequests?: { nodes: GithubPullRequest[]; pageInfo: PageInfo };
   };
 }
 
@@ -135,6 +135,8 @@ const dashboardQuery = `
     $repo: String!
     $issueCursor: String
     $prCursor: String
+    $includeIssues: Boolean!
+    $includePullRequests: Boolean!
   ) {
     repository(owner: $owner, name: $repo) {
       url
@@ -142,7 +144,7 @@ const dashboardQuery = `
         name
         target { ... on Commit { oid } }
       }
-      issues(first: 50, after: $issueCursor, states: OPEN, orderBy: { field: UPDATED_AT, direction: DESC }) {
+      issues(first: 50, after: $issueCursor, states: OPEN, orderBy: { field: UPDATED_AT, direction: DESC }) @include(if: $includeIssues) {
         nodes {
           number title url body updatedAt lastEditedAt
           milestone { title }
@@ -157,7 +159,7 @@ const dashboardQuery = `
         }
         pageInfo { hasNextPage endCursor }
       }
-      pullRequests(first: 50, after: $prCursor, states: OPEN, orderBy: { field: UPDATED_AT, direction: DESC }) {
+      pullRequests(first: 50, after: $prCursor, states: OPEN, orderBy: { field: UPDATED_AT, direction: DESC }) @include(if: $includePullRequests) {
         nodes {
           number title url body isDraft headRefOid baseRefOid baseRefName mergeable mergeStateStatus updatedAt
           closingIssuesReferences(first: 20) { nodes { number } }
@@ -190,7 +192,10 @@ const dashboardQuery = `
           reviewThreads(first: 100) {
             nodes {
               isResolved isOutdated
-              comments(first: 1) { nodes { body url } }
+              comments(first: 100) {
+                nodes { body url }
+                pageInfo { hasNextPage }
+              }
             }
             pageInfo { hasNextPage }
           }
@@ -306,7 +311,9 @@ function asReviewThread(thread: GithubReviewThread): RawReviewThread {
   return {
     resolved: thread.isResolved,
     outdated: thread.isOutdated,
-    body: first?.body ?? "Unclassified unresolved review thread",
+    comments: thread.comments.nodes.length > 0
+      ? thread.comments.nodes.map((comment) => comment.body)
+      : ["Unclassified unresolved review thread"],
     url: first?.url ?? "",
   };
 }
@@ -340,6 +347,8 @@ export async function loadGithubSnapshot(
   const mergedPullRequests = new Map<number, GithubMergedPullRequest>();
   let issueCursor: string | null = null;
   let prCursor: string | null = null;
+  let issueMore = true;
+  let prMore = true;
   let repository: NonNullable<GithubPage["repository"]> | undefined;
 
   try {
@@ -349,17 +358,30 @@ export async function loadGithubSnapshot(
         repo: options.repo,
         issueCursor,
         prCursor,
+        includeIssues: issueMore,
+        includePullRequests: prMore,
       })) as GithubPage;
       if (response.repository === null) throw new Error("repository not found");
       repository = response.repository;
-      for (const issue of repository.issues.nodes) issues.set(issue.number, issue);
-      for (const pr of repository.pullRequests.nodes) pullRequests.set(pr.number, pr);
-
-      const issueMore = repository.issues.pageInfo.hasNextPage;
-      const prMore = repository.pullRequests.pageInfo.hasNextPage;
+      if (issueMore) {
+        if (repository.issues === undefined) throw new Error("missing Issue page");
+        for (const issue of repository.issues.nodes) issues.set(issue.number, issue);
+        issueMore = repository.issues.pageInfo.hasNextPage;
+        if (issueMore) {
+          issueCursor = repository.issues.pageInfo.endCursor;
+          if (issueCursor === null) throw new Error("missing Issue cursor");
+        }
+      }
+      if (prMore) {
+        if (repository.pullRequests === undefined) throw new Error("missing pull-request page");
+        for (const pr of repository.pullRequests.nodes) pullRequests.set(pr.number, pr);
+        prMore = repository.pullRequests.pageInfo.hasNextPage;
+        if (prMore) {
+          prCursor = repository.pullRequests.pageInfo.endCursor;
+          if (prCursor === null) throw new Error("missing pull-request cursor");
+        }
+      }
       if (!issueMore && !prMore) break;
-      issueCursor = repository.issues.pageInfo.endCursor;
-      prCursor = repository.pullRequests.pageInfo.endCursor;
     }
   } catch {
     return {
@@ -489,7 +511,8 @@ export async function loadGithubSnapshot(
     }
     const commentsComplete = !pr.comments.pageInfo.hasPreviousPage;
     const reviewsComplete = !pr.reviews.pageInfo.hasNextPage;
-    const reviewThreadsComplete = !(pr.reviewThreads.pageInfo?.hasNextPage ?? false);
+    const reviewThreadsComplete = !(pr.reviewThreads.pageInfo?.hasNextPage ?? false) &&
+      pr.reviewThreads.nodes.every((thread) => !thread.comments.pageInfo.hasNextPage);
     if (!commentsComplete) failures.push(`PR #${pr.number} handoff observation was truncated.`);
     if (!reviewsComplete) failures.push(`PR #${pr.number} review observation was truncated.`);
     if (!reviewThreadsComplete) failures.push(`PR #${pr.number} review-thread observation was truncated.`);
@@ -557,7 +580,7 @@ export class GithubApiClient implements ReadonlyGithubApi {
     this.#fetch = fetchImplementation;
   }
 
-  async graphql(query: string, variables: Record<string, string | null>): Promise<unknown> {
+  async graphql(query: string, variables: Record<string, string | boolean | null>): Promise<unknown> {
     const response = await this.#fetch("https://api.github.com/graphql", {
       method: "POST",
       headers: this.#headers("application/vnd.github+json"),

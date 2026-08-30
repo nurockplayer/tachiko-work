@@ -215,7 +215,7 @@ function issueReadiness(issue: RawIssue, handoff: HandoffProjection): DeliveryLa
 }
 
 function humanActionRequested(comments: RawComment[], handoff: HandoffProjection): boolean {
-  if (handoff.condition !== "current") return false;
+  if (handoff.condition !== "current" && handoff.condition !== "stale") return false;
   if (/human[_ -]?required/i.test(handoff.claimedState ?? "")) return true;
   const latest = canonicalComments(comments).toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
   if (latest === undefined) return false;
@@ -364,7 +364,9 @@ function projectReviews(pr: RawPullRequest, observedAt: string): ReviewProjectio
     status,
     reviewedHeadSha,
     unresolvedThreadCount: unresolved.length,
-    substantiveUnresolvedCount: unresolved.filter((thread) => isSubstantiveFinding(thread.body)).length,
+    substantiveUnresolvedCount: unresolved.filter(
+      (thread) => thread.comments.some((comment) => isSubstantiveFinding(comment)),
+    ).length,
     sourceRefs: refs,
   };
 }
@@ -539,7 +541,10 @@ function projectLane(
       );
   const action: DeliveryLane["action"] = requiresHuman || phase === "human_required"
     ? { owner: "human", reason: "The canonical coordination state requests human or Steward action." }
-    : phase === "review_fix" || checks.status === "failure" || ownershipConflict
+    : phase === "review_fix" || checks.status === "failure" || ownershipConflict ||
+        pr?.mergeable === "conflicting" || pr?.mergeStateStatus === "dirty" ||
+        drift === "suspected" || handoff.condition === "inconsistent" || handoff.condition === "stale" ||
+        !issueScopeReconciled
       ? { owner: "codex", reason: blockers[0] ?? "Delivery-agent action is required." }
       : { owner: "none", reason: "No human action is currently evidenced." };
   const issueRef = source(

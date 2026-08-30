@@ -123,7 +123,7 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries).toEqual([]);
   });
 
-  it("does not let a stale no-PR handoff override live Issue readiness or request human action", () => {
+  it("does not let a stale no-PR handoff override live Issue readiness but preserves human action", () => {
     const coordinated = issue();
     coordinated.comments[0]!.body = [
       "<!-- agent-handoff:v1 -->",
@@ -138,9 +138,9 @@ describe("normalizeRepositorySnapshot", () => {
 
     expect(lane?.handoff.condition).toBe("stale");
     expect(lane?.issue.readiness).toBe("ready");
-    expect(lane?.phase).toBe("ready");
-    expect(lane?.action.owner).toBe("none");
-    expect(projection.attention.humanActionRequired).toBe(false);
+    expect(lane?.phase).toBe("human_required");
+    expect(lane?.action.owner).toBe("human");
+    expect(projection.attention.humanActionRequired).toBe(true);
   });
 
   it("does not turn guardrail prose into parked, blocked, or human-required state", () => {
@@ -218,7 +218,7 @@ describe("normalizeRepositorySnapshot", () => {
     const pr = pullRequest();
     pr.reviewDecision = "changes_requested";
     pr.reviewThreads = [
-      { resolved: false, outdated: false, body: "[P2] Preserve exact-head identity", url: "https://github.com/thread" },
+      { resolved: false, outdated: false, comments: ["[P2] Preserve exact-head identity"], url: "https://github.com/thread" },
     ];
 
     const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
@@ -282,7 +282,7 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.handoff.condition).toBe("stale");
     expect(lane?.phase).toBe("validating");
     expect(lane?.issue.readiness).toBe("active");
-    expect(lane?.action.owner).toBe("none");
+    expect(lane?.action.owner).toBe("codex");
   });
 
   it("preserves a current blocked handoff state for an open PR", () => {
@@ -301,7 +301,7 @@ describe("normalizeRepositorySnapshot", () => {
   it("does not block the merge gate on P3-only review threads", () => {
     const pr = pullRequest();
     pr.reviewThreads = [
-      { resolved: false, outdated: false, body: "[P3] Consider a shorter label", url: "https://github.com/thread" },
+      { resolved: false, outdated: false, comments: ["[P3] Consider a shorter label"], url: "https://github.com/thread" },
     ];
 
     const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
@@ -315,7 +315,7 @@ describe("normalizeRepositorySnapshot", () => {
   it("lets substantive severity evidence override non-substantive wording", () => {
     const pr = pullRequest();
     pr.reviewThreads = [
-      { resolved: false, outdated: false, body: "[P1] This trivial-looking bug loses data.", url: "https://github.com/thread" },
+      { resolved: false, outdated: false, comments: ["[P1] This trivial-looking bug loses data."], url: "https://github.com/thread" },
     ];
 
     const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
@@ -328,7 +328,7 @@ describe("normalizeRepositorySnapshot", () => {
   it("keeps unresolved substantive findings blocking after their code location is outdated", () => {
     const pr = pullRequest();
     pr.reviewThreads = [
-      { resolved: false, outdated: true, body: "[P2] Correctness finding still unresolved", url: "https://github.com/thread" },
+      { resolved: false, outdated: true, comments: ["[P2] Correctness finding still unresolved"], url: "https://github.com/thread" },
     ];
 
     const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
@@ -341,8 +341,24 @@ describe("normalizeRepositorySnapshot", () => {
   it("treats unlabeled unresolved correctness findings as substantive", () => {
     const pr = pullRequest();
     pr.reviewThreads = [
-      { resolved: false, outdated: false, body: "This returns the wrong result and loses user data.", url: "https://github.com/thread" },
+      { resolved: false, outdated: false, comments: ["This returns the wrong result and loses user data."], url: "https://github.com/thread" },
     ];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.reviews.substantiveUnresolvedCount).toBe(1);
+    expect(lane?.phase).toBe("review_fix");
+  });
+
+  it("lets a later unlabeled substantive reply override an initial P3", () => {
+    const pr = pullRequest();
+    pr.reviewThreads = [{
+      resolved: false,
+      outdated: false,
+      comments: ["[P3] Initial suggestion", "This later reply identifies a wrong result."],
+      url: "https://github.com/thread",
+    }];
 
     const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
     const lane = projection.deliveries[0];
@@ -557,6 +573,19 @@ describe("normalizeRepositorySnapshot", () => {
 
     expect(projection.deliveries[0]?.phase).toBe("validating");
     expect(projection.deliveries[0]?.blockers).toContain("GitHub reports that pull request #200 is blocked from merging.");
+  });
+
+  it("assigns merge-conflict repair to the delivery agent", () => {
+    const pr = pullRequest();
+    pr.mergeable = "conflicting";
+    pr.mergeStateStatus = "dirty";
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.phase).toBe("validating");
+    expect(lane?.blockers).toContain("GitHub reports that pull request #200 has merge conflicts.");
+    expect(lane?.action.owner).toBe("codex");
   });
 
   it("requires a handoff update after an Issue scope edit", () => {

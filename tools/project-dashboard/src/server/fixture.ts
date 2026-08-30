@@ -112,7 +112,7 @@ function reviewFixPr(): RawPullRequest {
       {
         resolved: false,
         outdated: false,
-        body: "[P2] Keep target identity out of Tachiko semantics",
+        comments: ["[P2] Keep target identity out of Tachiko semantics"],
         url: "https://github.com/nurockplayer/tachiko-work/pull/201#discussion_r1",
       },
     ],

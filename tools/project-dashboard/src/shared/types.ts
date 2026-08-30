@@ -66,7 +66,7 @@ export interface RawReview {
 export interface RawReviewThread {
   resolved: boolean;
   outdated: boolean;
-  body: string;
+  comments: string[];
   url: string;
 }
 

@@ -40,7 +40,7 @@ function githubPage() {
             comments: { nodes: [], pageInfo: { hasPreviousPage: false } },
           },
         ],
-        pageInfo: { hasNextPage: false, endCursor: null },
+        pageInfo: { hasNextPage: false, endCursor: null as string | null },
       },
       pullRequests: {
         nodes: [
@@ -84,10 +84,23 @@ function githubPage() {
             },
             reviewDecision: "REVIEW_REQUIRED",
             reviews: { nodes: [], pageInfo: { hasNextPage: false } },
-            reviewThreads: { nodes: [] },
+            reviewThreads: {
+              nodes: [{
+                isResolved: false,
+                isOutdated: false,
+                comments: {
+                  nodes: [
+                    { body: "[P3] Initial suggestion", url: "https://github.com/thread#comment-1" },
+                    { body: "[P1] Follow-up correctness finding", url: "https://github.com/thread#comment-2" },
+                  ],
+                  pageInfo: { hasNextPage: false },
+                },
+              }],
+              pageInfo: { hasNextPage: false },
+            },
           },
         ],
-        pageInfo: { hasNextPage: false, endCursor: null },
+        pageInfo: { hasNextPage: false, endCursor: null as string | null },
       },
       mergedPullRequests: {
         nodes: [
@@ -100,7 +113,7 @@ function githubPage() {
             mergedBy: { login: "maintainer" },
           },
         ],
-        pageInfo: { hasNextPage: false, endCursor: null },
+        pageInfo: { hasNextPage: false, endCursor: null as string | null },
       },
     },
   };
@@ -148,6 +161,12 @@ describe("loadGithubSnapshot", () => {
         requiredChecks: [{ name: "test", integrationId: 42 }],
         checksObservedHeadSha: headSha,
         checks: [{ name: "test", integrationId: 42, status: "completed", conclusion: "success" }],
+        reviewThreads: [{
+          resolved: false,
+          outdated: false,
+          comments: ["[P3] Initial suggestion", "[P1] Follow-up correctness finding"],
+          url: "https://github.com/thread#comment-1",
+        }],
       }],
       recentCompletions: [{ number: 186, mergedBy: "maintainer" }],
     });
@@ -249,11 +268,49 @@ describe("loadGithubSnapshot", () => {
     expect(result.recentCompletions?.map((completion) => completion.number)).toEqual([202, 100]);
   });
 
+  it("stops querying a repository connection after that connection is exhausted", async () => {
+    const dashboardVariables: Array<Record<string, string | boolean | null>> = [];
+    const api: ReadonlyGithubApi = {
+      graphql: async (query, variables) => {
+        if (query.includes("RecentCompletions")) return githubPage();
+        dashboardVariables.push(variables);
+        const page = githubPage();
+        const secondPage = dashboardVariables.length === 2;
+        page.repository.issues.pageInfo = { hasNextPage: false, endCursor: null };
+        page.repository.pullRequests.pageInfo = {
+          hasNextPage: !secondPage,
+          endCursor: secondPage ? null : "pr-page-2",
+        };
+        if (secondPage) page.repository.pullRequests.nodes = [];
+        return page;
+      },
+      rawText: async () => "## Current horizon\n\n> **05 · Designer MVP**",
+      requiredStatusChecks: async () => [],
+      compare: async () => ({ status: "ahead", mergeBaseSha: mainSha, files: [] }),
+    };
+
+    await loadGithubSnapshot(api, {
+      owner: "nurockplayer",
+      repo: "tachiko-work",
+      observedAt: "2026-08-30T00:00:00.000Z",
+    });
+
+    expect(dashboardVariables).toHaveLength(2);
+    expect(dashboardVariables[0]).toMatchObject({ includeIssues: true, includePullRequests: true });
+    expect(dashboardVariables[1]).toMatchObject({
+      includeIssues: false,
+      includePullRequests: true,
+      issueCursor: null,
+      prCursor: "pr-page-2",
+    });
+  });
+
   it("preserves incomplete handoff and review observation with exact merger attribution", async () => {
     const page = githubPage();
     page.repository.issues.nodes[0]!.comments.pageInfo.hasPreviousPage = true;
     page.repository.pullRequests.nodes[0]!.comments.pageInfo.hasPreviousPage = true;
     page.repository.pullRequests.nodes[0]!.reviews.pageInfo.hasNextPage = true;
+    page.repository.pullRequests.nodes[0]!.reviewThreads.nodes[0]!.comments.pageInfo.hasNextPage = true;
     page.repository.mergedPullRequests.nodes[0]!.mergedBy = { login: "release-maintainer" };
     const api: ReadonlyGithubApi = {
       graphql: async () => page,
@@ -271,11 +328,13 @@ describe("loadGithubSnapshot", () => {
     expect(result.issues?.[0]?.commentsComplete).toBe(false);
     expect(result.pullRequests?.[0]?.commentsComplete).toBe(false);
     expect(result.pullRequests?.[0]?.reviews).toBeNull();
+    expect(result.pullRequests?.[0]?.reviewThreads).toBeNull();
     expect(result.recentCompletions?.[0]?.mergedBy).toBe("release-maintainer");
     expect(result.failures).toEqual(expect.arrayContaining([
       "Issue #169 handoff observation was truncated.",
       "PR #200 handoff observation was truncated.",
       "PR #200 review observation was truncated.",
+      "PR #200 review-thread observation was truncated.",
     ]));
   });
 
