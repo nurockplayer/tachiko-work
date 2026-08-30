@@ -364,22 +364,25 @@ function derivePhase(
   ownershipConflict: boolean,
   githubMergeReady: boolean,
   issueScopeReconciled: boolean,
+  horizonObserved: boolean,
 ): DeliveryPhase {
   const claimedState = handoff.condition === "current" ? handoff.claimedState?.toLowerCase() ?? "" : "";
   if (readiness === "parked" || claimedState.includes("parked")) return "parked";
   if (claimedState.includes("human_required") || claimedState.includes("human required")) return "human_required";
   if (ownershipConflict) return "blocked";
   if (readiness === "blocked") return "blocked";
+  if (!issueScopeReconciled || !horizonObserved) return "validating";
   if (pr === null) return readiness === "ready" ? "ready" : readiness === "active" ? "implementing" : "unknown";
   if (readiness === "unknown" || pr.isDraft) return "validating";
   if ((reviews.substantiveUnresolvedCount ?? 0) > 0) return "review_fix";
   if (reviews.status === "stale") return "rereview";
   if (reviews.decision === "changes_requested") return "review_fix";
   if (checks.status !== "success" || checks.requiredStatus !== "satisfied") return "validating";
+  if (reviews.status !== "current") return "rereview";
   if (reviews.decision !== "approved") return "rereview";
   if (handoff.condition !== "current") return "validating";
   if (drift !== "none") return "validating";
-  if (!githubMergeReady || !issueScopeReconciled) return "validating";
+  if (!githubMergeReady) return "validating";
   return "merge_gate";
 }
 
@@ -422,12 +425,15 @@ function projectLane(
   const drift = pr === null ? "none" : authorityDrift(pr, handoff, snapshot.mainSha);
   const issueHorizonClass = horizonClass(issue.milestone, snapshot.productHorizon);
   const outsideCurrentHorizon = issueHorizonClass === "other";
+  const horizonObserved = issueHorizonClass !== "unknown";
   const githubMergeReady = pr === null || (pr.mergeable === "mergeable" && pr.mergeStateStatus === "clean");
-  const issueScopeReconciled = pr === null || issue.lastEditedAt === null || (
+  const issueScopeReconciled = issue.lastEditedAt === null || handoff.condition === "missing" || (
     handoff.updatedAt !== null && handoff.updatedAt.localeCompare(issue.lastEditedAt) >= 0
   );
   const multipleIssueClaim = (pr?.issueNumbers.length ?? 0) > 1;
-  const ownershipConflict = ownershipConflicts.length > 0 || multipleIssueClaim;
+  const handoffIssueMismatch = pr !== null && pr.issueNumbers.length === 1 && handoff.condition === "current" &&
+    handoff.claimedIssueNumber !== null && handoff.claimedIssueNumber !== pr.issueNumbers[0];
+  const ownershipConflict = ownershipConflicts.length > 0 || multipleIssueClaim || handoffIssueMismatch;
   const blockers: string[] = [];
 
   if ((issue.blockedBy?.length ?? 0) > 0) {
@@ -458,6 +464,9 @@ function projectLane(
   if (multipleIssueClaim && pr !== null) {
     blockers.push(`Pull request #${pr.number} claims multiple Issues (${pr.issueNumbers.map((number) => `#${number}`).join(", ")}), violating the one-Issue delivery boundary.`);
   }
+  if (handoffIssueMismatch) {
+    blockers.push(`Canonical handoff claims Issue #${handoff.claimedIssueNumber ?? "Unknown"}, but pull request #${pr.number} closes Issue #${pr.issueNumbers[0] ?? "Unknown"}.`);
+  }
   if (pr?.isDraft === true) blockers.push(`Pull request #${pr.number} is still a draft.`);
   if (pr !== null && (pr.mergeable === "unknown" || pr.mergeStateStatus === "unknown")) {
     blockers.push(`GitHub mergeability could not be fully observed for pull request #${pr.number}.`);
@@ -469,6 +478,7 @@ function projectLane(
   if (!issueScopeReconciled) {
     blockers.push(`Issue #${issue.number} scope was edited after the canonical handoff; explicit reconciliation is required.`);
   }
+  if (!horizonObserved) blockers.push("Product Roadmap horizon could not be observed.");
   if (outsideCurrentHorizon) {
     blockers.push(`Issue #${issue.number} belongs to non-current product milestone ${issue.milestone ?? "Unknown"}; the live current horizon is ${snapshot.productHorizon ?? "Unknown"}.`);
   }
@@ -485,6 +495,7 @@ function projectLane(
         ownershipConflict,
         githubMergeReady,
         issueScopeReconciled,
+        horizonObserved,
       );
   const requiresHuman = humanActionRequested(comments, handoff);
   const action: DeliveryLane["action"] = requiresHuman || phase === "human_required"

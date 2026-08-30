@@ -426,6 +426,16 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries[0]?.phase).toBe("rereview");
   });
 
+  it("keeps an approved decision out of merge gate without observed exact-head approval", () => {
+    const pr = pullRequest();
+    pr.reviews = [];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+
+    expect(projection.deliveries[0]?.reviews.status).toBe("unknown");
+    expect(projection.deliveries[0]?.phase).toBe("rereview");
+  });
+
   it("requires GitHub's exact merge gate to be clean before projecting merge gate", () => {
     const pr = pullRequest();
     pr.mergeStateStatus = "blocked";
@@ -447,6 +457,44 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries[0]?.blockers).toContain(
       "Issue #169 scope was edited after the canonical handoff; explicit reconciliation is required.",
     );
+  });
+
+  it("requires a no-PR Issue handoff update after an Issue scope edit", () => {
+    const edited = issue();
+    edited.lastEditedAt = "2026-08-30T00:01:00.000Z";
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [edited] }));
+
+    expect(projection.deliveries[0]?.phase).toBe("validating");
+    expect(projection.deliveries[0]?.blockers).toContain(
+      "Issue #169 scope was edited after the canonical handoff; explicit reconciliation is required.",
+    );
+  });
+
+  it("blocks a canonical handoff Issue that conflicts with the PR closing reference", () => {
+    const pr = pullRequest();
+    pr.comments[0]!.body = pr.comments[0]!.body.replace("ISSUE: #169", "ISSUE: #170");
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+
+    expect(projection.deliveries[0]?.phase).toBe("blocked");
+    expect(projection.deliveries[0]?.blockers).toContain(
+      "Canonical handoff claims Issue #170, but pull request #200 closes Issue #169.",
+    );
+  });
+
+  it("keeps a green PR out of merge gate when roadmap horizon observation is unavailable", () => {
+    const projection = normalizeRepositorySnapshot(snapshot({
+      productHorizon: null,
+      fetchHealth: "partial",
+      failures: ["Product Roadmap observation failed."],
+      issues: [issue()],
+      pullRequests: [pullRequest()],
+    }));
+
+    expect(projection.currentWork.horizonStatus).toBe("unknown");
+    expect(projection.deliveries[0]?.phase).toBe("validating");
+    expect(projection.deliveries[0]?.blockers).toContain("Product Roadmap horizon could not be observed.");
   });
 
   it("keeps stacked pull requests for one Issue in distinct delivery lanes", () => {
