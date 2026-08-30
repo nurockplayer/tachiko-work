@@ -1186,6 +1186,11 @@ describe("normalizeRepositorySnapshot", () => {
     "This does not terminate.",
     "This won't terminate.",
     "This cannot terminate.",
+    "This never returns.",
+    "This never halts.",
+    "This does not halt.",
+    "This runs forever.",
+    "This is non-terminating.",
   ])("blocks an unlabeled comment-only runtime failure on the current head: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1260,6 +1265,9 @@ describe("normalizeRepositorySnapshot", () => {
     "This does not loop forever.",
     "This never fails to terminate.",
     "This does not fail to terminate.",
+    "This does not run forever.",
+    "This is not non-terminating.",
+    "This does not fail to halt.",
   ])("does not infer a substantive finding from a clean comment-only review summary: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1663,6 +1671,11 @@ describe("normalizeRepositorySnapshot", () => {
     "This does not terminate.",
     "This won't terminate.",
     "This cannot terminate.",
+    "This never returns.",
+    "This never halts.",
+    "This does not halt.",
+    "This runs forever.",
+    "This is non-terminating.",
   ])("fails closed on an unlabeled correctness finding: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
@@ -1727,6 +1740,9 @@ describe("normalizeRepositorySnapshot", () => {
     "This does not loop forever.",
     "This never fails to terminate.",
     "This does not fail to terminate.",
+    "This does not run forever.",
+    "This is not non-terminating.",
+    "This does not fail to halt.",
   ])("does not promote a negated unlabeled impact statement: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
