@@ -31,6 +31,7 @@ static NEXT_RESEARCH_TEMP: AtomicU64 = AtomicU64::new(0);
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct AdmissionWork {
     source_bytes: usize,
+    nesting_scan_bytes: usize,
     strict_json_bytes: usize,
     canonical_render_bytes: usize,
     entity_records: usize,
@@ -331,9 +332,11 @@ fn admit_one_pass_exact(
         document,
         AdmissionWork {
             source_bytes,
-            // `inspect_roproj` performs syntax and duplicate-member passes;
-            // DTO deserialization is a third complete traversal of each JSON
-            // unit. JSONL separator LFs are representation checks, not JSON.
+            // `inspect_roproj` performs one explicit nesting preflight plus
+            // syntax and duplicate-member parser passes. DTO deserialization
+            // is a third parser traversal. JSONL separator LFs are layout
+            // checks, not JSON input.
+            nesting_scan_bytes: strict_input_bytes,
             strict_json_bytes: strict_input_bytes * 3,
             canonical_render_bytes: source_bytes,
             entity_records,
@@ -485,6 +488,7 @@ fn admit_one_pass_host_controlled(
         document,
         AdmissionWork {
             source_bytes,
+            nesting_scan_bytes: strict_input_bytes,
             strict_json_bytes: strict_input_bytes * 3,
             canonical_render_bytes: source_bytes,
             entity_records,
@@ -784,6 +788,7 @@ fn scan_spine_host(root: &Path, retain_structural: bool) -> Result<SpineScan, Fo
         structural,
         work: AdmissionWork {
             source_bytes,
+            nesting_scan_bytes: strict_input_bytes,
             strict_json_bytes: strict_input_bytes * 3,
             canonical_render_bytes: source_bytes,
             entity_records,
@@ -2593,7 +2598,7 @@ fn issue_175_a0_a1_release_baseline() {
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(20);
     println!(
-        "arm,workload,entities,fields,source_bytes,strict_json_bytes,canonical_render_bytes,entity_records,formula_ast_nodes,reference_edges,formula_dependency_edges,repetitions,p50_us,p95_us"
+        "arm,workload,entities,fields,source_bytes,nesting_scan_bytes,strict_json_bytes,canonical_render_bytes,entity_records,formula_ast_nodes,reference_edges,formula_dependency_edges,repetitions,p50_us,p95_us"
     );
     for entity_count in entity_counts
         .split(',')
@@ -2630,7 +2635,7 @@ fn issue_175_a0_a1_host_open_warm_raw_samples() {
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(30);
     println!(
-        "arm,workload,cache_state,entities,fields,source_bytes,physical_read_bytes,strict_json_bytes,canonical_render_bytes,entity_records,formula_ast_nodes,reference_edges,formula_dependency_edges,repetition,order,source_known_us,first_source_preview_us,semantic_current_us"
+        "arm,workload,cache_state,entities,fields,source_bytes,physical_read_bytes,nesting_scan_bytes,strict_json_bytes,canonical_render_bytes,entity_records,formula_ast_nodes,reference_edges,formula_dependency_edges,repetition,order,source_known_us,first_source_preview_us,semantic_current_us"
     );
     for entity_count in entity_counts
         .split(',')
@@ -2670,7 +2675,7 @@ fn issue_175_full_workload_matrix_raw_samples() {
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(20);
     println!(
-        "arm,workload,cache_state,entities,fields,source_bytes,strict_json_bytes,entity_records,formula_ast_nodes,reference_edges,formula_dependency_edges,serialized_spine_bytes,repetition,source_known_us,first_preview_us,semantic_or_scan_current_us"
+        "arm,workload,cache_state,entities,fields,source_sha256,source_bytes,nesting_scan_bytes,strict_json_bytes,canonical_render_bytes,entity_records,formula_ast_nodes,reference_edges,formula_dependency_edges,serialized_spine_bytes,repetition,source_known_us,first_preview_us,semantic_or_scan_current_us"
     );
     for entity_count in entity_counts
         .split(',')
@@ -2686,7 +2691,9 @@ fn issue_175_full_workload_matrix_raw_samples() {
                 .map(|entity| entity.fields.len())
                 .sum::<usize>();
             super::super::host::materialize_roproj(&root, &document).unwrap();
-            let work = scan_spine_host(&root, true).unwrap().work;
+            let initial_scan = scan_spine_host(&root, true).unwrap();
+            let work = initial_scan.work;
+            let source_fingerprint = initial_scan.directory.source_fingerprint;
             for repetition in 0..repetitions {
                 // Deterministically rotate arm order to distribute filesystem
                 // and allocator order effects across paired warm samples.
@@ -2699,6 +2706,7 @@ fn issue_175_full_workload_matrix_raw_samples() {
                         field_count,
                         repetition,
                         work,
+                        &source_fingerprint,
                     );
                 }
             }
@@ -2706,6 +2714,7 @@ fn issue_175_full_workload_matrix_raw_samples() {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_matrix_arm(
     arm: usize,
     root: &Path,
@@ -2714,6 +2723,7 @@ fn run_matrix_arm(
     field_count: usize,
     repetition: usize,
     work: AdmissionWork,
+    source_fingerprint: &str,
 ) {
     match arm {
         0 => {
@@ -2726,6 +2736,7 @@ fn run_matrix_arm(
                 field_count,
                 repetition,
                 work,
+                source_fingerprint,
                 0,
                 None,
                 None,
@@ -2741,6 +2752,7 @@ fn run_matrix_arm(
                 field_count,
                 repetition,
                 work,
+                source_fingerprint,
                 0,
                 Some(timings.source_known),
                 timings.first_source_preview,
@@ -2761,6 +2773,7 @@ fn run_matrix_arm(
                 field_count,
                 repetition,
                 scan.work,
+                source_fingerprint,
                 scan.serialized_bytes,
                 None,
                 None,
@@ -2779,6 +2792,7 @@ fn emit_matrix_sample(
     field_count: usize,
     repetition: usize,
     work: AdmissionWork,
+    source_fingerprint: &str,
     serialized_spine_bytes: usize,
     source_known: Option<Duration>,
     first_preview: Option<Duration>,
@@ -2789,10 +2803,16 @@ fn emit_matrix_sample(
     } else {
         work.strict_json_bytes
     };
+    let nesting_scan_bytes = if arm == "A0" {
+        work.nesting_scan_bytes * 2
+    } else {
+        work.nesting_scan_bytes
+    };
     println!(
-        "{arm},{},os_cache_warm,{entity_count},{field_count},{},{strict_json_bytes},{},{},{},{},{serialized_spine_bytes},{repetition},{},{},{}",
+        "{arm},{},os_cache_warm,{entity_count},{field_count},{source_fingerprint},{},{nesting_scan_bytes},{strict_json_bytes},{},{},{},{},{},{serialized_spine_bytes},{repetition},{},{},{}",
         shape.name(),
         work.source_bytes,
+        work.canonical_render_bytes,
         work.entity_records,
         work.formula_ast_nodes,
         work.reference_edges,
@@ -2915,7 +2935,7 @@ fn issue_175_directory_structural_raw_samples() {
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(30);
     println!(
-        "arm,workload,cache_state,entities,fields,source_bytes,strict_json_bytes,entity_records,formula_ast_nodes,reference_edges,formula_dependency_edges,serialized_spine_bytes,spine_source_ratio_ppm,repetition,scan_us"
+        "arm,workload,cache_state,entities,fields,source_bytes,nesting_scan_bytes,strict_json_bytes,entity_records,formula_ast_nodes,reference_edges,formula_dependency_edges,serialized_spine_bytes,spine_source_ratio_ppm,repetition,scan_us"
     );
     for entity_count in entity_counts
         .split(',')
@@ -2930,9 +2950,10 @@ fn issue_175_directory_structural_raw_samples() {
             for (arm, retain_structural) in [("C-directory", false), ("C-structural", true)] {
                 let scan = scan_spine_host(black_box(&root), retain_structural).unwrap();
                 println!(
-                    "{arm},mixed_smoke,os_cache_warm,{entity_count},{},{},{},{},{},{},{},{},{},{repetition},{}",
+                    "{arm},mixed_smoke,os_cache_warm,{entity_count},{},{},{},{},{},{},{},{},{},{},{repetition},{}",
                     entity_count * 5,
                     scan.work.source_bytes,
+                    scan.work.nesting_scan_bytes,
                     scan.work.strict_json_bytes,
                     scan.work.entity_records,
                     scan.work.formula_ast_nodes,
@@ -3247,8 +3268,13 @@ fn emit_host_sample(
     } else {
         work.strict_json_bytes
     };
+    let nesting_scan_bytes = if arm == "A0" {
+        work.nesting_scan_bytes * 2
+    } else {
+        work.nesting_scan_bytes
+    };
     println!(
-        "{arm},mixed_smoke_host,os_cache_warm,{entity_count},{},{},{},{strict_json_bytes},{},{},{},{},{},{repetition},{order},{},{},{}",
+        "{arm},mixed_smoke_host,os_cache_warm,{entity_count},{},{},{},{nesting_scan_bytes},{strict_json_bytes},{},{},{},{},{},{repetition},{order},{},{},{}",
         entity_count * 5,
         work.source_bytes,
         work.source_bytes,
@@ -3280,8 +3306,13 @@ fn emit_baseline_row(
     } else {
         work.strict_json_bytes
     };
+    let nesting_scan_bytes = if arm == "A0" {
+        work.nesting_scan_bytes * 2
+    } else {
+        work.nesting_scan_bytes
+    };
     println!(
-        "{arm},mixed_smoke,{entity_count},{},{},{strict_json_bytes},{},{},{},{},{},{repetitions},{p50},{p95}",
+        "{arm},mixed_smoke,{entity_count},{},{},{nesting_scan_bytes},{strict_json_bytes},{},{},{},{},{},{repetitions},{p50},{p95}",
         entity_count * 5,
         work.source_bytes,
         work.canonical_render_bytes,
