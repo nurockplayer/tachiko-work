@@ -1205,6 +1205,15 @@ describe("normalizeRepositorySnapshot", () => {
     "This never ends.",
     "This loops endlessly.",
     "This runs endlessly.",
+    "This isn't terminating.",
+    "This is not exiting.",
+    "This recurses forever.",
+    "This recurses indefinitely.",
+    "This deadlocks.",
+    "This waits forever.",
+    "This stalls forever.",
+    "This never reaches completion.",
+    "This cannot be terminated.",
   ])("blocks an unlabeled comment-only runtime failure on the current head: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1300,6 +1309,11 @@ describe("normalizeRepositorySnapshot", () => {
     "This does not loop endlessly.",
     "This does not run endlessly.",
     "This is not endlessly looping.",
+    "This isn't looping indefinitely.",
+    "This does not recurse forever.",
+    "This does not deadlock.",
+    "This does not wait forever.",
+    "This does not stall forever.",
   ])("does not infer a substantive finding from a clean comment-only review summary: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1722,6 +1736,15 @@ describe("normalizeRepositorySnapshot", () => {
     "This never ends.",
     "This loops endlessly.",
     "This runs endlessly.",
+    "This isn't terminating.",
+    "This is not exiting.",
+    "This recurses forever.",
+    "This recurses indefinitely.",
+    "This deadlocks.",
+    "This waits forever.",
+    "This stalls forever.",
+    "This never reaches completion.",
+    "This cannot be terminated.",
   ])("fails closed on an unlabeled correctness finding: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
@@ -1807,6 +1830,11 @@ describe("normalizeRepositorySnapshot", () => {
     "This does not loop endlessly.",
     "This does not run endlessly.",
     "This is not endlessly looping.",
+    "This isn't looping indefinitely.",
+    "This does not recurse forever.",
+    "This does not deadlock.",
+    "This does not wait forever.",
+    "This does not stall forever.",
   ])("does not promote a negated unlabeled impact statement: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
