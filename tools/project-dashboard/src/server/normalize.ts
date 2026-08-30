@@ -25,7 +25,7 @@ const postposedClearedReviewFinding = /\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|block
 const equivalentReviewFindingLabel = /(?:^|\s)(?:blocking|security|correctness|data[- ]integrity)\s*[:,]/i;
 const equivalentReviewFindingContext = /\b(?:blocking|security|correctness|data[- ]integrity)\b[^.!?;\n]{0,80}\b(?:finding|issue|bug|risk|failure|regression|vulnerab\w*|flaw|problem|concern|break\w*|corrupt\w*|overwrit\w*|data[- ]loss)\b|\b(?:finding|issue|bug|risk|failure|regression|vulnerab\w*|flaw|problem|concern|break\w*|corrupt\w*|overwrit\w*|data[- ]loss)\b[^.!?;\n]{0,80}\b(?:blocking|security|correctness|data[- ]integrity)\b/i;
 const explicitReviewClearingSignal = /(?:\[|\b)(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|data[- ]integrity)(?:\]|\b)/i;
-const reviewClauseBoundary = /[.!?;\n]+|\b(?:but|except|however|although|yet)\b|,\s*(?=(?:so|therefore|thus|hence|causing|which|p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|data[- ]integrity)\b)/i;
+const reviewClauseBoundary = /[.!?;\n]+|\b(?:but|except|however|although|yet)\b|,\s+and\s+|,\s*(?=(?:so|therefore|thus|hence|causing|which|p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|data[- ]integrity)\b)/i;
 const explicitlyNonSubstantiveFinding = /^(?:[_*]+\s*)?(?:\[(?:p3|sev(?:erity)?[ -]?3)\]|(?:p3|sev(?:erity)?[ -]?3|nit(?:pick)?|trivial)\b)/i;
 const explicitlyNonSubstantiveBadge = /^(?:<sub>\s*)+!\[(?:p3|sev(?:erity)?[ -]?3)\s+badge\]\([^)]*\)(?:<\/sub>\s*)+/i;
 const explicitlyNonSubstantiveAcknowledgment = /^(?:done|fixed(?:\s+in\s+(?:commit\s+)?[0-9a-f]{7,40})?|thanks,\s+applied this suggestion)[.!]?$/i;
