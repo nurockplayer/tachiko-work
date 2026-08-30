@@ -2,10 +2,10 @@
 
 Decision state: Research evidence for [#174](https://github.com/nurockplayer/tachiko-work/issues/174). This report does not change Accepted architecture.
 
-Measurement implementations: A0/A1/C/D/F at
-`4ed7f994825edb8a3bb6f1ac4a5cc5d940f74387`; corrected E1 at
-`664411545009b152d94f8a7554c37d344b994172`; final counterbalanced B and
-immutable-Git-object E2 at `be4d80146242eda5fc2258d82d6baf3ce7a19aa3`; full-oracle and aggregate
+Measurement implementations: A0/A1/C/F at
+`4ed7f994825edb8a3bb6f1ac4a5cc5d940f74387`; final counterbalanced B at
+`be4d80146242eda5fc2258d82d6baf3ce7a19aa3`; resampled D and corrected
+E1/immutable-Git-object E2 at `8ce554191e36496dedb57322fc1ab059a205ab07`; full-oracle and aggregate
 two-pass counter corrections at
 `607e9208da2fdf71e0741d7ff7efceec890ac6fc`; all on
 `main@022a14d18503477aa7e20f6fca102f9e85dce740`.
@@ -27,8 +27,8 @@ The experiment falsified a universal Global Spine benefit:
   `2.69x` for chains/cycles, and `2.83x` for reference-heavy data;
 - at 16,000 mixed entities, Structural Index peak RSS is higher than A0 and
   more than twice A1; spine plus eventual `Document` raises peak further;
-- exact dirty-source sidecar validation is `1.58x` slower than A1 at p95,
-  while Git validation is `2.39x` slower;
+- exact dirty-source sidecar validation is `1.87x` slower than A1 at p95,
+  while Git validation is `2.33x` slower;
 - counterbalanced background admission fails the foreground-interference gate:
   p95 of paired p95 ratios is `1.103` and the maximum is `5.224`; and
 - exact bounded source payload access is fast, but formula meaning and
@@ -48,7 +48,7 @@ justify a Global Spine.
 | Benefit not limited to payload-heavy data | Fail | Payload Structural Index is `0.07x` source, but mixed is `1.38x` and references `2.83x` |
 | No `>10%` foreground regression | Fail | Counterbalanced p95 of per-run foreground p95 ratios is `1.103`; maximum is `5.224`; 2/20 runs exceed `1.10` |
 | `>=40%` peak-RSS reduction, without hidden eventual peak | Fail | A1 p50 peak is `30.4 MB`; Structural is `71.8 MB`; Structural + `Document` is `79.4 MB`; pinned Structural + `Document` is `91.2 MB` |
-| Sidecar validation preserves material reuse benefit | Fail | E1 validated p95 is `2.02 s` versus A1 `1.28 s`; E2 validated p95 is `896 ms` versus A1 `375 ms` |
+| Sidecar validation preserves material reuse benefit | Fail | E1 validated p95 is `747 ms` versus A1 `399 ms`; E2 validated p95 is `2.13 s` versus A1 `915 ms` |
 
 ## Method
 
@@ -183,15 +183,16 @@ D uses a complete in-memory snapshot of the exact 18 source files, a matching
 Structural Index, byte locators, record digests, and source fingerprint. This
 is race-safe but retains all source bytes; it is not a low-memory paging result.
 
-At 16k chain entities, p95 first bounded access including the one-time pin was:
+At 16k chain entities, p95 first bounded access resampling a fresh complete pin
+and first materialization in every repetition was:
 
 | Request | Closure | p95 | Proof |
 | --- | ---: | ---: | --- |
-| Random entity | 1 | 6.72 ms | exact source payload; semantic state not current |
-| Near dependency | 2 | 5.79 ms | requires full admission for formula truth |
-| Mid dependency | 8,001 | 64.7 ms | requires full admission for formula truth |
-| Far dependency | 16,000 | 97.0 ms | requires full admission for formula truth |
-| Cold reverse dependents | 15,999 | 85.9 ms | requires full admission |
+| Random entity | 1 | 13.1 ms | exact source payload; semantic state not current |
+| Near dependency | 2 | 13.5 ms | requires full admission for formula truth |
+| Mid dependency | 8,001 | 94.2 ms | requires full admission for formula truth |
+| Far dependency | 16,000 | 292 ms | requires full admission for formula truth |
+| Cold reverse dependents | 15,999 | 392 ms | requires full admission |
 
 Cross-cold cycles, source revision changes, and pinned revision-A versus live
 revision-B behavior are covered by executable correctness tests. Unsupported
@@ -216,11 +217,11 @@ At 16k mixed entities:
 
 | Case | Source | Sidecar | Reuse p95 | A1 p95 | Interpretation |
 | --- | ---: | ---: | ---: | ---: | --- |
-| E1 dirty filesystem, validated | 9.63 MB | 18.83 MB | 2.02 s | 1.28 s | Includes 1.20 s pinned source revalidation + 818 ms decode; slower than A1 |
-| E2 identity + decode only | 9.63 MB | 18.83 MB | 344 ms | 375 ms | Non-authoritative diagnostic; source-derived facts are not proven |
-| E2 Git-object + pinned source-derived validation | 9.63 MB | 18.83 MB | 896 ms | 375 ms | Exact validation is 2.39x slower than A1 |
+| E1 dirty filesystem, validated | 9.63 MB | 18.83 MB | 747 ms | 399 ms | Includes 506 ms pinned source revalidation + 261 ms decode; exact reuse is 1.87x slower |
+| E2 identity + decode only | 9.63 MB | 18.83 MB | 422 ms | 915 ms | Non-authoritative diagnostic; source-derived facts are not proven |
+| E2 Git-object + pinned source-derived validation | 9.63 MB | 18.83 MB | 2.13 s | 915 ms | Exact validation is 2.33x slower than A1 |
 
-E1 first build also costs a 323 ms scan plus 70 ms encode. The mixed sidecar is
+E1 first build also costs a 344 ms scan plus 76 ms encode. The mixed sidecar is
 `1.96x` source size. Integrity detects accidental corruption; it is not an
 authentication mechanism against malicious replacement of both sidecar and
 checksum.
@@ -322,7 +323,7 @@ committed. Retained-runtime RSS is in
 5. Do not advance **C**: the exact derived spine is not broadly compact, is not
    faster than A1, and raises RSS.
 6. Do not advance **D**: durable representation is not the remaining proven
-   bottleneck; E2 Git-object proof and sidecar decode are `2.39x` slower than
+   bottleneck; E2 Git-object proof and sidecar decode are `2.33x` slower than
    A1 at p95.
 7. Do not create an ADR, `.roproj/v2`, public readiness/cache protocol, or
    production successor from #175 automatically.
