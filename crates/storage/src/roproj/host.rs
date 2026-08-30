@@ -333,7 +333,7 @@ fn remove_staging_directory(staging: &Path) -> Result<(), FormatError> {
     })
 }
 
-fn require_exact_root_entries(root: &Path) -> Result<(), FormatError> {
+pub(super) fn require_exact_root_entries(root: &Path) -> Result<(), FormatError> {
     let mut found_manifest = false;
     let mut found_schemas = false;
     let mut found_entities = false;
@@ -375,7 +375,7 @@ fn require_exact_root_entries(root: &Path) -> Result<(), FormatError> {
     require_directory(&root.join("entities"), "entities directory")
 }
 
-fn require_exact_entity_entries(entities: &Path) -> Result<(), FormatError> {
+pub(super) fn require_exact_entity_entries(entities: &Path) -> Result<(), FormatError> {
     let mut present = [false; ROPROJ_V1_PATHS.len() - 2];
     for entry in read_directory(entities)? {
         let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
@@ -508,7 +508,7 @@ fn read_directory(path: &Path) -> Result<Vec<fs::DirEntry>, FormatError> {
     Ok(entries)
 }
 
-fn read_file(path: &Path) -> Result<Vec<u8>, FormatError> {
+pub(super) fn read_file(path: &Path) -> Result<Vec<u8>, FormatError> {
     fs::read(path).map_err(|source| FormatError::Read {
         path: path.to_owned(),
         source,

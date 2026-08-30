@@ -22,5 +22,9 @@ ryu-js.workspace = true
 sha2.workspace = true
 renamore.workspace = true
 
+[dev-dependencies]
+tachiko-formula-engine = { version = "0.1.0", path = "../formula-engine" }
+tachiko-workspace-engine = { version = "0.1.0", path = "../workspace-engine" }
+
 [lints]
 workspace = true
