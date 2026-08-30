@@ -253,6 +253,31 @@ describe("normalizeRepositorySnapshot", () => {
   });
 
   it.each([
+    "Blocked; now Ready.",
+    "Parked; now Ready.",
+  ])("honors a current Ready claim after an earlier delivery state: %s", (status) => {
+    const ready = issue();
+    ready.body = `## Status\n\n${status}\n\nOwner: \`agent:codex\``;
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [ready] }));
+
+    expect(projection.deliveries[0]?.issue.readiness).toBe("ready");
+    expect(projection.deliveries[0]?.phase).toBe("ready");
+  });
+
+  it.each([
+    { status: "Ready; now Blocked.", readiness: "blocked" },
+    { status: "Ready; now Parked.", readiness: "parked" },
+  ])("honors a current $readiness claim after an earlier Ready claim", ({ status, readiness }) => {
+    const changed = issue();
+    changed.body = `## Status\n\n${status}\n\nOwner: \`agent:codex\``;
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [changed] }));
+
+    expect(projection.deliveries[0]?.issue.readiness).toBe(readiness);
+  });
+
+  it.each([
     "Not parked; Ready for bounded implementation.",
     "Not currently parked; Ready.",
     "Never parked. Ready.",
@@ -884,6 +909,28 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.phase).toBe("merge_gate");
     expect(lane?.blockers).not.toContain("Canonical handoff is missing for pull request #200.");
     expect(lane?.action.owner).toBe("none");
+  });
+
+  it("assigns a failing human-owned pull request to its human owner", () => {
+    const humanOwned = issue();
+    humanOwned.body = "## Status\n\nReady\n\nOwner: `nurockplayer`";
+    const pr = pullRequest();
+    pr.comments = [];
+    pr.checks = [{
+      name: "test",
+      integrationId: null,
+      attemptAt: null,
+      status: "completed",
+      conclusion: "failure",
+      url: null,
+    }];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [humanOwned], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.checks.status).toBe("failure");
+    expect(lane?.action.owner).toBe("human");
+    expect(projection.attention.humanActionRequired).toBe(true);
   });
 
   it.each([

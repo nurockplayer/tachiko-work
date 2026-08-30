@@ -320,15 +320,28 @@ function statusHasAffirmativeClaim(
   );
 }
 
-function statusReadyClaim(statusText: string): "affirmative" | "negated" | null {
-  let latest: "affirmative" | "negated" | null = null;
+function statusLatestAffirmativeClaimIndex(
+  statusText: string,
+  claim: RegExp,
+  pendingIsConditional = false,
+): number | null {
+  const matcher = new RegExp(claim.source, `${claim.flags.replaceAll("g", "")}g`);
+  const matches = [...statusText.matchAll(matcher)].filter(
+    (match) => !statusClaimIsNegated(statusText, match) &&
+      !statusClaimIsConditional(statusText, match, pendingIsConditional),
+  );
+  return matches.at(-1)?.index ?? null;
+}
+
+function statusReadyClaim(statusText: string): { polarity: "affirmative" | "negated"; index: number } | null {
+  let latest: { polarity: "affirmative" | "negated"; index: number } | null = null;
   for (const match of statusText.matchAll(/\bready\b/gi)) {
     const before = statusText.slice(0, match.index);
     if (/\bdecision[_ -]?$/i.test(before)) continue;
     const negated = statusClaimIsNegated(statusText, match);
     if (!negated && statusClaimIsConditional(statusText, match, true)) continue;
     if (!negated) {
-      latest = "affirmative";
+      latest = { polarity: "affirmative", index: match.index };
       continue;
     }
 
@@ -339,9 +352,29 @@ function statusReadyClaim(statusText: string): "affirmative" | "negated" | null 
     const historicalNegation =
       /\b(?:previously|formerly|historically|was|were|had\s+been|no\s+longer)\b[\s\S]*\bnot(?:[_ -]+(?:yet|currently|now|presently|quite))?[_ -]*$/i.test(clauseBefore) ||
       /^\s*(?:\([^)]*\b(?:resolved|cleared|closed|historical)\b[^)]*\)|[-—,:=]?\s*(?:(?:but|and)\s+(?:now\s+)?)?(?:previously|formerly|historically|resolved|cleared|closed|no\s+longer)\b)/i.test(after);
-    if (!historicalNegation) latest = "negated";
+    if (!historicalNegation) latest = { polarity: "negated", index: match.index };
   }
   return latest;
+}
+
+function statusDeliveryState(statusText: string): "ready" | "not_ready" | "blocked" | "parked" | "active" | null {
+  const ready = statusReadyClaim(statusText);
+  const candidates = [
+    ready === null ? null : { state: ready.polarity === "affirmative" ? "ready" as const : "not_ready" as const, index: ready.index },
+    { state: "blocked" as const, index: statusLatestAffirmativeClaimIndex(statusText, /\bblock(?:ed)?\b/i) },
+    { state: "parked" as const, index: statusLatestAffirmativeClaimIndex(statusText, /\bpark(?:ed)?\b/i) },
+    {
+      state: "active" as const,
+      index: statusLatestAffirmativeClaimIndex(
+        statusText,
+        /\b(?:active|implementing|in progress|validating|review[_ -]?fix)\b/i,
+        true,
+      ),
+    },
+  ].filter((claim): claim is { state: "ready" | "not_ready" | "blocked" | "parked" | "active"; index: number } =>
+    claim !== null && claim.index !== null,
+  );
+  return candidates.toSorted((left, right) => right.index - left.index)[0]?.state ?? null;
 }
 
 function statusClaimsDecisionReady(statusText: string): boolean {
@@ -349,19 +382,15 @@ function statusClaimsDecisionReady(statusText: string): boolean {
 }
 
 function statusClaimsBlocked(statusText: string): boolean {
-  return statusHasAffirmativeClaim(statusText, /\bblock(?:ed)?\b/i);
+  return statusDeliveryState(statusText) === "blocked";
 }
 
 function statusClaimsParked(statusText: string): boolean {
-  return statusHasAffirmativeClaim(statusText, /\bpark(?:ed)?\b/i);
+  return statusDeliveryState(statusText) === "parked";
 }
 
 function statusClaimsActive(statusText: string): boolean {
-  return statusHasAffirmativeClaim(
-    statusText,
-    /\b(?:active|implementing|in progress|validating|review[_ -]?fix)\b/i,
-    true,
-  );
+  return statusDeliveryState(statusText) === "active";
 }
 
 function statusClaimsHumanRequired(statusText: string): boolean {
@@ -369,11 +398,11 @@ function statusClaimsHumanRequired(statusText: string): boolean {
 }
 
 function statusClaimsReady(statusText: string): boolean {
-  return !/\bdecision[_ -]?ready\b/i.test(statusText) && statusReadyClaim(statusText) === "affirmative";
+  return !/\bdecision[_ -]?ready\b/i.test(statusText) && statusDeliveryState(statusText) === "ready";
 }
 
 function statusClaimsNotReady(statusText: string): boolean {
-  return statusReadyClaim(statusText) === "negated";
+  return statusDeliveryState(statusText) === "not_ready";
 }
 
 function handoffClaimsMergeReady(handoff: HandoffProjection): boolean {
@@ -932,7 +961,10 @@ function projectLane(
         handoffMergeReadinessRequiresDelivery || currentPrePrHandoffBlocked || pr?.isDraft === true ||
         !targetsDefaultBranch || !ownershipObservationComplete
         || !decisionReadyScopeReconciled
-      ? { owner: deliveryActionOwner(owner), reason: blockers[0] ?? "Delivery-agent action is required." }
+      ? {
+          owner: alignedHumanPr ? "human" : deliveryActionOwner(owner),
+          reason: blockers[0] ?? "Delivery-owner action is required.",
+        }
       : { owner: "none", reason: "No human action is currently evidenced." };
   const issueRef = source(
     "direct",
