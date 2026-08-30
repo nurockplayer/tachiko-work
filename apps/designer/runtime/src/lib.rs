@@ -4,7 +4,7 @@
 //! provisional delivery mechanics, not a public Semantic API or SDK contract.
 
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     mem::{size_of, size_of_val},
 };
 
@@ -43,6 +43,7 @@ const MAX_FORMULAS: usize = 32;
 const MAX_FORMULA_PROFILE_NODES: usize = 256;
 const MAX_PROFILE_STRING_BYTES: usize = 4_096;
 const MAX_PROJECTION_BYTES: usize = 65_536;
+const MAX_WIDTH_FINITE_JSON_NUMBER: f64 = -f64::MIN_POSITIVE;
 pub(crate) const MAX_WIRE_REQUEST_BYTES: usize = 65_536;
 pub(crate) const MAX_PROJECT_TRANSFER_BYTES: usize = 64 * 1024 * 1024;
 const DESIGNER_PRINCIPAL: &str = "designer-human";
@@ -482,13 +483,44 @@ impl DesignerRuntime {
     }
 
     fn ensure_supported_project(&self) -> Result<(), DesignerError> {
+        let mut post_edit_fields = BTreeSet::new();
         for collection in &self.collections {
-            self.query_table(&collection.key).map_err(|error| {
+            let table = self.query_table(&collection.key).map_err(|error| {
                 DesignerError::UnsupportedProject {
                     message: error.to_string(),
                 }
             })?;
+            post_edit_fields.extend(
+                table
+                    .rows
+                    .iter()
+                    .flat_map(|row| &row.fields)
+                    .filter(|field| field.editable_number || field.formula.is_some())
+                    .map(|field| field.target.clone()),
+            );
         }
+        let mut post_edit_refresh = self
+            .query_fields(
+                self.current_revision(),
+                &post_edit_fields.into_iter().collect::<Vec<_>>(),
+            )
+            .map_err(|error| DesignerError::UnsupportedProject {
+                message: format!("the worst-case post-edit refresh is not bounded: {error}"),
+            })?;
+        "resident/18446744073709551615".clone_into(&mut post_edit_refresh.revision);
+        for field in &mut post_edit_refresh.fields {
+            if let Some(StoredValueProjection::Number { value }) = &mut field.stored {
+                *value = MAX_WIDTH_FINITE_JSON_NUMBER;
+            }
+            if let Some(CalculationProjection::Value { value }) = &mut field.calculated {
+                *value = MAX_WIDTH_FINITE_JSON_NUMBER;
+            }
+        }
+        ensure_projection_size(&post_edit_refresh).map_err(|error| {
+            DesignerError::UnsupportedProject {
+                message: format!("the worst-case post-edit refresh is not bounded: {error}"),
+            }
+        })?;
         let control = self
             .query_fields(
                 self.current_revision(),
@@ -1155,6 +1187,10 @@ fn ensure_cheap_document_profile(document: &Document) -> Result<(), DesignerErro
             }
         }
     }
+    ensure_cheap_entity_profile(document)
+}
+
+fn ensure_cheap_entity_profile(document: &Document) -> Result<(), DesignerError> {
     if document.entities.len() > MAX_TOTAL_ENTITIES {
         return Err(DesignerError::UnsupportedProject {
             message: format!(
@@ -1163,7 +1199,7 @@ fn ensure_cheap_document_profile(document: &Document) -> Result<(), DesignerErro
             ),
         });
     }
-    let mut entity_counts = BTreeMap::new();
+    let mut collection_profiles = BTreeMap::new();
     for (entity_id, entity) in &document.entities {
         ensure_profile_string("entity map identity", entity_id.as_str())?;
         ensure_profile_string("entity identity", entity.id.as_str())?;
@@ -1178,6 +1214,9 @@ fn ensure_cheap_document_profile(document: &Document) -> Result<(), DesignerErro
                 ),
             });
         }
+        let profile = collection_profiles
+            .entry(entity.schema.clone())
+            .or_insert((0usize, 0usize));
         for (field_id, value) in &entity.fields {
             ensure_profile_string("stored field identity", field_id.as_str())?;
             match value {
@@ -1185,13 +1224,22 @@ fn ensure_cheap_document_profile(document: &Document) -> Result<(), DesignerErro
                     ensure_profile_string("stored reference identity", entity.as_str())?;
                 }
                 Value::Formula(expression) => ensure_formula_reference_profile(expression)?,
-                Value::Text(text) => ensure_stored_text_profile(text)?,
+                Value::Text(text) => {
+                    ensure_stored_text_profile(text)?;
+                    profile.1 = profile.1.saturating_add(text.len());
+                    if profile.1 > MAX_PROJECTION_BYTES {
+                        return Err(DesignerError::UnsupportedProject {
+                            message: format!(
+                                "a collection contains more than the bounded {MAX_PROJECTION_BYTES}-byte stored-text projection maximum"
+                            ),
+                        });
+                    }
+                }
                 Value::Number(_) | Value::Boolean(_) => {}
             }
         }
-        let count = entity_counts.entry(entity.schema.clone()).or_insert(0usize);
-        *count = count.saturating_add(1);
-        if *count > MAX_TABLE_ROWS {
+        profile.0 = profile.0.saturating_add(1);
+        if profile.0 > MAX_TABLE_ROWS {
             return Err(DesignerError::UnsupportedProject {
                 message: format!(
                     "a collection exceeds the bounded maximum of {MAX_TABLE_ROWS} entities"
@@ -1567,5 +1615,20 @@ impl IdGenerator for MoonfallIds {
             SemanticIdKind::Entity => self.entities.pop_front(),
         }
         .expect("Moonfall fixture IDs cover every generated semantic subject")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MAX_WIDTH_FINITE_JSON_NUMBER;
+
+    #[test]
+    fn worst_case_refresh_number_uses_the_maximum_finite_json_width() {
+        assert_eq!(
+            serde_json::to_string(&MAX_WIDTH_FINITE_JSON_NUMBER)
+                .expect("finite Number must serialize")
+                .len(),
+            24
+        );
     }
 }

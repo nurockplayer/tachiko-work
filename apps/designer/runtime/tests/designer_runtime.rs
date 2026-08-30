@@ -227,6 +227,143 @@ fn admission_bounds_stored_text_before_validation_and_projection() {
 }
 
 #[test]
+fn admission_bounds_aggregate_collection_text_before_validation_and_projection() {
+    let mut document = create_document(
+        StarterTemplate::GameBalance,
+        "Oversized collection text",
+        &mut TestIds::default(),
+    )
+    .expect("fixture should be valid");
+    let schema_id = document
+        .schemas
+        .values()
+        .next()
+        .expect("fixture should contain a schema")
+        .id
+        .clone();
+    let entity_id = document
+        .entities
+        .values()
+        .find(|entity| entity.schema == schema_id)
+        .expect("fixture schema should contain an entity")
+        .id
+        .clone();
+    for index in 0..3 {
+        let field_id = FieldId::from(format!("aggregate_text_{index}"));
+        document
+            .schemas
+            .get_mut(&schema_id)
+            .expect("fixture schema should exist")
+            .fields
+            .insert(
+                field_id.clone(),
+                FieldDefinition {
+                    id: field_id.clone(),
+                    key: FieldKey::from(format!("aggregate_text_{index}")),
+                    field_type: FieldType::Text,
+                    required: false,
+                },
+            );
+        document
+            .entities
+            .get_mut(&entity_id)
+            .expect("fixture entity should exist")
+            .fields
+            .insert(field_id, Value::Text("t".repeat(22_000)));
+    }
+
+    let Err(error) = DesignerRuntime::from_document(document, OCCURRENCE_ONE) else {
+        panic!("table construction must receive bounded aggregate stored text");
+    };
+    let failure = error.failure_projection("unavailable");
+    assert_eq!(failure.code, "unsupported_project");
+    assert!(failure.message.contains("a collection contains more than"));
+    assert!(failure.message.contains("65536-byte stored-text"));
+}
+
+#[test]
+fn admission_bounds_the_complete_cross_collection_post_edit_refresh() {
+    let mut document = create_document(
+        StarterTemplate::GameBalance,
+        "Oversized post-edit refresh",
+        &mut TestIds::default(),
+    )
+    .expect("fixture should be valid");
+    let schema_ids = document.schemas.keys().cloned().collect::<Vec<_>>();
+    for (collection_index, schema_id) in schema_ids.into_iter().enumerate() {
+        let entity_id = document
+            .entities
+            .values()
+            .find(|entity| entity.schema == schema_id)
+            .expect("fixture schema should contain an entity")
+            .id
+            .clone();
+        let source_id = FieldId::from(format!("refresh_source_{collection_index}"));
+        let source_key = FieldKey::from(format!(
+            "refresh_source_{}{}",
+            collection_index,
+            "s".repeat(3_400)
+        ));
+        let schema = document
+            .schemas
+            .get_mut(&schema_id)
+            .expect("fixture schema should exist");
+        schema.fields.insert(
+            source_id.clone(),
+            FieldDefinition {
+                id: source_id.clone(),
+                key: source_key,
+                field_type: FieldType::Number,
+                required: false,
+            },
+        );
+        let entity = document
+            .entities
+            .get_mut(&entity_id)
+            .expect("fixture entity should exist");
+        entity.fields.insert(
+            source_id.clone(),
+            Value::Number(Number::new(1.0).expect("finite fixture number")),
+        );
+        for formula_index in 0..6 {
+            let formula_id = FieldId::from(format!(
+                "refresh_formula_{collection_index}_{formula_index}"
+            ));
+            schema.fields.insert(
+                formula_id.clone(),
+                FieldDefinition {
+                    id: formula_id.clone(),
+                    key: FieldKey::from(format!(
+                        "refresh_formula_{collection_index}_{formula_index}"
+                    )),
+                    field_type: FieldType::Number,
+                    required: false,
+                },
+            );
+            entity.fields.insert(
+                formula_id,
+                Value::Formula(Expression::Reference(FieldRef::new(
+                    entity_id.clone(),
+                    source_id.clone(),
+                ))),
+            );
+        }
+    }
+
+    let Err(error) = DesignerRuntime::from_document(document, OCCURRENCE_ONE) else {
+        panic!("candidate admission must bound the complete post-edit refresh");
+    };
+    let failure = error.failure_projection("unavailable");
+    assert_eq!(failure.code, "unsupported_project");
+    assert!(
+        failure.message.contains("worst-case post-edit refresh"),
+        "{}",
+        failure.message
+    );
+    assert!(failure.message.contains("bounded maximum is 65536"));
+}
+
+#[test]
 fn admission_bounds_formula_reference_identity_before_validation() {
     let mut document = create_document(
         StarterTemplate::GameBalance,
