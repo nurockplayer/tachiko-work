@@ -593,6 +593,7 @@ describe("normalizeRepositorySnapshot", () => {
     "Ready: once scope is approved.",
     "Ready = when the dependency closes.",
     "Ready - pending Steward approval.",
+    "Pending Steward approval — Ready.",
   ])("does not treat a future conditional Ready reference as authoritative readiness: %s", (status) => {
     const backlog = issue();
     backlog.body = `## Status\n\n${status}\n\nOwner: \`agent:codex\``;
