@@ -59,8 +59,14 @@ function shaMatches(claimed: string | null, actual: string | null): boolean {
   return actual.startsWith(claimed) || claimed.startsWith(actual);
 }
 
+function hasTrustedAuthorAssociation(authorAssociation: string | null): boolean {
+  return /^(?:owner|member|collaborator)$/i.test(authorAssociation ?? "");
+}
+
 function canonicalComments(comments: RawComment[]): RawComment[] {
-  return comments.filter((comment) => comment.body.includes(handoffMarker));
+  return comments.filter(
+    (comment) => hasTrustedAuthorAssociation(comment.authorAssociation) && comment.body.includes(handoffMarker),
+  );
 }
 
 function isSubstantiveFinding(body: string): boolean {
@@ -207,6 +213,7 @@ function issueOwner(issue: RawIssue, handoff: HandoffProjection): string {
   if ((handoff.condition === "current" || handoff.condition === "stale") && handoff.claimedOwner !== null) {
     return handoff.claimedOwner;
   }
+  if (!hasTrustedAuthorAssociation(issue.authorAssociation)) return "unknown";
   return labeledValue(issue.body, "Owner") ?? "unknown";
 }
 
@@ -217,6 +224,7 @@ function hasUsableIssueClaim(
 }
 
 function issueStatusText(issue: RawIssue): string {
+  if (!hasTrustedAuthorAssociation(issue.authorAssociation)) return "";
   return (
     issue.body.match(/^##[ \t]+Status[ \t]*(?:\r?\n|$)([\s\S]*?)(?=^#{1,6}[ \t]+|$(?![\s\S]))/im)?.[1] ?? ""
   ).toLowerCase();
@@ -319,8 +327,13 @@ function issueReadiness(issue: RawIssue, handoff: HandoffProjection): DeliveryLa
   if (/\bdecision[_ -]?ready\b/i.test(issueStatus) || statusClaimsNotReady(issueStatus)) return "unknown";
   if (statusClaimsParked(issueStatus)) return "parked";
   if (statusClaimsBlocked(issueStatus)) return "blocked";
-  if (!statusClaimsActive(issueStatus) && !statusClaimsReady(issueStatus)) return "unknown";
   const handoffState = handoff.claimedState?.toLowerCase() ?? "";
+  const trustedHandoffAffirmsDelivery = !hasTrustedAuthorAssociation(issue.authorAssociation) &&
+    handoff.condition === "current" &&
+    (statusClaimsActive(handoffState) || statusClaimsReady(handoffState));
+  if (!statusClaimsActive(issueStatus) && !statusClaimsReady(issueStatus) && !trustedHandoffAffirmsDelivery) {
+    return "unknown";
+  }
   const staleHandoffClaimsBlocked = handoff.condition === "stale" &&
     statusClaimsBlocked(handoffState);
   const currentHandoffState = handoff.condition === "current" || staleHandoffClaimsBlocked
@@ -889,6 +902,7 @@ function placeholderIssue(pr: RawPullRequest, observedAt: string): RawIssue {
     title: pr.issueNumbers.length === 0 ? `${pr.title} (Issue association unknown)` : `Issue #${number}`,
     url: pr.issueNumbers.length === 0 ? pr.url : `${pr.url.split("/pull/")[0] ?? pr.url}/issues/${number}`,
     body: "",
+    authorAssociation: null,
     updatedAt: observedAt,
     lastEditedAt: null,
     milestone: null,

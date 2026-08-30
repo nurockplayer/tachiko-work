@@ -38,6 +38,7 @@ interface GithubComment {
   id: string;
   body: string;
   url: string;
+  authorAssociation: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -47,6 +48,7 @@ interface GithubIssue {
   title: string;
   url: string;
   body: string;
+  authorAssociation: string;
   updatedAt: string;
   lastEditedAt: string | null;
   milestone: { title: string } | null;
@@ -151,14 +153,14 @@ const dashboardQuery = `
       }
       issues(first: 50, after: $issueCursor, states: OPEN, orderBy: { field: UPDATED_AT, direction: DESC }) @include(if: $includeIssues) {
         nodes {
-          number title url body updatedAt lastEditedAt
+          number title url body authorAssociation updatedAt lastEditedAt
           milestone { title }
           blockedBy(first: 25) {
             nodes { number title url state }
             pageInfo { hasNextPage }
           }
           comments(last: 100) {
-            nodes { id body url createdAt updatedAt }
+            nodes { id body url authorAssociation createdAt updatedAt }
             pageInfo { hasPreviousPage }
           }
         }
@@ -172,7 +174,7 @@ const dashboardQuery = `
             pageInfo { hasNextPage }
           }
           comments(last: 100) {
-            nodes { id body url createdAt updatedAt }
+            nodes { id body url authorAssociation createdAt updatedAt }
             pageInfo { hasPreviousPage }
           }
           commits(last: 1) {
@@ -235,6 +237,7 @@ function asComment(comment: GithubComment): RawComment {
     id: comment.id,
     body: comment.body,
     url: comment.url,
+    authorAssociation: comment.authorAssociation,
     createdAt: comment.createdAt,
     updatedAt: comment.updatedAt,
   };
@@ -464,6 +467,7 @@ export async function loadGithubSnapshot(
       title: issue.title,
       url: issue.url,
       body: issue.body,
+      authorAssociation: issue.authorAssociation,
       updatedAt: issue.updatedAt,
       lastEditedAt: issue.lastEditedAt,
       milestone: issue.milestone?.title ?? null,

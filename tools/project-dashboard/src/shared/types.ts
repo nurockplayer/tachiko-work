@@ -26,6 +26,7 @@ export interface RawComment {
   id: string;
   body: string;
   url: string;
+  authorAssociation: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -35,6 +36,7 @@ export interface RawIssue {
   title: string;
   url: string;
   body: string;
+  authorAssociation: string | null;
   updatedAt: string;
   lastEditedAt: string | null;
   milestone: string | null;

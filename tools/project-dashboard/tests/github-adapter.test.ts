@@ -17,6 +17,7 @@ function githubPage() {
             title: "Dashboard v0",
             url: "https://github.com/nurockplayer/tachiko-work/issues/169",
             body: "**READY FOR BOUNDED IMPLEMENTATION**\nOwner: agent:codex",
+            authorAssociation: "OWNER",
             updatedAt: "2026-08-30T00:00:00Z",
             lastEditedAt: null,
             milestone: null,
@@ -37,7 +38,17 @@ function githubPage() {
               ],
               pageInfo: { hasNextPage: false },
             },
-            comments: { nodes: [], pageInfo: { hasPreviousPage: false } },
+            comments: {
+              nodes: [{
+                id: "issue-handoff",
+                body: "<!-- agent-handoff:v1 -->\nOWNER: agent:codex\nSTATE: ready",
+                url: "https://github.com/nurockplayer/tachiko-work/issues/169#issuecomment-1",
+                authorAssociation: "OWNER",
+                createdAt: "2026-08-30T00:00:00Z",
+                updatedAt: "2026-08-30T00:00:00Z",
+              }],
+              pageInfo: { hasPreviousPage: false },
+            },
           },
         ],
         pageInfo: { hasNextPage: false, endCursor: null as string | null },
@@ -166,6 +177,8 @@ describe("loadGithubSnapshot", () => {
           url: "https://github.com/nurockplayer/tachiko-work/issues/170",
         }],
         commentsComplete: true,
+        authorAssociation: "OWNER",
+        comments: [{ authorAssociation: "OWNER" }],
       }],
       pullRequests: [{
         number: 200,
@@ -208,6 +221,8 @@ describe("loadGithubSnapshot", () => {
     expect(result.productHorizonUrl).toContain(mainSha);
     expect(projectionQuery).toContain("pullRequests(first: 25");
     expect(projectionQuery).toContain("author { __typename login }");
+    expect(projectionQuery).toContain("body authorAssociation updatedAt");
+    expect(projectionQuery).toContain("id body url authorAssociation createdAt updatedAt");
     expect(projectionQuery).toContain("reviewThreads(first: 50)");
     expect(projectionQuery).toContain("detailsUrl startedAt checkSuite { app { databaseId }");
     expect(projectionQuery).toContain("targetUrl createdAt updatedAt");
