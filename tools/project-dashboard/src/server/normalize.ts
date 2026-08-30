@@ -308,16 +308,19 @@ function statusClaimIsConditional(
     (pendingIsConditional && /^\s*(?:(?:[:=-])\s*)?(?:only\s+)?pending\b/i.test(after));
 }
 
-function statusHasAffirmativeClaim(
+function statusLatestClaim(
   statusText: string,
   claim: RegExp,
   pendingIsConditional = false,
-): boolean {
+): { polarity: "affirmative" | "negated"; index: number } | null {
   const matcher = new RegExp(claim.source, `${claim.flags.replaceAll("g", "")}g`);
-  return [...statusText.matchAll(matcher)].some(
-    (match) => !statusClaimIsNegated(statusText, match) &&
-      !statusClaimIsConditional(statusText, match, pendingIsConditional),
-  );
+  let latest: { polarity: "affirmative" | "negated"; index: number } | null = null;
+  for (const match of statusText.matchAll(matcher)) {
+    const negated = statusClaimIsNegated(statusText, match);
+    if (!negated && statusClaimIsConditional(statusText, match, pendingIsConditional)) continue;
+    latest = { polarity: negated ? "negated" : "affirmative", index: match.index };
+  }
+  return latest;
 }
 
 function statusLatestAffirmativeClaimIndex(
@@ -357,10 +360,26 @@ function statusReadyClaim(statusText: string): { polarity: "affirmative" | "nega
   return latest;
 }
 
-function statusDeliveryState(statusText: string): "ready" | "not_ready" | "blocked" | "parked" | "active" | null {
+type StatusDeliveryState =
+  | "ready"
+  | "not_ready"
+  | "decision_ready"
+  | "not_decision_ready"
+  | "blocked"
+  | "parked"
+  | "active";
+
+function statusDeliveryState(statusText: string): StatusDeliveryState | null {
   const ready = statusReadyClaim(statusText);
+  const decisionReady = statusLatestClaim(statusText, /\bdecision[_ -]?ready\b/i, true);
   const candidates = [
     ready === null ? null : { state: ready.polarity === "affirmative" ? "ready" as const : "not_ready" as const, index: ready.index },
+    decisionReady === null
+      ? null
+      : {
+          state: decisionReady.polarity === "affirmative" ? "decision_ready" as const : "not_decision_ready" as const,
+          index: decisionReady.index,
+        },
     { state: "blocked" as const, index: statusLatestAffirmativeClaimIndex(statusText, /\bblock(?:ed)?\b/i) },
     { state: "parked" as const, index: statusLatestAffirmativeClaimIndex(statusText, /\bpark(?:ed)?\b/i) },
     {
@@ -371,14 +390,14 @@ function statusDeliveryState(statusText: string): "ready" | "not_ready" | "block
         true,
       ),
     },
-  ].filter((claim): claim is { state: "ready" | "not_ready" | "blocked" | "parked" | "active"; index: number } =>
+  ].filter((claim): claim is { state: StatusDeliveryState; index: number } =>
     claim !== null && claim.index !== null,
   );
   return candidates.toSorted((left, right) => right.index - left.index)[0]?.state ?? null;
 }
 
 function statusClaimsDecisionReady(statusText: string): boolean {
-  return statusHasAffirmativeClaim(statusText, /\bdecision[_ -]?ready\b/i, true);
+  return statusDeliveryState(statusText) === "decision_ready";
 }
 
 function statusClaimsBlocked(statusText: string): boolean {
@@ -394,11 +413,11 @@ function statusClaimsActive(statusText: string): boolean {
 }
 
 function statusClaimsHumanRequired(statusText: string): boolean {
-  return statusHasAffirmativeClaim(statusText, /\bhuman[_ -]?required\b/i);
+  return statusLatestClaim(statusText, /\bhuman[_ -]?required\b/i)?.polarity === "affirmative";
 }
 
 function statusClaimsReady(statusText: string): boolean {
-  return !/\bdecision[_ -]?ready\b/i.test(statusText) && statusDeliveryState(statusText) === "ready";
+  return statusDeliveryState(statusText) === "ready";
 }
 
 function statusClaimsNotReady(statusText: string): boolean {
@@ -415,7 +434,7 @@ function issueReadiness(issue: RawIssue, handoff: HandoffProjection): DeliveryLa
   const issueStatus = issueStatusText(issue);
   if (authorityOnlyIssue.test(issue.title) && statusClaimsDecisionReady(issueStatus)) return "ready";
   if (authorityOnlyIssue.test(issue.title)) return "unknown";
-  if (/\bdecision[_ -]?ready\b/i.test(issueStatus) || statusClaimsNotReady(issueStatus)) return "unknown";
+  if (statusClaimsNotReady(issueStatus)) return "unknown";
   if (statusClaimsParked(issueStatus)) return "parked";
   if (statusClaimsBlocked(issueStatus)) return "blocked";
   const handoffState = handoff.claimedState?.toLowerCase() ?? "";
@@ -431,7 +450,7 @@ function issueReadiness(issue: RawIssue, handoff: HandoffProjection): DeliveryLa
     ? handoff.claimedState
     : null;
   const statusText = (currentHandoffState ?? issueStatus).toLowerCase().replaceAll("_", " ");
-  if (/\bdecision[_ -]?ready\b/i.test(statusText)) return "unknown";
+  if (["decision_ready", "not_decision_ready"].includes(statusDeliveryState(statusText) ?? "")) return "unknown";
   if (statusClaimsNotReady(statusText)) return "unknown";
   if (statusClaimsParked(statusText)) return "parked";
   if (statusClaimsBlocked(statusText)) return "blocked";

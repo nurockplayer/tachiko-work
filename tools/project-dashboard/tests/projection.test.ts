@@ -255,6 +255,7 @@ describe("normalizeRepositorySnapshot", () => {
   it.each([
     "Blocked; now Ready.",
     "Parked; now Ready.",
+    "Decision-Ready (resolved); now Ready.",
   ])("honors a current Ready claim after an earlier delivery state: %s", (status) => {
     const ready = issue();
     ready.body = `## Status\n\n${status}\n\nOwner: \`agent:codex\``;
@@ -362,6 +363,37 @@ describe("normalizeRepositorySnapshot", () => {
       expect(projection.attention.humanActionRequired).toBe(true);
     },
   );
+
+  it("honors a cleared Human-Required transition", () => {
+    const cleared = issue();
+    cleared.body = [
+      "## Status",
+      "",
+      "Human-Required; now no longer Human-Required; Ready",
+      "",
+      "Owner: `agent:codex`",
+    ].join("\n");
+    cleared.comments = [];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [cleared] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.issue.readiness).toBe("ready");
+    expect(lane?.phase).toBe("ready");
+    expect(lane?.action.owner).toBe("none");
+    expect(projection.attention.humanActionRequired).toBe(false);
+  });
+
+  it("honors a current Human-Required claim after an earlier cleared claim", () => {
+    const escalated = issue();
+    escalated.body = "## Status\n\nNo longer Human-Required; now Human-Required.\n\nOwner: `agent:codex`";
+    escalated.comments = [];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [escalated] }));
+
+    expect(projection.deliveries[0]?.phase).toBe("human_required");
+    expect(projection.attention.humanActionRequired).toBe(true);
+  });
 
   it("does not let an operational handoff elevate an unrecognized Issue status", () => {
     const backlog = issue();
