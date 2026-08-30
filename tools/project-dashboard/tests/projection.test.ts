@@ -210,6 +210,29 @@ describe("normalizeRepositorySnapshot", () => {
   });
 
   it.each([
+    "Previously Not Ready; now Ready.",
+    "Not Ready (resolved); Ready.",
+    "Ready. Previously Not Ready.",
+  ])("honors the current Ready claim after a historical Not Ready claim: %s", (status) => {
+    const ready = issue();
+    ready.body = `## Status\n\n${status}\n\nOwner: \`agent:codex\``;
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [ready] }));
+
+    expect(projection.deliveries[0]?.issue.readiness).toBe("ready");
+    expect(projection.deliveries[0]?.phase).toBe("ready");
+  });
+
+  it("honors a current Not Ready claim after an earlier Ready claim", () => {
+    const notReady = issue();
+    notReady.body = "## Status\n\nReady; now Not Ready.\n\nOwner: `agent:codex`";
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [notReady] }));
+
+    expect(projection.deliveries).toEqual([]);
+  });
+
+  it.each([
     "Previously blocked; Ready.",
     "Was blocked; Ready.",
     "Blocked (resolved); Ready.",

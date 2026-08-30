@@ -320,9 +320,26 @@ function statusHasAffirmativeClaim(
   );
 }
 
-function statusHasNegatedClaim(statusText: string, claim: RegExp): boolean {
-  const matcher = new RegExp(claim.source, `${claim.flags.replaceAll("g", "")}g`);
-  return [...statusText.matchAll(matcher)].some((match) => statusClaimIsNegated(statusText, match));
+function statusReadyClaim(statusText: string): "affirmative" | "negated" | null {
+  let latest: "affirmative" | "negated" | null = null;
+  for (const match of statusText.matchAll(/\bready\b/gi)) {
+    const before = statusText.slice(0, match.index);
+    if (/\bdecision[_ -]?$/i.test(before) || statusClaimIsConditional(statusText, match, true)) continue;
+    if (!statusClaimIsNegated(statusText, match)) {
+      latest = "affirmative";
+      continue;
+    }
+
+    const clauseBefore = before.slice(
+      Math.max(before.lastIndexOf("\n"), before.lastIndexOf("."), before.lastIndexOf(";")) + 1,
+    );
+    const after = statusText.slice(match.index + match[0].length);
+    const historicalNegation =
+      /\b(?:previously|formerly|historically|was|were|had\s+been|no\s+longer)\b[\s\S]*\bnot(?:[_ -]+(?:yet|currently|now|presently|quite))?[_ -]*$/i.test(clauseBefore) ||
+      /^\s*(?:\([^)]*\b(?:resolved|cleared|closed|historical)\b[^)]*\)|[-—,:=]?\s*(?:(?:but|and)\s+(?:now\s+)?)?(?:previously|formerly|historically|resolved|cleared|closed|no\s+longer)\b)/i.test(after);
+    if (!historicalNegation) latest = "negated";
+  }
+  return latest;
 }
 
 function statusClaimsDecisionReady(statusText: string): boolean {
@@ -350,13 +367,11 @@ function statusClaimsHumanRequired(statusText: string): boolean {
 }
 
 function statusClaimsReady(statusText: string): boolean {
-  return !/\bdecision[_ -]?ready\b/i.test(statusText) && !statusClaimsNotReady(statusText) &&
-    statusHasAffirmativeClaim(statusText, /\bready\b/i, true) &&
-    !/not ready for (?:production )?implementation/i.test(statusText);
+  return !/\bdecision[_ -]?ready\b/i.test(statusText) && statusReadyClaim(statusText) === "affirmative";
 }
 
 function statusClaimsNotReady(statusText: string): boolean {
-  return statusHasNegatedClaim(statusText, /\b(?:decision[_ -]?)?ready\b/i);
+  return statusReadyClaim(statusText) === "negated";
 }
 
 function handoffClaimsMergeReady(handoff: HandoffProjection): boolean {
