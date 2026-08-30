@@ -124,7 +124,10 @@ describe("normalizeRepositorySnapshot", () => {
     const projection = normalizeRepositorySnapshot(snapshot({ issues: [external] }));
 
     expect(projection.deliveries).toEqual([]);
-    expect(projection.attention.humanActionRequired).toBe(false);
+    expect(projection.attention).toMatchObject({
+      humanActionRequired: true,
+      reasons: ["No Ready delivery remains; the Project Steward must select or ready successor work."],
+    });
   });
 
   it("accepts a trusted pre-PR handoff as an independent readiness signal", () => {
@@ -156,7 +159,10 @@ describe("normalizeRepositorySnapshot", () => {
     const projection = normalizeRepositorySnapshot(snapshot({ issues: [injected] }));
 
     expect(projection.deliveries).toEqual([]);
-    expect(projection.attention.humanActionRequired).toBe(false);
+    expect(projection.attention).toMatchObject({
+      humanActionRequired: true,
+      reasons: ["No Ready delivery remains; the Project Steward must select or ready successor work."],
+    });
   });
 
   it("does not treat an explicit Not Ready state as Ready", () => {
@@ -171,6 +177,10 @@ describe("normalizeRepositorySnapshot", () => {
     const projection = normalizeRepositorySnapshot(snapshot({ issues: [notReady] }));
 
     expect(projection.deliveries).toEqual([]);
+    expect(projection.attention).toMatchObject({
+      humanActionRequired: true,
+      reasons: ["No Ready delivery remains; the Project Steward must select or ready successor work."],
+    });
   });
 
   it.each(["Not yet Ready", "Not currently Ready"])(
