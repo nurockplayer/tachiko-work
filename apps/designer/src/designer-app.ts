@@ -404,9 +404,20 @@ export function mountDesigner(
           case "number":
             void commitNumber({ entity, field }, control.value);
             break;
-          case "text":
-            void commitText({ entity, field }, control.value);
+          case "text": {
+            const initialText =
+              control instanceof HTMLTextAreaElement
+                ? decodeOpaqueAttribute(control.dataset.initialText)
+                : undefined;
+            const value =
+              initialText !== undefined &&
+              control instanceof HTMLTextAreaElement &&
+              control.value === control.dataset.initialNormalized
+                ? initialText
+                : control.value;
+            void commitText({ entity, field }, value);
             break;
+          }
           case "boolean":
             if (!(control instanceof HTMLInputElement)) return;
             void commitBoolean({ entity, field }, control.checked);
@@ -451,7 +462,10 @@ export function mountDesigner(
     root.querySelectorAll<HTMLTextAreaElement>("textarea[data-initial-text]").forEach(
       (textarea) => {
         const initialText = decodeOpaqueAttribute(textarea.dataset.initialText);
-        if (initialText !== undefined) textarea.value = initialText;
+        if (initialText !== undefined) {
+          textarea.value = initialText;
+          textarea.dataset.initialNormalized = textarea.value;
+        }
       },
     );
   };
