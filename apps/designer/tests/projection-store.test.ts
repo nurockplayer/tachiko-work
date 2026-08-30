@@ -26,7 +26,7 @@ const table: TableProjection = {
           formula: null,
           calculated: null,
           diagnostics: [],
-          editable_number: true,
+          editable_scalar: "number",
         },
         {
           target: { entity: "iron_sword", field: "dps" },
@@ -37,7 +37,7 @@ const table: TableProjection = {
           },
           calculated: { status: "value", value: 40 },
           diagnostics: [],
-          editable_number: false,
+          editable_scalar: null,
         },
       ],
     },
@@ -205,7 +205,7 @@ describe("revision-keyed projection store", () => {
             formula: { source: "[tempered_blade.price]" },
             calculated: { status: "unavailable" },
             diagnostics: [],
-            editable_number: false,
+            editable_scalar: null,
           },
         ],
       });

@@ -14,9 +14,9 @@ use tachiko_storage::{
     encode_roproj_v1,
 };
 use tachiko_workspace_engine::{
-    CalculationFailure, Document, Expression, FieldAddress, FieldId, FieldRef, FieldType,
-    IdGenerator, Number, SemanticIdKind, StarterTemplate, Value, WorkspaceError, analyze_field,
-    create_document,
+    CalculationFailure, Document, Expression, FieldAddress, FieldDefinition, FieldId, FieldKey,
+    FieldRef, FieldType, IdGenerator, Number, SemanticIdKind, StarterTemplate, Value,
+    WorkspaceError, analyze_field, create_document,
     formula_operations::FormulaCalculationOutcome,
     patch_lifecycle::{
         AuthorizationAction, AuthorizationDomainId, AuthorizationPolicyVersion, DocumentScopeId,
@@ -47,6 +47,7 @@ const MAX_WIDTH_FINITE_JSON_NUMBER: f64 = -f64::MIN_POSITIVE;
 pub(crate) const MAX_WIRE_REQUEST_BYTES: usize = 65_536;
 pub(crate) const MAX_PROJECT_TRANSFER_BYTES: usize = 64 * 1024 * 1024;
 const DESIGNER_PRINCIPAL: &str = "designer-human";
+const PREFLIGHT_OCCURRENCE: &str = "00000000-0000-4000-8000-000000000000";
 const PROJECT_BUNDLE_MAGIC: &[u8; 8] = b"TWDPROJ1";
 
 /// App-private requests accepted by the Designer runtime adapter.
@@ -63,10 +64,10 @@ pub enum DesignerRequest {
         expected_revision: String,
         fields: Vec<FieldTarget>,
     },
-    EditNumber {
+    EditScalar {
         expected_revision: String,
         target: FieldTarget,
-        input: String,
+        input: ScalarEditInput,
     },
 }
 
@@ -142,7 +143,25 @@ pub struct FieldProjection {
     pub formula: Option<FormulaProjection>,
     pub calculated: Option<CalculationProjection>,
     pub diagnostics: Vec<DiagnosticProjection>,
-    pub editable_number: bool,
+    pub editable_scalar: Option<ScalarKind>,
+}
+
+/// Rust-authoritative directly stored scalar kinds supported by this private table path.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScalarKind {
+    Number,
+    Text,
+    Boolean,
+}
+
+/// Private typed input for one directly stored scalar edit.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ScalarEditInput {
+    Number { input: String },
+    Text { value: String },
+    Boolean { value: bool },
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -296,8 +315,8 @@ pub enum DesignerError {
     Lifecycle(#[from] PatchLifecycleError),
     #[error("'{input}' is not a finite Number")]
     InvalidNumberInput { input: String },
-    #[error("field '{field}' is not a directly stored Number")]
-    UnsupportedNumberEdit { field: FieldRef },
+    #[error("field '{field}' is not editable through this directly stored scalar path")]
+    UnsupportedScalarEdit { field: FieldRef },
     #[error("requested revision '{requested}' is stale; current revision is '{current}'")]
     StaleQuery { requested: String, current: String },
     #[error("successful publication did not yield matching invalidation facts")]
@@ -323,7 +342,7 @@ impl DesignerError {
                 ("edit_rejected", Vec::new())
             }
             Self::InvalidNumberInput { .. } => ("invalid_number", Vec::new()),
-            Self::UnsupportedNumberEdit { .. } => ("unsupported_edit", Vec::new()),
+            Self::UnsupportedScalarEdit { .. } => ("unsupported_edit", Vec::new()),
             Self::Storage(_)
             | Self::InvalidProjectWorkspace { .. }
             | Self::InvalidProjectTransfer { .. } => ("invalid_project", Vec::new()),
@@ -386,11 +405,12 @@ impl DesignerRuntime {
     /// not satisfy current semantic and calculation authority.
     pub fn moonfall(occurrence_id: &str) -> Result<Self, DesignerError> {
         let mut generator = MoonfallIds::new();
-        let document = create_document(
+        let mut document = create_document(
             StarterTemplate::GameBalance,
             "Moonfall Balance",
             &mut generator,
         )?;
+        add_moonfall_boolean_fixture(&mut document)?;
         Self::from_document(document, occurrence_id)
     }
 
@@ -460,11 +480,11 @@ impl DesignerRuntime {
             } => Ok(DesignerResponse::Fields(
                 self.query_fields(&expected_revision, &fields)?,
             )),
-            DesignerRequest::EditNumber {
+            DesignerRequest::EditScalar {
                 expected_revision,
                 target,
                 input,
-            } => Ok(DesignerResponse::Published(self.edit_number(
+            } => Ok(DesignerResponse::Published(self.edit_scalar(
                 &expected_revision,
                 &target,
                 &input,
@@ -495,7 +515,7 @@ impl DesignerRuntime {
                     .rows
                     .iter()
                     .flat_map(|row| &row.fields)
-                    .filter(|field| field.editable_number || field.formula.is_some())
+                    .filter(|field| field.editable_scalar.is_some() || field.formula.is_some())
                     .map(|field| field.target.clone()),
             );
         }
@@ -648,7 +668,7 @@ impl DesignerRuntime {
         FieldProjection {
             target: field_target(&field.field),
             address: field.presentation_address.to_string(),
-            editable_number: matches!(field.stored_value, Some(Value::Number(_))),
+            editable_scalar: scalar_kind(field.stored_value.as_ref()),
             stored,
             formula,
             calculated: field.calculated_value.as_ref().map(calculation_projection),
@@ -695,31 +715,41 @@ impl DesignerRuntime {
         Ok(projection)
     }
 
-    fn edit_number(
+    fn edit_scalar(
         &mut self,
         expected_revision: &str,
         target: &FieldTarget,
-        input: &str,
+        input: &ScalarEditInput,
     ) -> Result<PublicationProjection, DesignerError> {
+        let current_revision = self.current_revision();
+        if current_revision != expected_revision {
+            return Err(DesignerError::StaleQuery {
+                requested: expected_revision.to_owned(),
+                current: current_revision.to_owned(),
+            });
+        }
         let field = target.as_field_ref();
         let current = self.session.query_fields(std::slice::from_ref(&field))?;
-        if !matches!(current.value()[0].stored_value, Some(Value::Number(_))) {
-            return Err(DesignerError::UnsupportedNumberEdit { field });
-        }
-        let parsed = input
-            .parse::<f64>()
-            .ok()
-            .and_then(|value| Number::new(value).ok())
-            .ok_or_else(|| DesignerError::InvalidNumberInput {
-                input: input.to_owned(),
-            })?;
+        let value = match (current.value()[0].stored_value.as_ref(), input) {
+            (Some(Value::Number(_)), ScalarEditInput::Number { input }) => {
+                let parsed = input
+                    .parse::<f64>()
+                    .ok()
+                    .and_then(|value| Number::new(value).ok())
+                    .ok_or_else(|| DesignerError::InvalidNumberInput {
+                        input: input.to_owned(),
+                    })?;
+                Value::Number(parsed)
+            }
+            (Some(Value::Text(_)), ScalarEditInput::Text { value }) => Value::Text(value.clone()),
+            (Some(Value::Boolean(_)), ScalarEditInput::Boolean { value }) => Value::Boolean(*value),
+            _ => return Err(DesignerError::UnsupportedScalarEdit { field }),
+        };
+        self.ensure_scalar_edit_projection(&field, &value)?;
         let snapshot = self.session.export_snapshot();
         self.proposal_serial = self.proposal_serial.saturating_add(1);
         let proposal_id = ProposalId::from(format!("designer-edit-{}", self.proposal_serial));
-        let body = SemanticPatchBody::command(SemanticCommand::set_field_value(
-            field,
-            Value::Number(parsed),
-        ));
+        let body = SemanticPatchBody::command(SemanticCommand::set_field_value(field, value));
         self.lifecycle.propose(
             snapshot.document_scope(),
             snapshot.document(),
@@ -775,6 +805,25 @@ impl DesignerRuntime {
                 .map(field_target)
                 .collect(),
         })
+    }
+
+    fn ensure_scalar_edit_projection(
+        &self,
+        field: &FieldRef,
+        value: &Value,
+    ) -> Result<(), DesignerError> {
+        let mut candidate = self.session.export_snapshot().document().clone();
+        let entity = candidate.entities.get_mut(&field.entity).ok_or_else(|| {
+            DesignerError::UnsupportedScalarEdit {
+                field: field.clone(),
+            }
+        })?;
+        entity.fields.insert(field.field.clone(), value.clone());
+        if validate(&candidate).is_err() {
+            // Let the lifecycle preserve its authoritative validation diagnostics.
+            return Ok(());
+        }
+        Self::from_document(candidate, PREFLIGHT_OCCURRENCE).map(|_| ())
     }
 
     fn current_revision(&self) -> &str {
@@ -1553,6 +1602,40 @@ fn field_target(field: &FieldRef) -> FieldTarget {
     }
 }
 
+fn add_moonfall_boolean_fixture(document: &mut Document) -> Result<(), DesignerError> {
+    let field = FieldId::from("enabled");
+    let weapons = document
+        .schemas
+        .values_mut()
+        .find(|schema| schema.key.as_str() == DEFAULT_COLLECTION)
+        .ok_or_else(|| DesignerError::UnsupportedProject {
+            message: "the Moonfall weapons schema is unavailable".to_owned(),
+        })?;
+    if weapons.fields.contains_key(&field) {
+        return Err(DesignerError::UnsupportedProject {
+            message: "the Moonfall Boolean fixture field is already present".to_owned(),
+        });
+    }
+    weapons.fields.insert(
+        field.clone(),
+        FieldDefinition {
+            id: field.clone(),
+            key: FieldKey::from("enabled"),
+            field_type: FieldType::Boolean,
+            required: true,
+        },
+    );
+    let iron_sword = document
+        .entities
+        .values_mut()
+        .find(|entity| entity.key.as_str() == "iron_sword")
+        .ok_or_else(|| DesignerError::UnsupportedProject {
+            message: "the Moonfall iron_sword entity is unavailable".to_owned(),
+        })?;
+    iron_sword.fields.insert(field, Value::Boolean(true));
+    Ok(())
+}
+
 fn diagnostic_projection(
     diagnostic: &tachiko_workspace_engine::Diagnostic,
 ) -> DiagnosticProjection {
@@ -1574,6 +1657,15 @@ fn stored_value_projection(value: &Value) -> StoredValueProjection {
             entity: entity.to_string(),
         },
         Value::Formula(_) => unreachable!("formula definitions are projected separately"),
+    }
+}
+
+const fn scalar_kind(value: Option<&Value>) -> Option<ScalarKind> {
+    match value {
+        Some(Value::Number(_)) => Some(ScalarKind::Number),
+        Some(Value::Text(_)) => Some(ScalarKind::Text),
+        Some(Value::Boolean(_)) => Some(ScalarKind::Boolean),
+        Some(Value::Reference(_) | Value::Formula(_)) | None => None,
     }
 }
 
