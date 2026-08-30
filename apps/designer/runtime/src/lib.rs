@@ -15,9 +15,8 @@ use tachiko_storage::{
 };
 use tachiko_workspace_engine::{
     CalculationFailure, Document, Expression, FieldAddress, FieldDefinition, FieldId, FieldKey,
-    FieldRef, FieldType,
-    IdGenerator, Number, SemanticIdKind, StarterTemplate, Value, WorkspaceError, analyze_field,
-    create_document,
+    FieldRef, FieldType, IdGenerator, Number, SemanticIdKind, StarterTemplate, Value,
+    WorkspaceError, analyze_field, create_document,
     formula_operations::FormulaCalculationOutcome,
     patch_lifecycle::{
         AuthorizationAction, AuthorizationDomainId, AuthorizationPolicyVersion, DocumentScopeId,
@@ -48,6 +47,7 @@ const MAX_WIDTH_FINITE_JSON_NUMBER: f64 = -f64::MIN_POSITIVE;
 pub(crate) const MAX_WIRE_REQUEST_BYTES: usize = 65_536;
 pub(crate) const MAX_PROJECT_TRANSFER_BYTES: usize = 64 * 1024 * 1024;
 const DESIGNER_PRINCIPAL: &str = "designer-human";
+const PREFLIGHT_OCCURRENCE: &str = "00000000-0000-4000-8000-000000000000";
 const PROJECT_BUNDLE_MAGIC: &[u8; 8] = b"TWDPROJ1";
 
 /// App-private requests accepted by the Designer runtime adapter.
@@ -735,18 +735,14 @@ impl DesignerRuntime {
                 Value::Number(parsed)
             }
             (Some(Value::Text(_)), ScalarEditInput::Text { value }) => Value::Text(value.clone()),
-            (Some(Value::Boolean(_)), ScalarEditInput::Boolean { value }) => {
-                Value::Boolean(*value)
-            }
+            (Some(Value::Boolean(_)), ScalarEditInput::Boolean { value }) => Value::Boolean(*value),
             _ => return Err(DesignerError::UnsupportedScalarEdit { field }),
         };
+        self.ensure_scalar_edit_projection(&field, &value)?;
         let snapshot = self.session.export_snapshot();
         self.proposal_serial = self.proposal_serial.saturating_add(1);
         let proposal_id = ProposalId::from(format!("designer-edit-{}", self.proposal_serial));
-        let body = SemanticPatchBody::command(SemanticCommand::set_field_value(
-            field,
-            value,
-        ));
+        let body = SemanticPatchBody::command(SemanticCommand::set_field_value(field, value));
         self.lifecycle.propose(
             snapshot.document_scope(),
             snapshot.document(),
@@ -802,6 +798,25 @@ impl DesignerRuntime {
                 .map(field_target)
                 .collect(),
         })
+    }
+
+    fn ensure_scalar_edit_projection(
+        &self,
+        field: &FieldRef,
+        value: &Value,
+    ) -> Result<(), DesignerError> {
+        let mut candidate = self.session.export_snapshot().document().clone();
+        let entity = candidate.entities.get_mut(&field.entity).ok_or_else(|| {
+            DesignerError::UnsupportedScalarEdit {
+                field: field.clone(),
+            }
+        })?;
+        entity.fields.insert(field.field.clone(), value.clone());
+        if validate(&candidate).is_err() {
+            // Let the lifecycle preserve its authoritative validation diagnostics.
+            return Ok(());
+        }
+        Self::from_document(candidate, PREFLIGHT_OCCURRENCE).map(|_| ())
     }
 
     fn current_revision(&self) -> &str {

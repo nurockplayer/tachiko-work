@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 
 use tachiko_designer_runtime::{
-    CalculationProjection, DesignerRequest, DesignerResponse, DesignerRuntime, DesignerWireReply, ScalarEditInput, ScalarKind,
-    StoredValueProjection, close_project, open_project, process_wire_request,
+    CalculationProjection, DesignerRequest, DesignerResponse, DesignerRuntime, DesignerWireReply,
+    ScalarEditInput, ScalarKind, StoredValueProjection, close_project, open_project,
+    process_wire_request,
 };
 use tachiko_workspace_engine::{
     DocumentId, EntityId, EntityKey, Expression, FieldAddress, FieldDefinition, FieldId, FieldKey,
@@ -742,7 +743,9 @@ fn number_edit_publishes_once_and_refreshes_only_direct_and_dependent_fields() {
         .handle(DesignerRequest::EditScalar {
             expected_revision: "resident/0".to_owned(),
             target: "iron_sword.damage".into(),
-            input: ScalarEditInput::Number { input: "45".to_owned() },
+            input: ScalarEditInput::Number {
+                input: "45".to_owned(),
+            },
         })
         .expect("valid Number edit should execute")
     else {
@@ -892,7 +895,10 @@ fn rejected_scalar_kind_does_not_publish_a_canonical_change() {
             input: ScalarEditInput::Boolean { value: false },
         })
         .expect_err("the Rust authority must reject a mismatched control kind");
-    assert_eq!(error.failure_projection("resident/0").code, "unsupported_edit");
+    assert_eq!(
+        error.failure_projection("resident/0").code,
+        "unsupported_edit"
+    );
 
     let DesignerResponse::Fields(fields) = runtime
         .handle(DesignerRequest::QueryFields {
@@ -910,13 +916,48 @@ fn rejected_scalar_kind_does_not_publish_a_canonical_change() {
 }
 
 #[test]
+fn oversized_text_edit_is_rejected_before_publication() {
+    let mut runtime = moonfall();
+
+    let error = runtime
+        .handle(DesignerRequest::EditScalar {
+            expected_revision: "resident/0".to_owned(),
+            target: "iron_sword.name".into(),
+            input: ScalarEditInput::Text {
+                value: "x".repeat(65_500),
+            },
+        })
+        .expect_err("a candidate that cannot refresh its bounded projections must not publish");
+    assert_eq!(
+        error.failure_projection("resident/0").code,
+        "unsupported_project"
+    );
+
+    let DesignerResponse::Fields(fields) = runtime
+        .handle(DesignerRequest::QueryFields {
+            expected_revision: "resident/0".to_owned(),
+            fields: vec!["iron_sword.name".into()],
+        })
+        .expect("rejected candidate must leave the resident projection unchanged")
+    else {
+        panic!("expected fields response");
+    };
+    assert!(matches!(
+        fields.fields[0].stored,
+        Some(StoredValueProjection::Text { ref value }) if value == "Iron Sword"
+    ));
+}
+
+#[test]
 fn stale_and_calculation_failing_edits_leave_the_published_projection_unchanged() {
     let mut runtime = moonfall();
     runtime
         .handle(DesignerRequest::EditScalar {
             expected_revision: "resident/0".to_owned(),
             target: "iron_sword.damage".into(),
-            input: ScalarEditInput::Number { input: "45".to_owned() },
+            input: ScalarEditInput::Number {
+                input: "45".to_owned(),
+            },
         })
         .expect("first edit should publish");
 
@@ -924,7 +965,9 @@ fn stale_and_calculation_failing_edits_leave_the_published_projection_unchanged(
         .handle(DesignerRequest::EditScalar {
             expected_revision: "resident/0".to_owned(),
             target: "iron_sword.damage".into(),
-            input: ScalarEditInput::Number { input: "50".to_owned() },
+            input: ScalarEditInput::Number {
+                input: "50".to_owned(),
+            },
         })
         .expect_err("stale expected revision must fail");
     let stale = stale.failure_projection("resident/1");
@@ -935,7 +978,9 @@ fn stale_and_calculation_failing_edits_leave_the_published_projection_unchanged(
         .handle(DesignerRequest::EditScalar {
             expected_revision: "resident/1".to_owned(),
             target: "iron_sword.attack_interval".into(),
-            input: ScalarEditInput::Number { input: "0".to_owned() },
+            input: ScalarEditInput::Number {
+                input: "0".to_owned(),
+            },
         })
         .expect_err("division-by-zero candidate must fail validation");
     let invalid = invalid.failure_projection("resident/1");
@@ -1063,7 +1108,9 @@ fn canonical_open_is_candidate_first_and_starts_a_fresh_revision_domain() {
         .handle(DesignerRequest::EditScalar {
             expected_revision: "resident/0".to_owned(),
             target: "iron_sword.damage".into(),
-            input: ScalarEditInput::Number { input: "45".to_owned() },
+            input: ScalarEditInput::Number {
+                input: "45".to_owned(),
+            },
         })
         .expect("current occurrence should advance");
 
@@ -1168,7 +1215,9 @@ fn exact_revision_export_does_not_capture_or_mark_a_later_edit() {
         .handle(DesignerRequest::EditScalar {
             expected_revision: "resident/0".to_owned(),
             target: "iron_sword.damage".into(),
-            input: ScalarEditInput::Number { input: "45".to_owned() },
+            input: ScalarEditInput::Number {
+                input: "45".to_owned(),
+            },
         })
         .expect("later edit should publish");
 
