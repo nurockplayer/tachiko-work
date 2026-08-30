@@ -5,7 +5,7 @@ capture_mode: prospective
 capture_status: active
 captured_at: "2026-08-30T18:52:40Z"
 repository: nurockplayer/tachiko-work
-base_sha: 022a14d18503477aa7e20f6fca102f9e85dce740
+base_sha: c3b5ad2aad04e6b79594dbc7f79199591997bdc4
 issue: https://github.com/nurockplayer/tachiko-work/issues/175
 authority_state: Hypothesis
 agent:
@@ -97,7 +97,8 @@ Research evidence cannot amend those Accepted records.
 ## Context / source manifest actually supplied
 
 Confirmed supplied context included #175 and its canonical handoff, parent
-#174, live `main@022a14d18503477aa7e20f6fca102f9e85dce740`, open PR overlap
+#174, initial `main@022a14d18503477aa7e20f6fca102f9e85dce740`, reconciled
+`main@c3b5ad2aad04e6b79594dbc7f79199591997bdc4`, open PR overlap
 for #188 and #193, current storage/formula/workspace code and tests, Accepted
 ADRs/specifications, prior #41/#91/#95/#96 harness patterns, and three bounded
 read-only audits covering benchmark method, full-oracle/adversarial behavior,
@@ -158,10 +159,12 @@ were accepted where they matched Issue and Accepted authority.
 - The first B interference capture always ran baseline first, warming the
   deterministic resident navigation path before the background arm. The next
   capture alternated order but did not prove that the worker was active when
-  foreground timing began. Final B alternates order, waits until exactly 64
+  foreground timing began. Final B alternates order, waits until at least 64
   entity records have completed, asserts the worker is still active, and
-  records that boundary per row. Its p95 paired ratio is `1.401`, with 6/20
-  runs above `1.10`, and therefore fails the 10% foreground-regression gate.
+  records the observed boundary per row. After the final bounded-token recapture its
+  p95 paired ratio is `1.638`, with 5/20 runs above `1.10`, and therefore
+  still fails the 10% foreground-regression gate. One scheduler-overshoot row
+  observed 136 records before foreground start; it is retained, not filtered.
 - The first corrected E2 still derived trusted facts and pinned bytes from the
   mutable worktree. Final E2 binds object format, commit, tree, modes, paths,
   blob IDs, and reads the exact blob objects before independently re-deriving
@@ -198,6 +201,17 @@ were accepted where they matched Issue and Accepted authority.
   metadata. Final E1/E2 reject bytes above a source-derived/global cap before
   UTF-8 or JSON work; E2 resolves `HEAD` once and derives tree/listing/blob
   reads from that captured commit.
+- A HOLD review found that the E1/E2 exact-A1 comparator still ran after
+  reuse-side scans and while pinned/trusted/encoded sidecar state remained in
+  the same process. Final setup, A1, and reuse each execute in separate fresh
+  children, paired order alternates, PIDs/source identity are asserted, and
+  monotonic internal plus process-wall timings are recorded.
+- A second HOLD review found that after an entity record read completed,
+  strict inspection, DTO decode, work counting, canonical rendering, and
+  semantic conversion could run without another cancellation boundary. The
+  final controlled path fails closed above a 64 KiB post-read work budget and
+  checks after every named phase. Deterministic post-read and per-phase tests
+  prove cancellation with zero completed records and no SemanticCurrent.
 - Initial raw A0 rows doubled parser-byte work but not decoded record, AST,
   reference, or dependency counters for the second logical decode. Final rows
   aggregate every decode-work counter symmetrically. A fixture manifest now
@@ -226,13 +240,19 @@ source snapshot and returns `RequiresFullAdmission` for unsupported semantic
 proof.
 
 A0/A1/C/F captures were regenerated at `4ed7f994` after the cancellation and
-edge-accounting corrections. Final progress-synchronized B was regenerated at
-`58a2c47`; D was
+edge-accounting corrections. D was
 regenerated at `8ce55419` after per-observation pinning. E1/E2 were regenerated
 at `f2912ff5` after exact-A1 lifetime correction, a pre-parse sidecar byte cap,
 single-resolution Git identity, immutable-object trust, and an independently
 Git-pinned exact-A1 comparator. The earlier
 `1b3d75de`, `bd115c8`, and interrupted exploratory E2 files were discarded.
+After mechanical reconciliation with `main@c3b5ad2`, B/E1/E2 alone were
+recaptured at `01ef8dc0ffd69a5b5314854ae621b7bb5706ed67` for bounded post-read
+cancellation and fresh-process comparator isolation. HOLD-era unpushed
+`d527238` recaptures were discarded. A0/A1/C/D/F were not rerun because the
+final correction does not materially change their timed non-cancelled paths
+or evidence contracts; the manifest retains exact per-artifact base/head
+provenance.
 Cold-cache cells remain absent and explicitly unavailable rather than
 relabeled.
 
@@ -246,20 +266,23 @@ and A1 outputs for all four cases into `calculate_complete` and
 oracle. C/D still publish no semantic result and return
 `RequiresFullAdmission` where the full oracle is required.
 
-## Final outcome
+## Provisional outcome withheld under Steward HOLD
 
-**Outcome A — reject/defer Global Spine**, with **B — progressive UX only** as
+The historical provisional result was **Outcome A — reject/defer Global
+Spine**, with **B — progressive UX only** as
 an optional bounded shell/source-preview technique over optimized exact A1.
 The measured background-admission schedule is rejected because it fails the
-10% foreground-regression gate.
+10% foreground-regression gate. It remains withdrawn and is not republished to
+#174 by this correction.
 
 A1 materially improves current A0, but C does not beat A1 at the `>=2x` gate.
 Structural size is compact only in payload/constant-AST shapes and expands
 mixed, reference, field, chain, and cycle classes. Fresh-process RSS shows no
 40% reduction and exposes higher spine-plus-eventual-full peaks. D is useful
 for exact source payload navigation but cannot publish complete formula or
-validation truth. Exact E1 is 2.16x slower than A1 at p95 on 16k mixed data;
-exact E2 is 2.17x slower than an exact A1 that independently pays the same Git
+validation truth. Exact E1 full open is 2.13x slower than A1 at p95 on 16k
+mixed data; exact E2 full open is 2.20x slower than an exact A1 that
+independently pays the same Git
 identity and object-pinning costs. The faster E2 identity-plus-decode cell is
 explicitly non-authoritative because it does not prove source-derived facts.
 

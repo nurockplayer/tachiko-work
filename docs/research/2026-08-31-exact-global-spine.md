@@ -1,27 +1,31 @@
 # Issue #175 exact Global Spine and progressive `.roproj/v1` open
 
 Decision state: Research evidence for [#174](https://github.com/nurockplayer/tachiko-work/issues/174). This report does not change Accepted architecture.
+The recommendation below remains withdrawn under the Project Steward HOLD and
+is not republished to #174 by this correction.
 
 Measurement implementations: A0/A1/C/F at
 `4ed7f994825edb8a3bb6f1ac4a5cc5d940f74387`; final counterbalanced and
-progress-synchronized B at `58a2c47ea110c6a1a6d0617da0d805c14940b631`;
+progress-synchronized B, fresh-process E1/E2 comparators, and bounded post-read
+cancellation at `01ef8dc0ffd69a5b5314854ae621b7bb5706ed67`;
 resampled D at
-`8ce554191e36496dedb57322fc1ab059a205ab07`; bounded E1 and atomic
-immutable-Git-object E2 with an independently pinned exact-A1 comparator at
-`f2912ff58d5a5f22e240be6e8c63686ad22cefc8`; aggregate two-pass counter
+`8ce554191e36496dedb57322fc1ab059a205ab07`; aggregate two-pass counter
 corrections at `607e9208da2fdf71e0741d7ff7efceec890ac6fc`; and cross-crate full-oracle
 wiring plus cancellable metadata loading at
 `d3edb03b0e2d1bd1fb7690aa09d5a23f92926666`; cancellation-polled accepted
 semantic validation at `b31d1429b96d98427631a1eaab8a39f79232bdb1`; and its
 research-feature isolation plus host-path formula-node regression at
-`878e62c836cb06fd3cf58061567b989c64451213`; all on
-`main@022a14d18503477aa7e20f6fca102f9e85dce740`.
+`878e62c836cb06fd3cf58061567b989c64451213`. The final B/E1/E2 captures are
+mechanically reconciled with `main@c3b5ad2aad04e6b79594dbc7f79199591997bdc4`;
+the unaffected A0/A1/C/D/F artifacts retain their exact pre-reconciliation
+measurement/base heads in the evidence manifest because #193 changed only the
+disjoint Designer lane.
 
 ## Outcome
 
-**Recommend outcome A — reject/defer Global Spine. Keep outcome B as a
-bounded progressive-UX option over optimized exact eager admission. Do not
-advance C or D.**
+**Historical provisional result (withheld): outcome A — reject/defer Global
+Spine, with B only as a bounded progressive-UX option over optimized exact
+eager admission; do not advance C or D.**
 
 The experiment falsified a universal Global Spine benefit:
 
@@ -34,12 +38,12 @@ The experiment falsified a universal Global Spine benefit:
   `2.69x` for chains/cycles, and `2.83x` for reference-heavy data;
 - at 16,000 mixed entities, Structural Index peak RSS is higher than A0 and
   more than twice A1; spine plus eventual `Document` raises peak further;
-- exact dirty-source sidecar validation is `2.16x` slower than A1 at p95,
-  while Git validation is `2.17x` slower than an exact A1 that independently
+- exact dirty-source sidecar open is `2.13x` slower than A1 at p95,
+  while Git validation is `2.20x` slower than an exact A1 that independently
   pays the same Git identity and object-pinning costs;
 - counterbalanced, progress-synchronized background admission fails the
-  foreground-interference gate: p95 of paired p95 ratios is `1.401`, the
-  maximum is `1.451`, and 6/20 runs exceed `1.10`; and
+  foreground-interference gate: p95 of paired p95 ratios is `1.638`, the
+  maximum is `1.683`, and 5/20 runs exceed `1.10`; and
 - exact bounded source payload access is fast, but formula meaning and
   validation still require complete admission. The prototype correctly
   returns `requires_full_admission` rather than guessing.
@@ -55,9 +59,9 @@ justify a Global Spine.
 | Full-oracle equivalence | Pass for the research paths tested | The actual A0 and A1 admitted outputs under success, cold numeric mutation, cross-cold SCC, and division-by-zero pressure exactly match the source `Document`, `calculate_complete` outcome, and workspace stable observations; late-invalid A0/A1/C rejection parity; formula oracle 10/10 and workspace validation 19/19 |
 | `>=2x` p95 benefit over A1 in two realistic large classes | Fail | At 64k, C Structural is only `1.07x` faster than A1 for payload and is `1.41x` slower for references and `1.43x` slower for mixed |
 | Benefit not limited to payload-heavy data | Fail | Payload Structural Index is `0.07x` source, but mixed is `1.38x` and references `2.83x` |
-| No `>10%` foreground regression | Fail | Progress-synchronized counterbalanced p95 of per-run foreground p95 ratios is `1.401`; maximum is `1.451`; 6/20 runs exceed `1.10` |
+| No `>10%` foreground regression | Fail | Progress-synchronized counterbalanced p95 of per-run foreground p95 ratios is `1.638`; maximum is `1.683`; 5/20 runs exceed `1.10` |
 | `>=40%` peak-RSS reduction, without hidden eventual peak | Fail | A1 p50 peak is `30.4 MB`; Structural is `71.8 MB`; Structural + `Document` is `79.4 MB`; pinned Structural + `Document` is `91.2 MB` |
-| Sidecar validation preserves material reuse benefit | Fail | E1 validated p95 is `643 ms` versus A1 `298 ms`; E2 validated p95 is `907 ms` versus independently Git-pinned A1 `418 ms` |
+| Sidecar validation preserves material reuse benefit | Fail | E1 full-open p95 is `719 ms` versus A1 `338 ms`; E2 full-open p95 is `1,042 ms` versus independently Git-pinned A1 `473 ms` |
 
 ## Method
 
@@ -88,11 +92,13 @@ Successful rows have `outcome=success`; B cancellation rows retain their
 explicit `cancelled` outcome. No missing metadata is inferred.
 
 Fixture generation and initial filesystem materialization are outside admission
-timing. E2 is the explicit exception: both validated reuse and exact A1 include
-their own independent Git identity, object pin, and exact-snapshot
-materialization. Matrix latency is process/allocator-warm inside one release
-test process. RSS launches each arm in a fresh direct child. UI rendering, WASM
-compile/JIT, and process startup are outside scope.
+timing. E1/E2 setup, exact A1, and reuse each run in separate fresh child
+processes; child-internal admission/reuse timing excludes process startup, and
+the raw rows separately report process wall time. E2 validated reuse and exact
+A1 each include their own independent Git identity, object pin, and
+exact-snapshot materialization. Matrix latency is process/allocator-warm inside
+one release test process. RSS launches each arm in a fresh direct child. UI
+rendering and WASM compile/JIT are outside scope.
 
 The explicit search/navigation contract tested is exact resident ID plus field
 navigation and bounded entity lookup. No generic search, exact scalar-value
@@ -173,15 +179,20 @@ alternated `baseline_then_background` and `background_then_baseline`. The
 foreground timer began only after the admission worker had completed exactly
 64 entity records and while that worker was still active:
 
-- baseline per-run request p95: p50 `55 us`, p95 `63 us`;
-- with background A1: p50 `48 us`, p95 `65 us`;
-- foreground p95 ratio: p50 `0.994`, p95 `1.401`, max `1.451`; 6/20
+- baseline per-run request p95: p50 `63 us`, p95 `4,161 us`;
+- with background A1: p50 `63 us`, p95 `1,027 us`;
+- foreground p95 ratio: p50 `0.866`, p95 `1.638`, max `1.683`; 5/20
   runs exceeded the `1.10` gate;
-- order-stratified ratio p95 is `1.451` for baseline-first and `1.174` for
+- order-stratified ratio p95 is `1.039` for baseline-first and `1.683` for
   background-first;
-- background SemanticCurrent: p50 `221 ms`, p95 `230 ms`;
-- cancellation: all 20 cancelled, with p95 `65` and maximum `65` completed
-  records; cleanup/join latency p95 is `75 us` and maximum is `78 us`.
+- background SemanticCurrent: p50 `270 ms`, p95 `2,293 ms`;
+- cancellation: all 20 cancelled, with p95 `64` and maximum `79` completed
+  records; cleanup/join latency p95 is `357 us` and maximum is `518 us`.
+
+The worker was observed after at least 64 completed records; scheduler
+overshoot reached 136 records in one interference row and is retained rather
+than filtered. The large p95 tails are likewise preserved as recorded noisy
+samples.
 
 This background-admission contract fails the 10% regression gate. B remains
 supported only as a non-authoritative bounded shell/source-preview technique;
@@ -229,11 +240,11 @@ At 16k mixed entities:
 
 | Case | Source | Sidecar | Reuse p95 | A1 p95 | Interpretation |
 | --- | ---: | ---: | ---: | ---: | --- |
-| E1 dirty filesystem, validated | 9.63 MB | 18.83 MB | 643 ms | 298 ms | Includes source-derived/global pre-parse byte cap; exact reuse is 2.16x slower |
-| E2 identity + decode only | 9.63 MB | 18.83 MB | 264 ms | 418 ms | Non-authoritative diagnostic; source-derived facts are not proven |
-| E2 Git-object + pinned source-derived validation | 9.63 MB | 18.83 MB | 907 ms | 418 ms | Both arms resolve HEAD once, then independently pin the same commit/object bytes; exact validation is 2.17x slower than A1 |
+| E1 dirty filesystem, validated full open | 9.63 MB | 18.83 MB | 719 ms | 338 ms | Separate fresh processes; full open includes sidecar read and is 2.13x slower |
+| E2 identity + decode only | 9.63 MB | 18.83 MB | 261 ms | 473 ms | Non-authoritative diagnostic; source-derived facts are not proven |
+| E2 Git-object + pinned source-derived full open | 9.63 MB | 18.83 MB | 1,042 ms | 473 ms | Separate fresh processes independently pin the same commit/object bytes; exact full open is 2.20x slower |
 
-E1 first build also costs a 309 ms scan plus 75 ms encode. The mixed sidecar is
+E1 first build also costs a 422 ms scan plus 84 ms encode. The mixed sidecar is
 `1.96x` source size. Integrity detects accidental corruption; it is not an
 authentication mechanism against malicious replacement of both sidecar and
 checksum.
@@ -292,8 +303,9 @@ Validation at measurement HEAD:
 
 - Cold OS-page-cache evidence is unavailable. All latency tables say
   `os_cache_warm`.
-- Latency runs are process/allocator-warm; fresh process isolation is used for
-  RSS, not latency.
+- Matrix/A0/A1/B/C/D latency runs are process/allocator-warm. E1/E2 use fresh
+  processes for setup, A1, and reuse; their internal and process-wall timings
+  are separate columns.
 - RSS has five repetitions per arm, enough to falsify the 40% reduction claim
   here but not to define a product memory SLA.
 - A1 is a research implementation shared with the cross-crate oracle only
@@ -305,11 +317,14 @@ Validation at measurement HEAD:
   resident exact `Document` and is not evidence for cold payload search.
 - Background A1 polls cancellation inside a research-feature-only copy of the
   accepted semantic validator at schema, entity, field, and formula-node
-  boundaries before SemanticCurrent. Ordinary production validation remains
-  exactly on its pre-experiment implementation path.
+  boundaries before SemanticCurrent. Entity records also poll during bounded
+  reads, fail closed above a 64 KiB post-read work budget, and check after each
+  strict/decode/count/render/conversion phase. Ordinary production validation
+  remains exactly on its pre-experiment implementation path.
 - D pins the complete source snapshot, so its timing cannot be interpreted as
   a source-RSS reduction.
-- No UI render, WASM compile/JIT, or process startup timing is included.
+- No UI render or WASM compile/JIT timing is included. E1/E2 raw rows disclose
+  process wall time, while their primary internal timers exclude startup.
 - No scalar-value or full-text search implementation was tested.
 
 ## Evidence and reproduction
@@ -327,21 +342,11 @@ tests in
 committed. Retained-runtime RSS is in
 `crates/workspace-engine/tests/issue_175_residency.rs`.
 
-## Recommendation returned to #174
+## Provisional interpretation withheld from #174
 
-1. Select **A — reject/defer Global Spine** for the present architecture
-   decision.
-2. Carry optimized exact eager A1 forward only through a separately authorized
-   production issue; this research PR does not productionize it.
-3. Allow **B — progressive UX only** as an optional bounded shell/source-preview
-   technique, with SemanticCurrent remaining the authority boundary. Do not
-   adopt the measured background-admission schedule: it fails the 10% gate.
-4. Treat payload-only compactness as evidence for a narrow locator/payload
-   optimization if future product measurements require it.
-5. Do not advance **C**: the exact derived spine is not broadly compact, is not
-   faster than A1, and raises RSS.
-6. Do not advance **D**: durable representation is not the remaining proven
-   bottleneck; E2 Git-object proof and sidecar decode are `2.17x` slower than
-   an equivalently Git-pinned exact A1 at p95.
-7. Do not create an ADR, `.roproj/v2`, public readiness/cache protocol, or
-   production successor from #175 automatically.
+The previously drafted A/B/C/D recommendation remains withdrawn while the
+Project Steward HOLD is active. These corrected observations are not a new
+architecture publication, do not change Accepted authority, and authorize no
+ADR, `.roproj/v2`, public readiness/cache protocol, production successor, or
+Designer work. Delivery returns to Project Steward only after exact-head
+validation and review convergence.
