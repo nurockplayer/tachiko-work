@@ -393,19 +393,22 @@ export function mountDesigner(
     root.querySelectorAll<HTMLFormElement>("[data-edit-form]").forEach((form) => {
       form.addEventListener("submit", (event) => {
         event.preventDefault();
-        const input = form.querySelector<HTMLInputElement>("input");
+        const control = form.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+          "input, textarea",
+        );
         const entity = decodeOpaqueAttribute(form.dataset.entity);
         const field = decodeOpaqueAttribute(form.dataset.field);
-        if (input === null || entity === undefined || field === undefined) return;
+        if (control === null || entity === undefined || field === undefined) return;
         switch (form.dataset.editKind) {
           case "number":
-            void commitNumber({ entity, field }, input.value);
+            void commitNumber({ entity, field }, control.value);
             break;
           case "text":
-            void commitText({ entity, field }, input.value);
+            void commitText({ entity, field }, control.value);
             break;
           case "boolean":
-            void commitBoolean({ entity, field }, input.checked);
+            if (!(control instanceof HTMLInputElement)) return;
+            void commitBoolean({ entity, field }, control.checked);
             break;
         }
       });
@@ -728,14 +731,12 @@ function fieldMarkup(
         <form data-edit-form data-entity="${encodeOpaqueAttribute(
           field.target.entity,
         )}" data-field="${encodeOpaqueAttribute(field.target.field)}" data-edit-kind="text">
-          <input
-            type="text"
-            value="${escapeHtml(field.stored.value)}"
+          <textarea
             aria-label="${escapeHtml(humanize(field.target.field))} for ${escapeHtml(
               humanize(entityKey),
             )}"
             ${busy ? "disabled" : ""}
-          />
+          >${escapeHtml(field.stored.value)}</textarea>
           <button type="submit" ${busy ? "disabled" : ""}>Apply</button>
         </form>
         <small class="value-kind">Stored · Text</small>

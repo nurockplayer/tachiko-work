@@ -70,13 +70,13 @@ test("canonical Save As survives close and reload while existing destinations re
   await expect(page.locator('[data-field="iron_sword.dps"] output')).toHaveText("50");
   await expect(page.getByTestId("durability")).toContainText("Unsaved changes");
 
-  await page.getByLabel("Name for Iron Sword").fill("Longsword");
+  await page.getByLabel("Name for Iron Sword").fill("Longsword\n+1");
   await page
     .locator('[data-field="iron_sword.name"]')
     .getByRole("button", { name: "Apply" })
     .click();
   await expect(page.getByTestId("revision")).toContainText("resident/2");
-  await expect(page.getByLabel("Name for Iron Sword")).toHaveValue("Longsword");
+  await expect(page.getByLabel("Name for Iron Sword")).toHaveValue("Longsword\n+1");
 
   await page.getByLabel("Enabled for Iron Sword").uncheck();
   await page
@@ -110,7 +110,7 @@ test("canonical Save As survives close and reload while existing destinations re
   await expect(page.getByRole("heading", { name: "Moonfall Balance" })).toBeVisible();
   await expect(page.getByTestId("revision")).toContainText("resident/0");
   await expect(page.getByLabel("Damage for Iron Sword")).toHaveValue("45");
-  await expect(page.getByLabel("Name for Iron Sword")).toHaveValue("Longsword");
+  await expect(page.getByLabel("Name for Iron Sword")).toHaveValue("Longsword\n+1");
   await expect(page.getByLabel("Enabled for Iron Sword")).not.toBeChecked();
   await expect(page.locator('[data-field="iron_sword.dps"] output')).toHaveText("50");
   await expect(page.getByTestId("durability")).toContainText("Saved");
@@ -120,7 +120,7 @@ test("canonical Save As survives close and reload while existing destinations re
   page.once("dialog", async (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Open", exact: true }).click();
   await expect(page.getByLabel("Damage for Iron Sword")).toHaveValue("45");
-  await expect(page.getByLabel("Name for Iron Sword")).toHaveValue("Longsword");
+  await expect(page.getByLabel("Name for Iron Sword")).toHaveValue("Longsword\n+1");
   await expect(page.getByLabel("Enabled for Iron Sword")).not.toBeChecked();
   await expect(page.locator('[data-field="iron_sword.dps"] output')).toHaveText("50");
   await expect(page.getByTestId("durability")).toContainText("Saved");
