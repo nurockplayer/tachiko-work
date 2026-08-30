@@ -225,6 +225,12 @@ fn admission_bounds_formula_analysis_before_per_formula_projection() {
         .filter(|value| matches!(value, Value::Formula(_)))
         .count();
     assert!(formula_count > 32);
+    document
+        .schemas
+        .values_mut()
+        .find(|schema| schema.key.as_str() == "weapons")
+        .expect("weapons schema should exist")
+        .id = SchemaId::from("deliberate_map_key_mismatch");
 
     let Err(error) = DesignerRuntime::from_document(document, OCCURRENCE_ONE) else {
         panic!("formula analysis must have a cheap aggregate admission bound");
@@ -236,6 +242,70 @@ fn admission_bounds_formula_analysis_before_per_formula_projection() {
             .message
             .contains(&format!("contains {formula_count} formulas"))
     );
+    assert!(failure.message.contains("bounded maximum is 32"));
+}
+
+#[test]
+fn admission_bounds_total_entities_before_workspace_validation() {
+    let mut document = create_document(
+        StarterTemplate::GameBalance,
+        "Too many malformed entities",
+        &mut TestIds::default(),
+    )
+    .expect("fixture should be valid");
+    let template = document
+        .entities
+        .values()
+        .next()
+        .expect("fixture entity should exist")
+        .clone();
+    document.entities.clear();
+    for index in 0..1_025 {
+        let id = format!("malformed_entity_{index:04}");
+        let mut entity = template.clone();
+        entity.id = EntityId::from(id.as_str());
+        entity.key = EntityKey::from(id.as_str());
+        entity.schema = SchemaId::from(format!("missing_schema_{index:04}"));
+        entity.fields.clear();
+        document.entities.insert(entity.id.clone(), entity);
+    }
+
+    let Err(error) = DesignerRuntime::from_document(document, OCCURRENCE_ONE) else {
+        panic!("total entities must be bounded before workspace validation");
+    };
+    let failure = error.failure_projection("unavailable");
+    assert_eq!(failure.code, "unsupported_project");
+    assert!(failure.message.contains("contains 1025 entities"));
+    assert!(failure.message.contains("bounded maximum is 1024"));
+}
+
+#[test]
+fn admission_bounds_entity_fields_before_workspace_validation() {
+    let mut document = create_document(
+        StarterTemplate::GameBalance,
+        "Too many undeclared fields",
+        &mut TestIds::default(),
+    )
+    .expect("fixture should be valid");
+    let entity = document
+        .entities
+        .values_mut()
+        .find(|entity| entity.key.as_str() == "iron_sword")
+        .expect("fixture entity should exist");
+    while entity.fields.len() <= 32 {
+        let field = FieldId::from(format!("undeclared_field_{:02}", entity.fields.len()));
+        entity.fields.insert(
+            field,
+            Value::Number(Number::new(1.0).expect("finite fixture number")),
+        );
+    }
+
+    let Err(error) = DesignerRuntime::from_document(document, OCCURRENCE_ONE) else {
+        panic!("stored entity fields must be bounded before workspace validation");
+    };
+    let failure = error.failure_projection("unavailable");
+    assert_eq!(failure.code, "unsupported_project");
+    assert!(failure.message.contains("contains 33 stored fields"));
     assert!(failure.message.contains("bounded maximum is 32"));
 }
 

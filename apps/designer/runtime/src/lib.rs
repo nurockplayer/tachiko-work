@@ -35,6 +35,7 @@ const DEFAULT_COLLECTION: &str = "weapons";
 const MAX_COLLECTIONS: usize = 32;
 const MAX_TABLE_FIELDS: usize = 32;
 const MAX_TABLE_ROWS: usize = 32;
+const MAX_TOTAL_ENTITIES: usize = MAX_COLLECTIONS * MAX_TABLE_ROWS;
 const MAX_FIELD_QUERY_TARGETS: usize = MAX_TABLE_FIELDS * MAX_TABLE_ROWS;
 const MAX_FORMULAS: usize = 32;
 const MAX_PROJECTION_BYTES: usize = 65_536;
@@ -396,6 +397,7 @@ impl DesignerRuntime {
     /// Returns an app-profile or shared workspace failure before any existing
     /// occurrence is replaced.
     pub fn from_document(document: Document, occurrence_id: &str) -> Result<Self, DesignerError> {
+        ensure_cheap_document_profile(&document)?;
         validate(&document).map_err(|source| DesignerError::InvalidProjectWorkspace { source })?;
         let control_field = document
             .resolve_field(&FieldAddress::new("shop", "upgrade_cost"))
@@ -410,21 +412,9 @@ impl DesignerRuntime {
             .values()
             .map(|collection| collection.summary.clone())
             .collect::<Vec<_>>();
-        let formula_count = document
-            .entities
-            .values()
-            .flat_map(|entity| entity.fields.values())
-            .filter(|value| matches!(value, Value::Formula(_)))
-            .count();
         let title = document.title.clone();
         let document_scope = document_scope(occurrence_id, &document)?;
-        ensure_static_profile(
-            &title,
-            &control_field,
-            &collections,
-            &collection_specs,
-            formula_count,
-        )?;
+        ensure_static_profile(&title, &control_field, &collections, &collection_specs)?;
         let formula_sources = formula_sources(&document)?;
         let principal = PrincipalId::from(DESIGNER_PRINCIPAL);
         let lifecycle = designer_lifecycle(&document_scope, &document, &principal)?;
@@ -1117,12 +1107,84 @@ fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
         .collect()
 }
 
+fn ensure_cheap_document_profile(document: &Document) -> Result<(), DesignerError> {
+    if document.schemas.len() > MAX_COLLECTIONS {
+        return Err(DesignerError::UnsupportedProject {
+            message: format!(
+                "the project advertises {} collections; the bounded maximum is {MAX_COLLECTIONS}",
+                document.schemas.len()
+            ),
+        });
+    }
+    if !document
+        .schemas
+        .values()
+        .any(|schema| schema.key.as_str() == DEFAULT_COLLECTION)
+    {
+        return Err(DesignerError::UnsupportedProject {
+            message: format!("the required '{DEFAULT_COLLECTION}' collection is unavailable"),
+        });
+    }
+    for schema in document.schemas.values() {
+        if schema.fields.len() > MAX_TABLE_FIELDS {
+            return Err(DesignerError::UnsupportedProject {
+                message: DesignerError::CollectionTooLarge {
+                    collection: schema.key.to_string(),
+                }
+                .to_string(),
+            });
+        }
+    }
+    if document.entities.len() > MAX_TOTAL_ENTITIES {
+        return Err(DesignerError::UnsupportedProject {
+            message: format!(
+                "the project contains {} entities; the bounded maximum is {MAX_TOTAL_ENTITIES}",
+                document.entities.len()
+            ),
+        });
+    }
+    let mut entity_counts = BTreeMap::new();
+    for entity in document.entities.values() {
+        if entity.fields.len() > MAX_TABLE_FIELDS {
+            return Err(DesignerError::UnsupportedProject {
+                message: format!(
+                    "entity '{}' contains {} stored fields; the bounded maximum is {MAX_TABLE_FIELDS}",
+                    entity.id,
+                    entity.fields.len()
+                ),
+            });
+        }
+        let count = entity_counts.entry(entity.schema.clone()).or_insert(0usize);
+        *count = count.saturating_add(1);
+        if *count > MAX_TABLE_ROWS {
+            return Err(DesignerError::UnsupportedProject {
+                message: format!(
+                    "a collection exceeds the bounded maximum of {MAX_TABLE_ROWS} entities"
+                ),
+            });
+        }
+    }
+    let formula_count = document
+        .entities
+        .values()
+        .flat_map(|entity| entity.fields.values())
+        .filter(|value| matches!(value, Value::Formula(_)))
+        .count();
+    if formula_count > MAX_FORMULAS {
+        return Err(DesignerError::UnsupportedProject {
+            message: format!(
+                "the project contains {formula_count} formulas; the bounded maximum is {MAX_FORMULAS}"
+            ),
+        });
+    }
+    Ok(())
+}
+
 fn ensure_static_profile(
     title: &str,
     control_field: &FieldTarget,
     collections: &[CollectionSummary],
     collection_specs: &BTreeMap<String, CollectionSpec>,
-    formula_count: usize,
 ) -> Result<(), DesignerError> {
     if collections.len() > MAX_COLLECTIONS {
         return Err(DesignerError::UnsupportedProject {
@@ -1135,13 +1197,6 @@ fn ensure_static_profile(
     if !collection_specs.contains_key(DEFAULT_COLLECTION) {
         return Err(DesignerError::UnsupportedProject {
             message: format!("the required '{DEFAULT_COLLECTION}' collection is unavailable"),
-        });
-    }
-    if formula_count > MAX_FORMULAS {
-        return Err(DesignerError::UnsupportedProject {
-            message: format!(
-                "the project contains {formula_count} formulas; the bounded maximum is {MAX_FORMULAS}"
-            ),
         });
     }
     for collection in collection_specs.values() {
