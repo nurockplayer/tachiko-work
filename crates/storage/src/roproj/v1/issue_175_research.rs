@@ -1007,18 +1007,43 @@ fn decode_sidecar(
     }
 }
 
+fn require_sidecar_matches_trusted_index(
+    decoded: StructuralIndex,
+    trusted: &StructuralIndex,
+) -> Result<StructuralIndex, String> {
+    if &decoded == trusted {
+        Ok(decoded)
+    } else {
+        Err("sidecar facts do not match the exact source-derived index".to_owned())
+    }
+}
+
 fn open_sidecar_or_fallback(
     root: &Path,
     bytes: &[u8],
     expected_binding: &SourceBinding,
 ) -> Result<SidecarOpen, FormatError> {
+    let trusted = scan_spine_host(root, true)?
+        .structural
+        .expect("structural scan requested");
+    let trusted_source_sha256 = trusted.directory.source_fingerprint.clone();
     let current_binding = match expected_binding {
         SourceBinding::DirtyFilesystem { .. } => SourceBinding::DirtyFilesystem {
-            source_sha256: fingerprint_source(root)?.0,
+            source_sha256: trusted_source_sha256,
         },
-        SourceBinding::GitSnapshot { .. } => expected_binding.clone(),
+        SourceBinding::GitSnapshot { source_sha256, .. }
+            if source_sha256 == &trusted_source_sha256 =>
+        {
+            expected_binding.clone()
+        }
+        SourceBinding::GitSnapshot { .. } => {
+            return admit_one_pass_host(root, false)
+                .map(|(document, _, _)| SidecarOpen::FellBackToExactAdmission(document));
+        }
     };
-    match decode_sidecar(bytes, &current_binding) {
+    match decode_sidecar(bytes, &current_binding)
+        .and_then(|decoded| require_sidecar_matches_trusted_index(decoded, &trusted))
+    {
         Ok(index) => Ok(SidecarOpen::Reused(index)),
         Err(_) => admit_one_pass_host(root, false)
             .map(|(document, _, _)| SidecarOpen::FellBackToExactAdmission(document)),
@@ -2904,6 +2929,15 @@ fn issue_175_dirty_sidecar_reuse_is_bound_and_fails_closed() {
         SidecarOpen::Reused(reused) if reused == index
     ));
 
+    let mut fabricated_index = index.clone();
+    fabricated_index.directory.entities[0].key = "fabricated_sidecar_key".to_owned();
+    let fabricated = encode_sidecar(&fabricated_index, binding.clone()).unwrap();
+    assert!(decode_sidecar(&fabricated, &binding).is_ok());
+    assert!(matches!(
+        open_sidecar_or_fallback(&root, &fabricated, &binding).unwrap(),
+        SidecarOpen::FellBackToExactAdmission(document) if document == expected
+    ));
+
     let mut corrupted: SidecarEnvelope = serde_json::from_slice(&sidecar).unwrap();
     corrupted.payload_json.push(' ');
     let corrupted = serde_json::to_vec(&corrupted).unwrap();
@@ -2981,6 +3015,12 @@ fn issue_175_git_sidecar_binds_exact_immutable_snapshot_objects() {
     assert!(blobs.iter().all(|blob| blob.mode == "100644"));
     let sidecar = encode_sidecar(&index, binding.clone()).unwrap();
     assert_eq!(decode_sidecar(&sidecar, &binding).unwrap(), index);
+
+    let mut fabricated_index = index.clone();
+    fabricated_index.field_presence.pop();
+    let fabricated = encode_sidecar(&fabricated_index, binding.clone()).unwrap();
+    let decoded = decode_sidecar(&fabricated, &binding).unwrap();
+    assert!(require_sidecar_matches_trusted_index(decoded, &index).is_err());
 
     let mut mismatched_payload = index.clone();
     mismatched_payload.directory.source_fingerprint = "00".repeat(32);
@@ -3593,7 +3633,7 @@ fn issue_175_dirty_sidecar_raw_samples() {
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(30);
     println!(
-        "arm,workload,cache_state,entities,source_sha256,source_bytes,sidecar_bytes,first_scan_us,first_sidecar_encode_us,repetition,hash_us,sidecar_decode_us,total_validated_reuse_us,full_a1_us"
+        "arm,workload,cache_state,entities,source_sha256,source_bytes,sidecar_bytes,first_scan_us,first_sidecar_encode_us,repetition,source_revalidation_us,sidecar_decode_us,total_validated_reuse_us,full_a1_us"
     );
     for entity_count in entity_counts
         .split(',')
@@ -3612,12 +3652,19 @@ fn issue_175_dirty_sidecar_raw_samples() {
         let encode_started = Instant::now();
         let sidecar = encode_sidecar(&index, binding.clone()).unwrap();
         let encode_time = encode_started.elapsed();
-        black_box(fingerprint_source(&root).unwrap());
-        black_box(decode_sidecar(&sidecar, &binding).unwrap());
+        let trusted = scan_spine_host(&root, true).unwrap().structural.unwrap();
+        let decoded = decode_sidecar(&sidecar, &binding).unwrap();
+        black_box(require_sidecar_matches_trusted_index(decoded, &trusted).unwrap());
         for repetition in 0..repetitions {
-            let (_, _, hash_time) = fingerprint_source(black_box(&root)).unwrap();
+            let source_revalidation_started = Instant::now();
+            let trusted = scan_spine_host(black_box(&root), true)
+                .unwrap()
+                .structural
+                .unwrap();
+            let source_revalidation_time = source_revalidation_started.elapsed();
             let decode_started = Instant::now();
-            black_box(decode_sidecar(black_box(&sidecar), &binding).unwrap());
+            let decoded = decode_sidecar(black_box(&sidecar), &binding).unwrap();
+            black_box(require_sidecar_matches_trusted_index(decoded, &trusted).unwrap());
             let decode_time = decode_started.elapsed();
             let full_started = Instant::now();
             black_box(admit_one_pass_host(black_box(&root), false).unwrap());
@@ -3628,9 +3675,9 @@ fn issue_175_dirty_sidecar_raw_samples() {
                 sidecar.len(),
                 scan.scan_time.as_micros(),
                 encode_time.as_micros(),
-                hash_time.as_micros(),
+                source_revalidation_time.as_micros(),
                 decode_time.as_micros(),
-                (hash_time + decode_time).as_micros(),
+                (source_revalidation_time + decode_time).as_micros(),
                 full_time.as_micros(),
             );
         }
@@ -3664,16 +3711,24 @@ fn issue_175_git_sidecar_raw_samples() {
     let sidecar = encode_sidecar(&index, binding.clone()).unwrap();
     let encode_time = encode_started.elapsed();
     println!(
-        "arm,workload,cache_state,entities,source_sha256,source_bytes,sidecar_bytes,first_scan_us,first_git_identity_us,first_source_proof_us,first_sidecar_encode_us,repetition,git_identity_us,source_proof_us,sidecar_decode_us,identity_only_validated_reuse_us,total_with_source_reproof_us,full_a1_us"
+        "arm,workload,cache_state,entities,source_sha256,source_bytes,sidecar_bytes,first_scan_us,first_git_identity_us,first_source_revalidation_us,first_sidecar_encode_us,repetition,git_identity_us,source_revalidation_us,sidecar_decode_us,identity_only_untrusted_decode_us,total_validated_reuse_us,full_a1_us"
     );
     for repetition in 0..repetitions {
-        let (current_source_sha256, current_source_bytes, source_proof_time) =
+        let source_revalidation_started = Instant::now();
+        let (current_source_sha256, current_source_bytes, _) =
             fingerprint_git_snapshot(black_box(&repo));
         assert_eq!(current_source_bytes, scan.work.source_bytes);
+        let trusted = scan_spine_host(black_box(&project), true)
+            .unwrap()
+            .structural
+            .unwrap();
+        assert_eq!(trusted.directory.source_fingerprint, current_source_sha256);
+        let source_revalidation_time = source_revalidation_started.elapsed();
         let (current_binding, identity_time) =
             git_snapshot_binding(black_box(&repo), current_source_sha256);
         let decode_started = Instant::now();
-        black_box(decode_sidecar(black_box(&sidecar), &current_binding).unwrap());
+        let decoded = decode_sidecar(black_box(&sidecar), &current_binding).unwrap();
+        black_box(require_sidecar_matches_trusted_index(decoded, &trusted).unwrap());
         let decode_time = decode_started.elapsed();
         let full_started = Instant::now();
         black_box(admit_one_pass_host(black_box(&project), false).unwrap());
@@ -3688,10 +3743,10 @@ fn issue_175_git_sidecar_raw_samples() {
             first_source_proof_time.as_micros(),
             encode_time.as_micros(),
             identity_time.as_micros(),
-            source_proof_time.as_micros(),
+            source_revalidation_time.as_micros(),
             decode_time.as_micros(),
             (identity_time + decode_time).as_micros(),
-            (identity_time + source_proof_time + decode_time).as_micros(),
+            (identity_time + source_revalidation_time + decode_time).as_micros(),
             full_time.as_micros(),
         );
     }
