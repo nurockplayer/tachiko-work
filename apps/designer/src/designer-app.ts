@@ -48,6 +48,7 @@ export function mountDesigner(
   let busy = false;
   let destroyed = false;
   let occurrenceClosed = false;
+  const pendingTextBuffers = new Map<string, string>();
   let savedProjects: SavedProjectSummary[] = [];
   let selectedSavedProject = "";
   const durability = createDurabilityState();
@@ -156,8 +157,10 @@ export function mountDesigner(
   const commitNumber = (target: FieldTarget, input: string): Promise<void> =>
     commitScalar(target, (expectedRevision) => client.editNumber(expectedRevision, target, input));
 
-  const commitText = (target: FieldTarget, value: string): Promise<void> =>
-    commitScalar(target, (expectedRevision) => client.editText(expectedRevision, target, value));
+  const commitText = (target: FieldTarget, value: string): Promise<void> => {
+    pendingTextBuffers.delete(textBufferKey(target));
+    return commitScalar(target, (expectedRevision) => client.editText(expectedRevision, target, value));
+  };
 
   const commitBoolean = (target: FieldTarget, value: boolean): Promise<void> =>
     commitScalar(target, (expectedRevision) =>
@@ -216,6 +219,7 @@ export function mountDesigner(
       value: controlField.calculated.value,
       revision: candidate.revision,
     });
+    pendingTextBuffers.clear();
     bootstrap = candidate;
     store = nextStore;
     selectedCollection = candidate.default_collection;
@@ -226,6 +230,7 @@ export function mountDesigner(
 
   const installOpenedOccurrence = (opened: OpenedProjection): void => {
     const nextStore = createProjectionStore(opened.table, opened.control);
+    pendingTextBuffers.clear();
     bootstrap = opened.bootstrap;
     store = nextStore;
     selectedCollection = opened.bootstrap.default_collection;
@@ -370,6 +375,7 @@ export function mountDesigner(
     render();
     try {
       await client.closeProject();
+      pendingTextBuffers.clear();
       bootstrap = null;
       store = null;
       selectedCollection = "";
@@ -392,6 +398,14 @@ export function mountDesigner(
 
   const bindInteractions = (): void => {
     root.querySelectorAll<HTMLFormElement>("[data-edit-form]").forEach((form) => {
+      const draftControl = form.querySelector<HTMLTextAreaElement>("textarea");
+      const draftEntity = decodeOpaqueAttribute(form.dataset.entity);
+      const draftField = decodeOpaqueAttribute(form.dataset.field);
+      if (draftControl !== null && draftEntity !== undefined && draftField !== undefined) {
+        draftControl.addEventListener("input", () => {
+          pendingTextBuffers.set(textBufferKey({ entity: draftEntity, field: draftField }), draftControl.value);
+        });
+      }
       form.addEventListener("submit", (event) => {
         event.preventDefault();
         const control = form.querySelector<HTMLInputElement | HTMLTextAreaElement>(
@@ -471,7 +485,12 @@ export function mountDesigner(
       (textarea) => {
         const initialText = decodeOpaqueAttribute(textarea.dataset.initialText);
         if (initialText !== undefined) {
-          textarea.value = initialText;
+          const entity = decodeOpaqueAttribute(textarea.form?.dataset.entity);
+          const field = decodeOpaqueAttribute(textarea.form?.dataset.field);
+          textarea.value =
+            entity !== undefined && field !== undefined
+              ? (pendingTextBuffers.get(textBufferKey({ entity, field })) ?? initialText)
+              : initialText;
           textarea.dataset.initialNormalized = normalizeLineEndings(textarea.value);
         }
       },
@@ -510,6 +529,10 @@ export function mountDesigner(
       void client.close();
     },
   };
+}
+
+function textBufferKey(target: FieldTarget): string {
+  return JSON.stringify([target.entity, target.field]);
 }
 
 function loadingMarkup(): string {

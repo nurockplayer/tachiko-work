@@ -529,6 +529,41 @@ describe("Designer application seam", () => {
     app.destroy();
   });
 
+  it("preserves an unsubmitted Text draft across an unrelated scalar publication", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const client = new ScalarClient();
+    const app = mountDesigner(root, client, host);
+    await app.ready;
+
+    const name = root.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Name for Iron Sword"]',
+    );
+    const enabled = root.querySelector<HTMLInputElement>(
+      'input[aria-label="Enabled for Iron Sword"]',
+    );
+    if (name === null || enabled === null || enabled.form === null) {
+      throw new Error("scalar controls are required");
+    }
+    name.value = "Pending draft";
+    name.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    enabled.checked = false;
+    enabled.form.requestSubmit();
+
+    await vi.waitFor(() => {
+      expect(root.querySelector('[data-testid="revision"]')?.textContent).toContain(
+        "resident/2",
+      );
+    });
+    expect(
+      root.querySelector<HTMLTextAreaElement>('textarea[aria-label="Name for Iron Sword"]')
+        ?.value,
+    ).toBe("Pending draft");
+    expect(client.textEditRequests).toHaveLength(0);
+    app.destroy();
+  });
+
   it("preserves opaque edit targets across HTML parsing", async () => {
     const target = { entity: "entity\u0000id", field: "field\rid" };
     const opaqueTable = structuredClone(table);
