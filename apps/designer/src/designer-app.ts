@@ -901,63 +901,12 @@ function preserveUneditedLineEndings(
   normalizedOriginal: string,
   edited: string,
 ): string {
+  if (normalizeLineEndings(original) !== normalizedOriginal) return edited;
   const originalLineEndings = original.match(/\r\n|\r|\n/g) ?? [];
-  const editedLineEndingCount = (edited.match(/\n/g) ?? []).length;
-  if (
-    originalLineEndings.length === editedLineEndingCount &&
-    normalizeLineEndings(original) === normalizedOriginal
-  ) {
-    let lineEndingIndex = 0;
-    return edited.replace(/\n/g, () => {
-      const lineEnding = originalLineEndings[lineEndingIndex++];
-      return lineEnding ?? "\n";
-    });
-  }
-
-  let prefixLength = 0;
-  const sharedLength = Math.min(normalizedOriginal.length, edited.length);
-  while (
-    prefixLength < sharedLength &&
-    normalizedOriginal[prefixLength] === edited[prefixLength]
-  ) {
-    prefixLength += 1;
-  }
-
-  let suffixLength = 0;
-  while (
-    suffixLength < normalizedOriginal.length - prefixLength &&
-    suffixLength < edited.length - prefixLength &&
-    normalizedOriginal[normalizedOriginal.length - suffixLength - 1] ===
-      edited[edited.length - suffixLength - 1]
-  ) {
-    suffixLength += 1;
-  }
-
-  const prefixEnd = originalOffsetForNormalizedLength(original, prefixLength);
-  const suffixStart = originalOffsetForNormalizedLength(
-    original,
-    normalizedOriginal.length - suffixLength,
-  );
-  return `${original.slice(0, prefixEnd)}${edited.slice(
-    prefixLength,
-    edited.length - suffixLength,
-  )}${original.slice(suffixStart)}`;
+  let lineEndingIndex = 0;
+  return edited.replace(/\n/g, () => originalLineEndings[lineEndingIndex++] ?? "\n");
 }
 
 function normalizeLineEndings(value: string): string {
   return value.replace(/\r\n|\r/g, "\n");
-}
-
-function originalOffsetForNormalizedLength(original: string, normalizedLength: number): number {
-  let originalOffset = 0;
-  let normalizedOffset = 0;
-  while (originalOffset < original.length && normalizedOffset < normalizedLength) {
-    if (original[originalOffset] === "\r") {
-      originalOffset += original[originalOffset + 1] === "\n" ? 2 : 1;
-    } else {
-      originalOffset += 1;
-    }
-    normalizedOffset += 1;
-  }
-  return originalOffset;
 }
