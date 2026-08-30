@@ -274,6 +274,17 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries).toEqual([]);
   });
 
+  it("allows a Decision-Ready authority Issue with a focused PR through the merge gate", () => {
+    const decision = issue();
+    decision.title = "[Decision][M05 P1] Choose the dashboard delivery boundary";
+    decision.body = "## Status\n\n**DECISION-READY**\n\nOwner: `agent:codex`";
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [decision], pullRequests: [pullRequest()] }));
+
+    expect(projection.deliveries[0]?.issue.readiness).toBe("active");
+    expect(projection.deliveries[0]?.phase).toBe("merge_gate");
+  });
+
   it("keeps a linked Decision Issue out of the merge gate", () => {
     const decision = issue();
     decision.title = "[Decision][M05 P1] Choose the delivery boundary";
@@ -650,6 +661,24 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.action.owner).toBe("human");
   });
 
+  it("preserves affirmative human action from an inconsistent duplicate handoff", () => {
+    const pr = pullRequest();
+    pr.comments.push({
+      ...pr.comments[0]!,
+      id: "handoff-pr-duplicate",
+      body: pr.comments[0]!.body.replace("HUMAN ACTION: none", "HUMAN ACTION: required"),
+      updatedAt: "2026-08-30T00:01:00.000Z",
+    });
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.handoff.condition).toBe("inconsistent");
+    expect(lane?.phase).toBe("human_required");
+    expect(lane?.blockers).toContain("Canonical handoff conflicts with live PR identity or is duplicated.");
+    expect(lane?.action.owner).toBe("human");
+  });
+
   it("assigns an operational Not Ready handoff to the delivery agent when the Issue is Ready", () => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace("STATE: merge-ready", "STATE: Not Ready");
@@ -792,10 +821,14 @@ describe("normalizeRepositorySnapshot", () => {
     const pr = pullRequest();
     pr.commentsComplete = false;
 
-    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue(), issue(170)], pullRequests: [pr] }));
 
     expect(projection.deliveries[0]?.handoff.condition).toBe("unknown");
     expect(projection.deliveries[0]?.phase).toBe("validating");
+    for (const lane of projection.deliveries) {
+      expect(lane.phase).toBe("validating");
+      expect(lane.blockers).toContain("Pull-request Issue ownership could not be fully observed.");
+    }
   });
 
   it("does not advertise a no-PR Issue as Ready when handoff observation is truncated", () => {

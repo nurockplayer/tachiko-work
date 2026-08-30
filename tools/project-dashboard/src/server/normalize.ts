@@ -18,6 +18,7 @@ const explicitlySubstantiveFinding = /(?:\[|\b)(?:p[0-2]|sev(?:erity)?[ -]?[0-2]
 const explicitlyNonSubstantiveFinding = /^(?:[_*]+\s*)?(?:\[(?:p3|sev(?:erity)?[ -]?3)\]|(?:p3|sev(?:erity)?[ -]?3|nit(?:pick)?|trivial)\b)/i;
 const explicitlyNonSubstantiveBadge = /^(?:<sub>\s*)+!\[(?:p3|sev(?:erity)?[ -]?3)\s+badge\]\([^)]*\)(?:<\/sub>\s*)+/i;
 const authorityOnlyIssue = /^\s*\[(?:decision|research)\](?:\s|\[|$)/i;
+const decisionIssue = /^\s*\[decision\](?:\s|\[|$)/i;
 
 function source(
   className: SourceClass,
@@ -228,8 +229,9 @@ function handoffClaimsMergeReady(handoff: HandoffProjection): boolean {
 function issueReadiness(issue: RawIssue, handoff: HandoffProjection): DeliveryLane["issue"]["readiness"] {
   if (issue.blockedBy === null) return "unknown";
   if (issue.blockedBy.length > 0) return "blocked";
-  if (authorityOnlyIssue.test(issue.title)) return "unknown";
   const issueStatus = issueStatusText(issue);
+  if (decisionIssue.test(issue.title) && /\bdecision[_ -]?ready\b/.test(issueStatus)) return "ready";
+  if (authorityOnlyIssue.test(issue.title)) return "unknown";
   if (/\bdecision[_ -]?ready\b/.test(issueStatus) || /\bnot[_ -]+ready\b/.test(issueStatus)) return "unknown";
   if (/\bpark(?:ed)?\b/.test(issueStatus)) return "parked";
   if (statusClaimsBlocked(issueStatus)) return "blocked";
@@ -251,7 +253,7 @@ function issueReadiness(issue: RawIssue, handoff: HandoffProjection): DeliveryLa
 }
 
 function humanActionRequested(comments: RawComment[], handoff: HandoffProjection): boolean {
-  if (handoff.condition !== "current" && handoff.condition !== "stale") return false;
+  if (!["current", "stale", "inconsistent"].includes(handoff.condition)) return false;
   if (/human[_ -]?required/i.test(handoff.claimedState ?? "")) return true;
   const latest = canonicalComments(comments).toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
   if (latest === undefined) return false;
@@ -757,7 +759,7 @@ export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): Re
   const issuesByNumber = new Map(issues.map((issue) => [issue.number, issue]));
   const ownershipObservationComplete = snapshot.pullRequests !== null &&
     pullRequests.every((pr) =>
-      pr.issueNumbersComplete && (pr.issueNumbers.length > 0 || pr.commentsComplete)
+      pr.issueNumbersComplete && pr.commentsComplete
     );
   const pullRequestsByIssue = new Map<number, number[]>();
   for (const pr of pullRequests) {
