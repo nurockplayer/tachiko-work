@@ -434,19 +434,9 @@ fn admit_one_pass_host_controlled(
         let mut record_index = 0;
         loop {
             line.clear();
-            let read = reader
-                .read_until(b'\n', &mut line)
-                .map_err(|source| FormatError::Read {
-                    path: path.clone(),
-                    source,
-                })?;
+            let read = read_record_cancellable(&mut reader, &mut line, &path, cancel)?;
             if read == 0 {
                 break;
-            }
-            if cancel.is_some_and(|token| token.load(Ordering::Relaxed)) {
-                return invalid_representation(
-                    "research A1 admission cancelled before SemanticCurrent".to_owned(),
-                );
             }
             source_bytes += read;
             let Some(record_bytes) = line.strip_suffix(b"\n") else {
@@ -532,6 +522,54 @@ fn admit_one_pass_host_controlled(
             semantic_current,
         },
     ))
+}
+
+fn read_record_cancellable<R: BufRead>(
+    reader: &mut R,
+    line: &mut Vec<u8>,
+    path: &Path,
+    cancel: Option<&AtomicBool>,
+) -> Result<usize, FormatError> {
+    const MAX_CHUNK_BYTES: usize = 64 * 1024;
+
+    if cancel.is_none() {
+        return reader
+            .read_until(b'\n', line)
+            .map_err(|source| FormatError::Read {
+                path: path.to_owned(),
+                source,
+            });
+    }
+
+    let initial_len = line.len();
+    loop {
+        if cancel.is_some_and(|token| token.load(Ordering::Relaxed)) {
+            return invalid_representation(
+                "research A1 admission cancelled before SemanticCurrent".to_owned(),
+            );
+        }
+        let (consumed, record_complete) = {
+            let available = reader.fill_buf().map_err(|source| FormatError::Read {
+                path: path.to_owned(),
+                source,
+            })?;
+            if available.is_empty() {
+                return Ok(line.len() - initial_len);
+            }
+            let bounded = &available[..available.len().min(MAX_CHUNK_BYTES)];
+            let consumed = bounded
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .map_or(bounded.len(), |index| index + 1);
+            let record_complete = bounded[consumed - 1] == b'\n';
+            line.extend_from_slice(&bounded[..consumed]);
+            (consumed, record_complete)
+        };
+        reader.consume(consumed);
+        if record_complete {
+            return Ok(line.len() - initial_len);
+        }
+    }
 }
 
 fn source_preview(root: &Path) -> Result<(String, String, String), FormatError> {
@@ -1748,23 +1786,9 @@ fn dto_work_counts(entity: &EntityV1) -> (usize, usize, usize) {
         match value {
             ValueV1::Reference(_) => reference_edges += 1,
             ValueV1::Formula(expression) => {
-                let mut stack = vec![expression];
-                while let Some(node) = stack.pop() {
-                    formula_ast_nodes += 1;
-                    match node {
-                        ExpressionV1::Reference(_) => formula_dependency_edges += 1,
-                        ExpressionV1::Add(arguments)
-                        | ExpressionV1::Subtract(arguments)
-                        | ExpressionV1::Multiply(arguments)
-                        | ExpressionV1::Divide(arguments)
-                        | ExpressionV1::Minimum(arguments)
-                        | ExpressionV1::Maximum(arguments) => {
-                            stack.push(&arguments.right);
-                            stack.push(&arguments.left);
-                        }
-                        ExpressionV1::Number(_) => {}
-                    }
-                }
+                let (dependencies, nodes) = expression_dependencies(expression);
+                formula_ast_nodes += nodes;
+                formula_dependency_edges += dependencies.len();
             }
             ValueV1::Number(_) | ValueV1::Text(_) | ValueV1::Boolean(_) => {}
         }
@@ -2757,6 +2781,86 @@ fn issue_175_progressive_source_preview_is_non_authoritative_and_cancellable() {
             if message.contains("cancelled before SemanticCurrent")
     ));
     assert_eq!(records.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn issue_175_record_read_polls_cancellation_between_bounded_chunks() {
+    struct CancellingReader<'a> {
+        bytes: &'a [u8],
+        position: usize,
+        cancel: &'a AtomicBool,
+    }
+
+    impl Read for CancellingReader<'_> {
+        fn read(&mut self, _buffer: &mut [u8]) -> std::io::Result<usize> {
+            unreachable!("bounded record reader uses BufRead directly")
+        }
+    }
+
+    impl BufRead for CancellingReader<'_> {
+        fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+            let end = (self.position + 4).min(self.bytes.len());
+            Ok(&self.bytes[self.position..end])
+        }
+
+        fn consume(&mut self, amount: usize) {
+            self.position += amount;
+            self.cancel.store(true, Ordering::Relaxed);
+        }
+    }
+
+    let cancel = AtomicBool::new(false);
+    let mut reader = CancellingReader {
+        bytes: b"abcdefghijklmnop\n",
+        position: 0,
+        cancel: &cancel,
+    };
+    let mut line = Vec::new();
+    let error = read_record_cancellable(
+        &mut reader,
+        &mut line,
+        Path::new("entities/f.jsonl"),
+        Some(&cancel),
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        FormatError::InvalidRoProjectRepresentation { message }
+            if message.contains("cancelled before SemanticCurrent")
+    ));
+    assert_eq!(line, b"abcd");
+}
+
+#[test]
+fn issue_175_dependency_work_counts_unique_graph_edges_for_every_arm() {
+    let duplicate_target = || {
+        ExpressionV1::Reference(FieldRefV1 {
+            entity: "target".to_owned(),
+            field: "value".to_owned(),
+        })
+    };
+    let entity = EntityV1 {
+        id: "source".to_owned(),
+        key: "source".to_owned(),
+        schema: "schema".to_owned(),
+        fields: BTreeMap::from([(
+            "value".to_owned(),
+            ValueV1::Formula(ExpressionV1::Add(BinaryArgumentsV1 {
+                left: Box::new(duplicate_target()),
+                right: Box::new(duplicate_target()),
+            })),
+        )]),
+    };
+
+    assert_eq!(dto_work_counts(&entity), (3, 0, 1));
+    let mut presence = Vec::new();
+    let mut references = Vec::new();
+    let mut dependencies = BTreeMap::new();
+    assert_eq!(
+        retain_structural_facts(&entity, &mut presence, &mut references, &mut dependencies,),
+        (3, 0, 1)
+    );
+    assert_eq!(dependencies.values().next().unwrap().len(), 1);
 }
 
 #[test]
