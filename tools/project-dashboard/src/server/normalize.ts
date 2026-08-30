@@ -432,7 +432,9 @@ function statusDeliveryState(statusText: string): StatusDeliveryState | null {
   );
   const candidates = [
     ready === null ? null : { state: ready.polarity === "affirmative" ? "ready" as const : "not_ready" as const, index: ready.index },
-    backlog === null ? null : { state: "not_ready" as const, index: backlog.index },
+    backlog === null || backlog.polarity !== "affirmative"
+      ? null
+      : { state: "not_ready" as const, index: backlog.index },
     decisionReady === null
       ? null
       : {
@@ -1138,7 +1140,6 @@ function placeholderIssue(pr: RawPullRequest, observedAt: string): RawIssue {
 }
 
 function pullRequestIssueClaims(pr: RawPullRequest, snapshot: RawRepositorySnapshot): number[] {
-  const issueNumbers = pr.issueNumbers.length === 0 ? [pr.number] : pr.issueNumbers;
   const handoff = projectHandoff(
     pr.comments,
     pr.commentsComplete,
@@ -1146,7 +1147,7 @@ function pullRequestIssueClaims(pr: RawPullRequest, snapshot: RawRepositorySnaps
     pr.headSha,
     snapshot.mainSha,
   );
-  return [...new Set([...issueNumbers, ...handoff.observedIssueNumbers])];
+  return [...new Set([...pr.issueNumbers, ...handoff.observedIssueNumbers])];
 }
 
 export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): RepositoryProjection {

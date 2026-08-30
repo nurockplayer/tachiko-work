@@ -3,5 +3,5 @@ export function isAuthorityPath(path: string): boolean {
 }
 
 export function isDecisionAuthorityPath(path: string): boolean {
-  return /^docs\/(?:decisions|governance|specs)\//.test(path);
+  return /^docs\/(?:decisions|governance|specs|vision)\//.test(path);
 }

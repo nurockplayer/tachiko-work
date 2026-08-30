@@ -214,6 +214,7 @@ describe("normalizeRepositorySnapshot", () => {
     "Not Ready (resolved); Ready.",
     "Ready. Previously Not Ready.",
     "Previously Backlog; now Ready.",
+    "Ready; formerly Backlog.",
   ])("honors the current Ready claim after a historical Not Ready claim: %s", (status) => {
     const ready = issue();
     ready.body = `## Status\n\n${status}\n\nOwner: \`agent:codex\``;
@@ -804,19 +805,20 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.blockers).toContain("Pull-request changed paths could not be fully observed.");
   });
 
-  it("does not reuse broader drift candidates as Decision-Ready authority output", () => {
+  it.each([
+    "docs/vision/product-constitution.md",
+    "docs/vision/design-principles.md",
+  ])("allows focused vision authority output for a Decision-Ready Issue: %s", (path) => {
     const decision = issue();
     decision.title = "[Decision][M05 P1] Choose the dashboard delivery boundary";
     decision.body = "## Status\n\n**DECISION-READY**\n\nOwner: `agent:codex`";
     const pr = pullRequest();
-    pr.changedPaths = ["docs/vision/design-principles.md"];
+    pr.changedPaths = [path];
 
     const projection = normalizeRepositorySnapshot(snapshot({ issues: [decision], pullRequests: [pr] }));
 
-    expect(projection.deliveries[0]?.phase).toBe("validating");
-    expect(projection.deliveries[0]?.blockers).toContain(
-      "Decision-Ready authorizes only a focused authority or specification pull request.",
-    );
+    expect(projection.deliveries[0]?.issue.readiness).toBe("active");
+    expect(projection.deliveries[0]?.phase).toBe("merge_gate");
   });
 
   it("keeps a linked Decision Issue out of the merge gate", () => {
@@ -2335,6 +2337,25 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries).toHaveLength(1);
     expect(projection.deliveries[0]?.id).toBe("issue-169-pr-200");
     expect(projection.deliveries[0]?.issue.number).toBe(169);
+  });
+
+  it("does not let an unassociated PR number claim or suppress the same-numbered Issue", () => {
+    const unassociated = pullRequest();
+    unassociated.issueNumbers = [];
+    unassociated.comments = [];
+    const sameNumberedIssue = issue(unassociated.number);
+
+    const projection = normalizeRepositorySnapshot(snapshot({
+      issues: [sameNumberedIssue],
+      pullRequests: [unassociated],
+    }));
+
+    expect(projection.deliveries).toHaveLength(2);
+    const issueLane = projection.deliveries.find((lane) => lane.id === "issue-200");
+    const prLane = projection.deliveries.find((lane) => lane.id === "issue-200-pr-200");
+    expect(issueLane?.issue.number).toBe(200);
+    expect(issueLane?.pr).toBeNull();
+    expect(prLane?.pr?.number).toBe(200);
   });
 
   it("keeps a stale canonical handoff Issue claim associated with its PR", () => {
