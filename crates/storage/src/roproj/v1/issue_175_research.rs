@@ -19,10 +19,12 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use sha2::Digest as ShaDigest;
+use tachiko_formula_engine::{CalculationOutcome, calculate_complete};
 use tachiko_semantic_core::{
     Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldDefinition, FieldId,
     FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value, is_valid_identifier,
 };
+use tachiko_workspace_engine::validation_report;
 
 use super::*;
 
@@ -2455,6 +2457,72 @@ fn issue_175_a1_matches_a0_semantics_without_whole_tree_reencoding() {
 }
 
 #[test]
+fn issue_175_a0_a1_match_complete_formula_and_validation_oracles() {
+    let chain = dependency_chain_document(257, false);
+    let before = assert_a0_a1_full_oracle_equivalence(&owned_files(&encode(&chain).unwrap()));
+    assert!(matches!(before, CalculationOutcome::Complete(_)));
+
+    let mut changed = chain;
+    let first = changed
+        .entities
+        .get_mut(&EntityId::from("issue-175-chain-00000000"))
+        .unwrap();
+    first.fields.insert(
+        FieldId::from("value"),
+        Value::Number(Number::new(7.0).unwrap()),
+    );
+    let after = assert_a0_a1_full_oracle_equivalence(&owned_files(&encode(&changed).unwrap()));
+    assert_ne!(
+        before, after,
+        "cold numeric mutation must change the full outcome"
+    );
+
+    let cycle = dependency_chain_document(257, true);
+    let cycle_files = owned_files(&encode(&cycle).unwrap());
+    assert!(matches!(
+        assert_a0_a1_full_oracle_equivalence(&cycle_files),
+        CalculationOutcome::Failed(_)
+    ));
+    let cycle_document = current_a0(&cycle_files).unwrap();
+    assert!(
+        !validation_report(&cycle_document)
+            .stable_observations()
+            .is_empty(),
+        "cross-cold SCC must remain visible to the full validation oracle"
+    );
+
+    let mut division_by_zero = mixed_document(257, 37);
+    let first = division_by_zero.entities.values_mut().next().unwrap();
+    first.fields.insert(
+        FieldId::from("computed"),
+        Value::Formula(Expression::Divide {
+            left: Box::new(Expression::Number(Number::new(1.0).unwrap())),
+            right: Box::new(Expression::Number(Number::new(0.0).unwrap())),
+        }),
+    );
+    let failure_files = owned_files(&encode(&division_by_zero).unwrap());
+    assert!(matches!(
+        assert_a0_a1_full_oracle_equivalence(&failure_files),
+        CalculationOutcome::Failed(_)
+    ));
+}
+
+fn assert_a0_a1_full_oracle_equivalence(files: &[(String, Vec<u8>)]) -> CalculationOutcome {
+    let a0 = current_a0(files).unwrap();
+    let (a1, _) = admit_one_pass_exact(files, false).unwrap();
+    assert_eq!(a0, a1);
+
+    let a0_calculation = calculate_complete(&a0);
+    let a1_calculation = calculate_complete(&a1);
+    assert_eq!(a0_calculation, a1_calculation);
+    assert_eq!(
+        validation_report(&a0).stable_observations(),
+        validation_report(&a1).stable_observations()
+    );
+    a0_calculation
+}
+
+#[test]
 fn issue_175_a1_preserves_a0_rejection_classes() {
     let tree = encode(&mixed_document(257, 37)).unwrap();
     let canonical = owned_files(&tree);
@@ -3456,25 +3524,23 @@ fn emit_matrix_sample(
     first_preview: Option<Duration>,
     current: Duration,
 ) {
-    let json_parser_deserializer_bytes = if arm == "A0" {
-        work.json_parser_deserializer_bytes * 2
-    } else {
-        work.json_parser_deserializer_bytes
-    };
-    let nesting_scan_bytes = if arm == "A0" {
-        work.nesting_scan_bytes * 2
-    } else {
-        work.nesting_scan_bytes
-    };
+    let logical_decode_passes = usize::from(arm == "A0") + 1;
+    let json_parser_deserializer_bytes =
+        work.json_parser_deserializer_bytes * logical_decode_passes;
+    let nesting_scan_bytes = work.nesting_scan_bytes * logical_decode_passes;
+    let entity_records = work.entity_records * logical_decode_passes;
+    let formula_ast_nodes = work.formula_ast_nodes * logical_decode_passes;
+    let reference_edges = work.reference_edges * logical_decode_passes;
+    let formula_dependency_edges = work.formula_dependency_edges * logical_decode_passes;
     println!(
         "{arm},{},os_cache_warm,{entity_count},{field_count},{source_fingerprint},{},{nesting_scan_bytes},{json_parser_deserializer_bytes},{},{},{},{},{},{serialized_spine_bytes},{repetition},{},{},{}",
         shape.name(),
         work.source_bytes,
         work.canonical_render_bytes,
-        work.entity_records,
-        work.formula_ast_nodes,
-        work.reference_edges,
-        work.formula_dependency_edges,
+        entity_records,
+        formula_ast_nodes,
+        reference_edges,
+        formula_dependency_edges,
         source_known.map_or_else(String::new, |value| value.as_micros().to_string()),
         first_preview.map_or_else(String::new, |value| value.as_micros().to_string()),
         current.as_micros(),
@@ -4074,26 +4140,24 @@ fn emit_host_sample(
     first_source_preview: Option<Duration>,
     semantic_current: Duration,
 ) {
-    let json_parser_deserializer_bytes = if arm == "A0" {
-        work.json_parser_deserializer_bytes * 2
-    } else {
-        work.json_parser_deserializer_bytes
-    };
-    let nesting_scan_bytes = if arm == "A0" {
-        work.nesting_scan_bytes * 2
-    } else {
-        work.nesting_scan_bytes
-    };
+    let logical_decode_passes = usize::from(arm == "A0") + 1;
+    let json_parser_deserializer_bytes =
+        work.json_parser_deserializer_bytes * logical_decode_passes;
+    let nesting_scan_bytes = work.nesting_scan_bytes * logical_decode_passes;
+    let entity_records = work.entity_records * logical_decode_passes;
+    let formula_ast_nodes = work.formula_ast_nodes * logical_decode_passes;
+    let reference_edges = work.reference_edges * logical_decode_passes;
+    let formula_dependency_edges = work.formula_dependency_edges * logical_decode_passes;
     println!(
         "{arm},mixed_smoke_host,{cache_state},{entity_count},{},{source_sha256},{},{},{nesting_scan_bytes},{json_parser_deserializer_bytes},{},{},{},{},{},{repetition},{order},{},{},{}",
         entity_count * 5,
         work.source_bytes,
         work.source_bytes,
         work.canonical_render_bytes,
-        work.entity_records,
-        work.formula_ast_nodes,
-        work.reference_edges,
-        work.formula_dependency_edges,
+        entity_records,
+        formula_ast_nodes,
+        reference_edges,
+        formula_dependency_edges,
         source_known.map_or_else(String::new, |value| value.as_micros().to_string()),
         first_source_preview.map_or_else(String::new, |value| value.as_micros().to_string()),
         semantic_current.as_micros(),
@@ -4110,26 +4174,24 @@ fn emit_baseline_row(
     let p50 = percentile(samples, 50).as_micros();
     let p95 = percentile(samples, 95).as_micros();
     // A0 strictly decodes the tree once during admission, re-encodes it, then
-    // decodes it again for ordinary load. Its raw strict-parser traversal is
-    // therefore twice A1's; physical host reads are measured separately.
-    let json_parser_deserializer_bytes = if arm == "A0" {
-        work.json_parser_deserializer_bytes * 2
-    } else {
-        work.json_parser_deserializer_bytes
-    };
-    let nesting_scan_bytes = if arm == "A0" {
-        work.nesting_scan_bytes * 2
-    } else {
-        work.nesting_scan_bytes
-    };
+    // decodes it again for ordinary load. Every decode-work counter is an
+    // aggregate across both logical passes; physical reads remain separate.
+    let logical_decode_passes = usize::from(arm == "A0") + 1;
+    let json_parser_deserializer_bytes =
+        work.json_parser_deserializer_bytes * logical_decode_passes;
+    let nesting_scan_bytes = work.nesting_scan_bytes * logical_decode_passes;
+    let entity_records = work.entity_records * logical_decode_passes;
+    let formula_ast_nodes = work.formula_ast_nodes * logical_decode_passes;
+    let reference_edges = work.reference_edges * logical_decode_passes;
+    let formula_dependency_edges = work.formula_dependency_edges * logical_decode_passes;
     println!(
         "{arm},mixed_smoke,{entity_count},{},{},{nesting_scan_bytes},{json_parser_deserializer_bytes},{},{},{},{},{},{repetitions},{p50},{p95}",
         entity_count * 5,
         work.source_bytes,
         work.canonical_render_bytes,
-        work.entity_records,
-        work.formula_ast_nodes,
-        work.reference_edges,
-        work.formula_dependency_edges,
+        entity_records,
+        formula_ast_nodes,
+        reference_edges,
+        formula_dependency_edges,
     );
 }

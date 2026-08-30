@@ -458,7 +458,9 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tachiko-formula-engine",
  "tachiko-semantic-core",
+ "tachiko-workspace-engine",
  "thiserror",
  "uuid",
 ]
