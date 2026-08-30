@@ -901,6 +901,18 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.action.owner).toBe("human");
   });
 
+  it("does not let an infinitive-qualified future Ready claim override a current blocker", () => {
+    const blocked = issue();
+    blocked.body = "## Status\n\nBlocked; ready to proceed once access is granted.\n\nOwner: `agent:codex`";
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [blocked] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.issue.readiness).toBe("blocked");
+    expect(lane?.phase).toBe("blocked");
+    expect(lane?.action.owner).toBe("human");
+  });
+
   it.each([
     "No pending blockers — Ready.",
     "Pending review is complete — Ready.",

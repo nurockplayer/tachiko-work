@@ -363,6 +363,7 @@ function statusClaimIsConditional(
   return /\b(?:(?:future|become|mark|set|move|declare|consider)(?:\s+(?:as|to))?|(?:will|would|should|can|could|may|might)(?:\s+be|\s+become)?)\s*$/i.test(before) ||
     unresolvedPrefix ||
     /^\s*(?:(?:[:=-])\s*)?(?:only\s+)?(?:(?:once|when|if|after)\b|subject\s+to\b)/i.test(after) ||
+    /^\s+to\b[^.;\n]{0,80}\b(?:once|when|if|after)\b/i.test(after) ||
     (pendingIsConditional && /^\s*(?:(?:[:=-])\s*)?(?:only\s+)?pending\b/i.test(after));
 }
 
