@@ -298,13 +298,13 @@ function statusClaimsHumanRequired(statusText: string): boolean {
 }
 
 function statusClaimsReady(statusText: string): boolean {
-  return !/\bdecision[_ -]?ready\b/.test(statusText) && !statusClaimsNotReady(statusText) &&
+  return !/\bdecision[_ -]?ready\b/i.test(statusText) && !statusClaimsNotReady(statusText) &&
     statusHasAffirmativeClaim(statusText, /\bready\b/i, true) &&
-    !/not ready for (?:production )?implementation/.test(statusText);
+    !/not ready for (?:production )?implementation/i.test(statusText);
 }
 
 function statusClaimsNotReady(statusText: string): boolean {
-  return statusHasNegatedClaim(statusText, /\bready\b/i);
+  return statusHasNegatedClaim(statusText, /\b(?:decision[_ -]?)?ready\b/i);
 }
 
 function handoffClaimsMergeReady(handoff: HandoffProjection): boolean {
@@ -317,7 +317,7 @@ function issueReadiness(issue: RawIssue, handoff: HandoffProjection): DeliveryLa
   const issueStatus = issueStatusText(issue);
   if (decisionIssue.test(issue.title) && statusClaimsDecisionReady(issueStatus)) return "ready";
   if (authorityOnlyIssue.test(issue.title)) return "unknown";
-  if (/\bdecision[_ -]?ready\b/.test(issueStatus) || statusClaimsNotReady(issueStatus)) return "unknown";
+  if (/\bdecision[_ -]?ready\b/i.test(issueStatus) || statusClaimsNotReady(issueStatus)) return "unknown";
   if (statusClaimsParked(issueStatus)) return "parked";
   if (statusClaimsBlocked(issueStatus)) return "blocked";
   if (!statusClaimsActive(issueStatus) && !statusClaimsReady(issueStatus)) return "unknown";
@@ -328,7 +328,7 @@ function issueReadiness(issue: RawIssue, handoff: HandoffProjection): DeliveryLa
     ? handoff.claimedState
     : null;
   const statusText = (currentHandoffState ?? issueStatus).toLowerCase();
-  if (/\bdecision[_ -]?ready\b/.test(statusText)) return "unknown";
+  if (/\bdecision[_ -]?ready\b/i.test(statusText)) return "unknown";
   if (statusClaimsNotReady(statusText)) return "unknown";
   if (statusClaimsParked(statusText)) return "parked";
   if (statusClaimsBlocked(statusText)) return "blocked";

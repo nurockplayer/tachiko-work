@@ -468,6 +468,7 @@ describe("normalizeRepositorySnapshot", () => {
 
   it.each([
     "NOT DECISION-READY",
+    "Not Decision-Ready",
     "Not yet Decision Ready",
     "Not currently Decision-Ready",
     "Decision-Ready: false",
