@@ -333,7 +333,7 @@ function humanActionRequested(comments: RawComment[], handoff: HandoffProjection
   ].filter((claim): claim is string => claim !== null);
   const isNegative = (claim: string) =>
     /^(?:none|no|false|unnecessary|not(?:\s+currently)?\s+(?:required|needed|necessary|applicable)|n\/a)\b/i.test(claim) ||
-    /\b(?:(?:human|steward)\s+)?(?:action|decision|escalation|approval|review)\s+(?:(?:is|are)\s+not|isn['’]?t|aren['’]?t)\s+(?:required|needed|necessary|applicable)\b/i.test(claim) ||
+    /\b(?:(?:human|steward)\s+)?(?:action|decision|escalation|approval|review)\s+(?:(?:is|are)\s+not|isn['’]?t|aren['’]?t)(?:\s+currently)?\s+(?:required|needed|necessary|applicable)\b/i.test(claim) ||
     /\bdo not escalate\b/i.test(claim);
   if (labeledClaims.some((claim) => !isNegative(claim))) return true;
 

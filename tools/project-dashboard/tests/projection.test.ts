@@ -1125,6 +1125,7 @@ describe("normalizeRepositorySnapshot", () => {
     "not necessary",
     "not applicable",
     "Human action isn't required",
+    "Human action is not currently required",
     "not currently needed",
     "unnecessary",
   ])("does not escalate an explicit negative human-action label: %s", (claim) => {
