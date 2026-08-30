@@ -680,6 +680,9 @@ fn source_preview(
     super::super::host::require_directory(root, "canonical .roproj root")?;
     super::super::host::require_exact_root_entries(root)?;
     super::super::host::require_exact_entity_entries(&root.join("entities"))?;
+    let manifest_path = root.join(ROPROJ_V1_PATHS[0]);
+    let manifest_bytes = super::super::host::read_file(&manifest_path)?;
+    dispatch_manifest(&manifest_bytes)?;
     for relative in ROPROJ_V1_PATHS.iter().skip(2) {
         let path = root.join(relative);
         let mut reader = BufReader::new(File::open(&path).map_err(|source| FormatError::Read {
@@ -1260,8 +1263,36 @@ fn scan_spine_pinned(
     snapshot: &PinnedSourceSnapshot,
     retain_structural: bool,
 ) -> Result<SpineScan, FormatError> {
+    with_materialized_pinned_snapshot(snapshot, "git-snapshot.roproj", |root| {
+        scan_spine_host(root, retain_structural)
+    })
+    .and_then(|scan| {
+        if scan.directory().source_fingerprint != snapshot.source_fingerprint
+            || scan.work.source_bytes != snapshot.source_bytes
+        {
+            return invalid_representation(
+                "Git-object snapshot changed while deriving trusted Structural Index".to_owned(),
+            );
+        }
+        Ok(scan)
+    })
+}
+
+fn admit_one_pass_pinned(
+    snapshot: &PinnedSourceSnapshot,
+) -> Result<(Document, AdmissionWork, HostAdmissionTimings), FormatError> {
+    with_materialized_pinned_snapshot(snapshot, "git-snapshot-a1.roproj", |root| {
+        admit_one_pass_host(root, false)
+    })
+}
+
+fn with_materialized_pinned_snapshot<T>(
+    snapshot: &PinnedSourceSnapshot,
+    directory_name: &str,
+    operation: impl FnOnce(&Path) -> Result<T, FormatError>,
+) -> Result<T, FormatError> {
     let temp = ResearchTempDirectory::new();
-    let root = temp.path().join("git-snapshot.roproj");
+    let root = temp.path().join(directory_name);
     let entities = root.join("entities");
     std::fs::create_dir(&root).map_err(|source| FormatError::Write {
         path: root.clone(),
@@ -1276,15 +1307,7 @@ fn scan_spine_pinned(
         std::fs::write(&path, &snapshot.files[relative])
             .map_err(|source| FormatError::Write { path, source })?;
     }
-    let scan = scan_spine_host(&root, retain_structural)?;
-    if scan.directory().source_fingerprint != snapshot.source_fingerprint
-        || scan.work.source_bytes != snapshot.source_bytes
-    {
-        return invalid_representation(
-            "Git-object snapshot changed while deriving trusted Structural Index".to_owned(),
-        );
-    }
-    Ok(scan)
+    operation(&root)
 }
 
 fn materialize_entities_from_pin(
@@ -3036,6 +3059,29 @@ fn issue_175_progressive_source_preview_is_non_authoritative_and_cancellable() {
 }
 
 #[test]
+fn issue_175_progressive_source_preview_dispatches_manifest_before_body_data() {
+    let temp = ResearchTempDirectory::new();
+    let root = temp.path().join("unsupported-preview.roproj");
+    super::super::host::materialize_roproj(&root, &mixed_document(17, 37)).unwrap();
+    std::fs::write(
+        root.join("manifest.json"),
+        br#"{"format":"tachiko.roproj","format_version":2,"document":{"id":"issue-175-mixed","title":"Issue 175 mixed smoke"}}"#,
+    )
+    .unwrap();
+    for relative in ROPROJ_V1_PATHS.iter().skip(2) {
+        std::fs::write(root.join(relative), b"not v1 entity JSON\n").unwrap();
+    }
+
+    assert!(matches!(
+        source_preview(&root, None),
+        Err(FormatError::UnsupportedRoProjectVersion {
+            found: 2,
+            supported: 1,
+        })
+    ));
+}
+
+#[test]
 fn issue_175_progressive_source_preview_has_an_explicit_record_budget() {
     let temp = ResearchTempDirectory::new();
     let root = temp.path().join("oversized-preview.roproj");
@@ -3290,6 +3336,8 @@ fn issue_175_git_sidecar_binds_exact_immutable_snapshot_objects() {
     let (pinned, binding, _, _) = pin_git_bound_snapshot(&repo);
     let scan = scan_spine_pinned(&pinned, true).unwrap();
     let index = scan.structural.unwrap();
+    let (admitted, _, _) = admit_one_pass_pinned(&pinned).unwrap();
+    assert_eq!(admitted, expected);
     assert_eq!(pinned.source_bytes, scan.work.source_bytes);
     assert_eq!(
         pinned.source_fingerprint,
@@ -4068,7 +4116,7 @@ fn issue_175_git_sidecar_raw_samples() {
     let temp = ResearchTempDirectory::new();
     let repo = temp.path().join("repo");
     let document = mixed_document(entity_count, 64);
-    let project = initialize_git_snapshot(&repo, &document);
+    let _project = initialize_git_snapshot(&repo, &document);
     let (first_pinned, binding, first_identity_time, first_pin_time) =
         pin_git_bound_snapshot(&repo);
     let first_scan_started = Instant::now();
@@ -4085,7 +4133,7 @@ fn issue_175_git_sidecar_raw_samples() {
     let sidecar = encode_sidecar(&index, binding.clone()).unwrap();
     let encode_time = encode_started.elapsed();
     println!(
-        "arm,workload,cache_state,entities,source_sha256,source_bytes,sidecar_bytes,first_scan_us,first_git_identity_us,first_source_revalidation_us,first_sidecar_encode_us,repetition,git_identity_us,source_revalidation_us,sidecar_decode_us,identity_only_untrusted_decode_us,total_validated_reuse_us,full_a1_us"
+        "arm,workload,cache_state,entities,source_sha256,source_bytes,sidecar_bytes,first_scan_us,first_git_identity_us,first_source_revalidation_us,first_sidecar_encode_us,repetition,git_identity_us,source_revalidation_us,sidecar_decode_us,identity_only_untrusted_decode_us,total_validated_reuse_us,full_git_snapshot_a1_us"
     );
     for repetition in 0..repetitions {
         let (pinned, current_binding, identity_time, pin_time) =
@@ -4105,7 +4153,10 @@ fn issue_175_git_sidecar_raw_samples() {
         let decode_time = decode_started.elapsed();
         black_box(&pinned);
         let full_started = Instant::now();
-        let full = black_box(admit_one_pass_host(black_box(&project), false).unwrap());
+        let (full_pinned, full_binding, _, _) = pin_git_bound_snapshot(black_box(&repo));
+        assert_eq!(full_binding, current_binding);
+        assert_eq!(full_pinned.source_fingerprint, current_source_sha256);
+        let full = black_box(admit_one_pass_pinned(black_box(&full_pinned)).unwrap());
         let full_time = full_started.elapsed();
         black_box(full);
         println!(
