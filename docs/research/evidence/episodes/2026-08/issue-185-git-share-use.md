@@ -14,8 +14,8 @@ agent:
   model: unknown
   configuration: unknown
 context_manifest_status: partial
-intervention_classes: [constraint_addition]
-failure_classes: []
+intervention_classes: [constraint_addition, correction]
+failure_classes: [implementation_assumption, tooling_failure]
 links:
   issues:
     - https://github.com/nurockplayer/tachiko-work/issues/176
@@ -206,6 +206,34 @@ discovery hint as such a contract would be authority drift.
 No corrective probe iteration was required before the initial passing result.
 The Archify missing/mismatched-B assertions were present from the first run.
 
+Post-PR independent and hosted review then found four evidence-integrity
+assumptions that the initial clean-machine pass had not exercised:
+
+1. the human-visible source reference was synthetic while an unreported
+   temporary path performed Git resolution;
+2. the probe compared Moonfall before/after but could publish valid dirty
+   working-tree bytes;
+3. disposable Git commits could inherit user/system configuration, signing,
+   and hooks; and
+4. the two published license texts still came from working-tree bytes after
+   Moonfall itself had been pinned.
+
+The probe now uses the advertised runtime repository path as the actual Git
+resolver input and rejects a wrong reference. It requires a clean Moonfall path,
+reads Moonfall and both license payloads from the exact checked-in repository
+HEAD, strips inherited `GIT_*` inputs, disables system/global Git configuration,
+and explicitly disables signing and hooks. Normal and hostile-environment runs
+with injected `GIT_DIR`, `commit.gpgSign`, and `core.hooksPath` settings produced
+byte-identical A/B commit and digest evidence.
+
+The 2026-08-31 08:00 JST
+[`project-steward-watch:v1`](https://github.com/nurockplayer/tachiko-work/pull/201#issuecomment-5471799481)
+independently required the exact-HEAD license correction and this appended
+history. The correction changed no experiment relationship, semantic outcome,
+or production boundary. A transient release-gate retry also encountered a
+stale local preview listener and then exhausted disk space in generated Cargo
+artifacts; both environmental conditions were removed without source changes.
+
 ## Final outcome
 
 **BOUNDED PROBE PASS; HYPOTHESIS NOT FALSIFIED.** Ordinary Git plus exact
@@ -258,3 +286,7 @@ git diff --check
 
 - 2026-08-31: initial probe passed on `main@c3b5ad2a`; Project Steward A/B/C/D
   interpretation and any follow-up authority remain pending.
+- 2026-08-31: post-PR review corrections made the source tuple, repository
+  inputs, and Git commit environment exact and reproducible; the 08:00 JST
+  Steward watch confirmed the bounded hypothesis remained plausible and kept
+  final interpretation pending exact-head gates.
