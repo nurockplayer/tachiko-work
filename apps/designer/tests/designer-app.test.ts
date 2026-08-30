@@ -998,6 +998,66 @@ describe("Designer application seam", () => {
     vi.unstubAllGlobals();
   });
 
+  it("treats pending scalar drafts as unsaved across Save As, Open, and Close", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const memoryHost = new MemoryHost();
+    const client = new FakeClient();
+    const closeProject = vi.spyOn(client, "closeProject");
+    const openProject = vi.spyOn(client, "openProject");
+    const prompt = vi
+      .fn<Window["prompt"]>()
+      .mockReturnValueOnce("baseline.roproj")
+      .mockReturnValueOnce("draft-excluded.roproj");
+    const confirm = vi.fn<Window["confirm"]>().mockReturnValue(false);
+    const addEventListener = vi.spyOn(window, "addEventListener");
+    vi.stubGlobal("prompt", prompt);
+    vi.stubGlobal("confirm", confirm);
+    const app = mountDesigner(root, client, memoryHost);
+    await app.ready;
+
+    root.querySelector<HTMLButtonElement>("[data-save-as]")?.click();
+    await vi.waitFor(() => {
+      expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+        "Saved",
+      );
+    });
+
+    const name = root.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Name for Iron Sword"]',
+    );
+    if (name === null) throw new Error("Text control is required");
+    name.value = "Unpublished draft";
+    name.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+      "Unsaved changes",
+    );
+    expect(addEventListener).toHaveBeenCalledWith("beforeunload", expect.any(Function));
+
+    root.querySelector<HTMLButtonElement>("[data-close-project]")?.click();
+    root.querySelector<HTMLButtonElement>("[data-open-project]")?.click();
+    expect(confirm).toHaveBeenCalledTimes(2);
+    expect(closeProject).not.toHaveBeenCalled();
+    expect(openProject).not.toHaveBeenCalled();
+
+    root.querySelector<HTMLButtonElement>("[data-save-as]")?.click();
+    await vi.waitFor(() => {
+      expect(memoryHost.projects.has("draft-excluded.roproj")).toBe(true);
+    });
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+      "Unsaved changes",
+    );
+    expect(
+      root.querySelector<HTMLTextAreaElement>('textarea[aria-label="Name for Iron Sword"]')
+        ?.value,
+    ).toBe("Unpublished draft");
+
+    app.destroy();
+    addEventListener.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
   it("requires confirmation before Open or Close discards a dirty occurrence", async () => {
     document.body.innerHTML = '<div id="app"></div>';
     const root = document.querySelector<HTMLElement>("#app");

@@ -50,6 +50,8 @@ export function mountDesigner(
   let occurrenceClosed = false;
   const pendingTextBuffers = new Map<string, string>();
   const pendingBooleanBuffers = new Map<string, boolean>();
+  const hasPendingScalarDrafts = (): boolean =>
+    pendingTextBuffers.size > 0 || pendingBooleanBuffers.size > 0;
   let savedProjects: SavedProjectSummary[] = [];
   let selectedSavedProject = "";
   const durability = createDurabilityState();
@@ -61,13 +63,24 @@ export function mountDesigner(
   };
 
   const syncBeforeUnloadGuard = (): void => {
-    const shouldGuard = !destroyed && durability.snapshot().dirty;
+    const shouldGuard =
+      !destroyed && (durability.snapshot().dirty || hasPendingScalarDrafts());
     if (shouldGuard && !beforeUnloadGuarded) {
       window.addEventListener("beforeunload", warnBeforeDirtyUnload);
       beforeUnloadGuarded = true;
     } else if (!shouldGuard && beforeUnloadGuarded) {
       window.removeEventListener("beforeunload", warnBeforeDirtyUnload);
       beforeUnloadGuarded = false;
+    }
+  };
+
+  const reflectPendingDraftState = (): void => {
+    syncBeforeUnloadGuard();
+    const durabilityChip = root.querySelector<HTMLElement>('[data-testid="durability"]');
+    if (durabilityChip !== null) {
+      durabilityChip.dataset.dirty = "true";
+      const label = durabilityChip.querySelector("span");
+      if (label !== null) label.textContent = "Unsaved changes";
     }
   };
 
@@ -92,7 +105,7 @@ export function mountDesigner(
       selectedCollection,
       notice,
       busy,
-      durability.snapshot().dirty,
+      durability.snapshot().dirty || hasPendingScalarDrafts(),
       durability.snapshot().durable_revision,
       savedProjects,
       selectedSavedProject,
@@ -164,14 +177,20 @@ export function mountDesigner(
     commitScalar(
       target,
       (expectedRevision) => client.editText(expectedRevision, target, value),
-      () => pendingTextBuffers.delete(textBufferKey(target)),
+      () => {
+        pendingTextBuffers.delete(textBufferKey(target));
+        syncBeforeUnloadGuard();
+      },
     );
 
   const commitBoolean = (target: FieldTarget, value: boolean): Promise<void> =>
     commitScalar(
       target,
       (expectedRevision) => client.editBoolean(expectedRevision, target, value),
-      () => pendingBooleanBuffers.delete(textBufferKey(target)),
+      () => {
+        pendingBooleanBuffers.delete(textBufferKey(target));
+        syncBeforeUnloadGuard();
+      },
     );
 
   const selectCollection = async (collection: string): Promise<void> => {
@@ -274,7 +293,7 @@ export function mountDesigner(
   };
 
   const confirmDiscardDirtyOccurrence = (action: string): boolean =>
-    !durability.snapshot().dirty ||
+    (!durability.snapshot().dirty && !hasPendingScalarDrafts()) ||
     window.confirm(
       `${action} will discard unsaved changes in the current project. Continue?`,
     );
@@ -415,6 +434,7 @@ export function mountDesigner(
       if (draftControl !== null && draftEntity !== undefined && draftField !== undefined) {
         draftControl.addEventListener("input", () => {
           pendingTextBuffers.set(textBufferKey({ entity: draftEntity, field: draftField }), draftControl.value);
+          reflectPendingDraftState();
         });
       }
       if (draftBoolean !== null && draftEntity !== undefined && draftField !== undefined) {
@@ -423,6 +443,7 @@ export function mountDesigner(
             textBufferKey({ entity: draftEntity, field: draftField }),
             draftBoolean.checked,
           );
+          reflectPendingDraftState();
         });
       }
       form.addEventListener("submit", (event) => {
@@ -457,12 +478,14 @@ export function mountDesigner(
               return;
             }
             pendingTextBuffers.set(textBufferKey({ entity, field }), control.value);
+            syncBeforeUnloadGuard();
             void commitText({ entity, field }, value);
             break;
           }
           case "boolean":
             if (!(control instanceof HTMLInputElement)) return;
             pendingBooleanBuffers.set(textBufferKey({ entity, field }), control.checked);
+            syncBeforeUnloadGuard();
             void commitBoolean({ entity, field }, control.checked);
             break;
         }
