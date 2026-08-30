@@ -297,6 +297,7 @@ function statusClaimsActive(statusText: string): boolean {
   return statusHasAffirmativeClaim(
     statusText,
     /\b(?:active|implementing|in progress|validating|review[_ -]?fix)\b/i,
+    true,
   );
 }
 

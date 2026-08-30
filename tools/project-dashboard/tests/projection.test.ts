@@ -703,6 +703,36 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.phase).toBe("ready");
   });
 
+  it.each([
+    "Pending Steward approval — Active.",
+    "Pending approval — Implementing.",
+  ])("does not treat a pending-qualified active claim as active: %s", (status) => {
+    const pending = issue();
+    pending.body = `## Status\n\n${status}\n\nOwner: \`agent:codex\``;
+
+    const projection = normalizeRepositorySnapshot(snapshot({
+      issues: [pending],
+      pullRequests: [pullRequest()],
+    }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.issue.readiness).toBe("unknown");
+    expect(lane?.phase).toBe("validating");
+    expect(lane?.action.owner).toBe("human");
+  });
+
+  it.each([
+    "No pending blockers — Active.",
+    "Pending review is complete — Implementing.",
+  ])("preserves an affirmatively resolved active prefix: %s", (status) => {
+    const active = issue();
+    active.body = `## Status\n\n${status}\n\nOwner: \`agent:codex\``;
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [active] }));
+
+    expect(projection.deliveries[0]?.issue.readiness).toBe("active");
+  });
+
   it("does not treat a suffixed Status heading as authoritative readiness", () => {
     const rationale = issue();
     rationale.body = "## Status rationale\n\nBuild a production-ready dashboard.\n\nOwner: `agent:codex`";
