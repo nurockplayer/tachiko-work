@@ -69,12 +69,22 @@ function githubPage() {
                           {
                             __typename: "CheckRun",
                             name: "test",
-                            startedAt: null,
+                            startedAt: "2026-08-30T00:00:30Z",
                             status: "COMPLETED",
-                            conclusion: "SUCCESS",
+                            conclusion: "FAILURE",
                             detailsUrl: null,
                             checkSuite: {
-                              createdAt: "2026-08-30T00:00:00Z",
+                              app: { databaseId: 42 },
+                            },
+                          },
+                          {
+                            __typename: "CheckRun",
+                            name: "test",
+                            startedAt: null,
+                            status: "QUEUED",
+                            conclusion: null,
+                            detailsUrl: null,
+                            checkSuite: {
                               app: { databaseId: 42 },
                             },
                           },
@@ -174,9 +184,15 @@ describe("loadGithubSnapshot", () => {
         checks: [{
           name: "test",
           integrationId: 42,
-          attemptAt: "2026-08-30T00:00:00Z",
+          attemptAt: "2026-08-30T00:00:30Z",
           status: "completed",
-          conclusion: "success",
+          conclusion: "failure",
+        }, {
+          name: "test",
+          integrationId: 42,
+          attemptAt: null,
+          status: "queued",
+          conclusion: null,
         }],
         reviewThreads: [{
           resolved: false,
@@ -190,7 +206,7 @@ describe("loadGithubSnapshot", () => {
     expect(result.productHorizonUrl).toContain(mainSha);
     expect(projectionQuery).toContain("pullRequests(first: 25");
     expect(projectionQuery).toContain("reviewThreads(first: 50)");
-    expect(projectionQuery).toContain("detailsUrl startedAt checkSuite { createdAt");
+    expect(projectionQuery).toContain("detailsUrl startedAt checkSuite { app { databaseId }");
     expect(projectionQuery).toContain("targetUrl createdAt updatedAt");
     expect(projectionQuery).toMatch(/reviewThreads\(first: 50\)[\s\S]*comments\(first: 50\)/);
   });

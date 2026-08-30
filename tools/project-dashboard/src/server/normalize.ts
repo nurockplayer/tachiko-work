@@ -325,21 +325,21 @@ function humanActionRequested(comments: RawComment[], handoff: HandoffProjection
   if (/human[_ -]?required/i.test(handoff.claimedState ?? "")) return true;
   const latest = canonicalComments(comments).toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
   if (latest === undefined) return false;
-  const claims = [
+  const labeledClaims = [
     labeledValue(latest.body, "HUMAN ACTION"),
     labeledValue(latest.body, "FOUNDER / STEWARD ACTION"),
     labeledValue(latest.body, "STEWARD ACTION"),
     labeledValue(latest.body, "ESCALATION"),
-    markdownSectionValue(latest.body, /\bescalation\b/i),
   ].filter((claim): claim is string => claim !== null);
-  return claims.some((claim) => {
-    if (
-      /^(?:none|no|not (?:required|needed)|n\/a)\b/i.test(claim) ||
-      /\b(?:(?:human|steward)\s+)?(?:action|decision|escalation|approval|review)\s+(?:is\s+)?not\s+(?:required|needed)\b/i.test(claim) ||
-      /\bdo not escalate\b/i.test(claim)
-    ) return false;
-    return /\b(?:required|needed|decision|action|approval|review|escalat(?:e|ion))\b/i.test(claim);
-  });
+  const isNegative = (claim: string) =>
+    /^(?:none|no|false|unnecessary|not(?:\s+currently)?\s+(?:required|needed|necessary|applicable)|n\/a)\b/i.test(claim) ||
+    /\b(?:(?:human|steward)\s+)?(?:action|decision|escalation|approval|review)\s+(?:(?:is|are)\s+not|isn['’]?t|aren['’]?t)\s+(?:required|needed|necessary|applicable)\b/i.test(claim) ||
+    /\bdo not escalate\b/i.test(claim);
+  if (labeledClaims.some((claim) => !isNegative(claim))) return true;
+
+  const escalationSection = markdownSectionValue(latest.body, /\bescalation\b/i);
+  return escalationSection !== null && !isNegative(escalationSection) &&
+    /\b(?:required|needed|decision|action|approval|review|escalat(?:e|ion))\b/i.test(escalationSection);
 }
 
 function deliveryActionOwner(owner: string): DeliveryLane["action"]["owner"] {
@@ -349,7 +349,7 @@ function deliveryActionOwner(owner: string): DeliveryLane["action"]["owner"] {
   return "unknown";
 }
 
-function latestCheckAttempts(checks: RawCheck[]): RawCheck[] {
+function latestCheckAttempts(checks: RawCheck[]): { checks: RawCheck[]; ambiguous: boolean } {
   const attemptsByIdentity = new Map<string, RawCheck[]>();
   for (const check of checks) {
     const identity = `${check.name}\u0000${check.integrationId ?? ""}`;
@@ -358,13 +358,21 @@ function latestCheckAttempts(checks: RawCheck[]): RawCheck[] {
     attemptsByIdentity.set(identity, attempts);
   }
 
-  return [...attemptsByIdentity.values()].flatMap((attempts) => {
-    if (attempts.length === 1 || attempts.some((attempt) => attempt.attemptAt === null)) return attempts;
+  let ambiguous = false;
+  const latest = [...attemptsByIdentity.values()].flatMap((attempts) => {
+    if (attempts.length === 1) return attempts;
+    if (attempts.some((attempt) => attempt.attemptAt === null)) {
+      ambiguous = true;
+      return attempts;
+    }
     const latestAt = attempts.toSorted((left, right) =>
       (right.attemptAt ?? "").localeCompare(left.attemptAt ?? "")
     )[0]?.attemptAt;
-    return attempts.filter((attempt) => attempt.attemptAt === latestAt);
+    const latestAttempts = attempts.filter((attempt) => attempt.attemptAt === latestAt);
+    if (latestAttempts.length > 1) ambiguous = true;
+    return latestAttempts;
   });
+  return { checks: latest, ambiguous };
 }
 
 function projectChecks(pr: RawPullRequest, observedAt: string): CheckProjection {
@@ -382,7 +390,18 @@ function projectChecks(pr: RawPullRequest, observedAt: string): CheckProjection 
       sourceRefs: refs,
     };
   }
-  const checks = latestCheckAttempts(pr.checks);
+  const latest = latestCheckAttempts(pr.checks);
+  if (latest.ambiguous) {
+    return {
+      status: "unknown",
+      requiredStatus: "unknown",
+      observedHeadSha: pr.checksObservedHeadSha,
+      summary: "The latest check attempt could not be identified from GitHub's per-run timestamps.",
+      requiredSummary: "Required checks remain unknown because the latest check attempt could not be identified.",
+      sourceRefs: refs,
+    };
+  }
+  const checks = latest.checks;
   const required = projectRequiredChecks(pr, checks);
   if (checks.length === 0) {
     return {
@@ -660,7 +679,7 @@ function projectLane(
   if (handoffMergeReadinessRequiresDelivery) {
     blockers.push("The current canonical handoff does not affirm merge-ready delivery state.");
   }
-  if (pr !== null && checks.status === "unknown") blockers.push("Checks were not observed for the current PR head.");
+  if (pr !== null && checks.status === "unknown") blockers.push(checks.summary);
   if (checks.status === "pending") blockers.push(checks.summary);
   if (pr !== null && checks.requiredStatus !== "satisfied") blockers.push(checks.requiredSummary);
   if (checks.status === "failure") blockers.push(checks.summary);

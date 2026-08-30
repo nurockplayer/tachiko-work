@@ -861,14 +861,14 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.phase).toBe("merge_gate");
   });
 
-  it("uses a queued rerun's creation fallback to supersede an older failure", () => {
+  it("fails closed when a queued rerun has no per-run timestamp to supersede an older failure", () => {
     const pr = pullRequest();
     pr.requiredChecks = [{ name: "test", integrationId: null }];
     pr.checks = [
       {
         name: "test",
         integrationId: null,
-        attemptAt: "2026-08-30T00:00:00Z",
+        attemptAt: "2026-08-30T00:01:00Z",
         status: "completed",
         conclusion: "failure",
         url: null,
@@ -876,7 +876,7 @@ describe("normalizeRepositorySnapshot", () => {
       {
         name: "test",
         integrationId: null,
-        attemptAt: "2026-08-30T00:01:00Z",
+        attemptAt: null,
         status: "queued",
         conclusion: null,
         url: null,
@@ -886,10 +886,11 @@ describe("normalizeRepositorySnapshot", () => {
     const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
     const lane = projection.deliveries[0];
 
-    expect(lane?.checks.status).toBe("pending");
-    expect(lane?.checks.requiredStatus).toBe("unsatisfied");
+    expect(lane?.checks.status).toBe("unknown");
+    expect(lane?.checks.requiredStatus).toBe("unknown");
     expect(lane?.phase).toBe("validating");
-    expect(lane?.blockers).toContain("test is queued.");
+    expect(lane?.blockers).toContain("The latest check attempt could not be identified from GitHub's per-run timestamps.");
+    expect(lane?.blockers).toContain("Required checks remain unknown because the latest check attempt could not be identified.");
   });
 
   it("never treats an optional green check as satisfying an unobserved required check", () => {
@@ -1117,11 +1118,20 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.action.owner).toBe("none");
   });
 
-  it("does not escalate a natural-language negative human-action label", () => {
+  it.each([
+    "Human action is not required",
+    "no",
+    "false",
+    "not necessary",
+    "not applicable",
+    "Human action isn't required",
+    "not currently needed",
+    "unnecessary",
+  ])("does not escalate an explicit negative human-action label: %s", (claim) => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace(
       "HUMAN ACTION: none",
-      "HUMAN ACTION: Human action is not required",
+      `HUMAN ACTION: ${claim}`,
     );
 
     const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
@@ -1130,6 +1140,23 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.handoff.condition).toBe("current");
     expect(lane?.phase).toBe("merge_gate");
     expect(lane?.action.owner).toBe("none");
+  });
+
+  it.each([
+    "yes",
+    "Founder to choose option A",
+  ])("treats a non-negative human-action label as affirmative: %s", (claim) => {
+    const pr = pullRequest();
+    pr.comments[0]!.body = pr.comments[0]!.body.replace(
+      "HUMAN ACTION: none",
+      `HUMAN ACTION: ${claim}`,
+    );
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.phase).toBe("human_required");
+    expect(lane?.action.owner).toBe("human");
   });
 
   it.each([
