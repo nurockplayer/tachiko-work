@@ -305,8 +305,8 @@ function handoffReportsFailedValidation(body: string): boolean {
     return /(?:\b(?:no|none|zero)\b|\b0)\s+(?:\w+\s+){0,8}$/i.test(prefix);
   };
 
-  if (/\b(?:no|zero|0)\s+(?:(?!not\b)\w+\s+){0,5}(?:(?:was|were)\s+)?run\b/i.test(validation)) return true;
-  const negativeOutcome = /\b(?:(?:did|does|do|has|have|had)\s+not\s+(?:\w+\s+){0,2}pass(?:ed)?|(?:was|were|is|are|has|have|had)\s+(?:not\s+(?:(?:yet|been|successfully)\s+){0,2}run|(?:been\s+)?skipped)|not\s+(?:(?:yet|been|successfully)\s+){0,2}run|never\s+(?:ran|run))\b/gi;
+  if (/\b(?:no|zero|0)\s+(?:(?!not\b)\w+\s+){0,5}(?:(?:was|were)\s+)?(?:run|executed)\b/i.test(validation)) return true;
+  const negativeOutcome = /\b(?:(?:did|does|do|has|have|had)\s+not\s+(?:\w+\s+){0,2}pass(?:ed)?|(?:was|were|is|are|has|have|had)\s+(?:not\s+(?:(?:yet|been|successfully)\s+){0,2}(?:run|executed)|(?:been\s+)?skipped)|not\s+(?:(?:yet|been|successfully)\s+){0,2}(?:run|executed)|never\s+(?:ran|run))\b/gi;
   for (const match of validation.matchAll(negativeOutcome)) {
     if (!quantityNegatesOutcome(match.index)) return true;
   }
@@ -844,7 +844,10 @@ function activeSubstantiveReviewBodies(reviews: RawReview[]): RawReview[] {
   for (const history of byReviewer.values()) {
     for (const review of history.toSorted((left, right) => right.submittedAt.localeCompare(left.submittedAt))) {
       if (review.state === "dismissed") break;
-      if (review.state === "approved") break;
+      if (review.state === "approved") {
+        if (isSubstantiveReviewBody(review.body)) active.push(review);
+        break;
+      }
       if (isSubstantiveReviewBody(review.body)) {
         active.push(review);
         break;

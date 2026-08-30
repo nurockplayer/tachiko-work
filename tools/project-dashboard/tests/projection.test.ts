@@ -2475,6 +2475,11 @@ describe("normalizeRepositorySnapshot", () => {
     "build never run",
     "Tests have been skipped",
     "build was not successfully run",
+    "Tests were not executed",
+    "Tests were not successfully executed",
+    "Test suite was not executed",
+    "No tests were executed",
+    "Tests have not been executed",
   ])("does not accept merge-ready while canonical validation evidence reports: %s", (validation) => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace(
@@ -2499,6 +2504,8 @@ describe("normalizeRepositorySnapshot", () => {
     "No validation checks have not run",
     "No tests have been skipped",
     "No builds were not successfully run",
+    "No tests were not executed",
+    "No tests have not been executed",
   ])("does not invent failed validation evidence from a clean summary: %s", (validation) => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace(
@@ -2769,6 +2776,19 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries[0]?.reviews.substantiveUnresolvedCount).toBe(0);
     expect(projection.deliveries[0]?.reviews.status).toBe("current");
     expect(projection.deliveries[0]?.phase).toBe("merge_gate");
+  });
+
+  it("counts a substantive finding contained in the current approval body", () => {
+    const pr = pullRequest();
+    pr.reviews = [
+      { state: "approved", author: "reviewer", body: "[P1] This crashes on empty input", headSha, url: "https://github.com/review/approval-finding", submittedAt: observedAt },
+    ];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+
+    expect(projection.deliveries[0]?.reviews.substantiveUnresolvedCount).toBe(1);
+    expect(projection.deliveries[0]?.reviews.status).toBe("current");
+    expect(projection.deliveries[0]?.phase).toBe("review_fix");
   });
 
   it("retains a review finding across a later unrelated comment by the same reviewer", () => {
