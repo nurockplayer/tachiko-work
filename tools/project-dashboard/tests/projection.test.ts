@@ -2483,6 +2483,10 @@ describe("normalizeRepositorySnapshot", () => {
     "Test suite was not executed",
     "No tests were executed",
     "Tests have not been executed",
+    "Tests haven't been run",
+    "Tests weren't executed",
+    "CI isn't passing",
+    "release-check didn't pass",
   ])("does not accept merge-ready while canonical validation evidence reports: %s", (validation) => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace(
@@ -2514,6 +2518,8 @@ describe("normalizeRepositorySnapshot", () => {
     "No checks pending",
     "No checks in progress",
     "release-check is not pending",
+    "release-check hasn't timed out",
+    "release-check wasn't in progress",
   ])("does not invent failed validation evidence from a clean summary: %s", (validation) => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace(
@@ -2809,6 +2815,11 @@ describe("normalizeRepositorySnapshot", () => {
     "Approved; P1 was fixed in the latest commit.",
     "P1 fixed, approved.",
     "P1 addressed, LGTM.",
+    "P1 fixed and approved.",
+    "P1 fixed — approved.",
+    "P1 fixed, approved by reviewer.",
+    "P1 addressed in this commit.",
+    "P1 addressed by commit abc1234.",
   ])("does not retain a resolved finding from an approval body: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [
@@ -2825,6 +2836,8 @@ describe("normalizeRepositorySnapshot", () => {
     "Approved, but P1 was not fixed.",
     "No P1 findings have been addressed.",
     "No P1 findings were addressed.",
+    "P1 fixed and approval pending.",
+    "P1 addressed by commit soon.",
   ])("retains a negated resolution from an approval body: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [
