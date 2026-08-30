@@ -2273,6 +2273,44 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries[0]?.phase).toBe("merge_gate");
   });
 
+  it("does not let same-author release descriptor text demote the canonical handoff state", () => {
+    const pr = pullRequest();
+    pr.comments[0]!.body = `Delivery handoff\n\n${pr.comments[0]!.body}`;
+    pr.comments.push({
+      ...pr.comments[0]!,
+      id: "release-descriptor",
+      body: "Release descriptor for `<!-- agent-handoff:v1 -->`: STATE: validating",
+      updatedAt: "2026-08-30T00:01:00.000Z",
+    });
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.handoff.condition).toBe("current");
+    expect(lane?.handoff.claimedState).toBe("merge-ready");
+    expect(lane?.phase).toBe("merge_gate");
+  });
+
+  it("does not let same-author release descriptor text promote the canonical handoff state", () => {
+    const pr = pullRequest();
+    pr.comments[0]!.body = pr.comments[0]!.body
+      .replace("STATE: merge-ready", "STATE: validating")
+      .replace(mainSha, "c".repeat(40));
+    pr.comments.push({
+      ...pr.comments[0]!,
+      id: "release-descriptor",
+      body: "Release descriptor for `<!-- agent-handoff:v1 -->`: STATE: merge-ready",
+      updatedAt: "2026-08-30T00:01:00.000Z",
+    });
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.handoff.condition).toBe("stale");
+    expect(lane?.handoff.claimedState).toBe("validating");
+    expect(lane?.phase).toBe("validating");
+  });
+
   it("assigns incomplete live-main handoff reconciliation to the delivery agent", () => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body

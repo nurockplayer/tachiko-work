@@ -16,7 +16,7 @@ import type {
 } from "../shared/types.ts";
 import { isDecisionAuthorityPath } from "../shared/authority.ts";
 
-const handoffMarker = "<!-- agent-handoff:v1 -->";
+const canonicalHandoffMarkerLine = /^[ \t]*<!-- agent-handoff:v1 -->[ \t]*$/m;
 const explicitlyPrioritizedFinding = /(?:\[|\b)(?:p[0-2]|sev(?:erity)?[ -]?[0-2])(?:\]|\b)/i;
 const bracketedPrioritizedFinding = /\[(?:p[0-2]|sev(?:erity)?[ -]?[0-2])\]/i;
 const directlyClearedBracketedFinding = /(?:\b(?:no|not\s+(?:an?\s+)?)\s*\[(?:p[0-2]|sev(?:erity)?[ -]?[0-2])\]|\[(?:p[0-2]|sev(?:erity)?[ -]?[0-2])\][^.!?;\n]{0,80}\b(?:none|zero|absent|resolved|passed|not\s+(?:found|present))\b)/i;
@@ -137,7 +137,8 @@ function hasTrustedAuthorAssociation(authorAssociation: string | null): boolean 
 
 function canonicalComments(comments: RawComment[]): RawComment[] {
   return comments.filter(
-    (comment) => hasTrustedAuthorAssociation(comment.authorAssociation) && comment.body.includes(handoffMarker),
+    (comment) => hasTrustedAuthorAssociation(comment.authorAssociation) &&
+      canonicalHandoffMarkerLine.test(comment.body),
   );
 }
 
