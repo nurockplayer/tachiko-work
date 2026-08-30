@@ -625,14 +625,16 @@ export async function loadGithubSnapshot(
 export class GithubApiClient implements ReadonlyGithubApi {
   readonly #token: string;
   readonly #fetch: typeof fetch;
+  readonly #requestTimeoutMs: number;
 
-  constructor(token: string, fetchImplementation: typeof fetch = fetch) {
+  constructor(token: string, fetchImplementation: typeof fetch = fetch, requestTimeoutMs = 15_000) {
     this.#token = token;
     this.#fetch = fetchImplementation;
+    this.#requestTimeoutMs = requestTimeoutMs;
   }
 
   async graphql(query: string, variables: Record<string, string | boolean | null>): Promise<unknown> {
-    const response = await this.#fetch("https://api.github.com/graphql", {
+    const response = await this.#request("https://api.github.com/graphql", {
       method: "POST",
       headers: this.#headers("application/vnd.github+json"),
       body: JSON.stringify({ query, variables }),
@@ -641,7 +643,7 @@ export class GithubApiClient implements ReadonlyGithubApi {
   }
 
   async rawText(path: string): Promise<string> {
-    const response = await this.#fetch(`https://api.github.com${path}`, {
+    const response = await this.#request(`https://api.github.com${path}`, {
       method: "GET",
       headers: this.#headers("application/vnd.github.raw+json"),
     });
@@ -656,7 +658,7 @@ export class GithubApiClient implements ReadonlyGithubApi {
       parameters?: { required_status_checks?: Array<{ context?: string; integration_id?: number | null }> };
     }> = [];
     for (let page = 1;; page += 1) {
-      const rulesResponse = await this.#fetch(
+      const rulesResponse = await this.#request(
         `https://api.github.com/repos/${owner}/${repo}/rules/branches/${encodedBranch}?per_page=100&page=${page}`,
         {
           method: "GET",
@@ -674,7 +676,7 @@ export class GithubApiClient implements ReadonlyGithubApi {
         ? []
         : [{ name: check.context, integrationId: check.integration_id === -1 ? null : check.integration_id ?? null }]);
 
-    const classicResponse = await this.#fetch(
+    const classicResponse = await this.#request(
       `https://api.github.com/repos/${owner}/${repo}/branches/${encodedBranch}/protection/required_status_checks`,
       {
         method: "GET",
@@ -711,7 +713,7 @@ export class GithubApiClient implements ReadonlyGithubApi {
     headSha: string,
   ): Promise<{ status: string; mergeBaseSha: string | null; files: string[] }> {
     const path = `/repos/${owner}/${repo}/compare/${encodeURIComponent(baseSha)}...${encodeURIComponent(headSha)}`;
-    const response = await this.#fetch(`https://api.github.com${path}`, {
+    const response = await this.#request(`https://api.github.com${path}`, {
       method: "GET",
       headers: this.#headers("application/vnd.github+json"),
     });
@@ -735,6 +737,13 @@ export class GithubApiClient implements ReadonlyGithubApi {
       "User-Agent": "tachiko-work-project-dashboard",
       "X-GitHub-Api-Version": "2022-11-28",
     };
+  }
+
+  #request(input: string, init: RequestInit): Promise<Response> {
+    return this.#fetch(input, {
+      ...init,
+      signal: AbortSignal.timeout(this.#requestTimeoutMs),
+    });
   }
 
   async #readJson(response: Response): Promise<unknown> {

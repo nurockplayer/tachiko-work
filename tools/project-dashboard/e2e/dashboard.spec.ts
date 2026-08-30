@@ -9,11 +9,16 @@ test("renders the five source-linked control-room surfaces without false merge-r
   }
 
   await expect(page.getByRole("link", { name: /roadmap source/i })).toBeVisible();
-  await expect(page.getByRole("article", { name: /issue 169/i })).toContainText(/inconsistent/i);
-  await expect(page.getByRole("article", { name: /issue 169/i })).toContainText("Checks were not observed for the current PR head");
-  await expect(page.getByRole("article", { name: /issue 169/i })).toContainText(/base tip/i);
-  await expect(page.getByRole("article", { name: /issue 169/i })).toContainText(/merge base/i);
-  await expect(page.getByRole("article", { name: /issue 169/i })).not.toContainText("merge ready");
+  const dashboardLane = page.getByRole("article", { name: /issue 169/i });
+  await expect(dashboardLane).toContainText(/inconsistent/i);
+  await expect(dashboardLane).toContainText("Checks were not observed for the current PR head");
+  await expect(dashboardLane).toContainText(/base tip/i);
+  await expect(dashboardLane).toContainText(/merge base/i);
+  await expect(dashboardLane).toContainText(/handoff state/i);
+  await expect(dashboardLane).toContainText(/handoff checked main/i);
+  await expect(dashboardLane.locator(".definition").filter({ hasText: "Handoff updated" }).locator("time"))
+    .toHaveAttribute("datetime", "2026-08-30T00:00:00.000Z");
+  await expect(dashboardLane).not.toContainText("merge ready");
   await expect(page.getByRole("article", { name: /issue 163/i })).toContainText(/review fix/i);
   await expect(page.getByRole("list", { name: /current work sequence/i })).toContainText("Independent tooling / research lane");
   await expect(page.locator(".attention-panel > .section-heading .status-badge")).toHaveClass(/cyber-badge--green/);

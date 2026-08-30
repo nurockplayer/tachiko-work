@@ -138,7 +138,20 @@ function deliveryCard(lane: DeliveryLane): HTMLElement {
         ? "No body edit reported"
         : element("time", { datetime: lane.issue.lastEditedAt }, [new Date(lane.issue.lastEditedAt).toLocaleString()]),
     ),
-    definition("Handoff", badge(lane.handoff.condition)),
+    definition("Handoff condition", badge(lane.handoff.condition)),
+    definition(
+      "Handoff state",
+      lane.handoff.claimedState === null
+        ? element("span", { class: "unknown" }, ["Unknown"])
+        : badge(lane.handoff.claimedState),
+    ),
+    definition(
+      "Handoff updated",
+      lane.handoff.updatedAt === null
+        ? element("span", { class: "unknown" }, ["Unknown"])
+        : element("time", { datetime: lane.handoff.updatedAt }, [new Date(lane.handoff.updatedAt).toLocaleString()]),
+    ),
+    definition("Handoff checked main", element("code", {}, [shortIdentity(lane.handoff.lastCheckedMainSha)])),
     definition("Authority drift", badge(lane.authorityDrift)),
   ]);
   if (lane.pr === null) {

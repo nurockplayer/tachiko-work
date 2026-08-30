@@ -620,6 +620,25 @@ describe("loadGithubSnapshot", () => {
     ]);
   });
 
+  it("aborts a stalled GitHub request at the shared request deadline", async () => {
+    const fetchImplementation = vi.fn((_input: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (signal === null || signal === undefined) {
+          reject(new Error("missing request deadline"));
+          return;
+        }
+        signal.addEventListener("abort", () => {
+          reject(signal.reason instanceof Error ? signal.reason : new Error("GitHub request timed out"));
+        }, { once: true });
+      }));
+    const client = new GithubApiClient("test-token", fetchImplementation, 1);
+
+    await expect(client.rawText("/repos/nurockplayer/tachiko-work/contents/README.md"))
+      .rejects.toMatchObject({ name: "TimeoutError" });
+    expect(fetchImplementation).toHaveBeenCalledTimes(1);
+  });
+
   it("degrades a failed compare observation to partial/unknown rather than healthy", async () => {
     const api: ReadonlyGithubApi = {
       graphql: async () => githubPage(),
