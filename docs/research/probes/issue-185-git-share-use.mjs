@@ -199,6 +199,14 @@ async function main() {
     'show',
     `${repositoryHead}:examples/game-balance/game-balance.ro`,
   ]);
+  const licenseApache = gitBytes(REPOSITORY_ROOT, [
+    'show',
+    `${repositoryHead}:LICENSE-APACHE`,
+  ]);
+  const licenseMit = gitBytes(REPOSITORY_ROOT, [
+    'show',
+    `${repositoryHead}:LICENSE-MIT`,
+  ]);
   assert.equal(
     (await readFile(MOONFALL_SOURCE)).compare(sourceBefore),
     0,
@@ -249,8 +257,8 @@ async function main() {
     // never copied recursively into the share repository.
     await mkdir(join(publisherRepository, 'asset'), { recursive: true });
     await writeFile(join(publisherRepository, PAYLOAD_PATH), sourceBefore);
-    await cp(join(REPOSITORY_ROOT, 'LICENSE-APACHE'), join(publisherRepository, 'LICENSE-APACHE'));
-    await cp(join(REPOSITORY_ROOT, 'LICENSE-MIT'), join(publisherRepository, 'LICENSE-MIT'));
+    await writeFile(join(publisherRepository, 'LICENSE-APACHE'), licenseApache);
+    await writeFile(join(publisherRepository, 'LICENSE-MIT'), licenseMit);
     await writeFile(
       join(publisherRepository, 'README.md'),
       `# Moonfall game-balance example — Issue #185 experiment
