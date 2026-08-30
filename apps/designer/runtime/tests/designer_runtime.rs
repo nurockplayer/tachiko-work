@@ -1,10 +1,12 @@
+use std::collections::BTreeMap;
+
 use tachiko_designer_runtime::{
     CalculationProjection, DesignerRequest, DesignerResponse, DesignerRuntime, DesignerWireReply,
     StoredValueProjection, close_project, open_project, process_wire_request,
 };
 use tachiko_workspace_engine::{
-    FieldAddress, FieldDefinition, FieldId, FieldKey, FieldType, IdGenerator, SemanticIdKind,
-    StarterTemplate, create_document,
+    FieldAddress, FieldDefinition, FieldId, FieldKey, FieldType, IdGenerator, Schema, SchemaId,
+    SchemaKey, SemanticIdKind, StarterTemplate, create_document,
 };
 
 const OCCURRENCE_ZERO: &str = "00000000-0000-4000-8000-000000000000";
@@ -130,6 +132,35 @@ fn admission_rejects_any_collection_that_cannot_be_rendered() {
         error.failure_projection("unavailable").code,
         "unsupported_project"
     );
+}
+
+#[test]
+fn admission_rejects_an_unbounded_collection_catalog() {
+    let mut document = create_document(
+        StarterTemplate::GameBalance,
+        "Too many collections",
+        &mut TestIds::default(),
+    )
+    .expect("fixture should be valid");
+    for index in 0..64 {
+        let id = format!("extra_schema_{index:02}");
+        let key = format!("extra_collection_{index:02}");
+        document.schemas.insert(
+            SchemaId::from(id.as_str()),
+            Schema {
+                id: SchemaId::from(id.as_str()),
+                key: SchemaKey::from(key.as_str()),
+                fields: BTreeMap::default(),
+            },
+        );
+    }
+
+    let Err(error) = DesignerRuntime::from_document(document, OCCURRENCE_ONE) else {
+        panic!("the advertised collection catalog must remain bounded");
+    };
+    let failure = error.failure_projection("unavailable");
+    assert_eq!(failure.code, "unsupported_project");
+    assert!(failure.message.contains("bounded maximum is 32"));
 }
 
 #[test]

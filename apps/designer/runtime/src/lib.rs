@@ -32,6 +32,7 @@ use thiserror::Error;
 mod wasm;
 
 const DEFAULT_COLLECTION: &str = "weapons";
+const MAX_COLLECTIONS: usize = 32;
 const MAX_TABLE_FIELDS: usize = 32;
 const MAX_TABLE_ROWS: usize = 32;
 const MAX_FIELD_QUERY_TARGETS: usize = MAX_TABLE_FIELDS * MAX_TABLE_ROWS;
@@ -470,6 +471,14 @@ impl DesignerRuntime {
     }
 
     fn ensure_supported_project(&self) -> Result<(), DesignerError> {
+        if self.collections.len() > MAX_COLLECTIONS {
+            return Err(DesignerError::UnsupportedProject {
+                message: format!(
+                    "the project advertises {} collections; the bounded maximum is {MAX_COLLECTIONS}",
+                    self.collections.len()
+                ),
+            });
+        }
         for collection in &self.collections {
             self.query_table(&collection.key).map_err(|error| {
                 DesignerError::UnsupportedProject {
