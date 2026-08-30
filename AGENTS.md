@@ -20,6 +20,38 @@ For issue-driven repository work, follow the canonical
 It defines the Ready gate, provider-neutral Steward/delivery-agent split,
 single-PR handoff, review discipline, and post-merge stop conditions.
 
+## Delivery continuity
+
+For a Ready Issue with an active agent-owned PR, continue the bounded one-Issue
+delivery loop autonomously until a canonical stop or escalation condition is
+actually reached.
+
+A pending non-terminal sub-agent result, CI job, hosted review, or other
+asynchronous validation is **not** a completion, handoff, or stop condition.
+When the current execution environment can remain active, wait or poll for the
+result, consume it when available, and continue the same review-fix /
+exact-head-validation loop.
+
+Runtime liveness is a separate concern from agent behavior. If an individual
+agent run may terminate before a canonical stop condition is reached, first
+make the continuation state recoverable outside ephemeral local state. Keep the
+single canonical `agent-handoff:v1` exact and persist meaningful active work to
+Git or another repository-approved durable artifact when necessary; do not leave
+the only copy of progress as an uncommitted local diff.
+
+If a run terminates before a canonical stop condition is reached, the scheduler
+or orchestrator is responsible for automatically re-entering the same Issue/PR
+from that durable handoff/checkpoint. A human copying and pasting a "continue"
+prompt is not part of the intended delivery workflow.
+
+Intermediate progress may update the single canonical `agent-handoff:v1`, but
+do not present intermediate progress as task completion solely because an
+asynchronous gate is still running or because one agent runtime ended. Return
+control only when one of the canonical repository delivery workflow conditions
+applies: no genuinely Ready Issue remains after live-state recalibration; an
+unresolved durable architecture or product decision exists; Accepted authority
+conflicts; or an external permission or service requires human action.
+
 ## JavaScript and TypeScript
 
 Node.js is used by parts of the release and WASM validation workflow. If package-managed JavaScript or TypeScript tooling is introduced or modified:
