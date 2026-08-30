@@ -958,9 +958,12 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.action.owner).toBe("human");
   });
 
-  it("does not let an infinitive-qualified future Ready claim override a current blocker", () => {
+  it.each([
+    "Blocked; ready to proceed once access is granted.",
+    "Blocked; awaiting Steward approval before Ready.",
+  ])("does not let a prefix- or suffix-qualified future Ready claim override a current blocker: %s", (status) => {
     const blocked = issue();
-    blocked.body = "## Status\n\nBlocked; ready to proceed once access is granted.\n\nOwner: `agent:codex`";
+    blocked.body = `## Status\n\n${status}\n\nOwner: \`agent:codex\``;
 
     const projection = normalizeRepositorySnapshot(snapshot({ issues: [blocked] }));
     const lane = projection.deliveries[0];
@@ -2458,6 +2461,11 @@ describe("normalizeRepositorySnapshot", () => {
     "pnpm test failed",
     "release-check: failed",
     "build was not run",
+    "release-check did not pass",
+    "No tests were run",
+    "build was skipped",
+    "build never ran",
+    "build has not yet been run",
   ])("does not accept merge-ready while canonical validation evidence reports: %s", (validation) => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace(
@@ -2477,6 +2485,9 @@ describe("normalizeRepositorySnapshot", () => {
     "706 passed, 0 failed",
     "No validation checks failed",
     "The release check has not failed",
+    "No tests not run",
+    "0 tests not run",
+    "No validation checks have not run",
   ])("does not invent failed validation evidence from a clean summary: %s", (validation) => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace(
