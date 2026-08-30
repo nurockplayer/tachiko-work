@@ -1362,6 +1362,7 @@ describe("normalizeRepositorySnapshot", () => {
     "No CSRF protection allows unauthorized requests.",
     "No CSRF check permits unauthorized access.",
     "No session validation allows unauthorized requests.",
+    "No error handler prevents this crash on empty input.",
     "This permits SQL injection for crafted input.",
     "SQL injection permits data loss and checks passed.",
     "SQL injection is prevented and code injection permits data loss.",
@@ -1507,6 +1508,7 @@ describe("normalizeRepositorySnapshot", () => {
     "Synchronization prevents data races.",
     "A CSRF token prevents unauthorized requests.",
     "CSRF protection does not allow unauthorized requests.",
+    "An error handler prevents this crash on empty input.",
     "This does not permit SQL injection.",
     "SQL injection is prevented.",
     "SQL injection was blocked.",
@@ -2005,6 +2007,7 @@ describe("normalizeRepositorySnapshot", () => {
     "No CSRF protection allows unauthorized requests.",
     "No CSRF check permits unauthorized access.",
     "No session validation allows unauthorized requests.",
+    "No error handler prevents this crash on empty input.",
     "This permits SQL injection for crafted input.",
     "SQL injection permits data loss and checks passed.",
     "SQL injection is prevented and code injection permits data loss.",
@@ -2121,6 +2124,7 @@ describe("normalizeRepositorySnapshot", () => {
     "Synchronization prevents data races.",
     "A CSRF token prevents unauthorized requests.",
     "CSRF protection does not allow unauthorized requests.",
+    "An error handler prevents this crash on empty input.",
     "This does not permit SQL injection.",
     "SQL injection is prevented.",
     "SQL injection was blocked.",
@@ -2396,6 +2400,7 @@ describe("normalizeRepositorySnapshot", () => {
     "[P1] Missing synchronization still permits a race condition.",
     "none; [P1] Missing synchronization still permits a race condition.",
     "clean, but [P1] Missing synchronization still permits a race condition.",
+    "none\n[P1] Missing synchronization still permits a race condition.",
   ])("does not accept merge-ready while the canonical handoff reports a substantive unresolved review: %s", (reviewState) => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace(
