@@ -9,7 +9,11 @@ use std::{
     hint::black_box,
     io::{BufRead, BufReader, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
+    process::Command,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -348,6 +352,16 @@ fn admit_one_pass_host(
     root: &Path,
     collect_work: bool,
 ) -> Result<(Document, AdmissionWork, HostAdmissionTimings), FormatError> {
+    admit_one_pass_host_controlled(root, collect_work, None, None)
+}
+
+#[allow(clippy::too_many_lines)]
+fn admit_one_pass_host_controlled(
+    root: &Path,
+    collect_work: bool,
+    cancel: Option<&AtomicBool>,
+    records_completed: Option<&AtomicUsize>,
+) -> Result<(Document, AdmissionWork, HostAdmissionTimings), FormatError> {
     let started = Instant::now();
     super::super::host::require_exact_root_entries(root)?;
 
@@ -395,6 +409,11 @@ fn admit_one_pass_host(
                 })?;
             if read == 0 {
                 break;
+            }
+            if cancel.is_some_and(|token| token.load(Ordering::Relaxed)) {
+                return invalid_representation(
+                    "research A1 admission cancelled before SemanticCurrent".to_owned(),
+                );
             }
             source_bytes += read;
             let Some(record_bytes) = line.strip_suffix(b"\n") else {
@@ -444,6 +463,12 @@ fn admit_one_pass_host(
                 return invalid_representation(format!("duplicate entity id '{id_text}'"));
             }
             entity_records += 1;
+            if let Some(records_completed) = records_completed {
+                records_completed.store(entity_records, Ordering::Relaxed);
+            }
+            if entity_records % 64 == 0 {
+                std::thread::yield_now();
+            }
         }
     }
 
@@ -473,6 +498,102 @@ fn admit_one_pass_host(
             semantic_current,
         },
     ))
+}
+
+fn source_preview(root: &Path) -> Result<(String, String, String), FormatError> {
+    for relative in ROPROJ_V1_PATHS.iter().skip(2) {
+        let path = root.join(relative);
+        let mut reader = BufReader::new(File::open(&path).map_err(|source| FormatError::Read {
+            path: path.clone(),
+            source,
+        })?);
+        let mut line = Vec::new();
+        if reader
+            .read_until(b'\n', &mut line)
+            .map_err(|source| FormatError::Read {
+                path: path.clone(),
+                source,
+            })?
+            == 0
+        {
+            continue;
+        }
+        let record_bytes = line.strip_suffix(b"\n").ok_or_else(|| {
+            FormatError::InvalidRoProjectRepresentation {
+                message: format!("source preview '{relative}' lacks final LF"),
+            }
+        })?;
+        let record = utf8(relative, record_bytes)?;
+        inspect_roproj(record, ROPROJ_V1_MAX_JSON_NESTING)
+            .map_err(|error| map_frontend_error(relative, error))?;
+        let dto: EntityV1 = deserialize_roproj(relative, record)?;
+        let mut canonical = String::new();
+        write_entity(&mut canonical, &dto)?;
+        if canonical != record || shard_index(&dto.id) != shard_index_from_path(relative)? {
+            return invalid_representation(
+                "source preview record is not exact canonical source".to_owned(),
+            );
+        }
+        return Ok((dto.id, dto.key, dto.schema));
+    }
+    invalid_representation("source preview found no entity record".to_owned())
+}
+
+fn shard_index_from_path(path: &str) -> Result<usize, FormatError> {
+    ROPROJ_V1_PATHS
+        .iter()
+        .skip(2)
+        .position(|candidate| candidate == &path)
+        .ok_or_else(|| FormatError::InvalidRoProjectRepresentation {
+            message: format!("unknown canonical shard path '{path}'"),
+        })
+}
+
+fn foreground_preview_samples(root: &Path, count: usize) -> Vec<Duration> {
+    (0..count)
+        .map(|_| {
+            let started = Instant::now();
+            black_box(source_preview(black_box(root)).unwrap());
+            started.elapsed()
+        })
+        .collect()
+}
+
+fn current_rss_bytes() -> usize {
+    let output = Command::new("ps")
+        .args(["-o", "rss=", "-p", &std::process::id().to_string()])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let kibibytes = String::from_utf8(output.stdout)
+        .unwrap()
+        .trim()
+        .parse::<usize>()
+        .unwrap();
+    kibibytes * 1024
+}
+
+fn emit_steady_rss() {
+    println!("ISSUE175_STEADY_RSS_BYTES={}", current_rss_bytes());
+}
+
+fn parse_child_rss(stdout: &[u8], stderr: &[u8]) -> (usize, usize) {
+    let stdout = String::from_utf8_lossy(stdout);
+    let steady = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("ISSUE175_STEADY_RSS_BYTES="))
+        .unwrap()
+        .parse::<usize>()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(stderr);
+    let peak = stderr
+        .lines()
+        .find(|line| line.contains("maximum resident set size"))
+        .and_then(|line| line.split_whitespace().next())
+        .unwrap()
+        .parse::<usize>()
+        .unwrap();
+    (steady, peak)
 }
 
 #[allow(clippy::too_many_lines)]
@@ -898,6 +1019,87 @@ fn exact_scalar_search_proof() -> BoundedProof<()> {
     BoundedProof::RequiresFullAdmission(
         "exact scalar/full-text search values are absent from the Structural Index",
     )
+}
+
+fn initialize_git_snapshot(repo: &Path, document: &Document) -> PathBuf {
+    std::fs::create_dir(repo).unwrap();
+    run_git(repo, &["init", "-q"]);
+    let project = repo.join("project.roproj");
+    super::super::host::materialize_roproj(&project, document).unwrap();
+    run_git(repo, &["add", "project.roproj"]);
+    run_git(
+        repo,
+        &[
+            "-c",
+            "user.name=Tachiko Research",
+            "-c",
+            "user.email=research@tachiko.invalid",
+            "commit",
+            "-qm",
+            "immutable issue 175 snapshot",
+        ],
+    );
+    project
+}
+
+fn git_snapshot_binding(repo: &Path) -> (SourceBinding, Duration) {
+    let started = Instant::now();
+    let commit = git_output(repo, &["rev-parse", "HEAD"]);
+    let tree = git_output(repo, &["rev-parse", "HEAD:project.roproj"]);
+    let listing = git_output(repo, &["ls-tree", "-r", "HEAD", "--", "project.roproj"]);
+    let blobs = listing
+        .lines()
+        .map(|line| {
+            let (metadata, path) = line.split_once('\t').unwrap();
+            let mut metadata = metadata.split_whitespace();
+            let mode = metadata.next().unwrap().to_owned();
+            assert_eq!(metadata.next(), Some("blob"));
+            let object_id = metadata.next().unwrap().to_owned();
+            GitBlobBinding {
+                path: path.strip_prefix("project.roproj/").unwrap().to_owned(),
+                mode,
+                object_id,
+            }
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(blobs.len(), ROPROJ_V1_PATHS.len());
+    (
+        SourceBinding::GitSnapshot {
+            commit,
+            tree,
+            blobs,
+        },
+        started.elapsed(),
+    )
+}
+
+fn run_git(repo: &Path, arguments: &[&str]) {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(arguments)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn git_output(repo: &Path, arguments: &[&str]) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(arguments)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
 }
 
 fn id_navigation_proof(index: &StructuralIndex, id: &str) -> BoundedProof<bool> {
@@ -1399,12 +1601,436 @@ fn dependency_chain_document(entity_count: usize, cycle: bool) -> Document {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+enum WorkloadShape {
+    PayloadUnicodeLong,
+    ReferenceHeavy,
+    FormulaEdgeHeavy,
+    FormulaAstHeavy,
+    DeepDependencyChain,
+    WideFanOut,
+    WideFanIn,
+    CrossShardCycle,
+    WideFieldPresence,
+    MixedRealistic,
+}
+
+impl WorkloadShape {
+    const ALL: [Self; 10] = [
+        Self::PayloadUnicodeLong,
+        Self::ReferenceHeavy,
+        Self::FormulaEdgeHeavy,
+        Self::FormulaAstHeavy,
+        Self::DeepDependencyChain,
+        Self::WideFanOut,
+        Self::WideFanIn,
+        Self::CrossShardCycle,
+        Self::WideFieldPresence,
+        Self::MixedRealistic,
+    ];
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::PayloadUnicodeLong => "payload_unicode_long_record",
+            Self::ReferenceHeavy => "reference_heavy",
+            Self::FormulaEdgeHeavy => "formula_edge_heavy",
+            Self::FormulaAstHeavy => "formula_ast_heavy",
+            Self::DeepDependencyChain => "deep_dependency_chain",
+            Self::WideFanOut => "wide_fan_out",
+            Self::WideFanIn => "wide_fan_in",
+            Self::CrossShardCycle => "cross_shard_cycle",
+            Self::WideFieldPresence => "wide_field_presence",
+            Self::MixedRealistic => "mixed_realistic_game_data",
+        }
+    }
+
+    fn document(self, entity_count: usize) -> Document {
+        match self {
+            Self::PayloadUnicodeLong => payload_document(entity_count, 2_048),
+            Self::ReferenceHeavy => reference_document(entity_count, 16),
+            Self::FormulaEdgeHeavy => formula_profile_document(entity_count, 16, 0),
+            Self::FormulaAstHeavy => formula_profile_document(entity_count, 0, 128),
+            Self::DeepDependencyChain => dependency_chain_document(entity_count, false),
+            Self::WideFanOut => fan_out_document(entity_count),
+            Self::WideFanIn => formula_profile_document(entity_count, 64, 0),
+            Self::CrossShardCycle => dependency_chain_document(entity_count, true),
+            Self::WideFieldPresence => wide_field_document(entity_count, 64),
+            Self::MixedRealistic => mixed_document(entity_count, 128),
+        }
+    }
+}
+
+fn payload_document(entity_count: usize, text_chars: usize) -> Document {
+    let schema_id = SchemaId::from("issue-175-payload-schema");
+    let payload = FieldId::from("payload");
+    let text = "界\\\"\n"
+        .repeat(text_chars)
+        .chars()
+        .take(text_chars)
+        .collect::<String>();
+    let entities = (0..entity_count)
+        .map(|index| {
+            let id = EntityId::from(format!("issue-175-payload-{index:08}"));
+            (
+                id.clone(),
+                Entity {
+                    id,
+                    key: EntityKey::from(format!("payload_{index:08}")),
+                    schema: schema_id.clone(),
+                    fields: BTreeMap::from([(payload.clone(), Value::Text(text.clone()))]),
+                },
+            )
+        })
+        .collect();
+    single_schema_document(
+        "issue-175-payload-document",
+        "Issue 175 payload / Unicode / long JSONL",
+        schema_id,
+        "payloads",
+        BTreeMap::from([(payload.clone(), field(&payload, "payload", FieldType::Text))]),
+        entities,
+    )
+}
+
+fn reference_document(entity_count: usize, reference_fields: usize) -> Document {
+    let schema_id = SchemaId::from("issue-175-reference-schema");
+    let fields = (0..reference_fields)
+        .map(|index| {
+            let id = FieldId::from(format!("reference-{index:03}"));
+            (
+                id.clone(),
+                field(
+                    &id,
+                    &format!("reference_{index:03}"),
+                    FieldType::Reference {
+                        schema: schema_id.clone(),
+                    },
+                ),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let entities = (0..entity_count)
+        .map(|index| {
+            let id = EntityId::from(format!("issue-175-reference-{index:08}"));
+            let values = fields
+                .keys()
+                .enumerate()
+                .map(|(offset, field)| {
+                    let target = (index + offset * 97) % entity_count;
+                    (
+                        field.clone(),
+                        Value::Reference(EntityId::from(format!(
+                            "issue-175-reference-{target:08}"
+                        ))),
+                    )
+                })
+                .collect();
+            (
+                id.clone(),
+                Entity {
+                    id,
+                    key: EntityKey::from(format!("reference_{index:08}")),
+                    schema: schema_id.clone(),
+                    fields: values,
+                },
+            )
+        })
+        .collect();
+    single_schema_document(
+        "issue-175-reference-document",
+        "Issue 175 reference heavy",
+        schema_id,
+        "references",
+        fields,
+        entities,
+    )
+}
+
+fn formula_profile_document(
+    entity_count: usize,
+    edges_per_formula: usize,
+    literal_leaves: usize,
+) -> Document {
+    let schema_id = SchemaId::from("issue-175-formula-schema");
+    let base = FieldId::from("base");
+    let computed = FieldId::from("computed");
+    let entities = (0..entity_count)
+        .map(|index| {
+            let id = EntityId::from(format!("issue-175-formula-{index:08}"));
+            let leaves = if edges_per_formula > 0 {
+                (0..edges_per_formula)
+                    .map(|offset| {
+                        let target = (index + offset * 97) % entity_count;
+                        Expression::Reference(FieldRef::new(
+                            format!("issue-175-formula-{target:08}"),
+                            base.clone(),
+                        ))
+                    })
+                    .collect()
+            } else {
+                (0..literal_leaves)
+                    .map(|_| Expression::Number(Number::new(1.0).unwrap()))
+                    .collect()
+            };
+            (
+                id.clone(),
+                Entity {
+                    id,
+                    key: EntityKey::from(format!("formula_{index:08}")),
+                    schema: schema_id.clone(),
+                    fields: BTreeMap::from([
+                        (base.clone(), Value::Number(Number::new(1.0).unwrap())),
+                        (computed.clone(), Value::Formula(balanced_sum(leaves))),
+                    ]),
+                },
+            )
+        })
+        .collect();
+    single_schema_document(
+        "issue-175-formula-document",
+        "Issue 175 independent formula dimensions",
+        schema_id,
+        "formulas",
+        BTreeMap::from([
+            (base.clone(), field(&base, "base", FieldType::Number)),
+            (
+                computed.clone(),
+                field(&computed, "computed", FieldType::Number),
+            ),
+        ]),
+        entities,
+    )
+}
+
+fn balanced_sum(mut nodes: Vec<Expression>) -> Expression {
+    assert!(!nodes.is_empty());
+    while nodes.len() > 1 {
+        let mut next = Vec::with_capacity(nodes.len().div_ceil(2));
+        let mut iterator = nodes.into_iter();
+        while let Some(left) = iterator.next() {
+            next.push(match iterator.next() {
+                Some(right) => Expression::Add {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+                None => left,
+            });
+        }
+        nodes = next;
+    }
+    nodes.pop().unwrap()
+}
+
+fn fan_out_document(entity_count: usize) -> Document {
+    let mut document = formula_profile_document(entity_count, 1, 0);
+    for entity in document.entities.values_mut() {
+        entity.fields.insert(
+            FieldId::from("computed"),
+            Value::Formula(Expression::Reference(FieldRef::new(
+                "issue-175-formula-00000000",
+                "base",
+            ))),
+        );
+    }
+    document.title = "Issue 175 wide fan-out".to_owned();
+    document
+}
+
+fn wide_field_document(entity_count: usize, field_count: usize) -> Document {
+    let schema_id = SchemaId::from("issue-175-wide-schema");
+    let fields = (0..field_count)
+        .map(|index| {
+            let id = FieldId::from(format!("wide-{index:03}"));
+            let field_type = match index % 3 {
+                0 => FieldType::Number,
+                1 => FieldType::Text,
+                _ => FieldType::Boolean,
+            };
+            (
+                id.clone(),
+                field(&id, &format!("wide_{index:03}"), field_type),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let entities = (0..entity_count)
+        .map(|index| {
+            let id = EntityId::from(format!("issue-175-wide-{index:08}"));
+            let values = fields
+                .iter()
+                .enumerate()
+                .map(|(offset, (field, definition))| {
+                    let numeric_offset = u32::try_from(offset).unwrap();
+                    let value = match definition.field_type {
+                        FieldType::Number => {
+                            Value::Number(Number::new(f64::from(numeric_offset)).unwrap())
+                        }
+                        FieldType::Text => Value::Text(format!("wide value {index}/{offset}")),
+                        FieldType::Boolean => Value::Boolean((index + offset) % 2 == 0),
+                        FieldType::Reference { .. } => unreachable!(),
+                    };
+                    (field.clone(), value)
+                })
+                .collect();
+            (
+                id.clone(),
+                Entity {
+                    id,
+                    key: EntityKey::from(format!("wide_{index:08}")),
+                    schema: schema_id.clone(),
+                    fields: values,
+                },
+            )
+        })
+        .collect();
+    single_schema_document(
+        "issue-175-wide-document",
+        "Issue 175 wide field presence",
+        schema_id,
+        "wide",
+        fields,
+        entities,
+    )
+}
+
+fn single_schema_document(
+    document_id: &str,
+    title: &str,
+    schema_id: SchemaId,
+    schema_key: &str,
+    fields: BTreeMap<FieldId, FieldDefinition>,
+    entities: BTreeMap<EntityId, Entity>,
+) -> Document {
+    Document {
+        id: DocumentId::from(document_id),
+        title: title.to_owned(),
+        schemas: BTreeMap::from([(
+            schema_id.clone(),
+            Schema {
+                id: schema_id,
+                key: SchemaKey::from(schema_key),
+                fields,
+            },
+        )]),
+        entities,
+    }
+}
+
 fn field(id: &FieldId, key: &str, field_type: FieldType) -> FieldDefinition {
     FieldDefinition {
         id: id.clone(),
         key: FieldKey::from(key),
         field_type,
         required: true,
+    }
+}
+
+fn ids_in_shard(prefix: &str, shard: usize, count: usize) -> Vec<EntityId> {
+    let mut ids = Vec::with_capacity(count);
+    for candidate in 0_u64.. {
+        let id = format!("{prefix}-{candidate:016x}");
+        if shard_index(&id) == shard {
+            ids.push(EntityId::from(id));
+            if ids.len() == count {
+                break;
+            }
+        }
+    }
+    ids.sort_unstable_by(|left, right| left.as_str().as_bytes().cmp(right.as_str().as_bytes()));
+    ids
+}
+
+fn late_invalid_pressure_document(entity_count: usize) -> Document {
+    assert!(entity_count >= 3);
+    let ids = ids_in_shard("issue-175-late", 15, entity_count);
+    let cold_schema_id = SchemaId::from("issue-175-late-cold-schema");
+    let hot_schema_id = SchemaId::from("issue-175-late-hot-schema");
+    let base = FieldId::from("base");
+    let link = FieldId::from("link");
+    let computed = FieldId::from("computed");
+    let cold_entity_id = ids[0].clone();
+    let hot_target_id = ids[1].clone();
+    let schemas = BTreeMap::from([
+        (
+            cold_schema_id.clone(),
+            Schema {
+                id: cold_schema_id.clone(),
+                key: SchemaKey::from("late_cold"),
+                fields: BTreeMap::from([(base.clone(), field(&base, "base", FieldType::Number))]),
+            },
+        ),
+        (
+            hot_schema_id.clone(),
+            Schema {
+                id: hot_schema_id.clone(),
+                key: SchemaKey::from("late_hot"),
+                fields: BTreeMap::from([
+                    (base.clone(), field(&base, "base", FieldType::Number)),
+                    (
+                        link.clone(),
+                        field(
+                            &link,
+                            "link",
+                            FieldType::Reference {
+                                schema: hot_schema_id.clone(),
+                            },
+                        ),
+                    ),
+                    (
+                        computed.clone(),
+                        field(&computed, "computed", FieldType::Number),
+                    ),
+                ]),
+            },
+        ),
+    ]);
+    let entities = ids
+        .into_iter()
+        .enumerate()
+        .map(|(index, id)| {
+            if id == cold_entity_id {
+                return (
+                    id.clone(),
+                    Entity {
+                        id,
+                        key: EntityKey::from(format!("late_{index:08}")),
+                        schema: cold_schema_id.clone(),
+                        fields: BTreeMap::from([(
+                            base.clone(),
+                            Value::Number(Number::new(1.0).unwrap()),
+                        )]),
+                    },
+                );
+            }
+            let fields = BTreeMap::from([
+                (
+                    base.clone(),
+                    Value::Number(Number::new(f64::from(u32::try_from(index).unwrap())).unwrap()),
+                ),
+                (link.clone(), Value::Reference(hot_target_id.clone())),
+                (
+                    computed.clone(),
+                    Value::Formula(Expression::Reference(FieldRef {
+                        entity: hot_target_id.clone(),
+                        field: base.clone(),
+                    })),
+                ),
+            ]);
+            (
+                id.clone(),
+                Entity {
+                    id,
+                    key: EntityKey::from(format!("late_{index:08}")),
+                    schema: hot_schema_id.clone(),
+                    fields,
+                },
+            )
+        })
+        .collect();
+    Document {
+        id: DocumentId::from("issue-175-late-document"),
+        title: "Issue 175 physically late invalid pressure".to_owned(),
+        schemas,
+        entities,
     }
 }
 
@@ -1498,6 +2124,131 @@ fn issue_175_a1_preserves_a0_rejection_classes() {
     assert_rejection_parity("formula node limit", &formula_limit);
 }
 
+#[test]
+fn issue_175_late_invalid_pressure_is_physically_last_in_final_shard() {
+    let document = late_invalid_pressure_document(17);
+    let canonical = owned_files(&encode(&document).unwrap());
+    assert!(canonical[2..17].iter().all(|(_, bytes)| bytes.is_empty()));
+    assert_eq!(canonical[17].0, "entities/f.jsonl");
+    assert_eq!(
+        std::str::from_utf8(&canonical[17].1)
+            .unwrap()
+            .lines()
+            .count(),
+        17
+    );
+
+    let hot_key = document
+        .entities
+        .values()
+        .find(|entity| entity.schema.as_str() == "issue-175-late-hot-schema")
+        .unwrap()
+        .key
+        .as_str()
+        .to_owned();
+    let cold_id = document
+        .entities
+        .values()
+        .find(|entity| entity.schema.as_str() == "issue-175-late-cold-schema")
+        .unwrap()
+        .id
+        .as_str()
+        .to_owned();
+
+    let mut duplicate_id = canonical.clone();
+    let last = last_record(&duplicate_id[17].1).as_bytes().to_vec();
+    duplicate_id[17].1.extend_from_slice(&last);
+    duplicate_id[17].1.push(b'\n');
+    assert_rejection_parity("duplicate id in physically final record", &duplicate_id);
+
+    let mut duplicate_key = canonical.clone();
+    mutate_last_entity_dto(&mut duplicate_key, 15, |entity| entity.key = hot_key);
+    assert_rejection_parity("duplicate key in physically final record", &duplicate_key);
+
+    let mut missing_reference = canonical.clone();
+    mutate_last_entity_dto(&mut missing_reference, 15, |entity| {
+        entity.fields.insert(
+            "link".to_owned(),
+            ValueV1::Reference("issue-175-missing-target".to_owned()),
+        );
+    });
+    assert_rejection_parity(
+        "missing reference in physically final record",
+        &missing_reference,
+    );
+
+    let mut wrong_schema_reference = canonical.clone();
+    mutate_last_entity_dto(&mut wrong_schema_reference, 15, |entity| {
+        entity
+            .fields
+            .insert("link".to_owned(), ValueV1::Reference(cold_id));
+    });
+    assert_rejection_parity(
+        "wrong-schema reference in physically final record",
+        &wrong_schema_reference,
+    );
+
+    let mut order_violation = canonical.clone();
+    swap_final_records(&mut order_violation[17].1);
+    assert_rejection_parity("final-record unsigned UTF-8 ordering", &order_violation);
+
+    let mut wrong_shard = canonical.clone();
+    let final_record = take_last_record(&mut wrong_shard[17].1);
+    wrong_shard[16].1 = final_record;
+    wrong_shard[16].1.push(b'\n');
+    assert_rejection_parity("final-record wrong shard", &wrong_shard);
+
+    let mut duplicate_member = canonical.clone();
+    mutate_last_entity_record(&mut duplicate_member, 15, |record| {
+        record.replacen("{\"id\":", "{\"id\":\"duplicate\",\"id\":", 1)
+    });
+    assert_rejection_parity("final-record duplicate JSON member", &duplicate_member);
+
+    let mut unknown_member = canonical.clone();
+    mutate_last_entity_record(&mut unknown_member, 15, |record| {
+        format!("{},\"unknown\":true}}", record.strip_suffix('}').unwrap())
+    });
+    assert_rejection_parity("final-record unknown member", &unknown_member);
+
+    let mut malformed_formula = canonical;
+    mutate_last_entity_record(&mut malformed_formula, 15, |record| {
+        record.replacen("\"op\":\"reference\"", "\"op\":\"unknown\"", 1)
+    });
+    assert_rejection_parity("final-record malformed formula", &malformed_formula);
+}
+
+#[test]
+fn issue_175_workload_matrix_varies_structure_and_payload_independently() {
+    for shape in WorkloadShape::ALL {
+        let document = shape.document(128);
+        let tree = encode(&document).unwrap();
+        let files = owned_files(&tree);
+        let a0 = current_a0(&files).unwrap();
+        let (a1, _) = admit_one_pass_exact(&files, true).unwrap();
+        assert_eq!(a0, document, "A0 drift for {}", shape.name());
+        assert_eq!(a1, document, "A1 drift for {}", shape.name());
+
+        let temp = ResearchTempDirectory::new();
+        let root = temp.path().join("matrix.roproj");
+        super::super::host::materialize_roproj(&root, &document).unwrap();
+        let directory = scan_spine_host(&root, false).unwrap();
+        let structural = scan_spine_host(&root, true).unwrap();
+        assert_eq!(directory.directory.entities.len(), 128);
+        assert_eq!(directory.directory, structural.directory);
+    }
+
+    let edge = WorkloadShape::FormulaEdgeHeavy.document(128);
+    let ast = WorkloadShape::FormulaAstHeavy.document(128);
+    let edge_work = admit_one_pass_exact(&owned_files(&encode(&edge).unwrap()), true)
+        .unwrap()
+        .1;
+    let ast_work = admit_one_pass_exact(&owned_files(&encode(&ast).unwrap()), true)
+        .unwrap()
+        .1;
+    assert!(edge_work.formula_dependency_edges > ast_work.formula_dependency_edges);
+    assert!(ast_work.formula_ast_nodes > edge_work.formula_ast_nodes);
+}
+
 fn assert_rejection_parity(label: &str, files: &[(String, Vec<u8>)]) {
     let a0 = current_a0(files).unwrap_err();
     let a1 = admit_one_pass_exact(files, false).unwrap_err();
@@ -1506,6 +2257,19 @@ fn assert_rejection_parity(label: &str, files: &[(String, Vec<u8>)]) {
         std::mem::discriminant(&a1),
         "A0/A1 rejection class drift for {label}: A0={a0}; A1={a1}"
     );
+    if a0.to_string() != a1.to_string() {
+        assert!(
+            matches!(
+                (&a0, &a1),
+                (
+                    FormatError::InvalidRoProjectRepresentation { message: a0_message },
+                    FormatError::InvalidRoProjectRepresentation { message: a1_message },
+                ) if a0_message == "tree bytes are not canonical .roproj/v1"
+                    && a1_message.contains("not canonical .roproj/v1")
+            ),
+            "unexpected A0/A1 rejection detail drift for {label}: A0={a0}; A1={a1}"
+        );
+    }
 }
 
 fn mutate_first_entity_record(
@@ -1536,6 +2300,65 @@ fn mutate_first_entity_dto(files: &mut [(String, Vec<u8>)], mutation: impl FnOnc
     });
 }
 
+fn last_record(bytes: &[u8]) -> &str {
+    std::str::from_utf8(bytes)
+        .unwrap()
+        .strip_suffix('\n')
+        .unwrap()
+        .split('\n')
+        .next_back()
+        .unwrap()
+}
+
+fn take_last_record(bytes: &mut Vec<u8>) -> Vec<u8> {
+    let final_start = bytes[..bytes.len() - 1]
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map_or(0, |index| index + 1);
+    let record = bytes[final_start..bytes.len() - 1].to_vec();
+    bytes.truncate(final_start);
+    record
+}
+
+fn mutate_last_entity_record(
+    files: &mut [(String, Vec<u8>)],
+    shard: usize,
+    mutation: impl FnOnce(&str) -> String,
+) {
+    let bytes = &mut files[shard + 2].1;
+    let record = take_last_record(bytes);
+    let mutated = mutation(std::str::from_utf8(&record).unwrap());
+    bytes.extend_from_slice(mutated.as_bytes());
+    bytes.push(b'\n');
+}
+
+fn mutate_last_entity_dto(
+    files: &mut [(String, Vec<u8>)],
+    shard: usize,
+    mutation: impl FnOnce(&mut EntityV1),
+) {
+    mutate_last_entity_record(files, shard, |record| {
+        let mut entity: EntityV1 = deserialize_roproj("research mutation", record).unwrap();
+        mutation(&mut entity);
+        let mut rendered = String::new();
+        write_entity(&mut rendered, &entity).unwrap();
+        rendered
+    });
+}
+
+fn swap_final_records(bytes: &mut Vec<u8>) {
+    let source = std::str::from_utf8(bytes).unwrap();
+    let mut records = source
+        .strip_suffix('\n')
+        .unwrap()
+        .split('\n')
+        .collect::<Vec<_>>();
+    let final_index = records.len() - 1;
+    records.swap(final_index - 1, final_index);
+    *bytes = records.join("\n").into_bytes();
+    bytes.push(b'\n');
+}
+
 fn balanced_formula(depth: usize) -> ExpressionV1 {
     if depth == 0 {
         ExpressionV1::Number(NumberV1(1.0))
@@ -1562,6 +2385,27 @@ fn issue_175_streaming_host_a1_matches_current_host_a0() {
     assert_eq!(work.entity_records, 257);
     assert!(timings.source_known <= timings.semantic_current);
     assert!(timings.first_source_preview.unwrap() <= timings.semantic_current);
+}
+
+#[test]
+fn issue_175_progressive_source_preview_is_non_authoritative_and_cancellable() {
+    let temp = ResearchTempDirectory::new();
+    let root = temp.path().join("progressive.roproj");
+    let expected = mixed_document(257, 37);
+    super::super::host::materialize_roproj(&root, &expected).unwrap();
+    let preview = source_preview(&root).unwrap();
+    assert!(expected.entities.contains_key(preview.0.as_str()));
+
+    let cancel = AtomicBool::new(true);
+    let records = AtomicUsize::new(0);
+    let error =
+        admit_one_pass_host_controlled(&root, false, Some(&cancel), Some(&records)).unwrap_err();
+    assert!(matches!(
+        error,
+        FormatError::InvalidRoProjectRepresentation { message }
+            if message.contains("cancelled before SemanticCurrent")
+    ));
+    assert_eq!(records.load(Ordering::Relaxed), 0);
 }
 
 #[test]
@@ -1631,6 +2475,35 @@ fn issue_175_dirty_sidecar_reuse_is_bound_and_fails_closed() {
         open_sidecar_or_fallback(&other_root, &sidecar, &other_binding).unwrap(),
         SidecarOpen::FellBackToExactAdmission(document) if document == other
     ));
+}
+
+#[test]
+fn issue_175_git_sidecar_binds_exact_immutable_snapshot_objects() {
+    let temp = ResearchTempDirectory::new();
+    let repo = temp.path().join("repo");
+    let expected = mixed_document(257, 37);
+    let project = initialize_git_snapshot(&repo, &expected);
+    let scan = scan_spine_host(&project, true).unwrap();
+    let index = scan.structural.unwrap();
+    let (binding, _) = git_snapshot_binding(&repo);
+    let SourceBinding::GitSnapshot { blobs, .. } = &binding else {
+        unreachable!();
+    };
+    assert_eq!(
+        blobs
+            .iter()
+            .map(|blob| blob.path.as_str())
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(ROPROJ_V1_PATHS)
+    );
+    assert!(blobs.iter().all(|blob| blob.mode == "100644"));
+    let sidecar = encode_sidecar(&index, binding.clone()).unwrap();
+    assert_eq!(decode_sidecar(&sidecar, &binding).unwrap(), index);
+
+    let dirty_binding = SourceBinding::DirtyFilesystem {
+        source_sha256: index.directory.source_fingerprint.clone(),
+    };
+    assert!(decode_sidecar(&sidecar, &dirty_binding).is_err());
 }
 
 #[test]
@@ -1787,6 +2660,251 @@ fn issue_175_a0_a1_host_open_warm_raw_samples() {
 }
 
 #[test]
+#[ignore = "run explicitly in release mode to record Issue #175 workload matrix"]
+fn issue_175_full_workload_matrix_raw_samples() {
+    require_release_profile();
+    let entity_counts = std::env::var("TACHIKO_ISSUE_175_MATRIX_ENTITIES")
+        .unwrap_or_else(|_| "1000,4000,16000".to_owned());
+    let repetitions = std::env::var("TACHIKO_ISSUE_175_REPETITIONS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(20);
+    println!(
+        "arm,workload,cache_state,entities,fields,source_bytes,strict_json_bytes,entity_records,formula_ast_nodes,reference_edges,formula_dependency_edges,serialized_spine_bytes,repetition,source_known_us,first_preview_us,semantic_or_scan_current_us"
+    );
+    for entity_count in entity_counts
+        .split(',')
+        .map(|value| value.parse::<usize>().unwrap())
+    {
+        for shape in WorkloadShape::ALL {
+            let temp = ResearchTempDirectory::new();
+            let root = temp.path().join("matrix.roproj");
+            let document = shape.document(entity_count);
+            let field_count = document
+                .entities
+                .values()
+                .map(|entity| entity.fields.len())
+                .sum::<usize>();
+            super::super::host::materialize_roproj(&root, &document).unwrap();
+            let work = scan_spine_host(&root, true).unwrap().work;
+            for repetition in 0..repetitions {
+                // Deterministically rotate arm order to distribute filesystem
+                // and allocator order effects across paired warm samples.
+                for slot in 0..4 {
+                    run_matrix_arm(
+                        (slot + repetition) % 4,
+                        &root,
+                        shape,
+                        entity_count,
+                        field_count,
+                        repetition,
+                        work,
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn run_matrix_arm(
+    arm: usize,
+    root: &Path,
+    shape: WorkloadShape,
+    entity_count: usize,
+    field_count: usize,
+    repetition: usize,
+    work: AdmissionWork,
+) {
+    match arm {
+        0 => {
+            let started = Instant::now();
+            black_box(super::super::host::load_roproj(root).unwrap());
+            emit_matrix_sample(
+                "A0",
+                shape,
+                entity_count,
+                field_count,
+                repetition,
+                work,
+                0,
+                None,
+                None,
+                started.elapsed(),
+            );
+        }
+        1 => {
+            let (_, _, timings) = admit_one_pass_host(root, false).unwrap();
+            emit_matrix_sample(
+                "A1",
+                shape,
+                entity_count,
+                field_count,
+                repetition,
+                work,
+                0,
+                Some(timings.source_known),
+                timings.first_source_preview,
+                timings.semantic_current,
+            );
+        }
+        2 | 3 => {
+            let retain_structural = arm == 3;
+            let scan = scan_spine_host(root, retain_structural).unwrap();
+            emit_matrix_sample(
+                if retain_structural {
+                    "C-structural"
+                } else {
+                    "C-directory"
+                },
+                shape,
+                entity_count,
+                field_count,
+                repetition,
+                scan.work,
+                scan.serialized_bytes,
+                None,
+                None,
+                scan.scan_time,
+            );
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_matrix_sample(
+    arm: &str,
+    shape: WorkloadShape,
+    entity_count: usize,
+    field_count: usize,
+    repetition: usize,
+    work: AdmissionWork,
+    serialized_spine_bytes: usize,
+    source_known: Option<Duration>,
+    first_preview: Option<Duration>,
+    current: Duration,
+) {
+    let strict_json_bytes = if arm == "A0" {
+        work.strict_json_bytes * 2
+    } else {
+        work.strict_json_bytes
+    };
+    println!(
+        "{arm},{},os_cache_warm,{entity_count},{field_count},{},{strict_json_bytes},{},{},{},{},{serialized_spine_bytes},{repetition},{},{},{}",
+        shape.name(),
+        work.source_bytes,
+        work.entity_records,
+        work.formula_ast_nodes,
+        work.reference_edges,
+        work.formula_dependency_edges,
+        source_known.map_or_else(String::new, |value| value.as_micros().to_string()),
+        first_preview.map_or_else(String::new, |value| value.as_micros().to_string()),
+        current.as_micros(),
+    );
+}
+
+#[test]
+#[ignore = "run explicitly in release mode to record Issue #175 B evidence"]
+fn issue_175_progressive_background_interference_and_cancellation() {
+    require_release_profile();
+    let entity_count = std::env::var("TACHIKO_ISSUE_175_BACKGROUND_ENTITIES")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(16_000);
+    let foreground_count = std::env::var("TACHIKO_ISSUE_175_FOREGROUND_REQUESTS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(200);
+    let repetitions = std::env::var("TACHIKO_ISSUE_175_REPETITIONS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(20);
+    let temp = ResearchTempDirectory::new();
+    let root = temp.path().join("progressive.roproj");
+    super::super::host::materialize_roproj(&root, &mixed_document(entity_count, 64)).unwrap();
+    black_box(source_preview(&root).unwrap());
+    println!(
+        "arm,workload,cache_state,entities,repetition,foreground_requests,baseline_p50_us,baseline_p95_us,baseline_p99_us,baseline_min_us,baseline_max_us,background_p50_us,background_p95_us,background_p99_us,background_min_us,background_max_us,foreground_p95_ratio_ppm,baseline_elapsed_us,background_foreground_elapsed_us,background_semantic_current_us,cancelled_after_records,cancellation_latency_us"
+    );
+    for repetition in 0..repetitions {
+        let baseline_started = Instant::now();
+        let baseline = foreground_preview_samples(&root, foreground_count);
+        let baseline_elapsed = baseline_started.elapsed();
+
+        let worker_root = root.clone();
+        let background_started = Instant::now();
+        let worker = std::thread::spawn(move || admit_one_pass_host(&worker_root, false));
+        let interfered_started = Instant::now();
+        let interfered = foreground_preview_samples(&root, foreground_count);
+        let interfered_elapsed = interfered_started.elapsed();
+        let background = worker.join().unwrap().unwrap();
+        let background_time = background_started.elapsed();
+        let baseline_distribution = latency_distribution(&baseline);
+        let interfered_distribution = latency_distribution(&interfered);
+        let regression_ppm = interfered_distribution
+            .1
+            .as_nanos()
+            .saturating_mul(1_000_000)
+            .checked_div(baseline_distribution.1.as_nanos())
+            .unwrap_or(0);
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let records = Arc::new(AtomicUsize::new(0));
+        let worker_root = root.clone();
+        let worker_cancel = Arc::clone(&cancel);
+        let worker_records = Arc::clone(&records);
+        let cancellation_worker = std::thread::spawn(move || {
+            admit_one_pass_host_controlled(
+                &worker_root,
+                false,
+                Some(&worker_cancel),
+                Some(&worker_records),
+            )
+        });
+        while records.load(Ordering::Relaxed) < 64 {
+            std::thread::yield_now();
+        }
+        let cancellation_started = Instant::now();
+        cancel.store(true, Ordering::Relaxed);
+        let cancellation = cancellation_worker.join().unwrap();
+        let cancellation_time = cancellation_started.elapsed();
+        assert!(cancellation.is_err());
+        println!(
+            "B-progressive,mixed_smoke,os_cache_warm,{entity_count},{repetition},{foreground_count},{},{},{},{},{},{},{},{},{},{},{regression_ppm},{},{},{},{},{}",
+            baseline_distribution.0.as_micros(),
+            baseline_distribution.1.as_micros(),
+            baseline_distribution.2.as_micros(),
+            baseline_distribution.3.as_micros(),
+            baseline_distribution.4.as_micros(),
+            interfered_distribution.0.as_micros(),
+            interfered_distribution.1.as_micros(),
+            interfered_distribution.2.as_micros(),
+            interfered_distribution.3.as_micros(),
+            interfered_distribution.4.as_micros(),
+            baseline_elapsed.as_micros(),
+            interfered_elapsed.as_micros(),
+            background
+                .2
+                .semantic_current
+                .as_micros()
+                .max(background_time.as_micros()),
+            records.load(Ordering::Relaxed),
+            cancellation_time.as_micros(),
+        );
+    }
+}
+
+fn latency_distribution(
+    samples: &[Duration],
+) -> (Duration, Duration, Duration, Duration, Duration) {
+    let mut sorted = samples.to_vec();
+    let p50 = percentile(&mut sorted, 50);
+    let p95 = percentile(&mut sorted, 95);
+    let p99 = percentile(&mut sorted, 99);
+    (p50, p95, p99, sorted[0], sorted[sorted.len() - 1])
+}
+
+#[test]
 #[ignore = "run explicitly in release mode to record Issue #175 C evidence"]
 fn issue_175_directory_structural_raw_samples() {
     require_release_profile();
@@ -1880,6 +2998,49 @@ fn issue_175_dirty_sidecar_raw_samples() {
 }
 
 #[test]
+#[ignore = "run explicitly in release mode to record Issue #175 E2 evidence"]
+fn issue_175_git_sidecar_raw_samples() {
+    require_release_profile();
+    let entity_count = std::env::var("TACHIKO_ISSUE_175_GIT_ENTITIES")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(10_000);
+    let repetitions = std::env::var("TACHIKO_ISSUE_175_REPETITIONS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(30);
+    let temp = ResearchTempDirectory::new();
+    let repo = temp.path().join("repo");
+    let document = mixed_document(entity_count, 64);
+    let project = initialize_git_snapshot(&repo, &document);
+    let scan = scan_spine_host(&project, true).unwrap();
+    let index = scan.structural.unwrap();
+    let (binding, _) = git_snapshot_binding(&repo);
+    let sidecar = encode_sidecar(&index, binding.clone()).unwrap();
+    println!(
+        "arm,workload,cache_state,entities,source_bytes,sidecar_bytes,repetition,git_identity_us,sidecar_decode_us,total_validated_reuse_us,full_a1_us"
+    );
+    for repetition in 0..repetitions {
+        let (_, identity_time) = git_snapshot_binding(black_box(&repo));
+        let decode_started = Instant::now();
+        black_box(decode_sidecar(black_box(&sidecar), &binding).unwrap());
+        let decode_time = decode_started.elapsed();
+        let full_started = Instant::now();
+        black_box(admit_one_pass_host(black_box(&project), false).unwrap());
+        let full_time = full_started.elapsed();
+        println!(
+            "E2-git-sidecar,mixed_smoke,os_cache_warm,{entity_count},{},{},{repetition},{},{},{},{}",
+            scan.work.source_bytes,
+            sidecar.len(),
+            identity_time.as_micros(),
+            decode_time.as_micros(),
+            (identity_time + decode_time).as_micros(),
+            full_time.as_micros(),
+        );
+    }
+}
+
+#[test]
 #[ignore = "run explicitly in release mode to record Issue #175 D evidence"]
 fn issue_175_bounded_materialization_raw_samples() {
     require_release_profile();
@@ -1921,6 +3082,105 @@ fn issue_175_bounded_materialization_raw_samples() {
                 bounded.full_fingerprint_bytes,
                 duration.as_micros(),
             );
+        }
+    }
+}
+
+#[test]
+#[ignore = "internal fresh-process child for Issue #175 RSS evidence"]
+fn issue_175_rss_child() {
+    require_release_profile();
+    let root = PathBuf::from(std::env::var("TACHIKO_ISSUE_175_RSS_ROOT").unwrap());
+    let arm = std::env::var("TACHIKO_ISSUE_175_RSS_ARM").unwrap();
+    match arm.as_str() {
+        "baseline" => emit_steady_rss(),
+        "A0" => {
+            let document = super::super::host::load_roproj(&root).unwrap();
+            emit_steady_rss();
+            black_box(&document);
+        }
+        "A1" => {
+            let document = admit_one_pass_host(&root, false).unwrap();
+            emit_steady_rss();
+            black_box(&document);
+        }
+        "directory" => {
+            let directory = scan_spine_host(&root, false).unwrap();
+            emit_steady_rss();
+            black_box(&directory);
+        }
+        "structural" => {
+            let structural = scan_spine_host(&root, true).unwrap();
+            emit_steady_rss();
+            black_box(&structural);
+        }
+        "structural_hot_payload" => {
+            let structural = scan_spine_host(&root, true).unwrap();
+            let index = structural.structural.as_ref().unwrap();
+            let first = index.directory.entities.first().unwrap().id.clone();
+            let hot =
+                materialize_entities_pinned_dirty(&root, index, &BTreeSet::from([first])).unwrap();
+            emit_steady_rss();
+            black_box((&structural, &hot));
+        }
+        "structural_plus_document" => {
+            let structural = scan_spine_host(&root, true).unwrap();
+            let document = admit_one_pass_host(&root, false).unwrap();
+            emit_steady_rss();
+            black_box((&structural, &document));
+        }
+        _ => panic!("unknown Issue #175 RSS arm '{arm}'"),
+    }
+}
+
+#[test]
+#[ignore = "run explicitly on macOS in release mode to record Issue #175 F RSS evidence"]
+fn issue_175_fresh_process_rss_samples() {
+    require_release_profile();
+    assert_eq!(std::env::consts::OS, "macos", "RSS units are macOS bytes");
+    let entity_count = std::env::var("TACHIKO_ISSUE_175_RSS_ENTITIES")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(10_000);
+    let repetitions = std::env::var("TACHIKO_ISSUE_175_RSS_REPETITIONS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(5);
+    let temp = ResearchTempDirectory::new();
+    let root = temp.path().join("rss.roproj");
+    super::super::host::materialize_roproj(&root, &mixed_document(entity_count, 64)).unwrap();
+    let executable = std::env::current_exe().unwrap();
+    println!("arm,workload,cache_state,entities,repetition,steady_rss_bytes,peak_rss_bytes");
+    for repetition in 0..repetitions {
+        for arm in [
+            "baseline",
+            "A0",
+            "A1",
+            "directory",
+            "structural",
+            "structural_hot_payload",
+            "structural_plus_document",
+        ] {
+            let output = Command::new("/usr/bin/time")
+                .arg("-l")
+                .arg(&executable)
+                .args([
+                    "--exact",
+                    "roproj::v1::issue_175_research::issue_175_rss_child",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env("TACHIKO_ISSUE_175_RSS_ROOT", &root)
+                .env("TACHIKO_ISSUE_175_RSS_ARM", arm)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "RSS child failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let (steady, peak) = parse_child_rss(&output.stdout, &output.stderr);
+            println!("{arm},mixed_smoke,os_cache_warm,{entity_count},{repetition},{steady},{peak}");
         }
     }
 }
