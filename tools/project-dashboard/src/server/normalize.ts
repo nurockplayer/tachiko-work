@@ -107,7 +107,11 @@ function reviewBodyClauses(body: string): string[] {
     let current = coordinated.shift()?.trim() ?? "";
     for (const candidate of coordinated) {
       const next = candidate.trim();
-      if (coordinatedReviewPredicate.test(current) && coordinatedReviewClauseStart.test(next)) {
+      const negatedImpact = negatedUnlabeledSubstantiveImpact.test(current) || negatedDestructiveDataImpact.test(current);
+      const affirmativeImpact = isSubstantiveReviewClause(next) || affirmativeUnlabeledSubstantiveImpact.test(next) ||
+        affirmativeDestructiveDataImpact.test(next) || affirmativeBuildOrTestFailure.test(next);
+      if ((coordinatedReviewPredicate.test(current) && coordinatedReviewClauseStart.test(next)) ||
+        (negatedImpact && affirmativeImpact)) {
         clauses.push(current);
         current = next;
       } else {

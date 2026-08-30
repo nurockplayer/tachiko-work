@@ -1174,6 +1174,7 @@ describe("normalizeRepositorySnapshot", () => {
     "Deletion of user data occurs here.",
     "No user data is deleted, and data is erased.",
     "No user data is deleted and data is erased.",
+    "No crashes occur and this causes data loss.",
   ])("blocks an unlabeled comment-only runtime failure on the current head: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1238,6 +1239,7 @@ describe("normalizeRepositorySnapshot", () => {
     "User data is not erased.",
     "No user data is deleted, and data is not erased.",
     "No user data is deleted and data is not erased.",
+    "No crashes occur and this causes no data loss.",
   ])("does not infer a substantive finding from a clean comment-only review summary: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1629,6 +1631,7 @@ describe("normalizeRepositorySnapshot", () => {
     "User data is deleted.",
     "No user data is deleted, and data is erased.",
     "No user data is deleted and data is erased.",
+    "No crashes occur and this causes data loss.",
   ])("fails closed on an unlabeled correctness finding: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
@@ -1683,6 +1686,7 @@ describe("normalizeRepositorySnapshot", () => {
     "User data is not erased.",
     "No user data is deleted, and data is not erased.",
     "No user data is deleted and data is not erased.",
+    "No crashes occur and this causes no data loss.",
   ])("does not promote a negated unlabeled impact statement: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
