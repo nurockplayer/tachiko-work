@@ -237,6 +237,19 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.blockers).toContain("Checks were not observed for the current PR head.");
   });
 
+  it("surfaces a missing PR handoff as delivery-agent reconciliation work", () => {
+    const pr = pullRequest();
+    pr.comments = [];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.handoff.condition).toBe("missing");
+    expect(lane?.phase).toBe("validating");
+    expect(lane?.blockers).toContain("Canonical handoff is missing for pull request #200.");
+    expect(lane?.action.owner).toBe("codex");
+  });
+
   it("projects a current substantive review finding as review-fix without founder escalation", () => {
     const pr = pullRequest();
     pr.reviewDecision = "changes_requested";
@@ -296,7 +309,7 @@ describe("normalizeRepositorySnapshot", () => {
 
     expect(lane?.reviews.status).toBe("stale");
     expect(lane?.phase).toBe("rereview");
-    expect(lane?.action.owner).toBe("none");
+    expect(lane?.action.owner).toBe("codex");
   });
 
   it("never treats green exact-head checks with hosted review pending as merge-ready", () => {

@@ -510,6 +510,9 @@ function projectLane(
     blockers.push(`${reviews.substantiveUnresolvedCount ?? 0} substantive review finding(s) remain unresolved.`);
   }
   if (reviews.status === "stale") blockers.push("The latest substantive review does not describe the current PR head.");
+  if (pr !== null && handoff.condition === "missing") {
+    blockers.push(`Canonical handoff is missing for pull request #${pr.number}.`);
+  }
   if (handoff.condition === "inconsistent") blockers.push("Canonical handoff conflicts with live PR identity or is duplicated.");
   if (handoff.condition === "stale") blockers.push("Canonical handoff has not reconciled the observed live main.");
   if (pr !== null && snapshot.defaultBranchName === null) {
@@ -569,10 +572,11 @@ function projectLane(
       );
   const action: DeliveryLane["action"] = requiresHuman || phase === "human_required"
     ? { owner: "human", reason: "The canonical coordination state requests human or Steward action." }
-    : phase === "review_fix" || checks.status === "failure" || ownershipConflict ||
+    : phase === "review_fix" || phase === "rereview" || checks.status === "failure" || ownershipConflict ||
         pr?.mergeable === "conflicting" || pr?.mergeStateStatus === "dirty" ||
         drift === "suspected" || handoff.condition === "inconsistent" || handoff.condition === "stale" ||
-        !issueScopeReconciled || !targetsDefaultBranch || !ownershipObservationComplete
+        (pr !== null && handoff.condition === "missing") || !issueScopeReconciled ||
+        !targetsDefaultBranch || !ownershipObservationComplete
       ? { owner: deliveryActionOwner(owner), reason: blockers[0] ?? "Delivery-agent action is required." }
       : { owner: "none", reason: "No human action is currently evidenced." };
   const issueRef = source(
