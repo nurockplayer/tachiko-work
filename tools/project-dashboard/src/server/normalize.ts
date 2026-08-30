@@ -230,7 +230,11 @@ function statusClaimIsNegated(statusText: string, match: RegExpExecArray): boole
     /^\s*(?:(?:is\s+)?not\b|[:=-]\s*(?:false|no)\b)/i.test(after);
 }
 
-function statusClaimIsConditional(statusText: string, match: RegExpExecArray): boolean {
+function statusClaimIsConditional(
+  statusText: string,
+  match: RegExpExecArray,
+  pendingIsConditional: boolean,
+): boolean {
   const before = statusText.slice(0, match.index);
   const after = statusText.slice(match.index + match[0].length);
   const prefixClause = before
@@ -241,20 +245,27 @@ function statusClaimIsConditional(statusText: string, match: RegExpExecArray): b
   const unresolvedPrefix = prefixSegments.some((segment) => {
     if (/^(?:subject\s+to\b|(?:only\s+)?(?:once|when|if|after)\b)/i.test(segment)) return true;
     if (/^pending\b/i.test(segment)) {
-      return !/\b(?:is|are|was|were|has|have)\s+(?:now\s+)?(?:been\s+)?(?:complete|completed|resolved|satisfied|approved|cleared|closed)\b/i.test(segment);
+      return pendingIsConditional &&
+        !/\b(?:is|are|was|were|has|have)\s+(?:now\s+)?(?:been\s+)?(?:complete|completed|resolved|satisfied|approved|cleared|closed)\b/i.test(segment);
     }
-    return !/^(?:no|none|nothing)\b/i.test(segment) &&
+    return pendingIsConditional && !/^(?:no|none|nothing)\b/i.test(segment) &&
       /\b(?:is|are|remain|remains)\s+pending\b/i.test(segment);
   });
   return /\b(?:(?:future|become|mark|set|move|declare|consider)(?:\s+(?:as|to))?|(?:will|would|should|can|could|may|might)(?:\s+be|\s+become)?)\s*$/i.test(before) ||
     unresolvedPrefix ||
-    /^\s*(?:(?:[:=-])\s*)?(?:only\s+)?(?:(?:once|when|if|after|pending)\b|subject\s+to\b)/i.test(after);
+    /^\s*(?:(?:[:=-])\s*)?(?:only\s+)?(?:(?:once|when|if|after)\b|subject\s+to\b)/i.test(after) ||
+    (pendingIsConditional && /^\s*(?:(?:[:=-])\s*)?(?:only\s+)?pending\b/i.test(after));
 }
 
-function statusHasAffirmativeClaim(statusText: string, claim: RegExp): boolean {
+function statusHasAffirmativeClaim(
+  statusText: string,
+  claim: RegExp,
+  pendingIsConditional = false,
+): boolean {
   const matcher = new RegExp(claim.source, `${claim.flags.replaceAll("g", "")}g`);
   return [...statusText.matchAll(matcher)].some(
-    (match) => !statusClaimIsNegated(statusText, match) && !statusClaimIsConditional(statusText, match),
+    (match) => !statusClaimIsNegated(statusText, match) &&
+      !statusClaimIsConditional(statusText, match, pendingIsConditional),
   );
 }
 
@@ -264,7 +275,7 @@ function statusHasNegatedClaim(statusText: string, claim: RegExp): boolean {
 }
 
 function statusClaimsDecisionReady(statusText: string): boolean {
-  return statusHasAffirmativeClaim(statusText, /\bdecision[_ -]?ready\b/i);
+  return statusHasAffirmativeClaim(statusText, /\bdecision[_ -]?ready\b/i, true);
 }
 
 function statusClaimsBlocked(statusText: string): boolean {
@@ -288,7 +299,7 @@ function statusClaimsHumanRequired(statusText: string): boolean {
 
 function statusClaimsReady(statusText: string): boolean {
   return !/\bdecision[_ -]?ready\b/.test(statusText) && !statusClaimsNotReady(statusText) &&
-    statusHasAffirmativeClaim(statusText, /\bready\b/i) &&
+    statusHasAffirmativeClaim(statusText, /\bready\b/i, true) &&
     !/not ready for (?:production )?implementation/.test(statusText);
 }
 

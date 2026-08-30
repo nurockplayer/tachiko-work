@@ -221,7 +221,7 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries).toEqual([]);
   });
 
-  it.each(["Human required", "human_required"])(
+  it.each(["Human required", "human_required", "Human required pending a decision"])(
     "routes authoritative %s status to human action without a handoff",
     (status) => {
       const escalated = issue();
@@ -368,18 +368,21 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.blockers).toContain("The authoritative Issue status reports this lane blocked.");
   });
 
-  it("routes an authoritative blocked Issue without a PR to the Steward", () => {
-    const blocked = issue();
-    blocked.body = "## Status\n\n**BLOCKED**\n\nOwner: `agent:codex`";
+  it.each(["BLOCKED", "Blocked pending an upstream fix"])(
+    "routes an authoritative %s Issue without a PR to the Steward",
+    (status) => {
+      const blocked = issue();
+      blocked.body = `## Status\n\n**${status}**\n\nOwner: \`agent:codex\``;
 
-    const projection = normalizeRepositorySnapshot(snapshot({ issues: [blocked] }));
-    const lane = projection.deliveries[0];
+      const projection = normalizeRepositorySnapshot(snapshot({ issues: [blocked] }));
+      const lane = projection.deliveries[0];
 
-    expect(lane?.phase).toBe("blocked");
-    expect(lane?.blockers).toContain("The authoritative Issue status reports this lane blocked.");
-    expect(lane?.action.owner).toBe("human");
-    expect(projection.attention.humanActionRequired).toBe(true);
-  });
+      expect(lane?.phase).toBe("blocked");
+      expect(lane?.blockers).toContain("The authoritative Issue status reports this lane blocked.");
+      expect(lane?.action.owner).toBe("human");
+      expect(projection.attention.humanActionRequired).toBe(true);
+    },
+  );
 
   it("does not treat Decision-Ready authority work as production implementation readiness", () => {
     const decision = issue(190);
