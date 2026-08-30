@@ -1797,6 +1797,20 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries[0]?.phase).toBe("review_fix");
   });
 
+  it("does not clear an earlier review finding with an unrelated negative comment", () => {
+    const pr = pullRequest();
+    pr.reviews = [
+      { state: "commented", author: "reviewer", body: "[P2] Fix data loss", headSha, url: "https://github.com/review/finding", submittedAt: "2026-08-29T23:00:00.000Z" },
+      { state: "commented", author: "reviewer", body: "No formatting issues.", headSha, url: "https://github.com/review/formatting", submittedAt: observedAt },
+      { state: "approved", author: "other-reviewer", body: "", headSha, url: "https://github.com/review/approval", submittedAt: observedAt },
+    ];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+
+    expect(projection.deliveries[0]?.reviews.substantiveUnresolvedCount).toBe(1);
+    expect(projection.deliveries[0]?.phase).toBe("review_fix");
+  });
+
   it("clears an earlier review finding with an explicit later resolution by the same reviewer", () => {
     const pr = pullRequest();
     pr.reviews = [
