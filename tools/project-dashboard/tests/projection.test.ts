@@ -281,6 +281,9 @@ describe("normalizeRepositorySnapshot", () => {
   it.each([
     "Blocked; now no longer Blocked.",
     "Parked; now no longer Parked.",
+    "Blocked; now Unblocked.",
+    "Parked; now Unparked.",
+    "Active; now Inactive.",
   ])("fails closed after a current delivery state is explicitly cleared: %s", (status) => {
     const cleared = issue();
     cleared.body = `## Status\n\n${status}\n\nOwner: \`agent:codex\``;
@@ -296,6 +299,9 @@ describe("normalizeRepositorySnapshot", () => {
   it.each([
     { status: "No longer Blocked; now Blocked.", readiness: "blocked" },
     { status: "No longer Parked; now Parked.", readiness: "parked" },
+    { status: "Unblocked; now Blocked.", readiness: "blocked" },
+    { status: "Unparked; now Parked.", readiness: "parked" },
+    { status: "Inactive; now Active.", readiness: "active" },
   ])("honors a reasserted current $readiness state", ({ status, readiness }) => {
     const changed = issue();
     changed.body = `## Status\n\n${status}\n\nOwner: \`agent:codex\``;
@@ -1147,6 +1153,27 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.blockers).toContain("1 substantive review finding(s) remain unresolved.");
   });
 
+  it.each([
+    "There is no null check, so this crashes on empty input.",
+    "This throws for an empty input.",
+  ])("blocks an unlabeled comment-only runtime failure on the current head: %s", (body) => {
+    const pr = pullRequest();
+    pr.reviews = [...(pr.reviews ?? []), {
+      state: "commented",
+      author: "codex",
+      body,
+      headSha,
+      url: "https://github.com/review/comment-only-runtime-failure",
+      submittedAt: observedAt,
+    }];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.reviews.substantiveUnresolvedCount).toBe(1);
+    expect(lane?.phase).toBe("review_fix");
+  });
+
   it("does not block on a substantive comment-only review body from an old head", () => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1185,6 +1212,7 @@ describe("normalizeRepositorySnapshot", () => {
     "P0: absent.",
     "Tests don't fail on Windows.",
     "Tests are not failing on Windows.",
+    "This does not throw for an empty input.",
   ])("does not infer a substantive finding from a clean comment-only review summary: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1570,6 +1598,8 @@ describe("normalizeRepositorySnapshot", () => {
     "Could you refactor this to prevent data loss?",
     "Please update docs because this is incorrect.",
     "This fails to compile on Windows.",
+    "There is no null check, so this crashes on empty input.",
+    "This throws for an empty input.",
   ])("fails closed on an unlabeled correctness finding: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [

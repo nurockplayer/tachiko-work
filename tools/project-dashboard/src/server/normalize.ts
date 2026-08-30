@@ -25,12 +25,12 @@ const postposedClearedReviewFinding = /\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|block
 const equivalentReviewFindingLabel = /(?:^|\s)(?:blocking|security|correctness|data[- ]integrity)\s*[:,]/i;
 const equivalentReviewFindingContext = /\b(?:blocking|security|correctness|data[- ]integrity)\b[^.!?;\n]{0,80}\b(?:finding|issue|bug|risk|failure|regression|vulnerab\w*|flaw|problem|concern|break\w*|corrupt\w*|overwrit\w*|data[- ]loss)\b|\b(?:finding|issue|bug|risk|failure|regression|vulnerab\w*|flaw|problem|concern|break\w*|corrupt\w*|overwrit\w*|data[- ]loss)\b[^.!?;\n]{0,80}\b(?:blocking|security|correctness|data[- ]integrity)\b/i;
 const explicitReviewClearingSignal = /(?:\[|\b)(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|data[- ]integrity)(?:\]|\b)/i;
-const reviewClauseBoundary = /[.!?;\n]+|\b(?:but|except|however|although|yet)\b|,\s*(?=(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|data[- ]integrity)\b)/i;
+const reviewClauseBoundary = /[.!?;\n]+|\b(?:but|except|however|although|yet)\b|,\s*(?=(?:so|therefore|thus|hence|causing|which|p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|data[- ]integrity)\b)/i;
 const explicitlyNonSubstantiveFinding = /^(?:[_*]+\s*)?(?:\[(?:p3|sev(?:erity)?[ -]?3)\]|(?:p3|sev(?:erity)?[ -]?3|nit(?:pick)?|trivial)\b)/i;
 const explicitlyNonSubstantiveBadge = /^(?:<sub>\s*)+!\[(?:p3|sev(?:erity)?[ -]?3)\s+badge\]\([^)]*\)(?:<\/sub>\s*)+/i;
 const explicitlyNonSubstantiveAcknowledgment = /^(?:done|fixed(?:\s+in\s+(?:commit\s+)?[0-9a-f]{7,40})?|thanks,\s+applied this suggestion)[.!]?$/i;
-const negatedUnlabeledSubstantiveImpact = /(?:\b(?:no|none|without|zero|0)\b[^.!?;\n]{0,80}\b(?:p3|sev(?:erity)?[ -]?3|bugs?|errors?|wrong|incorrect|stale|invalid|unsafe|unauthori[sz]ed|data[- ]loss(?:es)?|regressions?|race\s+condition|deadlock|vulnerab\w*|security\s+flaw|crash(?:es|ed|ing)?|panic(?:s|ked|king)?|corrupt\w*|overwrit\w*|bypass\w*|leak\w*|los(?:e|es|ing|t)\s+(?:user\s+)?data)\b|\b(?:does|do|did|can|could|would|should|will|is|are|was|were|has|have|had)\s+not\s+(?:\w+\s+){0,3}(?:return\s+(?:a\s+)?wrong|produc\w*\s+(?:an?\s+)?incorrect|los(?:e|es|ing|t)\s+(?:user\s+)?data|corrupt\w*|overwrit\w*|bypass\w*|leak\w*|crash\w*|panic\w*|break\w*|fail\w*)\b|\b(?:data[- ]loss(?:es)?|regressions?|race\s+condition|deadlock|vulnerab\w*|security\s+flaw|crash(?:es|ed|ing)?|panic(?:s|ked|king)?|corrupt\w*|overwrit\w*|bypass\w*|leak\w*)\b[^.!?;\n]{0,80}\b(?:not\s+(?:found|present|observed|identified|detected)|absent)\b)/i;
-const affirmativeUnlabeledSubstantiveImpact = /\b(?:wrong|incorrect|unsafe|unauthori[sz]ed|data[- ]loss(?:es)?|regressions?|race\s+condition|deadlock|vulnerab\w*|security\s+flaw|crash(?:es|ed|ing)?|panic(?:s|ked|king)?|corrupt\w*|overwrit\w*|bypass\w*|leak\w*|los(?:e|es|ing|t)\s+(?:user\s+)?data)\b/i;
+const negatedUnlabeledSubstantiveImpact = /(?:\b(?:no|none|without|zero|0)\b[^.!?;\n]{0,80}\b(?:p3|sev(?:erity)?[ -]?3|bugs?|errors?|wrong|incorrect|stale|invalid|unsafe|unauthori[sz]ed|data[- ]loss(?:es)?|regressions?|race\s+condition|deadlock|vulnerab\w*|security\s+flaw|crash(?:es|ed|ing)?|panic(?:s|ked|king)?|throws?|throwing|thrown|exceptions?|corrupt\w*|overwrit\w*|bypass\w*|leak\w*|los(?:e|es|ing|t)\s+(?:user\s+)?data)\b|\b(?:does|do|did|can|could|would|should|will|is|are|was|were|has|have|had)\s+not\s+(?:\w+\s+){0,3}(?:return\s+(?:a\s+)?wrong|produc\w*\s+(?:an?\s+)?incorrect|los(?:e|es|ing|t)\s+(?:user\s+)?data|corrupt\w*|overwrit\w*|bypass\w*|leak\w*|crash\w*|panic\w*|throw\w*|break\w*|fail\w*)\b|\b(?:data[- ]loss(?:es)?|regressions?|race\s+condition|deadlock|vulnerab\w*|security\s+flaw|crash(?:es|ed|ing)?|panic(?:s|ked|king)?|throws?|throwing|thrown|exceptions?|corrupt\w*|overwrit\w*|bypass\w*|leak\w*)\b[^.!?;\n]{0,80}\b(?:not\s+(?:found|present|observed|identified|detected)|absent)\b)/i;
+const affirmativeUnlabeledSubstantiveImpact = /\b(?:wrong|incorrect|unsafe|unauthori[sz]ed|data[- ]loss(?:es)?|regressions?|race\s+condition|deadlock|vulnerab\w*|security\s+flaw|crash(?:es|ed|ing)?|panic(?:s|ked|king)?|throws?|throwing|thrown|exceptions?|corrupt\w*|overwrit\w*|bypass\w*|leak\w*|los(?:e|es|ing|t)\s+(?:user\s+)?data)\b/i;
 const affirmativeBuildOrTestFailure = /\b(?:(?:fails?|failed|failing|breaks?|broke|broken)\s+(?:to\s+)?(?:compile|build|tests?|typecheck|lint|ci)\b|(?:compilation|build|tests?|typecheck|lint|ci)\s+(?:(?:(?:is|are|was|were)\s+)?(?:fails?|failed|failing|breaks?|broke|broken)\b|(?:(?:do|does|did|can|could|will|would|should|is|are|was|were)\s+not|(?:do|does|did|can|could|will|would|should|is|are|was|were)n['’]?t)\s+pass(?:es|ed|ing)?\b))/i;
 const unlabeledPureMaintainabilitySuggestion = /^(?:could|would|can|please|consider|maybe|perhaps)\b[^.!?;\n]{0,120}\b(?:rename|naming|clarity|readability|style|format(?:ting)?|wording|comments?|documentation|docs|simplif\w*|clean\s*up|refactor\w*)\b/i;
 const authorityOnlyIssue = /^\s*\[(?:decision|research)\](?:\s|\[|$)/i;
@@ -320,11 +320,12 @@ function statusLatestClaim(
   statusText: string,
   claim: RegExp,
   pendingIsConditional = false,
+  lexicallyNegated: RegExp | null = null,
 ): { polarity: "affirmative" | "negated"; index: number } | null {
   const matcher = new RegExp(claim.source, `${claim.flags.replaceAll("g", "")}g`);
   let latest: { polarity: "affirmative" | "negated"; index: number } | null = null;
   for (const match of statusText.matchAll(matcher)) {
-    const negated = statusClaimIsNegated(statusText, match);
+    const negated = statusClaimIsNegated(statusText, match) || (lexicallyNegated?.test(match[0]) ?? false);
     if (!negated && statusClaimIsConditional(statusText, match, pendingIsConditional)) continue;
     latest = { polarity: negated ? "negated" : "affirmative", index: match.index };
   }
@@ -370,12 +371,13 @@ type StatusDeliveryState =
 function statusDeliveryState(statusText: string): StatusDeliveryState | null {
   const ready = statusReadyClaim(statusText);
   const decisionReady = statusLatestClaim(statusText, /\bdecision[_ -]?ready\b/i, true);
-  const blocked = statusLatestClaim(statusText, /\bblock(?:ed)?\b/i);
-  const parked = statusLatestClaim(statusText, /\bpark(?:ed)?\b/i);
+  const blocked = statusLatestClaim(statusText, /\b(?:unblocked|block(?:ed)?)\b/i, false, /^unblocked$/i);
+  const parked = statusLatestClaim(statusText, /\b(?:unparked|park(?:ed)?)\b/i, false, /^unparked$/i);
   const active = statusLatestClaim(
     statusText,
-    /\b(?:active|implementing|in progress|validating|review[_ -]?fix)\b/i,
+    /\b(?:inactive|active|implementing|in progress|validating|review[_ -]?fix)\b/i,
     true,
+    /^inactive$/i,
   );
   const candidates = [
     ready === null ? null : { state: ready.polarity === "affirmative" ? "ready" as const : "not_ready" as const, index: ready.index },
