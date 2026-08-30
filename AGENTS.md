@@ -47,10 +47,10 @@ prompt is not part of the intended delivery workflow.
 Intermediate progress may update the single canonical `agent-handoff:v1`, but
 do not present intermediate progress as task completion solely because an
 asynchronous gate is still running or because one agent runtime ended. Return
-control only for the stop/escalation conditions defined by the canonical
-repository delivery workflow, including a genuine durable decision or authority
-contradiction, an external/human-only permission requirement, or no genuinely
-Ready work remaining after the required live-state recalibration.
+control only when one of the canonical repository delivery workflow conditions
+applies: no genuinely Ready Issue remains after live-state recalibration; an
+unresolved durable architecture or product decision exists; Accepted authority
+conflicts; or an external permission or service requires human action.
 
 ## JavaScript and TypeScript
 
