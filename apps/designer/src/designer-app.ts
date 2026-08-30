@@ -413,12 +413,16 @@ export function mountDesigner(
               control instanceof HTMLTextAreaElement
                 ? control.dataset.initialNormalized
                 : undefined;
-            const value =
-              initialText !== undefined &&
-              initialNormalized !== undefined &&
-              control instanceof HTMLTextAreaElement
-                ? preserveUneditedLineEndings(initialText, initialNormalized, control.value)
-                : control.value;
+            let value = control.value;
+            try {
+              if (initialText !== undefined && initialNormalized !== undefined && control instanceof HTMLTextAreaElement) {
+                value = reconcileTextEdit(initialText, initialNormalized, control.value);
+              }
+            } catch (error) {
+              notice = { tone: "error", title: "Text edit not applied", message: error instanceof Error ? error.message : "Text edit reconciliation failed.", diagnostics: [] };
+              render();
+              return;
+            }
             void commitText({ entity, field }, value);
             break;
           }
@@ -896,15 +900,94 @@ function decodeOpaqueAttribute(value: string | undefined): string | undefined {
   }
 }
 
-function preserveUneditedLineEndings(
+function reconcileTextEdit(
   original: string,
   normalizedOriginal: string,
   edited: string,
 ): string {
   if (normalizeLineEndings(original) !== normalizedOriginal) return edited;
-  const originalLineEndings = original.match(/\r\n|\r|\n/g) ?? [];
-  let lineEndingIndex = 0;
-  return edited.replace(/\n/g, () => originalLineEndings[lineEndingIndex++] ?? "\n");
+  const originalTokens = tokenizeLogicalLines(original);
+  const editedTokens = tokenizeLogicalLines(edited);
+  const originalCounts = occurrenceCounts(originalTokens);
+  const editedCounts = occurrenceCounts(editedTokens);
+  const editedUniqueIndex = new Map<string, number>();
+  editedTokens.forEach((token, index) => {
+    if (editedCounts.get(token.normalized) === 1) editedUniqueIndex.set(token.normalized, index);
+  });
+  const anchors: Array<{ originalIndex: number; editedIndex: number }> = [];
+  let previousEditedIndex = -1;
+  originalTokens.forEach((token, originalIndex) => {
+    const editedIndex = editedUniqueIndex.get(token.normalized);
+    if (originalCounts.get(token.normalized) === 1 && editedIndex !== undefined && editedIndex > previousEditedIndex) {
+      anchors.push({ originalIndex, editedIndex });
+      previousEditedIndex = editedIndex;
+    }
+  });
+  let originalStart = 0;
+  let editedStart = 0;
+  let reconciled = "";
+  for (const anchor of anchors) {
+    reconciled += reconcileRegion(originalTokens.slice(originalStart, anchor.originalIndex), editedTokens.slice(editedStart, anchor.editedIndex), originalCounts);
+    const originalToken = originalTokens[anchor.originalIndex];
+    if (originalToken === undefined) throw new Error("Text edit reconciliation lost its anchor.");
+    reconciled += originalToken.raw;
+    originalStart = anchor.originalIndex + 1;
+    editedStart = anchor.editedIndex + 1;
+  }
+  return `${reconciled}${reconcileRegion(originalTokens.slice(originalStart), editedTokens.slice(editedStart), originalCounts)}`;
+}
+
+type LogicalLine = { raw: string; normalized: string };
+
+function tokenizeLogicalLines(value: string): LogicalLine[] {
+  const tokens: LogicalLine[] = [];
+  let start = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] !== "\r" && value[index] !== "\n") continue;
+    const end = value[index] === "\r" && value[index + 1] === "\n" ? index + 2 : index + 1;
+    tokens.push({ raw: value.slice(start, end), normalized: `${value.slice(start, index)}\n` });
+    start = end;
+    index = end - 1;
+  }
+  if (start < value.length || tokens.length === 0) tokens.push({ raw: value.slice(start), normalized: value.slice(start) });
+  return tokens;
+}
+
+function occurrenceCounts(tokens: LogicalLine[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const token of tokens) counts.set(token.normalized, (counts.get(token.normalized) ?? 0) + 1);
+  return counts;
+}
+
+function reconcileRegion(original: LogicalLine[], edited: LogicalLine[], counts: Map<string, number>): string {
+  const originalNormalized = original.map((token) => token.normalized).join("");
+  const editedNormalized = edited.map((token) => token.normalized).join("");
+  if (originalNormalized === editedNormalized) return original.map((token) => token.raw).join("");
+  if (edited.length === 0) return "";
+  if (
+    original.length === edited.length &&
+    original.every((token) => (counts.get(token.normalized) ?? 0) === 1)
+  ) {
+    return original
+      .map((token, index) => {
+        const editedToken = edited[index];
+        return `${logicalLineContent(editedToken?.raw ?? "")}${logicalLineSeparator(token.raw)}`;
+      })
+      .join("");
+  }
+  if (original.some((token) => token.raw.includes("\r") && (counts.get(token.normalized) ?? 0) > 1)) {
+    throw new Error("This Text edit is ambiguous and cannot preserve existing CR or CRLF line endings safely.");
+  }
+  return edited.map((token) => token.raw).join("");
+}
+
+function logicalLineContent(value: string): string {
+  return value.replace(/\r\n|\r|\n$/, "");
+}
+
+function logicalLineSeparator(value: string): string {
+  const match = value.match(/\r\n|\r|\n$/);
+  return match?.[0] ?? "";
 }
 
 function normalizeLineEndings(value: string): string {
