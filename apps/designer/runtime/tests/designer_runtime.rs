@@ -5,9 +5,9 @@ use tachiko_designer_runtime::{
     StoredValueProjection, close_project, open_project, process_wire_request,
 };
 use tachiko_workspace_engine::{
-    DocumentId, EntityId, EntityKey, FieldAddress, FieldDefinition, FieldId, FieldKey, FieldType,
-    IdGenerator, Number, Schema, SchemaId, SchemaKey, SemanticIdKind, StarterTemplate, Value,
-    create_document,
+    DocumentId, EntityId, EntityKey, Expression, FieldAddress, FieldDefinition, FieldId, FieldKey,
+    FieldRef, FieldType, IdGenerator, Number, Schema, SchemaId, SchemaKey, SemanticIdKind,
+    StarterTemplate, Value, create_document,
 };
 
 const OCCURRENCE_ZERO: &str = "00000000-0000-4000-8000-000000000000";
@@ -179,6 +179,57 @@ fn admission_bounds_document_identity_before_authority_construction() {
     };
     let failure = error.failure_projection("unavailable");
     assert_eq!(failure.code, "unsupported_project");
+    assert!(failure.message.contains("4096-byte maximum"));
+}
+
+#[test]
+fn admission_bounds_document_title_before_validation_and_projection() {
+    let mut document = create_document(
+        StarterTemplate::GameBalance,
+        "Bounded title",
+        &mut TestIds::default(),
+    )
+    .expect("fixture should be valid");
+    document.title = "t".repeat(4_097);
+
+    let Err(error) = DesignerRuntime::from_document(document, OCCURRENCE_ONE) else {
+        panic!("projection construction must receive a bounded document title");
+    };
+    let failure = error.failure_projection("unavailable");
+    assert_eq!(failure.code, "unsupported_project");
+    assert!(failure.message.contains("document title"));
+    assert!(failure.message.contains("4096-byte maximum"));
+}
+
+#[test]
+fn admission_bounds_formula_reference_identity_before_validation() {
+    let mut document = create_document(
+        StarterTemplate::GameBalance,
+        "Oversized formula reference",
+        &mut TestIds::default(),
+    )
+    .expect("fixture should be valid");
+    let formula = document
+        .entities
+        .values_mut()
+        .flat_map(|entity| entity.fields.values_mut())
+        .find(|value| matches!(value, Value::Formula(_)))
+        .expect("fixture should contain a formula");
+    *formula = Value::Formula(Expression::Reference(FieldRef::new(
+        "e".repeat(4_097),
+        "bounded_field",
+    )));
+
+    let Err(error) = DesignerRuntime::from_document(document, OCCURRENCE_ONE) else {
+        panic!("formula validation must receive bounded reference identities");
+    };
+    let failure = error.failure_projection("unavailable");
+    assert_eq!(failure.code, "unsupported_project");
+    assert!(
+        failure
+            .message
+            .contains("formula reference entity identity")
+    );
     assert!(failure.message.contains("4096-byte maximum"));
 }
 

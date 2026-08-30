@@ -14,8 +14,9 @@ use tachiko_storage::{
     encode_roproj_v1,
 };
 use tachiko_workspace_engine::{
-    CalculationFailure, Document, FieldAddress, FieldId, FieldRef, FieldType, IdGenerator, Number,
-    SemanticIdKind, StarterTemplate, Value, WorkspaceError, analyze_field, create_document,
+    CalculationFailure, Document, Expression, FieldAddress, FieldId, FieldRef, FieldType,
+    IdGenerator, Number, SemanticIdKind, StarterTemplate, Value, WorkspaceError, analyze_field,
+    create_document,
     formula_operations::FormulaCalculationOutcome,
     patch_lifecycle::{
         AuthorizationAction, AuthorizationDomainId, AuthorizationPolicyVersion, DocumentScopeId,
@@ -39,7 +40,8 @@ const MAX_TABLE_ROWS: usize = 32;
 const MAX_TOTAL_ENTITIES: usize = MAX_COLLECTIONS * MAX_TABLE_ROWS;
 const MAX_FIELD_QUERY_TARGETS: usize = MAX_TABLE_FIELDS * MAX_TABLE_ROWS;
 const MAX_FORMULAS: usize = 32;
-const MAX_DOCUMENT_ID_BYTES: usize = 4_096;
+const MAX_FORMULA_PROFILE_NODES: usize = 256;
+const MAX_PROFILE_STRING_BYTES: usize = 4_096;
 const MAX_PROJECTION_BYTES: usize = 65_536;
 pub(crate) const MAX_WIRE_REQUEST_BYTES: usize = 65_536;
 pub(crate) const MAX_PROJECT_TRANSFER_BYTES: usize = 64 * 1024 * 1024;
@@ -1113,13 +1115,8 @@ fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
 }
 
 fn ensure_cheap_document_profile(document: &Document) -> Result<(), DesignerError> {
-    if document.id.as_str().len() > MAX_DOCUMENT_ID_BYTES {
-        return Err(DesignerError::UnsupportedProject {
-            message: format!(
-                "the document identity exceeds the bounded {MAX_DOCUMENT_ID_BYTES}-byte maximum"
-            ),
-        });
-    }
+    ensure_profile_string("document identity", document.id.as_str())?;
+    ensure_profile_string("document title", &document.title)?;
     if document.schemas.len() > MAX_COLLECTIONS {
         return Err(DesignerError::UnsupportedProject {
             message: format!(
@@ -1137,7 +1134,10 @@ fn ensure_cheap_document_profile(document: &Document) -> Result<(), DesignerErro
             message: format!("the required '{DEFAULT_COLLECTION}' collection is unavailable"),
         });
     }
-    for schema in document.schemas.values() {
+    for (schema_id, schema) in &document.schemas {
+        ensure_profile_string("schema map identity", schema_id.as_str())?;
+        ensure_profile_string("schema identity", schema.id.as_str())?;
+        ensure_profile_string("schema key", schema.key.as_str())?;
         if schema.fields.len() > MAX_TABLE_FIELDS {
             return Err(DesignerError::UnsupportedProject {
                 message: DesignerError::CollectionTooLarge {
@@ -1145,6 +1145,14 @@ fn ensure_cheap_document_profile(document: &Document) -> Result<(), DesignerErro
                 }
                 .to_string(),
             });
+        }
+        for (field_id, field) in &schema.fields {
+            ensure_profile_string("field map identity", field_id.as_str())?;
+            ensure_profile_string("field identity", field.id.as_str())?;
+            ensure_profile_string("field key", field.key.as_str())?;
+            if let FieldType::Reference { schema } = &field.field_type {
+                ensure_profile_string("reference schema identity", schema.as_str())?;
+            }
         }
     }
     if document.entities.len() > MAX_TOTAL_ENTITIES {
@@ -1156,7 +1164,11 @@ fn ensure_cheap_document_profile(document: &Document) -> Result<(), DesignerErro
         });
     }
     let mut entity_counts = BTreeMap::new();
-    for entity in document.entities.values() {
+    for (entity_id, entity) in &document.entities {
+        ensure_profile_string("entity map identity", entity_id.as_str())?;
+        ensure_profile_string("entity identity", entity.id.as_str())?;
+        ensure_profile_string("entity key", entity.key.as_str())?;
+        ensure_profile_string("entity schema identity", entity.schema.as_str())?;
         if entity.fields.len() > MAX_TABLE_FIELDS {
             return Err(DesignerError::UnsupportedProject {
                 message: format!(
@@ -1165,6 +1177,16 @@ fn ensure_cheap_document_profile(document: &Document) -> Result<(), DesignerErro
                     entity.fields.len()
                 ),
             });
+        }
+        for (field_id, value) in &entity.fields {
+            ensure_profile_string("stored field identity", field_id.as_str())?;
+            match value {
+                Value::Reference(entity) => {
+                    ensure_profile_string("stored reference identity", entity.as_str())?;
+                }
+                Value::Formula(expression) => ensure_formula_reference_profile(expression)?,
+                Value::Number(_) | Value::Text(_) | Value::Boolean(_) => {}
+            }
         }
         let count = entity_counts.entry(entity.schema.clone()).or_insert(0usize);
         *count = count.saturating_add(1);
@@ -1188,6 +1210,55 @@ fn ensure_cheap_document_profile(document: &Document) -> Result<(), DesignerErro
                 "the project contains {formula_count} formulas; the bounded maximum is {MAX_FORMULAS}"
             ),
         });
+    }
+    Ok(())
+}
+
+fn ensure_profile_string(label: &str, value: &str) -> Result<(), DesignerError> {
+    if value.len() > MAX_PROFILE_STRING_BYTES {
+        return Err(DesignerError::UnsupportedProject {
+            message: format!(
+                "the {label} exceeds the bounded {MAX_PROFILE_STRING_BYTES}-byte maximum"
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn ensure_formula_reference_profile(expression: &Expression) -> Result<(), DesignerError> {
+    let mut pending = vec![expression];
+    let mut visited = 0usize;
+    while let Some(expression) = pending.pop() {
+        visited = visited.saturating_add(1);
+        if visited > MAX_FORMULA_PROFILE_NODES {
+            return Err(DesignerError::UnsupportedProject {
+                message: format!(
+                    "a formula exceeds the bounded {MAX_FORMULA_PROFILE_NODES}-node maximum"
+                ),
+            });
+        }
+        match expression {
+            Expression::Reference(reference) => {
+                ensure_profile_string(
+                    "formula reference entity identity",
+                    reference.entity.as_str(),
+                )?;
+                ensure_profile_string(
+                    "formula reference field identity",
+                    reference.field.as_str(),
+                )?;
+            }
+            Expression::Add { left, right }
+            | Expression::Subtract { left, right }
+            | Expression::Multiply { left, right }
+            | Expression::Divide { left, right }
+            | Expression::Minimum { left, right }
+            | Expression::Maximum { left, right } => {
+                pending.push(right);
+                pending.push(left);
+            }
+            Expression::Number(_) => {}
+        }
     }
     Ok(())
 }
