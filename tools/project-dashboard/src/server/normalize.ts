@@ -215,7 +215,9 @@ function hasUsableIssueClaim(
 }
 
 function issueStatusText(issue: RawIssue): string {
-  return (issue.body.match(/## Status\s*([\s\S]*?)(?=\n## |$)/i)?.[1] ?? "").toLowerCase();
+  return (
+    issue.body.match(/^##[ \t]+Status[ \t]*(?:\r?\n|$)([\s\S]*?)(?=^##[ \t]+|$(?![\s\S]))/im)?.[1] ?? ""
+  ).toLowerCase();
 }
 
 function statusClaimIsNegated(statusText: string, match: RegExpExecArray): boolean {

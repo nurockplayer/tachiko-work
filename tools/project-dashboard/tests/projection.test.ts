@@ -558,6 +558,20 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries).toEqual([]);
   });
 
+  it("does not treat a suffixed Status heading as authoritative readiness", () => {
+    const rationale = issue();
+    rationale.body = "## Status rationale\n\nBuild a production-ready dashboard.\n\nOwner: `agent:codex`";
+
+    const projection = normalizeRepositorySnapshot(snapshot({
+      issues: [rationale],
+      pullRequests: [pullRequest()],
+    }));
+
+    expect(projection.deliveries[0]?.issue.readiness).toBe("unknown");
+    expect(projection.deliveries[0]?.phase).toBe("validating");
+    expect(projection.deliveries[0]?.action.owner).toBe("human");
+  });
+
   it("invalidates checks and a merge-ready handoff when the PR head moves", () => {
     const pr = pullRequest();
     pr.headSha = "c".repeat(40);
