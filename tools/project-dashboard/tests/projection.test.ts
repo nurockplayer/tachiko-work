@@ -455,6 +455,19 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.attention.humanActionRequired).toBe(true);
   });
 
+  it("lets a later explicit Ready state clear an earlier Human-Required claim", () => {
+    const ready = issue();
+    ready.body = "## Status\n\nHuman-Required; now Ready.\n\nOwner: `agent:codex`";
+    ready.comments = [];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [ready] }));
+
+    expect(projection.deliveries[0]?.issue.readiness).toBe("ready");
+    expect(projection.deliveries[0]?.phase).toBe("ready");
+    expect(projection.deliveries[0]?.action.owner).toBe("none");
+    expect(projection.attention.humanActionRequired).toBe(false);
+  });
+
   it("honors a cleared Human-Required transition in the canonical handoff state", () => {
     const cleared = issue();
     cleared.comments[0]!.body = [
@@ -913,6 +926,21 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.issue.readiness).toBe("blocked");
     expect(lane?.phase).toBe("blocked");
     expect(lane?.action.owner).toBe("human");
+  });
+
+  it.each([
+    { prior: "Blocked", readiness: "blocked", phase: "blocked" },
+    { prior: "Parked", readiness: "parked", phase: "parked" },
+    { prior: "Active", readiness: "active", phase: "implementing" },
+  ])("reveals an earlier $prior state when a later Ready claim becomes conditional", ({ prior, readiness, phase }) => {
+    const changed = issue();
+    changed.body = `## Status\n\n${prior}; Ready; ready to proceed once access is granted.\n\nOwner: \`agent:codex\``;
+    changed.comments = [];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [changed] }));
+
+    expect(projection.deliveries[0]?.issue.readiness).toBe(readiness);
+    expect(projection.deliveries[0]?.phase).toBe(phase);
   });
 
   it.each([

@@ -424,7 +424,7 @@ function statusReadyClaim(statusText: string): { polarity: "affirmative" | "nega
     if (/\bdecision[_ -]?$/i.test(before)) continue;
     const negated = statusClaimIsNegated(statusText, match);
     if (!negated && statusClaimIsConditional(statusText, match, true)) {
-      if (latest?.polarity === "affirmative") latest = { polarity: "negated", index: match.index };
+      if (latest?.polarity === "affirmative") latest = null;
       continue;
     }
     if (!negated) {
@@ -456,7 +456,7 @@ type StatusDeliveryState =
   | "active"
   | "not_active";
 
-function statusDeliveryState(statusText: string): StatusDeliveryState | null {
+function statusDeliveryClaim(statusText: string): { state: StatusDeliveryState; index: number } | null {
   const ready = statusReadyClaim(statusText);
   const backlog = statusLatestClaim(statusText, /\bbacklog\b/i);
   const decisionReady = statusLatestClaim(statusText, /\bdecision[_ -]?ready\b/i, true);
@@ -489,7 +489,11 @@ function statusDeliveryState(statusText: string): StatusDeliveryState | null {
       ? null
       : { state: active.polarity === "affirmative" ? "active" as const : "not_active" as const, index: active.index },
   ].filter((claim): claim is { state: StatusDeliveryState; index: number } => claim !== null);
-  return candidates.toSorted((left, right) => right.index - left.index)[0]?.state ?? null;
+  return candidates.toSorted((left, right) => right.index - left.index)[0] ?? null;
+}
+
+function statusDeliveryState(statusText: string): StatusDeliveryState | null {
+  return statusDeliveryClaim(statusText)?.state ?? null;
 }
 
 function statusClaimsDecisionReady(statusText: string): boolean {
@@ -509,7 +513,10 @@ function statusClaimsActive(statusText: string): boolean {
 }
 
 function statusClaimsHumanRequired(statusText: string): boolean {
-  return statusLatestClaim(statusText, /\bhuman[_ -]?required\b/i)?.polarity === "affirmative";
+  const humanRequired = statusLatestClaim(statusText, /\bhuman[_ -]?required\b/i);
+  if (humanRequired?.polarity !== "affirmative") return false;
+  const delivery = statusDeliveryClaim(statusText);
+  return delivery === null || humanRequired.index > delivery.index;
 }
 
 function statusClaimsReady(statusText: string): boolean {
