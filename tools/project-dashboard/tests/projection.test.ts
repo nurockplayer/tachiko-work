@@ -346,6 +346,28 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries).toEqual([]);
   });
 
+  it("honors a cleared active Issue transition instead of entering the merge gate", () => {
+    const inactive = issue();
+    inactive.body = "## Status\n\nActive; now no longer Active.\n\nOwner: `agent:codex`";
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [inactive], pullRequests: [pullRequest()] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.issue.readiness).toBe("unknown");
+    expect(lane?.phase).toBe("validating");
+    expect(lane?.phase).not.toBe("merge_gate");
+  });
+
+  it("honors a current active Issue claim after an earlier cleared claim", () => {
+    const active = issue();
+    active.body = "## Status\n\nNo longer Active; now Active.\n\nOwner: `agent:codex`";
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [active] }));
+
+    expect(projection.deliveries[0]?.issue.readiness).toBe("active");
+    expect(projection.deliveries[0]?.phase).toBe("implementing");
+  });
+
   it.each(["Human required", "human_required", "Human required pending a decision"])(
     "routes authoritative %s status to human action without a handoff",
     (status) => {
@@ -1076,6 +1098,9 @@ describe("normalizeRepositorySnapshot", () => {
     "Tests don't pass on Windows.",
     "The build does not pass.",
     "CI isn't passing.",
+    "Tests are failing on Windows.",
+    "The build is broken.",
+    "Compilation is failing.",
   ])("blocks an unlabeled comment-only build failure on the current head: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1132,6 +1157,7 @@ describe("normalizeRepositorySnapshot", () => {
     "P2 issue: not found.",
     "P0: absent.",
     "Tests don't fail on Windows.",
+    "Tests are not failing on Windows.",
   ])("does not infer a substantive finding from a clean comment-only review summary: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
