@@ -95,6 +95,7 @@ export function mountDesigner(
       savedProjects,
       selectedSavedProject,
     );
+    hydrateTextareas();
     bindInteractions();
   };
 
@@ -446,6 +447,15 @@ export function mountDesigner(
       });
   };
 
+  const hydrateTextareas = (): void => {
+    root.querySelectorAll<HTMLTextAreaElement>("textarea[data-initial-text]").forEach(
+      (textarea) => {
+        const initialText = decodeOpaqueAttribute(textarea.dataset.initialText);
+        if (initialText !== undefined) textarea.value = initialText;
+      },
+    );
+  };
+
   render();
   const ready = (async () => {
     try {
@@ -732,11 +742,12 @@ function fieldMarkup(
           field.target.entity,
         )}" data-field="${encodeOpaqueAttribute(field.target.field)}" data-edit-kind="text">
           <textarea
+            data-initial-text="${encodeOpaqueAttribute(field.stored.value)}"
             aria-label="${escapeHtml(humanize(field.target.field))} for ${escapeHtml(
               humanize(entityKey),
             )}"
             ${busy ? "disabled" : ""}
-          >${escapeHtml(field.stored.value)}</textarea>
+          ></textarea>
           <button type="submit" ${busy ? "disabled" : ""}>Apply</button>
         </form>
         <small class="value-kind">Stored · Text</small>

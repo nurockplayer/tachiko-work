@@ -83,7 +83,7 @@ const table: TableProjection = {
         {
           target: { entity: "iron_sword", field: "name" },
           address: "iron_sword.name",
-          stored: { kind: "text", value: "Iron Sword" },
+          stored: { kind: "text", value: "\nLeading" },
           formula: null,
           calculated: null,
           diagnostics: [],
@@ -251,8 +251,12 @@ class ScalarClient extends FakeClient {
         );
         if (field === undefined) throw new Error(`Missing test field '${target.field}'.`);
         const refreshed = structuredClone(field);
-        if (target.field === "name" && this.textEditRequests.length > 0) {
-          refreshed.stored = { kind: "text", value: "Longsword\n+1" };
+        const latestTextEdit = this.textEditRequests.at(-1);
+        if (target.field === "name" && latestTextEdit !== undefined) {
+          refreshed.stored = {
+            kind: "text",
+            value: latestTextEdit.value,
+          };
         }
         if (target.field === "enabled" && this.booleanEditRequests.length > 0) {
           refreshed.stored = { kind: "boolean", value: false };
@@ -406,7 +410,7 @@ describe("Designer application seam", () => {
       'textarea[aria-label="Name for Iron Sword"]',
     );
     if (name === null || name.form === null) throw new Error("text edit form is required");
-    name.value = "Longsword\n+1";
+    expect(name.value).toBe("\nLeading");
     name.form.requestSubmit();
     await vi.waitFor(() => {
       expect(root.querySelector('[data-testid="revision"]')?.textContent).toContain(
@@ -417,13 +421,13 @@ describe("Designer application seam", () => {
       {
         expectedRevision: "resident/0",
         target: { entity: "iron_sword", field: "name" },
-        value: "Longsword\n+1",
+        value: "\nLeading",
       },
     ]);
     expect(
       root.querySelector<HTMLTextAreaElement>('textarea[aria-label="Name for Iron Sword"]')
         ?.value,
-    ).toBe("Longsword\n+1");
+    ).toBe("\nLeading");
 
     const enabled = root.querySelector<HTMLInputElement>(
       'input[aria-label="Enabled for Iron Sword"]',
