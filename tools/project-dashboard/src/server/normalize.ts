@@ -27,7 +27,7 @@ const postposedClearedReviewFinding = /\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|block
 const equivalentReviewFindingLabel = /(?:^|\s)(?:blocking|security|correctness|data[- ]integrity)\s*[:,]/i;
 const equivalentReviewFindingContext = /\b(?:blocking|security|correctness|data[- ]integrity)\b[^.!?;\n]{0,80}\b(?:finding|issue|bug|risk|failure|regression|vulnerab\w*|flaw|problem|concern|break\w*|corrupt\w*|overwrit\w*|data[- ]loss)\b|\b(?:finding|issue|bug|risk|failure|regression|vulnerab\w*|flaw|problem|concern|break\w*|corrupt\w*|overwrit\w*|data[- ]loss)\b[^.!?;\n]{0,80}\b(?:blocking|security|correctness|data[- ]integrity)\b/i;
 const explicitReviewClearingSignal = /(?:\[|\b)(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|data[- ]integrity)(?:\]|\b)/i;
-const reviewClauseBoundary = /[.!?;\n]+|\b(?:but|except|however|although|yet)\b|,\s+and\s+|,\s*(?=(?:so|therefore|thus|hence|causing|which|p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|data[- ]integrity)\b)/i;
+const reviewClauseBoundary = /[.!?;\n]+|\b(?:but|except|however|although|yet)\b|,\s+and\s+|,\s*(?=(?:causing|which|p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|data[- ]integrity)\b)/i;
 const coordinatedReviewPredicate = /\b(?:is|are|was|were|do|does|did|can|could|would|should|will|has|have|had|gets?|got|fails?|failed|failing|breaks?|broke|broken|passes?|passed|passing|occurs?|occurred|occurring|permits?|permitted|permitting|allows?|allowed|allowing|enables?|enabled|enabling|throws?|throwing|thrown|exceptions?|crash(?:es|ed|ing)?|panic(?:s|ked|king)?|delet(?:e|es|ed|ing)|eras(?:e|es|ed|ing)|corrupt\w*|overwrit\w*|bypass\w*|leak\w*)\b/i;
 const coordinatedReviewClauseStart = /^(?:\S+\s+){0,4}(?:is|are|was|were|do|does|did|can|could|would|should|will|has|have|had|gets?|got|fails?|failed|failing|breaks?|broke|broken|passes?|passed|passing|occurs?|occurred|occurring|permits?|permitted|permitting|allows?|allowed|allowing|enables?|enabled|enabling|throws?|throwing|thrown|exceptions?|crash(?:es|ed|ing)?|panic(?:s|ked|king)?|delet(?:e|es|ed|ing)|eras(?:e|es|ed|ing)|corrupt\w*|overwrit\w*|bypass\w*|leak\w*)\b/i;
 const completedClearedReviewFinding = /(?:\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2])\]?|\b(?:findings?|issues?|concerns?|problems?|failures?|bugs?|errors?|defects?|breakages?))\s*$|^(?:no|none|without|zero|0)\b(?:\s+\S+){2,}\s*$/i;
@@ -108,10 +108,25 @@ function hasCausalSubstantiveImpact(clause: string): boolean {
     (injectionImpact.test(consequence) && !negatedInjectionImpact.test(consequence));
 }
 
+function isCleanCausalConsequence(clause: string): boolean {
+  return /^\s*(?:so|therefore|thus|hence)\b[^.!?;\n]{0,80}\b(?:works?(?:\s+as\s+expected)?|pass(?:es)?|succeeds?|is\s+(?:correct|safe|valid)|are\s+(?:correct|safe|valid))\b/i.test(clause);
+}
+
+function isClearedCausalReviewClause(clause: string): boolean {
+  const marker = /\b(?:so|therefore|thus|hence)\b/i.exec(clause);
+  if (marker?.index === undefined) return false;
+  const premise = clause.slice(0, marker.index).replace(/[,\s]+$/, "");
+  const consequence = clause.slice(marker.index);
+  return isClearedReviewClause(premise) &&
+    (isCleanCausalConsequence(consequence) || negatedUnlabeledSubstantiveImpact.test(consequence) ||
+      negatedDestructiveDataImpact.test(consequence) || negatedInjectionImpact.test(consequence));
+}
+
 function isSubstantiveFinding(body: string): boolean {
   const normalized = stripMarkdown(body).replace(explicitlyNonSubstantiveBadge, "[P3] ");
   return reviewBodyClauses(normalized).some((clause) => {
     if (explicitlyNonSubstantiveAcknowledgment.test(clause)) return false;
+    if (isClearedCausalReviewClause(clause)) return false;
     if (isSubstantiveReviewClause(clause)) return true;
     if (missingSafeguardImpact.test(clause)) return true;
     if (hasCausalSubstantiveImpact(clause)) return true;
@@ -122,6 +137,7 @@ function isSubstantiveFinding(body: string): boolean {
     if (injectionImpact.test(clause)) return true;
     if (affirmativeUnlabeledSubstantiveImpact.test(clause) || affirmativeDestructiveDataImpact.test(clause) ||
       affirmativeBuildOrTestFailure.test(clause)) return true;
+    if (isCleanCausalConsequence(clause)) return false;
     if (explicitlyNonSubstantiveBadge.test(clause)) return false;
     if (explicitlyNonSubstantiveFinding.test(clause)) return false;
     return !unlabeledPureMaintainabilitySuggestion.test(clause);
@@ -172,6 +188,7 @@ function isSubstantiveReviewClause(clause: string): boolean {
 function isSubstantiveReviewBody(body: string): boolean {
   return reviewBodyClauses(body).some((clause) => {
     if (explicitlyNonSubstantiveAcknowledgment.test(clause)) return false;
+    if (isClearedCausalReviewClause(clause)) return false;
     if (isSubstantiveReviewClause(clause)) return true;
     if (missingSafeguardImpact.test(clause)) return true;
     if (hasCausalSubstantiveImpact(clause)) return true;
@@ -182,6 +199,7 @@ function isSubstantiveReviewBody(body: string): boolean {
     if (injectionImpact.test(clause)) return true;
     if (affirmativeUnlabeledSubstantiveImpact.test(clause) || affirmativeDestructiveDataImpact.test(clause) ||
       affirmativeBuildOrTestFailure.test(clause)) return true;
+    if (isCleanCausalConsequence(clause)) return false;
     if (explicitlyNonSubstantiveBadge.test(clause)) return false;
     if (explicitlyNonSubstantiveFinding.test(clause)) return false;
     return !unlabeledPureMaintainabilitySuggestion.test(clause);
