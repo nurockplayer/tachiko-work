@@ -1185,7 +1185,8 @@ fn ensure_cheap_document_profile(document: &Document) -> Result<(), DesignerErro
                     ensure_profile_string("stored reference identity", entity.as_str())?;
                 }
                 Value::Formula(expression) => ensure_formula_reference_profile(expression)?,
-                Value::Number(_) | Value::Text(_) | Value::Boolean(_) => {}
+                Value::Text(text) => ensure_stored_text_profile(text)?,
+                Value::Number(_) | Value::Boolean(_) => {}
             }
         }
         let count = entity_counts.entry(entity.schema.clone()).or_insert(0usize);
@@ -1219,6 +1220,17 @@ fn ensure_profile_string(label: &str, value: &str) -> Result<(), DesignerError> 
         return Err(DesignerError::UnsupportedProject {
             message: format!(
                 "the {label} exceeds the bounded {MAX_PROFILE_STRING_BYTES}-byte maximum"
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn ensure_stored_text_profile(value: &str) -> Result<(), DesignerError> {
+    if value.len() > MAX_PROJECTION_BYTES {
+        return Err(DesignerError::UnsupportedProject {
+            message: format!(
+                "stored text exceeds the bounded {MAX_PROJECTION_BYTES}-byte projection maximum"
             ),
         });
     }

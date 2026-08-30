@@ -202,6 +202,31 @@ fn admission_bounds_document_title_before_validation_and_projection() {
 }
 
 #[test]
+fn admission_bounds_stored_text_before_validation_and_projection() {
+    let mut document = create_document(
+        StarterTemplate::GameBalance,
+        "Oversized stored text",
+        &mut TestIds::default(),
+    )
+    .expect("fixture should be valid");
+    let value = document
+        .entities
+        .values_mut()
+        .flat_map(|entity| entity.fields.values_mut())
+        .next()
+        .expect("fixture should contain a stored value");
+    *value = Value::Text("t".repeat(65_537));
+
+    let Err(error) = DesignerRuntime::from_document(document, OCCURRENCE_ONE) else {
+        panic!("projection construction must receive bounded stored text");
+    };
+    let failure = error.failure_projection("unavailable");
+    assert_eq!(failure.code, "unsupported_project");
+    assert!(failure.message.contains("stored text"));
+    assert!(failure.message.contains("65536-byte projection maximum"));
+}
+
+#[test]
 fn admission_bounds_formula_reference_identity_before_validation() {
     let mut document = create_document(
         StarterTemplate::GameBalance,
@@ -395,7 +420,7 @@ fn admission_rejects_an_oversized_serialized_table_projection() {
         .get_mut(&name.entity)
         .expect("fixture entity should exist")
         .fields
-        .insert(name.field, Value::Text("x".repeat(70_000)));
+        .insert(name.field, Value::Text("x".repeat(65_500)));
 
     let Err(error) = DesignerRuntime::from_document(document, OCCURRENCE_ONE) else {
         panic!("serialized table projections must remain bounded");
