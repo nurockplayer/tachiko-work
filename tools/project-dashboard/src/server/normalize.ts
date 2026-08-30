@@ -769,8 +769,7 @@ function projectLane(
   const authoritativeIssueStatus = issueStatusText(issue);
   const issueStatusBlocked = statusClaimsBlocked(authoritativeIssueStatus);
   const issueStatusAffirmsDelivery = statusClaimsActive(authoritativeIssueStatus) || statusClaimsReady(authoritativeIssueStatus);
-  const dependencyStateRequiresSteward = pr !== null &&
-    (issue.blockedBy === null || issue.blockedBy.length > 0);
+  const dependencyStateRequiresSteward = issue.blockedBy === null || issue.blockedBy.length > 0;
   const authorityReadinessRequiresSteward = pr !== null && authorityOnlyIssue.test(issue.title) &&
     !decisionReadyAuthority;
   const issueReadinessRequiresSteward = issue.blockedBy !== null && issue.blockedBy.length === 0 &&
@@ -894,6 +893,8 @@ function projectLane(
       ? { owner: "human", reason: "A non-current milestone pull request requires Project Steward roadmap activation." }
     : dependencyStateRequiresSteward
       ? { owner: "human", reason: "Issue dependency state requires Project Steward reconciliation." }
+    : !horizonObserved
+      ? { owner: "human", reason: "Product Roadmap authority requires Project Steward reconciliation." }
     : issueReadinessRequiresSteward
       ? { owner: "human", reason: "The authoritative Issue status requires Steward readiness action." }
     : phase === "review_fix" || phase === "rereview" || checks.status === "failure" || checks.status === "pending" ||

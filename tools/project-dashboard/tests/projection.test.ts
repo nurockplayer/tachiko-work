@@ -392,6 +392,11 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.issue.readiness).toBe("blocked");
     expect(lane?.phase).toBe("blocked");
     expect(lane?.blockers).toContain("Live Issue dependencies block this lane: #187.");
+    expect(lane?.action).toEqual({
+      owner: "human",
+      reason: "Issue dependency state requires Project Steward reconciliation.",
+    });
+    expect(projection.attention.humanActionRequired).toBe(true);
   });
 
   it("routes a pull request with live blocked-by dependencies to the Project Steward", () => {
@@ -1938,6 +1943,11 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.currentWork.horizonStatus).toBe("unknown");
     expect(projection.deliveries[0]?.phase).toBe("validating");
     expect(projection.deliveries[0]?.blockers).toContain("Product Roadmap horizon could not be observed.");
+    expect(projection.deliveries[0]?.action).toEqual({
+      owner: "human",
+      reason: "Product Roadmap authority requires Project Steward reconciliation.",
+    });
+    expect(projection.attention.humanActionRequired).toBe(true);
   });
 
   it("keeps stacked pull requests for one Issue in distinct delivery lanes", () => {
