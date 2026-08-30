@@ -1552,6 +1552,7 @@ describe("normalizeRepositorySnapshot", () => {
     "The authorization guard blocks code injection.",
     "Input validation prevents SQL injection.",
     "Looks good.",
+    "This looks good to me.",
     "LGTM",
     "SQL injection has never occurred.",
     "[P3] Consider a shorter label.",
@@ -2237,6 +2238,27 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.blockers).toContain("Canonical handoff conflicts with live PR identity or is duplicated.");
   });
 
+  it.each(["blocked", "validating"])("keeps conflicting canonical STATE/STATUS aliases out of the merge gate: %s", (status) => {
+    const pr = pullRequest();
+    pr.comments[0]!.body += `\nSTATUS: ${status}`;
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.handoff.condition).toBe("inconsistent");
+    expect(lane?.phase).toBe("validating");
+  });
+
+  it("allows descriptive STATUS prose alongside the canonical STATE", () => {
+    const pr = pullRequest();
+    pr.comments[0]!.body += "\nSTATUS: all exact-head checks and reviews passed";
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+
+    expect(projection.deliveries[0]?.handoff.condition).toBe("current");
+    expect(projection.deliveries[0]?.phase).toBe("merge_gate");
+  });
+
   it("assigns incomplete live-main handoff reconciliation to the delivery agent", () => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body
@@ -2506,6 +2528,8 @@ describe("normalizeRepositorySnapshot", () => {
     "release-check was cancelled",
     "release-check was canceled",
     "release-check was aborted",
+    `release-check passed on old commit ${"c".repeat(40)}`,
+    "release-check passed on commit ccccccc",
   ])("does not accept merge-ready while canonical validation evidence reports: %s", (validation) => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace(
@@ -2542,6 +2566,8 @@ describe("normalizeRepositorySnapshot", () => {
     "release-check was not cancelled",
     "release-check wasn't canceled",
     "No checks were aborted",
+    `release-check passed on commit ${headSha}`,
+    `release-check passed on exact head ${headSha.slice(0, 8)}`,
   ])("does not invent failed validation evidence from a clean summary: %s", (validation) => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace(
@@ -2828,6 +2854,7 @@ describe("normalizeRepositorySnapshot", () => {
   });
 
   it.each([
+    "This looks good to me.",
     "Approved after P1 was fixed.",
     "P1 fixed; approved.",
     "P1 was fixed.",
