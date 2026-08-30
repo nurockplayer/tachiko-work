@@ -1381,6 +1381,9 @@ fn invalid_representation<T>(message: String) -> Result<T, FormatError> {
 }
 
 #[cfg(test)]
+mod issue_175_research;
+
+#[cfg(test)]
 mod tests {
     use super::NumberV1;
 
