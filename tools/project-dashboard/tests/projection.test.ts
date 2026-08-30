@@ -608,6 +608,22 @@ describe("normalizeRepositorySnapshot", () => {
     );
   });
 
+  it("blocks a stale canonical handoff Issue that conflicts with the PR closing reference", () => {
+    const pr = pullRequest();
+    pr.comments[0]!.body = pr.comments[0]!.body
+      .replace("ISSUE: #169", "ISSUE: #170")
+      .replace(mainSha, "d".repeat(40));
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.handoff.condition).toBe("stale");
+    expect(lane?.phase).toBe("blocked");
+    expect(lane?.blockers).toContain(
+      "Canonical handoff claims Issue #170, but pull request #200 closes Issue #169.",
+    );
+  });
+
   it("keeps a green PR out of merge gate when roadmap horizon observation is unavailable", () => {
     const projection = normalizeRepositorySnapshot(snapshot({
       productHorizon: null,

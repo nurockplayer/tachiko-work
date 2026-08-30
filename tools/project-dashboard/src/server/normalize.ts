@@ -193,6 +193,12 @@ function issueOwner(issue: RawIssue, handoff: HandoffProjection): string {
   return labeledValue(issue.body, "Owner") ?? "unknown";
 }
 
+function hasUsableIssueClaim(
+  handoff: HandoffProjection,
+): handoff is HandoffProjection & { claimedIssueNumber: number } {
+  return (handoff.condition === "current" || handoff.condition === "stale") && handoff.claimedIssueNumber !== null;
+}
+
 function issueReadiness(issue: RawIssue, handoff: HandoffProjection): DeliveryLane["issue"]["readiness"] {
   if (issue.blockedBy === null) return "unknown";
   if (issue.blockedBy.length > 0) return "blocked";
@@ -463,8 +469,8 @@ function projectLane(
     handoff.updatedAt !== null && handoff.updatedAt.localeCompare(issue.lastEditedAt) >= 0
   );
   const multipleIssueClaim = (pr?.issueNumbers.length ?? 0) > 1;
-  const handoffIssueMismatch = pr !== null && pr.issueNumbers.length === 1 && handoff.condition === "current" &&
-    handoff.claimedIssueNumber !== null && handoff.claimedIssueNumber !== pr.issueNumbers[0];
+  const handoffIssueMismatch = pr !== null && pr.issueNumbers.length === 1 && hasUsableIssueClaim(handoff) &&
+    handoff.claimedIssueNumber !== pr.issueNumbers[0];
   const ownershipConflict = ownershipConflicts.length > 0 || multipleIssueClaim || handoffIssueMismatch;
   const blockers: string[] = [];
 
@@ -497,7 +503,7 @@ function projectLane(
     blockers.push(`Pull request #${pr.number} claims multiple Issues (${pr.issueNumbers.map((number) => `#${number}`).join(", ")}), violating the one-Issue delivery boundary.`);
   }
   if (handoffIssueMismatch) {
-    blockers.push(`Canonical handoff claims Issue #${handoff.claimedIssueNumber ?? "Unknown"}, but pull request #${pr.number} closes Issue #${pr.issueNumbers[0] ?? "Unknown"}.`);
+    blockers.push(`Canonical handoff claims Issue #${handoff.claimedIssueNumber}, but pull request #${pr.number} closes Issue #${pr.issueNumbers[0] ?? "Unknown"}.`);
   }
   if (pr?.isDraft === true) blockers.push(`Pull request #${pr.number} is still a draft.`);
   if (pr !== null && (pr.mergeable === "unknown" || pr.mergeStateStatus === "unknown")) {
@@ -634,7 +640,7 @@ export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): Re
       pr.headSha,
       snapshot.mainSha,
     );
-    return (handoff.condition === "current" || handoff.condition === "stale") && handoff.claimedIssueNumber !== null
+    return hasUsableIssueClaim(handoff)
       ? { ...pr, issueNumbers: [handoff.claimedIssueNumber] }
       : pr;
   });
