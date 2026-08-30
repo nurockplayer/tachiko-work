@@ -1341,6 +1341,11 @@ describe("normalizeRepositorySnapshot", () => {
     "Could you rename this local for clarity?",
     "An authorization check prevents users from bypassing access control.",
     "This does not permit SQL injection.",
+    "SQL injection is prevented.",
+    "SQL injection was blocked.",
+    "SQL injection is impossible.",
+    "Command injection isn't possible.",
+    "SQL injection checks passed.",
   ])("does not infer a substantive finding from a clean comment-only review summary: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1888,6 +1893,11 @@ describe("normalizeRepositorySnapshot", () => {
     "This is not a cycle.",
     "An authorization check prevents users from bypassing access control.",
     "This does not permit SQL injection.",
+    "SQL injection is prevented.",
+    "SQL injection was blocked.",
+    "SQL injection is impossible.",
+    "Command injection isn't possible.",
+    "SQL injection checks passed.",
   ])("does not promote a negated unlabeled impact statement: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [

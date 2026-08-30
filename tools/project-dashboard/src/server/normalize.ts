@@ -41,7 +41,7 @@ const unlabeledPureMaintainabilitySuggestion = /^(?:could|would|can|please|consi
 const missingSafeguardImpact = /\bno\s+(?:authorization|authentication|permission|access[- ]control|security)\s+(?:check|guard|safeguard|control)\w*\b[^.!?;\n]{0,80}\b(?:prevents?|blocks?|stops?)\b[^.!?;\n]{0,80}\b(?:bypass|inject|leak|corrupt|overwrit|delet|eras)\w*\b/i;
 const satisfiedSafeguardImpact = /\b(?:an?|the)\s+(?:authorization|authentication|permission|access[- ]control|security)\s+(?:check|guard|safeguard|control)\w*\s+(?:prevents?|blocks?|stops?)\b[^.!?;\n]{0,80}\b(?:bypass|inject|leak|corrupt|overwrit|delet|eras)\w*\b/i;
 const injectionImpact = /\b(?:sql|command|code)\s+injection\b/i;
-const negatedInjectionImpact = /(?:\b(?:(?:no|without)\s+(?:\w+\s+){0,3}|(?:(?:does|do|did|can|could|would|should|will|is|are|was|were)\s+not|(?:does|do|did|can|could|would|should|wo|is|are|was|were)n['’]?t|cannot|never)\s+(?:\w+\s+){0,3})(?:sql|command|code)\s+injection\b|\b(?:sql|command|code)\s+injection\b[^.!?;\n]{0,30}\b(?:is|was)\s+not\s+(?:possible|permitted|enabled)\b)/i;
+const negatedInjectionImpact = /(?:\b(?:(?:no|without)\s+(?:\w+\s+){0,3}|(?:(?:does|do|did|can|could|would|should|will|is|are|was|were)\s+not|(?:does|do|did|can|could|would|should|wo|is|are|was|were)n['’]?t|cannot|never)\s+(?:\w+\s+){0,3})(?:sql|command|code)\s+injection\b|\b(?:sql|command|code)\s+injection\b[^.!?;\n]{0,30}(?:(?:is|was)\s+(?:prevented|blocked|mitigated|rejected|impossible)|(?:is|was)\s+not\s+(?:possible|permitted|enabled)|(?:is|was)n['’]?t\s+(?:possible|permitted|enabled)|(?:can(?:not|['’]?t)|(?:does|did)\s+not)\s+(?:occur|happen|succeed)|checks?\s+passed)\b)/i;
 const authorityOnlyIssue = /^\s*\[(?:decision|research)\](?:\s|\[|$)/i;
 
 function source(
