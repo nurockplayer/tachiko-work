@@ -2223,6 +2223,20 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.phase).toBe("validating");
   });
 
+  it.each(["STATE", "STATUS"])("keeps duplicate canonical %s records out of the merge gate", (label) => {
+    const pr = pullRequest();
+    pr.comments[0]!.body += label === "STATE"
+      ? "\nSTATE: validating"
+      : "\nSTATUS: merge-ready\nSTATUS: validating";
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.handoff.condition).toBe("inconsistent");
+    expect(lane?.phase).toBe("validating");
+    expect(lane?.blockers).toContain("Canonical handoff conflicts with live PR identity or is duplicated.");
+  });
+
   it("assigns incomplete live-main handoff reconciliation to the delivery agent", () => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body
@@ -2489,6 +2503,9 @@ describe("normalizeRepositorySnapshot", () => {
     "Tests weren't executed",
     "CI isn't passing",
     "release-check didn't pass",
+    "release-check was cancelled",
+    "release-check was canceled",
+    "release-check was aborted",
   ])("does not accept merge-ready while canonical validation evidence reports: %s", (validation) => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace(
@@ -2522,6 +2539,9 @@ describe("normalizeRepositorySnapshot", () => {
     "release-check is not pending",
     "release-check hasn't timed out",
     "release-check wasn't in progress",
+    "release-check was not cancelled",
+    "release-check wasn't canceled",
+    "No checks were aborted",
   ])("does not invent failed validation evidence from a clean summary: %s", (validation) => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace(

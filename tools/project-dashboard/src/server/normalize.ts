@@ -74,6 +74,12 @@ function labeledValue(body: string, label: string): string | null {
   return value === "" ? null : value;
 }
 
+function hasDuplicateLabeledValue(body: string, label: string): boolean {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`^\\s*(?:[-*]\\s*)?(?:\\*\\*)?${escaped}(?:\\*\\*)?\\s*:\\s*(.+?)\\s*$`, "gim");
+  return [...body.matchAll(pattern)].filter((match) => stripMarkdown(match[1] ?? "") !== "").length > 1;
+}
+
 function labeledBlockValue(body: string, label: string): string | null {
   const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const lines = body.split(/\r?\n/);
@@ -330,6 +336,11 @@ function handoffReportsFailedValidation(body: string): boolean {
     if (contextNegatesOutcome(match.index)) continue;
     return true;
   }
+  for (const match of validation.matchAll(/\b(?:cancelled|canceled|aborted)\b/gi)) {
+    if (quantityNegatesOutcome(match.index)) continue;
+    if (contextNegatesOutcome(match.index)) continue;
+    return true;
+  }
   return false;
 }
 
@@ -388,6 +399,8 @@ function projectHandoff(
   let condition: HandoffProjection["condition"] = "current";
 
   if (canonical.length !== 1) {
+    condition = "inconsistent";
+  } else if (hasDuplicateLabeledValue(latest.body, "STATE") || hasDuplicateLabeledValue(latest.body, "STATUS")) {
     condition = "inconsistent";
   } else if (currentHeadSha !== null && !hasRequiredPrHandoffRecords(latest.body)) {
     condition = "inconsistent";
