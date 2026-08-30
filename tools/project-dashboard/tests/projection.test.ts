@@ -1349,6 +1349,8 @@ describe("normalizeRepositorySnapshot", () => {
     "The parser fails to reject stale approvals.",
     "This breaks exact-head validation.",
     "[P3] rename suggestion; [P2] this loses data.",
+    "Could you refactor this to prevent data loss?",
+    "Please update docs because this is incorrect.",
   ])("fails closed on an unlabeled correctness finding: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
@@ -1385,6 +1387,9 @@ describe("normalizeRepositorySnapshot", () => {
     "No regression observed.",
     "No wrong result.",
     "This does not lose user data.",
+    "No P3 findings.",
+    "No bugs found.",
+    "No errors found.",
   ])("does not promote a negated unlabeled impact statement: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
