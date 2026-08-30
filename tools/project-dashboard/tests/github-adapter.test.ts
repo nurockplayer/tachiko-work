@@ -257,25 +257,28 @@ describe("loadGithubSnapshot", () => {
     expect(result.failures).toContain("PR #200 closing-Issue observation was truncated.");
   });
 
-  it("fetches every merged pull-request page before selecting recent completions by merge time", async () => {
+  it("bounds the recent-completion window and sorts its sample by merge time", async () => {
+    let recentQuery = "";
+    let recentCalls = 0;
     const api: ReadonlyGithubApi = {
-      graphql: async (query, variables) => {
+      graphql: async (query) => {
         if (!query.includes("RecentCompletions")) return githubPage();
-        const secondPage = variables.mergedCursor !== null;
+        recentCalls += 1;
+        recentQuery = query;
         return {
           repository: {
             mergedPullRequests: {
-              nodes: [
-                {
-                  number: secondPage ? 202 : 100,
-                  title: secondPage ? "Newest merge" : "Old merge with recent activity",
-                  url: `https://github.com/nurockplayer/tachiko-work/pull/${secondPage ? 202 : 100}`,
-                  mergedAt: secondPage ? "2026-08-30T01:00:00Z" : "2025-01-01T00:00:00Z",
-                  mergeCommit: { oid: (secondPage ? "e" : "d").repeat(40) },
+              nodes: Array.from({ length: 9 }, (_, index) => {
+                const number = 100 + index;
+                return {
+                  number,
+                  title: `Merge ${number}`,
+                  url: `https://github.com/nurockplayer/tachiko-work/pull/${number}`,
+                  mergedAt: `2026-08-30T00:0${index}:00Z`,
+                  mergeCommit: { oid: index.toString(16).repeat(40) },
                   mergedBy: { login: "maintainer" },
-                },
-              ],
-              pageInfo: { hasNextPage: !secondPage, endCursor: secondPage ? null : "merged-page-2" },
+                };
+              }),
             },
           },
         };
@@ -291,7 +294,11 @@ describe("loadGithubSnapshot", () => {
       observedAt: "2026-08-30T00:00:00.000Z",
     });
 
-    expect(result.recentCompletions?.map((completion) => completion.number)).toEqual([202, 100]);
+    expect(recentCalls).toBe(1);
+    expect(recentQuery).toMatch(/pullRequests\(\s*first:\s*100/);
+    expect(recentQuery).toMatch(/states:\s*MERGED/);
+    expect(recentQuery).toMatch(/orderBy:\s*\{\s*field:\s*UPDATED_AT,\s*direction:\s*DESC\s*\}/);
+    expect(result.recentCompletions?.map((completion) => completion.number)).toEqual([108, 107, 106, 105, 104, 103, 102, 101]);
   });
 
   it("stops querying a repository connection after that connection is exhausted", async () => {

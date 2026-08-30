@@ -214,6 +214,31 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.blockers).toContain("Issue dependency state could not be fully observed.");
   });
 
+  it("does not let a merge-ready handoff override an authoritative Not Ready Issue", () => {
+    const notReady = issue();
+    notReady.body = "## Status\n\n**NOT READY**\n\nOwner: `agent:codex`";
+    const pr = pullRequest();
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [notReady], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.issue.readiness).toBe("unknown");
+    expect(lane?.phase).toBe("validating");
+  });
+
+  it("does not let a merge-ready handoff override an authoritative blocked Issue", () => {
+    const blocked = issue();
+    blocked.body = "## Status\n\n**BLOCKED**\n\nOwner: `agent:codex`";
+    const pr = pullRequest();
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [blocked], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.issue.readiness).toBe("blocked");
+    expect(lane?.phase).toBe("blocked");
+    expect(lane?.blockers).toContain("The authoritative Issue status reports this lane blocked.");
+  });
+
   it("does not treat Decision-Ready authority work as production implementation readiness", () => {
     const decision = issue(190);
     decision.body = "## Status\n\n**DECISION-READY**\n\nOwner: `agent:chatgpt`";
@@ -367,6 +392,19 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.checks.requiredStatus).toBe("unsatisfied");
     expect(lane?.phase).toBe("validating");
     expect(lane?.blockers).toContain("Required check release was not observed for the current PR head.");
+    expect(lane?.action.owner).toBe("codex");
+  });
+
+  it("assigns an unknown required-check set to the delivery agent", () => {
+    const pr = pullRequest();
+    pr.requiredChecks = null;
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.checks.requiredStatus).toBe("unknown");
+    expect(lane?.phase).toBe("validating");
+    expect(lane?.action.owner).toBe("codex");
   });
 
   it("does not let a stale handoff parked claim override live PR state", () => {

@@ -203,18 +203,29 @@ function hasUsableIssueClaim(
   return (handoff.condition === "current" || handoff.condition === "stale") && handoff.claimedIssueNumber !== null;
 }
 
+function issueStatusText(issue: RawIssue): string {
+  return (issue.body.match(/## Status\s*([\s\S]*?)(?=\n## |$)/i)?.[1] ?? issue.body.slice(0, 600)).toLowerCase();
+}
+
+function statusClaimsBlocked(statusText: string): boolean {
+  return /\bblock(?:ed)?\b/.test(statusText) && !statusText.includes("not blocked");
+}
+
 function issueReadiness(issue: RawIssue, handoff: HandoffProjection): DeliveryLane["issue"]["readiness"] {
   if (issue.blockedBy === null) return "unknown";
   if (issue.blockedBy.length > 0) return "blocked";
   if (authorityOnlyIssue.test(issue.title)) return "unknown";
-  const statusSection = issue.body.match(/## Status\s*([\s\S]*?)(?=\n## |$)/i)?.[1] ?? issue.body.slice(0, 600);
+  const issueStatus = issueStatusText(issue);
+  if (/\bdecision[_ -]?ready\b/.test(issueStatus) || /\bnot[_ -]+ready\b/.test(issueStatus)) return "unknown";
+  if (/\bpark(?:ed)?\b/.test(issueStatus)) return "parked";
+  if (statusClaimsBlocked(issueStatus)) return "blocked";
   const handoffState = handoff.claimedState?.toLowerCase() ?? "";
   const staleHandoffClaimsBlocked = handoff.condition === "stale" &&
-    /\bblock(?:ed)?\b/.test(handoffState) && !handoffState.includes("not blocked");
+    statusClaimsBlocked(handoffState);
   const currentHandoffState = handoff.condition === "current" || staleHandoffClaimsBlocked
     ? handoff.claimedState
     : null;
-  const statusText = (currentHandoffState ?? statusSection).toLowerCase();
+  const statusText = (currentHandoffState ?? issueStatus).toLowerCase();
   if (/\bdecision[_ -]?ready\b/.test(statusText)) return "unknown";
   if (/\bnot[_ -]+ready\b/.test(statusText)) return "unknown";
   if (/\bpark(?:ed)?\b/.test(statusText)) return "parked";
@@ -500,13 +511,18 @@ function projectLane(
     handoff.claimedIssueNumber !== pr.issueNumbers[0];
   const ownershipConflict = ownershipConflicts.length > 0 || multipleIssueClaim || handoffIssueMismatch;
   const blockers: string[] = [];
+  const issueStatusBlocked = statusClaimsBlocked(issueStatusText(issue));
 
   if ((issue.blockedBy?.length ?? 0) > 0) {
     blockers.push(`Live Issue dependencies block this lane: ${issue.blockedBy?.map((dependency) => `#${dependency.number}`).join(", ") ?? "Unknown"}.`);
   }
   if (issue.blockedBy === null) blockers.push("Issue dependency state could not be fully observed.");
-  if (handoff.condition === "current" && observedReadiness === "blocked" && (issue.blockedBy?.length ?? 0) === 0) {
+  if (issueStatusBlocked && (issue.blockedBy?.length ?? 0) === 0) {
+    blockers.push("The authoritative Issue status reports this lane blocked.");
+  } else if (handoff.condition === "current" && observedReadiness === "blocked" && (issue.blockedBy?.length ?? 0) === 0) {
     blockers.push("The current canonical handoff reports this lane blocked.");
+  } else if (handoff.condition === "stale" && observedReadiness === "blocked" && (issue.blockedBy?.length ?? 0) === 0) {
+    blockers.push("The stale canonical handoff reports this lane blocked pending reconciliation.");
   }
   if (pr !== null && checks.status === "unknown") blockers.push("Checks were not observed for the current PR head.");
   if (pr !== null && checks.requiredStatus !== "satisfied") blockers.push(checks.requiredSummary);
@@ -577,7 +593,8 @@ function projectLane(
       );
   const action: DeliveryLane["action"] = requiresHuman || phase === "human_required"
     ? { owner: "human", reason: "The canonical coordination state requests human or Steward action." }
-    : phase === "review_fix" || phase === "rereview" || checks.status === "failure" || ownershipConflict ||
+    : phase === "review_fix" || phase === "rereview" || checks.status === "failure" ||
+        (pr !== null && checks.requiredStatus !== "satisfied") || ownershipConflict ||
         pr?.mergeable === "conflicting" || pr?.mergeStateStatus === "dirty" ||
         drift === "suspected" || handoff.condition === "inconsistent" || handoff.condition === "stale" ||
         (pr !== null && handoff.condition === "missing") || !issueScopeReconciled ||

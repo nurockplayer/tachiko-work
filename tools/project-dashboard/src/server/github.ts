@@ -125,7 +125,7 @@ interface GithubPage {
 
 interface GithubMergedPage {
   repository: null | {
-    mergedPullRequests: { nodes: GithubMergedPullRequest[]; pageInfo: PageInfo };
+    mergedPullRequests: { nodes: GithubMergedPullRequest[] };
   };
 }
 
@@ -210,11 +210,14 @@ const dashboardQuery = `
 `;
 
 const recentCompletionsQuery = `
-  query RecentCompletions($owner: String!, $repo: String!, $mergedCursor: String) {
+  query RecentCompletions($owner: String!, $repo: String!) {
     repository(owner: $owner, name: $repo) {
-      mergedPullRequests: pullRequests(first: 100, after: $mergedCursor, states: MERGED) {
+      mergedPullRequests: pullRequests(
+        first: 100
+        states: MERGED
+        orderBy: { field: UPDATED_AT, direction: DESC }
+      ) {
         nodes { number title url mergedAt mergeCommit { oid } mergedBy { login } }
-        pageInfo { hasNextPage endCursor }
       }
     }
   }
@@ -407,20 +410,13 @@ export async function loadGithubSnapshot(
   const mainSha = repository.defaultBranchRef?.target.oid ?? null;
   const defaultBranchName = repository.defaultBranchRef?.name ?? null;
   let recentCompletionsAvailable = true;
-  let mergedCursor: string | null = null;
   try {
-    for (;;) {
-      const response = (await api.graphql(recentCompletionsQuery, {
-        owner: options.owner,
-        repo: options.repo,
-        mergedCursor,
-      })) as GithubMergedPage;
-      if (response.repository === null) throw new Error("repository not found");
-      for (const pr of response.repository.mergedPullRequests.nodes) mergedPullRequests.set(pr.number, pr);
-      if (!response.repository.mergedPullRequests.pageInfo.hasNextPage) break;
-      mergedCursor = response.repository.mergedPullRequests.pageInfo.endCursor;
-      if (mergedCursor === null) throw new Error("missing merged pull-request cursor");
-    }
+    const response = (await api.graphql(recentCompletionsQuery, {
+      owner: options.owner,
+      repo: options.repo,
+    })) as GithubMergedPage;
+    if (response.repository === null) throw new Error("repository not found");
+    for (const pr of response.repository.mergedPullRequests.nodes) mergedPullRequests.set(pr.number, pr);
   } catch {
     recentCompletionsAvailable = false;
     failures.push("Recent completion observation failed.");
