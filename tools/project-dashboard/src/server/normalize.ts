@@ -55,6 +55,14 @@ function canonicalComments(comments: RawComment[]): RawComment[] {
   return comments.filter((comment) => comment.body.includes(handoffMarker));
 }
 
+function claimedIssueNumber(body: string): number | null {
+  const claim = labeledValue(body, "ISSUE");
+  if (claim === null) return null;
+  const match = claim.match(/^(?:Issue\s*)?#?(\d+)(?:\s*\/\s*PR\s*#?\d+)?$/i);
+  const number = Number.parseInt(match?.[1] ?? "", 10);
+  return Number.isSafeInteger(number) ? number : null;
+}
+
 function hasNonemptyMarkdownSection(body: string, headingPattern: RegExp): boolean {
   const lines = body.split(/\r?\n/);
   for (const [index, line] of lines.entries()) {
@@ -85,16 +93,30 @@ function hasRequiredPrHandoffRecords(body: string): boolean {
 
 function projectHandoff(
   comments: RawComment[],
+  commentsComplete: boolean,
   observedAt: string,
   currentHeadSha: string | null,
   liveMainSha: string | null,
 ): HandoffProjection {
+  if (!commentsComplete) {
+    return {
+      condition: "unknown",
+      claimedOwner: null,
+      claimedState: null,
+      claimedIssueNumber: null,
+      claimedHeadSha: null,
+      lastCheckedMainSha: null,
+      updatedAt: null,
+      sourceRefs: [],
+    };
+  }
   const canonical = canonicalComments(comments);
   if (canonical.length === 0) {
     return {
       condition: "missing",
       claimedOwner: null,
       claimedState: null,
+      claimedIssueNumber: null,
       claimedHeadSha: null,
       lastCheckedMainSha: null,
       updatedAt: null,
@@ -133,6 +155,7 @@ function projectHandoff(
     condition,
     claimedOwner: labeledValue(latest.body, "OWNER"),
     claimedState: labeledValue(latest.body, "STATE") ?? labeledValue(latest.body, "STATUS"),
+    claimedIssueNumber: canonical.length === 1 ? claimedIssueNumber(latest.body) : null,
     claimedHeadSha,
     lastCheckedMainSha,
     updatedAt: latest.updatedAt,
@@ -141,7 +164,7 @@ function projectHandoff(
 }
 
 function issueOwner(issue: RawIssue, handoff: HandoffProjection): string {
-  if (handoff.claimedOwner !== null) return handoff.claimedOwner;
+  if (handoff.condition === "current" && handoff.claimedOwner !== null) return handoff.claimedOwner;
   return labeledValue(issue.body, "Owner") ?? "unknown";
 }
 
@@ -287,9 +310,17 @@ function projectReviews(pr: RawPullRequest, observedAt: string): ReviewProjectio
   const relevantReviews = pr.reviews
     .filter((review) => review.state === "approved" || review.state === "changes_requested")
     .toSorted((left, right) => right.submittedAt.localeCompare(left.submittedAt));
-  const reviewedHeadSha = relevantReviews[0]?.headSha ?? null;
+  const reviewedHeads = new Set(relevantReviews.map((review) => review.headSha));
+  const reviewedHeadSha = reviewedHeads.size === 1 ? relevantReviews[0]?.headSha ?? null : null;
   const unresolved = pr.reviewThreads.filter((thread) => !thread.resolved);
-  const status = reviewedHeadSha === null ? (pr.reviewDecision === "review_required" ? "current" : "unknown") : shaMatches(reviewedHeadSha, pr.headSha) ? "current" : "stale";
+  const allReviewsCoverHead = relevantReviews.length > 0 && relevantReviews.every(
+    (review) => review.headSha !== null && shaMatches(review.headSha, pr.headSha),
+  );
+  const status = relevantReviews.length === 0
+    ? (pr.reviewDecision === "review_required" ? "current" : "unknown")
+    : allReviewsCoverHead
+      ? "current"
+      : "stale";
 
   return {
     decision: pr.reviewDecision,
@@ -314,6 +345,15 @@ function authorityDrift(
   return "none";
 }
 
+function horizonClass(
+  milestone: string | null,
+  productHorizon: string | null,
+): "current" | "independent" | "other" | "unknown" {
+  if (productHorizon === null) return "unknown";
+  if (milestone === null) return "independent";
+  return milestone === productHorizon ? "current" : "other";
+}
+
 function derivePhase(
   readiness: DeliveryLane["issue"]["readiness"],
   pr: RawPullRequest | null,
@@ -322,6 +362,8 @@ function derivePhase(
   handoff: HandoffProjection,
   drift: DeliveryLane["authorityDrift"],
   ownershipConflict: boolean,
+  githubMergeReady: boolean,
+  issueScopeReconciled: boolean,
 ): DeliveryPhase {
   const claimedState = handoff.condition === "current" ? handoff.claimedState?.toLowerCase() ?? "" : "";
   if (readiness === "parked" || claimedState.includes("parked")) return "parked";
@@ -337,6 +379,7 @@ function derivePhase(
   if (reviews.decision !== "approved") return "rereview";
   if (handoff.condition !== "current") return "validating";
   if (drift !== "none") return "validating";
+  if (!githubMergeReady || !issueScopeReconciled) return "validating";
   return "merge_gate";
 }
 
@@ -346,10 +389,14 @@ function projectLane(
   snapshot: RawRepositorySnapshot,
   ownershipConflicts: Array<{ issueNumber: number; prNumbers: number[] }> = [],
 ): DeliveryLane {
-  const comments = pr?.comments ?? issue.comments;
-  const handoff = projectHandoff(comments, snapshot.observedAt, pr?.headSha ?? null, snapshot.mainSha);
+  const comments = pr === null ? issue.comments : pr.comments;
+  const commentsComplete = pr === null ? issue.commentsComplete : pr.commentsComplete;
+  const handoff = projectHandoff(comments, commentsComplete, snapshot.observedAt, pr?.headSha ?? null, snapshot.mainSha);
   const observedReadiness = issueReadiness(issue, handoff);
-  const readiness = pr === null || !["ready", "active"].includes(observedReadiness) ? observedReadiness : "active";
+  const readinessBeforeHandoff = pr === null || !["ready", "active"].includes(observedReadiness) ? observedReadiness : "active";
+  const readiness = !commentsComplete && !["blocked", "parked"].includes(readinessBeforeHandoff)
+    ? "unknown"
+    : readinessBeforeHandoff;
   const checks =
     pr === null
       ? {
@@ -373,6 +420,12 @@ function projectLane(
         }
       : projectReviews(pr, snapshot.observedAt);
   const drift = pr === null ? "none" : authorityDrift(pr, handoff, snapshot.mainSha);
+  const issueHorizonClass = horizonClass(issue.milestone, snapshot.productHorizon);
+  const outsideCurrentHorizon = issueHorizonClass === "other";
+  const githubMergeReady = pr === null || (pr.mergeable === "mergeable" && pr.mergeStateStatus === "clean");
+  const issueScopeReconciled = pr === null || issue.lastEditedAt === null || (
+    handoff.updatedAt !== null && handoff.updatedAt.localeCompare(issue.lastEditedAt) >= 0
+  );
   const multipleIssueClaim = (pr?.issueNumbers.length ?? 0) > 1;
   const ownershipConflict = ownershipConflicts.length > 0 || multipleIssueClaim;
   const blockers: string[] = [];
@@ -406,15 +459,46 @@ function projectLane(
     blockers.push(`Pull request #${pr.number} claims multiple Issues (${pr.issueNumbers.map((number) => `#${number}`).join(", ")}), violating the one-Issue delivery boundary.`);
   }
   if (pr?.isDraft === true) blockers.push(`Pull request #${pr.number} is still a draft.`);
+  if (pr !== null && (pr.mergeable === "unknown" || pr.mergeStateStatus === "unknown")) {
+    blockers.push(`GitHub mergeability could not be fully observed for pull request #${pr.number}.`);
+  } else if (pr !== null && (pr.mergeable === "conflicting" || pr.mergeStateStatus === "dirty")) {
+    blockers.push(`GitHub reports that pull request #${pr.number} has merge conflicts.`);
+  } else if (pr !== null && pr.mergeStateStatus !== "clean") {
+    blockers.push(`GitHub reports that pull request #${pr.number} is blocked from merging.`);
+  }
+  if (!issueScopeReconciled) {
+    blockers.push(`Issue #${issue.number} scope was edited after the canonical handoff; explicit reconciliation is required.`);
+  }
+  if (outsideCurrentHorizon) {
+    blockers.push(`Issue #${issue.number} belongs to non-current product milestone ${issue.milestone ?? "Unknown"}; the live current horizon is ${snapshot.productHorizon ?? "Unknown"}.`);
+  }
 
-  const phase = derivePhase(readiness, pr, checks, reviews, handoff, drift, ownershipConflict);
+  const phase = outsideCurrentHorizon
+    ? "parked"
+    : derivePhase(
+        readiness,
+        pr,
+        checks,
+        reviews,
+        handoff,
+        drift,
+        ownershipConflict,
+        githubMergeReady,
+        issueScopeReconciled,
+      );
   const requiresHuman = humanActionRequested(comments, handoff);
   const action: DeliveryLane["action"] = requiresHuman || phase === "human_required"
     ? { owner: "human", reason: "The canonical coordination state requests human or Steward action." }
     : phase === "review_fix" || checks.status === "failure" || ownershipConflict
       ? { owner: "codex", reason: blockers[0] ?? "Delivery-agent action is required." }
       : { owner: "none", reason: "No human action is currently evidenced." };
-  const issueRef = source("direct", `Issue #${issue.number}`, issue.url, snapshot.observedAt, `issue-${issue.number}`);
+  const issueRef = source(
+    "direct",
+    `Issue #${issue.number}`,
+    issue.url,
+    snapshot.observedAt,
+    issue.lastEditedAt ?? issue.updatedAt,
+  );
   const sourceRefs = [issueRef];
   if (pr !== null) sourceRefs.push(source("direct", `Pull request #${pr.number}`, pr.url, snapshot.observedAt, pr.headSha));
   sourceRefs.push(
@@ -446,6 +530,7 @@ function projectLane(
       url: issue.url,
       readiness,
       milestone: issue.milestone,
+      lastEditedAt: issue.lastEditedAt,
       blockedBy: issue.blockedBy,
     },
     owner: issueOwner(issue, handoff),
@@ -465,6 +550,8 @@ function projectLane(
             liveMainSha: snapshot.mainSha,
             relationToMain: pr.relationToMain,
             authorityPathsChangedOnMain: pr.authorityPathsChangedOnMain,
+            mergeable: pr.mergeable,
+            mergeStateStatus: pr.mergeStateStatus,
           },
     checks,
     reviews,
@@ -484,15 +571,29 @@ function placeholderIssue(pr: RawPullRequest, observedAt: string): RawIssue {
     url: pr.issueNumbers.length === 0 ? pr.url : `${pr.url.split("/pull/")[0] ?? pr.url}/issues/${number}`,
     body: "",
     updatedAt: observedAt,
+    lastEditedAt: null,
     milestone: null,
     blockedBy: null,
+    commentsComplete: true,
     comments: [],
   };
 }
 
 export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): RepositoryProjection {
   const issues = snapshot.issues ?? [];
-  const pullRequests = snapshot.pullRequests ?? [];
+  const pullRequests = (snapshot.pullRequests ?? []).map((pr) => {
+    if (pr.issueNumbers.length > 0) return pr;
+    const handoff = projectHandoff(
+      pr.comments,
+      pr.commentsComplete,
+      snapshot.observedAt,
+      pr.headSha,
+      snapshot.mainSha,
+    );
+    return handoff.condition === "current" && handoff.claimedIssueNumber !== null
+      ? { ...pr, issueNumbers: [handoff.claimedIssueNumber] }
+      : pr;
+  });
   const issuesByNumber = new Map(issues.map((issue) => [issue.number, issue]));
   const pullRequestsByIssue = new Map<number, number[]>();
   for (const pr of pullRequests) {
@@ -520,7 +621,13 @@ export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): Re
 
   for (const issue of issues) {
     if (ownedIssueNumbers.has(issue.number)) continue;
-    const handoff = projectHandoff(issue.comments, snapshot.observedAt, null, snapshot.mainSha);
+    const handoff = projectHandoff(
+      issue.comments,
+      issue.commentsComplete,
+      snapshot.observedAt,
+      null,
+      snapshot.mainSha,
+    );
     const hasCanonicalHandoff = canonicalComments(issue.comments).length > 0;
     const owner = issueOwner(issue, handoff).toLowerCase();
     if (!hasCanonicalHandoff && !owner.includes("agent:")) continue;
@@ -555,9 +662,10 @@ export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): Re
     },
     deliveries,
     currentWork: {
-      currentHorizon: horizonKnown ? deliveries.filter((lane) => lane.issue.milestone === snapshot.productHorizon).map((lane) => lane.id) : [],
-      independent: horizonKnown ? deliveries.filter((lane) => lane.issue.milestone !== snapshot.productHorizon).map((lane) => lane.id) : [],
-      unclassified: horizonKnown ? [] : deliveries.map((lane) => lane.id),
+      currentHorizon: deliveries.filter((lane) => horizonClass(lane.issue.milestone, snapshot.productHorizon) === "current").map((lane) => lane.id),
+      independent: deliveries.filter((lane) => horizonClass(lane.issue.milestone, snapshot.productHorizon) === "independent").map((lane) => lane.id),
+      otherHorizon: deliveries.filter((lane) => horizonClass(lane.issue.milestone, snapshot.productHorizon) === "other").map((lane) => lane.id),
+      unclassified: deliveries.filter((lane) => horizonClass(lane.issue.milestone, snapshot.productHorizon) === "unknown").map((lane) => lane.id),
       horizonStatus: horizonKnown ? "current" : "unknown",
       dependencyHealth: snapshot.issues === null || !horizonKnown
         ? "unknown"

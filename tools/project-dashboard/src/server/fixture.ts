@@ -18,8 +18,10 @@ function issue(
     url: `https://github.com/nurockplayer/tachiko-work/issues/${number}`,
     body: `## Status\n\n**READY FOR BOUNDED IMPLEMENTATION**\n\nOwner: \`agent:codex\``,
     updatedAt: observedAt,
+    lastEditedAt: null,
     milestone,
     blockedBy: [],
+    commentsComplete: true,
     comments: [
       {
         id: `issue-${number}-handoff`,
@@ -45,7 +47,10 @@ function staleDashboardPr(): RawPullRequest {
     mergeBaseSha: "d".repeat(40),
     relationToMain: "diverged",
     authorityPathsChangedOnMain: ["docs/governance/project-governance.md"],
+    mergeable: "mergeable",
+    mergeStateStatus: "blocked",
     issueNumbers: [169],
+    commentsComplete: true,
     comments: [
       {
         id: "pr-200-handoff",
@@ -78,7 +83,10 @@ function reviewFixPr(): RawPullRequest {
     mergeBaseSha: mainSha,
     relationToMain: "current",
     authorityPathsChangedOnMain: [],
+    mergeable: "mergeable",
+    mergeStateStatus: "blocked",
     issueNumbers: [163],
+    commentsComplete: true,
     comments: [
       {
         id: "pr-201-handoff",
@@ -135,7 +143,7 @@ export function fixtureProjection(): RepositoryProjection {
         url: "https://github.com/nurockplayer/tachiko-work/pull/186",
         mergedAt: "2026-08-29T18:45:00.000Z",
         mergeSha: mainSha,
-        author: "nurockplayer",
+        mergedBy: "nurockplayer",
       },
     ],
   };

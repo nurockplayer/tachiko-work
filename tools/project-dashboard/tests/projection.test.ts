@@ -31,8 +31,10 @@ function issue(number = 169): RawIssue {
     url: `https://github.com/nurockplayer/tachiko-work/issues/${number}`,
     body: "## Status\n\n**READY FOR BOUNDED IMPLEMENTATION**\n\nOwner: `agent:codex`",
     updatedAt: observedAt,
+    lastEditedAt: null,
     milestone: null,
     blockedBy: [],
+    commentsComplete: true,
     comments: [
       {
         id: "handoff-issue",
@@ -58,8 +60,11 @@ function pullRequest(): RawPullRequest {
     mergeBaseSha: mainSha,
     relationToMain: "current",
     authorityPathsChangedOnMain: [],
+    mergeable: "mergeable",
+    mergeStateStatus: "clean",
     requiredChecks: [],
     issueNumbers: [169],
+    commentsComplete: true,
     comments: [
       {
         id: "handoff-pr",
@@ -359,6 +364,89 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries.map((lane) => lane.issue.number)).toEqual([187, 169]);
     expect(projection.currentWork.currentHorizon).toEqual(["issue-187"]);
     expect(projection.currentWork.independent).toEqual(["issue-169"]);
+  });
+
+  it("uses the canonical handoff Issue when a PR has no closing reference", () => {
+    const pr = pullRequest();
+    pr.issueNumbers = [];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+
+    expect(projection.deliveries).toHaveLength(1);
+    expect(projection.deliveries[0]?.id).toBe("issue-169-pr-200");
+    expect(projection.deliveries[0]?.issue.number).toBe(169);
+  });
+
+  it("keeps truncated PR handoff observation unknown", () => {
+    const pr = pullRequest();
+    pr.commentsComplete = false;
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+
+    expect(projection.deliveries[0]?.handoff.condition).toBe("unknown");
+    expect(projection.deliveries[0]?.phase).toBe("validating");
+  });
+
+  it("does not advertise a no-PR Issue as Ready when handoff observation is truncated", () => {
+    const truncated = issue();
+    truncated.commentsComplete = false;
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [truncated] }));
+
+    expect(projection.deliveries[0]?.handoff.condition).toBe("unknown");
+    expect(projection.deliveries[0]?.issue.readiness).toBe("unknown");
+    expect(projection.deliveries[0]?.phase).toBe("unknown");
+  });
+
+  it("parks non-current product-milestone work outside independent and active lanes", () => {
+    const future = issue(206);
+    future.milestone = "06 · Team Workspace Beta";
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [future] }));
+
+    expect(projection.deliveries[0]?.phase).toBe("parked");
+    expect(projection.deliveries[0]?.blockers).toContain(
+      "Issue #206 belongs to non-current product milestone 06 · Team Workspace Beta; the live current horizon is 05 · Designer MVP.",
+    );
+    expect(projection.currentWork.independent).toEqual([]);
+    expect(projection.currentWork.otherHorizon).toEqual(["issue-206"]);
+  });
+
+  it("keeps an approved decision stale until every counted approval covers the exact head", () => {
+    const pr = pullRequest();
+    pr.reviews = [
+      { state: "approved", headSha, url: "https://github.com/review/current", submittedAt: observedAt },
+      { state: "approved", headSha: "c".repeat(40), url: "https://github.com/review/stale", submittedAt: "2026-08-29T23:00:00.000Z" },
+    ];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+
+    expect(projection.deliveries[0]?.reviews.status).toBe("stale");
+    expect(projection.deliveries[0]?.reviews.reviewedHeadSha).toBeNull();
+    expect(projection.deliveries[0]?.phase).toBe("rereview");
+  });
+
+  it("requires GitHub's exact merge gate to be clean before projecting merge gate", () => {
+    const pr = pullRequest();
+    pr.mergeStateStatus = "blocked";
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+
+    expect(projection.deliveries[0]?.phase).toBe("validating");
+    expect(projection.deliveries[0]?.blockers).toContain("GitHub reports that pull request #200 is blocked from merging.");
+  });
+
+  it("requires a handoff update after an Issue scope edit", () => {
+    const edited = issue();
+    edited.lastEditedAt = "2026-08-30T00:01:00.000Z";
+    const pr = pullRequest();
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [edited], pullRequests: [pr] }));
+
+    expect(projection.deliveries[0]?.phase).toBe("validating");
+    expect(projection.deliveries[0]?.blockers).toContain(
+      "Issue #169 scope was edited after the canonical handoff; explicit reconciliation is required.",
+    );
   });
 
   it("keeps stacked pull requests for one Issue in distinct delivery lanes", () => {

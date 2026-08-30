@@ -18,6 +18,7 @@ function githubPage() {
             url: "https://github.com/nurockplayer/tachiko-work/issues/169",
             body: "**READY FOR BOUNDED IMPLEMENTATION**\nOwner: agent:codex",
             updatedAt: "2026-08-30T00:00:00Z",
+            lastEditedAt: null,
             milestone: null,
             blockedBy: { nodes: [], pageInfo: { hasNextPage: false } },
             comments: { nodes: [], pageInfo: { hasPreviousPage: false } },
@@ -36,6 +37,8 @@ function githubPage() {
             headRefOid: headSha,
             baseRefOid: mainSha,
             baseRefName: "main",
+            mergeable: "MERGEABLE",
+            mergeStateStatus: "CLEAN",
             updatedAt: "2026-08-30T00:00:00Z",
             closingIssuesReferences: { nodes: [{ number: 169 }] },
             comments: { nodes: [], pageInfo: { hasPreviousPage: false } },
@@ -64,7 +67,7 @@ function githubPage() {
               ],
             },
             reviewDecision: "REVIEW_REQUIRED",
-            reviews: { nodes: [] },
+            reviews: { nodes: [], pageInfo: { hasNextPage: false } },
             reviewThreads: { nodes: [] },
           },
         ],
@@ -78,7 +81,7 @@ function githubPage() {
             url: "https://github.com/nurockplayer/tachiko-work/pull/186",
             mergedAt: "2026-08-29T19:00:00Z",
             mergeCommit: { oid: "c".repeat(40) },
-            author: { login: "nurockplayer" },
+            mergedBy: { login: "maintainer" },
           },
         ],
         pageInfo: { hasNextPage: false, endCursor: null },
@@ -106,7 +109,7 @@ describe("loadGithubSnapshot", () => {
       fetchHealth: "healthy",
       mainSha,
       productHorizon: "05 · Designer MVP",
-      issues: [{ number: 169, blockedBy: [] }],
+      issues: [{ number: 169, blockedBy: [], commentsComplete: true }],
       pullRequests: [{
         number: 200,
         isDraft: false,
@@ -115,11 +118,14 @@ describe("loadGithubSnapshot", () => {
         mergeBaseSha: mainSha,
         relationToMain: "current",
         authorityPathsChangedOnMain: [],
+        mergeable: "mergeable",
+        mergeStateStatus: "clean",
+        commentsComplete: true,
         requiredChecks: [{ name: "test", integrationId: 42 }],
         checksObservedHeadSha: headSha,
         checks: [{ name: "test", integrationId: 42, status: "completed", conclusion: "success" }],
       }],
-      recentCompletions: [{ number: 186 }],
+      recentCompletions: [{ number: 186, mergedBy: "maintainer" }],
     });
     expect(result.productHorizonUrl).toContain(mainSha);
   });
@@ -197,7 +203,7 @@ describe("loadGithubSnapshot", () => {
                   url: `https://github.com/nurockplayer/tachiko-work/pull/${secondPage ? 202 : 100}`,
                   mergedAt: secondPage ? "2026-08-30T01:00:00Z" : "2025-01-01T00:00:00Z",
                   mergeCommit: { oid: (secondPage ? "e" : "d").repeat(40) },
-                  author: { login: "nurockplayer" },
+                  mergedBy: { login: "maintainer" },
                 },
               ],
               pageInfo: { hasNextPage: !secondPage, endCursor: secondPage ? null : "merged-page-2" },
@@ -217,6 +223,36 @@ describe("loadGithubSnapshot", () => {
     });
 
     expect(result.recentCompletions?.map((completion) => completion.number)).toEqual([202, 100]);
+  });
+
+  it("preserves incomplete handoff and review observation with exact merger attribution", async () => {
+    const page = githubPage();
+    page.repository.issues.nodes[0]!.comments.pageInfo.hasPreviousPage = true;
+    page.repository.pullRequests.nodes[0]!.comments.pageInfo.hasPreviousPage = true;
+    page.repository.pullRequests.nodes[0]!.reviews.pageInfo.hasNextPage = true;
+    page.repository.mergedPullRequests.nodes[0]!.mergedBy = { login: "release-maintainer" };
+    const api: ReadonlyGithubApi = {
+      graphql: async () => page,
+      rawText: async () => "## Current horizon\n\n> **05 · Designer MVP**",
+      requiredStatusChecks: async () => [],
+      compare: async () => ({ status: "ahead", mergeBaseSha: mainSha, files: [] }),
+    };
+
+    const result = await loadGithubSnapshot(api, {
+      owner: "nurockplayer",
+      repo: "tachiko-work",
+      observedAt: "2026-08-30T00:00:00.000Z",
+    });
+
+    expect(result.issues?.[0]?.commentsComplete).toBe(false);
+    expect(result.pullRequests?.[0]?.commentsComplete).toBe(false);
+    expect(result.pullRequests?.[0]?.reviews).toBeNull();
+    expect(result.recentCompletions?.[0]?.mergedBy).toBe("release-maintainer");
+    expect(result.failures).toEqual(expect.arrayContaining([
+      "Issue #169 handoff observation was truncated.",
+      "PR #200 handoff observation was truncated.",
+      "PR #200 review observation was truncated.",
+    ]));
   });
 
   it("keeps authority drift unknown when GitHub caps a compare at 300 files", async () => {

@@ -36,8 +36,10 @@ export interface RawIssue {
   url: string;
   body: string;
   updatedAt: string;
+  lastEditedAt: string | null;
   milestone: string | null;
   blockedBy: Array<{ number: number; title: string; url: string }> | null;
+  commentsComplete: boolean;
   comments: RawComment[];
 }
 
@@ -80,7 +82,10 @@ export interface RawPullRequest {
   mergeBaseSha: string | null;
   relationToMain: "current" | "behind" | "diverged" | "unknown";
   authorityPathsChangedOnMain: string[] | null;
+  mergeable: "mergeable" | "conflicting" | "unknown";
+  mergeStateStatus: "clean" | "blocked" | "behind" | "dirty" | "draft" | "unstable" | "unknown";
   issueNumbers: number[];
+  commentsComplete: boolean;
   comments: RawComment[];
   checksObservedHeadSha: string | null;
   checks: RawCheck[] | null;
@@ -97,7 +102,7 @@ export interface RawCompletion {
   url: string;
   mergedAt: string;
   mergeSha: string | null;
-  author: string;
+  mergedBy: string | null;
 }
 
 export interface RawRepositorySnapshot {
@@ -118,6 +123,7 @@ export interface HandoffProjection {
   condition: "current" | "stale" | "inconsistent" | "missing" | "unknown";
   claimedOwner: string | null;
   claimedState: string | null;
+  claimedIssueNumber: number | null;
   claimedHeadSha: string | null;
   lastCheckedMainSha: string | null;
   updatedAt: string | null;
@@ -150,6 +156,7 @@ export interface DeliveryLane {
     url: string;
     readiness: "ready" | "active" | "blocked" | "parked" | "unknown";
     milestone: string | null;
+    lastEditedAt: string | null;
     blockedBy: Array<{ number: number; title: string; url: string }> | null;
   };
   owner: string;
@@ -166,6 +173,8 @@ export interface DeliveryLane {
     liveMainSha: string | null;
     relationToMain: RawPullRequest["relationToMain"];
     authorityPathsChangedOnMain: string[] | null;
+    mergeable: RawPullRequest["mergeable"];
+    mergeStateStatus: RawPullRequest["mergeStateStatus"];
   };
   checks: CheckProjection;
   reviews: ReviewProjection;
@@ -193,6 +202,7 @@ export interface RepositoryProjection {
   currentWork: {
     currentHorizon: DeliveryLane["id"][];
     independent: DeliveryLane["id"][];
+    otherHorizon: DeliveryLane["id"][];
     unclassified: DeliveryLane["id"][];
     horizonStatus: "current" | "unknown";
     dependencyHealth: "healthy" | "partial" | "unknown";

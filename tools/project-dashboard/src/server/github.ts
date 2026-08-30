@@ -47,6 +47,7 @@ interface GithubIssue {
   url: string;
   body: string;
   updatedAt: string;
+  lastEditedAt: string | null;
   milestone: { title: string } | null;
   blockedBy: { nodes: Array<{ number: number; title: string; url: string }>; pageInfo: PageInfo };
   comments: { nodes: GithubComment[]; pageInfo: PageInfo };
@@ -86,6 +87,8 @@ interface GithubPullRequest {
   headRefOid: string;
   baseRefOid: string;
   baseRefName: string;
+  mergeable: string;
+  mergeStateStatus: string;
   updatedAt: string;
   closingIssuesReferences: { nodes: Array<{ number: number }> };
   comments: { nodes: GithubComment[]; pageInfo: PageInfo };
@@ -98,7 +101,7 @@ interface GithubPullRequest {
     }>;
   };
   reviewDecision: string | null;
-  reviews: { nodes: GithubReview[] };
+  reviews: { nodes: GithubReview[]; pageInfo: PageInfo };
   reviewThreads: { nodes: GithubReviewThread[]; pageInfo?: PageInfo };
 }
 
@@ -108,7 +111,7 @@ interface GithubMergedPullRequest {
   url: string;
   mergedAt: string | null;
   mergeCommit: { oid: string } | null;
-  author: { login: string } | null;
+  mergedBy: { login: string } | null;
 }
 
 interface GithubPage {
@@ -141,7 +144,7 @@ const dashboardQuery = `
       }
       issues(first: 50, after: $issueCursor, states: OPEN, orderBy: { field: UPDATED_AT, direction: DESC }) {
         nodes {
-          number title url body updatedAt
+          number title url body updatedAt lastEditedAt
           milestone { title }
           blockedBy(first: 25) {
             nodes { number title url }
@@ -156,7 +159,7 @@ const dashboardQuery = `
       }
       pullRequests(first: 50, after: $prCursor, states: OPEN, orderBy: { field: UPDATED_AT, direction: DESC }) {
         nodes {
-          number title url body isDraft headRefOid baseRefOid baseRefName updatedAt
+          number title url body isDraft headRefOid baseRefOid baseRefName mergeable mergeStateStatus updatedAt
           closingIssuesReferences(first: 20) { nodes { number } }
           comments(last: 100) {
             nodes { id body url createdAt updatedAt }
@@ -180,8 +183,9 @@ const dashboardQuery = `
             }
           }
           reviewDecision
-          reviews(last: 100) {
+          reviews: latestOpinionatedReviews(first: 100) {
             nodes { state submittedAt url commit { oid } }
+            pageInfo { hasNextPage }
           }
           reviewThreads(first: 100) {
             nodes {
@@ -201,7 +205,7 @@ const recentCompletionsQuery = `
   query RecentCompletions($owner: String!, $repo: String!, $mergedCursor: String) {
     repository(owner: $owner, name: $repo) {
       mergedPullRequests: pullRequests(first: 100, after: $mergedCursor, states: MERGED) {
-        nodes { number title url mergedAt mergeCommit { oid } author { login } }
+        nodes { number title url mergedAt mergeCommit { oid } mergedBy { login } }
         pageInfo { hasNextPage endCursor }
       }
     }
@@ -269,6 +273,22 @@ function normalizeReviewDecision(value: string | null): RawPullRequest["reviewDe
   if (value === "APPROVED") return "approved";
   if (value === "CHANGES_REQUESTED") return "changes_requested";
   if (value === "REVIEW_REQUIRED") return "review_required";
+  return "unknown";
+}
+
+function normalizeMergeable(value: string): RawPullRequest["mergeable"] {
+  if (value === "MERGEABLE") return "mergeable";
+  if (value === "CONFLICTING") return "conflicting";
+  return "unknown";
+}
+
+function normalizeMergeStateStatus(value: string): RawPullRequest["mergeStateStatus"] {
+  if (value === "CLEAN") return "clean";
+  if (value === "BLOCKED") return "blocked";
+  if (value === "BEHIND") return "behind";
+  if (value === "DIRTY") return "dirty";
+  if (value === "DRAFT") return "draft";
+  if (value === "UNSTABLE" || value === "HAS_HOOKS") return "unstable";
   return "unknown";
 }
 
@@ -406,9 +426,11 @@ export async function loadGithubSnapshot(
       url: issue.url,
       body: issue.body,
       updatedAt: issue.updatedAt,
+      lastEditedAt: issue.lastEditedAt,
       milestone: issue.milestone?.title ?? null,
       blockedBy: dependenciesComplete ? issue.blockedBy.nodes : null,
-      comments: commentsComplete ? issue.comments.nodes.map(asComment) : [],
+      commentsComplete,
+      comments: issue.comments.nodes.map(asComment),
     });
   }
 
@@ -462,8 +484,10 @@ export async function loadGithubSnapshot(
       }
     }
     const commentsComplete = !pr.comments.pageInfo.hasPreviousPage;
+    const reviewsComplete = !pr.reviews.pageInfo.hasNextPage;
     const reviewThreadsComplete = !(pr.reviewThreads.pageInfo?.hasNextPage ?? false);
     if (!commentsComplete) failures.push(`PR #${pr.number} handoff observation was truncated.`);
+    if (!reviewsComplete) failures.push(`PR #${pr.number} review observation was truncated.`);
     if (!reviewThreadsComplete) failures.push(`PR #${pr.number} review-thread observation was truncated.`);
     rawPullRequests.push({
       number: pr.number,
@@ -477,13 +501,16 @@ export async function loadGithubSnapshot(
       mergeBaseSha,
       relationToMain,
       authorityPathsChangedOnMain,
+      mergeable: normalizeMergeable(pr.mergeable),
+      mergeStateStatus: normalizeMergeStateStatus(pr.mergeStateStatus),
       issueNumbers: pr.closingIssuesReferences.nodes.map((issue) => issue.number),
-      comments: commentsComplete ? pr.comments.nodes.map(asComment) : [],
+      commentsComplete,
+      comments: pr.comments.nodes.map(asComment),
       checksObservedHeadSha: commit?.oid ?? null,
       checks: checksComplete ? commit?.statusCheckRollup?.contexts.nodes.map(asCheck) ?? null : null,
       requiredChecks: requiredChecksByBranch.get(pr.baseRefName) ?? null,
       reviewDecision: normalizeReviewDecision(pr.reviewDecision),
-      reviews: pr.reviews.nodes.map(asReview),
+      reviews: reviewsComplete ? pr.reviews.nodes.map(asReview) : null,
       reviewThreads: reviewThreadsComplete ? pr.reviewThreads.nodes.map(asReviewThread) : null,
       updatedAt: pr.updatedAt,
     });
@@ -499,7 +526,7 @@ export async function loadGithubSnapshot(
       url: pr.url,
       mergedAt: pr.mergedAt,
       mergeSha: pr.mergeCommit?.oid ?? null,
-      author: pr.author?.login ?? "unknown",
+      mergedBy: pr.mergedBy?.login ?? null,
     }));
 
   return {

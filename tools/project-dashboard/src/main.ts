@@ -132,6 +132,12 @@ function deliveryCard(lane: DeliveryLane): HTMLElement {
   const facts = element("dl", { class: "lane-facts" }, [
     definition("Owner", lane.owner),
     definition("Issue state", label(lane.issue.readiness)),
+    definition(
+      "Issue scope edit",
+      lane.issue.lastEditedAt === null
+        ? "No body edit reported"
+        : element("time", { datetime: lane.issue.lastEditedAt }, [new Date(lane.issue.lastEditedAt).toLocaleString()]),
+    ),
     definition("Handoff", badge(lane.handoff.condition)),
     definition("Authority drift", badge(lane.authorityDrift)),
   ]);
@@ -148,6 +154,7 @@ function deliveryCard(lane: DeliveryLane): HTMLElement {
       definition("Merge base", element("code", {}, [shortIdentity(lane.pr.mergeBaseSha)])),
       definition("Live main", element("code", {}, [shortIdentity(lane.pr.liveMainSha)])),
       definition("Relation to main", badge(lane.pr.relationToMain)),
+      definition("GitHub mergeability", `${label(lane.pr.mergeable)} · ${label(lane.pr.mergeStateStatus)}`),
       definition("Checks", element("span", {}, [badge(lane.checks.status), ` ${lane.checks.summary}`])),
       definition(
         "Required checks",
@@ -196,6 +203,7 @@ function currentWork(projection: RepositoryProjection): HTMLElement {
   const groups: Array<[string, string[]]> = [
     ["Current product horizon lane", projection.currentWork.currentHorizon],
     ["Independent tooling / research lane", projection.currentWork.independent],
+    ["Other product milestone — not current", projection.currentWork.otherHorizon],
     ["Horizon classification Unknown", projection.currentWork.unclassified],
   ];
   for (const [group, ids] of groups) {
@@ -247,7 +255,7 @@ function recentMerges(projection: RepositoryProjection): HTMLElement {
         element("li", {}, [
           element("div", {}, [
             element("a", { href: githubUrl(completion.url), target: "_blank", rel: "noreferrer" }, [`#${completion.number} · ${completion.title}`]),
-            element("p", { class: "quiet" }, [`Merged by ${completion.author} · `, element("time", { datetime: completion.mergedAt }, [new Date(completion.mergedAt).toLocaleString()])]),
+            element("p", { class: "quiet" }, [`Merged by ${completion.mergedBy ?? "Unknown"} · `, element("time", { datetime: completion.mergedAt }, [new Date(completion.mergedAt).toLocaleString()])]),
           ]),
           element("code", {}, [shortIdentity(completion.mergeSha)]),
           sourceLinks(completion.sourceRefs),
