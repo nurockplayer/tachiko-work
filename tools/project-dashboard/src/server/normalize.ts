@@ -95,7 +95,7 @@ function canonicalComments(comments: RawComment[]): RawComment[] {
 }
 
 function hasCausalSubstantiveImpact(clause: string): boolean {
-  const marker = /\b(?:means?|caus(?:e|es|ing)|so|therefore|thus|hence)\b/i.exec(clause);
+  const marker = /\b(?:means?|caus(?:e|es|ed|ing)|so|therefore|thus|hence)\b/i.exec(clause);
   if (marker?.index === undefined) return false;
   const premise = clause.slice(0, marker.index);
   const consequence = clause.slice(marker.index + marker[0].length);

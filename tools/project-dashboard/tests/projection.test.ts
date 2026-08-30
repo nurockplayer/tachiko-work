@@ -1244,6 +1244,7 @@ describe("normalizeRepositorySnapshot", () => {
   it.each([
     "There is no null check, so this crashes on empty input.",
     "No null check means this crashes on empty input.",
+    "No null check caused this to crash on empty input.",
     "No null check, which means this crashes on empty input.",
     "No null check, causing this to crash on empty input.",
     "This throws for an empty input.",
@@ -1873,6 +1874,7 @@ describe("normalizeRepositorySnapshot", () => {
     "This fails to compile on Windows.",
     "There is no null check, so this crashes on empty input.",
     "No null check means this crashes on empty input.",
+    "No null check caused this to crash on empty input.",
     "No null check, which means this crashes on empty input.",
     "No null check, causing this to crash on empty input.",
     "This throws for an empty input.",
