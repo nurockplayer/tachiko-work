@@ -51,7 +51,7 @@ export type FieldProjection = {
   formula: { source: string } | null;
   calculated: CalculationProjection | null;
   diagnostics: DiagnosticProjection[];
-  editable_number: boolean;
+  editable_scalar: "number" | "text" | "boolean" | null;
 };
 
 export type TableProjection = {
@@ -100,10 +100,13 @@ export type DesignerRequest =
       fields: FieldTarget[];
     }
   | {
-      type: "edit_number";
+      type: "edit_scalar";
       expected_revision: string;
       target: FieldTarget;
-      input: string;
+      input:
+        | { kind: "number"; input: string }
+        | { kind: "text"; value: string }
+        | { kind: "boolean"; value: boolean };
     };
 
 export type DesignerResponse =

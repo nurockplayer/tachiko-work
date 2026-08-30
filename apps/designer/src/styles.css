@@ -528,7 +528,8 @@ td {
   gap: 7px;
 }
 
-.stored-cell input {
+.stored-cell input,
+.stored-cell textarea {
   width: 88px;
   padding: 8px 9px;
   border: 1px solid #bbc1d1;
@@ -553,7 +554,8 @@ td {
 }
 
 .stored-cell button:disabled,
-.stored-cell input:disabled {
+.stored-cell input:disabled,
+.stored-cell textarea:disabled {
   cursor: wait;
   opacity: 0.55;
 }

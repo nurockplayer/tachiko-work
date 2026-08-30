@@ -34,6 +34,8 @@ const table: TableProjection = {
     { id: "attack_interval", key: "attack_interval", field_type: "number" },
     { id: "damage", key: "damage", field_type: "number" },
     { id: "dps", key: "dps", field_type: "number" },
+    { id: "enabled", key: "enabled", field_type: "boolean" },
+    { id: "name", key: "name", field_type: "text" },
   ],
   rows: [
     {
@@ -47,7 +49,7 @@ const table: TableProjection = {
           formula: null,
           calculated: null,
           diagnostics: [],
-          editable_number: true,
+          editable_scalar: "number",
         },
         {
           target: { entity: "iron_sword", field: "damage" },
@@ -56,7 +58,7 @@ const table: TableProjection = {
           formula: null,
           calculated: null,
           diagnostics: [],
-          editable_number: true,
+          editable_scalar: "number",
         },
         {
           target: { entity: "iron_sword", field: "dps" },
@@ -67,7 +69,25 @@ const table: TableProjection = {
           },
           calculated: { status: "value", value: 40 },
           diagnostics: [],
-          editable_number: false,
+          editable_scalar: null,
+        },
+        {
+          target: { entity: "iron_sword", field: "enabled" },
+          address: "iron_sword.enabled",
+          stored: { kind: "boolean", value: true },
+          formula: null,
+          calculated: null,
+          diagnostics: [],
+          editable_scalar: "boolean",
+        },
+        {
+          target: { entity: "iron_sword", field: "name" },
+          address: "iron_sword.name",
+          stored: { kind: "text", value: "Leading\nMiddle\nTail" },
+          formula: null,
+          calculated: null,
+          diagnostics: [],
+          editable_scalar: "text",
         },
       ],
     },
@@ -90,6 +110,16 @@ class FakeClient implements DesignerClient {
     expectedRevision: string;
     target: FieldTarget;
     input: string;
+  }> = [];
+  textEditRequests: Array<{
+    expectedRevision: string;
+    target: FieldTarget;
+    value: string;
+  }> = [];
+  booleanEditRequests: Array<{
+    expectedRevision: string;
+    target: FieldTarget;
+    value: boolean;
   }> = [];
 
   async bootstrap(): Promise<BootstrapProjection> {
@@ -126,7 +156,7 @@ class FakeClient implements DesignerClient {
             formula: { source: "[tempered_blade.price]" },
             calculated: { status: "value", value: 200 },
             diagnostics: [],
-            editable_number: false,
+            editable_scalar: null,
           },
         ],
       };
@@ -162,7 +192,79 @@ class FakeClient implements DesignerClient {
     };
   }
 
+  async editText(
+    expectedRevision: string,
+    target: FieldTarget,
+    value: string,
+  ): Promise<PublicationProjection> {
+    this.textEditRequests.push({
+      expectedRevision,
+      target: structuredClone(target),
+      value,
+    });
+    return {
+      base_revision: expectedRevision,
+      resulting_revision: "resident/1",
+      entities: [],
+      fields: [structuredClone(target)],
+      affected_calculations: [],
+    };
+  }
+
+  async editBoolean(
+    expectedRevision: string,
+    target: FieldTarget,
+    value: boolean,
+  ): Promise<PublicationProjection> {
+    this.booleanEditRequests.push({
+      expectedRevision,
+      target: structuredClone(target),
+      value,
+    });
+    return {
+      base_revision: expectedRevision,
+      resulting_revision: "resident/2",
+      entities: [],
+      fields: [structuredClone(target)],
+      affected_calculations: [],
+    };
+  }
+
   close(): void {}
+}
+
+class ScalarClient extends FakeClient {
+  override async queryFields(
+    revision: string,
+    fields: FieldTarget[],
+  ): Promise<FieldBatchProjection> {
+    if (fields.length === 1 && fields[0]?.entity === "shop") {
+      return super.queryFields(revision, fields);
+    }
+    this.queryRequests.push(structuredClone(fields));
+    return {
+      revision,
+      fields: fields.map((target) => {
+        const field = table.rows[0]!.fields.find(
+          (candidate) =>
+            candidate.target.entity === target.entity && candidate.target.field === target.field,
+        );
+        if (field === undefined) throw new Error(`Missing test field '${target.field}'.`);
+        const refreshed = structuredClone(field);
+        const latestTextEdit = this.textEditRequests.at(-1);
+        if (target.field === "name" && latestTextEdit !== undefined) {
+          refreshed.stored = {
+            kind: "text",
+            value: latestTextEdit.value,
+          };
+        }
+        if (target.field === "enabled" && this.booleanEditRequests.length > 0) {
+          refreshed.stored = { kind: "boolean", value: false };
+        }
+        return refreshed;
+      }),
+    };
+  }
 }
 
 class FakeHost implements DesignerProjectHost {
@@ -296,6 +398,259 @@ class ControlRecoveryClient extends FakeClient {
 }
 
 describe("Designer application seam", () => {
+  it("reconciles Text line endings conservatively across adversarial edits", async () => {
+    const nameField = table.rows[0]!.fields.find((field) => field.target.field === "name");
+    if (nameField === undefined || nameField.stored?.kind !== "text") throw new Error("text fixture required");
+    const original = nameField.stored.value;
+    const cases = [
+      ["a\n", "a", "a"],
+      ["a", "a\n", "a\n"],
+      ["a\r", "a\n", "a\r"],
+      ["a\r\n", "a\n", "a\r\n"],
+      ["\nlead\ntail\n", "\nlead\nchanged\n", "\nlead\nchanged\n"],
+      ["a\nb", "a\nx\nb", "a\nx\nb"],
+      ["😀\ncenter\ntail", "😀\ninsert\ncenter\ntail", "😀\ninsert\ncenter\ntail"],
+      [`${"x".repeat(65_000)}\n`, `${"x".repeat(65_000)}\n`, `${"x".repeat(65_000)}\n`],
+    ] as const;
+    try {
+      for (const [raw, normalized, expected] of cases) {
+        nameField.stored = { kind: "text", value: raw };
+        document.body.innerHTML = '<div id="app"></div>';
+        const root = document.querySelector<HTMLElement>("#app");
+        if (root === null) throw new Error("test root is required");
+        const client = new ScalarClient();
+        const app = mountDesigner(root, client, host);
+        await app.ready;
+        const textarea = root.querySelector<HTMLTextAreaElement>('textarea[aria-label="Name for Iron Sword"]');
+        if (textarea === null || textarea.form === null) throw new Error("text control required");
+        textarea.dataset.initialNormalized = raw.replace(/\r\n|\r/g, "\n");
+        textarea.value = normalized;
+        textarea.form.requestSubmit();
+        await vi.waitFor(() => {
+          expect(client.textEditRequests).toHaveLength(1);
+        });
+        expect(client.textEditRequests[0]?.value).toBe(expected);
+        app.destroy();
+      }
+
+      nameField.stored = { kind: "text", value: "same\nx\r\nsame\n" };
+      document.body.innerHTML = '<div id="app"></div>';
+      const root = document.querySelector<HTMLElement>("#app");
+      if (root === null) throw new Error("test root is required");
+      const client = new ScalarClient();
+      const app = mountDesigner(root, client, host);
+      await app.ready;
+      const textarea = root.querySelector<HTMLTextAreaElement>('textarea[aria-label="Name for Iron Sword"]');
+      if (textarea === null || textarea.form === null) throw new Error("text control required");
+      textarea.dataset.initialNormalized = "same\nx\nsame\n";
+      textarea.value = "same\nX\nsame\n";
+      textarea.form.requestSubmit();
+      expect(client.textEditRequests).toHaveLength(0);
+      expect(root.textContent).toContain("Text edit not applied");
+      app.destroy();
+
+      nameField.stored = { kind: "text", value: "a\r" };
+      document.body.innerHTML = '<div id="app"></div>';
+      const coalescingRoot = document.querySelector<HTMLElement>("#app");
+      if (coalescingRoot === null) throw new Error("test root is required");
+      const coalescingClient = new ScalarClient();
+      const coalescingApp = mountDesigner(coalescingRoot, coalescingClient, host);
+      await coalescingApp.ready;
+      const coalescingText = coalescingRoot.querySelector<HTMLTextAreaElement>('textarea[aria-label="Name for Iron Sword"]');
+      if (coalescingText === null || coalescingText.form === null) throw new Error("text control required");
+      coalescingText.dataset.initialNormalized = "a\n";
+      coalescingText.value = "a\n\n";
+      coalescingText.form.requestSubmit();
+      expect(coalescingClient.textEditRequests).toHaveLength(0);
+      expect(coalescingRoot.textContent).toContain("Text edit not applied");
+      coalescingApp.destroy();
+    } finally {
+      nameField.stored = { kind: "text", value: original };
+    }
+  });
+
+  it("publishes Rust-authorized Text and Boolean controls against their visible revisions", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const client = new ScalarClient();
+    const app = mountDesigner(root, client, host);
+    await app.ready;
+
+    const name = root.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Name for Iron Sword"]',
+    );
+    if (name === null || name.form === null) throw new Error("text edit form is required");
+    expect(name.value).toBe("Leading\nMiddle\nTail");
+    name.dataset.initialNormalized = "Leading\nMiddle\nTail";
+    name.value = "Changed\nMiddle\nFin\nExtra";
+    name.form.requestSubmit();
+    await vi.waitFor(() => {
+      expect(root.querySelector('[data-testid="revision"]')?.textContent).toContain(
+        "resident/1",
+      );
+    });
+    expect(client.textEditRequests).toEqual([
+      {
+        expectedRevision: "resident/0",
+        target: { entity: "iron_sword", field: "name" },
+        value: "Changed\nMiddle\nFin\nExtra",
+      },
+    ]);
+    expect(
+      root.querySelector<HTMLTextAreaElement>('textarea[aria-label="Name for Iron Sword"]')
+        ?.value,
+    ).toBe("Changed\nMiddle\nFin\nExtra");
+
+    const enabled = root.querySelector<HTMLInputElement>(
+      'input[aria-label="Enabled for Iron Sword"]',
+    );
+    if (enabled === null || enabled.form === null) {
+      throw new Error("boolean edit form is required");
+    }
+    enabled.checked = false;
+    enabled.form.requestSubmit();
+    await vi.waitFor(() => {
+      expect(root.querySelector('[data-testid="revision"]')?.textContent).toContain(
+        "resident/2",
+      );
+    });
+    expect(client.booleanEditRequests).toEqual([
+      {
+        expectedRevision: "resident/1",
+        target: { entity: "iron_sword", field: "enabled" },
+        value: false,
+      },
+    ]);
+    expect(
+      root.querySelector<HTMLInputElement>('input[aria-label="Enabled for Iron Sword"]')
+        ?.checked,
+    ).toBe(false);
+    app.destroy();
+  });
+
+  it("preserves an unsubmitted Text draft across an unrelated scalar publication", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const client = new ScalarClient();
+    const app = mountDesigner(root, client, host);
+    await app.ready;
+
+    const name = root.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Name for Iron Sword"]',
+    );
+    const enabled = root.querySelector<HTMLInputElement>(
+      'input[aria-label="Enabled for Iron Sword"]',
+    );
+    if (name === null || enabled === null || enabled.form === null) {
+      throw new Error("scalar controls are required");
+    }
+    name.value = "Pending draft";
+    name.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    enabled.checked = false;
+    enabled.form.requestSubmit();
+
+    await vi.waitFor(() => {
+      expect(root.querySelector('[data-testid="revision"]')?.textContent).toContain(
+        "resident/2",
+      );
+    });
+    expect(
+      root.querySelector<HTMLTextAreaElement>('textarea[aria-label="Name for Iron Sword"]')
+        ?.value,
+    ).toBe("Pending draft");
+    expect(client.textEditRequests).toHaveLength(0);
+    app.destroy();
+  });
+
+  it("preserves a rejected Text draft without advancing the revision", async () => {
+    class RejectingTextClient extends ScalarClient {
+      override async editText(
+        expectedRevision: string,
+        target: FieldTarget,
+        value: string,
+      ): Promise<PublicationProjection> {
+        this.textEditRequests.push({
+          expectedRevision,
+          target: structuredClone(target),
+          value,
+        });
+        throw new DesignerRuntimeError({
+          code: "invalid_request",
+          message: "Text edit rejected for test.",
+          current_revision: "resident/0",
+          diagnostics: [],
+        });
+      }
+    }
+
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const client = new RejectingTextClient();
+    const app = mountDesigner(root, client, host);
+    await app.ready;
+
+    const name = root.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Name for Iron Sword"]',
+    );
+    if (name === null || name.form === null) throw new Error("Text control is required");
+    name.value = "Rejected draft";
+    name.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    name.form.requestSubmit();
+
+    await vi.waitFor(() => {
+      expect(root.querySelector('[role="alert"]')?.textContent).toContain(
+        "Text edit rejected for test.",
+      );
+    });
+    expect(
+      root.querySelector<HTMLTextAreaElement>('textarea[aria-label="Name for Iron Sword"]')
+        ?.value,
+    ).toBe("Rejected draft");
+    expect(root.querySelector('[data-testid="revision"]')?.textContent).toContain(
+      "resident/0",
+    );
+    app.destroy();
+  });
+
+  it("preserves an unsubmitted Boolean draft across an unrelated scalar publication", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const client = new ScalarClient();
+    const app = mountDesigner(root, client, host);
+    await app.ready;
+
+    const enabled = root.querySelector<HTMLInputElement>(
+      'input[aria-label="Enabled for Iron Sword"]',
+    );
+    const name = root.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Name for Iron Sword"]',
+    );
+    if (enabled === null || name === null || name.form === null) {
+      throw new Error("scalar controls are required");
+    }
+    enabled.checked = false;
+    enabled.dispatchEvent(new Event("change", { bubbles: true }));
+    name.value = "Published name";
+    name.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    name.form.requestSubmit();
+
+    await vi.waitFor(() => {
+      expect(root.querySelector('[data-testid="revision"]')?.textContent).toContain(
+        "resident/1",
+      );
+    });
+    expect(
+      root.querySelector<HTMLInputElement>('input[aria-label="Enabled for Iron Sword"]')
+        ?.checked,
+    ).toBe(false);
+    expect(client.booleanEditRequests).toHaveLength(0);
+    app.destroy();
+  });
+
   it("preserves opaque edit targets across HTML parsing", async () => {
     const target = { entity: "entity\u0000id", field: "field\rid" };
     const opaqueTable = structuredClone(table);
@@ -639,6 +994,114 @@ describe("Designer application seam", () => {
     );
     app.destroy();
     addEventListener.mockRestore();
+    removeEventListener.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  it("treats pending scalar drafts as unsaved across Save As, Open, and Close", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const memoryHost = new MemoryHost();
+    const client = new FakeClient();
+    const closeProject = vi.spyOn(client, "closeProject");
+    const openProject = vi.spyOn(client, "openProject");
+    const prompt = vi
+      .fn<Window["prompt"]>()
+      .mockReturnValueOnce("baseline.roproj")
+      .mockReturnValueOnce("draft-excluded.roproj");
+    const confirm = vi.fn<Window["confirm"]>().mockReturnValue(false);
+    const addEventListener = vi.spyOn(window, "addEventListener");
+    vi.stubGlobal("prompt", prompt);
+    vi.stubGlobal("confirm", confirm);
+    const app = mountDesigner(root, client, memoryHost);
+    await app.ready;
+
+    root.querySelector<HTMLButtonElement>("[data-save-as]")?.click();
+    await vi.waitFor(() => {
+      expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+        "Saved",
+      );
+    });
+
+    const name = root.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Name for Iron Sword"]',
+    );
+    if (name === null) throw new Error("Text control is required");
+    name.value = "Unpublished draft";
+    name.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+      "Unsaved changes",
+    );
+    expect(addEventListener).toHaveBeenCalledWith("beforeunload", expect.any(Function));
+
+    root.querySelector<HTMLButtonElement>("[data-close-project]")?.click();
+    root.querySelector<HTMLButtonElement>("[data-open-project]")?.click();
+    expect(confirm).toHaveBeenCalledTimes(2);
+    expect(closeProject).not.toHaveBeenCalled();
+    expect(openProject).not.toHaveBeenCalled();
+
+    root.querySelector<HTMLButtonElement>("[data-save-as]")?.click();
+    await vi.waitFor(() => {
+      expect(memoryHost.projects.has("draft-excluded.roproj")).toBe(true);
+    });
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+      "Unsaved changes",
+    );
+    expect(
+      root.querySelector<HTMLTextAreaElement>('textarea[aria-label="Name for Iron Sword"]')
+        ?.value,
+    ).toBe("Unpublished draft");
+
+    app.destroy();
+    addEventListener.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  it("removes pending scalar drafts that return to their projected values", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const memoryHost = new MemoryHost();
+    const prompt = vi.fn<Window["prompt"]>().mockReturnValue("baseline.roproj");
+    const removeEventListener = vi.spyOn(window, "removeEventListener");
+    vi.stubGlobal("prompt", prompt);
+    const app = mountDesigner(root, new FakeClient(), memoryHost);
+    await app.ready;
+
+    root.querySelector<HTMLButtonElement>("[data-save-as]")?.click();
+    await vi.waitFor(() => {
+      expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+        "Saved",
+      );
+    });
+
+    const name = root.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Name for Iron Sword"]',
+    );
+    const enabled = root.querySelector<HTMLInputElement>(
+      'input[aria-label="Enabled for Iron Sword"]',
+    );
+    if (name === null || enabled === null) throw new Error("scalar controls are required");
+
+    name.value = "Draft";
+    name.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    name.value = "Leading\nMiddle\nTail";
+    name.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    enabled.checked = false;
+    enabled.dispatchEvent(new Event("change", { bubbles: true }));
+    enabled.checked = true;
+    enabled.dispatchEvent(new Event("change", { bubbles: true }));
+
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+      "Saved",
+    );
+    expect(removeEventListener).toHaveBeenCalledWith(
+      "beforeunload",
+      expect.any(Function),
+    );
+
+    app.destroy();
     removeEventListener.mockRestore();
     vi.unstubAllGlobals();
   });

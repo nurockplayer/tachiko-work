@@ -122,10 +122,42 @@ export class WorkerDesignerClient implements DesignerClient {
     return expectResponse(
       "published",
       await this.#command({
-        type: "edit_number",
+        type: "edit_scalar",
         expected_revision: expectedRevision,
         target,
-        input,
+        input: { kind: "number", input },
+      }),
+    );
+  }
+
+  async editText(
+    expectedRevision: string,
+    target: FieldTarget,
+    value: string,
+  ): Promise<PublicationProjection> {
+    return expectResponse(
+      "published",
+      await this.#command({
+        type: "edit_scalar",
+        expected_revision: expectedRevision,
+        target,
+        input: { kind: "text", value },
+      }),
+    );
+  }
+
+  async editBoolean(
+    expectedRevision: string,
+    target: FieldTarget,
+    value: boolean,
+  ): Promise<PublicationProjection> {
+    return expectResponse(
+      "published",
+      await this.#command({
+        type: "edit_scalar",
+        expected_revision: expectedRevision,
+        target,
+        input: { kind: "boolean", value },
       }),
     );
   }
