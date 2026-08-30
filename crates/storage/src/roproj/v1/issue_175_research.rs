@@ -32,7 +32,7 @@ static NEXT_RESEARCH_TEMP: AtomicU64 = AtomicU64::new(0);
 struct AdmissionWork {
     source_bytes: usize,
     nesting_scan_bytes: usize,
-    strict_json_bytes: usize,
+    json_parser_deserializer_bytes: usize,
     canonical_render_bytes: usize,
     entity_records: usize,
     formula_ast_nodes: usize,
@@ -153,11 +153,23 @@ struct StructuralIndex {
 
 #[derive(Clone, Debug)]
 struct SpineScan {
-    directory: Directory,
+    directory: Option<Directory>,
     structural: Option<StructuralIndex>,
     work: AdmissionWork,
     scan_time: Duration,
     serialized_bytes: usize,
+}
+
+impl SpineScan {
+    fn directory(&self) -> &Directory {
+        self.directory.as_ref().unwrap_or_else(|| {
+            &self
+                .structural
+                .as_ref()
+                .expect("SpineScan always owns one exact layer")
+                .directory
+        })
+    }
 }
 
 const SIDECAR_FORMAT: &str = "tachiko.issue-175.spine-sidecar";
@@ -355,7 +367,7 @@ fn admit_one_pass_exact(
             // is a third parser traversal. JSONL separator LFs are layout
             // checks, not JSON input.
             nesting_scan_bytes: strict_input_bytes,
-            strict_json_bytes: strict_input_bytes * 3,
+            json_parser_deserializer_bytes: strict_input_bytes * 3,
             canonical_render_bytes: source_bytes,
             entity_records,
             formula_ast_nodes,
@@ -507,7 +519,7 @@ fn admit_one_pass_host_controlled(
         AdmissionWork {
             source_bytes,
             nesting_scan_bytes: strict_input_bytes,
-            strict_json_bytes: strict_input_bytes * 3,
+            json_parser_deserializer_bytes: strict_input_bytes * 3,
             canonical_render_bytes: source_bytes,
             entity_records,
             formula_ast_nodes,
@@ -731,10 +743,6 @@ fn scan_spine_host(root: &Path, retain_structural: bool) -> Result<SpineScan, Fo
                 ));
             }
 
-            let (nodes, entity_references, dependencies) = dto_work_counts(&dto);
-            formula_ast_nodes += nodes;
-            reference_edges += entity_references;
-            formula_dependency_edges += dependencies;
             if !is_valid_identifier(&dto.key) {
                 return invalid_representation(format!(
                     "entity key '{}' is not a valid human key",
@@ -767,12 +775,15 @@ fn scan_spine_host(root: &Path, retain_structural: bool) -> Result<SpineScan, Fo
             // Directory output does not retain these facts, but exact source
             // admission still needs them temporarily to reject missing fields,
             // type/reference errors, and malformed formula coverage.
-            retain_structural_facts(
+            let (nodes, entity_references, dependencies) = retain_structural_facts(
                 &dto,
                 &mut field_presence,
                 &mut references,
                 &mut formula_dependencies,
             );
+            formula_ast_nodes += nodes;
+            reference_edges += entity_references;
+            formula_dependency_edges += dependencies;
             // Conversion validates stable IDs, finite Number values, and the
             // complete bound formula depth/node contract before payload drop.
             drop(dto.into_semantic()?);
@@ -803,22 +814,26 @@ fn scan_spine_host(root: &Path, retain_structural: bool) -> Result<SpineScan, Fo
         &references,
         &formula_dependencies,
     )?;
-    let structural = if retain_structural {
+    let (directory, structural) = if retain_structural {
         let reverse_formula_dependencies = reverse_edges(&formula_dependencies);
-        Some(StructuralIndex {
-            directory: directory.clone(),
-            field_presence,
-            references,
-            formula_dependencies: dependency_facts(&formula_dependencies),
-            reverse_formula_dependencies: dependency_facts(&reverse_formula_dependencies),
-        })
+        (
+            None,
+            Some(StructuralIndex {
+                directory,
+                field_presence,
+                references,
+                formula_dependencies: dependency_facts(&formula_dependencies),
+                reverse_formula_dependencies: dependency_facts(&reverse_formula_dependencies),
+            }),
+        )
     } else {
-        None
+        (Some(directory), None)
     };
+    let scan_time = started.elapsed();
     let serialized_bytes = if let Some(structural) = &structural {
         serde_json::to_vec(structural)?.len()
     } else {
-        serde_json::to_vec(&directory)?.len()
+        serde_json::to_vec(directory.as_ref().unwrap())?.len()
     };
     Ok(SpineScan {
         directory,
@@ -826,14 +841,14 @@ fn scan_spine_host(root: &Path, retain_structural: bool) -> Result<SpineScan, Fo
         work: AdmissionWork {
             source_bytes,
             nesting_scan_bytes: strict_input_bytes,
-            strict_json_bytes: strict_input_bytes * 3,
+            json_parser_deserializer_bytes: strict_input_bytes * 3,
             canonical_render_bytes: source_bytes,
             entity_records,
             formula_ast_nodes,
             reference_edges,
             formula_dependency_edges,
         },
-        scan_time: started.elapsed(),
+        scan_time,
         serialized_bytes,
     })
 }
@@ -959,7 +974,13 @@ fn open_sidecar_or_fallback(
     bytes: &[u8],
     expected_binding: &SourceBinding,
 ) -> Result<SidecarOpen, FormatError> {
-    match decode_sidecar(bytes, expected_binding) {
+    let current_binding = match expected_binding {
+        SourceBinding::DirtyFilesystem { .. } => SourceBinding::DirtyFilesystem {
+            source_sha256: fingerprint_source(root)?.0,
+        },
+        SourceBinding::GitSnapshot { .. } => expected_binding.clone(),
+    };
+    match decode_sidecar(bytes, &current_binding) {
         Ok(index) => Ok(SidecarOpen::Reused(index)),
         Err(_) => admit_one_pass_host(root, false)
             .map(|(document, _, _)| SidecarOpen::FellBackToExactAdmission(document)),
@@ -1409,6 +1430,9 @@ fn validate_directory_keys(schemas: &[DirectorySchema]) -> Result<(), FormatErro
 }
 
 fn validate_directory_coverage(directory: &Directory) -> Result<(), FormatError> {
+    if directory.document_title.trim().is_empty() {
+        return invalid_representation("document title must not be empty".to_owned());
+    }
     let schema_ids = directory
         .schemas
         .iter()
@@ -1469,7 +1493,10 @@ fn retain_structural_facts(
     presence: &mut Vec<FieldPresenceFact>,
     references: &mut Vec<EntityReferenceFact>,
     dependencies: &mut BTreeMap<IndexedFieldRef, BTreeSet<IndexedFieldRef>>,
-) {
+) -> (usize, usize, usize) {
+    let mut formula_ast_nodes = 0;
+    let mut reference_edges = 0;
+    let mut formula_dependency_edges = 0;
     for (field, value) in &entity.fields {
         let source = IndexedFieldRef {
             entity: entity.id.clone(),
@@ -1480,16 +1507,23 @@ fn retain_structural_facts(
             kind: value_kind(value),
         });
         match value {
-            ValueV1::Reference(target_entity) => references.push(EntityReferenceFact {
-                source,
-                target_entity: target_entity.clone(),
-            }),
+            ValueV1::Reference(target_entity) => {
+                reference_edges += 1;
+                references.push(EntityReferenceFact {
+                    source,
+                    target_entity: target_entity.clone(),
+                });
+            }
             ValueV1::Formula(expression) => {
-                dependencies.insert(source, expression_dependencies(expression));
+                let (targets, nodes) = expression_dependencies(expression);
+                formula_ast_nodes += nodes;
+                formula_dependency_edges += targets.len();
+                dependencies.insert(source, targets);
             }
             ValueV1::Number(_) | ValueV1::Text(_) | ValueV1::Boolean(_) => {}
         }
     }
+    (formula_ast_nodes, reference_edges, formula_dependency_edges)
 }
 
 fn value_kind(value: &ValueV1) -> ValueKindFact {
@@ -1502,10 +1536,12 @@ fn value_kind(value: &ValueV1) -> ValueKindFact {
     }
 }
 
-fn expression_dependencies(expression: &ExpressionV1) -> BTreeSet<IndexedFieldRef> {
+fn expression_dependencies(expression: &ExpressionV1) -> (BTreeSet<IndexedFieldRef>, usize) {
     let mut dependencies = BTreeSet::new();
     let mut stack = vec![expression];
+    let mut nodes = 0;
     while let Some(node) = stack.pop() {
+        nodes += 1;
         match node {
             ExpressionV1::Reference(reference) => {
                 dependencies.insert(IndexedFieldRef {
@@ -1525,7 +1561,7 @@ fn expression_dependencies(expression: &ExpressionV1) -> BTreeSet<IndexedFieldRe
             ExpressionV1::Number(_) => {}
         }
     }
-    dependencies
+    (dependencies, nodes)
 }
 
 fn reverse_edges(
@@ -2408,6 +2444,12 @@ fn issue_175_a1_preserves_a0_rejection_classes() {
             .insert("computed".to_owned(), ValueV1::Formula(balanced_formula(8)));
     });
     assert_rejection_parity("formula node limit", &formula_limit);
+
+    let mut empty_title = owned_files(&encode(&mixed_document(257, 37)).unwrap());
+    let mut manifest = decode_manifest(&empty_title[0].1).unwrap();
+    manifest.document.title = "   ".to_owned();
+    empty_title[0].1 = render_manifest(&manifest).unwrap().into_bytes();
+    assert_rejection_parity("empty document title", &empty_title);
 }
 
 #[test]
@@ -2519,8 +2561,8 @@ fn issue_175_workload_matrix_varies_structure_and_payload_independently() {
         super::super::host::materialize_roproj(&root, &document).unwrap();
         let directory = scan_spine_host(&root, false).unwrap();
         let structural = scan_spine_host(&root, true).unwrap();
-        assert_eq!(directory.directory.entities.len(), 128);
-        assert_eq!(directory.directory, structural.directory);
+        assert_eq!(directory.directory().entities.len(), 128);
+        assert_eq!(directory.directory(), structural.directory());
     }
 
     let edge = WorkloadShape::FormulaEdgeHeavy.document(128);
@@ -2729,7 +2771,7 @@ fn issue_175_directory_and_structural_index_are_distinct_exact_layers() {
     let index = structural.structural.as_ref().unwrap();
 
     assert!(directory.structural.is_none());
-    assert_eq!(directory.directory, index.directory);
+    assert_eq!(directory.directory(), &index.directory);
     assert_eq!(index.directory.entities.len(), 257);
     assert_eq!(index.field_presence.len(), 257 * 5);
     assert_eq!(index.references.len(), 257);
@@ -2791,6 +2833,22 @@ fn issue_175_dirty_sidecar_reuse_is_bound_and_fails_closed() {
     assert!(matches!(
         open_sidecar_or_fallback(&other_root, &sidecar, &other_binding).unwrap(),
         SidecarOpen::FellBackToExactAdmission(document) if document == other
+    ));
+
+    let mut changed_same_root = expected;
+    changed_same_root
+        .title
+        .push_str(" changed after sidecar build");
+    let replacement = temp.path().join("replacement.roproj");
+    super::super::host::materialize_roproj(&replacement, &changed_same_root).unwrap();
+    std::fs::copy(
+        replacement.join("manifest.json"),
+        root.join("manifest.json"),
+    )
+    .unwrap();
+    assert!(matches!(
+        open_sidecar_or_fallback(&root, &sidecar, &binding).unwrap(),
+        SidecarOpen::FellBackToExactAdmission(document) if document == changed_same_root
     ));
 }
 
@@ -2938,7 +2996,7 @@ fn issue_175_a0_a1_release_baseline() {
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(20);
     println!(
-        "arm,workload,entities,fields,source_bytes,nesting_scan_bytes,strict_json_bytes,canonical_render_bytes,entity_records,formula_ast_nodes,reference_edges,formula_dependency_edges,repetitions,p50_us,p95_us"
+        "arm,workload,entities,fields,source_bytes,nesting_scan_bytes,json_parser_deserializer_bytes,canonical_render_bytes,entity_records,formula_ast_nodes,reference_edges,formula_dependency_edges,repetitions,p50_us,p95_us"
     );
     for entity_count in entity_counts
         .split(',')
@@ -2982,7 +3040,7 @@ fn issue_175_a0_a1_host_open_raw_samples() {
         "os_cache_warm"
     };
     println!(
-        "arm,workload,cache_state,entities,fields,source_sha256,source_bytes,physical_read_bytes,nesting_scan_bytes,strict_json_bytes,canonical_render_bytes,entity_records,formula_ast_nodes,reference_edges,formula_dependency_edges,repetition,order,source_known_us,first_source_preview_us,semantic_current_us"
+        "arm,workload,cache_state,entities,fields,source_sha256,source_bytes,physical_read_bytes,nesting_scan_bytes,json_parser_deserializer_bytes,canonical_render_bytes,entity_records,formula_ast_nodes,reference_edges,formula_dependency_edges,repetition,order,source_known_us,first_source_preview_us,semantic_current_us"
     );
     for entity_count in entity_counts
         .split(',')
@@ -3084,7 +3142,7 @@ fn issue_175_full_workload_matrix_raw_samples() {
         .ok()
         .map(|value| value.split(',').map(str::to_owned).collect::<BTreeSet<_>>());
     println!(
-        "arm,workload,cache_state,entities,fields,source_sha256,source_bytes,nesting_scan_bytes,strict_json_bytes,canonical_render_bytes,entity_records,formula_ast_nodes,reference_edges,formula_dependency_edges,serialized_spine_bytes,repetition,source_known_us,first_preview_us,semantic_or_scan_current_us"
+        "arm,workload,cache_state,entities,fields,source_sha256,source_bytes,nesting_scan_bytes,json_parser_deserializer_bytes,canonical_render_bytes,entity_records,formula_ast_nodes,reference_edges,formula_dependency_edges,serialized_spine_bytes,repetition,source_known_us,first_preview_us,semantic_or_scan_current_us"
     );
     for entity_count in entity_counts
         .split(',')
@@ -3108,7 +3166,7 @@ fn issue_175_full_workload_matrix_raw_samples() {
             super::super::host::materialize_roproj(&root, &document).unwrap();
             let initial_scan = scan_spine_host(&root, true).unwrap();
             let work = initial_scan.work;
-            let source_fingerprint = initial_scan.directory.source_fingerprint;
+            let source_fingerprint = initial_scan.directory().source_fingerprint.clone();
             for repetition in 0..repetitions {
                 // Deterministically rotate arm order to distribute filesystem
                 // and allocator order effects across paired warm samples.
@@ -3160,7 +3218,9 @@ fn run_matrix_arm(
     match arm {
         0 => {
             let started = Instant::now();
-            black_box(super::super::host::load_roproj(root).unwrap());
+            let document = super::super::host::load_roproj(root).unwrap();
+            let semantic_current = started.elapsed();
+            black_box(&document);
             emit_matrix_sample(
                 "A0",
                 shape,
@@ -3172,8 +3232,9 @@ fn run_matrix_arm(
                 0,
                 None,
                 None,
-                started.elapsed(),
+                semantic_current,
             );
+            drop(document);
         }
         1 => {
             let (_, _, timings) = admit_one_pass_host(root, false).unwrap();
@@ -3230,10 +3291,10 @@ fn emit_matrix_sample(
     first_preview: Option<Duration>,
     current: Duration,
 ) {
-    let strict_json_bytes = if arm == "A0" {
-        work.strict_json_bytes * 2
+    let json_parser_deserializer_bytes = if arm == "A0" {
+        work.json_parser_deserializer_bytes * 2
     } else {
-        work.strict_json_bytes
+        work.json_parser_deserializer_bytes
     };
     let nesting_scan_bytes = if arm == "A0" {
         work.nesting_scan_bytes * 2
@@ -3241,7 +3302,7 @@ fn emit_matrix_sample(
         work.nesting_scan_bytes
     };
     println!(
-        "{arm},{},os_cache_warm,{entity_count},{field_count},{source_fingerprint},{},{nesting_scan_bytes},{strict_json_bytes},{},{},{},{},{},{serialized_spine_bytes},{repetition},{},{},{}",
+        "{arm},{},os_cache_warm,{entity_count},{field_count},{source_fingerprint},{},{nesting_scan_bytes},{json_parser_deserializer_bytes},{},{},{},{},{},{serialized_spine_bytes},{repetition},{},{},{}",
         shape.name(),
         work.source_bytes,
         work.canonical_render_bytes,
@@ -3257,6 +3318,7 @@ fn emit_matrix_sample(
 
 #[test]
 #[ignore = "run explicitly in release mode to record Issue #175 B evidence"]
+#[allow(clippy::too_many_lines)]
 fn issue_175_progressive_background_interference_and_cancellation() {
     require_release_profile();
     let entity_count = std::env::var("TACHIKO_ISSUE_175_BACKGROUND_ENTITIES")
@@ -3282,7 +3344,7 @@ fn issue_175_progressive_background_interference_and_cancellation() {
     let source_sha256 = fingerprint_source(&root).unwrap().0;
     black_box(source_preview(&root).unwrap());
     println!(
-        "arm,foreground_contract,cache_state,entities,source_sha256,repetition,foreground_samples,operations_per_sample,baseline_p50_us,baseline_p95_us,baseline_p99_us,baseline_min_us,baseline_max_us,background_p50_us,background_p95_us,background_p99_us,background_min_us,background_max_us,foreground_p95_ratio_ppm,baseline_elapsed_us,background_foreground_elapsed_us,background_semantic_current_us,cancelled_after_records,cancellation_latency_us"
+        "arm,foreground_contract,cache_state,entities,source_sha256,repetition,foreground_samples,operations_per_sample,baseline_p50_us,baseline_p95_us,baseline_p99_us,baseline_min_us,baseline_max_us,background_p50_us,background_p95_us,background_p99_us,background_min_us,background_max_us,foreground_p95_ratio_ppm,baseline_elapsed_us,background_foreground_elapsed_us,background_semantic_current_us,background_join_wall_us,cancelled_after_records,cancellation_outcome,cancellation_latency_us"
     );
     for repetition in 0..repetitions {
         let baseline_started = Instant::now();
@@ -3321,16 +3383,27 @@ fn issue_175_progressive_background_interference_and_cancellation() {
                 Some(&worker_records),
             )
         });
-        while records.load(Ordering::Relaxed) < 64 {
+        let cancellation_threshold = entity_count.min(64);
+        while records.load(Ordering::Relaxed) < cancellation_threshold
+            && !cancellation_worker.is_finished()
+        {
             std::thread::yield_now();
         }
+        let completed_before_cancel = cancellation_worker.is_finished();
         let cancellation_started = Instant::now();
-        cancel.store(true, Ordering::Relaxed);
+        if !completed_before_cancel {
+            cancel.store(true, Ordering::Relaxed);
+        }
         let cancellation = cancellation_worker.join().unwrap();
         let cancellation_time = cancellation_started.elapsed();
-        assert!(cancellation.is_err());
+        let cancellation_outcome = match (completed_before_cancel, cancellation) {
+            (true, Ok(_)) => "completed_before_cancel",
+            (false, Err(_)) => "cancelled",
+            (false, Ok(_)) => "completed_during_cancel_race",
+            (true, Err(error)) => panic!("completed worker returned an error: {error}"),
+        };
         println!(
-            "B-progressive,resident_exact_id_field_navigation,not_source_io,{entity_count},{source_sha256},{repetition},{foreground_count},{foreground_batch_ops},{},{},{},{},{},{},{},{},{},{},{regression_ppm},{},{},{},{},{}",
+            "B-progressive,resident_exact_id_field_navigation,not_source_io,{entity_count},{source_sha256},{repetition},{foreground_count},{foreground_batch_ops},{},{},{},{},{},{},{},{},{},{},{regression_ppm},{},{},{},{},{},{cancellation_outcome},{}",
             baseline_distribution.0.as_micros(),
             baseline_distribution.1.as_micros(),
             baseline_distribution.2.as_micros(),
@@ -3343,11 +3416,8 @@ fn issue_175_progressive_background_interference_and_cancellation() {
             interfered_distribution.4.as_micros(),
             baseline_elapsed.as_micros(),
             interfered_elapsed.as_micros(),
-            background
-                .2
-                .semantic_current
-                .as_micros()
-                .max(background_time.as_micros()),
+            background.2.semantic_current.as_micros(),
+            background_time.as_micros(),
             records.load(Ordering::Relaxed),
             cancellation_time.as_micros(),
         );
@@ -3375,7 +3445,7 @@ fn issue_175_directory_structural_raw_samples() {
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(30);
     println!(
-        "arm,workload,cache_state,entities,fields,source_bytes,nesting_scan_bytes,strict_json_bytes,entity_records,formula_ast_nodes,reference_edges,formula_dependency_edges,serialized_spine_bytes,spine_source_ratio_ppm,repetition,scan_us"
+        "arm,workload,cache_state,entities,fields,source_bytes,nesting_scan_bytes,json_parser_deserializer_bytes,entity_records,formula_ast_nodes,reference_edges,formula_dependency_edges,serialized_spine_bytes,spine_source_ratio_ppm,repetition,scan_us"
     );
     for entity_count in entity_counts
         .split(',')
@@ -3394,7 +3464,7 @@ fn issue_175_directory_structural_raw_samples() {
                     entity_count * 5,
                     scan.work.source_bytes,
                     scan.work.nesting_scan_bytes,
-                    scan.work.strict_json_bytes,
+                    scan.work.json_parser_deserializer_bytes,
                     scan.work.entity_records,
                     scan.work.formula_ast_nodes,
                     scan.work.reference_edges,
@@ -3430,8 +3500,8 @@ fn issue_175_dirty_sidecar_raw_samples() {
         let expected = mixed_document(entity_count, 64);
         super::super::host::materialize_roproj(&root, &expected).unwrap();
         let scan = scan_spine_host(&root, true).unwrap();
+        let source_sha256 = scan.directory().source_fingerprint.clone();
         let index = scan.structural.unwrap();
-        let source_sha256 = scan.directory.source_fingerprint.clone();
         let binding = SourceBinding::DirtyFilesystem {
             source_sha256: source_sha256.clone(),
         };
@@ -3803,10 +3873,10 @@ fn emit_host_sample(
     first_source_preview: Option<Duration>,
     semantic_current: Duration,
 ) {
-    let strict_json_bytes = if arm == "A0" {
-        work.strict_json_bytes * 2
+    let json_parser_deserializer_bytes = if arm == "A0" {
+        work.json_parser_deserializer_bytes * 2
     } else {
-        work.strict_json_bytes
+        work.json_parser_deserializer_bytes
     };
     let nesting_scan_bytes = if arm == "A0" {
         work.nesting_scan_bytes * 2
@@ -3814,7 +3884,7 @@ fn emit_host_sample(
         work.nesting_scan_bytes
     };
     println!(
-        "{arm},mixed_smoke_host,{cache_state},{entity_count},{},{source_sha256},{},{},{nesting_scan_bytes},{strict_json_bytes},{},{},{},{},{},{repetition},{order},{},{},{}",
+        "{arm},mixed_smoke_host,{cache_state},{entity_count},{},{source_sha256},{},{},{nesting_scan_bytes},{json_parser_deserializer_bytes},{},{},{},{},{},{repetition},{order},{},{},{}",
         entity_count * 5,
         work.source_bytes,
         work.source_bytes,
@@ -3841,10 +3911,10 @@ fn emit_baseline_row(
     // A0 strictly decodes the tree once during admission, re-encodes it, then
     // decodes it again for ordinary load. Its raw strict-parser traversal is
     // therefore twice A1's; physical host reads are measured separately.
-    let strict_json_bytes = if arm == "A0" {
-        work.strict_json_bytes * 2
+    let json_parser_deserializer_bytes = if arm == "A0" {
+        work.json_parser_deserializer_bytes * 2
     } else {
-        work.strict_json_bytes
+        work.json_parser_deserializer_bytes
     };
     let nesting_scan_bytes = if arm == "A0" {
         work.nesting_scan_bytes * 2
@@ -3852,7 +3922,7 @@ fn emit_baseline_row(
         work.nesting_scan_bytes
     };
     println!(
-        "{arm},mixed_smoke,{entity_count},{},{},{nesting_scan_bytes},{strict_json_bytes},{},{},{},{},{},{repetitions},{p50},{p95}",
+        "{arm},mixed_smoke,{entity_count},{},{},{nesting_scan_bytes},{json_parser_deserializer_bytes},{},{},{},{},{},{repetitions},{p50},{p95}",
         entity_count * 5,
         work.source_bytes,
         work.canonical_render_bytes,
