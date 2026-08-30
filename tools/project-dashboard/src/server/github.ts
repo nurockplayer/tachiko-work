@@ -219,11 +219,10 @@ const dashboardQuery = `
 `;
 
 const recentCompletionsQuery = `
-  query RecentCompletions($owner: String!, $repo: String!, $cursor: String) {
+  query RecentCompletions($owner: String!, $repo: String!) {
     repository(owner: $owner, name: $repo) {
       mergedPullRequests: pullRequests(
         first: 100
-        after: $cursor
         states: MERGED
         orderBy: { field: UPDATED_AT, direction: DESC }
       ) {
@@ -426,20 +425,12 @@ export async function loadGithubSnapshot(
   const defaultBranchName = repository.defaultBranchRef?.name ?? null;
   let recentCompletionsAvailable = true;
   try {
-    let cursor: string | null = null;
-    for (;;) {
-      const response = (await api.graphql(recentCompletionsQuery, {
-        owner: options.owner,
-        repo: options.repo,
-        cursor,
-      })) as GithubMergedPage;
-      if (response.repository === null) throw new Error("repository not found");
-      const connection = response.repository.mergedPullRequests;
-      for (const pr of connection.nodes) mergedPullRequests.set(pr.number, pr);
-      if (!connection.pageInfo.hasNextPage) break;
-      cursor = connection.pageInfo.endCursor;
-      if (cursor === null) throw new Error("missing recent-completion cursor");
-    }
+    const response = (await api.graphql(recentCompletionsQuery, {
+      owner: options.owner,
+      repo: options.repo,
+    })) as GithubMergedPage;
+    if (response.repository === null) throw new Error("repository not found");
+    for (const pr of response.repository.mergedPullRequests.nodes) mergedPullRequests.set(pr.number, pr);
   } catch {
     recentCompletionsAvailable = false;
     failures.push("Recent completion observation failed.");

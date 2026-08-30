@@ -476,7 +476,7 @@ function statusClaimIsConditional(
     /^\s*(?:(?:[:=-])\s*)?(?:only\s+)?(?:(?:once|when|if|after)\b|subject\s+to\b)/i.test(after) ||
     /^\s+to\b[^.;\n]{0,80}\b(?:once|when|if|after)\b/i.test(after) ||
     (pendingIsConditional && /^\s+(?:acceptance\s+)?criteria\b[^.;\n]{0,80}\b(?:is|are|remain|remains)\s+pending\b/i.test(after)) ||
-    (pendingIsConditional && /^\s*(?:(?:[:=-])\s*)?(?:only\s+)?pending\b/i.test(after));
+    (pendingIsConditional && /^\s*(?:(?:[:=-])\s*)?(?:only\s+)?(?:pending|awaiting|waiting\s+for)\b/i.test(after));
 }
 
 function statusLatestClaim(
@@ -1413,7 +1413,10 @@ export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): Re
     attention: {
       humanActionRequired: humanActions.length > 0 || deliveryQueueRequiresSteward ? true : observationIncomplete ? null : false,
       reasons: humanActions.length > 0
-        ? humanActions.map((lane) => `#${lane.issue.number}: ${lane.action.reason}`)
+        ? [
+            ...humanActions.map((lane) => `#${lane.issue.number}: ${lane.action.reason}`),
+            ...attentionFailures,
+          ]
         : deliveryQueueRequiresSteward
         ? ["No Ready delivery remains; the Project Steward must select or ready successor work."]
         : observationIncomplete

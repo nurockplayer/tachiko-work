@@ -965,6 +965,8 @@ describe("normalizeRepositorySnapshot", () => {
     "Blocked awaiting Steward approval before Ready.",
     "Blocked waiting for Steward approval before Ready.",
     "Blocked pending approval before Ready.",
+    "Blocked; Ready awaiting Steward approval.",
+    "Blocked; Ready waiting for Steward approval.",
   ])("does not let a prefix- or suffix-qualified future Ready claim override a current blocker: %s", (status) => {
     const blocked = issue();
     blocked.body = `## Status\n\n${status}\n\nOwner: \`agent:codex\``;
@@ -3289,6 +3291,25 @@ describe("normalizeRepositorySnapshot", () => {
 
     expect(projection.attention.humanActionRequired).toBe(true);
     expect(projection.attention.reasons).toContain("#169: The canonical coordination state requests human or Steward action.");
+  });
+
+  it("preserves source-failure reasons alongside a known human-action request", () => {
+    const pr = pullRequest();
+    pr.comments[0]!.body = pr.comments[0]!.body
+      .replace("STATE: merge-ready", "STATE: human_required")
+      .replace("HUMAN ACTION: none", "HUMAN ACTION: required");
+
+    const projection = normalizeRepositorySnapshot(snapshot({
+      fetchHealth: "partial",
+      failures: ["Product Roadmap observation failed."],
+      productHorizon: null,
+      issues: [issue()],
+      pullRequests: [pr],
+    }));
+
+    expect(projection.attention.humanActionRequired).toBe(true);
+    expect(projection.attention.reasons).toContain("#169: The canonical coordination state requests human or Steward action.");
+    expect(projection.attention.reasons).toContain("Product Roadmap observation failed.");
   });
 
   it("keeps independent attention confidence when only recent completion history is unavailable", () => {
