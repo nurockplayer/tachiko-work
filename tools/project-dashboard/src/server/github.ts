@@ -8,6 +8,7 @@ import type {
   RawReview,
   RawReviewThread,
 } from "../shared/types.ts";
+import { isAuthorityPath } from "../shared/authority.ts";
 
 export interface ReadonlyGithubApi {
   graphql(query: string, variables: Record<string, string | boolean | null>): Promise<unknown>;
@@ -336,10 +337,6 @@ function relationFromCompare(status: string): RawPullRequest["relationToMain"] {
   return "unknown";
 }
 
-function isAuthorityPath(path: string): boolean {
-  return /^(?:AGENTS\.md|CONTRIBUTING\.md|SECURITY\.md|docs\/(?:decisions|governance|specs|vision)\/|docs\/product\/product-roadmap\.md)/.test(path);
-}
-
 export async function loadGithubSnapshot(
   api: ReadonlyGithubApi,
   options: GithubSnapshotOptions,
@@ -466,12 +463,15 @@ export async function loadGithubSnapshot(
   for (const pr of pullRequests.values()) {
     let relationToMain: RawPullRequest["relationToMain"] = "unknown";
     let mergeBaseSha: string | null = null;
+    let changedPaths: string[] | null = null;
     let authorityPathsChangedOnMain: string[] | null = null;
+    let relationComparison: Awaited<ReturnType<ReadonlyGithubApi["compare"]>> | null = null;
     if (mainSha === null) {
       failures.push(`PR #${pr.number} relation-to-main observation failed.`);
     } else {
       try {
         const comparison = await api.compare(options.owner, options.repo, mainSha, pr.headRefOid);
+        relationComparison = comparison;
         relationToMain = relationFromCompare(comparison.status);
         mergeBaseSha = comparison.mergeBaseSha;
         if (mergeBaseSha === null) {
@@ -494,6 +494,18 @@ export async function loadGithubSnapshot(
           failures.push(`PR #${pr.number} authority-change observation failed.`);
         }
       }
+    }
+    try {
+      const scopeComparison = pr.baseRefOid === mainSha && relationComparison !== null
+        ? relationComparison
+        : await api.compare(options.owner, options.repo, pr.baseRefOid, pr.headRefOid);
+      if (scopeComparison.files.length >= 300) {
+        failures.push(`PR #${pr.number} changed-path observation failed.`);
+      } else {
+        changedPaths = scopeComparison.files.toSorted();
+      }
+    } catch {
+      failures.push(`PR #${pr.number} changed-path observation failed.`);
     }
 
     const commit = pr.commits.nodes[0]?.commit;
@@ -530,6 +542,7 @@ export async function loadGithubSnapshot(
       baseSha: pr.baseRefOid,
       mergeBaseSha,
       relationToMain,
+      changedPaths,
       authorityPathsChangedOnMain,
       mergeable: normalizeMergeable(pr.mergeable),
       mergeStateStatus: normalizeMergeStateStatus(pr.mergeStateStatus),

@@ -155,6 +155,7 @@ describe("loadGithubSnapshot", () => {
         baseSha: mainSha,
         mergeBaseSha: mainSha,
         relationToMain: "current",
+        changedPaths: [],
         authorityPathsChangedOnMain: [],
         mergeable: "mergeable",
         mergeStateStatus: "clean",
@@ -186,13 +187,14 @@ describe("loadGithubSnapshot", () => {
       requiredStatusChecks: async () => [],
       compare: async (_owner, _repo, base, head) => {
         comparisons.push(`${base}...${head}`);
-        return base === mainSha
-          ? { status: "diverged", mergeBaseSha: oldBase, files: [] }
-          : {
+        if (base === mainSha) return { status: "diverged", mergeBaseSha: oldBase, files: [] };
+        return head === mainSha
+          ? {
               status: "ahead",
               mergeBaseSha: oldBase,
               files: ["src/unrelated.rs", "docs/decisions/ADR-0029-dashboard-boundary.md"],
-            };
+            }
+          : { status: "ahead", mergeBaseSha: oldBase, files: ["docs/specs/dashboard-boundary.md"] };
       },
     };
 
@@ -202,13 +204,41 @@ describe("loadGithubSnapshot", () => {
       observedAt: "2026-08-30T00:00:00.000Z",
     });
 
-    expect(comparisons).toEqual([`${mainSha}...${headSha}`, `${oldBase}...${mainSha}`]);
+    expect(comparisons).toEqual([
+      `${mainSha}...${headSha}`,
+      `${oldBase}...${mainSha}`,
+      `${oldBase}...${headSha}`,
+    ]);
     expect(result.pullRequests?.[0]).toMatchObject({
       baseSha: oldBase,
       mergeBaseSha: oldBase,
       relationToMain: "diverged",
+      changedPaths: ["docs/specs/dashboard-boundary.md"],
       authorityPathsChangedOnMain: ["docs/decisions/ADR-0029-dashboard-boundary.md"],
     });
+  });
+
+  it("keeps pull-request scope unknown when changed-path observation reaches the API cap", async () => {
+    const api: ReadonlyGithubApi = {
+      graphql: async () => githubPage(),
+      rawText: async () => "## Current horizon\n\n> **05 · Designer MVP**",
+      requiredStatusChecks: async () => [],
+      compare: async () => ({
+        status: "ahead",
+        mergeBaseSha: mainSha,
+        files: Array.from({ length: 300 }, (_, index) => `docs/specs/file-${index}.md`),
+      }),
+    };
+
+    const result = await loadGithubSnapshot(api, {
+      owner: "nurockplayer",
+      repo: "tachiko-work",
+      observedAt: "2026-08-30T00:00:00.000Z",
+    });
+
+    expect(result.fetchHealth).toBe("partial");
+    expect(result.pullRequests?.[0]?.changedPaths).toBeNull();
+    expect(result.failures).toContain("PR #200 changed-path observation failed.");
   });
 
   it("keeps draft state and truncated exact-head checks explicit", async () => {

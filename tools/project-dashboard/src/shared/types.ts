@@ -81,6 +81,7 @@ export interface RawPullRequest {
   baseSha: string | null;
   mergeBaseSha: string | null;
   relationToMain: "current" | "behind" | "diverged" | "unknown";
+  changedPaths: string[] | null;
   authorityPathsChangedOnMain: string[] | null;
   mergeable: "mergeable" | "conflicting" | "unknown";
   mergeStateStatus: "clean" | "blocked" | "behind" | "dirty" | "draft" | "unstable" | "unknown";
@@ -126,6 +127,7 @@ export interface HandoffProjection {
   claimedOwner: string | null;
   claimedState: string | null;
   claimedIssueNumber: number | null;
+  observedIssueNumbers: number[];
   claimedHeadSha: string | null;
   lastCheckedMainSha: string | null;
   updatedAt: string | null;

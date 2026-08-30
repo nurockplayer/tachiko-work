@@ -60,6 +60,7 @@ function pullRequest(): RawPullRequest {
     baseSha: mainSha,
     mergeBaseSha: mainSha,
     relationToMain: "current",
+    changedPaths: ["tools/project-dashboard/src/server/normalize.ts"],
     authorityPathsChangedOnMain: [],
     mergeable: "mergeable",
     mergeStateStatus: "clean",
@@ -278,11 +279,73 @@ describe("normalizeRepositorySnapshot", () => {
     const decision = issue();
     decision.title = "[Decision][M05 P1] Choose the dashboard delivery boundary";
     decision.body = "## Status\n\n**DECISION-READY**\n\nOwner: `agent:codex`";
+    const pr = pullRequest();
+    pr.changedPaths = ["docs/decisions/ADR-0029-dashboard-boundary.md"];
 
-    const projection = normalizeRepositorySnapshot(snapshot({ issues: [decision], pullRequests: [pullRequest()] }));
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [decision], pullRequests: [pr] }));
 
     expect(projection.deliveries[0]?.issue.readiness).toBe("active");
     expect(projection.deliveries[0]?.phase).toBe("merge_gate");
+  });
+
+  it("keeps a Decision-Ready authority Issue without a focused PR outside delivery", () => {
+    const decision = issue();
+    decision.title = "[Decision][M05 P1] Choose the dashboard delivery boundary";
+    decision.body = "## Status\n\n**DECISION-READY**\n\nOwner: `agent:codex`";
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [decision] }));
+
+    expect(projection.deliveries).toEqual([]);
+  });
+
+  it("keeps a Decision-Ready authority Issue paired with implementation changes out of the merge gate", () => {
+    const decision = issue();
+    decision.title = "[Decision][M05 P1] Choose the dashboard delivery boundary";
+    decision.body = "## Status\n\n**DECISION-READY**\n\nOwner: `agent:codex`";
+    const pr = pullRequest();
+    pr.changedPaths = [
+      "docs/decisions/ADR-0029-dashboard-boundary.md",
+      "crates/workspace-engine/src/lib.rs",
+    ];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [decision], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.issue.readiness).toBe("unknown");
+    expect(lane?.phase).toBe("validating");
+    expect(lane?.blockers).toContain(
+      "Decision-Ready authorizes only a focused authority or specification pull request.",
+    );
+    expect(lane?.action.owner).toBe("codex");
+  });
+
+  it("keeps Decision-Ready scope unknown when changed paths cannot be observed completely", () => {
+    const decision = issue();
+    decision.title = "[Decision][M05 P1] Choose the dashboard delivery boundary";
+    decision.body = "## Status\n\n**DECISION-READY**\n\nOwner: `agent:codex`";
+    const pr = pullRequest();
+    pr.changedPaths = null;
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [decision], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.phase).toBe("validating");
+    expect(lane?.blockers).toContain("Pull-request changed paths could not be fully observed.");
+  });
+
+  it("does not reuse broader drift candidates as Decision-Ready authority output", () => {
+    const decision = issue();
+    decision.title = "[Decision][M05 P1] Choose the dashboard delivery boundary";
+    decision.body = "## Status\n\n**DECISION-READY**\n\nOwner: `agent:codex`";
+    const pr = pullRequest();
+    pr.changedPaths = ["docs/vision/design-principles.md"];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [decision], pullRequests: [pr] }));
+
+    expect(projection.deliveries[0]?.phase).toBe("validating");
+    expect(projection.deliveries[0]?.blockers).toContain(
+      "Decision-Ready authorizes only a focused authority or specification pull request.",
+    );
   });
 
   it("keeps a linked Decision Issue out of the merge gate", () => {
@@ -1030,6 +1093,50 @@ describe("normalizeRepositorySnapshot", () => {
     }));
 
     expect(projection.deliveries.map((lane) => lane.phase)).toEqual(["blocked", "blocked"]);
+    for (const lane of projection.deliveries) {
+      expect(lane.blockers).toContain("Multiple open pull requests claim Issue #170: #200, #201.");
+    }
+  });
+
+  it("reserves every observed Issue claim from inconsistent duplicate handoffs", () => {
+    const first = pullRequest();
+    first.comments.push({
+      ...first.comments[0]!,
+      id: "handoff-pr-duplicate",
+      body: first.comments[0]!.body
+        .replace("ISSUE: #169", "ISSUE: #170")
+        .replace("OWNER: agent:codex", "OWNER: agent:chatgpt"),
+      url: "https://github.com/nurockplayer/tachiko-work/pull/200#issuecomment-3",
+      updatedAt: "2026-08-30T00:01:00.000Z",
+    });
+    const second = pullRequest();
+    second.number = 201;
+    second.url = "https://github.com/nurockplayer/tachiko-work/pull/201";
+    second.body = "Closes #170";
+    second.issueNumbers = [170];
+    second.headSha = "c".repeat(40);
+    second.checksObservedHeadSha = second.headSha;
+    second.reviews![0]!.headSha = second.headSha;
+    second.comments[0]!.body = second.comments[0]!.body
+      .replace("ISSUE: #169", "ISSUE: #170")
+      .replaceAll(headSha, second.headSha);
+
+    const projection = normalizeRepositorySnapshot(snapshot({
+      issues: [issue(), issue(170)],
+      pullRequests: [first, second],
+    }));
+
+    expect(projection.deliveries.map((lane) => lane.phase)).toEqual(["blocked", "blocked"]);
+    const firstLane = projection.deliveries.find((lane) => lane.pr?.number === 200);
+    expect(firstLane).toMatchObject({ issue: { number: 169 }, owner: "agent:codex" });
+    expect(firstLane?.handoff).toMatchObject({
+      condition: "inconsistent",
+      claimedIssueNumber: null,
+      observedIssueNumbers: [169, 170],
+    });
+    expect(firstLane?.blockers).not.toContain(
+      "Canonical handoff claims Issue #170, but pull request #200 closes Issue #169.",
+    );
     for (const lane of projection.deliveries) {
       expect(lane.blockers).toContain("Multiple open pull requests claim Issue #170: #200, #201.");
     }

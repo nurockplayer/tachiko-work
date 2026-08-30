@@ -12,6 +12,7 @@ import type {
   SourceClass,
   SourceRef,
 } from "../shared/types.ts";
+import { isDecisionAuthorityPath } from "../shared/authority.ts";
 
 const handoffMarker = "<!-- agent-handoff:v1 -->";
 const explicitlySubstantiveFinding = /(?:\[|\b)(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness)(?:\]|\b)/i;
@@ -134,6 +135,7 @@ function projectHandoff(
       claimedOwner: null,
       claimedState: null,
       claimedIssueNumber: null,
+      observedIssueNumbers: [],
       claimedHeadSha: null,
       lastCheckedMainSha: null,
       updatedAt: null,
@@ -147,6 +149,7 @@ function projectHandoff(
       claimedOwner: null,
       claimedState: null,
       claimedIssueNumber: null,
+      observedIssueNumbers: [],
       claimedHeadSha: null,
       lastCheckedMainSha: null,
       updatedAt: null,
@@ -160,6 +163,10 @@ function projectHandoff(
   }
 
   const claimedHeadSha = normalizedSha(labeledValue(latest.body, "HEAD") ?? labeledValue(latest.body, "EXACT HEAD"));
+  const observedIssueNumbers = [...new Set(canonical.flatMap((comment) => {
+    const number = claimedIssueNumber(comment.body);
+    return number === null ? [] : [number];
+  }))].toSorted((left, right) => left - right);
   const lastCheckedMainSha = normalizedSha(
     labeledValue(latest.body, "LAST CHECKED MAIN") ?? labeledValue(latest.body, "MAIN"),
   );
@@ -186,6 +193,7 @@ function projectHandoff(
     claimedOwner: labeledValue(latest.body, "OWNER"),
     claimedState: labeledValue(latest.body, "STATE") ?? labeledValue(latest.body, "STATUS"),
     claimedIssueNumber: canonical.length === 1 ? claimedIssueNumber(latest.body) : null,
+    observedIssueNumbers,
     claimedHeadSha,
     lastCheckedMainSha,
     updatedAt: latest.updatedAt,
@@ -250,6 +258,14 @@ function issueReadiness(issue: RawIssue, handoff: HandoffProjection): DeliveryLa
   if (/\bactive\b|\bimplementing\b|\bin progress\b|\bvalidating\b|\breview[_ -]?fix\b|\bhuman[_ -]?required\b/.test(statusText)) return "active";
   if (/\bready\b/.test(statusText) && !/not ready for (?:production )?implementation/.test(statusText)) return "ready";
   return "unknown";
+}
+
+function isDecisionReadyAuthorityIssue(issue: RawIssue): boolean {
+  return decisionIssue.test(issue.title) && /\bdecision[_ -]?ready\b/.test(issueStatusText(issue));
+}
+
+function isFocusedAuthorityPullRequest(pr: RawPullRequest): boolean {
+  return pr.changedPaths !== null && pr.changedPaths.length > 0 && pr.changedPaths.every(isDecisionAuthorityPath);
 }
 
 function humanActionRequested(comments: RawComment[], handoff: HandoffProjection): boolean {
@@ -487,7 +503,9 @@ function projectLane(
   const comments = pr === null ? issue.comments : pr.comments;
   const commentsComplete = pr === null ? issue.commentsComplete : pr.commentsComplete;
   const handoff = projectHandoff(comments, commentsComplete, snapshot.observedAt, pr?.headSha ?? null, snapshot.mainSha);
-  const observedReadiness = issueReadiness(issue, handoff);
+  const decisionReadyAuthority = isDecisionReadyAuthorityIssue(issue);
+  const decisionReadyScopeReconciled = !decisionReadyAuthority || (pr !== null && isFocusedAuthorityPullRequest(pr));
+  const observedReadiness = decisionReadyScopeReconciled ? issueReadiness(issue, handoff) : "unknown";
   const readinessBeforeHandoff = pr === null || !["ready", "active"].includes(observedReadiness) ? observedReadiness : "active";
   const readiness = !commentsComplete && !["blocked", "parked"].includes(readinessBeforeHandoff)
     ? "unknown"
@@ -579,6 +597,11 @@ function projectLane(
     blockers.push(`Pull request #${pr.number} targets ${pr.baseRefName} instead of the live default branch ${snapshot.defaultBranchName ?? "Unknown"}.`);
   }
   if (!ownershipObservationComplete) blockers.push("Pull-request Issue ownership could not be fully observed.");
+  if (pr !== null && decisionReadyAuthority && pr.changedPaths === null) {
+    blockers.push("Pull-request changed paths could not be fully observed.");
+  } else if (pr !== null && decisionReadyAuthority && !decisionReadyScopeReconciled) {
+    blockers.push("Decision-Ready authorizes only a focused authority or specification pull request.");
+  }
   const changedAuthorityPaths = pr?.authorityPathsChangedOnMain ?? [];
   if (drift === "suspected" && changedAuthorityPaths.length > 0) {
     blockers.push(`Accepted-authority candidates changed on main: ${changedAuthorityPaths.join(", ")}.`);
@@ -638,6 +661,7 @@ function projectLane(
         (pr !== null && handoff.condition === "unknown") ||
         (pr !== null && handoff.condition === "missing") || !issueScopeReconciled ||
         handoffMergeReadinessRequiresDelivery || pr?.isDraft === true || !targetsDefaultBranch || !ownershipObservationComplete
+        || !decisionReadyScopeReconciled
       ? { owner: deliveryActionOwner(owner), reason: blockers[0] ?? "Delivery-agent action is required." }
       : { owner: "none", reason: "No human action is currently evidenced." };
   const issueRef = source(
@@ -736,9 +760,7 @@ function pullRequestIssueClaims(pr: RawPullRequest, snapshot: RawRepositorySnaps
     pr.headSha,
     snapshot.mainSha,
   );
-  return hasUsableIssueClaim(handoff)
-    ? [...new Set([...issueNumbers, handoff.claimedIssueNumber])]
-    : issueNumbers;
+  return [...new Set([...issueNumbers, ...handoff.observedIssueNumbers])];
 }
 
 export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): RepositoryProjection {
@@ -787,6 +809,7 @@ export function normalizeRepositorySnapshot(snapshot: RawRepositorySnapshot): Re
 
   for (const issue of issues) {
     if (ownedIssueNumbers.has(issue.number)) continue;
+    if (isDecisionReadyAuthorityIssue(issue)) continue;
     const handoff = projectHandoff(
       issue.comments,
       issue.commentsComplete,
