@@ -672,6 +672,42 @@ fn read_record_cancellable_with_limit<R: BufRead>(
     }
 }
 
+fn read_file_cancellable_with_limit(
+    path: &Path,
+    cancel: Option<&AtomicBool>,
+    limit: usize,
+) -> Result<Vec<u8>, FormatError> {
+    let mut reader = BufReader::new(File::open(path).map_err(|source| FormatError::Read {
+        path: path.to_owned(),
+        source,
+    })?);
+    let mut bytes = Vec::new();
+    loop {
+        if cancel.is_some_and(|token| token.load(Ordering::Relaxed)) {
+            return invalid_representation(
+                "research A1 admission cancelled before SemanticCurrent".to_owned(),
+            );
+        }
+        let consumed = {
+            let available = reader.fill_buf().map_err(|source| FormatError::Read {
+                path: path.to_owned(),
+                source,
+            })?;
+            if available.is_empty() {
+                return Ok(bytes);
+            }
+            if bytes.len().saturating_add(available.len()) > limit {
+                return invalid_representation(format!(
+                    "non-authoritative source preview manifest exceeds {limit} byte budget"
+                ));
+            }
+            bytes.extend_from_slice(available);
+            available.len()
+        };
+        reader.consume(consumed);
+    }
+}
+
 fn source_preview(
     root: &Path,
     cancel: Option<&AtomicBool>,
@@ -681,7 +717,8 @@ fn source_preview(
     super::super::host::require_exact_root_entries(root)?;
     super::super::host::require_exact_entity_entries(&root.join("entities"))?;
     let manifest_path = root.join(ROPROJ_V1_PATHS[0]);
-    let manifest_bytes = super::super::host::read_file(&manifest_path)?;
+    let manifest_bytes =
+        read_file_cancellable_with_limit(&manifest_path, cancel, MAX_PREVIEW_RECORD_BYTES)?;
     dispatch_manifest(&manifest_bytes)?;
     for relative in ROPROJ_V1_PATHS.iter().skip(2) {
         let path = root.join(relative);
@@ -3078,6 +3115,30 @@ fn issue_175_progressive_source_preview_dispatches_manifest_before_body_data() {
             found: 2,
             supported: 1,
         })
+    ));
+}
+
+#[test]
+fn issue_175_progressive_source_preview_bounds_and_cancels_manifest_read() {
+    let temp = ResearchTempDirectory::new();
+    let root = temp.path().join("oversized-manifest-preview.roproj");
+    let mut document = mixed_document(17, 37);
+    document.title = "x".repeat(70_000);
+    super::super::host::materialize_roproj(&root, &document).unwrap();
+
+    let cancel = AtomicBool::new(true);
+    let cancelled = source_preview(&root, Some(&cancel)).unwrap_err();
+    assert!(matches!(
+        cancelled,
+        FormatError::InvalidRoProjectRepresentation { message }
+            if message.contains("cancelled before SemanticCurrent")
+    ));
+
+    let error = source_preview(&root, None).unwrap_err();
+    assert!(matches!(
+        error,
+        FormatError::InvalidRoProjectRepresentation { message }
+            if message.contains("source preview manifest exceeds 65536 byte budget")
     ));
 }
 
