@@ -172,6 +172,10 @@ were accepted where they matched Issue and Accepted authority.
   preview dispatches the manifest before any body interpretation, is
   exact-layout checked, cancellable, and capped at 64 KiB; admission checks
   cancellation before, between, and after final validation passes.
+- Background admission initially used uncancellable whole-file reads for its
+  manifest and schemas. Final A1 polls cancellation while reading both files
+  and before and after each metadata parse/canonical-render boundary; a
+  pre-cancelled 1 MB schemas case stops before parsing.
 - Sidecar A1 comparison originally timestamped after dropping the complete
   `Document`, while D added one shared pin duration to every warmed lookup.
   Final E retains A1 through the timestamp; final D resamples pinning and the
@@ -223,11 +227,15 @@ Git-pinned exact-A1 comparator. The earlier
 Cold-cache cells remain absent and explicitly unavailable rather than
 relabeled.
 
-The final exactness correction at `607e920` proves exact A0/A1 `Document`
-equality across a valid chain, cold numeric mutation, cross-cold SCC, and
-division-by-zero pressure. The same shapes independently preserve complete
-calculation and workspace stable observations. C/D still publish no semantic
-result and return `RequiresFullAdmission` where the full oracle is required.
+The aggregate-counter exactness correction at `607e920` proves exact A0/A1
+`Document` equality across a valid chain, cold numeric mutation, cross-cold
+SCC, and division-by-zero pressure. A later independent review correctly noted
+that the separate formula/workspace test had not consumed those admitted
+outputs. At `d3edb03`, a research-only cross-crate bridge feeds the actual A0
+and A1 outputs for all four cases into `calculate_complete` and
+`validation_report().stable_observations()` and compares both with the source
+oracle. C/D still publish no semantic result and return
+`RequiresFullAdmission` where the full oracle is required.
 
 ## Final outcome
 

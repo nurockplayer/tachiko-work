@@ -8,9 +8,10 @@ progress-synchronized B at `58a2c47ea110c6a1a6d0617da0d805c14940b631`;
 resampled D at
 `8ce554191e36496dedb57322fc1ab059a205ab07`; bounded E1 and atomic
 immutable-Git-object E2 with an independently pinned exact-A1 comparator at
-`f2912ff58d5a5f22e240be6e8c63686ad22cefc8`; full-oracle and aggregate two-pass
-counter corrections at
-`607e9208da2fdf71e0741d7ff7efceec890ac6fc`; all on
+`f2912ff58d5a5f22e240be6e8c63686ad22cefc8`; aggregate two-pass counter
+corrections at `607e9208da2fdf71e0741d7ff7efceec890ac6fc`; and cross-crate full-oracle
+wiring plus cancellable metadata loading at
+`d3edb03b0e2d1bd1fb7690aa09d5a23f92926666`; all on
 `main@022a14d18503477aa7e20f6fca102f9e85dce740`.
 
 ## Outcome
@@ -48,7 +49,7 @@ justify a Global Spine.
 
 | Gate | Result | Evidence |
 | --- | --- | --- |
-| Full-oracle equivalence | Pass for the research paths tested | Exact A0/A1 `Document` equality under success, cold numeric mutation, cross-cold SCC, and division-by-zero pressure; the same shapes independently preserve complete-calculation and workspace stable observations; late-invalid A0/A1/C rejection parity; formula oracle 10/10 and workspace validation 19/19 |
+| Full-oracle equivalence | Pass for the research paths tested | The actual A0 and A1 admitted outputs under success, cold numeric mutation, cross-cold SCC, and division-by-zero pressure exactly match the source `Document`, `calculate_complete` outcome, and workspace stable observations; late-invalid A0/A1/C rejection parity; formula oracle 10/10 and workspace validation 19/19 |
 | `>=2x` p95 benefit over A1 in two realistic large classes | Fail | At 64k, C Structural is only `1.07x` faster than A1 for payload and is `1.41x` slower for references and `1.43x` slower for mixed |
 | Benefit not limited to payload-heavy data | Fail | Payload Structural Index is `0.07x` source, but mixed is `1.38x` and references `2.83x` |
 | No `>10%` foreground regression | Fail | Progress-synchronized counterbalanced p95 of per-run foreground p95 ratios is `1.401`; maximum is `1.451`; 6/20 runs exceed `1.10` |
@@ -277,7 +278,8 @@ structural parsing: they run the required document-level coverage checks.
 
 Validation at measurement HEAD:
 
-- Issue #175 focused tests: 16 passed, 10 ignored measurement entrypoints;
+- Issue #175 storage tests: 21 passed, 10 ignored measurement entrypoints;
+- cross-crate admitted-output full-oracle test: 1 passed;
 - storage `.roproj/v1` and host suites: 66 passed;
 - formula complete-oracle suite: 10 passed;
 - workspace validation-report suite: 19 passed; and
@@ -291,9 +293,10 @@ Validation at measurement HEAD:
   RSS, not latency.
 - RSS has five repetitions per arm, enough to falsify the 40% reduction claim
   here but not to define a product memory SLA.
-- A1 is a research implementation inside the storage test module. It still
-  performs strict syntax, duplicate-member, nesting, and DTO traversals and
-  allocates temporary per-record canonical spelling evidence.
+- A1 is a research implementation shared with the cross-crate oracle only
+  through an opt-in test feature. It still performs strict syntax,
+  duplicate-member, nesting, and DTO traversals and allocates temporary
+  per-record canonical spelling evidence.
 - Source preview is non-authoritative, capped at a 64 KiB record, cancellable,
   and exact-layout checked. The B foreground contract begins from an already
   resident exact `Document` and is not evidence for cold payload search.
