@@ -543,6 +543,11 @@ function projectReviews(pr: RawPullRequest, observedAt: string): ReviewProjectio
   const reviewedHeads = new Set(relevantReviews.map((review) => review.headSha));
   const reviewedHeadSha = reviewedHeads.size === 1 ? relevantReviews[0]?.headSha ?? null : null;
   const unresolved = pr.reviewThreads.filter((thread) => !thread.resolved);
+  const substantiveReviewBodies = pr.reviews.filter(
+    (review) => !["dismissed", "pending"].includes(review.state) &&
+      review.headSha !== null && shaMatches(review.headSha, pr.headSha) &&
+      explicitlySubstantiveFinding.test(review.body),
+  );
   const allReviewsCoverHead = relevantReviews.length > 0 && relevantReviews.every(
     (review) => review.headSha !== null && shaMatches(review.headSha, pr.headSha),
   );
@@ -557,10 +562,15 @@ function projectReviews(pr: RawPullRequest, observedAt: string): ReviewProjectio
     status,
     reviewedHeadSha,
     unresolvedThreadCount: unresolved.length,
-    substantiveUnresolvedCount: unresolved.filter(
+    substantiveUnresolvedCount: substantiveReviewBodies.length + unresolved.filter(
       (thread) => thread.comments.some((comment) => isSubstantiveFinding(comment)),
     ).length,
-    sourceRefs: refs,
+    sourceRefs: [
+      ...refs,
+      ...substantiveReviewBodies.map((review) =>
+        source("direct", "Current-head substantive review body", review.url, observedAt, review.headSha)
+      ),
+    ],
   };
 }
 

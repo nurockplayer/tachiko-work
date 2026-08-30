@@ -113,6 +113,7 @@ function reviewFixPr(): RawPullRequest {
     reviews: [
       {
         state: "changes_requested",
+        body: "",
         headSha: reviewHead,
         url: "https://github.com/nurockplayer/tachiko-work/pull/201#pullrequestreview-1",
         submittedAt: observedAt,

@@ -96,7 +96,7 @@ function pullRequest(): RawPullRequest {
     checksObservedHeadSha: headSha,
     checks: [{ name: "test", integrationId: null, attemptAt: null, status: "completed", conclusion: "success", url: null }],
     reviewDecision: "approved",
-    reviews: [{ state: "approved", headSha, url: "https://github.com/review", submittedAt: observedAt }],
+    reviews: [{ state: "approved", body: "", headSha, url: "https://github.com/review", submittedAt: observedAt }],
     reviewThreads: [],
     updatedAt: observedAt,
   };
@@ -872,6 +872,63 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.attention.humanActionRequired).toBe(false);
   });
 
+  it("blocks a substantive comment-only review body on the current head", () => {
+    const pr = pullRequest();
+    pr.reviews = [...(pr.reviews ?? []), {
+      state: "commented",
+      body: "[P2] Preserve comment-only review evidence",
+      headSha,
+      url: "https://github.com/review/comment-only",
+      submittedAt: observedAt,
+    }];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.reviews.substantiveUnresolvedCount).toBe(1);
+    expect(lane?.phase).toBe("review_fix");
+    expect(lane?.blockers).toContain("1 substantive review finding(s) remain unresolved.");
+    expect(lane?.reviews.sourceRefs).toContainEqual(expect.objectContaining({
+      label: "Current-head substantive review body",
+      url: "https://github.com/review/comment-only",
+      observedIdentity: headSha,
+    }));
+  });
+
+  it("does not block on a substantive comment-only review body from an old head", () => {
+    const pr = pullRequest();
+    pr.reviews = [...(pr.reviews ?? []), {
+      state: "commented",
+      body: "[P2] Finding from the preceding head",
+      headSha: "c".repeat(40),
+      url: "https://github.com/review/old-comment-only",
+      submittedAt: "2026-08-29T23:00:00.000Z",
+    }];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.reviews.substantiveUnresolvedCount).toBe(0);
+    expect(lane?.phase).toBe("merge_gate");
+  });
+
+  it("does not infer a substantive finding from an unlabelled comment-only review summary", () => {
+    const pr = pullRequest();
+    pr.reviews = [...(pr.reviews ?? []), {
+      state: "commented",
+      body: "Automated review completed without inline findings.",
+      headSha,
+      url: "https://github.com/review/summary",
+      submittedAt: observedAt,
+    }];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.reviews.substantiveUnresolvedCount).toBe(0);
+    expect(lane?.phase).toBe("merge_gate");
+  });
+
   it("routes delivery reconciliation to the claimed ChatGPT agent", () => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace("OWNER: agent:codex", "OWNER: agent:chatgpt");
@@ -937,6 +994,7 @@ describe("normalizeRepositorySnapshot", () => {
     pr.reviewDecision = "changes_requested";
     pr.reviews = [{
       state: "changes_requested",
+      body: "",
       headSha,
       url: "https://github.com/review",
       submittedAt: observedAt,
@@ -1619,8 +1677,8 @@ describe("normalizeRepositorySnapshot", () => {
   it("keeps an approved decision stale until every counted approval covers the exact head", () => {
     const pr = pullRequest();
     pr.reviews = [
-      { state: "approved", headSha, url: "https://github.com/review/current", submittedAt: observedAt },
-      { state: "approved", headSha: "c".repeat(40), url: "https://github.com/review/stale", submittedAt: "2026-08-29T23:00:00.000Z" },
+      { state: "approved", body: "", headSha, url: "https://github.com/review/current", submittedAt: observedAt },
+      { state: "approved", body: "", headSha: "c".repeat(40), url: "https://github.com/review/stale", submittedAt: "2026-08-29T23:00:00.000Z" },
     ];
 
     const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));

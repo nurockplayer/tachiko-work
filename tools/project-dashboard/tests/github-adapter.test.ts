@@ -109,7 +109,16 @@ function githubPage() {
               ],
             },
             reviewDecision: "REVIEW_REQUIRED",
-            reviews: { nodes: [], pageInfo: { hasNextPage: false } },
+            reviews: {
+              nodes: [{
+                state: "COMMENTED",
+                body: "[P2] Comment-only current-head finding",
+                submittedAt: "2026-08-30T00:00:00Z",
+                url: "https://github.com/review/comment-only",
+                commit: { oid: headSha },
+              }],
+              pageInfo: { hasNextPage: false },
+            },
             reviewThreads: {
               nodes: [{
                 isResolved: false,
@@ -215,6 +224,12 @@ describe("loadGithubSnapshot", () => {
           comments: ["[P3] Initial suggestion", "[P1] Follow-up correctness finding"],
           url: "https://github.com/thread#comment-1",
         }],
+        reviews: [{
+          state: "commented",
+          body: "[P2] Comment-only current-head finding",
+          headSha,
+          url: "https://github.com/review/comment-only",
+        }],
       }],
       recentCompletions: [{ number: 186, mergedBy: "maintainer" }],
     });
@@ -224,6 +239,9 @@ describe("loadGithubSnapshot", () => {
     expect(projectionQuery).toContain("body authorAssociation updatedAt");
     expect(projectionQuery).toContain("id body url authorAssociation createdAt updatedAt");
     expect(projectionQuery).toContain("reviewThreads(first: 50)");
+    expect(projectionQuery).toContain("reviews(first: 100)");
+    expect(projectionQuery).not.toContain("latestOpinionatedReviews");
+    expect(projectionQuery).toMatch(/reviews\(first: 100\)[\s\S]*nodes \{ state body submittedAt url commit \{ oid \} \}/);
     expect(projectionQuery).toContain("detailsUrl startedAt checkSuite { app { databaseId }");
     expect(projectionQuery).toContain("targetUrl createdAt updatedAt");
     expect(projectionQuery).toMatch(/reviewThreads\(first: 50\)[\s\S]*comments\(first: 50\)/);

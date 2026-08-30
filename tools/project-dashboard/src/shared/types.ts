@@ -61,6 +61,7 @@ export interface RawRequiredCheck {
 
 export interface RawReview {
   state: "approved" | "changes_requested" | "commented" | "dismissed" | "pending" | "unknown";
+  body: string;
   headSha: string | null;
   url: string;
   submittedAt: string;
