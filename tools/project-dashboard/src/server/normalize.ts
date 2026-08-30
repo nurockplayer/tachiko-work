@@ -21,7 +21,7 @@ const explicitlyPrioritizedFinding = /(?:\[|\b)(?:p[0-2]|sev(?:erity)?[ -]?[0-2]
 const bracketedPrioritizedFinding = /\[(?:p[0-2]|sev(?:erity)?[ -]?[0-2])\]/i;
 const directlyClearedBracketedFinding = /(?:\b(?:no|not\s+(?:an?\s+)?)\s*\[(?:p[0-2]|sev(?:erity)?[ -]?[0-2])\]|\[(?:p[0-2]|sev(?:erity)?[ -]?[0-2])\][^.!?;\n]{0,80}\b(?:none|zero|absent|resolved|passed|not\s+(?:found|present))\b)/i;
 const negatedReviewFinding = /(?:\b(?:no|none|without|zero|0)\b[^.!?;\n]{0,80}\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|findings?|issues?|concerns?|problems?|failures?|bugs?|errors?|defects?|breakages?)\b|\bnot\s+(?:an?\s+)?\[?(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness)(?:\]|\b)|\b(?:(?:is|are|was|were)\s+not|(?:is|are|was|were)n['’]?t)\s+(?:wrong|incorrect|unsafe|invalid|stale|unauthori[sz]ed)\b)/i;
-const clearedReviewFinding = /\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|security|correctness|blocking|data[- ]integrity)\b[^.!?;\n]{0,80}\b(?:checks?|review|findings?|issues?)?\s*(?:passed|complete(?:d)?|clean|resolved|fixed|addressed)\b(?:\s+in\s+(?:(?:the\s+)?(?:latest|current)\s+commit|(?:commit\s+)?[0-9a-f]{7,40}))?(?:\s*\([^)]*\))?\s*$/i;
+const clearedReviewFinding = /\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|security|correctness|blocking|data[- ]integrity)\b[^.!?;\n]{0,80}\b(?:checks?|review|findings?|issues?)?\s*(?:passed|complete(?:d)?|clean|resolved|fixed|addressed)\b(?:\s+in\s+(?:(?:the\s+)?(?:latest|current)\s+commit|(?:commit\s+)?[0-9a-f]{7,40}))?(?:\s*,\s*(?:approved|lgtm|looks?\s+good|all\s+good))?(?:\s*\([^)]*\))?\s*$/i;
 const negatedReviewResolution = /\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|security|correctness|blocking|data[- ]integrity)\b[^.!?;\n]{0,80}(?:\b(?:not|never|cannot)\b|\b(?:is|are|was|were|has|have|had|do|does|did|can|could|would|should|will|wo)n['’]?t\b)(?:\s+\w+){0,3}\s+(?:passed|complete(?:d)?|clean|resolved|fixed|addressed)\b/i;
 const unresolvedReviewResolution = /\bno\s+(?:(?:p[0-2]|sev(?:erity)?[ -]?[0-2])\s+)?(?:findings?|issues?|concerns?|problems?)\b[^.!?;\n]{0,80}\b(?:resolved|fixed|addressed|cleared|closed)\b/i;
 const postposedClearedReviewFinding = /\b(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|data[- ]integrity)(?:\s+(?:findings?|issues?|concerns?|problems?)(?:\s+found)?)?\s*(?::|=|\bare\b)\s*(?:none|zero|0|absent|not\s+(?:found|present|observed|identified|detected))\b(?:\s*\([^)]*\))?\s*$/i;
@@ -311,6 +311,12 @@ function handoffReportsFailedValidation(body: string): boolean {
     if (!quantityNegatesOutcome(match.index)) return true;
   }
   for (const match of validation.matchAll(/\btimed[- ]?out\b/gi)) {
+    const prefix = validation.slice(Math.max(0, match.index - 80), match.index);
+    if (quantityNegatesOutcome(match.index)) continue;
+    if (/\b(?:never\s+(?:\w+\s+){0,4}|not\s+(?!only\b|just\b)(?:\w+\s+){0,4})$/i.test(prefix)) continue;
+    return true;
+  }
+  for (const match of validation.matchAll(/\b(?:pending|in[_ -]?progress)\b/gi)) {
     const prefix = validation.slice(Math.max(0, match.index - 80), match.index);
     if (quantityNegatesOutcome(match.index)) continue;
     if (/\b(?:never\s+(?:\w+\s+){0,4}|not\s+(?!only\b|just\b)(?:\w+\s+){0,4})$/i.test(prefix)) continue;

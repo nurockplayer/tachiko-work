@@ -2476,6 +2476,8 @@ describe("normalizeRepositorySnapshot", () => {
     "Tests have been skipped",
     "build was not successfully run",
     "release-check timed out",
+    "release-check is still in progress",
+    "release-check pending",
     "Tests were not executed",
     "Tests were not successfully executed",
     "Test suite was not executed",
@@ -2509,6 +2511,9 @@ describe("normalizeRepositorySnapshot", () => {
     "No tests have not been executed",
     "No checks timed out",
     "release-check has not timed out",
+    "No checks pending",
+    "No checks in progress",
+    "release-check is not pending",
   ])("does not invent failed validation evidence from a clean summary: %s", (validation) => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace(
@@ -2802,6 +2807,8 @@ describe("normalizeRepositorySnapshot", () => {
     "P1 addressed in commit abc1234.",
     "P1 was fixed in commit abc1234.",
     "Approved; P1 was fixed in the latest commit.",
+    "P1 fixed, approved.",
+    "P1 addressed, LGTM.",
   ])("does not retain a resolved finding from an approval body: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [
