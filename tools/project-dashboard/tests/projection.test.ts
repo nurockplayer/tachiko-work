@@ -1394,6 +1394,9 @@ describe("normalizeRepositorySnapshot", () => {
     "No failures found.",
     "No defects detected.",
     "No breakage.",
+    "No regressions observed.",
+    "No breakages.",
+    "No data losses.",
     "This is not wrong.",
     "This isn't unsafe.",
   ])("does not promote a negated unlabeled impact statement: %s", (body) => {
