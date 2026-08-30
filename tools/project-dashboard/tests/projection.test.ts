@@ -965,6 +965,8 @@ describe("normalizeRepositorySnapshot", () => {
     "P2 findings resolved.",
     "P1 review complete.",
     "Not a [P2] issue.",
+    "P2 issue: not found.",
+    "P0: absent.",
   ])("does not infer a substantive finding from a clean comment-only review summary: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
