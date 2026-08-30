@@ -1056,9 +1056,12 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.blockers).toContain("Canonical handoff is missing for pull request #200.");
   });
 
-  it("requires a handoff when Issue ownership is absent", () => {
+  it.each([
+    "## Status\n\nReady",
+    "## Status\n\nReady\n\nOwner: `mystery-owner`",
+  ])("routes a required handoff to the Steward when Issue ownership is unrecognized: %s", (body) => {
     const unowned = issue();
-    unowned.body = "## Status\n\nReady";
+    unowned.body = body;
     const pr = pullRequest();
     pr.comments = [];
 
@@ -1066,6 +1069,14 @@ describe("normalizeRepositorySnapshot", () => {
 
     expect(projection.deliveries[0]?.phase).toBe("validating");
     expect(projection.deliveries[0]?.blockers).toContain("Canonical handoff is missing for pull request #200.");
+    expect(projection.deliveries[0]?.action).toEqual({
+      owner: "human",
+      reason: "Required delivery work has no recognized owner; Project Steward reconciliation is required.",
+    });
+    expect(projection.attention).toMatchObject({
+      humanActionRequired: true,
+      reasons: ["#169: Required delivery work has no recognized owner; Project Steward reconciliation is required."],
+    });
   });
 
   it("still blocks an inconsistent optional handoff on a human-owned pull request", () => {
@@ -1162,6 +1173,7 @@ describe("normalizeRepositorySnapshot", () => {
     "Data is erased on retry.",
     "Deletion of user data occurs here.",
     "No user data is deleted, and data is erased.",
+    "No user data is deleted and data is erased.",
   ])("blocks an unlabeled comment-only runtime failure on the current head: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1203,6 +1215,7 @@ describe("normalizeRepositorySnapshot", () => {
     "Security and correctness checks passed; no blocking issues.",
     "No P1/P2 findings.",
     "No blocking correctness issues.",
+    "No security and correctness issues were found.",
     "P2 findings: none.",
     "P0: 0.",
     "Security: none.",
@@ -1224,6 +1237,7 @@ describe("normalizeRepositorySnapshot", () => {
     "No deletion of user data.",
     "User data is not erased.",
     "No user data is deleted, and data is not erased.",
+    "No user data is deleted and data is not erased.",
   ])("does not infer a substantive finding from a clean comment-only review summary: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1614,6 +1628,7 @@ describe("normalizeRepositorySnapshot", () => {
     "This deletes user data.",
     "User data is deleted.",
     "No user data is deleted, and data is erased.",
+    "No user data is deleted and data is erased.",
   ])("fails closed on an unlabeled correctness finding: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
@@ -1658,6 +1673,7 @@ describe("normalizeRepositorySnapshot", () => {
     "No defects detected.",
     "No breakage.",
     "No regressions observed.",
+    "No security and correctness issues were found.",
     "No breakages.",
     "No data losses.",
     "This is not wrong.",
@@ -1666,6 +1682,7 @@ describe("normalizeRepositorySnapshot", () => {
     "No deletion of user data.",
     "User data is not erased.",
     "No user data is deleted, and data is not erased.",
+    "No user data is deleted and data is not erased.",
   ])("does not promote a negated unlabeled impact statement: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [

@@ -26,6 +26,8 @@ const equivalentReviewFindingLabel = /(?:^|\s)(?:blocking|security|correctness|d
 const equivalentReviewFindingContext = /\b(?:blocking|security|correctness|data[- ]integrity)\b[^.!?;\n]{0,80}\b(?:finding|issue|bug|risk|failure|regression|vulnerab\w*|flaw|problem|concern|break\w*|corrupt\w*|overwrit\w*|data[- ]loss)\b|\b(?:finding|issue|bug|risk|failure|regression|vulnerab\w*|flaw|problem|concern|break\w*|corrupt\w*|overwrit\w*|data[- ]loss)\b[^.!?;\n]{0,80}\b(?:blocking|security|correctness|data[- ]integrity)\b/i;
 const explicitReviewClearingSignal = /(?:\[|\b)(?:p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|data[- ]integrity)(?:\]|\b)/i;
 const reviewClauseBoundary = /[.!?;\n]+|\b(?:but|except|however|although|yet)\b|,\s+and\s+|,\s*(?=(?:so|therefore|thus|hence|causing|which|p[0-2]|sev(?:erity)?[ -]?[0-2]|blocking|security|correctness|data[- ]integrity)\b)/i;
+const coordinatedReviewPredicate = /\b(?:is|are|was|were|do|does|did|can|could|would|should|will|has|have|had|gets?|got|fails?|failed|failing|breaks?|broke|broken|passes?|passed|passing|throws?|throwing|thrown|exceptions?|crash(?:es|ed|ing)?|panic(?:s|ked|king)?|delet(?:e|es|ed|ing)|eras(?:e|es|ed|ing)|corrupt\w*|overwrit\w*|bypass\w*|leak\w*)\b/i;
+const coordinatedReviewClauseStart = /^(?:\S+\s+){0,4}(?:is|are|was|were|do|does|did|can|could|would|should|will|has|have|had|gets?|got|fails?|failed|failing|breaks?|broke|broken|passes?|passed|passing|throws?|throwing|thrown|exceptions?|crash(?:es|ed|ing)?|panic(?:s|ked|king)?|delet(?:e|es|ed|ing)|eras(?:e|es|ed|ing)|corrupt\w*|overwrit\w*|bypass\w*|leak\w*)\b/i;
 const explicitlyNonSubstantiveFinding = /^(?:[_*]+\s*)?(?:\[(?:p3|sev(?:erity)?[ -]?3)\]|(?:p3|sev(?:erity)?[ -]?3|nit(?:pick)?|trivial)\b)/i;
 const explicitlyNonSubstantiveBadge = /^(?:<sub>\s*)+!\[(?:p3|sev(?:erity)?[ -]?3)\s+badge\]\([^)]*\)(?:<\/sub>\s*)+/i;
 const explicitlyNonSubstantiveAcknowledgment = /^(?:done|fixed(?:\s+in\s+(?:commit\s+)?[0-9a-f]{7,40})?|thanks,\s+applied this suggestion)[.!]?$/i;
@@ -99,7 +101,22 @@ function isSubstantiveFinding(body: string): boolean {
 }
 
 function reviewBodyClauses(body: string): string[] {
-  return stripMarkdown(body).split(reviewClauseBoundary).map((segment) => segment.trim()).filter(Boolean);
+  return stripMarkdown(body).split(reviewClauseBoundary).flatMap((segment) => {
+    const coordinated = segment.trim().split(/\s+and\s+/i);
+    const clauses: string[] = [];
+    let current = coordinated.shift()?.trim() ?? "";
+    for (const candidate of coordinated) {
+      const next = candidate.trim();
+      if (coordinatedReviewPredicate.test(current) && coordinatedReviewClauseStart.test(next)) {
+        clauses.push(current);
+        current = next;
+      } else {
+        current = `${current} and ${next}`;
+      }
+    }
+    if (current !== "") clauses.push(current);
+    return clauses;
+  });
 }
 
 function isClearedReviewClause(clause: string): boolean {
@@ -952,6 +969,8 @@ function projectLane(
   }
 
   const requiresHuman = statusClaimsHumanRequired(authoritativeIssueStatus) || humanActionRequested(comments, handoff);
+  const projectedDeliveryOwner = deliveryActionOwner(owner);
+  const unknownActionOwner = !alignedHumanPr && projectedDeliveryOwner === "unknown";
   const phase = outsideCurrentHorizon
     ? "parked"
     : derivePhase(
@@ -990,8 +1009,10 @@ function projectLane(
         !targetsDefaultBranch || !ownershipObservationComplete
         || !decisionReadyScopeReconciled
       ? {
-          owner: alignedHumanPr ? "human" : deliveryActionOwner(owner),
-          reason: blockers[0] ?? "Delivery-owner action is required.",
+          owner: alignedHumanPr || unknownActionOwner ? "human" : projectedDeliveryOwner,
+          reason: unknownActionOwner
+            ? "Required delivery work has no recognized owner; Project Steward reconciliation is required."
+            : blockers[0] ?? "Delivery-owner action is required.",
         }
       : { owner: "none", reason: "No human action is currently evidenced." };
   const issueRef = source(
