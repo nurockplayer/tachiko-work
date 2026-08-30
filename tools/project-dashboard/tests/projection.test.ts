@@ -298,6 +298,24 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries).toEqual([]);
   });
 
+  it.each([
+    "NOT DECISION-READY",
+    "Not yet Decision Ready",
+    "Not currently Decision-Ready",
+    "Decision-Ready: false",
+  ])("rejects a negated Decision-Ready authority status: %s", (status) => {
+    const decision = issue();
+    decision.title = "[Decision][M05 P1] Choose the dashboard delivery boundary";
+    decision.body = `## Status\n\n**${status}**\n\nOwner: \`agent:codex\``;
+    const pr = pullRequest();
+    pr.changedPaths = ["docs/decisions/ADR-0029-dashboard-boundary.md"];
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [decision], pullRequests: [pr] }));
+
+    expect(projection.deliveries[0]?.issue.readiness).toBe("unknown");
+    expect(projection.deliveries[0]?.phase).toBe("validating");
+  });
+
   it("keeps a Decision-Ready authority Issue paired with implementation changes out of the merge gate", () => {
     const decision = issue();
     decision.title = "[Decision][M05 P1] Choose the dashboard delivery boundary";
@@ -367,6 +385,15 @@ describe("normalizeRepositorySnapshot", () => {
     const projection = normalizeRepositorySnapshot(snapshot({ issues: [delivery] }));
 
     expect(projection.deliveries[0]?.phase).toBe("ready");
+  });
+
+  it("does not infer readiness from general Issue prose without an explicit Status section", () => {
+    const ungoverned = issue();
+    ungoverned.body = "Build a production-ready dashboard for the founder.\n\nOwner: `agent:codex`";
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [ungoverned] }));
+
+    expect(projection.deliveries).toEqual([]);
   });
 
   it("invalidates checks and a merge-ready handoff when the PR head moves", () => {
@@ -621,12 +648,15 @@ describe("normalizeRepositorySnapshot", () => {
 
   it("assigns incomplete live-main handoff reconciliation to the delivery agent", () => {
     const pr = pullRequest();
-    pr.comments[0]!.body = pr.comments[0]!.body.replace(`\nLAST CHECKED MAIN: ${mainSha}`, "");
+    pr.comments[0]!.body = pr.comments[0]!.body
+      .replace("OWNER: agent:codex", "OWNER: agent:chatgpt")
+      .replace(`\nLAST CHECKED MAIN: ${mainSha}`, "");
 
     const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
     const lane = projection.deliveries[0];
 
     expect(lane?.handoff.condition).toBe("unknown");
+    expect(lane?.owner).toBe("agent:codex");
     expect(lane?.phase).toBe("validating");
     expect(lane?.blockers).toContain("Canonical handoff could not be fully reconciled with the observed PR and live main.");
     expect(lane?.action.owner).toBe("codex");
@@ -878,6 +908,21 @@ describe("normalizeRepositorySnapshot", () => {
     expect(projection.deliveries[0]?.issue.number).toBe(169);
     expect(projection.deliveries[0]?.handoff.condition).toBe("stale");
     expect(projection.deliveries[0]?.phase).toBe("validating");
+  });
+
+  it("preserves a stale handoff owner for delivery reconciliation", () => {
+    const pr = pullRequest();
+    pr.comments[0]!.body = pr.comments[0]!.body
+      .replace("OWNER: agent:codex", "OWNER: agent:chatgpt")
+      .replace(`LAST CHECKED MAIN: ${mainSha}`, `LAST CHECKED MAIN: ${"d".repeat(40)}`);
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.handoff.condition).toBe("stale");
+    expect(lane?.owner).toBe("agent:chatgpt");
+    expect(lane?.phase).toBe("validating");
+    expect(lane?.action.owner).toBe("chatgpt");
   });
 
   it("keeps truncated PR handoff observation unknown", () => {

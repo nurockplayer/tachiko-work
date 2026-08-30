@@ -202,7 +202,9 @@ function projectHandoff(
 }
 
 function issueOwner(issue: RawIssue, handoff: HandoffProjection): string {
-  if (handoff.condition === "current" && handoff.claimedOwner !== null) return handoff.claimedOwner;
+  if ((handoff.condition === "current" || handoff.condition === "stale") && handoff.claimedOwner !== null) {
+    return handoff.claimedOwner;
+  }
   return labeledValue(issue.body, "Owner") ?? "unknown";
 }
 
@@ -213,7 +215,14 @@ function hasUsableIssueClaim(
 }
 
 function issueStatusText(issue: RawIssue): string {
-  return (issue.body.match(/## Status\s*([\s\S]*?)(?=\n## |$)/i)?.[1] ?? issue.body.slice(0, 600)).toLowerCase();
+  return (issue.body.match(/## Status\s*([\s\S]*?)(?=\n## |$)/i)?.[1] ?? "").toLowerCase();
+}
+
+function statusClaimsDecisionReady(statusText: string): boolean {
+  if (!/\bdecision[_ -]?ready\b/.test(statusText)) return false;
+  return !/\b(?:not|never)\b[^\n]{0,40}\bdecision[_ -]?ready\b/.test(statusText) &&
+    !/\bnon[_ -]+decision[_ -]?ready\b/.test(statusText) &&
+    !/\bdecision[_ -]?ready\b\s*(?:(?:is\s+)?not\b|[:=-]\s*(?:false|no)\b)/.test(statusText);
 }
 
 function statusClaimsBlocked(statusText: string): boolean {
@@ -238,7 +247,7 @@ function issueReadiness(issue: RawIssue, handoff: HandoffProjection): DeliveryLa
   if (issue.blockedBy === null) return "unknown";
   if (issue.blockedBy.length > 0) return "blocked";
   const issueStatus = issueStatusText(issue);
-  if (decisionIssue.test(issue.title) && /\bdecision[_ -]?ready\b/.test(issueStatus)) return "ready";
+  if (decisionIssue.test(issue.title) && statusClaimsDecisionReady(issueStatus)) return "ready";
   if (authorityOnlyIssue.test(issue.title)) return "unknown";
   if (/\bdecision[_ -]?ready\b/.test(issueStatus) || /\bnot[_ -]+ready\b/.test(issueStatus)) return "unknown";
   if (/\bpark(?:ed)?\b/.test(issueStatus)) return "parked";
@@ -261,7 +270,7 @@ function issueReadiness(issue: RawIssue, handoff: HandoffProjection): DeliveryLa
 }
 
 function isDecisionReadyAuthorityIssue(issue: RawIssue): boolean {
-  return decisionIssue.test(issue.title) && /\bdecision[_ -]?ready\b/.test(issueStatusText(issue));
+  return decisionIssue.test(issue.title) && statusClaimsDecisionReady(issueStatusText(issue));
 }
 
 function isFocusedAuthorityPullRequest(pr: RawPullRequest): boolean {
