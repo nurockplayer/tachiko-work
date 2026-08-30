@@ -1230,6 +1230,7 @@ describe("normalizeRepositorySnapshot", () => {
     "This is trapped in a cycle.",
     "No authorization check prevents users from bypassing access control.",
     "This permits SQL injection for crafted input.",
+    "SQL injection permits data loss and checks passed.",
   ])("blocks an unlabeled comment-only runtime failure on the current head: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1346,6 +1347,11 @@ describe("normalizeRepositorySnapshot", () => {
     "SQL injection is impossible.",
     "Command injection isn't possible.",
     "SQL injection checks passed.",
+    "SQL injection never happens.",
+    "SQL injection never occurs.",
+    "SQL injection was not observed.",
+    "SQL injection test passed.",
+    "Authorization checks prevent users from bypassing access control.",
   ])("does not infer a substantive finding from a clean comment-only review summary: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1793,6 +1799,7 @@ describe("normalizeRepositorySnapshot", () => {
     "This is trapped in a cycle.",
     "No authorization check prevents users from bypassing access control.",
     "This permits SQL injection for crafted input.",
+    "SQL injection permits data loss and checks passed.",
   ])("fails closed on an unlabeled correctness finding: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
@@ -1898,6 +1905,11 @@ describe("normalizeRepositorySnapshot", () => {
     "SQL injection is impossible.",
     "Command injection isn't possible.",
     "SQL injection checks passed.",
+    "SQL injection never happens.",
+    "SQL injection never occurs.",
+    "SQL injection was not observed.",
+    "SQL injection test passed.",
+    "Authorization checks prevent users from bypassing access control.",
   ])("does not promote a negated unlabeled impact statement: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
