@@ -690,7 +690,8 @@ function projectLane(
   const authoritativeIssueStatus = issueStatusText(issue);
   const issueStatusBlocked = statusClaimsBlocked(authoritativeIssueStatus);
   const issueStatusAffirmsDelivery = statusClaimsActive(authoritativeIssueStatus) || statusClaimsReady(authoritativeIssueStatus);
-  const dependencyObservationRequiresSteward = pr !== null && issue.blockedBy === null;
+  const dependencyStateRequiresSteward = pr !== null &&
+    (issue.blockedBy === null || issue.blockedBy.length > 0);
   const authorityReadinessRequiresSteward = pr !== null && authorityOnlyIssue.test(issue.title) &&
     !decisionReadyAuthority;
   const issueReadinessRequiresSteward = issue.blockedBy !== null && issue.blockedBy.length === 0 &&
@@ -811,7 +812,7 @@ function projectLane(
       ? { owner: "human", reason: "Multiple open pull requests claim the same Issue; Project Steward reconciliation is required." }
     : nonCurrentPrRequiresSteward
       ? { owner: "human", reason: "A non-current milestone pull request requires Project Steward roadmap activation." }
-    : dependencyObservationRequiresSteward
+    : dependencyStateRequiresSteward
       ? { owner: "human", reason: "Issue dependency state requires Project Steward reconciliation." }
     : issueReadinessRequiresSteward
       ? { owner: "human", reason: "The authoritative Issue status requires Steward readiness action." }

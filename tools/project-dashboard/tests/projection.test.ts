@@ -374,6 +374,25 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.blockers).toContain("Live Issue dependencies block this lane: #187.");
   });
 
+  it("routes a pull request with live blocked-by dependencies to the Project Steward", () => {
+    const dependent = issue();
+    dependent.blockedBy = [{ number: 187, title: "Open canonical project", url: "https://github.com/nurockplayer/tachiko-work/issues/187" }];
+
+    const projection = normalizeRepositorySnapshot(snapshot({
+      issues: [dependent],
+      pullRequests: [pullRequest()],
+    }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.issue.readiness).toBe("blocked");
+    expect(lane?.phase).toBe("blocked");
+    expect(lane?.action).toEqual({
+      owner: "human",
+      reason: "Issue dependency state requires Project Steward reconciliation.",
+    });
+    expect(projection.attention.humanActionRequired).toBe(true);
+  });
+
   it("keeps truncated Issue dependency state unknown and out of the merge gate", () => {
     const truncated = issue();
     truncated.blockedBy = null;
