@@ -1233,6 +1233,7 @@ describe("normalizeRepositorySnapshot", () => {
     "SQL injection permits data loss and checks passed.",
     "SQL injection is prevented and code injection permits data loss.",
     "SQL injection is impossible and command injection occurs.",
+    "No input validation prevents SQL injection.",
   ])("blocks an unlabeled comment-only runtime failure on the current head: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1361,6 +1362,9 @@ describe("normalizeRepositorySnapshot", () => {
     "SQL injection is ruled out.",
     "The system prevents SQL injection.",
     "The authorization guard blocks code injection.",
+    "Input validation prevents SQL injection.",
+    "Looks good.",
+    "LGTM",
   ])("does not infer a substantive finding from a clean comment-only review summary: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1391,6 +1395,7 @@ describe("normalizeRepositorySnapshot", () => {
     "P2 issue is not yet resolved.",
     "P1 review hasn't completed.",
     "Not fixed: [P2] this path overwrites data.",
+    "No test covers this [P1] regression.",
   ])("blocks an affirmative equivalent comment-only finding: %s", (body) => {
     const pr = pullRequest();
     pr.reviews = [...(pr.reviews ?? []), {
@@ -1811,6 +1816,8 @@ describe("normalizeRepositorySnapshot", () => {
     "SQL injection permits data loss and checks passed.",
     "SQL injection is prevented and code injection permits data loss.",
     "SQL injection is impossible and command injection occurs.",
+    "No input validation prevents SQL injection.",
+    "No test covers this [P1] regression.",
   ])("fails closed on an unlabeled correctness finding: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
@@ -1928,6 +1935,9 @@ describe("normalizeRepositorySnapshot", () => {
     "SQL injection is ruled out.",
     "The system prevents SQL injection.",
     "The authorization guard blocks code injection.",
+    "Input validation prevents SQL injection.",
+    "Looks good.",
+    "LGTM",
   ])("does not promote a negated unlabeled impact statement: %s", (body) => {
     const pr = pullRequest();
     pr.reviewThreads = [
