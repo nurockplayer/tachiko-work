@@ -398,6 +398,64 @@ class ControlRecoveryClient extends FakeClient {
 }
 
 describe("Designer application seam", () => {
+  it("reconciles Text line endings conservatively across adversarial edits", async () => {
+    const nameField = table.rows[0]!.fields.find((field) => field.target.field === "name");
+    if (nameField === undefined || nameField.stored?.kind !== "text") throw new Error("text fixture required");
+    const original = nameField.stored.value;
+    const cases = [
+      ["a\n", "a", "a"],
+      ["a", "a\n", "a\n"],
+      ["a\r", "a", "a"],
+      ["a\r\n", "a", "a"],
+      ["\r\nlead\rtail\n", "\nlead\ntail\n", "\r\nlead\rtail\n"],
+      ["a\rb", "a\nx\nb", "a\rx\nb"],
+      ["a\r\nb", "a\nx\nb", "a\r\nx\nb"],
+      ["a\r\nb\rc", "b\nc", "b\rc"],
+      ["a\r\nb\rc\nd", "A\nb\nC\nd", "A\r\nb\rC\nd"],
+      ["😀\r\ncenter\rtail", "😀\ninsert\ncenter\ntail", "😀\r\ninsert\ncenter\rtail"],
+      [`${"x".repeat(65_000)}\n`, `${"x".repeat(65_000)}\n`, `${"x".repeat(65_000)}\n`],
+    ] as const;
+    try {
+      for (const [raw, normalized, expected] of cases) {
+        nameField.stored = { kind: "text", value: raw };
+        document.body.innerHTML = '<div id="app"></div>';
+        const root = document.querySelector<HTMLElement>("#app");
+        if (root === null) throw new Error("test root is required");
+        const client = new ScalarClient();
+        const app = mountDesigner(root, client, host);
+        await app.ready;
+        const textarea = root.querySelector<HTMLTextAreaElement>('textarea[aria-label="Name for Iron Sword"]');
+        if (textarea === null || textarea.form === null) throw new Error("text control required");
+        textarea.dataset.initialNormalized = raw.replace(/\r\n|\r/g, "\n");
+        textarea.value = normalized;
+        textarea.form.requestSubmit();
+        await vi.waitFor(() => {
+          expect(client.textEditRequests).toHaveLength(1);
+        });
+        expect(client.textEditRequests[0]?.value).toBe(expected);
+        app.destroy();
+      }
+
+      nameField.stored = { kind: "text", value: "same\r\nsame\r\nend" };
+      document.body.innerHTML = '<div id="app"></div>';
+      const root = document.querySelector<HTMLElement>("#app");
+      if (root === null) throw new Error("test root is required");
+      const client = new ScalarClient();
+      const app = mountDesigner(root, client, host);
+      await app.ready;
+      const textarea = root.querySelector<HTMLTextAreaElement>('textarea[aria-label="Name for Iron Sword"]');
+      if (textarea === null || textarea.form === null) throw new Error("text control required");
+      textarea.dataset.initialNormalized = "same\nsame\nend";
+      textarea.value = "same\nchanged\nend";
+      textarea.form.requestSubmit();
+      expect(client.textEditRequests).toHaveLength(0);
+      expect(root.textContent).toContain("Text edit not applied");
+      app.destroy();
+    } finally {
+      nameField.stored = { kind: "text", value: original };
+    }
+  });
+
   it("publishes Rust-authorized Text and Boolean controls against their visible revisions", async () => {
     document.body.innerHTML = '<div id="app"></div>';
     const root = document.querySelector<HTMLElement>("#app");

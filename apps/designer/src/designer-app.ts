@@ -966,7 +966,12 @@ function reconcileRegion(original: LogicalLine[], edited: LogicalLine[], counts:
   if (edited.length === 0) return "";
   if (
     original.length === edited.length &&
-    original.every((token) => (counts.get(token.normalized) ?? 0) === 1)
+    original.every(
+      (token, index) =>
+        (counts.get(token.normalized) ?? 0) === 1 &&
+        Boolean(logicalLineSeparator(token.raw)) ===
+          Boolean(logicalLineSeparator(edited[index]?.raw ?? "")),
+    )
   ) {
     return original
       .map((token, index) => {
