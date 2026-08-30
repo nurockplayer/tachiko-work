@@ -1,0 +1,83 @@
+{
+  "profile": "tachiko.issue-163.experiment-summary/probe-v1",
+  "repository_base_sha": "db97ec88962bbbaa66cf042a90aa407f3b165ef6",
+  "base_artifact_sha256": "3351b64a5c7b387eb92ed7f9fa8ee47bed625717f5dffa952dd79eb8e130bdec",
+  "manual_workflow": {
+    "baseline_copy_or_update_steps": 3,
+    "generated_copy_or_update_steps": 0,
+    "manual_steps_eliminated": 3
+  },
+  "provenance_quality": {
+    "projected_fragments": 3,
+    "fragments_with_source_ids_and_fingerprints": 3,
+    "citation_fragment_preserved": true,
+    "repository_revision_preserved": true
+  },
+  "repeatability": {
+    "semantic_projection_equal": true,
+    "source_provenance_equal": true,
+    "pptx_byte_identity_required": false,
+    "pptx_bytes_equal_observation_scope": "paired-generations-same-invocation",
+    "pptx_bytes_equal_observation": true
+  },
+  "decision_signal": {
+    "strategy_under_test": "A+",
+    "result_for_exercised_fixed_projection": "adapter-plus-manifest-sufficient",
+    "concrete_renderer_independent_intent_failure_observed": false,
+    "semantic_promotion_recommended": false,
+    "unexercised_question": "user-curated narrative intent continuity across renderers",
+    "decision_owner": "Issue #67"
+  },
+  "cases": {
+    "metric_change": {
+      "change_class": "source-semantic",
+      "changed_source_ids": [
+        "semantic:field:89f0fd5e-dfc9-53bf-b008-85f78c403420"
+      ],
+      "stale_adapter_elements": [
+        "adapter:claim-text",
+        "adapter:metric-value"
+      ]
+    },
+    "claim_citation_change": {
+      "change_class": "source-semantic",
+      "changed_source_ids": [
+        "fixture:claim:iron-sword-threshold",
+        "fixture:evidence:moonfall-readme"
+      ],
+      "stale_adapter_elements": [
+        "adapter:citation-footer",
+        "adapter:claim-text"
+      ],
+      "metric_unchanged": true
+    },
+    "unrelated_change": {
+      "change_class": "source-unrelated",
+      "changed_source_ids": [
+        "fixture:unrelated:localization-note"
+      ],
+      "stale_adapter_elements": []
+    },
+    "renderer_layout_change": {
+      "change_class": "renderer-only",
+      "changed_source_ids": [],
+      "stale_adapter_elements": [],
+      "semantic_projection_fingerprint_unchanged": true,
+      "source_provenance_fingerprint_unchanged": true,
+      "renderer_configuration_fingerprint_changed": true,
+      "artifact_hash_changed": true
+    },
+    "target_limitation": {
+      "fidelity": "degraded",
+      "semantic_promotion": "none"
+    },
+    "manual_target_edit": {
+      "contract": "target-edit-non-authoritative-overwritten-on-regeneration",
+      "round_trip_supported": false,
+      "original_artifact_sha256": "3351b64a5c7b387eb92ed7f9fa8ee47bed625717f5dffa952dd79eb8e130bdec",
+      "manually_edited_artifact_sha256": "9318796a234bf6d72b4b47efdea9fe076b4a8d0f73c72d8b877b3c3b793dbde8",
+      "regenerated_artifact_sha256": "3351b64a5c7b387eb92ed7f9fa8ee47bed625717f5dffa952dd79eb8e130bdec",
+      "manual_target_value_removed": true
+    }
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "profile": "tachiko.issue-163.research-fixture-variant/v1",
+  "id": "claim-citation-change",
+  "description": "Change one reviewed claim and its repository citation while leaving the metric and Analysis Query lineage unchanged.",
+  "changes": [
+    {
+      "source_id": "fixture:claim:iron-sword-threshold",
+      "set": {
+        "text": "The reviewed Iron Sword meets the starter-balance threshold while retaining a 40 DPS observation."
+      }
+    },
+    {
+      "source_id": "fixture:evidence:moonfall-readme",
+      "set": {
+        "locator": "Expected semantic highlights / Analysis Query result"
+      }
+    }
+  ],
+  "expected": {
+    "change_class": "source-semantic",
+    "changed_source_ids": [
+      "fixture:claim:iron-sword-threshold",
+      "fixture:evidence:moonfall-readme"
+    ],
+    "stale_adapter_elements": [
+      "adapter:citation-footer",
+      "adapter:claim-text"
+    ],
+    "metric_unchanged": true
+  }
+}
