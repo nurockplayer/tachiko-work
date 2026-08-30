@@ -177,10 +177,14 @@ were accepted where they matched Issue and Accepted authority.
   and before and after each metadata parse/canonical-render boundary; a
   pre-cancelled 1 MB schemas case stops before parsing.
 - A later hosted review found that the first accepted semantic validation pass
-  was still monolithic after decode. At `b31d142`, the research feature exposes
+  was still monolithic after decode. At `b31d142`, the research feature exposed
   the accepted validator with cancellation polling inside schema, entity,
-  field, and formula-node loops; background A1 uses it and a 16k-chain test
-  deterministically cancels on the 128th validation poll.
+  field, and formula-node loops. Exact-head review then found that the ordinary
+  validator shared that controlled implementation. At `878e62c`, ordinary
+  production validation was restored exactly to `main`, while the cancellable
+  traversal was isolated behind the research feature. A host-open regression
+  now decodes a 255-node formula and deterministically cancels at its 64-node
+  formula checkpoint before SemanticCurrent.
 - Sidecar A1 comparison originally timestamped after dropping the complete
   `Document`, while D added one shared pin duration to every warmed lookup.
   Final E retains A1 through the timestamp; final D resamples pinning and the

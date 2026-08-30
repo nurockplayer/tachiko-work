@@ -11,8 +11,10 @@ immutable-Git-object E2 with an independently pinned exact-A1 comparator at
 `f2912ff58d5a5f22e240be6e8c63686ad22cefc8`; aggregate two-pass counter
 corrections at `607e9208da2fdf71e0741d7ff7efceec890ac6fc`; and cross-crate full-oracle
 wiring plus cancellable metadata loading at
-`d3edb03b0e2d1bd1fb7690aa09d5a23f92926666`; and cancellation-polled accepted
-semantic validation at `b31d1429b96d98427631a1eaab8a39f79232bdb1`; all on
+`d3edb03b0e2d1bd1fb7690aa09d5a23f92926666`; cancellation-polled accepted
+semantic validation at `b31d1429b96d98427631a1eaab8a39f79232bdb1`; and its
+research-feature isolation plus host-path formula-node regression at
+`878e62c836cb06fd3cf58061567b989c64451213`; all on
 `main@022a14d18503477aa7e20f6fca102f9e85dce740`.
 
 ## Outcome
@@ -301,8 +303,10 @@ Validation at measurement HEAD:
 - Source preview is non-authoritative, capped at a 64 KiB record, cancellable,
   and exact-layout checked. The B foreground contract begins from an already
   resident exact `Document` and is not evidence for cold payload search.
-- Background A1 polls cancellation inside the accepted semantic validator at
-  schema, entity, field, and formula-node boundaries before SemanticCurrent.
+- Background A1 polls cancellation inside a research-feature-only copy of the
+  accepted semantic validator at schema, entity, field, and formula-node
+  boundaries before SemanticCurrent. Ordinary production validation remains
+  exactly on its pre-experiment implementation path.
 - D pins the complete source snapshot, so its timing cannot be interpreted as
   a source-RSS reduction.
 - No UI render, WASM compile/JIT, or process startup timing is included.

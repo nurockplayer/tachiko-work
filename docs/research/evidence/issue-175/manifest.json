@@ -4,7 +4,7 @@
   "issue": "https://github.com/nurockplayer/tachiko-work/issues/175",
   "parent_issue": "https://github.com/nurockplayer/tachiko-work/issues/174",
   "pull_request": "https://github.com/nurockplayer/tachiko-work/pull/195",
-  "measurement_head": "b31d1429b96d98427631a1eaab8a39f79232bdb1",
+  "measurement_head": "878e62c836cb06fd3cf58061567b989c64451213",
   "artifact_measurement_heads": {
     "a0_a1_c_f_latency_and_rss": "4ed7f994825edb8a3bb6f1ac4a5cc5d940f74387",
     "b_progressive_interference": "58a2c47ea110c6a1a6d0617da0d805c14940b631",
@@ -13,7 +13,8 @@
     "e2_atomic_git_snapshot_and_exact_a1_comparator": "f2912ff58d5a5f22e240be6e8c63686ad22cefc8",
     "a0_aggregate_counter_correction": "607e9208da2fdf71e0741d7ff7efceec890ac6fc",
     "admitted_output_full_oracle_and_metadata_cancellation": "d3edb03b0e2d1bd1fb7690aa09d5a23f92926666",
-    "cancellable_accepted_semantic_validation": "b31d1429b96d98427631a1eaab8a39f79232bdb1"
+    "cancellable_accepted_semantic_validation": "b31d1429b96d98427631a1eaab8a39f79232bdb1",
+    "research_isolated_semantic_cancellation_and_host_formula_poll": "878e62c836cb06fd3cf58061567b989c64451213"
   },
   "base_head": "022a14d18503477aa7e20f6fca102f9e85dce740",
   "captured_at_utc": "2026-08-30T20:35:23Z",
@@ -38,14 +39,14 @@
     "Fixture generation and initial materialization occur outside timed admission samples. E2 is the explicit exception: validated reuse and full_git_snapshot_a1_us each include an independent Git identity check, object pin, and exact-snapshot materialization.",
     "A0 and A1 host samples start from the same filesystem source and report the same physical source bytes read; every A0 parser, nesting, record, AST, reference, and dependency counter aggregates its admission plus ordinary-load decode.",
     "Matrix source SHA-256 values are framed hashes of the exact 18-file canonical source tree.",
-    "A0/A1/C/F timing and RSS rows were regenerated at 4ed7f994 after the cancellation and dependency-edge accounting corrections; final counterbalanced B rows were regenerated at 58a2c47 after adding a progress signal that starts foreground timing only after exactly 64 completed entity records while the worker remains active; D rows were regenerated at 8ce55419 after per-observation pinning; E1/E2 rows were regenerated at f2912ff5 after the pre-parse sidecar byte cap and single-resolution Git binding, with E2 exact A1 independently repeating Git identity, object pinning, snapshot materialization, and exact admission; A0 aggregate logical-decode counters were corrected at 607e920; the actual admitted A0/A1 outputs were wired to the accepted calculation and workspace oracles, and metadata reads gained cancellation boundaries, at d3edb03; accepted semantic validation gained internal cancellation polling at b31d142.",
+    "A0/A1/C/F timing and RSS rows were regenerated at 4ed7f994 after the cancellation and dependency-edge accounting corrections; final counterbalanced B rows were regenerated at 58a2c47 after adding a progress signal that starts foreground timing only after exactly 64 completed entity records while the worker remains active; D rows were regenerated at 8ce55419 after per-observation pinning; E1/E2 rows were regenerated at f2912ff5 after the pre-parse sidecar byte cap and single-resolution Git binding, with E2 exact A1 independently repeating Git identity, object pinning, snapshot materialization, and exact admission; A0 aggregate logical-decode counters were corrected at 607e920; the actual admitted A0/A1 outputs were wired to the accepted calculation and workspace oracles, and metadata reads gained cancellation boundaries, at d3edb03; accepted semantic validation gained internal cancellation polling at b31d142; at 878e62c the ordinary production validator was restored exactly to main while the controlled traversal was isolated behind the research feature and a host-open 255-node formula regression proved cancellation at the 64-node checkpoint. No timing row required recapture because the measured production validation path and measurement arms are unchanged.",
     "D first_exact_bounded_us samples a fresh complete source pin plus the first materialization in every repetition; repeated_materialize_us is a separate immediately repeated lookup on that same pinned snapshot.",
     "The earlier 1b3d75de and bd115c8 captures plus concurrently launched or interrupted exploratory E2 runs were discarded; no superseded row is present in the committed CSV files.",
     "The sidecar is a JSON envelope, not SQLite; sidecar_bytes is the complete serialized JSON byte length and there are no WAL/SHM files.",
     "Validated E1/E2 reuse rejects an envelope above an eight-times-source-plus-1-MiB byte budget (also globally capped at 512 MiB) before UTF-8/JSON parsing, pins all 18 source files, independently re-derives the complete Structural Index, and compares every sidecar fact before reuse. E2 resolves HEAD once, then reads the exact Git blob object IDs bound by object format, captured commit, tree, path, and mode; it does not derive trusted facts from the mutable worktree. E2 full_git_snapshot_a1_us independently repeats the same Git identity and blob pinning, materializes those exact bytes, and runs exact A1 admission. Identity-plus-decode is retained only as a non-authoritative decomposition metric.",
     "B alternates baseline_then_background and background_then_baseline order, waits for exactly 64 completed entity records while asserting that the background worker remains active, and records arm_order plus background_started_after_records in every raw row; the counterbalanced p95 ratio fails the 10 percent foreground-regression gate.",
     "Background A1 reads manifest and schemas through unbounded but cancellation-polled chunks and checks cancellation before and after metadata parsing and canonical rendering; this preserves exact admission size semantics.",
-    "Background A1 uses the accepted semantic validator with research-feature cancellation polling at schema, entity, field, and formula-node boundaries; the non-cancellable production entry point retains the same ordered diagnostic behavior.",
+    "Background A1 uses a research-feature-only copy of the accepted semantic validator with cancellation polling at schema, entity, field, and formula-node boundaries; ordinary non-cancellable production validation remains exactly on the main implementation path.",
     "No failed or cancelled measurement row was silently removed. Cancellation outcomes are explicit in progressive-background-raw.csv."
   ],
   "row_context": {
