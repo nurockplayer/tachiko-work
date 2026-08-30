@@ -2451,6 +2451,13 @@ describe("normalizeRepositorySnapshot", () => {
   it.each([
     "release-check failed",
     "not run",
+    "build failed",
+    "lint failed",
+    "typecheck failed",
+    "CI failed",
+    "pnpm test failed",
+    "release-check: failed",
+    "build was not run",
   ])("does not accept merge-ready while canonical validation evidence reports: %s", (validation) => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace(
@@ -2464,6 +2471,24 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.handoff.failedValidationEvidence).toBe(true);
     expect(lane?.phase).toBe("validating");
     expect(lane?.blockers).toContain("The current canonical handoff does not affirm merge-ready delivery state.");
+  });
+
+  it.each([
+    "706 passed, 0 failed",
+    "No validation checks failed",
+    "The release check has not failed",
+  ])("does not invent failed validation evidence from a clean summary: %s", (validation) => {
+    const pr = pullRequest();
+    pr.comments[0]!.body = pr.comments[0]!.body.replace(
+      "VALIDATION EVIDENCE: exact-head gates passed",
+      `VALIDATION EVIDENCE: ${validation}`,
+    );
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.handoff.failedValidationEvidence).toBe(false);
+    expect(lane?.phase).toBe("merge_gate");
   });
 
   it("stops unresolved-review continuation parsing at a canonical Markdown heading", () => {

@@ -299,8 +299,14 @@ function handoffReportsFailedValidation(body: string): boolean {
   const validation = labeledBlockValue(body, "VALIDATION EVIDENCE") ??
     markdownSectionValue(body, /\b(?:validation|evidence)\b/i);
   if (validation === null) return false;
-  return /(?:^|[;,.]\s*|\n\s*)(?:(?:release[- ]?check|validation|tests?|checks?|gates?)\s+)?(?:failed|not\s+run)\b/i
-    .test(validation);
+  if (/\bnot\s+(?:(?:yet|been)\s+)?run\b/i.test(validation)) return true;
+  for (const match of validation.matchAll(/\bfailed\b/gi)) {
+    const prefix = validation.slice(Math.max(0, match.index - 80), match.index);
+    if (/(?:\b(?:no|none|zero)\b|\b0)\s+(?:\w+\s+){0,8}$/i.test(prefix)) continue;
+    if (/\b(?:not|never)\s+(?:\w+\s+){0,4}$/i.test(prefix)) continue;
+    return true;
+  }
+  return false;
 }
 
 function projectHandoff(
