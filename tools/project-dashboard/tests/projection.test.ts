@@ -940,6 +940,7 @@ describe("normalizeRepositorySnapshot", () => {
     "Ready: once scope is approved.",
     "Ready = when the dependency closes.",
     "Ready - pending Steward approval.",
+    "Ready criteria are pending Steward approval.",
     "Pending Steward approval — Ready.",
     "Pending review is complete, but scope is pending — Ready.",
   ])("does not treat a future conditional Ready reference as authoritative readiness: %s", (status) => {
@@ -1358,6 +1359,9 @@ describe("normalizeRepositorySnapshot", () => {
     "Synchronization does not prevent data races.",
     "A mutex prevents this race condition but does not prevent deadlock.",
     "No CSRF token prevents unauthorized requests.",
+    "No CSRF protection allows unauthorized requests.",
+    "No CSRF check permits unauthorized access.",
+    "No session validation allows unauthorized requests.",
     "This permits SQL injection for crafted input.",
     "SQL injection permits data loss and checks passed.",
     "SQL injection is prevented and code injection permits data loss.",
@@ -1502,6 +1506,7 @@ describe("normalizeRepositorySnapshot", () => {
     "Mutexes prevent race conditions.",
     "Synchronization prevents data races.",
     "A CSRF token prevents unauthorized requests.",
+    "CSRF protection does not allow unauthorized requests.",
     "This does not permit SQL injection.",
     "SQL injection is prevented.",
     "SQL injection was blocked.",
@@ -1997,6 +2002,9 @@ describe("normalizeRepositorySnapshot", () => {
     "Synchronization does not prevent data races.",
     "A mutex prevents this race condition but does not prevent deadlock.",
     "No CSRF token prevents unauthorized requests.",
+    "No CSRF protection allows unauthorized requests.",
+    "No CSRF check permits unauthorized access.",
+    "No session validation allows unauthorized requests.",
     "This permits SQL injection for crafted input.",
     "SQL injection permits data loss and checks passed.",
     "SQL injection is prevented and code injection permits data loss.",
@@ -2112,6 +2120,7 @@ describe("normalizeRepositorySnapshot", () => {
     "Mutexes prevent race conditions.",
     "Synchronization prevents data races.",
     "A CSRF token prevents unauthorized requests.",
+    "CSRF protection does not allow unauthorized requests.",
     "This does not permit SQL injection.",
     "SQL injection is prevented.",
     "SQL injection was blocked.",
@@ -2381,6 +2390,21 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.phase).toBe("validating");
     expect(lane?.blockers).toContain("The current canonical handoff does not affirm merge-ready delivery state.");
     expect(lane?.action.owner).toBe("codex");
+  });
+
+  it("does not accept merge-ready while the canonical handoff reports a substantive unresolved review", () => {
+    const pr = pullRequest();
+    pr.comments[0]!.body = pr.comments[0]!.body.replace(
+      "UNRESOLVED REVIEW STATE: none",
+      "UNRESOLVED REVIEW STATE: [P1] Missing synchronization still permits a race condition.",
+    );
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.handoff.substantiveUnresolvedReview).toBe(true);
+    expect(lane?.phase).toBe("validating");
+    expect(lane?.blockers).toContain("The current canonical handoff does not affirm merge-ready delivery state.");
   });
 
   it("accepts the canonical underscore merge-ready handoff spelling", () => {

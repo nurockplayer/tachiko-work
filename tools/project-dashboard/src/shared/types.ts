@@ -136,6 +136,7 @@ export interface HandoffProjection {
   observedIssueNumbers: number[];
   claimedHeadSha: string | null;
   lastCheckedMainSha: string | null;
+  substantiveUnresolvedReview: boolean;
   updatedAt: string | null;
   sourceRefs: SourceRef[];
 }
