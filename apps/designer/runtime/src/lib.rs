@@ -10,7 +10,8 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use tachiko_storage::{
-    CanonicalRoProjectV1, FormatError, ROPROJ_V1_PATHS, decode_roproj_v1, encode_roproj_v1,
+    CanonicalRoProjectAdmissionError, CanonicalRoProjectV1, FormatError, ROPROJ_V1_PATHS,
+    encode_roproj_v1,
 };
 use tachiko_workspace_engine::{
     CalculationFailure, Document, FieldAddress, FieldId, FieldRef, FieldType, IdGenerator, Number,
@@ -763,8 +764,7 @@ pub fn open_project(
     input: &[u8],
     occurrence_id: &str,
 ) -> Result<OpenedProjection, DesignerError> {
-    let tree = decode_project_bundle(input)?;
-    let document = decode_roproj_v1(&tree)?;
+    let document = decode_project_bundle(input)?;
     let candidate = DesignerRuntime::from_document(document, occurrence_id)?;
     let bootstrap = candidate.bootstrap_projection();
     let table = candidate.query_table(&bootstrap.default_collection)?;
@@ -864,7 +864,7 @@ fn encode_project_bundle(tree: &CanonicalRoProjectV1) -> Result<Vec<u8>, Designe
     Ok(output)
 }
 
-fn decode_project_bundle(input: &[u8]) -> Result<CanonicalRoProjectV1, DesignerError> {
+fn decode_project_bundle(input: &[u8]) -> Result<Document, DesignerError> {
     enforce_project_transfer_limit(input.len())?;
     let mut cursor = ProjectBundleCursor::new(input);
     if cursor.take(PROJECT_BUNDLE_MAGIC.len())? != PROJECT_BUNDLE_MAGIC {
@@ -914,7 +914,11 @@ fn decode_project_bundle(input: &[u8]) -> Result<CanonicalRoProjectV1, DesignerE
             message: format!("project transfer contains unexpected path '{extra}'"),
         });
     }
-    Ok(CanonicalRoProjectV1::try_from_files(files)?)
+    match CanonicalRoProjectV1::try_from_files_with_profile(files, ensure_cheap_document_profile) {
+        Ok((_, document)) => Ok(document),
+        Err(CanonicalRoProjectAdmissionError::Format(error)) => Err(error.into()),
+        Err(CanonicalRoProjectAdmissionError::Profile(error)) => Err(error),
+    }
 }
 
 fn enforce_project_transfer_limit(actual: usize) -> Result<(), DesignerError> {

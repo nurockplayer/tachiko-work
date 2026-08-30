@@ -1,6 +1,7 @@
 //! Storage-owned `.roproj/v1` DTOs and canonical tree codec.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::convert::Infallible;
 
 use serde::{Deserialize, Deserializer, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
@@ -64,6 +65,12 @@ pub struct CanonicalRoProjectV1 {
     files: Vec<CanonicalRoProjectFile>,
 }
 
+#[derive(Debug)]
+pub enum CanonicalRoProjectAdmissionError<E> {
+    Format(FormatError),
+    Profile(E),
+}
+
 impl CanonicalRoProjectV1 {
     #[must_use]
     pub fn files(&self) -> &[CanonicalRoProjectFile] {
@@ -85,17 +92,48 @@ impl CanonicalRoProjectV1 {
     /// Returns a `.roproj` format, version, JSON, semantic, or representation
     /// error unless the input is the exact canonical eighteen-file tree.
     pub fn try_from_files(files: Vec<(String, Vec<u8>)>) -> Result<Self, FormatError> {
+        match Self::try_from_files_with_profile(files, |_| Ok::<(), Infallible>(())) {
+            Ok((tree, _)) => Ok(tree),
+            Err(CanonicalRoProjectAdmissionError::Format(error)) => Err(error),
+            Err(CanonicalRoProjectAdmissionError::Profile(never)) => match never {},
+        }
+    }
+
+    /// Admit an exact canonical tree while allowing a caller-owned resource
+    /// profile to reject the decoded document before semantic validation.
+    ///
+    /// The callback must inspect resource shape only. Successful return still
+    /// requires complete storage-owned semantic validation and byte-for-byte
+    /// canonical re-encoding before the document is released.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage format error when the tree is invalid or noncanonical,
+    /// or the caller's profile error when bounded admission rejects the decoded
+    /// document before semantic validation.
+    pub fn try_from_files_with_profile<E>(
+        files: Vec<(String, Vec<u8>)>,
+        profile: impl FnOnce(&Document) -> Result<(), E>,
+    ) -> Result<(Self, Document), CanonicalRoProjectAdmissionError<E>> {
         if files.len() != ROPROJ_V1_PATHS.len() {
-            return invalid_representation(format!(
-                "canonical tree requires {} files, found {}",
-                ROPROJ_V1_PATHS.len(),
-                files.len()
+            return Err(CanonicalRoProjectAdmissionError::Format(
+                FormatError::InvalidRoProjectRepresentation {
+                    message: format!(
+                        "canonical tree requires {} files, found {}",
+                        ROPROJ_V1_PATHS.len(),
+                        files.len()
+                    ),
+                },
             ));
         }
         for (index, ((path, _), expected)) in files.iter().zip(ROPROJ_V1_PATHS).enumerate() {
             if path != expected {
-                return invalid_representation(format!(
-                    "canonical path {index} must be '{expected}', found '{path}'"
+                return Err(CanonicalRoProjectAdmissionError::Format(
+                    FormatError::InvalidRoProjectRepresentation {
+                        message: format!(
+                            "canonical path {index} must be '{expected}', found '{path}'"
+                        ),
+                    },
                 ));
             }
         }
@@ -105,12 +143,23 @@ impl CanonicalRoProjectV1 {
                 .map(|(path, bytes)| CanonicalRoProjectFile { path, bytes })
                 .collect(),
         };
-        let document = decode(&tree)?;
-        let canonical = encode(&document)?;
+        let document =
+            decode_unvalidated(&tree).map_err(CanonicalRoProjectAdmissionError::Format)?;
+        profile(&document).map_err(CanonicalRoProjectAdmissionError::Profile)?;
+        super::super::check_document(&document)
+            .map_err(CanonicalRoProjectAdmissionError::Format)?;
+        validate_semantic_expression_limits(&document)
+            .map_err(CanonicalRoProjectAdmissionError::Format)?;
+        let canonical =
+            encode_validated(&document).map_err(CanonicalRoProjectAdmissionError::Format)?;
         if tree != canonical {
-            return invalid_representation("tree bytes are not canonical .roproj/v1".to_owned());
+            return Err(CanonicalRoProjectAdmissionError::Format(
+                FormatError::InvalidRoProjectRepresentation {
+                    message: "tree bytes are not canonical .roproj/v1".to_owned(),
+                },
+            ));
         }
-        Ok(tree)
+        Ok((tree, document))
     }
 }
 
@@ -289,7 +338,10 @@ struct UnorderedRoProjectV1 {
 pub fn encode(document: &Document) -> Result<CanonicalRoProjectV1, FormatError> {
     super::super::check_document(document)?;
     validate_semantic_expression_limits(document)?;
+    encode_validated(document)
+}
 
+fn encode_validated(document: &Document) -> Result<CanonicalRoProjectV1, FormatError> {
     let manifest = ManifestV1::from_semantic(document);
     let mut schemas = document
         .schemas
@@ -341,6 +393,13 @@ pub fn encode(document: &Document) -> Result<CanonicalRoProjectV1, FormatError> 
 /// representation error, or [`FormatError::InvalidDocument`] when semantic
 /// validation fails.
 pub fn decode(tree: &CanonicalRoProjectV1) -> Result<Document, FormatError> {
+    let document = decode_unvalidated(tree)?;
+    super::super::check_document(&document)?;
+    validate_semantic_expression_limits(&document)?;
+    Ok(document)
+}
+
+fn decode_unvalidated(tree: &CanonicalRoProjectV1) -> Result<Document, FormatError> {
     let manifest = decode_manifest(tree.file(ROPROJ_V1_PATHS[0]).ok_or_else(|| {
         FormatError::InvalidRoProjectRepresentation {
             message: "canonical tree is missing manifest.json".to_owned(),
@@ -362,8 +421,6 @@ pub fn decode(tree: &CanonicalRoProjectV1) -> Result<Document, FormatError> {
         schemas,
         entities,
     };
-    super::super::check_document(&document)?;
-    validate_semantic_expression_limits(&document)?;
     Ok(document)
 }
 
