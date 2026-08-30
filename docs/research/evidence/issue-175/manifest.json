@@ -4,17 +4,17 @@
   "issue": "https://github.com/nurockplayer/tachiko-work/issues/175",
   "parent_issue": "https://github.com/nurockplayer/tachiko-work/issues/174",
   "pull_request": "https://github.com/nurockplayer/tachiko-work/pull/195",
-  "measurement_head": "e263d34a356d75daa58836ac9598e11037984db0",
+  "measurement_head": "f2912ff58d5a5f22e240be6e8c63686ad22cefc8",
   "artifact_measurement_heads": {
     "a0_a1_c_f_latency_and_rss": "4ed7f994825edb8a3bb6f1ac4a5cc5d940f74387",
     "b_progressive_interference": "be4d80146242eda5fc2258d82d6baf3ce7a19aa3",
     "d_resampled_pin_and_first_materialization": "8ce554191e36496dedb57322fc1ab059a205ab07",
-    "e1_exact_a1_lifetime": "8ce554191e36496dedb57322fc1ab059a205ab07",
-    "e2_independent_git_snapshot_a1_comparator": "e263d34a356d75daa58836ac9598e11037984db0",
+    "e1_bounded_sidecar_and_exact_a1_lifetime": "f2912ff58d5a5f22e240be6e8c63686ad22cefc8",
+    "e2_atomic_git_snapshot_and_exact_a1_comparator": "f2912ff58d5a5f22e240be6e8c63686ad22cefc8",
     "full_oracle_and_a0_aggregate_counter_correction": "607e9208da2fdf71e0741d7ff7efceec890ac6fc"
   },
   "base_head": "022a14d18503477aa7e20f6fca102f9e85dce740",
-  "captured_at_utc": "2026-08-30T19:39:47Z",
+  "captured_at_utc": "2026-08-30T19:58:11Z",
   "cache_state": "os_cache_warm",
   "cold_cache_status": "unavailable: /usr/sbin/purge returned Operation not permitted",
   "percentile_method": "nearest-rank: sorted_samples[ceil(n * p) - 1]",
@@ -36,11 +36,11 @@
     "Fixture generation and initial materialization occur outside timed admission samples. E2 is the explicit exception: validated reuse and full_git_snapshot_a1_us each include an independent Git identity check, object pin, and exact-snapshot materialization.",
     "A0 and A1 host samples start from the same filesystem source and report the same physical source bytes read; every A0 parser, nesting, record, AST, reference, and dependency counter aggregates its admission plus ordinary-load decode.",
     "Matrix source SHA-256 values are framed hashes of the exact 18-file canonical source tree.",
-    "A0/A1/C/F timing and RSS rows were regenerated at 4ed7f994 after the cancellation and dependency-edge accounting corrections; final counterbalanced B rows were regenerated at be4d801; D and E1 rows were regenerated at 8ce55419 after per-observation pinning and exact A1 lifetime corrections; immutable-Git-object E2 rows were regenerated at e263d34a after the exact A1 comparator independently repeated Git identity, object pinning, snapshot materialization, and exact admission; A0 aggregate logical-decode counters and full-oracle verification were corrected at 607e920.",
+    "A0/A1/C/F timing and RSS rows were regenerated at 4ed7f994 after the cancellation and dependency-edge accounting corrections; final counterbalanced B rows were regenerated at be4d801; D rows were regenerated at 8ce55419 after per-observation pinning; E1/E2 rows were regenerated at f2912ff5 after the pre-parse sidecar byte cap and single-resolution Git binding, with E2 exact A1 independently repeating Git identity, object pinning, snapshot materialization, and exact admission; A0 aggregate logical-decode counters and full-oracle verification were corrected at 607e920.",
     "D first_exact_bounded_us samples a fresh complete source pin plus the first materialization in every repetition; repeated_materialize_us is a separate immediately repeated lookup on that same pinned snapshot.",
     "The earlier 1b3d75de and bd115c8 captures plus concurrently launched or interrupted exploratory E2 runs were discarded; no superseded row is present in the committed CSV files.",
     "The sidecar is a JSON envelope, not SQLite; sidecar_bytes is the complete serialized JSON byte length and there are no WAL/SHM files.",
-    "Validated E1/E2 reuse pins all 18 source files, independently re-derives the complete Structural Index, and compares every sidecar fact before reuse. E2 reads the exact Git blob object IDs bound by object format, commit, tree, path, and mode; it does not derive trusted facts from the mutable worktree. E2 full_git_snapshot_a1_us independently repeats the same Git identity and blob pinning, materializes those exact bytes, and runs exact A1 admission. Identity-plus-decode is retained only as a non-authoritative decomposition metric.",
+    "Validated E1/E2 reuse rejects an envelope above an eight-times-source-plus-1-MiB byte budget (also globally capped at 512 MiB) before UTF-8/JSON parsing, pins all 18 source files, independently re-derives the complete Structural Index, and compares every sidecar fact before reuse. E2 resolves HEAD once, then reads the exact Git blob object IDs bound by object format, captured commit, tree, path, and mode; it does not derive trusted facts from the mutable worktree. E2 full_git_snapshot_a1_us independently repeats the same Git identity and blob pinning, materializes those exact bytes, and runs exact A1 admission. Identity-plus-decode is retained only as a non-authoritative decomposition metric.",
     "B alternates baseline_then_background and background_then_baseline order and records arm_order in every raw row; the counterbalanced p95 ratio fails the 10 percent foreground-regression gate.",
     "No failed or cancelled measurement row was silently removed. Cancellation outcomes are explicit in progressive-background-raw.csv."
   ],
@@ -81,9 +81,9 @@
   "artifacts_sha256": {
     "bounded-materialization-raw.csv": "ef3f97d283ba09fc685efc06d71be886093e795624f9a1ad3f2b038f63e209a4",
     "bounded-materialization-summary.csv": "2409626e420a4659b70dadc8d5b7cfa38089f9ba872dfc3c947e76e6abb5e847",
-    "dirty-sidecar-raw.csv": "1f76a74971adfdb56050df4f353e1fcae7171011a703f4b826dde14f4b9ae2f5",
+    "dirty-sidecar-raw.csv": "e9a8c9c2efe7fac22a5d02eddf79dd691733fe9d194e33a72615b65950181cce",
     "fixture-manifest.csv": "7f1c0d63d00e5d4209a7f28b154ddcdb3959def3b14dd9aff550072f6f7871b1",
-    "git-sidecar-raw.csv": "769eaea38de1ff98a6a694cdbe28d214e9ba0f0b8b4a6f9dd96b4448b5193af9",
+    "git-sidecar-raw.csv": "43534a8072cb0e9231bee1db573c9825e6cdce4cb99657915bb47f9de1a6298e",
     "host-open-raw.csv": "4a4afe3a22beb6c755cd8b2e271ac151f277e9f305fe3795a4cf0eb254170eff",
     "host-open-summary.csv": "2ab12fafb5c91d1b49f515814b1ecbf3c2c38ef4845a5a8710b5d6bf7a6b4100",
     "matrix-raw.csv": "43909997283bf9fe12e8891dcee018c5d362d32c3ae397b0f2fc63e30647bd8a",
@@ -92,7 +92,7 @@
     "progressive-background-summary.csv": "376d75306e43cc0f3b0a885c4e251a79888e3b4191f59183eb718b7dc115ed10",
     "retained-rss-raw.csv": "cc51c591adeb5cfe77bf1568b80accb459ffdc12e16b33b0716bdd1ac839b788",
     "rss-summary.csv": "de8f715f5c428eb7414b77a494ba5a2bac7bc87b312acf8c7cde61dad89a3a83",
-    "sidecar-summary.csv": "08fac4ccdc1085b6f9ff8bd0a22287c35974943bfb581c0a933ce6fb9267552e",
+    "sidecar-summary.csv": "aa03f97a97b48f95e90d2b9c5b6e285d4506bf265799e19cd4cb47da83ce058a",
     "storage-rss-raw.csv": "f2f1888c7156422dbbbbd52942f6285a4535085cab41f69237e8efb909ccf56c"
   }
 }

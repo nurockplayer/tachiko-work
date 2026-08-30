@@ -177,6 +177,11 @@ were accepted where they matched Issue and Accepted authority.
   reuse read immutable Git objects. Final E2 independently repeats object
   identity and blob pinning for both arms and admits the comparator from that
   exact pinned snapshot; no E2 timing compares different source authorities.
+- Sidecar decode originally accepted an unbounded untrusted envelope before
+  parsing, and E2 independently resolved mutable `HEAD` for commit/tree/blob
+  metadata. Final E1/E2 reject bytes above a source-derived/global cap before
+  UTF-8 or JSON work; E2 resolves `HEAD` once and derives tree/listing/blob
+  reads from that captured commit.
 - Initial raw A0 rows doubled parser-byte work but not decoded record, AST,
   reference, or dependency counters for the second logical decode. Final rows
   aggregate every decode-work counter symmetrically. A fixture manifest now
@@ -205,10 +210,11 @@ source snapshot and returns `RequiresFullAdmission` for unsupported semantic
 proof.
 
 A0/A1/C/F captures were regenerated at `4ed7f994` after the cancellation and
-edge-accounting corrections. Final B was regenerated at `be4d801`; D and E1
-were regenerated at `8ce55419` after per-observation pinning and A1 lifetime
-corrections. E2 was regenerated at `e263d34a` after immutable-object trust and
-an independently Git-pinned exact-A1 comparator. The earlier
+edge-accounting corrections. Final B was regenerated at `be4d801`; D was
+regenerated at `8ce55419` after per-observation pinning. E1/E2 were regenerated
+at `f2912ff5` after exact-A1 lifetime correction, a pre-parse sidecar byte cap,
+single-resolution Git identity, immutable-object trust, and an independently
+Git-pinned exact-A1 comparator. The earlier
 `1b3d75de`, `bd115c8`, and interrupted exploratory E2 files were discarded.
 Cold-cache cells remain absent and explicitly unavailable rather than
 relabeled.
@@ -231,8 +237,8 @@ Structural size is compact only in payload/constant-AST shapes and expands
 mixed, reference, field, chain, and cycle classes. Fresh-process RSS shows no
 40% reduction and exposes higher spine-plus-eventual-full peaks. D is useful
 for exact source payload navigation but cannot publish complete formula or
-validation truth. Exact E1 is 1.87x slower than A1 at p95 on 16k mixed data;
-exact E2 is 1.68x slower than an exact A1 that independently pays the same Git
+validation truth. Exact E1 is 2.16x slower than A1 at p95 on 16k mixed data;
+exact E2 is 2.17x slower than an exact A1 that independently pays the same Git
 identity and object-pinning costs. The faster E2 identity-plus-decode cell is
 explicitly non-authoritative because it does not prove source-derived facts.
 
