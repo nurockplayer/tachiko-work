@@ -116,11 +116,27 @@ marker:
 
 ```text
 <!-- agent-handoff:v1 -->
+ISSUE: 123
+PR: 456
+OWNER: agent:codex
+STATE: active
+HEAD: 0123456789abcdef0123456789abcdef01234567
+MAIN: 89abcdef0123456789abcdef0123456789abcdef
 ```
 
 Create the comment immediately after opening the PR. Thereafter, locate that
-comment and PATCH it in place; do not add replacement status comments. The
-handoff records, at minimum:
+comment and PATCH it in place; do not add replacement status comments. The six
+lines shown are the complete machine header and must immediately follow the
+marker with no heading or blank line between them. Each field appears exactly
+once. `ISSUE` and `PR` are unpadded positive integers, `HEAD` and `MAIN` are
+full lowercase 40-hex commit identities, `OWNER` is the canonical repository
+owner token, and `STATE` is one lowercase coordination token. Aliases,
+duplicates, unknown fields, malformed values, or identity conflicts make the
+header Unknown. GitHub supplies comment identity, author/trust metadata, URL,
+timestamps, and enclosing repository/PR context; the payload cannot assert
+them.
+
+After one blank line, the handoff records human-readable details including:
 
 - Issue;
 - current status;
@@ -132,9 +148,14 @@ handoff records, at minimum:
 - next action; and
 - escalation or human-decision requirement.
 
-The handoff is operational state. It is not architectural or product authority,
-and durable rationale must remain in the appropriate Issue, policy, ADR,
-specification, or repository documentation.
+Only the strict header is machine-readable. Its `STATE` is a coordination claim
+and never grants Issue readiness, mutation authority, or merge readiness.
+Narrative text is operational context for people and is not parsed for
+validation, review severity, readiness, blocking, escalation, or merge
+authority. The handoff is not architectural or product authority, and durable
+rationale must remain in the appropriate Issue, policy, ADR, specification, or
+repository documentation. Freshness is identity-based; quiet time alone does
+not make a matching handoff stale.
 
 ### Review and merge discipline
 
@@ -211,14 +232,24 @@ exactly one separate top-level comment containing:
 
 ```text
 <!-- project-steward-watch:v1 -->
+VERDICT: GREEN
+HEAD: 0123456789abcdef0123456789abcdef01234567
+MAIN: 89abcdef0123456789abcdef0123456789abcdef
+HUMAN_ACTION: none
 ```
 
 Create this comment when Project Steward monitoring begins. Thereafter, PATCH
-that same comment in place whenever any field it is required to record changes,
-including the exact observed PR head or checked live `main`; do not add
-replacement Steward-watch comments.
+that same comment in place whenever any field changes, including the exact
+observed PR head or checked live `main`; do not add replacement Steward-watch
+comments. The four lines shown are the complete machine header and must
+immediately follow the marker. Each field appears exactly once; `VERDICT` is
+`GREEN`, `AMBER`, or `HOLD`, `HEAD` and `MAIN` are full lowercase 40-hex
+identities, and `HUMAN_ACTION` is `none` or `required`. Duplicate, unknown,
+malformed, or identity-mismatched fields make the watch Unknown rather than
+silently current.
 
-The Steward watch records, at minimum:
+After one blank line, the Steward watch records human-readable details
+including:
 
 - GREEN / AMBER / HOLD convergence verdict;
 - exact observed PR head and last checked live `main`;
@@ -230,11 +261,73 @@ The Steward watch records, at minimum:
 
 The Steward watch is operational evidence, not product or architecture
 authority. It is advisory in GREEN and AMBER and blocks new mutation in HOLD.
+`HUMAN_ACTION: required` remains structured attention evidence. GREEN and
+AMBER never grant merge authority, and a stale HEAD/MAIN cannot make a HOLD
+current. Root-cause, scope, blocker, and next-action prose is human narrative
+and is not language-classified.
 The delivery agent must re-read it when reconciling Git state, before a new
 review-fix batch, before declaring merge-ready, and while waiting on hosted
 CI/review. The single `agent-handoff:v1` remains the implementation ownership
 and status handoff; do not turn either narrative body into an open-ended machine
 grammar.
+
+### Closed operational evidence
+
+Use `operational-evidence:v1` only for an exact-head local/manual validation or
+review run that has no adequate native GitHub check/review, or for a
+comment-only review finding/resolution that has no native resolvable thread.
+The complete machine comment begins on its first line and uses exactly one of
+these closed shapes:
+
+```text
+<!-- operational-evidence:v1
+KIND: validation
+PR: 456
+HEAD: 0123456789abcdef0123456789abcdef01234567
+RUN: local-release-01234567
+NAME: release-check
+RESULT: pass
+-->
+```
+
+`KIND` may instead be `review`. Validation results are `pass`, `fail`, or
+`unknown`; review results are `clean`, `findings`, or `unknown`. A run may add
+one optional `SUPERSEDES: <prior GitHub source ID>` field.
+
+```text
+<!-- operational-evidence:v1
+KIND: review-finding
+PR: 456
+HEAD: 0123456789abcdef0123456789abcdef01234567
+RUN: independent-review-01234567
+SEVERITY: P2
+-->
+```
+
+```text
+<!-- operational-evidence:v1
+KIND: review-resolution
+PR: 456
+HEAD: 89abcdef0123456789abcdef0123456789abcdef
+RESOLVES: 123456789
+-->
+```
+
+Every required field appears exactly once. Unknown/duplicate fields,
+unsupported values, abbreviated identities, malformed tokens, edited evidence
+comments, or multiple envelopes in one source fail closed. Repository,
+producer, source ID, author association, URL, and timestamps come from GitHub
+context rather than payload. Evidence is append-only: a transition names the
+exact prior GitHub source with `SUPERSEDES` or `RESOLVES`; timestamps do not
+choose a winner. Unrelated conflicting claims are `EvidenceConflict`/Unknown.
+
+Native GitHub facts always have higher authority. Custom evidence cannot clear
+a failed required check, current `CHANGES_REQUESTED`, unresolved native thread,
+or current Steward HOLD. Exact-head validation and clean-review runs expire on
+head change; structured P0/P1/P2 findings persist until an explicit structured
+resolution; P3 is advisory. Free prose and cache/history are advisory only and
+cannot grant or deny ownership, readiness, validation, review severity,
+blocking, human action, mutation authority, or merge readiness.
 
 ### Post-merge recalibration and stop conditions
 
