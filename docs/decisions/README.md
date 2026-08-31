@@ -20,7 +20,7 @@ For project-wide authority rules, read [`../governance/knowledge-authority.md`](
 | [ADR-0008](ADR-0008-developer-mvp-completion-and-next-phase.md) | Developer MVP completion / next phase | Superseded | ADR-0009 is the surviving authority |
 | [ADR-0009](ADR-0009-developer-mvp-validation-and-next-phase.md) | Developer MVP validation / next phase | Accepted, historical milestone boundary | Confirms Developer MVP as the completed validation point |
 | [ADR-0010](ADR-0010-first-usable-product-workflow.md) | First usable product workflow | Accepted | Current CLI-first usable workflow |
-| [ADR-0011](ADR-0011-semantic-three-way-merge.md) | Semantic three-way merge | Accepted for implemented merge contract | Broader collaboration/conflict semantics remain separate Open Questions |
+| [ADR-0011](ADR-0011-semantic-three-way-merge.md) | Semantic three-way merge | Accepted | Core deterministic three-way merge behavior; ADR-0031 now owns the versioned deterministic conflict-object protocol while current production conflict DTOs may lag |
 | [ADR-0012](ADR-0012-release-distribution-contract.md) | Release distribution contract | Accepted | Tag-gated release/distribution contract |
 | [ADR-0013](ADR-0013-semantic-entity-lifecycle.md) | Validated semantic entity lifecycle | Accepted for v0.1 lifecycle contract | Preview-first mutation and relationship safety remain authoritative; ADR-0015 supersedes rename-as-identity semantics |
 | [ADR-0014](ADR-0014-computational-formula-authoring.md) | Bounded computational formula authoring | Accepted | Formula authoring is bounded, deterministic, and separate from generic `set`/read-only AI paths |
@@ -40,6 +40,7 @@ For project-wide authority rules, read [`../governance/knowledge-authority.md`](
 | [ADR-0028](ADR-0028-game-engine-host-extension-boundary.md) | Game-engine host extension boundary | Accepted | Unity, Unreal Engine, and Godot integrations are host adapters over existing semantic/runtime/authorization authority; engine effects remain separate, and no general plugin-platform promise is stabilized in M04 |
 | [ADR-0029](ADR-0029-current-state-authority-and-optional-history.md) | Current-state authority and optional semantic history | Accepted | Current semantic state and complete standalone snapshots remain authoritative; revision occurrences are distinct from content/checkpoint/Git identity; general history is optional, event sourcing and universal CRDT/OT are not defaults, and Git remains a non-semantic optional adapter |
 | [ADR-0030](ADR-0030-canonical-semantic-delta.md) | Canonical Semantic Delta as direct-state evidence | Accepted | Fixes the same-Document, stable-ID-targeted, direct-fact-only logical delta contract and canonical order without creating mutation, history, provenance, or wire authority |
+| [ADR-0031](ADR-0031-semantic-merge-conflict-protocol.md) | Deterministic semantic merge conflict protocol | Accepted | Fixes `tachiko.semantic-conflict/v1`: typed stable targets + direct facets, three closed structural conflict kinds, logical composite identity, canonical ordering, and separation from post-merge validation/calculation failure; concrete production DTO/codec/runtime work remains separate |
 
 ## How to use ADRs
 
