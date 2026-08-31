@@ -65,9 +65,19 @@ Adoption should be a bridge, not a cliff.
 
 ## 6. Multiple Views, Shared Meaning
 
-Markdown, visual editing, spreadsheet interfaces, structured-data views, domain-specific tools, and AI operations may be different projections of shared semantic structures.
+Markdown, visual editing, spreadsheet interfaces, structured-data views, graphs, timelines, domain-specific tools, and AI operations may be different projections of shared semantic structures.
 
-Not every surface must expose every primitive, and not every document type must be forced into one visual metaphor.
+A view is not merely decoration over data. It is an instrument for thinking with shared meaning: a table may make comparison and aggregation easy to see; a graph may expose dependency and relationship structure; a timeline may expose sequence, delay, and duration; a document-like view may make context and rationale easier to understand.
+
+The underlying semantic state remains authoritative while the user changes how that state is selected, arranged, filtered, grouped, or presented. A view may own presentation state such as layout, grouping, ordering, formatting, or interaction state without becoming a competing source of semantic truth.
+
+Not every surface must expose every primitive, and not every document type must be forced into one visual metaphor. Different representations are valuable when they make different questions easier to ask or different relationships easier to perceive.
+
+Before adding a new first-party view, ask:
+
+> What does this view make easier to see, understand, decide, or do that existing views do not?
+
+If there is no meaningful answer, the new surface may be cosmetic variation rather than a useful cognitive instrument.
 
 The shared model exists to preserve meaning across views, not to make all views identical.
 
