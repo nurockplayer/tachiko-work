@@ -24,8 +24,9 @@ merge/conflicts, history policy, permissions, and team review workflows.
 
 > **Public pre-alpha:** the repository is intentionally public for inspection and
 > early feedback. There is no tagged binary release yet, the graphical Designer
-> is not packaged or released yet, and APIs, formats, contribution policy, and the
-> long-term licensing boundary are still evolving.
+> is not packaged or released yet, and APIs, formats, and contribution policy are
+> still evolving. The licensing direction is founder-accepted, while its legal
+> implementation remains pending under issue #202.
 
 ## What works today
 
