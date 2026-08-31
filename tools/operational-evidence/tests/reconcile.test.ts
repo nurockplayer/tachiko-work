@@ -821,6 +821,37 @@ describe("reconcile", () => {
     });
   });
 
+  it("fails closed when a trusted operational envelope is malformed", () => {
+    const malformedFinding = comment(
+      "malformed-finding",
+      [
+        "<!-- operational-evidence:v1",
+        "KIND: review-finding",
+        "PR: 201",
+        `HEAD: ${HEAD}`,
+        "RUN: malformed-review-run",
+        "-->",
+      ].join("\n"),
+    );
+    const result = reconcile(
+      baseInput({
+        comments: [...baseInput().comments, malformedFinding],
+      }),
+    );
+
+    expect(result.review).toMatchObject({
+      state: "unknown",
+      reason: "missing-field",
+      provenance: [
+        expect.objectContaining({
+          kind: "comment",
+          source: expect.objectContaining({ sourceId: "malformed-finding" }),
+        }),
+      ],
+    });
+    expect(result.mergeGate.state).toBe("unknown");
+  });
+
   it("makes standalone P3 findings advisory and keeps unclassified runs Unknown", () => {
     const withP3 = reconcile(
       baseInput({

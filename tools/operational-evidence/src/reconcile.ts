@@ -1,6 +1,7 @@
 import type {
   EvidenceParseContext,
   OperationalEvidence,
+  ParseFailure,
   ParseFailureReason,
   ReviewEvidence,
   ReviewFindingEvidence,
@@ -229,6 +230,7 @@ export interface Reconciliation {
 
 interface EvidenceSet {
   readonly values: readonly OperationalEvidence[];
+  readonly parseFailures: readonly ParseFailure[];
   readonly relationshipFailures: ReadonlyMap<string, ConditionReason>;
   readonly activeRunSourceIds: ReadonlySet<string>;
   readonly sourceConflicts: ReadonlySet<string>;
@@ -443,6 +445,7 @@ function buildEvidenceSet(
   sourceConflicts: ReadonlySet<string>,
 ): EvidenceSet {
   const values: OperationalEvidence[] = [];
+  const parseFailures: ParseFailure[] = [];
   const advisories: Advisory[] = [];
   for (const source of comments) {
     if (!exactMarkerPresent(source.body, EVIDENCE_MARKER)) continue;
@@ -450,6 +453,9 @@ function buildEvidenceSet(
     if (parsed.ok) {
       values.push(parsed.value);
     } else {
+      if (parsed.reason !== "producer-untrusted") {
+        parseFailures.push(parsed);
+      }
       advisories.push({
         reason:
           parsed.reason === "producer-untrusted"
@@ -461,6 +467,9 @@ function buildEvidenceSet(
     }
   }
   values.sort((left, right) =>
+    compareOrdinal(left.source.sourceId, right.source.sourceId),
+  );
+  parseFailures.sort((left, right) =>
     compareOrdinal(left.source.sourceId, right.source.sourceId),
   );
 
@@ -525,6 +534,7 @@ function buildEvidenceSet(
   );
   return {
     values,
+    parseFailures,
     relationshipFailures,
     activeRunSourceIds,
     sourceConflicts,
@@ -695,6 +705,16 @@ function reconcileValidation(
       name,
       ...condition("unknown", "validation-missing", [
         { kind: "authority", id: `required-native-validation:${name}` },
+      ]),
+    };
+  }
+
+  const parseFailure = evidence.parseFailures[0];
+  if (parseFailure !== undefined) {
+    return {
+      name,
+      ...condition("unknown", parseFailure.reason, [
+        commentProvenance(parseFailure.source),
       ]),
     };
   }
@@ -962,6 +982,12 @@ function reconcileReview(
         commentProvenance(first.value.source),
       ]);
     }
+  }
+  const parseFailure = evidence.parseFailures[0];
+  if (parseFailure !== undefined) {
+    return condition("unknown", parseFailure.reason, [
+      commentProvenance(parseFailure.source),
+    ]);
   }
 
   if (
