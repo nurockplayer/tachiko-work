@@ -127,8 +127,8 @@ This ADR authorizes no production implementation. The following remain open:
   command/operation/transaction/event taxonomy, public revision and event
   contracts, and retry/no-op semantics;
 - [Issue #49](https://github.com/nurockplayer/tachiko-work/issues/49): history
-  profiles, checkpoints, replay, compaction, retention, migration, and crash
-  recovery; and
+  profiles, checkpoints, replay, compaction, retention, migration, crash
+  recovery, and semantic-revision/checkpoint-to-Git association mapping; and
 - [Issue #50](https://github.com/nurockplayer/tachiko-work/issues/50): offline
   causality, selective CRDT/OT boundaries, and resynchronization.
 
