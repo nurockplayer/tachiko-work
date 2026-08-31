@@ -684,6 +684,33 @@ describe("reconcile", () => {
     expect(result.mergeGate.state).toBe("satisfied");
   });
 
+  it("keeps a current pending review waiting even with an exact-head approval", () => {
+    const approval: NativeReview = {
+      current: true,
+      head: HEAD,
+      state: "APPROVED",
+      source: { id: "approval-current" },
+    };
+    const pending: NativeReview = {
+      current: true,
+      head: HEAD,
+      state: "PENDING",
+      source: { id: "review-pending" },
+    };
+    const result = reconcile(
+      baseInput({
+        comments: [handoff(), watch(), validation("pass", "pass")],
+        nativeReviews: complete([approval, pending]),
+      }),
+    );
+
+    expect(result.review).toMatchObject({
+      state: "waiting",
+      reason: "native-review-pending",
+    });
+    expect(result.mergeGate.state).toBe("waiting");
+  });
+
   it("keeps an explicit structured unknown review Unknown", () => {
     const result = reconcile(
       baseInput({

@@ -1013,15 +1013,6 @@ function reconcileReview(
     (review) =>
       review.state === "APPROVED" && review.head === input.context.headSha,
   );
-  if (nativeApproval.length > 0) {
-    return condition(
-      "satisfied",
-      "native-approval-current",
-      nativeApproval.map((review) =>
-        nativeProvenance("native-review", review.source),
-      ),
-    );
-  }
   const pendingReview = currentReviews.filter(
     (review) => review.state === "PENDING",
   );
@@ -1030,6 +1021,15 @@ function reconcileReview(
       "waiting",
       "native-review-pending",
       pendingReview.map((review) =>
+        nativeProvenance("native-review", review.source),
+      ),
+    );
+  }
+  if (nativeApproval.length > 0) {
+    return condition(
+      "satisfied",
+      "native-approval-current",
+      nativeApproval.map((review) =>
         nativeProvenance("native-review", review.source),
       ),
     );
