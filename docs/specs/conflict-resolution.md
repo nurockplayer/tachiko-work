@@ -24,8 +24,10 @@ merge markers, mutation programs, validation diagnostics, or Git authority.
 
 The logical contract identifier is exactly `tachiko.semantic-conflict/v1`.
 
-A canonical conflict result is scoped by one continuing `DocumentId` and contains
-one canonically ordered sequence of zero or more semantic conflict objects. This
+A canonical conflict-set result is scoped by one continuing `DocumentId` and
+contains one canonically ordered **non-empty** sequence of semantic conflict
+objects. An empty conflict sequence is not a structural merge result;
+conflict-free reconciliation returns the candidate semantic state instead. This
 is a logical DTO contract. It does not select Rust or Serde layout, JSON or
 protobuf bytes, IPC, WASM ABI, network transport, UUID/hash spelling, or public
 SDK shape.
