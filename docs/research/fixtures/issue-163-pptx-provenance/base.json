@@ -1,0 +1,124 @@
+{
+  "profile": "tachiko.issue-163.research-fixture/v1",
+  "authority": "research-only fixture; not .roproj semantic truth",
+  "repository": {
+    "name": "nurockplayer/tachiko-work",
+    "base_sha": "db97ec88962bbbaa66cf042a90aa407f3b165ef6",
+    "semantic_source_path": "examples/game-balance/game-balance.ro"
+  },
+  "snapshot": "base",
+  "analysis_lineage": {
+    "kind": "ephemeral-analysis-query-capture",
+    "document": "b15c0317-bc59-5387-85bf-c414e3850099",
+    "source_revision": "cli-semantic-sha256:a480657ffe42b83d82e148fbf8393bc528f54969a5ccd536699b1e4263c90894",
+    "validator_configuration": "workspace_full",
+    "formula_calculation_used": true,
+    "normalized_definition": {
+      "schema": "6e594d33-70eb-5755-8b9f-f19b948d39ce",
+      "narrowing": [
+        "24ab8d17-bff2-53fc-9632-45617effe270"
+      ],
+      "predicates": [
+        {
+          "field": "fa616e90-705e-5fa8-b735-2a6e84d03354",
+          "operator": "greater_than_or_equal",
+          "operand": {
+            "type": "number",
+            "value": 35
+          }
+        }
+      ],
+      "group_by": "866dded6-ba9f-542c-b328-bea19ee0f80f",
+      "results": [
+        { "kind": "membership" },
+        { "kind": "count" },
+        {
+          "kind": "minimum",
+          "field": "fa616e90-705e-5fa8-b735-2a6e84d03354"
+        },
+        {
+          "kind": "maximum",
+          "field": "89f0fd5e-dfc9-53bf-b008-85f78c403420"
+        },
+        {
+          "kind": "observations",
+          "field": "89f0fd5e-dfc9-53bf-b008-85f78c403420"
+        }
+      ]
+    }
+  },
+  "sources": [
+    {
+      "id": "semantic:field:89f0fd5e-dfc9-53bf-b008-85f78c403420",
+      "kind": "metric",
+      "semantic_subject": "24ab8d17-bff2-53fc-9632-45617effe270",
+      "field": "89f0fd5e-dfc9-53bf-b008-85f78c403420",
+      "label": "Iron Sword DPS",
+      "value": 40,
+      "unit": "damage/second",
+      "derivation": "authoritative formula-backed Analysis Query observation"
+    },
+    {
+      "id": "fixture:claim:iron-sword-threshold",
+      "id_scope": "issue-163 research fixture only",
+      "kind": "claim",
+      "text": "The reviewed Iron Sword clears the 35-damage selection threshold at 40 DPS.",
+      "depends_on": [
+        "semantic:field:89f0fd5e-dfc9-53bf-b008-85f78c403420"
+      ],
+      "citations": [
+        "fixture:evidence:moonfall-readme"
+      ]
+    },
+    {
+      "id": "fixture:evidence:moonfall-readme",
+      "id_scope": "issue-163 research fixture only",
+      "kind": "evidence",
+      "title": "Moonfall game-balance fixture explanation",
+      "repository_path": "examples/game-balance/README.md",
+      "locator": "Model / Analysis Query result"
+    },
+    {
+      "id": "fixture:unrelated:localization-note",
+      "id_scope": "issue-163 research fixture only",
+      "kind": "research-note",
+      "text": "Japanese localization review remains pending for the fictional Moonfall title."
+    }
+  ],
+  "projection": {
+    "elements": [
+      {
+        "adapter_element_id": "adapter:metric-value",
+        "source_ids": [
+          "semantic:field:89f0fd5e-dfc9-53bf-b008-85f78c403420"
+        ]
+      },
+      {
+        "adapter_element_id": "adapter:claim-text",
+        "source_ids": [
+          "fixture:claim:iron-sword-threshold",
+          "semantic:field:89f0fd5e-dfc9-53bf-b008-85f78c403420"
+        ]
+      },
+      {
+        "adapter_element_id": "adapter:citation-footer",
+        "source_ids": [
+          "fixture:claim:iron-sword-threshold",
+          "fixture:evidence:moonfall-readme"
+        ]
+      }
+    ],
+    "desired_behavior": {
+      "id": "adapter-behavior:live-evidence-hover",
+      "description": "A viewer can inspect live per-fragment evidence and query lineage without leaving the rendered artifact."
+    }
+  },
+  "manual_baseline": {
+    "copy_or_update_steps": 3,
+    "steps": [
+      "copy the reviewed metric into the deck",
+      "copy the reviewed claim into the deck",
+      "copy and format its evidence reference"
+    ]
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "profile": "tachiko.issue-163.research-fixture-variant/v1",
+  "id": "metric-change",
+  "description": "Change only the formula-backed DPS observation using the existing buffed Moonfall query context.",
+  "changes": [
+    {
+      "source_id": "semantic:field:89f0fd5e-dfc9-53bf-b008-85f78c403420",
+      "set": {
+        "value": 50
+      }
+    }
+  ],
+  "lineage_changes": {
+    "source_revision": "cli-semantic-sha256:e7253fae438d4a2487e5a4d5bfc9249b8a0a13a1dc829d78f268517a4cb64b19",
+    "semantic_source_path": "examples/game-balance/buffed-sword.ro"
+  },
+  "expected": {
+    "change_class": "source-semantic",
+    "changed_source_ids": [
+      "semantic:field:89f0fd5e-dfc9-53bf-b008-85f78c403420"
+    ],
+    "stale_adapter_elements": [
+      "adapter:claim-text",
+      "adapter:metric-value"
+    ]
+  }
+}
