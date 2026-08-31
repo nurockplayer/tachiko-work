@@ -47,6 +47,14 @@ pnpm --dir apps/designer exec playwright install chromium
 bash scripts/designer-check.sh
 ```
 
+The repository-local operational-evidence library uses the same pinned pnpm
+version but has no browser or runtime dependencies. Exercise its strict parser,
+reconciliation fixtures, declarations, and build with:
+
+```sh
+bash scripts/operational-evidence-check.sh
+```
+
 ## Work in focused loops
 
 Run the smallest affected crate or test while iterating:
