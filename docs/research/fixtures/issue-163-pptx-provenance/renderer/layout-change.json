@@ -1,0 +1,28 @@
+{
+  "profile": "tachiko.issue-163.pptx-renderer-config/probe-v1",
+  "id": "renderer-layout-change",
+  "layout": "LAYOUT_WIDE",
+  "background": "FFFFFF",
+  "ink": "000000",
+  "muted_ink": "555555",
+  "rule": "B8BCC4",
+  "accent": "6DCBF4",
+  "metric": {
+    "x": 8.35,
+    "y": 2,
+    "w": 4.2,
+    "h": 1.15
+  },
+  "metric_label": {
+    "x": 8.35,
+    "y": 3.2,
+    "w": 4.2,
+    "h": 0.45
+  },
+  "claim": {
+    "x": 0.75,
+    "y": 2.05,
+    "w": 6.85,
+    "h": 1.5
+  }
+}

@@ -148,6 +148,94 @@ Do not change Accepted authority merely to satisfy reviewer preference.
 Escalate genuine authority contradictions to the Project Steward. Never force
 push. Merge only the exact reviewed and validated head under repository policy.
 
+### Review-fix convergence circuit breaker
+
+A sequence of individually valid review findings can still show that a delivery
+loop is no longer converging. The **Project Steward** owns a qualitative,
+root-cause-aware convergence circuit breaker. Review count, commit count, test
+count, or elapsed time may support the diagnosis, but none is sufficient by
+itself to trip or clear the breaker and none can make a known blocker mergeable.
+
+Classify the active review-fix loop as:
+
+- **GREEN — converging:** substantive findings are materially independent or a
+  finite cluster around one invariant; each fix removes a concrete defect;
+  scope and Accepted authority remain stable; and new evidence is shrinking
+  the blocker set rather than only changing its wording.
+- **AMBER — convergence at risk:** successive substantive findings cluster on
+  one root-cause seam, implementation/test/evidence volume grows without
+  corresponding acceptance-capability growth, fixes drift toward aliases,
+  synonyms, exception lists, or other local enumeration, or exact-head review
+  repeatedly discovers adjacent variants of the same abstraction weakness.
+  The delivery agent may finish the current bounded batch, but the next repair
+  should prefer the root cause over another local patch.
+- **HOLD — structurally non-convergent:** another autonomous mutation batch is
+  more likely to enlarge or relocate the problem than close it. Evidence
+  includes the same seam recurring after a structural repair attempt, proposed
+  fixes undoing or contradicting previous valid fixes, a valid blocker requiring
+  new durable authority or scope expansion, materially conflicting valid repair
+  directions that need Steward reconciliation, or an implementation becoming an
+  open-ended grammar/exception system rather than a bounded representation.
+
+HOLD blocks new speculative mutation. It does not block read-only CI, hosted
+review, evidence collection, or reconciliation. A pending non-terminal gate is
+not itself a convergence failure. Genuine P0/P1/P2-equivalent correctness,
+security, data-integrity, ownership, scope, GitHub-API, or Accepted-authority
+findings remain blocking under every convergence state. Conversely, P3,
+nitpick, or pure-maintainability churn does not keep a delivery loop alive.
+
+After HOLD, the Project Steward must reconcile the durable evidence and choose
+one bounded action:
+
+1. reject or reclassify a finding when repository authority shows that it is
+   invalid or outside the current acceptance criteria;
+2. authorize exactly one bounded structural repair when the current Issue can
+   still be satisfied without changing durable authority; or
+3. freeze further mutation and route the design problem to focused
+   Research/Decision work.
+
+The bounded structural repair is a controlled recovery probe, not permission to
+resume the previous loop. After the repair, and before any further autonomous
+mutation, the Project Steward must update the same Steward watch with the repair
+result, exact observed PR head and checked live `main`, supporting evidence, and
+a fresh GREEN, AMBER, or HOLD verdict. A successful repair does not implicitly
+clear HOLD. If the same root-cause seam materially recurs after that repair,
+HOLD applies again and autonomous mutation stops. Moving design debt to
+follow-up work never relaxes an unresolved valid blocker on the current PR; if
+current acceptance cannot be met without the new decision, the current PR
+remains unmergeable until the proper authority resolves or explicitly re-scopes
+it.
+
+For autonomous implementation PRs under Project Steward monitoring, maintain
+exactly one separate top-level comment containing:
+
+```text
+<!-- project-steward-watch:v1 -->
+```
+
+Create this comment when Project Steward monitoring begins. Thereafter, PATCH
+that same comment in place whenever any field it is required to record changes,
+including the exact observed PR head or checked live `main`; do not add
+replacement Steward-watch comments.
+
+The Steward watch records, at minimum:
+
+- GREEN / AMBER / HOLD convergence verdict;
+- exact observed PR head and last checked live `main`;
+- scope / authority verdict;
+- root-cause seam or `none` and concise supporting evidence;
+- current blocker disposition;
+- bounded authorized next action; and
+- whether human or founder input is required and, when it is required, why.
+
+The Steward watch is operational evidence, not product or architecture
+authority. It is advisory in GREEN and AMBER and blocks new mutation in HOLD.
+The delivery agent must re-read it when reconciling Git state, before a new
+review-fix batch, before declaring merge-ready, and while waiting on hosted
+CI/review. The single `agent-handoff:v1` remains the implementation ownership
+and status handoff; do not turn either narrative body into an open-ended machine
+grammar.
+
 ### Post-merge recalibration and stop conditions
 
 After every merge, refresh live `main` and re-read the Product Roadmap, open

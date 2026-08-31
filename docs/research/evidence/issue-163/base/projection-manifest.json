@@ -1,0 +1,138 @@
+{
+  "profile": "tachiko.issue-163.projection-manifest/probe-v1",
+  "authority": "generated adapter provenance; not .roproj semantic truth",
+  "repository": {
+    "name": "nurockplayer/tachiko-work",
+    "base_sha": "db97ec88962bbbaa66cf042a90aa407f3b165ef6",
+    "semantic_source_path": "examples/game-balance/game-balance.ro"
+  },
+  "fixture_snapshot": "base",
+  "analysis_lineage": {
+    "kind": "ephemeral-analysis-query-capture",
+    "document": "b15c0317-bc59-5387-85bf-c414e3850099",
+    "source_revision": "cli-semantic-sha256:a480657ffe42b83d82e148fbf8393bc528f54969a5ccd536699b1e4263c90894",
+    "validator_configuration": "workspace_full",
+    "formula_calculation_used": true,
+    "normalized_definition": {
+      "schema": "6e594d33-70eb-5755-8b9f-f19b948d39ce",
+      "narrowing": [
+        "24ab8d17-bff2-53fc-9632-45617effe270"
+      ],
+      "predicates": [
+        {
+          "field": "fa616e90-705e-5fa8-b735-2a6e84d03354",
+          "operator": "greater_than_or_equal",
+          "operand": {
+            "type": "number",
+            "value": 35
+          }
+        }
+      ],
+      "group_by": "866dded6-ba9f-542c-b328-bea19ee0f80f",
+      "results": [
+        {
+          "kind": "membership"
+        },
+        {
+          "kind": "count"
+        },
+        {
+          "kind": "minimum",
+          "field": "fa616e90-705e-5fa8-b735-2a6e84d03354"
+        },
+        {
+          "kind": "maximum",
+          "field": "89f0fd5e-dfc9-53bf-b008-85f78c403420"
+        },
+        {
+          "kind": "observations",
+          "field": "89f0fd5e-dfc9-53bf-b008-85f78c403420"
+        }
+      ]
+    }
+  },
+  "generator": {
+    "name": "PptxGenJS",
+    "version": "4.0.1",
+    "package_manager": "pnpm@11.25.0",
+    "configuration": "default",
+    "configuration_sha256": "9e8a06e8437a329689ca954ac46e31cea724d554cf564808742aa1a18983c968"
+  },
+  "source_fingerprints": {
+    "fixture:claim:iron-sword-threshold": "sha256:96a3e14746fc9ea434eafd1cd34acdad3c54ea92f6b03aac3c42052ee92146d0",
+    "fixture:evidence:moonfall-readme": "sha256:df760da356d9c9b09541f3ff2032b03f491b92c00dc8919f3bb22d610c4735f9",
+    "fixture:unrelated:localization-note": "sha256:5569159303b652899305d2fc5fc2007aa2a618b2ef04dd3fc125748a126a39a1",
+    "semantic:field:89f0fd5e-dfc9-53bf-b008-85f78c403420": "sha256:54530822e20dd8cb1d91da78705fefe85bfe0eaa2f0f81d30804b86e3721ebc0"
+  },
+  "source_provenance_fingerprint": "sha256:a8eb52623f2f2c73f31f16ca1eb6d16f39ebd551ce8e54146e7f5458cf9340e7",
+  "projection_elements": [
+    {
+      "adapter_element_id": "adapter:metric-value",
+      "source_ids": [
+        "semantic:field:89f0fd5e-dfc9-53bf-b008-85f78c403420"
+      ],
+      "source_fingerprints": {
+        "semantic:field:89f0fd5e-dfc9-53bf-b008-85f78c403420": "sha256:54530822e20dd8cb1d91da78705fefe85bfe0eaa2f0f81d30804b86e3721ebc0"
+      },
+      "target": {
+        "slide_number": 1,
+        "object_name": "adapter:metric-value"
+      },
+      "target_metadata_authority": "adapter-only"
+    },
+    {
+      "adapter_element_id": "adapter:claim-text",
+      "source_ids": [
+        "fixture:claim:iron-sword-threshold",
+        "semantic:field:89f0fd5e-dfc9-53bf-b008-85f78c403420"
+      ],
+      "source_fingerprints": {
+        "fixture:claim:iron-sword-threshold": "sha256:96a3e14746fc9ea434eafd1cd34acdad3c54ea92f6b03aac3c42052ee92146d0",
+        "semantic:field:89f0fd5e-dfc9-53bf-b008-85f78c403420": "sha256:54530822e20dd8cb1d91da78705fefe85bfe0eaa2f0f81d30804b86e3721ebc0"
+      },
+      "target": {
+        "slide_number": 1,
+        "object_name": "adapter:claim-text"
+      },
+      "target_metadata_authority": "adapter-only"
+    },
+    {
+      "adapter_element_id": "adapter:citation-footer",
+      "source_ids": [
+        "fixture:claim:iron-sword-threshold",
+        "fixture:evidence:moonfall-readme"
+      ],
+      "source_fingerprints": {
+        "fixture:claim:iron-sword-threshold": "sha256:96a3e14746fc9ea434eafd1cd34acdad3c54ea92f6b03aac3c42052ee92146d0",
+        "fixture:evidence:moonfall-readme": "sha256:df760da356d9c9b09541f3ff2032b03f491b92c00dc8919f3bb22d610c4735f9"
+      },
+      "target": {
+        "slide_number": 1,
+        "object_name": "adapter:citation-footer"
+      },
+      "target_metadata_authority": "adapter-only"
+    }
+  ],
+  "semantic_projection_fingerprint": "sha256:df14d4a7b793c4e561457a956835979b0a3bb5a5aee802e77d56042e2f348ed6",
+  "fidelity_losses": [
+    {
+      "intended_behavior_id": "adapter-behavior:live-evidence-hover",
+      "target": "PPTX",
+      "status": "degraded",
+      "realized_as": "static visible citation plus speaker-note source block",
+      "lost_behavior": "no live per-fragment evidence inspection or query refresh inside the PPTX",
+      "semantic_promotion": "none"
+    }
+  ],
+  "manual_target_edit_contract": {
+    "authoritative": false,
+    "regeneration": "overwrites target-only edits",
+    "round_trip_or_conflict_protocol": false
+  },
+  "artifact": {
+    "path": "moonfall-review.pptx",
+    "sha256": "3351b64a5c7b387eb92ed7f9fa8ee47bed625717f5dffa952dd79eb8e130bdec",
+    "bytes": 59531,
+    "byte_identity_is_contract": false
+  }
+}
