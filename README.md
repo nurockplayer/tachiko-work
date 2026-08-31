@@ -18,7 +18,7 @@ The first product wedge is **game-balance data for technical designers and
 developers**. The complete workflow remains CLI-first, and the repository now
 also contains the first browser Designer vertical slice: a bounded typed table
 over the resident Rust runtime. The active roadmap horizon is
-[`05 · Designer MVP`](docs/product/product-roadmap.md), which is expanding that
+[`06 · Team Workspace Beta`](docs/product/product-roadmap.md), which is expanding that
 graphical workspace without moving semantic authority into the frontend.
 
 > **Public pre-alpha:** the repository is intentionally public for inspection and
