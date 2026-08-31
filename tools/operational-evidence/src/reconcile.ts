@@ -241,6 +241,8 @@ const HANDOFF_MARKER = "<!-- agent-handoff:v1 -->";
 const WATCH_MARKER = "<!-- project-steward-watch:v1 -->";
 const EVIDENCE_MARKER = "<!-- operational-evidence:v1";
 const REQUIREMENT_TOKEN = /^[a-z0-9]+(?:[-_:][a-z0-9]+)*$/;
+const FULL_SHA = /^[0-9a-f]{40}$/;
+const POSITIVE_INTEGER = /^[1-9][0-9]*$/;
 
 function compareOrdinal(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -440,8 +442,13 @@ function isRunEvidence(
 }
 
 type OperationalFailureScope =
-  | { readonly kind: "validation" | "review"; readonly name: string }
-  | { readonly kind: "review-finding" };
+  | {
+      readonly kind: "validation" | "review";
+      readonly pullRequest: number;
+      readonly head: string;
+      readonly name: string;
+    }
+  | { readonly kind: "review-finding"; readonly pullRequest: number };
 
 interface ScopedParseFailure {
   readonly failure: ParseFailure;
@@ -461,7 +468,9 @@ function operationalFailureScope(
   const closeIndex = lines.indexOf("-->", 1);
   if (closeIndex === -1) return undefined;
   const envelope = lines.slice(1, closeIndex);
-  const exactValues = (field: "KIND" | "NAME"): readonly string[] =>
+  const exactValues = (
+    field: "KIND" | "PR" | "HEAD" | "NAME",
+  ): readonly string[] =>
     envelope.flatMap((line) => {
       const prefix = `${field}: `;
       return line.startsWith(prefix) ? [line.slice(prefix.length)] : [];
@@ -469,11 +478,27 @@ function operationalFailureScope(
   const kinds = exactValues("KIND");
   if (kinds.length !== 1) return undefined;
   const kind = kinds[0];
-  if (kind === "review-finding") return { kind };
+  const pullRequests = exactValues("PR");
+  const pullRequestText =
+    pullRequests.length === 1 ? pullRequests[0] : undefined;
+  if (
+    pullRequestText === undefined ||
+    !POSITIVE_INTEGER.test(pullRequestText)
+  ) {
+    return undefined;
+  }
+  const pullRequest = Number(pullRequestText);
+  if (!Number.isSafeInteger(pullRequest) || pullRequest <= 0) return undefined;
+  if (kind === "review-finding") return { kind, pullRequest };
   if (kind !== "validation" && kind !== "review") return undefined;
+  const heads = exactValues("HEAD");
+  const head = heads.length === 1 ? heads[0] : undefined;
+  if (head === undefined || !FULL_SHA.test(head)) return undefined;
   const names = exactValues("NAME");
   const name = names.length === 1 ? names[0] : undefined;
-  return name === undefined ? undefined : { kind, name };
+  return name === undefined
+    ? undefined
+    : { kind, pullRequest, head, name };
 }
 
 function buildEvidenceSet(
@@ -494,6 +519,16 @@ function buildEvidenceSet(
         const scope = operationalFailureScope(source);
         if (scope !== undefined) {
           scopedParseFailures.push({ failure: parsed, scope });
+          if (
+            scope.kind !== "review-finding" &&
+            scope.pullRequest === context.pullRequestNumber &&
+            scope.head !== context.headSha
+          ) {
+            advisories.push({
+              reason: "stale-structured-evidence",
+              provenance: [commentProvenance(parsed.source)],
+            });
+          }
         }
       }
       advisories.push({
@@ -754,7 +789,10 @@ function reconcileValidation(
 
   const parseFailure = evidence.scopedParseFailures.find(
     (value) =>
-      value.scope.kind === "validation" && value.scope.name === name,
+      value.scope.kind === "validation" &&
+      value.scope.pullRequest === input.context.pullRequestNumber &&
+      value.scope.head === input.context.headSha &&
+      value.scope.name === name,
   )?.failure;
   if (parseFailure !== undefined) {
     return {
@@ -1030,7 +1068,9 @@ function reconcileReview(
     }
   }
   const findingParseFailure = evidence.scopedParseFailures.find(
-    (value) => value.scope.kind === "review-finding",
+    (value) =>
+      value.scope.kind === "review-finding" &&
+      value.scope.pullRequest === input.context.pullRequestNumber,
   )?.failure;
   if (findingParseFailure !== undefined) {
     return condition("unknown", findingParseFailure.reason, [
@@ -1108,7 +1148,10 @@ function reconcileReview(
 
   const reviewParseFailure = evidence.scopedParseFailures.find(
     (value) =>
-      value.scope.kind === "review" && value.scope.name === requiredName,
+      value.scope.kind === "review" &&
+      value.scope.pullRequest === input.context.pullRequestNumber &&
+      value.scope.head === input.context.headSha &&
+      value.scope.name === requiredName,
   )?.failure;
   if (reviewParseFailure !== undefined) {
     return condition("unknown", reviewParseFailure.reason, [

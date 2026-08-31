@@ -925,6 +925,64 @@ describe("reconcile", () => {
     expect(validationFailure.review.state).toBe("satisfied");
   });
 
+  it("keeps stale-head and cross-PR malformed run evidence advisory", () => {
+    const staleValidation = comment(
+      "stale-validation",
+      [
+        "<!-- operational-evidence:v1",
+        "KIND: validation",
+        "PR: 201",
+        `HEAD: ${OLD_HEAD}`,
+        "RUN: stale-validation-run",
+        "NAME: manual-validation",
+        "-->",
+      ].join("\n"),
+    );
+    const staleReview = comment(
+      "stale-review",
+      [
+        "<!-- operational-evidence:v1",
+        "KIND: review",
+        "PR: 201",
+        `HEAD: ${OLD_HEAD}`,
+        "RUN: stale-review-run",
+        "NAME: exact-head-review",
+        "-->",
+      ].join("\n"),
+    );
+    const crossPullRequest = comment(
+      "cross-pr-validation",
+      [
+        "<!-- operational-evidence:v1",
+        "KIND: validation",
+        "PR: 202",
+        `HEAD: ${HEAD}`,
+        "RUN: cross-pr-run",
+        "NAME: manual-validation",
+        "-->",
+      ].join("\n"),
+    );
+    const result = reconcile(
+      baseInput({
+        comments: [
+          ...baseInput().comments,
+          staleValidation,
+          staleReview,
+          crossPullRequest,
+        ],
+      }),
+    );
+
+    expect(result.validations[0]?.state).toBe("satisfied");
+    expect(result.review.state).toBe("satisfied");
+    expect(result.mergeGate.state).toBe("satisfied");
+    expect(result.advisories).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ reason: "stale-structured-evidence" }),
+      ]),
+    );
+  });
+
   it("keeps unscoped and unrelated malformed envelopes advisory", () => {
     const unrelated = comment(
       "unrelated-validation",
