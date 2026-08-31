@@ -214,9 +214,9 @@ exactly one separate top-level comment containing:
 ```
 
 Create this comment when Project Steward monitoring begins. Thereafter, PATCH
-that same comment in place when the verdict, supporting evidence, blocker
-disposition, or bounded authorized next action changes; do not add replacement
-Steward-watch comments.
+that same comment in place whenever any field it is required to record changes,
+including the exact observed PR head or checked live `main`; do not add
+replacement Steward-watch comments.
 
 The Steward watch records, at minimum:
 
