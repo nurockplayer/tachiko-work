@@ -1,5 +1,11 @@
 # Collaboration Model Specification
 
+Decision state: Mixed — current merge and ADR-0029 history boundary Accepted;
+broader collaboration Open Question
+
+Authority: [ADR-0011](../decisions/ADR-0011-semantic-three-way-merge.md) and
+[ADR-0029](../decisions/ADR-0029-current-state-authority-and-optional-history.md)
+
 ## Principle
 
 Collaboration currently starts from semantic changes, not raw file edits.
@@ -41,7 +47,7 @@ Two designers changing the same balance value should create a meaningful conflic
 
 Possible foundations:
 
-- operation log
-- CRDT
+- optional retained semantic transition history
+- selectively justified CRDT/OT adapters
 - Git integration
 - review workflow
