@@ -1,8 +1,4 @@
-import {
-  createProjectionStore,
-  type ControlProjection,
-  type ProjectionStore,
-} from "./projection-store.ts";
+import { createProjectionStore, type ProjectionStore } from "./projection-store.ts";
 import { createDurabilityState } from "./durability-state.ts";
 import type {
   DesignerProjectHost,
@@ -101,7 +97,6 @@ export function mountDesigner(
     root.innerHTML = designerMarkup(
       bootstrap,
       snapshot.table,
-      snapshot.control,
       snapshot.currentness,
       selectedCollection,
       notice,
@@ -201,22 +196,11 @@ export function mountDesigner(
     render();
     try {
       const expectedRevision = store.snapshot().table.revision;
-      const [table, controlBatch] = await Promise.all([
-        client.queryTable(collection),
-        client.queryFields(expectedRevision, [bootstrap.control_field]),
-      ]);
-      if (table.revision !== expectedRevision || controlBatch.revision !== expectedRevision) {
+      const table = await client.queryTable(collection);
+      if (table.revision !== expectedRevision) {
         throw new Error("Collection query returned a different semantic revision.");
       }
-      const controlField = controlBatch.fields[0];
-      if (controlField?.calculated?.status !== "value") {
-        throw new Error("The unrelated control projection is unavailable.");
-      }
-      store = createProjectionStore(table, {
-        target: bootstrap.control_field,
-        value: controlField.calculated.value,
-        revision: expectedRevision,
-      });
+      store = createProjectionStore(table);
       selectedCollection = collection;
     } catch (error) {
       showFailure(error, false);
@@ -230,22 +214,11 @@ export function mountDesigner(
     candidate: BootstrapProjection,
     durable: boolean,
   ): Promise<void> => {
-    const [table, controlBatch] = await Promise.all([
-      client.queryTable(candidate.default_collection),
-      client.queryFields(candidate.revision, [candidate.control_field]),
-    ]);
-    if (table.revision !== candidate.revision || controlBatch.revision !== candidate.revision) {
-      throw new Error("Initial projections do not share one semantic revision.");
+    const table = await client.queryTable(candidate.default_collection);
+    if (table.revision !== candidate.revision) {
+      throw new Error("Initial projection does not match the bootstrap revision.");
     }
-    const controlField = controlBatch.fields[0];
-    if (controlField?.calculated?.status !== "value") {
-      throw new Error("The unrelated control projection is unavailable.");
-    }
-    const nextStore = createProjectionStore(table, {
-      target: candidate.control_field,
-      value: controlField.calculated.value,
-      revision: candidate.revision,
-    });
+    const nextStore = createProjectionStore(table);
     pendingTextBuffers.clear();
     pendingBooleanBuffers.clear();
     bootstrap = candidate;
@@ -257,7 +230,7 @@ export function mountDesigner(
   };
 
   const installOpenedOccurrence = (opened: OpenedProjection): void => {
-    const nextStore = createProjectionStore(opened.table, opened.control);
+    const nextStore = createProjectionStore(opened.table);
     pendingTextBuffers.clear();
     pendingBooleanBuffers.clear();
     bootstrap = opened.bootstrap;
@@ -629,7 +602,6 @@ function startupFailureMarkup(message: string): string {
 function designerMarkup(
   bootstrap: BootstrapProjection,
   table: TableProjection,
-  control: ControlProjection,
   currentness: "current" | "refreshing" | "refresh_failed",
   selectedCollection: string,
   notice: Notice | null,
@@ -652,7 +624,7 @@ function designerMarkup(
           <div><strong>Tachiko</strong><span>Designer</span></div>
         </div>
         <div class="workspace-title">
-          <p class="eyebrow">Game balance workspace</p>
+          <p class="eyebrow">Semantic project workspace</p>
           <h1>${escapeHtml(bootstrap.title)}</h1>
         </div>
         <div class="revision-chip" data-currentness="${currentness}">
@@ -701,14 +673,6 @@ function designerMarkup(
               )
               .join("")}
           </select>
-
-          <section class="control-witness" aria-labelledby="control-title">
-            <p class="eyebrow">Unrelated control</p>
-            <h2 id="control-title">Upgrade cost</h2>
-            <output data-testid="control-value">${formatNumber(control.value)}</output>
-            <p>Carried forward because this field was not invalidated.</p>
-            <code>${escapeHtml(control.target.entity)}.${escapeHtml(control.target.field)}</code>
-          </section>
         </aside>
 
         <section class="table-workbench" aria-labelledby="table-title">
@@ -815,7 +779,9 @@ function rowMarkup(
         <code>${escapeHtml(row.id)}</code>
       </th>
       ${table.columns
-        .map((column) => fieldMarkup(fields.get(column.id), row.key, busy))
+        .map((column) =>
+          fieldMarkup(fields.get(column.id), row.key, column.key, busy),
+        )
         .join("")}
     </tr>
   `;
@@ -824,6 +790,7 @@ function rowMarkup(
 function fieldMarkup(
   field: FieldProjection | undefined,
   entityKey: string,
+  fieldKey: string,
   busy: boolean,
 ): string {
   if (field === undefined) return '<td class="empty-cell">—</td>';
@@ -841,7 +808,7 @@ function fieldMarkup(
             type="number"
             step="any"
             value="${String(field.stored.value)}"
-            aria-label="${escapeHtml(humanize(field.target.field))} for ${escapeHtml(
+            aria-label="${escapeHtml(humanize(fieldKey))} for ${escapeHtml(
               humanize(entityKey),
             )}"
             ${busy ? "disabled" : ""}
@@ -861,7 +828,7 @@ function fieldMarkup(
         )}" data-field="${encodeOpaqueAttribute(field.target.field)}" data-edit-kind="text">
           <textarea
             data-initial-text="${encodeOpaqueAttribute(field.stored.value)}"
-            aria-label="${escapeHtml(humanize(field.target.field))} for ${escapeHtml(
+            aria-label="${escapeHtml(humanize(fieldKey))} for ${escapeHtml(
               humanize(entityKey),
             )}"
             ${busy ? "disabled" : ""}
@@ -883,7 +850,7 @@ function fieldMarkup(
             type="checkbox"
             data-initial-checked="${String(field.stored.value)}"
             ${field.stored.value ? "checked" : ""}
-            aria-label="${escapeHtml(humanize(field.target.field))} for ${escapeHtml(
+            aria-label="${escapeHtml(humanize(fieldKey))} for ${escapeHtml(
               humanize(entityKey),
             )}"
             ${busy ? "disabled" : ""}

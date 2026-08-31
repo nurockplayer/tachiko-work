@@ -1,12 +1,19 @@
 # Tachiko Designer vertical slice
 
 This is the first production graphical projection and persistence composition
-over the resident Rust workspace runtime. It intentionally supports one narrow
-product path: open one canonical Moonfall-shaped `.roproj/v1`, browse a typed
-collection, edit directly stored Text, Number, and Boolean values, publish
-against the expected revision, selectively refresh affected fields and
-dependent formulas, Save As
-to a new browser-local destination, then destroy and reopen the occurrence.
+over the resident Rust workspace runtime. It intentionally supports a bounded
+product path: open a canonical `.roproj/v1`, deterministically select and browse
+a typed collection, edit directly stored Text, Number, and Boolean values,
+publish against the expected revision, selectively refresh affected fields and
+dependent formulas, Save As to a new browser-local destination, then destroy
+and reopen the occurrence.
+
+The built-in Moonfall balance demo remains the default launch occurrence. The
+repository-owned [`Product Gap` dogfood project](../../dogfood/product-gaps.roproj/)
+proves that the same app-local profile admits and operates an ordinary second
+domain without requiring Moonfall collection names or control subjects. The
+dogfood project is product evidence, not a public template or a source of
+repository-delivery truth.
 
 The Worker retains the Rust-authoritative workspace occurrence. Browser state
 contains only bounded, revision-keyed projections and edit buffers. The

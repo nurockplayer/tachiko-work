@@ -14,17 +14,11 @@ export type BootstrapProjection = {
   revision: string;
   default_collection: string;
   collections: CollectionSummary[];
-  control_field: FieldTarget;
 };
 
 export type OpenedProjection = {
   bootstrap: BootstrapProjection;
   table: TableProjection;
-  control: {
-    target: FieldTarget;
-    value: number;
-    revision: string;
-  };
 };
 
 export type StoredValueProjection =

@@ -61,11 +61,7 @@ describe("revision-keyed projection store", () => {
     first.address = "first";
     second.target = { entity: "a", field: "b.c" };
     second.address = "second";
-    const store = createProjectionStore(collisionTable, {
-      target: { entity: "control", field: "value" },
-      value: 200,
-      revision: "resident/0",
-    });
+    const store = createProjectionStore(collisionTable);
 
     const requested = store.beginPublication({
       base_revision: "resident/0",
@@ -90,12 +86,25 @@ describe("revision-keyed projection store", () => {
     });
   });
 
-  it("refreshes only invalidated fields and carries an unrelated control forward", () => {
-    const store = createProjectionStore(table, {
-      target: { entity: "shop", field: "upgrade_cost" },
-      value: 200,
-      revision: "resident/0",
+  it("refreshes only invalidated fields and carries an unrelated row field forward", () => {
+    const tableWithUnrelatedRow = structuredClone(table);
+    tableWithUnrelatedRow.collection.entity_count = 2;
+    tableWithUnrelatedRow.rows.push({
+      id: "bronze_sword",
+      key: "bronze_sword",
+      fields: [
+        {
+          target: { entity: "bronze_sword", field: "damage" },
+          address: "bronze_sword.damage",
+          stored: { kind: "number", value: 12 },
+          formula: null,
+          calculated: null,
+          diagnostics: [],
+          editable_scalar: "number",
+        },
+      ],
     });
+    const store = createProjectionStore(tableWithUnrelatedRow);
 
     const requested = store.beginPublication(publication);
 
@@ -104,11 +113,6 @@ describe("revision-keyed projection store", () => {
       { entity: "iron_sword", field: "dps" },
     ]);
     expect(store.snapshot().currentness).toBe("refreshing");
-    expect(store.snapshot().control).toEqual({
-      target: { entity: "shop", field: "upgrade_cost" },
-      value: 200,
-      revision: "resident/1",
-    });
 
     const refreshed: FieldBatchProjection = {
       revision: "resident/1",
@@ -132,15 +136,15 @@ describe("revision-keyed projection store", () => {
       status: "value",
       value: 50,
     });
-    expect(store.snapshot().control.value).toBe(200);
+    expect(store.field("bronze_sword.damage")?.stored).toEqual({
+      kind: "number",
+      value: 12,
+    });
+    expect(store.snapshot().table.rows[1]).toEqual(tableWithUnrelatedRow.rows[1]);
   });
 
   it("retains failed invalidations until a later refresh resolves every stale field", () => {
-    const store = createProjectionStore(table, {
-      target: { entity: "shop", field: "upgrade_cost" },
-      value: 200,
-      revision: "resident/0",
-    });
+    const store = createProjectionStore(table);
 
     store.beginPublication(publication);
     store.failRefresh("temporary query failure");
@@ -172,49 +176,6 @@ describe("revision-keyed projection store", () => {
     expect(store.field("iron_sword.damage")?.stored).toEqual({
       kind: "number",
       value: 45,
-    });
-  });
-
-  it("does not mark an invalidated unavailable control projection current", () => {
-    const store = createProjectionStore(table, {
-      target: { entity: "shop", field: "upgrade_cost" },
-      value: 200,
-      revision: "resident/0",
-    });
-    store.beginPublication({
-      ...publication,
-      affected_calculations: [
-        { entity: "iron_sword", field: "dps" },
-        { entity: "shop", field: "upgrade_cost" },
-      ],
-    });
-
-    expect(() => {
-      store.finishRefresh({
-        revision: "resident/1",
-        fields: [
-          { ...table.rows[0]!.fields[0]!, stored: { kind: "number", value: 45 } },
-          {
-            ...table.rows[0]!.fields[1]!,
-            calculated: { status: "value", value: 50 },
-          },
-          {
-            target: { entity: "shop", field: "upgrade_cost" },
-            address: "shop.upgrade_cost",
-            stored: null,
-            formula: { source: "[tempered_blade.price]" },
-            calculated: { status: "unavailable" },
-            diagnostics: [],
-            editable_scalar: null,
-          },
-        ],
-      });
-    }).toThrow("invalidated control projection is unavailable");
-    expect(store.snapshot().currentness).toBe("refreshing");
-    expect(store.snapshot().control).toEqual({
-      target: { entity: "shop", field: "upgrade_cost" },
-      value: 200,
-      revision: "resident/0",
     });
   });
 });

@@ -39,6 +39,14 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- The first-party browser Designer now admits a second bounded ordinary domain
+  without Moonfall-specific collection or control-formula requirements. A
+  repository-owned canonical Product Gap project dogfoods opaque semantic IDs,
+  typed Text/Number/Boolean editing, deterministic priority formulas,
+  selective refresh, rejected-edit no-drift behavior, and create-only Save As
+  through teardown/reopen while the existing Moonfall journeys remain intact.
+  The fixture is product evidence, not a public template or project-management
+  authority.
 - The first-party browser Designer table now edits directly stored Text,
   Number, and Boolean values through the same Rust-authoritative,
   expected-revision publication path. Typed controls remain projection-derived,

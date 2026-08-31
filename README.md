@@ -45,11 +45,13 @@ On current `main`, Tachiko already provides an end-to-end game-balance proof wit
 - a Rust-authoritative resident runtime with revision-safe commands, bounded
   projections/invalidation, retained incremental state, and native/WASM
   conformance evidence;
-- a first-party browser/Worker/WASM Designer slice that browses the Moonfall
-  weapons table, opens canonical `.roproj/v1` directories, applies a
-  revision-safe Number edit, selectively refreshes DPS, atomically Saves As a
-  new browser-local project, and reopens that exact state after resident
-  teardown without treating frontend state as canonical.
+- a first-party browser/Worker/WASM Designer slice that opens bounded canonical
+  `.roproj/v1` projects, browses typed tables, applies revision-safe
+  Text/Number/Boolean edits, selectively refreshes formulas, atomically Saves As
+  a new browser-local project, and reopens that exact state after resident
+  teardown without treating frontend state as canonical. The built-in Moonfall
+  demo and repository-owned Product Gap dogfood project exercise two distinct
+  domains over the same runtime.
 
 The current product deliberately does **not** claim a completed spreadsheet UI,
 Office compatibility, realtime collaboration, cloud SaaS, or production
@@ -72,6 +74,7 @@ the user interface. AI is a semantic client, not an alternate source of truth.
 - **Run the proof:** [Try it in five minutes](#try-it-in-five-minutes)
 - **Run the Designer slice:** [`apps/designer/`](apps/designer/README.md)
 - **See the durable example:** [`examples/game-balance/`](examples/game-balance/README.md)
+- **Inspect the self-dogfood project:** [`dogfood/product-gaps.roproj/`](dogfood/product-gaps.roproj/)
 - **See where the product is going:** [Product Roadmap](docs/product/product-roadmap.md)
 - **Understand the system:** [Architecture overview](#architecture-overview)
 - **Understand contribution status:** [`CONTRIBUTING.md`](CONTRIBUTING.md)
