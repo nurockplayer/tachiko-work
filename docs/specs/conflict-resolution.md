@@ -68,8 +68,18 @@ The `subject` facet is used only where complete direct subject state is needed
 for create/delete-level conflict evidence. A complete schema subject contains
 its key and all `(FieldId, field definition)` entries in stable-ID order. A
 complete schema-field subject contains key, field type, and requiredness. A
-complete entity subject contains key, `SchemaId`, and all applicable
-`(FieldId, typed stored value)` entries in stable-ID order.
+complete entity subject contains its key, its stored `SchemaId`, and **every**
+`(FieldId, typed stored value)` entry present in that Entity's own semantic
+`fields` map, ordered by the same `FieldId` rule. Membership is defined by the
+Entity state itself; it MUST NOT be filtered through the currently resolved
+Schema's field declarations.
+
+If an admitted Entity names a missing Schema or contains a stored `FieldId` that
+the named Schema does not declare, the complete entity subject still preserves
+that `SchemaId` and stored field entry as direct comparison evidence. Such stale
+or invalid membership is handled by the existing validation/finalization
+authority after structural reconciliation; it does not make canonical conflict
+facts implementation-dependent.
 
 Stored values preserve admitted semantic type. References use stable IDs.
 Formulas use bound semantic expressions rather than authoring text.
@@ -111,8 +121,8 @@ Examples:
   `concurrent_addition` conflict.
 
 For continuing subjects without a parent create/delete conflict, independent
-facets remain independently conflictable. A clear-versus-change of one stored
-value is `delete_modify` on the schema-qualified `stored_value` facet.
+facets remain independently conflictable. An absent-versus-change transition for
+one stored value is `delete_modify` on the schema-qualified `stored_value` facet.
 
 ### Canonical conflict facts
 
