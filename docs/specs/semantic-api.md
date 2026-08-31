@@ -1523,8 +1523,10 @@ back to full recomputation when impact is unsafe. Public session handles,
 exact public result/invalidation shapes, cross-host concurrency, Worker lifecycle,
 IPC/FFI/network serialization/ABI, and native/browser persistence/recovery
 remain Deferred to future host/transport work. Issue #11 retains broader
-transaction/recovery architecture, and Issue #12
-retains persisted history/event-sourcing work.
+transaction/recovery architecture. Under
+[ADR-0029](../decisions/ADR-0029-current-state-authority-and-optional-history.md),
+Issues #48 and #49 retain deferred event-taxonomy and optional persisted-history
+work respectively.
 
 Every mapping MUST preserve the Semantic API Stable laws and outcomes. Runtime
 or transport topology is not independent semantic authority. A mapping of

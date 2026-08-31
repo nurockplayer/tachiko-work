@@ -1,5 +1,11 @@
 # Distributed Collaboration Architecture
 
+Decision state: Mixed — ADR-0029 layer boundary Accepted; collaboration
+mechanics Open Question
+
+Authority: [ADR-0011](../decisions/ADR-0011-semantic-three-way-merge.md) and
+[ADR-0029](../decisions/ADR-0029-current-state-authority-and-optional-history.md)
+
 ## Principle
 
 Collaboration is built on semantic operations, not shared mutable files.
@@ -26,18 +32,23 @@ Current v0.1 behavior:
 - Conflict awareness
 - Git compatibility
 
-## Model
+## Boundary
 
-```
+```text
 User Action
     |
-Semantic Operation
+Command or ordered AtomicBatch
     |
-Operation Log
+revision-safe semantic publication
     |
-State Reconstruction
+authoritative current state + complete snapshot
+    |
+optional history / collaboration / Git adapters
 ```
 
 ## Future Direction
 
-The system may combine event sourcing, CRDT techniques, and Git history to provide both collaboration and reproducibility.
+Future adapters may use bounded retained-history or selectively justified
+CRDT/OT techniques, but they may not make replay authoritative, replace a
+complete standalone snapshot, or use Git as semantic identity. #45, #46, and
+Issues #48–#50 own the deferred mechanics.

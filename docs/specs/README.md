@@ -100,12 +100,15 @@ diagnostic semantics without deciding plugin runtime mechanics.
 
 | Document | Read it for | Authority caution |
 | --- | --- | --- |
-| [`collaboration-model.md`](collaboration-model.md) | Current merge behavior and broader collaboration direction | Current semantic merge is Accepted; broader collaboration remains Open Question |
+| [`collaboration-model.md`](collaboration-model.md) | Current merge behavior and broader collaboration direction | Current semantic merge and ADR-0029's snapshot/history boundary are Accepted; broader collaboration remains Open Question |
 | [`conflict-resolution.md`](conflict-resolution.md) | Current conflict behavior and future conflict model | Provisional around current merge; future model remains Open Question |
-| [`operation-log-model.md`](operation-log-model.md) | Persisted operation-log proposal | Open Question; no first-class persisted log in v0.1 |
-| [`event-sourcing-model.md`](event-sourcing-model.md) | Event-sourcing hypothesis | Hypothesis, not accepted architecture |
+| [`operation-log-model.md`](operation-log-model.md) | Optional retained-history proposal | ADR-0029 makes general history optional and non-authoritative; concrete profiles remain Open Questions |
+| [`event-sourcing-model.md`](event-sourcing-model.md) | Optional event-sourcing-technique hypothesis | ADR-0029 rejects event sourcing as the core persistence model; bounded optional techniques remain Open Questions |
 
-Do not infer that event sourcing, CRDTs, or a persisted operation log are selected merely because design documents exist for them.
+Do not infer that event sourcing, universal CRDT/OT, or a persisted operation
+log are selected merely because design documents exist for them. ADR-0029
+accepts complete current-state snapshots and optional non-authoritative history
+as the governing boundary.
 
 ## Choosing the right source
 

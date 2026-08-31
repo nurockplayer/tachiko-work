@@ -594,14 +594,15 @@ must not fabricate a proposal ID, `ExactChangeBinding`, originator or approver
 role, Approval ID, Approve Grant reference, or `Consumed` Approval state. A
 direct-Human receipt may retain the executor, effective Execute Grant
 references, trusted authorization footprint and policy version, relevant input
-and resulting revision, and gate/result evidence. Exact receipt/history DTO,
-storage, and retention remain #29/#12 work.
+and resulting revision, and gate/result evidence. Issue #29 retains the current
+receipt implementation, #48 owns the future receipt/event taxonomy, and #49
+owns durable history storage and retention.
 
 Approval-gated provenance and any optional direct-Human receipt facts may
 attach to an execution receipt or history record and cross adapter boundaries.
-They are not semantic Document data. Exact durable storage, receipt DTO,
-retention, and recovery links remain #29/#12 follow-up. Event sourcing, CRDT,
-and a general operation-log protocol are not required. Denials need
+They are not semantic Document data. Exact receipt DTO work remains with Issues #29
+and #48; durable storage, retention, and recovery links remain #49 follow-up.
+Event sourcing, CRDT, and a general operation-log protocol are not required. Denials need
 machine-readable outcomes; durable denial logging remains #30/audit-policy
 scope.
 
@@ -639,8 +640,9 @@ authority.
   advance, concurrency, and state installation.
 - #11 owns broader enterprise/team permissions, transaction/recovery, and
   reusable policy questions.
-- #12/history work owns persisted history, event sourcing, undo, and retention
-  architecture.
+- #48 owns the future transition/receipt/event taxonomy; #49 owns persisted
+  history profiles, checkpoints, replay/compaction, undo, and retention
+  architecture under ADR-0029.
 - storage/host may materialize only an already-authorized semantic result under
   separate host authority.
 
@@ -989,8 +991,8 @@ Costs:
   external-effect enforcement, safe denials, and security tests.
 - #93 supplies concrete session/revision/concurrency mechanics without changing
   proposal or authorization meaning.
-- #11/#12 retain broader permissions, reusable policies, transaction/recovery,
-  and history architecture.
+- #11 retains broader permissions, reusable policies, and transaction/recovery;
+  #48/#49 retain deferred history taxonomy and architecture under ADR-0029.
 - Issue #28 receives a Decision Capsule only after this authority package is
   reviewed and merged.
 
@@ -1004,4 +1006,5 @@ Costs:
 - ADR-0020
 - ADR-0022
 - ADR-0024
+- [ADR-0029](ADR-0029-current-state-authority-and-optional-history.md)
 - Issues #11, #12, #28, #29, #30, #93
