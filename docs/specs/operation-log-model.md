@@ -4,7 +4,8 @@ Decision state: Mixed — ADR-0029 boundary Accepted; retained-history mechanics
 
 Implementation state: No first-class persisted operation log in v0.1
 
-Authority: ADR-0029
+Authority:
+[ADR-0029](../decisions/ADR-0029-current-state-authority-and-optional-history.md)
 
 Decision owners: #48 and #49
 

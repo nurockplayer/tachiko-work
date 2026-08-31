@@ -4,7 +4,8 @@ Decision state: Mixed — core event sourcing Rejected by ADR-0029; optional tec
 
 Implementation state: Not implemented in v0.1
 
-Authority: ADR-0029
+Authority:
+[ADR-0029](../decisions/ADR-0029-current-state-authority-and-optional-history.md)
 
 Decision owner for optional history mechanics: #49
 

@@ -6,8 +6,12 @@ Accepted
 
 Decision issue: [#12](https://github.com/nurockplayer/tachiko-work/issues/12)
 
-Related authority: ADR-0003, ADR-0020, ADR-0022, ADR-0024, ADR-0025, and
-ADR-0026
+Related authority: [ADR-0003](ADR-0003-ro-and-roproj-representation.md),
+[ADR-0020](ADR-0020-first-class-headless-semantic-api.md),
+[ADR-0022](ADR-0022-resident-semantic-runtime-and-host-boundary.md),
+[ADR-0024](ADR-0024-revision-pinned-semantic-patch.md),
+[ADR-0025](ADR-0025-portable-package-v1.md), and
+[ADR-0026](ADR-0026-scoped-semantic-authorization-and-approval.md)
 
 ## Context
 
