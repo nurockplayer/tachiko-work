@@ -93,6 +93,17 @@ or invalid membership is handled by the existing validation/finalization
 authority after structural reconciliation; it does not make canonical conflict
 facts implementation-dependent.
 
+For a continuing Entity, each state qualifies every present stored entry by that
+state's stored Entity `SchemaId`, producing the target
+`(EntityId, state.Entity.SchemaId, FieldId)`. Compare the union of those qualified
+targets across `base / left / right`. For any target in the union, a state
+contributes `absent` when its Entity has a different `SchemaId` or its own fields
+map has no such `FieldId`. Consequently, a schema-membership change clears facts
+under the old `SchemaId` and creates facts under the new `SchemaId`; identical
+`FieldId` text under two Schema IDs denotes two distinct targets. Entity
+create/delete parent conflicts still suppress these child facts as defined
+below.
+
 Stored values preserve admitted semantic type. References use stable IDs.
 Formulas use bound semantic expressions rather than authoring text.
 
@@ -234,6 +245,92 @@ This separation applies to schema/data interactions, stale or invalid references
 formula failures, and other cross-fact incompatibilities that cannot be known by
 examining one directly disputed facet in isolation.
 
+### Normative logical fixtures
+
+These fixtures are part of the logical v1 conformance contract. They describe
+semantic facts, not a concrete serialization or production DTO. Unless a fixture
+says otherwise, reconciliation uses conflict contract
+`tachiko.semantic-conflict/v1`; `base / left / right` are admitted under one same
+supported semantic contract, share `DocumentId = d:arena`, and differ only in the
+facts shown. `Number`, `Text`, `Reference`, and `Formula` below are typed semantic
+values; formula references are bound stable-ID expressions.
+
+1. **Independent edits.** Base has
+   `(e:goblin, s:unit, f:hp) = Number(180)` and
+   `(e:goblin, s:unit, f:attack) = Number(18)`. Left changes only `f:hp` to
+   `Number(210)`; right changes only `f:attack` to `Number(21)`. Structural
+   reconciliation returns a candidate containing both changes and no conflict.
+2. **Same-final-value edit.** Base has
+   `(e:goblin, s:unit, f:hp) = Number(180)`; both sides change it to
+   `Number(210)`. Structural reconciliation returns that value in the candidate
+   and no conflict.
+3. **Same-fact conflict.** With the same base fact, left changes it to
+   `Number(210)` and right to `Number(240)`. The result is exactly one conflict:
+   target `(e:goblin, s:unit, f:hp)`, facet `stored_value`, kind
+   `concurrent_change`, facts `Number(180) / Number(210) / Number(240)`.
+4. **Delete/update with parent suppression.** Base contains Entity `e:goblin`
+   with key `goblin`, schema `s:unit`, and `f:hp = Number(180)`. Left deletes the
+   Entity; right changes its key to `goblin_elite`. The result is exactly one
+   Entity `e:goblin` / `subject` / `delete_modify` conflict with complete base
+   and right Entity facts and an absent left fact. No child `key` or stored-value
+   conflict is emitted.
+5. **Incompatible concurrent addition.** Schema `s:boss` is absent in base. Left
+   adds it with key `boss` and required Number field `f:hp`; right adds the same
+   stable Schema target with key `boss` and required Text field `f:hp`. The
+   result is exactly one Schema `s:boss` / `subject` /
+   `concurrent_addition` conflict carrying both complete definitions.
+6. **Rename continuity.** Base Entity `e:goblin` has key `goblin`; left changes
+   the key to `goblin_elite` and right to `goblin_veteran`. The result is one
+   Entity `e:goblin` / `key` / `concurrent_change` conflict. It is not a
+   delete/create pair.
+7. **Schema/data finalization failure.** Base Schema `s:unit` has no `f:armor`
+   and Entity `e:goblin` is absent. Left adds required Number field `f:armor` to
+   `s:unit`; right adds `e:goblin` under `s:unit` without an `f:armor` stored
+   value. The direct facts do not conflict, so structural reconciliation returns
+   a candidate. Full schema-instance validation rejects that candidate with the
+   existing ADR-0019 evidence; no Semantic Conflict is emitted.
+8. **Reference finalization failure.** Base contains Entities `e:source`,
+   `e:old`, and `e:target`, with stored target
+   `(e:source, s:unit, f:target) = Reference(e:old)`. Left changes that value to
+   `Reference(e:target)`; right deletes `e:target`. Each direct change is on a
+   different target, so structural reconciliation returns a candidate.
+   Relationship validation rejects the dangling stable-ID reference; no Semantic
+   Conflict is emitted.
+9. **Bound-formula conflict.** Base stored target
+   `(e:goblin, s:unit, f:power)` is
+   `Formula(Add(Ref(e:goblin, f:hp), Number(1)))`; left uses `Number(2)` and right
+   uses `Number(3)` in the otherwise identical bound expression. The result is
+   one schema-qualified `stored_value` / `concurrent_change` conflict whose facts
+   are those bound expressions, regardless of authoring spelling.
+10. **Post-merge formula failure.** Base has Number values at
+    `(e:goblin, s:unit, f:a)` and `(e:goblin, s:unit, f:b)`. Left changes only
+    `f:a` to `Formula(Add(Ref(e:goblin, f:b), Number(1)))`; right changes only
+    `f:b` to `Formula(Add(Ref(e:goblin, f:a), Number(1)))`. Each branch is
+    acyclic, and the direct targets do not conflict. The merged candidate has a
+    cycle and is rejected by the ADR-0018/ADR-0019 formula oracle; no Semantic
+    Conflict is emitted.
+11. **Schema-membership qualification.** Schemas `s:unit` and `s:boss` both
+    declare Number field `f:hp`. Base Entity `e:goblin` has
+    `SchemaId = s:unit` and `f:hp = Number(180)`. Left changes membership to
+    `s:boss` while retaining `f:hp = Number(180)` in its Entity fields map; right
+    keeps `s:unit` and changes `f:hp` to `Number(210)`. The one-sided `schema`
+    facet change can merge, but the old target `(e:goblin, s:unit, f:hp)` has
+    facts `Number(180) / absent / Number(210)` and therefore emits one
+    `stored_value` / `delete_modify` conflict. The new target
+    `(e:goblin, s:boss, f:hp)` is a distinct one-sided addition, not the same
+    field occurrence.
+12. **Canonical order.** When one reconciliation also produces conflicts on
+    Document `d:arena` / `title`; Schemas `s:alpha` / `key` and `s:unit` / `key`;
+    schema field `(s:unit, f:hp)` / `key` and then `field_type`; Entity
+    `e:goblin` / `key`; and stored field `(e:goblin, s:unit, f:hp)` /
+    `stored_value`, the sequence is exactly the order just listed. Subject rank,
+    stable-ID order, and facet rank determine it; input collection or insertion
+    order cannot change it.
+13. **Admission and compatibility failure.** If any input uses a different
+    `DocumentId`, or a consumer encounters an unsupported conflict contract,
+    target/facet combination, or kind, processing fails closed and returns no
+    Semantic Conflict set or candidate under v1.
+
 ### Git integration
 
 Git is an optional adapter. A merge driver or review surface may consume the
@@ -271,7 +368,8 @@ This authority/specification does not authorize production DTO, codec, CLI
 output, WASM/public transport, or merge-engine changes. After this authority is
 merged, a separate Ready implementation Issue must own production realization,
 including same-Document admission enforcement, removal of mergeable
-`Document.id`, and executable fixtures for the accepted protocol.
+`Document.id`, and concrete executable fixtures for the accepted logical fixtures
+above.
 
 Issues [#47](https://github.com/nurockplayer/tachiko-work/issues/47),
 [#48](https://github.com/nurockplayer/tachiko-work/issues/48),
