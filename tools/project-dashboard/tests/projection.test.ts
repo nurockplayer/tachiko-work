@@ -2252,6 +2252,47 @@ describe("normalizeRepositorySnapshot", () => {
     expect(lane?.phase).toBe("validating");
   });
 
+  it("keeps mixed validation-evidence representations out of the merge gate", () => {
+    const pr = pullRequest();
+    pr.comments[0]!.body += "\n## Validation Evidence\n\nrelease-check failed";
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.handoff.condition).toBe("inconsistent");
+    expect(lane?.phase).toBe("validating");
+    expect(lane?.blockers).toContain("Canonical handoff conflicts with live PR identity or is duplicated.");
+  });
+
+  it.each([
+    ["HEAD", `EXACT HEAD: ${"c".repeat(40)}`],
+    ["MAIN", `MAIN: ${"c".repeat(40)}`],
+  ])("keeps conflicting canonical %s aliases out of the merge gate", (_family, conflictingClaim) => {
+    const pr = pullRequest();
+    pr.comments[0]!.body += `\n${conflictingClaim}`;
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.handoff.condition).toBe("inconsistent");
+    expect(lane?.phase).toBe("validating");
+  });
+
+  it("accepts equivalent canonical identity aliases", () => {
+    const pr = pullRequest();
+    pr.comments[0]!.body += `\nEXACT HEAD: ${headSha.slice(0, 8)}\nMAIN: ${mainSha.slice(0, 8)}`;
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.handoff).toMatchObject({
+      condition: "current",
+      claimedHeadSha: headSha,
+      lastCheckedMainSha: mainSha,
+    });
+    expect(lane?.phase).toBe("merge_gate");
+  });
+
   it.each(["blocked", "validating", "human_required"])("keeps conflicting canonical STATE/STATUS aliases out of the merge gate: %s", (status) => {
     const pr = pullRequest();
     pr.comments[0]!.body += `\nSTATUS: ${status}`;
@@ -2583,23 +2624,9 @@ describe("normalizeRepositorySnapshot", () => {
     `release-check passed on old commit ${"c".repeat(40)}`,
     "release-check passed on commit ccccccc",
     "validation head ccccccc",
-  ])("does not accept merge-ready while canonical validation evidence reports: %s", (validation) => {
-    const pr = pullRequest();
-    pr.comments[0]!.body = pr.comments[0]!.body.replace(
-      "VALIDATION EVIDENCE: exact-head gates passed",
-      `VALIDATION EVIDENCE: ${validation}`,
-    );
-
-    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
-    const lane = projection.deliveries[0];
-
-    expect(lane?.handoff.failedValidationEvidence).toBe(true);
-    expect(lane?.phase).toBe("validating");
-    expect(lane?.blockers).toContain("The current canonical handoff does not affirm merge-ready delivery state.");
-  });
-
-  it.each([
-    "706 passed, 0 failed",
+    "validation unavailable",
+    "result unknown",
+    `validation head ${headSha}`,
     "No validation checks failed",
     "The release check has not failed",
     "No tests not run",
@@ -2619,8 +2646,26 @@ describe("normalizeRepositorySnapshot", () => {
     "release-check was not cancelled",
     "release-check wasn't canceled",
     "No checks were aborted",
+  ])("does not accept merge-ready while canonical validation evidence reports: %s", (validation) => {
+    const pr = pullRequest();
+    pr.comments[0]!.body = pr.comments[0]!.body.replace(
+      "VALIDATION EVIDENCE: exact-head gates passed",
+      `VALIDATION EVIDENCE: ${validation}`,
+    );
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.handoff.failedValidationEvidence).toBe(true);
+    expect(lane?.phase).toBe("validating");
+    expect(lane?.blockers).toContain("The current canonical handoff does not affirm merge-ready delivery state.");
+  });
+
+  it.each([
+    "706 passed, 0 failed",
     `release-check passed on commit ${headSha}`,
     `release-check passed on exact head ${headSha.slice(0, 8)}`,
+    `release-check completed on exact head ${headSha}`,
     "1234567 tests passed",
     "build 20260831 passed",
     "job for 1234567 passed",
@@ -2628,7 +2673,6 @@ describe("normalizeRepositorySnapshot", () => {
     "tests passed from 1234567",
     "checksum deadbeef verified; release-check passed",
     `base main commit ${"c".repeat(40)}; release-check passed`,
-    `validation head ${headSha}`,
   ])("does not invent failed validation evidence from a clean summary: %s", (validation) => {
     const pr = pullRequest();
     pr.comments[0]!.body = pr.comments[0]!.body.replace(
@@ -2639,6 +2683,21 @@ describe("normalizeRepositorySnapshot", () => {
     const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
     const lane = projection.deliveries[0];
 
+    expect(lane?.handoff.failedValidationEvidence).toBe(false);
+    expect(lane?.phase).toBe("merge_gate");
+  });
+
+  it("accepts one affirmative heading-form validation record", () => {
+    const pr = pullRequest();
+    pr.comments[0]!.body = pr.comments[0]!.body.replace(
+      "VALIDATION EVIDENCE: exact-head gates passed",
+      `## Validation Evidence\n\nrelease-check completed on exact head ${headSha}`,
+    );
+
+    const projection = normalizeRepositorySnapshot(snapshot({ issues: [issue()], pullRequests: [pr] }));
+    const lane = projection.deliveries[0];
+
+    expect(lane?.handoff.condition).toBe("current");
     expect(lane?.handoff.failedValidationEvidence).toBe(false);
     expect(lane?.phase).toBe("merge_gate");
   });
@@ -3217,6 +3276,38 @@ describe("normalizeRepositorySnapshot", () => {
       "Canonical handoff claims Issue #170, but pull request #200 closes Issue #169.",
     );
     for (const lane of projection.deliveries) {
+      expect(lane.blockers).toContain("Multiple open pull requests claim Issue #170: #200, #201.");
+    }
+  });
+
+  it("reserves every strict Issue claim from one inconsistent handoff", () => {
+    const first = pullRequest();
+    first.comments[0]!.body += "\nISSUE: #170";
+    const second = pullRequest();
+    second.number = 201;
+    second.url = "https://github.com/nurockplayer/tachiko-work/pull/201";
+    second.body = "Closes #170";
+    second.issueNumbers = [170];
+    second.headSha = "c".repeat(40);
+    second.checksObservedHeadSha = second.headSha;
+    second.reviews![0]!.headSha = second.headSha;
+    second.comments[0]!.body = second.comments[0]!.body
+      .replace("ISSUE: #169", "ISSUE: #170")
+      .replaceAll(headSha, second.headSha);
+
+    const projection = normalizeRepositorySnapshot(snapshot({
+      issues: [issue(), issue(170)],
+      pullRequests: [first, second],
+    }));
+
+    const firstLane = projection.deliveries.find((lane) => lane.pr?.number === 200);
+    expect(firstLane?.handoff).toMatchObject({
+      condition: "inconsistent",
+      claimedIssueNumber: null,
+      observedIssueNumbers: [169, 170],
+    });
+    for (const lane of projection.deliveries) {
+      expect(lane.phase).toBe("blocked");
       expect(lane.blockers).toContain("Multiple open pull requests claim Issue #170: #200, #201.");
     }
   });

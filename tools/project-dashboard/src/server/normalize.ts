@@ -66,18 +66,18 @@ function stripMarkdown(value: string): string {
     .trim();
 }
 
-function labeledValue(body: string, label: string): string | null {
+function labeledValues(body: string, label: string): string[] {
   const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = body.match(new RegExp(`^\\s*(?:[-*]\\s*)?(?:\\*\\*)?${escaped}(?:\\*\\*)?\\s*:\\s*(.+?)\\s*$`, "im"));
-  if (match?.[1] === undefined) return null;
-  const value = stripMarkdown(match[1]);
-  return value === "" ? null : value;
+  const pattern = new RegExp(`^\\s*(?:[-*]\\s*)?(?:\\*\\*)?${escaped}(?:\\*\\*)?\\s*:\\s*(.+?)\\s*$`, "gim");
+  return [...body.matchAll(pattern)].map((match) => stripMarkdown(match[1] ?? "")).filter((value) => value !== "");
+}
+
+function labeledValue(body: string, label: string): string | null {
+  return labeledValues(body, label)[0] ?? null;
 }
 
 function hasDuplicateLabeledValue(body: string, label: string): boolean {
-  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const pattern = new RegExp(`^\\s*(?:[-*]\\s*)?(?:\\*\\*)?${escaped}(?:\\*\\*)?\\s*:\\s*(.+?)\\s*$`, "gim");
-  return [...body.matchAll(pattern)].filter((match) => stripMarkdown(match[1] ?? "") !== "").length > 1;
+  return labeledValues(body, label).length > 1;
 }
 
 function hasDuplicateCanonicalHandoffValue(body: string): boolean {
@@ -101,10 +101,11 @@ function hasDuplicateCanonicalHandoffValue(body: string): boolean {
   ].some((label) => hasDuplicateLabeledValue(body, label));
 }
 
-function labeledBlockValue(body: string, label: string): string | null {
+function labeledBlockValues(body: string, label: string): string[] {
   const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const lines = body.split(/\r?\n/);
   const labelPattern = new RegExp(`^\\s*(?:[-*]\\s*)?(?:\\*\\*)?${escaped}(?:\\*\\*)?\\s*:\\s*(.*?)\\s*$`, "i");
+  const values: string[] = [];
   for (const [index, line] of lines.entries()) {
     const match = line.match(labelPattern);
     if (match === null) continue;
@@ -115,9 +116,13 @@ function labeledBlockValue(body: string, label: string): string | null {
       content.push(following);
     }
     const value = stripMarkdown(content.join("\n"));
-    return value === "" ? null : value;
+    if (value !== "") values.push(value);
   }
-  return null;
+  return values;
+}
+
+function labeledBlockValue(body: string, label: string): string | null {
+  return labeledBlockValues(body, label)[0] ?? null;
 }
 
 function normalizedSha(value: string | null): string | null {
@@ -129,6 +134,17 @@ function normalizedSha(value: string | null): string | null {
 function shaMatches(claimed: string | null, actual: string | null): boolean {
   if (claimed === null || actual === null) return false;
   return actual.startsWith(claimed) || claimed.startsWith(actual);
+}
+
+function reconcileShaAliases(body: string, labels: string[]): { value: string | null; inconsistent: boolean } {
+  const values = labels.flatMap((label) => labeledValues(body, label));
+  if (values.length === 0) return { value: null, inconsistent: false };
+  const normalized = values.map(normalizedSha);
+  const value = normalized[0] ?? null;
+  return {
+    value,
+    inconsistent: value === null || normalized.some((candidate) => !shaMatches(candidate, value)),
+  };
 }
 
 function hasTrustedAuthorAssociation(authorAssociation: string | null): boolean {
@@ -261,12 +277,23 @@ function clearsSubstantiveReviewBody(body: string): boolean {
     clauses.some((clause) => explicitReviewClearingSignal.test(clause) && isClearedReviewClause(clause));
 }
 
+function strictIssueNumber(claim: string): number | null {
+  const match = claim.match(/^(?:Issue\s*)?#?(\d+)(?:\s*\/\s*PR\s*#?\d+)?$/i);
+  const number = Number.parseInt(match?.[1] ?? "", 10);
+  return Number.isSafeInteger(number) ? number : null;
+}
+
+function strictIssueNumbers(body: string): number[] {
+  return labeledValues(body, "ISSUE").flatMap((claim) => {
+    const number = strictIssueNumber(claim);
+    return number === null ? [] : [number];
+  });
+}
+
 function claimedIssueNumber(body: string): number | null {
-  const claim = labeledValue(body, "ISSUE");
-  if (claim !== null) {
-    const match = claim.match(/^(?:Issue\s*)?#?(\d+)(?:\s*\/\s*PR\s*#?\d+)?$/i);
-    const number = Number.parseInt(match?.[1] ?? "", 10);
-    return Number.isSafeInteger(number) ? number : null;
+  const strictClaims = labeledValues(body, "ISSUE");
+  if (strictClaims.length > 0) {
+    return strictClaims.length === 1 ? strictIssueNumber(strictClaims[0] ?? "") : null;
   }
 
   const candidates = new Set<number>();
@@ -281,8 +308,9 @@ function claimedIssueNumber(body: string): number | null {
   return candidates.size === 1 ? [...candidates][0] ?? null : null;
 }
 
-function markdownSectionValue(body: string, headingPattern: RegExp): string | null {
+function markdownSectionValues(body: string, headingPattern: RegExp): string[] {
   const lines = body.split(/\r?\n/);
+  const values: string[] = [];
   for (const [index, line] of lines.entries()) {
     const heading = line.match(/^#{1,6}\s+(.+?)\s*$/)?.[1];
     if (heading === undefined || !headingPattern.test(heading)) continue;
@@ -293,9 +321,13 @@ function markdownSectionValue(body: string, headingPattern: RegExp): string | nu
       content.push(following);
     }
     const value = stripMarkdown(content.join("\n"));
-    if (value !== "") return value;
+    if (value !== "") values.push(value);
   }
-  return null;
+  return values;
+}
+
+function markdownSectionValue(body: string, headingPattern: RegExp): string | null {
+  return markdownSectionValues(body, headingPattern)[0] ?? null;
 }
 
 function hasNonemptyMarkdownSection(body: string, headingPattern: RegExp): boolean {
@@ -306,7 +338,7 @@ function hasRequiredPrHandoffRecords(body: string): boolean {
   const hasIssue = claimedIssueNumber(body) !== null;
   const hasStatus = labeledValue(body, "STATUS") !== null || labeledValue(body, "STATE") !== null;
   const hasScope = labeledValue(body, "SCOPE BOUNDARY") !== null || hasNonemptyMarkdownSection(body, /\bscope\b/i);
-  const hasValidation = labeledValue(body, "VALIDATION EVIDENCE") !== null || hasNonemptyMarkdownSection(body, /\b(?:validation|evidence)\b/i);
+  const hasValidation = validationEvidenceValues(body).length > 0;
   const hasReviewState = labeledValue(body, "UNRESOLVED REVIEW STATE") !== null || hasNonemptyMarkdownSection(body, /\b(?:unresolved review|review state)\b/i);
   const hasNextAction = labeledValue(body, "NEXT ACTION") !== null || hasNonemptyMarkdownSection(body, /^next\b/i);
   const hasEscalation = ["HUMAN ACTION", "FOUNDER / STEWARD ACTION", "STEWARD ACTION", "ESCALATION"]
@@ -323,9 +355,14 @@ function handoffReportsSubstantiveUnresolvedReview(body: string): boolean {
   return isSubstantiveFinding(reviewState);
 }
 
-function handoffReportsFailedValidation(body: string, currentHeadSha: string | null): boolean {
-  const validation = labeledBlockValue(body, "VALIDATION EVIDENCE") ??
-    markdownSectionValue(body, /\b(?:validation|evidence)\b/i);
+function validationEvidenceValues(body: string): string[] {
+  return [
+    ...labeledBlockValues(body, "VALIDATION EVIDENCE"),
+    ...markdownSectionValues(body, /\b(?:validation|evidence)\b/i),
+  ];
+}
+
+function handoffReportsFailedValidation(validation: string | null, currentHeadSha: string | null): boolean {
   if (validation === null) return false;
 
   if (currentHeadSha !== null) {
@@ -345,32 +382,36 @@ function handoffReportsFailedValidation(body: string, currentHeadSha: string | n
     return /(?:\bnever|\bnot|\b(?:is|are|was|were|has|have|had|do|does|did)\s+not|\b(?:is|are|was|were|has|have|had|do|does|did)n['’]?t)\s+(?!only\b|just\b)(?:\w+\s+){0,4}$/i.test(prefix);
   };
 
+  let hasAffirmativeResult = false;
+  for (const match of validation.matchAll(/\b(?:passed|succeeded|completed)\b/gi)) {
+    if (!quantityNegatesOutcome(match.index) && !contextNegatesOutcome(match.index)) {
+      hasAffirmativeResult = true;
+    }
+  }
+
   if (/\b(?:no|zero|0)\s+(?:(?!not\b)\w+\s+){0,5}(?:(?:was|were)\s+)?(?:run|executed)\b/i.test(validation)) return true;
   const negativeOutcome = /\b(?:(?:(?:did|does|do|is|are|was|were|has|have|had)\s+not|(?:did|does|do|is|are|was|were|has|have|had)n['’]?t)\s+(?:(?:yet|been|successfully)\s+){0,2}(?:pass(?:ed|ing)?|run|executed)|(?:was|were|is|are|has|have|had)\s+(?:been\s+)?skipped|not\s+(?:(?:yet|been|successfully)\s+){0,2}(?:run|executed)|never\s+(?:ran|run))\b/gi;
   for (const match of validation.matchAll(negativeOutcome)) {
-    if (!quantityNegatesOutcome(match.index)) return true;
+    if (quantityNegatesOutcome(match.index)) continue;
+    return true;
   }
   for (const match of validation.matchAll(/\btimed[- ]?out\b/gi)) {
-    if (quantityNegatesOutcome(match.index)) continue;
-    if (contextNegatesOutcome(match.index)) continue;
+    if (quantityNegatesOutcome(match.index) || contextNegatesOutcome(match.index)) continue;
     return true;
   }
   for (const match of validation.matchAll(/\b(?:pending|in[_ -]?progress)\b/gi)) {
-    if (quantityNegatesOutcome(match.index)) continue;
-    if (contextNegatesOutcome(match.index)) continue;
+    if (quantityNegatesOutcome(match.index) || contextNegatesOutcome(match.index)) continue;
     return true;
   }
   for (const match of validation.matchAll(/\bfailed\b/gi)) {
-    if (quantityNegatesOutcome(match.index)) continue;
-    if (contextNegatesOutcome(match.index)) continue;
+    if (quantityNegatesOutcome(match.index) || contextNegatesOutcome(match.index)) continue;
     return true;
   }
   for (const match of validation.matchAll(/\b(?:cancelled|canceled|aborted)\b/gi)) {
-    if (quantityNegatesOutcome(match.index)) continue;
-    if (contextNegatesOutcome(match.index)) continue;
+    if (quantityNegatesOutcome(match.index) || contextNegatesOutcome(match.index)) continue;
     return true;
   }
-  return false;
+  return !hasAffirmativeResult;
 }
 
 function projectHandoff(
@@ -417,23 +458,31 @@ function projectHandoff(
     throw new Error("Canonical handoff selection unexpectedly failed");
   }
 
-  const claimedHeadSha = normalizedSha(labeledValue(latest.body, "HEAD") ?? labeledValue(latest.body, "EXACT HEAD"));
+  const headClaim = reconcileShaAliases(latest.body, ["HEAD", "EXACT HEAD"]);
+  const claimedHeadSha = headClaim.value;
   const observedIssueNumbers = [...new Set(canonical.flatMap((comment) => {
-    const number = claimedIssueNumber(comment.body);
-    return number === null ? [] : [number];
+    const strictClaims = strictIssueNumbers(comment.body);
+    if (labeledValues(comment.body, "ISSUE").length > 0) return strictClaims;
+    const fallback = claimedIssueNumber(comment.body);
+    return fallback === null ? [] : [fallback];
   }))].toSorted((left, right) => left - right);
-  const lastCheckedMainSha = normalizedSha(
-    labeledValue(latest.body, "LAST CHECKED MAIN") ?? labeledValue(latest.body, "MAIN"),
-  );
+  const mainClaim = reconcileShaAliases(latest.body, ["LAST CHECKED MAIN", "MAIN"]);
+  const lastCheckedMainSha = mainClaim.value;
   let condition: HandoffProjection["condition"] = "current";
 
   const stateClaim = canonicalHandoffStateClaim(labeledValue(latest.body, "STATE") ?? "");
   const statusClaim = canonicalHandoffStateClaim(labeledValue(latest.body, "STATUS") ?? "");
   const conflictingStateAliases = stateClaim !== null && statusClaim !== null && stateClaim !== statusClaim;
+  const validationClaims = validationEvidenceValues(latest.body);
+  const validationClaim = validationClaims.length === 1 ? validationClaims[0] ?? null : null;
+  const inconsistentValidationClaims = validationClaims.length > 1;
 
   if (canonical.length !== 1) {
     condition = "inconsistent";
-  } else if (hasDuplicateCanonicalHandoffValue(latest.body) || conflictingStateAliases) {
+  } else if (
+    hasDuplicateCanonicalHandoffValue(latest.body) || conflictingStateAliases || headClaim.inconsistent ||
+    mainClaim.inconsistent || inconsistentValidationClaims
+  ) {
     condition = "inconsistent";
   } else if (currentHeadSha !== null && !hasRequiredPrHandoffRecords(latest.body)) {
     condition = "inconsistent";
@@ -458,7 +507,7 @@ function projectHandoff(
     claimedHeadSha,
     lastCheckedMainSha,
     substantiveUnresolvedReview: handoffReportsSubstantiveUnresolvedReview(latest.body),
-    failedValidationEvidence: handoffReportsFailedValidation(latest.body, currentHeadSha),
+    failedValidationEvidence: handoffReportsFailedValidation(validationClaim, currentHeadSha),
     updatedAt: latest.updatedAt,
     sourceRefs: [source("direct", "Canonical handoff", latest.url, observedAt, latest.id)],
   };
