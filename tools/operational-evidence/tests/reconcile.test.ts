@@ -195,10 +195,23 @@ function baseInput(overrides: Partial<ReconcileInput> = {}): ReconcileInput {
     nativeChecks: complete<NativeCheck>([]),
     nativeReviews: complete<NativeReview>([]),
     nativeThreads: complete<NativeReviewThread>([]),
+    nativeRepository: complete([
+      {
+        issueReady: true,
+        dependencies: "satisfied",
+        pullRequestState: "OPEN",
+        pullRequestDraft: false,
+        baseRef: "main",
+        authorityConflict: false,
+      },
+    ]),
     requirements: {
-      requiredValidations: ["manual-validation"],
-      requiredReview: "exact-head-review",
+      requiredValidations: [
+        { name: "manual-validation", evidence: "manual" },
+      ],
+      requiredReview: { name: "exact-head-review", evidence: "manual" },
       currentStewardWatch: true,
+      expectedBaseRef: "main",
     },
     ...overrides,
   };
@@ -246,6 +259,67 @@ describe("reconcile", () => {
       reason: "review-missing",
     });
     expect(result.mergeGate.state).toBe("unknown");
+  });
+
+  it("requires complete native authority and pull-request facts for gate projections", () => {
+    const unavailable = reconcile(
+      baseInput({
+        nativeRepository: {
+          availability: "unavailable",
+          source: { id: "repository-api" },
+        },
+      }),
+    );
+    const notReady = reconcile(
+      baseInput({
+        nativeRepository: complete([
+          {
+            issueReady: false,
+            dependencies: "satisfied",
+            pullRequestState: "OPEN",
+            pullRequestDraft: false,
+            baseRef: "main",
+            authorityConflict: false,
+          },
+        ]),
+      }),
+    );
+
+    expect(unavailable.authority).toMatchObject({
+      state: "unknown",
+      reason: "observation-unavailable",
+    });
+    expect(unavailable.mergeGate.state).toBe("unknown");
+    expect(notReady.authority).toMatchObject({
+      state: "blocked",
+      reason: "issue-not-ready",
+    });
+    expect(notReady.mutationGate.state).toBe("blocked");
+    expect(notReady.mergeGate.state).toBe("blocked");
+  });
+
+  it("keeps draft PR policy out of mutation while blocking merge", () => {
+    const result = reconcile(
+      baseInput({
+        nativeRepository: complete([
+          {
+            issueReady: true,
+            dependencies: "satisfied",
+            pullRequestState: "OPEN",
+            pullRequestDraft: true,
+            baseRef: "main",
+            authorityConflict: false,
+          },
+        ]),
+      }),
+    );
+
+    expect(result.mutationGate.state).toBe("satisfied");
+    expect(result.mergePolicy).toMatchObject({
+      state: "blocked",
+      reason: "pull-request-draft",
+    });
+    expect(result.mergeGate.state).toBe("blocked");
   });
 
   it("selects before parsing and fails closed on two trusted handoffs", () => {
@@ -336,6 +410,39 @@ describe("reconcile", () => {
       reason: "native-check-failed",
     });
     expect(result.mergeGate.state).toBe("blocked");
+  });
+
+  it("does not let custom evidence replace native-required validation or review", () => {
+    const result = reconcile(
+      baseInput({
+        requirements: {
+          requiredValidations: [
+            { name: "manual-validation", evidence: "native-check" },
+          ],
+          requiredReview: {
+            name: "exact-head-review",
+            evidence: "native-review",
+          },
+          currentStewardWatch: true,
+          expectedBaseRef: "main",
+        },
+      }),
+    );
+
+    expect(result.validations[0]).toMatchObject({
+      state: "unknown",
+      reason: "validation-missing",
+    });
+    expect(result.review).toMatchObject({
+      state: "unknown",
+      reason: "review-missing",
+    });
+    expect(result.advisories).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ reason: "custom-evidence-not-applicable" }),
+      ]),
+    );
+    expect(result.mergeGate.state).toBe("unknown");
   });
 
   it("lets a current native success outrank a custom failure", () => {
@@ -662,10 +769,6 @@ describe("reconcile", () => {
   });
 
   it("persists structured blocking findings across heads until explicit resolution", () => {
-    const oldRun = review("findings-run", "findings", {
-      head: OLD_HEAD,
-      run: "review-run",
-    });
     const oldFinding = finding("finding-p1", "P1", "review-run", OLD_HEAD);
     const blocked = reconcile(
       baseInput({
@@ -674,7 +777,6 @@ describe("reconcile", () => {
           watch(),
           validation("pass", "pass"),
           review("clean", "clean"),
-          oldRun,
           oldFinding,
         ],
       }),
@@ -686,7 +788,6 @@ describe("reconcile", () => {
           watch(),
           validation("pass", "pass"),
           review("clean", "clean"),
-          oldRun,
           oldFinding,
           resolution("resolution", "finding-p1"),
         ],
@@ -700,7 +801,7 @@ describe("reconcile", () => {
     expect(resolved.review.state).toBe("satisfied");
   });
 
-  it("does not let a resolution target a native thread or an unmatched finding", () => {
+  it("keeps a standalone P2 finding blocking and cannot resolve a native thread", () => {
     const result = reconcile(
       baseInput({
         comments: [
@@ -714,21 +815,21 @@ describe("reconcile", () => {
       }),
     );
 
-    expect(result.review.state).toBe("unknown");
-    expect(["review-run-missing", "reference-mismatch"]).toContain(
-      result.review.reason,
-    );
+    expect(result.review).toMatchObject({
+      state: "blocked",
+      reason: "review-finding-blocking",
+    });
   });
 
-  it("makes P3 findings advisory and requires a matching findings run", () => {
+  it("makes standalone P3 findings advisory and keeps unclassified runs Unknown", () => {
     const withP3 = reconcile(
       baseInput({
         comments: [
           handoff(),
           watch(),
           validation("pass", "pass"),
-          review("findings", "findings", { run: "review-run" }),
-          finding("finding-p3", "P3", "review-run"),
+          review("clean", "clean"),
+          finding("finding-p3", "P3", "standalone-review-run"),
         ],
       }),
     );
@@ -745,7 +846,7 @@ describe("reconcile", () => {
 
     expect(withP3.review).toMatchObject({
       state: "satisfied",
-      reason: "review-findings-current",
+      reason: "review-clean-current",
     });
     expect(withP3.advisories).toEqual(
       expect.arrayContaining([
@@ -793,6 +894,33 @@ describe("reconcile", () => {
         expect.objectContaining({ reason: "unstructured-prose" }),
       ]),
     );
+  });
+
+  it("orders provenance by fixed ordinal code units instead of host collation", () => {
+    const result = reconcile(
+      baseInput({
+        nativeChecks: complete([
+          {
+            name: "manual-validation",
+            head: HEAD,
+            status: "failure",
+            source: { id: "a-check" },
+          },
+          {
+            name: "manual-validation",
+            head: HEAD,
+            status: "failure",
+            source: { id: "Z-check" },
+          },
+        ]),
+      }),
+    );
+
+    expect(
+      result.validations[0]?.provenance.map((value) =>
+        value.kind === "native-check" ? value.id : "",
+      ),
+    ).toEqual(["Z-check", "a-check"]);
   });
 
   it("deduplicates an exact source repeat but fails closed on a reused ID", () => {

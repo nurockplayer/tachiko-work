@@ -41,7 +41,6 @@ export type ConditionReason =
   | "reference-missing"
   | "reference-mismatch"
   | "reference-cycle"
-  | "review-run-missing"
   | "native-approval-current"
   | "native-approval-stale"
   | "native-changes-requested"
@@ -56,6 +55,17 @@ export type ConditionReason =
   | "review-missing"
   | "review-finding-blocking"
   | "source-identity-conflict"
+  | "native-context-invalid"
+  | "repository-authority-current"
+  | "authority-conflict"
+  | "issue-not-ready"
+  | "dependency-waiting"
+  | "dependency-blocked"
+  | "pull-request-open"
+  | "pull-request-not-open"
+  | "pull-request-base-mismatch"
+  | "merge-policy-current"
+  | "pull-request-draft"
   | "observation-incomplete"
   | "observation-unavailable"
   | "not-required"
@@ -136,11 +146,33 @@ export interface NativeReviewThread {
   readonly source: NativeSourceRef;
 }
 
+export interface NativeRepositoryFacts {
+  /** `false` is an explicit native negative; missing facts use an incomplete observation. */
+  readonly issueReady: boolean;
+  readonly dependencies: "satisfied" | "waiting" | "blocked";
+  readonly pullRequestState: "OPEN" | "CLOSED" | "MERGED";
+  readonly pullRequestDraft: boolean;
+  readonly baseRef: string;
+  readonly authorityConflict: boolean;
+}
+
+export interface ValidationRequirement {
+  readonly name: string;
+  /** Custom evidence is eligible only for an explicit manual/local gap. */
+  readonly evidence: "native-check" | "manual";
+}
+
+export interface ReviewRequirement {
+  readonly name: string;
+  /** Custom evidence is eligible only when an adequate native review is unavailable. */
+  readonly evidence: "native-review" | "manual";
+}
+
 export interface ReconcileRequirements {
-  readonly requiredValidations: readonly string[];
-  /** A canonical structured review NAME, or null when no exact-head review is required. */
-  readonly requiredReview: string | null;
+  readonly requiredValidations: readonly ValidationRequirement[];
+  readonly requiredReview: ReviewRequirement | null;
   readonly currentStewardWatch: boolean;
+  readonly expectedBaseRef: string;
 }
 
 export interface AdvisoryInput {
@@ -154,6 +186,7 @@ export interface ReconcileInput {
   readonly nativeChecks: Observation<NativeCheck>;
   readonly nativeReviews: Observation<NativeReview>;
   readonly nativeThreads: Observation<NativeReviewThread>;
+  readonly nativeRepository: Observation<NativeRepositoryFacts>;
   readonly requirements: ReconcileRequirements;
   readonly advisories?: readonly AdvisoryInput[];
 }
@@ -167,7 +200,8 @@ export type AdvisoryReason =
   | "stale-native-evidence"
   | "native-thread-p3"
   | "review-finding-p3"
-  | "custom-evidence-shadowed";
+  | "custom-evidence-shadowed"
+  | "custom-evidence-not-applicable";
 
 export interface Advisory {
   readonly reason: AdvisoryReason;
@@ -182,6 +216,9 @@ export interface ValidationCondition extends Condition {
 export interface Reconciliation {
   readonly handoff: Condition;
   readonly watch: Condition;
+  readonly authority: Condition;
+  readonly pullRequest: Condition;
+  readonly mergePolicy: Condition;
   readonly validations: readonly ValidationCondition[];
   readonly review: Condition;
   readonly humanAction: Condition;
@@ -201,6 +238,11 @@ interface EvidenceSet {
 const HANDOFF_MARKER = "<!-- agent-handoff:v1 -->";
 const WATCH_MARKER = "<!-- project-steward-watch:v1 -->";
 const EVIDENCE_MARKER = "<!-- operational-evidence:v1";
+const REQUIREMENT_TOKEN = /^[a-z0-9]+(?:[-_:][a-z0-9]+)*$/;
+
+function compareOrdinal(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
 
 function nativeProvenance(
   kind: Exclude<Provenance["kind"], "authority" | "comment">,
@@ -224,7 +266,7 @@ function stableProvenance(values: readonly Provenance[]): readonly Provenance[] 
   const byKey = new Map<string, Provenance>();
   for (const value of values) byKey.set(provenanceKey(value), value);
   return [...byKey.values()].sort((left, right) =>
-    provenanceKey(left).localeCompare(provenanceKey(right)),
+    compareOrdinal(provenanceKey(left), provenanceKey(right)),
   );
 }
 
@@ -269,7 +311,7 @@ function stableComments(
   comments: readonly StructuredCommentSource[],
 ): StableComments {
   const sorted = [...comments].sort((left, right) =>
-    sourceFingerprint(left).localeCompare(sourceFingerprint(right)),
+    compareOrdinal(sourceFingerprint(left), sourceFingerprint(right)),
   );
   const seenFingerprints = new Set<string>();
   const fingerprintsById = new Map<string, Set<string>>();
@@ -419,7 +461,7 @@ function buildEvidenceSet(
     }
   }
   values.sort((left, right) =>
-    left.source.sourceId.localeCompare(right.source.sourceId),
+    compareOrdinal(left.source.sourceId, right.source.sourceId),
   );
 
   const runBySource = new Map<string, ValidationEvidence | ReviewEvidence>();
@@ -501,15 +543,78 @@ function observationProblem<T>(observation: Observation<T>): Condition | undefin
   );
 }
 
+interface NativeContextConditions {
+  readonly authority: Condition;
+  readonly pullRequest: Condition;
+  readonly mergePolicy: Condition;
+}
+
+function reconcileNativeContext(input: ReconcileInput): NativeContextConditions {
+  const availability = observationProblem(input.nativeRepository);
+  if (availability !== undefined) {
+    return {
+      authority: availability,
+      pullRequest: availability,
+      mergePolicy: availability,
+    };
+  }
+  const repositoryFacts = input.nativeRepository.facts ?? [];
+  if (repositoryFacts.length !== 1) {
+    const invalid = condition("unknown", "native-context-invalid", [
+      nativeProvenance("native-observation", input.nativeRepository.source),
+    ]);
+    return { authority: invalid, pullRequest: invalid, mergePolicy: invalid };
+  }
+
+  const facts = repositoryFacts[0];
+  if (facts === undefined) {
+    const invalid = condition("unknown", "native-context-invalid", [
+      nativeProvenance("native-observation", input.nativeRepository.source),
+    ]);
+    return { authority: invalid, pullRequest: invalid, mergePolicy: invalid };
+  }
+  const provenance = [
+    nativeProvenance("native-observation", input.nativeRepository.source),
+  ];
+  let authority: Condition;
+  if (facts.authorityConflict) {
+    authority = condition("blocked", "authority-conflict", provenance);
+  } else if (!facts.issueReady) {
+    authority = condition("blocked", "issue-not-ready", provenance);
+  } else if (facts.dependencies === "blocked") {
+    authority = condition("blocked", "dependency-blocked", provenance);
+  } else if (facts.dependencies === "waiting") {
+    authority = condition("waiting", "dependency-waiting", provenance);
+  } else {
+    authority = condition(
+      "satisfied",
+      "repository-authority-current",
+      provenance,
+    );
+  }
+
+  const pullRequest =
+    facts.pullRequestState !== "OPEN"
+      ? condition("blocked", "pull-request-not-open", provenance)
+      : facts.baseRef !== input.requirements.expectedBaseRef
+        ? condition("blocked", "pull-request-base-mismatch", provenance)
+        : condition("satisfied", "pull-request-open", provenance);
+  const mergePolicy = facts.pullRequestDraft
+    ? condition("blocked", "pull-request-draft", provenance)
+    : condition("satisfied", "merge-policy-current", provenance);
+  return { authority, pullRequest, mergePolicy };
+}
+
 function reconcileValidation(
-  name: string,
+  requirement: ValidationRequirement,
   input: ReconcileInput,
   evidence: EvidenceSet,
   advisories: Advisory[],
 ): ValidationCondition {
+  const { name } = requirement;
   const checks = [...(input.nativeChecks.facts ?? [])]
     .filter((check) => check.name === name)
-    .sort((left, right) => left.source.id.localeCompare(right.source.id));
+    .sort((left, right) => compareOrdinal(left.source.id, right.source.id));
   const currentChecks = checks.filter(
     (check) => check.head === input.context.headSha,
   );
@@ -562,6 +667,35 @@ function reconcileValidation(
     return {
       name,
       ...condition("satisfied", "native-check-succeeded", nativeSources),
+    };
+  }
+
+  if (requirement.evidence === "native-check") {
+    if (currentCustom.length > 0) {
+      advisories.push({
+        reason: "custom-evidence-not-applicable",
+        provenance: currentCustom.map((value) =>
+          commentProvenance(value.source),
+        ),
+      });
+    }
+    if (oldChecks.length > 0) {
+      return {
+        name,
+        ...condition(
+          "unknown",
+          "validation-stale",
+          oldChecks.map((check) =>
+            nativeProvenance("native-check", check.source),
+          ),
+        ),
+      };
+    }
+    return {
+      name,
+      ...condition("unknown", "validation-missing", [
+        { kind: "authority", id: `required-native-validation:${name}` },
+      ]),
     };
   }
 
@@ -642,9 +776,6 @@ function reconcileFindings(
   evidence: EvidenceSet,
   advisories: Advisory[],
 ): FindingState {
-  const reviewRuns = evidence.values.filter(
-    (value): value is ReviewEvidence => value.kind === "review",
-  );
   const findings = evidence.values.filter(
     (value): value is ReviewFindingEvidence => value.kind === "review-finding",
   );
@@ -665,16 +796,7 @@ function reconcileFindings(
       invalid.push({ value: finding, reason: "source-identity-conflict" });
       continue;
     }
-    const matchingRun = reviewRuns.some(
-      (run) =>
-        !evidence.relationshipFailures.has(run.source.sourceId) &&
-        run.pullRequest === finding.pullRequest &&
-        run.head === finding.head &&
-        run.run === finding.run &&
-        run.result === "findings",
-    );
-    if (matchingRun) validFindingIds.add(finding.source.sourceId);
-    else invalid.push({ value: finding, reason: "review-run-missing" });
+    validFindingIds.add(finding.source.sourceId);
   }
   const resolved = new Set<string>();
   for (const resolution of resolutions) {
@@ -718,7 +840,7 @@ function reconcileReview(
   advisories: Advisory[],
 ): Condition {
   const reviews = [...(input.nativeReviews.facts ?? [])].sort((left, right) =>
-    left.source.id.localeCompare(right.source.id),
+    compareOrdinal(left.source.id, right.source.id),
   );
   const currentReviews = reviews.filter(
     (review) => review.current,
@@ -738,7 +860,7 @@ function reconcileReview(
   }
 
   const threads = [...(input.nativeThreads.facts ?? [])].sort((left, right) =>
-    left.source.id.localeCompare(right.source.id),
+    compareOrdinal(left.source.id, right.source.id),
   );
   const openThreads = threads.filter((thread) => !thread.resolved);
   const blockingThreads = openThreads.filter(
@@ -757,12 +879,12 @@ function reconcileReview(
   }
 
   const findingState = reconcileFindings(evidence, advisories);
-  const requiredName = input.requirements.requiredReview;
+  const requiredReview = input.requirements.requiredReview;
   const currentCustomReviews = evidence.values.filter(
     (value): value is ReviewEvidence =>
       value.kind === "review" &&
       value.head === input.context.headSha &&
-      (requiredName === null || value.name === requiredName),
+      (requiredReview === null || value.name === requiredReview.name),
   );
   if (
     currentReviews.some(
@@ -842,11 +964,25 @@ function reconcileReview(
     }
   }
 
-  if (requiredName === null) {
+  if (
+    requiredReview !== null &&
+    (requiredReview.name.length > 64 ||
+      !REQUIREMENT_TOKEN.test(requiredReview.name))
+  ) {
+    return condition("unknown", "native-context-invalid", [
+      {
+        kind: "authority",
+        id: "review-requirement-invalid",
+      },
+    ]);
+  }
+
+  if (requiredReview === null) {
     return condition("satisfied", "not-required", [
       { kind: "authority", id: "exact-head-review-not-required" },
     ]);
   }
+  const requiredName = requiredReview.name;
   const nativeApproval = currentReviews.filter(
     (review) =>
       review.state === "APPROVED" && review.head === input.context.headSha,
@@ -871,6 +1007,29 @@ function reconcileReview(
         nativeProvenance("native-review", review.source),
       ),
     );
+  }
+
+  if (requiredReview.evidence === "native-review") {
+    if (currentCustomReviews.length > 0) {
+      advisories.push({
+        reason: "custom-evidence-not-applicable",
+        provenance: currentCustomReviews.map((value) =>
+          commentProvenance(value.source),
+        ),
+      });
+    }
+    if (oldApprovals.length > 0) {
+      return condition(
+        "unknown",
+        "review-stale",
+        oldApprovals.map((review) =>
+          nativeProvenance("native-review", review.source),
+        ),
+      );
+    }
+    return condition("unknown", "review-missing", [
+      { kind: "authority", id: `required-native-review:${requiredName}` },
+    ]);
   }
 
   const all = evidence.values.filter(
@@ -967,7 +1126,7 @@ function stableAdvisories(values: readonly Advisory[]): readonly Advisory[] {
     });
   }
   return [...keyed.entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
+    .sort(([left], [right]) => compareOrdinal(left, right))
     .map(([, value]) => value);
 }
 
@@ -1042,6 +1201,7 @@ export function reconcile(input: ReconcileInput): Reconciliation {
   );
   const evidence = buildEvidenceSet(comments, input.context, stable.conflicts);
   advisories.push(...evidence.advisories);
+  const nativeContext = reconcileNativeContext(input);
 
   const handoff = handoffSelection.condition;
   let watch = watchSelection.condition;
@@ -1090,24 +1250,59 @@ export function reconcile(input: ReconcileInput): Reconciliation {
     ]);
   }
 
-  const validations = [...new Set(input.requirements.requiredValidations)]
-    .sort((left, right) => left.localeCompare(right))
-    .map((name) => reconcileValidation(name, input, evidence, advisories));
+  const validationNames = [
+    ...new Set(
+      input.requirements.requiredValidations.map((requirement) =>
+        requirement.name,
+      ),
+    ),
+  ].sort(compareOrdinal);
+  const validations = validationNames.map((name) => {
+    const matches = input.requirements.requiredValidations.filter(
+      (requirement) => requirement.name === name,
+    );
+    const evidenceKinds = new Set(
+      matches.map((requirement) => requirement.evidence),
+    );
+    const selected = matches[0];
+    if (
+      selected === undefined ||
+      name.length > 64 ||
+      !REQUIREMENT_TOKEN.test(name) ||
+      evidenceKinds.size !== 1
+    ) {
+      return {
+        name,
+        ...condition("unknown", "native-context-invalid", [
+          { kind: "authority", id: "validation-requirement-invalid" },
+        ]),
+      };
+    }
+    return reconcileValidation(selected, input, evidence, advisories);
+  });
   const review = reconcileReview(input, evidence, advisories);
   const watchParticipates =
-    input.requirements.currentStewardWatch || watchSelection.value !== undefined;
+    input.requirements.currentStewardWatch ||
+    trustedWatchCandidatePresent ||
+    watchSelection.value !== undefined;
   const mutationGate = aggregate([
+    nativeContext.authority,
+    nativeContext.pullRequest,
     handoff,
     ...(watchParticipates ? [watch, humanAction] : []),
   ]);
   const mergeGate = aggregate([
     mutationGate,
+    nativeContext.mergePolicy,
     ...validations,
     review,
   ]);
   return {
     handoff: withObservedContext(handoff, input.context),
     watch: withObservedContext(watch, input.context),
+    authority: withObservedContext(nativeContext.authority, input.context),
+    pullRequest: withObservedContext(nativeContext.pullRequest, input.context),
+    mergePolicy: withObservedContext(nativeContext.mergePolicy, input.context),
     validations: validations.map((value) => ({
       ...withObservedContext(value, input.context),
       name: value.name,
