@@ -876,7 +876,123 @@ describe("reconcile", () => {
         }),
       ],
     });
+    expect(result.validations[0]?.state).toBe("satisfied");
     expect(result.mergeGate.state).toBe("unknown");
+  });
+
+  it("scopes malformed run evidence to its exact kind and requirement name", () => {
+    const malformedReview = comment(
+      "malformed-review",
+      [
+        "<!-- operational-evidence:v1",
+        "KIND: review",
+        "PR: 201",
+        `HEAD: ${HEAD}`,
+        "RUN: malformed-review-run",
+        "NAME: exact-head-review",
+        "-->",
+      ].join("\n"),
+    );
+    const malformedValidation = comment(
+      "malformed-validation",
+      [
+        "<!-- operational-evidence:v1",
+        "KIND: validation",
+        "PR: 201",
+        `HEAD: ${HEAD}`,
+        "RUN: malformed-validation-run",
+        "NAME: manual-validation",
+        "-->",
+      ].join("\n"),
+    );
+
+    const reviewFailure = reconcile(
+      baseInput({ comments: [...baseInput().comments, malformedReview] }),
+    );
+    const validationFailure = reconcile(
+      baseInput({ comments: [...baseInput().comments, malformedValidation] }),
+    );
+
+    expect(reviewFailure.validations[0]?.state).toBe("satisfied");
+    expect(reviewFailure.review).toMatchObject({
+      state: "unknown",
+      reason: "missing-field",
+    });
+    expect(validationFailure.validations[0]).toMatchObject({
+      state: "unknown",
+      reason: "missing-field",
+    });
+    expect(validationFailure.review.state).toBe("satisfied");
+  });
+
+  it("keeps unscoped and unrelated malformed envelopes advisory", () => {
+    const unrelated = comment(
+      "unrelated-validation",
+      [
+        "<!-- operational-evidence:v1",
+        "KIND: validation",
+        "PR: 201",
+        `HEAD: ${HEAD}`,
+        "RUN: unrelated-run",
+        "NAME: another-validation",
+        "-->",
+      ].join("\n"),
+    );
+    const unscoped = comment(
+      "unscoped-review",
+      [
+        "<!-- operational-evidence:v1",
+        "KIND: review",
+        "PR: 201",
+        `HEAD: ${HEAD}`,
+        "RUN: unscoped-run",
+        "-->",
+      ].join("\n"),
+    );
+    const result = reconcile(
+      baseInput({ comments: [...baseInput().comments, unrelated, unscoped] }),
+    );
+
+    expect(result.validations[0]?.state).toBe("satisfied");
+    expect(result.review.state).toBe("satisfied");
+    expect(result.mergeGate.state).toBe("satisfied");
+    expect(result.advisories).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ reason: "invalid-structured-source" }),
+      ]),
+    );
+  });
+
+  it("keeps native approval authoritative over a malformed review attestation", () => {
+    const malformedReview = comment(
+      "malformed-review",
+      [
+        "<!-- operational-evidence:v1",
+        "KIND: review",
+        "PR: 201",
+        `HEAD: ${HEAD}`,
+        "RUN: malformed-review-run",
+        "NAME: exact-head-review",
+        "-->",
+      ].join("\n"),
+    );
+    const approval: NativeReview = {
+      current: true,
+      head: HEAD,
+      state: "APPROVED",
+      source: { id: "approval-current" },
+    };
+    const result = reconcile(
+      baseInput({
+        comments: [...baseInput().comments, malformedReview],
+        nativeReviews: complete([approval]),
+      }),
+    );
+
+    expect(result.review).toMatchObject({
+      state: "satisfied",
+      reason: "native-approval-current",
+    });
   });
 
   it("makes standalone P3 findings advisory and keeps unclassified runs Unknown", () => {

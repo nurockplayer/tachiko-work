@@ -230,7 +230,7 @@ export interface Reconciliation {
 
 interface EvidenceSet {
   readonly values: readonly OperationalEvidence[];
-  readonly parseFailures: readonly ParseFailure[];
+  readonly scopedParseFailures: readonly ScopedParseFailure[];
   readonly relationshipFailures: ReadonlyMap<string, ConditionReason>;
   readonly activeRunSourceIds: ReadonlySet<string>;
   readonly sourceConflicts: ReadonlySet<string>;
@@ -439,13 +439,50 @@ function isRunEvidence(
   return value.kind === "validation" || value.kind === "review";
 }
 
+type OperationalFailureScope =
+  | { readonly kind: "validation" | "review"; readonly name: string }
+  | { readonly kind: "review-finding" };
+
+interface ScopedParseFailure {
+  readonly failure: ParseFailure;
+  readonly scope: OperationalFailureScope;
+}
+
+function operationalFailureScope(
+  source: StructuredCommentSource,
+): OperationalFailureScope | undefined {
+  const lines = source.body.replaceAll("\r\n", "\n").split("\n");
+  if (
+    lines[0] !== EVIDENCE_MARKER ||
+    lines.filter((line) => line === EVIDENCE_MARKER).length !== 1
+  ) {
+    return undefined;
+  }
+  const closeIndex = lines.indexOf("-->", 1);
+  if (closeIndex === -1) return undefined;
+  const envelope = lines.slice(1, closeIndex);
+  const exactValues = (field: "KIND" | "NAME"): readonly string[] =>
+    envelope.flatMap((line) => {
+      const prefix = `${field}: `;
+      return line.startsWith(prefix) ? [line.slice(prefix.length)] : [];
+    });
+  const kinds = exactValues("KIND");
+  if (kinds.length !== 1) return undefined;
+  const kind = kinds[0];
+  if (kind === "review-finding") return { kind };
+  if (kind !== "validation" && kind !== "review") return undefined;
+  const names = exactValues("NAME");
+  const name = names.length === 1 ? names[0] : undefined;
+  return name === undefined ? undefined : { kind, name };
+}
+
 function buildEvidenceSet(
   comments: readonly StructuredCommentSource[],
   context: EvidenceParseContext,
   sourceConflicts: ReadonlySet<string>,
 ): EvidenceSet {
   const values: OperationalEvidence[] = [];
-  const parseFailures: ParseFailure[] = [];
+  const scopedParseFailures: ScopedParseFailure[] = [];
   const advisories: Advisory[] = [];
   for (const source of comments) {
     if (!exactMarkerPresent(source.body, EVIDENCE_MARKER)) continue;
@@ -454,7 +491,10 @@ function buildEvidenceSet(
       values.push(parsed.value);
     } else {
       if (parsed.reason !== "producer-untrusted") {
-        parseFailures.push(parsed);
+        const scope = operationalFailureScope(source);
+        if (scope !== undefined) {
+          scopedParseFailures.push({ failure: parsed, scope });
+        }
       }
       advisories.push({
         reason:
@@ -469,8 +509,11 @@ function buildEvidenceSet(
   values.sort((left, right) =>
     compareOrdinal(left.source.sourceId, right.source.sourceId),
   );
-  parseFailures.sort((left, right) =>
-    compareOrdinal(left.source.sourceId, right.source.sourceId),
+  scopedParseFailures.sort((left, right) =>
+    compareOrdinal(
+      left.failure.source.sourceId,
+      right.failure.source.sourceId,
+    ),
   );
 
   const runBySource = new Map<string, ValidationEvidence | ReviewEvidence>();
@@ -534,7 +577,7 @@ function buildEvidenceSet(
   );
   return {
     values,
-    parseFailures,
+    scopedParseFailures,
     relationshipFailures,
     activeRunSourceIds,
     sourceConflicts,
@@ -709,7 +752,10 @@ function reconcileValidation(
     };
   }
 
-  const parseFailure = evidence.parseFailures[0];
+  const parseFailure = evidence.scopedParseFailures.find(
+    (value) =>
+      value.scope.kind === "validation" && value.scope.name === name,
+  )?.failure;
   if (parseFailure !== undefined) {
     return {
       name,
@@ -983,10 +1029,12 @@ function reconcileReview(
       ]);
     }
   }
-  const parseFailure = evidence.parseFailures[0];
-  if (parseFailure !== undefined) {
-    return condition("unknown", parseFailure.reason, [
-      commentProvenance(parseFailure.source),
+  const findingParseFailure = evidence.scopedParseFailures.find(
+    (value) => value.scope.kind === "review-finding",
+  )?.failure;
+  if (findingParseFailure !== undefined) {
+    return condition("unknown", findingParseFailure.reason, [
+      commentProvenance(findingParseFailure.source),
     ]);
   }
 
@@ -1055,6 +1103,16 @@ function reconcileReview(
     }
     return condition("unknown", "review-missing", [
       { kind: "authority", id: `required-native-review:${requiredName}` },
+    ]);
+  }
+
+  const reviewParseFailure = evidence.scopedParseFailures.find(
+    (value) =>
+      value.scope.kind === "review" && value.scope.name === requiredName,
+  )?.failure;
+  if (reviewParseFailure !== undefined) {
+    return condition("unknown", reviewParseFailure.reason, [
+      commentProvenance(reviewParseFailure.source),
     ]);
   }
 
