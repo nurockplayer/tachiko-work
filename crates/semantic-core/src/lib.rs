@@ -15,4 +15,6 @@ pub use model::{
     FieldId, FieldKey, FieldRef, FieldType, InvalidNumber, MAX_EXPRESSION_DEPTH,
     MAX_EXPRESSION_NODES, Number, Schema, SchemaId, SchemaKey, Value,
 };
+#[cfg(feature = "issue-175-research")]
+pub use validation::validate_document_cancellable;
 pub use validation::{is_valid_identifier, validate_document, validate_document_core};

@@ -27,6 +27,8 @@ pub use portable_package::{
     publish_unpacked_roproj, read_portable_package, read_portable_package_source, unpack_roproj,
 };
 
+#[cfg(feature = "issue-175-research")]
+pub use roproj::issue_175_admit_a0_a1;
 pub use roproj::{
     CanonicalRoProjectAdmissionError, CanonicalRoProjectFile, CanonicalRoProjectV1,
     ROPROJ_V1_FORMAT_VERSION, ROPROJ_V1_PATHS, canonicalize_roproj, decode_roproj_v1,

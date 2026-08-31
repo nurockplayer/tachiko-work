@@ -26,5 +26,9 @@ tachiko-workspace-engine = { version = "0.1.0", path = "../workspace-engine" }
 thiserror.workspace = true
 uuid = { workspace = true, features = ["v7"] }
 
+[dev-dependencies]
+tachiko-storage = { version = "0.1.0", path = "../storage", features = ["issue-175-research"] }
+tachiko-workspace-engine = { version = "0.1.0", path = "../workspace-engine", features = ["issue-175-research"] }
+
 [lints]
 workspace = true

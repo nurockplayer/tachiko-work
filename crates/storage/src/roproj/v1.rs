@@ -1380,6 +1380,15 @@ fn invalid_representation<T>(message: String) -> Result<T, FormatError> {
     Err(FormatError::InvalidRoProjectRepresentation { message })
 }
 
+#[cfg(any(test, feature = "issue-175-research"))]
+mod issue_175_oracle_bridge;
+
+#[cfg(test)]
+mod issue_175_research;
+
+#[cfg(feature = "issue-175-research")]
+pub use issue_175_oracle_bridge::issue_175_admit_a0_a1;
+
 #[cfg(test)]
 mod tests {
     use super::NumberV1;

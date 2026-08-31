@@ -1,0 +1,11 @@
+metric,n,p50,p95,p99,min,max,unit
+baseline_request_p95,20,63,4161,4419,48,4419,us
+background_request_p95,20,63,1027,2575,41,2575,us
+foreground_p95_ratio,20,866310,1638139,1682769,109443,1682769,ppm
+foreground_p95_ratio_baseline_then_background,10,812424,1038948,1038948,120394,1038948,ppm
+foreground_p95_ratio_background_then_baseline,10,1083495,1682769,1682769,109443,1682769,ppm
+background_semantic_current,20,270360,2293228,2348960,247120,2348960,us
+background_join_wall,20,270437,2293814,2349160,247184,2349160,us
+background_started_after_records,20,64,64,136,64,136,records
+cancelled_after_records,20,64,64,79,64,79,records
+cancellation_latency,20,67,357,518,50,518,us

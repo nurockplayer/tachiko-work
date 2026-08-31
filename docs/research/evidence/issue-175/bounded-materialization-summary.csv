@@ -1,0 +1,16 @@
+entities,request_contract,n,p50_first_exact_bounded_us,p95_first_exact_bounded_us,p99_first_exact_bounded_us,min_us,max_us,closure_entities,proof
+1000,random_entity_lookup,30,786,2425,3169,457,3169,1,exact_source_payload_semantic_not_current
+1000,near_dependency,30,561,2584,2629,455,2629,2,requires_full_admission_for_formula
+1000,random_mid_dependency,30,4103,9274,10003,2936,10003,501,requires_full_admission_for_formula
+1000,far_dependency,30,7313,19649,20488,5381,20488,1000,requires_full_admission_for_formula
+1000,cold_reverse_dependents,30,9267,19149,45027,5392,45027,999,requires_full_admission
+4000,random_entity_lookup,30,2576,6988,8804,1179,8804,1,exact_source_payload_semantic_not_current
+4000,near_dependency,30,1731,5355,6824,1150,6824,2,requires_full_admission_for_formula
+4000,random_mid_dependency,30,18920,39502,43107,13796,43107,2001,requires_full_admission_for_formula
+4000,far_dependency,30,31035,44942,48541,23856,48541,4000,requires_full_admission_for_formula
+4000,cold_reverse_dependents,30,40836,75525,79424,25024,79424,3999,requires_full_admission
+16000,random_entity_lookup,30,7661,13085,14188,4371,14188,1,exact_source_payload_semantic_not_current
+16000,near_dependency,30,8539,13493,16137,4248,16137,2,requires_full_admission_for_formula
+16000,random_mid_dependency,30,70334,94236,101573,49862,101573,8001,requires_full_admission_for_formula
+16000,far_dependency,30,122094,291743,292298,89894,292298,16000,requires_full_admission_for_formula
+16000,cold_reverse_dependents,30,147615,392488,481690,88214,481690,15999,requires_full_admission

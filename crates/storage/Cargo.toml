@@ -12,6 +12,9 @@ keywords.workspace = true
 categories.workspace = true
 rust-version.workspace = true
 
+[features]
+issue-175-research = ["tachiko-semantic-core/issue-175-research"]
+
 [dependencies]
 serde.workspace = true
 serde_json = { workspace = true, features = ["arbitrary_precision", "raw_value", "unbounded_depth"] }
@@ -21,6 +24,9 @@ uuid = { workspace = true, features = ["v5"] }
 ryu-js.workspace = true
 sha2.workspace = true
 renamore.workspace = true
+
+[dev-dependencies]
+tachiko-semantic-core = { version = "0.1.0", path = "../semantic-core", features = ["issue-175-research"] }
 
 [lints]
 workspace = true

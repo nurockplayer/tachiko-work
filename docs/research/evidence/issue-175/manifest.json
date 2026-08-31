@@ -1,0 +1,152 @@
+{
+  "schema_version": "tachiko-research-benchmark-manifest/v1",
+  "experiment": "issue-175-exact-global-spine-r2",
+  "issue": "https://github.com/nurockplayer/tachiko-work/issues/175",
+  "parent_issue": "https://github.com/nurockplayer/tachiko-work/issues/174",
+  "pull_request": "https://github.com/nurockplayer/tachiko-work/pull/195",
+  "measurement_head": "01ef8dc0ffd69a5b5314854ae621b7bb5706ed67",
+  "artifact_measurement_heads": {
+    "a0_a1_c_f_latency_and_rss": "4ed7f994825edb8a3bb6f1ac4a5cc5d940f74387",
+    "b_progressive_interference": "01ef8dc0ffd69a5b5314854ae621b7bb5706ed67",
+    "d_resampled_pin_and_first_materialization": "8ce554191e36496dedb57322fc1ab059a205ab07",
+    "e1_bounded_sidecar_and_exact_a1_lifetime": "01ef8dc0ffd69a5b5314854ae621b7bb5706ed67",
+    "e2_atomic_git_snapshot_and_exact_a1_comparator": "01ef8dc0ffd69a5b5314854ae621b7bb5706ed67",
+    "a0_aggregate_counter_correction": "607e9208da2fdf71e0741d7ff7efceec890ac6fc",
+    "admitted_output_full_oracle_and_metadata_cancellation": "d3edb03b0e2d1bd1fb7690aa09d5a23f92926666",
+    "cancellable_accepted_semantic_validation": "b31d1429b96d98427631a1eaab8a39f79232bdb1",
+    "research_isolated_semantic_cancellation_and_host_formula_poll": "878e62c836cb06fd3cf58061567b989c64451213",
+    "closure_typed_large_record_fast_path": "3faece0fcbc8c7ef7e2734f404afb8d00c2a2ed4"
+  },
+  "artifact_provenance_by_artifact": {
+    "bounded-materialization-raw.csv": {
+      "measurement_head": "8ce554191e36496dedb57322fc1ab059a205ab07",
+      "base_head": "022a14d18503477aa7e20f6fca102f9e85dce740"
+    },
+    "dirty-sidecar-raw.csv": {
+      "measurement_head": "01ef8dc0ffd69a5b5314854ae621b7bb5706ed67",
+      "base_head": "c3b5ad2aad04e6b79594dbc7f79199591997bdc4"
+    },
+    "git-sidecar-raw.csv": {
+      "measurement_head": "01ef8dc0ffd69a5b5314854ae621b7bb5706ed67",
+      "base_head": "c3b5ad2aad04e6b79594dbc7f79199591997bdc4"
+    },
+    "host-open-raw.csv": {
+      "measurement_head": "4ed7f994825edb8a3bb6f1ac4a5cc5d940f74387",
+      "base_head": "022a14d18503477aa7e20f6fca102f9e85dce740"
+    },
+    "matrix-raw.csv": {
+      "measurement_head": "4ed7f994825edb8a3bb6f1ac4a5cc5d940f74387",
+      "base_head": "022a14d18503477aa7e20f6fca102f9e85dce740"
+    },
+    "progressive-background-raw.csv": {
+      "measurement_head": "01ef8dc0ffd69a5b5314854ae621b7bb5706ed67",
+      "base_head": "c3b5ad2aad04e6b79594dbc7f79199591997bdc4"
+    },
+    "retained-rss-raw.csv": {
+      "measurement_head": "4ed7f994825edb8a3bb6f1ac4a5cc5d940f74387",
+      "base_head": "022a14d18503477aa7e20f6fca102f9e85dce740"
+    },
+    "storage-rss-raw.csv": {
+      "measurement_head": "4ed7f994825edb8a3bb6f1ac4a5cc5d940f74387",
+      "base_head": "022a14d18503477aa7e20f6fca102f9e85dce740"
+    }
+  },
+  "base_head": "c3b5ad2aad04e6b79594dbc7f79199591997bdc4",
+  "captured_at_utc": "2026-08-30T22:26:38Z",
+  "cache_state": "os_cache_warm",
+  "cold_cache_status": "unavailable: /usr/sbin/purge returned Operation not permitted",
+  "percentile_method": "nearest-rank: sorted_samples[ceil(n * p) - 1]",
+  "environment": {
+    "host": "local",
+    "os": "macOS 15.7.4 (24G517)",
+    "architecture": "arm64",
+    "cpu": "Apple M2 Pro",
+    "memory_bytes": 17179869184,
+    "storage": "APPLE SSD AP0512Z, 500277792768 bytes, APFS/NVMe",
+    "rustc": "1.97.1 (8bab26f4f 2026-07-14)",
+    "cargo": "1.97.1 (c980f4866 2026-06-30)",
+    "git": "2.55.0",
+    "build_profile": "release"
+  },
+  "closure_validation": {
+    "head": "3faece0fcbc8c7ef7e2734f404afb8d00c2a2ed4",
+    "command": "cargo test -p tachiko-storage issue_175_ --locked",
+    "passed": 26,
+    "failed": 0,
+    "ignored": 11,
+    "filtered_out": 16
+  },
+  "method_notes": [
+    "Latency samples are OS-cache-warm. Matrix/A0/A1/B/C/D are process/allocator-warm within each ignored release test; E1/E2 setup, exact-A1, and reuse each execute in separate fresh child processes, with child-internal timings and process-wall timings reported separately.",
+    "RSS samples run each arm in a fresh direct release-test child and use macOS /usr/bin/time -l maximum resident set size bytes plus a steady ps sample.",
+    "Fixture generation and initial materialization occur outside timed admission samples. E1/E2 sidecar setup executes in a separate child that exits before paired sampling. E2 validated reuse and full_git_snapshot_a1_us each include an independent Git identity check, object pin, and exact-snapshot materialization.",
+    "A0 and A1 host samples start from the same filesystem source and report the same physical source bytes read; every A0 parser, nesting, record, AST, reference, and dependency counter aggregates its admission plus ordinary-load decode.",
+    "Matrix source SHA-256 values are framed hashes of the exact 18-file canonical source tree.",
+    "A0/A1/C/F timing and RSS rows were regenerated at 4ed7f994 after the cancellation and dependency-edge accounting corrections; D rows were regenerated at 8ce55419 after per-observation pinning; A0 aggregate logical-decode counters were corrected at 607e920; admitted A0/A1 outputs were wired to the accepted calculation and workspace oracles and metadata reads gained cancellation boundaries at d3edb03; accepted semantic validation gained internal cancellation polling at b31d142; at 878e62c ordinary production validation was restored exactly to main while controlled traversal was isolated behind the research feature. After mechanical reconciliation with main c3b5ad2, B/E1/E2 alone were regenerated at 01ef8dc: B measures the bounded token path for both successful interference and cancellation; E1/E2 use fresh setup/A1/reuse child processes, counterbalanced pair order, explicit PIDs, monotonic validated-reuse/full-open timing, and process-wall timing. At 3faece0 the closure-only fast path replaced an invalid-representation oversized-record result with typed RequiresForegroundExactAdmission and proved ordinary exact A1 admits the same source. A0/A1/C/D/E/F and B were not recaptured because the closure does not materially change their timed measured paths or raw evidence contracts.",
+    "D first_exact_bounded_us samples a fresh complete source pin plus the first materialization in every repetition; repeated_materialize_us is a separate immediately repeated lookup on that same pinned snapshot.",
+    "The earlier 1b3d75de and bd115c8 captures, concurrently launched or interrupted exploratory E2 runs, and HOLD-era unpushed d527238 recaptures were discarded; no superseded row is present in the committed CSV files.",
+    "The sidecar is a JSON envelope, not SQLite; sidecar_bytes is the complete serialized JSON byte length and there are no WAL/SHM files.",
+    "Validated E1/E2 reuse rejects an envelope above an eight-times-source-plus-1-MiB byte budget (also globally capped at 512 MiB) before UTF-8/JSON parsing, pins all 18 source files, independently re-derives the complete Structural Index, and compares every sidecar fact before reuse. Setup, exact-A1, and reuse run in separate fresh processes; A1 receives no sidecar path/state. E2 resolves HEAD once per child, then reads the exact Git blob object IDs bound by object format, captured commit, tree, path, and mode; it does not derive trusted facts from the mutable worktree. E2 full_git_snapshot_a1_us independently repeats Git identity and blob pinning, materializes those exact bytes, and runs exact A1 admission. Identity-plus-decode remains a non-authoritative decomposition metric; total_validated_reuse_us and full_sidecar_open_us are monotonic child-side measurements.",
+    "B alternates baseline_then_background and background_then_baseline order, waits for at least 64 completed entity records while asserting that the background worker remains active, and records arm_order plus the observed background_started_after_records in every raw row. Both successful and cancelled background workers use the controlled bounded token path. All five ratios above 1.10 occur in background_then_baseline (p95 1.683), while baseline_then_background has p95 1.039; the combined p95 1.638 is order-confounded and the no-regression gate is inconclusive/not attributable.",
+    "Background A1 reads manifest and schemas through unbounded but cancellation-polled chunks and checks cancellation before and after metadata parsing and canonical rendering; this preserves exact admission size semantics.",
+    "Background A1 uses a research-feature-only copy of the accepted semantic validator with cancellation polling at schema, entity, field, and formula-node boundaries; ordinary non-cancellable production validation remains exactly on the main implementation path.",
+    "Controlled background entity records poll cancellation during bounded reads and check cancellation after UTF-8, strict inspection, DTO decode, work counting, canonical rendering, and semantic conversion. Above a 64 KiB post-read work budget the research fast path returns typed RequiresForegroundExactAdmission rather than classifying canonical source as invalid; a deterministic regression proves ordinary exact A1 admits the same source and reaches SemanticCurrent. Separate tests prove cancellation after a completed large-record read and no SemanticCurrent publication.",
+    "No failed or cancelled measurement row was silently removed. Cancellation outcomes are explicit in progressive-background-raw.csv."
+  ],
+  "row_context": {
+    "schema_version": "tachiko-research-benchmark-row/v1",
+    "experiment_suite": "issue-175-exact-global-spine-r2",
+    "base_head": "c3b5ad2aad04e6b79594dbc7f79199591997bdc4",
+    "fixture_experiment_by_artifact": {
+      "bounded-materialization-raw.csv": "bounded_materialization",
+      "dirty-sidecar-raw.csv": "dirty_sidecar",
+      "git-sidecar-raw.csv": "git_sidecar",
+      "host-open-raw.csv": "host_open",
+      "matrix-raw.csv": "matrix",
+      "progressive-background-raw.csv": "B-progressive",
+      "retained-rss-raw.csv": "retained_rss",
+      "storage-rss-raw.csv": "storage_rss"
+    },
+    "fixture_column_aliases_by_artifact": {
+      "progressive-background-raw.csv": {
+        "workload": "foreground_contract"
+      }
+    },
+    "fixture_join": "Derive experiment from fixture_experiment_by_artifact, apply any declared fixture_column_aliases_by_artifact, then join each raw row to fixture-manifest.csv by experiment/workload/entities/source_sha256; where a raw source_sha256 is absent, use the matching literal unknown fixture row. Inherit exact measurement_head and base_head from artifact_provenance_by_artifact for the containing raw artifact.",
+    "default_outcome": "success",
+    "explicit_outcome_exception": "progressive-background-raw.csv records cancellation_outcome=cancelled for every cancellation-pressure row.",
+    "oracle_status": "The actual A0 and A1 admitted outputs are exactly equal to their source Documents under success, cold numeric mutation, SCC, and evaluation-failure pressure, and each output is fed directly to calculate_complete and workspace validation stable_observations for comparison with the source oracle. C/D never claim SemanticCurrent and return requires_full_admission for unsupported formula/validation proof. The large-record research fast path returns RequiresForegroundExactAdmission, and ordinary exact A1 fallback proves the same canonical source reaches SemanticCurrent.",
+    "phase_boundary": "HostReady is the already-running release test process and is excluded; no shell/UI milestone is measured. SourceKnown, first source preview, SemanticCurrent, bounded-result, scan, sidecar, cancellation, and RSS fields are explicit where applicable.",
+    "unknown_metadata": "Unknown values are the literal unknown in fixture-manifest.csv; no unavailable per-row metadata is inferred."
+  },
+  "commands": [
+    "TACHIKO_ISSUE_175_MATRIX_ENTITIES=1000,4000,16000 TACHIKO_ISSUE_175_REPETITIONS=20 cargo test --release -p tachiko-storage issue_175_full_workload_matrix_raw_samples --locked -- --ignored --nocapture",
+    "TACHIKO_ISSUE_175_MATRIX_ENTITIES=64000 TACHIKO_ISSUE_175_MATRIX_WORKLOADS=payload_unicode_long_record,reference_heavy,mixed_realistic_game_data TACHIKO_ISSUE_175_REPETITIONS=20 cargo test --release -p tachiko-storage issue_175_full_workload_matrix_raw_samples --locked -- --ignored --nocapture",
+    "TACHIKO_ISSUE_175_ENTITY_COUNTS=1000,4000,16000 TACHIKO_ISSUE_175_REPETITIONS=30 cargo test --release -p tachiko-storage issue_175_a0_a1_host_open_raw_samples --locked -- --ignored --nocapture",
+    "TACHIKO_ISSUE_175_BACKGROUND_ENTITIES=16000 TACHIKO_ISSUE_175_FOREGROUND_REQUESTS=200 TACHIKO_ISSUE_175_FOREGROUND_BATCH_OPS=256 TACHIKO_ISSUE_175_REPETITIONS=20 cargo test --release -p tachiko-storage issue_175_progressive_background_interference_and_cancellation --locked -- --ignored --nocapture",
+    "TACHIKO_ISSUE_175_ENTITY_COUNTS=1000,4000,16000 TACHIKO_ISSUE_175_REPETITIONS=30 cargo test --release -p tachiko-storage issue_175_bounded_materialization_raw_samples --locked -- --ignored --nocapture",
+    "TACHIKO_ISSUE_175_ENTITY_COUNTS=1000,4000,16000 TACHIKO_ISSUE_175_REPETITIONS=30 cargo test --release -p tachiko-storage issue_175_dirty_sidecar_raw_samples --locked -- --ignored --nocapture",
+    "TACHIKO_ISSUE_175_GIT_ENTITIES=1000 TACHIKO_ISSUE_175_REPETITIONS=30 cargo test --release -p tachiko-storage issue_175_git_sidecar_raw_samples --locked -- --ignored --nocapture",
+    "TACHIKO_ISSUE_175_GIT_ENTITIES=4000 TACHIKO_ISSUE_175_REPETITIONS=30 cargo test --release -p tachiko-storage issue_175_git_sidecar_raw_samples --locked -- --ignored --nocapture",
+    "TACHIKO_ISSUE_175_GIT_ENTITIES=16000 TACHIKO_ISSUE_175_REPETITIONS=30 cargo test --release -p tachiko-storage issue_175_git_sidecar_raw_samples --locked -- --ignored --nocapture",
+    "TACHIKO_ISSUE_175_RSS_ENTITIES=16000 TACHIKO_ISSUE_175_RSS_REPETITIONS=5 cargo test --release -p tachiko-storage issue_175_fresh_process_rss_samples --locked -- --ignored --nocapture",
+    "TACHIKO_ISSUE_175_RETAINED_RSS_ENTITIES=16000 TACHIKO_ISSUE_175_RSS_REPETITIONS=5 cargo test --release -p tachiko-workspace-engine --test issue_175_residency issue_175_retained_state_rss_samples --locked -- --ignored --nocapture"
+  ],
+  "artifacts_sha256": {
+    "bounded-materialization-raw.csv": "ef3f97d283ba09fc685efc06d71be886093e795624f9a1ad3f2b038f63e209a4",
+    "bounded-materialization-summary.csv": "2409626e420a4659b70dadc8d5b7cfa38089f9ba872dfc3c947e76e6abb5e847",
+    "dirty-sidecar-raw.csv": "d548a3b0ffac194d3cccc104d7d3bd4a9ca38c2682624939e5fd857c61b9228b",
+    "fixture-manifest.csv": "7f1c0d63d00e5d4209a7f28b154ddcdb3959def3b14dd9aff550072f6f7871b1",
+    "git-sidecar-raw.csv": "76911e8dc930332476845dd432f4587011c3b36a796c2b96107314142f1ebf45",
+    "host-open-raw.csv": "4a4afe3a22beb6c755cd8b2e271ac151f277e9f305fe3795a4cf0eb254170eff",
+    "host-open-summary.csv": "2ab12fafb5c91d1b49f515814b1ecbf3c2c38ef4845a5a8710b5d6bf7a6b4100",
+    "matrix-raw.csv": "43909997283bf9fe12e8891dcee018c5d362d32c3ae397b0f2fc63e30647bd8a",
+    "matrix-summary.csv": "90d86f77df4995b09fe66f739f24dd985a2c66ee92c28a4230a692b2cfa0037d",
+    "progressive-background-raw.csv": "065ea75749363f51a741570985d9d1d267e71ea745d9634928e93a5ccfe4df00",
+    "progressive-background-summary.csv": "cc14408949a8ec58ae314b76807f55f94d96f1300852e1b2e70cd46ae7e5f096",
+    "retained-rss-raw.csv": "cc51c591adeb5cfe77bf1568b80accb459ffdc12e16b33b0716bdd1ac839b788",
+    "rss-summary.csv": "de8f715f5c428eb7414b77a494ba5a2bac7bc87b312acf8c7cde61dad89a3a83",
+    "sidecar-summary.csv": "f393f80f6e0f66fdaac5c4d0f5a5d52ebd9e94b846e12bd51b5cd24f32031398",
+    "storage-rss-raw.csv": "f2f1888c7156422dbbbbd52942f6285a4535085cab41f69237e8efb909ccf56c"
+  }
+}

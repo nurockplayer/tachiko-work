@@ -1,0 +1,16 @@
+arm,workload,entities,repetition,steady_rss_bytes,peak_rss_bytes
+baseline,formula_per_entity,16000,0,1736704,1818624
+document,formula_per_entity,16000,0,26066944,26083328
+resident_document_and_derived,formula_per_entity,16000,0,94027776,94060544
+baseline,formula_per_entity,16000,1,1753088,1802240
+document,formula_per_entity,16000,1,26066944,26099712
+resident_document_and_derived,formula_per_entity,16000,1,98713600,98729984
+baseline,formula_per_entity,16000,2,1753088,1802240
+document,formula_per_entity,16000,2,25952256,26017792
+resident_document_and_derived,formula_per_entity,16000,2,93863936,93880320
+baseline,formula_per_entity,16000,3,1753088,1802240
+document,formula_per_entity,16000,3,26050560,26099712
+resident_document_and_derived,formula_per_entity,16000,3,92766208,92782592
+baseline,formula_per_entity,16000,4,1753088,1802240
+document,formula_per_entity,16000,4,26083328,26116096
+resident_document_and_derived,formula_per_entity,16000,4,93290496,93323264
