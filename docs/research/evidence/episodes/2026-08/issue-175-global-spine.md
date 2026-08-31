@@ -24,8 +24,8 @@ links:
     - https://github.com/nurockplayer/tachiko-work/pull/195
   adrs:
     - ../../../../decisions/ADR-0017-versioned-storage-and-canonical-representation.md
-    - ../../../../decisions/ADR-0018-formula-semantics-and-complete-calculation.md
-    - ../../../../decisions/ADR-0019-validation-authority-and-reporting.md
+    - ../../../../decisions/ADR-0018-bound-formulas-and-deterministic-binary64.md
+    - ../../../../decisions/ADR-0019-staged-semantic-validation-and-diagnostics.md
     - ../../../../decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md
   specs:
     - ../../../../specs/roproj-format.md
