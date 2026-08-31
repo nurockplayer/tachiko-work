@@ -72,8 +72,8 @@ not converted into a structural conflict kind.
 Future adapters may use bounded retained-history or selectively justified
 CRDT/OT techniques, but they may not make replay authoritative, replace a
 complete standalone snapshot, or use Git as semantic identity. ADR-0030 resolves
-Issue #45 without making delta an operation or event. ADR-0031 resolves Issue
-#46's deterministic structural conflict evidence without selecting production
-DTO/transport/runtime realization. Issues #47–#50 own the remaining cross-version,
-operation/revision/event, history/checkpoint/Git-association, and causality/CRDT
-mechanics.
+Issue #45 without making delta an operation or event. The ADR-0031 decision
+resolves Issue #46's deterministic structural conflict evidence without selecting
+production DTO/transport/runtime realization. Issues #47–#50 own the remaining
+cross-version, operation/revision/event, history/checkpoint/Git-association, and
+causality/CRDT mechanics.
