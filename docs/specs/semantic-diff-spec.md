@@ -127,11 +127,13 @@ Sort the direct facts lexicographically by this logical tuple:
 ```
 
 Typed target IDs appear in the tuple in the order shown in the stable-target
-table. Each supported Semantic API/identifier mapping MUST define one exact
-total order for each opaque ID type; `tachiko.semantic-delta/v1` uses that
-mapping's canonical stable-ID order without interpreting ID contents. Complete
-schema and entity definitions order their field entries by the same canonical
-`FieldId` order.
+table. For every typed stable ID, `tachiko.semantic-delta/v1` compares the exact
+logical identifier Unicode scalar sequence lexicographically by scalar value,
+with shorter equal-prefix sequences first and with no normalization, case
+folding, locale, or interpretation of identifier contents. This one order is
+part of the v1 logical contract and is independent of transport or storage
+encoding. Complete schema and entity definitions order their field entries by
+the same `FieldId` rule.
 
 No other value participates in ordering. In particular, ordering MUST NOT use
 filesystem paths, serialized member order, locale, mutable human keys,

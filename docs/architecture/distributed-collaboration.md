@@ -1,10 +1,12 @@
 # Distributed Collaboration Architecture
 
-Decision state: Mixed — ADR-0029 layer boundary Accepted; collaboration
-mechanics Open Question
+Decision state: Mixed — ADR-0029 layer boundary and ADR-0030 canonical delta
+evidence Accepted; collaboration mechanics Open Question
 
 Authority: [ADR-0011](../decisions/ADR-0011-semantic-three-way-merge.md) and
-[ADR-0029](../decisions/ADR-0029-current-state-authority-and-optional-history.md)
+[ADR-0029](../decisions/ADR-0029-current-state-authority-and-optional-history.md),
+with canonical direct-state delta evidence defined by
+[ADR-0030](../decisions/ADR-0030-canonical-semantic-delta.md)
 
 ## Principle
 
@@ -50,5 +52,6 @@ optional history / collaboration / Git adapters
 
 Future adapters may use bounded retained-history or selectively justified
 CRDT/OT techniques, but they may not make replay authoritative, replace a
-complete standalone snapshot, or use Git as semantic identity. #45, #46, and
-Issues #48–#50 own the deferred mechanics.
+complete standalone snapshot, or use Git as semantic identity. ADR-0030 resolves
+#45 without making delta an operation or event. #46 and Issues #48–#50 own the
+remaining deferred mechanics.
