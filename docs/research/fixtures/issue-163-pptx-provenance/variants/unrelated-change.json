@@ -1,0 +1,20 @@
+{
+  "profile": "tachiko.issue-163.research-fixture-variant/v1",
+  "id": "unrelated-change",
+  "description": "Change one research-only source that no projected fragment consumes.",
+  "changes": [
+    {
+      "source_id": "fixture:unrelated:localization-note",
+      "set": {
+        "text": "Japanese and French localization reviews remain pending for the fictional Moonfall title."
+      }
+    }
+  ],
+  "expected": {
+    "change_class": "source-unrelated",
+    "changed_source_ids": [
+      "fixture:unrelated:localization-note"
+    ],
+    "stale_adapter_elements": []
+  }
+}
