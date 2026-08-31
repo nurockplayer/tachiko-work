@@ -2,9 +2,9 @@
 
 Decision state: Normative Accepted logical conflict contract under
 [ADR-0031](../decisions/ADR-0031-semantic-merge-conflict-protocol.md), preserving
-the merge behavior accepted by
-[ADR-0011](../decisions/ADR-0011-semantic-three-way-merge.md) and the direct-state
-evidence boundary accepted by
+ADR-0011's merge laws except for the explicit ADR-0031 amendment that makes
+`DocumentId` same-Document admission/continuity identity rather than a mergeable
+facet, and preserving the direct-state evidence boundary accepted by
 [ADR-0030](../decisions/ADR-0030-canonical-semantic-delta.md).
 
 Authority: [ADR-0031](../decisions/ADR-0031-semantic-merge-conflict-protocol.md)
@@ -12,8 +12,9 @@ Authority: [ADR-0031](../decisions/ADR-0031-semantic-merge-conflict-protocol.md)
 Decision issue: [#46](https://github.com/nurockplayer/tachiko-work/issues/46)
 
 The current `merge-engine` Rust conflict shape is implementation evidence. Its
-path-oriented address and concrete enum/serialization shape are not this
-protocol DTO and must not be treated as permanent public meaning.
+path-oriented address, concrete enum/serialization shape, and legacy
+three-way-selection of `Document.id` are not this protocol DTO and must not be
+treated as permanent public meaning.
 
 ## Principle
 
@@ -36,12 +37,19 @@ SDK shape.
 
 `base`, `left`, and `right` MUST be admitted semantic `Document` states under the
 same supported semantic contract. All three MUST have the same `DocumentId`.
-A different-Document input is an admission/contract failure, not a conflict.
+A different-Document input is an admission/contract failure, not a conflict and
+not a one-sided identity change.
+
+This same-Document rule is the explicit ADR-0031 amendment to ADR-0011's
+original v0.1 merge surface, which treated `Document.id` as an ordinary
+three-way-selected unit. Document title and the remaining ADR-0011 merge laws
+are unchanged. Until separate production realization work lands, the current
+merge-engine behavior that still selects `Document.id` is implementation lag.
 
 The existing CLI's `ours` and `theirs` terminology maps to logical `left` and
 `right`. Those presentation labels are not conflict identity.
 
-Structural reconciliation follows ADR-0011:
+Structural reconciliation otherwise follows ADR-0011:
 
 - equal branch facts pass through;
 - a fact changed only on one side is accepted;
@@ -64,7 +72,9 @@ Each conflict uses one typed stable target plus one direct facet:
 
 The target families and subject ranks are the same as
 `tachiko.semantic-delta/v1`. Stable IDs use that contract's exact logical Unicode
-scalar ordering.
+scalar ordering. The Document target's `DocumentId` identifies the continuing
+Document whose `title` may conflict; `DocumentId` itself is not a direct conflict
+facet.
 
 The `subject` facet is used only where complete direct subject state is needed
 for create/delete-level conflict evidence. A complete schema subject contains
@@ -252,14 +262,16 @@ base/left/right facts.
 
 The current `merge-engine` demonstrates deterministic three-way selection,
 typed base/ours/theirs payload, stable-ID-aware semantic behavior inherited from
-the current model, and no partial output on conflict. Its current `path` address
-and concrete Rust conflict shape are Provisional implementation evidence and do
-not satisfy the complete logical v1 protocol above by themselves.
+the current model, and no partial output on conflict. Its current `path` address,
+concrete Rust conflict shape, and three-way selection of `Document.id` are
+Provisional implementation evidence and do not satisfy the complete logical v1
+protocol above by themselves.
 
 This authority/specification does not authorize production DTO, codec, CLI
 output, WASM/public transport, or merge-engine changes. After this authority is
-merged, a separate Ready implementation Issue must own production realization
-and executable fixtures for the accepted protocol.
+merged, a separate Ready implementation Issue must own production realization,
+including same-Document admission enforcement, removal of mergeable
+`Document.id`, and executable fixtures for the accepted protocol.
 
 Issues [#47](https://github.com/nurockplayer/tachiko-work/issues/47),
 [#48](https://github.com/nurockplayer/tachiko-work/issues/48),
