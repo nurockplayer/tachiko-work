@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted
+Accepted. This ADR amends only ADR-0011's original treatment of `DocumentId` as
+a mergeable three-way-selected unit; the remaining ADR-0011 merge laws remain
+Accepted.
 
 Decision issue: [#46](https://github.com/nurockplayer/tachiko-work/issues/46)
 
@@ -21,17 +23,26 @@ ADR-0011 already accepts deterministic model-level three-way merge over
 `base / ours / theirs`, including same-final-value and one-sided merge,
 independent semantic-field composition, delete/modify conflicts, incompatible
 concurrent additions, and validation/calculation of a conflict-free candidate.
-The current merge engine proves that behavior, but its internal path-oriented
-conflict address is implementation evidence rather than a durable public
-conflict identity.
+The original v0.1 merge surface also applied ordinary three-way selection to
+`Document.id`. The current merge engine proves that historical behavior, but its
+path-oriented conflict address and mergeable-DocumentId treatment are
+implementation evidence rather than the final protocol boundary.
 
-ADR-0015 and ADR-0030 now provide the typed stable identity and direct-state
-vocabulary needed to harden the remaining machine conflict contract without
-turning storage paths, Git coordinates, or another patch language into semantic
-authority. ADR-0019 and ADR-0018 already own post-reconciliation semantic
-validation and formula correctness.
+ADR-0015 and ADR-0030 now establish stable document identity and require direct
+A-to-B Semantic Delta comparison to stay within one continuing `DocumentId`.
+Human authority for Issue #46 approved the same continuity rule for three-way
+reconciliation: different-Document inputs are outside one merge occurrence,
+not a semantic disagreement within it. This ADR therefore makes that narrow
+amendment to ADR-0011 explicitly rather than silently pretending the older
+`document identity/title` wording never included identity.
 
-The remaining M06 requirement is therefore narrower than redesigning merge:
+ADR-0030 also provides the typed stable target and direct-state vocabulary needed
+to harden the remaining machine conflict contract without turning storage paths,
+Git coordinates, or another patch language into semantic authority. ADR-0019 and
+ADR-0018 already own post-reconciliation semantic validation and formula
+correctness.
+
+The remaining M06 requirement is otherwise narrower than redesigning merge:
 define a versioned, deterministic conflict object that independent clients can
 compare, order, explain, and project while keeping mutation, validation,
 history, and Git boundaries separate.
@@ -41,8 +52,16 @@ history, and Git boundaries separate.
 ### 1. Merge remains state reconciliation, not mutation
 
 `base`, `left`, and `right` are admitted semantic states for one continuing
-`DocumentId` under the same supported semantic contract. A different-Document
-input is an admission/contract failure, not a semantic conflict.
+`DocumentId` under the same supported semantic contract. All three MUST carry
+that same `DocumentId`. A different-Document input is an admission/contract
+failure, not a semantic conflict and not a one-sided identity change.
+
+This supersedes only ADR-0011's original treatment of `Document.id` as an
+ordinary mergeable semantic unit. Document title and all other ADR-0011 merge
+facets/laws remain Accepted. The current production merge-engine behavior that
+still three-way-selects `Document.id` is implementation lag and must be removed
+by the separately Ready ADR-0031 production realization work; this authority PR
+does not alter runtime code.
 
 `Command | AtomicBatch` and `SemanticPatch` remain the mutation/proposal
 authority. Canonical Semantic Delta may be derived for `base -> left` and
@@ -61,6 +80,10 @@ The v1 logical contract reuses ADR-0030 target families:
 - schema field: `(SchemaId, FieldId)`;
 - entity: `EntityId`; and
 - stored entity field: `(EntityId, SchemaId, FieldId)`.
+
+The document target uses the continuing `DocumentId` only to identify the
+Document whose direct `title` facet may conflict; `DocumentId` itself is never a
+conflict facet.
 
 A target is paired with one closed direct facet that identifies the disputed
 semantic fact. Facets are limited to document title; complete schema subject or
@@ -178,15 +201,20 @@ conflict identity or authority.
 
 - Human, CLI, GUI, Git, and AI clients can share one deterministic logical
   conflict contract while rendering different explanations.
+- Three-way reconciliation is now explicitly scoped to one continuing
+  `DocumentId`, matching ADR-0015/ADR-0030 continuity; a changed document ID is
+  rejected as different-document input rather than merged or conflicted.
 - Stable-ID rename continuity remains distinct from delete/create replacement.
 - Canonical delta and canonical conflict evidence compose without turning either
   into mutation input.
 - Validation/calculation stays single-sourced instead of being duplicated inside
   merge conflict classification.
-- Current path-oriented merge-engine conflict output is now explicit
-  implementation lag, not protocol authority.
-- Production conflict DTO/codec/runtime changes require a separately Ready
-  implementation Issue after this authority lands.
+- Current path-oriented merge-engine conflict output and current
+  three-way-selection of `Document.id` are explicit implementation lag, not
+  protocol authority.
+- Production conflict DTO/codec/runtime changes, including the DocumentId
+  admission correction, require a separately Ready implementation Issue after
+  this authority lands.
 - #48 may define operation/revision/optional-event taxonomy without reopening
   merge conflict meaning; #49/#50 retain history/checkpoint and causality/CRDT
   work.
@@ -195,6 +223,9 @@ conflict identity or authority.
 
 - **Path/JSON/Git coordinates as conflict identity:** rejected because
   representation and repository coordinates are not semantic identity.
+- **Merging divergent `DocumentId` values:** rejected by the Human-approved v1
+  continuity boundary; a merge reconciles states of one continuing semantic
+  document rather than choosing which document identity survives.
 - **Semantic Delta as an apply/merge program:** rejected because ADR-0030 is
   derived evidence and Command/SemanticPatch already own mutation intent.
 - **Open-ended conflict kinds:** rejected because validation/calculation already
