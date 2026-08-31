@@ -14,9 +14,9 @@ use tachiko_storage::{
     encode_roproj_v1,
 };
 use tachiko_workspace_engine::{
-    CalculationFailure, Document, Expression, FieldAddress, FieldDefinition, FieldId, FieldKey,
-    FieldRef, FieldType, IdGenerator, Number, SemanticIdKind, StarterTemplate, Value,
-    WorkspaceError, analyze_field, create_document,
+    CalculationFailure, Document, Expression, FieldDefinition, FieldId, FieldKey, FieldRef,
+    FieldType, IdGenerator, Number, SemanticIdKind, StarterTemplate, Value, WorkspaceError,
+    analyze_field, create_document,
     formula_operations::FormulaCalculationOutcome,
     patch_lifecycle::{
         AuthorizationAction, AuthorizationDomainId, AuthorizationPolicyVersion, DocumentScopeId,
@@ -33,7 +33,6 @@ use thiserror::Error;
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 
-const DEFAULT_COLLECTION: &str = "weapons";
 const MAX_COLLECTIONS: usize = 32;
 const MAX_TABLE_FIELDS: usize = 32;
 const MAX_TABLE_ROWS: usize = 32;
@@ -49,6 +48,7 @@ pub(crate) const MAX_PROJECT_TRANSFER_BYTES: usize = 64 * 1024 * 1024;
 const DESIGNER_PRINCIPAL: &str = "designer-human";
 const PREFLIGHT_OCCURRENCE: &str = "00000000-0000-4000-8000-000000000000";
 const PROJECT_BUNDLE_MAGIC: &[u8; 8] = b"TWDPROJ1";
+const MOONFALL_BOOLEAN_FIXTURE_COLLECTION: &str = "weapons";
 
 /// App-private requests accepted by the Designer runtime adapter.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -87,14 +87,6 @@ pub enum DesignerResponse {
 pub struct OpenedProjection {
     pub bootstrap: BootstrapProjection,
     pub table: TableProjection,
-    pub control: ControlProjection,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct ControlProjection {
-    pub target: FieldTarget,
-    pub value: f64,
-    pub revision: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -103,7 +95,6 @@ pub struct BootstrapProjection {
     pub revision: String,
     pub default_collection: String,
     pub collections: Vec<CollectionSummary>,
-    pub control_field: FieldTarget,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -297,7 +288,7 @@ pub enum DesignerError {
         "project transfer exceeds the private {maximum}-byte host boundary (received {actual} bytes)"
     )]
     ProjectTransferTooLarge { actual: usize, maximum: usize },
-    #[error("this canonical project is outside the bounded Moonfall Designer profile: {message}")]
+    #[error("this canonical project is outside the bounded Designer profile: {message}")]
     UnsupportedProject { message: String },
     #[error("the trusted host occurrence identity is invalid")]
     InvalidOccurrenceIdentity,
@@ -371,7 +362,7 @@ impl DesignerError {
 pub struct DesignerRuntime {
     title: String,
     document_scope: DocumentScopeId,
-    control_field: FieldTarget,
+    default_collection: String,
     collections: Vec<CollectionSummary>,
     collection_specs: BTreeMap<String, CollectionSpec>,
     formula_sources: BTreeMap<FieldRef, String>,
@@ -424,22 +415,15 @@ impl DesignerRuntime {
     pub fn from_document(document: Document, occurrence_id: &str) -> Result<Self, DesignerError> {
         ensure_cheap_document_profile(&document)?;
         validate(&document).map_err(|source| DesignerError::InvalidProjectWorkspace { source })?;
-        let control_field = document
-            .resolve_field(&FieldAddress::new("shop", "upgrade_cost"))
-            .map(|field| field_target(&field))
-            .map_err(|error| DesignerError::UnsupportedProject {
-                message: format!(
-                    "the required shop.upgrade_cost control formula is unavailable: {error}"
-                ),
-            })?;
         let collection_specs = collection_specs(&document);
+        let default_collection = select_default_collection(&collection_specs)?;
         let collections = collection_specs
             .values()
             .map(|collection| collection.summary.clone())
             .collect::<Vec<_>>();
         let title = document.title.clone();
         let document_scope = document_scope(occurrence_id, &document)?;
-        ensure_static_profile(&title, &control_field, &collections, &collection_specs)?;
+        ensure_static_profile(&title, &default_collection, &collections, &collection_specs)?;
         let formula_sources = formula_sources(&document)?;
         let principal = PrincipalId::from(DESIGNER_PRINCIPAL);
         let lifecycle = designer_lifecycle(&document_scope, &document, &principal)?;
@@ -447,7 +431,7 @@ impl DesignerRuntime {
         let runtime = Self {
             title,
             document_scope,
-            control_field,
+            default_collection,
             collections,
             collection_specs,
             formula_sources,
@@ -496,9 +480,8 @@ impl DesignerRuntime {
         BootstrapProjection {
             title: self.title.clone(),
             revision: self.session.revision().as_str().to_owned(),
-            default_collection: DEFAULT_COLLECTION.to_owned(),
+            default_collection: self.default_collection.clone(),
             collections: self.collections.clone(),
-            control_field: self.control_field.clone(),
         }
     }
 
@@ -541,25 +524,6 @@ impl DesignerRuntime {
                 message: format!("the worst-case post-edit refresh is not bounded: {error}"),
             }
         })?;
-        let control = self
-            .query_fields(
-                self.current_revision(),
-                std::slice::from_ref(&self.control_field),
-            )
-            .map_err(|error| DesignerError::UnsupportedProject {
-                message: error.to_string(),
-            })?;
-        if !matches!(
-            control
-                .fields
-                .first()
-                .and_then(|field| field.calculated.as_ref()),
-            Some(CalculationProjection::Value { .. })
-        ) {
-            return Err(DesignerError::UnsupportedProject {
-                message: "the required shop.upgrade_cost control formula is unavailable".to_owned(),
-            });
-        }
         Ok(())
     }
 
@@ -852,28 +816,7 @@ pub fn open_project(
     let candidate = DesignerRuntime::from_document(document, occurrence_id)?;
     let bootstrap = candidate.bootstrap_projection();
     let table = candidate.query_table(&bootstrap.default_collection)?;
-    let control_batch = candidate.query_fields(
-        &bootstrap.revision,
-        std::slice::from_ref(&bootstrap.control_field),
-    )?;
-    let control_value = control_batch
-        .fields
-        .first()
-        .and_then(|field| field.calculated.as_ref())
-        .and_then(CalculationProjection::number)
-        .ok_or_else(|| DesignerError::UnsupportedProject {
-            message: "the required shop.upgrade_cost control formula is unavailable".to_owned(),
-        })?;
-    let control = ControlProjection {
-        target: bootstrap.control_field.clone(),
-        value: control_value,
-        revision: bootstrap.revision.clone(),
-    };
-    let opened = OpenedProjection {
-        bootstrap,
-        table,
-        control,
-    };
+    let opened = OpenedProjection { bootstrap, table };
     ensure_projection_size(&opened)?;
     *runtime = Some(candidate);
     Ok(opened)
@@ -1195,6 +1138,24 @@ fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
         .collect()
 }
 
+fn select_default_collection(
+    collection_specs: &BTreeMap<String, CollectionSpec>,
+) -> Result<String, DesignerError> {
+    collection_specs
+        .values()
+        .max_by(|left, right| {
+            left.summary
+                .entity_count
+                .cmp(&right.summary.entity_count)
+                .then_with(|| left.columns.len().cmp(&right.columns.len()))
+                .then_with(|| right.summary.key.cmp(&left.summary.key))
+        })
+        .map(|collection| collection.summary.key.clone())
+        .ok_or_else(|| DesignerError::UnsupportedProject {
+            message: "the project does not contain a collection to display".to_owned(),
+        })
+}
+
 fn ensure_cheap_document_profile(document: &Document) -> Result<(), DesignerError> {
     let mut profile_string_bytes = 0usize;
     ensure_profile_string(
@@ -1209,15 +1170,6 @@ fn ensure_cheap_document_profile(document: &Document) -> Result<(), DesignerErro
                 "the project advertises {} collections; the bounded maximum is {MAX_COLLECTIONS}",
                 document.schemas.len()
             ),
-        });
-    }
-    if !document
-        .schemas
-        .values()
-        .any(|schema| schema.key.as_str() == DEFAULT_COLLECTION)
-    {
-        return Err(DesignerError::UnsupportedProject {
-            message: format!("the required '{DEFAULT_COLLECTION}' collection is unavailable"),
         });
     }
     for (schema_id, schema) in &document.schemas {
@@ -1437,7 +1389,7 @@ fn ensure_formula_reference_profile(
 
 fn ensure_static_profile(
     title: &str,
-    control_field: &FieldTarget,
+    default_collection: &str,
     collections: &[CollectionSummary],
     collection_specs: &BTreeMap<String, CollectionSpec>,
 ) -> Result<(), DesignerError> {
@@ -1449,9 +1401,9 @@ fn ensure_static_profile(
             ),
         });
     }
-    if !collection_specs.contains_key(DEFAULT_COLLECTION) {
+    if !collection_specs.contains_key(default_collection) {
         return Err(DesignerError::UnsupportedProject {
-            message: format!("the required '{DEFAULT_COLLECTION}' collection is unavailable"),
+            message: format!("the selected '{default_collection}' collection is unavailable"),
         });
     }
     for collection in collection_specs.values() {
@@ -1468,9 +1420,8 @@ fn ensure_static_profile(
     let bootstrap = BootstrapProjection {
         title: title.to_owned(),
         revision: "resident/0".to_owned(),
-        default_collection: DEFAULT_COLLECTION.to_owned(),
+        default_collection: default_collection.to_owned(),
         collections: collections.to_vec(),
-        control_field: control_field.clone(),
     };
     ensure_projection_size(&bootstrap).map_err(|error| DesignerError::UnsupportedProject {
         message: error.to_string(),
@@ -1515,7 +1466,7 @@ fn formula_sources(document: &Document) -> Result<BTreeMap<FieldRef, String>, De
                 .map(|(field, _)| FieldRef::new(entity.id.clone(), field.clone()))
         })
         .map(|field| {
-            let source = analyze_field(document, "moonfall-fixture", &field)?
+            let source = analyze_field(document, "designer-formula-projection", &field)?
                 .formula_source
                 .ok_or_else(|| DesignerError::MissingFormulaProjection {
                     field: field.clone(),
@@ -1607,7 +1558,7 @@ fn add_moonfall_boolean_fixture(document: &mut Document) -> Result<(), DesignerE
     let weapons = document
         .schemas
         .values_mut()
-        .find(|schema| schema.key.as_str() == DEFAULT_COLLECTION)
+        .find(|schema| schema.key.as_str() == MOONFALL_BOOLEAN_FIXTURE_COLLECTION)
         .ok_or_else(|| DesignerError::UnsupportedProject {
             message: "the Moonfall weapons schema is unavailable".to_owned(),
         })?;

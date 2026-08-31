@@ -24,7 +24,6 @@ const bootstrap: BootstrapProjection = {
     { id: "economy", key: "economy", entity_count: 1 },
     { id: "weapons", key: "weapons", entity_count: 1 },
   ],
-  control_field: { entity: "shop", field: "upgrade_cost" },
 };
 
 const table: TableProjection = {
@@ -97,11 +96,6 @@ const table: TableProjection = {
 const openedProjection = (): OpenedProjection => ({
   bootstrap: structuredClone(bootstrap),
   table: structuredClone(table),
-  control: {
-    target: structuredClone(bootstrap.control_field),
-    value: 200,
-    revision: "resident/0",
-  },
 });
 
 class FakeClient implements DesignerClient {
@@ -145,22 +139,6 @@ class FakeClient implements DesignerClient {
     fields: FieldTarget[],
   ): Promise<FieldBatchProjection> {
     this.queryRequests.push(structuredClone(fields));
-    if (fields.length === 1 && fields[0]?.entity === "shop") {
-      return {
-        revision,
-        fields: [
-          {
-            target: bootstrap.control_field,
-            address: "shop.upgrade_cost",
-            stored: null,
-            formula: { source: "[tempered_blade.price]" },
-            calculated: { status: "value", value: 200 },
-            diagnostics: [],
-            editable_scalar: null,
-          },
-        ],
-      };
-    }
     return {
       revision,
       fields: [
@@ -238,9 +216,6 @@ class ScalarClient extends FakeClient {
     revision: string,
     fields: FieldTarget[],
   ): Promise<FieldBatchProjection> {
-    if (fields.length === 1 && fields[0]?.entity === "shop") {
-      return super.queryFields(revision, fields);
-    }
     this.queryRequests.push(structuredClone(fields));
     return {
       revision,
@@ -347,20 +322,12 @@ class RejectingOpenClient extends FakeClient {
 }
 
 class RefreshFailingClient extends FakeClient {
-  override async queryFields(
-    revision: string,
-    fields: FieldTarget[],
-  ): Promise<FieldBatchProjection> {
-    if (fields.length === 1 && fields[0]?.entity === "shop") {
-      return super.queryFields(revision, fields);
-    }
+  override async queryFields(): Promise<FieldBatchProjection> {
     throw new Error("Selective refresh is temporarily unavailable.");
   }
 }
 
-class ControlRecoveryClient extends FakeClient {
-  private refreshFailed = false;
-
+class RefreshRecoveryClient extends RefreshFailingClient {
   override async queryTable(): Promise<TableProjection> {
     const projected = structuredClone(table);
     if (this.editRequests.length > 0) {
@@ -369,31 +336,6 @@ class ControlRecoveryClient extends FakeClient {
       projected.rows[0]!.fields[2]!.calculated = { status: "value", value: 50 };
     }
     return projected;
-  }
-
-  override async queryFields(
-    revision: string,
-    fields: FieldTarget[],
-  ): Promise<FieldBatchProjection> {
-    if (fields.some((field) => field.entity === "iron_sword")) {
-      this.refreshFailed = true;
-      throw new Error("Selective refresh is temporarily unavailable.");
-    }
-    const batch = await super.queryFields(revision, fields);
-    if (this.refreshFailed && batch.fields[0]?.calculated?.status === "value") {
-      batch.fields[0].calculated.value = 220;
-    }
-    return batch;
-  }
-
-  override async editNumber(
-    expectedRevision: string,
-    target: FieldTarget,
-    input: string,
-  ): Promise<PublicationProjection> {
-    const publication = await super.editNumber(expectedRevision, target, input);
-    publication.affected_calculations.push(bootstrap.control_field);
-    return publication;
   }
 }
 
@@ -655,6 +597,7 @@ describe("Designer application seam", () => {
     const target = { entity: "entity\u0000id", field: "field\rid" };
     const opaqueTable = structuredClone(table);
     opaqueTable.columns[1]!.id = target.field;
+    opaqueTable.columns[1]!.key = "impact_score";
     opaqueTable.rows[0]!.fields[1]!.target = target;
 
     class OpaqueTargetClient extends FakeClient {
@@ -685,9 +628,6 @@ describe("Designer application seam", () => {
         revision: string,
         fields: FieldTarget[],
       ): Promise<FieldBatchProjection> {
-        if (fields.length === 1 && fields[0]?.entity === "shop") {
-          return super.queryFields(revision, fields);
-        }
         this.queryRequests.push(structuredClone(fields));
         return {
           revision,
@@ -708,8 +648,12 @@ describe("Designer application seam", () => {
     const app = mountDesigner(root, client, host);
     await app.ready;
 
-    const damage = root.querySelector<HTMLInputElement>('input[value="36"]');
+    const damage = root.querySelector<HTMLInputElement>(
+      'input[aria-label="Impact Score for Iron Sword"]',
+    );
     if (damage === null) throw new Error("opaque target input is required");
+    expect(JSON.parse(damage.form?.dataset.entity ?? "null")).toBe(target.entity);
+    expect(JSON.parse(damage.form?.dataset.field ?? "null")).toBe(target.field);
     damage.value = "45";
     damage.form?.requestSubmit();
 
@@ -734,9 +678,8 @@ describe("Designer application seam", () => {
     expect(root.querySelector('[data-field="iron_sword.dps"]')?.textContent).toContain(
       "40",
     );
-    expect(root.querySelector('[data-testid="control-value"]')?.textContent).toBe(
-      "200",
-    );
+    expect(client.queryRequests).toEqual([]);
+    expect(root.textContent).toContain("Semantic project workspace");
 
     if (damage === null) throw new Error("damage input is required");
     damage.value = "45";
@@ -760,9 +703,6 @@ describe("Designer application seam", () => {
         input: "45",
       },
     ]);
-    expect(root.querySelector('[data-testid="control-value"]')?.textContent).toBe(
-      "200",
-    );
     expect(root.querySelector('[data-testid="revision"]')?.textContent).toContain(
       "resident/1",
     );
@@ -876,11 +816,11 @@ describe("Designer application seam", () => {
     expect(client.editRequests).toHaveLength(1);
   });
 
-  it("recovers a failed invalidated control through a fresh collection query", async () => {
+  it("recovers a failed selective refresh through a fresh collection query", async () => {
     document.body.innerHTML = '<div id="app"></div>';
     const root = document.querySelector<HTMLElement>("#app");
     if (root === null) throw new Error("test root is required");
-    const client = new ControlRecoveryClient();
+    const client = new RefreshRecoveryClient();
     const app = mountDesigner(root, client, host);
     await app.ready;
 
@@ -900,20 +840,20 @@ describe("Designer application seam", () => {
       "[data-collection-select]",
     );
     if (collection === null) throw new Error("collection selector is required");
-    collection.value = "economy";
+    collection.value = "weapons";
     collection.dispatchEvent(new Event("change"));
 
     await vi.waitFor(() => {
       expect(root.querySelector('[data-currentness="current"]')).not.toBeNull();
     });
-    expect(root.querySelector('[data-testid="control-value"]')?.textContent).toBe(
-      "220",
+    const recoveredDamage = root.querySelector<HTMLInputElement>(
+      'input[aria-label="Damage for Iron Sword"]',
     );
-    expect(
-      root.querySelector<HTMLInputElement>(
-        'input[aria-label="Damage for Iron Sword"]',
-      )?.disabled,
-    ).toBe(false);
+    expect(recoveredDamage?.disabled).toBe(false);
+    expect(recoveredDamage?.value).toBe("45");
+    expect(root.querySelector('[data-field="iron_sword.dps"]')?.textContent).toContain(
+      "50",
+    );
   });
 
   it("marks only confirmed host revisions durable and reopens after occurrence teardown", async () => {

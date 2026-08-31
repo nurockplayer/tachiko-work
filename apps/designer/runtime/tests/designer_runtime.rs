@@ -6,9 +6,9 @@ use tachiko_designer_runtime::{
     process_wire_request,
 };
 use tachiko_workspace_engine::{
-    DocumentId, EntityId, EntityKey, Expression, FieldAddress, FieldDefinition, FieldId, FieldKey,
-    FieldRef, FieldType, IdGenerator, Number, Schema, SchemaId, SchemaKey, SemanticIdKind,
-    StarterTemplate, Value, create_document,
+    Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldAddress, FieldDefinition,
+    FieldId, FieldKey, FieldRef, FieldType, IdGenerator, Number, Schema, SchemaId, SchemaKey,
+    SemanticIdKind, StarterTemplate, Value, create_document,
 };
 
 const OCCURRENCE_ZERO: &str = "00000000-0000-4000-8000-000000000000";
@@ -27,6 +27,158 @@ impl IdGenerator for TestIds {
         self.0 += 1;
         format!("test_id_{:03}", self.0)
     }
+}
+
+fn product_gap_document_without_formulas() -> Document {
+    Document {
+        id: DocumentId::from("tachiko_product_gaps"),
+        title: "Tachiko Product Gaps".to_owned(),
+        schemas: product_gap_schemas_without_formulas(),
+        entities: product_gap_entities_without_formulas(),
+    }
+}
+
+fn product_gap_schemas_without_formulas() -> BTreeMap<SchemaId, Schema> {
+    let areas = SchemaId::from("schema_areas");
+    let product_gaps = SchemaId::from("schema_product_gaps");
+    let roadmap_notes = SchemaId::from("schema_roadmap_notes");
+    let label = FieldId::from("field_label");
+    let title = FieldId::from("field_title");
+    let confirmed = FieldId::from("field_confirmed");
+
+    BTreeMap::from([
+        (
+            areas.clone(),
+            Schema {
+                id: areas.clone(),
+                key: SchemaKey::from("areas"),
+                fields: BTreeMap::from([(
+                    label.clone(),
+                    FieldDefinition {
+                        id: label.clone(),
+                        key: FieldKey::from("label"),
+                        field_type: FieldType::Text,
+                        required: true,
+                    },
+                )]),
+            },
+        ),
+        (
+            product_gaps.clone(),
+            Schema {
+                id: product_gaps.clone(),
+                key: SchemaKey::from("product_gaps"),
+                fields: BTreeMap::from([
+                    (
+                        title.clone(),
+                        FieldDefinition {
+                            id: title.clone(),
+                            key: FieldKey::from("title"),
+                            field_type: FieldType::Text,
+                            required: true,
+                        },
+                    ),
+                    (
+                        confirmed.clone(),
+                        FieldDefinition {
+                            id: confirmed.clone(),
+                            key: FieldKey::from("confirmed"),
+                            field_type: FieldType::Boolean,
+                            required: true,
+                        },
+                    ),
+                ]),
+            },
+        ),
+        (
+            roadmap_notes.clone(),
+            Schema {
+                id: roadmap_notes.clone(),
+                key: SchemaKey::from("roadmap_notes"),
+                fields: BTreeMap::from([(
+                    title.clone(),
+                    FieldDefinition {
+                        id: title.clone(),
+                        key: FieldKey::from("title"),
+                        field_type: FieldType::Text,
+                        required: true,
+                    },
+                )]),
+            },
+        ),
+    ])
+}
+
+fn product_gap_entities_without_formulas() -> BTreeMap<EntityId, Entity> {
+    let areas = SchemaId::from("schema_areas");
+    let product_gaps = SchemaId::from("schema_product_gaps");
+    let roadmap_notes = SchemaId::from("schema_roadmap_notes");
+    let label = FieldId::from("field_label");
+    let title = FieldId::from("field_title");
+    let confirmed = FieldId::from("field_confirmed");
+
+    BTreeMap::from([
+        (
+            EntityId::from("area_designer"),
+            Entity {
+                id: EntityId::from("area_designer"),
+                key: EntityKey::from("designer"),
+                schema: areas,
+                fields: BTreeMap::from([(label, Value::Text("Designer".to_owned()))]),
+            },
+        ),
+        (
+            EntityId::from("gap_authoring"),
+            Entity {
+                id: EntityId::from("gap_authoring"),
+                key: EntityKey::from("schema_authoring"),
+                schema: product_gaps.clone(),
+                fields: BTreeMap::from([
+                    (
+                        title.clone(),
+                        Value::Text("Schema authoring is not exposed".to_owned()),
+                    ),
+                    (confirmed.clone(), Value::Boolean(true)),
+                ]),
+            },
+        ),
+        (
+            EntityId::from("gap_persistence"),
+            Entity {
+                id: EntityId::from("gap_persistence"),
+                key: EntityKey::from("create_only_persistence"),
+                schema: product_gaps,
+                fields: BTreeMap::from([
+                    (
+                        title.clone(),
+                        Value::Text("Browser persistence is create-only".to_owned()),
+                    ),
+                    (confirmed, Value::Boolean(false)),
+                ]),
+            },
+        ),
+        (
+            EntityId::from("note_beta"),
+            Entity {
+                id: EntityId::from("note_beta"),
+                key: EntityKey::from("team_workspace_beta"),
+                schema: roadmap_notes.clone(),
+                fields: BTreeMap::from([(
+                    title.clone(),
+                    Value::Text("Team Workspace Beta".to_owned()),
+                )]),
+            },
+        ),
+        (
+            EntityId::from("note_designer"),
+            Entity {
+                id: EntityId::from("note_designer"),
+                key: EntityKey::from("designer_mvp"),
+                schema: roadmap_notes,
+                fields: BTreeMap::from([(title, Value::Text("Designer MVP".to_owned()))]),
+            },
+        ),
+    ])
 }
 
 #[test]
@@ -53,26 +205,14 @@ fn bootstrap_exposes_fixture_collections_without_a_document_snapshot() {
             .collect::<Vec<_>>(),
         ["characters", "economy", "items", "weapons"]
     );
-    assert_eq!(bootstrap.control_field.entity, "shop");
-    assert_eq!(bootstrap.control_field.field, "upgrade_cost");
 }
 
 #[test]
-fn admission_resolves_the_control_address_to_stable_ids() {
-    let document = create_document(
-        StarterTemplate::GameBalance,
-        "Opaque identities",
-        &mut TestIds::default(),
-    )
-    .expect("fixture should be valid");
-    let expected = document
-        .resolve_field(&FieldAddress::new("shop", "upgrade_cost"))
-        .expect("control address should resolve");
-    assert_ne!(expected.entity.as_str(), "shop");
-    assert_ne!(expected.field.as_str(), "upgrade_cost");
+fn admission_selects_a_bounded_non_moonfall_collection_without_formulas() {
+    let mut runtime =
+        DesignerRuntime::from_document(product_gap_document_without_formulas(), OCCURRENCE_ONE)
+            .expect("an ordinary bounded project should be admitted");
 
-    let mut runtime = DesignerRuntime::from_document(document, OCCURRENCE_ONE)
-        .expect("opaque stable IDs must not change the supported profile");
     let DesignerResponse::Bootstrap(bootstrap) = runtime
         .handle(DesignerRequest::Bootstrap {
             occurrence_id: OCCURRENCE_ONE.to_owned(),
@@ -81,24 +221,69 @@ fn admission_resolves_the_control_address_to_stable_ids() {
     else {
         panic!("expected bootstrap response");
     };
-    assert_eq!(bootstrap.control_field.entity, expected.entity.as_str());
-    assert_eq!(bootstrap.control_field.field, expected.field.as_str());
-    let DesignerResponse::Fields(control) = runtime
-        .handle(DesignerRequest::QueryFields {
-            expected_revision: bootstrap.revision,
-            fields: vec![bootstrap.control_field],
+    assert_eq!(bootstrap.title, "Tachiko Product Gaps");
+    assert_eq!(bootstrap.default_collection, "product_gaps");
+
+    let DesignerResponse::Table(table) = runtime
+        .handle(DesignerRequest::QueryTable {
+            collection: bootstrap.default_collection,
         })
-        .expect("resolved control field should remain queryable")
+        .expect("the deterministic default collection should be queryable")
     else {
-        panic!("expected control field response");
+        panic!("expected table response");
     };
-    assert_eq!(
-        control.fields[0]
-            .calculated
-            .as_ref()
-            .and_then(CalculationProjection::number),
-        Some(200.0)
+    assert_eq!(table.collection.entity_count, 2);
+    assert_eq!(table.rows.len(), 2);
+    assert!(
+        table
+            .rows
+            .iter()
+            .flat_map(|row| &row.fields)
+            .all(|field| field.formula.is_none())
     );
+}
+
+#[test]
+fn default_collection_breaks_equal_size_ties_by_human_key() {
+    let mut document = product_gap_document_without_formulas();
+    let product_gaps_schema = document
+        .schemas
+        .values()
+        .find(|schema| schema.key.as_str() == "product_gaps")
+        .expect("product gap schema should exist")
+        .clone();
+    let mut later_schema = product_gaps_schema.clone();
+    later_schema.id = SchemaId::from("schema_z_product_gaps");
+    later_schema.key = SchemaKey::from("z_product_gaps");
+    let later_schema_id = later_schema.id.clone();
+    document
+        .schemas
+        .insert(later_schema_id.clone(), later_schema);
+
+    let product_gap_entities = document
+        .entities
+        .values()
+        .filter(|entity| entity.schema == product_gaps_schema.id)
+        .cloned()
+        .collect::<Vec<_>>();
+    for (index, mut entity) in product_gap_entities.into_iter().enumerate() {
+        entity.id = EntityId::from(format!("z_product_gap_{index}"));
+        entity.key = EntityKey::from(format!("z_product_gap_{index}"));
+        entity.schema = later_schema_id.clone();
+        document.entities.insert(entity.id.clone(), entity);
+    }
+
+    let mut runtime = DesignerRuntime::from_document(document, OCCURRENCE_ONE)
+        .expect("equal-sized bounded collections should be admitted");
+    let DesignerResponse::Bootstrap(bootstrap) = runtime
+        .handle(DesignerRequest::Bootstrap {
+            occurrence_id: OCCURRENCE_ONE.to_owned(),
+        })
+        .expect("bootstrap should succeed")
+    else {
+        panic!("expected bootstrap response");
+    };
+    assert_eq!(bootstrap.default_collection, "product_gaps");
 }
 
 #[test]
@@ -433,29 +618,6 @@ fn admission_bounds_formula_reference_identity_before_validation() {
             .contains("formula reference entity identity")
     );
     assert!(failure.message.contains("4096-byte maximum"));
-}
-
-#[test]
-fn admission_requires_the_default_weapons_collection() {
-    let mut document = create_document(
-        StarterTemplate::GameBalance,
-        "Missing default collection",
-        &mut TestIds::default(),
-    )
-    .expect("fixture should be valid");
-    document
-        .schemas
-        .values_mut()
-        .find(|schema| schema.key.as_str() == "weapons")
-        .expect("weapons schema should exist")
-        .key = SchemaKey::from("armaments");
-
-    let Err(error) = DesignerRuntime::from_document(document, OCCURRENCE_ONE) else {
-        panic!("bootstrap must never advertise an unavailable default collection");
-    };
-    let failure = error.failure_projection("unavailable");
-    assert_eq!(failure.code, "unsupported_project");
-    assert!(failure.message.contains("required 'weapons' collection"));
 }
 
 #[test]
@@ -894,7 +1056,7 @@ fn rejected_scalar_kind_does_not_publish_a_canonical_change() {
             target: "iron_sword.name".into(),
             input: ScalarEditInput::Boolean { value: false },
         })
-        .expect_err("the Rust authority must reject a mismatched control kind");
+        .expect_err("the Rust authority must reject a mismatched scalar kind");
     assert_eq!(
         error.failure_projection("resident/0").code,
         "unsupported_edit"
@@ -1194,8 +1356,6 @@ fn canonical_open_is_candidate_first_and_starts_a_fresh_revision_domain() {
         open_project(&mut runtime, &bundle, OCCURRENCE_ONE).expect("canonical open should succeed");
     assert_eq!(reopened.bootstrap.revision, "resident/0");
     assert_eq!(reopened.table.revision, "resident/0");
-    assert_eq!(reopened.control.revision, "resident/0");
-    assert!((reopened.control.value - 200.0).abs() < f64::EPSILON);
     assert_ne!(runtime.as_ref().unwrap().occurrence_scope(), original_scope);
     let DesignerResponse::Fields(reopened_fields) = runtime
         .as_mut()
