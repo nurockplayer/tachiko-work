@@ -35,7 +35,7 @@ The semantic model owns meaning. Physical formats are representations. ADR-0017 
 | [`validation-engine.md`](validation-engine.md) | ADR-0019 staged validation, candidate/finalization semantics, full-validation oracle, and operation gating |
 | [`diagnostics-contract.md`](diagnostics-contract.md) | Semantic-ID-centered machine-readable diagnostic meaning and stability boundaries |
 | [`formula-engine-spec.md`](formula-engine-spec.md) | Accepted bounded authoring and ADR-0018 stable-ID projection/rename, binary64, dependency, and recomputation contract; #32's Semantic API scenarios compose this same oracle without creating a second evaluator |
-| [`semantic-diff-spec.md`](semantic-diff-spec.md) | Semantic diff behavior |
+| [`semantic-diff-spec.md`](semantic-diff-spec.md) | ADR-0030 canonical Semantic Delta v1 logical contract, closed direct-change vocabulary, stable targets, deterministic ordering, and separation from derived impact; current Rust/wire shapes remain unstandardized |
 
 ADR-0020 makes the Headless Semantic API the mandatory first-party semantic
 product boundary while keeping current Rust APIs, serde shapes, complete

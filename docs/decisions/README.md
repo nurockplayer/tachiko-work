@@ -39,6 +39,7 @@ For project-wide authority rules, read [`../governance/knowledge-authority.md`](
 | [ADR-0027](ADR-0027-open-format-and-interoperability-policy.md) | Open format and interoperability policy | Accepted | Reuse mature standards before invention; external formats remain adapter boundaries; Tachiko-native work requires an open independently implementable ownership path and explicit fidelity claims |
 | [ADR-0028](ADR-0028-game-engine-host-extension-boundary.md) | Game-engine host extension boundary | Accepted | Unity, Unreal Engine, and Godot integrations are host adapters over existing semantic/runtime/authorization authority; engine effects remain separate, and no general plugin-platform promise is stabilized in M04 |
 | [ADR-0029](ADR-0029-current-state-authority-and-optional-history.md) | Current-state authority and optional semantic history | Accepted | Current semantic state and complete standalone snapshots remain authoritative; revision occurrences are distinct from content/checkpoint/Git identity; general history is optional, event sourcing and universal CRDT/OT are not defaults, and Git remains a non-semantic optional adapter |
+| [ADR-0030](ADR-0030-canonical-semantic-delta.md) | Canonical Semantic Delta as direct-state evidence | Accepted | Fixes the same-Document, stable-ID-targeted, direct-fact-only logical delta contract and canonical order without creating mutation, history, provenance, or wire authority |
 
 ## How to use ADRs
 
