@@ -24,8 +24,9 @@ merge/conflicts, history policy, permissions, and team review workflows.
 
 > **Public pre-alpha:** the repository is intentionally public for inspection and
 > early feedback. There is no tagged binary release yet, the graphical Designer
-> is not packaged or released yet, and APIs, formats, contribution policy, and the
-> long-term licensing boundary are still evolving.
+> is not packaged or released yet, and APIs, formats, and contribution policy are
+> still evolving. The licensing direction is founder-accepted, while its legal
+> implementation remains pending under issue #202.
 
 ## What works today
 
@@ -187,8 +188,9 @@ bypassing its security policy.
 Every archive also includes `THIRD_PARTY_LICENSES.md`, the generated inventory
 and exact license/notice texts for the locked dependencies used by the CLI.
 Revisions already published under `Apache-2.0 OR MIT` retain those historical
-license grants. The long-term license-by-component policy is still being decided
-in issue #15; see [`docs/governance/licensing-posture.md`](docs/governance/licensing-posture.md).
+license grants. Issue #15 records the founder-accepted long-term direction,
+while issue #202 remains the legal implementation gate; see
+[`docs/governance/licensing-posture.md`](docs/governance/licensing-posture.md).
 
 ## Try it in five minutes
 
@@ -485,8 +487,8 @@ bash scripts/release-check.sh
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the current contribution boundary,
 [`SECURITY.md`](SECURITY.md) for responsible reporting, the
-[`licensing posture`](docs/governance/licensing-posture.md) for provisional
-governance, and the
+[`licensing posture`](docs/governance/licensing-posture.md) for the
+founder-accepted direction and pending legal implementation gate, and the
 [`release-owner runbook`](docs/governance/release-process.md) for the tag and
 publication boundary.
 

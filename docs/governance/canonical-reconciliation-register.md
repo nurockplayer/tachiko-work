@@ -2,7 +2,7 @@
 
 Status: Accepted register when merged
 
-Last reconciliation: 2026-08-31
+Last reconciliation: 2026-09-01
 
 ## Purpose
 
@@ -120,7 +120,7 @@ A GitHub Issue is never automatically an Accepted decision. The table below clas
 | #12 mutation history / event sourcing / CRDT / Git | Resolved by ADR-0029 | Current state and complete snapshots are authoritative; general history is optional; event sourcing and universal CRDT/OT are not core defaults; Git remains optional and non-semantic. ADR-0030 resolves #45; #46-#50 and #47 retain the remaining mechanics, with #49 owning semantic-revision/checkpoint-to-Git association mapping. |
 | #13 progressive typing | Resolved by ADR-0021 | Progressive semantic strengthening is Accepted without weakening the current strongly typed core; concrete freeform kinds, identity thresholds, promotion commands, storage, and UI remain Deferred. |
 | #14 open format/interoperability policy | Resolved by ADR-0027 | Reuse-before-invention, explicit external-format boundaries, an open independently implementable Tachiko ownership path, explicit fidelity claims, and the current milestone boundary are Accepted; concrete format mappings/adapters remain separately owned by #18/#34 and later roadmap work. |
-| #15 licensing/commercial boundary | Open Question | Founder/governance decision after research/legal review. |
+| #15 licensing/commercial boundary | Founder-accepted direction; legal implementation gate pending | Records the accepted open adoption/interoperability and commercial-boundary direction. #202 remains the legal implementation gate before policy-dependent changes or external code/specification contributions. |
 | #17 game-engine host extension boundary | Resolved by ADR-0028 | M04 classifies Unity, Unreal Engine, and Godot integrations as host adapters over existing semantic/runtime/authorization authority and stabilizes no general plugin-platform contract. |
 | #18 Japan enterprise / gradual Excel migration | Accepted product direction with Hypotheses | Japan as a priority research environment and gradual migration are accepted; individual pain-point claims require user evidence. |
 | #19 canonical docs / ADR reconciliation | Completed reconciliation task | Closed after establishing authority precedence, ADR numbering, and canonical reconciliation rules. |
