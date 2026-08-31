@@ -13,6 +13,10 @@ Related authority: [ADR-0003](ADR-0003-ro-and-roproj-representation.md),
 [ADR-0025](ADR-0025-portable-package-v1.md), and
 [ADR-0026](ADR-0026-scoped-semantic-authorization-and-approval.md)
 
+Subsequent authority: [ADR-0030](ADR-0030-canonical-semantic-delta.md)
+resolves the deferred machine-readable Semantic Delta contract without changing
+this current-state/history boundary.
+
 ## Context
 
 Tachiko Work needs semantic revisions, meaningful review, and optional Git
@@ -115,10 +119,10 @@ checkpoint cadence, signing, or trust policy.
 
 ## Deferred decisions
 
-This ADR authorizes no production implementation. The following remain open:
+This ADR authorizes no production implementation. Its machine-readable semantic
+delta deferral in [Issue #45](https://github.com/nurockplayer/tachiko-work/issues/45)
+is resolved separately by ADR-0030. The following remain open:
 
-- [Issue #45](https://github.com/nurockplayer/tachiko-work/issues/45):
-  machine-readable semantic delta;
 - [Issue #46](https://github.com/nurockplayer/tachiko-work/issues/46):
   deterministic merge and conflict objects;
 - [Issue #47](https://github.com/nurockplayer/tachiko-work/issues/47):
