@@ -102,7 +102,10 @@ Confirmed supplied context included #175 and its canonical handoff, parent
 for #188 and #193, current storage/formula/workspace code and tests, Accepted
 ADRs/specifications, prior #41/#91/#95/#96 harness patterns, and three bounded
 read-only audits covering benchmark method, full-oracle/adversarial behavior,
-and spine/sidecar/RSS accounting.
+and spine/sidecar/RSS accounting. The final narrative-only disposition was
+mechanically aligned with `main@af35c0751f5bb4800226ef7043a776b68a2103be`;
+the evidence manifest retains the exact measurement/base heads of the
+unchanged artifacts.
 
 The exact hidden system prompt, provider deployment, sampling state, and model
 revision are `unknown`. The committed benchmark manifest records the observable
@@ -219,6 +222,15 @@ were accepted where they matched Issue and Accepted authority.
   regression proves ordinary exact A1 admits the same canonical source to
   SemanticCurrent. Deterministic post-read and per-phase tests prove
   cancellation with zero completed records and no SemanticCurrent.
+- Final review established the remaining boundary precisely: record reads poll
+  cancellation between chunks, but the record buffer has no allocation ceiling
+  and grows until newline. `RequiresForegroundExactAdmission` is therefore a
+  post-read typed decline, not an early memory-bounded fallback for an
+  arbitrarily large single record. Exact A1 proves correctness recovery for the
+  same canonical source, but B fails #175's bounded and memory-pressure-aware
+  background-work requirement for this adversarial case. The Steward accepted
+  this as negative falsification evidence rather than authorizing another
+  reader/parser repair cycle.
 - Initial raw A0 rows doubled parser-byte work but not decoded record, AST,
   reference, or dependency counters for the second logical decode. Final rows
   aggregate every decode-work counter symmetrically. A fixture manifest now
@@ -254,7 +266,7 @@ single-resolution Git identity, immutable-object trust, and an independently
 Git-pinned exact-A1 comparator. The earlier
 `1b3d75de`, `bd115c8`, and interrupted exploratory E2 files were discarded.
 After mechanical reconciliation with `main@c3b5ad2`, B/E1/E2 alone were
-recaptured at `01ef8dc0ffd69a5b5314854ae621b7bb5706ed67` for bounded post-read
+recaptured at `01ef8dc0ffd69a5b5314854ae621b7bb5706ed67` for post-read
 cancellation and fresh-process comparator isolation. HOLD-era unpushed
 `d527238` recaptures were discarded. A0/A1/C/D/F were not rerun because the
 final correction does not materially change their timed non-cancelled paths
@@ -270,6 +282,11 @@ measured path or raw evidence contract.
 Cold-cache cells remain absent and explicitly unavailable rather than
 relabeled.
 
+The final disposition was recorded after mechanical reconciliation with
+`main@af35c0751f5bb4800226ef7043a776b68a2103be`. It changes narrative only:
+all A0/A1/B/C/D/E/F raw rows, summaries, the evidence manifest, and its declared
+hashes remain byte-identical.
+
 The aggregate-counter exactness correction at `607e920` proves exact A0/A1
 `Document` equality across a valid chain, cold numeric mutation, cross-cold
 SCC, and division-by-zero pressure. A later independent review correctly noted
@@ -283,8 +300,12 @@ oracle. C/D still publish no semantic result and return
 ## Research outcome withheld from architecture publication
 
 The historical provisional result was **Outcome A — reject/defer Global
-Spine**, with **B — progressive UX only** as
-an optional bounded shell/source-preview technique over optimized exact A1.
+Spine**, with **B — progressive UX only** as a non-authoritative
+shell/source-preview technique over optimized exact A1. The background reader
+does not satisfy the bounded and memory-pressure-aware requirement for an
+arbitrarily large single record: it is chunk-cancellable, but buffers through
+newline before the post-read typed decline. Exact A1 preserves correctness for
+the same source; it does not cure that background-memory limitation.
 The measured background-admission schedule is quantitatively inconclusive:
 all `>1.10` ratios occur in one arm order, so the combined p95 cannot be
 attributed to concurrent background work rather than second-arm/cache

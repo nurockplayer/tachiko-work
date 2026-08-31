@@ -6,8 +6,9 @@ is not republished to #174 by this correction.
 
 Measurement implementations: A0/A1/C/F at
 `4ed7f994825edb8a3bb6f1ac4a5cc5d940f74387`; final counterbalanced and
-progress-synchronized B, fresh-process E1/E2 comparators, and bounded post-read
-cancellation at `01ef8dc0ffd69a5b5314854ae621b7bb5706ed67`;
+progress-synchronized B, fresh-process E1/E2 comparators, and chunk-cancellable
+background admission with post-read fallback behavior at
+`01ef8dc0ffd69a5b5314854ae621b7bb5706ed67`;
 resampled D at
 `8ce554191e36496dedb57322fc1ab059a205ab07`; aggregate two-pass counter
 corrections at `607e9208da2fdf71e0741d7ff7efceec890ac6fc`; and cross-crate full-oracle
@@ -21,14 +22,18 @@ fast-path closure plus exact-A1 fallback proof at
 mechanically reconciled with `main@c3b5ad2aad04e6b79594dbc7f79199591997bdc4`;
 the unaffected A0/A1/C/D/F artifacts retain their exact pre-reconciliation
 measurement/base heads in the evidence manifest because #193 changed only the
-disjoint Designer lane.
+disjoint Designer lane. This final evidence disposition is mechanically
+reconciled with `main@af35c0751f5bb4800226ef7043a776b68a2103be`; no measurement
+artifact or measurement provenance was rewritten.
 
 ## Outcome
 
 **Research result: outcome A — reject/defer Global Spine, with B only as a
-bounded progressive-UX observation over optimized exact eager admission; do
-not advance C or D.** This does not change Accepted authority or publish an
-architecture decision for #174.
+progressive-UX observation over optimized exact eager admission; do not
+advance C or D.** B does not satisfy #175's bounded and memory-pressure-aware
+background-work requirement for an adversarial arbitrarily large single
+record. This does not change Accepted authority or publish an architecture
+decision for #174.
 
 The experiment falsified a universal Global Spine benefit:
 
@@ -48,6 +53,10 @@ The experiment falsified a universal Global Spine benefit:
   `1.10` occur in `background_then_baseline`, whose p95 is `1.683`, while
   `baseline_then_background` has p95 `1.039`, so the combined `1.638` cannot
   be attributed to concurrent background work rather than order/carryover;
+- the research reader polls cancellation while reading chunks, but its record
+  buffer grows until newline. Its `RequiresForegroundExactAdmission` result is
+  therefore a post-read typed decline, not an early allocation-bounded
+  fallback for an arbitrarily large single record;
 - exact bounded source payload access is fast, but formula meaning and
   validation still require complete admission. The prototype correctly
   returns `requires_full_admission` rather than guessing.
@@ -64,6 +73,7 @@ justify a Global Spine.
 | `>=2x` p95 benefit over A1 in two realistic large classes | Fail | At 64k, C Structural is only `1.07x` faster than A1 for payload and is `1.41x` slower for references and `1.43x` slower for mixed |
 | Benefit not limited to payload-heavy data | Fail | Payload Structural Index is `0.07x` source, but mixed is `1.38x` and references `2.83x` |
 | No `>10%` foreground regression | Inconclusive / not attributable | All five ratios above `1.10` are in `background_then_baseline` (p95 `1.683`), while `baseline_then_background` has p95 `1.039`; the combined p95 `1.638` is confounded by arm order/carryover and cannot establish background-attributable regression |
+| Background work is bounded, cancellable, foreground-aware, and memory-pressure-aware | Fail for an adversarial single record | Reads poll cancellation by chunk, but the record buffer grows until newline and only then emits `RequiresForegroundExactAdmission`; exact A1 proves correctness recovery for the same source, not early allocation-bounded background fallback |
 | `>=40%` peak-RSS reduction, without hidden eventual peak | Fail | A1 p50 peak is `30.4 MB`; Structural is `71.8 MB`; Structural + `Document` is `79.4 MB`; pinned Structural + `Document` is `91.2 MB` |
 | Sidecar validation preserves material reuse benefit | Fail | E1 full-open p95 is `719 ms` versus A1 `338 ms`; E2 full-open p95 is `1,042 ms` versus independently Git-pinned A1 `473 ms` |
 
@@ -203,9 +213,20 @@ entire `>1.10` tail is confined to `background_then_baseline`, consistent with
 a systematic second-arm/cache carryover effect. The gate is therefore
 inconclusive, which is insufficient to advance Global Spine under the
 preregistered no-regression requirement. B remains only a non-authoritative
-bounded shell/source-preview observation; background scheduling would require
+progressive shell/source-preview observation; background scheduling would require
 a separately controlled experiment. Correctness authority stays complete and
 eager.
+
+The controlled research reader is chunk-cancellable: it checks cancellation
+between bounded read chunks and again through strict inspection, decode, work
+counting, canonical rendering, and semantic conversion. It is not
+allocation-bounded for an arbitrarily large single record, because the record
+buffer continues growing until newline before the 64 KiB work-budget check.
+Consequently, `RequiresForegroundExactAdmission` is a post-read typed decline,
+not an early memory-bounded fallback. Ordinary exact A1 admits the same
+canonical source and reaches SemanticCurrent, proving correctness recovery but
+not bounded-memory background handling. B therefore fails #175's bounded and
+memory-pressure-aware background-work requirement for this adversarial case.
 
 ## D — pinned source and bounded materialization
 
@@ -329,12 +350,15 @@ Prior unaffected validation retained by the evidence bundle:
   resident exact `Document` and is not evidence for cold payload search.
 - Background A1 polls cancellation inside a research-feature-only copy of the
   accepted semantic validator at schema, entity, field, and formula-node
-  boundaries before SemanticCurrent. Entity records also poll during bounded
-  reads and check after each strict/decode/count/render/conversion phase. The
-  research fast path returns typed `RequiresForegroundExactAdmission` above a
-  64 KiB post-read work budget; the same canonical source succeeds through
-  ordinary exact A1 fallback and reaches SemanticCurrent. Ordinary production
-  validation remains exactly on its pre-experiment implementation path.
+  boundaries before SemanticCurrent. Entity records also poll between read
+  chunks and check after each strict/decode/count/render/conversion phase, but
+  the single-record buffer grows until newline without an allocation ceiling.
+  The research fast path returns typed `RequiresForegroundExactAdmission`
+  only after the 64 KiB post-read work-budget check. The same canonical source
+  succeeds through ordinary exact A1 fallback and reaches SemanticCurrent,
+  proving correctness recovery but not early memory-bounded fallback. Ordinary
+  production validation remains exactly on its pre-experiment implementation
+  path.
 - D pins the complete source snapshot, so its timing cannot be interpreted as
   a source-RSS reduction.
 - No UI render or WASM compile/JIT timing is included. E1/E2 raw rows disclose
