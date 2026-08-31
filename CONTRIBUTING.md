@@ -6,18 +6,27 @@ crate boundaries before introducing new abstractions.
 
 ## Public pre-alpha contribution status
 
-The repository is intentionally public, but the project is still pre-alpha and
-the long-term licensing/contributor model is being decided in GitHub issue #15.
+The repository is intentionally public, but the project is still pre-alpha.
+The founder has accepted the long-term product/governance direction in GitHub
+Issue #15: keep adoption-facing semantic and interoperability surfaces
+`Apache-2.0 OR MIT`, with DCO plus inbound-equals-outbound as the preferred
+future contributor model.
 
-External implementation/code pull requests are temporarily not accepted while
-that decision remains open. Issue reports, architecture/product discussion,
-review findings, and documentation feedback are welcome.
+That direction is **not yet an active external contribution policy**. Issue #202
+is the required legal implementation gate for chain of title, historical grants,
+exact inbound terms, corporate contributors, stable-spec copyright/patent terms,
+and trademark/compatibility policy.
 
-This avoids accidentally constraining future licensing choices before the
-project decides its CLA/DCO/copyright model. Revisions already published under
-`Apache-2.0 OR MIT` remain available under those historical grants. See
+External implementation/code and normative-specification pull requests remain
+temporarily paused until #202 records an approved non-privileged outcome and the
+repository adopts the exact contribution terms. Issue reports,
+architecture/product discussion, review findings, and documentation feedback
+are welcome.
+
+Revisions already published under `Apache-2.0 OR MIT` remain available under
+those historical grants. See
 [`docs/governance/licensing-posture.md`](docs/governance/licensing-posture.md)
-for the current provisional direction.
+for the current founder-accepted direction and legal gate.
 
 ## Set up the toolchains
 
