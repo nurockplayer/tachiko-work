@@ -36,9 +36,16 @@ SDK shape.
 ### Admission
 
 `base`, `left`, and `right` MUST be admitted semantic `Document` states under the
-same supported semantic contract. All three MUST have the same `DocumentId`.
-A different-Document input is an admission/contract failure, not a conflict and
-not a one-sided identity change.
+same supported semantic contract. Before structural reconciliation, each input
+MUST already have passed ADR-0019 full semantic validation and ADR-0018 complete
+formula calculation for the merge-input role. An unfinalized or invalid input is
+an admission/contract failure and returns neither a Semantic Conflict set nor a
+candidate under v1.
+
+All three inputs MUST also have the same `DocumentId`. A different-Document input
+is an admission/contract failure, not a conflict and not a one-sided identity
+change. Input finalization does not pre-judge cross-branch interaction: the
+conflict-free combined candidate is finalized again as specified below.
 
 This same-Document rule is the explicit ADR-0031 amendment to ADR-0011's
 original v0.1 merge surface, which treated `Document.id` as an ordinary
@@ -86,12 +93,13 @@ complete entity subject contains its key, its stored `SchemaId`, and **every**
 Entity state itself; it MUST NOT be filtered through the currently resolved
 Schema's field declarations.
 
-If an admitted Entity names a missing Schema or contains a stored `FieldId` that
-the named Schema does not declare, the complete entity subject still preserves
-that `SchemaId` and stored field entry as direct comparison evidence. Such stale
-or invalid membership is handled by the existing validation/finalization
-authority after structural reconciliation; it does not make canonical conflict
-facts implementation-dependent.
+An Entity that names a missing Schema or contains a stored `FieldId` that its
+named Schema does not declare cannot pass the merge-input finalization gate. If
+such stale or invalid membership is encountered, admission fails before
+structural reconciliation; no canonical conflict facts, conflict set, or
+candidate are produced. For admitted inputs, complete-entity membership remains
+derived from the Entity's own semantic `fields` map rather than re-projected from
+Schema iteration, so fact membership and ordering have one deterministic source.
 
 For a continuing Entity, each state qualifies every present stored entry by that
 state's stored Entity `SchemaId`, producing the target
@@ -236,10 +244,11 @@ Structural reconciliation has two possible logical results:
 2. one conflict-free candidate semantic state.
 
 A conflict-free candidate MUST then pass the existing full semantic validation
-and complete formula calculation required by ADR-0011, ADR-0019, and ADR-0018.
-Validation or calculation failure blocks publication and returns the existing
-semantic diagnostic/calculation evidence. It MUST NOT create a Semantic Conflict,
-conflict identity, or fourth conflict kind.
+and complete formula calculation required by ADR-0011, ADR-0019, and ADR-0018,
+even though every input passed that gate individually. Validation or calculation
+failure caused by the combined candidate blocks publication and returns the
+existing semantic diagnostic/calculation evidence. It MUST NOT create a Semantic
+Conflict, conflict identity, or fourth conflict kind.
 
 This separation applies to schema/data interactions, stale or invalid references,
 formula failures, and other cross-fact incompatibilities that cannot be known by
@@ -252,8 +261,9 @@ semantic facts, not a concrete serialization or production DTO. Unless a fixture
 says otherwise, reconciliation uses conflict contract
 `tachiko.semantic-conflict/v1`; `base / left / right` are admitted under one same
 supported semantic contract, share `DocumentId = d:arena`, and differ only in the
-facts shown. `Number`, `Text`, `Reference`, and `Formula` below are typed semantic
-values; formula references are bound stable-ID expressions.
+facts shown. Each input has individually passed full semantic validation and
+complete formula calculation. `Number`, `Text`, `Reference`, and `Formula` below
+are typed semantic values; formula references are bound stable-ID expressions.
 
 1. **Independent edits.** Base has
    `(e:goblin, s:unit, f:hp) = Number(180)` and
@@ -326,10 +336,10 @@ values; formula references are bound stable-ID expressions.
     `stored_value`, the sequence is exactly the order just listed. Subject rank,
     stable-ID order, and facet rank determine it; input collection or insertion
     order cannot change it.
-13. **Admission and compatibility failure.** If any input uses a different
-    `DocumentId`, or a consumer encounters an unsupported conflict contract,
-    target/facet combination, or kind, processing fails closed and returns no
-    Semantic Conflict set or candidate under v1.
+13. **Admission and compatibility failure.** If any input is unfinalized or
+    invalid, any input uses a different `DocumentId`, or a consumer encounters an
+    unsupported conflict contract, target/facet combination, or kind, processing
+    fails closed and returns no Semantic Conflict set or candidate under v1.
 
 ### Git integration
 

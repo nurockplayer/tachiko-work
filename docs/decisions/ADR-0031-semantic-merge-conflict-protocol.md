@@ -52,9 +52,17 @@ history, and Git boundaries separate.
 ### 1. Merge remains state reconciliation, not mutation
 
 `base`, `left`, and `right` are admitted semantic states for one continuing
-`DocumentId` under the same supported semantic contract. All three MUST carry
-that same `DocumentId`. A different-Document input is an admission/contract
-failure, not a semantic conflict and not a one-sided identity change.
+`DocumentId` under the same supported semantic contract. Each input MUST already
+have passed ADR-0019 full semantic validation and ADR-0018 complete formula
+calculation for the merge-input role. An unfinalized or invalid input fails
+admission before structural reconciliation and produces neither a conflict set
+nor a candidate.
+
+All three inputs MUST carry that same `DocumentId`. A different-Document input is
+an admission/contract failure, not a semantic conflict and not a one-sided
+identity change. Making the existing merge-input operation gate explicit does
+not pre-judge the combined candidate and does not create another amendment to
+ADR-0011's semantic merge laws.
 
 This supersedes only ADR-0011's original treatment of `Document.id` as an
 ordinary mergeable semantic unit. Document title and all other ADR-0011 merge
@@ -181,8 +189,9 @@ iteration, Git coordinates, or runtime occurrence and has no execution meaning.
 ### 7. Post-merge semantic failure is a separate outcome
 
 Structural reconciliation first yields either a canonical conflict set or one
-candidate semantic state. A conflict-free candidate then passes ADR-0019 full
-validation and ADR-0018 complete calculation.
+candidate semantic state. Although each input passed its merge-input gate
+individually, a conflict-free combined candidate then passes ADR-0019 full
+validation and ADR-0018 complete calculation again.
 
 Failure there returns the existing semantic diagnostic/calculation evidence and
 blocks publication. It does not manufacture a `SemanticConflict`, add a conflict
