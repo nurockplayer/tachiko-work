@@ -1,16 +1,22 @@
 # Semantic Operation Log Model
 
-Decision state: Open Question
+Decision state: Mixed — ADR-0029 boundary Accepted; retained-history mechanics Open Question
 
 Implementation state: No first-class persisted operation log in v0.1
 
-Decision owners: #12 and #48
+Authority: ADR-0029
+
+Decision owners: #48 and #49
 
 ## Overview
 
 Tachiko Work has accepted the principle that meaningful changes should be expressed semantically rather than reduced to opaque raw-file replacement where a semantic operation exists.
 
-What remains unresolved is whether a persisted operation log is authoritative history, optional audit metadata, collaboration infrastructure, or unnecessary for some workflows.
+ADR-0029 resolves that any general retained operation/history log is optional
+and cannot be authoritative state or required to reconstruct a complete
+snapshot. What remains unresolved is whether a particular future profile
+retains transition records for audit, recovery, or collaboration and which
+guarantees that profile declares.
 
 Current runtime edits are made through explicit typed workspace-engine
 operations composed by the CLI into validated output documents. Those
@@ -51,13 +57,16 @@ These benefits justify research; they do not by themselves require event sourcin
 
 ## Future questions
 
-#12 and #48 must determine:
+#48 and #49 must determine:
 
-- whether semantic operations are the canonical mutation vocabulary;
-- whether an operation log is persisted and, if so, whether it is authoritative or optional;
+- whether a particular profile persists transition records and what bounded
+  guarantee it provides;
 - how operations differ from commands, atomic transactions, state deltas, and committed semantic events;
 - how any semantic history composes with Git;
-- whether current state must be reconstructable from retained operations;
-- how history can be omitted or compacted without changing current semantic meaning.
+- how retained history can be compacted while disclosing its changed coverage
+  and preserving current semantic meaning.
 
-Until those questions are accepted through an ADR/specification, operation-log persistence remains an Open Question rather than a storage requirement.
+Until those questions are accepted through an ADR/specification,
+operation-log persistence remains an Open Question rather than a storage
+requirement. It may not reopen ADR-0029's current-state authority or complete
+standalone snapshot boundary.
