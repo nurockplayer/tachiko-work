@@ -195,12 +195,16 @@ one bounded action:
    Research/Decision work.
 
 The bounded structural repair is a controlled recovery probe, not permission to
-resume the previous loop. If the same root-cause seam materially recurs after
-that repair, HOLD applies again and autonomous mutation stops. Moving design
-debt to follow-up work never relaxes an unresolved valid blocker on the current
-PR; if current acceptance cannot be met without the new decision, the current
-PR remains unmergeable until the proper authority resolves or explicitly
-re-scopes it.
+resume the previous loop. After the repair, and before any further autonomous
+mutation, the Project Steward must update the same Steward watch with the repair
+result, exact observed PR head and checked live `main`, supporting evidence, and
+a fresh GREEN, AMBER, or HOLD verdict. A successful repair does not implicitly
+clear HOLD. If the same root-cause seam materially recurs after that repair,
+HOLD applies again and autonomous mutation stops. Moving design debt to
+follow-up work never relaxes an unresolved valid blocker on the current PR; if
+current acceptance cannot be met without the new decision, the current PR
+remains unmergeable until the proper authority resolves or explicitly re-scopes
+it.
 
 For autonomous implementation PRs under Project Steward monitoring, maintain
 exactly one separate top-level comment containing:
@@ -208,6 +212,11 @@ exactly one separate top-level comment containing:
 ```text
 <!-- project-steward-watch:v1 -->
 ```
+
+Create this comment when Project Steward monitoring begins. Thereafter, PATCH
+that same comment in place when the verdict, supporting evidence, blocker
+disposition, or bounded authorized next action changes; do not add replacement
+Steward-watch comments.
 
 The Steward watch records, at minimum:
 
@@ -217,7 +226,7 @@ The Steward watch records, at minimum:
 - root-cause seam or `none` and concise supporting evidence;
 - current blocker disposition;
 - bounded authorized next action; and
-- founder / human action requirement.
+- whether human or founder input is required and, when it is required, why.
 
 The Steward watch is operational evidence, not product or architecture
 authority. It is advisory in GREEN and AMBER and blocks new mutation in HOLD.
