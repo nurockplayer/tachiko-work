@@ -23,7 +23,7 @@ mechanically reconciled with `main@c3b5ad2aad04e6b79594dbc7f79199591997bdc4`;
 the unaffected A0/A1/C/D/F artifacts retain their exact pre-reconciliation
 measurement/base heads in the evidence manifest because #193 changed only the
 disjoint Designer lane. This final evidence disposition is mechanically
-reconciled with `main@af35c0751f5bb4800226ef7043a776b68a2103be`; no measurement
+reconciled with `main@2c76be0c61a8e751efe76b02dc66d6a40cb6031b`; no measurement
 artifact or measurement provenance was rewritten.
 
 ## Outcome

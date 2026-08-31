@@ -103,7 +103,7 @@ for #188 and #193, current storage/formula/workspace code and tests, Accepted
 ADRs/specifications, prior #41/#91/#95/#96 harness patterns, and three bounded
 read-only audits covering benchmark method, full-oracle/adversarial behavior,
 and spine/sidecar/RSS accounting. The final narrative-only disposition was
-mechanically aligned with `main@af35c0751f5bb4800226ef7043a776b68a2103be`;
+mechanically aligned with `main@2c76be0c61a8e751efe76b02dc66d6a40cb6031b`;
 the evidence manifest retains the exact measurement/base heads of the
 unchanged artifacts.
 
@@ -283,7 +283,7 @@ Cold-cache cells remain absent and explicitly unavailable rather than
 relabeled.
 
 The final disposition was recorded after mechanical reconciliation with
-`main@af35c0751f5bb4800226ef7043a776b68a2103be`. It changes narrative only:
+`main@2c76be0c61a8e751efe76b02dc66d6a40cb6031b`. It changes narrative only:
 all A0/A1/B/C/D/E/F raw rows, summaries, the evidence manifest, and its declared
 hashes remain byte-identical.
 
