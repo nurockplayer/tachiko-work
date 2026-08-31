@@ -229,7 +229,7 @@ Issue `#40` is a completed implementation/evidence task that consumed ADR-0015, 
 
 The ordered #70 -> #40 -> #72 Core & Format Hardening sequence is complete. The #90-owned formula oracle prerequisite and #89 workspace validation composition close the ADR-0018/ADR-0019 implementation gaps.
 
-#9, #10, #12, #13, #26, #41, #27, #43, and #28 are resolved by amended
+Issues #9, #10, #12, #13, #26, #41, #27, #43, and #28 are resolved by amended
 ADR-0007, ADR-0020, ADR-0029, ADR-0021, ADR-0022, ADR-0023, ADR-0024,
 ADR-0025, and ADR-0026 respectively.
 #14 is separately resolved by ADR-0027 without promoting concrete external-format

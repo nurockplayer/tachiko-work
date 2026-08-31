@@ -58,7 +58,7 @@ These benefits justify research; they do not by themselves require event sourcin
 
 ## Future questions
 
-#48 and #49 must determine:
+Issues #48 and #49 must determine:
 
 - whether a particular profile persists transition records and what bounded
   guarantee it provides;

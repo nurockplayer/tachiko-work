@@ -34,7 +34,7 @@ Current v0.1 behavior:
 
 ## Boundary
 
-```
+```text
 User Action
     |
 Command or ordered AtomicBatch
@@ -51,4 +51,4 @@ optional history / collaboration / Git adapters
 Future adapters may use bounded retained-history or selectively justified
 CRDT/OT techniques, but they may not make replay authoritative, replace a
 complete standalone snapshot, or use Git as semantic identity. #45, #46, and
-#48–#50 own the deferred mechanics.
+Issues #48–#50 own the deferred mechanics.
