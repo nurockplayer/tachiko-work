@@ -104,6 +104,9 @@ export function parseProductHorizon(
     url,
     evidenceClass: "direct",
   };
+  if (/[\u2028\u2029]/.test(markdown)) {
+    return { state: "unknown", value: "Unknown", source };
+  }
   const normalizedMarkdown = markdown.replace(/\r\n?/g, "\n");
   const rawHeadings = [...normalizedMarkdown.matchAll(CURRENT_HORIZON_HEADING)];
   const rawHeading = rawHeadings.length === 1 ? rawHeadings[0] : undefined;

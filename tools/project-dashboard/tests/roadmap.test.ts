@@ -68,6 +68,18 @@ describe("parseProductHorizon", () => {
     },
   );
 
+  it.each(["\u2028", "\u2029"])(
+    "rejects JavaScript-only %j line separators as authority boundaries",
+    (separator) => {
+      expect(
+        parseProductHorizon(
+          `prose${separator}## Current horizon${separator}${separator}> **FAKE**`,
+          "https://github.example/roadmap",
+        ),
+      ).toMatchObject({ state: "unknown", value: "Unknown" });
+    },
+  );
+
   it.each([
     "<script>\nconst example = true;\n</script>",
     "<details>\nexample\n\n",
