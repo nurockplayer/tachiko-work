@@ -28,6 +28,11 @@ const PERCEPTUAL_REVIEW_CHECK = "perceptual-review";
 
 type ImplementationOverlap = "none" | "unknown" | "conflict";
 
+function attentionKey(item: AttentionItem): string {
+  const sourceUrls = [...new Set(item.sources.map((source) => source.url))].sort().join("|");
+  return `${String(item.issueNumber ?? "repository")}:${item.reason}:${item.label}:${sourceUrls}`;
+}
+
 function evidenceSource(
   label: string,
   url: string,
@@ -310,7 +315,6 @@ function trustedHandoffIssueClaims(
     const identity = boundedHandoffIdentity(source.body);
     if (
       identity === null ||
-      !identity.pullRequests.includes(pull.number) ||
       !source.metadata.trustedProducer ||
       !source.metadata.topLevel
     ) {
@@ -319,7 +323,11 @@ function trustedHandoffIssueClaims(
     for (const issueNumber of identity.issues) {
       const issue = issues.find((candidate) => candidate.number === issueNumber);
       if (issue === undefined) continue;
-      if (identity.issues.length !== 1 || identity.pullRequests.length !== 1) {
+      if (
+        identity.issues.length !== 1 ||
+        identity.pullRequests.length !== 1 ||
+        identity.pullRequests[0] !== pull.number
+      ) {
         ambiguous.add(issue.number);
         continue;
       }
@@ -360,7 +368,7 @@ function boundedHandoffIdentity(
     });
   const issues = [...new Set(values("ISSUE").map(Number))].filter(Number.isSafeInteger);
   const pullRequests = [...new Set(values("PR").map(Number))].filter(Number.isSafeInteger);
-  return issues.length > 0 && pullRequests.length > 0 ? { issues, pullRequests } : null;
+  return issues.length > 0 ? { issues, pullRequests } : null;
 }
 
 function mergeabilityFor(pull: RawPullRequest): DisplaySignal {
@@ -1127,7 +1135,7 @@ export function normalizeRepository(
   const attention: AttentionItem[] = [];
   const attentionKeys = new Set<string>();
   for (const item of errorAttention(observation)) {
-    const key = `${String(item.issueNumber ?? "repository")}:${item.reason}:${item.label}`;
+    const key = attentionKey(item);
     if (attentionKeys.has(key)) continue;
     attentionKeys.add(key);
     attention.push(item);
@@ -1151,7 +1159,7 @@ export function normalizeRepository(
           ...signal,
           ...(lane.issue === null ? {} : { issueNumber: lane.issue.number }),
         };
-        const key = `${String(item.issueNumber ?? "repository")}:${item.reason}:${item.label}`;
+        const key = attentionKey(item);
         if (!attentionKeys.has(key)) {
           attentionKeys.add(key);
           attention.push(item);

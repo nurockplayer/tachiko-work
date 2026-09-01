@@ -262,6 +262,70 @@ describe("GitHub observation adapter", () => {
     expect(observation.pullRequests[0]?.mergeability).toBe("mergeable");
   });
 
+  it("preserves native reviewer association for repository trust policy", async () => {
+    const graph = graphResponse();
+    const pull = graph.data.repository.pullRequests.nodes[0];
+    if (pull === undefined) throw new Error("fixture missing pull request");
+    const reviews = [
+      {
+        id: "review-member",
+        fullDatabaseId: "101",
+        body: "",
+        url: "https://github.example/reviews/member",
+        createdAt: "2026-09-01T00:00:00.000Z",
+        updatedAt: "2026-09-01T00:00:00.000Z",
+        includesCreatedEdit: false,
+        state: "APPROVED",
+        submittedAt: "2026-09-01T00:00:00.000Z",
+        author: { login: "member" },
+        authorAssociation: "MEMBER",
+        commit: { oid: HEAD },
+      },
+      {
+        id: "review-outsider",
+        fullDatabaseId: "102",
+        body: "",
+        url: "https://github.example/reviews/outsider",
+        createdAt: "2026-09-01T00:01:00.000Z",
+        updatedAt: "2026-09-01T00:01:00.000Z",
+        includesCreatedEdit: false,
+        state: "CHANGES_REQUESTED",
+        submittedAt: "2026-09-01T00:01:00.000Z",
+        author: { login: "outsider" },
+        authorAssociation: "NONE",
+        commit: { oid: HEAD },
+      },
+    ];
+    (pull.reviews as unknown as { nodes: typeof reviews }).nodes = reviews;
+    const fetchImpl = (async (input: string | URL | Request) => {
+      const url = typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url;
+      return url.endsWith("/graphql")
+        ? new Response(JSON.stringify(graph), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          })
+        : new Response(
+            JSON.stringify({ status: "ahead", merge_base_commit: { sha: MAIN } }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+    }) as typeof fetch;
+
+    const observation = await observeRepository({ fetchImpl });
+    expect(
+      observation.pullRequests[0]?.reviews.map((review) => ({
+        id: review.id,
+        association: review.authorAssociation,
+      })),
+    ).toEqual([
+      { id: "101", association: "MEMBER" },
+      { id: "102", association: "NONE" },
+    ]);
+  });
+
   it("marks completeness-required pagination as partial but keeps bounded recent history valid", async () => {
     const fake = fakeFetch(true);
     const observation = await observeRepository({ fetchImpl: fake.implementation });

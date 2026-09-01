@@ -355,6 +355,45 @@ describe("normalizeRepository", () => {
     });
   });
 
+  it("does not let outsider changes-requested block linked or unlinked lanes", () => {
+    const outsiderChanges = {
+      id: "outsider-changes",
+      authorLogin: "outsider",
+      authorAssociation: "NONE" as const,
+      submittedAt: "2026-09-01T00:01:00.000Z",
+      commitSha: HEAD,
+      state: "CHANGES_REQUESTED" as const,
+      url: "https://github.example/reviews/outsider-changes",
+    };
+    const linked = healthyObservation();
+    addGreenOperationalEvidence(linked);
+    const linkedPull = linked.pullRequests[0];
+    if (linkedPull === undefined) throw new Error("fixture missing pull request");
+    linkedPull.comments = linkedPull.comments.filter(
+      (comment) => !comment.body.includes("KIND: review"),
+    );
+    linkedPull.reviews = [outsiderChanges];
+    expect(normalizeRepository(linked).deliveries[0]).toMatchObject({
+      review: { state: "unknown", reason: "review-missing" },
+      mergeGate: { state: "unknown" },
+    });
+
+    const unlinked = healthyObservation();
+    const unlinkedPull = unlinked.pullRequests[0];
+    if (unlinkedPull === undefined) throw new Error("fixture missing pull request");
+    unlinkedPull.closingIssueNumbers = [];
+    unlinkedPull.reviews = [outsiderChanges];
+    expect(
+      normalizeRepository(unlinked).deliveries.find(
+        (lane) => lane.pullRequest?.number === unlinkedPull.number,
+      ),
+    ).toMatchObject({
+      issue: null,
+      review: { state: "unknown", reason: "review-missing" },
+      phase: "unknown",
+    });
+  });
+
   it("keeps current pending and ambiguous decisive reviews fail-closed", () => {
     const pending = healthyObservation();
     addGreenOperationalEvidence(pending);
@@ -740,6 +779,18 @@ describe("normalizeRepository", () => {
       }
     };
     expectBothBlocked();
+    expect(
+      normalizeRepository(observation).attention
+        .filter(
+          (item) =>
+            item.issueNumber === 169 &&
+            item.state === "blocked",
+        )
+        .flatMap((item) => item.sources.map((sourceLink) => sourceLink.url)),
+    ).toEqual(expect.arrayContaining([
+      "https://github.example/pulls/225",
+      "https://github.example/pulls/226",
+    ]));
 
     for (const pull of observation.pullRequests) {
       pull.authorityChanges = [
@@ -876,7 +927,21 @@ describe("normalizeRepository", () => {
     }
   });
 
-  it("keeps a trusted malformed handoff identity fail-closed for overlap", () => {
+  it.each([
+    [
+      "owner mismatch",
+      (body: string) => body
+        .replace("PR: 225", "PR: 226")
+        .replace("OWNER: agent:codex", "OWNER: agent:retired"),
+    ],
+    ["missing PR", (body: string) => body.replace("PR: 225\n", "")],
+    ["wrong PR", (body: string) => body.replace("PR: 225", "PR: 999")],
+    ["zero-padded PR", (body: string) => body.replace("PR: 225", "PR: 0226")],
+    [
+      "conflicting duplicate PR",
+      (body: string) => body.replace("PR: 225", "PR: 226\nPR: 999"),
+    ],
+  ] as const)("keeps a trusted handoff with %s fail-closed for overlap", (_case, mutate) => {
     const observation = healthyObservation();
     addGreenOperationalEvidence(observation);
     const source = observation.pullRequests[0];
@@ -894,9 +959,7 @@ describe("normalizeRepository", () => {
         {
           ...handoff,
           id: "malformed-owner-handoff",
-          body: handoff.body
-            .replace("PR: 225", "PR: 226")
-            .replace("OWNER: agent:codex", "OWNER: agent:retired"),
+          body: mutate(handoff.body),
         },
       ],
       reviews: [],
