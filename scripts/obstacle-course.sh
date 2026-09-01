@@ -4,7 +4,13 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 runner_path="${repo_root}/scripts/obstacle-course.sh"
 course_version="tachiko-obstacle/v0"
-correctness_stage_count=4
+correctness_stages=(
+  repository-dogfood
+  git-review-roundtrip
+  semantic-runtime
+  retained-workspace
+)
+correctness_stage_count="${#correctness_stages[@]}"
 TACHIKO_BIN="${TACHIKO_BIN:-}"
 
 # shellcheck source=scripts/release-lib.sh
@@ -15,13 +21,12 @@ usage() {
 }
 
 list_course() {
-  printf '%s\n' \
-    "${course_version}" \
-    "correctness repository-dogfood" \
-    "correctness git-review-roundtrip" \
-    "correctness semantic-runtime" \
-    "correctness retained-workspace" \
-    "performance retained-workspace samples=3 thresholds=none"
+  local stage
+  echo "${course_version}"
+  for stage in "${correctness_stages[@]}"; do
+    echo "correctness ${stage}"
+  done
+  echo "performance retained-workspace samples=3 thresholds=none"
 }
 
 run_repository_dogfood() {
@@ -163,6 +168,10 @@ fi
 
 cd "${repo_root}"
 
+# Evidence identity must describe this checkout, not an inherited Git context.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
+  GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE
+
 for required_command in cargo git rustc; do
   if ! command -v "${required_command}" >/dev/null 2>&1; then
     echo "obstacle-course: ${required_command} is required" >&2
@@ -179,15 +188,26 @@ performance_log="${run_dir}/performance.log"
 : >"${performance_log}"
 
 current_worktree_state() {
-  if [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then
+  local status_output
+  if ! status_output="$(git -C "${repo_root}" status \
+    --porcelain --untracked-files=normal)"; then
+    echo "obstacle-course: could not determine worktree state" >&2
+    return 1
+  fi
+  if [[ -n "${status_output}" ]]; then
     echo "dirty"
   else
     echo "clean"
   fi
 }
 
-head_commit="$(git rev-parse HEAD)"
-worktree_state="$(current_worktree_state)"
+if ! head_commit="$(git -C "${repo_root}" rev-parse HEAD)"; then
+  echo "obstacle-course: could not determine HEAD" >&2
+  exit 1
+fi
+if ! worktree_state="$(current_worktree_state)"; then
+  exit 1
+fi
 rust_identity="$(rustc --version | tr ' ' '_')"
 os_identity="$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
 native_target="$(rustc -vV | sed -n 's/^host: //p')"
@@ -195,7 +215,7 @@ if [[ -z "${native_target}" ]]; then
   echo "obstacle-course: could not determine the native Rust target" >&2
   exit 1
 fi
-course_target_dir="${repo_root}/target/obstacle-course"
+course_target_dir="${run_dir}/cargo-target"
 export CARGO_TARGET_DIR="${course_target_dir}"
 export CARGO_BUILD_TARGET="${native_target}"
 executable_name="$(tachiko_executable_name "${native_target}")"
@@ -204,8 +224,14 @@ tachiko_bin="${course_target_dir}/${native_target}/release/${executable_name}"
 verify_source_identity() {
   local checkpoint="$1"
   local observed_head observed_worktree_state
-  observed_head="$(git rev-parse HEAD)"
-  observed_worktree_state="$(current_worktree_state)"
+  if ! observed_head="$(git -C "${repo_root}" rev-parse HEAD)"; then
+    echo "EVIDENCE FAIL: could not determine HEAD checkpoint=${checkpoint}" >&2
+    return 1
+  fi
+  if ! observed_worktree_state="$(current_worktree_state)"; then
+    echo "EVIDENCE FAIL: could not determine worktree state checkpoint=${checkpoint}" >&2
+    return 1
+  fi
   if [[ "${observed_head}" != "${head_commit}" || \
     "${observed_worktree_state}" != "${worktree_state}" ]]; then
     echo "EVIDENCE FAIL: source identity changed checkpoint=${checkpoint} expected_commit=${head_commit} observed_commit=${observed_head} expected_worktree=${worktree_state} observed_worktree=${observed_worktree_state}" >&2
@@ -275,7 +301,7 @@ retained_digest="$(workload_digest retained-workspace \
   crates/workspace-engine/tests/retained_state_benchmark.rs)"
 
 echo "COURSE ${course_version} commit=${head_commit} worktree=${worktree_state} profile=release network=offline correctness_stages=${correctness_stage_count}"
-echo "ENV os=${os_identity} rustc=${rust_identity} native_target=${native_target} cargo_target=target/obstacle-course/${native_target}"
+echo "ENV os=${os_identity} rustc=${rust_identity} native_target=${native_target} cargo_target=run-scoped/${native_target}"
 echo "WORKLOAD stage=repository-dogfood id=product-gaps-roproj/v1 sha256=${dogfood_digest}"
 echo "WORKLOAD stage=git-review-roundtrip id=game-balance-git-review/v0 sha256=${git_review_digest}"
 echo "WORKLOAD stage=semantic-runtime id=focused-semantic-runtime/v0 sha256=${semantic_digest}"
@@ -443,7 +469,7 @@ run_stage() {
 passed=0
 failed=0
 evidence_failed=0
-for stage in repository-dogfood git-review-roundtrip semantic-runtime retained-workspace; do
+for stage in "${correctness_stages[@]}"; do
   samples=1
   if [[ "${stage}" == "retained-workspace" ]]; then
     samples=3
