@@ -2,15 +2,17 @@
 
 Decision state: Mixed — ADR-0011 three-way merge, ADR-0031 deterministic
 Semantic Conflict v1 evidence, ADR-0029 current-state/history boundary, and
-ADR-0030 canonical delta evidence Accepted; broader collaboration mechanics
-remain Open Question.
+ADR-0030 canonical delta evidence, and ADR-0032 execution/transition taxonomy
+Accepted; broader collaboration mechanics remain Open Question.
 
 Authority: [ADR-0011](../decisions/ADR-0011-semantic-three-way-merge.md),
 [ADR-0031](../decisions/ADR-0031-semantic-merge-conflict-protocol.md), and
 [ADR-0029](../decisions/ADR-0029-current-state-authority-and-optional-history.md),
 with canonical direct-state delta evidence defined by
-[ADR-0030](../decisions/ADR-0030-canonical-semantic-delta.md) and deterministic
-conflict evidence specified by
+[ADR-0030](../decisions/ADR-0030-canonical-semantic-delta.md), execution and
+retained-transition taxonomy defined by
+[ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md),
+and deterministic conflict evidence specified by
 [`../specs/conflict-resolution.md`](../specs/conflict-resolution.md).
 
 ## Principle
@@ -72,8 +74,9 @@ not converted into a structural conflict kind.
 Future adapters may use bounded retained-history or selectively justified
 CRDT/OT techniques, but they may not make replay authoritative, replace a
 complete standalone snapshot, or use Git as semantic identity. ADR-0030 resolves
-Issue #45 without making delta an operation or event. The ADR-0031 decision
-resolves Issue #46's deterministic structural conflict evidence without selecting
-production DTO/transport/runtime realization. Issues #47–#50 own the remaining
-cross-version, operation/revision/event, history/checkpoint/Git-association, and
-causality/CRDT mechanics.
+Issue #45 without making delta an operation or event. ADR-0031 resolves Issue
+#46's deterministic structural conflict evidence without selecting production
+DTO/transport/runtime realization. ADR-0032 resolves Issue #48's
+operation/revision/optional-event taxonomy without selecting history mechanics.
+Issues #47, #49, and #50 own the remaining cross-version,
+history/checkpoint/Git-association, and causality/CRDT mechanics.

@@ -382,11 +382,13 @@ including same-Document admission enforcement, removal of mergeable
 above.
 
 Issues [#47](https://github.com/nurockplayer/tachiko-work/issues/47),
-[#48](https://github.com/nurockplayer/tachiko-work/issues/48),
 [#49](https://github.com/nurockplayer/tachiko-work/issues/49), and
 [#50](https://github.com/nurockplayer/tachiko-work/issues/50) retain cross-version
-migration, operation/revision/event taxonomy, history/checkpoint/Git association,
-and causality/CRDT work respectively.
+migration, history/checkpoint/Git association, and causality/CRDT work
+respectively.
+[ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md)
+separately fixes operation/revision/event taxonomy without changing this
+conflict contract.
 
 ## Goals
 

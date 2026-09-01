@@ -595,13 +595,15 @@ role, Approval ID, Approve Grant reference, or `Consumed` Approval state. A
 direct-Human receipt may retain the executor, effective Execute Grant
 references, trusted authorization footprint and policy version, relevant input
 and resulting revision, and gate/result evidence. Issue #29 retains the current
-receipt implementation, #48 owns the future receipt/event taxonomy, and #49
-owns durable history storage and retention.
+receipt implementation, ADR-0032 owns the receipt/event distinction and
+retained-transition taxonomy, and #49 owns durable history storage and
+retention.
 
 Approval-gated provenance and any optional direct-Human receipt facts may
 attach to an execution receipt or history record and cross adapter boundaries.
-They are not semantic Document data. Exact receipt DTO work remains with Issues #29
-and #48; durable storage, retention, and recovery links remain #49 follow-up.
+They are not semantic Document data. Exact receipt DTO work remains separately
+owned after ADR-0032; durable storage, retention, and recovery links remain #49
+follow-up.
 Event sourcing, CRDT, and a general operation-log protocol are not required. Denials need
 machine-readable outcomes; durable denial logging remains #30/audit-policy
 scope.
@@ -640,7 +642,7 @@ authority.
   advance, concurrency, and state installation.
 - #11 owns broader enterprise/team permissions, transaction/recovery, and
   reusable policy questions.
-- #48 owns the future transition/receipt/event taxonomy; #49 owns persisted
+- ADR-0032 owns the transition/receipt/event taxonomy; #49 owns persisted
   history profiles, checkpoints, replay/compaction, undo, and retention
   architecture under ADR-0029.
 - storage/host may materialize only an already-authorized semantic result under
@@ -992,7 +994,8 @@ Costs:
 - #93 supplies concrete session/revision/concurrency mechanics without changing
   proposal or authorization meaning.
 - #11 retains broader permissions, reusable policies, and transaction/recovery;
-  #48/#49 retain deferred history taxonomy and architecture under ADR-0029.
+  ADR-0032 resolves the history taxonomy while #49 retains history architecture
+  under ADR-0029.
 - Issue #28 receives a Decision Capsule only after this authority package is
   reviewed and merged.
 
@@ -1007,4 +1010,5 @@ Costs:
 - ADR-0022
 - ADR-0024
 - [ADR-0029](ADR-0029-current-state-authority-and-optional-history.md)
+- [ADR-0032](ADR-0032-semantic-execution-and-transition-taxonomy.md)
 - Issues #11, #12, #28, #29, #30, #93

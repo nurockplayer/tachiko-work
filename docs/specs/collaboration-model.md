@@ -1,15 +1,18 @@
 # Collaboration Model Specification
 
 Decision state: Mixed — current merge behavior, the deterministic Semantic
-Conflict v1 protocol, ADR-0029 history boundary, and ADR-0030 canonical delta
-evidence are Accepted; broader collaboration remains Open Question.
+Conflict v1 protocol, ADR-0029 history boundary, ADR-0030 canonical delta
+evidence, and ADR-0032 execution/transition taxonomy are Accepted; broader
+collaboration remains Open Question.
 
 Authority: [ADR-0011](../decisions/ADR-0011-semantic-three-way-merge.md),
 [ADR-0031](../decisions/ADR-0031-semantic-merge-conflict-protocol.md), and
 [ADR-0029](../decisions/ADR-0029-current-state-authority-and-optional-history.md),
 with canonical direct-state delta evidence defined by
-[ADR-0030](../decisions/ADR-0030-canonical-semantic-delta.md) and deterministic
-conflict evidence specified by
+[ADR-0030](../decisions/ADR-0030-canonical-semantic-delta.md), execution and
+retained-transition taxonomy defined by
+[ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md),
+and deterministic conflict evidence specified by
 [`conflict-resolution.md`](conflict-resolution.md).
 
 ## Principle
@@ -66,9 +69,10 @@ A structurally conflict-free merge that creates an invalid reference or formula
 state is rejected by ordinary semantic finalization; it does not invent another
 conflict kind.
 
-## Still open
+## Accepted taxonomy and still-open mechanics
 
-- operation/revision/optional-event taxonomy (#48)
+- operation/revision/optional-event taxonomy is fixed by
+  [ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md)
 - optional retained history, checkpoints, replay, compaction, and Git association
   (#49)
 - offline causality and selectively justified CRDT/OT boundaries (#50)
