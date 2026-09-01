@@ -135,6 +135,41 @@ jobs:
       - name: Validate strict operational evidence
         run: bash scripts/operational-evidence-check.sh
 
+  project-dashboard:
+    name: Live Project Dashboard browser journey
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 11.25.0
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: |
+            tools/operational-evidence/pnpm-lock.yaml
+            tools/project-dashboard/pnpm-lock.yaml
+
+      - name: Install Dashboard dependencies
+        run: |
+          pnpm --dir tools/operational-evidence install --frozen-lockfile
+          pnpm --dir tools/project-dashboard install --frozen-lockfile
+
+      - name: Install Chromium
+        run: pnpm --dir tools/project-dashboard exec playwright install --with-deps chromium
+
+      - name: Validate the read-only Dashboard and browser journeys
+        run: bash scripts/project-dashboard-check.sh
+
   minimum-rust:
     name: Minimum supported Rust 1.85.0
     runs-on: ubuntu-24.04

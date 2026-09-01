@@ -48,6 +48,9 @@ bash scripts/designer-check.sh
 echo "==> strict operational-evidence foundation"
 bash scripts/operational-evidence-check.sh
 
+echo "==> read-only Live Project Dashboard"
+TACHIKO_OPERATIONAL_EVIDENCE_CHECKED=1 bash scripts/project-dashboard-check.sh
+
 echo "==> warning-free documentation"
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 

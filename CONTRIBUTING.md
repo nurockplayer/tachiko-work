@@ -64,6 +64,16 @@ reconciliation fixtures, declarations, and build with:
 bash scripts/operational-evidence-check.sh
 ```
 
+The repository-local Live Project Dashboard directly consumes that strict
+foundation. Its focused gate runs pnpm-only lint, typechecks, deterministic
+projection/security tests, the production build, and the Chromium desktop,
+mobile, reduced-motion, partial/Unknown, and refresh-focus journeys:
+
+```sh
+pnpm --dir tools/project-dashboard exec playwright install chromium
+bash scripts/project-dashboard-check.sh
+```
+
 ## Work in focused loops
 
 Run the smallest affected crate or test while iterating:

@@ -454,6 +454,14 @@ producing new semantic inputs and rerunning the command.
 - `ai-api`: provider-free read/explain/suggest adapter over workspace-engine; suggestions remain inert and approval-required
 - `cli`: argument/filesystem/persistence composition and rendering over workspace-engine plus storage
 
+Repository-local operational tooling remains outside the Tachiko product and
+semantic crate graph. `tools/operational-evidence` owns the strict structured
+handoff/evidence boundary, while `tools/project-dashboard` provides a
+loopback-only, read-only live GitHub/repository projection over that boundary.
+Run its full focused gate with `bash scripts/project-dashboard-check.sh`; see
+[`tools/project-dashboard/README.md`](tools/project-dashboard/README.md) for the
+security, authority, and Unknown-state boundaries.
+
 ## Architecture overview
 
 ![High-level architecture overview: React/Tauri frontend, Rust semantic backend, Tachiko formats (.roproj/.ro), and external integrations.](docs/architecture/tachiko-work-architecture-overview.png)

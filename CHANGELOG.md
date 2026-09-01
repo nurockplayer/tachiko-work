@@ -39,6 +39,14 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- A repository-local Live Project Dashboard now projects exact live-main,
+  Roadmap, independent Issue/PR lanes, checks/reviews, strict handoff/watch
+  evidence, current dependencies, recent merges, and authority/human-attention
+  conditions through five read-only CYBERCORE-styled surfaces. Credentials stay
+  server-side on loopback, source failures remain explicit Unknown/partial, and
+  the tool introduces no Tachiko semantic, write, orchestration, or public
+  deployment contract.
+
 - The first-party browser Designer now admits a second bounded ordinary domain
   without Moonfall-specific collection or control-formula requirements. A
   repository-owned canonical Product Gap project dogfoods opaque semantic IDs,

@@ -1,0 +1,515 @@
+import type {
+  GitHubAuthorAssociation,
+  GitHubCommentKind,
+} from "@tachiko-work/operational-evidence";
+
+import type {
+  ObservationAvailability,
+  RawCheck,
+  RawComment,
+  RawPullRequest,
+  RepositoryObservation,
+} from "../shared/model.js";
+
+const REPOSITORY = "nurockplayer/tachiko-work";
+const OWNER = "nurockplayer";
+const NAME = "tachiko-work";
+const API_URL = "https://api.github.com";
+const GRAPHQL_URL = `${API_URL}/graphql`;
+const ROADMAP_PATH = "docs/product/product-roadmap.md";
+const REQUEST_TIMEOUT_MS = 15_000;
+
+const QUERY = `
+  query DashboardRepository($owner: String!, $name: String!) {
+    repository(owner: $owner, name: $name) {
+      url
+      defaultBranchRef {
+        name
+        target {
+          ... on Commit { oid url }
+        }
+      }
+      roadmap: object(expression: "main:${ROADMAP_PATH}") {
+        ... on Blob { text oid }
+      }
+      issues(first: 100, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
+        pageInfo { hasNextPage }
+        nodes {
+          number title url state
+          labels(first: 30) { pageInfo { hasNextPage } nodes { name } }
+          milestone { title }
+          blockedBy(first: 100) {
+            pageInfo { hasNextPage }
+            nodes { number state url }
+          }
+        }
+      }
+      pullRequests(first: 40, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
+        pageInfo { hasNextPage }
+        nodes {
+          number title url state isDraft headRefOid baseRefOid baseRefName
+          closingIssuesReferences(first: 20) {
+            pageInfo { hasNextPage }
+            nodes { number }
+          }
+          comments(first: 100) {
+            pageInfo { hasNextPage }
+            nodes {
+              id databaseId body url createdAt updatedAt includesCreatedEdit
+              author { login }
+              authorAssociation
+            }
+          }
+          reviews(first: 100) {
+            pageInfo { hasNextPage }
+            nodes {
+              id fullDatabaseId body url createdAt updatedAt includesCreatedEdit state
+              author { login }
+              authorAssociation
+              commit { oid }
+            }
+          }
+          reviewThreads(first: 100) {
+            pageInfo { hasNextPage }
+            nodes {
+              id isResolved isOutdated
+              comments(first: 100) {
+                pageInfo { hasNextPage }
+                nodes {
+                  id databaseId body url createdAt updatedAt includesCreatedEdit
+                  author { login }
+                  authorAssociation
+                }
+              }
+            }
+          }
+          statusCheckRollup {
+            contexts(first: 100) {
+              pageInfo { hasNextPage }
+              nodes {
+                __typename
+                ... on CheckRun { id name status conclusion url detailsUrl }
+                ... on StatusContext { id context state targetUrl commit { oid } }
+              }
+            }
+          }
+        }
+      }
+      recent: pullRequests(first: 8, states: MERGED, orderBy: {field: UPDATED_AT, direction: DESC}) {
+        pageInfo { hasNextPage }
+        nodes { number title url mergedAt mergeCommit { oid } }
+      }
+    }
+  }
+`;
+
+interface PageInfo {
+  hasNextPage: boolean;
+}
+
+interface Actor {
+  login: string;
+}
+
+interface GraphComment {
+  id: string;
+  databaseId: number | null;
+  body: string;
+  url: string;
+  createdAt: string;
+  updatedAt: string;
+  includesCreatedEdit: boolean;
+  author: Actor | null;
+  authorAssociation: GitHubAuthorAssociation;
+}
+
+interface GraphReview extends GraphComment {
+  fullDatabaseId: string | null;
+  state: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED" | "PENDING";
+  commit: { oid: string } | null;
+}
+
+interface GraphThread {
+  id: string;
+  isResolved: boolean;
+  isOutdated: boolean;
+  comments: { pageInfo: PageInfo; nodes: GraphComment[] };
+}
+
+interface GraphCheckRun {
+  __typename: "CheckRun";
+  id: string;
+  name: string;
+  status: string;
+  conclusion: string | null;
+  url: string;
+  detailsUrl: string | null;
+}
+
+interface GraphStatusContext {
+  __typename: "StatusContext";
+  id: string;
+  context: string;
+  state: string;
+  targetUrl: string | null;
+  commit: { oid: string };
+}
+
+type GraphCheck = GraphCheckRun | GraphStatusContext;
+
+interface GraphPull {
+  number: number;
+  title: string;
+  url: string;
+  state: "OPEN" | "CLOSED" | "MERGED";
+  isDraft: boolean;
+  headRefOid: string;
+  baseRefOid: string;
+  baseRefName: string;
+  closingIssuesReferences: { pageInfo: PageInfo; nodes: { number: number }[] };
+  comments: { pageInfo: PageInfo; nodes: GraphComment[] };
+  reviews: { pageInfo: PageInfo; nodes: GraphReview[] };
+  reviewThreads: { pageInfo: PageInfo; nodes: GraphThread[] };
+  statusCheckRollup: {
+    contexts: { pageInfo: PageInfo; nodes: GraphCheck[] };
+  } | null;
+}
+
+interface GraphRepository {
+  url: string;
+  defaultBranchRef: {
+    name: string;
+    target: { oid: string; url: string };
+  } | null;
+  roadmap: { text: string; oid: string } | null;
+  issues: {
+    pageInfo: PageInfo;
+    nodes: {
+      number: number;
+      title: string;
+      url: string;
+      state: "OPEN" | "CLOSED";
+      labels: { pageInfo: PageInfo; nodes: { name: string }[] };
+      milestone: { title: string } | null;
+      blockedBy: {
+        pageInfo: PageInfo;
+        nodes: { number: number; state: "OPEN" | "CLOSED"; url: string }[];
+      };
+    }[];
+  };
+  pullRequests: { pageInfo: PageInfo; nodes: GraphPull[] };
+  recent: {
+    pageInfo: PageInfo;
+    nodes: {
+      number: number;
+      title: string;
+      url: string;
+      mergedAt: string | null;
+      mergeCommit: { oid: string } | null;
+    }[];
+  };
+}
+
+interface GraphResponse {
+  data?: { repository: GraphRepository | null };
+  errors?: { message: string }[];
+}
+
+interface CompareResponse {
+  status: "ahead" | "behind" | "diverged" | "identical";
+  merge_base_commit: { sha: string };
+}
+
+interface RequestOptions {
+  token?: string;
+  fetchImpl?: typeof fetch;
+}
+
+function requestHeaders(token?: string): Record<string, string> {
+  return {
+    Accept: "application/vnd.github+json",
+    "Content-Type": "application/json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    ...(token === undefined ? {} : { Authorization: `Bearer ${token}` }),
+  };
+}
+
+async function githubRequest<T>(
+  url: string,
+  init: RequestInit,
+  options: RequestOptions,
+): Promise<T> {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const response = await fetchImpl(url, {
+    ...init,
+    headers: requestHeaders(options.token),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    throw new Error(`GitHub observation failed with HTTP ${String(response.status)}`);
+  }
+  return (await response.json()) as T;
+}
+
+function stableSourceId(comment: GraphComment): string {
+  return comment.databaseId === null ? comment.id : String(comment.databaseId);
+}
+
+function trustedProducer(comment: GraphComment): boolean {
+  return comment.author?.login === OWNER && comment.authorAssociation === "OWNER";
+}
+
+function rawComment(
+  comment: GraphComment,
+  kind: GitHubCommentKind,
+  topLevel: boolean,
+): RawComment {
+  return {
+    body: comment.body,
+    id: stableSourceId(comment),
+    kind,
+    authorLogin: comment.author?.login ?? "unknown",
+    authorAssociation: comment.authorAssociation,
+    url: comment.url,
+    createdAt: comment.createdAt,
+    updatedAt: comment.updatedAt,
+    edited: comment.includesCreatedEdit,
+    topLevel,
+    trustedProducer: trustedProducer(comment),
+  };
+}
+
+function checkState(check: GraphCheck): RawCheck["status"] {
+  if (check.__typename === "StatusContext") {
+    if (check.state === "SUCCESS") return "success";
+    if (check.state === "PENDING" || check.state === "EXPECTED") return "pending";
+    return "failure";
+  }
+  if (check.status !== "COMPLETED") return "pending";
+  return check.conclusion === "SUCCESS" ? "success" : "failure";
+}
+
+function rawCheck(check: GraphCheck, headSha: string): RawCheck {
+  if (check.__typename === "StatusContext") {
+    return {
+      name: check.context,
+      headSha: check.commit.oid,
+      status: checkState(check),
+      url: check.targetUrl ?? `https://github.com/${REPOSITORY}/commit/${headSha}/checks`,
+    };
+  }
+  return {
+    name: check.name,
+    headSha,
+    status: checkState(check),
+    url: check.detailsUrl ?? check.url,
+  };
+}
+
+function hasNestedTruncation(pull: GraphPull): boolean {
+  return (
+    pull.closingIssuesReferences.pageInfo.hasNextPage ||
+    pull.comments.pageInfo.hasNextPage ||
+    pull.reviews.pageInfo.hasNextPage ||
+    pull.reviewThreads.pageInfo.hasNextPage ||
+    pull.reviewThreads.nodes.some((thread) => thread.comments.pageInfo.hasNextPage) ||
+    (pull.statusCheckRollup?.contexts.pageInfo.hasNextPage ?? false)
+  );
+}
+
+async function comparePull(
+  mainSha: string,
+  headSha: string,
+  options: RequestOptions,
+): Promise<{ mergeBaseSha: string; relation: RawPullRequest["relationToMain"] }> {
+  const comparison = await githubRequest<CompareResponse>(
+    `${API_URL}/repos/${REPOSITORY}/compare/${mainSha}...${headSha}`,
+    { method: "GET" },
+    options,
+  );
+  const relation =
+    comparison.status === "diverged"
+      ? "diverged"
+      : comparison.status === "behind"
+        ? "behind"
+        : comparison.merge_base_commit.sha === mainSha
+          ? "current"
+          : "unknown";
+  return { mergeBaseSha: comparison.merge_base_commit.sha, relation };
+}
+
+function unavailableObservation(reason: string): RepositoryObservation {
+  return {
+    repository: REPOSITORY,
+    ownerToken: "agent:codex",
+    observedAt: new Date().toISOString(),
+    availability: "unavailable",
+    main: null,
+    roadmap: null,
+    issues: [],
+    issuesAvailability: "unavailable",
+    pullRequests: [],
+    pullsAvailability: "unavailable",
+    recentActivity: [],
+    recentActivityAvailability: "unavailable",
+    errors: [{ source: "GitHub", url: GRAPHQL_URL, reason }],
+  };
+}
+
+export async function observeRepository(
+  options: RequestOptions = {},
+): Promise<RepositoryObservation> {
+  let response: GraphResponse;
+  try {
+    response = await githubRequest<GraphResponse>(
+      GRAPHQL_URL,
+      {
+        method: "POST",
+        body: JSON.stringify({ query: QUERY, variables: { owner: OWNER, name: NAME } }),
+      },
+      options,
+    );
+  } catch {
+    return unavailableObservation("observation-unavailable");
+  }
+  const repository = response.data?.repository;
+  const main = repository?.defaultBranchRef?.target;
+  if (repository === null || repository === undefined || main === undefined) {
+    return unavailableObservation("observation-incomplete");
+  }
+
+  const errors: RepositoryObservation["errors"] = [];
+  if ((response.errors?.length ?? 0) > 0) {
+    errors.push({ source: "GitHub GraphQL", url: GRAPHQL_URL, reason: "observation-incomplete" });
+  }
+  const topLevelTruncated =
+    repository.issues.pageInfo.hasNextPage ||
+    repository.pullRequests.pageInfo.hasNextPage;
+  const issueTruncated = repository.issues.nodes.some(
+    (issue) => issue.labels.pageInfo.hasNextPage || issue.blockedBy.pageInfo.hasNextPage,
+  );
+  const pullTruncated = repository.pullRequests.nodes.some(hasNestedTruncation);
+  if (topLevelTruncated || issueTruncated || pullTruncated) {
+    errors.push({ source: "GitHub GraphQL", url: GRAPHQL_URL, reason: "observation-incomplete" });
+  }
+
+  const comparisons = await Promise.all(
+    repository.pullRequests.nodes.map(async (pull) => {
+      try {
+        return await comparePull(main.oid, pull.headRefOid, options);
+      } catch {
+        errors.push({ source: `PR #${String(pull.number)} comparison`, url: pull.url, reason: "observation-unavailable" });
+        return { mergeBaseSha: null, relation: "unknown" as const };
+      }
+    }),
+  );
+  const pullRequests = repository.pullRequests.nodes.map((pull, index): RawPullRequest => {
+    const comparison = comparisons[index] ?? { mergeBaseSha: null, relation: "unknown" as const };
+    const reviewComments = pull.reviews.nodes
+      .filter((review) => review.body.length > 0)
+      .map((review) => rawComment(review, "pull-request-review", true));
+    const threadComments = pull.reviewThreads.nodes.flatMap((thread) =>
+      thread.comments.nodes.map((comment) =>
+        rawComment(comment, "pull-request-review-comment", false),
+      ),
+    );
+    const checkNodes = pull.statusCheckRollup?.contexts.nodes ?? [];
+    return {
+      number: pull.number,
+      title: pull.title,
+      url: pull.url,
+      state: pull.state,
+      draft: pull.isDraft,
+      headSha: pull.headRefOid,
+      baseSha: pull.baseRefOid,
+      baseRef: pull.baseRefName,
+      mergeBaseSha: comparison.mergeBaseSha,
+      relationToMain: comparison.relation,
+      closingIssueNumbers: pull.closingIssuesReferences.nodes.map((issue) => issue.number),
+      comments: [
+        ...pull.comments.nodes.map((comment) => rawComment(comment, "issue-comment", true)),
+        ...reviewComments,
+        ...threadComments,
+      ],
+      commentsAvailability: hasNestedTruncation(pull) ? "incomplete" : "complete",
+      checks: checkNodes.map((check) => rawCheck(check, pull.headRefOid)),
+      checksAvailability:
+        pull.statusCheckRollup === null
+          ? "complete"
+          : pull.statusCheckRollup.contexts.pageInfo.hasNextPage
+            ? "incomplete"
+            : "complete",
+      reviews: pull.reviews.nodes.map((review) => ({
+        id: review.fullDatabaseId ?? review.id,
+        commitSha: review.commit?.oid ?? "",
+        state: review.state,
+        url: review.url,
+      })),
+      reviewsAvailability: pull.reviews.pageInfo.hasNextPage ? "incomplete" : "complete",
+      threads: pull.reviewThreads.nodes.map((thread) => ({
+        id: thread.id,
+        resolved: thread.isResolved,
+        outdated: thread.isOutdated,
+        url: thread.comments.nodes[0]?.url ?? pull.url,
+      })),
+      threadsAvailability:
+        pull.reviewThreads.pageInfo.hasNextPage ||
+        pull.reviewThreads.nodes.some((thread) => thread.comments.pageInfo.hasNextPage)
+          ? "incomplete"
+          : "complete",
+    };
+  });
+
+  const availability: ObservationAvailability =
+    errors.length === 0 ? "complete" : "incomplete";
+  const token = options.token?.trim();
+  return {
+    repository: REPOSITORY,
+    ownerToken: "agent:codex",
+    observedAt: new Date().toISOString(),
+    availability,
+    main: { sha: main.oid, url: main.url },
+    roadmap: repository.roadmap === null
+      ? null
+      : {
+          markdown: repository.roadmap.text,
+          url: `https://github.com/${REPOSITORY}/blob/${main.oid}/${ROADMAP_PATH}`,
+        },
+    issues: repository.issues.nodes.map((issue) => ({
+      number: issue.number,
+      title: issue.title,
+      url: issue.url,
+      state: issue.state,
+      labels: issue.labels.nodes.map((label) => label.name),
+      milestone: issue.milestone?.title ?? null,
+      blockedBy: issue.blockedBy.nodes,
+      dependencyAvailability: issue.blockedBy.pageInfo.hasNextPage ? "incomplete" : "complete",
+    })),
+    issuesAvailability:
+      repository.issues.pageInfo.hasNextPage || issueTruncated ? "incomplete" : "complete",
+    pullRequests,
+    pullsAvailability:
+      repository.pullRequests.pageInfo.hasNextPage || pullTruncated ? "incomplete" : "complete",
+    recentActivity: repository.recent.nodes.flatMap((pull) =>
+      pull.mergedAt === null || pull.mergeCommit === null
+        ? []
+        : [{
+            number: pull.number,
+            title: pull.title,
+            url: pull.url,
+            mergedAt: pull.mergedAt,
+            mergeSha: pull.mergeCommit.oid,
+          }],
+    ),
+    // Recent activity is intentionally a bounded context window, not a complete history query.
+    recentActivityAvailability: "complete",
+    errors,
+    ...(token === undefined || token.length === 0 ? {} : { serverCredential: token }),
+  };
+}
+
+export function readServerCredential(environment: NodeJS.ProcessEnv = process.env): string | undefined {
+  const value = environment.GITHUB_TOKEN ?? environment.GH_TOKEN;
+  const trimmed = value?.trim();
+  return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
+}
