@@ -194,9 +194,9 @@ Issue `#40` is a completed implementation/evidence task that consumed ADR-0015, 
 - #42: Epic/index only; not decision authority.
 - #45: resolved by ADR-0030 and `semantic-diff-spec.md`; production DTO/code
   requires a separately Ready implementation issue.
-- #46: resolved by ADR-0031 and `conflict-resolution.md`; production Semantic
-  Conflict v1 DTO/codec/runtime realization requires a separately Ready
-  implementation issue.
+- #46: resolved by ADR-0031 and `conflict-resolution.md`; #223 realizes the
+  logical production merge/workspace boundary, while codec/wire/SDK
+  stabilization requires separately Ready implementation work.
 - #48: resolved by ADR-0032 and `semantic-api.md`; production revision/event
   DTOs and history mechanics require separately Ready implementation work.
 - #47 and #49-#55: Open Questions for later cross-version migration, history,
