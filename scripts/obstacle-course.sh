@@ -88,7 +88,7 @@ run_exact_workspace_test() {
 
   cargo test --quiet --release --locked --offline \
     -p tachiko-workspace-engine --test "${test_target}" "${test_name}" \
-    -- --exact
+    -- --exact --include-ignored
 }
 
 run_semantic_runtime() {
@@ -122,7 +122,7 @@ run_retained_workspace() {
     -p tachiko-workspace-engine \
     --test retained_state_benchmark \
     repeated_local_edits_reuse_material_calculation_work \
-    -- --exact --ignored --nocapture
+    -- --exact --include-ignored --nocapture
 
   echo "retained-workspace passed: full-oracle equivalence + deterministic incremental work counters"
 }

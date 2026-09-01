@@ -86,7 +86,8 @@ sample, exit status, and captured stdout/stderr.
 Before a named test-backed stage runs, the runner enumerates its exact test
 target and requires the selected test to exist exactly once. Renaming or
 removing a load-bearing test therefore fails the course instead of producing a
-successful zero-test run.
+successful zero-test run. The exact invocation includes ignored tests, so a
+change in ignore polarity cannot silently skip the selected test body.
 
 Before running, the command reports:
 
