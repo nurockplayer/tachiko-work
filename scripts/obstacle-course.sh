@@ -60,9 +60,31 @@ run_git_review_roundtrip() {
   TACHIKO_BIN="${TACHIKO_BIN}" bash "${repo_root}/scripts/git-ci-smoke.sh"
 }
 
+require_exact_workspace_test() {
+  local stage="$1"
+  local test_target="$2"
+  local test_name="$3"
+  local listing match_count
+
+  if ! listing="$(cargo test --quiet --release --locked --offline \
+    -p tachiko-workspace-engine --test "${test_target}" \
+    -- --list --format terse)"; then
+    echo "${stage}: could not enumerate exact workspace test ${test_target}::${test_name}" >&2
+    return 1
+  fi
+  match_count="$(printf '%s\n' "${listing}" | grep -Fxc "${test_name}: test" || true)"
+  if [[ "${match_count}" -ne 1 ]]; then
+    echo "${stage}: expected exact workspace test ${test_target}::${test_name} once, found ${match_count}" >&2
+    return 1
+  fi
+}
+
 run_exact_workspace_test() {
-  local test_target="$1"
-  local test_name="$2"
+  local stage="$1"
+  local test_target="$2"
+  local test_name="$3"
+
+  require_exact_workspace_test "${stage}" "${test_target}" "${test_name}"
 
   cargo test --quiet --release --locked --offline \
     -p tachiko-workspace-engine --test "${test_target}" "${test_name}" \
@@ -71,15 +93,19 @@ run_exact_workspace_test() {
 
 run_semantic_runtime() {
   run_exact_workspace_test \
+    semantic-runtime \
     analysis_operations \
     repeated_equal_query_is_exactly_reproducible_with_structured_lineage
   run_exact_workspace_test \
+    semantic-runtime \
     patch_lifecycle \
     approved_one_field_patch_previews_applies_verifies_and_records_provenance
   run_exact_workspace_test \
+    semantic-runtime \
     resident_session \
     scalar_mutation_invalidates_changed_field_and_downstream_projection_at_new_revision
   run_exact_workspace_test \
+    semantic-runtime \
     resident_session \
     field_query_preserves_formula_failure_and_stable_subject_diagnostics
 
@@ -87,6 +113,11 @@ run_semantic_runtime() {
 }
 
 run_retained_workspace() {
+  require_exact_workspace_test \
+    retained-workspace \
+    retained_state_benchmark \
+    repeated_local_edits_reuse_material_calculation_work
+
   cargo test --quiet --release --locked --offline \
     -p tachiko-workspace-engine \
     --test retained_state_benchmark \

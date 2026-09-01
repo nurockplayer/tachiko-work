@@ -2,7 +2,7 @@
 
 Status: implementation evidence; not protocol or conformance authority
 
-Tracking: [Issue #213](https://github.com/nurockplayer/tachiko-work/issues/213)
+Tracking issue: [Issue #213](https://github.com/nurockplayer/tachiko-work/issues/213)
 
 ## Purpose
 
@@ -49,15 +49,26 @@ read-only rejection checks. The runner has no fault-injection production path.
 The authoritative semantics exercised here remain in the Accepted decisions and
 their specifications:
 
-- canonical storage and `.roproj/v1`: ADR-0017, ADR-0023, and
+- canonical storage and `.roproj/v1`:
+  [ADR-0017](../decisions/ADR-0017-versioned-storage-and-canonical-representation.md),
+  [ADR-0023](../decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md), and
   [`roproj-layout-v1.md`](../specs/roproj-layout-v1.md);
-- formulas: ADR-0018 and
+- formulas:
+  [ADR-0018](../decisions/ADR-0018-bound-formulas-and-deterministic-binary64.md)
+  and
   [`formula-engine-spec.md`](../specs/formula-engine-spec.md);
-- validation and diagnostics: ADR-0019 and
+- validation and diagnostics:
+  [ADR-0019](../decisions/ADR-0019-staged-semantic-validation-and-diagnostics.md)
+  and
   [`diagnostics-contract.md`](../specs/diagnostics-contract.md);
-- headless Query/Propose/Execute and resident publication: ADR-0020, ADR-0022,
-  ADR-0024, ADR-0026, and [`semantic-api.md`](../specs/semantic-api.md);
-- semantic review meaning: ADR-0030 and
+- headless Query/Propose/Execute and resident publication:
+  [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md),
+  [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md),
+  [ADR-0024](../decisions/ADR-0024-revision-pinned-semantic-patch.md),
+  [ADR-0026](../decisions/ADR-0026-scoped-semantic-authorization-and-approval.md),
+  and [`semantic-api.md`](../specs/semantic-api.md);
+- semantic review meaning:
+  [ADR-0030](../decisions/ADR-0030-canonical-semantic-delta.md) and
   [`semantic-diff-spec.md`](../specs/semantic-diff-spec.md).
 
 The current rendered diff is implementation evidence, not a new wire shape for
@@ -71,6 +82,11 @@ Each correctness stage prints `STAGE <id> PASS|FAIL` plus its invariant. The
 runner attempts all four stages, prints `N/4 correctness stages passed`, and
 returns nonzero when any correctness stage fails. A failure includes the stage,
 sample, exit status, and captured stdout/stderr.
+
+Before a named test-backed stage runs, the runner enumerates its exact test
+target and requires the selected test to exist exactly once. Renaming or
+removing a load-bearing test therefore fails the course instead of producing a
+successful zero-test run.
 
 Before running, the command reports:
 

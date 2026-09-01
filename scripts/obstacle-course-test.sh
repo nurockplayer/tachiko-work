@@ -37,4 +37,24 @@ fi
 grep -F "usage: bash scripts/obstacle-course.sh [--list]" \
   "${test_dir}/empty-arg.err" >/dev/null
 
-echo "obstacle-course test passed: public stage registry + fail-closed option parsing"
+mkdir -p "${test_dir}/fake-bin"
+cat >"${test_dir}/fake-bin/cargo" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "${test_dir}/fake-bin/cargo"
+
+for stage in semantic-runtime retained-workspace; do
+  if PATH="${test_dir}/fake-bin:${PATH}" \
+    TACHIKO_OBSTACLE_INTERNAL=1 TACHIKO_BIN=/bin/true \
+    bash "${runner}" --internal-run-stage "${stage}" \
+    >"${test_dir}/${stage}-missing-test.out" \
+    2>"${test_dir}/${stage}-missing-test.err"; then
+    echo "obstacle-course test: ${stage} accepted a missing exact test" >&2
+    exit 1
+  fi
+  grep -F "${stage}: expected exact workspace test" \
+    "${test_dir}/${stage}-missing-test.err" >/dev/null
+done
+
+echo "obstacle-course test passed: registry + fail-closed options and exact-test selection"
