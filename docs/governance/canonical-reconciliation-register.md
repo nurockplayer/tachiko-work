@@ -261,10 +261,13 @@ specification, with the first provider-neutral workspace/CLI slice implemented
 by #144. `#33` is resolved by the bounded Analysis Query amendment and normative
 Semantic API specification, with the first provider-neutral workspace/CLI slice
 implemented by #150.
-`#45` is resolved by ADR-0030 / `semantic-diff-spec.md`; `#46` is resolved by
-ADR-0031 / `conflict-resolution.md`; and `#48` is resolved by ADR-0032 /
-`semantic-api.md`. Their production protocol DTO/runtime/history realizations
-remain separate implementation work rather than implicit authority changes.
+`#45` is resolved by ADR-0030 / `semantic-diff-spec.md`, with production delta
+DTO/code separately owned. `#46` is resolved by ADR-0031 /
+`conflict-resolution.md`, and #223 realizes its logical production
+merge/workspace boundary while codec/wire/SDK stabilization remains separately
+owned. `#48` is resolved by ADR-0032 / `semantic-api.md` without authorizing a
+production DTO or history mechanism. None of these implementation states changes
+Accepted authority implicitly.
 Production `.roproj/v1` pure codec/native host work is implemented by #123.
 Portable-package v1 packaged `.ro` codec/native host/CLI work is implemented by
 Issue `#3` and consumes, without redesigning, the Accepted package contract and

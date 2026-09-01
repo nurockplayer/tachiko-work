@@ -11,10 +11,11 @@ Authority: [ADR-0031](../decisions/ADR-0031-semantic-merge-conflict-protocol.md)
 
 Decision issue: [#46](https://github.com/nurockplayer/tachiko-work/issues/46)
 
-The current `merge-engine` Rust conflict shape is implementation evidence. Its
-path-oriented address, concrete enum/serialization shape, and legacy
-three-way-selection of `Document.id` are not this protocol DTO and must not be
-treated as permanent public meaning.
+Issue #223 makes the current `merge-engine` Rust conflict shape implementation
+evidence for this logical contract: same-Document admission and typed
+target/facet/kind/fact semantics are realized in the production merge/workspace
+boundary. The concrete Rust/CLI shape is not a stabilized codec, wire, or public
+SDK contract and must not be treated as permanent public meaning.
 
 ## Principle
 
@@ -50,8 +51,9 @@ conflict-free combined candidate is finalized again as specified below.
 This same-Document rule is the explicit ADR-0031 amendment to ADR-0011's
 original v0.1 merge surface, which treated `Document.id` as an ordinary
 three-way-selected unit. Document title and the remaining ADR-0011 merge laws
-are unchanged. Until separate production realization work lands, the current
-merge-engine behavior that still selects `Document.id` is implementation lag.
+are unchanged. The pre-#223 merge-engine behavior that selected `Document.id`
+is historical implementation lag; #223 removes that selection at the production
+merge/workspace boundary without stabilizing a codec, wire, or SDK shape.
 
 The existing CLI's `ours` and `theirs` terminology maps to logical `left` and
 `right`. Those presentation labels are not conflict identity.
