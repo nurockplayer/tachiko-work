@@ -262,16 +262,7 @@ async function githubRequest<T>(
 }
 
 function stableSourceId(comment: GraphComment): string {
-  if (
-    "fullDatabaseId" in comment &&
-    typeof comment.fullDatabaseId === "string" &&
-    comment.fullDatabaseId.length > 0
-  ) {
-    return comment.fullDatabaseId;
-  }
-  return comment.databaseId === undefined || comment.databaseId === null
-    ? comment.id
-    : String(comment.databaseId);
+  return comment.id;
 }
 
 function trustedProducer(comment: GraphComment): boolean {
@@ -622,7 +613,7 @@ export async function observeRepository(
             ? "incomplete"
             : "complete",
       reviews: reviews.map((review) => ({
-        id: review.fullDatabaseId ?? review.id,
+        id: stableSourceId(review),
         authorLogin: review.author?.login ?? `unknown:${review.id}`,
         authorAssociation: review.authorAssociation,
         submittedAt: review.submittedAt,

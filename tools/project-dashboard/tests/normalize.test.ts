@@ -1371,6 +1371,31 @@ describe("normalizeRepository", () => {
     });
   });
 
+  it("preserves a current linked review blocker when review observation is partial", () => {
+    const observation = healthyObservation();
+    addGreenOperationalEvidence(observation);
+    const pull = observation.pullRequests[0];
+    if (pull === undefined) throw new Error("fixture missing pull request");
+    pull.reviewsAvailability = "incomplete";
+    pull.reviews = [
+      {
+        id: "current-changes-requested",
+        authorLogin: "reviewer",
+        authorAssociation: "MEMBER",
+        submittedAt: "2026-09-01T00:00:00.000Z",
+        commitSha: pull.headSha,
+        state: "CHANGES_REQUESTED",
+        url: "https://github.example/reviews/current-changes-requested",
+      },
+    ];
+
+    expect(normalizeRepository(observation).deliveries[0]).toMatchObject({
+      review: { state: "blocked", reason: "native-changes-requested" },
+      mergeGate: { state: "blocked" },
+      phase: "review_fix",
+    });
+  });
+
   it("keeps Ready counts Unknown when Issue or label observation is incomplete", () => {
     const incompleteIssues = healthyObservation();
     incompleteIssues.issuesAvailability = "incomplete";
@@ -1461,13 +1486,17 @@ describe("normalizeRepository", () => {
       const pull = observation.pullRequests[0];
       if (pull === undefined) throw new Error("fixture missing pull request");
       pull.closingIssueNumbers = [];
+      pull.comments = pull.comments.filter(
+        (comment) => !comment.body.startsWith("<!-- agent-handoff:v1 -->"),
+      );
       pull.mergeability = mergeability;
 
-      expect(
+      const lane =
         normalizeRepository(observation).deliveries.find(
           (lane) => lane.pullRequest?.number === pull.number,
-        ),
-      ).toMatchObject({ mergeGate: { state }, phase: state });
+        );
+      expect(lane?.issue).toBeNull();
+      expect(lane).toMatchObject({ mergeGate: { state }, phase: state });
     },
   );
 

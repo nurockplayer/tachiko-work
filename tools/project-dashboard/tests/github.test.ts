@@ -289,7 +289,7 @@ describe("GitHub observation adapter", () => {
     expect(observation.pullRequests[0]?.mergeability).toBe("mergeable");
   });
 
-  it("preserves native reviewer association for repository trust policy", async () => {
+  it("preserves reviewer trust and globally unique GraphQL source IDs", async () => {
     const graph = graphResponse();
     const pull = graph.data.repository.pullRequests.nodes[0];
     if (pull === undefined) throw new Error("fixture missing pull request");
@@ -322,8 +322,36 @@ describe("GitHub observation adapter", () => {
         authorAssociation: "NONE",
         commit: { oid: HEAD },
       },
+      {
+        id: "review-without-database-id",
+        fullDatabaseId: null,
+        body: "Review without a database ID",
+        url: "https://github.example/reviews/no-database-id",
+        createdAt: "2026-09-01T00:02:00.000Z",
+        updatedAt: "2026-09-01T00:02:00.000Z",
+        includesCreatedEdit: false,
+        state: "COMMENTED",
+        submittedAt: "2026-09-01T00:02:00.000Z",
+        author: { login: "member" },
+        authorAssociation: "MEMBER",
+        commit: { oid: HEAD },
+      },
     ];
     (pull.reviews as unknown as { nodes: typeof reviews }).nodes = reviews;
+    const issueComments = [
+      {
+        id: "issue-comment-node",
+        databaseId: 101,
+        body: "Unstructured issue comment",
+        url: "https://github.example/comments/101",
+        createdAt: "2026-09-01T00:00:00.000Z",
+        updatedAt: "2026-09-01T00:00:00.000Z",
+        includesCreatedEdit: false,
+        author: { login: "member" },
+        authorAssociation: "MEMBER",
+      },
+    ];
+    (pull.comments as unknown as { nodes: typeof issueComments }).nodes = issueComments;
     const fetchImpl = (async (input: string | URL | Request) => {
       const url = typeof input === "string"
         ? input
@@ -348,11 +376,24 @@ describe("GitHub observation adapter", () => {
         association: review.authorAssociation,
       })),
     ).toEqual([
-      { id: "101", association: "MEMBER" },
-      { id: "102", association: "NONE" },
+      { id: "review-member", association: "MEMBER" },
+      { id: "review-outsider", association: "NONE" },
+      { id: "review-without-database-id", association: "MEMBER" },
     ]);
     expect(observation.pullRequests[0]?.comments).toContainEqual(
-      expect.objectContaining({ id: "101", kind: "pull-request-review" }),
+      expect.objectContaining({ id: "review-member", kind: "pull-request-review" }),
+    );
+    expect(observation.pullRequests[0]?.comments).toContainEqual(
+      expect.objectContaining({
+        id: "review-without-database-id",
+        kind: "pull-request-review",
+      }),
+    );
+    expect(observation.pullRequests[0]?.comments).toContainEqual(
+      expect.objectContaining({ id: "issue-comment-node", kind: "issue-comment" }),
+    );
+    expect(normalizeRepository(observation).deliveries[0]?.review.reason).not.toBe(
+      "source-identity-conflict",
     );
   });
 
