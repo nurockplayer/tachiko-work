@@ -68,6 +68,8 @@ function graphResponse(
               baseRefOid: MAIN,
               baseRefName: "main",
               mergeable,
+              mergeStateStatus: "CLEAN" as const,
+              reviewDecision: null,
               closingIssuesReferences: {
                 pageInfo: { hasNextPage: closingIssuesHaveNextPage },
                 nodes: [{ number: 169 }],
@@ -201,6 +203,8 @@ function fakeBehindAuthorityFetch() {
             { filename: "docs/product/engine-integration-strategy.md" },
             { filename: ".github/workflows/ci.yml" },
             { filename: "scripts/release-check.sh" },
+            { filename: "Cargo.toml" },
+            { filename: "Cargo.lock" },
             { filename: "crates/cli/AGENTS.md" },
             {
               filename: "docs/discussions/renamed-authority.md",
@@ -282,6 +286,7 @@ describe("GitHub observation adapter", () => {
     expect(graphBody).toContain("query DashboardRepository");
     expect(graphBody).toContain("state submittedAt");
     expect(graphBody).toContain("baseRefName mergeable");
+    expect(graphBody).toContain("mergeStateStatus reviewDecision");
     expect(graphBody).not.toContain("mutation");
     expect(observation.serverCredential).toBe("present");
     expect(JSON.stringify(observation)).not.toContain("server_secret");
@@ -450,6 +455,28 @@ describe("GitHub observation adapter", () => {
 
     expect(observation.pullRequests[0]?.mergeability).toBe(expected);
   });
+
+  it.each([
+    ["CLEAN", null, "satisfied"],
+    ["HAS_HOOKS", "APPROVED", "satisfied"],
+    ["UNSTABLE", null, "satisfied"],
+    ["BLOCKED", null, "blocked"],
+    ["BEHIND", null, "blocked"],
+    ["UNKNOWN", null, "unknown"],
+    ["CLEAN", "REVIEW_REQUIRED", "waiting"],
+    ["CLEAN", "CHANGES_REQUESTED", "blocked"],
+  ] as const)(
+    "maps native merge policy %s / %s to %s",
+    async (mergeStateStatus, reviewDecision, expected) => {
+      const graph = graphResponse();
+      const pull = graph.data.repository.pullRequests.nodes[0];
+      if (pull === undefined) throw new Error("fixture missing pull request");
+      Object.assign(pull, { mergeStateStatus, reviewDecision });
+
+      const observation = await observeRepository({ fetchImpl: fetchForGraph(graph) });
+      expect(observation.pullRequests[0]?.nativeMergePolicy).toBe(expected);
+    },
+  );
 
   it("keeps handoff ownership overlap incomplete when top-level comments are truncated", async () => {
     const fake = fakeFetch(false, false, true, false, false, false, true);
@@ -745,6 +772,8 @@ describe("GitHub observation adapter", () => {
       "docs/product/engine-integration-strategy.md",
       ".github/workflows/ci.yml",
       "scripts/release-check.sh",
+      "Cargo.toml",
+      "Cargo.lock",
       "crates/cli/AGENTS.md",
       "docs/decisions/ADR-renamed.md",
       ".github/workflows/renamed.yml",

@@ -392,15 +392,25 @@ function boundedHandoffIdentity(
 
 function mergeabilityFor(pull: RawPullRequest): DisplaySignal {
   const source = [evidenceSource(`PR #${String(pull.number)}`, pull.url)];
-  if (pull.mergeability === "conflicting") {
+  if (pull.mergeability === "conflicting" || pull.nativeMergePolicy === "blocked") {
     return directSignal(
       "blocked",
-      "native-merge-conflict",
-      "Pull request has a native merge conflict",
+      pull.mergeability === "conflicting" ? "native-merge-conflict" : "native-merge-policy-blocked",
+      pull.mergeability === "conflicting"
+        ? "Pull request has a native merge conflict"
+        : "GitHub native merge policy blocks this pull request",
       source,
     );
   }
-  if (pull.mergeability === "unknown") {
+  if (pull.nativeMergePolicy === "waiting") {
+    return directSignal(
+      "waiting",
+      "native-review-required",
+      "GitHub native review policy is waiting",
+      source,
+    );
+  }
+  if (pull.mergeability === "unknown" || pull.nativeMergePolicy === "unknown") {
     return directSignal(
       "unknown",
       "observation-incomplete",
@@ -714,6 +724,8 @@ function pullLane(
             ? mergeGate.state === "waiting" ? "review_wait" : "unknown"
           : mergeGate.state === "satisfied"
             ? "merge_gate"
+            : mergeability.state === "waiting"
+              ? "review_wait"
             : mergeability.state === "unknown"
               ? "unknown"
             : readiness.state === "unknown"
@@ -1097,6 +1109,9 @@ export function normalizeRepository(
   }
   const linkedIssueNumbers = new Set<number>();
   const deliveries: DeliveryLane[] = observation.pullRequests.map((pull, index) => {
+    for (const issueNumber of implementationDefiniteIssueNumbers[index] ?? []) {
+      linkedIssueNumbers.add(issueNumber);
+    }
     const implementationOverlap: ImplementationOverlap = [
       ...(implementationDefiniteIssueNumbers[index] ?? []),
     ].some((issueNumber) => (implementationCounts.get(issueNumber) ?? 0) > 1)
@@ -1116,7 +1131,6 @@ export function normalizeRepository(
         roadmap.state === "satisfied",
       );
     }
-    linkedIssueNumbers.add(issue.number);
     return pullLane(
       effectiveObservation,
       issue,

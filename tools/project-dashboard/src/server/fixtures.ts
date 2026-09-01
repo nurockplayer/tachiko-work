@@ -81,6 +81,7 @@ export function healthyObservation(): RepositoryObservation {
         mergeBaseSha: MAIN_SHA,
         relationToMain: "current",
         mergeability: "mergeable",
+        nativeMergePolicy: "satisfied",
         authorityChanges: [],
         authorityAvailability: "complete",
         closingIssueNumbers: [169],

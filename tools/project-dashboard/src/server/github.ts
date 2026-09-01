@@ -48,6 +48,7 @@ const QUERY = `
         pageInfo { hasNextPage }
         nodes {
           number title url state isDraft headRefOid baseRefOid baseRefName mergeable
+          mergeStateStatus reviewDecision
           closingIssuesReferences(first: 20) {
             pageInfo { hasNextPage }
             nodes { number }
@@ -168,6 +169,15 @@ interface GraphPull {
   baseRefOid: string;
   baseRefName: string;
   mergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
+  mergeStateStatus:
+    | "DIRTY"
+    | "UNKNOWN"
+    | "BLOCKED"
+    | "BEHIND"
+    | "UNSTABLE"
+    | "HAS_HOOKS"
+    | "CLEAN";
+  reviewDecision: "CHANGES_REQUESTED" | "APPROVED" | "REVIEW_REQUIRED" | null;
   closingIssuesReferences: {
     pageInfo: PageInfo;
     nodes: ({ number: number } | null)[] | null;
@@ -384,6 +394,8 @@ function topLevelCommentsTruncated(pull: GraphPull): boolean {
 function isAuthorityPath(path: string): boolean {
   return (
     (path === "AGENTS.md" || path.endsWith("/AGENTS.md")) ||
+    path === "Cargo.toml" ||
+    path === "Cargo.lock" ||
     path === "CONTRIBUTING.md" ||
     path === "SECURITY.md" ||
     path === ROADMAP_PATH ||
@@ -397,6 +409,20 @@ function isAuthorityPath(path: string): boolean {
     path.startsWith("docs/specs/") ||
     path.startsWith("docs/vision/")
   );
+}
+
+function nativeMergePolicy(pull: GraphPull): RawPullRequest["nativeMergePolicy"] {
+  if (pull.reviewDecision === "CHANGES_REQUESTED") return "blocked";
+  if (pull.reviewDecision === "REVIEW_REQUIRED") return "waiting";
+  if (
+    pull.mergeStateStatus === "DIRTY" ||
+    pull.mergeStateStatus === "BLOCKED" ||
+    pull.mergeStateStatus === "BEHIND"
+  ) {
+    return "blocked";
+  }
+  if (pull.mergeStateStatus === "UNKNOWN") return "unknown";
+  return "satisfied";
 }
 
 async function comparePull(
@@ -603,6 +629,7 @@ export async function observeRepository(
           : pull.mergeable === "CONFLICTING"
             ? "conflicting"
             : "unknown",
+      nativeMergePolicy: nativeMergePolicy(pull),
       authorityChanges: comparison.authorityChanges,
       authorityAvailability: comparison.authorityAvailability,
       closingIssueNumbers: presentNodes(pull.closingIssuesReferences?.nodes ?? null).map(

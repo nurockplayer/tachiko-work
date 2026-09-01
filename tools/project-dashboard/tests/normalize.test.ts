@@ -872,13 +872,13 @@ describe("normalizeRepository", () => {
     expect(lanes).toHaveLength(2);
     expect(lanes.find((lane) => lane.pullRequest?.number === 226)?.issue).toBeNull();
     expect(
-      projection.deliveries.find(
+      projection.deliveries.some(
         (lane) => lane.issue?.number === 223 && lane.pullRequest === null,
       ),
-    ).toMatchObject({ phase: "ready" });
+    ).toBe(false);
     expect(projection.executive.readyCount).toMatchObject({
       state: "satisfied",
-      value: 1,
+      value: 0,
     });
     for (const lane of lanes) {
       expect(lane.authority.state).toBe("blocked");
@@ -1332,6 +1332,23 @@ describe("normalizeRepository", () => {
     expect(normalizeRepository(observation).deliveries[0]).toMatchObject({
       mergeGate: { state },
       phase: state === "blocked" ? "blocked" : "unknown",
+    });
+  });
+
+  it.each([
+    ["blocked", "blocked"],
+    ["waiting", "review_wait"],
+    ["unknown", "unknown"],
+  ] as const)("fails merge closed for native merge policy %s", (policy, phase) => {
+    const observation = healthyObservation();
+    addGreenOperationalEvidence(observation);
+    const pull = observation.pullRequests[0];
+    if (pull === undefined) throw new Error("fixture missing pull request");
+    pull.nativeMergePolicy = policy;
+
+    expect(normalizeRepository(observation).deliveries[0]).toMatchObject({
+      mergeGate: { state: policy },
+      phase,
     });
   });
 

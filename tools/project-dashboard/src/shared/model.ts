@@ -100,6 +100,7 @@ export interface RawPullRequest {
   mergeBaseSha: string | null;
   relationToMain: "current" | "behind" | "diverged" | "unknown";
   mergeability: "mergeable" | "conflicting" | "unknown";
+  nativeMergePolicy: "satisfied" | "blocked" | "waiting" | "unknown";
   authorityChanges: { path: string; url: string }[];
   authorityAvailability: ObservationAvailability;
   closingIssueNumbers: number[];
