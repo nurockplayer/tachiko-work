@@ -335,8 +335,10 @@ function isAuthorityPath(path: string): boolean {
     path === "CONTRIBUTING.md" ||
     path === "SECURITY.md" ||
     path === ROADMAP_PATH ||
+    path.startsWith("docs/architecture/") ||
     path.startsWith("docs/decisions/") ||
     path.startsWith("docs/governance/") ||
+    path.startsWith("docs/security/") ||
     path.startsWith("docs/specs/") ||
     path.startsWith("docs/vision/")
   );

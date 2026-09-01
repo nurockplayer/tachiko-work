@@ -3,6 +3,54 @@ import { describe, expect, it } from "vitest";
 import { healthyObservation, partialObservation } from "../src/server/fixtures.js";
 import { normalizeRepository } from "../src/server/normalize.js";
 
+const HEAD = "2222222222222222222222222222222222222222";
+
+function addGreenOperationalEvidence(observation: ReturnType<typeof healthyObservation>): void {
+  const pull = observation.pullRequests[0];
+  if (pull === undefined) throw new Error("fixture missing pull request");
+  const comment = (id: string, body: string) => ({
+    body,
+    id,
+    kind: "issue-comment" as const,
+    authorLogin: "nurockplayer",
+    authorAssociation: "OWNER" as const,
+    url: `https://github.example/comments/${id}`,
+    createdAt: "2026-09-01T00:00:00.000Z",
+    updatedAt: null,
+    edited: false,
+    topLevel: true,
+    trustedProducer: true,
+  });
+  pull.comments.push(
+    comment(
+      "release-evidence",
+      [
+        "<!-- operational-evidence:v1",
+        "KIND: validation",
+        "PR: 225",
+        `HEAD: ${HEAD}`,
+        "RUN: release-225",
+        "NAME: release-check",
+        "RESULT: pass",
+        "-->",
+      ].join("\n"),
+    ),
+    comment(
+      "review-evidence",
+      [
+        "<!-- operational-evidence:v1",
+        "KIND: review",
+        "PR: 225",
+        `HEAD: ${HEAD}`,
+        "RUN: review-225",
+        "NAME: project-review",
+        "RESULT: clean",
+        "-->",
+      ].join("\n"),
+    ),
+  );
+}
+
 describe("normalizeRepository", () => {
   it("keeps independent lanes and exact evidence classes separate", () => {
     const projection = normalizeRepository(healthyObservation());
@@ -112,6 +160,33 @@ describe("normalizeRepository", () => {
     expect(normalizeRepository(observation).deliveries[0]?.phase).toBe("rereview");
   });
 
+  it("never lets changed or unavailable authority pass an otherwise-green merge gate", () => {
+    const changed = healthyObservation();
+    addGreenOperationalEvidence(changed);
+    expect(normalizeRepository(changed).deliveries[0]?.mergeGate.state).toBe("satisfied");
+    const changedPull = changed.pullRequests[0];
+    if (changedPull === undefined) throw new Error("fixture missing pull request");
+    changedPull.authorityChanges = [
+      { path: "docs/vision/product-constitution.md", url: "https://github.example/compare" },
+    ];
+    expect(normalizeRepository(changed).deliveries[0]).toMatchObject({
+      authority: { state: "unknown" },
+      mergeGate: { state: "unknown" },
+      phase: "rereview",
+    });
+
+    const unavailable = healthyObservation();
+    addGreenOperationalEvidence(unavailable);
+    const unavailablePull = unavailable.pullRequests[0];
+    if (unavailablePull === undefined) throw new Error("fixture missing pull request");
+    unavailablePull.authorityAvailability = "unavailable";
+    expect(normalizeRepository(unavailable).deliveries[0]).toMatchObject({
+      authority: { state: "unknown" },
+      mergeGate: { state: "unknown" },
+      phase: "unknown",
+    });
+  });
+
   it("keeps truncated dependencies Unknown in the critical-path projection", () => {
     const observation = healthyObservation();
     const issue = observation.issues[1];
@@ -122,6 +197,29 @@ describe("normalizeRepository", () => {
       (item) => item.issueNumber === issue.number,
     );
     expect(node?.state).toBe("unknown");
+  });
+
+  it("preserves explicit Blocked and dependency Waiting as distinct conditions", () => {
+    const blocked = healthyObservation();
+    const blockedIssue = blocked.issues[1];
+    if (blockedIssue === undefined) throw new Error("fixture missing issue");
+    blockedIssue.labels = ["agent:codex", "state:blocked"];
+    expect(
+      normalizeRepository(blocked).criticalPath.nodes.find(
+        (item) => item.issueNumber === blockedIssue.number,
+      )?.state,
+    ).toBe("blocked");
+
+    const waiting = healthyObservation();
+    const waitingIssue = waiting.issues[0];
+    if (waitingIssue === undefined) throw new Error("fixture missing issue");
+    waitingIssue.blockedBy = [
+      { number: 200, state: "OPEN", url: "https://github.example/issues/200" },
+    ];
+    const lane = normalizeRepository(waiting).deliveries[0];
+    expect(lane?.readiness.state).toBe("waiting");
+    expect(lane?.mergeGate.state).toBe("waiting");
+    expect(lane?.phase).toBe("waiting");
   });
 
   it("routes failed exact-head checks to blocked phase and attention", () => {

@@ -105,21 +105,10 @@ function ownerFor(issue: RawIssue): string {
   return owners.length === 1 ? owners.at(0) ?? "unknown" : "unknown";
 }
 
-function readinessFor(issue: RawIssue): DisplaySignal {
+function labelReadinessFor(issue: RawIssue): DisplaySignal {
   const source = evidenceSource("Issue labels", issue.url);
   if (issue.labelsAvailability !== "complete") {
     return directSignal("unknown", "observation-incomplete", "Issue labels Unknown", [source]);
-  }
-  if (issue.dependencyAvailability !== "complete") {
-    return directSignal("unknown", "observation-incomplete", "Dependency state Unknown", [source]);
-  }
-  if (issue.blockedBy.some((dependency) => dependency.state === "OPEN")) {
-    return directSignal("waiting", "dependency-waiting", "Waiting on dependency", [
-      source,
-      ...issue.blockedBy.map((dependency) =>
-        evidenceSource(`Issue #${String(dependency.number)}`, dependency.url),
-      ),
-    ]);
   }
   if (
     issue.labels.includes("state:blocked") ||
@@ -136,6 +125,28 @@ function readinessFor(issue: RawIssue): DisplaySignal {
     "Issue readiness Unknown",
     [source],
   );
+}
+
+function readinessFor(issue: RawIssue): DisplaySignal {
+  const labelReadiness = labelReadinessFor(issue);
+  if (labelReadiness.state !== "satisfied") return labelReadiness;
+  if (issue.dependencyAvailability !== "complete") {
+    return directSignal(
+      "unknown",
+      "observation-incomplete",
+      "Dependency state Unknown",
+      [evidenceSource("Issue dependencies", issue.url)],
+    );
+  }
+  if (issue.blockedBy.some((dependency) => dependency.state === "OPEN")) {
+    return directSignal("waiting", "dependency-waiting", "Waiting on dependency", [
+      evidenceSource("Issue labels", issue.url),
+      ...issue.blockedBy.map((dependency) =>
+        evidenceSource(`Issue #${String(dependency.number)}`, dependency.url),
+      ),
+    ]);
+  }
+  return labelReadiness;
 }
 
 function aggregateSignals(signals: DisplaySignal[], fallback: string): DisplaySignal {
@@ -198,6 +209,7 @@ function pullLane(
 ): DeliveryLane {
   const mainSha = repository.main?.sha ?? "";
   const githubUrl = pull.url;
+  const labelReadiness = labelReadinessFor(issue);
   const readiness = readinessFor(issue);
   const reconciliation = reconcile({
     context: {
@@ -251,7 +263,7 @@ function pullLane(
         : "complete",
       [
         {
-          issueReady: readiness.state === "satisfied",
+          issueReady: labelReadiness.state === "satisfied",
           dependencies: issue.blockedBy.some((dependency) => dependency.state === "OPEN")
             ? "waiting"
             : "satisfied",
@@ -317,10 +329,6 @@ function pullLane(
     ],
     "Delivery integrity Unknown",
   );
-  const mergeGate = aggregateSignals(
-    [fromCondition(reconciliation.mergeGate, "Merge gate Unknown"), checks, commentState],
-    "Merge gate Unknown",
-  );
   const authority =
     pull.authorityAvailability !== "complete"
       ? directSignal(
@@ -341,6 +349,15 @@ function pullLane(
             evidenceSource(`Authority · ${change.path}`, change.url, "derived"),
           ),
         );
+  const mergeGate = aggregateSignals(
+    [
+      fromCondition(reconciliation.mergeGate, "Merge gate Unknown"),
+      checks,
+      commentState,
+      authority,
+    ],
+    "Merge gate Unknown",
+  );
   const phase = humanAction.state === "blocked"
     ? "human_required"
     : review.state === "blocked"
@@ -355,11 +372,13 @@ function pullLane(
               ? "unknown"
               : authority.reason === "authority-drift-suspected"
                 ? "rereview"
-                : checks.state === "waiting"
-                  ? "validating"
-                  : checks.state === "satisfied" && review.state !== "satisfied"
-                    ? "rereview"
-                    : "implementing";
+                : authority.state === "unknown"
+                  ? "unknown"
+                  : checks.state === "waiting"
+                    ? "validating"
+                    : checks.state === "satisfied" && review.state !== "satisfied"
+                      ? "rereview"
+                      : "implementing";
   return {
     issue: { number: issue.number, title: issue.title, url: issue.url },
     owner: ownerFor(issue),
@@ -727,7 +746,9 @@ export function normalizeRepository(
             ? "ready"
             : readiness.state === "waiting"
               ? "waiting"
-              : "unknown",
+              : readiness.state === "blocked"
+                ? "blocked"
+                : "unknown",
           url: issue.url,
         };
       }),

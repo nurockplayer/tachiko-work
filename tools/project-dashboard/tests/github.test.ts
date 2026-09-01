@@ -140,7 +140,9 @@ function fakeBehindAuthorityFetch() {
           status: "ahead",
           merge_base_commit: { sha: MERGE_BASE },
           files: [
+            { filename: "docs/architecture/document-model.md" },
             { filename: "docs/decisions/ADR-0032-dashboard.md" },
+            { filename: "docs/security/threat-model.md" },
             { filename: "docs/vision/product-constitution.md" },
             { filename: "docs/discussions/history.md" },
           ],
@@ -212,7 +214,9 @@ describe("GitHub observation adapter", () => {
     expect(fake.requests).toHaveLength(3);
     expect(pull?.authorityAvailability).toBe("complete");
     expect(pull?.authorityChanges.map((change) => change.path)).toEqual([
+      "docs/architecture/document-model.md",
       "docs/decisions/ADR-0032-dashboard.md",
+      "docs/security/threat-model.md",
       "docs/vision/product-constitution.md",
     ]);
     expect(normalizeRepository(observation).deliveries[0]?.authority.state).toBe("unknown");
