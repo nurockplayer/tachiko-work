@@ -313,12 +313,12 @@ describe("GitHub observation adapter", () => {
     expect(observation.pullRequests[0]?.mergeability).toBe(expected);
   });
 
-  it("keeps truncated comments scoped away from native implementation linkage", async () => {
+  it("keeps handoff ownership overlap incomplete when top-level comments are truncated", async () => {
     const fake = fakeFetch(false, false, true, false, false, false, true);
     const observation = await observeRepository({ fetchImpl: fake.implementation });
 
     expect(observation.pullRequests[0]?.commentsAvailability).toBe("incomplete");
-    expect(observation.implementationLinkageAvailability).toBe("complete");
+    expect(observation.implementationLinkageAvailability).toBe("incomplete");
     expect(normalizeRepository(observation).deliveries[0]?.mergeGate.state).not.toBe(
       "satisfied",
     );

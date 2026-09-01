@@ -879,12 +879,15 @@ function unlinkedPullLane(
   );
   const automatedBrowser = checkSignal(pull, AUTOMATED_BROWSER_CHECK);
   const perceptualReview = checkSignal(pull, PERCEPTUAL_REVIEW_CHECK);
+  const mergeability = mergeabilityFor(pull);
   return {
     issue: null,
     owner: "unknown",
     phase:
       implementationConflict ||
-      [checks, review, authority].some((signal) => signal.state === "blocked")
+      [checks, review, authority, mergeability].some(
+        (signal) => signal.state === "blocked",
+      )
         ? "blocked"
         : "unknown",
     pullRequest: {
@@ -906,7 +909,10 @@ function unlinkedPullLane(
     stewardWatch: unavailable,
     authority,
     humanAction: unavailable,
-    mergeGate: aggregateSignals([unknownIssue, checks, review, authority], "Merge gate Unknown"),
+    mergeGate: aggregateSignals(
+      [unknownIssue, checks, review, authority, mergeability],
+      "Merge gate Unknown",
+    ),
     evidence: {
       automatedBrowser,
       perceptualReview,
@@ -914,7 +920,7 @@ function unlinkedPullLane(
     },
     sources: [
       pullSource,
-      ...[checks, review, authority, automatedBrowser, perceptualReview].flatMap(
+      ...[checks, review, authority, mergeability, automatedBrowser, perceptualReview].flatMap(
         (signal) => signal.sources,
       ),
     ],

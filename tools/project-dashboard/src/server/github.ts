@@ -610,7 +610,9 @@ export async function observeRepository(
       (response.errors?.length ?? 0) > 0 ||
       repository.pullRequests.pageInfo.hasNextPage ||
       repository.pullRequests.nodes.some(
-        (pull) => pull.closingIssuesReferences.pageInfo.hasNextPage,
+        (pull) =>
+          pull.closingIssuesReferences.pageInfo.hasNextPage ||
+          pull.comments.pageInfo.hasNextPage,
       )
         ? "incomplete"
         : "complete",

@@ -987,6 +987,33 @@ describe("normalizeRepository", () => {
     });
   });
 
+  it("keeps other lanes Unknown when a hidden paginated handoff may claim ownership", () => {
+    const observation = healthyObservation();
+    addGreenOperationalEvidence(observation);
+    const source = observation.pullRequests[0];
+    if (source === undefined) throw new Error("fixture missing pull request");
+    observation.pullRequests.push({
+      ...source,
+      number: 226,
+      title: "unobserved handoff owner",
+      url: "https://github.example/pulls/226",
+      closingIssueNumbers: [],
+      comments: [],
+      commentsAvailability: "incomplete",
+    });
+    observation.implementationLinkageAvailability = "incomplete";
+
+    expect(
+      normalizeRepository(observation).deliveries.find(
+        (lane) => lane.pullRequest?.number === 225,
+      ),
+    ).toMatchObject({
+      authority: { state: "unknown", reason: "observation-incomplete" },
+      mergeGate: { state: "unknown" },
+      phase: "unknown",
+    });
+  });
+
   it("keeps Ready counts Unknown when Issue or label observation is incomplete", () => {
     const incompleteIssues = healthyObservation();
     incompleteIssues.issuesAvailability = "incomplete";
@@ -1029,7 +1056,7 @@ describe("normalizeRepository", () => {
       headSha: secondHead,
       closingIssueNumbers: [223],
       comments: [],
-      commentsAvailability: "incomplete",
+      reviewsAvailability: "incomplete",
       checks: source.checks.map((check) => ({ ...check, headSha: secondHead })),
       reviews: [],
       threads: [],
@@ -1037,7 +1064,7 @@ describe("normalizeRepository", () => {
     observation.availability = "incomplete";
     observation.pullsAvailability = "incomplete";
     observation.errors.push({
-      source: "PR #226 comments",
+      source: "PR #226 reviews",
       url: "https://github.example/pulls/226",
       reason: "observation-incomplete",
     });
@@ -1066,6 +1093,26 @@ describe("normalizeRepository", () => {
     expect(lane?.phase).toBe("blocked");
     expect(lane?.mergeGate.state).toBe("unknown");
   });
+
+  it.each([
+    ["conflicting", "blocked"],
+    ["unknown", "unknown"],
+  ] as const)(
+    "preserves native mergeability %s for an unlinked lane",
+    (mergeability, state) => {
+      const observation = healthyObservation();
+      const pull = observation.pullRequests[0];
+      if (pull === undefined) throw new Error("fixture missing pull request");
+      pull.closingIssueNumbers = [];
+      pull.mergeability = mergeability;
+
+      expect(
+        normalizeRepository(observation).deliveries.find(
+          (lane) => lane.pullRequest?.number === pull.number,
+        ),
+      ).toMatchObject({ mergeGate: { state }, phase: state });
+    },
+  );
 
   it("exposes exact check provenance on the delivery lane", () => {
     const lane = normalizeRepository(healthyObservation()).deliveries[0];
