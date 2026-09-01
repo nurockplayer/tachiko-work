@@ -337,6 +337,7 @@ function pullRequestFact(
     mergeStateStatus: pull.mergeStateStatus,
     reviewDecision: pull.reviewDecision,
     linkedIssueNumbers,
+    linkageAvailability: sectionAvailability(linkagePartial),
     checks: {
       availability: sectionAvailability(globalPartial || pagePartial(checkPage)),
       items: present(checkPage).map((check) => check.__typename === "CheckRun"
@@ -427,20 +428,12 @@ function unavailableProjection(observedAt: string): DashboardProjection {
   };
 }
 
-function linkedIssueFor(
-  pull: PullRequestFact,
-  issuesByNumber: ReadonlyMap<number, IssueFact>,
-): IssueFact | undefined {
-  return pull.linkedIssueNumbers.length === 1
-    ? issuesByNumber.get(pull.linkedIssueNumbers[0] ?? 0)
-    : undefined;
-}
-
 function evidenceRelevant(
   pull: PullRequestFact,
   issuesByNumber: ReadonlyMap<number, IssueFact>,
 ): boolean {
-  return linkedIssueFor(pull, issuesByNumber)?.labels.includes(OWNER_TOKEN) === true ||
+  return pull.linkedIssueNumbers.some((number) =>
+    issuesByNumber.get(number)?.labels.includes(OWNER_TOKEN) === true) ||
     pull.handoff.source !== null ||
     pull.stewardWatch.source !== null;
 }
@@ -468,16 +461,27 @@ export function projectGraphResponse(
   const pullsAvailability = sectionAvailability(
     pullPagePartial || pullRequests.some((pull) => pull.availability !== "complete"),
   );
+  const linkageAvailability = sectionAvailability(
+    pullPagePartial || pullRequests.some((pull) => pull.linkageAvailability !== "complete"),
+  );
   const issuesByNumber = new Map(issues.map((issue) => [issue.number, issue]));
   const usedIssues = new Set<number>();
-  const deliveries: DeliveryLane[] = pullRequests.map((pullRequest) => {
-    const linked = linkedIssueFor(pullRequest, issuesByNumber) ?? null;
-    if (linked !== null) usedIssues.add(linked.number);
-    return { issue: linked, pullRequest, linkageAvailability: pullsAvailability };
+  const deliveries = pullRequests.flatMap<DeliveryLane>((pullRequest) => {
+    const linkedIssues = pullRequest.linkedIssueNumbers.flatMap((number) => {
+      const issue = issuesByNumber.get(number);
+      return issue === undefined ? [] : [issue];
+    });
+    if (linkedIssues.length === 0) {
+      return [{ issue: null, pullRequest, linkageAvailability: pullRequest.linkageAvailability }];
+    }
+    return linkedIssues.map((issue) => {
+      usedIssues.add(issue.number);
+      return { issue, pullRequest, linkageAvailability: pullRequest.linkageAvailability };
+    });
   });
   for (const issue of issues) {
     if (!usedIssues.has(issue.number) && issue.labels.includes(OWNER_TOKEN)) {
-      deliveries.push({ issue, pullRequest: null, linkageAvailability: pullsAvailability });
+      deliveries.push({ issue, pullRequest: null, linkageAvailability });
     }
   }
   deliveries.sort((left, right) =>

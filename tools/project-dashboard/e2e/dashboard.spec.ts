@@ -93,6 +93,68 @@ test("shows direct GitHub and Steward facts without a final verdict", async ({ p
   await expect(page.getByText(/merge ready|merge-ready|can_merge/i)).toHaveCount(0);
 });
 
+test("distinguishes a complete empty linked-Issue observation from Unknown", async ({ page }) => {
+  await page.route("**/api/project", async (route) => {
+    const response = await route.fetch();
+    const projection = (await response.json()) as {
+      deliveries: ({ pullRequest: Record<string, unknown> | null } & Record<string, unknown>)[];
+    } & Record<string, unknown>;
+    await route.fulfill({
+      response,
+      json: {
+        ...projection,
+        deliveries: projection.deliveries.map((lane, index) =>
+          index !== 0 || lane.pullRequest === null
+            ? lane
+            : {
+                ...lane,
+                pullRequest: {
+                  ...lane.pullRequest,
+                  linkedIssueNumbers: [],
+                  linkageAvailability: "complete",
+                },
+              }),
+      },
+    });
+  });
+  await page.goto("/");
+
+  await expect(
+    page.locator(".identity-item").filter({ hasText: "LINKED ISSUES" }).getByText("None observed", { exact: true }),
+  ).toBeVisible();
+});
+
+test("renders an incomplete empty linked-Issue observation as Unknown", async ({ page }) => {
+  await page.route("**/api/project", async (route) => {
+    const response = await route.fetch();
+    const projection = (await response.json()) as {
+      deliveries: ({ pullRequest: Record<string, unknown> | null } & Record<string, unknown>)[];
+    } & Record<string, unknown>;
+    await route.fulfill({
+      response,
+      json: {
+        ...projection,
+        deliveries: projection.deliveries.map((lane, index) =>
+          index !== 0 || lane.pullRequest === null
+            ? lane
+            : {
+                ...lane,
+                pullRequest: {
+                  ...lane.pullRequest,
+                  linkedIssueNumbers: [],
+                  linkageAvailability: "partial",
+                },
+              }),
+      },
+    });
+  });
+  await page.goto("/");
+
+  await expect(
+    page.locator(".identity-item").filter({ hasText: "LINKED ISSUES" }).getByText("Unknown", { exact: true }),
+  ).toBeVisible();
+});
+
 test("refresh preserves keyboard focus and announces completion", async ({ page }) => {
   await page.goto("/");
   const refresh = page.getByRole("button", { name: "Refresh observation" });

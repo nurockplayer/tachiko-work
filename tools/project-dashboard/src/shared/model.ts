@@ -61,6 +61,7 @@ export interface PullRequestFact {
   mergeStateStatus: string | null;
   reviewDecision: string | null;
   linkedIssueNumbers: number[];
+  linkageAvailability: Availability;
   checks: { availability: Availability; items: CheckFact[] };
   reviews: { availability: Availability; items: ReviewFact[] };
   handoff: StructuredFact;

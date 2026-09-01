@@ -234,9 +234,40 @@ describe("Dashboard GitHub observation", () => {
 
     const projection = projectGraphResponse(response);
     expect(projection.deliveries[0]?.pullRequest).toMatchObject({
+      linkageAvailability: "partial",
       handoff: { status: "unknown", reason: "Issue linkage Unknown" },
       stewardWatch: { status: "unknown", reason: "Issue linkage Unknown" },
     });
+  });
+
+  it("associates every observed Issue closed by a multi-Issue pull request", () => {
+    const response = graph();
+    const repository = response.data?.repository;
+    const firstIssue = repository?.issues.nodes?.[0];
+    const pull = repository?.pullRequests.nodes?.[0];
+    if (
+      repository !== null &&
+      repository !== undefined &&
+      firstIssue !== null &&
+      firstIssue !== undefined &&
+      pull !== null &&
+      pull !== undefined &&
+      pull.closingIssuesReferences !== null
+    ) {
+      repository.issues.nodes?.push({
+        ...firstIssue,
+        number: 231,
+        title: "Second linked Issue",
+        url: "https://github.example/issues/231",
+      });
+      pull.closingIssuesReferences.nodes?.push({ number: 231 });
+    }
+
+    const projection = projectGraphResponse(response);
+    const linkedLanes = projection.deliveries.filter((lane) => lane.pullRequest?.number === 230);
+    expect(linkedLanes.map((lane) => lane.issue?.number)).toEqual([229, 231]);
+    expect(linkedLanes.every((lane) => lane.linkageAvailability === "complete")).toBe(true);
+    expect(linkedLanes.every((lane) => lane.pullRequest?.handoff.status === "unknown")).toBe(true);
   });
 
   it("treats a missing check rollup as Unknown rather than an empty complete list", () => {
@@ -275,6 +306,37 @@ describe("Dashboard GitHub observation", () => {
     expect(projection.executive.humanAction).toMatchObject({
       value: null,
       availability: "partial",
+    });
+  });
+
+  it("keeps Issue-to-PR linkage complete when only unrelated pull details are partial", () => {
+    const response = graph();
+    const repository = response.data?.repository;
+    const firstIssue = repository?.issues.nodes?.[0];
+    const pull = repository?.pullRequests.nodes?.[0];
+    if (
+      repository !== null &&
+      repository !== undefined &&
+      firstIssue !== null &&
+      firstIssue !== undefined &&
+      pull !== null &&
+      pull !== undefined
+    ) {
+      repository.issues.nodes?.push({
+        ...firstIssue,
+        number: 231,
+        title: "Issue with no implementation pull request",
+        url: "https://github.example/issues/231",
+      });
+      pull.statusCheckRollup = null;
+    }
+
+    const projection = projectGraphResponse(response);
+    const issueOnlyLane = projection.deliveries.find((lane) => lane.issue?.number === 231);
+    expect(projection.fetchHealth).toBe("partial");
+    expect(issueOnlyLane).toMatchObject({
+      pullRequest: null,
+      linkageAvailability: "complete",
     });
   });
 

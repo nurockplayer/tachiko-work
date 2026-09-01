@@ -21,6 +21,8 @@ bash scripts/project-dashboard-check.sh
 Build and serve locally on loopback:
 
 ```sh
+pnpm --dir tools/operational-evidence install --frozen-lockfile
+pnpm --dir tools/operational-evidence build
 pnpm --dir tools/project-dashboard install --frozen-lockfile
 pnpm --dir tools/project-dashboard build
 pnpm --dir tools/project-dashboard serve

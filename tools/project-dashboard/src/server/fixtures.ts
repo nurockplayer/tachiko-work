@@ -34,6 +34,7 @@ export function healthyProjection(): DashboardProjection {
     mergeStateStatus: "CLEAN",
     reviewDecision: null,
     linkedIssueNumbers: [229],
+    linkageAvailability: "complete" as const,
     checks: {
       availability: "complete" as const,
       items: [{

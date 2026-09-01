@@ -182,7 +182,7 @@ function pullRequestGroups(pull: PullRequestFact): HTMLElement[] {
       fact(
         "LINKED ISSUES",
         pull.linkedIssueNumbers.length === 0
-          ? null
+          ? pull.linkageAvailability === "complete" ? "None observed" : null
           : pull.linkedIssueNumbers.map((number) => `#${String(number)}`).join(" · "),
       ),
     ]),
