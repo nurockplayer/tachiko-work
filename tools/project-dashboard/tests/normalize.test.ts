@@ -1148,6 +1148,31 @@ describe("normalizeRepository", () => {
     expect(projection.humanAction.state).toBe("blocked");
   });
 
+  it("does not let a current handoff suppress a contradictory native Issue lane", () => {
+    const observation = healthyObservation();
+    const pull = observation.pullRequests[0];
+    if (pull === undefined) throw new Error("fixture missing pull request");
+    pull.closingIssueNumbers = [223];
+
+    const projection = normalizeRepository(observation);
+    expect(
+      projection.deliveries.find((lane) => lane.pullRequest?.number === pull.number),
+    ).toMatchObject({
+      issue: { number: 223 },
+      authority: { state: "unknown", reason: "source-identity-conflict" },
+      mergeGate: { state: "unknown" },
+    });
+    expect(
+      projection.deliveries.find(
+        (lane) => lane.issue?.number === 169 && lane.pullRequest === null,
+      ),
+    ).toMatchObject({ phase: "ready" });
+    expect(projection.executive.readyCount).toMatchObject({
+      state: "satisfied",
+      value: 1,
+    });
+  });
+
   it.each([
     ["stale", (body: string) => body.replace(`HEAD: ${HEAD}`, `HEAD: ${"9".repeat(40)}`)],
     ["ambiguous", (body: string) => body.replace("PR: 225", "PR: 226")],

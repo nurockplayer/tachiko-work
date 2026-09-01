@@ -1083,23 +1083,40 @@ export function normalizeRepository(
   const effectiveObservation = handoffClaims.some((claim) => claim.unscoped)
     ? { ...observation, implementationLinkageAvailability: "incomplete" as const }
     : observation;
+  const acceptedCurrentHandoffClaims = observation.pullRequests.map((pull, index) =>
+    (handoffClaims[index]?.current ?? []).filter(
+      (issueNumber) =>
+        pull.closingIssueNumbers.length === 0 || pull.closingIssueNumbers.includes(issueNumber),
+    ),
+  );
+  const contradictoryCurrentHandoffClaims = observation.pullRequests.map((pull, index) =>
+    (handoffClaims[index]?.current ?? []).filter(
+      (issueNumber) =>
+        pull.closingIssueNumbers.length > 0 && !pull.closingIssueNumbers.includes(issueNumber),
+    ),
+  );
   const implementationDefiniteIssueNumbers = observation.pullRequests.map(
     (pull, index) =>
       new Set([
         ...pull.closingIssueNumbers,
-        ...(handoffClaims[index]?.current ?? []),
+        ...(acceptedCurrentHandoffClaims[index] ?? []),
       ]),
   );
   const implementationIssueNumbers = observation.pullRequests.map(
     (_pull, index) =>
       new Set([
         ...(implementationDefiniteIssueNumbers[index] ?? []),
+        ...(contradictoryCurrentHandoffClaims[index] ?? []),
         ...(handoffClaims[index]?.stale ?? []),
         ...(handoffClaims[index]?.ambiguous ?? []),
       ]),
   );
   const uncertainIssueNumbers = new Set(
-    handoffClaims.flatMap((claim) => [...claim.stale, ...claim.ambiguous]),
+    handoffClaims.flatMap((claim, index) => [
+      ...(contradictoryCurrentHandoffClaims[index] ?? []),
+      ...claim.stale,
+      ...claim.ambiguous,
+    ]),
   );
   const implementationCounts = new Map<number, number>();
   for (const issueNumbers of implementationDefiniteIssueNumbers) {
