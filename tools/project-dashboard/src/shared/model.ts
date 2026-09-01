@@ -128,6 +128,7 @@ export interface RepositoryObservation {
   issuesAvailability: ObservationAvailability;
   pullRequests: RawPullRequest[];
   pullsAvailability: ObservationAvailability;
+  implementationLinkageAvailability: ObservationAvailability;
   recentActivity: RawRecentActivity[];
   recentActivityAvailability: ObservationAvailability;
   errors: { source: string; url: string; reason: string }[];

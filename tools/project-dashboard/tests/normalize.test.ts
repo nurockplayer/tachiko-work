@@ -365,15 +365,75 @@ describe("normalizeRepository", () => {
       threads: source.threads.map((thread) => ({ ...thread })),
     });
 
+    const expectBothBlocked = () => {
+      const lanes = normalizeRepository(observation).deliveries.filter(
+        (lane) => lane.pullRequest?.number === 225 || lane.pullRequest?.number === 226,
+      );
+      expect(lanes).toHaveLength(2);
+      for (const lane of lanes) {
+        expect(lane.authority.state).toBe("blocked");
+        expect(lane.mergeGate.state).toBe("blocked");
+        expect(lane.phase).toBe("blocked");
+      }
+    };
+    expectBothBlocked();
+
+    for (const pull of observation.pullRequests) {
+      pull.authorityChanges = [
+        { path: "docs/vision/product-constitution.md", url: "https://github.example/compare" },
+      ];
+    }
+    expectBothBlocked();
+
+    for (const pull of observation.pullRequests) {
+      pull.authorityChanges = [];
+      pull.authorityAvailability = "unavailable";
+    }
+    expectBothBlocked();
+
+    const issue = observation.issues[0];
+    if (issue === undefined) throw new Error("fixture missing issue");
+    issue.labelsAvailability = "incomplete";
+    expectBothBlocked();
+  });
+
+  it("blocks mixed-cardinality PR linkage when any native Issue overlaps", () => {
+    const observation = healthyObservation();
+    const source = observation.pullRequests[0];
+    if (source === undefined) throw new Error("fixture missing pull request");
+    observation.pullRequests.push({
+      ...source,
+      number: 226,
+      title: "multi-Issue competing implementation",
+      url: "https://github.example/pulls/226",
+      closingIssueNumbers: [169, 223],
+      comments: [],
+      checks: source.checks.map((check) => ({ ...check })),
+      reviews: [],
+      threads: [],
+    });
+
     const lanes = normalizeRepository(observation).deliveries.filter(
-      (lane) => lane.issue?.number === 169,
+      (lane) => lane.pullRequest?.number === 225 || lane.pullRequest?.number === 226,
     );
     expect(lanes).toHaveLength(2);
+    expect(lanes.find((lane) => lane.pullRequest?.number === 226)?.issue).toBeNull();
     for (const lane of lanes) {
       expect(lane.authority.state).toBe("blocked");
       expect(lane.mergeGate.state).toBe("blocked");
       expect(lane.phase).toBe("blocked");
     }
+  });
+
+  it("keeps implementation overlap Unknown when the PR/linkage set is incomplete", () => {
+    const observation = healthyObservation();
+    addGreenOperationalEvidence(observation);
+    observation.implementationLinkageAvailability = "incomplete";
+
+    const lane = normalizeRepository(observation).deliveries[0];
+    expect(lane?.authority.state).toBe("unknown");
+    expect(lane?.mergeGate.state).toBe("unknown");
+    expect(lane?.phase).toBe("unknown");
   });
 
   it("exposes exact check provenance on the delivery lane", () => {

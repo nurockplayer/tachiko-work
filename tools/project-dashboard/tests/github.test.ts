@@ -11,6 +11,8 @@ function graphResponse(
   hasNextPage = false,
   labelsHaveNextPage = hasNextPage,
   hasRoadmap = true,
+  pullsHaveNextPage = false,
+  closingIssuesHaveNextPage = false,
 ) {
   return {
     data: {
@@ -44,7 +46,7 @@ function graphResponse(
           ],
         },
         pullRequests: {
-          pageInfo: { hasNextPage: false },
+          pageInfo: { hasNextPage: pullsHaveNextPage },
           nodes: [
             {
               number: 225,
@@ -56,7 +58,7 @@ function graphResponse(
               baseRefOid: MAIN,
               baseRefName: "main",
               closingIssuesReferences: {
-                pageInfo: { hasNextPage: false },
+                pageInfo: { hasNextPage: closingIssuesHaveNextPage },
                 nodes: [{ number: 169 }],
               },
               comments: { pageInfo: { hasNextPage: false }, nodes: [] },
@@ -91,6 +93,8 @@ function fakeFetch(
   hasNextPage = false,
   labelsHaveNextPage = hasNextPage,
   hasRoadmap = true,
+  pullsHaveNextPage = false,
+  closingIssuesHaveNextPage = false,
 ) {
   const requests: { url: string; init?: RequestInit }[] = [];
   const implementation = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -103,7 +107,15 @@ function fakeFetch(
     requests.push(init === undefined ? { url } : { url, init });
     if (url.endsWith("/graphql")) {
       return new Response(
-        JSON.stringify(graphResponse(hasNextPage, labelsHaveNextPage, hasRoadmap)),
+        JSON.stringify(
+          graphResponse(
+            hasNextPage,
+            labelsHaveNextPage,
+            hasRoadmap,
+            pullsHaveNextPage,
+            closingIssuesHaveNextPage,
+          ),
+        ),
         {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -204,6 +216,19 @@ describe("GitHub observation adapter", () => {
     expect(observation.availability).toBe("incomplete");
     expect(projection.fetchHealth).toBe("partial");
     expect(projection.executive.productHorizon.state).toBe("unknown");
+  });
+
+  it.each([
+    ["top-level pull pagination", true, false],
+    ["closing-Issue pagination", false, true],
+  ])("keeps merge state Unknown for incomplete %s", async (_name, pullPage, closingPage) => {
+    const fake = fakeFetch(false, false, true, pullPage, closingPage);
+    const observation = await observeRepository({ fetchImpl: fake.implementation });
+
+    expect(observation.implementationLinkageAvailability).toBe("incomplete");
+    expect(normalizeRepository(observation).deliveries[0]?.mergeGate.state).not.toBe(
+      "satisfied",
+    );
   });
 
   it("fails closed when Accepted ADR or Principle authority changed after the merge base", async () => {

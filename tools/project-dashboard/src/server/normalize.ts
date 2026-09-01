@@ -232,6 +232,38 @@ function commentSources(pull: RawPullRequest, repository: string): StructuredCom
   }));
 }
 
+function implementationConflictSignal(
+  repository: RepositoryObservation,
+  pull: RawPullRequest,
+  implementationConflict: boolean,
+): DisplaySignal {
+  const source = evidenceSource(`PR #${String(pull.number)}`, pull.url);
+  if (implementationConflict) {
+    return directSignal(
+      "blocked",
+      "source-identity-conflict",
+      "Competing implementation pull requests",
+      [source],
+    );
+  }
+  if (repository.implementationLinkageAvailability !== "complete") {
+    return directSignal(
+      "unknown",
+      repository.implementationLinkageAvailability === "unavailable"
+        ? "observation-unavailable"
+        : "observation-incomplete",
+      "Implementation overlap observation Unknown",
+      [source],
+    );
+  }
+  return directSignal(
+    "satisfied",
+    "not-required",
+    "No competing implementation pull request",
+    [source],
+  );
+}
+
 function pullLane(
   repository: RepositoryObservation,
   issue: RawIssue,
@@ -240,6 +272,11 @@ function pullLane(
 ): DeliveryLane {
   const mainSha = repository.main?.sha ?? "";
   const githubUrl = pull.url;
+  const implementationState = implementationConflictSignal(
+    repository,
+    pull,
+    implementationConflict,
+  );
   const ownership = ownershipFor(issue);
   const labelReadiness = labelReadinessFor(issue);
   const readiness = readinessFor(issue);
@@ -288,6 +325,7 @@ function pullLane(
     ),
     nativeRepository: observation(
       repository.main === null ||
+        repository.implementationLinkageAvailability !== "complete" ||
         ownership.state !== "satisfied" ||
         issue.labelsAvailability !== "complete" ||
         issue.dependencyAvailability !== "complete" ||
@@ -376,7 +414,7 @@ function pullLane(
     ],
     "Delivery integrity Unknown",
   );
-  const authority =
+  const observedAuthority =
     pull.authorityAvailability !== "complete"
       ? directSignal(
           "unknown",
@@ -396,6 +434,10 @@ function pullLane(
             evidenceSource(`Authority · ${change.path}`, change.url, "derived"),
           ),
         );
+  const authority = aggregateSignals(
+    [observedAuthority, implementationState],
+    "Authority state Unknown",
+  );
   const mergeGate = aggregateSignals(
     [
       fromCondition(reconciliation.mergeGate, "Merge gate Unknown"),
@@ -536,6 +578,7 @@ function issueLane(repository: RepositoryObservation, issue: RawIssue): Delivery
 function unlinkedPullLane(
   repository: RepositoryObservation,
   pull: RawPullRequest,
+  implementationConflict: boolean,
 ): DeliveryLane {
   const pullSource = evidenceSource(`PR #${String(pull.number)}`, pull.url);
   const unknownIssue = directSignal(
@@ -589,7 +632,7 @@ function unlinkedPullLane(
                 "Exact-head review Unknown",
                 reviewSources,
               );
-  const authority =
+  const observedAuthority =
     pull.authorityAvailability !== "complete"
       ? directSignal(
           "unknown",
@@ -612,6 +655,15 @@ function unlinkedPullLane(
               evidenceSource(`Authority · ${change.path}`, change.url, "derived"),
             ),
           );
+  const implementationState = implementationConflictSignal(
+    repository,
+    pull,
+    implementationConflict,
+  );
+  const authority = aggregateSignals(
+    [observedAuthority, implementationState],
+    "Authority state Unknown",
+  );
   const unavailable = directSignal(
     "unknown",
     "required-evidence-unknown",
@@ -623,7 +675,7 @@ function unlinkedPullLane(
   return {
     issue: null,
     owner: "unknown",
-    phase: "unknown",
+    phase: implementationConflict ? "blocked" : "unknown",
     pullRequest: {
       number: pull.number,
       title: pull.title,
@@ -691,26 +743,31 @@ export function normalizeRepository(
     : parseProductHorizon(observation.roadmap.markdown, observation.roadmap.url);
 
   const issuesByNumber = new Map(observation.issues.map((issue) => [issue.number, issue]));
-  const pullIssueNumbers = observation.pullRequests.map((pull) =>
+  const singlePullIssueNumbers = observation.pullRequests.map((pull) =>
     pull.closingIssueNumbers.length === 1 ? pull.closingIssueNumbers[0] : undefined,
   );
   const implementationCounts = new Map<number, number>();
-  for (const issueNumber of pullIssueNumbers) {
-    if (issueNumber !== undefined) {
+  for (const pull of observation.pullRequests) {
+    for (const issueNumber of new Set(pull.closingIssueNumbers)) {
       implementationCounts.set(issueNumber, (implementationCounts.get(issueNumber) ?? 0) + 1);
     }
   }
   const linkedIssueNumbers = new Set<number>();
   const deliveries: DeliveryLane[] = observation.pullRequests.map((pull, index) => {
-    const issueNumber = pullIssueNumbers[index];
+    const implementationConflict = pull.closingIssueNumbers.some(
+      (issueNumber) => (implementationCounts.get(issueNumber) ?? 0) > 1,
+    );
+    const issueNumber = singlePullIssueNumbers[index];
     const issue = issueNumber === undefined ? undefined : issuesByNumber.get(issueNumber);
-    if (issue === undefined) return unlinkedPullLane(observation, pull);
+    if (issue === undefined) {
+      return unlinkedPullLane(observation, pull, implementationConflict);
+    }
     linkedIssueNumbers.add(issue.number);
     return pullLane(
       observation,
       issue,
       pull,
-      (implementationCounts.get(issue.number) ?? 0) > 1,
+      implementationConflict,
     );
   });
   const readyOrOwnedIssues = observation.issues.filter(

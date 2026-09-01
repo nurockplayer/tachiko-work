@@ -132,6 +132,7 @@ export function healthyObservation(): RepositoryObservation {
       },
     ],
     pullsAvailability: "complete",
+    implementationLinkageAvailability: "complete",
     recentActivity: [
       {
         number: 207,
@@ -158,6 +159,7 @@ export function partialObservation(): RepositoryObservation {
     issuesAvailability: "unavailable",
     pullRequests: [],
     pullsAvailability: "unavailable",
+    implementationLinkageAvailability: "unavailable",
     recentActivity: [],
     recentActivityAvailability: "unavailable",
     errors: [

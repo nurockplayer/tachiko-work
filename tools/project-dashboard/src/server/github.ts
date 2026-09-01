@@ -416,6 +416,7 @@ function unavailableObservation(reason: string): RepositoryObservation {
     issuesAvailability: "unavailable",
     pullRequests: [],
     pullsAvailability: "unavailable",
+    implementationLinkageAvailability: "unavailable",
     recentActivity: [],
     recentActivityAvailability: "unavailable",
     errors: [{ source: "GitHub", url: GRAPHQL_URL, reason }],
@@ -589,6 +590,13 @@ export async function observeRepository(
     pullRequests,
     pullsAvailability:
       repository.pullRequests.pageInfo.hasNextPage || pullTruncated ? "incomplete" : "complete",
+    implementationLinkageAvailability:
+      repository.pullRequests.pageInfo.hasNextPage ||
+      repository.pullRequests.nodes.some(
+        (pull) => pull.closingIssuesReferences.pageInfo.hasNextPage,
+      )
+        ? "incomplete"
+        : "complete",
     recentActivity: repository.recent.nodes.flatMap((pull) =>
       pull.mergedAt === null || pull.mergeCommit === null
         ? []
