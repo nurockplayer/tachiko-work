@@ -69,6 +69,7 @@ export interface PullRequestFact {
 export interface DeliveryLane {
   issue: IssueFact | null;
   pullRequest: PullRequestFact | null;
+  linkageAvailability: Availability;
 }
 
 export interface RecentActivity {

@@ -26,10 +26,6 @@ function element<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
-function shortSha(value: string): string {
-  return /^[0-9a-f]{40}$/.test(value) ? value.slice(0, 10) : value;
-}
-
 function display(value: string | number | boolean | null): string {
   if (value === null) return "Unknown";
   return typeof value === "boolean" ? (value ? "Yes" : "No") : String(value);
@@ -92,9 +88,7 @@ function executiveStrip(projection: DashboardProjection): HTMLElement {
   grid.append(
     executiveValue("LIVE MAIN", {
       ...projection.executive.mainSha,
-      value: projection.executive.mainSha.value === null
-        ? null
-        : shortSha(projection.executive.mainSha.value),
+      value: projection.executive.mainSha.value,
     }),
     executiveValue("HORIZON", projection.executive.productHorizon),
     executiveValue("FETCH", {
@@ -167,19 +161,19 @@ function structuredGroup(title: string, value: StructuredFact): HTMLElement {
 
 function pullRequestGroups(pull: PullRequestFact): HTMLElement[] {
   const checks = pull.checks.items.map((check) => ({
-    text: `${check.name} · status ${display(check.status)} · conclusion ${display(check.conclusion)} · head ${shortSha(check.headSha)}`,
+    text: `${check.name} · status ${display(check.status)} · conclusion ${display(check.conclusion)} · head ${check.headSha}`,
     source: { label: "Native check", url: check.url, kind: "github" as const },
   }));
   const reviews = pull.reviews.items.map((review) => ({
-    text: `${review.author} · ${review.state} · commit ${review.commitSha === null ? "Unknown" : shortSha(review.commitSha)} · exact head ${display(review.exactHead)}`,
+    text: `${review.author} · ${review.state} · commit ${review.commitSha ?? "Unknown"} · exact head ${display(review.exactHead)}`,
     source: { label: "Native review", url: review.url, kind: "github" as const },
   }));
   return [
     factGroup("Pull request identity", pull.availability, [
       fact("STATE", pull.state),
       fact("DRAFT", pull.draft),
-      fact("HEAD", shortSha(pull.headSha)),
-      fact("BASE", `${pull.baseRef} · ${shortSha(pull.baseSha)}`),
+      fact("HEAD", pull.headSha),
+      fact("BASE", `${pull.baseRef} · ${pull.baseSha}`),
     ]),
     factGroup("GitHub native fields · displayed verbatim", pull.availability, [
       fact("MERGEABLE", pull.mergeable),
@@ -236,7 +230,16 @@ function laneCard(lane: DeliveryLane): HTMLElement {
     }
     card.append(...pullRequestGroups(lane.pullRequest));
   } else {
-    card.append(element("p", "empty-state", "No implementation pull request observed"));
+    card.append(
+      element(
+        "p",
+        "empty-state",
+        lane.linkageAvailability === "complete"
+          ? "No implementation pull request observed"
+          : "Implementation pull request linkage Unknown",
+      ),
+      availability(lane.linkageAvailability),
+    );
   }
   return card;
 }
@@ -300,7 +303,7 @@ function recentActivity(projection: DashboardProjection): HTMLElement {
     row.append(
       externalLink(item.url, `#${String(item.number)} · ${item.title}`),
       element("time", undefined, item.mergedAt),
-      element("code", undefined, shortSha(item.mergeSha)),
+      element("code", undefined, item.mergeSha),
     );
     list.append(row);
   }

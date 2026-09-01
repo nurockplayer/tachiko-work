@@ -243,15 +243,16 @@ function structuredFact<T>(
     return { status: "unknown", value: null, reason: "Issue linkage Unknown", source: null };
   }
   const candidates = candidateComments(comments, marker);
+  if (commentsPartial) {
+    const candidate = candidates.length === 1 ? candidates[0] : undefined;
+    return {
+      status: "unknown",
+      value: null,
+      reason: `${label} comment observation incomplete`,
+      source: candidate === undefined ? null : source(label, candidate.url, "structured"),
+    };
+  }
   if (candidates.length === 0) {
-    if (commentsPartial) {
-      return {
-        status: "unknown",
-        value: null,
-        reason: `${label} comment observation incomplete`,
-        source: null,
-      };
-    }
     return { status: "missing", value: null, reason: `${label} not observed`, source: null };
   }
   if (candidates.length !== 1) {
@@ -314,7 +315,7 @@ function pullRequestFact(
     pagePartial(pull.closingIssuesReferences) ||
     pagePartial(pull.comments) ||
     pagePartial(pull.reviews) ||
-    (checkPage !== null && pagePartial(checkPage));
+    pagePartial(checkPage);
   return {
     number: pull.number,
     title: pull.title,
@@ -329,7 +330,7 @@ function pullRequestFact(
     reviewDecision: pull.reviewDecision,
     linkedIssueNumbers,
     checks: {
-      availability: sectionAvailability(globalPartial || (checkPage !== null && pagePartial(checkPage))),
+      availability: sectionAvailability(globalPartial || pagePartial(checkPage)),
       items: present(checkPage).map((check) => check.__typename === "CheckRun"
         ? {
             name: check.name,
@@ -418,6 +419,24 @@ function unavailableProjection(observedAt: string): DashboardProjection {
   };
 }
 
+function linkedIssueFor(
+  pull: PullRequestFact,
+  issuesByNumber: ReadonlyMap<number, IssueFact>,
+): IssueFact | undefined {
+  return pull.linkedIssueNumbers.length === 1
+    ? issuesByNumber.get(pull.linkedIssueNumbers[0] ?? 0)
+    : undefined;
+}
+
+function evidenceRelevant(
+  pull: PullRequestFact,
+  issuesByNumber: ReadonlyMap<number, IssueFact>,
+): boolean {
+  return linkedIssueFor(pull, issuesByNumber)?.labels.includes(OWNER_TOKEN) === true ||
+    pull.handoff.source !== null ||
+    pull.stewardWatch.source !== null;
+}
+
 export function projectGraphResponse(
   response: DashboardGraphResponse,
   observedAt = new Date().toISOString(),
@@ -444,15 +463,13 @@ export function projectGraphResponse(
   const issuesByNumber = new Map(issues.map((issue) => [issue.number, issue]));
   const usedIssues = new Set<number>();
   const deliveries: DeliveryLane[] = pullRequests.map((pullRequest) => {
-    const linked = pullRequest.linkedIssueNumbers.length === 1
-      ? issuesByNumber.get(pullRequest.linkedIssueNumbers[0] ?? 0) ?? null
-      : null;
+    const linked = linkedIssueFor(pullRequest, issuesByNumber) ?? null;
     if (linked !== null) usedIssues.add(linked.number);
-    return { issue: linked, pullRequest };
+    return { issue: linked, pullRequest, linkageAvailability: pullsAvailability };
   });
   for (const issue of issues) {
     if (!usedIssues.has(issue.number) && issue.labels.includes(OWNER_TOKEN)) {
-      deliveries.push({ issue, pullRequest: null });
+      deliveries.push({ issue, pullRequest: null, linkageAvailability: pullsAvailability });
     }
   }
   deliveries.sort((left, right) =>
@@ -468,17 +485,15 @@ export function projectGraphResponse(
   const horizon = typeof roadmapText === "string" ? parseProductHorizon(roadmapText) : null;
   const activeIssues = issues.filter((issue) => issue.labels.includes(OWNER_TOKEN));
   const countAvailability = issuesAvailability;
-  const relevantPullRequests = pullRequests.filter((pull) => {
-    const linkedIssue = pull.linkedIssueNumbers.length === 1
-      ? issuesByNumber.get(pull.linkedIssueNumbers[0] ?? 0)
-      : undefined;
-    return linkedIssue?.labels.includes(OWNER_TOKEN) === true ||
-      pull.handoff.source !== null ||
-      pull.stewardWatch.source !== null;
-  });
+  const relevantPullRequests = pullRequests.filter((pull) =>
+    evidenceRelevant(pull, issuesByNumber));
   const watchFacts = relevantPullRequests.map((pull) => pull.stewardWatch);
   const requiredWatch = watchFacts.find((watch) => watch.status === "current" && watch.value?.includes("human action required"));
-  const allWatchesCurrent = watchFacts.length > 0 && watchFacts.every((watch) => watch.status === "current");
+  const allWatchesCurrent =
+    issuesAvailability === "complete" &&
+    pullsAvailability === "complete" &&
+    watchFacts.length > 0 &&
+    watchFacts.every((watch) => watch.status === "current");
   const humanAction = requiredWatch !== undefined
     ? "Required"
     : allWatchesCurrent
@@ -543,13 +558,7 @@ export function projectGraphResponse(
     });
   }
   for (const pull of pullRequests) {
-    const linkedIssue = pull.linkedIssueNumbers.length === 1
-      ? issuesByNumber.get(pull.linkedIssueNumbers[0] ?? 0)
-      : undefined;
-    const evidenceRelevant = linkedIssue?.labels.includes(OWNER_TOKEN) === true ||
-      pull.handoff.source !== null ||
-      pull.stewardWatch.source !== null;
-    if (!evidenceRelevant) continue;
+    if (!evidenceRelevant(pull, issuesByNumber)) continue;
     for (const [label, fact] of [["Agent handoff", pull.handoff], ["Steward watch", pull.stewardWatch]] as const) {
       if (fact.status !== "current") {
         attention.push({

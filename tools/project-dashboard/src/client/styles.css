@@ -107,6 +107,13 @@ h2 {
 h3 { margin: 0; font: 700 1.05rem / 1.35 system-ui, sans-serif; }
 h4 { margin: 0; font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase; }
 
+code {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
 .eyebrow,
 .metric-label {
   display: block;
@@ -168,6 +175,7 @@ h4 { margin: 0; font-size: 0.72rem; letter-spacing: 0.1em; text-transform: upper
   color: #fff;
   font-size: clamp(0.95rem, 2vw, 1.25rem);
   overflow-wrap: anywhere;
+  word-break: break-all;
 }
 
 .availability {
@@ -243,6 +251,7 @@ h4 { margin: 0; font-size: 0.72rem; letter-spacing: 0.1em; text-transform: upper
 
 .fact-list li,
 .activity-list li { margin-top: 0.6rem; }
+.fact-list span { overflow-wrap: anywhere; word-break: break-word; }
 .fact-list .source-link { margin-left: 0.55rem; }
 
 .structured-fact p { margin: 0.65rem 0 0; }

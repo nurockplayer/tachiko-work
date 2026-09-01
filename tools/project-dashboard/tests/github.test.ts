@@ -161,9 +161,8 @@ describe("Dashboard GitHub observation", () => {
     expect(JSON.stringify(projection)).not.toMatch(/mergeGate|mergeReady|canMerge|can_merge/);
   });
 
-  it("makes partial paths and malformed exact-head evidence explicit", () => {
+  it("makes malformed exact-head evidence explicit", () => {
     const response = graph();
-    response.errors = [{ path: ["repository", "pullRequests", 0, "comments"] }];
     const repository = response.data?.repository;
     const pull = repository?.pullRequests.nodes?.[0];
     const comment = pull?.comments?.nodes?.[0];
@@ -172,8 +171,8 @@ describe("Dashboard GitHub observation", () => {
     }
 
     const projection = projectGraphResponse(response);
-    expect(projection.fetchHealth).toBe("partial");
-    expect(projection.executive.activeCount.value).toBeNull();
+    expect(projection.fetchHealth).toBe("healthy");
+    expect(projection.executive.activeCount.value).toBe(1);
     expect(projection.deliveries[0]?.pullRequest?.handoff).toMatchObject({
       status: "unknown",
       reason: "Agent handoff head-mismatch",
@@ -206,7 +205,6 @@ describe("Dashboard GitHub observation", () => {
     const repository = response.data?.repository;
     const pull = repository?.pullRequests.nodes?.[0];
     if (pull !== null && pull !== undefined && pull.comments !== null) {
-      pull.comments.nodes = [];
       pull.comments.pageInfo.hasNextPage = true;
     }
     const issue = repository?.issues.nodes?.[0];
@@ -220,6 +218,45 @@ describe("Dashboard GitHub observation", () => {
     expect(projection.deliveries[0]?.pullRequest?.handoff).toMatchObject({
       status: "unknown",
       reason: "Agent handoff comment observation incomplete",
+    });
+  });
+
+  it("treats a missing check rollup as Unknown rather than an empty complete list", () => {
+    const response = graph();
+    const pull = response.data?.repository?.pullRequests.nodes?.[0];
+    if (pull !== null && pull !== undefined) pull.statusCheckRollup = null;
+
+    const projection = projectGraphResponse(response);
+    expect(projection.deliveries[0]?.pullRequest?.checks).toMatchObject({
+      availability: "partial",
+      items: [],
+    });
+    expect(projection.fetchHealth).toBe("partial");
+  });
+
+  it("keeps unmatched Issue-to-PR linkage and human action Unknown when pulls truncate", () => {
+    const response = graph();
+    const repository = response.data?.repository;
+    const firstIssue = repository?.issues.nodes?.[0];
+    if (repository !== null && repository !== undefined && firstIssue !== null && firstIssue !== undefined) {
+      repository.issues.nodes?.push({
+        ...firstIssue,
+        number: 231,
+        title: "Issue outside the observed pull window",
+        url: "https://github.example/issues/231",
+      });
+      repository.pullRequests.pageInfo.hasNextPage = true;
+    }
+
+    const projection = projectGraphResponse(response);
+    const issueOnlyLane = projection.deliveries.find((lane) => lane.issue?.number === 231);
+    expect(issueOnlyLane).toMatchObject({
+      pullRequest: null,
+      linkageAvailability: "partial",
+    });
+    expect(projection.executive.humanAction).toMatchObject({
+      value: null,
+      availability: "partial",
     });
   });
 

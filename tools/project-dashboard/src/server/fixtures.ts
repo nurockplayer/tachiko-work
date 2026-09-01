@@ -82,7 +82,7 @@ export function healthyProjection(): DashboardProjection {
       readyCount: { value: 1, availability: "complete", source: repositorySource },
       humanAction: { value: "None in current watches", availability: "complete", source: repositorySource },
     },
-    deliveries: [{ issue, pullRequest }],
+    deliveries: [{ issue, pullRequest, linkageAvailability: "complete" }],
     criticalPath: {
       availability: "complete",
       nodes: [
@@ -125,6 +125,7 @@ export function partialProjection(): DashboardProjection {
     },
     deliveries: projection.deliveries.map((lane) => ({
       ...lane,
+      linkageAvailability: "partial",
       pullRequest: lane.pullRequest === null ? null : {
         ...lane.pullRequest,
         mergeable: null,
@@ -140,6 +141,3 @@ export function partialProjection(): DashboardProjection {
     }],
   };
 }
-
-export const healthyObservation = healthyProjection;
-export const partialObservation = partialProjection;

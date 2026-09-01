@@ -20,7 +20,11 @@ test("is usable at mobile width and disables decorative motion", async ({ page }
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/");
 
-  await expect(page.locator("[data-surface='delivery-command-center']")).toBeVisible();
+  const surfaces = page.locator("[data-surface]");
+  await expect(surfaces).toHaveCount(5);
+  for (let index = 0; index < 5; index += 1) {
+    await expect(surfaces.nth(index)).toBeVisible();
+  }
   const overflow = await page.evaluate(() =>
     document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(0);
@@ -64,6 +68,7 @@ test("shows direct GitHub and Steward facts without a final verdict", async ({ p
   await page.goto("/");
 
   await expect(page.getByText("GitHub native fields · displayed verbatim")).toBeVisible();
+  await expect(page.getByText("2222222222222222222222222222222222222222", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("GREEN · human action none")).toBeVisible();
   await expect(page.getByText(/final merge verdict/)).toBeVisible();
   await expect(page.getByText(/merge ready|merge-ready|can_merge/i)).toHaveCount(0);
