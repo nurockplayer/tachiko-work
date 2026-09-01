@@ -119,9 +119,11 @@ changes while evidence is being collected. Repository-selecting and
 command-scoped Git environment variables, including inherited author/committer
 identity and dates, are cleared; every identity query is bound to the course
 checkout; and the Git-review stage ignores user/system Git configuration such
-as commit signing and hook paths. The runner also creates a fresh run-scoped
-Cargo target directory, derives and pins the native host target from the
-compiler Cargo uses, and uses
+as commit signing and hook paths. The runner rejects a `TMPDIR` that resolves
+to the checkout or one of its descendants, keeping its own transient evidence
+outside the source fingerprint. It also creates a fresh run-scoped Cargo target
+directory, derives and pins the native host target from the compiler Cargo uses,
+and uses
 `<run-target>/<native-target>/release/`. Every CLI stage therefore uses the
 platform-named release binary built by the same run rather than an inherited,
 Cargo-config-selected, concurrently written, or stale artifact. The run target

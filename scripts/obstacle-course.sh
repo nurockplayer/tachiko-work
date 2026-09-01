@@ -234,7 +234,26 @@ if ! command -v "${rustc_command}" >/dev/null 2>&1; then
   exit 1
 fi
 
-run_dir="$(mktemp -d "${TMPDIR:-/tmp}/tachiko-obstacle.XXXXXX")"
+course_temp_root="${TMPDIR:-/tmp}"
+if [[ ! -d "${course_temp_root}" ]]; then
+  echo "obstacle-course: TMPDIR is not a directory: '${course_temp_root}'" >&2
+  exit 1
+fi
+if ! physical_repo_root="$(cd "${repo_root}" && pwd -P)" || \
+  ! physical_temp_root="$(cd "${course_temp_root}" && pwd -P)"; then
+  echo "obstacle-course: could not resolve repository and TMPDIR paths" >&2
+  exit 1
+fi
+case "${physical_temp_root}/" in
+  "${physical_repo_root}/"*)
+    echo "obstacle-course: TMPDIR must resolve outside repository: '${course_temp_root}'" >&2
+    exit 1
+    ;;
+esac
+if ! run_dir="$(mktemp -d "${physical_temp_root}/tachiko-obstacle.XXXXXX")"; then
+  echo "obstacle-course: could not create run directory outside repository" >&2
+  exit 1
+fi
 cleanup() {
   rm -rf -- "${run_dir}"
 }

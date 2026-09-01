@@ -138,6 +138,7 @@ mkdir -p \
   "${test_dir}/normal-cargo-home" \
   "${normal_tmp}" \
   "$(dirname "${stale_tachiko_bin}")"
+normal_tmp="$(cd "${normal_tmp}" && pwd -P)"
 : >"${normal_log}"
 cp "${runner}" "${normal_repo}/scripts/obstacle-course.sh"
 cp "${repo_root}/scripts/release-lib.sh" \
@@ -417,8 +418,9 @@ run_normal_course() {
   local trigger_empty_directory_drift="$5"
   local stdout_file="$6"
   local stderr_file="$7"
+  local course_tmpdir="${8:-${normal_tmp}}"
   PATH="${normal_bin_dir}:${PATH}" \
-    TMPDIR="${normal_tmp}" \
+    TMPDIR="${course_tmpdir}" \
     CARGO_HOME="${test_dir}/normal-cargo-home" \
     CARGO_TARGET_DIR="${test_dir}/conflicting-env-target" \
     CARGO_BUILD_TARGET=conflicting-env-target \
@@ -534,6 +536,22 @@ grep -F "obstacle-course: could not determine worktree state" \
   "${test_dir}/status-fail.err" >/dev/null
 if grep -Fq "cargo command=" "${normal_log}"; then
   echo "obstacle-course test: setup ran after Git identity failure" >&2
+  exit 1
+fi
+
+: >"${normal_log}"
+mkdir -p "${normal_repo}/hostile-tmp"
+if run_normal_course 0 0 0 0 0 \
+  "${test_dir}/in-repository-tmp.out" \
+  "${test_dir}/in-repository-tmp.err" \
+  "${normal_repo}/hostile-tmp"; then
+  echo "obstacle-course test: in-repository TMPDIR unexpectedly produced evidence" >&2
+  exit 1
+fi
+grep -F "obstacle-course: TMPDIR must resolve outside repository" \
+  "${test_dir}/in-repository-tmp.err" >/dev/null
+if grep -Eq "^(cargo command|git args)=" "${normal_log}"; then
+  echo "obstacle-course test: setup ran with an in-repository TMPDIR" >&2
   exit 1
 fi
 
