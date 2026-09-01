@@ -721,7 +721,7 @@ function pullLane(
             )
           ? "unknown"
         : readiness.state === "waiting"
-          ? "waiting"
+          ? mergeGate.state === "waiting" ? "waiting" : "unknown"
           : commentState.state === "unknown"
             ? "unknown"
           : checks.state === "unknown"

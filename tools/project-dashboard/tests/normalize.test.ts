@@ -1535,6 +1535,28 @@ describe("normalizeRepository", () => {
     });
   });
 
+  it.each(["review", "authority", "Roadmap"] as const)(
+    "preserves required %s Unknown over dependency Waiting",
+    (source) => {
+      const observation = healthyObservation();
+      const issue = observation.issues[0];
+      const pull = observation.pullRequests[0];
+      if (issue === undefined || pull === undefined) throw new Error("fixture missing lane");
+      issue.blockedBy = [
+        { number: 200, state: "OPEN", url: "https://github.example/issues/200" },
+      ];
+      if (source !== "review") addGreenOperationalEvidence(observation);
+      if (source === "authority") pull.authorityAvailability = "incomplete";
+      if (source === "Roadmap") observation.roadmap = null;
+
+      expect(normalizeRepository(observation).deliveries[0]).toMatchObject({
+        readiness: { state: "waiting" },
+        mergeGate: { state: "unknown" },
+        phase: "unknown",
+      });
+    },
+  );
+
   it.each([
     ["stale", (body: string) => body.replace(`HEAD: ${HEAD}`, `HEAD: ${"9".repeat(40)}`)],
     ["ambiguous", (body: string) => body.replace("PR: 225", "PR: 226")],
