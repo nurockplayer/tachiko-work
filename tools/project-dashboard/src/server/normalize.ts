@@ -906,6 +906,7 @@ function unlinkedPullLane(
   pull: RawPullRequest,
   implementationOverlap: ImplementationOverlap,
   roadmapCurrent: boolean,
+  definiteIssues: readonly RawIssue[],
 ): DeliveryLane {
   const pullSource = evidenceSource(`PR #${String(pull.number)}`, pull.url);
   const unknownIssue = directSignal(
@@ -1017,11 +1018,23 @@ function unlinkedPullLane(
   const automatedBrowser = checkSignal(pull, AUTOMATED_BROWSER_CHECK);
   const perceptualReview = checkSignal(pull, PERCEPTUAL_REVIEW_CHECK);
   const mergeability = mergeabilityFor(pull);
+  const humanIssueSignals = definiteIssues.map(humanOwnershipFor);
+  const humanAction = humanIssueSignals.some((signal) => signal.state === "blocked")
+    ? directSignal(
+        "blocked",
+        "human-action-required",
+        "Linked human-owned issue requires attention",
+        definiteIssues
+          .filter((issue) => ownerFor(issue) === "agent:human")
+          .map((issue) => evidenceSource(`Issue #${String(issue.number)}`, issue.url)),
+      )
+    : unavailable;
   return {
     issue: null,
     owner: "unknown",
-    phase:
-      implementationOverlap === "conflict" ||
+    phase: humanAction.state === "blocked"
+      ? "human_required"
+      : implementationOverlap === "conflict" ||
       [checks, review, authority, mergeability].some(
         (signal) => signal.state === "blocked",
       )
@@ -1045,9 +1058,9 @@ function unlinkedPullLane(
     handoff: unavailable,
     stewardWatch: unavailable,
     authority,
-    humanAction: unavailable,
+    humanAction,
     mergeGate: aggregateSignals(
-      [unknownIssue, checks, review, authority, mergeability],
+      [unknownIssue, checks, review, authority, humanAction, mergeability],
       "Merge gate Unknown",
     ),
     evidence: {
@@ -1057,7 +1070,7 @@ function unlinkedPullLane(
     },
     sources: [
       pullSource,
-      ...[checks, review, authority, mergeability, automatedBrowser, perceptualReview].flatMap(
+      ...[checks, review, authority, humanAction, mergeability, automatedBrowser, perceptualReview].flatMap(
         (signal) => signal.sources,
       ),
     ],
@@ -1168,11 +1181,18 @@ export function normalizeRepository(
     const issueNumber = singlePullIssueNumbers[index];
     const issue = issueNumber === undefined ? undefined : issuesByNumber.get(issueNumber);
     if (issue === undefined) {
+      const definiteIssues = [...(implementationDefiniteIssueNumbers[index] ?? [])].flatMap(
+        (number) => {
+          const candidate = issuesByNumber.get(number);
+          return candidate === undefined ? [] : [candidate];
+        },
+      );
       return unlinkedPullLane(
         effectiveObservation,
         pull,
         implementationOverlap,
         roadmap.state === "satisfied",
+        definiteIssues,
       );
     }
     return pullLane(

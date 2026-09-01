@@ -887,6 +887,40 @@ describe("normalizeRepository", () => {
     }
   });
 
+  it("preserves a human blocker on an unlinked multi-Issue pull request", () => {
+    const observation = healthyObservation();
+    const source = observation.pullRequests[0];
+    const humanIssue = observation.issues[1];
+    if (source === undefined || humanIssue === undefined) throw new Error("fixture missing lane");
+    humanIssue.labels = ["agent:human", "state:ready"];
+    observation.pullRequests.push({
+      ...source,
+      number: 226,
+      title: "multi-Issue human implementation",
+      url: "https://github.example/pulls/226",
+      closingIssueNumbers: [169, humanIssue.number],
+      comments: [],
+      checks: source.checks.map((check) => ({ ...check })),
+      reviews: [],
+      threads: [],
+    });
+
+    const projection = normalizeRepository(observation);
+    expect(
+      projection.deliveries.find((lane) => lane.pullRequest?.number === 226),
+    ).toMatchObject({
+      issue: null,
+      humanAction: { state: "blocked", reason: "human-action-required" },
+      phase: "human_required",
+    });
+    expect(
+      projection.deliveries.some(
+        (lane) => lane.issue?.number === humanIssue.number && lane.pullRequest === null,
+      ),
+    ).toBe(false);
+    expect(projection.humanAction.state).toBe("blocked");
+  });
+
   it("preserves a known current conflict over a simultaneous stale claim", () => {
     const observation = healthyObservation();
     addGreenOperationalEvidence(observation);
