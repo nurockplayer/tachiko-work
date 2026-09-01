@@ -189,6 +189,30 @@ function sectionAvailability(partial: boolean): Availability {
   return partial ? "partial" : "complete";
 }
 
+type GraphError = NonNullable<DashboardGraphResponse["errors"]>[number];
+type GraphPath = readonly (string | number)[];
+
+function pathStartsWith(path: GraphPath, prefix: GraphPath): boolean {
+  return prefix.every((segment, index) => path[index] === segment);
+}
+
+function pathAffected(errors: readonly GraphError[], target: GraphPath): boolean {
+  return errors.some((error) =>
+    error.path === undefined ||
+    pathStartsWith(error.path, target) ||
+    pathStartsWith(target, error.path));
+}
+
+function connectionAffected(errors: readonly GraphError[], target: GraphPath): boolean {
+  return errors.some((error) => {
+    if (error.path === undefined || pathStartsWith(target, error.path)) return true;
+    if (!pathStartsWith(error.path, target)) return false;
+    const child = error.path[target.length];
+    return child === undefined || child === "pageInfo" ||
+      (child === "nodes" && error.path.length === target.length + 1);
+  });
+}
+
 function source(label: string, url: string, kind: SourceLink["kind"] = "github"): SourceLink {
   return { label, url, kind };
 }
@@ -281,14 +305,22 @@ function structuredFact<T>(
       };
 }
 
-function issueFact(issue: GraphIssue, globalPartial: boolean): IssueFact {
-  const labelsAvailability = sectionAvailability(globalPartial || pagePartial(issue.labels));
+interface IssuePartial {
+  core: boolean;
+  labels: boolean;
+  milestone: boolean;
+  dependencies: boolean;
+}
+
+function issueFact(issue: GraphIssue, observation: IssuePartial): IssueFact {
+  const labelsAvailability = sectionAvailability(observation.labels || pagePartial(issue.labels));
   const dependenciesAvailability = sectionAvailability(
-    globalPartial || pagePartial(issue.blockedBy),
+    observation.dependencies || pagePartial(issue.blockedBy),
   );
   const partial =
-    globalPartial ||
-    pagePartial(issue.labels) ||
+    observation.core ||
+    labelsAvailability !== "complete" ||
+    observation.milestone ||
     dependenciesAvailability !== "complete";
   return {
     number: issue.number,
@@ -298,7 +330,7 @@ function issueFact(issue: GraphIssue, globalPartial: boolean): IssueFact {
     labels: present(issue.labels).map((label) => label.name),
     labelsAvailability,
     milestone: issue.milestone?.title ?? null,
-    milestoneAvailability: sectionAvailability(globalPartial),
+    milestoneAvailability: sectionAvailability(observation.milestone),
     blockedBy: present(issue.blockedBy),
     dependenciesAvailability,
     availability: sectionAvailability(partial),
@@ -308,12 +340,18 @@ function issueFact(issue: GraphIssue, globalPartial: boolean): IssueFact {
 function pullRequestFact(
   pull: GraphPullRequest,
   mainSha: string,
-  globalPartial: boolean,
+  observation: {
+    core: boolean;
+    linkage: boolean;
+    comments: boolean;
+    reviews: boolean;
+    checks: boolean;
+  },
 ): PullRequestFact {
   const linkedIssueNumbers = present(pull.closingIssuesReferences).map((issue) => issue.number);
-  const linkagePartial = globalPartial || pagePartial(pull.closingIssuesReferences);
+  const linkagePartial = observation.linkage || pagePartial(pull.closingIssuesReferences);
   const comments = present(pull.comments);
-  const commentsPartial = globalPartial || pagePartial(pull.comments);
+  const commentsPartial = observation.comments || pagePartial(pull.comments);
   const context = !linkagePartial && linkedIssueNumbers.length === 1
     ? {
         repository: REPOSITORY,
@@ -325,11 +363,13 @@ function pullRequestFact(
       }
     : null;
   const checkPage = pull.statusCheckRollup?.contexts ?? null;
-  const partial = globalPartial ||
+  const checksPartial = observation.checks || pagePartial(checkPage);
+  const reviewsPartial = observation.reviews || pagePartial(pull.reviews);
+  const partial = observation.core ||
     linkagePartial ||
-    pagePartial(pull.comments) ||
-    pagePartial(pull.reviews) ||
-    pagePartial(checkPage);
+    commentsPartial ||
+    reviewsPartial ||
+    checksPartial;
   return {
     number: pull.number,
     title: pull.title,
@@ -345,7 +385,7 @@ function pullRequestFact(
     linkedIssueNumbers,
     linkageAvailability: sectionAvailability(linkagePartial),
     checks: {
-      availability: sectionAvailability(globalPartial || pagePartial(checkPage)),
+      availability: sectionAvailability(checksPartial),
       items: present(checkPage).map((check) => check.__typename === "CheckRun"
         ? {
             name: check.name,
@@ -363,7 +403,7 @@ function pullRequestFact(
           }),
     },
     reviews: {
-      availability: sectionAvailability(globalPartial || pagePartial(pull.reviews)),
+      availability: sectionAvailability(reviewsPartial),
       items: present(pull.reviews).map((review) => ({
         author: review.author?.login ?? "Unknown",
         state: review.state,
@@ -449,13 +489,36 @@ export function projectGraphResponse(
     return unavailableProjection(observedAt);
   }
 
-  const globalPartial = (response.errors?.length ?? 0) > 0;
+  const errors = response.errors ?? [];
+  const hasResponseErrors = errors.length > 0;
   const repositorySource = source("GitHub repository", repository.url);
-  const issuePagePartial = globalPartial || pagePartial(repository.issues);
-  const pullPagePartial = globalPartial || pagePartial(repository.pullRequests);
-  const issues = present(repository.issues).map((issue) => issueFact(issue, globalPartial));
-  const pullRequests = present(repository.pullRequests).map((pull) =>
-    pullRequestFact(pull, main.oid, globalPartial));
+  const issuePath = ["repository", "issues"] as const;
+  const pullPath = ["repository", "pullRequests"] as const;
+  const issuePagePartial = pagePartial(repository.issues) || connectionAffected(errors, issuePath);
+  const pullPagePartial = pagePartial(repository.pullRequests) || connectionAffected(errors, pullPath);
+  const issueNodes = repository.issues.nodes ?? [];
+  const pullNodes = repository.pullRequests.nodes ?? [];
+  const issues = issueNodes.flatMap((issue, index) => issue === null
+    ? []
+    : [issueFact(issue, {
+        core: ["number", "title", "url", "state"].some((field) =>
+          pathAffected(errors, [...issuePath, "nodes", index, field])),
+        labels: pathAffected(errors, [...issuePath, "nodes", index, "labels"]),
+        milestone: pathAffected(errors, [...issuePath, "nodes", index, "milestone"]),
+        dependencies: pathAffected(errors, [...issuePath, "nodes", index, "blockedBy"]),
+      })]);
+  const pullRequests = pullNodes.flatMap((pull, index) => pull === null
+    ? []
+    : [pullRequestFact(pull, main.oid, {
+        core: [
+          "number", "title", "url", "state", "isDraft", "headRefOid", "baseRefOid",
+          "baseRefName", "mergeable", "mergeStateStatus", "reviewDecision",
+        ].some((field) => pathAffected(errors, [...pullPath, "nodes", index, field])),
+        linkage: pathAffected(errors, [...pullPath, "nodes", index, "closingIssuesReferences"]),
+        comments: pathAffected(errors, [...pullPath, "nodes", index, "comments"]),
+        reviews: pathAffected(errors, [...pullPath, "nodes", index, "reviews"]),
+        checks: pathAffected(errors, [...pullPath, "nodes", index, "statusCheckRollup"]),
+      })]);
   const issuesAvailability = sectionAvailability(
     issuePagePartial || issues.some((issue) => issue.availability !== "complete"),
   );
@@ -465,10 +528,18 @@ export function projectGraphResponse(
   const linkageAvailability = sectionAvailability(
     pullPagePartial || pullRequests.some((pull) => pull.linkageAvailability !== "complete"),
   );
+  const issueDiscoveryAvailability = sectionAvailability(
+    issuePagePartial || issues.some((issue) => issue.labelsAvailability !== "complete"),
+  );
+  const watchDiscoveryAvailability = sectionAvailability(
+    pullPagePartial || pullNodes.some((pull, index) =>
+      pull === null ||
+      pagePartial(pull.comments) ||
+      pathAffected(errors, [...pullPath, "nodes", index, "comments"])),
+  );
   const deliveriesAvailability = sectionAvailability(
-    issuePagePartial ||
-    linkageAvailability !== "complete" ||
-    present(repository.issues).some((issue) => pagePartial(issue.labels)),
+    issueDiscoveryAvailability !== "complete" ||
+    linkageAvailability !== "complete",
   );
   const issuesByNumber = new Map(issues.map((issue) => [issue.number, issue]));
   const usedIssues = new Set<number>();
@@ -502,7 +573,7 @@ export function projectGraphResponse(
   const roadmapText = repository.roadmap?.text;
   const horizon = typeof roadmapText === "string" ? parseProductHorizon(roadmapText) : null;
   const activeIssues = issues.filter((issue) => issue.labels.includes(OWNER_TOKEN));
-  const countAvailability = issuesAvailability;
+  const countAvailability = issueDiscoveryAvailability;
   const relevantPullRequests = pullRequests.filter((pull) =>
     evidenceRelevant(pull, issuesByNumber));
   const watchFacts = relevantPullRequests.map((pull) => pull.stewardWatch);
@@ -510,8 +581,9 @@ export function projectGraphResponse(
     watch.status === "current" && watch.source !== null ? [watch.source] : []);
   const requiredWatch = watchFacts.find((watch) => watch.status === "current" && watch.value?.includes("human action required"));
   const allWatchesCurrent =
-    issuesAvailability === "complete" &&
-    pullsAvailability === "complete" &&
+    issueDiscoveryAvailability === "complete" &&
+    linkageAvailability === "complete" &&
+    watchDiscoveryAvailability === "complete" &&
     watchFacts.length > 0 &&
     watchFacts.every((watch) => watch.status === "current");
   const humanAction = requiredWatch !== undefined
@@ -545,7 +617,7 @@ export function projectGraphResponse(
     repository.recent.nodes.some((pull) => pull === null);
   const recentDropped = recentNodes.some((pull) => pull.mergedAt === null || pull.mergeCommit === null);
   const recentAvailability = sectionAvailability(
-    globalPartial || recentNodeMissing || recentDropped,
+    pathAffected(errors, ["repository", "recent"]) || recentNodeMissing || recentDropped,
   );
   const recentItems = recentNodes.flatMap((pull) =>
     pull.mergedAt === null || pull.mergeCommit === null
@@ -565,7 +637,7 @@ export function projectGraphResponse(
     sources: [repositorySource],
   }];
   if (
-    globalPartial ||
+    hasResponseErrors ||
     horizon === null ||
     issuesAvailability !== "complete" ||
     pullsAvailability !== "complete"
@@ -610,14 +682,20 @@ export function projectGraphResponse(
   return {
     repository: REPOSITORY,
     observedAt,
-    fetchHealth: globalPartial || horizon === null || issuesAvailability !== "complete" || pullsAvailability !== "complete" || recentAvailability !== "complete"
+    fetchHealth: hasResponseErrors || horizon === null || issuesAvailability !== "complete" || pullsAvailability !== "complete" || recentAvailability !== "complete"
       ? "partial"
       : "healthy",
     executive: {
-      mainSha: { value: main.oid, availability: "complete", source: source("Live main", main.url) },
+      mainSha: {
+        value: main.oid,
+        availability: sectionAvailability(pathAffected(errors, ["repository", "defaultBranchRef"])),
+        source: source("Live main", main.url),
+      },
       productHorizon: {
         value: horizon,
-        availability: horizon === null ? "partial" : "complete",
+        availability: horizon === null || pathAffected(errors, ["repository", "roadmap"])
+          ? "partial"
+          : "complete",
         source: roadmapSource,
       },
       activeCount: {

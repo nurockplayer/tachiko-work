@@ -346,7 +346,77 @@ describe("Dashboard GitHub observation", () => {
       availability: "partial",
       items: [],
     });
+    expect(projection.executive.humanAction).toMatchObject({
+      value: "None in current watches",
+      availability: "complete",
+    });
     expect(projection.fetchHealth).toBe("partial");
+  });
+
+  it("scopes GraphQL errors to their affected response path", () => {
+    const response = graph();
+    const repository = response.data?.repository;
+    if (repository !== null && repository !== undefined) repository.roadmap = null;
+    response.errors = [{ message: "Roadmap unavailable", path: ["repository", "roadmap"] }];
+
+    const projection = projectGraphResponse(response);
+    expect(projection.fetchHealth).toBe("partial");
+    expect(projection.executive.productHorizon.availability).toBe("partial");
+    expect(projection.executive.activeCount).toMatchObject({ value: 1, availability: "complete" });
+    expect(projection.deliveries[0]?.pullRequest).toMatchObject({
+      checks: { availability: "complete" },
+      handoff: { status: "current" },
+      stewardWatch: { status: "current" },
+    });
+    expect(projection.executive.humanAction).toMatchObject({
+      value: "None in current watches",
+      availability: "complete",
+    });
+  });
+
+  it("keeps structured evidence current when only check observation errors", () => {
+    const response = graph();
+    response.errors = [{
+      message: "Checks unavailable",
+      path: ["repository", "pullRequests", "nodes", 0, "statusCheckRollup"],
+    }];
+
+    const projection = projectGraphResponse(response);
+    expect(projection.deliveries[0]?.pullRequest).toMatchObject({
+      checks: { availability: "partial" },
+      handoff: { status: "current" },
+      stewardWatch: { status: "current" },
+    });
+    expect(projection.executive.humanAction).toMatchObject({
+      value: "None in current watches",
+      availability: "complete",
+    });
+  });
+
+  it("keeps no-human-action Unknown when an unclassified PR can hide a watch", () => {
+    const response = graph();
+    const pulls = response.data?.repository?.pullRequests;
+    const pull = pulls?.nodes?.[0];
+    if (pulls !== undefined && pull !== null && pull !== undefined) {
+      pulls.nodes?.push({
+        ...pull,
+        number: 231,
+        url: "https://github.example/pulls/231",
+        closingIssuesReferences: {
+          pageInfo: { hasNextPage: false },
+          nodes: [{ number: 999 }],
+        },
+        comments: null,
+      });
+    }
+
+    const projection = projectGraphResponse(response);
+    expect(projection.deliveries.find((lane) => lane.pullRequest?.number === 231)?.pullRequest)
+      .toMatchObject({ stewardWatch: { status: "unknown" } });
+    expect(projection.executive.humanAction).toMatchObject({
+      value: null,
+      availability: "partial",
+    });
   });
 
   it("does not invent a status-context head when GitHub omits its commit", () => {
