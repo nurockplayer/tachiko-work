@@ -105,18 +105,48 @@ function ownerFor(issue: RawIssue): string {
   return owners.length === 1 ? owners.at(0) ?? "unknown" : "unknown";
 }
 
+function ownershipFor(issue: RawIssue): DisplaySignal {
+  const source = evidenceSource("Issue owner labels", issue.url);
+  if (issue.labelsAvailability !== "complete") {
+    return directSignal("unknown", "observation-incomplete", "Issue ownership Unknown", [source]);
+  }
+  const owners = issue.labels.filter((label) => label.startsWith("agent:"));
+  if (owners.length !== 1) {
+    return directSignal(
+      "unknown",
+      owners.length === 0 ? "required-evidence-unknown" : "source-identity-conflict",
+      "Issue ownership Unknown",
+      [source],
+    );
+  }
+  return directSignal(
+    "satisfied",
+    "all-required-conditions-satisfied",
+    `Issue owner · ${owners[0] ?? "unknown"}`,
+    [source],
+  );
+}
+
 function labelReadinessFor(issue: RawIssue): DisplaySignal {
   const source = evidenceSource("Issue labels", issue.url);
   if (issue.labelsAvailability !== "complete") {
     return directSignal("unknown", "observation-incomplete", "Issue labels Unknown", [source]);
   }
-  if (
-    issue.labels.includes("state:blocked") ||
-    issue.labels.includes("state:parked")
-  ) {
+  const ready = issue.labels.includes("state:ready");
+  const explicitlyNotReady =
+    issue.labels.includes("state:blocked") || issue.labels.includes("state:parked");
+  if (ready && explicitlyNotReady) {
+    return directSignal(
+      "unknown",
+      "source-identity-conflict",
+      "Issue readiness labels conflict",
+      [source],
+    );
+  }
+  if (explicitlyNotReady) {
     return directSignal("blocked", "issue-not-ready", "Issue is not Ready", [source]);
   }
-  if (issue.labels.includes("state:ready")) {
+  if (ready) {
     return directSignal("satisfied", "all-required-conditions-satisfied", "Issue Ready", [source]);
   }
   return directSignal(
@@ -209,6 +239,7 @@ function pullLane(
 ): DeliveryLane {
   const mainSha = repository.main?.sha ?? "";
   const githubUrl = pull.url;
+  const ownership = ownershipFor(issue);
   const labelReadiness = labelReadinessFor(issue);
   const readiness = readinessFor(issue);
   const reconciliation = reconcile({
@@ -256,6 +287,7 @@ function pullLane(
     ),
     nativeRepository: observation(
       repository.main === null ||
+        ownership.state !== "satisfied" ||
         issue.labelsAvailability !== "complete" ||
         issue.dependencyAvailability !== "complete" ||
         readiness.state === "unknown"
@@ -317,7 +349,12 @@ function pullLane(
     "Steward watch Unknown",
   );
   const humanAction = aggregateSignals(
-    [fromCondition(reconciliation.humanAction, "Human action Unknown"), commentState, labelState],
+    [
+      fromCondition(reconciliation.humanAction, "Human action Unknown"),
+      commentState,
+      labelState,
+      ownership,
+    ],
     "Human action Unknown",
   );
   const deliveryIntegrity = aggregateSignals(
@@ -436,6 +473,7 @@ function pullLane(
 function issueLane(repository: RepositoryObservation, issue: RawIssue): DeliveryLane {
   const readiness = readinessFor(issue);
   const owner = ownerFor(issue);
+  const ownership = ownershipFor(issue);
   const unavailable = directSignal(
     "unknown",
     "not-required",
@@ -458,13 +496,8 @@ function issueLane(repository: RepositoryObservation, issue: RawIssue): Delivery
           evidenceSource("Live main", repository.main.url),
         ]),
     humanAction:
-      issue.labelsAvailability !== "complete"
-        ? directSignal(
-            "unknown",
-            "observation-incomplete",
-            "Issue ownership Unknown",
-            [evidenceSource("Issue owner label", issue.url)],
-          )
+      ownership.state !== "satisfied"
+        ? ownership
         : owner === "agent:human"
         ? directSignal(
             "blocked",

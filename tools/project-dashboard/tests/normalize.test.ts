@@ -251,6 +251,52 @@ describe("normalizeRepository", () => {
     expect(lane?.phase).toBe("unknown");
   });
 
+  it.each([
+    ["missing", ["state:ready"]],
+    ["conflicting", ["agent:codex", "agent:human", "state:ready"]],
+  ])("keeps %s ownership Unknown for both pull-request and no-PR lanes", (_name, labels) => {
+    const observation = healthyObservation();
+    const pullIssue = observation.issues[0];
+    const issueOnly = observation.issues[1];
+    if (pullIssue === undefined || issueOnly === undefined) {
+      throw new Error("fixture missing issue");
+    }
+    pullIssue.labels = [...labels];
+    issueOnly.labels = [...labels];
+
+    const projection = normalizeRepository(observation);
+    for (const issueNumber of [169, 223]) {
+      const lane = projection.deliveries.find((item) => item.issue?.number === issueNumber);
+      expect(lane?.owner).toBe("unknown");
+      expect(lane?.humanAction.state).toBe("unknown");
+      expect(
+        projection.attention.some(
+          (item) => item.issueNumber === issueNumber && item.label === "Issue ownership Unknown",
+        ),
+      ).toBe(true);
+    }
+    expect(projection.deliveries[0]?.mergeGate.state).not.toBe("satisfied");
+    expect(projection.humanAction.state).toBe("unknown");
+  });
+
+  it.each(["state:blocked", "state:parked"])(
+    "keeps Ready plus %s as conflicting Unknown evidence",
+    (negativeLabel) => {
+      const observation = healthyObservation();
+      const issue = observation.issues[0];
+      if (issue === undefined) throw new Error("fixture missing issue");
+      issue.labels = ["agent:codex", "state:ready", negativeLabel];
+
+      const lane = normalizeRepository(observation).deliveries[0];
+      expect(lane?.readiness).toMatchObject({
+        state: "unknown",
+        reason: "source-identity-conflict",
+      });
+      expect(lane?.mergeGate.state).not.toBe("satisfied");
+      expect(lane?.phase).toBe("unknown");
+    },
+  );
+
   it("keeps open pull requests visible when native Issue linkage is missing", () => {
     const observation = healthyObservation();
     const source = observation.pullRequests[0];
