@@ -682,9 +682,9 @@ Active -> Consumed | Revoked | Expired
   only when that fresh boundary Query decision permits the detail; otherwise
   the executor receives authorization denial. Issue #93 supplies the current
   in-process revision and guarded state installation; broader cross-host
-  concurrency and transaction/recovery remain with #11, while deferred history
-  taxonomy is fixed by ADR-0032 while history protocols remain with #49 under
-  ADR-0029.
+  concurrency and transaction/recovery remain with #11. ADR-0032 fixes the
+  transition/receipt/event taxonomy, while deferred history protocols and
+  mechanics remain with #49 under ADR-0029.
 - The current direct-Human path resolves the proposal originator's retained
   immutable PrincipalKind without making originator activity a common
   publication condition; the executor must remain an active Human with live
