@@ -19,7 +19,9 @@ export interface IssueFact {
   url: string;
   state: string;
   labels: string[];
+  labelsAvailability: Availability;
   milestone: string | null;
+  milestoneAvailability: Availability;
   blockedBy: { number: number; state: string; url: string }[];
   dependenciesAvailability: Availability;
   availability: Availability;
@@ -102,6 +104,7 @@ export interface DashboardProjection {
     humanAction: ObservedValue<string>;
   };
   deliveries: DeliveryLane[];
+  deliveriesAvailability: Availability;
   criticalPath: {
     availability: Availability;
     nodes: { issueNumber: number; label: string; state: string; url: string }[];

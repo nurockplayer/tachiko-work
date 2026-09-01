@@ -146,6 +146,7 @@ describe("Dashboard GitHub observation", () => {
     const pull = projection.deliveries[0]?.pullRequest;
 
     expect(projection.fetchHealth).toBe("healthy");
+    expect(projection.deliveriesAvailability).toBe("complete");
     expect(projection.executive.productHorizon.value).toBe("06 · Team Workspace Beta");
     expect(pull).toMatchObject({
       mergeable: "MERGEABLE",
@@ -159,6 +160,37 @@ describe("Dashboard GitHub observation", () => {
       conclusion: "NEUTRAL",
     });
     expect(JSON.stringify(projection)).not.toMatch(/mergeGate|mergeReady|canMerge|can_merge/);
+  });
+
+  it("keeps a fully observed empty delivery set complete", () => {
+    const response = graph();
+    const repository = response.data?.repository;
+    if (repository !== null && repository !== undefined) {
+      repository.issues.nodes = [];
+      repository.pullRequests.nodes = [];
+    }
+
+    const projection = projectGraphResponse(response);
+    expect(projection.deliveries).toEqual([]);
+    expect(projection.deliveriesAvailability).toBe("complete");
+  });
+
+  it("tracks empty Issue metadata independently from other Issue facts", () => {
+    const response = graph();
+    const issue = response.data?.repository?.issues.nodes?.[0];
+    if (issue !== null && issue !== undefined && issue.labels !== null) {
+      issue.labels.nodes = [];
+      issue.blockedBy = null;
+    }
+
+    const projection = projectGraphResponse(response);
+    expect(projection.deliveries[0]?.issue).toMatchObject({
+      labels: [],
+      labelsAvailability: "complete",
+      milestone: null,
+      milestoneAvailability: "complete",
+      dependenciesAvailability: "partial",
+    });
   });
 
   it("makes malformed exact-head evidence explicit", () => {

@@ -16,7 +16,9 @@ export function healthyProjection(): DashboardProjection {
     url: "https://github.example/issues/229",
     state: "OPEN",
     labels: ["agent:codex", "state:ready"],
+    labelsAvailability: "complete" as const,
     milestone: null,
+    milestoneAvailability: "complete" as const,
     blockedBy: [{ number: 200, state: "CLOSED", url: "https://github.example/issues/200" }],
     dependenciesAvailability: "complete" as const,
     availability: "complete" as const,
@@ -89,6 +91,7 @@ export function healthyProjection(): DashboardProjection {
       },
     },
     deliveries: [{ issue, pullRequest, linkageAvailability: "complete" }],
+    deliveriesAvailability: "complete",
     criticalPath: {
       availability: "complete",
       nodes: [
@@ -134,6 +137,8 @@ export function partialProjection(): DashboardProjection {
       linkageAvailability: "partial",
       issue: lane.issue === null ? null : {
         ...lane.issue,
+        labelsAvailability: "partial",
+        milestoneAvailability: "partial",
         dependenciesAvailability: "partial",
       },
       pullRequest: lane.pullRequest === null ? null : {
@@ -143,6 +148,7 @@ export function partialProjection(): DashboardProjection {
         handoff: { status: "unknown", value: null, reason: "Observation incomplete", source: null },
       },
     })),
+    deliveriesAvailability: "partial",
     attention: [{
       level: "unknown",
       label: "GitHub observation partial",

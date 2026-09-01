@@ -92,6 +92,55 @@ test("shows direct GitHub and Steward facts without a final verdict", async ({ p
   await expect(page.getByText(/merge ready|merge-ready|can_merge/i)).toHaveCount(0);
 });
 
+test("renders fully observed absent Issue metadata as none observed", async ({ page }) => {
+  await page.route("**/api/project", async (route) => {
+    const response = await route.fetch();
+    const projection = (await response.json()) as DashboardProjection;
+    const firstLane = projection.deliveries[0];
+    await route.fulfill({
+      response,
+      json: firstLane?.issue === null || firstLane?.issue === undefined
+        ? projection
+        : {
+            ...projection,
+            deliveries: [{
+              ...firstLane,
+              issue: {
+                ...firstLane.issue,
+                labels: [],
+                labelsAvailability: "complete",
+                milestone: null,
+                milestoneAvailability: "complete",
+              },
+            }],
+          },
+    });
+  });
+  await page.goto("/");
+
+  await expect(
+    page.locator(".identity-item").filter({ hasText: "LABELS" }).getByText("None observed", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.locator(".identity-item").filter({ hasText: "MILESTONE" }).getByText("None observed", { exact: true }),
+  ).toBeVisible();
+});
+
+test("renders a fully observed empty delivery set as none observed", async ({ page }) => {
+  await page.route("**/api/project", async (route) => {
+    const response = await route.fetch();
+    const projection = (await response.json()) as DashboardProjection;
+    await route.fulfill({
+      response,
+      json: { ...projection, deliveries: [], deliveriesAvailability: "complete" },
+    });
+  });
+  await page.goto("/");
+
+  await expect(page.getByText("No active delivery lanes observed", { exact: true })).toBeVisible();
+  await expect(page.getByText("Delivery observation Unknown", { exact: true })).toHaveCount(0);
+});
+
 test("distinguishes a complete empty linked-Issue observation from Unknown", async ({ page }) => {
   await page.route("**/api/project", async (route) => {
     const response = await route.fetch();

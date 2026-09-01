@@ -282,6 +282,7 @@ function structuredFact<T>(
 }
 
 function issueFact(issue: GraphIssue, globalPartial: boolean): IssueFact {
+  const labelsAvailability = sectionAvailability(globalPartial || pagePartial(issue.labels));
   const dependenciesAvailability = sectionAvailability(
     globalPartial || pagePartial(issue.blockedBy),
   );
@@ -295,7 +296,9 @@ function issueFact(issue: GraphIssue, globalPartial: boolean): IssueFact {
     url: issue.url,
     state: issue.state,
     labels: present(issue.labels).map((label) => label.name),
+    labelsAvailability,
     milestone: issue.milestone?.title ?? null,
+    milestoneAvailability: sectionAvailability(globalPartial),
     blockedBy: present(issue.blockedBy),
     dependenciesAvailability,
     availability: sectionAvailability(partial),
@@ -413,6 +416,7 @@ function unavailableProjection(observedAt: string): DashboardProjection {
       humanAction: { value: null, availability: "unavailable", source: repositorySource },
     },
     deliveries: [],
+    deliveriesAvailability: "unavailable",
     criticalPath: { availability: "unavailable", nodes: [], edges: [], source: repositorySource },
     recentActivity: { availability: "unavailable", items: [], source: repositorySource },
     attention: [{
@@ -460,6 +464,11 @@ export function projectGraphResponse(
   );
   const linkageAvailability = sectionAvailability(
     pullPagePartial || pullRequests.some((pull) => pull.linkageAvailability !== "complete"),
+  );
+  const deliveriesAvailability = sectionAvailability(
+    issuePagePartial ||
+    linkageAvailability !== "complete" ||
+    present(repository.issues).some((issue) => pagePartial(issue.labels)),
   );
   const issuesByNumber = new Map(issues.map((issue) => [issue.number, issue]));
   const usedIssues = new Set<number>();
@@ -633,6 +642,7 @@ export function projectGraphResponse(
       },
     },
     deliveries,
+    deliveriesAvailability,
     criticalPath: {
       availability: issuesAvailability,
       nodes: [...nodes.values()].sort((left, right) => left.issueNumber - right.issueNumber),

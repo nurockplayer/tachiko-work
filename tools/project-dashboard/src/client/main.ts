@@ -215,8 +215,16 @@ function laneCard(lane: DeliveryLane): HTMLElement {
   if (lane.issue !== null) {
     card.append(factGroup("Issue facts", lane.issue.availability, [
       fact("STATE", lane.issue.state),
-      fact("LABELS", lane.issue.labels.length === 0 ? null : lane.issue.labels.join(" · ")),
-      fact("MILESTONE", lane.issue.milestone),
+      fact(
+        "LABELS",
+        lane.issue.labels.length === 0
+          ? lane.issue.labelsAvailability === "complete" ? "None observed" : null
+          : lane.issue.labels.join(" · "),
+      ),
+      fact(
+        "MILESTONE",
+        lane.issue.milestone ?? (lane.issue.milestoneAvailability === "complete" ? "None observed" : null),
+      ),
       fact(
         "BLOCKED BY",
         lane.issue.blockedBy.length === 0
@@ -254,7 +262,16 @@ function commandCenter(projection: DashboardProjection): HTMLElement {
   );
   const grid = element("div", "lane-grid");
   if (projection.deliveries.length === 0) {
-    grid.append(element("p", "empty-state", "Unknown · no delivery lanes observed"));
+    grid.append(
+      element(
+        "p",
+        "empty-state",
+        projection.deliveriesAvailability === "complete"
+          ? "No active delivery lanes observed"
+          : "Delivery observation Unknown",
+      ),
+      availability(projection.deliveriesAvailability),
+    );
   } else {
     for (const lane of projection.deliveries) grid.append(laneCard(lane));
   }
