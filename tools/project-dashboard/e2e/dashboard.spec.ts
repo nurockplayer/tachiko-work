@@ -53,6 +53,47 @@ test("renders source failure as partial and Unknown", async ({ page }) => {
   await expect(page.getByText("Unknown", { exact: true }).first()).toBeVisible();
 });
 
+test("does not describe blocked or Unknown issue-only work as a Ready lane", async ({ page }) => {
+  let readiness: "blocked" | "unknown" = "blocked";
+  await page.route("**/api/project", async (route) => {
+    const response = await route.fetch();
+    const projection = (await response.json()) as {
+      deliveries: Array<Record<string, unknown>>;
+    } & Record<string, unknown>;
+    await route.fulfill({
+      response,
+      json: {
+        ...projection,
+        deliveries: projection.deliveries.map((lane) =>
+          lane.pullRequest === null
+            ? {
+                ...lane,
+                phase: readiness,
+                readiness: {
+                  state: readiness,
+                  reason: readiness === "blocked" ? "readiness-blocked" : "readiness-unknown",
+                  label: readiness === "blocked" ? "Blocked" : "Readiness Unknown",
+                  sources: [],
+                },
+              }
+            : lane,
+        ),
+      },
+    });
+  });
+
+  await page.goto("/");
+  await expect(page.locator(".identity-empty")).toHaveText(
+    "No implementation PR · native Issue lane",
+  );
+
+  readiness = "unknown";
+  await page.reload();
+  await expect(page.locator(".identity-empty")).toHaveText(
+    "No implementation PR · native Issue lane",
+  );
+});
+
 test("refresh preserves keyboard focus and announces completion", async ({ page }) => {
   await page.goto("/");
   const refresh = page.getByRole("button", { name: "Refresh observation" });

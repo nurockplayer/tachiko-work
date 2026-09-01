@@ -123,9 +123,11 @@ function laneCard(lane: DeliveryLane): HTMLElement {
       element(
         "span",
         "identity-empty",
-        lane.mergeGate.reason === "not-required"
-          ? "No implementation PR · native Ready lane"
-          : "Implementation PR linkage Unknown · native Issue lane",
+        lane.mergeGate.reason !== "not-required"
+          ? "Implementation PR linkage Unknown · native Issue lane"
+          : lane.readiness.state === "satisfied"
+            ? "No implementation PR · native Ready lane"
+            : "No implementation PR · native Issue lane",
       ),
     );
   } else {

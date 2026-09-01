@@ -206,6 +206,7 @@ describe("GitHub observation adapter", () => {
     expect(lane?.owner).toBe("unknown");
     expect(lane?.readiness.state).toBe("unknown");
     expect(lane?.mergeGate.state).not.toBe("satisfied");
+    expect(normalizeRepository(observation).executive.readyCount.state).toBe("unknown");
   });
 
   it("marks a missing Product Roadmap source partial and the horizon Unknown", async () => {

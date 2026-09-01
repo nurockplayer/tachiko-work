@@ -460,6 +460,39 @@ describe("normalizeRepository", () => {
     });
   });
 
+  it("keeps Ready counts Unknown when Issue or label observation is incomplete", () => {
+    const incompleteIssues = healthyObservation();
+    incompleteIssues.issuesAvailability = "incomplete";
+    expect(normalizeRepository(incompleteIssues).executive.readyCount).toMatchObject({
+      state: "unknown",
+      value: "Unknown",
+    });
+
+    const incompleteLabels = healthyObservation();
+    const issue = incompleteLabels.issues[1];
+    if (issue === undefined) throw new Error("fixture missing issue");
+    issue.labelsAvailability = "incomplete";
+    expect(normalizeRepository(incompleteLabels).executive.readyCount).toMatchObject({
+      state: "unknown",
+      value: "Unknown",
+    });
+  });
+
+  it("preserves explicit Blocked over incomplete implementation linkage", () => {
+    const observation = healthyObservation();
+    observation.implementationLinkageAvailability = "incomplete";
+    const issue = observation.issues[1];
+    if (issue === undefined) throw new Error("fixture missing issue");
+    issue.labels = ["agent:codex", "state:blocked"];
+
+    const lane = normalizeRepository(observation).deliveries.find(
+      (item) => item.issue?.number === issue.number && item.pullRequest === null,
+    );
+    expect(lane?.readiness.state).toBe("blocked");
+    expect(lane?.phase).toBe("blocked");
+    expect(lane?.mergeGate.state).toBe("unknown");
+  });
+
   it("exposes exact check provenance on the delivery lane", () => {
     const lane = normalizeRepository(healthyObservation()).deliveries[0];
     expect(lane?.sources.some((source) => source.url.endsWith("/checks/browser"))).toBe(true);

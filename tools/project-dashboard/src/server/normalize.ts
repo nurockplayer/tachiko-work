@@ -550,9 +550,11 @@ function issueLane(repository: RepositoryObservation, issue: RawIssue): Delivery
   return {
     issue: { number: issue.number, title: issue.title, url: issue.url },
     owner,
-    phase: linkageComplete
-      ? readiness.state === "satisfied" ? "ready" : readiness.state
-      : "unknown",
+    phase: readiness.state === "blocked"
+      ? "blocked"
+      : linkageComplete
+        ? readiness.state === "satisfied" ? "ready" : readiness.state
+        : "unknown",
     pullRequest: null,
     readiness,
     checks: unavailable,
@@ -860,10 +862,18 @@ export function normalizeRepository(
     "Open pull request linkage",
     `https://github.com/${observation.repository}/pulls`,
   );
-  const countValue = (value: number) =>
-    observation.implementationLinkageAvailability === "complete"
-      ? { state: "satisfied" as const, value, source: linkageSource }
-      : { state: "unknown" as const, value: "Unknown" as const, source: linkageSource };
+  const issuesSource = evidenceSource(
+    "Open Issue readiness",
+    `https://github.com/${observation.repository}/issues`,
+  );
+  const countValue = (value: number, complete: boolean, source: SourceLink) =>
+    complete
+      ? { state: "satisfied" as const, value, source }
+      : { state: "unknown" as const, value: "Unknown" as const, source };
+  const linkageComplete = observation.implementationLinkageAvailability === "complete";
+  const issuesComplete =
+    observation.issuesAvailability === "complete" &&
+    observation.issues.every((issue) => issue.labelsAvailability === "complete");
 
   return {
     repository: observation.repository,
@@ -872,11 +882,17 @@ export function normalizeRepository(
     executive: {
       mainSha,
       productHorizon: roadmap,
-      activeCount: countValue(deliveries.filter((lane) => lane.pullRequest !== null).length),
+      activeCount: countValue(
+        deliveries.filter((lane) => lane.pullRequest !== null).length,
+        linkageComplete,
+        linkageSource,
+      ),
       readyCount: countValue(
         deliveries.filter(
           (lane) => lane.pullRequest === null && lane.readiness.state === "satisfied",
         ).length,
+        linkageComplete && issuesComplete,
+        issuesSource,
       ),
     },
     deliveries,
