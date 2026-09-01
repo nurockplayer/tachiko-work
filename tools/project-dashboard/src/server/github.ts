@@ -468,7 +468,6 @@ export async function observeRepository(
       try {
         return await comparePull(main.oid, pull.headRefOid, options);
       } catch {
-        errors.push({ source: `PR #${String(pull.number)} comparison`, url: pull.url, reason: "observation-unavailable" });
         return {
           mergeBaseSha: null,
           relation: "unknown" as const,
@@ -538,6 +537,8 @@ export async function observeRepository(
             : "complete",
       reviews: pull.reviews.nodes.map((review) => ({
         id: review.fullDatabaseId ?? review.id,
+        authorLogin: review.author?.login ?? `unknown:${review.id}`,
+        submittedAt: review.createdAt,
         commitSha: review.commit?.oid ?? "",
         state: review.state,
         url: review.url,
@@ -589,6 +590,7 @@ export async function observeRepository(
     pullsAvailability:
       repository.pullRequests.pageInfo.hasNextPage || pullTruncated ? "incomplete" : "complete",
     implementationLinkageAvailability:
+      (response.errors?.length ?? 0) > 0 ||
       repository.pullRequests.pageInfo.hasNextPage ||
       repository.pullRequests.nodes.some(
         (pull) => pull.closingIssuesReferences.pageInfo.hasNextPage,
@@ -609,7 +611,7 @@ export async function observeRepository(
     // Recent activity is intentionally a bounded context window, not a complete history query.
     recentActivityAvailability: "complete",
     errors,
-    ...(token === undefined || token.length === 0 ? {} : { serverCredential: token }),
+    ...(token === undefined || token.length === 0 ? {} : { serverCredential: "present" }),
   };
 }
 

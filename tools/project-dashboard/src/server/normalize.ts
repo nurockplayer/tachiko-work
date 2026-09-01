@@ -77,6 +77,13 @@ function checkSignal(pull: RawPullRequest, name?: string): DisplaySignal {
   const sources = checks.map((check) =>
     evidenceSource(`Check · ${check.name}`, check.url),
   );
+  if (
+    checks.some(
+      (check) => check.headSha === pull.headSha && check.status === "failure",
+    )
+  ) {
+    return directSignal("blocked", "native-check-failed", "Exact-head check failed", sources);
+  }
   if (pull.checksAvailability !== "complete" || checks.length === 0) {
     return directSignal(
       "unknown",
@@ -89,9 +96,6 @@ function checkSignal(pull: RawPullRequest, name?: string): DisplaySignal {
   }
   if (checks.some((check) => check.headSha !== pull.headSha)) {
     return directSignal("unknown", "validation-stale", "Check identity mismatch", sources);
-  }
-  if (checks.some((check) => check.status === "failure")) {
-    return directSignal("blocked", "native-check-failed", "Exact-head check failed", sources);
   }
   if (checks.some((check) => check.status === "pending")) {
     return directSignal("waiting", "native-check-pending", "Exact-head checks pending", sources);
@@ -264,6 +268,24 @@ function implementationConflictSignal(
   );
 }
 
+function currentDecisiveReviewIds(
+  reviews: RawPullRequest["reviews"],
+): Set<string> {
+  const latestByAuthor = new Map<string, RawPullRequest["reviews"][number]>();
+  for (const review of reviews) {
+    if (review.state !== "APPROVED" && review.state !== "CHANGES_REQUESTED") continue;
+    const current = latestByAuthor.get(review.authorLogin);
+    if (
+      current === undefined ||
+      review.submittedAt > current.submittedAt ||
+      (review.submittedAt === current.submittedAt && review.id > current.id)
+    ) {
+      latestByAuthor.set(review.authorLogin, review);
+    }
+  }
+  return new Set([...latestByAuthor.values()].map((review) => review.id));
+}
+
 function pullLane(
   repository: RepositoryObservation,
   issue: RawIssue,
@@ -280,6 +302,7 @@ function pullLane(
   const ownership = ownershipFor(issue);
   const labelReadiness = labelReadinessFor(issue);
   const readiness = readinessFor(issue);
+  const currentReviewIds = currentDecisiveReviewIds(pull.reviews);
   const reconciliation = reconcile({
     context: {
       repository: repository.repository,
@@ -304,7 +327,7 @@ function pullLane(
     nativeReviews: observation(
       pull.reviewsAvailability,
       pull.reviews.map((review) => ({
-        current: review.commitSha === pull.headSha,
+        current: currentReviewIds.has(review.id),
         head: review.commitSha,
         state: review.state,
         source: { id: review.id, url: review.url },
@@ -325,6 +348,8 @@ function pullLane(
     ),
     nativeRepository: observation(
       repository.main === null ||
+        repository.roadmap === null ||
+        repository.availability !== "complete" ||
         repository.implementationLinkageAvailability !== "complete" ||
         ownership.state !== "satisfied" ||
         issue.labelsAvailability !== "complete" ||
@@ -451,7 +476,7 @@ function pullLane(
     ? "human_required"
     : review.state === "blocked"
       ? "review_fix"
-      : [readiness, checks, stewardWatch, authority].some(
+      : [readiness, checks, stewardWatch, authority, mergeGate].some(
             (signal) => signal.state === "blocked",
           )
         ? "blocked"
@@ -606,25 +631,25 @@ function unlinkedPullLane(
     ...pull.reviews.map((item) => evidenceSource("Native review", item.url)),
     ...pull.threads.map((item) => evidenceSource("Native review thread", item.url)),
   ];
+  const currentReviewIds = currentDecisiveReviewIds(pull.reviews);
   const review =
-    pull.reviewsAvailability !== "complete" || pull.threadsAvailability !== "complete"
+    pull.reviews.some(
+      (item) => currentReviewIds.has(item.id) && item.state === "CHANGES_REQUESTED",
+    )
+      ? directSignal(
+          "blocked",
+          "native-changes-requested",
+          "Current review requests changes",
+          reviewSources,
+        )
+      : pull.reviewsAvailability !== "complete" || pull.threadsAvailability !== "complete"
       ? directSignal(
           "unknown",
           "observation-incomplete",
           "Exact-head review observation incomplete",
           reviewSources,
         )
-      : pull.reviews.some(
-            (item) =>
-              item.commitSha === pull.headSha && item.state === "CHANGES_REQUESTED",
-          )
-        ? directSignal(
-            "blocked",
-            "native-changes-requested",
-            "Changes requested on exact head",
-            reviewSources,
-          )
-        : pull.threads.some((item) => !item.resolved)
+      : pull.threads.some((item) => !item.resolved)
           ? directSignal(
               "unknown",
               "native-thread-unknown",
@@ -689,7 +714,11 @@ function unlinkedPullLane(
   return {
     issue: null,
     owner: "unknown",
-    phase: implementationConflict ? "blocked" : "unknown",
+    phase:
+      implementationConflict ||
+      [checks, review, authority].some((signal) => signal.state === "blocked")
+        ? "blocked"
+        : "unknown",
     pullRequest: {
       number: pull.number,
       title: pull.title,
@@ -807,10 +836,14 @@ export function normalizeRepository(
         issue.labels.includes("state:ready"),
     )
     .sort((left, right) => left.number - right.number);
-  const attention: AttentionItem[] = [...errorAttention(observation)];
-  const attentionKeys = new Set(
-    attention.map((item) => `${String(item.issueNumber ?? "repository")}:${item.reason}:${item.label}`),
-  );
+  const attention: AttentionItem[] = [];
+  const attentionKeys = new Set<string>();
+  for (const item of errorAttention(observation)) {
+    const key = `${String(item.issueNumber ?? "repository")}:${item.reason}:${item.label}`;
+    if (attentionKeys.has(key)) continue;
+    attentionKeys.add(key);
+    attention.push(item);
+  }
   for (const lane of deliveries) {
     for (const signal of [
       lane.readiness,

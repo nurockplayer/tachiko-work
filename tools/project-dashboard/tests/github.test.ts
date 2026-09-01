@@ -13,8 +13,12 @@ function graphResponse(
   hasRoadmap = true,
   pullsHaveNextPage = false,
   closingIssuesHaveNextPage = false,
+  hasErrors = false,
 ) {
   return {
+    ...(hasErrors
+      ? { errors: [{ message: "partial GraphQL response", path: ["repository", "pullRequests"] }] }
+      : {}),
     data: {
       repository: {
         url: "https://github.example/repository",
@@ -95,6 +99,7 @@ function fakeFetch(
   hasRoadmap = true,
   pullsHaveNextPage = false,
   closingIssuesHaveNextPage = false,
+  hasErrors = false,
 ) {
   const requests: { url: string; init?: RequestInit }[] = [];
   const implementation = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -114,6 +119,7 @@ function fakeFetch(
             hasRoadmap,
             pullsHaveNextPage,
             closingIssuesHaveNextPage,
+            hasErrors,
           ),
         ),
         {
@@ -167,6 +173,41 @@ function fakeBehindAuthorityFetch() {
   return { implementation, requests };
 }
 
+function fakeComparisonFailureFetch() {
+  const graph = graphResponse();
+  const first = graph.data.repository.pullRequests.nodes[0];
+  if (first === undefined) throw new Error("fixture missing pull request");
+  graph.data.repository.pullRequests.nodes.push({
+    ...first,
+    number: 226,
+    url: "https://github.example/pulls/226",
+    headRefOid: "3333333333333333333333333333333333333333",
+    closingIssuesReferences: {
+      pageInfo: { hasNextPage: false },
+      nodes: [],
+    },
+  });
+  const implementation = (async (input: string | URL | Request) => {
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url;
+    if (url.endsWith("/graphql")) {
+      return new Response(JSON.stringify(graph), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url.includes(HEAD)) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    return new Response("comparison unavailable", { status: 503 });
+  }) as typeof fetch;
+  return implementation;
+}
+
 describe("GitHub observation adapter", () => {
   it("uses only a bounded query/GET path and treats skipped browser evidence as failure", async () => {
     const fake = fakeFetch();
@@ -184,6 +225,8 @@ describe("GitHub observation adapter", () => {
     if (typeof graphBody !== "string") throw new Error("GraphQL body must be JSON text");
     expect(graphBody).toContain("query DashboardRepository");
     expect(graphBody).not.toContain("mutation");
+    expect(observation.serverCredential).toBe("present");
+    expect(JSON.stringify(observation)).not.toContain("server_secret");
     expect(JSON.stringify(projection)).not.toContain("server_secret");
   });
 
@@ -217,6 +260,27 @@ describe("GitHub observation adapter", () => {
     expect(observation.availability).toBe("incomplete");
     expect(projection.fetchHealth).toBe("partial");
     expect(projection.executive.productHorizon.state).toBe("unknown");
+    expect(projection.deliveries[0]?.mergeGate.state).not.toBe("satisfied");
+  });
+
+  it("keeps implementation linkage incomplete for a partial GraphQL response", async () => {
+    const fake = fakeFetch(false, false, true, false, false, true);
+    const observation = await observeRepository({ fetchImpl: fake.implementation });
+
+    expect(observation.implementationLinkageAvailability).toBe("incomplete");
+    expect(normalizeRepository(observation).deliveries[0]?.mergeGate.state).not.toBe(
+      "satisfied",
+    );
+  });
+
+  it("keeps concurrent comparison errors in pull-request order", async () => {
+    const observation = await observeRepository({ fetchImpl: fakeComparisonFailureFetch() });
+
+    expect(
+      observation.errors
+        .filter((error) => error.source.endsWith("authority comparison"))
+        .map((error) => error.source),
+    ).toEqual(["PR #225 authority comparison", "PR #226 authority comparison"]);
   });
 
   it.each([

@@ -252,6 +252,102 @@ describe("normalizeRepository", () => {
     ).toBe(true);
   });
 
+  it("preserves a known exact-head failure when check pagination is incomplete", () => {
+    const observation = healthyObservation();
+    const pull = observation.pullRequests[0];
+    if (pull === undefined) throw new Error("fixture missing pull request");
+    pull.checksAvailability = "incomplete";
+    pull.checks[0] = { ...pull.checks[0]!, status: "failure" };
+
+    const lane = normalizeRepository(observation).deliveries[0];
+    expect(lane?.checks.state).toBe("blocked");
+    expect(lane?.phase).toBe("blocked");
+  });
+
+  it("keeps current review disposition separate from exact-head identity", () => {
+    const observation = healthyObservation();
+    addGreenOperationalEvidence(observation);
+    const pull = observation.pullRequests[0];
+    if (pull === undefined) throw new Error("fixture missing pull request");
+    pull.reviews = [
+      {
+        id: "review-changes",
+        authorLogin: "reviewer",
+        submittedAt: "2026-09-01T00:00:00.000Z",
+        commitSha: "1111111111111111111111111111111111111111",
+        state: "CHANGES_REQUESTED",
+        url: "https://github.example/reviews/changes",
+      },
+    ];
+    expect(normalizeRepository(observation).deliveries[0]?.review.state).toBe("blocked");
+
+    pull.reviews.push({
+      id: "review-approval",
+      authorLogin: "reviewer",
+      submittedAt: "2026-09-01T00:01:00.000Z",
+      commitSha: HEAD,
+      state: "APPROVED",
+      url: "https://github.example/reviews/approval",
+    });
+    expect(normalizeRepository(observation).deliveries[0]?.review.state).toBe("satisfied");
+  });
+
+  it("preserves a known unlinked review blocker under partial pagination", () => {
+    const observation = healthyObservation();
+    const pull = observation.pullRequests[0];
+    if (pull === undefined) throw new Error("fixture missing pull request");
+    pull.closingIssueNumbers = [];
+    pull.reviewsAvailability = "incomplete";
+    pull.reviews = [
+      {
+        id: "unlinked-changes",
+        authorLogin: "reviewer",
+        submittedAt: "2026-09-01T00:00:00.000Z",
+        commitSha: pull.headSha,
+        state: "CHANGES_REQUESTED",
+        url: "https://github.example/reviews/unlinked-changes",
+      },
+    ];
+
+    const lane = normalizeRepository(observation).deliveries.find(
+      (item) => item.pullRequest?.number === pull.number,
+    );
+    expect(lane?.issue).toBeNull();
+    expect(lane?.review.state).toBe("blocked");
+    expect(lane?.phase).toBe("blocked");
+  });
+
+  it("uses a blocked reconciled merge gate for lane phase selection", () => {
+    const observation = healthyObservation();
+    addGreenOperationalEvidence(observation);
+    const pull = observation.pullRequests[0];
+    if (pull === undefined) throw new Error("fixture missing pull request");
+    const validation = pull.comments.find((comment) =>
+      comment.body.includes("KIND: validation"),
+    );
+    if (validation === undefined) throw new Error("fixture missing validation evidence");
+    validation.body = validation.body.replace("RESULT: pass", "RESULT: fail");
+
+    const lane = normalizeRepository(observation).deliveries[0];
+    expect(lane?.checks.state).toBe("satisfied");
+    expect(lane?.mergeGate.state).toBe("blocked");
+    expect(lane?.phase).toBe("blocked");
+  });
+
+  it("deduplicates identical repository observation attention", () => {
+    const observation = healthyObservation();
+    observation.errors = [
+      { source: "GitHub GraphQL", url: "https://api.github.example/graphql", reason: "observation-incomplete" },
+      { source: "GitHub GraphQL", url: "https://api.github.example/graphql", reason: "observation-incomplete" },
+    ];
+
+    expect(
+      normalizeRepository(observation).attention.filter(
+        (item) => item.label === "GitHub GraphQL unavailable",
+      ),
+    ).toHaveLength(1);
+  });
+
   it("keeps partial label evidence Unknown throughout a pull-request lane", () => {
     const observation = healthyObservation();
     const issue = observation.issues[0];

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { healthyObservation } from "../src/server/fixtures.js";
-import { createDashboardServer } from "../src/server/serve.js";
+import { createDashboardServer, portFromEnvironment } from "../src/server/serve.js";
 
 const servers: ReturnType<typeof createDashboardServer>[] = [];
 
@@ -45,6 +45,16 @@ async function send(port: number, path: string, method = "GET") {
 }
 
 describe("dashboard server", () => {
+  it("accepts only a complete integer port string", () => {
+    expect(portFromEnvironment(undefined)).toBe(4174);
+    expect(portFromEnvironment("49173")).toBe(49173);
+    for (const value of ["4174invalid", "1.5", "", "0", "65536"]) {
+      expect(() => portFromEnvironment(value)).toThrow(
+        "DASHBOARD_PORT must be an integer from 1 to 65535",
+      );
+    }
+  });
+
   it("serves only a no-store read projection without credentials", async () => {
     const { port } = await startServer();
     const response = await send(port, "/api/project");
@@ -61,5 +71,13 @@ describe("dashboard server", () => {
     expect((await send(port, "/api/project", "POST")).status).toBe(405);
     expect((await send(port, "/api/merge")).status).toBe(404);
     expect((await send(port, "/..%2F..%2Fetc%2Fpasswd")).status).toBe(404);
+  });
+
+  it("streams validated static files", async () => {
+    const { port } = await startServer();
+    const response = await send(port, "/");
+
+    expect(response.status).toBe(200);
+    expect(response.body).toBe("dashboard");
   });
 });

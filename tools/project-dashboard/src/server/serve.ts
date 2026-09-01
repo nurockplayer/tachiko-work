@@ -1,6 +1,8 @@
-import { createReadStream, existsSync, statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { extname, resolve, sep } from "node:path";
+import { pipeline } from "node:stream/promises";
 
 import type { RepositoryObservation } from "../shared/model.js";
 import { healthyObservation, partialObservation } from "./fixtures.js";
@@ -108,14 +110,18 @@ export function createDashboardServer(
         response.end();
         return;
       }
-      response.writeHead(200, {
-        "Content-Type": contentTypes[extname(requested)] ?? "application/octet-stream",
-      });
       if (method === "HEAD") {
+        response.writeHead(200, {
+          "Content-Type": contentTypes[extname(requested)] ?? "application/octet-stream",
+        });
         response.end();
         return;
       }
-      createReadStream(requested).pipe(response);
+      const file = await open(requested, "r");
+      response.writeHead(200, {
+        "Content-Type": contentTypes[extname(requested)] ?? "application/octet-stream",
+      });
+      await pipeline(file.createReadStream(), response);
     })().catch(() => {
       if (!response.headersSent) response.writeHead(500);
       response.end();
@@ -123,8 +129,9 @@ export function createDashboardServer(
   });
 }
 
-function portFromEnvironment(value: string | undefined): number {
-  const port = value === undefined ? DEFAULT_PORT : Number.parseInt(value, 10);
+export function portFromEnvironment(value: string | undefined): number {
+  const port = value === undefined || !/^\d+$/.test(value) ? Number.NaN : Number(value);
+  if (value === undefined) return DEFAULT_PORT;
   if (!Number.isInteger(port) || port < 1 || port > 65_535) {
     throw new Error("DASHBOARD_PORT must be an integer from 1 to 65535");
   }

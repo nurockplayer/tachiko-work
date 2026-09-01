@@ -39,6 +39,9 @@ Build and serve the live dashboard on loopback only:
 bash scripts/operational-evidence-check.sh
 pnpm --dir tools/project-dashboard install --frozen-lockfile
 pnpm --dir tools/project-dashboard build
+pnpm --dir tools/project-dashboard serve
+
+# Optional: enable authenticated live GitHub observations.
 GITHUB_TOKEN="$(gh auth token)" pnpm --dir tools/project-dashboard serve
 ```
 

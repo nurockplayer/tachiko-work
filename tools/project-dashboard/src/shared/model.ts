@@ -61,6 +61,8 @@ export interface RawCheck {
 
 export interface RawReview {
   id: string;
+  authorLogin: string;
+  submittedAt: string;
   commitSha: string;
   state: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED" | "PENDING";
   url: string;
@@ -132,7 +134,7 @@ export interface RepositoryObservation {
   recentActivity: RawRecentActivity[];
   recentActivityAvailability: ObservationAvailability;
   errors: { source: string; url: string; reason: string }[];
-  /** Server-only input used to prove that projection serialization cannot leak it. */
+  /** Non-secret server-side credential-presence marker used by serialization tests. */
   serverCredential?: string;
 }
 
