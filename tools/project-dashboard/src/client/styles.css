@@ -159,7 +159,8 @@ button, a { -webkit-tap-highlight-color: transparent; }
 
 .critical-track { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); gap: 0.75rem; padding: 1rem; }
 .critical-node { display: grid; min-height: 9rem; align-content: space-between; gap: 0.5rem; padding: 1rem; border: 1px solid currentColor; color: #eaf8ff; background: var(--panel-soft); text-decoration: none; clip-path: polygon(0.7rem 0, 100% 0, 100% calc(100% - 0.7rem), calc(100% - 0.7rem) 100%, 0 100%, 0 0.7rem); }
-.critical-state { color: currentColor; font-size: 0.66rem; text-transform: uppercase; }
+.critical-state, .critical-dependencies { color: currentColor; font-size: 0.66rem; text-transform: uppercase; }
+.critical-dependencies { color: var(--ink-muted); text-transform: none; }
 
 .activity-list { margin: 0; padding: 0; list-style: none; }
 .activity-item { display: grid; grid-template-columns: minmax(10rem, 0.35fr) 1fr auto; gap: 1rem; padding: 0.9rem 1.2rem; border-bottom: 1px solid var(--line); font-size: 0.72rem; }

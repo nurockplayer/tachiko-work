@@ -95,6 +95,8 @@ export interface RawPullRequest {
   baseRef: string;
   mergeBaseSha: string | null;
   relationToMain: "current" | "behind" | "diverged" | "unknown";
+  authorityChanges: { path: string; url: string }[];
+  authorityAvailability: ObservationAvailability;
   closingIssueNumbers: number[];
   comments: RawComment[];
   commentsAvailability: ObservationAvailability;
@@ -146,7 +148,7 @@ export interface PullRequestProjection {
 }
 
 export interface DeliveryLane {
-  issue: Pick<RawIssue, "number" | "title" | "url">;
+  issue: Pick<RawIssue, "number" | "title" | "url"> | null;
   owner: string;
   phase: string;
   pullRequest: PullRequestProjection | null;
@@ -159,9 +161,9 @@ export interface DeliveryLane {
   humanAction: DisplaySignal;
   mergeGate: DisplaySignal;
   evidence: {
-    automatedBrowser: DisplayState;
-    perceptualReview: DisplayState;
-    deliveryIntegrity: DisplayState;
+    automatedBrowser: DisplaySignal;
+    perceptualReview: DisplaySignal;
+    deliveryIntegrity: DisplaySignal;
   };
   sources: SourceLink[];
 }

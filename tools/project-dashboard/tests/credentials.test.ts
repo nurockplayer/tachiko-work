@@ -9,6 +9,7 @@ describe("readServerCredential", () => {
 
   it("falls back to GH_TOKEN and treats blanks as missing", () => {
     expect(readServerCredential({ GH_TOKEN: " fallback " })).toBe("fallback");
+    expect(readServerCredential({ GITHUB_TOKEN: "   ", GH_TOKEN: " fallback " })).toBe("fallback");
     expect(readServerCredential({ GITHUB_TOKEN: "   " })).toBeUndefined();
   });
 });

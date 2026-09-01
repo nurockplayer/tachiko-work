@@ -113,7 +113,7 @@ interface Actor {
 
 interface GraphComment {
   id: string;
-  databaseId: number | null;
+  databaseId?: number | null;
   body: string;
   url: string;
   createdAt: string;
@@ -218,6 +218,7 @@ interface GraphResponse {
 interface CompareResponse {
   status: "ahead" | "behind" | "diverged" | "identical";
   merge_base_commit: { sha: string };
+  files?: { filename: string }[];
 }
 
 interface RequestOptions {
@@ -252,7 +253,9 @@ async function githubRequest<T>(
 }
 
 function stableSourceId(comment: GraphComment): string {
-  return comment.databaseId === null ? comment.id : String(comment.databaseId);
+  return comment.databaseId === undefined || comment.databaseId === null
+    ? comment.id
+    : String(comment.databaseId);
 }
 
 function trustedProducer(comment: GraphComment): boolean {
@@ -317,11 +320,37 @@ function hasNestedTruncation(pull: GraphPull): boolean {
   );
 }
 
+function commentsTruncated(pull: GraphPull): boolean {
+  return (
+    pull.comments.pageInfo.hasNextPage ||
+    pull.reviews.pageInfo.hasNextPage ||
+    pull.reviewThreads.pageInfo.hasNextPage ||
+    pull.reviewThreads.nodes.some((thread) => thread.comments.pageInfo.hasNextPage)
+  );
+}
+
+function isAuthorityPath(path: string): boolean {
+  return (
+    path === "AGENTS.md" ||
+    path === "CONTRIBUTING.md" ||
+    path === "SECURITY.md" ||
+    path === ROADMAP_PATH ||
+    path.startsWith("docs/adr/") ||
+    path.startsWith("docs/governance/") ||
+    path.startsWith("docs/specs/")
+  );
+}
+
 async function comparePull(
   mainSha: string,
   headSha: string,
   options: RequestOptions,
-): Promise<{ mergeBaseSha: string; relation: RawPullRequest["relationToMain"] }> {
+): Promise<{
+  mergeBaseSha: string;
+  relation: RawPullRequest["relationToMain"];
+  authorityChanges: RawPullRequest["authorityChanges"];
+  authorityAvailability: ObservationAvailability;
+}> {
   const comparison = await githubRequest<CompareResponse>(
     `${API_URL}/repos/${REPOSITORY}/compare/${mainSha}...${headSha}`,
     { method: "GET" },
@@ -335,7 +364,41 @@ async function comparePull(
         : comparison.merge_base_commit.sha === mainSha
           ? "current"
           : "unknown";
-  return { mergeBaseSha: comparison.merge_base_commit.sha, relation };
+  const mergeBaseSha = comparison.merge_base_commit.sha;
+  if (mergeBaseSha === mainSha) {
+    return {
+      mergeBaseSha,
+      relation,
+      authorityChanges: [],
+      authorityAvailability: "complete" as const,
+    };
+  }
+  try {
+    const mainAdvance = await githubRequest<CompareResponse>(
+      `${API_URL}/repos/${REPOSITORY}/compare/${mergeBaseSha}...${mainSha}`,
+      { method: "GET" },
+      options,
+    );
+    const compareUrl = `https://github.com/${REPOSITORY}/compare/${mergeBaseSha}...${mainSha}`;
+    return {
+      mergeBaseSha,
+      relation,
+      authorityChanges: (mainAdvance.files ?? [])
+        .filter((file) => isAuthorityPath(file.filename))
+        .map((file) => ({ path: file.filename, url: compareUrl })),
+      authorityAvailability:
+        mainAdvance.files === undefined || mainAdvance.files.length >= 300
+          ? "incomplete" as const
+          : "complete" as const,
+    };
+  } catch {
+    return {
+      mergeBaseSha,
+      relation,
+      authorityChanges: [],
+      authorityAvailability: "unavailable" as const,
+    };
+  }
 }
 
 function unavailableObservation(reason: string): RepositoryObservation {
@@ -399,12 +462,37 @@ export async function observeRepository(
         return await comparePull(main.oid, pull.headRefOid, options);
       } catch {
         errors.push({ source: `PR #${String(pull.number)} comparison`, url: pull.url, reason: "observation-unavailable" });
-        return { mergeBaseSha: null, relation: "unknown" as const };
+        return {
+          mergeBaseSha: null,
+          relation: "unknown" as const,
+          authorityChanges: [],
+          authorityAvailability: "unavailable" as const,
+        };
       }
     }),
   );
+  comparisons.forEach((comparison, index) => {
+    if (comparison.authorityAvailability !== "complete") {
+      const pull = repository.pullRequests.nodes[index];
+      if (pull !== undefined) {
+        errors.push({
+          source: `PR #${String(pull.number)} authority comparison`,
+          url: pull.url,
+          reason:
+            comparison.authorityAvailability === "unavailable"
+              ? "observation-unavailable"
+              : "observation-incomplete",
+        });
+      }
+    }
+  });
   const pullRequests = repository.pullRequests.nodes.map((pull, index): RawPullRequest => {
-    const comparison = comparisons[index] ?? { mergeBaseSha: null, relation: "unknown" as const };
+    const comparison = comparisons[index] ?? {
+      mergeBaseSha: null,
+      relation: "unknown" as const,
+      authorityChanges: [],
+      authorityAvailability: "unavailable" as const,
+    };
     const reviewComments = pull.reviews.nodes
       .filter((review) => review.body.length > 0)
       .map((review) => rawComment(review, "pull-request-review", true));
@@ -425,13 +513,17 @@ export async function observeRepository(
       baseRef: pull.baseRefName,
       mergeBaseSha: comparison.mergeBaseSha,
       relationToMain: comparison.relation,
-      closingIssueNumbers: pull.closingIssuesReferences.nodes.map((issue) => issue.number),
+      authorityChanges: comparison.authorityChanges,
+      authorityAvailability: comparison.authorityAvailability,
+      closingIssueNumbers: pull.closingIssuesReferences.pageInfo.hasNextPage
+        ? []
+        : pull.closingIssuesReferences.nodes.map((issue) => issue.number),
       comments: [
         ...pull.comments.nodes.map((comment) => rawComment(comment, "issue-comment", true)),
         ...reviewComments,
         ...threadComments,
       ],
-      commentsAvailability: hasNestedTruncation(pull) ? "incomplete" : "complete",
+      commentsAvailability: commentsTruncated(pull) ? "incomplete" : "complete",
       checks: checkNodes.map((check) => rawCheck(check, pull.headRefOid)),
       checksAvailability:
         pull.statusCheckRollup === null
@@ -509,7 +601,9 @@ export async function observeRepository(
 }
 
 export function readServerCredential(environment: NodeJS.ProcessEnv = process.env): string | undefined {
-  const value = environment.GITHUB_TOKEN ?? environment.GH_TOKEN;
-  const trimmed = value?.trim();
-  return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
+  for (const value of [environment.GITHUB_TOKEN, environment.GH_TOKEN]) {
+    const trimmed = value?.trim();
+    if (trimmed !== undefined && trimmed.length > 0) return trimmed;
+  }
+  return undefined;
 }

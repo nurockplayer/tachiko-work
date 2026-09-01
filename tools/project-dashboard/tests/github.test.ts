@@ -115,7 +115,7 @@ describe("GitHub observation adapter", () => {
 
     expect(observation.availability).toBe("complete");
     expect(projection.deliveries[0]?.checks.state).toBe("blocked");
-    expect(projection.deliveries[0]?.evidence.automatedBrowser).toBe("blocked");
+    expect(projection.deliveries[0]?.evidence.automatedBrowser.state).toBe("blocked");
     expect(fake.requests.map((request) => request.init?.method)).toEqual(["POST", "GET"]);
     const graphBody = fake.requests[0]?.init?.body;
     if (typeof graphBody !== "string") throw new Error("GraphQL body must be JSON text");

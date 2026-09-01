@@ -1,5 +1,5 @@
 import { createReadStream, existsSync, statSync } from "node:fs";
-import { createServer, type Server } from "node:http";
+import { createServer, type Server, type ServerResponse } from "node:http";
 import { extname, resolve, sep } from "node:path";
 
 import type { RepositoryObservation } from "../shared/model.js";
@@ -26,11 +26,20 @@ const contentTypes: Record<string, string> = {
 function securityHeaders(): Record<string, string> {
   return {
     "Cache-Control": "no-store",
-    "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+    "Content-Security-Policy": "default-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
     "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
   };
+}
+
+function readOnlyMethod(method: string): boolean {
+  return method === "GET" || method === "HEAD";
+}
+
+function rejectMethod(response: ServerResponse): void {
+  response.writeHead(405, { Allow: "GET, HEAD" });
+  response.end();
 }
 
 function fixtureProvider(name: string): ObservationProvider | null {
@@ -71,9 +80,8 @@ export function createDashboardServer(
         response.setHeader(name, value);
       }
       if (url.pathname === "/api/project") {
-        if (method !== "GET" && method !== "HEAD") {
-          response.writeHead(405, { Allow: "GET, HEAD" });
-          response.end();
+        if (!readOnlyMethod(method)) {
+          rejectMethod(response);
           return;
         }
         const projection = normalizeRepository(await provider());
@@ -90,9 +98,8 @@ export function createDashboardServer(
         response.end();
         return;
       }
-      if (method !== "GET" && method !== "HEAD") {
-        response.writeHead(405, { Allow: "GET, HEAD" });
-        response.end();
+      if (!readOnlyMethod(method)) {
+        rejectMethod(response);
         return;
       }
       const requested = resolveStaticPath(url.pathname, staticRoot);

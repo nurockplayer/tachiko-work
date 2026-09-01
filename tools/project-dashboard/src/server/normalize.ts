@@ -10,7 +10,6 @@ import type {
   DeliveryLane,
   DisplaySignal,
   DisplayState,
-  RawCheck,
   RawIssue,
   RawPullRequest,
   RepositoryObservation,
@@ -67,17 +66,18 @@ function observation<T>(
   id: string,
   url: string,
 ): Observation<T> {
-  if (availability === "unavailable") {
-    return { availability, facts, source: { id, url } };
-  }
   return { availability, facts, source: { id, url } };
 }
 
-function checkSignal(pull: RawPullRequest): DisplaySignal {
-  const sources = pull.checks.map((check) =>
+function checkSignal(pull: RawPullRequest, name?: string): DisplaySignal {
+  const checks =
+    name === undefined
+      ? pull.checks
+      : pull.checks.filter((check) => check.name === name);
+  const sources = checks.map((check) =>
     evidenceSource(`Check · ${check.name}`, check.url),
   );
-  if (pull.checksAvailability !== "complete" || pull.checks.length === 0) {
+  if (pull.checksAvailability !== "complete" || checks.length === 0) {
     return directSignal(
       "unknown",
       pull.checksAvailability === "unavailable"
@@ -87,31 +87,16 @@ function checkSignal(pull: RawPullRequest): DisplaySignal {
       sources,
     );
   }
-  if (pull.checks.some((check) => check.headSha !== pull.headSha)) {
+  if (checks.some((check) => check.headSha !== pull.headSha)) {
     return directSignal("unknown", "validation-stale", "Check identity mismatch", sources);
   }
-  if (pull.checks.some((check) => check.status === "failure")) {
+  if (checks.some((check) => check.status === "failure")) {
     return directSignal("blocked", "native-check-failed", "Exact-head check failed", sources);
   }
-  if (pull.checks.some((check) => check.status === "pending")) {
+  if (checks.some((check) => check.status === "pending")) {
     return directSignal("waiting", "native-check-pending", "Exact-head checks pending", sources);
   }
   return directSignal("satisfied", "native-check-succeeded", "Exact-head checks passed", sources);
-}
-
-function evidenceState(
-  checks: RawCheck[],
-  availability: RawPullRequest["checksAvailability"],
-  headSha: string,
-  name: string,
-): DisplayState {
-  if (availability !== "complete") return "unknown";
-  const matches = checks.filter((check) => check.name === name);
-  if (matches.length === 0) return "unknown";
-  if (matches.some((check) => check.headSha !== headSha)) return "unknown";
-  if (matches.some((check) => check.status === "failure")) return "blocked";
-  if (matches.some((check) => check.status === "pending")) return "waiting";
-  return "satisfied";
 }
 
 function ownerFor(issue: RawIssue): string {
@@ -132,10 +117,55 @@ function readinessFor(issue: RawIssue): DisplaySignal {
       ),
     ]);
   }
-  if (!issue.labels.includes("state:ready")) {
+  if (
+    issue.labels.includes("state:blocked") ||
+    issue.labels.includes("state:parked")
+  ) {
     return directSignal("blocked", "issue-not-ready", "Issue is not Ready", [source]);
   }
-  return directSignal("satisfied", "all-required-conditions-satisfied", "Issue Ready", [source]);
+  if (issue.labels.includes("state:ready")) {
+    return directSignal("satisfied", "all-required-conditions-satisfied", "Issue Ready", [source]);
+  }
+  return directSignal(
+    "unknown",
+    "required-evidence-unknown",
+    "Issue readiness Unknown",
+    [source],
+  );
+}
+
+function aggregateSignals(signals: DisplaySignal[], fallback: string): DisplaySignal {
+  const state = signals.some((signal) => signal.state === "blocked")
+    ? "blocked"
+    : signals.some((signal) => signal.state === "waiting")
+      ? "waiting"
+      : signals.some((signal) => signal.state === "unknown")
+        ? "unknown"
+        : signals.every((signal) => signal.state === "satisfied")
+          ? "satisfied"
+          : "advisory";
+  const selected = signals.find((signal) => signal.state === state) ?? signals[0];
+  return directSignal(
+    state,
+    selected?.reason ?? "required-evidence-unknown",
+    selected?.label ?? fallback,
+    signals.flatMap((signal) => signal.sources),
+  );
+}
+
+function commentCompleteness(pull: RawPullRequest): DisplaySignal {
+  return pull.commentsAvailability === "complete"
+    ? directSignal("satisfied", "all-required-conditions-satisfied", "Structured comments complete", [
+        evidenceSource("Pull request comments", pull.url),
+      ])
+    : directSignal(
+        "unknown",
+        pull.commentsAvailability === "unavailable"
+          ? "observation-unavailable"
+          : "observation-incomplete",
+        "Structured comment evidence incomplete",
+        [evidenceSource("Pull request comments", pull.url)],
+      );
 }
 
 function commentSources(pull: RawPullRequest, repository: string): StructuredCommentSource[] {
@@ -164,6 +194,7 @@ function pullLane(
 ): DeliveryLane {
   const mainSha = repository.main?.sha ?? "";
   const githubUrl = pull.url;
+  const readiness = readinessFor(issue);
   const reconciliation = reconcile({
     context: {
       repository: repository.repository,
@@ -208,12 +239,14 @@ function pullLane(
       githubUrl,
     ),
     nativeRepository: observation(
-      repository.main === null || issue.dependencyAvailability !== "complete"
+      repository.main === null ||
+        issue.dependencyAvailability !== "complete" ||
+        readiness.state === "unknown"
         ? "incomplete"
         : "complete",
       [
         {
-          issueReady: issue.labels.includes("state:ready"),
+          issueReady: readiness.state === "satisfied",
           dependencies: issue.blockedBy.some((dependency) => dependency.state === "OPEN")
             ? "waiting"
             : "satisfied",
@@ -239,23 +272,56 @@ function pullLane(
       },
     ],
   });
-  const readiness = readinessFor(issue);
   const checks = checkSignal(pull);
-  const review = fromCondition(reconciliation.review, "Exact-head review Unknown");
-  const mergeGate = fromCondition(reconciliation.mergeGate, "Merge gate Unknown");
+  const commentState = commentCompleteness(pull);
+  const review = aggregateSignals(
+    [fromCondition(reconciliation.review, "Exact-head review Unknown"), commentState],
+    "Exact-head review Unknown",
+  );
+  const handoff = aggregateSignals(
+    [fromCondition(reconciliation.handoff, "Handoff Unknown"), commentState],
+    "Handoff Unknown",
+  );
+  const stewardWatch = aggregateSignals(
+    [fromCondition(reconciliation.watch, "Steward watch Unknown"), commentState],
+    "Steward watch Unknown",
+  );
+  const humanAction = aggregateSignals(
+    [fromCondition(reconciliation.humanAction, "Human action Unknown"), commentState],
+    "Human action Unknown",
+  );
+  const deliveryIntegrity = aggregateSignals(
+    [
+      reconciliation.validations[0] === undefined
+        ? directSignal("unknown", "validation-missing", "Delivery integrity Unknown", [])
+        : fromCondition(reconciliation.validations[0], "Delivery integrity Unknown"),
+      commentState,
+    ],
+    "Delivery integrity Unknown",
+  );
+  const mergeGate = aggregateSignals(
+    [fromCondition(reconciliation.mergeGate, "Merge gate Unknown"), checks, commentState],
+    "Merge gate Unknown",
+  );
   const authority =
-    pull.relationToMain === "current"
-      ? fromCondition(reconciliation.authority, "Authority state Unknown")
+    pull.authorityAvailability !== "complete"
+      ? directSignal(
+          "unknown",
+          pull.authorityAvailability === "unavailable"
+            ? "observation-unavailable"
+            : "observation-incomplete",
+          "Authority-path observation Unknown",
+          [evidenceSource("Pull request", pull.url)],
+        )
+      : pull.authorityChanges.length === 0
+        ? fromCondition(reconciliation.authority, "Authority state Unknown")
       : directSignal(
           "unknown",
-          "authority-reconciliation-needed",
-          "Live-main reconciliation needed",
-          [
-            evidenceSource("Pull request relation", pull.url, "derived"),
-            ...(repository.main === null
-              ? []
-              : [evidenceSource("Live main", repository.main.url)]),
-          ],
+          "authority-drift-suspected",
+          "Changed authority paths need reconciliation",
+          pull.authorityChanges.map((change) =>
+            evidenceSource(`Authority · ${change.path}`, change.url, "derived"),
+          ),
         );
   const phase =
     mergeGate.state === "satisfied"
@@ -284,29 +350,30 @@ function pullLane(
     readiness,
     checks,
     review,
-    handoff: fromCondition(reconciliation.handoff, "Handoff Unknown"),
-    stewardWatch: fromCondition(reconciliation.watch, "Steward watch Unknown"),
+    handoff,
+    stewardWatch,
     authority,
-    humanAction: fromCondition(reconciliation.humanAction, "Human action Unknown"),
+    humanAction,
     mergeGate,
     evidence: {
-      automatedBrowser: evidenceState(
-        pull.checks,
-        pull.checksAvailability,
-        pull.headSha,
-        AUTOMATED_BROWSER_CHECK,
-      ),
-      perceptualReview: evidenceState(
-        pull.checks,
-        pull.checksAvailability,
-        pull.headSha,
-        PERCEPTUAL_REVIEW_CHECK,
-      ),
-      deliveryIntegrity: reconciliation.validations[0]?.state ?? "unknown",
+      automatedBrowser: checkSignal(pull, AUTOMATED_BROWSER_CHECK),
+      perceptualReview: checkSignal(pull, PERCEPTUAL_REVIEW_CHECK),
+      deliveryIntegrity,
     },
     sources: [
       evidenceSource(`Issue #${String(issue.number)}`, issue.url),
       evidenceSource(`PR #${String(pull.number)}`, pull.url),
+      ...[
+        readiness,
+        checks,
+        review,
+        handoff,
+        stewardWatch,
+        authority,
+        humanAction,
+        mergeGate,
+        deliveryIntegrity,
+      ].flatMap((signal) => signal.sources),
       ...reconciliation.advisories.flatMap((advisory) =>
         advisory.provenance.flatMap((value) =>
           "url" in value
@@ -353,11 +420,136 @@ function issueLane(repository: RepositoryObservation, issue: RawIssue): Delivery
         : directSignal("satisfied", "not-required", "No human action required", []),
     mergeGate: unavailable,
     evidence: {
-      automatedBrowser: "unknown",
-      perceptualReview: "unknown",
-      deliveryIntegrity: "unknown",
+      automatedBrowser: unavailable,
+      perceptualReview: unavailable,
+      deliveryIntegrity: unavailable,
     },
     sources: [evidenceSource(`Issue #${String(issue.number)}`, issue.url)],
+  };
+}
+
+function unlinkedPullLane(
+  repository: RepositoryObservation,
+  pull: RawPullRequest,
+): DeliveryLane {
+  const pullSource = evidenceSource(`PR #${String(pull.number)}`, pull.url);
+  const unknownIssue = directSignal(
+    "unknown",
+    "source-identity-conflict",
+    "Native Issue linkage Unknown",
+    [pullSource],
+  );
+  const checks = checkSignal(pull);
+  const reviewSources = [
+    ...pull.reviews.map((item) => evidenceSource("Native review", item.url)),
+    ...pull.threads.map((item) => evidenceSource("Native review thread", item.url)),
+  ];
+  const review =
+    pull.reviewsAvailability !== "complete" || pull.threadsAvailability !== "complete"
+      ? directSignal(
+          "unknown",
+          "observation-incomplete",
+          "Exact-head review observation incomplete",
+          reviewSources,
+        )
+      : pull.reviews.some(
+            (item) =>
+              item.commitSha === pull.headSha && item.state === "CHANGES_REQUESTED",
+          )
+        ? directSignal(
+            "blocked",
+            "native-changes-requested",
+            "Changes requested on exact head",
+            reviewSources,
+          )
+        : pull.threads.some((item) => !item.resolved)
+          ? directSignal(
+              "unknown",
+              "native-thread-unknown",
+              "Unresolved thread severity Unknown",
+              reviewSources,
+            )
+          : pull.reviews.some(
+                (item) => item.commitSha === pull.headSha && item.state === "PENDING",
+              )
+            ? directSignal(
+                "waiting",
+                "native-review-pending",
+                "Exact-head review pending",
+                reviewSources,
+              )
+            : directSignal(
+                "unknown",
+                "review-missing",
+                "Exact-head review Unknown",
+                reviewSources,
+              );
+  const authority =
+    pull.authorityAvailability !== "complete"
+      ? directSignal(
+          "unknown",
+          "observation-incomplete",
+          "Authority-path observation Unknown",
+          [pullSource],
+        )
+      : pull.authorityChanges.length === 0
+        ? directSignal(
+            "satisfied",
+            "repository-authority-current",
+            "No authority-path drift observed",
+            [pullSource],
+          )
+        : directSignal(
+            "unknown",
+            "authority-drift-suspected",
+            "Changed authority paths need reconciliation",
+            pull.authorityChanges.map((change) =>
+              evidenceSource(`Authority · ${change.path}`, change.url, "derived"),
+            ),
+          );
+  const unavailable = directSignal(
+    "unknown",
+    "required-evidence-unknown",
+    "Structured coordination Unknown",
+    [pullSource],
+  );
+  const automatedBrowser = checkSignal(pull, AUTOMATED_BROWSER_CHECK);
+  const perceptualReview = checkSignal(pull, PERCEPTUAL_REVIEW_CHECK);
+  return {
+    issue: null,
+    owner: "unknown",
+    phase: "unknown",
+    pullRequest: {
+      number: pull.number,
+      title: pull.title,
+      url: pull.url,
+      headSha: pull.headSha,
+      baseSha: pull.baseSha,
+      liveMainSha: repository.main?.sha ?? "",
+      mergeBaseSha: pull.mergeBaseSha,
+      baseRef: pull.baseRef,
+      relationToMain: pull.relationToMain,
+      draft: pull.draft,
+    },
+    readiness: unknownIssue,
+    checks,
+    review,
+    handoff: unavailable,
+    stewardWatch: unavailable,
+    authority,
+    humanAction: unavailable,
+    mergeGate: aggregateSignals([unknownIssue, checks, review, authority], "Merge gate Unknown"),
+    evidence: {
+      automatedBrowser,
+      perceptualReview,
+      deliveryIntegrity: unavailable,
+    },
+    sources: [
+      pullSource,
+      ...[checks, review, authority, automatedBrowser, perceptualReview].flatMap(
+        (signal) => signal.sources,
+      ),
+    ],
   };
 }
 
@@ -393,18 +585,37 @@ export function normalizeRepository(
       }
     : parseProductHorizon(observation.roadmap.markdown, observation.roadmap.url);
 
-  const laneIssues = observation.issues
-    .filter((issue) => issue.labels.some((label) => label.startsWith("agent:")))
-    .sort((left, right) => left.number - right.number);
-  const deliveries = laneIssues.map((issue) => {
-    const matches = observation.pullRequests.filter((pull) =>
-      pull.closingIssueNumbers.includes(issue.number),
-    );
-    const pull = matches.at(0);
-    return matches.length === 1 && pull !== undefined
-      ? pullLane(observation, issue, pull)
-      : issueLane(observation, issue);
+  const issuesByNumber = new Map(observation.issues.map((issue) => [issue.number, issue]));
+  const linkedIssueNumbers = new Set<number>();
+  const deliveries: DeliveryLane[] = observation.pullRequests.map((pull) => {
+    const issueNumber =
+      pull.closingIssueNumbers.length === 1 ? pull.closingIssueNumbers[0] : undefined;
+    const issue = issueNumber === undefined ? undefined : issuesByNumber.get(issueNumber);
+    if (issue === undefined) return unlinkedPullLane(observation, pull);
+    linkedIssueNumbers.add(issue.number);
+    return pullLane(observation, issue, pull);
   });
+  const readyOrOwnedIssues = observation.issues.filter(
+    (issue) =>
+      !linkedIssueNumbers.has(issue.number) &&
+      (issue.labels.some((label) => label.startsWith("agent:")) ||
+        issue.labels.includes("state:ready")),
+  );
+  deliveries.push(...readyOrOwnedIssues.map((issue) => issueLane(observation, issue)));
+  deliveries.sort((left, right) => {
+    const leftIdentity = left.issue?.number ?? Number.MAX_SAFE_INTEGER;
+    const rightIdentity = right.issue?.number ?? Number.MAX_SAFE_INTEGER;
+    if (leftIdentity !== rightIdentity) return leftIdentity - rightIdentity;
+    return (left.pullRequest?.number ?? 0) - (right.pullRequest?.number ?? 0);
+  });
+  const laneIssues = observation.issues
+    .filter(
+      (issue) =>
+        linkedIssueNumbers.has(issue.number) ||
+        issue.labels.some((label) => label.startsWith("agent:")) ||
+        issue.labels.includes("state:ready"),
+    )
+    .sort((left, right) => left.number - right.number);
   const attention: AttentionItem[] = [...errorAttention(observation)];
   for (const lane of deliveries) {
     for (const signal of [
@@ -418,7 +629,10 @@ export function normalizeRepository(
         signal.reason !== "not-required" &&
         (signal.state === "blocked" || signal.state === "unknown")
       ) {
-        attention.push({ ...signal, issueNumber: lane.issue.number });
+        attention.push({
+          ...signal,
+          ...(lane.issue === null ? {} : { issueNumber: lane.issue.number }),
+        });
       }
     }
   }
@@ -475,7 +689,9 @@ export function normalizeRepository(
         })),
       ),
     },
-    recentActivity: observation.recentActivity.slice(0, 8),
+    recentActivity: [...observation.recentActivity]
+      .sort((left, right) => right.mergedAt.localeCompare(left.mergedAt))
+      .slice(0, 8),
     attention,
     humanAction,
     sources: [mainSource, roadmap.source],

@@ -28,11 +28,20 @@ function shortSha(value: string): string {
 }
 
 function sourceLink(source: SourceLink): HTMLAnchorElement {
-  const link = element("a", `source-link source-${source.evidenceClass}`, source.label);
-  link.href = source.url;
+  const link = externalLink(
+    source.url,
+    source.label,
+    `source-link source-${source.evidenceClass}`,
+  );
+  link.dataset.evidenceClass = source.evidenceClass;
+  return link;
+}
+
+function externalLink(url: string, text: string, className?: string): HTMLAnchorElement {
+  const link = element("a", className, text);
+  link.href = url;
   link.target = "_blank";
   link.rel = "noreferrer";
-  link.dataset.evidenceClass = source.evidenceClass;
   return link;
 }
 
@@ -88,10 +97,17 @@ function executiveStrip(projection: RepositoryProjection): HTMLElement {
 function laneCard(lane: DeliveryLane): HTMLElement {
   const card = element("article", "lane-card");
   const header = element("header", "lane-header");
-  const issue = element("a", "lane-issue", `#${String(lane.issue.number)} · ${lane.issue.title}`);
-  issue.href = lane.issue.url;
-  issue.target = "_blank";
-  issue.rel = "noreferrer";
+  const laneIdentity =
+    lane.issue === null
+      ? {
+          text: `PR #${String(lane.pullRequest?.number ?? 0)} · ${lane.pullRequest?.title ?? "Unlinked pull request"}`,
+          url: lane.pullRequest?.url ?? "#",
+        }
+      : {
+          text: `#${String(lane.issue.number)} · ${lane.issue.title}`,
+          url: lane.issue.url,
+        };
+  const issue = externalLink(laneIdentity.url, laneIdentity.text, "lane-issue");
   header.append(issue, element("span", "phase-chip", lane.phase.replace("_", " ")));
 
   const identity = element("div", "identity-grid");
@@ -127,10 +143,16 @@ function laneCard(lane: DeliveryLane): HTMLElement {
     conditions.append(signal(value));
   }
   const evidence = element("div", "evidence-row");
+  const evidenceChip = (label: string, value: DisplaySignal) =>
+    element(
+      "span",
+      `evidence-chip state-${value.state}`,
+      `${label} · ${value.state}`,
+    );
   evidence.append(
-    element("span", `evidence-chip state-${lane.evidence.automatedBrowser}`, `Automated browser · ${lane.evidence.automatedBrowser}`),
-    element("span", `evidence-chip state-${lane.evidence.perceptualReview}`, `Perceptual review · ${lane.evidence.perceptualReview}`),
-    element("span", `evidence-chip state-${lane.evidence.deliveryIntegrity}`, `Delivery integrity · ${lane.evidence.deliveryIntegrity}`),
+    evidenceChip("Automated browser", lane.evidence.automatedBrowser),
+    evidenceChip("Perceptual review", lane.evidence.perceptualReview),
+    evidenceChip("Delivery integrity", lane.evidence.deliveryIntegrity),
   );
   card.append(header, element("p", "lane-owner", `OWNER / ${lane.owner}`), identity, conditions, evidence, sources(lane.sources));
   return card;
@@ -152,14 +174,26 @@ function criticalPath(projection: RepositoryProjection): HTMLElement {
   const node = section("critical-path", "02 / SEQUENCE", "Critical path · current work", "critical-path");
   const track = element("div", "critical-track");
   for (const item of projection.criticalPath.nodes) {
-    const card = element("a", `critical-node state-${item.state}`);
-    card.href = item.url;
-    card.target = "_blank";
-    card.rel = "noreferrer";
+    const card = externalLink(item.url, "", `critical-node state-${item.state}`);
+    const dependencies = projection.criticalPath.edges.filter(
+      (edge) => edge.to === item.issueNumber,
+    );
     card.append(
       element("span", "metric-label", `ISSUE #${String(item.issueNumber)}`),
       element("strong", undefined, item.label),
       element("span", "critical-state", item.state),
+      element(
+        "span",
+        "critical-dependencies",
+        dependencies.length === 0
+          ? "No native dependency"
+          : dependencies
+              .map(
+                (edge) =>
+                  `${edge.state === "satisfied" ? "Cleared" : "Waiting on"} #${String(edge.from)}`,
+              )
+              .join(" · "),
+      ),
     );
     track.append(card);
   }
@@ -175,10 +209,10 @@ function recentActivity(projection: RepositoryProjection): HTMLElement {
   const list = element("ol", "activity-list");
   for (const activity of projection.recentActivity) {
     const item = element("li", "activity-item");
-    const link = element("a", undefined, `PR #${String(activity.number)} · ${activity.title}`);
-    link.href = activity.url;
-    link.target = "_blank";
-    link.rel = "noreferrer";
+    const link = externalLink(
+      activity.url,
+      `PR #${String(activity.number)} · ${activity.title}`,
+    );
     item.append(
       element("time", undefined, new Date(activity.mergedAt).toLocaleString()),
       link,
