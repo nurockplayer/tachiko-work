@@ -485,7 +485,7 @@ describe("GitHub observation adapter", () => {
     });
   });
 
-  it("keeps handoff ownership overlap incomplete when review threads are truncated", async () => {
+  it("scopes truncated review threads to lane review evidence", async () => {
     const graph = graphResponse();
     const pull = graph.data.repository.pullRequests.nodes[0];
     if (pull === undefined) throw new Error("fixture missing pull request");
@@ -493,11 +493,11 @@ describe("GitHub observation adapter", () => {
 
     const observation = await observeRepository({ fetchImpl: fetchForGraph(graph) });
     expect(observation.pullRequests[0]?.commentsAvailability).toBe("incomplete");
-    expect(observation.implementationLinkageAvailability).toBe("incomplete");
-    expect(normalizeRepository(observation).deliveries[0]?.authority.state).toBe("unknown");
+    expect(observation.implementationLinkageAvailability).toBe("complete");
+    expect(normalizeRepository(observation).deliveries[0]?.authority.state).toBe("satisfied");
   });
 
-  it("keeps handoff ownership overlap incomplete when thread comments are truncated", async () => {
+  it("scopes truncated thread comments to lane review evidence", async () => {
     const graph = graphResponse();
     const pull = graph.data.repository.pullRequests.nodes[0];
     if (pull === undefined) throw new Error("fixture missing pull request");
@@ -514,7 +514,7 @@ describe("GitHub observation adapter", () => {
       commentsAvailability: "incomplete",
       threadsAvailability: "incomplete",
     });
-    expect(observation.implementationLinkageAvailability).toBe("incomplete");
+    expect(observation.implementationLinkageAvailability).toBe("complete");
     expect(normalizeRepository(observation).deliveries[0]?.mergeGate.state).not.toBe(
       "satisfied",
     );
@@ -600,7 +600,7 @@ describe("GitHub observation adapter", () => {
         appendNull(pull.reviewThreads.nodes);
       },
       { commentsAvailability: "incomplete", threadsAvailability: "incomplete" },
-      "incomplete",
+      "complete",
     ],
     [
       "thread-comment element",
@@ -615,7 +615,7 @@ describe("GitHub observation adapter", () => {
         appendNull(thread.comments.nodes);
       },
       { commentsAvailability: "incomplete", threadsAvailability: "incomplete" },
-      "incomplete",
+      "complete",
     ],
     [
       "check element",

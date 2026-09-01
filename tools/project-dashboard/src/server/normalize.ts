@@ -1097,9 +1097,6 @@ export function normalizeRepository(
   }
   const linkedIssueNumbers = new Set<number>();
   const deliveries: DeliveryLane[] = observation.pullRequests.map((pull, index) => {
-    for (const issueNumber of implementationIssueNumbers[index] ?? []) {
-      linkedIssueNumbers.add(issueNumber);
-    }
     const implementationOverlap: ImplementationOverlap = [
       ...(implementationDefiniteIssueNumbers[index] ?? []),
     ].some((issueNumber) => (implementationCounts.get(issueNumber) ?? 0) > 1)
@@ -1119,6 +1116,7 @@ export function normalizeRepository(
         roadmap.state === "satisfied",
       );
     }
+    linkedIssueNumbers.add(issue.number);
     return pullLane(
       effectiveObservation,
       issue,

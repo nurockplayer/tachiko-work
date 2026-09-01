@@ -371,6 +371,16 @@ function commentsTruncated(pull: GraphPull): boolean {
   );
 }
 
+function topLevelCommentsTruncated(pull: GraphPull): boolean {
+  return (
+    pull.comments.pageInfo.hasNextPage ||
+    hasMissingNode(pull.comments.nodes) ||
+    pull.reviews === null ||
+    pull.reviews.pageInfo.hasNextPage ||
+    hasMissingNode(pull.reviews.nodes)
+  );
+}
+
 function isAuthorityPath(path: string): boolean {
   return (
     (path === "AGENTS.md" || path.endsWith("/AGENTS.md")) ||
@@ -697,7 +707,7 @@ export async function observeRepository(
           pull.closingIssuesReferences === null ||
           pull.closingIssuesReferences.pageInfo.hasNextPage ||
           hasMissingNode(pull.closingIssuesReferences.nodes) ||
-          commentsTruncated(pull),
+          topLevelCommentsTruncated(pull),
       )
         ? "incomplete"
         : "complete",

@@ -872,13 +872,13 @@ describe("normalizeRepository", () => {
     expect(lanes).toHaveLength(2);
     expect(lanes.find((lane) => lane.pullRequest?.number === 226)?.issue).toBeNull();
     expect(
-      projection.deliveries.some(
+      projection.deliveries.find(
         (lane) => lane.issue?.number === 223 && lane.pullRequest === null,
       ),
-    ).toBe(false);
+    ).toMatchObject({ phase: "ready" });
     expect(projection.executive.readyCount).toMatchObject({
       state: "satisfied",
-      value: 0,
+      value: 1,
     });
     for (const lane of lanes) {
       expect(lane.authority.state).toBe("blocked");
@@ -1142,6 +1142,37 @@ describe("normalizeRepository", () => {
     const projection = normalizeRepository(observation);
     expect(projection.deliveries.find((lane) => lane.pullRequest?.number === 225)).toMatchObject({
       issue: { number: 169 },
+      humanAction: { state: "blocked", reason: "human-action-required" },
+      phase: "human_required",
+    });
+    expect(projection.humanAction.state).toBe("blocked");
+  });
+
+  it.each([
+    ["stale", (body: string) => body.replace(`HEAD: ${HEAD}`, `HEAD: ${"9".repeat(40)}`)],
+    ["ambiguous", (body: string) => body.replace("PR: 225", "PR: 226")],
+  ] as const)("retains a human-owned Issue lane for a %s handoff-only claim", (_case, mutate) => {
+    const observation = healthyObservation();
+    const issue = observation.issues[0];
+    const pull = observation.pullRequests[0];
+    if (issue === undefined || pull === undefined) throw new Error("fixture missing lane");
+    issue.labels = ["agent:human", "state:ready"];
+    pull.closingIssueNumbers = [];
+    pull.comments = pull.comments.map((comment) =>
+      comment.body.startsWith("<!-- agent-handoff:v1 -->")
+        ? { ...comment, body: mutate(comment.body) }
+        : comment,
+    );
+
+    const projection = normalizeRepository(observation);
+    expect(
+      projection.deliveries.find((lane) => lane.pullRequest?.number === pull.number),
+    ).toMatchObject({ issue: null, authority: { state: "unknown" } });
+    expect(
+      projection.deliveries.find(
+        (lane) => lane.issue?.number === issue.number && lane.pullRequest === null,
+      ),
+    ).toMatchObject({
       humanAction: { state: "blocked", reason: "human-action-required" },
       phase: "human_required",
     });
