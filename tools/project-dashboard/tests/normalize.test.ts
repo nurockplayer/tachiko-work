@@ -1166,7 +1166,7 @@ describe("normalizeRepository", () => {
       headSha: secondHead,
       closingIssueNumbers: [223],
       comments: [],
-      reviewsAvailability: "incomplete",
+      checksAvailability: "incomplete",
       checks: source.checks.map((check) => ({ ...check, headSha: secondHead })),
       reviews: [],
       threads: [],
@@ -1174,7 +1174,7 @@ describe("normalizeRepository", () => {
     observation.availability = "incomplete";
     observation.pullsAvailability = "incomplete";
     observation.errors.push({
-      source: "PR #226 reviews",
+      source: "PR #226 checks",
       url: "https://github.example/pulls/226",
       reason: "observation-incomplete",
     });
