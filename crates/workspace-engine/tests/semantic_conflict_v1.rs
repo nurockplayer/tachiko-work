@@ -1,12 +1,12 @@
 use std::collections::BTreeMap;
 
 use tachiko_workspace_engine::{
-    ConflictFacet, ConflictFact, ConflictKind, ConflictTarget, DiagnosticCode, Document,
-    DocumentId, Entity, EntityId, EntitySubject, Expression, FieldDefinition, FieldId, FieldKey,
-    FieldRef, FieldType, MergeConflict, MergeValue, Number, SEMANTIC_CONFLICT_V1, Schema,
-    SchemaFieldSubject, SchemaId, SchemaKey, SchemaSubject, SemanticConflictContract,
-    ValidationRole, Value, WorkspaceError, WorkspaceMergeOutcome, diagnostic_codes,
-    merge_documents,
+    ConflictFacet, ConflictFact, ConflictKind, ConflictTarget, DiagnosticCode, DiagnosticFact,
+    DiagnosticProvider, DiagnosticSeverity, Document, DocumentId, Entity, EntityId, EntitySubject,
+    Expression, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, MergeConflict, MergeValue,
+    Number, SEMANTIC_CONFLICT_V1, Schema, SchemaFieldSubject, SchemaId, SchemaKey, SchemaSubject,
+    SemanticConflictContract, SemanticSubject, StableDiagnosticObservation, ValidationRole, Value,
+    WorkspaceError, WorkspaceMergeOutcome, diagnostic_codes, merge_documents,
 };
 
 fn number(value: f64) -> Value {
@@ -105,6 +105,31 @@ fn conflicted(outcome: Result<WorkspaceMergeOutcome, WorkspaceError>) -> Vec<Mer
     match outcome.expect("fixture should pass admission") {
         WorkspaceMergeOutcome::Conflicted(conflicts) => conflicts,
         WorkspaceMergeOutcome::Merged(_) => panic!("fixture unexpectedly produced a candidate"),
+    }
+}
+
+fn unmaterialized_armor_observation() -> StableDiagnosticObservation {
+    StableDiagnosticObservation {
+        code: diagnostic_codes::MERGE_UNMATERIALIZED_QUALIFIED_FIELD,
+        severity: DiagnosticSeverity::Error,
+        subjects: vec![SemanticSubject::EntityField(FieldRef::new(
+            "e:goblin", "f:armor",
+        ))],
+        related_subjects: vec![
+            SemanticSubject::SchemaField {
+                schema: "s:boss".into(),
+                field: "f:armor".into(),
+            },
+            SemanticSubject::SchemaField {
+                schema: "s:unit".into(),
+                field: "f:armor".into(),
+            },
+        ],
+        facts: vec![
+            DiagnosticFact::new("selected_schema", "s:boss"),
+            DiagnosticFact::new("source_schema", "s:unit"),
+        ],
+        provider: DiagnosticProvider::new("tachiko.merge-engine"),
     }
 }
 
@@ -548,9 +573,10 @@ fn one_sided_old_schema_field_addition_reaches_candidate_validation() {
         panic!("the one-sided old-schema fact must reach candidate finalization")
     };
     assert_eq!(role, ValidationRole::MergeCandidate);
-    assert!(report.diagnostics().iter().any(|diagnostic| {
-        diagnostic.code == diagnostic_codes::MERGE_UNMATERIALIZED_QUALIFIED_FIELD
-    }));
+    assert_eq!(
+        report.stable_observations(),
+        vec![unmaterialized_armor_observation()]
+    );
 }
 
 #[test]
@@ -578,9 +604,10 @@ fn one_sided_old_schema_field_is_not_requalified_when_new_schema_reuses_id() {
         panic!("an old-schema fact must not be retargeted to the selected schema")
     };
     assert_eq!(role, ValidationRole::MergeCandidate);
-    assert!(report.diagnostics().iter().any(|diagnostic| {
-        diagnostic.code == diagnostic_codes::MERGE_UNMATERIALIZED_QUALIFIED_FIELD
-    }));
+    assert_eq!(
+        report.stable_observations(),
+        vec![unmaterialized_armor_observation()]
+    );
 }
 
 #[test]
