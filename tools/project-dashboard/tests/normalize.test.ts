@@ -312,6 +312,35 @@ describe("normalizeRepository", () => {
       phase: "review_wait",
     });
 
+    if (pending.roadmap === null) throw new Error("fixture missing roadmap");
+    pending.roadmap.markdown = "# Roadmap\n\n## Future";
+    expect(normalizeRepository(pending).deliveries[0]).toMatchObject({
+      review: { state: "waiting" },
+      mergeGate: { state: "unknown" },
+      phase: "unknown",
+    });
+
+    const incompleteComments = healthyObservation();
+    addGreenOperationalEvidence(incompleteComments);
+    const incompleteCommentsPull = incompleteComments.pullRequests[0];
+    if (incompleteCommentsPull === undefined) throw new Error("fixture missing pull request");
+    incompleteCommentsPull.commentsAvailability = "incomplete";
+    incompleteCommentsPull.reviews = [
+      {
+        id: "pending-review",
+        authorLogin: "reviewer",
+        submittedAt: null,
+        commitSha: incompleteCommentsPull.headSha,
+        state: "PENDING",
+        url: "https://github.example/reviews/pending",
+      },
+    ];
+    expect(normalizeRepository(incompleteComments).deliveries[0]).toMatchObject({
+      review: { state: "unknown" },
+      mergeGate: { state: "unknown" },
+      phase: "unknown",
+    });
+
     const tied = healthyObservation();
     addGreenOperationalEvidence(tied);
     const tiedPull = tied.pullRequests[0];
