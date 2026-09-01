@@ -18,6 +18,7 @@ export function healthyProjection(): DashboardProjection {
     labels: ["agent:codex", "state:ready"],
     milestone: null,
     blockedBy: [{ number: 200, state: "CLOSED", url: "https://github.example/issues/200" }],
+    dependenciesAvailability: "complete" as const,
     availability: "complete" as const,
   };
   const pullRequest = {
@@ -80,7 +81,11 @@ export function healthyProjection(): DashboardProjection {
       },
       activeCount: { value: 1, availability: "complete", source: repositorySource },
       readyCount: { value: 1, availability: "complete", source: repositorySource },
-      humanAction: { value: "None in current watches", availability: "complete", source: repositorySource },
+      humanAction: {
+        value: "None in current watches",
+        availability: "complete",
+        source: { label: "Steward watch", url: "https://github.example/comments/2", kind: "structured" },
+      },
     },
     deliveries: [{ issue, pullRequest, linkageAvailability: "complete" }],
     criticalPath: {
@@ -126,6 +131,10 @@ export function partialProjection(): DashboardProjection {
     deliveries: projection.deliveries.map((lane) => ({
       ...lane,
       linkageAvailability: "partial",
+      issue: lane.issue === null ? null : {
+        ...lane.issue,
+        dependenciesAvailability: "partial",
+      },
       pullRequest: lane.pullRequest === null ? null : {
         ...lane.pullRequest,
         mergeable: null,

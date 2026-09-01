@@ -279,7 +279,13 @@ function structuredFact<T>(
 }
 
 function issueFact(issue: GraphIssue, globalPartial: boolean): IssueFact {
-  const partial = globalPartial || pagePartial(issue.labels) || pagePartial(issue.blockedBy);
+  const dependenciesAvailability = sectionAvailability(
+    globalPartial || pagePartial(issue.blockedBy),
+  );
+  const partial =
+    globalPartial ||
+    pagePartial(issue.labels) ||
+    dependenciesAvailability !== "complete";
   return {
     number: issue.number,
     title: issue.title,
@@ -288,6 +294,7 @@ function issueFact(issue: GraphIssue, globalPartial: boolean): IssueFact {
     labels: present(issue.labels).map((label) => label.name),
     milestone: issue.milestone?.title ?? null,
     blockedBy: present(issue.blockedBy),
+    dependenciesAvailability,
     availability: sectionAvailability(partial),
   };
 }
@@ -298,9 +305,10 @@ function pullRequestFact(
   globalPartial: boolean,
 ): PullRequestFact {
   const linkedIssueNumbers = present(pull.closingIssuesReferences).map((issue) => issue.number);
+  const linkagePartial = globalPartial || pagePartial(pull.closingIssuesReferences);
   const comments = present(pull.comments);
   const commentsPartial = globalPartial || pagePartial(pull.comments);
-  const context = linkedIssueNumbers.length === 1
+  const context = !linkagePartial && linkedIssueNumbers.length === 1
     ? {
         repository: REPOSITORY,
         issueNumber: linkedIssueNumbers[0] ?? 0,
@@ -312,7 +320,7 @@ function pullRequestFact(
     : null;
   const checkPage = pull.statusCheckRollup?.contexts ?? null;
   const partial = globalPartial ||
-    pagePartial(pull.closingIssuesReferences) ||
+    linkagePartial ||
     pagePartial(pull.comments) ||
     pagePartial(pull.reviews) ||
     pagePartial(checkPage);
@@ -488,6 +496,8 @@ export function projectGraphResponse(
   const relevantPullRequests = pullRequests.filter((pull) =>
     evidenceRelevant(pull, issuesByNumber));
   const watchFacts = relevantPullRequests.map((pull) => pull.stewardWatch);
+  const currentWatchSources = watchFacts.flatMap((watch) =>
+    watch.status === "current" && watch.source !== null ? [watch.source] : []);
   const requiredWatch = watchFacts.find((watch) => watch.status === "current" && watch.value?.includes("human action required"));
   const allWatchesCurrent =
     issuesAvailability === "complete" &&
@@ -615,7 +625,10 @@ export function projectGraphResponse(
       humanAction: {
         value: humanAction,
         availability: humanAction === null ? "partial" : "complete",
-        source: requiredWatch?.source ?? repositorySource,
+        source: requiredWatch?.source ?? currentWatchSources[0] ?? repositorySource,
+        ...(requiredWatch === undefined && currentWatchSources.length > 1
+          ? { additionalSources: currentWatchSources.slice(1) }
+          : {}),
       },
     },
     deliveries,

@@ -36,6 +36,7 @@ test("renders source failure as partial and Unknown", async ({ page }) => {
     const response = await route.fetch();
     const projection = (await response.json()) as {
       executive: Record<string, unknown>;
+      deliveries: ({ issue: Record<string, unknown> | null } & Record<string, unknown>)[];
     } & Record<string, unknown>;
     await route.fulfill({
       response,
@@ -55,6 +56,18 @@ test("renders source failure as partial and Unknown", async ({ page }) => {
             source: { label: "Steward watches", url: "https://github.example", kind: "structured" },
           },
         },
+        deliveries: projection.deliveries.map((lane, index) =>
+          index !== 0 || lane.issue === null
+            ? lane
+            : {
+                ...lane,
+                issue: {
+                  ...lane.issue,
+                  blockedBy: [],
+                  dependenciesAvailability: "partial",
+                  availability: "partial",
+                },
+              }),
       },
     });
   });
@@ -62,6 +75,9 @@ test("renders source failure as partial and Unknown", async ({ page }) => {
 
   await expect(page.getByText("PARTIAL", { exact: true })).toBeVisible();
   await expect(page.getByText("Unknown", { exact: true }).first()).toBeVisible();
+  await expect(
+    page.locator(".identity-item").filter({ hasText: "BLOCKED BY" }).getByText("Unknown", { exact: true }),
+  ).toBeVisible();
 });
 
 test("shows direct GitHub and Steward facts without a final verdict", async ({ page }) => {
@@ -70,6 +86,9 @@ test("shows direct GitHub and Steward facts without a final verdict", async ({ p
   await expect(page.getByText("GitHub native fields · displayed verbatim")).toBeVisible();
   await expect(page.getByText("2222222222222222222222222222222222222222", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("GREEN · human action none")).toBeVisible();
+  await expect(
+    page.locator(".executive-cell").filter({ hasText: "HUMAN ACTION" }).getByRole("link", { name: "Steward watch" }),
+  ).toBeVisible();
   await expect(page.getByText(/final merge verdict/)).toBeVisible();
   await expect(page.getByText(/merge ready|merge-ready|can_merge/i)).toHaveCount(0);
 });

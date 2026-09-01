@@ -10,6 +10,7 @@ export interface ObservedValue<T> {
   value: T | null;
   availability: Availability;
   source: SourceLink;
+  additionalSources?: SourceLink[];
 }
 
 export interface IssueFact {
@@ -20,6 +21,7 @@ export interface IssueFact {
   labels: string[];
   milestone: string | null;
   blockedBy: { number: number; state: string; url: string }[];
+  dependenciesAvailability: Availability;
   availability: Availability;
 }
 

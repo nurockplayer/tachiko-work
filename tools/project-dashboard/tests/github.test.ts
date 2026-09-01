@@ -221,6 +221,24 @@ describe("Dashboard GitHub observation", () => {
     });
   });
 
+  it("does not use truncated closing-Issue references as exact evidence context", () => {
+    const response = graph();
+    const pull = response.data?.repository?.pullRequests.nodes?.[0];
+    if (
+      pull !== null &&
+      pull !== undefined &&
+      pull.closingIssuesReferences !== null
+    ) {
+      pull.closingIssuesReferences.pageInfo.hasNextPage = true;
+    }
+
+    const projection = projectGraphResponse(response);
+    expect(projection.deliveries[0]?.pullRequest).toMatchObject({
+      handoff: { status: "unknown", reason: "Issue linkage Unknown" },
+      stewardWatch: { status: "unknown", reason: "Issue linkage Unknown" },
+    });
+  });
+
   it("treats a missing check rollup as Unknown rather than an empty complete list", () => {
     const response = graph();
     const pull = response.data?.repository?.pullRequests.nodes?.[0];
@@ -257,6 +275,34 @@ describe("Dashboard GitHub observation", () => {
     expect(projection.executive.humanAction).toMatchObject({
       value: null,
       availability: "partial",
+    });
+  });
+
+  it("keeps an incomplete empty dependency observation Unknown", () => {
+    const response = graph();
+    const issue = response.data?.repository?.issues.nodes?.[0];
+    if (issue !== null && issue !== undefined && issue.blockedBy !== null) {
+      issue.blockedBy.nodes = [];
+      issue.blockedBy.pageInfo.hasNextPage = true;
+    }
+
+    const projection = projectGraphResponse(response);
+    expect(projection.deliveries[0]?.issue).toMatchObject({
+      blockedBy: [],
+      dependenciesAvailability: "partial",
+    });
+  });
+
+  it("links the no-human-action aggregate to its contributing Steward watch", () => {
+    const projection = projectGraphResponse(graph());
+
+    expect(projection.executive.humanAction).toMatchObject({
+      value: "None in current watches",
+      source: {
+        label: "Steward watch",
+        url: "https://github.example/comments/watch",
+        kind: "structured",
+      },
     });
   });
 

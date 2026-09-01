@@ -77,8 +77,8 @@ function executiveValue(label: string, observed: ObservedValue<string | number>)
     element("span", "metric-label", label),
     element("strong", "metric-value", display(observed.value)),
     availability(observed.availability),
-    sourceLink(observed.source),
   );
+  cell.append(sources([observed.source, ...(observed.additionalSources ?? [])]));
   return cell;
 }
 
@@ -219,7 +219,7 @@ function laneCard(lane: DeliveryLane): HTMLElement {
       fact(
         "BLOCKED BY",
         lane.issue.blockedBy.length === 0
-          ? "None observed"
+          ? lane.issue.dependenciesAvailability === "complete" ? "None observed" : null
           : lane.issue.blockedBy.map((item) => `#${String(item.number)} · ${item.state}`).join(" · "),
       ),
     ]));
