@@ -292,6 +292,87 @@ describe("normalizeRepository", () => {
     expect(normalizeRepository(observation).deliveries[0]?.review.state).toBe("satisfied");
   });
 
+  it("keeps current pending and ambiguous decisive reviews fail-closed", () => {
+    const pending = healthyObservation();
+    addGreenOperationalEvidence(pending);
+    const pendingPull = pending.pullRequests[0];
+    if (pendingPull === undefined) throw new Error("fixture missing pull request");
+    pendingPull.reviews = [
+      {
+        id: "pending-review",
+        authorLogin: "reviewer",
+        submittedAt: null,
+        commitSha: pendingPull.headSha,
+        state: "PENDING",
+        url: "https://github.example/reviews/pending",
+      },
+    ];
+    expect(normalizeRepository(pending).deliveries[0]).toMatchObject({
+      review: { state: "waiting" },
+      phase: "review_wait",
+    });
+
+    const tied = healthyObservation();
+    addGreenOperationalEvidence(tied);
+    const tiedPull = tied.pullRequests[0];
+    if (tiedPull === undefined) throw new Error("fixture missing pull request");
+    tiedPull.reviews = [
+      {
+        id: "9",
+        authorLogin: "reviewer",
+        submittedAt: "2026-09-01T00:00:00.000Z",
+        commitSha: tiedPull.headSha,
+        state: "APPROVED",
+        url: "https://github.example/reviews/approval",
+      },
+      {
+        id: "10",
+        authorLogin: "reviewer",
+        submittedAt: "2026-09-01T00:00:00.000Z",
+        commitSha: tiedPull.headSha,
+        state: "CHANGES_REQUESTED",
+        url: "https://github.example/reviews/changes",
+      },
+    ];
+    expect(normalizeRepository(tied).deliveries[0]?.review.state).toBe("blocked");
+
+    const missingTimestamp = healthyObservation();
+    addGreenOperationalEvidence(missingTimestamp);
+    const missingTimestampPull = missingTimestamp.pullRequests[0];
+    if (missingTimestampPull === undefined) throw new Error("fixture missing pull request");
+    missingTimestampPull.reviews = [
+      {
+        id: "approval-without-time",
+        authorLogin: "reviewer",
+        submittedAt: null,
+        commitSha: missingTimestampPull.headSha,
+        state: "APPROVED",
+        url: "https://github.example/reviews/approval-without-time",
+      },
+    ];
+    expect(normalizeRepository(missingTimestamp).deliveries[0]?.review.state).toBe(
+      "unknown",
+    );
+  });
+
+  it.each([
+    ["missing", "# Roadmap\n\n## Future"],
+    [
+      "ambiguous",
+      "## Current horizon\n\n> **06 · Team Workspace Beta**\n> **07 · Migration**",
+    ],
+  ])("keeps merge authority Unknown for a %s current-horizon block", (_name, markdown) => {
+    const observation = healthyObservation();
+    addGreenOperationalEvidence(observation);
+    if (observation.roadmap === null) throw new Error("fixture missing roadmap");
+    observation.roadmap.markdown = markdown;
+
+    const lane = normalizeRepository(observation).deliveries[0];
+    expect(lane?.authority.state).toBe("unknown");
+    expect(lane?.mergeGate.state).toBe("unknown");
+    expect(lane?.phase).not.toBe("merge_gate");
+  });
+
   it("preserves a known unlinked review blocker under partial pagination", () => {
     const observation = healthyObservation();
     const pull = observation.pullRequests[0];

@@ -224,6 +224,7 @@ describe("GitHub observation adapter", () => {
     const graphBody = fake.requests[0]?.init?.body;
     if (typeof graphBody !== "string") throw new Error("GraphQL body must be JSON text");
     expect(graphBody).toContain("query DashboardRepository");
+    expect(graphBody).toContain("state submittedAt");
     expect(graphBody).not.toContain("mutation");
     expect(observation.serverCredential).toBe("present");
     expect(JSON.stringify(observation)).not.toContain("server_secret");

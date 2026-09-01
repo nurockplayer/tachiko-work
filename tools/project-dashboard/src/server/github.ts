@@ -63,7 +63,7 @@ const QUERY = `
           reviews(first: 100) {
             pageInfo { hasNextPage }
             nodes {
-              id fullDatabaseId body url createdAt updatedAt includesCreatedEdit state
+              id fullDatabaseId body url createdAt updatedAt includesCreatedEdit state submittedAt
               author { login }
               authorAssociation
               commit { oid }
@@ -125,6 +125,7 @@ interface GraphComment {
 
 interface GraphReview extends GraphComment {
   fullDatabaseId: string | null;
+  submittedAt: string | null;
   state: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED" | "PENDING";
   commit: { oid: string } | null;
 }
@@ -538,7 +539,7 @@ export async function observeRepository(
       reviews: pull.reviews.nodes.map((review) => ({
         id: review.fullDatabaseId ?? review.id,
         authorLogin: review.author?.login ?? `unknown:${review.id}`,
-        submittedAt: review.createdAt,
+        submittedAt: review.submittedAt,
         commitSha: review.commit?.oid ?? "",
         state: review.state,
         url: review.url,

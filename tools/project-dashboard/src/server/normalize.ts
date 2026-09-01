@@ -268,22 +268,38 @@ function implementationConflictSignal(
   );
 }
 
-function currentDecisiveReviewIds(
+function currentReviewDisposition(
   reviews: RawPullRequest["reviews"],
-): Set<string> {
-  const latestByAuthor = new Map<string, RawPullRequest["reviews"][number]>();
+): { ids: Set<string>; complete: boolean } {
+  const decisiveByAuthor = new Map<string, RawPullRequest["reviews"]>();
+  const ids = new Set(
+    reviews.filter((review) => review.state === "PENDING").map((review) => review.id),
+  );
   for (const review of reviews) {
     if (review.state !== "APPROVED" && review.state !== "CHANGES_REQUESTED") continue;
-    const current = latestByAuthor.get(review.authorLogin);
-    if (
-      current === undefined ||
-      review.submittedAt > current.submittedAt ||
-      (review.submittedAt === current.submittedAt && review.id > current.id)
-    ) {
-      latestByAuthor.set(review.authorLogin, review);
+    const authorReviews = decisiveByAuthor.get(review.authorLogin) ?? [];
+    authorReviews.push(review);
+    decisiveByAuthor.set(review.authorLogin, authorReviews);
+  }
+  let complete = true;
+  for (const authorReviews of decisiveByAuthor.values()) {
+    if (authorReviews.some((review) => review.submittedAt === null)) {
+      complete = false;
+      for (const review of authorReviews) ids.add(review.id);
+      continue;
+    }
+    const latestTimestamp = authorReviews.reduce(
+      (latest, review) =>
+        review.submittedAt !== null && review.submittedAt > latest
+          ? review.submittedAt
+          : latest,
+      "",
+    );
+    for (const review of authorReviews) {
+      if (review.submittedAt === latestTimestamp) ids.add(review.id);
     }
   }
-  return new Set([...latestByAuthor.values()].map((review) => review.id));
+  return { ids, complete };
 }
 
 function pullLane(
@@ -291,6 +307,7 @@ function pullLane(
   issue: RawIssue,
   pull: RawPullRequest,
   implementationConflict: boolean,
+  roadmapCurrent: boolean,
 ): DeliveryLane {
   const mainSha = repository.main?.sha ?? "";
   const githubUrl = pull.url;
@@ -302,7 +319,11 @@ function pullLane(
   const ownership = ownershipFor(issue);
   const labelReadiness = labelReadinessFor(issue);
   const readiness = readinessFor(issue);
-  const currentReviewIds = currentDecisiveReviewIds(pull.reviews);
+  const currentReviews = currentReviewDisposition(pull.reviews);
+  const nativeReviewAvailability =
+    pull.reviewsAvailability === "complete" && !currentReviews.complete
+      ? "incomplete"
+      : pull.reviewsAvailability;
   const reconciliation = reconcile({
     context: {
       repository: repository.repository,
@@ -325,9 +346,9 @@ function pullLane(
       githubUrl,
     ),
     nativeReviews: observation(
-      pull.reviewsAvailability,
+      nativeReviewAvailability,
       pull.reviews.map((review) => ({
-        current: currentReviewIds.has(review.id),
+        current: currentReviews.ids.has(review.id),
         head: review.commitSha,
         state: review.state,
         source: { id: review.id, url: review.url },
@@ -349,6 +370,7 @@ function pullLane(
     nativeRepository: observation(
       repository.main === null ||
         repository.roadmap === null ||
+        !roadmapCurrent ||
         repository.availability !== "complete" ||
         repository.implementationLinkageAvailability !== "complete" ||
         ownership.state !== "satisfied" ||
@@ -482,6 +504,8 @@ function pullLane(
         ? "blocked"
         : readiness.state === "waiting"
           ? "waiting"
+          : review.state === "waiting"
+            ? "review_wait"
           : mergeGate.state === "satisfied"
             ? "merge_gate"
             : readiness.state === "unknown"
@@ -618,6 +642,7 @@ function unlinkedPullLane(
   repository: RepositoryObservation,
   pull: RawPullRequest,
   implementationConflict: boolean,
+  roadmapCurrent: boolean,
 ): DeliveryLane {
   const pullSource = evidenceSource(`PR #${String(pull.number)}`, pull.url);
   const unknownIssue = directSignal(
@@ -631,10 +656,10 @@ function unlinkedPullLane(
     ...pull.reviews.map((item) => evidenceSource("Native review", item.url)),
     ...pull.threads.map((item) => evidenceSource("Native review thread", item.url)),
   ];
-  const currentReviewIds = currentDecisiveReviewIds(pull.reviews);
+  const currentReviews = currentReviewDisposition(pull.reviews);
   const review =
     pull.reviews.some(
-      (item) => currentReviewIds.has(item.id) && item.state === "CHANGES_REQUESTED",
+      (item) => currentReviews.ids.has(item.id) && item.state === "CHANGES_REQUESTED",
     )
       ? directSignal(
           "blocked",
@@ -672,7 +697,20 @@ function unlinkedPullLane(
                 reviewSources,
               );
   const observedAuthority =
-    pull.authorityAvailability !== "complete"
+    !roadmapCurrent
+      ? directSignal(
+          "unknown",
+          "observation-incomplete",
+          "Product Roadmap authority Unknown",
+          [
+            evidenceSource(
+              "Product Roadmap",
+              repository.roadmap?.url ??
+                `https://github.com/${repository.repository}/blob/main/${ROADMAP_PATH}`,
+            ),
+          ],
+        )
+      : pull.authorityAvailability !== "complete"
       ? directSignal(
           "unknown",
           "observation-incomplete",
@@ -806,13 +844,19 @@ export function normalizeRepository(
     const issueNumber = singlePullIssueNumbers[index];
     const issue = issueNumber === undefined ? undefined : issuesByNumber.get(issueNumber);
     if (issue === undefined) {
-      return unlinkedPullLane(observation, pull, implementationConflict);
+      return unlinkedPullLane(
+        observation,
+        pull,
+        implementationConflict,
+        roadmap.state === "satisfied",
+      );
     }
     return pullLane(
       observation,
       issue,
       pull,
       implementationConflict,
+      roadmap.state === "satisfied",
     );
   });
   const readyOrOwnedIssues = observation.issues.filter(
