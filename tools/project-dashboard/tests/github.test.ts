@@ -16,6 +16,7 @@ function graphResponse(
   hasErrors = false,
   commentsHaveNextPage = false,
   mergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN" = "MERGEABLE",
+  reviewsHaveNextPage = false,
 ) {
   return {
     ...(hasErrors
@@ -69,7 +70,7 @@ function graphResponse(
                 nodes: [{ number: 169 }],
               },
               comments: { pageInfo: { hasNextPage: commentsHaveNextPage }, nodes: [] },
-              reviews: { pageInfo: { hasNextPage: false }, nodes: [] },
+              reviews: { pageInfo: { hasNextPage: reviewsHaveNextPage }, nodes: [] },
               reviewThreads: { pageInfo: { hasNextPage: false }, nodes: [] },
               statusCheckRollup: {
                 contexts: {
@@ -105,6 +106,7 @@ function fakeFetch(
   hasErrors = false,
   commentsHaveNextPage = false,
   mergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN" = "MERGEABLE",
+  reviewsHaveNextPage = false,
 ) {
   const requests: { url: string; init?: RequestInit }[] = [];
   const implementation = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -127,6 +129,7 @@ function fakeFetch(
             hasErrors,
             commentsHaveNextPage,
             mergeable,
+            reviewsHaveNextPage,
           ),
         ),
         {
@@ -322,6 +325,29 @@ describe("GitHub observation adapter", () => {
     expect(normalizeRepository(observation).deliveries[0]?.mergeGate.state).not.toBe(
       "satisfied",
     );
+  });
+
+  it("keeps handoff ownership overlap incomplete when top-level reviews are truncated", async () => {
+    const fake = fakeFetch(
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      "MERGEABLE",
+      true,
+    );
+    const observation = await observeRepository({ fetchImpl: fake.implementation });
+    const lane = normalizeRepository(observation).deliveries[0];
+
+    expect(observation.pullRequests[0]?.reviewsAvailability).toBe("incomplete");
+    expect(observation.implementationLinkageAvailability).toBe("incomplete");
+    expect(lane?.authority).toMatchObject({
+      state: "unknown",
+      reason: "observation-incomplete",
+    });
   });
 
   it("keeps concurrent comparison errors in pull-request order", async () => {

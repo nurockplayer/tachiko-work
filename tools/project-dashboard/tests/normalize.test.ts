@@ -1109,6 +1109,21 @@ describe("normalizeRepository", () => {
     });
   });
 
+  it("keeps an otherwise-green lane Unknown when paginated reviews may hide ownership", () => {
+    const observation = healthyObservation();
+    addGreenOperationalEvidence(observation);
+    const pull = observation.pullRequests[0];
+    if (pull === undefined) throw new Error("fixture missing pull request");
+    pull.reviewsAvailability = "incomplete";
+    observation.implementationLinkageAvailability = "incomplete";
+
+    expect(normalizeRepository(observation).deliveries[0]).toMatchObject({
+      authority: { state: "unknown", reason: "observation-incomplete" },
+      mergeGate: { state: "unknown" },
+      phase: "unknown",
+    });
+  });
+
   it("keeps Ready counts Unknown when Issue or label observation is incomplete", () => {
     const incompleteIssues = healthyObservation();
     incompleteIssues.issuesAvailability = "incomplete";

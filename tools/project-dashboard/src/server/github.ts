@@ -612,7 +612,8 @@ export async function observeRepository(
       repository.pullRequests.nodes.some(
         (pull) =>
           pull.closingIssuesReferences.pageInfo.hasNextPage ||
-          pull.comments.pageInfo.hasNextPage,
+          pull.comments.pageInfo.hasNextPage ||
+          pull.reviews.pageInfo.hasNextPage,
       )
         ? "incomplete"
         : "complete",
