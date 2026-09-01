@@ -1446,6 +1446,30 @@ describe("normalizeRepository", () => {
     },
   );
 
+  it.each([
+    ["handoff", "<!-- agent-handoff:v1 -->"],
+    ["Steward watch", "<!-- project-steward-watch:v1 -->"],
+  ] as const)("keeps the lane phase Unknown for a stale %s", (_case, marker) => {
+    const observation = healthyObservation();
+    addGreenOperationalEvidence(observation);
+    const pull = observation.pullRequests[0];
+    if (pull === undefined) throw new Error("fixture missing pull request");
+    pull.comments = pull.comments.map((comment) =>
+      comment.body.startsWith(marker)
+        ? {
+            ...comment,
+            body: comment.body.replace(`HEAD: ${HEAD}`, `HEAD: ${"9".repeat(40)}`),
+          }
+        : comment,
+    );
+
+    const lane = normalizeRepository(observation).deliveries[0];
+    expect(marker.includes("handoff") ? lane?.handoff.state : lane?.stewardWatch.state).toBe(
+      "unknown",
+    );
+    expect(lane).toMatchObject({ mergeGate: { state: "unknown" }, phase: "unknown" });
+  });
+
   it("keeps implementation overlap Unknown when the PR/linkage set is incomplete", () => {
     const observation = healthyObservation();
     addGreenOperationalEvidence(observation);

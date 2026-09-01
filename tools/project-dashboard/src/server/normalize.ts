@@ -742,7 +742,11 @@ function pullLane(
                     ? "validating"
                     : checks.state === "satisfied" && review.state !== "satisfied"
                       ? "rereview"
-                      : "implementing";
+                      : mergeGate.state === "unknown"
+                        ? "unknown"
+                        : mergeGate.state === "waiting"
+                          ? "waiting"
+                          : "implementing";
   return {
     issue: { number: issue.number, title: issue.title, url: issue.url },
     owner: ownerFor(issue),
