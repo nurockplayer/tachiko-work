@@ -1,4 +1,5 @@
 import {
+  parseAgentHandoff,
   reconcile,
   type Condition,
   type Observation,
@@ -196,6 +197,42 @@ function readinessFor(issue: RawIssue): DisplaySignal {
   return labelReadiness;
 }
 
+function roadmapAlignmentFor(
+  issue: RawIssue,
+  currentHorizon: string | null,
+): DisplaySignal {
+  const source = evidenceSource("Issue milestone", issue.url);
+  if (issue.milestone === null) {
+    return directSignal(
+      "satisfied",
+      "not-required",
+      "Unmilestoned Issue is permitted",
+      [source],
+    );
+  }
+  if (currentHorizon === null) {
+    return directSignal(
+      "unknown",
+      "observation-incomplete",
+      "Issue milestone alignment Unknown",
+      [source],
+    );
+  }
+  return issue.milestone === currentHorizon
+    ? directSignal(
+        "satisfied",
+        "all-required-conditions-satisfied",
+        "Issue belongs to the current Product Roadmap horizon",
+        [source],
+      )
+    : directSignal(
+        "blocked",
+        "issue-not-ready",
+        "Issue milestone is outside the current Product Roadmap horizon",
+        [source],
+      );
+}
+
 function aggregateSignals(signals: DisplaySignal[], fallback: string): DisplaySignal {
   const state = signals.some((signal) => signal.state === "blocked")
     ? "blocked"
@@ -247,6 +284,54 @@ function commentSources(pull: RawPullRequest, repository: string): StructuredCom
       trustedProducer: comment.trustedProducer,
     },
   }));
+}
+
+function trustedHandoffIssueNumbers(
+  repository: RepositoryObservation,
+  pull: RawPullRequest,
+  issues: readonly RawIssue[],
+): number[] {
+  if (repository.main === null) return [];
+  const parsed = commentSources(pull, repository.repository).flatMap((source) =>
+    issues.flatMap((issue) => {
+      const result = parseAgentHandoff(source, {
+        repository: repository.repository,
+        issueNumber: issue.number,
+        pullRequestNumber: pull.number,
+        owner: ownerFor(issue),
+        headSha: pull.headSha,
+        mainSha: repository.main?.sha ?? "",
+      });
+      return result.ok ? [result.value.issue] : [];
+    }),
+  );
+  return [...new Set(parsed)];
+}
+
+function mergeabilityFor(pull: RawPullRequest): DisplaySignal {
+  const source = [evidenceSource(`PR #${String(pull.number)}`, pull.url)];
+  if (pull.mergeability === "conflicting") {
+    return directSignal(
+      "blocked",
+      "native-merge-conflict",
+      "Pull request has a native merge conflict",
+      source,
+    );
+  }
+  if (pull.mergeability === "unknown") {
+    return directSignal(
+      "unknown",
+      "observation-incomplete",
+      "Native mergeability Unknown",
+      source,
+    );
+  }
+  return directSignal(
+    "satisfied",
+    "all-required-conditions-satisfied",
+    "Pull request is natively mergeable",
+    source,
+  );
 }
 
 function implementationConflictSignal(
@@ -321,6 +406,7 @@ function pullLane(
   pull: RawPullRequest,
   implementationConflict: boolean,
   roadmapCurrent: boolean,
+  currentHorizon: string | null,
 ): DeliveryLane {
   const mainSha = repository.main?.sha ?? "";
   const githubUrl = pull.url;
@@ -332,7 +418,11 @@ function pullLane(
   const ownership = ownershipFor(issue);
   const humanOwnership = humanOwnershipFor(issue);
   const labelReadiness = labelReadinessFor(issue);
-  const readiness = readinessFor(issue);
+  const readiness = aggregateSignals(
+    [readinessFor(issue), roadmapAlignmentFor(issue, currentHorizon)],
+    "Issue readiness Unknown",
+  );
+  const mergeability = mergeabilityFor(pull);
   const currentReviews = currentReviewDisposition(pull.reviews);
   const nativeReviewAvailability =
     pull.reviewsAvailability === "complete" && !currentReviews.complete
@@ -506,6 +596,8 @@ function pullLane(
       commentState,
       authority,
       humanAction,
+      readiness,
+      mergeability,
     ],
     "Merge gate Unknown",
   );
@@ -525,6 +617,8 @@ function pullLane(
             ? mergeGate.state === "waiting" ? "review_wait" : "unknown"
           : mergeGate.state === "satisfied"
             ? "merge_gate"
+            : mergeability.state === "unknown"
+              ? "unknown"
             : readiness.state === "unknown"
               ? "unknown"
               : authority.reason === "authority-drift-suspected"
@@ -596,11 +690,15 @@ function issueLane(
   repository: RepositoryObservation,
   issue: RawIssue,
   roadmapCurrent: boolean,
+  currentHorizon: string | null,
 ): DeliveryLane {
   const labelReadiness = labelReadinessFor(issue);
-  const readiness = readinessFor(issue);
+  const readiness = aggregateSignals(
+    [readinessFor(issue), roadmapAlignmentFor(issue, currentHorizon)],
+    "Issue readiness Unknown",
+  );
   const owner = ownerFor(issue);
-  const ownership = ownershipFor(issue);
+  const humanOwnership = humanOwnershipFor(issue);
   const linkageComplete = repository.implementationLinkageAvailability === "complete";
   const unavailable = linkageComplete
     ? directSignal(
@@ -620,7 +718,9 @@ function issueLane(
   return {
     issue: { number: issue.number, title: issue.title, url: issue.url },
     owner,
-    phase: readiness.state === "blocked"
+    phase: humanOwnership.state === "blocked"
+      ? "human_required"
+      : readiness.state === "blocked"
       ? "blocked"
       : linkageComplete && roadmapCurrent
         ? readiness.state === "satisfied" ? "ready" : readiness.state
@@ -650,17 +750,10 @@ function issueLane(
           evidenceSource("Live main", repository.main.url),
         ]),
     humanAction:
-      ownership.state !== "satisfied"
-        ? ownership
+      humanOwnership.state !== "satisfied"
+        ? humanOwnership
         : labelReadiness.state === "unknown"
           ? labelReadiness
-        : owner === "agent:human"
-        ? directSignal(
-            "blocked",
-            "human-action-required",
-            "Human-owned issue requires attention",
-            [evidenceSource("Issue owner label", issue.url)],
-          )
         : directSignal("satisfied", "not-required", "No human action required", []),
     mergeGate: unavailable,
     evidence: {
@@ -864,18 +957,24 @@ export function normalizeRepository(
   const singlePullIssueNumbers = observation.pullRequests.map((pull) =>
     pull.closingIssueNumbers.length === 1 ? pull.closingIssueNumbers[0] : undefined,
   );
+  const implementationIssueNumbers = observation.pullRequests.map((pull) =>
+    new Set([
+      ...pull.closingIssueNumbers,
+      ...trustedHandoffIssueNumbers(observation, pull, observation.issues),
+    ]),
+  );
   const implementationCounts = new Map<number, number>();
-  for (const pull of observation.pullRequests) {
-    for (const issueNumber of new Set(pull.closingIssueNumbers)) {
+  for (const issueNumbers of implementationIssueNumbers) {
+    for (const issueNumber of issueNumbers) {
       implementationCounts.set(issueNumber, (implementationCounts.get(issueNumber) ?? 0) + 1);
     }
   }
   const linkedIssueNumbers = new Set<number>();
   const deliveries: DeliveryLane[] = observation.pullRequests.map((pull, index) => {
-    for (const issueNumber of pull.closingIssueNumbers) {
+    for (const issueNumber of implementationIssueNumbers[index] ?? []) {
       linkedIssueNumbers.add(issueNumber);
     }
-    const implementationConflict = pull.closingIssueNumbers.some(
+    const implementationConflict = [...(implementationIssueNumbers[index] ?? [])].some(
       (issueNumber) => (implementationCounts.get(issueNumber) ?? 0) > 1,
     );
     const issueNumber = singlePullIssueNumbers[index];
@@ -894,6 +993,7 @@ export function normalizeRepository(
       pull,
       implementationConflict,
       roadmap.state === "satisfied",
+      roadmap.state === "satisfied" ? roadmap.value : null,
     );
   });
   const readyOrOwnedIssues = observation.issues.filter(
@@ -904,7 +1004,12 @@ export function normalizeRepository(
   );
   deliveries.push(
     ...readyOrOwnedIssues.map((issue) =>
-      issueLane(observation, issue, roadmap.state === "satisfied"),
+      issueLane(
+        observation,
+        issue,
+        roadmap.state === "satisfied",
+        roadmap.state === "satisfied" ? roadmap.value : null,
+      ),
     ),
   );
   deliveries.sort((left, right) => {
@@ -1020,7 +1125,16 @@ export function normalizeRepository(
     deliveries,
     criticalPath: {
       nodes: laneIssues.map((issue) => {
-        const readiness = readinessFor(issue);
+        const readiness = aggregateSignals(
+          [
+            readinessFor(issue),
+            roadmapAlignmentFor(
+              issue,
+              roadmap.state === "satisfied" ? roadmap.value : null,
+            ),
+          ],
+          "Issue readiness Unknown",
+        );
         return {
           issueNumber: issue.number,
           label: issue.title,

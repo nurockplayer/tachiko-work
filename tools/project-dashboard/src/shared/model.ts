@@ -98,6 +98,7 @@ export interface RawPullRequest {
   baseRef: string;
   mergeBaseSha: string | null;
   relationToMain: "current" | "behind" | "diverged" | "unknown";
+  mergeability: "mergeable" | "conflicting" | "unknown";
   authorityChanges: { path: string; url: string }[];
   authorityAvailability: ObservationAvailability;
   closingIssueNumbers: number[];

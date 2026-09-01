@@ -47,7 +47,7 @@ const QUERY = `
       pullRequests(first: 40, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
         pageInfo { hasNextPage }
         nodes {
-          number title url state isDraft headRefOid baseRefOid baseRefName
+          number title url state isDraft headRefOid baseRefOid baseRefName mergeable
           closingIssuesReferences(first: 20) {
             pageInfo { hasNextPage }
             nodes { number }
@@ -167,6 +167,7 @@ interface GraphPull {
   headRefOid: string;
   baseRefOid: string;
   baseRefName: string;
+  mergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
   closingIssuesReferences: { pageInfo: PageInfo; nodes: { number: number }[] };
   comments: { pageInfo: PageInfo; nodes: GraphComment[] };
   reviews: { pageInfo: PageInfo; nodes: GraphReview[] };
@@ -336,6 +337,8 @@ function isAuthorityPath(path: string): boolean {
     path === "CONTRIBUTING.md" ||
     path === "SECURITY.md" ||
     path === ROADMAP_PATH ||
+    path.startsWith(".github/workflows/") ||
+    path.startsWith("scripts/") ||
     path.startsWith("docs/architecture/") ||
     path.startsWith("docs/decisions/") ||
     path.startsWith("docs/governance/") ||
@@ -527,6 +530,12 @@ export async function observeRepository(
       baseRef: pull.baseRefName,
       mergeBaseSha: comparison.mergeBaseSha,
       relationToMain: comparison.relation,
+      mergeability:
+        pull.mergeable === "MERGEABLE"
+          ? "mergeable"
+          : pull.mergeable === "CONFLICTING"
+            ? "conflicting"
+            : "unknown",
       authorityChanges: comparison.authorityChanges,
       authorityAvailability: comparison.authorityAvailability,
       closingIssueNumbers: pull.closingIssuesReferences.nodes.map((issue) => issue.number),

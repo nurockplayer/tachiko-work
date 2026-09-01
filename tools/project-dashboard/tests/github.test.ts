@@ -14,6 +14,8 @@ function graphResponse(
   pullsHaveNextPage = false,
   closingIssuesHaveNextPage = false,
   hasErrors = false,
+  commentsHaveNextPage = false,
+  mergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN" = "MERGEABLE",
 ) {
   return {
     ...(hasErrors
@@ -61,11 +63,12 @@ function graphResponse(
               headRefOid: HEAD,
               baseRefOid: MAIN,
               baseRefName: "main",
+              mergeable,
               closingIssuesReferences: {
                 pageInfo: { hasNextPage: closingIssuesHaveNextPage },
                 nodes: [{ number: 169 }],
               },
-              comments: { pageInfo: { hasNextPage: false }, nodes: [] },
+              comments: { pageInfo: { hasNextPage: commentsHaveNextPage }, nodes: [] },
               reviews: { pageInfo: { hasNextPage: false }, nodes: [] },
               reviewThreads: { pageInfo: { hasNextPage: false }, nodes: [] },
               statusCheckRollup: {
@@ -100,6 +103,8 @@ function fakeFetch(
   pullsHaveNextPage = false,
   closingIssuesHaveNextPage = false,
   hasErrors = false,
+  commentsHaveNextPage = false,
+  mergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN" = "MERGEABLE",
 ) {
   const requests: { url: string; init?: RequestInit }[] = [];
   const implementation = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -120,6 +125,8 @@ function fakeFetch(
             pullsHaveNextPage,
             closingIssuesHaveNextPage,
             hasErrors,
+            commentsHaveNextPage,
+            mergeable,
           ),
         ),
         {
@@ -163,9 +170,15 @@ function fakeBehindAuthorityFetch() {
             { filename: "docs/security/threat-model.md" },
             { filename: "docs/vision/product-constitution.md" },
             { filename: "docs/product/engine-integration-strategy.md" },
+            { filename: ".github/workflows/ci.yml" },
+            { filename: "scripts/release-check.sh" },
             {
               filename: "docs/discussions/renamed-authority.md",
               previous_filename: "docs/decisions/ADR-renamed.md",
+            },
+            {
+              filename: "docs/discussions/renamed-workflow.md",
+              previous_filename: ".github/workflows/renamed.yml",
             },
             {
               filename: "docs/governance/renamed-in.md",
@@ -238,10 +251,12 @@ describe("GitHub observation adapter", () => {
     if (typeof graphBody !== "string") throw new Error("GraphQL body must be JSON text");
     expect(graphBody).toContain("query DashboardRepository");
     expect(graphBody).toContain("state submittedAt");
+    expect(graphBody).toContain("baseRefName mergeable");
     expect(graphBody).not.toContain("mutation");
     expect(observation.serverCredential).toBe("present");
     expect(JSON.stringify(observation)).not.toContain("server_secret");
     expect(JSON.stringify(projection)).not.toContain("server_secret");
+    expect(observation.pullRequests[0]?.mergeability).toBe("mergeable");
   });
 
   it("marks completeness-required pagination as partial but keeps bounded recent history valid", async () => {
@@ -287,6 +302,28 @@ describe("GitHub observation adapter", () => {
     );
   });
 
+  it.each([
+    ["MERGEABLE", "mergeable"],
+    ["CONFLICTING", "conflicting"],
+    ["UNKNOWN", "unknown"],
+  ] as const)("maps native mergeability %s", async (native, expected) => {
+    const fake = fakeFetch(false, false, true, false, false, false, false, native);
+    const observation = await observeRepository({ fetchImpl: fake.implementation });
+
+    expect(observation.pullRequests[0]?.mergeability).toBe(expected);
+  });
+
+  it("keeps truncated comments scoped away from native implementation linkage", async () => {
+    const fake = fakeFetch(false, false, true, false, false, false, true);
+    const observation = await observeRepository({ fetchImpl: fake.implementation });
+
+    expect(observation.pullRequests[0]?.commentsAvailability).toBe("incomplete");
+    expect(observation.implementationLinkageAvailability).toBe("complete");
+    expect(normalizeRepository(observation).deliveries[0]?.mergeGate.state).not.toBe(
+      "satisfied",
+    );
+  });
+
   it("keeps concurrent comparison errors in pull-request order", async () => {
     const observation = await observeRepository({ fetchImpl: fakeComparisonFailureFetch() });
 
@@ -325,7 +362,10 @@ describe("GitHub observation adapter", () => {
       "docs/security/threat-model.md",
       "docs/vision/product-constitution.md",
       "docs/product/engine-integration-strategy.md",
+      ".github/workflows/ci.yml",
+      "scripts/release-check.sh",
       "docs/decisions/ADR-renamed.md",
+      ".github/workflows/renamed.yml",
       "docs/governance/renamed-in.md",
     ]);
     expect(normalizeRepository(observation).deliveries[0]?.authority.state).toBe("unknown");

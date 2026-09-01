@@ -120,6 +120,9 @@ describe("normalizeRepository", () => {
         (item) => item.issueNumber === issue.number && item.reason === "human-action-required",
       ),
     ).toBe(true);
+    expect(
+      projection.deliveries.find((lane) => lane.issue?.number === issue.number)?.phase,
+    ).toBe("human_required");
   });
 
   it("blocks a fully evidenced linked lane owned by a human", () => {
@@ -451,7 +454,7 @@ describe("normalizeRepository", () => {
         (item) => item.issue?.number === 223 && item.pullRequest === null,
       );
       expect(lane).toMatchObject({
-        readiness: { state: "satisfied" },
+        readiness: { state: "unknown" },
         authority: { state: "unknown" },
         phase: "unknown",
       });
@@ -744,6 +747,164 @@ describe("normalizeRepository", () => {
       expect(lane.mergeGate.state).toBe("blocked");
       expect(lane.phase).toBe("blocked");
     }
+  });
+
+  it("blocks native and handoff-owned lanes that claim the same Issue", () => {
+    const observation = healthyObservation();
+    addGreenOperationalEvidence(observation);
+    const source = observation.pullRequests[0];
+    if (source === undefined) throw new Error("fixture missing pull request");
+    observation.pullRequests.push({
+      ...source,
+      number: 226,
+      title: "handoff-owned competing implementation",
+      url: "https://github.example/pulls/226",
+      closingIssueNumbers: [],
+      comments: source.comments.map((comment) => ({
+        ...comment,
+        id: `handoff-duplicate-${comment.id}`,
+        url: `https://github.example/comments/handoff-duplicate-${comment.id}`,
+        body: comment.body.replace("PR: 225", "PR: 226"),
+      })),
+    });
+
+    const lanes = normalizeRepository(observation).deliveries.filter(
+      (lane) => lane.pullRequest?.number === 225 || lane.pullRequest?.number === 226,
+    );
+    expect(lanes).toHaveLength(2);
+    for (const lane of lanes) {
+      expect(lane.authority.state).toBe("blocked");
+      expect(lane.phase).toBe("blocked");
+    }
+  });
+
+  it("retains a visible handoff overlap blocker under partial comment pagination", () => {
+    const observation = healthyObservation();
+    const source = observation.pullRequests[0];
+    if (source === undefined) throw new Error("fixture missing pull request");
+    observation.pullRequests.push({
+      ...source,
+      number: 226,
+      title: "partially observed handoff owner",
+      url: "https://github.example/pulls/226",
+      closingIssueNumbers: [],
+      commentsAvailability: "incomplete",
+      comments: source.comments.map((comment) => ({
+        ...comment,
+        id: `partial-${comment.id}`,
+        body: comment.body.replace("PR: 225", "PR: 226"),
+      })),
+    });
+
+    expect(
+      normalizeRepository(observation).deliveries.find(
+        (lane) => lane.pullRequest?.number === 225,
+      )?.authority.state,
+    ).toBe("blocked");
+  });
+
+  it("keeps duplicate trusted handoff claims in overlap accounting", () => {
+    const observation = healthyObservation();
+    const source = observation.pullRequests[0];
+    const handoff = source?.comments.find((comment) =>
+      comment.body.startsWith("<!-- agent-handoff:v1 -->"),
+    );
+    if (source === undefined || handoff === undefined) throw new Error("fixture missing handoff");
+    const competingHandoff = {
+      ...handoff,
+      id: "competing-handoff",
+      body: handoff.body.replace("PR: 225", "PR: 226"),
+    };
+    observation.pullRequests.push({
+      ...source,
+      number: 226,
+      title: "duplicate handoff owner",
+      url: "https://github.example/pulls/226",
+      closingIssueNumbers: [],
+      comments: [
+        competingHandoff,
+        { ...competingHandoff, id: "competing-handoff-duplicate" },
+      ],
+    });
+
+    expect(
+      normalizeRepository(observation).deliveries.find(
+        (lane) => lane.pullRequest?.number === 225,
+      )?.authority.state,
+    ).toBe("blocked");
+  });
+
+  it("suppresses issue-only Ready when a trusted handoff owns the Issue", () => {
+    const observation = healthyObservation();
+    const source = observation.pullRequests[0];
+    if (source === undefined) throw new Error("fixture missing pull request");
+    source.closingIssueNumbers = [];
+
+    const projection = normalizeRepository(observation);
+    expect(
+      projection.deliveries.some((lane) => lane.issue?.number === 169),
+    ).toBe(false);
+    expect(projection.executive.readyCount).toMatchObject({ state: "satisfied", value: 1 });
+  });
+
+  it("does not treat untrusted handoff prose as implementation ownership", () => {
+    const observation = healthyObservation();
+    addGreenOperationalEvidence(observation);
+    const source = observation.pullRequests[0];
+    if (source === undefined) throw new Error("fixture missing pull request");
+    observation.pullRequests.push({
+      ...source,
+      number: 226,
+      title: "untrusted handoff claim",
+      url: "https://github.example/pulls/226",
+      closingIssueNumbers: [],
+      comments: source.comments.map((comment) => ({
+        ...comment,
+        id: `untrusted-${comment.id}`,
+        trustedProducer: false,
+        body: comment.body.replace("PR: 225", "PR: 226"),
+      })),
+    });
+
+    expect(
+      normalizeRepository(observation).deliveries.find(
+        (lane) => lane.pullRequest?.number === 225,
+      )?.authority.state,
+    ).toBe("satisfied");
+  });
+
+  it("keeps future-milestone Ready Issues out of the current horizon", () => {
+    const observation = healthyObservation();
+    const issue = observation.issues[1];
+    if (issue === undefined) throw new Error("fixture missing issue");
+    issue.milestone = "07 · Future horizon";
+
+    const projection = normalizeRepository(observation);
+    const lane = projection.deliveries.find((item) => item.issue?.number === issue.number);
+    expect(lane).toMatchObject({
+      readiness: { state: "blocked", reason: "issue-not-ready" },
+      phase: "blocked",
+    });
+    expect(
+      projection.criticalPath.nodes.find((item) => item.issueNumber === issue.number)?.state,
+    ).toBe("blocked");
+    expect(projection.executive.readyCount).toMatchObject({ state: "satisfied", value: 0 });
+  });
+
+  it.each([
+    ["conflicting", "blocked"],
+    ["unknown", "unknown"],
+  ] as const)("fails merge closed for native mergeability %s", (mergeability, state) => {
+    const observation = healthyObservation();
+    addGreenOperationalEvidence(observation);
+    const pull = observation.pullRequests[0];
+    if (pull === undefined) throw new Error("fixture missing pull request");
+    pull.mergeability = mergeability;
+
+    expect(normalizeRepository(observation).deliveries[0]).toMatchObject({
+      mergeGate: { state },
+      phase: state === "blocked" ? "blocked" : "unknown",
+    });
   });
 
   it("keeps implementation overlap Unknown when the PR/linkage set is incomplete", () => {
