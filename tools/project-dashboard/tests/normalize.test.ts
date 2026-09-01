@@ -750,6 +750,55 @@ describe("normalizeRepository", () => {
     }
   });
 
+  it("preserves a known current conflict over a simultaneous stale claim", () => {
+    const observation = healthyObservation();
+    addGreenOperationalEvidence(observation);
+    const source = observation.pullRequests[0];
+    if (source === undefined) throw new Error("fixture missing pull request");
+    const commentsFor = (pullNumber: number, stale: boolean) =>
+      source.comments.map((comment) => ({
+        ...comment,
+        id: `mixed-${String(pullNumber)}-${comment.id}`,
+        body: comment.body.startsWith("<!-- agent-handoff:v1 -->") && stale
+          ? comment.body
+              .replace("PR: 225", `PR: ${String(pullNumber)}`)
+              .replace(`HEAD: ${HEAD}`, `HEAD: ${"9".repeat(40)}`)
+          : comment.body.replace("PR: 225", `PR: ${String(pullNumber)}`),
+      }));
+    observation.pullRequests.push(
+      {
+        ...source,
+        number: 226,
+        title: "current handoff owner",
+        url: "https://github.example/pulls/226",
+        closingIssueNumbers: [],
+        comments: commentsFor(226, false),
+      },
+      {
+        ...source,
+        number: 227,
+        title: "stale handoff owner",
+        url: "https://github.example/pulls/227",
+        closingIssueNumbers: [],
+        comments: commentsFor(227, true),
+      },
+    );
+
+    const lanes = normalizeRepository(observation).deliveries;
+    for (const pullNumber of [225, 226]) {
+      expect(lanes.find((lane) => lane.pullRequest?.number === pullNumber)).toMatchObject({
+        authority: { state: "blocked" },
+        mergeGate: { state: "blocked" },
+        phase: "blocked",
+      });
+    }
+    expect(lanes.find((lane) => lane.pullRequest?.number === 227)).toMatchObject({
+      authority: { state: "unknown", reason: "source-identity-conflict" },
+      mergeGate: { state: "unknown" },
+      phase: "unknown",
+    });
+  });
+
   it("blocks native and handoff-owned lanes that claim the same Issue", () => {
     const observation = healthyObservation();
     addGreenOperationalEvidence(observation);

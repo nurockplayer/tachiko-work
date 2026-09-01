@@ -28,6 +28,18 @@ function isTypeSevenHtmlLine(line: string): boolean {
   return closingTag !== undefined && !RAW_HTML_TAG.test(closingTag);
 }
 
+function isNonInterruptingParagraphContinuation(line: string): boolean {
+  if (/^ {4}/.test(line) || isTypeSevenHtmlLine(line)) return true;
+  const ordered = /^ {0,3}(\d{1,9})[.)](?:[ \t]+(.*))?$/.exec(line);
+  if (ordered !== null) {
+    const value = Number(ordered[1]);
+    const content = ordered[2] ?? "";
+    return value !== 1 || content.trim().length === 0;
+  }
+  const bullet = /^ {0,3}[-+*](?:[ \t]+(.*))?$/.exec(line);
+  return bullet !== null && (bullet[1] ?? "").trim().length === 0;
+}
+
 function blankLine(line: string): string {
   return " ".repeat(line.length);
 }
@@ -133,13 +145,10 @@ function hasPotentialSetextBoundary(section: string): boolean {
   return lines.some((line, index) => {
     if (index === 0 || !SETEXT_UNDERLINE.test(line)) return false;
     let contentIndex = index - 1;
-    while (/^ {4}/.test(lines[contentIndex] ?? "")) contentIndex -= 1;
-    const content = lines[contentIndex] ?? "";
-    if (paragraphEligible(content)) return true;
-    if (!isTypeSevenHtmlLine(content)) return false;
-    let precedingIndex = contentIndex - 1;
-    while (isTypeSevenHtmlLine(lines[precedingIndex] ?? "")) precedingIndex -= 1;
-    return paragraphEligible(lines[precedingIndex] ?? "");
+    while (isNonInterruptingParagraphContinuation(lines[contentIndex] ?? "")) {
+      contentIndex -= 1;
+    }
+    return paragraphEligible(lines[contentIndex] ?? "");
   });
 }
 

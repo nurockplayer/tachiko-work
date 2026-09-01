@@ -102,6 +102,40 @@ describe("parseProductHorizon", () => {
     },
   );
 
+  it.each([
+    "2. continuation",
+    "2) continuation",
+    "14. continuation",
+    "02. continuation",
+    "0. continuation",
+    "*",
+    "+   ",
+    "1.",
+    "1)   ",
+  ])(
+    "recognizes a non-interrupting list continuation before a Setext boundary: %j",
+    (continuation) => {
+      expect(
+        parseProductHorizon(
+          `## Current horizon\n\nNext section\n${continuation}\n---\n\n> **NOT CURRENT**`,
+          "https://github.example/roadmap",
+        ),
+      ).toMatchObject({ state: "unknown", value: "Unknown" });
+    },
+  );
+
+  it.each(["1. item", "1) item", "* item", "+ item"])(
+    "allows an interrupting list item before a thematic break: %j",
+    (item) => {
+      expect(
+        parseProductHorizon(
+          `## Current horizon\n\n> **A**\n\nParagraph\n${item}\n---`,
+          "https://github.example/roadmap",
+        ),
+      ).toMatchObject({ state: "satisfied", value: "A" });
+    },
+  );
+
   it.each(["> **A**", "- list item"])(
     "does not treat a thematic break after block content %j as Setext",
     (content) => {
