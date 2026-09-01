@@ -591,6 +591,49 @@ fn entity_schema_membership_change_merges_when_the_other_side_is_unchanged() {
 }
 
 #[test]
+fn schema_change_preserves_unmaterialized_old_schema_field_evidence() {
+    let mut base = balance_document(36.0, 0.9);
+    base.schemas
+        .get_mut("weapon")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("bonus"), optional_number_field("bonus"));
+    let mut alternate = base.schemas["weapon"].clone();
+    alternate.id = SchemaId::from("alternate_weapon");
+    alternate.key = SchemaKey::from("alternate_weapon");
+    base.schemas
+        .insert(SchemaId::from("alternate_weapon"), alternate);
+
+    let mut ours = base.clone();
+    ours.entities.get_mut("iron_sword").unwrap().schema = SchemaId::from("alternate_weapon");
+    let mut theirs = base.clone();
+    theirs
+        .entities
+        .get_mut("iron_sword")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("bonus"), number(4.0));
+
+    let MergeOutcome::Merged(candidate) = merge(&base, &ours, &theirs) else {
+        panic!("qualified one-sided field addition should structurally reconcile");
+    };
+
+    assert!(
+        !candidate.entities["iron_sword"]
+            .fields
+            .contains_key("bonus")
+    );
+    let [fact] = candidate.unmaterialized_fields() else {
+        panic!("the selected old-schema field fact must be retained for finalization")
+    };
+    assert_eq!(fact.entity(), &EntityId::from("iron_sword"));
+    assert_eq!(fact.source_schema(), &SchemaId::from("weapon"));
+    assert_eq!(fact.selected_schema(), &SchemaId::from("alternate_weapon"));
+    assert_eq!(fact.field(), &FieldId::from("bonus"));
+    assert_eq!(fact.value(), &number(4.0));
+}
+
+#[test]
 fn same_field_divergence_returns_the_typed_conflict_payload() {
     let base = balance_document(36.0, 0.9);
     let ours = balance_document(45.0, 0.9);

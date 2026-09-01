@@ -75,8 +75,8 @@ not converted into a structural conflict kind.
 Future adapters may use bounded retained-history or selectively justified
 CRDT/OT techniques, but they may not make replay authoritative, replace a
 complete standalone snapshot, or use Git as semantic identity. ADR-0030 resolves
-Issue #45 without making delta an operation or event. ADR-0031 resolves Issue
-#46's deterministic structural conflict evidence; Issue #223 realizes its
+Issue #45 without making delta an operation or event. ADR-0031 resolves
+Issue #46's deterministic structural conflict evidence; Issue #223 realizes its
 logical production merge boundary without selecting a stable codec, transport,
 wire, or SDK contract. ADR-0032 resolves Issue #48's
 operation/revision/optional-event taxonomy without selecting history mechanics.

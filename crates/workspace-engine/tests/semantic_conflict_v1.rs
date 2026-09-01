@@ -524,6 +524,66 @@ fn fixture_11_stored_fields_are_qualified_by_each_state_schema() {
 }
 
 #[test]
+fn one_sided_old_schema_field_addition_reaches_candidate_validation() {
+    let base = arena(
+        [
+            schema("s:unit", [definition("f:armor", FieldType::Number, false)]),
+            schema("s:boss", []),
+        ],
+        [entity("e:goblin", "s:unit", [])],
+    );
+    let mut left = base.clone();
+    left.entities.get_mut("e:goblin").unwrap().schema = "s:boss".into();
+    let mut right = base.clone();
+    right
+        .entities
+        .get_mut("e:goblin")
+        .unwrap()
+        .fields
+        .insert("f:armor".into(), number(12.0));
+
+    let error = merge_documents(&base, &left, &right).unwrap_err();
+
+    let WorkspaceError::InvalidDocument { role, report, .. } = error else {
+        panic!("the one-sided old-schema fact must reach candidate finalization")
+    };
+    assert_eq!(role, ValidationRole::MergeCandidate);
+    assert!(report.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code == diagnostic_codes::MERGE_UNMATERIALIZED_QUALIFIED_FIELD
+    }));
+}
+
+#[test]
+fn one_sided_old_schema_field_is_not_requalified_when_new_schema_reuses_id() {
+    let base = arena(
+        [
+            schema("s:unit", [definition("f:armor", FieldType::Number, false)]),
+            schema("s:boss", [definition("f:armor", FieldType::Number, false)]),
+        ],
+        [entity("e:goblin", "s:unit", [])],
+    );
+    let mut left = base.clone();
+    left.entities.get_mut("e:goblin").unwrap().schema = "s:boss".into();
+    let mut right = base.clone();
+    right
+        .entities
+        .get_mut("e:goblin")
+        .unwrap()
+        .fields
+        .insert("f:armor".into(), number(12.0));
+
+    let error = merge_documents(&base, &left, &right).unwrap_err();
+
+    let WorkspaceError::InvalidDocument { role, report, .. } = error else {
+        panic!("an old-schema fact must not be retargeted to the selected schema")
+    };
+    assert_eq!(role, ValidationRole::MergeCandidate);
+    assert!(report.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code == diagnostic_codes::MERGE_UNMATERIALIZED_QUALIFIED_FIELD
+    }));
+}
+
+#[test]
 fn fixture_12_conflicts_follow_canonical_semantic_order() {
     let base = arena(
         [

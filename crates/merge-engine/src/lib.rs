@@ -14,8 +14,74 @@ pub const SEMANTIC_CONFLICT_V1: &str = "tachiko.semantic-conflict/v1";
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum MergeOutcome {
-    Merged(Document),
+    Merged(MergeCandidate),
     Conflicted(Vec<MergeConflict>),
+}
+
+/// Conflict-free structural result awaiting workspace finalization.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MergeCandidate {
+    document: Document,
+    unmaterialized_fields: Vec<UnmaterializedStoredFact>,
+}
+
+impl MergeCandidate {
+    /// Consume the candidate into its semantic state and finalization evidence.
+    #[must_use]
+    pub fn into_parts(self) -> (Document, Vec<UnmaterializedStoredFact>) {
+        (self.document, self.unmaterialized_fields)
+    }
+
+    /// Stored facts that could not retain their schema-qualified target in the candidate state.
+    #[must_use]
+    pub fn unmaterialized_fields(&self) -> &[UnmaterializedStoredFact] {
+        &self.unmaterialized_fields
+    }
+}
+
+impl std::ops::Deref for MergeCandidate {
+    type Target = Document;
+
+    fn deref(&self) -> &Self::Target {
+        &self.document
+    }
+}
+
+/// A selected stored fact whose qualified target cannot be represented by the selected schema.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UnmaterializedStoredFact {
+    entity: EntityId,
+    source_schema: SchemaId,
+    selected_schema: SchemaId,
+    field: FieldId,
+    value: Value,
+}
+
+impl UnmaterializedStoredFact {
+    #[must_use]
+    pub fn entity(&self) -> &EntityId {
+        &self.entity
+    }
+
+    #[must_use]
+    pub fn source_schema(&self) -> &SchemaId {
+        &self.source_schema
+    }
+
+    #[must_use]
+    pub fn selected_schema(&self) -> &SchemaId {
+        &self.selected_schema
+    }
+
+    #[must_use]
+    pub fn field(&self) -> &FieldId {
+        &self.field
+    }
+
+    #[must_use]
+    pub fn value(&self) -> &Value {
+        &self.value
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -419,6 +485,7 @@ impl From<&Entity> for EntitySubject {
 #[must_use]
 pub fn merge(base: &Document, ours: &Document, theirs: &Document) -> MergeOutcome {
     let mut conflicts = Vec::new();
+    let mut unmaterialized_fields = Vec::new();
     let title = merge_scalar(
         ConflictCoordinate::new(
             &base.id,
@@ -443,6 +510,7 @@ pub fn merge(base: &Document, ours: &Document, theirs: &Document) -> MergeOutcom
         &base.entities,
         &ours.entities,
         &theirs.entities,
+        &mut unmaterialized_fields,
         &mut conflicts,
     );
 
@@ -464,11 +532,14 @@ pub fn merge(base: &Document, ours: &Document, theirs: &Document) -> MergeOutcom
     let (Some(title), Some(schemas), Some(entities)) = (title, schemas, entities) else {
         unreachable!("missing merge selection must have produced a conflict")
     };
-    MergeOutcome::Merged(Document {
-        id: base.id.clone(),
-        title,
-        schemas,
-        entities,
+    MergeOutcome::Merged(MergeCandidate {
+        document: Document {
+            id: base.id.clone(),
+            title,
+            schemas,
+            entities,
+        },
+        unmaterialized_fields,
     })
 }
 
@@ -673,6 +744,7 @@ fn merge_entities(
     base: &BTreeMap<EntityId, Entity>,
     ours: &BTreeMap<EntityId, Entity>,
     theirs: &BTreeMap<EntityId, Entity>,
+    unmaterialized_fields: &mut Vec<UnmaterializedStoredFact>,
     conflicts: &mut Vec<MergeConflict>,
 ) -> Option<BTreeMap<EntityId, Entity>> {
     let entity_ids: BTreeSet<_> = base
@@ -691,9 +763,15 @@ fn merge_entities(
             theirs.get(&entity_id),
         ) {
             (Some(base), Some(ours), Some(theirs)) => {
-                if let Some(entity) =
-                    merge_entity(document, &entity_id, base, ours, theirs, conflicts)
-                {
+                if let Some(entity) = merge_entity(
+                    document,
+                    &entity_id,
+                    base,
+                    ours,
+                    theirs,
+                    unmaterialized_fields,
+                    conflicts,
+                ) {
                     entities.insert(entity_id, entity);
                 } else {
                     complete = false;
@@ -729,6 +807,7 @@ fn merge_entity(
     base: &Entity,
     ours: &Entity,
     theirs: &Entity,
+    unmaterialized_fields: &mut Vec<UnmaterializedStoredFact>,
     conflicts: &mut Vec<MergeConflict>,
 ) -> Option<Entity> {
     let schema = merge_scalar(
@@ -755,6 +834,10 @@ fn merge_entity(
         |key| MergeValue::EntityKey(key.clone()),
         conflicts,
     );
+    let mut field_evidence = FieldMergeEvidence {
+        unmaterialized_fields,
+        conflicts,
+    };
     let fields = merge_entity_fields(
         document,
         entity_id,
@@ -762,7 +845,7 @@ fn merge_entity(
         base,
         ours,
         theirs,
-        conflicts,
+        &mut field_evidence,
     );
 
     Some(Entity {
@@ -773,6 +856,11 @@ fn merge_entity(
     })
 }
 
+struct FieldMergeEvidence<'evidence> {
+    unmaterialized_fields: &'evidence mut Vec<UnmaterializedStoredFact>,
+    conflicts: &'evidence mut Vec<MergeConflict>,
+}
+
 fn merge_entity_fields(
     document: &DocumentId,
     entity_id: &EntityId,
@@ -780,7 +868,7 @@ fn merge_entity_fields(
     base: &Entity,
     ours: &Entity,
     theirs: &Entity,
-    conflicts: &mut Vec<MergeConflict>,
+    evidence: &mut FieldMergeEvidence<'_>,
 ) -> Option<BTreeMap<FieldId, Value>> {
     let field_targets: BTreeSet<_> = base
         .fields
@@ -816,11 +904,23 @@ fn merge_entity_fields(
             qualified_field(ours, &schema_id, &field_id),
             qualified_field(theirs, &schema_id, &field_id),
             |field| MergeValue::FieldValue(field.clone()),
-            conflicts,
+            evidence.conflicts,
         ) {
             OptionalChoice::Chosen(Some(field)) => {
-                if selected_schema == Some(&schema_id) {
-                    fields.insert(field_id, field);
+                if let Some(selected_schema) = selected_schema {
+                    if selected_schema == &schema_id {
+                        fields.insert(field_id, field);
+                    } else {
+                        evidence
+                            .unmaterialized_fields
+                            .push(UnmaterializedStoredFact {
+                                entity: entity_id.clone(),
+                                source_schema: schema_id,
+                                selected_schema: selected_schema.clone(),
+                                field: field_id,
+                                value: field,
+                            });
+                    }
                 }
             }
             OptionalChoice::Chosen(None) => {}
