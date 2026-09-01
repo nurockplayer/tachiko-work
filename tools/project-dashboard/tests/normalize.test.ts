@@ -1166,11 +1166,18 @@ describe("normalizeRepository", () => {
       projection.deliveries.find(
         (lane) => lane.issue?.number === 169 && lane.pullRequest === null,
       ),
-    ).toMatchObject({ phase: "ready" });
+    ).toMatchObject({
+      authority: { state: "unknown", reason: "source-identity-conflict" },
+      mergeGate: { state: "unknown", reason: "source-identity-conflict" },
+      phase: "unknown",
+    });
     expect(projection.executive.readyCount).toMatchObject({
       state: "satisfied",
-      value: 1,
+      value: 0,
     });
+    expect(
+      projection.criticalPath.nodes.find((node) => node.issueNumber === 169)?.state,
+    ).toBe("unknown");
   });
 
   it.each([
@@ -1202,6 +1209,36 @@ describe("normalizeRepository", () => {
       phase: "human_required",
     });
     expect(projection.humanAction.state).toBe("blocked");
+  });
+
+  it.each([
+    ["stale", (body: string) => body.replace(`HEAD: ${HEAD}`, `HEAD: ${"9".repeat(40)}`)],
+    ["ambiguous", (body: string) => body.replace("PR: 225", "PR: 226")],
+  ] as const)("keeps an agent-owned Issue Unknown for a %s handoff-only claim", (_case, mutate) => {
+    const observation = healthyObservation();
+    const issue = observation.issues[0];
+    const pull = observation.pullRequests[0];
+    if (issue === undefined || pull === undefined) throw new Error("fixture missing lane");
+    pull.closingIssueNumbers = [];
+    pull.comments = pull.comments.map((comment) =>
+      comment.body.startsWith("<!-- agent-handoff:v1 -->")
+        ? { ...comment, body: mutate(comment.body) }
+        : comment,
+    );
+
+    const projection = normalizeRepository(observation);
+    expect(
+      projection.deliveries.find(
+        (lane) => lane.issue?.number === issue.number && lane.pullRequest === null,
+      ),
+    ).toMatchObject({
+      authority: { state: "unknown", reason: "source-identity-conflict" },
+      phase: "unknown",
+    });
+    expect(projection.executive.readyCount).toMatchObject({ state: "satisfied", value: 1 });
+    expect(
+      projection.criticalPath.nodes.find((node) => node.issueNumber === issue.number)?.state,
+    ).toBe("unknown");
   });
 
   it.each([

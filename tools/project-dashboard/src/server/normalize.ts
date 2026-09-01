@@ -800,6 +800,7 @@ function issueLane(
   issue: RawIssue,
   roadmapCurrent: boolean,
   currentHorizon: string | null,
+  implementationUncertain: boolean,
 ): DeliveryLane {
   const labelReadiness = labelReadinessFor(issue);
   const readiness = aggregateSignals(
@@ -809,7 +810,14 @@ function issueLane(
   const owner = ownerFor(issue);
   const humanOwnership = humanOwnershipFor(issue);
   const linkageComplete = repository.implementationLinkageAvailability === "complete";
-  const unavailable = linkageComplete
+  const unavailable = implementationUncertain
+    ? directSignal(
+        "unknown",
+        "source-identity-conflict",
+        "Implementation ownership Unknown",
+        [evidenceSource(`Issue #${String(issue.number)}`, issue.url)],
+      )
+    : linkageComplete
     ? directSignal(
         "unknown",
         "not-required",
@@ -831,6 +839,8 @@ function issueLane(
       ? "human_required"
       : readiness.state === "blocked"
       ? "blocked"
+      : implementationUncertain
+        ? "unknown"
       : linkageComplete && roadmapCurrent
         ? readiness.state === "satisfied" ? "ready" : readiness.state
         : "unknown",
@@ -842,6 +852,13 @@ function issueLane(
     stewardWatch: unavailable,
     authority: repository.main === null
       ? directSignal("unknown", "observation-unavailable", "Authority Unknown", [])
+      : implementationUncertain
+        ? directSignal(
+            "unknown",
+            "source-identity-conflict",
+            "Implementation ownership Unknown",
+            [evidenceSource(`Issue #${String(issue.number)}`, issue.url)],
+          )
       : !roadmapCurrent
         ? directSignal(
             "unknown",
@@ -1170,6 +1187,7 @@ export function normalizeRepository(
         issue,
         roadmap.state === "satisfied",
         roadmap.state === "satisfied" ? roadmap.value : null,
+        uncertainIssueNumbers.has(issue.number),
       ),
     ),
   );
@@ -1277,7 +1295,10 @@ export function normalizeRepository(
       ),
       readyCount: countValue(
         deliveries.filter(
-          (lane) => lane.pullRequest === null && lane.readiness.state === "satisfied",
+          (lane) =>
+            lane.pullRequest === null &&
+            lane.readiness.state === "satisfied" &&
+            (lane.issue === null || !uncertainIssueNumbers.has(lane.issue.number)),
         ).length,
         linkageComplete && issuesComplete && roadmap.state === "satisfied",
         issuesSource,
@@ -1299,7 +1320,9 @@ export function normalizeRepository(
         return {
           issueNumber: issue.number,
           label: issue.title,
-          state: readiness.state === "satisfied"
+          state: uncertainIssueNumbers.has(issue.number)
+            ? "unknown"
+            : readiness.state === "satisfied"
             ? "ready"
             : readiness.state === "waiting"
               ? "waiting"
