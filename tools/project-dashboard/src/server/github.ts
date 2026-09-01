@@ -313,6 +313,7 @@ interface IssuePartial {
 }
 
 function issueFact(issue: GraphIssue, observation: IssuePartial): IssueFact {
+  const identityAvailability = sectionAvailability(observation.core);
   const labelsAvailability = sectionAvailability(observation.labels || pagePartial(issue.labels));
   const dependenciesAvailability = sectionAvailability(
     observation.dependencies || pagePartial(issue.blockedBy),
@@ -333,6 +334,7 @@ function issueFact(issue: GraphIssue, observation: IssuePartial): IssueFact {
     milestoneAvailability: sectionAvailability(observation.milestone),
     blockedBy: present(issue.blockedBy),
     dependenciesAvailability,
+    identityAvailability,
     availability: sectionAvailability(partial),
   };
 }
@@ -341,7 +343,8 @@ function pullRequestFact(
   pull: GraphPullRequest,
   mainSha: string,
   observation: {
-    core: boolean;
+    identity: boolean;
+    native: boolean;
     linkage: boolean;
     comments: boolean;
     reviews: boolean;
@@ -365,7 +368,10 @@ function pullRequestFact(
   const checkPage = pull.statusCheckRollup?.contexts ?? null;
   const checksPartial = observation.checks || pagePartial(checkPage);
   const reviewsPartial = observation.reviews || pagePartial(pull.reviews);
-  const partial = observation.core ||
+  const identityAvailability = sectionAvailability(observation.identity);
+  const nativeAvailability = sectionAvailability(observation.native || linkagePartial);
+  const partial = observation.identity ||
+    observation.native ||
     linkagePartial ||
     commentsPartial ||
     reviewsPartial ||
@@ -384,6 +390,8 @@ function pullRequestFact(
     reviewDecision: pull.reviewDecision,
     linkedIssueNumbers,
     linkageAvailability: sectionAvailability(linkagePartial),
+    identityAvailability,
+    nativeAvailability,
     checks: {
       availability: sectionAvailability(checksPartial),
       items: present(checkPage).map((check) => check.__typename === "CheckRun"
@@ -510,10 +518,11 @@ export function projectGraphResponse(
   const pullRequests = pullNodes.flatMap((pull, index) => pull === null
     ? []
     : [pullRequestFact(pull, main.oid, {
-        core: [
-          "number", "title", "url", "state", "isDraft", "headRefOid", "baseRefOid",
-          "baseRefName", "mergeable", "mergeStateStatus", "reviewDecision",
+        identity: [
+          "number", "title", "url", "state", "isDraft", "headRefOid", "baseRefOid", "baseRefName",
         ].some((field) => pathAffected(errors, [...pullPath, "nodes", index, field])),
+        native: ["mergeable", "mergeStateStatus", "reviewDecision"].some((field) =>
+          pathAffected(errors, [...pullPath, "nodes", index, field])),
         linkage: pathAffected(errors, [...pullPath, "nodes", index, "closingIssuesReferences"]),
         comments: pathAffected(errors, [...pullPath, "nodes", index, "comments"]),
         reviews: pathAffected(errors, [...pullPath, "nodes", index, "reviews"]),
@@ -573,6 +582,12 @@ export function projectGraphResponse(
   const roadmapText = repository.roadmap?.text;
   const horizon = typeof roadmapText === "string" ? parseProductHorizon(roadmapText) : null;
   const activeIssues = issues.filter((issue) => issue.labels.includes(OWNER_TOKEN));
+  const criticalPathAvailability = sectionAvailability(
+    issueDiscoveryAvailability !== "complete" ||
+    activeIssues.some((issue) =>
+      issue.identityAvailability !== "complete" ||
+      issue.dependenciesAvailability !== "complete"),
+  );
   const countAvailability = issueDiscoveryAvailability;
   const relevantPullRequests = pullRequests.filter((pull) =>
     evidenceRelevant(pull, issuesByNumber));
@@ -722,7 +737,7 @@ export function projectGraphResponse(
     deliveries,
     deliveriesAvailability,
     criticalPath: {
-      availability: issuesAvailability,
+      availability: criticalPathAvailability,
       nodes: [...nodes.values()].sort((left, right) => left.issueNumber - right.issueNumber),
       edges,
       source: repositorySource,

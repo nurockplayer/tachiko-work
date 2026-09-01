@@ -170,13 +170,13 @@ function pullRequestGroups(pull: PullRequestFact): HTMLElement[] {
     source: { label: "Native review", url: review.url, kind: "github" as const },
   }));
   return [
-    factGroup("Pull request identity", pull.availability, [
+    factGroup("Pull request identity", pull.identityAvailability, [
       fact("STATE", pull.state),
       fact("DRAFT", pull.draft),
       fact("HEAD", pull.headSha),
       fact("BASE", `${pull.baseRef} · ${pull.baseSha}`),
     ]),
-    factGroup("GitHub native fields · displayed verbatim", pull.availability, [
+    factGroup("GitHub native fields · displayed verbatim", pull.nativeAvailability, [
       fact("MERGEABLE", pull.mergeable),
       fact("MERGE STATE", pull.mergeStateStatus),
       fact("REVIEW DECISION", pull.reviewDecision),

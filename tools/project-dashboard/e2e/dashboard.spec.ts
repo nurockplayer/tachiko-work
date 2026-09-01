@@ -92,6 +92,40 @@ test("shows direct GitHub and Steward facts without a final verdict", async ({ p
   await expect(page.getByText(/merge ready|merge-ready|can_merge/i)).toHaveCount(0);
 });
 
+test("keeps pull identity complete when only checks are partial", async ({ page }) => {
+  await page.route("**/api/project", async (route) => {
+    const response = await route.fetch();
+    const projection = (await response.json()) as DashboardProjection;
+    await route.fulfill({
+      response,
+      json: {
+        ...projection,
+        deliveries: projection.deliveries.map((lane, index) =>
+          index !== 0 || lane.pullRequest === null
+            ? lane
+            : {
+                ...lane,
+                pullRequest: {
+                  ...lane.pullRequest,
+                  availability: "partial",
+                  checks: { availability: "partial", items: [] },
+                },
+              }),
+      },
+    });
+  });
+  await page.goto("/");
+
+  await expect(
+    page.locator(".fact-group").filter({ hasText: "Pull request identity" })
+      .getByText("complete", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.locator(".fact-group").filter({ hasText: "Checks" })
+      .getByText("partial", { exact: true }),
+  ).toBeVisible();
+});
+
 test("renders fully observed absent Issue metadata as none observed", async ({ page }) => {
   await page.route("**/api/project", async (route) => {
     const response = await route.fetch();

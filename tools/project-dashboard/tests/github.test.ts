@@ -346,6 +346,10 @@ describe("Dashboard GitHub observation", () => {
       availability: "partial",
       items: [],
     });
+    expect(projection.deliveries[0]?.pullRequest).toMatchObject({
+      identityAvailability: "complete",
+      nativeAvailability: "complete",
+    });
     expect(projection.executive.humanAction).toMatchObject({
       value: "None in current watches",
       availability: "complete",
@@ -541,6 +545,22 @@ describe("Dashboard GitHub observation", () => {
       value: null,
       availability: "partial",
     });
+  });
+
+  it("keeps milestone errors out of the critical-path availability", () => {
+    const response = graph();
+    response.errors = [{
+      message: "Milestone unavailable",
+      path: ["repository", "issues", "nodes", 0, "milestone"],
+    }];
+
+    const projection = projectGraphResponse(response);
+    expect(projection.deliveries[0]?.issue).toMatchObject({
+      milestoneAvailability: "partial",
+      availability: "partial",
+    });
+    expect(projection.criticalPath.availability).toBe("complete");
+    expect(projection.fetchHealth).toBe("partial");
   });
 
   it("never serializes credentials and fails unavailable on request errors", async () => {

@@ -21,6 +21,7 @@ export function healthyProjection(): DashboardProjection {
     milestoneAvailability: "complete" as const,
     blockedBy: [{ number: 200, state: "CLOSED", url: "https://github.example/issues/200" }],
     dependenciesAvailability: "complete" as const,
+    identityAvailability: "complete" as const,
     availability: "complete" as const,
   };
   const pullRequest = {
@@ -37,6 +38,8 @@ export function healthyProjection(): DashboardProjection {
     reviewDecision: null,
     linkedIssueNumbers: [229],
     linkageAvailability: "complete" as const,
+    identityAvailability: "complete" as const,
+    nativeAvailability: "complete" as const,
     checks: {
       availability: "complete" as const,
       items: [{
@@ -144,6 +147,8 @@ export function partialProjection(): DashboardProjection {
       pullRequest: lane.pullRequest === null ? null : {
         ...lane.pullRequest,
         mergeable: null,
+        identityAvailability: "partial",
+        nativeAvailability: "partial",
         availability: "partial",
         handoff: { status: "unknown", value: null, reason: "Observation incomplete", source: null },
       },

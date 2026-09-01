@@ -24,6 +24,7 @@ export interface IssueFact {
   milestoneAvailability: Availability;
   blockedBy: { number: number; state: string; url: string }[];
   dependenciesAvailability: Availability;
+  identityAvailability: Availability;
   availability: Availability;
 }
 
@@ -64,6 +65,8 @@ export interface PullRequestFact {
   reviewDecision: string | null;
   linkedIssueNumbers: number[];
   linkageAvailability: Availability;
+  identityAvailability: Availability;
+  nativeAvailability: Availability;
   checks: { availability: Availability; items: CheckFact[] };
   reviews: { availability: Availability; items: ReviewFact[] };
   handoff: StructuredFact;
