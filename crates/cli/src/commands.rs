@@ -1498,10 +1498,16 @@ fn write_new(path: &Path, contents: &[u8]) -> Result<(), CommandError> {
 fn render_merge_conflicts(conflicts: &[MergeConflict]) -> String {
     let mut output = String::new();
     for conflict in conflicts {
-        let _ = writeln!(output, "  {}", conflict.path);
-        let _ = writeln!(output, "    base: {:?}", conflict.base);
-        let _ = writeln!(output, "    ours: {:?}", conflict.ours);
-        let _ = writeln!(output, "    theirs: {:?}", conflict.theirs);
+        let _ = writeln!(
+            output,
+            "  {:?} / {:?} / {:?}",
+            conflict.target(),
+            conflict.facet(),
+            conflict.kind()
+        );
+        let _ = writeln!(output, "    base: {:?}", conflict.base());
+        let _ = writeln!(output, "    left: {:?}", conflict.left());
+        let _ = writeln!(output, "    right: {:?}", conflict.right());
     }
     output.trim_end().to_owned()
 }

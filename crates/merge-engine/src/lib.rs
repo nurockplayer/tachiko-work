@@ -1,11 +1,16 @@
 //! Semantic three-way merge for Tachiko Work documents.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    cmp::Ordering,
+    collections::{BTreeMap, BTreeSet},
+};
 
 use tachiko_semantic_core::{
     Document, DocumentId, Entity, EntityId, EntityKey, FieldDefinition, FieldId, FieldKey,
     FieldType, Schema, SchemaId, SchemaKey, Value,
 };
+
+pub const SEMANTIC_CONFLICT_V1: &str = "tachiko.semantic-conflict/v1";
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum MergeOutcome {
@@ -15,28 +20,412 @@ pub enum MergeOutcome {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MergeConflict {
-    pub path: String,
-    pub base: Option<MergeValue>,
-    pub ours: Option<MergeValue>,
-    pub theirs: Option<MergeValue>,
+    contract: SemanticConflictContract,
+    document: DocumentId,
+    target: ConflictTarget,
+    facet: ConflictFacet,
+    kind: ConflictKind,
+    base: ConflictFact,
+    left: ConflictFact,
+    right: ConflictFact,
+}
+
+impl MergeConflict {
+    fn new(
+        document: &DocumentId,
+        target: ConflictTarget,
+        facet: ConflictFacet,
+        base: Option<MergeValue>,
+        left: Option<MergeValue>,
+        right: Option<MergeValue>,
+    ) -> Self {
+        assert!(
+            target.allows(facet),
+            "merge engine emitted an invalid target/facet pair"
+        );
+        let kind = ConflictKind::classify(base.as_ref(), left.as_ref(), right.as_ref())
+            .expect("merge engine emitted facts that are not a Semantic Conflict v1 conflict");
+        Self {
+            contract: SemanticConflictContract::V1,
+            document: document.clone(),
+            target,
+            facet,
+            kind,
+            base: ConflictFact::from(base),
+            left: ConflictFact::from(left),
+            right: ConflictFact::from(right),
+        }
+    }
+
+    #[must_use]
+    pub const fn contract(&self) -> SemanticConflictContract {
+        self.contract
+    }
+
+    #[must_use]
+    pub fn document(&self) -> &DocumentId {
+        &self.document
+    }
+
+    #[must_use]
+    pub fn target(&self) -> &ConflictTarget {
+        &self.target
+    }
+
+    #[must_use]
+    pub const fn facet(&self) -> ConflictFacet {
+        self.facet
+    }
+
+    #[must_use]
+    pub const fn kind(&self) -> ConflictKind {
+        self.kind
+    }
+
+    #[must_use]
+    pub fn base(&self) -> &ConflictFact {
+        &self.base
+    }
+
+    #[must_use]
+    pub fn left(&self) -> &ConflictFact {
+        &self.left
+    }
+
+    #[must_use]
+    pub fn right(&self) -> &ConflictFact {
+        &self.right
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum SemanticConflictContract {
+    V1,
+}
+
+impl SemanticConflictContract {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::V1 => SEMANTIC_CONFLICT_V1,
+        }
+    }
+}
+
+impl TryFrom<&str> for SemanticConflictContract {
+    type Error = UnsupportedConflictContract;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            SEMANTIC_CONFLICT_V1 => Ok(Self::V1),
+            _ => Err(UnsupportedConflictContract(value.to_owned())),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UnsupportedConflictContract(String);
+
+impl std::fmt::Display for UnsupportedConflictContract {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "unsupported semantic conflict contract '{}'",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for UnsupportedConflictContract {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ConflictTarget {
+    Document(DocumentId),
+    Schema(SchemaId),
+    SchemaField {
+        schema: SchemaId,
+        field: FieldId,
+    },
+    Entity(EntityId),
+    StoredEntityField {
+        entity: EntityId,
+        schema: SchemaId,
+        field: FieldId,
+    },
+}
+
+impl ConflictTarget {
+    const fn subject_rank(&self) -> u8 {
+        match self {
+            Self::Document(_) => 0,
+            Self::Schema(_) => 1,
+            Self::SchemaField { .. } => 2,
+            Self::Entity(_) => 3,
+            Self::StoredEntityField { .. } => 4,
+        }
+    }
+
+    fn canonical_cmp(&self, other: &Self) -> Ordering {
+        self.subject_rank()
+            .cmp(&other.subject_rank())
+            .then_with(|| match (self, other) {
+                (Self::Document(left), Self::Document(right)) => left.cmp(right),
+                (Self::Schema(left), Self::Schema(right)) => left.cmp(right),
+                (
+                    Self::SchemaField {
+                        schema: left_schema,
+                        field: left_field,
+                    },
+                    Self::SchemaField {
+                        schema: right_schema,
+                        field: right_field,
+                    },
+                ) => (left_schema, left_field).cmp(&(right_schema, right_field)),
+                (Self::Entity(left), Self::Entity(right)) => left.cmp(right),
+                (
+                    Self::StoredEntityField {
+                        entity: left_entity,
+                        schema: left_schema,
+                        field: left_field,
+                    },
+                    Self::StoredEntityField {
+                        entity: right_entity,
+                        schema: right_schema,
+                        field: right_field,
+                    },
+                ) => (left_entity, left_schema, left_field).cmp(&(
+                    right_entity,
+                    right_schema,
+                    right_field,
+                )),
+                _ => Ordering::Equal,
+            })
+    }
+
+    #[must_use]
+    pub const fn allows(&self, facet: ConflictFacet) -> bool {
+        matches!(
+            (self, facet),
+            (Self::Document(_), ConflictFacet::Title)
+                | (Self::Schema(_), ConflictFacet::Subject | ConflictFacet::Key)
+                | (
+                    Self::SchemaField { .. },
+                    ConflictFacet::Subject
+                        | ConflictFacet::Key
+                        | ConflictFacet::FieldType
+                        | ConflictFacet::Requiredness
+                )
+                | (
+                    Self::Entity(_),
+                    ConflictFacet::Subject | ConflictFacet::Key | ConflictFacet::Schema
+                )
+                | (Self::StoredEntityField { .. }, ConflictFacet::StoredValue)
+        )
+    }
+
+    /// Check that a direct facet is valid for this closed target family.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed compatibility error for an unsupported pairing.
+    pub fn validate_facet(&self, facet: ConflictFacet) -> Result<(), UnsupportedTargetFacet> {
+        if self.allows(facet) {
+            Ok(())
+        } else {
+            Err(UnsupportedTargetFacet {
+                target: self.clone(),
+                facet,
+            })
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UnsupportedTargetFacet {
+    pub target: ConflictTarget,
+    pub facet: ConflictFacet,
+}
+
+impl std::fmt::Display for UnsupportedTargetFacet {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "unsupported semantic conflict target/facet pairing: {:?} / {:?}",
+            self.target, self.facet
+        )
+    }
+}
+
+impl std::error::Error for UnsupportedTargetFacet {}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConflictFacet {
+    Subject,
+    Title,
+    Key,
+    FieldType,
+    Requiredness,
+    Schema,
+    StoredValue,
+}
+
+impl ConflictFacet {
+    const fn canonical_rank(self, target: &ConflictTarget) -> u8 {
+        match (target, self) {
+            (ConflictTarget::Document(_), Self::Title)
+            | (
+                ConflictTarget::Schema(_)
+                | ConflictTarget::SchemaField { .. }
+                | ConflictTarget::Entity(_),
+                Self::Subject,
+            )
+            | (ConflictTarget::StoredEntityField { .. }, Self::StoredValue) => 0,
+            (
+                ConflictTarget::Schema(_)
+                | ConflictTarget::SchemaField { .. }
+                | ConflictTarget::Entity(_),
+                Self::Key,
+            ) => 1,
+            (ConflictTarget::SchemaField { .. }, Self::FieldType)
+            | (ConflictTarget::Entity(_), Self::Schema) => 2,
+            (ConflictTarget::SchemaField { .. }, Self::Requiredness) => 3,
+            _ => u8::MAX,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConflictKind {
+    ConcurrentAddition,
+    DeleteModify,
+    ConcurrentChange,
+}
+
+impl ConflictKind {
+    const fn canonical_rank(self) -> u8 {
+        match self {
+            Self::ConcurrentAddition => 0,
+            Self::DeleteModify => 1,
+            Self::ConcurrentChange => 2,
+        }
+    }
+
+    fn classify(
+        base: Option<&MergeValue>,
+        left: Option<&MergeValue>,
+        right: Option<&MergeValue>,
+    ) -> Option<Self> {
+        match (base, left, right) {
+            (None, Some(_), Some(_)) => Some(Self::ConcurrentAddition),
+            (Some(_), None, Some(_)) | (Some(_), Some(_), None) => Some(Self::DeleteModify),
+            (Some(_), Some(_), Some(_)) => Some(Self::ConcurrentChange),
+            _ => None,
+        }
+    }
+}
+
+impl TryFrom<&str> for ConflictKind {
+    type Error = UnsupportedConflictKind;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "concurrent_addition" => Ok(Self::ConcurrentAddition),
+            "delete_modify" => Ok(Self::DeleteModify),
+            "concurrent_change" => Ok(Self::ConcurrentChange),
+            _ => Err(UnsupportedConflictKind(value.to_owned())),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UnsupportedConflictKind(String);
+
+impl std::fmt::Display for UnsupportedConflictKind {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "unsupported semantic conflict kind '{}'", self.0)
+    }
+}
+
+impl std::error::Error for UnsupportedConflictKind {}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ConflictFact {
+    Absent,
+    Present(MergeValue),
+}
+
+impl From<Option<MergeValue>> for ConflictFact {
+    fn from(value: Option<MergeValue>) -> Self {
+        value.map_or(Self::Absent, Self::Present)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum MergeValue {
-    DocumentId(DocumentId),
     DocumentTitle(String),
-    Schema(Schema),
-    FieldDefinition(FieldDefinition),
-    Entity(Entity),
-    EntityId(EntityId),
+    SchemaSubject(SchemaSubject),
+    SchemaFieldSubject(SchemaFieldSubject),
+    EntitySubject(EntitySubject),
     SchemaId(SchemaId),
-    FieldId(FieldId),
     SchemaKey(SchemaKey),
     EntityKey(EntityKey),
     FieldKey(FieldKey),
     FieldType(FieldType),
     Required(bool),
     FieldValue(Value),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchemaSubject {
+    pub key: SchemaKey,
+    pub fields: BTreeMap<FieldId, SchemaFieldSubject>,
+}
+
+impl From<&Schema> for SchemaSubject {
+    fn from(schema: &Schema) -> Self {
+        Self {
+            key: schema.key.clone(),
+            fields: schema
+                .fields
+                .iter()
+                .map(|(field, definition)| (field.clone(), SchemaFieldSubject::from(definition)))
+                .collect(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchemaFieldSubject {
+    pub key: FieldKey,
+    pub field_type: FieldType,
+    pub required: bool,
+}
+
+impl From<&FieldDefinition> for SchemaFieldSubject {
+    fn from(field: &FieldDefinition) -> Self {
+        Self {
+            key: field.key.clone(),
+            field_type: field.field_type.clone(),
+            required: field.required,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct EntitySubject {
+    pub key: EntityKey,
+    pub schema: SchemaId,
+    pub fields: BTreeMap<FieldId, Value>,
+}
+
+impl From<&Entity> for EntitySubject {
+    fn from(entity: &Entity) -> Self {
+        Self {
+            key: entity.key.clone(),
+            schema: entity.schema.clone(),
+            fields: entity.fields.clone(),
+        }
+    }
 }
 
 /// Merge semantic changes from `ours` and `theirs` against their common `base`.
@@ -46,16 +435,12 @@ pub enum MergeValue {
 #[must_use]
 pub fn merge(base: &Document, ours: &Document, theirs: &Document) -> MergeOutcome {
     let mut conflicts = Vec::new();
-    let id = merge_scalar(
-        "id",
-        &base.id,
-        &ours.id,
-        &theirs.id,
-        |id| MergeValue::DocumentId(id.clone()),
-        &mut conflicts,
-    );
     let title = merge_scalar(
-        "title",
+        ConflictCoordinate::new(
+            &base.id,
+            ConflictTarget::Document(base.id.clone()),
+            ConflictFacet::Title,
+        ),
         &base.title,
         &ours.title,
         &theirs.title,
@@ -63,12 +448,14 @@ pub fn merge(base: &Document, ours: &Document, theirs: &Document) -> MergeOutcom
         &mut conflicts,
     );
     let schemas = merge_schemas(
+        &base.id,
         &base.schemas,
         &ours.schemas,
         &theirs.schemas,
         &mut conflicts,
     );
     let entities = merge_entities(
+        &base.id,
         &base.entities,
         &ours.entities,
         &theirs.entities,
@@ -76,16 +463,24 @@ pub fn merge(base: &Document, ours: &Document, theirs: &Document) -> MergeOutcom
     );
 
     if !conflicts.is_empty() {
-        conflicts.sort_by(|left, right| left.path.cmp(&right.path));
+        conflicts.sort_by(|left, right| {
+            left.target
+                .canonical_cmp(&right.target)
+                .then_with(|| {
+                    left.facet
+                        .canonical_rank(&left.target)
+                        .cmp(&right.facet.canonical_rank(&right.target))
+                })
+                .then_with(|| left.kind.canonical_rank().cmp(&right.kind.canonical_rank()))
+        });
         return MergeOutcome::Conflicted(conflicts);
     }
 
-    let (Some(id), Some(title), Some(schemas), Some(entities)) = (id, title, schemas, entities)
-    else {
+    let (Some(title), Some(schemas), Some(entities)) = (title, schemas, entities) else {
         unreachable!("missing merge selection must have produced a conflict")
     };
     MergeOutcome::Merged(Document {
-        id,
+        id: base.id.clone(),
         title,
         schemas,
         entities,
@@ -93,6 +488,7 @@ pub fn merge(base: &Document, ours: &Document, theirs: &Document) -> MergeOutcom
 }
 
 fn merge_schemas(
+    document: &DocumentId,
     base: &BTreeMap<SchemaId, Schema>,
     ours: &BTreeMap<SchemaId, Schema>,
     theirs: &BTreeMap<SchemaId, Schema>,
@@ -108,25 +504,30 @@ fn merge_schemas(
     let mut complete = true;
 
     for schema_id in schema_ids {
-        let path = format!("schemas.{schema_id}");
         match (
             base.get(&schema_id),
             ours.get(&schema_id),
             theirs.get(&schema_id),
         ) {
             (Some(base), Some(ours), Some(theirs)) => {
-                if let Some(schema) = merge_schema(&path, base, ours, theirs, conflicts) {
+                if let Some(schema) =
+                    merge_schema(document, &schema_id, base, ours, theirs, conflicts)
+                {
                     schemas.insert(schema_id, schema);
                 } else {
                     complete = false;
                 }
             }
             (base, ours, theirs) => match merge_optional(
-                &path,
+                ConflictCoordinate::new(
+                    document,
+                    ConflictTarget::Schema(schema_id.clone()),
+                    ConflictFacet::Subject,
+                ),
                 base,
                 ours,
                 theirs,
-                |schema| MergeValue::Schema(schema.clone()),
+                |schema| MergeValue::SchemaSubject(SchemaSubject::from(schema)),
                 conflicts,
             ) {
                 OptionalChoice::Chosen(Some(schema)) => {
@@ -142,23 +543,27 @@ fn merge_schemas(
 }
 
 fn merge_schema(
-    path: &str,
+    document: &DocumentId,
+    schema_id: &SchemaId,
     base: &Schema,
     ours: &Schema,
     theirs: &Schema,
     conflicts: &mut Vec<MergeConflict>,
 ) -> Option<Schema> {
-    let id = merge_scalar(
-        &format!("{path}.id"),
-        &base.id,
-        &ours.id,
-        &theirs.id,
-        |id| MergeValue::SchemaId(id.clone()),
+    let fields = merge_schema_fields(
+        document,
+        schema_id,
+        &base.fields,
+        &ours.fields,
+        &theirs.fields,
         conflicts,
     );
-    let fields = merge_schema_fields(path, &base.fields, &ours.fields, &theirs.fields, conflicts);
     let key = merge_scalar(
-        &format!("{path}.key"),
+        ConflictCoordinate::new(
+            document,
+            ConflictTarget::Schema(schema_id.clone()),
+            ConflictFacet::Key,
+        ),
         &base.key,
         &ours.key,
         &theirs.key,
@@ -167,14 +572,15 @@ fn merge_schema(
     );
 
     Some(Schema {
-        id: id?,
+        id: schema_id.clone(),
         key: key?,
         fields: fields?,
     })
 }
 
 fn merge_schema_fields(
-    schema_path: &str,
+    document: &DocumentId,
+    schema_id: &SchemaId,
     base: &BTreeMap<FieldId, FieldDefinition>,
     ours: &BTreeMap<FieldId, FieldDefinition>,
     theirs: &BTreeMap<FieldId, FieldDefinition>,
@@ -190,25 +596,33 @@ fn merge_schema_fields(
     let mut complete = true;
 
     for field_id in field_ids {
-        let path = format!("{schema_path}.fields.{field_id}");
         match (
             base.get(&field_id),
             ours.get(&field_id),
             theirs.get(&field_id),
         ) {
             (Some(base), Some(ours), Some(theirs)) => {
-                if let Some(field) = merge_field_definition(&path, base, ours, theirs, conflicts) {
+                if let Some(field) = merge_field_definition(
+                    document, schema_id, &field_id, base, ours, theirs, conflicts,
+                ) {
                     fields.insert(field_id, field);
                 } else {
                     complete = false;
                 }
             }
             (base, ours, theirs) => match merge_optional(
-                &path,
+                ConflictCoordinate::new(
+                    document,
+                    ConflictTarget::SchemaField {
+                        schema: schema_id.clone(),
+                        field: field_id.clone(),
+                    },
+                    ConflictFacet::Subject,
+                ),
                 base,
                 ours,
                 theirs,
-                |field| MergeValue::FieldDefinition(field.clone()),
+                |field| MergeValue::SchemaFieldSubject(SchemaFieldSubject::from(field)),
                 conflicts,
             ) {
                 OptionalChoice::Chosen(Some(field)) => {
@@ -224,22 +638,20 @@ fn merge_schema_fields(
 }
 
 fn merge_field_definition(
-    path: &str,
+    document: &DocumentId,
+    schema_id: &SchemaId,
+    field_id: &FieldId,
     base: &FieldDefinition,
     ours: &FieldDefinition,
     theirs: &FieldDefinition,
     conflicts: &mut Vec<MergeConflict>,
 ) -> Option<FieldDefinition> {
-    let id = merge_scalar(
-        &format!("{path}.id"),
-        &base.id,
-        &ours.id,
-        &theirs.id,
-        |id| MergeValue::FieldId(id.clone()),
-        conflicts,
-    );
+    let target = || ConflictTarget::SchemaField {
+        schema: schema_id.clone(),
+        field: field_id.clone(),
+    };
     let key = merge_scalar(
-        &format!("{path}.key"),
+        ConflictCoordinate::new(document, target(), ConflictFacet::Key),
         &base.key,
         &ours.key,
         &theirs.key,
@@ -247,7 +659,7 @@ fn merge_field_definition(
         conflicts,
     );
     let field_type = merge_scalar(
-        &format!("{path}.field_type"),
+        ConflictCoordinate::new(document, target(), ConflictFacet::FieldType),
         &base.field_type,
         &ours.field_type,
         &theirs.field_type,
@@ -255,7 +667,7 @@ fn merge_field_definition(
         conflicts,
     );
     let required = merge_scalar(
-        &format!("{path}.required"),
+        ConflictCoordinate::new(document, target(), ConflictFacet::Requiredness),
         &base.required,
         &ours.required,
         &theirs.required,
@@ -264,7 +676,7 @@ fn merge_field_definition(
     );
 
     Some(FieldDefinition {
-        id: id?,
+        id: field_id.clone(),
         key: key?,
         field_type: field_type?,
         required: required?,
@@ -272,6 +684,7 @@ fn merge_field_definition(
 }
 
 fn merge_entities(
+    document: &DocumentId,
     base: &BTreeMap<EntityId, Entity>,
     ours: &BTreeMap<EntityId, Entity>,
     theirs: &BTreeMap<EntityId, Entity>,
@@ -287,25 +700,30 @@ fn merge_entities(
     let mut complete = true;
 
     for entity_id in entity_ids {
-        let path = format!("entities.{entity_id}");
         match (
             base.get(&entity_id),
             ours.get(&entity_id),
             theirs.get(&entity_id),
         ) {
             (Some(base), Some(ours), Some(theirs)) => {
-                if let Some(entity) = merge_entity(&path, base, ours, theirs, conflicts) {
+                if let Some(entity) =
+                    merge_entity(document, &entity_id, base, ours, theirs, conflicts)
+                {
                     entities.insert(entity_id, entity);
                 } else {
                     complete = false;
                 }
             }
             (base, ours, theirs) => match merge_optional(
-                &path,
+                ConflictCoordinate::new(
+                    document,
+                    ConflictTarget::Entity(entity_id.clone()),
+                    ConflictFacet::Subject,
+                ),
                 base,
                 ours,
                 theirs,
-                |entity| MergeValue::Entity(entity.clone()),
+                |entity| MergeValue::EntitySubject(EntitySubject::from(entity)),
                 conflicts,
             ) {
                 OptionalChoice::Chosen(Some(entity)) => {
@@ -321,22 +739,19 @@ fn merge_entities(
 }
 
 fn merge_entity(
-    path: &str,
+    document: &DocumentId,
+    entity_id: &EntityId,
     base: &Entity,
     ours: &Entity,
     theirs: &Entity,
     conflicts: &mut Vec<MergeConflict>,
 ) -> Option<Entity> {
-    let id = merge_scalar(
-        &format!("{path}.id"),
-        &base.id,
-        &ours.id,
-        &theirs.id,
-        |id| MergeValue::EntityId(id.clone()),
-        conflicts,
-    );
     let schema = merge_scalar(
-        &format!("{path}.schema"),
+        ConflictCoordinate::new(
+            document,
+            ConflictTarget::Entity(entity_id.clone()),
+            ConflictFacet::Schema,
+        ),
         &base.schema,
         &ours.schema,
         &theirs.schema,
@@ -344,17 +759,29 @@ fn merge_entity(
         conflicts,
     );
     let key = merge_scalar(
-        &format!("{path}.key"),
+        ConflictCoordinate::new(
+            document,
+            ConflictTarget::Entity(entity_id.clone()),
+            ConflictFacet::Key,
+        ),
         &base.key,
         &ours.key,
         &theirs.key,
         |key| MergeValue::EntityKey(key.clone()),
         conflicts,
     );
-    let fields = merge_entity_fields(path, &base.fields, &ours.fields, &theirs.fields, conflicts);
+    let fields = merge_entity_fields(
+        document,
+        entity_id,
+        schema.as_ref(),
+        base,
+        ours,
+        theirs,
+        conflicts,
+    );
 
     Some(Entity {
-        id: id?,
+        id: entity_id.clone(),
         key: key?,
         schema: schema?,
         fields: fields?,
@@ -362,33 +789,54 @@ fn merge_entity(
 }
 
 fn merge_entity_fields(
-    entity_path: &str,
-    base: &BTreeMap<FieldId, Value>,
-    ours: &BTreeMap<FieldId, Value>,
-    theirs: &BTreeMap<FieldId, Value>,
+    document: &DocumentId,
+    entity_id: &EntityId,
+    selected_schema: Option<&SchemaId>,
+    base: &Entity,
+    ours: &Entity,
+    theirs: &Entity,
     conflicts: &mut Vec<MergeConflict>,
 ) -> Option<BTreeMap<FieldId, Value>> {
-    let field_ids: BTreeSet<_> = base
+    let field_targets: BTreeSet<_> = base
+        .fields
         .keys()
-        .chain(ours.keys())
-        .chain(theirs.keys())
-        .cloned()
+        .map(|field| (base.schema.clone(), field.clone()))
+        .chain(
+            ours.fields
+                .keys()
+                .map(|field| (ours.schema.clone(), field.clone())),
+        )
+        .chain(
+            theirs
+                .fields
+                .keys()
+                .map(|field| (theirs.schema.clone(), field.clone())),
+        )
         .collect();
     let mut fields = BTreeMap::new();
-    let mut complete = true;
+    let mut complete = selected_schema.is_some();
 
-    for field_id in field_ids {
-        let path = format!("{entity_path}.fields.{field_id}");
+    for (schema_id, field_id) in field_targets {
         match merge_optional(
-            &path,
-            base.get(&field_id),
-            ours.get(&field_id),
-            theirs.get(&field_id),
+            ConflictCoordinate::new(
+                document,
+                ConflictTarget::StoredEntityField {
+                    entity: entity_id.clone(),
+                    schema: schema_id.clone(),
+                    field: field_id.clone(),
+                },
+                ConflictFacet::StoredValue,
+            ),
+            qualified_field(base, &schema_id, &field_id),
+            qualified_field(ours, &schema_id, &field_id),
+            qualified_field(theirs, &schema_id, &field_id),
             |field| MergeValue::FieldValue(field.clone()),
             conflicts,
         ) {
             OptionalChoice::Chosen(Some(field)) => {
-                fields.insert(field_id, field);
+                if selected_schema == Some(&schema_id) {
+                    fields.insert(field_id, field);
+                }
             }
             OptionalChoice::Chosen(None) => {}
             OptionalChoice::Conflict => complete = false,
@@ -398,8 +846,34 @@ fn merge_entity_fields(
     complete.then_some(fields)
 }
 
+fn qualified_field<'entity>(
+    entity: &'entity Entity,
+    schema: &SchemaId,
+    field: &FieldId,
+) -> Option<&'entity Value> {
+    (entity.schema == *schema)
+        .then(|| entity.fields.get(field))
+        .flatten()
+}
+
+struct ConflictCoordinate<'document> {
+    document: &'document DocumentId,
+    target: ConflictTarget,
+    facet: ConflictFacet,
+}
+
+impl<'document> ConflictCoordinate<'document> {
+    fn new(document: &'document DocumentId, target: ConflictTarget, facet: ConflictFacet) -> Self {
+        Self {
+            document,
+            target,
+            facet,
+        }
+    }
+}
+
 fn merge_scalar<T: Clone + PartialEq>(
-    path: &str,
+    coordinate: ConflictCoordinate<'_>,
     base: &T,
     ours: &T,
     theirs: &T,
@@ -408,18 +882,20 @@ fn merge_scalar<T: Clone + PartialEq>(
 ) -> Option<T> {
     let selected = choose(base, ours, theirs);
     if selected.is_none() {
-        conflicts.push(MergeConflict {
-            path: path.to_owned(),
-            base: Some(value(base)),
-            ours: Some(value(ours)),
-            theirs: Some(value(theirs)),
-        });
+        conflicts.push(MergeConflict::new(
+            coordinate.document,
+            coordinate.target,
+            coordinate.facet,
+            Some(value(base)),
+            Some(value(ours)),
+            Some(value(theirs)),
+        ));
     }
     selected
 }
 
 fn merge_optional<T: Clone + PartialEq>(
-    path: &str,
+    coordinate: ConflictCoordinate<'_>,
     base: Option<&T>,
     ours: Option<&T>,
     theirs: Option<&T>,
@@ -428,12 +904,14 @@ fn merge_optional<T: Clone + PartialEq>(
 ) -> OptionalChoice<T> {
     let selected = choose_optional(base, ours, theirs);
     if matches!(selected, OptionalChoice::Conflict) {
-        conflicts.push(MergeConflict {
-            path: path.to_owned(),
-            base: base.map(&value),
-            ours: ours.map(&value),
-            theirs: theirs.map(value),
-        });
+        conflicts.push(MergeConflict::new(
+            coordinate.document,
+            coordinate.target,
+            coordinate.facet,
+            base.map(&value),
+            ours.map(&value),
+            theirs.map(value),
+        ));
     }
     selected
 }

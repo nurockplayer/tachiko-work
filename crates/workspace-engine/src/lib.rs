@@ -19,7 +19,11 @@ pub use tachiko_formula_engine::{
     CalculationError, CalculationFailure, CanonicalAuthoringProjectionError,
     ExpressionComplexityError, ReferenceFailure,
 };
-pub use tachiko_merge_engine::{MergeConflict, MergeValue};
+pub use tachiko_merge_engine::{
+    ConflictFacet, ConflictFact, ConflictKind, ConflictTarget, EntitySubject, MergeConflict,
+    MergeValue, SEMANTIC_CONFLICT_V1, SchemaFieldSubject, SchemaSubject, SemanticConflictContract,
+    UnsupportedConflictContract, UnsupportedConflictKind, UnsupportedTargetFacet,
+};
 use tachiko_merge_engine::{MergeOutcome, merge};
 use tachiko_semantic_core::{
     AddressIndex, AddressIndexError, is_valid_identifier, validate_document_core,
@@ -448,6 +452,14 @@ pub enum WorkspaceError {
     Calculation(#[from] CalculationError),
     #[error("could not compare edited document: {0}")]
     Diff(#[from] DiffError),
+    #[error(
+        "merge inputs belong to different documents: base '{base}', left '{left}', right '{right}'"
+    )]
+    DifferentMergeDocument {
+        base: DocumentId,
+        left: DocumentId,
+        right: DocumentId,
+    },
 }
 
 /// Create a document through the host-supplied stable-ID boundary.
@@ -816,6 +828,13 @@ pub fn merge_documents(
     ours: &Document,
     theirs: &Document,
 ) -> Result<WorkspaceMergeOutcome, WorkspaceError> {
+    if base.id != ours.id || base.id != theirs.id {
+        return Err(WorkspaceError::DifferentMergeDocument {
+            base: base.id.clone(),
+            left: ours.id.clone(),
+            right: theirs.id.clone(),
+        });
+    }
     require_validated_calculation_for(base, ValidationRole::MergeBase)?;
     require_validated_calculation_for(ours, ValidationRole::MergeOurs)?;
     require_validated_calculation_for(theirs, ValidationRole::MergeTheirs)?;

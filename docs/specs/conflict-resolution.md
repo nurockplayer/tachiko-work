@@ -367,19 +367,19 @@ base/left/right facts.
 
 ## Implementation status and follow-up
 
-The current `merge-engine` demonstrates deterministic three-way selection,
-typed base/ours/theirs payload, stable-ID-aware semantic behavior inherited from
-the current model, and no partial output on conflict. Its current `path` address,
-concrete Rust conflict shape, and three-way selection of `Document.id` are
-Provisional implementation evidence and do not satisfy the complete logical v1
-protocol above by themselves.
+The production merge/workspace boundary realizes this logical v1 contract under
+[Issue #223](https://github.com/nurockplayer/tachiko-work/issues/223). It enforces
+same-Document finalized-input admission, removes three-way selection of
+`Document.id`, returns the typed target/facet/kind/fact conflict object in
+canonical semantic order, qualifies stored fields by each Entity state's stored
+`SchemaId`, preserves parent-child suppression, and executes all 13 normative
+logical fixtures above. Candidate validation and complete calculation remain
+workspace finalization evidence rather than another conflict kind.
 
-This authority/specification does not authorize production DTO, codec, CLI
-output, WASM/public transport, or merge-engine changes. After this authority is
-merged, a separate Ready implementation Issue must own production realization,
-including same-Document admission enforcement, removal of mergeable
-`Document.id`, and concrete executable fixtures for the accepted logical fixtures
-above.
+The concrete Rust DTO and CLI rendering remain implementation-level. This
+realization does not select or stabilize a serialization codec, WASM/public
+transport, network/SDK shape, hash/UUID identity, storage format, resolver UI,
+or Git merge driver.
 
 Issues [#47](https://github.com/nurockplayer/tachiko-work/issues/47),
 [#49](https://github.com/nurockplayer/tachiko-work/issues/49), and
