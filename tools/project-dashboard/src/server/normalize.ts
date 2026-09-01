@@ -754,6 +754,9 @@ export function normalizeRepository(
   }
   const linkedIssueNumbers = new Set<number>();
   const deliveries: DeliveryLane[] = observation.pullRequests.map((pull, index) => {
+    for (const issueNumber of pull.closingIssueNumbers) {
+      linkedIssueNumbers.add(issueNumber);
+    }
     const implementationConflict = pull.closingIssueNumbers.some(
       (issueNumber) => (implementationCounts.get(issueNumber) ?? 0) > 1,
     );
@@ -762,7 +765,6 @@ export function normalizeRepository(
     if (issue === undefined) {
       return unlinkedPullLane(observation, pull, implementationConflict);
     }
-    linkedIssueNumbers.add(issue.number);
     return pullLane(
       observation,
       issue,

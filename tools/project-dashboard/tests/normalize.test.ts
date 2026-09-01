@@ -413,11 +413,18 @@ describe("normalizeRepository", () => {
       threads: [],
     });
 
-    const lanes = normalizeRepository(observation).deliveries.filter(
+    const projection = normalizeRepository(observation);
+    const lanes = projection.deliveries.filter(
       (lane) => lane.pullRequest?.number === 225 || lane.pullRequest?.number === 226,
     );
     expect(lanes).toHaveLength(2);
     expect(lanes.find((lane) => lane.pullRequest?.number === 226)?.issue).toBeNull();
+    expect(
+      projection.deliveries.some(
+        (lane) => lane.issue?.number === 223 && lane.pullRequest === null,
+      ),
+    ).toBe(false);
+    expect(projection.executive.readyCount).toBe(0);
     for (const lane of lanes) {
       expect(lane.authority.state).toBe("blocked");
       expect(lane.mergeGate.state).toBe("blocked");
