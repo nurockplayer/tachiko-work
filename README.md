@@ -463,6 +463,15 @@ This diagram shows the current product architecture direction. Internal crate bo
 
 For details, see the [architecture docs index](docs/architecture/README.md).
 
+The repository-local [Live Project Dashboard](tools/project-dashboard/README.md)
+is a five-surface, read-only view of direct GitHub and Steward facts. It keeps
+incomplete observations partial/Unknown and does not reconstruct merge policy
+or produce a final merge verdict. Run its pnpm-only focused gate with:
+
+```sh
+bash scripts/project-dashboard-check.sh
+```
+
 For a fast contributor check after an edit, run:
 
 ```sh

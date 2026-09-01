@@ -39,6 +39,11 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- Added a repository-local, read-only Live Project Dashboard with five
+  observational surfaces for direct GitHub/Steward facts, explicit
+  partial/Unknown states, and server-side credentials; it does not infer a
+  final merge verdict or reconstruct merge policy.
+
 - The first-party browser Designer now admits a second bounded ordinary domain
   without Moonfall-specific collection or control-formula requirements. A
   repository-owned canonical Product Gap project dogfoods opaque semantic IDs,

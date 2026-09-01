@@ -64,6 +64,20 @@ reconciliation fixtures, declarations, and build with:
 bash scripts/operational-evidence-check.sh
 ```
 
+The repository-local Live Project Dashboard consumes that foundation. Its
+focused gate uses pnpm 11.25.0 for lint, typecheck, tests, build, and Chromium
+browser journeys:
+
+```sh
+pnpm --dir tools/project-dashboard exec playwright install chromium
+bash scripts/project-dashboard-check.sh
+```
+
+The Dashboard is observational only: it displays direct GitHub and Steward
+facts across five surfaces, keeps incomplete evidence partial/Unknown, and
+does not reconstruct merge policy or emit a final merge verdict. Its server is
+loopback-only, GET/HEAD-only, and keeps credentials server-side.
+
 ## Work in focused loops
 
 Run the smallest affected crate or test while iterating:
