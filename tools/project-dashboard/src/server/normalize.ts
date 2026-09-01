@@ -402,19 +402,19 @@ function mergeabilityFor(pull: RawPullRequest): DisplaySignal {
       source,
     );
   }
-  if (pull.nativeMergePolicy === "waiting") {
-    return directSignal(
-      "waiting",
-      "native-review-required",
-      "GitHub native review policy is waiting",
-      source,
-    );
-  }
   if (pull.mergeability === "unknown" || pull.nativeMergePolicy === "unknown") {
     return directSignal(
       "unknown",
       "observation-incomplete",
       "Native mergeability Unknown",
+      source,
+    );
+  }
+  if (pull.nativeMergePolicy === "waiting") {
+    return directSignal(
+      "waiting",
+      "native-review-required",
+      "GitHub native review policy is waiting",
       source,
     );
   }
@@ -719,6 +719,8 @@ function pullLane(
         : readiness.state === "waiting"
           ? "waiting"
           : commentState.state === "unknown"
+            ? "unknown"
+          : checks.state === "unknown"
             ? "unknown"
           : review.state === "waiting"
             ? mergeGate.state === "waiting" ? "review_wait" : "unknown"

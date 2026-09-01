@@ -1414,6 +1414,38 @@ describe("normalizeRepository", () => {
     });
   });
 
+  it("preserves native mergeability Unknown over a waiting merge policy", () => {
+    const observation = healthyObservation();
+    addGreenOperationalEvidence(observation);
+    const pull = observation.pullRequests[0];
+    if (pull === undefined) throw new Error("fixture missing pull request");
+    pull.mergeability = "unknown";
+    pull.nativeMergePolicy = "waiting";
+
+    expect(normalizeRepository(observation).deliveries[0]).toMatchObject({
+      mergeGate: { state: "unknown" },
+      phase: "unknown",
+    });
+  });
+
+  it.each(["satisfied", "waiting"] as const)(
+    "keeps the lane phase Unknown for incomplete checks with native policy %s",
+    (policy) => {
+      const observation = healthyObservation();
+      addGreenOperationalEvidence(observation);
+      const pull = observation.pullRequests[0];
+      if (pull === undefined) throw new Error("fixture missing pull request");
+      pull.checksAvailability = "incomplete";
+      pull.nativeMergePolicy = policy;
+
+      expect(normalizeRepository(observation).deliveries[0]).toMatchObject({
+        checks: { state: "unknown" },
+        mergeGate: { state: "unknown" },
+        phase: "unknown",
+      });
+    },
+  );
+
   it("keeps implementation overlap Unknown when the PR/linkage set is incomplete", () => {
     const observation = healthyObservation();
     addGreenOperationalEvidence(observation);
