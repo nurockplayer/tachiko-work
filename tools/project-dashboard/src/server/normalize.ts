@@ -26,6 +26,8 @@ const PROJECT_REVIEW = "project-review";
 const AUTOMATED_BROWSER_CHECK = "Live Project Dashboard browser journey";
 const PERCEPTUAL_REVIEW_CHECK = "perceptual-review";
 
+type ImplementationOverlap = "none" | "unknown" | "conflict";
+
 function evidenceSource(
   label: string,
   url: string,
@@ -286,26 +288,31 @@ function commentSources(pull: RawPullRequest, repository: string): StructuredCom
   }));
 }
 
-function trustedHandoffIssueNumbers(
+function trustedHandoffIssueClaims(
   repository: RepositoryObservation,
   pull: RawPullRequest,
   issues: readonly RawIssue[],
-): number[] {
-  if (repository.main === null) return [];
-  const parsed = commentSources(pull, repository.repository).flatMap((source) =>
-    issues.flatMap((issue) => {
+): { current: number[]; stale: number[] } {
+  if (repository.main === null) return { current: [], stale: [] };
+  const current = new Set<number>();
+  const stale = new Set<number>();
+  for (const source of commentSources(pull, repository.repository)) {
+    for (const issue of issues) {
       const result = parseAgentHandoff(source, {
         repository: repository.repository,
         issueNumber: issue.number,
         pullRequestNumber: pull.number,
         owner: ownerFor(issue),
         headSha: pull.headSha,
-        mainSha: repository.main?.sha ?? "",
+        mainSha: repository.main.sha,
       });
-      return result.ok ? [result.value.issue] : [];
-    }),
-  );
-  return [...new Set(parsed)];
+      if (result.ok) current.add(result.value.issue);
+      else if (result.reason === "head-mismatch" || result.reason === "main-mismatch") {
+        stale.add(issue.number);
+      }
+    }
+  }
+  return { current: [...current], stale: [...stale] };
 }
 
 function mergeabilityFor(pull: RawPullRequest): DisplaySignal {
@@ -337,14 +344,22 @@ function mergeabilityFor(pull: RawPullRequest): DisplaySignal {
 function implementationConflictSignal(
   repository: RepositoryObservation,
   pull: RawPullRequest,
-  implementationConflict: boolean,
+  implementationOverlap: ImplementationOverlap,
 ): DisplaySignal {
   const source = evidenceSource(`PR #${String(pull.number)}`, pull.url);
-  if (implementationConflict) {
+  if (implementationOverlap === "conflict") {
     return directSignal(
       "blocked",
       "source-identity-conflict",
       "Competing implementation pull requests",
+      [source],
+    );
+  }
+  if (implementationOverlap === "unknown") {
+    return directSignal(
+      "unknown",
+      "source-identity-conflict",
+      "Stale implementation ownership needs reconciliation",
       [source],
     );
   }
@@ -404,7 +419,7 @@ function pullLane(
   repository: RepositoryObservation,
   issue: RawIssue,
   pull: RawPullRequest,
-  implementationConflict: boolean,
+  implementationOverlap: ImplementationOverlap,
   roadmapCurrent: boolean,
   currentHorizon: string | null,
 ): DeliveryLane {
@@ -413,7 +428,7 @@ function pullLane(
   const implementationState = implementationConflictSignal(
     repository,
     pull,
-    implementationConflict,
+    implementationOverlap,
   );
   const ownership = ownershipFor(issue);
   const humanOwnership = humanOwnershipFor(issue);
@@ -491,7 +506,7 @@ function pullLane(
           pullRequestState: pull.state,
           pullRequestDraft: pull.draft,
           baseRef: pull.baseRef,
-          authorityConflict: implementationConflict,
+          authorityConflict: implementationOverlap === "conflict",
         },
       ],
       `repository:${String(pull.number)}`,
@@ -768,7 +783,7 @@ function issueLane(
 function unlinkedPullLane(
   repository: RepositoryObservation,
   pull: RawPullRequest,
-  implementationConflict: boolean,
+  implementationOverlap: ImplementationOverlap,
   roadmapCurrent: boolean,
 ): DeliveryLane {
   const pullSource = evidenceSource(`PR #${String(pull.number)}`, pull.url);
@@ -865,7 +880,7 @@ function unlinkedPullLane(
   const implementationState = implementationConflictSignal(
     repository,
     pull,
-    implementationConflict,
+    implementationOverlap,
   );
   const authority = aggregateSignals(
     [observedAuthority, implementationState],
@@ -884,7 +899,7 @@ function unlinkedPullLane(
     issue: null,
     owner: "unknown",
     phase:
-      implementationConflict ||
+      implementationOverlap === "conflict" ||
       [checks, review, authority, mergeability].some(
         (signal) => signal.state === "blocked",
       )
@@ -963,14 +978,26 @@ export function normalizeRepository(
   const singlePullIssueNumbers = observation.pullRequests.map((pull) =>
     pull.closingIssueNumbers.length === 1 ? pull.closingIssueNumbers[0] : undefined,
   );
-  const implementationIssueNumbers = observation.pullRequests.map((pull) =>
-    new Set([
-      ...pull.closingIssueNumbers,
-      ...trustedHandoffIssueNumbers(observation, pull, observation.issues),
-    ]),
+  const handoffClaims = observation.pullRequests.map((pull) =>
+    trustedHandoffIssueClaims(observation, pull, observation.issues),
   );
+  const implementationDefiniteIssueNumbers = observation.pullRequests.map(
+    (pull, index) =>
+      new Set([
+        ...pull.closingIssueNumbers,
+        ...(handoffClaims[index]?.current ?? []),
+      ]),
+  );
+  const implementationIssueNumbers = observation.pullRequests.map(
+    (_pull, index) =>
+      new Set([
+        ...(implementationDefiniteIssueNumbers[index] ?? []),
+        ...(handoffClaims[index]?.stale ?? []),
+      ]),
+  );
+  const staleIssueNumbers = new Set(handoffClaims.flatMap((claim) => claim.stale));
   const implementationCounts = new Map<number, number>();
-  for (const issueNumbers of implementationIssueNumbers) {
+  for (const issueNumbers of implementationDefiniteIssueNumbers) {
     for (const issueNumber of issueNumbers) {
       implementationCounts.set(issueNumber, (implementationCounts.get(issueNumber) ?? 0) + 1);
     }
@@ -980,16 +1007,22 @@ export function normalizeRepository(
     for (const issueNumber of implementationIssueNumbers[index] ?? []) {
       linkedIssueNumbers.add(issueNumber);
     }
-    const implementationConflict = [...(implementationIssueNumbers[index] ?? [])].some(
-      (issueNumber) => (implementationCounts.get(issueNumber) ?? 0) > 1,
-    );
+    const implementationOverlap: ImplementationOverlap = [
+      ...(implementationDefiniteIssueNumbers[index] ?? []),
+    ].some((issueNumber) => (implementationCounts.get(issueNumber) ?? 0) > 1)
+      ? "conflict"
+      : [...(implementationIssueNumbers[index] ?? [])].some((issueNumber) =>
+            staleIssueNumbers.has(issueNumber),
+          )
+        ? "unknown"
+        : "none";
     const issueNumber = singlePullIssueNumbers[index];
     const issue = issueNumber === undefined ? undefined : issuesByNumber.get(issueNumber);
     if (issue === undefined) {
       return unlinkedPullLane(
         observation,
         pull,
-        implementationConflict,
+        implementationOverlap,
         roadmap.state === "satisfied",
       );
     }
@@ -997,7 +1030,7 @@ export function normalizeRepository(
       observation,
       issue,
       pull,
-      implementationConflict,
+      implementationOverlap,
       roadmap.state === "satisfied",
       roadmap.state === "satisfied" ? roadmap.value : null,
     );

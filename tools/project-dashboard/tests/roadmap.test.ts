@@ -90,6 +90,18 @@ describe("parseProductHorizon", () => {
     ).toMatchObject({ state: "unknown", value: "Unknown" });
   });
 
+  it.each(["<custom>", "</custom>", "<span>", "</span>"])(
+    "recognizes a Type-7 HTML paragraph continuation before a Setext boundary: %s",
+    (html) => {
+      expect(
+        parseProductHorizon(
+          `## Current horizon\n\nNext section\n${html}\n---\n\n> **NOT CURRENT**`,
+          "https://github.example/roadmap",
+        ),
+      ).toMatchObject({ state: "unknown", value: "Unknown" });
+    },
+  );
+
   it.each(["> **A**", "- list item"])(
     "does not treat a thematic break after block content %j as Setext",
     (content) => {

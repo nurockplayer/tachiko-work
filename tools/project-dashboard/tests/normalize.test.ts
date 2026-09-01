@@ -4,6 +4,7 @@ import { healthyObservation, partialObservation } from "../src/server/fixtures.j
 import { normalizeRepository } from "../src/server/normalize.js";
 
 const HEAD = "2222222222222222222222222222222222222222";
+const MAIN = "1111111111111111111111111111111111111111";
 
 function addGreenOperationalEvidence(observation: ReturnType<typeof healthyObservation>): void {
   const pull = observation.pullRequests[0];
@@ -878,6 +879,44 @@ describe("normalizeRepository", () => {
         (lane) => lane.pullRequest?.number === 225,
       )?.authority.state,
     ).toBe("satisfied");
+  });
+
+  it.each([
+    ["HEAD", HEAD],
+    ["MAIN", MAIN],
+  ] as const)("keeps a competing stale handoff %s fail-closed", (field, currentValue) => {
+    const observation = healthyObservation();
+    addGreenOperationalEvidence(observation);
+    const source = observation.pullRequests[0];
+    if (source === undefined) throw new Error("fixture missing pull request");
+    observation.pullRequests.push({
+      ...source,
+      number: 226,
+      title: "stale handoff owner",
+      url: "https://github.example/pulls/226",
+      closingIssueNumbers: [],
+      comments: source.comments.map((comment) => ({
+        ...comment,
+        id: `stale-${field}-${comment.id}`,
+        body: comment.body.startsWith("<!-- agent-handoff:v1 -->")
+          ? comment.body
+              .replace("PR: 225", "PR: 226")
+              .replace(`${field}: ${currentValue}`, `${field}: ${"9".repeat(40)}`)
+          : comment.body.replace("PR: 225", "PR: 226"),
+      })),
+    });
+
+    const lanes = normalizeRepository(observation).deliveries.filter(
+      (lane) => lane.pullRequest?.number === 225 || lane.pullRequest?.number === 226,
+    );
+    expect(lanes).toHaveLength(2);
+    for (const lane of lanes) {
+      expect(lane).toMatchObject({
+        authority: { state: "unknown", reason: "source-identity-conflict" },
+        mergeGate: { state: "unknown" },
+        phase: "unknown",
+      });
+    }
   });
 
   it("keeps future-milestone Ready Issues out of the current horizon", () => {

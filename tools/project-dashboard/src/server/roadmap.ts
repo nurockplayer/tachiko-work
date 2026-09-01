@@ -9,11 +9,24 @@ const RAW_HTML_TAG =
 const COMPLETE_HTML_OPEN_TAG =
   /^ {0,3}<([A-Za-z][A-Za-z0-9-]*)(?:[ \t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t]*=[ \t]*(?:[^ "'=<>`]+|'[^']*'|"[^"]*"))?)*[ \t]*\/?>[ \t]*$/;
 const COMPLETE_HTML_CLOSING_TAG =
-  /^ {0,3}<\/[A-Za-z][A-Za-z0-9-]*[ \t]*>[ \t]*$/;
+  /^ {0,3}<\/([A-Za-z][A-Za-z0-9-]*)[ \t]*>[ \t]*$/;
 const TYPE_ONE_HTML_TAG = /^(?:script|pre|style|textarea)$/i;
 
 type HtmlBlock = { end: RegExp | "blank" };
 type Fence = { kind: "`" | "~"; length: number };
+
+function isTypeSevenHtmlLine(line: string): boolean {
+  const openTag = COMPLETE_HTML_OPEN_TAG.exec(line)?.[1];
+  if (
+    openTag !== undefined &&
+    !TYPE_ONE_HTML_TAG.test(openTag) &&
+    !RAW_HTML_TAG.test(openTag)
+  ) {
+    return true;
+  }
+  const closingTag = COMPLETE_HTML_CLOSING_TAG.exec(line)?.[1];
+  return closingTag !== undefined && !RAW_HTML_TAG.test(closingTag);
+}
 
 function blankLine(line: string): string {
   return " ".repeat(line.length);
@@ -42,11 +55,7 @@ function htmlBlockFrom(line: string): HtmlBlock | null {
   )?.[1];
   if (typeSix !== undefined && RAW_HTML_TAG.test(typeSix)) return { end: "blank" };
 
-  const typeSevenOpen = COMPLETE_HTML_OPEN_TAG.exec(line)?.[1];
-  return (typeSevenOpen !== undefined && !TYPE_ONE_HTML_TAG.test(typeSevenOpen)) ||
-    COMPLETE_HTML_CLOSING_TAG.test(line)
-    ? { end: "blank" }
-    : null;
+  return isTypeSevenHtmlLine(line) ? { end: "blank" } : null;
 }
 
 function withoutNonAuthorityBlocks(markdown: string): string {
@@ -125,7 +134,12 @@ function hasPotentialSetextBoundary(section: string): boolean {
     if (index === 0 || !SETEXT_UNDERLINE.test(line)) return false;
     let contentIndex = index - 1;
     while (/^ {4}/.test(lines[contentIndex] ?? "")) contentIndex -= 1;
-    return paragraphEligible(lines[contentIndex] ?? "");
+    const content = lines[contentIndex] ?? "";
+    if (paragraphEligible(content)) return true;
+    if (!isTypeSevenHtmlLine(content)) return false;
+    let precedingIndex = contentIndex - 1;
+    while (isTypeSevenHtmlLine(lines[precedingIndex] ?? "")) precedingIndex -= 1;
+    return paragraphEligible(lines[precedingIndex] ?? "");
   });
 }
 
