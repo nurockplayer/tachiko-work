@@ -134,7 +134,7 @@ interface GraphThread {
   id: string;
   isResolved: boolean;
   isOutdated: boolean;
-  comments: { pageInfo: PageInfo; nodes: GraphComment[] };
+  comments: { pageInfo: PageInfo; nodes: (GraphComment | null)[] | null };
 }
 
 interface GraphCheckRun {
@@ -168,12 +168,12 @@ interface GraphPull {
   baseRefOid: string;
   baseRefName: string;
   mergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
-  closingIssuesReferences: { pageInfo: PageInfo; nodes: { number: number }[] };
-  comments: { pageInfo: PageInfo; nodes: GraphComment[] };
-  reviews: { pageInfo: PageInfo; nodes: GraphReview[] };
-  reviewThreads: { pageInfo: PageInfo; nodes: GraphThread[] };
+  closingIssuesReferences: { pageInfo: PageInfo; nodes: ({ number: number } | null)[] | null };
+  comments: { pageInfo: PageInfo; nodes: (GraphComment | null)[] | null };
+  reviews: { pageInfo: PageInfo; nodes: (GraphReview | null)[] | null };
+  reviewThreads: { pageInfo: PageInfo; nodes: (GraphThread | null)[] | null };
   statusCheckRollup: {
-    contexts: { pageInfo: PageInfo; nodes: GraphCheck[] };
+    contexts: { pageInfo: PageInfo; nodes: (GraphCheck | null)[] | null };
   } | null;
 }
 
@@ -182,11 +182,11 @@ interface GraphIssue {
   title: string;
   url: string;
   state: "OPEN" | "CLOSED";
-  labels: { pageInfo: PageInfo; nodes: { name: string }[] };
+  labels: { pageInfo: PageInfo; nodes: ({ name: string } | null)[] | null };
   milestone: { title: string } | null;
   blockedBy: {
     pageInfo: PageInfo;
-    nodes: { number: number; state: "OPEN" | "CLOSED"; url: string }[];
+    nodes: ({ number: number; state: "OPEN" | "CLOSED"; url: string } | null)[] | null;
   };
 }
 
@@ -207,12 +207,12 @@ interface GraphRepository {
   roadmap: { text: string; oid: string } | null;
   issues: {
     pageInfo: PageInfo;
-    nodes: (GraphIssue | null)[];
+    nodes: (GraphIssue | null)[] | null;
   };
-  pullRequests: { pageInfo: PageInfo; nodes: (GraphPull | null)[] };
+  pullRequests: { pageInfo: PageInfo; nodes: (GraphPull | null)[] | null };
   recent: {
     pageInfo: PageInfo;
-    nodes: (GraphRecentPull | null)[];
+    nodes: (GraphRecentPull | null)[] | null;
   };
 }
 
@@ -315,23 +315,49 @@ function rawCheck(check: GraphCheck, headSha: string): RawCheck {
   };
 }
 
+function presentNodes<T>(nodes: readonly (T | null)[] | null): T[] {
+  return nodes?.filter((node): node is T => node !== null) ?? [];
+}
+
+function hasMissingNode(nodes: readonly unknown[] | null): boolean {
+  return nodes === null || nodes.some((node) => node === null);
+}
+
 function hasNestedTruncation(pull: GraphPull): boolean {
+  const threads = presentNodes(pull.reviewThreads.nodes);
   return (
     pull.closingIssuesReferences.pageInfo.hasNextPage ||
+    hasMissingNode(pull.closingIssuesReferences.nodes) ||
     pull.comments.pageInfo.hasNextPage ||
+    hasMissingNode(pull.comments.nodes) ||
     pull.reviews.pageInfo.hasNextPage ||
+    hasMissingNode(pull.reviews.nodes) ||
     pull.reviewThreads.pageInfo.hasNextPage ||
-    pull.reviewThreads.nodes.some((thread) => thread.comments.pageInfo.hasNextPage) ||
-    (pull.statusCheckRollup?.contexts.pageInfo.hasNextPage ?? false)
+    hasMissingNode(pull.reviewThreads.nodes) ||
+    threads.some(
+      (thread) =>
+        thread.comments.pageInfo.hasNextPage || hasMissingNode(thread.comments.nodes),
+    ) ||
+    (pull.statusCheckRollup?.contexts.pageInfo.hasNextPage ?? false) ||
+    (pull.statusCheckRollup === null
+      ? false
+      : hasMissingNode(pull.statusCheckRollup.contexts.nodes))
   );
 }
 
 function commentsTruncated(pull: GraphPull): boolean {
+  const threads = presentNodes(pull.reviewThreads.nodes);
   return (
     pull.comments.pageInfo.hasNextPage ||
+    hasMissingNode(pull.comments.nodes) ||
     pull.reviews.pageInfo.hasNextPage ||
+    hasMissingNode(pull.reviews.nodes) ||
     pull.reviewThreads.pageInfo.hasNextPage ||
-    pull.reviewThreads.nodes.some((thread) => thread.comments.pageInfo.hasNextPage)
+    hasMissingNode(pull.reviewThreads.nodes) ||
+    threads.some(
+      (thread) =>
+        thread.comments.pageInfo.hasNextPage || hasMissingNode(thread.comments.nodes),
+    )
   );
 }
 
@@ -460,18 +486,12 @@ export async function observeRepository(
     return unavailableObservation("observation-incomplete");
   }
 
-  const issueNodes = repository.issues.nodes.filter(
-    (issue): issue is GraphIssue => issue !== null,
-  );
-  const pullNodes = repository.pullRequests.nodes.filter(
-    (pull): pull is GraphPull => pull !== null,
-  );
-  const recentNodes = repository.recent.nodes.filter(
-    (pull): pull is GraphRecentPull => pull !== null,
-  );
-  const issueNodeMissing = issueNodes.length !== repository.issues.nodes.length;
-  const pullNodeMissing = pullNodes.length !== repository.pullRequests.nodes.length;
-  const recentNodeMissing = recentNodes.length !== repository.recent.nodes.length;
+  const issueNodes = presentNodes(repository.issues.nodes);
+  const pullNodes = presentNodes(repository.pullRequests.nodes);
+  const recentNodes = presentNodes(repository.recent.nodes);
+  const issueNodeMissing = hasMissingNode(repository.issues.nodes);
+  const pullNodeMissing = hasMissingNode(repository.pullRequests.nodes);
+  const recentNodeMissing = hasMissingNode(repository.recent.nodes);
   const nullNodeObserved = issueNodeMissing || pullNodeMissing || recentNodeMissing;
 
   const errors: RepositoryObservation["errors"] = [];
@@ -485,7 +505,11 @@ export async function observeRepository(
     repository.issues.pageInfo.hasNextPage ||
     repository.pullRequests.pageInfo.hasNextPage;
   const issueTruncated = issueNodes.some(
-    (issue) => issue.labels.pageInfo.hasNextPage || issue.blockedBy.pageInfo.hasNextPage,
+    (issue) =>
+      issue.labels.pageInfo.hasNextPage ||
+      hasMissingNode(issue.labels.nodes) ||
+      issue.blockedBy.pageInfo.hasNextPage ||
+      hasMissingNode(issue.blockedBy.nodes),
   );
   const pullTruncated = pullNodes.some(hasNestedTruncation);
   if (topLevelTruncated || issueTruncated || pullTruncated || nullNodeObserved) {
@@ -528,15 +552,18 @@ export async function observeRepository(
       authorityChanges: [],
       authorityAvailability: "unavailable" as const,
     };
-    const reviewComments = pull.reviews.nodes
+    const comments = presentNodes(pull.comments.nodes);
+    const reviews = presentNodes(pull.reviews.nodes);
+    const threads = presentNodes(pull.reviewThreads.nodes);
+    const reviewComments = reviews
       .filter((review) => review.body.length > 0)
       .map((review) => rawComment(review, "pull-request-review", true));
-    const threadComments = pull.reviewThreads.nodes.flatMap((thread) =>
-      thread.comments.nodes.map((comment) =>
+    const threadComments = threads.flatMap((thread) =>
+      presentNodes(thread.comments.nodes).map((comment) =>
         rawComment(comment, "pull-request-review-comment", false),
       ),
     );
-    const checkNodes = pull.statusCheckRollup?.contexts.nodes ?? [];
+    const checkNodes = presentNodes(pull.statusCheckRollup?.contexts.nodes ?? []);
     return {
       number: pull.number,
       title: pull.title,
@@ -556,9 +583,11 @@ export async function observeRepository(
             : "unknown",
       authorityChanges: comparison.authorityChanges,
       authorityAvailability: comparison.authorityAvailability,
-      closingIssueNumbers: pull.closingIssuesReferences.nodes.map((issue) => issue.number),
+      closingIssueNumbers: presentNodes(pull.closingIssuesReferences.nodes).map(
+        (issue) => issue.number,
+      ),
       comments: [
-        ...pull.comments.nodes.map((comment) => rawComment(comment, "issue-comment", true)),
+        ...comments.map((comment) => rawComment(comment, "issue-comment", true)),
         ...reviewComments,
         ...threadComments,
       ],
@@ -567,10 +596,11 @@ export async function observeRepository(
       checksAvailability:
         pull.statusCheckRollup === null
           ? "complete"
-          : pull.statusCheckRollup.contexts.pageInfo.hasNextPage
+          : pull.statusCheckRollup.contexts.pageInfo.hasNextPage ||
+              hasMissingNode(pull.statusCheckRollup.contexts.nodes)
             ? "incomplete"
             : "complete",
-      reviews: pull.reviews.nodes.map((review) => ({
+      reviews: reviews.map((review) => ({
         id: review.fullDatabaseId ?? review.id,
         authorLogin: review.author?.login ?? `unknown:${review.id}`,
         authorAssociation: review.authorAssociation,
@@ -579,16 +609,23 @@ export async function observeRepository(
         state: review.state,
         url: review.url,
       })),
-      reviewsAvailability: pull.reviews.pageInfo.hasNextPage ? "incomplete" : "complete",
-      threads: pull.reviewThreads.nodes.map((thread) => ({
+      reviewsAvailability:
+        pull.reviews.pageInfo.hasNextPage || hasMissingNode(pull.reviews.nodes)
+          ? "incomplete"
+          : "complete",
+      threads: threads.map((thread) => ({
         id: thread.id,
         resolved: thread.isResolved,
         outdated: thread.isOutdated,
-        url: thread.comments.nodes[0]?.url ?? pull.url,
+        url: presentNodes(thread.comments.nodes)[0]?.url ?? pull.url,
       })),
       threadsAvailability:
         pull.reviewThreads.pageInfo.hasNextPage ||
-        pull.reviewThreads.nodes.some((thread) => thread.comments.pageInfo.hasNextPage)
+        hasMissingNode(pull.reviewThreads.nodes) ||
+        threads.some(
+          (thread) =>
+            thread.comments.pageInfo.hasNextPage || hasMissingNode(thread.comments.nodes),
+        )
           ? "incomplete"
           : "complete",
     };
@@ -614,11 +651,17 @@ export async function observeRepository(
       title: issue.title,
       url: issue.url,
       state: issue.state,
-      labels: issue.labels.nodes.map((label) => label.name),
-      labelsAvailability: issue.labels.pageInfo.hasNextPage ? "incomplete" : "complete",
+      labels: presentNodes(issue.labels.nodes).map((label) => label.name),
+      labelsAvailability:
+        issue.labels.pageInfo.hasNextPage || hasMissingNode(issue.labels.nodes)
+          ? "incomplete"
+          : "complete",
       milestone: issue.milestone?.title ?? null,
-      blockedBy: issue.blockedBy.nodes,
-      dependencyAvailability: issue.blockedBy.pageInfo.hasNextPage ? "incomplete" : "complete",
+      blockedBy: presentNodes(issue.blockedBy.nodes),
+      dependencyAvailability:
+        issue.blockedBy.pageInfo.hasNextPage || hasMissingNode(issue.blockedBy.nodes)
+          ? "incomplete"
+          : "complete",
     })),
     issuesAvailability:
       repository.issues.pageInfo.hasNextPage || issueTruncated || issueNodeMissing
@@ -636,6 +679,7 @@ export async function observeRepository(
       pullNodes.some(
         (pull) =>
           pull.closingIssuesReferences.pageInfo.hasNextPage ||
+          hasMissingNode(pull.closingIssuesReferences.nodes) ||
           commentsTruncated(pull),
       )
         ? "incomplete"

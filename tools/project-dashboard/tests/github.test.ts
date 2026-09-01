@@ -165,6 +165,10 @@ function fetchForGraph(graph: ReturnType<typeof graphResponse>): typeof fetch {
   });
 }
 
+function appendNull(nodes: unknown[]): void {
+  nodes.push(null);
+}
+
 function fakeBehindAuthorityFetch() {
   const requests: string[] = [];
   const implementation = (async (input: string | URL | Request) => {
@@ -446,12 +450,34 @@ describe("GitHub observation adapter", () => {
     expect(normalizeRepository(observation).deliveries[0]?.authority.state).toBe("unknown");
   });
 
+  it("keeps handoff ownership overlap incomplete when thread comments are truncated", async () => {
+    const graph = graphResponse();
+    const pull = graph.data.repository.pullRequests.nodes[0];
+    if (pull === undefined) throw new Error("fixture missing pull request");
+    (pull.reviewThreads.nodes as unknown[]).push({
+      id: "thread-1",
+      isResolved: false,
+      isOutdated: false,
+      comments: { pageInfo: { hasNextPage: true }, nodes: [] },
+    });
+
+    const observation = await observeRepository({ fetchImpl: fetchForGraph(graph) });
+    const observedPull = observation.pullRequests[0];
+    expect(observedPull).toMatchObject({
+      commentsAvailability: "incomplete",
+      threadsAvailability: "incomplete",
+    });
+    expect(observation.implementationLinkageAvailability).toBe("incomplete");
+    expect(normalizeRepository(observation).deliveries[0]?.mergeGate.state).not.toBe(
+      "satisfied",
+    );
+  });
+
   it("retains usable partial data when GraphQL nulls top-level nodes", async () => {
     const graph = graphResponse(false, false, true, false, false, true);
     const issues = graph.data.repository.issues.nodes;
     const pulls = graph.data.repository.pullRequests.nodes;
     const recent = graph.data.repository.recent.nodes;
-    const appendNull = (nodes: unknown[]) => nodes.push(null);
     appendNull(issues);
     appendNull(pulls);
     appendNull(recent);
@@ -466,6 +492,46 @@ describe("GitHub observation adapter", () => {
     });
     expect(observation.issues).toHaveLength(1);
     expect(observation.pullRequests).toHaveLength(1);
+    expect(normalizeRepository(observation).fetchHealth).toBe("partial");
+  });
+
+  it("fails linkage and executive counts closed for a null PR node without errors", async () => {
+    const graph = graphResponse();
+    appendNull(graph.data.repository.pullRequests.nodes);
+
+    const projection = normalizeRepository(
+      await observeRepository({ fetchImpl: fetchForGraph(graph) }),
+    );
+    expect(projection.fetchHealth).toBe("partial");
+    expect(projection.executive.activeCount.state).toBe("unknown");
+    expect(projection.executive.readyCount.state).toBe("unknown");
+  });
+
+  it("compacts nullable nested nodes and marks each evidence source incomplete", async () => {
+    const graph = graphResponse();
+    const issue = graph.data.repository.issues.nodes[0];
+    const pull = graph.data.repository.pullRequests.nodes[0];
+    if (issue === undefined || pull === undefined) throw new Error("fixture missing lane");
+    appendNull(issue.labels.nodes);
+    appendNull(issue.blockedBy.nodes);
+    appendNull(pull.closingIssuesReferences.nodes);
+    appendNull(pull.comments.nodes);
+    appendNull(pull.reviews.nodes);
+    appendNull(pull.reviewThreads.nodes);
+    appendNull(pull.statusCheckRollup.contexts.nodes);
+
+    const observation = await observeRepository({ fetchImpl: fetchForGraph(graph) });
+    expect(observation.issues[0]).toMatchObject({
+      labelsAvailability: "incomplete",
+      dependencyAvailability: "incomplete",
+    });
+    expect(observation.pullRequests[0]).toMatchObject({
+      commentsAvailability: "incomplete",
+      checksAvailability: "incomplete",
+      reviewsAvailability: "incomplete",
+      threadsAvailability: "incomplete",
+    });
+    expect(observation.implementationLinkageAvailability).toBe("incomplete");
     expect(normalizeRepository(observation).fetchHealth).toBe("partial");
   });
 
