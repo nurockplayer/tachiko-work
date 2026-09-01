@@ -103,9 +103,10 @@ A dirty run is provisional because the commit alone does not identify its
 source. Final evidence must come from a clean exact HEAD. The runner rechecks
 the commit and clean/dirty state after setup and after every stage, and rejects
 the run if either changed while evidence was being collected. It also overrides
-Cargo's target directory with `target/obstacle-course`, so every CLI stage uses
-the release binary built by the same run rather than an environment-selected
-stale artifact.
+Cargo's target directory, derives and pins the native `rustc` host target, and
+uses `target/obstacle-course/<native-target>/release/`. Every CLI stage therefore
+uses the platform-named release binary built by the same run rather than an
+environment- or Cargo-config-selected stale artifact.
 
 The runner builds release artifacts before measurement. Build/setup time is
 excluded. Each stage runs in a fresh process; OS cache state is explicitly

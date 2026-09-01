@@ -190,9 +190,16 @@ head_commit="$(git rev-parse HEAD)"
 worktree_state="$(current_worktree_state)"
 rust_identity="$(rustc --version | tr ' ' '_')"
 os_identity="$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
+native_target="$(rustc -vV | sed -n 's/^host: //p')"
+if [[ -z "${native_target}" ]]; then
+  echo "obstacle-course: could not determine the native Rust target" >&2
+  exit 1
+fi
 course_target_dir="${repo_root}/target/obstacle-course"
 export CARGO_TARGET_DIR="${course_target_dir}"
-tachiko_bin="${course_target_dir}/release/tachiko"
+export CARGO_BUILD_TARGET="${native_target}"
+executable_name="$(tachiko_executable_name "${native_target}")"
+tachiko_bin="${course_target_dir}/${native_target}/release/${executable_name}"
 
 verify_source_identity() {
   local checkpoint="$1"
@@ -268,14 +275,15 @@ retained_digest="$(workload_digest retained-workspace \
   crates/workspace-engine/tests/retained_state_benchmark.rs)"
 
 echo "COURSE ${course_version} commit=${head_commit} worktree=${worktree_state} profile=release network=offline correctness_stages=${correctness_stage_count}"
-echo "ENV os=${os_identity} rustc=${rust_identity} cargo_target=target/obstacle-course"
+echo "ENV os=${os_identity} rustc=${rust_identity} native_target=${native_target} cargo_target=target/obstacle-course/${native_target}"
 echo "WORKLOAD stage=repository-dogfood id=product-gaps-roproj/v1 sha256=${dogfood_digest}"
 echo "WORKLOAD stage=git-review-roundtrip id=game-balance-git-review/v0 sha256=${git_review_digest}"
 echo "WORKLOAD stage=semantic-runtime id=focused-semantic-runtime/v0 sha256=${semantic_digest}"
 echo "WORKLOAD stage=retained-workspace id=formula-per-entity/v0 entities=10,100,1000 edits=20 sha256=${retained_digest}"
 
 echo "SETUP release artifacts (excluded from performance samples)"
-if ! cargo build --quiet --release --locked --offline -p tachiko-cli; then
+if ! cargo build --quiet --release --locked --offline \
+  --target "${native_target}" -p tachiko-cli; then
   echo "SETUP FAIL: release CLI build failed" >&2
   echo "0/${correctness_stage_count} correctness stages passed"
   exit 1
@@ -286,6 +294,7 @@ if ! cargo test --quiet --release --locked --offline \
   --test patch_lifecycle \
   --test resident_session \
   --test retained_state_benchmark \
+  --target "${native_target}" \
   --no-run; then
   echo "SETUP FAIL: release test artifact build failed" >&2
   echo "0/${correctness_stage_count} correctness stages passed"
@@ -326,7 +335,8 @@ measure_stage_once() {
       /usr/bin/time -l bash -c \
         'stage_stderr=$1; shift; exec "$@" 2>"${stage_stderr}"' \
         obstacle-metrics "${stderr_file}" \
-        env TACHIKO_OBSTACLE_INTERNAL=1 TACHIKO_BIN="${tachiko_bin}" \
+        env CARGO_TARGET_DIR="${course_target_dir}" CARGO_BUILD_TARGET="${native_target}" \
+          TACHIKO_OBSTACLE_INTERNAL=1 TACHIKO_BIN="${tachiko_bin}" \
           CARGO_TERM_COLOR=never bash "${runner_path}" \
           --internal-run-stage "${stage}" \
         >"${stdout_file}" 2>"${metrics_file}"
@@ -337,7 +347,8 @@ measure_stage_once() {
       /usr/bin/time -f $'wall_seconds=%e\npeak_rss_kib=%M' bash -c \
         'stage_stderr=$1; shift; exec "$@" 2>"${stage_stderr}"' \
         obstacle-metrics "${stderr_file}" \
-        env TACHIKO_OBSTACLE_INTERNAL=1 TACHIKO_BIN="${tachiko_bin}" \
+        env CARGO_TARGET_DIR="${course_target_dir}" CARGO_BUILD_TARGET="${native_target}" \
+          TACHIKO_OBSTACLE_INTERNAL=1 TACHIKO_BIN="${tachiko_bin}" \
           CARGO_TERM_COLOR=never bash "${runner_path}" \
           --internal-run-stage "${stage}" \
         >"${stdout_file}" 2>"${metrics_file}"
@@ -345,7 +356,8 @@ measure_stage_once() {
       ;;
     *)
       started=${SECONDS}
-      env TACHIKO_OBSTACLE_INTERNAL=1 TACHIKO_BIN="${tachiko_bin}" \
+      env CARGO_TARGET_DIR="${course_target_dir}" CARGO_BUILD_TARGET="${native_target}" \
+        TACHIKO_OBSTACLE_INTERNAL=1 TACHIKO_BIN="${tachiko_bin}" \
         CARGO_TERM_COLOR=never bash "${runner_path}" \
         --internal-run-stage "${stage}" \
         >"${stdout_file}" 2>"${stderr_file}"
