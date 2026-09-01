@@ -224,7 +224,7 @@ conflict identity or authority.
 - Production conflict DTO/codec/runtime changes, including the DocumentId
   admission correction, require a separately Ready implementation Issue after
   this authority lands.
-- #48 may define operation/revision/optional-event taxonomy without reopening
+- ADR-0032 defines operation/revision/optional-event taxonomy without reopening
   merge conflict meaning; #49/#50 retain history/checkpoint and causality/CRDT
   work.
 
@@ -255,5 +255,6 @@ conflict identity or authority.
 - [Conflict Resolution Specification](../specs/conflict-resolution.md)
 - [Issue #47](https://github.com/nurockplayer/tachiko-work/issues/47)
 - [Issue #48](https://github.com/nurockplayer/tachiko-work/issues/48)
+- [ADR-0032 semantic execution and retained-transition taxonomy](ADR-0032-semantic-execution-and-transition-taxonomy.md)
 - [Issue #49](https://github.com/nurockplayer/tachiko-work/issues/49)
 - [Issue #50](https://github.com/nurockplayer/tachiko-work/issues/50)

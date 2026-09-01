@@ -17,7 +17,9 @@ Subsequent authority:
 [ADR-0030](ADR-0030-canonical-semantic-delta.md) resolves the deferred
 machine-readable Semantic Delta contract, and
 [ADR-0031](ADR-0031-semantic-merge-conflict-protocol.md) resolves the deferred
-deterministic semantic conflict-object contract. Neither changes this
+deterministic semantic conflict-object contract.
+[ADR-0032](ADR-0032-semantic-execution-and-transition-taxonomy.md) resolves the
+deferred execution/revision/optional-event taxonomy. None changes this
 current-state/history boundary.
 
 ## Context
@@ -126,13 +128,12 @@ This ADR authorizes no production implementation. Its machine-readable semantic
 delta deferral in [Issue #45](https://github.com/nurockplayer/tachiko-work/issues/45)
 is resolved by ADR-0030, and its deterministic merge/conflict-object deferral in
 [Issue #46](https://github.com/nurockplayer/tachiko-work/issues/46) is resolved by
-ADR-0031. The following remain open:
+ADR-0031. Its command/operation/transaction/event taxonomy deferral in
+[Issue #48](https://github.com/nurockplayer/tachiko-work/issues/48) is resolved
+by ADR-0032. The following remain open:
 
 - [Issue #47](https://github.com/nurockplayer/tachiko-work/issues/47):
   compatibility migration and cross-version branch behavior;
-- [Issue #48](https://github.com/nurockplayer/tachiko-work/issues/48):
-  command/operation/transaction/event taxonomy, public revision and event
-  contracts, and retry/no-op semantics;
 - [Issue #49](https://github.com/nurockplayer/tachiko-work/issues/49): history
   profiles, checkpoints, replay, compaction, retention, migration, crash
   recovery, and semantic-revision/checkpoint-to-Git association mapping; and
@@ -143,9 +144,10 @@ Production realization of ADR-0030 Semantic Delta or ADR-0031 Semantic Conflict
 is not implicitly authorized merely because those logical contracts are
 Accepted; each requires separately Ready implementation work.
 
-Durable revision IDs, event/receipt DTOs, checkpoint formats or cadence,
+Concrete public revision/event/receipt DTOs, checkpoint formats or cadence,
 history storage, replay/upcasters, causal clocks, Git mapping, and
-collaboration/server topology are not selected here.
+collaboration/server topology are not selected here. ADR-0032 fixes only their
+logical taxonomy and identity separation.
 
 ## Consequences
 
@@ -180,3 +182,4 @@ collaboration/server topology are not selected here.
 - [Distributed collaboration architecture](../architecture/distributed-collaboration.md)
 - [Git-native workflow](../architecture/git-native-workflow.md)
 - [Decision traceability protocol](../governance/decision-traceability.md)
+- [ADR-0032 semantic execution and retained-transition taxonomy](ADR-0032-semantic-execution-and-transition-taxonomy.md)
