@@ -18,6 +18,7 @@ const API_URL = "https://api.github.com";
 const GRAPHQL_URL = `${API_URL}/graphql`;
 const ROADMAP_PATH = "docs/product/product-roadmap.md";
 const REQUEST_TIMEOUT_MS = 15_000;
+const CARGO_AUTHORITY_PATH = /(?:^|\/)Cargo\.(?:toml|lock)$/;
 
 const QUERY = `
   query DashboardRepository($owner: String!, $name: String!) {
@@ -119,7 +120,7 @@ interface GraphComment {
   url: string;
   createdAt: string;
   updatedAt: string;
-  lastEditedAt?: string | null;
+  lastEditedAt: string | null;
   author: Actor | null;
   authorAssociation: GitHubAuthorAssociation;
 }
@@ -293,7 +294,7 @@ function rawComment(
     url: comment.url,
     createdAt: comment.createdAt,
     updatedAt: comment.updatedAt,
-    edited: comment.lastEditedAt !== null && comment.lastEditedAt !== undefined,
+    edited: comment.lastEditedAt !== null,
     topLevel,
     trustedProducer: trustedProducer(comment),
   };
@@ -394,8 +395,7 @@ function topLevelCommentsTruncated(pull: GraphPull): boolean {
 function isAuthorityPath(path: string): boolean {
   return (
     (path === "AGENTS.md" || path.endsWith("/AGENTS.md")) ||
-    path === "Cargo.toml" ||
-    path === "Cargo.lock" ||
+    CARGO_AUTHORITY_PATH.test(path) ||
     path === "CONTRIBUTING.md" ||
     path === "SECURITY.md" ||
     path === ROADMAP_PATH ||

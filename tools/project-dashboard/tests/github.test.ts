@@ -205,6 +205,8 @@ function fakeBehindAuthorityFetch() {
             { filename: "scripts/release-check.sh" },
             { filename: "Cargo.toml" },
             { filename: "Cargo.lock" },
+            { filename: "crates/cli/Cargo.toml" },
+            { filename: "apps/designer/runtime/Cargo.lock" },
             { filename: "crates/cli/AGENTS.md" },
             {
               filename: "docs/discussions/renamed-authority.md",
@@ -217,6 +219,10 @@ function fakeBehindAuthorityFetch() {
             {
               filename: "docs/governance/renamed-in.md",
               previous_filename: "docs/discussions/draft.md",
+            },
+            {
+              filename: "docs/discussions/renamed-manifest.md",
+              previous_filename: "crates/storage/Cargo.toml",
             },
             {
               filename: "docs/decisions/ADR-0032-dashboard.md",
@@ -287,6 +293,7 @@ describe("GitHub observation adapter", () => {
     expect(graphBody).toContain("state submittedAt");
     expect(graphBody).toContain("baseRefName mergeable");
     expect(graphBody).toContain("mergeStateStatus reviewDecision");
+    expect(graphBody.match(/\blastEditedAt\b/g)).toHaveLength(3);
     expect(graphBody).not.toContain("mutation");
     expect(observation.serverCredential).toBe("present");
     expect(JSON.stringify(observation)).not.toContain("server_secret");
@@ -357,6 +364,25 @@ describe("GitHub observation adapter", () => {
       },
     ];
     (pull.comments as unknown as { nodes: typeof issueComments }).nodes = issueComments;
+    const threadComments = [
+      {
+        id: "thread-comment-node",
+        databaseId: 101,
+        body: "Unstructured review-thread comment",
+        url: "https://github.example/review-comments/101",
+        createdAt: "2026-09-01T00:04:00.000Z",
+        updatedAt: "2026-09-01T00:04:00.000Z",
+        lastEditedAt: null,
+        author: { login: "member" },
+        authorAssociation: "MEMBER",
+      },
+    ];
+    (pull.reviewThreads.nodes as unknown[]).push({
+      id: "thread-with-shared-database-id",
+      isResolved: true,
+      isOutdated: false,
+      comments: { pageInfo: { hasNextPage: false }, nodes: threadComments },
+    });
     const fetchImpl = (async (input: string | URL | Request) => {
       const url = typeof input === "string"
         ? input
@@ -401,8 +427,94 @@ describe("GitHub observation adapter", () => {
         edited: true,
       }),
     );
+    expect(observation.pullRequests[0]?.comments).toContainEqual(
+      expect.objectContaining({
+        id: "thread-comment-node",
+        kind: "pull-request-review-comment",
+      }),
+    );
+    expect(
+      new Set(observation.pullRequests[0]?.comments.map((comment) => comment.id)).size,
+    ).toBe(observation.pullRequests[0]?.comments.length);
     expect(normalizeRepository(observation).deliveries[0]?.review.reason).not.toBe(
       "source-identity-conflict",
+    );
+  });
+
+  it.each(
+    (["issue-comment", "pull-request-review", "pull-request-review-comment"] as const)
+      .flatMap((kind) =>
+        (["unedited", "edited", "missing"] as const).map((editState) => [
+          kind,
+          editState,
+        ] as const),
+      ),
+  )("fails structured %s evidence closed for %s edit metadata", async (kind, editState) => {
+    const graph = graphResponse();
+    const pull = graph.data.repository.pullRequests.nodes[0];
+    if (pull === undefined) throw new Error("fixture missing pull request");
+    const body = [
+      "<!-- operational-evidence:v1",
+      "KIND: validation",
+      "PR: 225",
+      `HEAD: ${HEAD}`,
+      `RUN: ${kind}-${editState}`,
+      "NAME: release-check",
+      "RESULT: pass",
+      "-->",
+    ].join("\n");
+    const comment: Record<string, unknown> = {
+      id: `node-${kind}-${editState}`,
+      databaseId: 101,
+      body,
+      url: `https://github.example/${kind}/${editState}`,
+      createdAt: "2026-09-01T00:00:00.000Z",
+      updatedAt: "2026-09-01T00:00:00.000Z",
+      ...(editState === "missing"
+        ? {}
+        : { lastEditedAt: editState === "edited" ? "2026-09-01T00:01:00.000Z" : null }),
+      author: { login: "nurockplayer" },
+      authorAssociation: "OWNER",
+    };
+
+    if (kind === "issue-comment") {
+      Object.assign(pull.comments, { nodes: [comment] });
+    } else if (kind === "pull-request-review") {
+      Object.assign(pull.reviews, {
+        nodes: [
+          {
+            ...comment,
+            fullDatabaseId: "101",
+            state: "COMMENTED",
+            submittedAt: "2026-09-01T00:00:00.000Z",
+            commit: { oid: HEAD },
+          },
+        ],
+      });
+    } else {
+      Object.assign(pull.reviewThreads, {
+        nodes: [
+          {
+            id: `thread-${editState}`,
+            isResolved: true,
+            isOutdated: false,
+            comments: { pageInfo: { hasNextPage: false }, nodes: [comment] },
+          },
+        ],
+      });
+    }
+
+    const observation = await observeRepository({ fetchImpl: fetchForGraph(graph) });
+    const observed = observation.pullRequests[0]?.comments.find(
+      (candidate) => candidate.id === comment.id,
+    );
+    const integrity = normalizeRepository(observation).deliveries[0]?.evidence.deliveryIntegrity;
+
+    expect(observed?.edited).toBe(editState !== "unedited");
+    expect(integrity).toMatchObject(
+      editState === "unedited"
+        ? { state: "satisfied", reason: "validation-passed" }
+        : { state: "unknown", reason: "source-edited" },
     );
   });
 
@@ -781,10 +893,13 @@ describe("GitHub observation adapter", () => {
       "scripts/release-check.sh",
       "Cargo.toml",
       "Cargo.lock",
+      "crates/cli/Cargo.toml",
+      "apps/designer/runtime/Cargo.lock",
       "crates/cli/AGENTS.md",
       "docs/decisions/ADR-renamed.md",
       ".github/workflows/renamed.yml",
       "docs/governance/renamed-in.md",
+      "crates/storage/Cargo.toml",
     ]);
     expect(normalizeRepository(observation).deliveries[0]?.authority.state).toBe("unknown");
   });
