@@ -1058,11 +1058,15 @@ export function normalizeRepository(
     : parseProductHorizon(observation.roadmap.markdown, observation.roadmap.url);
 
   const issuesByNumber = new Map(observation.issues.map((issue) => [issue.number, issue]));
-  const singlePullIssueNumbers = observation.pullRequests.map((pull) =>
-    pull.closingIssueNumbers.length === 1 ? pull.closingIssueNumbers[0] : undefined,
-  );
   const handoffClaims = observation.pullRequests.map((pull) =>
     trustedHandoffIssueClaims(observation, pull, observation.issues),
+  );
+  const singlePullIssueNumbers = observation.pullRequests.map((pull, index) =>
+    pull.closingIssueNumbers.length === 1
+      ? pull.closingIssueNumbers[0]
+      : pull.closingIssueNumbers.length === 0 && handoffClaims[index]?.current.length === 1
+        ? handoffClaims[index].current[0]
+        : undefined,
   );
   const effectiveObservation = handoffClaims.some((claim) => claim.unscoped)
     ? { ...observation, implementationLinkageAvailability: "incomplete" as const }
@@ -1191,10 +1195,10 @@ export function normalizeRepository(
   }
   const humanSignals = deliveries.map((lane) => lane.humanAction);
   const humanAction =
-    observation.availability !== "complete" || observation.issuesAvailability !== "complete"
-      ? directSignal("unknown", "observation-incomplete", "Human action state Unknown", [mainSource])
-      : humanSignals.some((signal) => signal.state === "blocked")
-        ? directSignal("blocked", "human-action-required", "Human action required", [])
+    humanSignals.some((signal) => signal.state === "blocked")
+      ? directSignal("blocked", "human-action-required", "Human action required", [])
+      : observation.availability !== "complete" || observation.issuesAvailability !== "complete"
+        ? directSignal("unknown", "observation-incomplete", "Human action state Unknown", [mainSource])
         : humanSignals.some((signal) => signal.state === "unknown")
           ? directSignal("unknown", "required-evidence-unknown", "Human action state Unknown", [])
           : directSignal("satisfied", "human-action-none", "No human action required", []);

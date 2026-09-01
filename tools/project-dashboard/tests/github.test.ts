@@ -297,7 +297,7 @@ describe("GitHub observation adapter", () => {
       {
         id: "review-member",
         fullDatabaseId: "101",
-        body: "",
+        body: "Structured review body",
         url: "https://github.example/reviews/member",
         createdAt: "2026-09-01T00:00:00.000Z",
         updatedAt: "2026-09-01T00:00:00.000Z",
@@ -351,6 +351,9 @@ describe("GitHub observation adapter", () => {
       { id: "101", association: "MEMBER" },
       { id: "102", association: "NONE" },
     ]);
+    expect(observation.pullRequests[0]?.comments).toContainEqual(
+      expect.objectContaining({ id: "101", kind: "pull-request-review" }),
+    );
   });
 
   it("marks completeness-required pagination as partial but keeps bounded recent history valid", async () => {

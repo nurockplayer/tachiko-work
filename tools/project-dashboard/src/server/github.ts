@@ -262,6 +262,13 @@ async function githubRequest<T>(
 }
 
 function stableSourceId(comment: GraphComment): string {
+  if (
+    "fullDatabaseId" in comment &&
+    typeof comment.fullDatabaseId === "string" &&
+    comment.fullDatabaseId.length > 0
+  ) {
+    return comment.fullDatabaseId;
+  }
   return comment.databaseId === undefined || comment.databaseId === null
     ? comment.id
     : String(comment.databaseId);

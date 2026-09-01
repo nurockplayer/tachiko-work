@@ -130,6 +130,32 @@ describe("normalizeRepository", () => {
     ).toBe("human_required");
   });
 
+  it("keeps a known human blocker decisive when unrelated observation is partial", () => {
+    const observation = healthyObservation();
+    const issue = observation.issues[1];
+    if (issue === undefined) throw new Error("fixture missing issue");
+    issue.labels = ["agent:human", "state:ready"];
+    observation.availability = "incomplete";
+    observation.errors.push({
+      source: "Unrelated comparison",
+      url: "https://github.example/compare",
+      reason: "observation-incomplete",
+    });
+
+    const projection = normalizeRepository(observation);
+    expect(projection.fetchHealth).toBe("partial");
+    expect(projection.humanAction).toMatchObject({
+      state: "blocked",
+      reason: "human-action-required",
+    });
+    expect(
+      projection.deliveries.find((lane) => lane.issue?.number === issue.number),
+    ).toMatchObject({
+      humanAction: { state: "blocked", reason: "human-action-required" },
+      phase: "human_required",
+    });
+  });
+
   it("blocks a fully evidenced linked lane owned by a human", () => {
     const observation = healthyObservation();
     addGreenOperationalEvidence(observation);
@@ -382,6 +408,9 @@ describe("normalizeRepository", () => {
     const unlinkedPull = unlinked.pullRequests[0];
     if (unlinkedPull === undefined) throw new Error("fixture missing pull request");
     unlinkedPull.closingIssueNumbers = [];
+    unlinkedPull.comments = unlinkedPull.comments.filter(
+      (comment) => !comment.body.startsWith("<!-- agent-handoff:v1 -->"),
+    );
     unlinkedPull.reviews = [outsiderChanges];
     expect(
       normalizeRepository(unlinked).deliveries.find(
@@ -553,6 +582,9 @@ describe("normalizeRepository", () => {
     const pull = observation.pullRequests[0];
     if (pull === undefined) throw new Error("fixture missing pull request");
     pull.closingIssueNumbers = [];
+    pull.comments = pull.comments.filter(
+      (comment) => !comment.body.startsWith("<!-- agent-handoff:v1 -->"),
+    );
     pull.reviewsAvailability = "incomplete";
     pull.reviews = [
       {
@@ -585,6 +617,9 @@ describe("normalizeRepository", () => {
       const pull = observation.pullRequests[0];
       if (pull === undefined) throw new Error("fixture missing pull request");
       pull.closingIssueNumbers = [];
+      pull.comments = pull.comments.filter(
+        (comment) => !comment.body.startsWith("<!-- agent-handoff:v1 -->"),
+      );
       if (kind === "reviews") pull.reviewsAvailability = availability;
       else pull.threadsAvailability = availability;
 
@@ -600,6 +635,9 @@ describe("normalizeRepository", () => {
     const pull = observation.pullRequests[0];
     if (pull === undefined) throw new Error("fixture missing pull request");
     pull.closingIssueNumbers = [];
+    pull.comments = pull.comments.filter(
+      (comment) => !comment.body.startsWith("<!-- agent-handoff:v1 -->"),
+    );
     pull.reviews = [
       {
         id: "unlinked-pending",
@@ -1076,17 +1114,38 @@ describe("normalizeRepository", () => {
     ).toBe("blocked");
   });
 
-  it("suppresses issue-only Ready when a trusted handoff owns the Issue", () => {
+  it("uses a sole current trusted handoff to link a PR without a native closing reference", () => {
     const observation = healthyObservation();
     const source = observation.pullRequests[0];
     if (source === undefined) throw new Error("fixture missing pull request");
     source.closingIssueNumbers = [];
 
     const projection = normalizeRepository(observation);
-    expect(
-      projection.deliveries.some((lane) => lane.issue?.number === 169),
-    ).toBe(false);
+    expect(projection.deliveries.find((lane) => lane.pullRequest?.number === 225)).toMatchObject({
+      issue: { number: 169 },
+    });
     expect(projection.executive.readyCount).toMatchObject({ state: "satisfied", value: 1 });
+  });
+
+  it("keeps a handoff-only human-owned PR visible as requiring human action", () => {
+    const observation = healthyObservation();
+    const issue = observation.issues[0];
+    const pull = observation.pullRequests[0];
+    if (issue === undefined || pull === undefined) throw new Error("fixture missing lane");
+    issue.labels = ["agent:human", "state:ready"];
+    pull.closingIssueNumbers = [];
+    pull.comments = pull.comments.map((comment) => ({
+      ...comment,
+      body: comment.body.replace("OWNER: agent:codex", "OWNER: agent:human"),
+    }));
+
+    const projection = normalizeRepository(observation);
+    expect(projection.deliveries.find((lane) => lane.pullRequest?.number === 225)).toMatchObject({
+      issue: { number: 169 },
+      humanAction: { state: "blocked", reason: "human-action-required" },
+      phase: "human_required",
+    });
+    expect(projection.humanAction.state).toBe("blocked");
   });
 
   it.each([
