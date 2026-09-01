@@ -160,15 +160,21 @@ cat >"${normal_repo}/.cargo/config.toml" <<'EOF'
 [build]
 target = "conflicting-config-target"
 target-dir = "conflicting-config-target-dir"
+rustc = "conflicting-config-rustc"
+rustc-wrapper = "conflicting-config-rustc-wrapper"
+rustc-workspace-wrapper = "conflicting-config-workspace-wrapper"
 EOF
 
 cat >"${normal_repo}/scripts/git-ci-smoke.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
-printf 'git-smoke config_global=%s config_nosystem=%s config_count=%s config_parameters=%s\n' \
+printf 'git-smoke config_global=%s config_nosystem=%s config_count=%s config_parameters=%s author_name=%s author_email=%s author_date=%s committer_name=%s committer_email=%s committer_date=%s\n' \
   "${GIT_CONFIG_GLOBAL:-unset}" "${GIT_CONFIG_NOSYSTEM:-unset}" \
   "${GIT_CONFIG_COUNT:-unset}" "${GIT_CONFIG_PARAMETERS:-unset}" \
+  "${GIT_AUTHOR_NAME:-unset}" "${GIT_AUTHOR_EMAIL:-unset}" \
+  "${GIT_AUTHOR_DATE:-unset}" "${GIT_COMMITTER_NAME:-unset}" \
+  "${GIT_COMMITTER_EMAIL:-unset}" "${GIT_COMMITTER_DATE:-unset}" \
   >>"${FAKE_TOOLCHAIN_LOG}"
 exit 99
 EOF
@@ -187,7 +193,8 @@ for variable in \
   GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE \
   GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_CONFIG_SYSTEM GIT_TEMPLATE_DIR \
   GIT_CEILING_DIRECTORIES GIT_EXTERNAL_DIFF GIT_DIFF_OPTS \
-  GIT_REPLACE_REF_BASE; do
+  GIT_REPLACE_REF_BASE GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_AUTHOR_DATE \
+  GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_COMMITTER_DATE; do
   if [[ -n "${!variable:-}" ]]; then
     echo "fake git: inherited ${variable}" >&2
     exit 93
@@ -227,6 +234,17 @@ elif [[ "${1:-}" == "ls-files" ]]; then
     printf '100644 fake-index-object 0\ttracked-fixture\0'
   fi
   exit 0
+elif [[ "${1:-}" == "check-ignore" ]]; then
+  if [[ "$#" -ne 4 || "${2:-}" != "-q" || "${3:-}" != "--" ]]; then
+    echo "fake git: malformed check-ignore query: $*" >&2
+    exit 2
+  fi
+  candidate="${!#}"
+  if [[ -n "${FAKE_GIT_IGNORED_PATH:-}" && \
+    "${candidate}" == "${FAKE_GIT_IGNORED_PATH}" ]]; then
+    exit 0
+  fi
+  exit 1
 else
   echo "fake git: unexpected arguments: $*" >&2
   exit 2
@@ -280,6 +298,9 @@ printf 'stage-bin path=%s target_dir=%s build_target=%s\n' \
 if [[ "${FAKE_TRIGGER_FINGERPRINT_DRIFT:-0}" == "1" ]]; then
   printf 'raw tracked bytes after\r\n' >"${FAKE_TRACKED_RAW_FILE}"
 fi
+if [[ "${FAKE_TRIGGER_IGNORED_DRIFT:-0}" == "1" ]]; then
+  printf 'ignored host artifact\n' >"${FAKE_IGNORED_RAW_FILE}"
+fi
 exit 97
 EOF
 chmod +x "${test_dir}/fake-tachiko"
@@ -303,6 +324,24 @@ grep -Fx 'target = "conflicting-config-target"' \
   "${FAKE_REPO_ROOT}/.cargo/config.toml" >/dev/null
 grep -Fx 'target-dir = "conflicting-config-target-dir"' \
   "${FAKE_REPO_ROOT}/.cargo/config.toml" >/dev/null
+grep -Fx 'rustc = "conflicting-config-rustc"' \
+  "${FAKE_REPO_ROOT}/.cargo/config.toml" >/dev/null
+grep -Fx 'rustc-wrapper = "conflicting-config-rustc-wrapper"' \
+  "${FAKE_REPO_ROOT}/.cargo/config.toml" >/dev/null
+grep -Fx 'rustc-workspace-wrapper = "conflicting-config-workspace-wrapper"' \
+  "${FAKE_REPO_ROOT}/.cargo/config.toml" >/dev/null
+if [[ "${RUSTC:-}" != "${FAKE_CARGO_RUSTC}" || \
+  -n "${CARGO_BUILD_RUSTC:-}" ]]; then
+  echo "fake cargo: compiler selection is not normalized" >&2
+  exit 94
+fi
+if [[ "${RUSTC_WRAPPER-unset}" != "" || \
+  "${RUSTC_WORKSPACE_WRAPPER-unset}" != "" || \
+  -n "${CARGO_BUILD_RUSTC_WRAPPER+x}" || \
+  -n "${CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER+x}" ]]; then
+  echo "fake cargo: compiler wrappers are not neutralized" >&2
+  exit 94
+fi
 
 command_name="${1:-}"
 explicit_target="unset"
@@ -360,14 +399,19 @@ run_normal_course() {
   local status_fail="$1"
   local git_dirty="$2"
   local trigger_fingerprint_drift="$3"
-  local stdout_file="$4"
-  local stderr_file="$5"
+  local trigger_ignored_drift="$4"
+  local stdout_file="$5"
+  local stderr_file="$6"
   PATH="${normal_bin_dir}:${PATH}" \
     TMPDIR="${normal_tmp}" \
     CARGO_HOME="${test_dir}/normal-cargo-home" \
     CARGO_TARGET_DIR="${test_dir}/conflicting-env-target" \
     CARGO_BUILD_TARGET=conflicting-env-target \
-    RUSTC="${normal_bin_dir}/cargo-rustc" \
+    CARGO_BUILD_RUSTC="${normal_bin_dir}/cargo-rustc" \
+    RUSTC_WRAPPER="${test_dir}/hostile-rustc-wrapper" \
+    RUSTC_WORKSPACE_WRAPPER="${test_dir}/hostile-workspace-wrapper" \
+    CARGO_BUILD_RUSTC_WRAPPER="${test_dir}/hostile-cargo-rustc-wrapper" \
+    CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER="${test_dir}/hostile-cargo-workspace-wrapper" \
     GIT_DIR="${test_dir}/hostile.git" \
     GIT_WORK_TREE="${test_dir}/hostile-worktree" \
     GIT_INDEX_FILE="${test_dir}/hostile-index" \
@@ -389,11 +433,21 @@ run_normal_course() {
     GIT_DIFF_OPTS=--unified=99 \
     GIT_REPLACE_REF_BASE=refs/replace/hostile \
     GIT_NO_REPLACE_OBJECTS=0 \
+    GIT_AUTHOR_NAME="Hostile Author" \
+    GIT_AUTHOR_EMAIL=hostile-author@invalid \
+    GIT_AUTHOR_DATE=not-a-date \
+    GIT_COMMITTER_NAME="Hostile Committer" \
+    GIT_COMMITTER_EMAIL=hostile-committer@invalid \
+    GIT_COMMITTER_DATE=not-a-date \
     FAKE_GIT_STATUS_FAIL="${status_fail}" \
     FAKE_GIT_DIRTY="${git_dirty}" \
     FAKE_TRIGGER_FINGERPRINT_DRIFT="${trigger_fingerprint_drift}" \
+    FAKE_TRIGGER_IGNORED_DRIFT="${trigger_ignored_drift}" \
     FAKE_TRACKED_RAW_FILE="${tracked_raw_file}" \
+    FAKE_IGNORED_RAW_FILE="${normal_repo}/crates/workspace-engine/tests/common/.DS_Store" \
+    FAKE_GIT_IGNORED_PATH=crates/workspace-engine/tests/common/.DS_Store \
     FAKE_NATIVE_TARGET="${native_target}" \
+    FAKE_CARGO_RUSTC="${normal_bin_dir}/cargo-rustc" \
     FAKE_REPO_ROOT="${normal_repo}" \
     FAKE_PERSISTENT_TARGET_DIR="${persistent_target_dir}" \
     FAKE_TACHIKO_TEMPLATE="${test_dir}/fake-tachiko" \
@@ -402,7 +456,7 @@ run_normal_course() {
     >"${stdout_file}" 2>"${stderr_file}"
 }
 
-if run_normal_course 0 0 0 \
+if run_normal_course 0 0 0 0 \
   "${test_dir}/normal.out" "${test_dir}/normal.err"; then
   echo "obstacle-course test: intentionally failing fake stage unexpectedly passed" >&2
   exit 1
@@ -439,7 +493,7 @@ require_normal_log \
 require_normal_log \
   "git args=-C ${normal_repo} rev-parse HEAD git_dir=unset git_work_tree=unset"
 require_normal_log \
-  "git-smoke config_global=/dev/null config_nosystem=1 config_count=unset config_parameters=unset"
+  "git-smoke config_global=/dev/null config_nosystem=1 config_count=unset config_parameters=unset author_name=unset author_email=unset author_date=unset committer_name=unset committer_email=unset committer_date=unset"
 if grep -Fq "stale-stage-bin" "${normal_log}"; then
   echo "obstacle-course test: persistent stale CLI was executed" >&2
   exit 1
@@ -453,7 +507,7 @@ grep -F \
   "${test_dir}/normal.out" >/dev/null
 
 : >"${normal_log}"
-if run_normal_course 1 0 0 \
+if run_normal_course 1 0 0 0 \
   "${test_dir}/status-fail.out" "${test_dir}/status-fail.err"; then
   echo "obstacle-course test: failed Git status unexpectedly produced evidence" >&2
   exit 1
@@ -467,7 +521,7 @@ fi
 
 : >"${normal_log}"
 printf 'raw tracked bytes before\n' >"${tracked_raw_file}"
-if run_normal_course 0 1 1 \
+if run_normal_course 0 1 1 0 \
   "${test_dir}/fingerprint-drift.out" \
   "${test_dir}/fingerprint-drift.err"; then
   echo "obstacle-course test: dirty source mutation unexpectedly produced stable evidence" >&2
@@ -480,6 +534,41 @@ grep -F "expected_worktree=dirty observed_worktree=dirty" \
 if grep -Fq "EVIDENCE source_identity=stable" \
   "${test_dir}/fingerprint-drift.out"; then
   echo "obstacle-course test: changed dirty source was reported stable" >&2
+  exit 1
+fi
+
+: >"${normal_log}"
+rm -f -- "${normal_repo}/crates/workspace-engine/tests/common/.DS_Store"
+printf 'preexisting ignored host artifact\n' \
+  >"${normal_repo}/crates/workspace-engine/tests/common/.DS_Store"
+if run_normal_course 0 0 0 0 \
+  "${test_dir}/ignored-initial.out" \
+  "${test_dir}/ignored-initial.err"; then
+  echo "obstacle-course test: preexisting ignored workload input unexpectedly passed" >&2
+  exit 1
+fi
+grep -F "obstacle-course: ignored file cannot be a workload input 'crates/workspace-engine/tests/common/.DS_Store'" \
+  "${test_dir}/ignored-initial.err" >/dev/null
+if grep -Fq "cargo command=" "${normal_log}"; then
+  echo "obstacle-course test: setup ran after ignored workload rejection" >&2
+  exit 1
+fi
+
+: >"${normal_log}"
+rm -f -- "${normal_repo}/crates/workspace-engine/tests/common/.DS_Store"
+if run_normal_course 0 0 0 1 \
+  "${test_dir}/ignored-drift.out" \
+  "${test_dir}/ignored-drift.err"; then
+  echo "obstacle-course test: ignored workload mutation unexpectedly produced stable evidence" >&2
+  exit 1
+fi
+grep -F "obstacle-course: ignored file cannot be a workload input 'crates/workspace-engine/tests/common/.DS_Store'" \
+  "${test_dir}/ignored-drift.err" >/dev/null
+grep -F "EVIDENCE FAIL: could not fingerprint workload identity checkpoint=after-repository-dogfood stage=semantic-runtime" \
+  "${test_dir}/ignored-drift.err" >/dev/null
+if grep -Fq "EVIDENCE source_identity=stable" \
+  "${test_dir}/ignored-drift.out"; then
+  echo "obstacle-course test: ignored workload mutation was reported stable" >&2
   exit 1
 fi
 

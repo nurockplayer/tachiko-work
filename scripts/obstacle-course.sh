@@ -11,6 +11,23 @@ correctness_stages=(
   retained-workspace
 )
 correctness_stage_count="${#correctness_stages[@]}"
+dogfood_workload_inputs=(
+  dogfood/product-gaps.roproj
+)
+git_review_workload_inputs=(
+  .gitattributes
+  examples/game-balance/game-balance.ro
+  scripts/git-ci-smoke.sh
+)
+semantic_workload_inputs=(
+  crates/workspace-engine/tests/common
+  crates/workspace-engine/tests/analysis_operations.rs
+  crates/workspace-engine/tests/patch_lifecycle.rs
+  crates/workspace-engine/tests/resident_session.rs
+)
+retained_workload_inputs=(
+  crates/workspace-engine/tests/retained_state_benchmark.rs
+)
 TACHIKO_BIN="${TACHIKO_BIN:-}"
 
 # shellcheck source=scripts/release-lib.sh
@@ -172,7 +189,9 @@ cd "${repo_root}"
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
   GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE \
   GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_CONFIG_SYSTEM GIT_TEMPLATE_DIR \
-  GIT_CEILING_DIRECTORIES GIT_EXTERNAL_DIFF GIT_DIFF_OPTS GIT_REPLACE_REF_BASE
+  GIT_CEILING_DIRECTORIES GIT_EXTERNAL_DIFF GIT_DIFF_OPTS GIT_REPLACE_REF_BASE \
+  GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_AUTHOR_DATE \
+  GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_COMMITTER_DATE
 export GIT_CONFIG_GLOBAL=/dev/null
 export GIT_CONFIG_NOSYSTEM=1
 export GIT_ATTR_NOSYSTEM=1
@@ -184,9 +203,14 @@ for required_command in cargo git; do
     exit 1
   fi
 done
-rustc_command="${RUSTC:-rustc}"
+rustc_command="${RUSTC:-${CARGO_BUILD_RUSTC:-rustc}}"
+export RUSTC="${rustc_command}"
+unset CARGO_BUILD_RUSTC
+export RUSTC_WRAPPER=
+export RUSTC_WORKSPACE_WRAPPER=
+unset CARGO_BUILD_RUSTC_WRAPPER CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER
 if ! command -v "${rustc_command}" >/dev/null 2>&1; then
-  echo "obstacle-course: Rust compiler '${rustc_command}' selected by RUSTC is required" >&2
+  echo "obstacle-course: selected Rust compiler '${rustc_command}' is required" >&2
   exit 1
 fi
 
@@ -396,16 +420,29 @@ verify_source_identity() {
     echo "EVIDENCE FAIL: source identity changed checkpoint=${checkpoint} expected_commit=${head_commit} observed_commit=${observed_head} expected_worktree=${worktree_state} observed_worktree=${observed_worktree_state} expected_state=${source_state_fingerprint} observed_state=${observed_source_state_fingerprint}" >&2
     return 1
   fi
+  if ! verify_workload_identity "${checkpoint}"; then
+    return 1
+  fi
 }
 
 record_fixture_file() {
   local file="$1"
   local manifest="$2"
-  local relative bytes digest
+  local relative ignored_status bytes digest
   relative="${file#"${repo_root}/"}"
   if [[ ! -f "${file}" || "${relative}" == *$'\t'* || "${relative}" == *$'\n'* ]]; then
     echo "obstacle-course: invalid fixture manifest path '${relative}'" >&2
     return 1
+  fi
+  if git -C "${repo_root}" check-ignore -q -- "${relative}"; then
+    echo "obstacle-course: ignored file cannot be a workload input '${relative}'" >&2
+    return 1
+  else
+    ignored_status=$?
+    if [[ "${ignored_status}" -ne 1 ]]; then
+      echo "obstacle-course: could not classify workload input '${relative}'" >&2
+      return 1
+    fi
   fi
   if ! bytes="$(wc -c <"${file}" | tr -d ' ')"; then
     echo "obstacle-course: could not measure fixture '${relative}'" >&2
@@ -415,7 +452,11 @@ record_fixture_file() {
     echo "obstacle-course: could not hash fixture '${relative}'" >&2
     return 1
   fi
-  printf '%s\t%s\t%s\n' "${relative}" "${bytes}" "${digest}" >>"${manifest}"
+  if ! printf '%s\t%s\t%s\n' "${relative}" "${bytes}" "${digest}" \
+    >>"${manifest}"; then
+    echo "obstacle-course: could not record fixture '${relative}'" >&2
+    return 1
+  fi
 }
 
 workload_digest() {
@@ -448,16 +489,52 @@ workload_digest() {
   tachiko_sha256_digest "${manifest}"
 }
 
-dogfood_digest="$(workload_digest repository-dogfood dogfood/product-gaps.roproj)"
-git_review_digest="$(workload_digest git-review-roundtrip \
-  .gitattributes examples/game-balance/game-balance.ro scripts/git-ci-smoke.sh)"
-semantic_digest="$(workload_digest semantic-runtime \
-  crates/workspace-engine/tests/common \
-  crates/workspace-engine/tests/analysis_operations.rs \
-  crates/workspace-engine/tests/patch_lifecycle.rs \
-  crates/workspace-engine/tests/resident_session.rs)"
-retained_digest="$(workload_digest retained-workspace \
-  crates/workspace-engine/tests/retained_state_benchmark.rs)"
+if ! dogfood_digest="$(workload_digest repository-dogfood \
+  "${dogfood_workload_inputs[@]}")"; then
+  exit 1
+fi
+if ! git_review_digest="$(workload_digest git-review-roundtrip \
+  "${git_review_workload_inputs[@]}")"; then
+  exit 1
+fi
+if ! semantic_digest="$(workload_digest semantic-runtime \
+  "${semantic_workload_inputs[@]}")"; then
+  exit 1
+fi
+if ! retained_digest="$(workload_digest retained-workspace \
+  "${retained_workload_inputs[@]}")"; then
+  exit 1
+fi
+
+verify_one_workload_identity() {
+  local checkpoint="$1"
+  local stage="$2"
+  local expected="$3"
+  local observed
+  shift 3
+
+  if ! observed="$(workload_digest "${stage}" "$@")"; then
+    echo "EVIDENCE FAIL: could not fingerprint workload identity checkpoint=${checkpoint} stage=${stage}" >&2
+    return 1
+  fi
+  if [[ "${observed}" != "${expected}" ]]; then
+    echo "EVIDENCE FAIL: workload identity changed checkpoint=${checkpoint} stage=${stage} expected=${expected} observed=${observed}" >&2
+    return 1
+  fi
+}
+
+verify_workload_identity() {
+  local checkpoint="$1"
+
+  verify_one_workload_identity "${checkpoint}" repository-dogfood \
+    "${dogfood_digest}" "${dogfood_workload_inputs[@]}" &&
+    verify_one_workload_identity "${checkpoint}" git-review-roundtrip \
+      "${git_review_digest}" "${git_review_workload_inputs[@]}" &&
+    verify_one_workload_identity "${checkpoint}" semantic-runtime \
+      "${semantic_digest}" "${semantic_workload_inputs[@]}" &&
+    verify_one_workload_identity "${checkpoint}" retained-workspace \
+      "${retained_digest}" "${retained_workload_inputs[@]}"
+}
 
 echo "COURSE ${course_version} commit=${head_commit} worktree=${worktree_state} profile=release network=offline correctness_stages=${correctness_stage_count}"
 echo "ENV os=${os_identity} rustc=${rust_identity} native_target=${native_target} cargo_target=run-scoped/${native_target}"

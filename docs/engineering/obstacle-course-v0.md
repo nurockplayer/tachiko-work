@@ -25,9 +25,12 @@ bash scripts/obstacle-course.sh
 
 The command is offline by default. Cargo dependencies and a supported Rust
 toolchain must already be available locally; the selected compiler identity is
-recorded in the result. When `RUSTC` selects a compiler, the reported identity
-and native target come from that same compiler used by Cargo. `--list` prints
-the closed v0 stage registry without building or running it.
+recorded in the result. The runner resolves `RUSTC`, then
+`CARGO_BUILD_RUSTC`, then the `rustc` on `PATH`; it exports that selection as
+the single Cargo compiler and neutralizes competing compiler/wrapper selectors.
+The reported identity and native target therefore come from the same compiler
+used by Cargo. `--list` prints the closed v0 stage registry without building or
+running it.
 
 ## v0 course
 
@@ -105,12 +108,17 @@ A dirty run is provisional because the commit alone does not identify its
 source. Final evidence must come from a clean exact HEAD. The runner rechecks
 the commit, clean/dirty state, and a byte-sensitive fingerprint of tracked
 changes plus relevant untracked file contents after setup and after every stage.
-It rejects the run if any of them changed while evidence was being collected.
-Repository-selecting and command-scoped Git environment variables are cleared,
-every identity query is bound to the course checkout, and the Git-review stage
-ignores user/system Git configuration such as commit signing and hook paths.
-The runner also creates a fresh run-scoped Cargo target directory, derives and
-pins the native host target from the compiler Cargo uses, and uses
+It also recomputes each exact workload manifest at those checkpoints. Ignored
+files inside a workload path are rejected before execution and at checkpoints,
+because a stage could observe them even though Git excludes them from ordinary
+source-state enumeration. The run is rejected if source or workload identity
+changes while evidence is being collected. Repository-selecting and
+command-scoped Git environment variables, including inherited author/committer
+identity and dates, are cleared; every identity query is bound to the course
+checkout; and the Git-review stage ignores user/system Git configuration such
+as commit signing and hook paths. The runner also creates a fresh run-scoped
+Cargo target directory, derives and pins the native host target from the
+compiler Cargo uses, and uses
 `<run-target>/<native-target>/release/`. Every CLI stage therefore uses the
 platform-named release binary built by the same run rather than an inherited,
 Cargo-config-selected, concurrently written, or stale artifact. The run target
@@ -178,8 +186,9 @@ hide a current regression.
 - No CI/release refactor, benchmark framework, Dashboard dependency, network
   service, model call, or hostname-specific behavior is introduced.
 
-The public registry/fail-closed option seam, exact-test execution, Git identity
-failure, and run-scoped native artifact binding have a focused check:
+The public registry/fail-closed option seam, exact-test execution, compiler/Git
+environment isolation, ignored-workload rejection, and run-scoped native
+artifact binding have a focused check:
 
 ```sh
 bash scripts/obstacle-course-test.sh
