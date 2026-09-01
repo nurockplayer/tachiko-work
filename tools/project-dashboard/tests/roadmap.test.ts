@@ -31,6 +31,37 @@ describe("parseProductHorizon", () => {
   });
 
   it.each([
+    "##\tLater section",
+    "##",
+    " ## Later section",
+    "# Replacement document",
+    "Later section\n---",
+    "Later section\n===",
+  ])(
+    "does not read a horizon value beyond the next CommonMark H2 form %j",
+    (nextHeading) => {
+      expect(
+        parseProductHorizon(
+          `## Current horizon\n\n${nextHeading}\n\n> **NOT CURRENT**`,
+          "https://github.example/roadmap",
+        ),
+      ).toMatchObject({ state: "unknown", value: "Unknown" });
+    },
+  );
+
+  it.each([
+    "<script>\n## Current horizon\n\n> **FAKE**\n</script>",
+    "<details>\n## Current horizon\n> **FAKE**\n\n",
+  ])("resumes authority parsing after a bounded raw HTML block", (rawBlock) => {
+    expect(
+      parseProductHorizon(
+        `${rawBlock}\n## Current horizon\n\n> **06 · Team Workspace Beta**`,
+        "https://github.example/roadmap",
+      ),
+    ).toMatchObject({ state: "satisfied", value: "06 · Team Workspace Beta" });
+  });
+
+  it.each([
     ["missing", "# Roadmap\n\n## Future"],
     ["wrong heading depth", "### Current horizon\n\n> **06 · Team Workspace Beta**"],
     ["inline prose", "Prefix ## Current horizon\n\n> **06 · Team Workspace Beta**"],
@@ -55,8 +86,52 @@ describe("parseProductHorizon", () => {
       "~~~~md\n~~~~not-a-close\n## Current horizon\n\n> **06 · Team Workspace Beta**\n~~~~",
     ],
     [
+      "backtick fence with a comment-like info string",
+      "```<!-- -->\n## Current horizon\n\n> **06 · Team Workspace Beta**\n```",
+    ],
+    [
+      "tilde fence with a comment-like info string",
+      "~~~<!-- -->\n## Current horizon\n\n> **06 · Team Workspace Beta**\n~~~",
+    ],
+    [
       "HTML-commented example",
       "<!--\n## Current horizon\n\n> **06 · Team Workspace Beta**\n-->",
+    ],
+    [
+      "script-block example",
+      "<script>\n## Current horizon\n\n> **06 · Team Workspace Beta**\n</script>",
+    ],
+    [
+      "script-block opener with a comment",
+      "<script><!-- -->\n## Current horizon\n\n> **06 · Team Workspace Beta**\n</script>",
+    ],
+    [
+      "script-block pseudo-close with whitespace",
+      "<script>\n</script >\n## Current horizon\n\n> **06 · Team Workspace Beta**\n</script>",
+    ],
+    [
+      "pre-block example",
+      "<PRE class=example>\n## Current horizon\n\n> **06 · Team Workspace Beta**\n</PRE>",
+    ],
+    [
+      "block-tag example",
+      "<details>\n## Current horizon\n\n> **06 · Team Workspace Beta**\n</details>",
+    ],
+    [
+      "self-closing block-tag example with trailing content",
+      "<div/> trailing\n## Current horizon\n\n> **06 · Team Workspace Beta**\n\n",
+    ],
+    [
+      "custom-tag example",
+      "<roadmap-example>\n## Current horizon\n\n> **06 · Team Workspace Beta**\n\n",
+    ],
+    [
+      "custom-tag example with a quoted greater-than attribute",
+      "<roadmap-example data=\">\">\n## Current horizon\n\n> **06 · Team Workspace Beta**\n\n",
+    ],
+    [
+      "processing-instruction example",
+      "<?example\n## Current horizon\n\n> **06 · Team Workspace Beta**\n?>",
     ],
     [
       "ambiguous",
