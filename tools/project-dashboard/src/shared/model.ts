@@ -33,6 +33,26 @@ export interface DisplayValue<T> {
 
 export type ObservationAvailability = "complete" | "incomplete" | "unavailable";
 
+export type FieldObservation<T> =
+  | { state: "value"; value: T }
+  | { state: "null" }
+  | {
+      state: "unknown";
+      availability: Exclude<ObservationAvailability, "complete">;
+      path: readonly (string | number)[] | null;
+    };
+
+export type ReviewDecision = "CHANGES_REQUESTED" | "APPROVED" | "REVIEW_REQUIRED";
+
+export type MergeStateStatus =
+  | "DIRTY"
+  | "UNKNOWN"
+  | "BLOCKED"
+  | "BEHIND"
+  | "UNSTABLE"
+  | "HAS_HOOKS"
+  | "CLEAN";
+
 export interface RawSource {
   id: string;
   url: string;
@@ -47,7 +67,7 @@ export interface RawComment {
   url: string;
   createdAt: string;
   updatedAt: string | null;
-  edited: boolean;
+  lastEditedAt: FieldObservation<string>;
   topLevel: boolean;
   trustedProducer: boolean;
 }
@@ -83,7 +103,7 @@ export interface RawIssue {
   state: "OPEN" | "CLOSED";
   labels: string[];
   labelsAvailability: ObservationAvailability;
-  milestone: string | null;
+  milestone: FieldObservation<string>;
   blockedBy: { number: number; state: "OPEN" | "CLOSED"; url: string }[];
   dependencyAvailability: ObservationAvailability;
 }
@@ -100,7 +120,8 @@ export interface RawPullRequest {
   mergeBaseSha: string | null;
   relationToMain: "current" | "behind" | "diverged" | "unknown";
   mergeability: "mergeable" | "conflicting" | "unknown";
-  nativeMergePolicy: "satisfied" | "blocked" | "waiting" | "unknown";
+  mergeStateStatus: MergeStateStatus;
+  reviewDecision: FieldObservation<ReviewDecision>;
   authorityChanges: { path: string; url: string }[];
   authorityAvailability: ObservationAvailability;
   closingIssueNumbers: number[];
@@ -136,7 +157,12 @@ export interface RepositoryObservation {
   implementationLinkageAvailability: ObservationAvailability;
   recentActivity: RawRecentActivity[];
   recentActivityAvailability: ObservationAvailability;
-  errors: { source: string; url: string; reason: string }[];
+  errors: {
+    source: string;
+    url: string;
+    reason: string;
+    path?: readonly (string | number)[];
+  }[];
   /** Non-secret server-side credential-presence marker used by serialization tests. */
   serverCredential?: string;
 }

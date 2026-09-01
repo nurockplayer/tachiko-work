@@ -4,11 +4,14 @@ import type {
 } from "@tachiko-work/operational-evidence";
 
 import type {
+  FieldObservation,
+  MergeStateStatus,
   ObservationAvailability,
   RawCheck,
   RawComment,
   RawPullRequest,
   RepositoryObservation,
+  ReviewDecision,
 } from "../shared/model.js";
 
 const REPOSITORY = "nurockplayer/tachiko-work";
@@ -170,15 +173,8 @@ interface GraphPull {
   baseRefOid: string;
   baseRefName: string;
   mergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
-  mergeStateStatus:
-    | "DIRTY"
-    | "UNKNOWN"
-    | "BLOCKED"
-    | "BEHIND"
-    | "UNSTABLE"
-    | "HAS_HOOKS"
-    | "CLEAN";
-  reviewDecision: "CHANGES_REQUESTED" | "APPROVED" | "REVIEW_REQUIRED" | null;
+  mergeStateStatus: MergeStateStatus;
+  reviewDecision: ReviewDecision | null;
   closingIssuesReferences: {
     pageInfo: PageInfo;
     nodes: ({ number: number } | null)[] | null;
@@ -230,9 +226,14 @@ interface GraphRepository {
   };
 }
 
+interface GraphError {
+  message: string;
+  path?: readonly (string | number)[];
+}
+
 interface GraphResponse {
   data?: { repository: GraphRepository | null };
-  errors?: { message: string }[];
+  errors?: GraphError[];
 }
 
 interface CompareResponse {
@@ -280,10 +281,38 @@ function trustedProducer(comment: GraphComment): boolean {
   return comment.author?.login === OWNER && comment.authorAssociation === "OWNER";
 }
 
+function fieldError(
+  errors: GraphResponse["errors"],
+  fieldPath: readonly (string | number)[],
+): GraphError | undefined {
+  return errors?.find((error) =>
+    error.path === undefined ||
+    fieldPath.every((segment, index) => error.path?.[index] === segment),
+  );
+}
+
+function observeNullable<T>(
+  value: T | null | undefined,
+  errors: GraphResponse["errors"],
+  fieldPath: readonly (string | number)[],
+): FieldObservation<T> {
+  const error = fieldError(errors, fieldPath);
+  if (error !== undefined || value === undefined) {
+    return {
+      state: "unknown",
+      availability: "incomplete",
+      path: error?.path ?? fieldPath,
+    };
+  }
+  return value === null ? { state: "null" } : { state: "value", value };
+}
+
 function rawComment(
   comment: GraphComment,
   kind: GitHubCommentKind,
   topLevel: boolean,
+  errors: GraphResponse["errors"],
+  commentPath: readonly (string | number)[],
 ): RawComment {
   return {
     body: comment.body,
@@ -294,7 +323,11 @@ function rawComment(
     url: comment.url,
     createdAt: comment.createdAt,
     updatedAt: comment.updatedAt,
-    edited: comment.lastEditedAt !== null,
+    lastEditedAt: observeNullable(
+      comment.lastEditedAt,
+      errors,
+      [...commentPath, "lastEditedAt"],
+    ),
     topLevel,
     trustedProducer: trustedProducer(comment),
   };
@@ -335,13 +368,21 @@ function hasMissingNode(nodes: readonly unknown[] | null): boolean {
   return nodes === null || nodes.some((node) => node === null);
 }
 
+function graphNodeIndex<T>(nodes: readonly (T | null)[] | null, node: T): number {
+  return nodes?.indexOf(node) ?? -1;
+}
+
 function roadmapText(value: unknown): string | null {
   if (typeof value !== "object" || value === null || !("text" in value)) return null;
   const text = value.text;
   return typeof text === "string" && text.trim().length > 0 ? text : null;
 }
 
-function hasNestedTruncation(pull: GraphPull): boolean {
+function hasNestedTruncation(
+  pull: GraphPull,
+  errors: GraphResponse["errors"],
+  pullPath: readonly (string | number)[],
+): boolean {
   const threads = presentNodes(pull.reviewThreads.nodes);
   return (
     pull.closingIssuesReferences === null ||
@@ -361,11 +402,20 @@ function hasNestedTruncation(pull: GraphPull): boolean {
     (pull.statusCheckRollup?.contexts.pageInfo.hasNextPage ?? false) ||
     (pull.statusCheckRollup === null
       ? false
-      : hasMissingNode(pull.statusCheckRollup.contexts.nodes))
+      : hasMissingNode(pull.statusCheckRollup.contexts.nodes)) ||
+    fieldError(errors, [...pullPath, "closingIssuesReferences"]) !== undefined ||
+    fieldError(errors, [...pullPath, "comments"]) !== undefined ||
+    fieldError(errors, [...pullPath, "reviews"]) !== undefined ||
+    fieldError(errors, [...pullPath, "reviewThreads"]) !== undefined ||
+    fieldError(errors, [...pullPath, "statusCheckRollup"]) !== undefined
   );
 }
 
-function commentsTruncated(pull: GraphPull): boolean {
+function commentsTruncated(
+  pull: GraphPull,
+  errors: GraphResponse["errors"],
+  pullPath: readonly (string | number)[],
+): boolean {
   const threads = presentNodes(pull.reviewThreads.nodes);
   return (
     pull.comments.pageInfo.hasNextPage ||
@@ -378,7 +428,10 @@ function commentsTruncated(pull: GraphPull): boolean {
     threads.some(
       (thread) =>
         thread.comments.pageInfo.hasNextPage || hasMissingNode(thread.comments.nodes),
-    )
+    ) ||
+    fieldError(errors, [...pullPath, "comments"]) !== undefined ||
+    fieldError(errors, [...pullPath, "reviews"]) !== undefined ||
+    fieldError(errors, [...pullPath, "reviewThreads"]) !== undefined
   );
 }
 
@@ -409,20 +462,6 @@ function isAuthorityPath(path: string): boolean {
     path.startsWith("docs/specs/") ||
     path.startsWith("docs/vision/")
   );
-}
-
-function nativeMergePolicy(pull: GraphPull): RawPullRequest["nativeMergePolicy"] {
-  if (pull.reviewDecision === "CHANGES_REQUESTED") return "blocked";
-  if (
-    pull.mergeStateStatus === "DIRTY" ||
-    pull.mergeStateStatus === "BLOCKED" ||
-    pull.mergeStateStatus === "BEHIND"
-  ) {
-    return "blocked";
-  }
-  if (pull.mergeStateStatus === "UNKNOWN") return "unknown";
-  if (pull.reviewDecision === "REVIEW_REQUIRED") return "waiting";
-  return "satisfied";
 }
 
 async function comparePull(
@@ -541,8 +580,13 @@ export async function observeRepository(
   const nullNodeObserved = issueNodeMissing || pullNodeMissing || recentNodeMissing;
 
   const errors: RepositoryObservation["errors"] = [];
-  if ((response.errors?.length ?? 0) > 0) {
-    errors.push({ source: "GitHub GraphQL", url: GRAPHQL_URL, reason: "observation-incomplete" });
+  for (const error of response.errors ?? []) {
+    errors.push({
+      source: "GitHub GraphQL",
+      url: GRAPHQL_URL,
+      reason: "observation-incomplete",
+      ...(error.path === undefined ? {} : { path: error.path }),
+    });
   }
   const roadmapMarkdown = roadmapText(repository.roadmap);
   if (roadmapMarkdown === null) {
@@ -551,15 +595,32 @@ export async function observeRepository(
   const topLevelTruncated =
     repository.issues.pageInfo.hasNextPage ||
     repository.pullRequests.pageInfo.hasNextPage;
-  const issueTruncated = issueNodes.some(
-    (issue) =>
+  const issueTruncated = issueNodes.some((issue) => {
+    const issuePath = [
+      "repository",
+      "issues",
+      "nodes",
+      graphNodeIndex(repository.issues.nodes, issue),
+    ] as const;
+    return (
       issue.labels === null ||
       issue.labels.pageInfo.hasNextPage ||
       hasMissingNode(issue.labels.nodes) ||
       issue.blockedBy.pageInfo.hasNextPage ||
-      hasMissingNode(issue.blockedBy.nodes),
-  );
-  const pullTruncated = pullNodes.some(hasNestedTruncation);
+      hasMissingNode(issue.blockedBy.nodes) ||
+      fieldError(response.errors, [...issuePath, "labels"]) !== undefined ||
+      fieldError(response.errors, [...issuePath, "blockedBy"]) !== undefined
+    );
+  });
+  const pullTruncated = pullNodes.some((pull) => {
+    const pullPath = [
+      "repository",
+      "pullRequests",
+      "nodes",
+      graphNodeIndex(repository.pullRequests.nodes, pull),
+    ] as const;
+    return hasNestedTruncation(pull, response.errors, pullPath);
+  });
   if (topLevelTruncated || issueTruncated || pullTruncated || nullNodeObserved) {
     errors.push({ source: "GitHub GraphQL", url: GRAPHQL_URL, reason: "observation-incomplete" });
   }
@@ -594,6 +655,12 @@ export async function observeRepository(
     }
   });
   const pullRequests = pullNodes.map((pull, index): RawPullRequest => {
+    const pullPath = [
+      "repository",
+      "pullRequests",
+      "nodes",
+      graphNodeIndex(repository.pullRequests.nodes, pull),
+    ] as const;
     const comparison = comparisons[index] ?? {
       mergeBaseSha: null,
       relation: "unknown" as const,
@@ -605,12 +672,30 @@ export async function observeRepository(
     const threads = presentNodes(pull.reviewThreads.nodes);
     const reviewComments = reviews
       .filter((review) => review.body.length > 0)
-      .map((review) => rawComment(review, "pull-request-review", true));
-    const threadComments = threads.flatMap((thread) =>
-      presentNodes(thread.comments.nodes).map((comment) =>
-        rawComment(comment, "pull-request-review-comment", false),
-      ),
-    );
+      .map((review) =>
+        rawComment(review, "pull-request-review", true, response.errors, [
+          ...pullPath,
+          "reviews",
+          "nodes",
+          graphNodeIndex(pull.reviews?.nodes ?? null, review),
+        ]),
+      );
+    const threadComments = threads.flatMap((thread) => {
+      const threadPath = [
+        ...pullPath,
+        "reviewThreads",
+        "nodes",
+        graphNodeIndex(pull.reviewThreads.nodes, thread),
+      ] as const;
+      return presentNodes(thread.comments.nodes).map((comment) =>
+        rawComment(comment, "pull-request-review-comment", false, response.errors, [
+          ...threadPath,
+          "comments",
+          "nodes",
+          graphNodeIndex(thread.comments.nodes, comment),
+        ]),
+      );
+    });
     const checkNodes = presentNodes(pull.statusCheckRollup?.contexts.nodes ?? []);
     return {
       number: pull.number,
@@ -629,26 +714,41 @@ export async function observeRepository(
           : pull.mergeable === "CONFLICTING"
             ? "conflicting"
             : "unknown",
-      nativeMergePolicy: nativeMergePolicy(pull),
+      mergeStateStatus: pull.mergeStateStatus,
+      reviewDecision: observeNullable(
+        pull.reviewDecision,
+        response.errors,
+        [...pullPath, "reviewDecision"],
+      ),
       authorityChanges: comparison.authorityChanges,
       authorityAvailability: comparison.authorityAvailability,
       closingIssueNumbers: presentNodes(pull.closingIssuesReferences?.nodes ?? null).map(
         (issue) => issue.number,
       ),
       comments: [
-        ...comments.map((comment) => rawComment(comment, "issue-comment", true)),
+        ...comments.map((comment) =>
+          rawComment(comment, "issue-comment", true, response.errors, [
+            ...pullPath,
+            "comments",
+            "nodes",
+            graphNodeIndex(pull.comments.nodes, comment),
+          ]),
+        ),
         ...reviewComments,
         ...threadComments,
       ],
-      commentsAvailability: commentsTruncated(pull) ? "incomplete" : "complete",
+      commentsAvailability: commentsTruncated(pull, response.errors, pullPath)
+        ? "incomplete"
+        : "complete",
       checks: checkNodes.map((check) => rawCheck(check, pull.headRefOid)),
       checksAvailability:
-        pull.statusCheckRollup === null
-          ? "complete"
-          : pull.statusCheckRollup.contexts.pageInfo.hasNextPage ||
+        fieldError(response.errors, [...pullPath, "statusCheckRollup"]) !== undefined ||
+        (pull.statusCheckRollup !== null &&
+          (pull.statusCheckRollup.contexts.pageInfo.hasNextPage ||
               hasMissingNode(pull.statusCheckRollup.contexts.nodes)
-            ? "incomplete"
-            : "complete",
+          ))
+          ? "incomplete"
+          : "complete",
       reviews: reviews.map((review) => ({
         id: stableSourceId(review),
         authorLogin: review.author?.login ?? `unknown:${review.id}`,
@@ -661,7 +761,8 @@ export async function observeRepository(
       reviewsAvailability:
         pull.reviews === null ||
         pull.reviews.pageInfo.hasNextPage ||
-        hasMissingNode(pull.reviews.nodes)
+        hasMissingNode(pull.reviews.nodes) ||
+        fieldError(response.errors, [...pullPath, "reviews"]) !== undefined
           ? "incomplete"
           : "complete",
       threads: threads.map((thread) => ({
@@ -676,7 +777,8 @@ export async function observeRepository(
         threads.some(
           (thread) =>
             thread.comments.pageInfo.hasNextPage || hasMissingNode(thread.comments.nodes),
-        )
+        ) ||
+        fieldError(response.errors, [...pullPath, "reviewThreads"]) !== undefined
           ? "incomplete"
           : "complete",
     };
@@ -697,7 +799,14 @@ export async function observeRepository(
           markdown: roadmapMarkdown,
           url: `https://github.com/${REPOSITORY}/blob/${main.oid}/${ROADMAP_PATH}`,
         },
-    issues: issueNodes.map((issue) => ({
+    issues: issueNodes.map((issue) => {
+      const issuePath = [
+        "repository",
+        "issues",
+        "nodes",
+        graphNodeIndex(repository.issues.nodes, issue),
+      ] as const;
+      return {
       number: issue.number,
       title: issue.title,
       url: issue.url,
@@ -709,13 +818,18 @@ export async function observeRepository(
         hasMissingNode(issue.labels.nodes)
           ? "incomplete"
           : "complete",
-      milestone: issue.milestone?.title ?? null,
+      milestone: observeNullable(
+        issue.milestone?.title ?? null,
+        response.errors,
+        [...issuePath, "milestone"],
+      ),
       blockedBy: presentNodes(issue.blockedBy.nodes),
       dependencyAvailability:
         issue.blockedBy.pageInfo.hasNextPage || hasMissingNode(issue.blockedBy.nodes)
           ? "incomplete"
           : "complete",
-    })),
+      };
+    }),
     issuesAvailability:
       repository.issues.pageInfo.hasNextPage || issueTruncated || issueNodeMissing
         ? "incomplete"

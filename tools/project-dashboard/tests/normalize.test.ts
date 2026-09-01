@@ -18,7 +18,7 @@ function addGreenOperationalEvidence(observation: ReturnType<typeof healthyObser
     url: `https://github.example/comments/${id}`,
     createdAt: "2026-09-01T00:00:00.000Z",
     updatedAt: null,
-    edited: false,
+    lastEditedAt: { state: "null" as const },
     topLevel: true,
     trustedProducer: true,
   });
@@ -50,6 +50,20 @@ function addGreenOperationalEvidence(observation: ReturnType<typeof healthyObser
       ].join("\n"),
     ),
   );
+}
+
+function setNativePolicy(
+  observation: ReturnType<typeof healthyObservation>,
+  policy: "blocked" | "unknown" | "waiting" | "satisfied",
+): void {
+  const pull = observation.pullRequests[0];
+  if (pull === undefined) throw new Error("fixture missing pull request");
+  pull.mergeStateStatus =
+    policy === "blocked" ? "BLOCKED" : policy === "unknown" ? "UNKNOWN" : "CLEAN";
+  pull.reviewDecision =
+    policy === "waiting"
+      ? { state: "value", value: "REVIEW_REQUIRED" }
+      : { state: "null" };
 }
 
 describe("normalizeRepository", () => {
@@ -1346,7 +1360,7 @@ describe("normalizeRepository", () => {
     const observation = healthyObservation();
     const issue = observation.issues[1];
     if (issue === undefined) throw new Error("fixture missing issue");
-    issue.milestone = "07 · Future horizon";
+    issue.milestone = { state: "value", value: "07 · Future horizon" };
 
     const projection = normalizeRepository(observation);
     const lane = projection.deliveries.find((item) => item.issue?.number === issue.number);
@@ -1365,7 +1379,7 @@ describe("normalizeRepository", () => {
     addGreenOperationalEvidence(observation);
     const issue = observation.issues[0];
     if (issue === undefined) throw new Error("fixture missing issue");
-    issue.milestone = "07 · Future horizon";
+    issue.milestone = { state: "value", value: "07 · Future horizon" };
 
     expect(normalizeRepository(observation).deliveries[0]).toMatchObject({
       readiness: { state: "blocked", reason: "issue-not-ready" },
@@ -1378,7 +1392,7 @@ describe("normalizeRepository", () => {
     const observation = healthyObservation();
     const issue = observation.issues[1];
     if (issue === undefined) throw new Error("fixture missing issue");
-    issue.milestone = null;
+    issue.milestone = { state: "null" };
 
     const projection = normalizeRepository(observation);
     expect(
@@ -1397,7 +1411,7 @@ describe("normalizeRepository", () => {
       addGreenOperationalEvidence(observation);
       const linkedIssue = observation.issues[0];
       if (linkedIssue === undefined) throw new Error("fixture missing issue");
-      linkedIssue.milestone = "06 · Team Workspace Beta";
+      linkedIssue.milestone = { state: "value", value: "06 · Team Workspace Beta" };
       if (kind === "missing") observation.roadmap = null;
       else if (observation.roadmap !== null) observation.roadmap.markdown = "# Roadmap\n\n## Future";
 
@@ -1440,7 +1454,7 @@ describe("normalizeRepository", () => {
     addGreenOperationalEvidence(observation);
     const pull = observation.pullRequests[0];
     if (pull === undefined) throw new Error("fixture missing pull request");
-    pull.nativeMergePolicy = policy;
+    setNativePolicy(observation, policy);
 
     expect(normalizeRepository(observation).deliveries[0]).toMatchObject({
       mergeGate: { state: policy },
@@ -1448,13 +1462,31 @@ describe("normalizeRepository", () => {
     });
   });
 
+  it.each([
+    ["BLOCKED", { state: "unknown", availability: "incomplete", path: null }, "blocked"],
+    ["UNKNOWN", { state: "value", value: "REVIEW_REQUIRED" }, "unknown"],
+    ["CLEAN", { state: "value", value: "REVIEW_REQUIRED" }, "waiting"],
+  ] as const)(
+    "preserves Blocked > Unknown > Waiting for %s / %s",
+    (mergeStateStatus, reviewDecision, expected) => {
+      const observation = healthyObservation();
+      addGreenOperationalEvidence(observation);
+      const pull = observation.pullRequests[0];
+      if (pull === undefined) throw new Error("fixture missing pull request");
+      pull.mergeStateStatus = mergeStateStatus;
+      pull.reviewDecision = reviewDecision;
+
+      expect(normalizeRepository(observation).deliveries[0]?.mergeGate.state).toBe(expected);
+    },
+  );
+
   it("preserves native mergeability Unknown over a waiting merge policy", () => {
     const observation = healthyObservation();
     addGreenOperationalEvidence(observation);
     const pull = observation.pullRequests[0];
     if (pull === undefined) throw new Error("fixture missing pull request");
     pull.mergeability = "unknown";
-    pull.nativeMergePolicy = "waiting";
+    setNativePolicy(observation, "waiting");
 
     expect(normalizeRepository(observation).deliveries[0]).toMatchObject({
       mergeGate: { state: "unknown" },
@@ -1470,7 +1502,7 @@ describe("normalizeRepository", () => {
       const pull = observation.pullRequests[0];
       if (pull === undefined) throw new Error("fixture missing pull request");
       pull.checksAvailability = "incomplete";
-      pull.nativeMergePolicy = policy;
+      setNativePolicy(observation, policy);
 
       expect(normalizeRepository(observation).deliveries[0]).toMatchObject({
         checks: { state: "unknown" },
@@ -1490,7 +1522,7 @@ describe("normalizeRepository", () => {
     addGreenOperationalEvidence(observation);
     const pull = observation.pullRequests[0];
     if (pull === undefined) throw new Error("fixture missing pull request");
-    pull.nativeMergePolicy = policy;
+    setNativePolicy(observation, policy);
     pull.comments = pull.comments.map((comment) =>
       comment.body.startsWith(marker)
         ? {

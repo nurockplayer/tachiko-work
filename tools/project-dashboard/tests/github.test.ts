@@ -174,6 +174,10 @@ function appendNull(nodes: unknown[]): void {
   nodes.push(null);
 }
 
+function addGraphError(graph: FixtureGraph, path: readonly (string | number)[]): void {
+  Object.assign(graph, { errors: [{ message: "partial field observation", path }] });
+}
+
 function fakeBehindAuthorityFetch() {
   const requests: string[] = [];
   const implementation = (async (input: string | URL | Request) => {
@@ -424,7 +428,7 @@ describe("GitHub observation adapter", () => {
       expect.objectContaining({
         id: "issue-comment-node",
         kind: "issue-comment",
-        edited: true,
+        lastEditedAt: { state: "value", value: "2026-09-01T00:03:00.000Z" },
       }),
     );
     expect(observation.pullRequests[0]?.comments).toContainEqual(
@@ -444,10 +448,9 @@ describe("GitHub observation adapter", () => {
   it.each(
     (["issue-comment", "pull-request-review", "pull-request-review-comment"] as const)
       .flatMap((kind) =>
-        (["unedited", "edited", "missing"] as const).map((editState) => [
-          kind,
-          editState,
-        ] as const),
+        (["unedited", "edited", "missing", "partial-error-null"] as const).map(
+          (editState) => [kind, editState] as const,
+        ),
       ),
   )("fails structured %s evidence closed for %s edit metadata", async (kind, editState) => {
     const graph = graphResponse();
@@ -472,7 +475,10 @@ describe("GitHub observation adapter", () => {
       updatedAt: "2026-09-01T00:00:00.000Z",
       ...(editState === "missing"
         ? {}
-        : { lastEditedAt: editState === "edited" ? "2026-09-01T00:01:00.000Z" : null }),
+        : {
+            lastEditedAt:
+              editState === "edited" ? "2026-09-01T00:01:00.000Z" : null,
+          }),
       author: { login: "nurockplayer" },
       authorAssociation: "OWNER",
     };
@@ -503,6 +509,25 @@ describe("GitHub observation adapter", () => {
         ],
       });
     }
+    if (editState === "partial-error-null") {
+      const sourcePath = kind === "issue-comment"
+        ? ["repository", "pullRequests", "nodes", 0, "comments", "nodes", 0]
+        : kind === "pull-request-review"
+          ? ["repository", "pullRequests", "nodes", 0, "reviews", "nodes", 0]
+          : [
+              "repository",
+              "pullRequests",
+              "nodes",
+              0,
+              "reviewThreads",
+              "nodes",
+              0,
+              "comments",
+              "nodes",
+              0,
+            ];
+      addGraphError(graph, [...sourcePath, "lastEditedAt"]);
+    }
 
     const observation = await observeRepository({ fetchImpl: fetchForGraph(graph) });
     const observed = observation.pullRequests[0]?.comments.find(
@@ -510,13 +535,138 @@ describe("GitHub observation adapter", () => {
     );
     const integrity = normalizeRepository(observation).deliveries[0]?.evidence.deliveryIntegrity;
 
-    expect(observed?.edited).toBe(editState !== "unedited");
+    expect(observed?.lastEditedAt).toMatchObject(
+      editState === "unedited"
+        ? { state: "null" }
+        : editState === "edited"
+          ? { state: "value", value: "2026-09-01T00:01:00.000Z" }
+          : { state: "unknown", availability: "incomplete" },
+    );
     expect(integrity).toMatchObject(
       editState === "unedited"
         ? { state: "satisfied", reason: "validation-passed" }
         : { state: "unknown", reason: "source-edited" },
     );
   });
+
+  it.each([
+    ["observed value", { title: "06 · Team Workspace Beta" }, null, "satisfied"],
+    ["observed null", null, null, "satisfied"],
+    [
+      "partial-error null",
+      null,
+      ["repository", "issues", "nodes", 0, "milestone"],
+      "unknown",
+    ],
+  ] as const)(
+    "distinguishes %s milestone observation",
+    async (_case, milestone, errorPath, expectedReadiness) => {
+      const graph = graphResponse();
+      const issue = graph.data.repository.issues.nodes[0];
+      if (issue === undefined) throw new Error("fixture missing issue");
+      Object.assign(issue, { milestone });
+      if (errorPath !== null) addGraphError(graph, errorPath);
+
+      const observation = await observeRepository({ fetchImpl: fetchForGraph(graph) });
+      expect(normalizeRepository(observation).deliveries[0]?.readiness.state).toBe(
+        expectedReadiness,
+      );
+      if (errorPath !== null) {
+        expect(observation.errors).toContainEqual(
+          expect.objectContaining({ path: errorPath }),
+        );
+      }
+    },
+  );
+
+  it.each([
+    ["observed value", "REVIEW_REQUIRED", null, "value"],
+    ["observed null", null, null, "null"],
+    [
+      "partial-error null",
+      null,
+      ["repository", "pullRequests", "nodes", 0, "reviewDecision"],
+      "unknown",
+    ],
+  ] as const)(
+    "distinguishes %s native review-decision observation",
+    async (_case, reviewDecision, errorPath, expectedState) => {
+      const graph = graphResponse();
+      const pull = graph.data.repository.pullRequests.nodes[0];
+      if (pull === undefined) throw new Error("fixture missing pull request");
+      Object.assign(pull, { reviewDecision });
+      if (errorPath !== null) addGraphError(graph, errorPath);
+
+      const observation = await observeRepository({ fetchImpl: fetchForGraph(graph) });
+      expect(observation.pullRequests[0] as unknown).toMatchObject({
+        reviewDecision: { state: expectedState },
+      });
+    },
+  );
+
+  it.each([
+    ["observed value", false, "complete"],
+    ["observed null", true, "complete"],
+    ["partial-error null", true, "incomplete"],
+  ] as const)(
+    "distinguishes %s status-check rollup observation",
+    async (_case, makeNull, expectedAvailability) => {
+      const graph = graphResponse();
+      const pull = graph.data.repository.pullRequests.nodes[0];
+      if (pull === undefined) throw new Error("fixture missing pull request");
+      if (makeNull) Object.assign(pull, { statusCheckRollup: null });
+      if (_case === "partial-error null") {
+        addGraphError(graph, [
+          "repository",
+          "pullRequests",
+          "nodes",
+          0,
+          "statusCheckRollup",
+        ]);
+      }
+
+      const observation = await observeRepository({ fetchImpl: fetchForGraph(graph) });
+      expect(observation.pullRequests[0]?.checksAvailability).toBe(expectedAvailability);
+    },
+  );
+
+  it.each(["author", "commit", "submittedAt"] as const)(
+    "marks a partial-error null review %s incomplete",
+    async (field) => {
+      const graph = graphResponse();
+      const pull = graph.data.repository.pullRequests.nodes[0];
+      if (pull === undefined) throw new Error("fixture missing pull request");
+      const review = {
+        id: `review-${field}`,
+        fullDatabaseId: "101",
+        body: "",
+        url: `https://github.example/reviews/${field}`,
+        createdAt: "2026-09-01T00:00:00.000Z",
+        updatedAt: "2026-09-01T00:00:00.000Z",
+        lastEditedAt: null,
+        state: "APPROVED",
+        submittedAt: "2026-09-01T00:00:00.000Z",
+        author: { login: "nurockplayer" },
+        authorAssociation: "OWNER",
+        commit: { oid: HEAD },
+      };
+      Object.assign(review, { [field]: null });
+      Object.assign(pull.reviews, { nodes: [review] });
+      addGraphError(graph, [
+        "repository",
+        "pullRequests",
+        "nodes",
+        0,
+        "reviews",
+        "nodes",
+        0,
+        field,
+      ]);
+
+      const observation = await observeRepository({ fetchImpl: fetchForGraph(graph) });
+      expect(observation.pullRequests[0]?.reviewsAvailability).toBe("incomplete");
+    },
+  );
 
   it("marks completeness-required pagination as partial but keeps bounded recent history valid", async () => {
     const fake = fakeFetch(true);
@@ -573,27 +723,32 @@ describe("GitHub observation adapter", () => {
   });
 
   it.each([
-    ["CLEAN", null, "satisfied"],
-    ["HAS_HOOKS", "APPROVED", "satisfied"],
-    ["UNSTABLE", null, "satisfied"],
-    ["BLOCKED", null, "blocked"],
-    ["BEHIND", null, "blocked"],
-    ["UNKNOWN", null, "unknown"],
-    ["CLEAN", "REVIEW_REQUIRED", "waiting"],
-    ["CLEAN", "CHANGES_REQUESTED", "blocked"],
-    ["BEHIND", "REVIEW_REQUIRED", "blocked"],
-    ["BLOCKED", "REVIEW_REQUIRED", "blocked"],
-    ["UNKNOWN", "REVIEW_REQUIRED", "unknown"],
+    ["CLEAN", null],
+    ["HAS_HOOKS", "APPROVED"],
+    ["UNSTABLE", null],
+    ["BLOCKED", null],
+    ["BEHIND", null],
+    ["UNKNOWN", null],
+    ["CLEAN", "REVIEW_REQUIRED"],
+    ["CLEAN", "CHANGES_REQUESTED"],
+    ["BEHIND", "REVIEW_REQUIRED"],
+    ["BLOCKED", "REVIEW_REQUIRED"],
+    ["UNKNOWN", "REVIEW_REQUIRED"],
   ] as const)(
-    "maps native merge policy %s / %s to %s",
-    async (mergeStateStatus, reviewDecision, expected) => {
+    "preserves native merge policy observations %s / %s",
+    async (mergeStateStatus, reviewDecision) => {
       const graph = graphResponse();
       const pull = graph.data.repository.pullRequests.nodes[0];
       if (pull === undefined) throw new Error("fixture missing pull request");
       Object.assign(pull, { mergeStateStatus, reviewDecision });
 
       const observation = await observeRepository({ fetchImpl: fetchForGraph(graph) });
-      expect(observation.pullRequests[0]?.nativeMergePolicy).toBe(expected);
+      expect(observation.pullRequests[0]?.mergeStateStatus).toBe(mergeStateStatus);
+      expect(observation.pullRequests[0]?.reviewDecision).toEqual(
+        reviewDecision === null
+          ? { state: "null" }
+          : { state: "value", value: reviewDecision },
+      );
     },
   );
 

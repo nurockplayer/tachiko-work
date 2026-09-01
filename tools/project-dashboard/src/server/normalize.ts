@@ -218,7 +218,17 @@ function roadmapAlignmentFor(
   currentHorizon: string | null,
 ): DisplaySignal {
   const source = evidenceSource("Issue milestone", issue.url);
-  if (issue.milestone === null) {
+  if (issue.milestone.state === "unknown") {
+    return directSignal(
+      "unknown",
+      issue.milestone.availability === "unavailable"
+        ? "observation-unavailable"
+        : "observation-incomplete",
+      "Issue milestone alignment Unknown",
+      [source],
+    );
+  }
+  if (issue.milestone.state === "null") {
     return directSignal(
       "satisfied",
       "not-required",
@@ -234,7 +244,7 @@ function roadmapAlignmentFor(
       [source],
     );
   }
-  return issue.milestone === currentHorizon
+  return issue.milestone.value === currentHorizon
     ? directSignal(
         "satisfied",
         "all-required-conditions-satisfied",
@@ -295,7 +305,7 @@ function commentSources(pull: RawPullRequest, repository: string): StructuredCom
       url: comment.url,
       createdAt: comment.createdAt,
       updatedAt: comment.updatedAt,
-      edited: comment.edited,
+      edited: comment.lastEditedAt.state !== "null",
       topLevel: comment.topLevel,
       trustedProducer: comment.trustedProducer,
     },
@@ -392,7 +402,19 @@ function boundedHandoffIdentity(
 
 function mergeabilityFor(pull: RawPullRequest): DisplaySignal {
   const source = [evidenceSource(`PR #${String(pull.number)}`, pull.url)];
-  if (pull.mergeability === "conflicting" || pull.nativeMergePolicy === "blocked") {
+  const decision = pull.reviewDecision;
+  const nativePolicy =
+    pull.mergeStateStatus === "DIRTY" ||
+    pull.mergeStateStatus === "BLOCKED" ||
+    pull.mergeStateStatus === "BEHIND" ||
+    (decision.state === "value" && decision.value === "CHANGES_REQUESTED")
+      ? "blocked"
+      : pull.mergeStateStatus === "UNKNOWN" || decision.state === "unknown"
+        ? "unknown"
+        : decision.state === "value" && decision.value === "REVIEW_REQUIRED"
+          ? "waiting"
+          : "satisfied";
+  if (pull.mergeability === "conflicting" || nativePolicy === "blocked") {
     return directSignal(
       "blocked",
       pull.mergeability === "conflicting" ? "native-merge-conflict" : "native-merge-policy-blocked",
@@ -402,7 +424,7 @@ function mergeabilityFor(pull: RawPullRequest): DisplaySignal {
       source,
     );
   }
-  if (pull.mergeability === "unknown" || pull.nativeMergePolicy === "unknown") {
+  if (pull.mergeability === "unknown" || nativePolicy === "unknown") {
     return directSignal(
       "unknown",
       "observation-incomplete",
@@ -410,7 +432,7 @@ function mergeabilityFor(pull: RawPullRequest): DisplaySignal {
       source,
     );
   }
-  if (pull.nativeMergePolicy === "waiting") {
+  if (nativePolicy === "waiting") {
     return directSignal(
       "waiting",
       "native-review-required",
