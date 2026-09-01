@@ -4,12 +4,22 @@ const CURRENT_HORIZON_HEADING = /^## Current horizon[ \t]*$/gm;
 const NEXT_SECTION = /^## /m;
 const HORIZON_LINE = /^> \*\*([^*\n]+)\*\*$/gm;
 
-function withoutFencedBlocks(markdown: string): string {
+function withoutNonAuthorityBlocks(markdown: string): string {
   let fence: { kind: "`" | "~"; length: number } | null = null;
+  let htmlComment = false;
   return markdown
     .split("\n")
     .map((line) => {
       if (fence === null) {
+        if (htmlComment) {
+          if (line.includes("-->")) htmlComment = false;
+          return "";
+        }
+        const commentStart = line.indexOf("<!--");
+        if (commentStart >= 0) {
+          if (line.indexOf("-->", commentStart + 4) < 0) htmlComment = true;
+          return "";
+        }
         const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
         if (marker === undefined) return line;
         fence = { kind: marker[0] as "`" | "~", length: marker.length };
@@ -37,7 +47,7 @@ export function parseProductHorizon(
     url,
     evidenceClass: "direct",
   };
-  const authorityMarkdown = withoutFencedBlocks(markdown);
+  const authorityMarkdown = withoutNonAuthorityBlocks(markdown);
   const headings = [...authorityMarkdown.matchAll(CURRENT_HORIZON_HEADING)];
   const heading = headings.length === 1 ? headings[0] : undefined;
   if (heading?.index === undefined) {

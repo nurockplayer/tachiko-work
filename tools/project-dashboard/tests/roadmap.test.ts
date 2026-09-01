@@ -55,6 +55,10 @@ describe("parseProductHorizon", () => {
       "~~~~md\n~~~~not-a-close\n## Current horizon\n\n> **06 · Team Workspace Beta**\n~~~~",
     ],
     [
+      "HTML-commented example",
+      "<!--\n## Current horizon\n\n> **06 · Team Workspace Beta**\n-->",
+    ],
+    [
       "ambiguous",
       "## Current horizon\n\n> **06 · Team Workspace Beta**\n> **07 · Migration**",
     ],
