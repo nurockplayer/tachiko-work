@@ -30,7 +30,7 @@ export interface CheckFact {
   status: string | null;
   conclusion: string | null;
   url: string;
-  headSha: string;
+  headSha: string | null;
 }
 
 export interface ReviewFact {

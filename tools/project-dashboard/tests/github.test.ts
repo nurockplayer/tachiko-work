@@ -180,6 +180,40 @@ describe("Dashboard GitHub observation", () => {
     expect(projection.attention.some((item) => item.level === "unknown")).toBe(true);
   });
 
+  it("classifies a misplaced canonical marker as malformed rather than missing", () => {
+    const response = graph();
+    const pull = response.data?.repository?.pullRequests.nodes?.[0];
+    const comment = pull?.comments?.nodes?.[0];
+    if (comment !== null && comment !== undefined) comment.body = `preface\n${comment.body}`;
+
+    const projection = projectGraphResponse(response);
+    expect(projection.deliveries[0]?.pullRequest?.handoff).toMatchObject({
+      status: "unknown",
+      reason: "Agent handoff marker-not-first-line",
+    });
+  });
+
+  it("does not let an untrusted duplicate suppress current owner evidence", () => {
+    const response = graph();
+    const comments = response.data?.repository?.pullRequests.nodes?.[0]?.comments;
+    const ownerComment = comments?.nodes?.[0];
+    if (comments !== null && comments !== undefined && ownerComment !== null && ownerComment !== undefined) {
+      comments.nodes?.push({
+        ...ownerComment,
+        id: "untrusted-duplicate",
+        url: "https://github.example/comments/untrusted",
+        author: { login: "attacker" },
+        authorAssociation: "NONE",
+      });
+    }
+
+    const projection = projectGraphResponse(response);
+    expect(projection.deliveries[0]?.pullRequest?.handoff).toMatchObject({
+      status: "current",
+      source: { url: "https://github.example/comments/handoff" },
+    });
+  });
+
   it("marks omitted recent merge identities partial instead of silently complete", () => {
     const response = graph();
     const recent = response.data?.repository?.recent.nodes?.[0];
@@ -281,6 +315,32 @@ describe("Dashboard GitHub observation", () => {
       items: [],
     });
     expect(projection.fetchHealth).toBe("partial");
+  });
+
+  it("does not invent a status-context head when GitHub omits its commit", () => {
+    const response = graph();
+    const pull = response.data?.repository?.pullRequests.nodes?.[0];
+    if (pull !== null && pull !== undefined) {
+      pull.statusCheckRollup = {
+        contexts: {
+          pageInfo: { hasNextPage: false },
+          nodes: [{
+            __typename: "StatusContext",
+            id: "status",
+            context: "legacy status",
+            state: "SUCCESS",
+            targetUrl: "https://github.example/status/1",
+            commit: null,
+          }],
+        },
+      };
+    }
+
+    const projection = projectGraphResponse(response);
+    expect(projection.deliveries[0]?.pullRequest?.checks.items[0]).toMatchObject({
+      name: "legacy status",
+      headSha: null,
+    });
   });
 
   it("keeps unmatched Issue-to-PR linkage and human action Unknown when pulls truncate", () => {

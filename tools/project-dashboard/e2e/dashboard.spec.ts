@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import type { DashboardProjection } from "../src/shared/model.js";
+
 test("renders five source-linked read-only control-room surfaces", async ({ page }) => {
   await page.goto("/");
 
@@ -34,10 +36,7 @@ test("is usable at mobile width and disables decorative motion", async ({ page }
 test("renders source failure as partial and Unknown", async ({ page }) => {
   await page.route("**/api/project", async (route) => {
     const response = await route.fetch();
-    const projection = (await response.json()) as {
-      executive: Record<string, unknown>;
-      deliveries: ({ issue: Record<string, unknown> | null } & Record<string, unknown>)[];
-    } & Record<string, unknown>;
+    const projection = (await response.json()) as DashboardProjection;
     await route.fulfill({
       response,
       json: {
@@ -96,9 +95,7 @@ test("shows direct GitHub and Steward facts without a final verdict", async ({ p
 test("distinguishes a complete empty linked-Issue observation from Unknown", async ({ page }) => {
   await page.route("**/api/project", async (route) => {
     const response = await route.fetch();
-    const projection = (await response.json()) as {
-      deliveries: ({ pullRequest: Record<string, unknown> | null } & Record<string, unknown>)[];
-    } & Record<string, unknown>;
+    const projection = (await response.json()) as DashboardProjection;
     await route.fulfill({
       response,
       json: {
@@ -127,9 +124,7 @@ test("distinguishes a complete empty linked-Issue observation from Unknown", asy
 test("renders an incomplete empty linked-Issue observation as Unknown", async ({ page }) => {
   await page.route("**/api/project", async (route) => {
     const response = await route.fetch();
-    const projection = (await response.json()) as {
-      deliveries: ({ pullRequest: Record<string, unknown> | null } & Record<string, unknown>)[];
-    } & Record<string, unknown>;
+    const projection = (await response.json()) as DashboardProjection;
     await route.fulfill({
       response,
       json: {
@@ -163,4 +158,26 @@ test("refresh preserves keyboard focus and announces completion", async ({ page 
 
   await expect(page.getByRole("button", { name: "Refresh observation" })).toBeFocused();
   await expect(page.locator("[aria-live='polite']")).toContainText("Observation refreshed");
+});
+
+test("refresh failure retains the current observation and recovery control", async ({ page }) => {
+  let requests = 0;
+  await page.route("**/api/project", async (route) => {
+    requests += 1;
+    if (requests === 1) await route.continue();
+    else await route.fulfill({ status: 503, body: "unavailable" });
+  });
+  await page.goto("/");
+  const refresh = page.getByRole("button", { name: "Refresh observation" });
+  await refresh.focus();
+  await refresh.press("Enter");
+
+  await expect(page.getByRole("heading", { name: "Live Project Control Room" })).toBeVisible();
+  await expect(refresh).toBeEnabled();
+  await expect(refresh).toBeFocused();
+  await expect(page.getByRole("alert")).toContainText("retained as stale · current live state Unknown");
+  await expect(
+    page.locator(".executive-cell").filter({ hasText: "FETCH" }).getByText("UNAVAILABLE", { exact: true }).first(),
+  ).toBeVisible();
+  await expect(page.locator("[aria-live='polite']")).toContainText("refresh failed");
 });

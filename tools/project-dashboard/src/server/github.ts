@@ -208,7 +208,12 @@ export function parseProductHorizon(markdown: string): string | null {
 }
 
 function candidateComments(comments: GraphComment[], marker: string): GraphComment[] {
-  return comments.filter((comment) => comment.body.replaceAll("\r\n", "\n").split("\n")[0] === marker);
+  return comments.filter((comment) =>
+    comment.body.replaceAll("\r\n", "\n").split("\n").includes(marker));
+}
+
+function trustedProducer(comment: GraphComment): boolean {
+  return comment.author?.login === OWNER && comment.authorAssociation === "OWNER";
 }
 
 function structuredSource(comment: GraphComment): StructuredCommentSource {
@@ -225,7 +230,7 @@ function structuredSource(comment: GraphComment): StructuredCommentSource {
       updatedAt: comment.updatedAt === comment.createdAt ? null : comment.updatedAt,
       edited: comment.lastEditedAt !== null,
       topLevel: true,
-      trustedProducer: comment.author?.login === OWNER && comment.authorAssociation === "OWNER",
+      trustedProducer: trustedProducer(comment),
     },
   };
 }
@@ -243,8 +248,9 @@ function structuredFact<T>(
     return { status: "unknown", value: null, reason: "Issue linkage Unknown", source: null };
   }
   const candidates = candidateComments(comments, marker);
+  const trusted = candidates.filter(trustedProducer);
   if (commentsPartial) {
-    const candidate = candidates.length === 1 ? candidates[0] : undefined;
+    const candidate = trusted.length === 1 ? trusted[0] : trusted.length === 0 ? candidates[0] : undefined;
     return {
       status: "unknown",
       value: null,
@@ -252,15 +258,12 @@ function structuredFact<T>(
       source: candidate === undefined ? null : source(label, candidate.url, "structured"),
     };
   }
-  if (candidates.length === 0) {
-    return { status: "missing", value: null, reason: `${label} not observed`, source: null };
+  if (trusted.length > 1) {
+    return { status: "unknown", value: null, reason: `Multiple trusted ${label} comments observed`, source: null };
   }
-  if (candidates.length !== 1) {
-    return { status: "unknown", value: null, reason: `Multiple ${label} comments observed`, source: null };
-  }
-  const candidate = candidates[0];
+  const candidate = trusted[0] ?? candidates[0];
   if (candidate === undefined) {
-    return { status: "unknown", value: null, reason: `${label} observation failed`, source: null };
+    return { status: "missing", value: null, reason: `${label} not observed`, source: null };
   }
   const result = parser(structuredSource(candidate), context);
   return result.ok
@@ -353,7 +356,7 @@ function pullRequestFact(
             status: check.state,
             conclusion: null,
             url: check.targetUrl ?? pull.url,
-            headSha: check.commit?.oid ?? pull.headRefOid,
+            headSha: check.commit?.oid ?? null,
           }),
     },
     reviews: {
@@ -372,10 +375,7 @@ function pullRequestFact(
       "<!-- agent-handoff:v1 -->",
       context,
       parseAgentHandoff,
-      (handoff) => {
-        const value = handoff as { state: string; owner: string };
-        return `${value.state} · ${value.owner}`;
-      },
+      (handoff) => `${handoff.state} · ${handoff.owner}`,
       "Agent handoff",
     ),
     stewardWatch: structuredFact(
@@ -384,10 +384,7 @@ function pullRequestFact(
       "<!-- project-steward-watch:v1 -->",
       context,
       parseStewardWatch,
-      (watch) => {
-        const value = watch as { verdict: string; humanAction: string };
-        return `${value.verdict} · human action ${value.humanAction}`;
-      },
+      (watch) => `${watch.verdict} · human action ${watch.humanAction}`,
       "Steward watch",
     ),
     availability: sectionAvailability(partial),

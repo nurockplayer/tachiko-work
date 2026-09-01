@@ -14,6 +14,7 @@ import type {
 const root = document.querySelector<HTMLDivElement>("#app");
 if (root === null) throw new Error("dashboard root is missing");
 const app: HTMLDivElement = root;
+let lastProjection: DashboardProjection | null = null;
 
 function element<K extends keyof HTMLElementTagNameMap>(
   name: K,
@@ -161,7 +162,7 @@ function structuredGroup(title: string, value: StructuredFact): HTMLElement {
 
 function pullRequestGroups(pull: PullRequestFact): HTMLElement[] {
   const checks = pull.checks.items.map((check) => ({
-    text: `${check.name} · status ${display(check.status)} · conclusion ${display(check.conclusion)} · head ${check.headSha}`,
+    text: `${check.name} · status ${display(check.status)} · conclusion ${display(check.conclusion)} · head ${display(check.headSha)}`,
     source: { label: "Native check", url: check.url, kind: "github" as const },
   }));
   const reviews = pull.reviews.items.map((review) => ({
@@ -332,7 +333,7 @@ function attentionPanel(projection: DashboardProjection): HTMLElement {
   return node;
 }
 
-function render(projection: DashboardProjection): void {
+function render(projection: DashboardProjection, warning?: string): void {
   const main = element("main", "dashboard-shell");
   main.id = "dashboard-main";
   const ambient = element("div", "ambient-grid");
@@ -354,10 +355,15 @@ function render(projection: DashboardProjection): void {
   const liveStatus = element("p", "sr-only");
   liveStatus.id = "refresh-status";
   liveStatus.setAttribute("aria-live", "polite");
+  const refreshWarning = warning === undefined
+    ? null
+    : element("p", "refresh-warning", warning);
+  refreshWarning?.setAttribute("role", "alert");
   main.append(
     ambient,
     header,
     liveStatus,
+    ...(refreshWarning === null ? [] : [refreshWarning]),
     executiveStrip(projection),
     commandCenter(projection),
     criticalPath(projection),
@@ -375,14 +381,33 @@ async function refreshProjection(restoreFocus: boolean): Promise<void> {
   try {
     const response = await fetch("/api/project", { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${String(response.status)}`);
-    render(await response.json() as DashboardProjection);
+    const projection = await response.json() as DashboardProjection;
+    lastProjection = projection;
+    render(projection);
     const nextRefresh = document.querySelector<HTMLButtonElement>(".refresh-button");
     if (shouldRestoreFocus) nextRefresh?.focus();
     const status = document.querySelector<HTMLElement>("#refresh-status");
     if (restoreFocus && status !== null) status.textContent = "Observation refreshed";
   } catch {
+    if (lastProjection !== null) {
+      render(
+        { ...lastProjection, fetchHealth: "unavailable" },
+        "Refresh failed · displayed facts are retained as stale · current live state Unknown",
+      );
+      const nextRefresh = document.querySelector<HTMLButtonElement>(".refresh-button");
+      const status = document.querySelector<HTMLElement>("#refresh-status");
+      if (status !== null) status.textContent = "Observation refresh failed · current display retained as stale";
+      if (shouldRestoreFocus) nextRefresh?.focus();
+      return;
+    }
     const failure = element("main", "fatal-observation", "Dashboard observation unavailable · Unknown");
     failure.id = "dashboard-main";
+    const retry = element("button", "refresh-button", "Retry observation");
+    retry.type = "button";
+    retry.addEventListener("click", () => {
+      void refreshProjection(true);
+    });
+    failure.append(retry);
     app.replaceChildren(failure);
   }
 }
