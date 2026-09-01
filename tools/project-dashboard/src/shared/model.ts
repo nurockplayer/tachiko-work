@@ -181,8 +181,8 @@ export interface RepositoryProjection {
   executive: {
     mainSha: DisplayValue<string>;
     productHorizon: DisplayValue<string>;
-    activeCount: number;
-    readyCount: number;
+    activeCount: DisplayValue<number | "Unknown">;
+    readyCount: DisplayValue<number | "Unknown">;
   };
   deliveries: DeliveryLane[];
   criticalPath: {

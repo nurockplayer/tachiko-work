@@ -522,9 +522,7 @@ export async function observeRepository(
       relationToMain: comparison.relation,
       authorityChanges: comparison.authorityChanges,
       authorityAvailability: comparison.authorityAvailability,
-      closingIssueNumbers: pull.closingIssuesReferences.pageInfo.hasNextPage
-        ? []
-        : pull.closingIssuesReferences.nodes.map((issue) => issue.number),
+      closingIssueNumbers: pull.closingIssuesReferences.nodes.map((issue) => issue.number),
       comments: [
         ...pull.comments.nodes.map((comment) => rawComment(comment, "issue-comment", true)),
         ...reviewComments,

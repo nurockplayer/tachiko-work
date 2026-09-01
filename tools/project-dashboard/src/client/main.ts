@@ -83,7 +83,14 @@ function executiveStrip(projection: RepositoryProjection): HTMLElement {
     ["LIVE MAIN", shortSha(projection.executive.mainSha.value), projection.executive.mainSha.state],
     ["HORIZON", projection.executive.productHorizon.value, projection.executive.productHorizon.state],
     ["FETCH", projection.fetchHealth.toUpperCase(), projection.fetchHealth === "healthy" ? "satisfied" : "unknown"],
-    ["ACTIVE / READY", `${String(projection.executive.activeCount)} / ${String(projection.executive.readyCount)}`, "satisfied"],
+    [
+      "ACTIVE / READY",
+      `${String(projection.executive.activeCount.value)} / ${String(projection.executive.readyCount.value)}`,
+      projection.executive.activeCount.state === "satisfied" &&
+      projection.executive.readyCount.state === "satisfied"
+        ? "satisfied"
+        : "unknown",
+    ],
     ["HUMAN ACTION", projection.humanAction.label, projection.humanAction.state],
   ];
   for (const [label, value, state] of cells) {
@@ -112,7 +119,15 @@ function laneCard(lane: DeliveryLane): HTMLElement {
 
   const identity = element("div", "identity-grid");
   if (lane.pullRequest === null) {
-    identity.append(element("span", "identity-empty", "No implementation PR · native Ready lane"));
+    identity.append(
+      element(
+        "span",
+        "identity-empty",
+        lane.mergeGate.reason === "not-required"
+          ? "No implementation PR · native Ready lane"
+          : "Implementation PR linkage Unknown · native Issue lane",
+      ),
+    );
   } else {
     const values: [string, string][] = [
       ["PR", `#${String(lane.pullRequest.number)}`],

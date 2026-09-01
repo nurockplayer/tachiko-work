@@ -531,16 +531,28 @@ function issueLane(repository: RepositoryObservation, issue: RawIssue): Delivery
   const readiness = readinessFor(issue);
   const owner = ownerFor(issue);
   const ownership = ownershipFor(issue);
-  const unavailable = directSignal(
-    "unknown",
-    "not-required",
-    "No pull request yet",
-    [evidenceSource(`Issue #${String(issue.number)}`, issue.url)],
-  );
+  const linkageComplete = repository.implementationLinkageAvailability === "complete";
+  const unavailable = linkageComplete
+    ? directSignal(
+        "unknown",
+        "not-required",
+        "No implementation PR",
+        [evidenceSource(`Issue #${String(issue.number)}`, issue.url)],
+      )
+    : directSignal(
+        "unknown",
+        repository.implementationLinkageAvailability === "unavailable"
+          ? "observation-unavailable"
+          : "observation-incomplete",
+        "Implementation PR linkage Unknown",
+        [evidenceSource(`Issue #${String(issue.number)}`, issue.url)],
+      );
   return {
     issue: { number: issue.number, title: issue.title, url: issue.url },
     owner,
-    phase: readiness.state === "satisfied" ? "ready" : readiness.state,
+    phase: linkageComplete
+      ? readiness.state === "satisfied" ? "ready" : readiness.state
+      : "unknown",
     pullRequest: null,
     readiness,
     checks: unavailable,
@@ -844,6 +856,14 @@ export function normalizeRepository(
     : sourceAvailability.every((value) => value === "unavailable")
       ? "unavailable"
       : "partial";
+  const linkageSource = evidenceSource(
+    "Open pull request linkage",
+    `https://github.com/${observation.repository}/pulls`,
+  );
+  const countValue = (value: number) =>
+    observation.implementationLinkageAvailability === "complete"
+      ? { state: "satisfied" as const, value, source: linkageSource }
+      : { state: "unknown" as const, value: "Unknown" as const, source: linkageSource };
 
   return {
     repository: observation.repository,
@@ -852,10 +872,12 @@ export function normalizeRepository(
     executive: {
       mainSha,
       productHorizon: roadmap,
-      activeCount: deliveries.filter((lane) => lane.pullRequest !== null).length,
-      readyCount: deliveries.filter(
-        (lane) => lane.pullRequest === null && lane.readiness.state === "satisfied",
-      ).length,
+      activeCount: countValue(deliveries.filter((lane) => lane.pullRequest !== null).length),
+      readyCount: countValue(
+        deliveries.filter(
+          (lane) => lane.pullRequest === null && lane.readiness.state === "satisfied",
+        ).length,
+      ),
     },
     deliveries,
     criticalPath: {

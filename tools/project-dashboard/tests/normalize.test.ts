@@ -424,7 +424,10 @@ describe("normalizeRepository", () => {
         (lane) => lane.issue?.number === 223 && lane.pullRequest === null,
       ),
     ).toBe(false);
-    expect(projection.executive.readyCount).toBe(0);
+    expect(projection.executive.readyCount).toMatchObject({
+      state: "satisfied",
+      value: 0,
+    });
     for (const lane of lanes) {
       expect(lane.authority.state).toBe("blocked");
       expect(lane.mergeGate.state).toBe("blocked");
@@ -437,10 +440,24 @@ describe("normalizeRepository", () => {
     addGreenOperationalEvidence(observation);
     observation.implementationLinkageAvailability = "incomplete";
 
-    const lane = normalizeRepository(observation).deliveries[0];
+    const projection = normalizeRepository(observation);
+    const lane = projection.deliveries[0];
+    const issueOnlyLane = projection.deliveries.find(
+      (item) => item.issue?.number === 223 && item.pullRequest === null,
+    );
     expect(lane?.authority.state).toBe("unknown");
     expect(lane?.mergeGate.state).toBe("unknown");
     expect(lane?.phase).toBe("unknown");
+    expect(issueOnlyLane?.phase).toBe("unknown");
+    expect(issueOnlyLane?.mergeGate.label).toBe("Implementation PR linkage Unknown");
+    expect(projection.executive.activeCount).toMatchObject({
+      state: "unknown",
+      value: "Unknown",
+    });
+    expect(projection.executive.readyCount).toMatchObject({
+      state: "unknown",
+      value: "Unknown",
+    });
   });
 
   it("exposes exact check provenance on the delivery lane", () => {

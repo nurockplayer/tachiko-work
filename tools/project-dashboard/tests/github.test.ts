@@ -224,11 +224,13 @@ describe("GitHub observation adapter", () => {
   ])("keeps merge state Unknown for incomplete %s", async (_name, pullPage, closingPage) => {
     const fake = fakeFetch(false, false, true, pullPage, closingPage);
     const observation = await observeRepository({ fetchImpl: fake.implementation });
+    const projection = normalizeRepository(observation);
 
     expect(observation.implementationLinkageAvailability).toBe("incomplete");
-    expect(normalizeRepository(observation).deliveries[0]?.mergeGate.state).not.toBe(
-      "satisfied",
-    );
+    expect(observation.pullRequests[0]?.closingIssueNumbers).toEqual([169]);
+    expect(projection.deliveries[0]?.mergeGate.state).not.toBe("satisfied");
+    expect(projection.executive.activeCount.state).toBe("unknown");
+    expect(projection.executive.readyCount.state).toBe("unknown");
   });
 
   it("fails closed when Accepted ADR or Principle authority changed after the merge base", async () => {
