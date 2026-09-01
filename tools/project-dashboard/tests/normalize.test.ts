@@ -891,6 +891,61 @@ describe("normalizeRepository", () => {
     expect(projection.executive.readyCount).toMatchObject({ state: "satisfied", value: 0 });
   });
 
+  it("fails an otherwise-green linked future-milestone lane closed", () => {
+    const observation = healthyObservation();
+    addGreenOperationalEvidence(observation);
+    const issue = observation.issues[0];
+    if (issue === undefined) throw new Error("fixture missing issue");
+    issue.milestone = "07 · Future horizon";
+
+    expect(normalizeRepository(observation).deliveries[0]).toMatchObject({
+      readiness: { state: "blocked", reason: "issue-not-ready" },
+      mergeGate: { state: "blocked" },
+      phase: "blocked",
+    });
+  });
+
+  it("preserves the unmilestoned no-PR Ready exception across projections", () => {
+    const observation = healthyObservation();
+    const issue = observation.issues[1];
+    if (issue === undefined) throw new Error("fixture missing issue");
+    issue.milestone = null;
+
+    const projection = normalizeRepository(observation);
+    expect(
+      projection.deliveries.find((lane) => lane.issue?.number === issue.number),
+    ).toMatchObject({ readiness: { state: "satisfied" }, phase: "ready" });
+    expect(projection.executive.readyCount).toMatchObject({ state: "satisfied", value: 1 });
+    expect(
+      projection.criticalPath.nodes.find((item) => item.issueNumber === issue.number)?.state,
+    ).toBe("ready");
+  });
+
+  it.each(["missing", "malformed"])(
+    "keeps milestone alignment Unknown across linked and critical-path projections when Roadmap is %s",
+    (kind) => {
+      const observation = healthyObservation();
+      addGreenOperationalEvidence(observation);
+      const linkedIssue = observation.issues[0];
+      if (linkedIssue === undefined) throw new Error("fixture missing issue");
+      linkedIssue.milestone = "06 · Team Workspace Beta";
+      if (kind === "missing") observation.roadmap = null;
+      else if (observation.roadmap !== null) observation.roadmap.markdown = "# Roadmap\n\n## Future";
+
+      const projection = normalizeRepository(observation);
+      expect(projection.deliveries[0]).toMatchObject({
+        readiness: { state: "unknown" },
+        mergeGate: { state: "unknown" },
+        phase: "unknown",
+      });
+      expect(
+        projection.criticalPath.nodes.find(
+          (item) => item.issueNumber === linkedIssue.number,
+        )?.state,
+      ).toBe("unknown");
+    },
+  );
+
   it.each([
     ["conflicting", "blocked"],
     ["unknown", "unknown"],
