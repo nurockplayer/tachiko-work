@@ -56,7 +56,7 @@ const QUERY = `
           comments(first: 100) {
             pageInfo { hasNextPage }
             nodes {
-              id databaseId body url createdAt updatedAt includesCreatedEdit
+              id databaseId body url createdAt updatedAt lastEditedAt
               author { login }
               authorAssociation
             }
@@ -64,7 +64,7 @@ const QUERY = `
           reviews(first: 100) {
             pageInfo { hasNextPage }
             nodes {
-              id fullDatabaseId body url createdAt updatedAt includesCreatedEdit state submittedAt
+              id fullDatabaseId body url createdAt updatedAt lastEditedAt state submittedAt
               author { login }
               authorAssociation
               commit { oid }
@@ -77,7 +77,7 @@ const QUERY = `
               comments(first: 100) {
                 pageInfo { hasNextPage }
                 nodes {
-                  id databaseId body url createdAt updatedAt includesCreatedEdit
+                  id databaseId body url createdAt updatedAt lastEditedAt
                   author { login }
                   authorAssociation
                 }
@@ -119,7 +119,7 @@ interface GraphComment {
   url: string;
   createdAt: string;
   updatedAt: string;
-  includesCreatedEdit: boolean;
+  lastEditedAt?: string | null;
   author: Actor | null;
   authorAssociation: GitHubAuthorAssociation;
 }
@@ -293,7 +293,7 @@ function rawComment(
     url: comment.url,
     createdAt: comment.createdAt,
     updatedAt: comment.updatedAt,
-    edited: comment.includesCreatedEdit,
+    edited: comment.lastEditedAt !== null && comment.lastEditedAt !== undefined,
     topLevel,
     trustedProducer: trustedProducer(comment),
   };

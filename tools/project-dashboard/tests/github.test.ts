@@ -306,7 +306,7 @@ describe("GitHub observation adapter", () => {
         url: "https://github.example/reviews/member",
         createdAt: "2026-09-01T00:00:00.000Z",
         updatedAt: "2026-09-01T00:00:00.000Z",
-        includesCreatedEdit: false,
+        lastEditedAt: null,
         state: "APPROVED",
         submittedAt: "2026-09-01T00:00:00.000Z",
         author: { login: "member" },
@@ -320,7 +320,7 @@ describe("GitHub observation adapter", () => {
         url: "https://github.example/reviews/outsider",
         createdAt: "2026-09-01T00:01:00.000Z",
         updatedAt: "2026-09-01T00:01:00.000Z",
-        includesCreatedEdit: false,
+        lastEditedAt: null,
         state: "CHANGES_REQUESTED",
         submittedAt: "2026-09-01T00:01:00.000Z",
         author: { login: "outsider" },
@@ -334,7 +334,7 @@ describe("GitHub observation adapter", () => {
         url: "https://github.example/reviews/no-database-id",
         createdAt: "2026-09-01T00:02:00.000Z",
         updatedAt: "2026-09-01T00:02:00.000Z",
-        includesCreatedEdit: false,
+        lastEditedAt: null,
         state: "COMMENTED",
         submittedAt: "2026-09-01T00:02:00.000Z",
         author: { login: "member" },
@@ -351,7 +351,7 @@ describe("GitHub observation adapter", () => {
         url: "https://github.example/comments/101",
         createdAt: "2026-09-01T00:00:00.000Z",
         updatedAt: "2026-09-01T00:00:00.000Z",
-        includesCreatedEdit: false,
+        lastEditedAt: "2026-09-01T00:03:00.000Z",
         author: { login: "member" },
         authorAssociation: "MEMBER",
       },
@@ -395,7 +395,11 @@ describe("GitHub observation adapter", () => {
       }),
     );
     expect(observation.pullRequests[0]?.comments).toContainEqual(
-      expect.objectContaining({ id: "issue-comment-node", kind: "issue-comment" }),
+      expect.objectContaining({
+        id: "issue-comment-node",
+        kind: "issue-comment",
+        edited: true,
+      }),
     );
     expect(normalizeRepository(observation).deliveries[0]?.review.reason).not.toBe(
       "source-identity-conflict",
