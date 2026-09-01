@@ -7,6 +7,9 @@ const MAIN = "1111111111111111111111111111111111111111";
 const HEAD = "2222222222222222222222222222222222222222";
 const MERGE_BASE = "0000000000000000000000000000000000000000";
 
+type FixturePull = ReturnType<typeof graphResponse>["data"]["repository"]["pullRequests"]["nodes"][number];
+type FixtureGraph = ReturnType<typeof graphResponse>;
+
 function graphResponse(
   hasNextPage = false,
   labelsHaveNextPage = hasNextPage,
@@ -507,32 +510,155 @@ describe("GitHub observation adapter", () => {
     expect(projection.executive.readyCount.state).toBe("unknown");
   });
 
-  it("compacts nullable nested nodes and marks each evidence source incomplete", async () => {
+  it("compacts nullable Issue evidence nodes", async () => {
     const graph = graphResponse();
     const issue = graph.data.repository.issues.nodes[0];
-    const pull = graph.data.repository.pullRequests.nodes[0];
-    if (issue === undefined || pull === undefined) throw new Error("fixture missing lane");
+    if (issue === undefined) throw new Error("fixture missing issue");
     appendNull(issue.labels.nodes);
     appendNull(issue.blockedBy.nodes);
-    appendNull(pull.closingIssuesReferences.nodes);
-    appendNull(pull.comments.nodes);
-    appendNull(pull.reviews.nodes);
-    appendNull(pull.reviewThreads.nodes);
-    appendNull(pull.statusCheckRollup.contexts.nodes);
 
     const observation = await observeRepository({ fetchImpl: fetchForGraph(graph) });
     expect(observation.issues[0]).toMatchObject({
       labelsAvailability: "incomplete",
       dependencyAvailability: "incomplete",
     });
-    expect(observation.pullRequests[0]).toMatchObject({
-      commentsAvailability: "incomplete",
-      checksAvailability: "incomplete",
-      reviewsAvailability: "incomplete",
-      threadsAvailability: "incomplete",
-    });
-    expect(observation.implementationLinkageAvailability).toBe("incomplete");
     expect(normalizeRepository(observation).fetchHealth).toBe("partial");
+  });
+
+  it.each([
+    [
+      "closing reference element",
+      (pull: FixturePull) => {
+        appendNull(pull.closingIssuesReferences.nodes);
+      },
+      {},
+      "incomplete",
+    ],
+    [
+      "top-level comment element",
+      (pull: FixturePull) => {
+        appendNull(pull.comments.nodes);
+      },
+      { commentsAvailability: "incomplete" },
+      "incomplete",
+    ],
+    [
+      "review element",
+      (pull: FixturePull) => {
+        appendNull(pull.reviews.nodes);
+      },
+      { commentsAvailability: "incomplete", reviewsAvailability: "incomplete" },
+      "incomplete",
+    ],
+    [
+      "review-thread element",
+      (pull: FixturePull) => {
+        appendNull(pull.reviewThreads.nodes);
+      },
+      { commentsAvailability: "incomplete", threadsAvailability: "incomplete" },
+      "incomplete",
+    ],
+    [
+      "thread-comment element",
+      (pull: FixturePull) => {
+        const thread = {
+          id: "thread-null-comment",
+          isResolved: false,
+          isOutdated: false,
+          comments: { pageInfo: { hasNextPage: false }, nodes: [] },
+        };
+        (pull.reviewThreads.nodes as unknown[]).push(thread);
+        appendNull(thread.comments.nodes);
+      },
+      { commentsAvailability: "incomplete", threadsAvailability: "incomplete" },
+      "incomplete",
+    ],
+    [
+      "check element",
+      (pull: FixturePull) => {
+        appendNull(pull.statusCheckRollup.contexts.nodes);
+      },
+      { checksAvailability: "incomplete" },
+      "complete",
+    ],
+    [
+      "null comment node list",
+      (pull: FixturePull) => {
+        Object.assign(pull.comments, { nodes: null });
+      },
+      { commentsAvailability: "incomplete" },
+      "incomplete",
+    ],
+  ] as const)(
+    "isolates nullable nested %s",
+    async (_case, mutate, expectedPull, expectedLinkage) => {
+      const graph = graphResponse();
+      const pull = graph.data.repository.pullRequests.nodes[0];
+      if (pull === undefined) throw new Error("fixture missing pull request");
+      mutate(pull);
+
+      const observation = await observeRepository({ fetchImpl: fetchForGraph(graph) });
+      expect(observation.pullsAvailability).toBe("incomplete");
+      expect(observation.pullRequests[0]).toMatchObject(expectedPull);
+      expect(observation.implementationLinkageAvailability).toBe(expectedLinkage);
+    },
+  );
+
+  it.each([
+    [
+      "Issue labels",
+      (graph: FixtureGraph) => {
+        const issue = graph.data.repository.issues.nodes[0];
+        if (issue === undefined) throw new Error("fixture missing issue");
+        Object.assign(issue, { labels: null });
+      },
+      { issue: { labelsAvailability: "incomplete" }, pull: {}, linkage: "complete" },
+    ],
+    [
+      "closing Issue references",
+      (graph: FixtureGraph) => {
+        const pull = graph.data.repository.pullRequests.nodes[0];
+        if (pull === undefined) throw new Error("fixture missing pull request");
+        Object.assign(pull, { closingIssuesReferences: null });
+      },
+      { issue: {}, pull: { closingIssueNumbers: [] }, linkage: "incomplete" },
+    ],
+    [
+      "reviews",
+      (graph: FixtureGraph) => {
+        const pull = graph.data.repository.pullRequests.nodes[0];
+        if (pull === undefined) throw new Error("fixture missing pull request");
+        Object.assign(pull, { reviews: null });
+      },
+      {
+        issue: {},
+        pull: { commentsAvailability: "incomplete", reviewsAvailability: "incomplete" },
+        linkage: "incomplete",
+      },
+    ],
+  ] as const)("fails a nullable %s connection closed", async (_case, mutate, expected) => {
+    const graph = graphResponse();
+    mutate(graph);
+
+    const observation = await observeRepository({ fetchImpl: fetchForGraph(graph) });
+    expect(observation.availability).toBe("incomplete");
+    expect(observation.issues[0]).toMatchObject(expected.issue);
+    expect(observation.pullRequests[0]).toMatchObject(expected.pull);
+    expect(observation.implementationLinkageAvailability).toBe(expected.linkage);
+  });
+
+  it.each([
+    ["non-Blob", {}],
+    ["nullable Blob text", { oid: "roadmap-oid", text: null }],
+    ["empty Blob text", { oid: "roadmap-oid", text: "" }],
+  ] as const)("keeps a %s Roadmap object Unknown", async (_case, roadmap) => {
+    const graph = graphResponse();
+    Object.assign(graph.data.repository, { roadmap });
+
+    const observation = await observeRepository({ fetchImpl: fetchForGraph(graph) });
+    expect(observation.roadmap).toBeNull();
+    expect(observation.availability).toBe("incomplete");
+    expect(normalizeRepository(observation).executive.productHorizon.state).toBe("unknown");
   });
 
   it("keeps concurrent comparison errors in pull-request order", async () => {

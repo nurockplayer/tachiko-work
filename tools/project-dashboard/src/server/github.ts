@@ -168,9 +168,12 @@ interface GraphPull {
   baseRefOid: string;
   baseRefName: string;
   mergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
-  closingIssuesReferences: { pageInfo: PageInfo; nodes: ({ number: number } | null)[] | null };
+  closingIssuesReferences: {
+    pageInfo: PageInfo;
+    nodes: ({ number: number } | null)[] | null;
+  } | null;
   comments: { pageInfo: PageInfo; nodes: (GraphComment | null)[] | null };
-  reviews: { pageInfo: PageInfo; nodes: (GraphReview | null)[] | null };
+  reviews: { pageInfo: PageInfo; nodes: (GraphReview | null)[] | null } | null;
   reviewThreads: { pageInfo: PageInfo; nodes: (GraphThread | null)[] | null };
   statusCheckRollup: {
     contexts: { pageInfo: PageInfo; nodes: (GraphCheck | null)[] | null };
@@ -182,7 +185,7 @@ interface GraphIssue {
   title: string;
   url: string;
   state: "OPEN" | "CLOSED";
-  labels: { pageInfo: PageInfo; nodes: ({ name: string } | null)[] | null };
+  labels: { pageInfo: PageInfo; nodes: ({ name: string } | null)[] | null } | null;
   milestone: { title: string } | null;
   blockedBy: {
     pageInfo: PageInfo;
@@ -204,7 +207,7 @@ interface GraphRepository {
     name: string;
     target: { oid: string; url: string };
   } | null;
-  roadmap: { text: string; oid: string } | null;
+  roadmap: unknown;
   issues: {
     pageInfo: PageInfo;
     nodes: (GraphIssue | null)[] | null;
@@ -323,13 +326,21 @@ function hasMissingNode(nodes: readonly unknown[] | null): boolean {
   return nodes === null || nodes.some((node) => node === null);
 }
 
+function roadmapText(value: unknown): string | null {
+  if (typeof value !== "object" || value === null || !("text" in value)) return null;
+  const text = value.text;
+  return typeof text === "string" && text.trim().length > 0 ? text : null;
+}
+
 function hasNestedTruncation(pull: GraphPull): boolean {
   const threads = presentNodes(pull.reviewThreads.nodes);
   return (
+    pull.closingIssuesReferences === null ||
     pull.closingIssuesReferences.pageInfo.hasNextPage ||
     hasMissingNode(pull.closingIssuesReferences.nodes) ||
     pull.comments.pageInfo.hasNextPage ||
     hasMissingNode(pull.comments.nodes) ||
+    pull.reviews === null ||
     pull.reviews.pageInfo.hasNextPage ||
     hasMissingNode(pull.reviews.nodes) ||
     pull.reviewThreads.pageInfo.hasNextPage ||
@@ -350,6 +361,7 @@ function commentsTruncated(pull: GraphPull): boolean {
   return (
     pull.comments.pageInfo.hasNextPage ||
     hasMissingNode(pull.comments.nodes) ||
+    pull.reviews === null ||
     pull.reviews.pageInfo.hasNextPage ||
     hasMissingNode(pull.reviews.nodes) ||
     pull.reviewThreads.pageInfo.hasNextPage ||
@@ -498,7 +510,8 @@ export async function observeRepository(
   if ((response.errors?.length ?? 0) > 0) {
     errors.push({ source: "GitHub GraphQL", url: GRAPHQL_URL, reason: "observation-incomplete" });
   }
-  if (repository.roadmap === null) {
+  const roadmapMarkdown = roadmapText(repository.roadmap);
+  if (roadmapMarkdown === null) {
     errors.push({ source: "Product Roadmap", url: repository.url, reason: "observation-incomplete" });
   }
   const topLevelTruncated =
@@ -506,6 +519,7 @@ export async function observeRepository(
     repository.pullRequests.pageInfo.hasNextPage;
   const issueTruncated = issueNodes.some(
     (issue) =>
+      issue.labels === null ||
       issue.labels.pageInfo.hasNextPage ||
       hasMissingNode(issue.labels.nodes) ||
       issue.blockedBy.pageInfo.hasNextPage ||
@@ -553,7 +567,7 @@ export async function observeRepository(
       authorityAvailability: "unavailable" as const,
     };
     const comments = presentNodes(pull.comments.nodes);
-    const reviews = presentNodes(pull.reviews.nodes);
+    const reviews = presentNodes(pull.reviews?.nodes ?? null);
     const threads = presentNodes(pull.reviewThreads.nodes);
     const reviewComments = reviews
       .filter((review) => review.body.length > 0)
@@ -583,7 +597,7 @@ export async function observeRepository(
             : "unknown",
       authorityChanges: comparison.authorityChanges,
       authorityAvailability: comparison.authorityAvailability,
-      closingIssueNumbers: presentNodes(pull.closingIssuesReferences.nodes).map(
+      closingIssueNumbers: presentNodes(pull.closingIssuesReferences?.nodes ?? null).map(
         (issue) => issue.number,
       ),
       comments: [
@@ -610,7 +624,9 @@ export async function observeRepository(
         url: review.url,
       })),
       reviewsAvailability:
-        pull.reviews.pageInfo.hasNextPage || hasMissingNode(pull.reviews.nodes)
+        pull.reviews === null ||
+        pull.reviews.pageInfo.hasNextPage ||
+        hasMissingNode(pull.reviews.nodes)
           ? "incomplete"
           : "complete",
       threads: threads.map((thread) => ({
@@ -640,10 +656,10 @@ export async function observeRepository(
     observedAt: new Date().toISOString(),
     availability,
     main: { sha: main.oid, url: main.url },
-    roadmap: repository.roadmap === null
+    roadmap: roadmapMarkdown === null
       ? null
       : {
-          markdown: repository.roadmap.text,
+          markdown: roadmapMarkdown,
           url: `https://github.com/${REPOSITORY}/blob/${main.oid}/${ROADMAP_PATH}`,
         },
     issues: issueNodes.map((issue) => ({
@@ -651,9 +667,11 @@ export async function observeRepository(
       title: issue.title,
       url: issue.url,
       state: issue.state,
-      labels: presentNodes(issue.labels.nodes).map((label) => label.name),
+      labels: presentNodes(issue.labels?.nodes ?? null).map((label) => label.name),
       labelsAvailability:
-        issue.labels.pageInfo.hasNextPage || hasMissingNode(issue.labels.nodes)
+        issue.labels === null ||
+        issue.labels.pageInfo.hasNextPage ||
+        hasMissingNode(issue.labels.nodes)
           ? "incomplete"
           : "complete",
       milestone: issue.milestone?.title ?? null,
@@ -678,6 +696,7 @@ export async function observeRepository(
       pullNodeMissing ||
       pullNodes.some(
         (pull) =>
+          pull.closingIssuesReferences === null ||
           pull.closingIssuesReferences.pageInfo.hasNextPage ||
           hasMissingNode(pull.closingIssuesReferences.nodes) ||
           commentsTruncated(pull),
