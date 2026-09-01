@@ -716,6 +716,10 @@ function pullLane(
             (signal) => signal.state === "blocked",
           )
         ? "blocked"
+        : [commentState, checks, handoff, stewardWatch, humanAction].some(
+              (signal) => signal.state === "unknown",
+            )
+          ? "unknown"
         : readiness.state === "waiting"
           ? "waiting"
           : commentState.state === "unknown"
@@ -1326,15 +1330,15 @@ export function normalizeRepository(
         return {
           issueNumber: issue.number,
           label: issue.title,
-          state: uncertainIssueNumbers.has(issue.number)
-            ? "unknown"
+          state: readiness.state === "blocked"
+            ? "blocked"
+            : uncertainIssueNumbers.has(issue.number)
+              ? "unknown"
             : readiness.state === "satisfied"
             ? "ready"
             : readiness.state === "waiting"
               ? "waiting"
-              : readiness.state === "blocked"
-                ? "blocked"
-                : "unknown",
+              : "unknown",
           url: issue.url,
         };
       }),

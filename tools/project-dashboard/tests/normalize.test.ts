@@ -1473,6 +1473,61 @@ describe("normalizeRepository", () => {
     expect(lane).toMatchObject({ mergeGate: { state: "unknown" }, phase: "unknown" });
   });
 
+  it.each([
+    ["handoff", "<!-- agent-handoff:v1 -->"],
+    ["Steward watch", "<!-- project-steward-watch:v1 -->"],
+  ] as const)("preserves stale %s Unknown over dependency Waiting", (_case, marker) => {
+    const observation = healthyObservation();
+    addGreenOperationalEvidence(observation);
+    const issue = observation.issues[0];
+    const pull = observation.pullRequests[0];
+    if (issue === undefined || pull === undefined) throw new Error("fixture missing lane");
+    issue.blockedBy = [
+      { number: 200, state: "OPEN", url: "https://github.example/issues/200" },
+    ];
+    pull.comments = pull.comments.map((comment) =>
+      comment.body.startsWith(marker)
+        ? {
+            ...comment,
+            body: comment.body.replace(`HEAD: ${HEAD}`, `HEAD: ${"9".repeat(40)}`),
+          }
+        : comment,
+    );
+
+    expect(normalizeRepository(observation).deliveries[0]).toMatchObject({
+      readiness: { state: "waiting" },
+      mergeGate: { state: "unknown" },
+      phase: "unknown",
+    });
+  });
+
+  it.each([
+    ["stale", (body: string) => body.replace(`HEAD: ${HEAD}`, `HEAD: ${"9".repeat(40)}`)],
+    ["ambiguous", (body: string) => body.replace("PR: 225", "PR: 226")],
+  ] as const)("preserves explicit Blocked over %s linkage uncertainty in critical path", (_case, mutate) => {
+    const observation = healthyObservation();
+    const issue = observation.issues[0];
+    const pull = observation.pullRequests[0];
+    if (issue === undefined || pull === undefined) throw new Error("fixture missing lane");
+    issue.labels = ["agent:codex", "state:blocked"];
+    pull.closingIssueNumbers = [];
+    pull.comments = pull.comments.map((comment) =>
+      comment.body.startsWith("<!-- agent-handoff:v1 -->")
+        ? { ...comment, body: mutate(comment.body) }
+        : comment,
+    );
+
+    const projection = normalizeRepository(observation);
+    expect(
+      projection.deliveries.find(
+        (lane) => lane.issue?.number === issue.number && lane.pullRequest === null,
+      ),
+    ).toMatchObject({ readiness: { state: "blocked" }, phase: "blocked" });
+    expect(
+      projection.criticalPath.nodes.find((node) => node.issueNumber === issue.number)?.state,
+    ).toBe("blocked");
+  });
+
   it("keeps implementation overlap Unknown when the PR/linkage set is incomplete", () => {
     const observation = healthyObservation();
     addGreenOperationalEvidence(observation);
