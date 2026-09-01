@@ -97,7 +97,9 @@ Before running, the command reports:
 - a versioned workload ID and SHA-256 manifest digest for every stage.
 
 A dirty run is provisional because the commit alone does not identify its
-source. Final evidence must come from a clean exact HEAD.
+source. Final evidence must come from a clean exact HEAD. The runner rechecks
+the commit and clean/dirty state after every stage finishes and rejects the run
+if either changed while evidence was being collected.
 
 The runner builds release artifacts before measurement. Build/setup time is
 excluded. Each stage runs in a fresh process; OS cache state is explicitly

@@ -419,10 +419,25 @@ for stage in repository-dogfood git-review-roundtrip semantic-runtime retained-w
   fi
 done
 
+ending_head_commit="$(git rev-parse HEAD)"
+if [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then
+  ending_worktree_state="dirty"
+else
+  ending_worktree_state="clean"
+fi
+evidence_failed=0
+if [[ "${ending_head_commit}" != "${head_commit}" || \
+  "${ending_worktree_state}" != "${worktree_state}" ]]; then
+  echo "EVIDENCE FAIL: source identity changed during the course start_commit=${head_commit} end_commit=${ending_head_commit} start_worktree=${worktree_state} end_worktree=${ending_worktree_state}" >&2
+  evidence_failed=1
+else
+  echo "EVIDENCE source_identity=stable commit=${head_commit} worktree=${worktree_state}"
+fi
+
 echo "${passed}/${correctness_stage_count} correctness stages passed"
 echo "PERFORMANCE evidence=informational thresholds=none correctness_independent=true"
 cat "${performance_log}"
 
-if [[ "${failed}" -ne 0 ]]; then
+if [[ "${failed}" -ne 0 || "${evidence_failed}" -ne 0 ]]; then
   exit 1
 fi
