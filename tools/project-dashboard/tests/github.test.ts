@@ -465,6 +465,9 @@ describe("GitHub observation adapter", () => {
     ["UNKNOWN", null, "unknown"],
     ["CLEAN", "REVIEW_REQUIRED", "waiting"],
     ["CLEAN", "CHANGES_REQUESTED", "blocked"],
+    ["BEHIND", "REVIEW_REQUIRED", "blocked"],
+    ["BLOCKED", "REVIEW_REQUIRED", "blocked"],
+    ["UNKNOWN", "REVIEW_REQUIRED", "unknown"],
   ] as const)(
     "maps native merge policy %s / %s to %s",
     async (mergeStateStatus, reviewDecision, expected) => {

@@ -413,7 +413,6 @@ function isAuthorityPath(path: string): boolean {
 
 function nativeMergePolicy(pull: GraphPull): RawPullRequest["nativeMergePolicy"] {
   if (pull.reviewDecision === "CHANGES_REQUESTED") return "blocked";
-  if (pull.reviewDecision === "REVIEW_REQUIRED") return "waiting";
   if (
     pull.mergeStateStatus === "DIRTY" ||
     pull.mergeStateStatus === "BLOCKED" ||
@@ -422,6 +421,7 @@ function nativeMergePolicy(pull: GraphPull): RawPullRequest["nativeMergePolicy"]
     return "blocked";
   }
   if (pull.mergeStateStatus === "UNKNOWN") return "unknown";
+  if (pull.reviewDecision === "REVIEW_REQUIRED") return "waiting";
   return "satisfied";
 }
 
