@@ -386,6 +386,11 @@ describe("normalizeRepository", () => {
 
   it.each([
     ["missing", "# Roadmap\n\n## Future"],
+    ["wrong-depth", "### Current horizon\n\n> **06 · Team Workspace Beta**"],
+    [
+      "fenced-example",
+      "```md\n## Current horizon\n\n> **06 · Team Workspace Beta**\n```",
+    ],
     [
       "ambiguous",
       "## Current horizon\n\n> **06 · Team Workspace Beta**\n> **07 · Migration**",
@@ -425,6 +430,30 @@ describe("normalizeRepository", () => {
     expect(lane?.issue).toBeNull();
     expect(lane?.review.state).toBe("blocked");
     expect(lane?.phase).toBe("blocked");
+  });
+
+  it("preserves current pending disposition for an unlinked old-head review", () => {
+    const observation = healthyObservation();
+    const pull = observation.pullRequests[0];
+    if (pull === undefined) throw new Error("fixture missing pull request");
+    pull.closingIssueNumbers = [];
+    pull.reviews = [
+      {
+        id: "unlinked-pending",
+        authorLogin: "reviewer",
+        submittedAt: null,
+        commitSha: "1111111111111111111111111111111111111111",
+        state: "PENDING",
+        url: "https://github.example/reviews/unlinked-pending",
+      },
+    ];
+
+    const lane = normalizeRepository(observation).deliveries.find(
+      (item) => item.pullRequest?.number === pull.number,
+    );
+    expect(lane?.issue).toBeNull();
+    expect(lane?.review.state).toBe("waiting");
+    expect(lane?.phase).toBe("unknown");
   });
 
   it("uses a blocked reconciled merge gate for lane phase selection", () => {

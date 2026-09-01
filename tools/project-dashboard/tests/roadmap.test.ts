@@ -32,6 +32,12 @@ describe("parseProductHorizon", () => {
 
   it.each([
     ["missing", "# Roadmap\n\n## Future"],
+    ["wrong heading depth", "### Current horizon\n\n> **06 · Team Workspace Beta**"],
+    ["inline prose", "Prefix ## Current horizon\n\n> **06 · Team Workspace Beta**"],
+    [
+      "fenced example",
+      "```md\n## Current horizon\n\n> **06 · Team Workspace Beta**\n```",
+    ],
     [
       "ambiguous",
       "## Current horizon\n\n> **06 · Team Workspace Beta**\n> **07 · Migration**",

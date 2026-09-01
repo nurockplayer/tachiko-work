@@ -684,7 +684,7 @@ function unlinkedPullLane(
               reviewSources,
             )
           : pull.reviews.some(
-                (item) => item.commitSha === pull.headSha && item.state === "PENDING",
+                (item) => currentReviews.ids.has(item.id) && item.state === "PENDING",
               )
             ? directSignal(
                 "waiting",
