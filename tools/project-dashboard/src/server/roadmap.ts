@@ -5,18 +5,25 @@ const NEXT_SECTION = /^## /m;
 const HORIZON_LINE = /^> \*\*([^*\n]+)\*\*$/gm;
 
 function withoutFencedBlocks(markdown: string): string {
-  let fence: "`" | "~" | null = null;
+  let fence: { kind: "`" | "~"; length: number } | null = null;
   return markdown
     .split("\n")
     .map((line) => {
-      const marker = /^\s*(`{3,}|~{3,})/.exec(line)?.[1];
-      if (marker !== undefined) {
-        const kind = marker[0] as "`" | "~";
-        if (fence === null) fence = kind;
-        else if (fence === kind) fence = null;
+      if (fence === null) {
+        const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+        if (marker === undefined) return line;
+        fence = { kind: marker[0] as "`" | "~", length: marker.length };
         return "";
       }
-      return fence === null ? line : "";
+      const closing = /^ {0,3}(`+|~+)[ \t]*$/.exec(line)?.[1];
+      if (
+        closing !== undefined &&
+        closing[0] === fence.kind &&
+        closing.length >= fence.length
+      ) {
+        fence = null;
+      }
+      return "";
     })
     .join("\n");
 }

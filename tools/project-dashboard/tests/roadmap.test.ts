@@ -39,6 +39,22 @@ describe("parseProductHorizon", () => {
       "```md\n## Current horizon\n\n> **06 · Team Workspace Beta**\n```",
     ],
     [
+      "shorter backtick pseudo-close",
+      "````md\n```\n## Current horizon\n\n> **06 · Team Workspace Beta**\n````",
+    ],
+    [
+      "suffixed backtick pseudo-close",
+      "````md\n````not-a-close\n## Current horizon\n\n> **06 · Team Workspace Beta**\n````",
+    ],
+    [
+      "shorter tilde pseudo-close",
+      "~~~~md\n~~~\n## Current horizon\n\n> **06 · Team Workspace Beta**\n~~~~",
+    ],
+    [
+      "suffixed tilde pseudo-close",
+      "~~~~md\n~~~~not-a-close\n## Current horizon\n\n> **06 · Team Workspace Beta**\n~~~~",
+    ],
+    [
       "ambiguous",
       "## Current horizon\n\n> **06 · Team Workspace Beta**\n> **07 · Migration**",
     ],
