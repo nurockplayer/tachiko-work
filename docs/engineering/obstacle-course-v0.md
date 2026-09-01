@@ -29,9 +29,12 @@ recorded in the result. The runner resolves `RUSTC`, then
 `CARGO_BUILD_RUSTC`, then the `rustc` on `PATH`; it exports that selection as
 the single Cargo compiler and neutralizes competing compiler/wrapper selectors.
 The reported identity and native target therefore come from the same compiler
-used by Cargo. Native test execution also normalizes the exact target runner to
-an `env` passthrough, overriding user or repository Cargo runner configuration.
-`--list` prints the closed v0 stage registry without building or running it.
+used by Cargo. The runner also clears the complete inherited
+`CARGO_PROFILE_RELEASE_*` prefix before setup or internal stage dispatch, so an
+ambient profile override cannot silently change the meaning of release-mode
+evidence. Native test execution normalizes the exact target runner to an `env`
+passthrough, overriding user or repository Cargo runner configuration. `--list`
+prints the closed v0 stage registry without building or running it.
 
 ## v0 course
 

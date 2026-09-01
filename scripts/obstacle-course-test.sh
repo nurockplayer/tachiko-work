@@ -357,6 +357,11 @@ if [[ "${CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER:-}" != "env" ]]; then
   echo "fake cargo: native target runner is not normalized" >&2
   exit 94
 fi
+release_profile_overrides=("${!CARGO_PROFILE_RELEASE_@}")
+if [[ "${#release_profile_overrides[@]}" -ne 0 ]]; then
+  echo "fake cargo: inherited release profile override ${release_profile_overrides[*]}" >&2
+  exit 94
+fi
 
 command_name="${1:-}"
 explicit_target="unset"
@@ -430,6 +435,10 @@ run_normal_course() {
     CARGO_BUILD_RUSTC_WRAPPER="${test_dir}/hostile-cargo-rustc-wrapper" \
     CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER="${test_dir}/hostile-cargo-workspace-wrapper" \
     CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER="conflicting-env-runner --from-env" \
+    CARGO_PROFILE_RELEASE_OPT_LEVEL=0 \
+    CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true \
+    CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true \
+    CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_OPT_LEVEL=3 \
     GIT_DIR="${test_dir}/hostile.git" \
     GIT_WORK_TREE="${test_dir}/hostile-worktree" \
     GIT_INDEX_FILE="${test_dir}/hostile-index" \
@@ -523,7 +532,7 @@ if [[ -e "${observed_target_dir}" ]]; then
   exit 1
 fi
 grep -F \
-  "native_target=${native_target} cargo_target=run-scoped/${native_target}" \
+  "native_target=${native_target} cargo_target=run-scoped/${native_target} native_runner=env-passthrough release_profile_env=neutralized" \
   "${test_dir}/normal.out" >/dev/null
 
 : >"${normal_log}"

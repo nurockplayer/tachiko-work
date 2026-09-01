@@ -30,6 +30,10 @@ retained_workload_inputs=(
 )
 TACHIKO_BIN="${TACHIKO_BIN:-}"
 
+normalize_release_profile_environment() {
+  unset "${!CARGO_PROFILE_RELEASE_@}"
+}
+
 normalize_native_target_runner() {
   local target="$1"
   local runner_variable
@@ -46,6 +50,9 @@ normalize_native_target_runner() {
   )_RUNNER"
   export "${runner_variable}=env"
 }
+
+# Ambient Cargo profile overrides must not change the meaning of release evidence.
+normalize_release_profile_environment
 
 # shellcheck source=scripts/release-lib.sh
 source "${repo_root}/scripts/release-lib.sh"
@@ -608,7 +615,7 @@ verify_workload_identity() {
 }
 
 echo "COURSE ${course_version} commit=${head_commit} worktree=${worktree_state} profile=release network=offline correctness_stages=${correctness_stage_count}"
-echo "ENV os=${os_identity} rustc=${rust_identity} native_target=${native_target} cargo_target=run-scoped/${native_target} native_runner=env-passthrough"
+echo "ENV os=${os_identity} rustc=${rust_identity} native_target=${native_target} cargo_target=run-scoped/${native_target} native_runner=env-passthrough release_profile_env=neutralized"
 echo "WORKLOAD stage=repository-dogfood id=product-gaps-roproj/v1 sha256=${dogfood_digest}"
 echo "WORKLOAD stage=git-review-roundtrip id=game-balance-git-review/v0 sha256=${git_review_digest}"
 echo "WORKLOAD stage=semantic-runtime id=focused-semantic-runtime/v0 sha256=${semantic_digest}"
