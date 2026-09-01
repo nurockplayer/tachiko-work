@@ -22,7 +22,7 @@ import { parseProductHorizon } from "./roadmap.js";
 const ROADMAP_PATH = "docs/product/product-roadmap.md";
 const RELEASE_CHECK = "release-check";
 const PROJECT_REVIEW = "project-review";
-const AUTOMATED_BROWSER_CHECK = "project-dashboard-browser";
+const AUTOMATED_BROWSER_CHECK = "Live Project Dashboard browser journey";
 const PERCEPTUAL_REVIEW_CHECK = "perceptual-review";
 
 function evidenceSource(
@@ -100,12 +100,16 @@ function checkSignal(pull: RawPullRequest, name?: string): DisplaySignal {
 }
 
 function ownerFor(issue: RawIssue): string {
+  if (issue.labelsAvailability !== "complete") return "unknown";
   const owners = issue.labels.filter((label) => label.startsWith("agent:"));
   return owners.length === 1 ? owners.at(0) ?? "unknown" : "unknown";
 }
 
 function readinessFor(issue: RawIssue): DisplaySignal {
   const source = evidenceSource("Issue labels", issue.url);
+  if (issue.labelsAvailability !== "complete") {
+    return directSignal("unknown", "observation-incomplete", "Issue labels Unknown", [source]);
+  }
   if (issue.dependencyAvailability !== "complete") {
     return directSignal("unknown", "observation-incomplete", "Dependency state Unknown", [source]);
   }
@@ -240,6 +244,7 @@ function pullLane(
     ),
     nativeRepository: observation(
       repository.main === null ||
+        issue.labelsAvailability !== "complete" ||
         issue.dependencyAvailability !== "complete" ||
         readiness.state === "unknown"
         ? "incomplete"
@@ -274,6 +279,19 @@ function pullLane(
   });
   const checks = checkSignal(pull);
   const commentState = commentCompleteness(pull);
+  const labelState = issue.labelsAvailability === "complete"
+    ? directSignal(
+        "satisfied",
+        "all-required-conditions-satisfied",
+        "Issue labels complete",
+        [evidenceSource("Issue labels", issue.url)],
+      )
+    : directSignal(
+        "unknown",
+        "observation-incomplete",
+        "Issue labels incomplete",
+        [evidenceSource("Issue labels", issue.url)],
+      );
   const review = aggregateSignals(
     [fromCondition(reconciliation.review, "Exact-head review Unknown"), commentState],
     "Exact-head review Unknown",
@@ -287,7 +305,7 @@ function pullLane(
     "Steward watch Unknown",
   );
   const humanAction = aggregateSignals(
-    [fromCondition(reconciliation.humanAction, "Human action Unknown"), commentState],
+    [fromCondition(reconciliation.humanAction, "Human action Unknown"), commentState, labelState],
     "Human action Unknown",
   );
   const deliveryIntegrity = aggregateSignals(
@@ -323,14 +341,25 @@ function pullLane(
             evidenceSource(`Authority · ${change.path}`, change.url, "derived"),
           ),
         );
-  const phase =
-    mergeGate.state === "satisfied"
-      ? "merge_gate"
-      : review.state === "blocked"
-        ? "review_fix"
-        : checks.state === "waiting"
-          ? "validating"
-          : "implementing";
+  const phase = humanAction.state === "blocked"
+    ? "human_required"
+    : review.state === "blocked"
+      ? "review_fix"
+      : [readiness, checks, stewardWatch].some((signal) => signal.state === "blocked")
+        ? "blocked"
+        : readiness.state === "waiting"
+          ? "waiting"
+          : mergeGate.state === "satisfied"
+            ? "merge_gate"
+            : readiness.state === "unknown"
+              ? "unknown"
+              : authority.reason === "authority-drift-suspected"
+                ? "rereview"
+                : checks.state === "waiting"
+                  ? "validating"
+                  : checks.state === "satisfied" && review.state !== "satisfied"
+                    ? "rereview"
+                    : "implementing";
   return {
     issue: { number: issue.number, title: issue.title, url: issue.url },
     owner: ownerFor(issue),
@@ -410,7 +439,14 @@ function issueLane(repository: RepositoryObservation, issue: RawIssue): Delivery
           evidenceSource("Live main", repository.main.url),
         ]),
     humanAction:
-      owner === "agent:human"
+      issue.labelsAvailability !== "complete"
+        ? directSignal(
+            "unknown",
+            "observation-incomplete",
+            "Issue ownership Unknown",
+            [evidenceSource("Issue owner label", issue.url)],
+          )
+        : owner === "agent:human"
         ? directSignal(
             "blocked",
             "human-action-required",
@@ -617,22 +653,33 @@ export function normalizeRepository(
     )
     .sort((left, right) => left.number - right.number);
   const attention: AttentionItem[] = [...errorAttention(observation)];
+  const attentionKeys = new Set(
+    attention.map((item) => `${String(item.issueNumber ?? "repository")}:${item.reason}:${item.label}`),
+  );
   for (const lane of deliveries) {
     for (const signal of [
+      lane.readiness,
+      lane.checks,
       lane.authority,
       lane.handoff,
       lane.stewardWatch,
       lane.review,
+      lane.mergeGate,
       lane.humanAction,
     ]) {
       if (
         signal.reason !== "not-required" &&
-        (signal.state === "blocked" || signal.state === "unknown")
+        (signal.state === "blocked" || signal.state === "waiting" || signal.state === "unknown")
       ) {
-        attention.push({
+        const item: AttentionItem = {
           ...signal,
           ...(lane.issue === null ? {} : { issueNumber: lane.issue.number }),
-        });
+        };
+        const key = `${String(item.issueNumber ?? "repository")}:${item.reason}:${item.label}`;
+        if (!attentionKeys.has(key)) {
+          attentionKeys.add(key);
+          attention.push(item);
+        }
       }
     }
   }
@@ -671,16 +718,19 @@ export function normalizeRepository(
     },
     deliveries,
     criticalPath: {
-      nodes: laneIssues.map((issue) => ({
-        issueNumber: issue.number,
-        label: issue.title,
-        state: issue.blockedBy.some((dependency) => dependency.state === "OPEN")
-          ? "waiting"
-          : issue.labels.includes("state:ready")
+      nodes: laneIssues.map((issue) => {
+        const readiness = readinessFor(issue);
+        return {
+          issueNumber: issue.number,
+          label: issue.title,
+          state: readiness.state === "satisfied"
             ? "ready"
-            : "unknown",
-        url: issue.url,
-      })),
+            : readiness.state === "waiting"
+              ? "waiting"
+              : "unknown",
+          url: issue.url,
+        };
+      }),
       edges: laneIssues.flatMap((issue) =>
         issue.blockedBy.map((dependency) => ({
           from: dependency.number,

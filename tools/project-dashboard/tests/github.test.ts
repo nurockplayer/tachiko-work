@@ -5,8 +5,13 @@ import { normalizeRepository } from "../src/server/normalize.js";
 
 const MAIN = "1111111111111111111111111111111111111111";
 const HEAD = "2222222222222222222222222222222222222222";
+const MERGE_BASE = "0000000000000000000000000000000000000000";
 
-function graphResponse(hasNextPage = false) {
+function graphResponse(
+  hasNextPage = false,
+  labelsHaveNextPage = hasNextPage,
+  hasRoadmap = true,
+) {
   return {
     data: {
       repository: {
@@ -15,10 +20,12 @@ function graphResponse(hasNextPage = false) {
           name: "main",
           target: { oid: MAIN, url: `https://github.example/commit/${MAIN}` },
         },
-        roadmap: {
-          oid: "roadmap-oid",
-          text: "## Current horizon\n\n> **06 · Team Workspace Beta**\n\n## Product stages",
-        },
+        roadmap: hasRoadmap
+          ? {
+              oid: "roadmap-oid",
+              text: "## Current horizon\n\n> **06 · Team Workspace Beta**\n\n## Product stages",
+            }
+          : null,
         issues: {
           pageInfo: { hasNextPage },
           nodes: [
@@ -28,7 +35,7 @@ function graphResponse(hasNextPage = false) {
               url: "https://github.example/issues/169",
               state: "OPEN",
               labels: {
-                pageInfo: { hasNextPage: false },
+                pageInfo: { hasNextPage: labelsHaveNextPage },
                 nodes: [{ name: "agent:codex" }, { name: "state:ready" }],
               },
               milestone: null,
@@ -62,7 +69,7 @@ function graphResponse(hasNextPage = false) {
                     {
                       __typename: "CheckRun",
                       id: "check-1",
-                      name: "project-dashboard-browser",
+                      name: "Live Project Dashboard browser journey",
                       status: "COMPLETED",
                       conclusion: "SKIPPED",
                       url: "https://github.example/checks/1",
@@ -80,7 +87,11 @@ function graphResponse(hasNextPage = false) {
   };
 }
 
-function fakeFetch(hasNextPage = false) {
+function fakeFetch(
+  hasNextPage = false,
+  labelsHaveNextPage = hasNextPage,
+  hasRoadmap = true,
+) {
   const requests: { url: string; init?: RequestInit }[] = [];
   const implementation = (async (input: string | URL | Request, init?: RequestInit) => {
     const url =
@@ -91,15 +102,53 @@ function fakeFetch(hasNextPage = false) {
           : input.url;
     requests.push(init === undefined ? { url } : { url, init });
     if (url.endsWith("/graphql")) {
-      return new Response(JSON.stringify(graphResponse(hasNextPage)), {
+      return new Response(
+        JSON.stringify(graphResponse(hasNextPage, labelsHaveNextPage, hasRoadmap)),
+        {
         status: 200,
         headers: { "Content-Type": "application/json" },
-      });
+        },
+      );
     }
     return new Response(
       JSON.stringify({ status: "ahead", merge_base_commit: { sha: MAIN } }),
       { status: 200, headers: { "Content-Type": "application/json" } },
     );
+  }) as typeof fetch;
+  return { implementation, requests };
+}
+
+function fakeBehindAuthorityFetch() {
+  const requests: string[] = [];
+  const implementation = (async (input: string | URL | Request) => {
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url;
+    requests.push(url);
+    if (url.endsWith("/graphql")) {
+      return new Response(JSON.stringify(graphResponse()), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    const body = url.endsWith(`${MAIN}...${HEAD}`)
+      ? { status: "diverged", merge_base_commit: { sha: MERGE_BASE } }
+      : {
+          status: "ahead",
+          merge_base_commit: { sha: MERGE_BASE },
+          files: [
+            { filename: "docs/decisions/ADR-0032-dashboard.md" },
+            { filename: "docs/vision/product-constitution.md" },
+            { filename: "docs/discussions/history.md" },
+          ],
+        };
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
   }) as typeof fetch;
   return { implementation, requests };
 }
@@ -132,5 +181,40 @@ describe("GitHub observation adapter", () => {
     expect(observation.issuesAvailability).toBe("incomplete");
     expect(observation.recentActivityAvailability).toBe("complete");
     expect(normalizeRepository(observation).fetchHealth).toBe("partial");
+  });
+
+  it("does not grant readiness, ownership, or merge state from truncated labels", async () => {
+    const fake = fakeFetch(false, true);
+    const observation = await observeRepository({ fetchImpl: fake.implementation });
+    const lane = normalizeRepository(observation).deliveries[0];
+
+    expect(observation.issues[0]?.labelsAvailability).toBe("incomplete");
+    expect(lane?.owner).toBe("unknown");
+    expect(lane?.readiness.state).toBe("unknown");
+    expect(lane?.mergeGate.state).not.toBe("satisfied");
+  });
+
+  it("marks a missing Product Roadmap source partial and the horizon Unknown", async () => {
+    const fake = fakeFetch(false, false, false);
+    const observation = await observeRepository({ fetchImpl: fake.implementation });
+    const projection = normalizeRepository(observation);
+
+    expect(observation.availability).toBe("incomplete");
+    expect(projection.fetchHealth).toBe("partial");
+    expect(projection.executive.productHorizon.state).toBe("unknown");
+  });
+
+  it("fails closed when Accepted ADR or Principle authority changed after the merge base", async () => {
+    const fake = fakeBehindAuthorityFetch();
+    const observation = await observeRepository({ fetchImpl: fake.implementation });
+    const pull = observation.pullRequests[0];
+
+    expect(fake.requests).toHaveLength(3);
+    expect(pull?.authorityAvailability).toBe("complete");
+    expect(pull?.authorityChanges.map((change) => change.path)).toEqual([
+      "docs/decisions/ADR-0032-dashboard.md",
+      "docs/vision/product-constitution.md",
+    ]);
+    expect(normalizeRepository(observation).deliveries[0]?.authority.state).toBe("unknown");
   });
 });

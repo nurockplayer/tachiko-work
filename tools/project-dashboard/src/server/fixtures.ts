@@ -50,6 +50,7 @@ export function healthyObservation(): RepositoryObservation {
         url: "https://github.example/issues/169",
         state: "OPEN",
         labels: ["agent:codex", "state:ready"],
+        labelsAvailability: "complete",
         milestone: null,
         blockedBy: [{ number: 200, state: "CLOSED", url: "https://github.example/issues/200" }],
         dependencyAvailability: "complete",
@@ -60,6 +61,7 @@ export function healthyObservation(): RepositoryObservation {
         url: "https://github.example/issues/223",
         state: "OPEN",
         labels: ["agent:codex", "state:ready"],
+        labelsAvailability: "complete",
         milestone: "06 · Team Workspace Beta",
         blockedBy: [],
         dependencyAvailability: "complete",
@@ -110,7 +112,7 @@ export function healthyObservation(): RepositoryObservation {
         commentsAvailability: "complete",
         checks: [
           {
-            name: "project-dashboard-browser",
+            name: "Live Project Dashboard browser journey",
             headSha: HEAD_SHA,
             status: "success",
             url: "https://github.example/checks/browser",

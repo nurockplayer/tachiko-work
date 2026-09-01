@@ -335,9 +335,10 @@ function isAuthorityPath(path: string): boolean {
     path === "CONTRIBUTING.md" ||
     path === "SECURITY.md" ||
     path === ROADMAP_PATH ||
-    path.startsWith("docs/adr/") ||
+    path.startsWith("docs/decisions/") ||
     path.startsWith("docs/governance/") ||
-    path.startsWith("docs/specs/")
+    path.startsWith("docs/specs/") ||
+    path.startsWith("docs/vision/")
   );
 }
 
@@ -444,6 +445,9 @@ export async function observeRepository(
   const errors: RepositoryObservation["errors"] = [];
   if ((response.errors?.length ?? 0) > 0) {
     errors.push({ source: "GitHub GraphQL", url: GRAPHQL_URL, reason: "observation-incomplete" });
+  }
+  if (repository.roadmap === null) {
+    errors.push({ source: "Product Roadmap", url: repository.url, reason: "observation-incomplete" });
   }
   const topLevelTruncated =
     repository.issues.pageInfo.hasNextPage ||
@@ -573,6 +577,7 @@ export async function observeRepository(
       url: issue.url,
       state: issue.state,
       labels: issue.labels.nodes.map((label) => label.name),
+      labelsAvailability: issue.labels.pageInfo.hasNextPage ? "incomplete" : "complete",
       milestone: issue.milestone?.title ?? null,
       blockedBy: issue.blockedBy.nodes,
       dependencyAvailability: issue.blockedBy.pageInfo.hasNextPage ? "incomplete" : "complete",

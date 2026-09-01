@@ -79,6 +79,7 @@ export interface RawIssue {
   url: string;
   state: "OPEN" | "CLOSED";
   labels: string[];
+  labelsAvailability: ObservationAvailability;
   milestone: string | null;
   blockedBy: { number: number; state: "OPEN" | "CLOSED"; url: string }[];
   dependencyAvailability: ObservationAvailability;

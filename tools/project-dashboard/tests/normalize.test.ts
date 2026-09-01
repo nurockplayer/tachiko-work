@@ -19,6 +19,7 @@ describe("normalizeRepository", () => {
     expect(projection.deliveries[0]?.evidence.automatedBrowser.state).toBe("satisfied");
     expect(projection.deliveries[0]?.evidence.perceptualReview.state).toBe("unknown");
     expect(projection.deliveries[0]?.mergeGate.state).not.toBe("satisfied");
+    expect(projection.deliveries[0]?.phase).toBe("rereview");
   });
 
   it("makes a moving-head handoff stale instead of trusting narrative claims", () => {
@@ -108,6 +109,48 @@ describe("normalizeRepository", () => {
     expect(authority?.state).toBe("unknown");
     expect(authority?.reason).toBe("authority-drift-suspected");
     expect(authority?.sources[0]?.url).toBe("https://github.example/compare");
+    expect(normalizeRepository(observation).deliveries[0]?.phase).toBe("rereview");
+  });
+
+  it("keeps truncated dependencies Unknown in the critical-path projection", () => {
+    const observation = healthyObservation();
+    const issue = observation.issues[1];
+    if (issue === undefined) throw new Error("fixture missing issue");
+    issue.dependencyAvailability = "incomplete";
+
+    const node = normalizeRepository(observation).criticalPath.nodes.find(
+      (item) => item.issueNumber === issue.number,
+    );
+    expect(node?.state).toBe("unknown");
+  });
+
+  it("routes failed exact-head checks to blocked phase and attention", () => {
+    const observation = healthyObservation();
+    const pull = observation.pullRequests[0];
+    if (pull === undefined) throw new Error("fixture missing pull request");
+    pull.checks[0] = { ...pull.checks[0]!, status: "failure" };
+
+    const projection = normalizeRepository(observation);
+    expect(projection.deliveries[0]?.phase).toBe("blocked");
+    expect(
+      projection.attention.some(
+        (item) => item.issueNumber === 169 && item.reason === "native-check-failed",
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps partial label evidence Unknown throughout a pull-request lane", () => {
+    const observation = healthyObservation();
+    const issue = observation.issues[0];
+    if (issue === undefined) throw new Error("fixture missing issue");
+    issue.labelsAvailability = "incomplete";
+
+    const lane = normalizeRepository(observation).deliveries[0];
+    expect(lane?.owner).toBe("unknown");
+    expect(lane?.readiness.state).toBe("unknown");
+    expect(lane?.humanAction.state).toBe("unknown");
+    expect(lane?.mergeGate.state).not.toBe("satisfied");
+    expect(lane?.phase).toBe("unknown");
   });
 
   it("keeps open pull requests visible when native Issue linkage is missing", () => {
