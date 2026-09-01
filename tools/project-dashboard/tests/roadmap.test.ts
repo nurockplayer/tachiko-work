@@ -37,6 +37,7 @@ describe("parseProductHorizon", () => {
     "# Replacement document",
     "Later section\n---",
     "Later section\n===",
+    "Foo\n    bar\n---",
   ])(
     "does not read a horizon value beyond the next CommonMark H2 form %j",
     (nextHeading) => {
@@ -49,9 +50,27 @@ describe("parseProductHorizon", () => {
     },
   );
 
+  it.each(["\r\n", "\r"])(
+    "bounds Setext sections after normalizing %j line endings",
+    (ending) => {
+      const markdown = [
+        "## Current horizon",
+        "",
+        "Later section",
+        "---",
+        "",
+        "> **NOT CURRENT**",
+      ].join(ending);
+      expect(parseProductHorizon(markdown, "https://github.example/roadmap")).toMatchObject({
+        state: "unknown",
+        value: "Unknown",
+      });
+    },
+  );
+
   it.each([
-    "<script>\n## Current horizon\n\n> **FAKE**\n</script>",
-    "<details>\n## Current horizon\n> **FAKE**\n\n",
+    "<script>\nconst example = true;\n</script>",
+    "<details>\nexample\n\n",
   ])("resumes authority parsing after a bounded raw HTML block", (rawBlock) => {
     expect(
       parseProductHorizon(
@@ -59,6 +78,29 @@ describe("parseProductHorizon", () => {
         "https://github.example/roadmap",
       ),
     ).toMatchObject({ state: "satisfied", value: "06 · Team Workspace Beta" });
+  });
+
+  it.each([
+    "<script/>",
+    "</script >\n",
+    "<![cdata[\n",
+    "``` invalid`info",
+    "`<!--`",
+    "\\<!--",
+    "<!-->",
+    "<!--->",
+    "paragraph continuation\n<roadmap-example>",
+    "<div/foo>",
+    "- item\n  ```\n  code",
+    "- item\n  <script>",
+    "- item\n  <!--",
+  ])("does not hide conflicting authority after ordinary content %j", (content) => {
+    expect(
+      parseProductHorizon(
+        `## Current horizon\n\n> **A**\n${content}\n## Current horizon\n\n> **B**\n-->`,
+        "https://github.example/roadmap",
+      ),
+    ).toMatchObject({ state: "unknown", value: "Unknown" });
   });
 
   it.each([
@@ -116,6 +158,10 @@ describe("parseProductHorizon", () => {
     [
       "block-tag example",
       "<details>\n## Current horizon\n\n> **06 · Team Workspace Beta**\n</details>",
+    ],
+    [
+      "block-tag example with non-ASCII whitespace",
+      "<details>\n\u00a0\n## Current horizon\n\n> **06 · Team Workspace Beta**\n</details>",
     ],
     [
       "self-closing block-tag example with trailing content",
