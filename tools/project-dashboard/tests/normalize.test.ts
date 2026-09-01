@@ -283,17 +283,26 @@ describe("normalizeRepository", () => {
     "keeps Ready plus %s as conflicting Unknown evidence",
     (negativeLabel) => {
       const observation = healthyObservation();
-      const issue = observation.issues[0];
-      if (issue === undefined) throw new Error("fixture missing issue");
-      issue.labels = ["agent:codex", "state:ready", negativeLabel];
+      const pullIssue = observation.issues[0];
+      const issueOnly = observation.issues[1];
+      if (pullIssue === undefined || issueOnly === undefined) {
+        throw new Error("fixture missing issue");
+      }
+      pullIssue.labels = ["agent:codex", "state:ready", negativeLabel];
+      issueOnly.labels = ["agent:codex", "state:ready", negativeLabel];
 
-      const lane = normalizeRepository(observation).deliveries[0];
-      expect(lane?.readiness).toMatchObject({
-        state: "unknown",
-        reason: "source-identity-conflict",
-      });
-      expect(lane?.mergeGate.state).not.toBe("satisfied");
-      expect(lane?.phase).toBe("unknown");
+      const projection = normalizeRepository(observation);
+      for (const issueNumber of [169, 223]) {
+        const lane = projection.deliveries.find((item) => item.issue?.number === issueNumber);
+        expect(lane?.readiness).toMatchObject({
+          state: "unknown",
+          reason: "source-identity-conflict",
+        });
+        expect(lane?.humanAction.state).toBe("unknown");
+      }
+      expect(projection.deliveries[0]?.mergeGate.state).not.toBe("satisfied");
+      expect(projection.deliveries[0]?.phase).toBe("unknown");
+      expect(projection.humanAction.state).toBe("unknown");
     },
   );
 

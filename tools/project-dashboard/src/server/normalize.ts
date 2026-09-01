@@ -323,6 +323,14 @@ function pullLane(
   });
   const checks = checkSignal(pull);
   const commentState = commentCompleteness(pull);
+  const readinessReconciliation = labelReadiness.state === "unknown"
+    ? labelReadiness
+    : directSignal(
+        "satisfied",
+        "not-required",
+        "No readiness-label reconciliation required",
+        labelReadiness.sources,
+      );
   const labelState = issue.labelsAvailability === "complete"
     ? directSignal(
         "satisfied",
@@ -354,6 +362,7 @@ function pullLane(
       commentState,
       labelState,
       ownership,
+      readinessReconciliation,
     ],
     "Human action Unknown",
   );
@@ -471,6 +480,7 @@ function pullLane(
 }
 
 function issueLane(repository: RepositoryObservation, issue: RawIssue): DeliveryLane {
+  const labelReadiness = labelReadinessFor(issue);
   const readiness = readinessFor(issue);
   const owner = ownerFor(issue);
   const ownership = ownershipFor(issue);
@@ -498,6 +508,8 @@ function issueLane(repository: RepositoryObservation, issue: RawIssue): Delivery
     humanAction:
       ownership.state !== "satisfied"
         ? ownership
+        : labelReadiness.state === "unknown"
+          ? labelReadiness
         : owner === "agent:human"
         ? directSignal(
             "blocked",
