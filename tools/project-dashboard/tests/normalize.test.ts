@@ -795,12 +795,19 @@ describe("normalizeRepository", () => {
         body: comment.body.replace("PR: 225", "PR: 226"),
       })),
     });
+    observation.implementationLinkageAvailability = "incomplete";
 
-    expect(
-      normalizeRepository(observation).deliveries.find(
-        (lane) => lane.pullRequest?.number === 225,
-      )?.authority.state,
-    ).toBe("blocked");
+    const lanes = normalizeRepository(observation).deliveries.filter(
+      (lane) => lane.pullRequest?.number === 225 || lane.pullRequest?.number === 226,
+    );
+    expect(lanes).toHaveLength(2);
+    for (const lane of lanes) {
+      expect(lane).toMatchObject({
+        authority: { state: "blocked" },
+        mergeGate: { state: "blocked" },
+        phase: "blocked",
+      });
+    }
   });
 
   it("keeps duplicate trusted handoff claims in overlap accounting", () => {
