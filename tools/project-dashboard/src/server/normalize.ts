@@ -58,9 +58,18 @@ function fromCondition(condition: Condition, fallbackLabel: string): DisplaySign
   return directSignal(
     condition.state,
     condition.reason,
-    reasonLabels[condition.reason] ?? fallbackLabel,
+    reasonLabels[condition.reason] ?? stateFallbackLabel(fallbackLabel, condition.state),
     sources,
   );
+}
+
+function stateFallbackLabel(
+  fallbackLabel: string,
+  state: Condition["state"],
+): string {
+  if (state === "unknown") return fallbackLabel;
+  const subject = fallbackLabel.replace(/\s+Unknown$/, "");
+  return `${subject} ${state}`;
 }
 
 function observation<T>(
@@ -292,12 +301,28 @@ function trustedHandoffIssueClaims(
   repository: RepositoryObservation,
   pull: RawPullRequest,
   issues: readonly RawIssue[],
-): { current: number[]; stale: number[] } {
-  if (repository.main === null) return { current: [], stale: [] };
+): { current: number[]; stale: number[]; ambiguous: number[] } {
+  if (repository.main === null) return { current: [], stale: [], ambiguous: [] };
   const current = new Set<number>();
   const stale = new Set<number>();
+  const ambiguous = new Set<number>();
   for (const source of commentSources(pull, repository.repository)) {
-    for (const issue of issues) {
+    const identity = boundedHandoffIdentity(source.body);
+    if (
+      identity === null ||
+      !identity.pullRequests.includes(pull.number) ||
+      !source.metadata.trustedProducer ||
+      !source.metadata.topLevel
+    ) {
+      continue;
+    }
+    for (const issueNumber of identity.issues) {
+      const issue = issues.find((candidate) => candidate.number === issueNumber);
+      if (issue === undefined) continue;
+      if (identity.issues.length !== 1 || identity.pullRequests.length !== 1) {
+        ambiguous.add(issue.number);
+        continue;
+      }
       const result = parseAgentHandoff(source, {
         repository: repository.repository,
         issueNumber: issue.number,
@@ -309,10 +334,33 @@ function trustedHandoffIssueClaims(
       if (result.ok) current.add(result.value.issue);
       else if (result.reason === "head-mismatch" || result.reason === "main-mismatch") {
         stale.add(issue.number);
+      } else {
+        ambiguous.add(issue.number);
       }
     }
   }
-  return { current: [...current], stale: [...stale] };
+  return { current: [...current], stale: [...stale], ambiguous: [...ambiguous] };
+}
+
+function boundedHandoffIdentity(
+  body: string,
+): { issues: number[]; pullRequests: number[] } | null {
+  const lines = body.replaceAll("\r\n", "\n").split("\n");
+  if (lines[0] !== "<!-- agent-handoff:v1 -->") return null;
+  const header: string[] = [];
+  for (let index = 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line === undefined || line === "") break;
+    header.push(line);
+  }
+  const values = (field: "ISSUE" | "PR") =>
+    header.flatMap((line) => {
+      const match = new RegExp(`^${field}: ([1-9][0-9]*)$`).exec(line);
+      return match?.[1] === undefined ? [] : [match[1]];
+    });
+  const issues = [...new Set(values("ISSUE").map(Number))].filter(Number.isSafeInteger);
+  const pullRequests = [...new Set(values("PR").map(Number))].filter(Number.isSafeInteger);
+  return issues.length > 0 && pullRequests.length > 0 ? { issues, pullRequests } : null;
 }
 
 function mergeabilityFor(pull: RawPullRequest): DisplaySignal {
@@ -359,7 +407,7 @@ function implementationConflictSignal(
     return directSignal(
       "unknown",
       "source-identity-conflict",
-      "Stale implementation ownership needs reconciliation",
+      "Implementation ownership needs reconciliation",
       [source],
     );
   }
@@ -415,6 +463,12 @@ function currentReviewDisposition(
   return { ids, complete };
 }
 
+function isTrustedNativeReviewer(review: RawPullRequest["reviews"][number]): boolean {
+  return review.authorAssociation === "OWNER" ||
+    review.authorAssociation === "MEMBER" ||
+    review.authorAssociation === "COLLABORATOR";
+}
+
 function pullLane(
   repository: RepositoryObservation,
   issue: RawIssue,
@@ -438,7 +492,8 @@ function pullLane(
     "Issue readiness Unknown",
   );
   const mergeability = mergeabilityFor(pull);
-  const currentReviews = currentReviewDisposition(pull.reviews);
+  const trustedReviews = pull.reviews.filter(isTrustedNativeReviewer);
+  const currentReviews = currentReviewDisposition(trustedReviews);
   const nativeReviewAvailability =
     pull.reviewsAvailability === "complete" && !currentReviews.complete
       ? "incomplete"
@@ -466,7 +521,7 @@ function pullLane(
     ),
     nativeReviews: observation(
       nativeReviewAvailability,
-      pull.reviews.map((review) => ({
+      trustedReviews.map((review) => ({
         current: currentReviews.ids.has(review.id),
         head: review.commitSha,
         state: review.state,
@@ -794,13 +849,14 @@ function unlinkedPullLane(
     [pullSource],
   );
   const checks = checkSignal(pull);
+  const trustedReviews = pull.reviews.filter(isTrustedNativeReviewer);
   const reviewSources = [
-    ...pull.reviews.map((item) => evidenceSource("Native review", item.url)),
+    ...trustedReviews.map((item) => evidenceSource("Native review", item.url)),
     ...pull.threads.map((item) => evidenceSource("Native review thread", item.url)),
   ];
-  const currentReviews = currentReviewDisposition(pull.reviews);
+  const currentReviews = currentReviewDisposition(trustedReviews);
   const review =
-    pull.reviews.some(
+    trustedReviews.some(
       (item) => currentReviews.ids.has(item.id) && item.state === "CHANGES_REQUESTED",
     )
       ? directSignal(
@@ -826,7 +882,7 @@ function unlinkedPullLane(
               "Unresolved thread severity Unknown",
               reviewSources,
             )
-          : pull.reviews.some(
+          : trustedReviews.some(
                 (item) => currentReviews.ids.has(item.id) && item.state === "PENDING",
               )
             ? directSignal(
@@ -993,9 +1049,12 @@ export function normalizeRepository(
       new Set([
         ...(implementationDefiniteIssueNumbers[index] ?? []),
         ...(handoffClaims[index]?.stale ?? []),
+        ...(handoffClaims[index]?.ambiguous ?? []),
       ]),
   );
-  const staleIssueNumbers = new Set(handoffClaims.flatMap((claim) => claim.stale));
+  const uncertainIssueNumbers = new Set(
+    handoffClaims.flatMap((claim) => [...claim.stale, ...claim.ambiguous]),
+  );
   const implementationCounts = new Map<number, number>();
   for (const issueNumbers of implementationDefiniteIssueNumbers) {
     for (const issueNumber of issueNumbers) {
@@ -1012,7 +1071,7 @@ export function normalizeRepository(
     ].some((issueNumber) => (implementationCounts.get(issueNumber) ?? 0) > 1)
       ? "conflict"
       : [...(implementationIssueNumbers[index] ?? [])].some((issueNumber) =>
-            staleIssueNumbers.has(issueNumber),
+            uncertainIssueNumbers.has(issueNumber),
           )
         ? "unknown"
         : "none";

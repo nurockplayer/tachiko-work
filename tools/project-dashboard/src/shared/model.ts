@@ -62,6 +62,7 @@ export interface RawCheck {
 export interface RawReview {
   id: string;
   authorLogin: string;
+  authorAssociation: GitHubAuthorAssociation;
   submittedAt: string | null;
   commitSha: string;
   state: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED" | "PENDING";

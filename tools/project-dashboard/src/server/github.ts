@@ -555,6 +555,7 @@ export async function observeRepository(
       reviews: pull.reviews.nodes.map((review) => ({
         id: review.fullDatabaseId ?? review.id,
         authorLogin: review.author?.login ?? `unknown:${review.id}`,
+        authorAssociation: review.authorAssociation,
         submittedAt: review.submittedAt,
         commitSha: review.commit?.oid ?? "",
         state: review.state,

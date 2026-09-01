@@ -4,6 +4,7 @@ test("renders five source-linked read-only control-room surfaces", async ({ page
   await page.goto("/");
 
   await expect(page.getByRole("heading", { name: "Live Project Control Room" })).toBeVisible();
+  await expect(page.getByText("TW / LIVE", { exact: true })).toBeVisible();
   await expect(page.locator("[data-surface]" )).toHaveCount(5);
   await expect(page.getByText("Command center")).toBeVisible();
   await expect(page.getByText("Critical path · current work")).toBeVisible();

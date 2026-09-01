@@ -65,6 +65,10 @@ describe("normalizeRepository", () => {
     );
     expect(projection.deliveries[0]?.checks.state).toBe("satisfied");
     expect(projection.deliveries[0]?.review.state).toBe("unknown");
+    expect(projection.deliveries[0]?.authority).toMatchObject({
+      state: "satisfied",
+      label: "Authority state satisfied",
+    });
     expect(projection.deliveries[0]?.evidence.automatedBrowser.state).toBe("satisfied");
     expect(projection.deliveries[0]?.evidence.perceptualReview.state).toBe("unknown");
     expect(projection.deliveries[0]?.mergeGate.state).not.toBe("satisfied");
@@ -294,27 +298,61 @@ describe("normalizeRepository", () => {
     addGreenOperationalEvidence(observation);
     const pull = observation.pullRequests[0];
     if (pull === undefined) throw new Error("fixture missing pull request");
+    pull.comments = pull.comments.filter(
+      (comment) => !comment.body.includes("KIND: review"),
+    );
     pull.reviews = [
       {
         id: "review-changes",
         authorLogin: "reviewer",
+        authorAssociation: "MEMBER",
         submittedAt: "2026-09-01T00:00:00.000Z",
         commitSha: "1111111111111111111111111111111111111111",
         state: "CHANGES_REQUESTED",
         url: "https://github.example/reviews/changes",
       },
     ];
-    expect(normalizeRepository(observation).deliveries[0]?.review.state).toBe("blocked");
+    expect(normalizeRepository(observation).deliveries[0]?.review).toMatchObject({
+      state: "blocked",
+      label: "Exact-head review blocked",
+    });
 
     pull.reviews.push({
       id: "review-approval",
       authorLogin: "reviewer",
+      authorAssociation: "MEMBER",
       submittedAt: "2026-09-01T00:01:00.000Z",
       commitSha: HEAD,
       state: "APPROVED",
       url: "https://github.example/reviews/approval",
     });
     expect(normalizeRepository(observation).deliveries[0]?.review.state).toBe("satisfied");
+  });
+
+  it("does not let an outsider native approval satisfy required review", () => {
+    const observation = healthyObservation();
+    addGreenOperationalEvidence(observation);
+    const pull = observation.pullRequests[0];
+    if (pull === undefined) throw new Error("fixture missing pull request");
+    pull.comments = pull.comments.filter(
+      (comment) => !comment.body.includes("KIND: review"),
+    );
+    pull.reviews = [
+      {
+        id: "outsider-approval",
+        authorLogin: "outsider",
+        authorAssociation: "NONE",
+        submittedAt: "2026-09-01T00:01:00.000Z",
+        commitSha: HEAD,
+        state: "APPROVED",
+        url: "https://github.example/reviews/outsider-approval",
+      },
+    ];
+
+    expect(normalizeRepository(observation).deliveries[0]).toMatchObject({
+      review: { state: "unknown", reason: "review-missing" },
+      mergeGate: { state: "unknown" },
+    });
   });
 
   it("keeps current pending and ambiguous decisive reviews fail-closed", () => {
@@ -326,6 +364,7 @@ describe("normalizeRepository", () => {
       {
         id: "pending-review",
         authorLogin: "reviewer",
+        authorAssociation: "MEMBER",
         submittedAt: null,
         commitSha: pendingPull.headSha,
         state: "PENDING",
@@ -354,6 +393,7 @@ describe("normalizeRepository", () => {
       {
         id: "pending-review",
         authorLogin: "reviewer",
+        authorAssociation: "MEMBER",
         submittedAt: null,
         commitSha: incompleteCommentsPull.headSha,
         state: "PENDING",
@@ -374,6 +414,7 @@ describe("normalizeRepository", () => {
       {
         id: "9",
         authorLogin: "reviewer",
+        authorAssociation: "MEMBER",
         submittedAt: "2026-09-01T00:00:00.000Z",
         commitSha: tiedPull.headSha,
         state: "APPROVED",
@@ -382,6 +423,7 @@ describe("normalizeRepository", () => {
       {
         id: "10",
         authorLogin: "reviewer",
+        authorAssociation: "MEMBER",
         submittedAt: "2026-09-01T00:00:00.000Z",
         commitSha: tiedPull.headSha,
         state: "CHANGES_REQUESTED",
@@ -398,6 +440,7 @@ describe("normalizeRepository", () => {
       {
         id: "approval-without-time",
         authorLogin: "reviewer",
+        authorAssociation: "MEMBER",
         submittedAt: null,
         commitSha: missingTimestampPull.headSha,
         state: "APPROVED",
@@ -476,6 +519,7 @@ describe("normalizeRepository", () => {
       {
         id: "unlinked-changes",
         authorLogin: "reviewer",
+        authorAssociation: "MEMBER",
         submittedAt: "2026-09-01T00:00:00.000Z",
         commitSha: pull.headSha,
         state: "CHANGES_REQUESTED",
@@ -521,6 +565,7 @@ describe("normalizeRepository", () => {
       {
         id: "unlinked-pending",
         authorLogin: "reviewer",
+        authorAssociation: "MEMBER",
         submittedAt: null,
         commitSha: "1111111111111111111111111111111111111111",
         state: "PENDING",
@@ -549,7 +594,10 @@ describe("normalizeRepository", () => {
 
     const lane = normalizeRepository(observation).deliveries[0];
     expect(lane?.checks.state).toBe("satisfied");
-    expect(lane?.mergeGate.state).toBe("blocked");
+    expect(lane?.mergeGate).toMatchObject({
+      state: "blocked",
+      label: "Merge gate blocked",
+    });
     expect(lane?.phase).toBe("blocked");
   });
 
@@ -825,6 +873,46 @@ describe("normalizeRepository", () => {
     for (const lane of lanes) {
       expect(lane.authority.state).toBe("blocked");
       expect(lane.phase).toBe("blocked");
+    }
+  });
+
+  it("keeps a trusted malformed handoff identity fail-closed for overlap", () => {
+    const observation = healthyObservation();
+    addGreenOperationalEvidence(observation);
+    const source = observation.pullRequests[0];
+    const handoff = source?.comments.find((comment) =>
+      comment.body.startsWith("<!-- agent-handoff:v1 -->"),
+    );
+    if (source === undefined || handoff === undefined) throw new Error("fixture missing handoff");
+    observation.pullRequests.push({
+      ...source,
+      number: 226,
+      title: "malformed handoff owner",
+      url: "https://github.example/pulls/226",
+      closingIssueNumbers: [],
+      comments: [
+        {
+          ...handoff,
+          id: "malformed-owner-handoff",
+          body: handoff.body
+            .replace("PR: 225", "PR: 226")
+            .replace("OWNER: agent:codex", "OWNER: agent:retired"),
+        },
+      ],
+      reviews: [],
+      threads: [],
+    });
+
+    const lanes = normalizeRepository(observation).deliveries.filter(
+      (lane) => lane.pullRequest?.number === 225 || lane.pullRequest?.number === 226,
+    );
+    expect(lanes).toHaveLength(2);
+    for (const lane of lanes) {
+      expect(lane).toMatchObject({
+        authority: { state: "unknown", reason: "source-identity-conflict" },
+        mergeGate: { state: "unknown" },
+        phase: "unknown",
+      });
     }
   });
 

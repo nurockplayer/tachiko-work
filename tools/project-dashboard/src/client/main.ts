@@ -274,7 +274,7 @@ function shell(): { main: HTMLElement; refresh: HTMLButtonElement; live: HTMLEle
   const header = element("header", "site-header");
   const brand = element("div", "brand-lockup");
   brand.append(
-    element("span", "brand-mark", "TW / 06"),
+    element("span", "brand-mark", "TW / LIVE"),
     element("h1", undefined, "Live Project Control Room"),
     element("p", undefined, "Read-only · source-linked · exact-identity operational projection"),
   );
