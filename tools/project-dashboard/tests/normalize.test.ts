@@ -134,6 +134,20 @@ describe("normalizeRepository", () => {
     expect(lane?.mergeGate.state).toBe("unknown");
   });
 
+  it("preserves Unknown over pending checks when required evidence is incomplete", () => {
+    const observation = healthyObservation();
+    const pull = observation.pullRequests[0];
+    if (pull === undefined) throw new Error("fixture missing pull request");
+    pull.commentsAvailability = "incomplete";
+    pull.checks = pull.checks.map((check) => ({ ...check, status: "pending" }));
+
+    const lane = normalizeRepository(observation).deliveries[0];
+    expect(lane?.checks.state).toBe("waiting");
+    expect(lane?.handoff.state).toBe("unknown");
+    expect(lane?.mergeGate.state).toBe("unknown");
+    expect(lane?.phase).toBe("unknown");
+  });
+
   it("distinguishes missing readiness from an explicit negative label", () => {
     const observation = healthyObservation();
     const issue = observation.issues[1];
@@ -211,6 +225,7 @@ describe("normalizeRepository", () => {
     ).toBe("blocked");
 
     const waiting = healthyObservation();
+    addGreenOperationalEvidence(waiting);
     const waitingIssue = waiting.issues[0];
     if (waitingIssue === undefined) throw new Error("fixture missing issue");
     waitingIssue.blockedBy = [
@@ -327,6 +342,38 @@ describe("normalizeRepository", () => {
     );
     expect(lane?.issue).toBeNull();
     expect(lane?.readiness.state).toBe("unknown");
+  });
+
+  it("blocks every lane when multiple open implementation PRs close the same Issue", () => {
+    const observation = healthyObservation();
+    addGreenOperationalEvidence(observation);
+    const source = observation.pullRequests[0];
+    if (source === undefined) throw new Error("fixture missing pull request");
+    observation.pullRequests.push({
+      ...source,
+      number: 226,
+      title: "competing implementation",
+      url: "https://github.example/pulls/226",
+      comments: source.comments.map((comment) => ({
+        ...comment,
+        id: `duplicate-${comment.id}`,
+        url: `https://github.example/comments/duplicate-${comment.id}`,
+        body: comment.body.replace("PR: 225", "PR: 226"),
+      })),
+      checks: source.checks.map((check) => ({ ...check })),
+      reviews: source.reviews.map((review) => ({ ...review })),
+      threads: source.threads.map((thread) => ({ ...thread })),
+    });
+
+    const lanes = normalizeRepository(observation).deliveries.filter(
+      (lane) => lane.issue?.number === 169,
+    );
+    expect(lanes).toHaveLength(2);
+    for (const lane of lanes) {
+      expect(lane.authority.state).toBe("blocked");
+      expect(lane.mergeGate.state).toBe("blocked");
+      expect(lane.phase).toBe("blocked");
+    }
   });
 
   it("exposes exact check provenance on the delivery lane", () => {

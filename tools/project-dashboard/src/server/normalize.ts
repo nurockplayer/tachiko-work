@@ -182,13 +182,13 @@ function readinessFor(issue: RawIssue): DisplaySignal {
 function aggregateSignals(signals: DisplaySignal[], fallback: string): DisplaySignal {
   const state = signals.some((signal) => signal.state === "blocked")
     ? "blocked"
-    : signals.some((signal) => signal.state === "waiting")
-      ? "waiting"
-      : signals.some((signal) => signal.state === "unknown")
+    : signals.some((signal) => signal.state === "unknown")
         ? "unknown"
-        : signals.every((signal) => signal.state === "satisfied")
-          ? "satisfied"
-          : "advisory";
+        : signals.some((signal) => signal.state === "waiting")
+          ? "waiting"
+          : signals.every((signal) => signal.state === "satisfied")
+            ? "satisfied"
+            : "advisory";
   const selected = signals.find((signal) => signal.state === state) ?? signals[0];
   return directSignal(
     state,
@@ -236,6 +236,7 @@ function pullLane(
   repository: RepositoryObservation,
   issue: RawIssue,
   pull: RawPullRequest,
+  implementationConflict: boolean,
 ): DeliveryLane {
   const mainSha = repository.main?.sha ?? "";
   const githubUrl = pull.url;
@@ -302,7 +303,7 @@ function pullLane(
           pullRequestState: pull.state,
           pullRequestDraft: pull.draft,
           baseRef: pull.baseRef,
-          authorityConflict: false,
+          authorityConflict: implementationConflict,
         },
       ],
       `repository:${String(pull.number)}`,
@@ -408,7 +409,9 @@ function pullLane(
     ? "human_required"
     : review.state === "blocked"
       ? "review_fix"
-      : [readiness, checks, stewardWatch].some((signal) => signal.state === "blocked")
+      : [readiness, checks, stewardWatch, authority].some(
+            (signal) => signal.state === "blocked",
+          )
         ? "blocked"
         : readiness.state === "waiting"
           ? "waiting"
@@ -420,6 +423,8 @@ function pullLane(
                 ? "rereview"
                 : authority.state === "unknown"
                   ? "unknown"
+                  : mergeGate.state === "unknown" && checks.state === "waiting"
+                    ? "unknown"
                   : checks.state === "waiting"
                     ? "validating"
                     : checks.state === "satisfied" && review.state !== "satisfied"
@@ -686,14 +691,27 @@ export function normalizeRepository(
     : parseProductHorizon(observation.roadmap.markdown, observation.roadmap.url);
 
   const issuesByNumber = new Map(observation.issues.map((issue) => [issue.number, issue]));
+  const pullIssueNumbers = observation.pullRequests.map((pull) =>
+    pull.closingIssueNumbers.length === 1 ? pull.closingIssueNumbers[0] : undefined,
+  );
+  const implementationCounts = new Map<number, number>();
+  for (const issueNumber of pullIssueNumbers) {
+    if (issueNumber !== undefined) {
+      implementationCounts.set(issueNumber, (implementationCounts.get(issueNumber) ?? 0) + 1);
+    }
+  }
   const linkedIssueNumbers = new Set<number>();
-  const deliveries: DeliveryLane[] = observation.pullRequests.map((pull) => {
-    const issueNumber =
-      pull.closingIssueNumbers.length === 1 ? pull.closingIssueNumbers[0] : undefined;
+  const deliveries: DeliveryLane[] = observation.pullRequests.map((pull, index) => {
+    const issueNumber = pullIssueNumbers[index];
     const issue = issueNumber === undefined ? undefined : issuesByNumber.get(issueNumber);
     if (issue === undefined) return unlinkedPullLane(observation, pull);
     linkedIssueNumbers.add(issue.number);
-    return pullLane(observation, issue, pull);
+    return pullLane(
+      observation,
+      issue,
+      pull,
+      (implementationCounts.get(issue.number) ?? 0) > 1,
+    );
   });
   const readyOrOwnedIssues = observation.issues.filter(
     (issue) =>
