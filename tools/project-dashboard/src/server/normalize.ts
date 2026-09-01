@@ -354,20 +354,29 @@ function boundedHandoffIdentity(
   body: string,
 ): { issues: number[]; pullRequests: number[] } | null {
   const lines = body.replaceAll("\r\n", "\n").split("\n");
-  if (lines[0] !== "<!-- agent-handoff:v1 -->") return null;
   const header: string[] = [];
-  for (let index = 1; index < lines.length; index += 1) {
-    const line = lines[index];
-    if (line === undefined || line === "") break;
-    header.push(line);
+  const markerIndexes = lines.flatMap((line, index) =>
+    line === "<!-- agent-handoff:v1 -->" ? [index] : [],
+  );
+  if (markerIndexes.length === 0) return null;
+  for (const markerIndex of markerIndexes) {
+    for (let index = markerIndex + 1; index < lines.length; index += 1) {
+      const line = lines[index];
+      if (line === undefined || line === "") break;
+      header.push(line);
+    }
   }
   const values = (field: "ISSUE" | "PR") =>
     header.flatMap((line) => {
-      const match = new RegExp(`^${field}: ([1-9][0-9]*)$`).exec(line);
+      const match = new RegExp(`^${field}: ([0-9]+)$`).exec(line);
       return match?.[1] === undefined ? [] : [match[1]];
     });
-  const issues = [...new Set(values("ISSUE").map(Number))].filter(Number.isSafeInteger);
-  const pullRequests = [...new Set(values("PR").map(Number))].filter(Number.isSafeInteger);
+  const positiveSafeIntegers = (rawValues: string[]) =>
+    [...new Set(rawValues.map(Number))].filter(
+      (value) => Number.isSafeInteger(value) && value > 0,
+    );
+  const issues = positiveSafeIntegers(values("ISSUE"));
+  const pullRequests = positiveSafeIntegers(values("PR"));
   return issues.length > 0 ? { issues, pullRequests } : null;
 }
 

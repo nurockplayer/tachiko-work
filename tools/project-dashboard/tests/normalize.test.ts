@@ -938,6 +938,16 @@ describe("normalizeRepository", () => {
     ["wrong PR", (body: string) => body.replace("PR: 225", "PR: 999")],
     ["zero-padded PR", (body: string) => body.replace("PR: 225", "PR: 0226")],
     [
+      "zero-padded Issue",
+      (body: string) => body
+        .replace("ISSUE: 169", "ISSUE: 0169")
+        .replace("PR: 225", "PR: 226"),
+    ],
+    [
+      "marker after leading prose",
+      (body: string) => `Leading trusted prose\n${body.replace("PR: 225", "PR: 226")}`,
+    ],
+    [
       "conflicting duplicate PR",
       (body: string) => body.replace("PR: 225", "PR: 226\nPR: 999"),
     ],
