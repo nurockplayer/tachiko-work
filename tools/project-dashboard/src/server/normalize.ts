@@ -727,7 +727,7 @@ function pullLane(
           : mergeGate.state === "satisfied"
             ? "merge_gate"
             : mergeability.state === "waiting"
-              ? "review_wait"
+              ? mergeGate.state === "waiting" ? "review_wait" : "unknown"
             : mergeability.state === "unknown"
               ? "unknown"
             : readiness.state === "unknown"

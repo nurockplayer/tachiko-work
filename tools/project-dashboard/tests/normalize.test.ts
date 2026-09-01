@@ -1447,13 +1447,16 @@ describe("normalizeRepository", () => {
   );
 
   it.each([
-    ["handoff", "<!-- agent-handoff:v1 -->"],
-    ["Steward watch", "<!-- project-steward-watch:v1 -->"],
-  ] as const)("keeps the lane phase Unknown for a stale %s", (_case, marker) => {
+    ["handoff", "<!-- agent-handoff:v1 -->", "satisfied"],
+    ["handoff", "<!-- agent-handoff:v1 -->", "waiting"],
+    ["Steward watch", "<!-- project-steward-watch:v1 -->", "satisfied"],
+    ["Steward watch", "<!-- project-steward-watch:v1 -->", "waiting"],
+  ] as const)("keeps the lane phase Unknown for a stale %s with %s native policy", (_case, marker, policy) => {
     const observation = healthyObservation();
     addGreenOperationalEvidence(observation);
     const pull = observation.pullRequests[0];
     if (pull === undefined) throw new Error("fixture missing pull request");
+    pull.nativeMergePolicy = policy;
     pull.comments = pull.comments.map((comment) =>
       comment.body.startsWith(marker)
         ? {
