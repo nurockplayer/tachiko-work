@@ -48,6 +48,7 @@ chmod +x "${test_dir}/fake-bin/cargo"
 for stage in semantic-runtime retained-workspace; do
   if PATH="${test_dir}/fake-bin:${PATH}" \
     TACHIKO_OBSTACLE_INTERNAL=1 TACHIKO_BIN=/bin/true \
+    CARGO_BUILD_TARGET=fake-native-target \
     bash "${runner}" --internal-run-stage "${stage}" \
     >"${test_dir}/${stage}-missing-test.out" \
     2>"${test_dir}/${stage}-missing-test.err"; then
@@ -112,6 +113,7 @@ chmod +x "${test_dir}/polarity-bin/cargo"
 for stage in semantic-runtime retained-workspace; do
   if ! PATH="${test_dir}/polarity-bin:${PATH}" \
     TACHIKO_OBSTACLE_INTERNAL=1 TACHIKO_BIN=/bin/true \
+    CARGO_BUILD_TARGET=fake-native-target \
     bash "${runner}" --internal-run-stage "${stage}" \
     >"${test_dir}/${stage}-polarity.out" \
     2>"${test_dir}/${stage}-polarity.err"; then
@@ -163,6 +165,9 @@ target-dir = "conflicting-config-target-dir"
 rustc = "conflicting-config-rustc"
 rustc-wrapper = "conflicting-config-rustc-wrapper"
 rustc-workspace-wrapper = "conflicting-config-workspace-wrapper"
+
+[target.x86_64-pc-windows-msvc]
+runner = ["conflicting-config-runner", "--from-config"]
 EOF
 
 cat >"${normal_repo}/scripts/git-ci-smoke.sh" <<'EOF'
@@ -301,6 +306,9 @@ fi
 if [[ "${FAKE_TRIGGER_IGNORED_DRIFT:-0}" == "1" ]]; then
   printf 'ignored host artifact\n' >"${FAKE_IGNORED_RAW_FILE}"
 fi
+if [[ "${FAKE_TRIGGER_EMPTY_DIRECTORY_DRIFT:-0}" == "1" ]]; then
+  mkdir -p "${FAKE_EMPTY_DIRECTORY}"
+fi
 exit 97
 EOF
 chmod +x "${test_dir}/fake-tachiko"
@@ -330,6 +338,8 @@ grep -Fx 'rustc-wrapper = "conflicting-config-rustc-wrapper"' \
   "${FAKE_REPO_ROOT}/.cargo/config.toml" >/dev/null
 grep -Fx 'rustc-workspace-wrapper = "conflicting-config-workspace-wrapper"' \
   "${FAKE_REPO_ROOT}/.cargo/config.toml" >/dev/null
+grep -Fx 'runner = ["conflicting-config-runner", "--from-config"]' \
+  "${FAKE_REPO_ROOT}/.cargo/config.toml" >/dev/null
 if [[ "${RUSTC:-}" != "${FAKE_CARGO_RUSTC}" || \
   -n "${CARGO_BUILD_RUSTC:-}" ]]; then
   echo "fake cargo: compiler selection is not normalized" >&2
@@ -340,6 +350,10 @@ if [[ "${RUSTC_WRAPPER-unset}" != "" || \
   -n "${CARGO_BUILD_RUSTC_WRAPPER+x}" || \
   -n "${CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER+x}" ]]; then
   echo "fake cargo: compiler wrappers are not neutralized" >&2
+  exit 94
+fi
+if [[ "${CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER:-}" != "env" ]]; then
+  echo "fake cargo: native target runner is not normalized" >&2
   exit 94
 fi
 
@@ -400,8 +414,9 @@ run_normal_course() {
   local git_dirty="$2"
   local trigger_fingerprint_drift="$3"
   local trigger_ignored_drift="$4"
-  local stdout_file="$5"
-  local stderr_file="$6"
+  local trigger_empty_directory_drift="$5"
+  local stdout_file="$6"
+  local stderr_file="$7"
   PATH="${normal_bin_dir}:${PATH}" \
     TMPDIR="${normal_tmp}" \
     CARGO_HOME="${test_dir}/normal-cargo-home" \
@@ -412,6 +427,7 @@ run_normal_course() {
     RUSTC_WORKSPACE_WRAPPER="${test_dir}/hostile-workspace-wrapper" \
     CARGO_BUILD_RUSTC_WRAPPER="${test_dir}/hostile-cargo-rustc-wrapper" \
     CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER="${test_dir}/hostile-cargo-workspace-wrapper" \
+    CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER="conflicting-env-runner --from-env" \
     GIT_DIR="${test_dir}/hostile.git" \
     GIT_WORK_TREE="${test_dir}/hostile-worktree" \
     GIT_INDEX_FILE="${test_dir}/hostile-index" \
@@ -443,8 +459,10 @@ run_normal_course() {
     FAKE_GIT_DIRTY="${git_dirty}" \
     FAKE_TRIGGER_FINGERPRINT_DRIFT="${trigger_fingerprint_drift}" \
     FAKE_TRIGGER_IGNORED_DRIFT="${trigger_ignored_drift}" \
+    FAKE_TRIGGER_EMPTY_DIRECTORY_DRIFT="${trigger_empty_directory_drift}" \
     FAKE_TRACKED_RAW_FILE="${tracked_raw_file}" \
     FAKE_IGNORED_RAW_FILE="${normal_repo}/crates/workspace-engine/tests/common/.DS_Store" \
+    FAKE_EMPTY_DIRECTORY="${normal_repo}/crates/workspace-engine/tests/common/empty-host-directory" \
     FAKE_GIT_IGNORED_PATH=crates/workspace-engine/tests/common/.DS_Store \
     FAKE_NATIVE_TARGET="${native_target}" \
     FAKE_CARGO_RUSTC="${normal_bin_dir}/cargo-rustc" \
@@ -456,7 +474,7 @@ run_normal_course() {
     >"${stdout_file}" 2>"${stderr_file}"
 }
 
-if run_normal_course 0 0 0 0 \
+if run_normal_course 0 0 0 0 0 \
   "${test_dir}/normal.out" "${test_dir}/normal.err"; then
   echo "obstacle-course test: intentionally failing fake stage unexpectedly passed" >&2
   exit 1
@@ -507,7 +525,7 @@ grep -F \
   "${test_dir}/normal.out" >/dev/null
 
 : >"${normal_log}"
-if run_normal_course 1 0 0 0 \
+if run_normal_course 1 0 0 0 0 \
   "${test_dir}/status-fail.out" "${test_dir}/status-fail.err"; then
   echo "obstacle-course test: failed Git status unexpectedly produced evidence" >&2
   exit 1
@@ -521,7 +539,7 @@ fi
 
 : >"${normal_log}"
 printf 'raw tracked bytes before\n' >"${tracked_raw_file}"
-if run_normal_course 0 1 1 0 \
+if run_normal_course 0 1 1 0 0 \
   "${test_dir}/fingerprint-drift.out" \
   "${test_dir}/fingerprint-drift.err"; then
   echo "obstacle-course test: dirty source mutation unexpectedly produced stable evidence" >&2
@@ -541,13 +559,13 @@ fi
 rm -f -- "${normal_repo}/crates/workspace-engine/tests/common/.DS_Store"
 printf 'preexisting ignored host artifact\n' \
   >"${normal_repo}/crates/workspace-engine/tests/common/.DS_Store"
-if run_normal_course 0 0 0 0 \
+if run_normal_course 0 0 0 0 0 \
   "${test_dir}/ignored-initial.out" \
   "${test_dir}/ignored-initial.err"; then
   echo "obstacle-course test: preexisting ignored workload input unexpectedly passed" >&2
   exit 1
 fi
-grep -F "obstacle-course: ignored file cannot be a workload input 'crates/workspace-engine/tests/common/.DS_Store'" \
+grep -F "obstacle-course: ignored entry cannot be a workload input 'crates/workspace-engine/tests/common/.DS_Store'" \
   "${test_dir}/ignored-initial.err" >/dev/null
 if grep -Fq "cargo command=" "${normal_log}"; then
   echo "obstacle-course test: setup ran after ignored workload rejection" >&2
@@ -556,19 +574,57 @@ fi
 
 : >"${normal_log}"
 rm -f -- "${normal_repo}/crates/workspace-engine/tests/common/.DS_Store"
-if run_normal_course 0 0 0 1 \
+ln -s ignored-host-target \
+  "${normal_repo}/crates/workspace-engine/tests/common/.DS_Store"
+if run_normal_course 0 0 0 0 0 \
+  "${test_dir}/ignored-symlink.out" \
+  "${test_dir}/ignored-symlink.err"; then
+  echo "obstacle-course test: ignored workload symlink unexpectedly passed" >&2
+  exit 1
+fi
+grep -F "obstacle-course: ignored entry cannot be a workload input 'crates/workspace-engine/tests/common/.DS_Store'" \
+  "${test_dir}/ignored-symlink.err" >/dev/null
+if grep -Fq "cargo command=" "${normal_log}"; then
+  echo "obstacle-course test: setup ran after ignored symlink rejection" >&2
+  exit 1
+fi
+
+: >"${normal_log}"
+rm -f -- "${normal_repo}/crates/workspace-engine/tests/common/.DS_Store"
+if run_normal_course 0 0 0 1 0 \
   "${test_dir}/ignored-drift.out" \
   "${test_dir}/ignored-drift.err"; then
   echo "obstacle-course test: ignored workload mutation unexpectedly produced stable evidence" >&2
   exit 1
 fi
-grep -F "obstacle-course: ignored file cannot be a workload input 'crates/workspace-engine/tests/common/.DS_Store'" \
+grep -F "obstacle-course: ignored entry cannot be a workload input 'crates/workspace-engine/tests/common/.DS_Store'" \
   "${test_dir}/ignored-drift.err" >/dev/null
 grep -F "EVIDENCE FAIL: could not fingerprint workload identity checkpoint=after-repository-dogfood stage=semantic-runtime" \
   "${test_dir}/ignored-drift.err" >/dev/null
 if grep -Fq "EVIDENCE source_identity=stable" \
   "${test_dir}/ignored-drift.out"; then
   echo "obstacle-course test: ignored workload mutation was reported stable" >&2
+  exit 1
+fi
+
+: >"${normal_log}"
+rm -f -- "${normal_repo}/crates/workspace-engine/tests/common/.DS_Store"
+rm -rf -- "${normal_repo}/crates/workspace-engine/tests/common/empty-host-directory"
+if run_normal_course 0 0 0 0 1 \
+  "${test_dir}/empty-directory-drift.out" \
+  "${test_dir}/empty-directory-drift.err"; then
+  echo "obstacle-course test: empty workload directory mutation unexpectedly produced stable evidence" >&2
+  exit 1
+fi
+if ! grep -F "EVIDENCE FAIL: workload identity changed checkpoint=after-repository-dogfood stage=semantic-runtime" \
+  "${test_dir}/empty-directory-drift.err" >/dev/null; then
+  sed 's/^/  /' "${test_dir}/empty-directory-drift.err" >&2
+  echo "obstacle-course test: empty workload directory drift was not identified" >&2
+  exit 1
+fi
+if grep -Fq "EVIDENCE source_identity=stable" \
+  "${test_dir}/empty-directory-drift.out"; then
+  echo "obstacle-course test: empty workload directory mutation was reported stable" >&2
   exit 1
 fi
 

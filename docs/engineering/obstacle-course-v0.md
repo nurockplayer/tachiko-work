@@ -29,8 +29,9 @@ recorded in the result. The runner resolves `RUSTC`, then
 `CARGO_BUILD_RUSTC`, then the `rustc` on `PATH`; it exports that selection as
 the single Cargo compiler and neutralizes competing compiler/wrapper selectors.
 The reported identity and native target therefore come from the same compiler
-used by Cargo. `--list` prints the closed v0 stage registry without building or
-running it.
+used by Cargo. Native test execution also normalizes the exact target runner to
+an `env` passthrough, overriding user or repository Cargo runner configuration.
+`--list` prints the closed v0 stage registry without building or running it.
 
 ## v0 course
 
@@ -108,9 +109,11 @@ A dirty run is provisional because the commit alone does not identify its
 source. Final evidence must come from a clean exact HEAD. The runner rechecks
 the commit, clean/dirty state, and a byte-sensitive fingerprint of tracked
 changes plus relevant untracked file contents after setup and after every stage.
-It also recomputes each exact workload manifest at those checkpoints. Ignored
-files inside a workload path are rejected before execution and at checkpoints,
-because a stage could observe them even though Git excludes them from ordinary
+It also recomputes each exact workload-tree manifest at those checkpoints.
+Regular files and every directory path, including empty directories, are bound
+to that manifest. Ignored entries, symlinks, and special entries inside a
+workload path are rejected before execution and at checkpoints, because a
+stage could observe them even though Git excludes them from ordinary
 source-state enumeration. The run is rejected if source or workload identity
 changes while evidence is being collected. Repository-selecting and
 command-scoped Git environment variables, including inherited author/committer

@@ -30,6 +30,23 @@ retained_workload_inputs=(
 )
 TACHIKO_BIN="${TACHIKO_BIN:-}"
 
+normalize_native_target_runner() {
+  local target="$1"
+  local runner_variable
+  if [[ -z "${target}" || "${target}" == *[!A-Za-z0-9_-]* ]]; then
+    echo "obstacle-course: invalid native Rust target '${target}'" >&2
+    return 1
+  fi
+  if ! command -v env >/dev/null 2>&1; then
+    echo "obstacle-course: env is required for native test execution" >&2
+    return 1
+  fi
+  runner_variable="CARGO_TARGET_$(
+    printf '%s' "${target}" | LC_ALL=C tr '[:lower:]-' '[:upper:]_'
+  )_RUNNER"
+  export "${runner_variable}=env"
+}
+
 # shellcheck source=scripts/release-lib.sh
 source "${repo_root}/scripts/release-lib.sh"
 
@@ -164,8 +181,11 @@ run_internal_stage() {
 
 if [[ "${1:-}" == "--internal-run-stage" ]]; then
   if [[ "${TACHIKO_OBSTACLE_INTERNAL:-}" != "1" || \
-    -z "${TACHIKO_BIN}" || "$#" -ne 2 ]]; then
+    -z "${TACHIKO_BIN}" || -z "${CARGO_BUILD_TARGET:-}" || "$#" -ne 2 ]]; then
     usage
+    exit 2
+  fi
+  if ! normalize_native_target_runner "${CARGO_BUILD_TARGET}"; then
     exit 2
   fi
   cd "${repo_root}"
@@ -197,7 +217,7 @@ export GIT_CONFIG_NOSYSTEM=1
 export GIT_ATTR_NOSYSTEM=1
 export GIT_NO_REPLACE_OBJECTS=1
 
-for required_command in cargo git; do
+for required_command in cargo env git; do
   if ! command -v "${required_command}" >/dev/null 2>&1; then
     echo "obstacle-course: ${required_command} is required" >&2
     exit 1
@@ -393,6 +413,9 @@ if [[ -z "${native_target}" ]]; then
   echo "obstacle-course: could not determine the native Rust target" >&2
   exit 1
 fi
+if ! normalize_native_target_runner "${native_target}"; then
+  exit 1
+fi
 course_target_dir="${run_dir}/cargo-target"
 export CARGO_TARGET_DIR="${course_target_dir}"
 export CARGO_BUILD_TARGET="${native_target}"
@@ -425,17 +448,14 @@ verify_source_identity() {
   fi
 }
 
-record_fixture_file() {
-  local file="$1"
-  local manifest="$2"
-  local relative ignored_status bytes digest
-  relative="${file#"${repo_root}/"}"
-  if [[ ! -f "${file}" || "${relative}" == *$'\t'* || "${relative}" == *$'\n'* ]]; then
-    echo "obstacle-course: invalid fixture manifest path '${relative}'" >&2
-    return 1
-  fi
+record_workload_entry() {
+  local entry="$1"
+  local entry_record="$2"
+  local entry_digests="$3"
+  local relative ignored_status kind payload_digest entry_digest
+  relative="${entry#"${repo_root}/"}"
   if git -C "${repo_root}" check-ignore -q -- "${relative}"; then
-    echo "obstacle-course: ignored file cannot be a workload input '${relative}'" >&2
+    echo "obstacle-course: ignored entry cannot be a workload input '${relative}'" >&2
     return 1
   else
     ignored_status=$?
@@ -444,17 +464,42 @@ record_fixture_file() {
       return 1
     fi
   fi
-  if ! bytes="$(wc -c <"${file}" | tr -d ' ')"; then
-    echo "obstacle-course: could not measure fixture '${relative}'" >&2
+
+  if [[ -L "${entry}" ]]; then
+    echo "obstacle-course: symlink cannot be a workload input '${relative}'" >&2
+    return 1
+  elif [[ -f "${entry}" ]]; then
+    if [[ -x "${entry}" ]]; then
+      kind="regular-executable"
+    else
+      kind="regular-file"
+    fi
+    if ! payload_digest="$(tachiko_sha256_digest "${entry}")"; then
+      echo "obstacle-course: could not hash workload file '${relative}'" >&2
+      return 1
+    fi
+  elif [[ -d "${entry}" ]]; then
+    kind="directory"
+    payload_digest="-"
+  elif [[ -e "${entry}" ]]; then
+    echo "obstacle-course: special entry cannot be a workload input '${relative}'" >&2
+    return 1
+  else
+    echo "obstacle-course: workload entry disappeared '${relative}'" >&2
     return 1
   fi
-  if ! digest="$(tachiko_sha256_digest "${file}")"; then
-    echo "obstacle-course: could not hash fixture '${relative}'" >&2
+
+  if ! printf '%s\0%s\0%s\0' \
+    "${kind}" "${relative}" "${payload_digest}" >"${entry_record}"; then
+    echo "obstacle-course: could not record workload entry '${relative}'" >&2
     return 1
   fi
-  if ! printf '%s\t%s\t%s\n' "${relative}" "${bytes}" "${digest}" \
-    >>"${manifest}"; then
-    echo "obstacle-course: could not record fixture '${relative}'" >&2
+  if ! entry_digest="$(tachiko_sha256_digest "${entry_record}")"; then
+    echo "obstacle-course: could not hash workload entry '${relative}'" >&2
+    return 1
+  fi
+  if ! printf '%s\n' "${entry_digest}" >>"${entry_digests}"; then
+    echo "obstacle-course: could not append workload entry '${relative}'" >&2
     return 1
   fi
 }
@@ -462,30 +507,37 @@ record_fixture_file() {
 workload_digest() {
   local stage="$1"
   shift
-  local manifest file_list path file
+  local manifest entry_list entry_record entry_digests path entry
   manifest="${run_dir}/${stage}.manifest"
-  file_list="${run_dir}/${stage}.files"
-  : >"${manifest}"
-  : >"${file_list}"
+  entry_list="${run_dir}/${stage}.entries"
+  entry_record="${run_dir}/${stage}.entry"
+  entry_digests="${run_dir}/${stage}.entry-digests"
+  : >"${entry_list}"
+  : >"${entry_digests}"
   for path in "$@"; do
-    if [[ -d "${repo_root}/${path}" ]]; then
-      if ! find "${repo_root}/${path}" -type f -print | LC_ALL=C sort >>"${file_list}"; then
-        echo "obstacle-course: could not enumerate fixture directory '${path}'" >&2
-        return 1
-      fi
-    else
-      printf '%s\n' "${repo_root}/${path}" >>"${file_list}"
+    if [[ ! -e "${repo_root}/${path}" && ! -L "${repo_root}/${path}" ]]; then
+      echo "obstacle-course: missing workload input '${path}'" >&2
+      return 1
+    fi
+    if ! LC_ALL=C find "${repo_root}/${path}" -print0 >>"${entry_list}"; then
+      echo "obstacle-course: could not enumerate workload input '${path}'" >&2
+      return 1
     fi
   done
-  if [[ ! -s "${file_list}" ]]; then
+  while IFS= read -r -d '' entry; do
+    if ! record_workload_entry \
+      "${entry}" "${entry_record}" "${entry_digests}"; then
+      return 1
+    fi
+  done <"${entry_list}"
+  if [[ ! -s "${entry_digests}" ]]; then
     echo "obstacle-course: workload '${stage}' has no fixture inputs" >&2
     return 1
   fi
-  while IFS= read -r file; do
-    if ! record_fixture_file "${file}" "${manifest}"; then
-      return 1
-    fi
-  done <"${file_list}"
+  if ! LC_ALL=C sort -u "${entry_digests}" >"${manifest}"; then
+    echo "obstacle-course: could not order workload manifest '${stage}'" >&2
+    return 1
+  fi
   tachiko_sha256_digest "${manifest}"
 }
 
@@ -537,7 +589,7 @@ verify_workload_identity() {
 }
 
 echo "COURSE ${course_version} commit=${head_commit} worktree=${worktree_state} profile=release network=offline correctness_stages=${correctness_stage_count}"
-echo "ENV os=${os_identity} rustc=${rust_identity} native_target=${native_target} cargo_target=run-scoped/${native_target}"
+echo "ENV os=${os_identity} rustc=${rust_identity} native_target=${native_target} cargo_target=run-scoped/${native_target} native_runner=env-passthrough"
 echo "WORKLOAD stage=repository-dogfood id=product-gaps-roproj/v1 sha256=${dogfood_digest}"
 echo "WORKLOAD stage=git-review-roundtrip id=game-balance-git-review/v0 sha256=${git_review_digest}"
 echo "WORKLOAD stage=semantic-runtime id=focused-semantic-runtime/v0 sha256=${semantic_digest}"
