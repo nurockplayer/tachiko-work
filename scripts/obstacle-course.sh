@@ -178,15 +178,33 @@ trap cleanup EXIT
 performance_log="${run_dir}/performance.log"
 : >"${performance_log}"
 
+current_worktree_state() {
+  if [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then
+    echo "dirty"
+  else
+    echo "clean"
+  fi
+}
+
 head_commit="$(git rev-parse HEAD)"
-if [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then
-  worktree_state="dirty"
-else
-  worktree_state="clean"
-fi
+worktree_state="$(current_worktree_state)"
 rust_identity="$(rustc --version | tr ' ' '_')"
 os_identity="$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
-tachiko_bin="${repo_root}/target/release/tachiko"
+course_target_dir="${repo_root}/target/obstacle-course"
+export CARGO_TARGET_DIR="${course_target_dir}"
+tachiko_bin="${course_target_dir}/release/tachiko"
+
+verify_source_identity() {
+  local checkpoint="$1"
+  local observed_head observed_worktree_state
+  observed_head="$(git rev-parse HEAD)"
+  observed_worktree_state="$(current_worktree_state)"
+  if [[ "${observed_head}" != "${head_commit}" || \
+    "${observed_worktree_state}" != "${worktree_state}" ]]; then
+    echo "EVIDENCE FAIL: source identity changed checkpoint=${checkpoint} expected_commit=${head_commit} observed_commit=${observed_head} expected_worktree=${worktree_state} observed_worktree=${observed_worktree_state}" >&2
+    return 1
+  fi
+}
 
 record_fixture_file() {
   local file="$1"
@@ -242,6 +260,7 @@ dogfood_digest="$(workload_digest repository-dogfood dogfood/product-gaps.roproj
 git_review_digest="$(workload_digest git-review-roundtrip \
   .gitattributes examples/game-balance/game-balance.ro scripts/git-ci-smoke.sh)"
 semantic_digest="$(workload_digest semantic-runtime \
+  crates/workspace-engine/tests/common \
   crates/workspace-engine/tests/analysis_operations.rs \
   crates/workspace-engine/tests/patch_lifecycle.rs \
   crates/workspace-engine/tests/resident_session.rs)"
@@ -249,7 +268,7 @@ retained_digest="$(workload_digest retained-workspace \
   crates/workspace-engine/tests/retained_state_benchmark.rs)"
 
 echo "COURSE ${course_version} commit=${head_commit} worktree=${worktree_state} profile=release network=offline correctness_stages=${correctness_stage_count}"
-echo "ENV os=${os_identity} rustc=${rust_identity}"
+echo "ENV os=${os_identity} rustc=${rust_identity} cargo_target=target/obstacle-course"
 echo "WORKLOAD stage=repository-dogfood id=product-gaps-roproj/v1 sha256=${dogfood_digest}"
 echo "WORKLOAD stage=git-review-roundtrip id=game-balance-git-review/v0 sha256=${git_review_digest}"
 echo "WORKLOAD stage=semantic-runtime id=focused-semantic-runtime/v0 sha256=${semantic_digest}"
@@ -269,6 +288,10 @@ if ! cargo test --quiet --release --locked --offline \
   --test retained_state_benchmark \
   --no-run; then
   echo "SETUP FAIL: release test artifact build failed" >&2
+  echo "0/${correctness_stage_count} correctness stages passed"
+  exit 1
+fi
+if ! verify_source_identity "after-setup"; then
   echo "0/${correctness_stage_count} correctness stages passed"
   exit 1
 fi
@@ -407,6 +430,7 @@ run_stage() {
 
 passed=0
 failed=0
+evidence_failed=0
 for stage in repository-dogfood git-review-roundtrip semantic-runtime retained-workspace; do
   samples=1
   if [[ "${stage}" == "retained-workspace" ]]; then
@@ -417,20 +441,13 @@ for stage in repository-dogfood git-review-roundtrip semantic-runtime retained-w
   else
     failed=$((failed + 1))
   fi
+  if ! verify_source_identity "after-${stage}"; then
+    evidence_failed=1
+    break
+  fi
 done
 
-ending_head_commit="$(git rev-parse HEAD)"
-if [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then
-  ending_worktree_state="dirty"
-else
-  ending_worktree_state="clean"
-fi
-evidence_failed=0
-if [[ "${ending_head_commit}" != "${head_commit}" || \
-  "${ending_worktree_state}" != "${worktree_state}" ]]; then
-  echo "EVIDENCE FAIL: source identity changed during the course start_commit=${head_commit} end_commit=${ending_head_commit} start_worktree=${worktree_state} end_worktree=${ending_worktree_state}" >&2
-  evidence_failed=1
-else
+if [[ "${evidence_failed}" -eq 0 ]]; then
   echo "EVIDENCE source_identity=stable commit=${head_commit} worktree=${worktree_state}"
 fi
 

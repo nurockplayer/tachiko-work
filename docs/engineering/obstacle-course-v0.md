@@ -37,7 +37,7 @@ orchestrates them.
 | --- | --- | --- |
 | `repository-dogfood` | The canonical Product Gaps `.roproj` admits successfully and repeated formula calculation is byte-identical with the pinned priority values. | `dogfood/product-gaps.roproj/`; its deterministic constructor and pin remain under `apps/designer/runtime/fixtures/` and `apps/designer/runtime/tests/`. |
 | `git-review-roundtrip` | Direct `.ro` materializes to canonical `.roproj`, a scalar edit remains one Git-reviewable shard record, semantic review agrees inside/outside Git, package consistency is fail-closed, and invalid representation/semantics are rejected. | `examples/game-balance/game-balance.ro` and `scripts/git-ci-smoke.sh`. Storage fixtures remain under `crates/storage/tests/`. |
-| `semantic-runtime` | Repeated bounded Query lineage is exact; an approved proposal previews, executes, verifies, and records provenance; a scalar publication invalidates the changed field and downstream formula projection at the new revision; failed-formula diagnostics retain stable subjects. | Focused existing tests in `crates/workspace-engine/tests/{analysis_operations,patch_lifecycle,resident_session}.rs`. |
+| `semantic-runtime` | Repeated bounded Query lineage is exact; an approved proposal previews, executes, verifies, and records provenance; a scalar publication invalidates the changed field and downstream formula projection at the new revision; failed-formula diagnostics retain stable subjects. | Focused existing tests in `crates/workspace-engine/tests/{analysis_operations,patch_lifecycle,resident_session}.rs` and their `tests/common/` fixture. |
 | `retained-workspace` | Across deterministic 10/100/1,000-entity generated workspaces and 20 edits, retained calculation/validation equals the fresh full oracle and the exact recompute/reuse counters remain bounded. | `crates/workspace-engine/tests/retained_state_benchmark.rs`. |
 
 The Git-review stage supplies durable intentional-failure proof through normal
@@ -61,6 +61,9 @@ their specifications:
   [ADR-0019](../decisions/ADR-0019-staged-semantic-validation-and-diagnostics.md)
   and
   [`diagnostics-contract.md`](../specs/diagnostics-contract.md);
+- portable package consistency and fail-closed publication:
+  [ADR-0025](../decisions/ADR-0025-portable-package-v1.md) and
+  [`portable-package-v1.md`](../specs/portable-package-v1.md);
 - headless Query/Propose/Execute and resident publication:
   [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md),
   [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md),
@@ -98,8 +101,11 @@ Before running, the command reports:
 
 A dirty run is provisional because the commit alone does not identify its
 source. Final evidence must come from a clean exact HEAD. The runner rechecks
-the commit and clean/dirty state after every stage finishes and rejects the run
-if either changed while evidence was being collected.
+the commit and clean/dirty state after setup and after every stage, and rejects
+the run if either changed while evidence was being collected. It also overrides
+Cargo's target directory with `target/obstacle-course`, so every CLI stage uses
+the release binary built by the same run rather than an environment-selected
+stale artifact.
 
 The runner builds release artifacts before measurement. Build/setup time is
 excluded. Each stage runs in a fresh process; OS cache state is explicitly
