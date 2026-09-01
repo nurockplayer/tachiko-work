@@ -86,22 +86,38 @@ function observation<T>(
   return { availability, facts, source: { id, url } };
 }
 
+type CompleteRawCheck = RawPullRequest["checks"][number] & {
+  headSha: { state: "value"; value: string };
+  result: { state: "value"; value: "success" | "pending" | "failure" };
+};
+
+function isCompleteRawCheck(check: RawPullRequest["checks"][number]): check is CompleteRawCheck {
+  return check.headSha.state === "value" && check.result.state === "value";
+}
+
 function checkSignal(pull: RawPullRequest, name?: string): DisplaySignal {
   const checks =
     name === undefined
       ? pull.checks
       : pull.checks.filter((check) => check.name === name);
+  const completeChecks = checks.filter(isCompleteRawCheck);
   const sources = checks.map((check) =>
     evidenceSource(`Check · ${check.name}`, check.url),
   );
   if (
-    checks.some(
-      (check) => check.headSha === pull.headSha && check.status === "failure",
+    completeChecks.some(
+      (check) =>
+        check.headSha.value === pull.headSha &&
+        check.result.value === "failure",
     )
   ) {
     return directSignal("blocked", "native-check-failed", "Exact-head check failed", sources);
   }
-  if (pull.checksAvailability !== "complete" || checks.length === 0) {
+  if (
+    pull.checksAvailability !== "complete" ||
+    checks.length === 0 ||
+    completeChecks.length !== checks.length
+  ) {
     return directSignal(
       "unknown",
       pull.checksAvailability === "unavailable"
@@ -111,10 +127,10 @@ function checkSignal(pull: RawPullRequest, name?: string): DisplaySignal {
       sources,
     );
   }
-  if (checks.some((check) => check.headSha !== pull.headSha)) {
+  if (completeChecks.some((check) => check.headSha.value !== pull.headSha)) {
     return directSignal("unknown", "validation-stale", "Check identity mismatch", sources);
   }
-  if (checks.some((check) => check.status === "pending")) {
+  if (completeChecks.some((check) => check.result.value === "pending")) {
     return directSignal("waiting", "native-check-pending", "Exact-head checks pending", sources);
   }
   return directSignal("satisfied", "native-check-succeeded", "Exact-head checks passed", sources);
@@ -402,50 +418,47 @@ function boundedHandoffIdentity(
 
 function mergeabilityFor(pull: RawPullRequest): DisplaySignal {
   const source = [evidenceSource(`PR #${String(pull.number)}`, pull.url)];
-  const decision = pull.reviewDecision;
-  const nativePolicy =
-    pull.mergeStateStatus === "DIRTY" ||
-    pull.mergeStateStatus === "BLOCKED" ||
-    pull.mergeStateStatus === "BEHIND" ||
-    (decision.state === "value" && decision.value === "CHANGES_REQUESTED")
-      ? "blocked"
-      : pull.mergeStateStatus === "UNKNOWN" || decision.state === "unknown"
-        ? "unknown"
-        : decision.state === "value" && decision.value === "REVIEW_REQUIRED"
-          ? "waiting"
-          : "satisfied";
-  if (pull.mergeability === "conflicting" || nativePolicy === "blocked") {
-    return directSignal(
-      "blocked",
-      pull.mergeability === "conflicting" ? "native-merge-conflict" : "native-merge-policy-blocked",
-      pull.mergeability === "conflicting"
-        ? "Pull request has a native merge conflict"
-        : "GitHub native merge policy blocks this pull request",
-      source,
-    );
+  switch (pull.nativeMergePolicy.state) {
+    case "blocked":
+      return directSignal(
+        "blocked",
+        pull.nativeMergePolicy.reason === "conflict"
+          ? "native-merge-conflict"
+          : "native-merge-policy-blocked",
+        pull.nativeMergePolicy.reason === "conflict"
+          ? "Pull request has a native merge conflict"
+          : "GitHub native merge policy blocks this pull request",
+        source,
+      );
+    case "unknown":
+      return directSignal(
+        "unknown",
+        "observation-incomplete",
+        "Native mergeability Unknown",
+        source,
+      );
+    case "waiting":
+      return directSignal(
+        "waiting",
+        "native-review-required",
+        "GitHub native review policy is waiting",
+        source,
+      );
+    case "satisfied":
+      return directSignal(
+        "satisfied",
+        "all-required-conditions-satisfied",
+        "Pull request is natively mergeable",
+        source,
+      );
+    default:
+      return directSignal(
+        "unknown",
+        "observation-incomplete",
+        "Native mergeability Unknown",
+        source,
+      );
   }
-  if (pull.mergeability === "unknown" || nativePolicy === "unknown") {
-    return directSignal(
-      "unknown",
-      "observation-incomplete",
-      "Native mergeability Unknown",
-      source,
-    );
-  }
-  if (nativePolicy === "waiting") {
-    return directSignal(
-      "waiting",
-      "native-review-required",
-      "GitHub native review policy is waiting",
-      source,
-    );
-  }
-  return directSignal(
-    "satisfied",
-    "all-required-conditions-satisfied",
-    "Pull request is natively mergeable",
-    source,
-  );
 }
 
 function implementationConflictSignal(
@@ -557,6 +570,11 @@ function pullLane(
     pull.reviewsAvailability === "complete" && !currentReviews.complete
       ? "incomplete"
       : pull.reviewsAvailability;
+  const completeChecks = pull.checks.filter(isCompleteRawCheck);
+  const nativeCheckAvailability =
+    pull.checksAvailability === "complete" && completeChecks.length !== pull.checks.length
+      ? "incomplete"
+      : pull.checksAvailability;
   const reconciliation = reconcile({
     context: {
       repository: repository.repository,
@@ -568,11 +586,11 @@ function pullLane(
     },
     comments: commentSources(pull, repository.repository),
     nativeChecks: observation(
-      pull.checksAvailability,
-      pull.checks.map((check) => ({
+      nativeCheckAvailability,
+      completeChecks.map((check) => ({
         name: check.name,
-        head: check.headSha,
-        status: check.status,
+        head: check.headSha.value,
+        status: check.result.value,
         source: { id: `check:${check.name}`, url: check.url },
       })),
       `checks:${String(pull.number)}`,

@@ -302,7 +302,7 @@ describe("GitHub observation adapter", () => {
     expect(observation.serverCredential).toBe("present");
     expect(JSON.stringify(observation)).not.toContain("server_secret");
     expect(JSON.stringify(projection)).not.toContain("server_secret");
-    expect(observation.pullRequests[0]?.mergeability).toBe("mergeable");
+    expect(observation.pullRequests[0]?.nativeMergePolicy).toEqual({ state: "satisfied" });
   });
 
   it("preserves reviewer trust and globally unique GraphQL source IDs", async () => {
@@ -580,8 +580,8 @@ describe("GitHub observation adapter", () => {
   );
 
   it.each([
-    ["observed value", "REVIEW_REQUIRED", null, "value"],
-    ["observed null", null, null, "null"],
+    ["observed value", "REVIEW_REQUIRED", null, "waiting"],
+    ["observed null", null, null, "satisfied"],
     [
       "partial-error null",
       null,
@@ -589,7 +589,7 @@ describe("GitHub observation adapter", () => {
       "unknown",
     ],
   ] as const)(
-    "distinguishes %s native review-decision observation",
+    "decodes %s native review-decision observation",
     async (_case, reviewDecision, errorPath, expectedState) => {
       const graph = graphResponse();
       const pull = graph.data.repository.pullRequests.nodes[0];
@@ -598,8 +598,8 @@ describe("GitHub observation adapter", () => {
       if (errorPath !== null) addGraphError(graph, errorPath);
 
       const observation = await observeRepository({ fetchImpl: fetchForGraph(graph) });
-      expect(observation.pullRequests[0] as unknown).toMatchObject({
-        reviewDecision: { state: expectedState },
+      expect(observation.pullRequests[0]?.nativeMergePolicy).toMatchObject({
+        state: expectedState,
       });
     },
   );
@@ -627,6 +627,146 @@ describe("GitHub observation adapter", () => {
 
       const observation = await observeRepository({ fetchImpl: fetchForGraph(graph) });
       expect(observation.pullRequests[0]?.checksAvailability).toBe(expectedAvailability);
+    },
+  );
+
+  it.each([
+    ["observed value", "SUCCESS", null, "value", "satisfied"],
+    ["observed null", null, null, "null", "unknown"],
+    [
+      "partial-error null",
+      null,
+      [
+        "repository",
+        "pullRequests",
+        "nodes",
+        0,
+        "statusCheckRollup",
+        "contexts",
+        "nodes",
+        0,
+        "conclusion",
+      ],
+      "unknown",
+      "unknown",
+    ],
+  ] as const)(
+    "distinguishes %s CheckRun conclusion",
+    async (_case, conclusion, errorPath, expectedObservation, expectedSignal) => {
+      const graph = graphResponse();
+      const pull = graph.data.repository.pullRequests.nodes[0];
+      if (pull === undefined) throw new Error("fixture missing pull request");
+      const check = pull.statusCheckRollup.contexts.nodes[0];
+      if (check === undefined) throw new Error("fixture missing check run");
+      Object.assign(check, { conclusion });
+      if (errorPath !== null) addGraphError(graph, errorPath);
+
+      const observation = await observeRepository({ fetchImpl: fetchForGraph(graph) });
+      expect(observation.pullRequests[0]?.checks[0]).toMatchObject({
+        headSha: { state: "value", value: HEAD },
+        result: { state: expectedObservation },
+      });
+      expect(normalizeRepository(observation).deliveries[0]?.checks.state).toBe(
+        expectedSignal,
+      );
+    },
+  );
+
+  it.each([
+    ["observed value", { oid: HEAD }, "SUCCESS", null, "value", "success", "satisfied"],
+    ["observed null", null, "FAILURE", null, "null", "failure", "unknown"],
+    [
+      "partial-error null",
+      null,
+      "FAILURE",
+      [
+        "repository",
+        "pullRequests",
+        "nodes",
+        0,
+        "statusCheckRollup",
+        "contexts",
+        "nodes",
+        0,
+        "commit",
+      ],
+      "unknown",
+      "failure",
+      "unknown",
+    ],
+  ] as const)(
+    "distinguishes %s StatusContext commit identity",
+    async (
+      _case,
+      commit,
+      state,
+      errorPath,
+      expectedObservation,
+      expectedResult,
+      expectedSignal,
+    ) => {
+      const graph = graphResponse();
+      const pull = graph.data.repository.pullRequests.nodes[0];
+      if (pull === undefined) throw new Error("fixture missing pull request");
+      Object.assign(pull.statusCheckRollup.contexts, {
+        nodes: [
+          {
+            __typename: "StatusContext",
+            id: `status-${_case}`,
+            context: "Live Project Dashboard browser journey",
+            state,
+            targetUrl: null,
+            commit,
+          },
+        ],
+      });
+      if (errorPath !== null) addGraphError(graph, errorPath);
+
+      const observation = await observeRepository({ fetchImpl: fetchForGraph(graph) });
+      expect(observation.pullRequests[0]?.checks[0]).toMatchObject({
+        headSha: { state: expectedObservation },
+        result: { state: "value", value: expectedResult },
+      });
+      expect(normalizeRepository(observation).deliveries[0]?.checks.state).toBe(
+        expectedSignal,
+      );
+    },
+  );
+
+  it.each([
+    ["CheckRun status", "CheckRun", "status", "FUTURE"],
+    ["CheckRun conclusion", "CheckRun", "conclusion", "FUTURE"],
+    ["StatusContext state", "StatusContext", "state", "FUTURE"],
+  ] as const)(
+    "decodes an unrecognized %s as Unknown",
+    async (_case, kind, field, value) => {
+      const graph = graphResponse();
+      const pull = graph.data.repository.pullRequests.nodes[0];
+      if (pull === undefined) throw new Error("fixture missing pull request");
+      if (kind === "CheckRun") {
+        const check = pull.statusCheckRollup.contexts.nodes[0];
+        if (check === undefined) throw new Error("fixture missing check run");
+        Object.assign(check, { [field]: value });
+      } else {
+        Object.assign(pull.statusCheckRollup.contexts, {
+          nodes: [
+            {
+              __typename: "StatusContext",
+              id: "status-unknown",
+              context: "Live Project Dashboard browser journey",
+              state: value,
+              targetUrl: null,
+              commit: { oid: HEAD },
+            },
+          ],
+        });
+      }
+
+      const observation = await observeRepository({ fetchImpl: fetchForGraph(graph) });
+      expect(observation.pullRequests[0]?.checks[0]?.result).toMatchObject({
+        state: "unknown",
+      });
+      expect(normalizeRepository(observation).deliveries[0]?.checks.state).toBe("unknown");
     },
   );
 
@@ -712,45 +852,159 @@ describe("GitHub observation adapter", () => {
   });
 
   it.each([
-    ["MERGEABLE", "mergeable"],
-    ["CONFLICTING", "conflicting"],
-    ["UNKNOWN", "unknown"],
-  ] as const)("maps native mergeability %s", async (native, expected) => {
-    const fake = fakeFetch(false, false, true, false, false, false, false, native);
-    const observation = await observeRepository({ fetchImpl: fake.implementation });
+    [
+      "recent activity",
+      ["repository", "recent", "nodes", 0, "mergeCommit"],
+      "complete",
+      "incomplete",
+    ],
+    [
+      "Issue milestone",
+      ["repository", "issues", "nodes", 0, "milestone"],
+      "complete",
+      "complete",
+    ],
+    [
+      "status-check conclusion",
+      [
+        "repository",
+        "pullRequests",
+        "nodes",
+        0,
+        "statusCheckRollup",
+        "contexts",
+        "nodes",
+        0,
+        "conclusion",
+      ],
+      "complete",
+      "complete",
+    ],
+    [
+      "closing Issue references",
+      ["repository", "pullRequests", "nodes", 0, "closingIssuesReferences"],
+      "incomplete",
+      "complete",
+    ],
+    [
+      "top-level Issue comments",
+      ["repository", "pullRequests", "nodes", 0, "comments"],
+      "incomplete",
+      "complete",
+    ],
+    [
+      "top-level reviews",
+      ["repository", "pullRequests", "nodes", 0, "reviews"],
+      "incomplete",
+      "complete",
+    ],
+  ] as const)(
+    "scopes a %s GraphQL error to the affected source",
+    async (_case, errorPath, expectedLinkage, expectedRecent) => {
+      const graph = graphResponse();
+      addGraphError(graph, errorPath);
 
-    expect(observation.pullRequests[0]?.mergeability).toBe(expected);
+      const observation = await observeRepository({ fetchImpl: fetchForGraph(graph) });
+      expect(observation.implementationLinkageAvailability).toBe(expectedLinkage);
+      expect(observation.recentActivityAvailability).toBe(expectedRecent);
+    },
+  );
+
+  it("treats a pathless GraphQL error as globally incomplete", async () => {
+    const graph = graphResponse();
+    Object.assign(graph, { errors: [{ message: "unscoped partial response" }] });
+
+    const observation = await observeRepository({ fetchImpl: fetchForGraph(graph) });
+    expect(observation.implementationLinkageAvailability).toBe("incomplete");
+    expect(observation.recentActivityAvailability).toBe("incomplete");
   });
 
   it.each([
-    ["CLEAN", null],
-    ["HAS_HOOKS", "APPROVED"],
-    ["UNSTABLE", null],
-    ["BLOCKED", null],
-    ["BEHIND", null],
-    ["UNKNOWN", null],
-    ["CLEAN", "REVIEW_REQUIRED"],
-    ["CLEAN", "CHANGES_REQUESTED"],
-    ["BEHIND", "REVIEW_REQUIRED"],
-    ["BLOCKED", "REVIEW_REQUIRED"],
-    ["UNKNOWN", "REVIEW_REQUIRED"],
+    ["MERGEABLE", "satisfied"],
+    ["CONFLICTING", "blocked"],
+    ["UNKNOWN", "unknown"],
+  ] as const)("decodes native mergeability %s", async (native, expected) => {
+    const fake = fakeFetch(false, false, true, false, false, false, false, native);
+    const observation = await observeRepository({ fetchImpl: fake.implementation });
+
+    expect(observation.pullRequests[0]?.nativeMergePolicy.state).toBe(expected);
+  });
+
+  it.each([
+    ["clean", {}, "satisfied", undefined],
+    ["draft", { isDraft: true }, "blocked", "policy"],
+    ["merge conflict", { mergeable: "CONFLICTING" }, "blocked", "conflict"],
+    ["dirty", { mergeStateStatus: "DIRTY" }, "blocked", "policy"],
+    ["blocked", { mergeStateStatus: "BLOCKED" }, "blocked", "policy"],
+    ["behind", { mergeStateStatus: "BEHIND" }, "blocked", "policy"],
+    ["merge state unknown", { mergeStateStatus: "UNKNOWN" }, "unknown", undefined],
+    ["unstable", { mergeStateStatus: "UNSTABLE" }, "satisfied", undefined],
+    ["hooks", { mergeStateStatus: "HAS_HOOKS" }, "satisfied", undefined],
+    ["review required", { reviewDecision: "REVIEW_REQUIRED" }, "waiting", undefined],
+    ["changes requested", { reviewDecision: "CHANGES_REQUESTED" }, "blocked", "policy"],
+    ["approved", { reviewDecision: "APPROVED" }, "satisfied", undefined],
+    ["unknown draft input", { isDraft: "false" }, "unknown", undefined],
+    ["unknown mergeability input", { mergeable: "FUTURE" }, "unknown", undefined],
+    ["unknown merge-state input", { mergeStateStatus: "FUTURE" }, "unknown", undefined],
+    ["unknown review input", { reviewDecision: "FUTURE" }, "unknown", undefined],
   ] as const)(
-    "preserves native merge policy observations %s / %s",
-    async (mergeStateStatus, reviewDecision) => {
+    "decodes native policy for %s",
+    async (_case, inputs, expectedState, expectedReason) => {
       const graph = graphResponse();
       const pull = graph.data.repository.pullRequests.nodes[0];
       if (pull === undefined) throw new Error("fixture missing pull request");
-      Object.assign(pull, { mergeStateStatus, reviewDecision });
+      Object.assign(pull, inputs);
 
       const observation = await observeRepository({ fetchImpl: fetchForGraph(graph) });
-      expect(observation.pullRequests[0]?.mergeStateStatus).toBe(mergeStateStatus);
-      expect(observation.pullRequests[0]?.reviewDecision).toEqual(
-        reviewDecision === null
-          ? { state: "null" }
-          : { state: "value", value: reviewDecision },
-      );
+      expect(observation.pullRequests[0]?.nativeMergePolicy).toMatchObject({
+        state: expectedState,
+        ...(expectedReason === undefined ? {} : { reason: expectedReason }),
+      });
     },
   );
+
+  it.each([
+    ["isDraft", ["isDraft"]],
+    ["mergeable", ["mergeable"]],
+    ["mergeStateStatus", ["mergeStateStatus"]],
+    ["reviewDecision", ["reviewDecision"]],
+  ] as const)(
+    "decodes a partial-error null %s as native policy Unknown",
+    async (field, suffix) => {
+      const graph = graphResponse();
+      const pull = graph.data.repository.pullRequests.nodes[0];
+      if (pull === undefined) throw new Error("fixture missing pull request");
+      Object.assign(pull, { [field]: null });
+      addGraphError(graph, ["repository", "pullRequests", "nodes", 0, ...suffix]);
+
+      const observation = await observeRepository({ fetchImpl: fetchForGraph(graph) });
+      expect(observation.pullRequests[0]?.nativeMergePolicy).toMatchObject({
+        state: "unknown",
+      });
+    },
+  );
+
+  it.each([
+    [
+      "Blocked over Unknown",
+      { isDraft: true, mergeStateStatus: "UNKNOWN" },
+      "blocked",
+    ],
+    [
+      "Unknown over Waiting",
+      { mergeable: "UNKNOWN", reviewDecision: "REVIEW_REQUIRED" },
+      "unknown",
+    ],
+    ["Waiting", { reviewDecision: "REVIEW_REQUIRED" }, "waiting"],
+  ] as const)("preserves %s native-policy precedence", async (_case, inputs, expected) => {
+    const graph = graphResponse();
+    const pull = graph.data.repository.pullRequests.nodes[0];
+    if (pull === undefined) throw new Error("fixture missing pull request");
+    Object.assign(pull, inputs);
+
+    const observation = await observeRepository({ fetchImpl: fetchForGraph(graph) });
+    expect(observation.pullRequests[0]?.nativeMergePolicy).toMatchObject({ state: expected });
+  });
 
   it("keeps handoff ownership overlap incomplete when top-level comments are truncated", async () => {
     const fake = fakeFetch(false, false, true, false, false, false, true);

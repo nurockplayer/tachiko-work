@@ -4,8 +4,11 @@ import type {
 } from "@tachiko-work/operational-evidence";
 
 import type {
+  CheckResult,
   FieldObservation,
+  MergeableState,
   MergeStateStatus,
+  NativeMergePolicy,
   ObservationAvailability,
   RawCheck,
   RawComment,
@@ -146,8 +149,8 @@ interface GraphCheckRun {
   __typename: "CheckRun";
   id: string;
   name: string;
-  status: string;
-  conclusion: string | null;
+  status: unknown;
+  conclusion: unknown;
   url: string;
   detailsUrl: string | null;
 }
@@ -156,9 +159,9 @@ interface GraphStatusContext {
   __typename: "StatusContext";
   id: string;
   context: string;
-  state: string;
+  state: unknown;
   targetUrl: string | null;
-  commit: { oid: string };
+  commit?: { oid: unknown } | null;
 }
 
 type GraphCheck = GraphCheckRun | GraphStatusContext;
@@ -168,13 +171,13 @@ interface GraphPull {
   title: string;
   url: string;
   state: "OPEN" | "CLOSED" | "MERGED";
-  isDraft: boolean;
+  isDraft: unknown;
   headRefOid: string;
   baseRefOid: string;
   baseRefName: string;
-  mergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
-  mergeStateStatus: MergeStateStatus;
-  reviewDecision: ReviewDecision | null;
+  mergeable: unknown;
+  mergeStateStatus: unknown;
+  reviewDecision: unknown;
   closingIssuesReferences: {
     pageInfo: PageInfo;
     nodes: ({ number: number } | null)[] | null;
@@ -193,7 +196,7 @@ interface GraphIssue {
   url: string;
   state: "OPEN" | "CLOSED";
   labels: { pageInfo: PageInfo; nodes: ({ name: string } | null)[] | null } | null;
-  milestone: { title: string } | null;
+  milestone?: { title: string } | null;
   blockedBy: {
     pageInfo: PageInfo;
     nodes: ({ number: number; state: "OPEN" | "CLOSED"; url: string } | null)[] | null;
@@ -281,23 +284,87 @@ function trustedProducer(comment: GraphComment): boolean {
   return comment.author?.login === OWNER && comment.authorAssociation === "OWNER";
 }
 
+const CHECK_STATUSES = [
+  "REQUESTED",
+  "QUEUED",
+  "IN_PROGRESS",
+  "COMPLETED",
+  "WAITING",
+  "PENDING",
+] as const;
+const CHECK_CONCLUSIONS = [
+  "ACTION_REQUIRED",
+  "TIMED_OUT",
+  "CANCELLED",
+  "FAILURE",
+  "SUCCESS",
+  "NEUTRAL",
+  "SKIPPED",
+  "STARTUP_FAILURE",
+  "STALE",
+] as const;
+const STATUS_STATES = ["EXPECTED", "ERROR", "FAILURE", "PENDING", "SUCCESS"] as const;
+const REVIEW_DECISIONS = ["CHANGES_REQUESTED", "APPROVED", "REVIEW_REQUIRED"] as const;
+const MERGEABLE_STATES = ["MERGEABLE", "CONFLICTING", "UNKNOWN"] as const;
+const MERGE_STATE_STATUSES = [
+  "DIRTY",
+  "UNKNOWN",
+  "BLOCKED",
+  "BEHIND",
+  "UNSTABLE",
+  "HAS_HOOKS",
+  "CLEAN",
+] as const;
+
+function isString(value: unknown): value is string {
+  return typeof value === "string";
+}
+
+function isBoolean(value: unknown): value is boolean {
+  return typeof value === "boolean";
+}
+
+function enumGuard<const Values extends readonly string[]>(values: Values) {
+  return (value: unknown): value is Values[number] =>
+    typeof value === "string" && values.includes(value);
+}
+
+const isCheckStatus = enumGuard(CHECK_STATUSES);
+const isCheckConclusion = enumGuard(CHECK_CONCLUSIONS);
+const isStatusState = enumGuard(STATUS_STATES);
+const isReviewDecision = enumGuard(REVIEW_DECISIONS);
+const isMergeableState = enumGuard(MERGEABLE_STATES);
+const isMergeStateStatus = enumGuard(MERGE_STATE_STATUSES);
+
 function fieldError(
   errors: GraphResponse["errors"],
   fieldPath: readonly (string | number)[],
 ): GraphError | undefined {
-  return errors?.find((error) =>
-    error.path === undefined ||
-    fieldPath.every((segment, index) => error.path?.[index] === segment),
-  );
+  return errors?.find((error) => {
+    if (error.path === undefined) return true;
+    const sharedLength = Math.min(error.path.length, fieldPath.length);
+    return Array.from(
+      { length: sharedLength },
+      (_, index) => error.path?.[index] === fieldPath[index],
+    ).every(Boolean);
+  });
 }
 
-function observeNullable<T>(
-  value: T | null | undefined,
+function sourceError(
+  errors: GraphResponse["errors"],
+  sourcePaths: readonly (readonly (string | number)[])[],
+): boolean {
+  return sourcePaths.some((path) => fieldError(errors, path) !== undefined);
+}
+
+function observeField<T>(
+  value: unknown,
+  isValue: (candidate: unknown) => candidate is T,
   errors: GraphResponse["errors"],
   fieldPath: readonly (string | number)[],
 ): FieldObservation<T> {
   const error = fieldError(errors, fieldPath);
-  if (error !== undefined || value === undefined) {
+  if (error !== undefined || value === undefined || (value !== null && !isValue(value))) {
     return {
       state: "unknown",
       availability: "incomplete",
@@ -305,6 +372,70 @@ function observeNullable<T>(
     };
   }
   return value === null ? { state: "null" } : { state: "value", value };
+}
+
+function unknownOrNull<T>(
+  observation: Exclude<FieldObservation<unknown>, { state: "value" }>,
+): FieldObservation<T> {
+  return observation.state === "null"
+    ? { state: "null" }
+    : {
+        state: "unknown",
+        availability: observation.availability,
+        path: observation.path,
+      };
+}
+
+type PolicyCandidate = NativeMergePolicy["state"];
+
+function requiredPolicy<T>(
+  observation: FieldObservation<T>,
+  decode: (value: T) => PolicyCandidate,
+): PolicyCandidate {
+  return observation.state === "value" ? decode(observation.value) : "unknown";
+}
+
+function decodeNativeMergePolicy(
+  draft: FieldObservation<boolean>,
+  mergeable: FieldObservation<MergeableState>,
+  mergeState: FieldObservation<MergeStateStatus>,
+  reviewDecision: FieldObservation<ReviewDecision>,
+): NativeMergePolicy {
+  const draftPolicy = requiredPolicy(draft, (value) => value ? "blocked" : "satisfied");
+  const mergeabilityPolicy = requiredPolicy(mergeable, (value) =>
+    value === "CONFLICTING" ? "blocked" : value === "UNKNOWN" ? "unknown" : "satisfied",
+  );
+  const mergeStatePolicy = requiredPolicy(mergeState, (value) => {
+    switch (value) {
+      case "DIRTY":
+      case "BLOCKED":
+      case "BEHIND":
+        return "blocked";
+      case "UNKNOWN":
+        return "unknown";
+      case "UNSTABLE":
+      case "HAS_HOOKS":
+      case "CLEAN":
+        return "satisfied";
+    }
+  });
+  const reviewPolicy = reviewDecision.state === "null"
+    ? "satisfied"
+    : requiredPolicy(reviewDecision, (value) =>
+        value === "CHANGES_REQUESTED"
+          ? "blocked"
+          : value === "REVIEW_REQUIRED"
+            ? "waiting"
+            : "satisfied",
+      );
+  const candidates = [draftPolicy, mergeabilityPolicy, mergeStatePolicy, reviewPolicy];
+  if (mergeabilityPolicy === "blocked") return { state: "blocked", reason: "conflict" };
+  if (candidates.includes("blocked")) return { state: "blocked", reason: "policy" };
+  if (candidates.includes("unknown")) return { state: "unknown" };
+  if (candidates.includes("waiting")) return { state: "waiting" };
+  return candidates.every((candidate) => candidate === "satisfied")
+    ? { state: "satisfied" }
+    : { state: "unknown" };
 }
 
 function rawComment(
@@ -323,8 +454,9 @@ function rawComment(
     url: comment.url,
     createdAt: comment.createdAt,
     updatedAt: comment.updatedAt,
-    lastEditedAt: observeNullable(
+    lastEditedAt: observeField(
       comment.lastEditedAt,
+      isString,
       errors,
       [...commentPath, "lastEditedAt"],
     ),
@@ -333,29 +465,57 @@ function rawComment(
   };
 }
 
-function checkState(check: GraphCheck): RawCheck["status"] {
-  if (check.__typename === "StatusContext") {
-    if (check.state === "SUCCESS") return "success";
-    if (check.state === "PENDING" || check.state === "EXPECTED") return "pending";
-    return "failure";
-  }
-  if (check.status !== "COMPLETED") return "pending";
-  return check.conclusion === "SUCCESS" ? "success" : "failure";
+function checkRunResult(
+  status: FieldObservation<(typeof CHECK_STATUSES)[number]>,
+  conclusion: FieldObservation<(typeof CHECK_CONCLUSIONS)[number]>,
+): FieldObservation<CheckResult> {
+  if (status.state !== "value") return unknownOrNull(status);
+  if (status.value !== "COMPLETED") return { state: "value", value: "pending" };
+  if (conclusion.state !== "value") return unknownOrNull(conclusion);
+  return {
+    state: "value",
+    value: conclusion.value === "SUCCESS" ? "success" : "failure",
+  };
 }
 
-function rawCheck(check: GraphCheck, headSha: string): RawCheck {
+function statusContextResult(
+  state: FieldObservation<(typeof STATUS_STATES)[number]>,
+): FieldObservation<CheckResult> {
+  if (state.state !== "value") return unknownOrNull(state);
+  if (state.value === "SUCCESS") return { state: "value", value: "success" };
+  if (state.value === "PENDING" || state.value === "EXPECTED") {
+    return { state: "value", value: "pending" };
+  }
+  return { state: "value", value: "failure" };
+}
+
+function rawCheck(
+  check: GraphCheck,
+  headSha: string,
+  errors: GraphResponse["errors"],
+  checkPath: readonly (string | number)[],
+): RawCheck {
   if (check.__typename === "StatusContext") {
+    const state = observeField(check.state, isStatusState, errors, [...checkPath, "state"]);
+    const commitOid = check.commit === null ? null : check.commit?.oid;
     return {
       name: check.context,
-      headSha: check.commit.oid,
-      status: checkState(check),
+      headSha: observeField(commitOid, isString, errors, [...checkPath, "commit"]),
+      result: statusContextResult(state),
       url: check.targetUrl ?? `https://github.com/${REPOSITORY}/commit/${headSha}/checks`,
     };
   }
+  const status = observeField(check.status, isCheckStatus, errors, [...checkPath, "status"]);
+  const conclusion = observeField(
+    check.conclusion,
+    isCheckConclusion,
+    errors,
+    [...checkPath, "conclusion"],
+  );
   return {
     name: check.name,
-    headSha,
-    status: checkState(check),
+    headSha: { state: "value", value: headSha },
+    result: checkRunResult(status, conclusion),
     url: check.detailsUrl ?? check.url,
   };
 }
@@ -697,28 +857,41 @@ export async function observeRepository(
       );
     });
     const checkNodes = presentNodes(pull.statusCheckRollup?.contexts.nodes ?? []);
+    const draft = observeField(pull.isDraft, isBoolean, response.errors, [...pullPath, "isDraft"]);
+    const mergeable = observeField(
+      pull.mergeable,
+      isMergeableState,
+      response.errors,
+      [...pullPath, "mergeable"],
+    );
+    const mergeState = observeField(
+      pull.mergeStateStatus,
+      isMergeStateStatus,
+      response.errors,
+      [...pullPath, "mergeStateStatus"],
+    );
+    const reviewDecision = observeField(
+      pull.reviewDecision,
+      isReviewDecision,
+      response.errors,
+      [...pullPath, "reviewDecision"],
+    );
     return {
       number: pull.number,
       title: pull.title,
       url: pull.url,
       state: pull.state,
-      draft: pull.isDraft,
+      draft: draft.state === "value" ? draft.value : false,
       headSha: pull.headRefOid,
       baseSha: pull.baseRefOid,
       baseRef: pull.baseRefName,
       mergeBaseSha: comparison.mergeBaseSha,
       relationToMain: comparison.relation,
-      mergeability:
-        pull.mergeable === "MERGEABLE"
-          ? "mergeable"
-          : pull.mergeable === "CONFLICTING"
-            ? "conflicting"
-            : "unknown",
-      mergeStateStatus: pull.mergeStateStatus,
-      reviewDecision: observeNullable(
-        pull.reviewDecision,
-        response.errors,
-        [...pullPath, "reviewDecision"],
+      nativeMergePolicy: decodeNativeMergePolicy(
+        draft,
+        mergeable,
+        mergeState,
+        reviewDecision,
       ),
       authorityChanges: comparison.authorityChanges,
       authorityAvailability: comparison.authorityAvailability,
@@ -740,7 +913,15 @@ export async function observeRepository(
       commentsAvailability: commentsTruncated(pull, response.errors, pullPath)
         ? "incomplete"
         : "complete",
-      checks: checkNodes.map((check) => rawCheck(check, pull.headRefOid)),
+      checks: checkNodes.map((check) =>
+        rawCheck(check, pull.headRefOid, response.errors, [
+          ...pullPath,
+          "statusCheckRollup",
+          "contexts",
+          "nodes",
+          graphNodeIndex(pull.statusCheckRollup?.contexts.nodes ?? null, check),
+        ]),
+      ),
       checksAvailability:
         fieldError(response.errors, [...pullPath, "statusCheckRollup"]) !== undefined ||
         (pull.statusCheckRollup !== null &&
@@ -786,6 +967,22 @@ export async function observeRepository(
 
   const availability: ObservationAvailability =
     errors.length === 0 ? "complete" : "incomplete";
+  const implementationLinkagePaths = [
+    ["repository", "pullRequests", "pageInfo"],
+    ...pullNodes.flatMap((pull) => {
+      const pullPath = [
+        "repository",
+        "pullRequests",
+        "nodes",
+        graphNodeIndex(repository.pullRequests.nodes, pull),
+      ] as const;
+      return [
+        [...pullPath, "closingIssuesReferences"],
+        [...pullPath, "comments"],
+        [...pullPath, "reviews"],
+      ];
+    }),
+  ] as const;
   const token = options.token?.trim();
   return {
     repository: REPOSITORY,
@@ -807,27 +1004,31 @@ export async function observeRepository(
         graphNodeIndex(repository.issues.nodes, issue),
       ] as const;
       return {
-      number: issue.number,
-      title: issue.title,
-      url: issue.url,
-      state: issue.state,
-      labels: presentNodes(issue.labels?.nodes ?? null).map((label) => label.name),
-      labelsAvailability:
-        issue.labels === null ||
-        issue.labels.pageInfo.hasNextPage ||
-        hasMissingNode(issue.labels.nodes)
-          ? "incomplete"
-          : "complete",
-      milestone: observeNullable(
-        issue.milestone?.title ?? null,
-        response.errors,
-        [...issuePath, "milestone"],
-      ),
-      blockedBy: presentNodes(issue.blockedBy.nodes),
-      dependencyAvailability:
-        issue.blockedBy.pageInfo.hasNextPage || hasMissingNode(issue.blockedBy.nodes)
-          ? "incomplete"
-          : "complete",
+        number: issue.number,
+        title: issue.title,
+        url: issue.url,
+        state: issue.state,
+        labels: presentNodes(issue.labels?.nodes ?? null).map((label) => label.name),
+        labelsAvailability:
+          issue.labels === null ||
+          issue.labels.pageInfo.hasNextPage ||
+          hasMissingNode(issue.labels.nodes) ||
+          fieldError(response.errors, [...issuePath, "labels"]) !== undefined
+            ? "incomplete"
+            : "complete",
+        milestone: observeField(
+          issue.milestone === null ? null : issue.milestone?.title,
+          isString,
+          response.errors,
+          [...issuePath, "milestone"],
+        ),
+        blockedBy: presentNodes(issue.blockedBy.nodes),
+        dependencyAvailability:
+          issue.blockedBy.pageInfo.hasNextPage ||
+          hasMissingNode(issue.blockedBy.nodes) ||
+          fieldError(response.errors, [...issuePath, "blockedBy"]) !== undefined
+            ? "incomplete"
+            : "complete",
       };
     }),
     issuesAvailability:
@@ -840,7 +1041,7 @@ export async function observeRepository(
         ? "incomplete"
         : "complete",
     implementationLinkageAvailability:
-      (response.errors?.length ?? 0) > 0 ||
+      sourceError(response.errors, implementationLinkagePaths) ||
       repository.pullRequests.pageInfo.hasNextPage ||
       pullNodeMissing ||
       pullNodes.some(
@@ -864,7 +1065,10 @@ export async function observeRepository(
           }],
     ),
     // Recent activity is intentionally a bounded context window, not a complete history query.
-    recentActivityAvailability: recentNodeMissing ? "incomplete" : "complete",
+    recentActivityAvailability:
+      recentNodeMissing || sourceError(response.errors, [["repository", "recent"]])
+        ? "incomplete"
+        : "complete",
     errors,
     ...(token === undefined || token.length === 0 ? {} : { serverCredential: "present" }),
   };

@@ -58,12 +58,10 @@ function setNativePolicy(
 ): void {
   const pull = observation.pullRequests[0];
   if (pull === undefined) throw new Error("fixture missing pull request");
-  pull.mergeStateStatus =
-    policy === "blocked" ? "BLOCKED" : policy === "unknown" ? "UNKNOWN" : "CLEAN";
-  pull.reviewDecision =
-    policy === "waiting"
-      ? { state: "value", value: "REVIEW_REQUIRED" }
-      : { state: "null" };
+  pull.nativeMergePolicy =
+    policy === "blocked"
+      ? { state: "blocked", reason: "policy" }
+      : { state: policy };
 }
 
 describe("normalizeRepository", () => {
@@ -208,7 +206,10 @@ describe("normalizeRepository", () => {
     const pull = observation.pullRequests[0];
     if (pull === undefined) throw new Error("fixture missing pull request");
     pull.commentsAvailability = "incomplete";
-    pull.checks = pull.checks.map((check) => ({ ...check, status: "pending" }));
+    pull.checks = pull.checks.map((check) => ({
+      ...check,
+      result: { state: "value", value: "pending" },
+    }));
 
     const lane = normalizeRepository(observation).deliveries[0];
     expect(lane?.checks.state).toBe("waiting");
@@ -310,7 +311,10 @@ describe("normalizeRepository", () => {
     const observation = healthyObservation();
     const pull = observation.pullRequests[0];
     if (pull === undefined) throw new Error("fixture missing pull request");
-    pull.checks[0] = { ...pull.checks[0]!, status: "failure" };
+    pull.checks[0] = {
+      ...pull.checks[0]!,
+      result: { state: "value", value: "failure" },
+    };
 
     const projection = normalizeRepository(observation);
     expect(projection.deliveries[0]?.phase).toBe("blocked");
@@ -326,7 +330,10 @@ describe("normalizeRepository", () => {
     const pull = observation.pullRequests[0];
     if (pull === undefined) throw new Error("fixture missing pull request");
     pull.checksAvailability = "incomplete";
-    pull.checks[0] = { ...pull.checks[0]!, status: "failure" };
+    pull.checks[0] = {
+      ...pull.checks[0]!,
+      result: { state: "value", value: "failure" },
+    };
 
     const lane = normalizeRepository(observation).deliveries[0];
     expect(lane?.checks.state).toBe("blocked");
@@ -1430,14 +1437,14 @@ describe("normalizeRepository", () => {
   );
 
   it.each([
-    ["conflicting", "blocked"],
-    ["unknown", "unknown"],
-  ] as const)("fails merge closed for native mergeability %s", (mergeability, state) => {
+    [{ state: "blocked", reason: "conflict" }, "blocked"],
+    [{ state: "unknown" }, "unknown"],
+  ] as const)("fails merge closed for native mergeability %s", (policy, state) => {
     const observation = healthyObservation();
     addGreenOperationalEvidence(observation);
     const pull = observation.pullRequests[0];
     if (pull === undefined) throw new Error("fixture missing pull request");
-    pull.mergeability = mergeability;
+    pull.nativeMergePolicy = policy;
 
     expect(normalizeRepository(observation).deliveries[0]).toMatchObject({
       mergeGate: { state },
@@ -1463,36 +1470,21 @@ describe("normalizeRepository", () => {
   });
 
   it.each([
-    ["BLOCKED", { state: "unknown", availability: "incomplete", path: null }, "blocked"],
-    ["UNKNOWN", { state: "value", value: "REVIEW_REQUIRED" }, "unknown"],
-    ["CLEAN", { state: "value", value: "REVIEW_REQUIRED" }, "waiting"],
+    [{ state: "blocked", reason: "policy" }, "blocked"],
+    [{ state: "unknown" }, "unknown"],
+    [{ state: "waiting" }, "waiting"],
   ] as const)(
-    "preserves Blocked > Unknown > Waiting for %s / %s",
-    (mergeStateStatus, reviewDecision, expected) => {
+    "maps the decoded native policy %s",
+    (policy, expected) => {
       const observation = healthyObservation();
       addGreenOperationalEvidence(observation);
       const pull = observation.pullRequests[0];
       if (pull === undefined) throw new Error("fixture missing pull request");
-      pull.mergeStateStatus = mergeStateStatus;
-      pull.reviewDecision = reviewDecision;
+      pull.nativeMergePolicy = policy;
 
       expect(normalizeRepository(observation).deliveries[0]?.mergeGate.state).toBe(expected);
     },
   );
-
-  it("preserves native mergeability Unknown over a waiting merge policy", () => {
-    const observation = healthyObservation();
-    addGreenOperationalEvidence(observation);
-    const pull = observation.pullRequests[0];
-    if (pull === undefined) throw new Error("fixture missing pull request");
-    pull.mergeability = "unknown";
-    setNativePolicy(observation, "waiting");
-
-    expect(normalizeRepository(observation).deliveries[0]).toMatchObject({
-      mergeGate: { state: "unknown" },
-      phase: "unknown",
-    });
-  });
 
   it.each(["satisfied", "waiting"] as const)(
     "keeps the lane phase Unknown for incomplete checks with native policy %s",
@@ -1751,7 +1743,10 @@ describe("normalizeRepository", () => {
       closingIssueNumbers: [223],
       comments: [],
       checksAvailability: "incomplete",
-      checks: source.checks.map((check) => ({ ...check, headSha: secondHead })),
+      checks: source.checks.map((check) => ({
+        ...check,
+        headSha: { state: "value", value: secondHead },
+      })),
       reviews: [],
       threads: [],
     });
@@ -1801,7 +1796,10 @@ describe("normalizeRepository", () => {
       pull.comments = pull.comments.filter(
         (comment) => !comment.body.startsWith("<!-- agent-handoff:v1 -->"),
       );
-      pull.mergeability = mergeability;
+      pull.nativeMergePolicy =
+        mergeability === "conflicting"
+          ? { state: "blocked", reason: "conflict" }
+          : { state: "unknown" };
 
       const lane =
         normalizeRepository(observation).deliveries.find(

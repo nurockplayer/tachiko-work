@@ -53,6 +53,16 @@ export type MergeStateStatus =
   | "HAS_HOOKS"
   | "CLEAN";
 
+export type MergeableState = "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
+
+export type NativeMergePolicy =
+  | { state: "blocked"; reason: "conflict" | "policy" }
+  | { state: "unknown" }
+  | { state: "waiting" }
+  | { state: "satisfied" };
+
+export type CheckResult = "success" | "pending" | "failure";
+
 export interface RawSource {
   id: string;
   url: string;
@@ -74,8 +84,8 @@ export interface RawComment {
 
 export interface RawCheck {
   name: string;
-  headSha: string;
-  status: "success" | "pending" | "failure";
+  headSha: FieldObservation<string>;
+  result: FieldObservation<CheckResult>;
   url: string;
 }
 
@@ -119,9 +129,7 @@ export interface RawPullRequest {
   baseRef: string;
   mergeBaseSha: string | null;
   relationToMain: "current" | "behind" | "diverged" | "unknown";
-  mergeability: "mergeable" | "conflicting" | "unknown";
-  mergeStateStatus: MergeStateStatus;
-  reviewDecision: FieldObservation<ReviewDecision>;
+  nativeMergePolicy: NativeMergePolicy;
   authorityChanges: { path: string; url: string }[];
   authorityAvailability: ObservationAvailability;
   closingIssueNumbers: number[];
