@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use tachiko_workspace_engine::{
     ConflictFacet, ConflictFact, ConflictKind, ConflictTarget, DiagnosticCode, Document,
     DocumentId, Entity, EntityId, EntitySubject, Expression, FieldDefinition, FieldId, FieldKey,
@@ -234,16 +236,20 @@ fn fixture_04_delete_update_emits_one_complete_parent_conflict() {
     assert_eq!(conflict.kind(), ConflictKind::DeleteModify);
     assert_eq!(
         conflict.base(),
-        &ConflictFact::Present(MergeValue::EntitySubject(EntitySubject::from(
-            &base.entities["e:goblin"]
-        )))
+        &ConflictFact::Present(MergeValue::EntitySubject(EntitySubject {
+            key: "goblin".into(),
+            schema: "s:unit".into(),
+            fields: BTreeMap::from([("f:hp".into(), number(180.0))]),
+        }))
     );
     assert_eq!(conflict.left(), &ConflictFact::Absent);
     assert_eq!(
         conflict.right(),
-        &ConflictFact::Present(MergeValue::EntitySubject(EntitySubject::from(
-            &right.entities["e:goblin"]
-        )))
+        &ConflictFact::Present(MergeValue::EntitySubject(EntitySubject {
+            key: "goblin_elite".into(),
+            schema: "s:unit".into(),
+            fields: BTreeMap::from([("f:hp".into(), number(180.0))]),
+        }))
     );
 }
 
@@ -265,13 +271,31 @@ fn fixture_05_incompatible_concurrent_addition_uses_complete_schema_subjects() {
     assert_eq!(conflict.base(), &ConflictFact::Absent);
     assert_eq!(
         conflict.left(),
-        &ConflictFact::Present(MergeValue::SchemaSubject(SchemaSubject::from(&left_schema)))
+        &ConflictFact::Present(MergeValue::SchemaSubject(SchemaSubject {
+            key: "boss".into(),
+            fields: BTreeMap::from([(
+                "f:hp".into(),
+                SchemaFieldSubject {
+                    key: "hp".into(),
+                    field_type: FieldType::Number,
+                    required: true,
+                },
+            )]),
+        }))
     );
     assert_eq!(
         conflict.right(),
-        &ConflictFact::Present(MergeValue::SchemaSubject(SchemaSubject::from(
-            &right_schema
-        )))
+        &ConflictFact::Present(MergeValue::SchemaSubject(SchemaSubject {
+            key: "boss".into(),
+            fields: BTreeMap::from([(
+                "f:hp".into(),
+                SchemaFieldSubject {
+                    key: "hp".into(),
+                    field_type: FieldType::Text,
+                    required: true,
+                },
+            )]),
+        }))
     );
 }
 
@@ -595,6 +619,38 @@ fn fixture_12_conflicts_follow_canonical_semantic_order() {
 }
 
 #[test]
+fn canonical_id_order_is_unicode_scalar_order_without_normalization() {
+    let decomposed_id = "s:e\u{301}";
+    let precomposed_id = "s:\u{e9}";
+    let mut decomposed = schema(decomposed_id, []);
+    decomposed.key = "decomposed".into();
+    let mut precomposed = schema(precomposed_id, []);
+    precomposed.key = "precomposed".into();
+    let base = arena([decomposed, precomposed], []);
+
+    let mut left = base.clone();
+    left.schemas.get_mut(decomposed_id).unwrap().key = "decomposed_left".into();
+    left.schemas.get_mut(precomposed_id).unwrap().key = "precomposed_left".into();
+    let mut right = base.clone();
+    right.schemas.get_mut(decomposed_id).unwrap().key = "decomposed_right".into();
+    right.schemas.get_mut(precomposed_id).unwrap().key = "precomposed_right".into();
+
+    let conflicts = conflicted(merge_documents(&base, &left, &right));
+
+    assert_eq!(
+        conflicts
+            .iter()
+            .map(MergeConflict::target)
+            .collect::<Vec<_>>(),
+        [
+            &ConflictTarget::Schema(decomposed_id.into()),
+            &ConflictTarget::Schema(precomposed_id.into()),
+        ]
+    );
+    assert_ne!(decomposed_id, precomposed_id);
+}
+
+#[test]
 fn fixture_13_admission_and_compatibility_fail_closed() {
     let valid = unit_document([], []);
     let mut invalid = valid.clone();
@@ -654,24 +710,70 @@ fn complete_subject_facts_exclude_stable_target_ids() {
             required: true,
         }
     );
-    assert_eq!(SchemaSubject::from(&schema).fields.len(), 1);
-    assert_eq!(EntitySubject::from(&entity).fields.len(), 1);
+    assert_eq!(
+        SchemaSubject::from(&schema),
+        SchemaSubject {
+            key: "unit".into(),
+            fields: BTreeMap::from([(
+                "f:hp".into(),
+                SchemaFieldSubject {
+                    key: "hp".into(),
+                    field_type: FieldType::Number,
+                    required: true,
+                },
+            )]),
+        }
+    );
+    assert_eq!(
+        EntitySubject::from(&entity),
+        EntitySubject {
+            key: "goblin".into(),
+            schema: "s:unit".into(),
+            fields: BTreeMap::from([("f:hp".into(), number(180.0))]),
+        }
+    );
 }
 
 #[test]
 fn equivalent_admitted_states_produce_equal_logical_conflicts() {
-    let base = unit_document(
-        [definition("f:hp", FieldType::Number, true)],
-        [("f:hp", number(180.0))],
+    let base_a = unit_document(
+        [
+            definition("f:hp", FieldType::Number, true),
+            definition("f:attack", FieldType::Number, true),
+        ],
+        [("f:hp", number(180.0)), ("f:attack", number(18.0))],
     );
-    let mut left = base.clone();
-    left.entities
+    let mut left_a = base_a.clone();
+    left_a
+        .entities
         .get_mut("e:goblin")
         .unwrap()
         .fields
         .insert("f:hp".into(), number(210.0));
-    let mut right = base.clone();
-    right
+    let mut right_a = base_a.clone();
+    right_a
+        .entities
+        .get_mut("e:goblin")
+        .unwrap()
+        .fields
+        .insert("f:hp".into(), number(240.0));
+
+    let base_b = unit_document(
+        [
+            definition("f:attack", FieldType::Number, true),
+            definition("f:hp", FieldType::Number, true),
+        ],
+        [("f:attack", number(18.0)), ("f:hp", number(180.0))],
+    );
+    let mut left_b = base_b.clone();
+    left_b
+        .entities
+        .get_mut("e:goblin")
+        .unwrap()
+        .fields
+        .insert("f:hp".into(), number(210.0));
+    let mut right_b = base_b.clone();
+    right_b
         .entities
         .get_mut("e:goblin")
         .unwrap()
@@ -679,8 +781,8 @@ fn equivalent_admitted_states_produce_equal_logical_conflicts() {
         .insert("f:hp".into(), number(240.0));
 
     assert_eq!(
-        conflicted(merge_documents(&base, &left, &right)),
-        conflicted(merge_documents(&base, &left, &right))
+        conflicted(merge_documents(&base_a, &left_a, &right_a)),
+        conflicted(merge_documents(&base_b, &left_b, &right_b))
     );
 }
 
@@ -689,14 +791,15 @@ fn complete_entity_subject_uses_its_own_fields_map() {
     let mut entity = entity("e:goblin", "s:unit", [("f:hp", number(180.0))]);
     entity.fields.insert("f:extra".into(), number(7.0));
 
-    let subject = EntitySubject::from(&entity);
-
     assert_eq!(
-        subject
-            .fields
-            .keys()
-            .map(FieldId::as_str)
-            .collect::<Vec<_>>(),
-        ["f:extra", "f:hp"]
+        EntitySubject::from(&entity),
+        EntitySubject {
+            key: "goblin".into(),
+            schema: "s:unit".into(),
+            fields: BTreeMap::from([
+                ("f:extra".into(), number(7.0)),
+                ("f:hp".into(), number(180.0)),
+            ]),
+        }
     );
 }

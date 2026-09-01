@@ -204,23 +204,7 @@ impl ConflictTarget {
 
     #[must_use]
     pub const fn allows(&self, facet: ConflictFacet) -> bool {
-        matches!(
-            (self, facet),
-            (Self::Document(_), ConflictFacet::Title)
-                | (Self::Schema(_), ConflictFacet::Subject | ConflictFacet::Key)
-                | (
-                    Self::SchemaField { .. },
-                    ConflictFacet::Subject
-                        | ConflictFacet::Key
-                        | ConflictFacet::FieldType
-                        | ConflictFacet::Requiredness
-                )
-                | (
-                    Self::Entity(_),
-                    ConflictFacet::Subject | ConflictFacet::Key | ConflictFacet::Schema
-                )
-                | (Self::StoredEntityField { .. }, ConflictFacet::StoredValue)
-        )
+        facet.canonical_rank(self).is_some()
     }
 
     /// Check that a direct facet is valid for this closed target family.
@@ -270,7 +254,7 @@ pub enum ConflictFacet {
 }
 
 impl ConflictFacet {
-    const fn canonical_rank(self, target: &ConflictTarget) -> u8 {
+    const fn canonical_rank(self, target: &ConflictTarget) -> Option<u8> {
         match (target, self) {
             (ConflictTarget::Document(_), Self::Title)
             | (
@@ -279,17 +263,17 @@ impl ConflictFacet {
                 | ConflictTarget::Entity(_),
                 Self::Subject,
             )
-            | (ConflictTarget::StoredEntityField { .. }, Self::StoredValue) => 0,
+            | (ConflictTarget::StoredEntityField { .. }, Self::StoredValue) => Some(0),
             (
                 ConflictTarget::Schema(_)
                 | ConflictTarget::SchemaField { .. }
                 | ConflictTarget::Entity(_),
                 Self::Key,
-            ) => 1,
+            ) => Some(1),
             (ConflictTarget::SchemaField { .. }, Self::FieldType)
-            | (ConflictTarget::Entity(_), Self::Schema) => 2,
-            (ConflictTarget::SchemaField { .. }, Self::Requiredness) => 3,
-            _ => u8::MAX,
+            | (ConflictTarget::Entity(_), Self::Schema) => Some(2),
+            (ConflictTarget::SchemaField { .. }, Self::Requiredness) => Some(3),
+            _ => None,
         }
     }
 }
@@ -469,7 +453,8 @@ pub fn merge(base: &Document, ours: &Document, theirs: &Document) -> MergeOutcom
                 .then_with(|| {
                     left.facet
                         .canonical_rank(&left.target)
-                        .cmp(&right.facet.canonical_rank(&right.target))
+                        .unwrap_or(u8::MAX)
+                        .cmp(&right.facet.canonical_rank(&right.target).unwrap_or(u8::MAX))
                 })
                 .then_with(|| left.kind.canonical_rank().cmp(&right.kind.canonical_rank()))
         });
@@ -947,4 +932,16 @@ fn choose_optional<T: Clone + PartialEq>(
 enum OptionalChoice<T> {
     Chosen(Option<T>),
     Conflict,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ConflictKind;
+
+    #[test]
+    fn conflict_kind_ranks_match_semantic_conflict_v1() {
+        assert_eq!(ConflictKind::ConcurrentAddition.canonical_rank(), 0);
+        assert_eq!(ConflictKind::DeleteModify.canonical_rank(), 1);
+        assert_eq!(ConflictKind::ConcurrentChange.canonical_rank(), 2);
+    }
 }
