@@ -122,6 +122,27 @@ describe("normalizeRepository", () => {
     ).toBe(true);
   });
 
+  it("blocks a fully evidenced linked lane owned by a human", () => {
+    const observation = healthyObservation();
+    addGreenOperationalEvidence(observation);
+    const issue = observation.issues[0];
+    const pull = observation.pullRequests[0];
+    if (issue === undefined || pull === undefined) throw new Error("fixture missing lane");
+    issue.labels = ["agent:human", "state:ready"];
+    pull.comments = pull.comments.map((comment) => ({
+      ...comment,
+      body: comment.body.replace("OWNER: agent:codex", "OWNER: agent:human"),
+    }));
+
+    const projection = normalizeRepository(observation);
+    expect(projection.deliveries[0]).toMatchObject({
+      humanAction: { state: "blocked", reason: "human-action-required" },
+      mergeGate: { state: "blocked" },
+      phase: "human_required",
+    });
+    expect(projection.humanAction.state).toBe("blocked");
+  });
+
   it("fails strict coordination closed when comment pagination is incomplete", () => {
     const observation = healthyObservation();
     const pull = observation.pullRequests[0];
@@ -415,6 +436,32 @@ describe("normalizeRepository", () => {
     expect(lane?.phase).not.toBe("merge_gate");
   });
 
+  it.each(["missing", "malformed"])(
+    "keeps issue-only Ready authority and count Unknown when the Roadmap is %s",
+    (kind) => {
+      const observation = healthyObservation();
+      if (kind === "missing") {
+        observation.roadmap = null;
+      } else if (observation.roadmap !== null) {
+        observation.roadmap.markdown = "# Roadmap\n\n## Future";
+      }
+
+      const projection = normalizeRepository(observation);
+      const lane = projection.deliveries.find(
+        (item) => item.issue?.number === 223 && item.pullRequest === null,
+      );
+      expect(lane).toMatchObject({
+        readiness: { state: "satisfied" },
+        authority: { state: "unknown" },
+        phase: "unknown",
+      });
+      expect(projection.executive.readyCount).toMatchObject({
+        state: "unknown",
+        value: "Unknown",
+      });
+    },
+  );
+
   it("preserves a known unlinked review blocker under partial pagination", () => {
     const observation = healthyObservation();
     const pull = observation.pullRequests[0];
@@ -439,6 +486,27 @@ describe("normalizeRepository", () => {
     expect(lane?.review.state).toBe("blocked");
     expect(lane?.phase).toBe("blocked");
   });
+
+  it.each([
+    ["reviews", "unavailable", "observation-unavailable"],
+    ["threads", "unavailable", "observation-unavailable"],
+    ["reviews", "incomplete", "observation-incomplete"],
+  ] as const)(
+    "reports unlinked %s availability %s precisely",
+    (kind, availability, reason) => {
+      const observation = healthyObservation();
+      const pull = observation.pullRequests[0];
+      if (pull === undefined) throw new Error("fixture missing pull request");
+      pull.closingIssueNumbers = [];
+      if (kind === "reviews") pull.reviewsAvailability = availability;
+      else pull.threadsAvailability = availability;
+
+      const lane = normalizeRepository(observation).deliveries.find(
+        (item) => item.pullRequest?.number === pull.number,
+      );
+      expect(lane?.review).toMatchObject({ state: "unknown", reason });
+    },
+  );
 
   it("preserves current pending disposition for an unlinked old-head review", () => {
     const observation = healthyObservation();
@@ -719,6 +787,53 @@ describe("normalizeRepository", () => {
       state: "unknown",
       value: "Unknown",
     });
+
+    for (const availability of ["incomplete", "unavailable"] as const) {
+      const incompleteDependencies = healthyObservation();
+      const dependencyIssue = incompleteDependencies.issues[1];
+      if (dependencyIssue === undefined) throw new Error("fixture missing issue");
+      dependencyIssue.dependencyAvailability = availability;
+      expect(
+        normalizeRepository(incompleteDependencies).executive.readyCount,
+      ).toMatchObject({ state: "unknown", value: "Unknown" });
+    }
+  });
+
+  it("scopes incomplete pull evidence to its own linked lane", () => {
+    const observation = healthyObservation();
+    addGreenOperationalEvidence(observation);
+    const source = observation.pullRequests[0];
+    if (source === undefined) throw new Error("fixture missing pull request");
+    const secondHead = "3333333333333333333333333333333333333333";
+    observation.pullRequests.push({
+      ...source,
+      number: 226,
+      title: "independent incomplete lane",
+      url: "https://github.example/pulls/226",
+      headSha: secondHead,
+      closingIssueNumbers: [223],
+      comments: [],
+      commentsAvailability: "incomplete",
+      checks: source.checks.map((check) => ({ ...check, headSha: secondHead })),
+      reviews: [],
+      threads: [],
+    });
+    observation.availability = "incomplete";
+    observation.pullsAvailability = "incomplete";
+    observation.errors.push({
+      source: "PR #226 comments",
+      url: "https://github.example/pulls/226",
+      reason: "observation-incomplete",
+    });
+
+    const projection = normalizeRepository(observation);
+    expect(
+      projection.deliveries.find((lane) => lane.pullRequest?.number === 225)?.mergeGate,
+    ).toMatchObject({ state: "satisfied" });
+    expect(
+      projection.deliveries.find((lane) => lane.pullRequest?.number === 226)?.mergeGate,
+    ).toMatchObject({ state: "unknown" });
+    expect(projection.fetchHealth).toBe("partial");
   });
 
   it("preserves explicit Blocked over incomplete implementation linkage", () => {

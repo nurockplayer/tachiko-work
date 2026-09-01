@@ -1,8 +1,8 @@
 import type { DisplayValue, SourceLink } from "../shared/model.js";
 
 const CURRENT_HORIZON_HEADING = /^## Current horizon[ \t]*$/gm;
-const NEXT_SECTION =
-  /^ {0,3}#{1,2}(?:[ \t]|$)|^ {0,3}(?:=+|-+)[ \t]*$/m;
+const NEXT_ATX_SECTION = /^ {0,3}#{1,2}(?:[ \t]|$)/m;
+const SETEXT_UNDERLINE = /^ {0,3}(?:=+|-+)[ \t]*$/;
 const HORIZON_LINE = /^> \*\*([^*\n]+)\*\*$/gm;
 const RAW_HTML_TAG =
   /^(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)$/i;
@@ -13,6 +13,20 @@ const COMPLETE_HTML_CLOSING_TAG =
 const TYPE_ONE_HTML_TAG = /^(?:script|pre|style|textarea)$/i;
 
 type HtmlBlock = { end: RegExp | "blank" };
+type Fence = { kind: "`" | "~"; length: number };
+
+function blankLine(line: string): string {
+  return " ".repeat(line.length);
+}
+
+function fenceStartFrom(line: string): Fence | null {
+  const match = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+  const marker = match?.[1];
+  const suffix = match?.[2] ?? "";
+  return marker !== undefined && (marker[0] === "~" || !suffix.includes("`"))
+    ? { kind: marker[0] as "`" | "~", length: marker.length }
+    : null;
+}
 
 function htmlBlockFrom(line: string): HtmlBlock | null {
   const typeOne = /^ {0,3}<(script|pre|style|textarea)(?:[ \t]|>|$)/i.exec(line)?.[1];
@@ -36,7 +50,7 @@ function htmlBlockFrom(line: string): HtmlBlock | null {
 }
 
 function withoutNonAuthorityBlocks(markdown: string): string {
-  let fence: { kind: "`" | "~"; length: number } | null = null;
+  let fence: Fence | null = null;
   let htmlComment = false;
   let htmlBlock: HtmlBlock | null = null;
   return markdown
@@ -51,28 +65,26 @@ function withoutNonAuthorityBlocks(markdown: string): string {
           ) {
             htmlBlock = null;
           }
-          return "";
+          return blankLine(line);
         }
         if (htmlComment) {
           if (line.includes("-->")) htmlComment = false;
-          return "";
+          return blankLine(line);
         }
-        const fenceStart = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
-        const marker = fenceStart?.[1];
-        const suffix = fenceStart?.[2] ?? "";
-        if (marker !== undefined && (marker[0] === "~" || !suffix.includes("`"))) {
-          fence = { kind: marker[0] as "`" | "~", length: marker.length };
-          return "";
+        const fenceStart = fenceStartFrom(line);
+        if (fenceStart !== null) {
+          fence = fenceStart;
+          return blankLine(line);
         }
         const rawHtml = htmlBlockFrom(line);
         if (rawHtml !== null) {
           if (rawHtml.end === "blank" || !rawHtml.end.test(line)) htmlBlock = rawHtml;
-          return "";
+          return blankLine(line);
         }
         const commentStart = /^ {0,3}<!--/.exec(line)?.index;
         if (commentStart !== undefined) {
           if (line.indexOf("-->", commentStart + 2) < 0) htmlComment = true;
-          return "";
+          return blankLine(line);
         }
         return line;
       }
@@ -84,15 +96,37 @@ function withoutNonAuthorityBlocks(markdown: string): string {
       ) {
         fence = null;
       }
-      return "";
+      return blankLine(line);
     })
     .join("\n");
 }
 
-function horizonSection(markdown: string, headingIndex: number, headingLength: number): string {
-  const remainder = markdown.slice(headingIndex + headingLength);
-  const nextSectionIndex = remainder.search(NEXT_SECTION);
-  return nextSectionIndex < 0 ? remainder : remainder.slice(0, nextSectionIndex);
+function horizonSectionBounds(
+  markdown: string,
+  headingIndex: number,
+  headingLength: number,
+): { start: number; end: number } {
+  const start = headingIndex + headingLength;
+  const nextSectionIndex = markdown.slice(start).search(NEXT_ATX_SECTION);
+  return { start, end: nextSectionIndex < 0 ? markdown.length : start + nextSectionIndex };
+}
+
+function hasPotentialSetextBoundary(section: string): boolean {
+  const lines = section.split("\n");
+  const paragraphEligible = (line: string) =>
+    !/^[ \t]*$/.test(line) &&
+    !/^ {0,3}(?:>|#{1,6}(?:[ \t]|$)|(?:[-+*]|\d{1,9}[.)])(?:[ \t]|$))/.test(
+      line,
+    ) &&
+    !/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,})$/.test(line) &&
+    htmlBlockFrom(line) === null &&
+    fenceStartFrom(line) === null;
+  return lines.some((line, index) => {
+    if (index === 0 || !SETEXT_UNDERLINE.test(line)) return false;
+    let contentIndex = index - 1;
+    while (/^ {4}/.test(lines[contentIndex] ?? "")) contentIndex -= 1;
+    return paragraphEligible(lines[contentIndex] ?? "");
+  });
 }
 
 export function parseProductHorizon(
@@ -113,26 +147,40 @@ export function parseProductHorizon(
   if (rawHeading?.index === undefined) {
     return { state: "unknown", value: "Unknown", source };
   }
-  const rawSection = horizonSection(
+  const rawBounds = horizonSectionBounds(
     normalizedMarkdown,
     rawHeading.index,
     rawHeading[0].length,
   );
-  if ([...rawSection.matchAll(HORIZON_LINE)].length !== 1) {
+  const rawSection = normalizedMarkdown.slice(rawBounds.start, rawBounds.end);
+  const rawMatches = [...rawSection.matchAll(HORIZON_LINE)];
+  const rawMatch = rawMatches.length === 1 ? rawMatches[0] : undefined;
+  if (rawMatch?.index === undefined || hasPotentialSetextBoundary(rawSection)) {
     return { state: "unknown", value: "Unknown", source };
   }
+  const rawHorizonIndex = rawBounds.start + rawMatch.index;
 
   const authorityMarkdown = withoutNonAuthorityBlocks(normalizedMarkdown);
   const headings = [...authorityMarkdown.matchAll(CURRENT_HORIZON_HEADING)];
   const heading = headings.length === 1 ? headings[0] : undefined;
-  if (heading?.index === undefined) {
+  if (heading?.index === undefined || heading.index !== rawHeading.index) {
     return { state: "unknown", value: "Unknown", source };
   }
 
-  const section = horizonSection(authorityMarkdown, heading.index, heading[0].length);
-  const matches = [...section.matchAll(HORIZON_LINE)].map((match) => match[1]?.trim());
-  const horizon = matches.length === 1 ? matches[0] : undefined;
-  return horizon === undefined || horizon.length === 0
+  const filteredBounds = horizonSectionBounds(
+    authorityMarkdown,
+    heading.index,
+    heading[0].length,
+  );
+  const section = authorityMarkdown.slice(filteredBounds.start, filteredBounds.end);
+  const matches = [...section.matchAll(HORIZON_LINE)];
+  const match = matches.length === 1 ? matches[0] : undefined;
+  const horizon = match?.[1]?.trim();
+  return match?.index === undefined ||
+    filteredBounds.start + match.index !== rawHorizonIndex ||
+    hasPotentialSetextBoundary(section) ||
+    horizon === undefined ||
+    horizon.length === 0
     ? { state: "unknown", value: "Unknown", source }
     : { state: "satisfied", value: horizon, source };
 }

@@ -219,7 +219,7 @@ interface GraphResponse {
 interface CompareResponse {
   status: "ahead" | "behind" | "diverged" | "identical";
   merge_base_commit: { sha: string };
-  files?: { filename: string }[];
+  files?: { filename: string; previous_filename?: string }[];
 }
 
 interface RequestOptions {
@@ -339,6 +339,7 @@ function isAuthorityPath(path: string): boolean {
     path.startsWith("docs/architecture/") ||
     path.startsWith("docs/decisions/") ||
     path.startsWith("docs/governance/") ||
+    path.startsWith("docs/product/") ||
     path.startsWith("docs/security/") ||
     path.startsWith("docs/specs/") ||
     path.startsWith("docs/vision/")
@@ -387,9 +388,15 @@ async function comparePull(
     return {
       mergeBaseSha,
       relation,
-      authorityChanges: (mainAdvance.files ?? [])
-        .filter((file) => isAuthorityPath(file.filename))
-        .map((file) => ({ path: file.filename, url: compareUrl })),
+      authorityChanges: [
+        ...new Set(
+          (mainAdvance.files ?? []).flatMap((file) =>
+            [file.filename, file.previous_filename].filter(
+              (path): path is string => path !== undefined && isAuthorityPath(path),
+            ),
+          ),
+        ),
+      ].map((path) => ({ path, url: compareUrl })),
       authorityAvailability:
         mainAdvance.files === undefined || mainAdvance.files.length >= 300
           ? "incomplete" as const

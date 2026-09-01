@@ -38,6 +38,7 @@ describe("parseProductHorizon", () => {
     "Later section\n---",
     "Later section\n===",
     "Foo\n    bar\n---",
+    "``` invalid`info\n---",
   ])(
     "does not read a horizon value beyond the next CommonMark H2 form %j",
     (nextHeading) => {
@@ -79,6 +80,44 @@ describe("parseProductHorizon", () => {
       ).toMatchObject({ state: "unknown", value: "Unknown" });
     },
   );
+
+  it("does not treat a thematic break as a section boundary", () => {
+    expect(
+      parseProductHorizon(
+        "## Current horizon\n\n> **A**\n\n---\n\n> **B**",
+        "https://github.example/roadmap",
+      ),
+    ).toMatchObject({ state: "unknown", value: "Unknown" });
+  });
+
+  it.each(["> **A**", "- list item"])(
+    "does not treat a thematic break after block content %j as Setext",
+    (content) => {
+      expect(
+        parseProductHorizon(
+          `## Current horizon\n\n> **A**\n${content === "> **A**" ? "" : `${content}\n`}---`,
+          "https://github.example/roadmap",
+        ),
+      ).toMatchObject({ state: "satisfied", value: "A" });
+    },
+  );
+
+  it("requires the raw horizon candidate to survive filtering at the same position", () => {
+    expect(
+      parseProductHorizon(
+        [
+          "## Current horizon",
+          "",
+          "<script>",
+          "> **HIDDEN**",
+          "## Hidden section",
+          "</script>",
+          "> **VISIBLE**",
+        ].join("\n"),
+        "https://github.example/roadmap",
+      ),
+    ).toMatchObject({ state: "unknown", value: "Unknown" });
+  });
 
   it.each([
     "<script>\nconst example = true;\n</script>",

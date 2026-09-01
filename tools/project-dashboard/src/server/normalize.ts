@@ -131,6 +131,19 @@ function ownershipFor(issue: RawIssue): DisplaySignal {
   );
 }
 
+function humanOwnershipFor(issue: RawIssue): DisplaySignal {
+  const ownership = ownershipFor(issue);
+  if (ownership.state !== "satisfied") return ownership;
+  return ownerFor(issue) === "agent:human"
+    ? directSignal(
+        "blocked",
+        "human-action-required",
+        "Human-owned issue requires attention",
+        [evidenceSource("Issue owner label", issue.url)],
+      )
+    : directSignal("satisfied", "not-required", "No human owner action required", []);
+}
+
 function labelReadinessFor(issue: RawIssue): DisplaySignal {
   const source = evidenceSource("Issue labels", issue.url);
   if (issue.labelsAvailability !== "complete") {
@@ -317,6 +330,7 @@ function pullLane(
     implementationConflict,
   );
   const ownership = ownershipFor(issue);
+  const humanOwnership = humanOwnershipFor(issue);
   const labelReadiness = labelReadinessFor(issue);
   const readiness = readinessFor(issue);
   const currentReviews = currentReviewDisposition(pull.reviews);
@@ -371,7 +385,6 @@ function pullLane(
       repository.main === null ||
         repository.roadmap === null ||
         !roadmapCurrent ||
-        repository.availability !== "complete" ||
         repository.implementationLinkageAvailability !== "complete" ||
         ownership.state !== "satisfied" ||
         issue.labelsAvailability !== "complete" ||
@@ -448,6 +461,7 @@ function pullLane(
       commentState,
       labelState,
       ownership,
+      humanOwnership,
       readinessReconciliation,
     ],
     "Human action Unknown",
@@ -491,6 +505,7 @@ function pullLane(
       checks,
       commentState,
       authority,
+      humanAction,
     ],
     "Merge gate Unknown",
   );
@@ -577,7 +592,11 @@ function pullLane(
   };
 }
 
-function issueLane(repository: RepositoryObservation, issue: RawIssue): DeliveryLane {
+function issueLane(
+  repository: RepositoryObservation,
+  issue: RawIssue,
+  roadmapCurrent: boolean,
+): DeliveryLane {
   const labelReadiness = labelReadinessFor(issue);
   const readiness = readinessFor(issue);
   const owner = ownerFor(issue);
@@ -603,7 +622,7 @@ function issueLane(repository: RepositoryObservation, issue: RawIssue): Delivery
     owner,
     phase: readiness.state === "blocked"
       ? "blocked"
-      : linkageComplete
+      : linkageComplete && roadmapCurrent
         ? readiness.state === "satisfied" ? "ready" : readiness.state
         : "unknown",
     pullRequest: null,
@@ -614,6 +633,19 @@ function issueLane(repository: RepositoryObservation, issue: RawIssue): Delivery
     stewardWatch: unavailable,
     authority: repository.main === null
       ? directSignal("unknown", "observation-unavailable", "Authority Unknown", [])
+      : !roadmapCurrent
+        ? directSignal(
+            "unknown",
+            "observation-incomplete",
+            "Product Roadmap authority Unknown",
+            [
+              evidenceSource(
+                "Product Roadmap",
+                repository.roadmap?.url ??
+                  `https://github.com/${repository.repository}/blob/main/${ROADMAP_PATH}`,
+              ),
+            ],
+          )
       : directSignal("satisfied", "repository-authority-current", "Authority observed", [
           evidenceSource("Live main", repository.main.url),
         ]),
@@ -672,7 +704,10 @@ function unlinkedPullLane(
       : pull.reviewsAvailability !== "complete" || pull.threadsAvailability !== "complete"
       ? directSignal(
           "unknown",
-          "observation-incomplete",
+          pull.reviewsAvailability === "unavailable" ||
+            pull.threadsAvailability === "unavailable"
+            ? "observation-unavailable"
+            : "observation-incomplete",
           "Exact-head review observation incomplete",
           reviewSources,
         )
@@ -867,7 +902,11 @@ export function normalizeRepository(
       (issue.labels.some((label) => label.startsWith("agent:")) ||
         issue.labels.includes("state:ready")),
   );
-  deliveries.push(...readyOrOwnedIssues.map((issue) => issueLane(observation, issue)));
+  deliveries.push(
+    ...readyOrOwnedIssues.map((issue) =>
+      issueLane(observation, issue, roadmap.state === "satisfied"),
+    ),
+  );
   deliveries.sort((left, right) => {
     const leftIdentity = left.issue?.number ?? Number.MAX_SAFE_INTEGER;
     const rightIdentity = right.issue?.number ?? Number.MAX_SAFE_INTEGER;
@@ -952,7 +991,11 @@ export function normalizeRepository(
   const linkageComplete = observation.implementationLinkageAvailability === "complete";
   const issuesComplete =
     observation.issuesAvailability === "complete" &&
-    observation.issues.every((issue) => issue.labelsAvailability === "complete");
+    observation.issues.every(
+      (issue) =>
+        issue.labelsAvailability === "complete" &&
+        issue.dependencyAvailability === "complete",
+    );
 
   return {
     repository: observation.repository,
@@ -970,7 +1013,7 @@ export function normalizeRepository(
         deliveries.filter(
           (lane) => lane.pullRequest === null && lane.readiness.state === "satisfied",
         ).length,
-        linkageComplete && issuesComplete,
+        linkageComplete && issuesComplete && roadmap.state === "satisfied",
         issuesSource,
       ),
     },

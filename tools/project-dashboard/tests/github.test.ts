@@ -162,6 +162,19 @@ function fakeBehindAuthorityFetch() {
             { filename: "docs/decisions/ADR-0032-dashboard.md" },
             { filename: "docs/security/threat-model.md" },
             { filename: "docs/vision/product-constitution.md" },
+            { filename: "docs/product/engine-integration-strategy.md" },
+            {
+              filename: "docs/discussions/renamed-authority.md",
+              previous_filename: "docs/decisions/ADR-renamed.md",
+            },
+            {
+              filename: "docs/governance/renamed-in.md",
+              previous_filename: "docs/discussions/draft.md",
+            },
+            {
+              filename: "docs/decisions/ADR-0032-dashboard.md",
+              previous_filename: "docs/decisions/ADR-0032-dashboard.md",
+            },
             { filename: "docs/discussions/history.md" },
           ],
         };
@@ -311,6 +324,9 @@ describe("GitHub observation adapter", () => {
       "docs/decisions/ADR-0032-dashboard.md",
       "docs/security/threat-model.md",
       "docs/vision/product-constitution.md",
+      "docs/product/engine-integration-strategy.md",
+      "docs/decisions/ADR-renamed.md",
+      "docs/governance/renamed-in.md",
     ]);
     expect(normalizeRepository(observation).deliveries[0]?.authority.state).toBe("unknown");
   });
