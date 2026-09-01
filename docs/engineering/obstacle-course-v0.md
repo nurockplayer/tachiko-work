@@ -25,8 +25,9 @@ bash scripts/obstacle-course.sh
 
 The command is offline by default. Cargo dependencies and a supported Rust
 toolchain must already be available locally; the selected compiler identity is
-recorded in the result. `--list` prints the closed v0 stage registry without
-building or running it.
+recorded in the result. When `RUSTC` selects a compiler, the reported identity
+and native target come from that same compiler used by Cargo. `--list` prints
+the closed v0 stage registry without building or running it.
 
 ## v0 course
 
@@ -102,11 +103,14 @@ Before running, the command reports:
 
 A dirty run is provisional because the commit alone does not identify its
 source. Final evidence must come from a clean exact HEAD. The runner rechecks
-the commit and clean/dirty state after setup and after every stage, and rejects
-the run if either changed while evidence was being collected. Repository-selecting
-Git environment variables are cleared and every identity query is bound to the
-course checkout. The runner also creates a fresh run-scoped Cargo target
-directory, derives and pins the native `rustc` host target, and uses
+the commit, clean/dirty state, and a byte-sensitive fingerprint of tracked
+changes plus relevant untracked file contents after setup and after every stage.
+It rejects the run if any of them changed while evidence was being collected.
+Repository-selecting and command-scoped Git environment variables are cleared,
+every identity query is bound to the course checkout, and the Git-review stage
+ignores user/system Git configuration such as commit signing and hook paths.
+The runner also creates a fresh run-scoped Cargo target directory, derives and
+pins the native host target from the compiler Cargo uses, and uses
 `<run-target>/<native-target>/release/`. Every CLI stage therefore uses the
 platform-named release binary built by the same run rather than an inherited,
 Cargo-config-selected, concurrently written, or stale artifact. The run target

@@ -170,14 +170,25 @@ cd "${repo_root}"
 
 # Evidence identity must describe this checkout, not an inherited Git context.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
-  GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE
+  GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE \
+  GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_CONFIG_SYSTEM GIT_TEMPLATE_DIR \
+  GIT_CEILING_DIRECTORIES GIT_EXTERNAL_DIFF GIT_DIFF_OPTS GIT_REPLACE_REF_BASE
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_NOSYSTEM=1
+export GIT_ATTR_NOSYSTEM=1
+export GIT_NO_REPLACE_OBJECTS=1
 
-for required_command in cargo git rustc; do
+for required_command in cargo git; do
   if ! command -v "${required_command}" >/dev/null 2>&1; then
     echo "obstacle-course: ${required_command} is required" >&2
     exit 1
   fi
 done
+rustc_command="${RUSTC:-rustc}"
+if ! command -v "${rustc_command}" >/dev/null 2>&1; then
+  echo "obstacle-course: Rust compiler '${rustc_command}' selected by RUSTC is required" >&2
+  exit 1
+fi
 
 run_dir="$(mktemp -d "${TMPDIR:-/tmp}/tachiko-obstacle.XXXXXX")"
 cleanup() {
@@ -201,6 +212,146 @@ current_worktree_state() {
   fi
 }
 
+repository_state_fingerprint() {
+  local manifest staged_diff unstaged_diff index_entries
+  local tracked_paths untracked_paths link_bytes
+  local path absolute kind digest
+  if ! manifest="$(mktemp "${run_dir}/source-state.XXXXXX")"; then
+    echo "obstacle-course: could not create source-state manifest" >&2
+    return 1
+  fi
+  staged_diff="${manifest}.staged"
+  unstaged_diff="${manifest}.unstaged"
+  index_entries="${manifest}.index"
+  tracked_paths="${manifest}.tracked-paths"
+  untracked_paths="${manifest}.untracked"
+  link_bytes="${manifest}.link"
+
+  if ! git -C "${repo_root}" diff --cached --no-ext-diff --no-textconv \
+    --binary --full-index --no-renames "${head_commit}" -- >"${staged_diff}"; then
+    echo "obstacle-course: could not fingerprint staged source state" >&2
+    return 1
+  fi
+  if ! git -C "${repo_root}" diff --no-ext-diff --no-textconv \
+    --binary --full-index --no-renames -- >"${unstaged_diff}"; then
+    echo "obstacle-course: could not fingerprint unstaged source state" >&2
+    return 1
+  fi
+  if ! LC_ALL=C git -C "${repo_root}" ls-files \
+    --stage -z >"${index_entries}"; then
+    echo "obstacle-course: could not enumerate exact index state" >&2
+    return 1
+  fi
+  if ! LC_ALL=C git -C "${repo_root}" ls-files \
+    --cached -z >"${tracked_paths}"; then
+    echo "obstacle-course: could not enumerate tracked source state" >&2
+    return 1
+  fi
+  if ! LC_ALL=C git -C "${repo_root}" ls-files \
+    --others --exclude-standard -z >"${untracked_paths}"; then
+    echo "obstacle-course: could not enumerate untracked source state" >&2
+    return 1
+  fi
+  if ! digest="$(tachiko_sha256_digest "${staged_diff}")"; then
+    echo "obstacle-course: could not hash staged source state" >&2
+    return 1
+  fi
+  if ! printf 'staged-diff\0%s\0' "${digest}" >"${manifest}"; then
+    echo "obstacle-course: could not record staged source state" >&2
+    return 1
+  fi
+  if ! digest="$(tachiko_sha256_digest "${unstaged_diff}")"; then
+    echo "obstacle-course: could not hash unstaged source state" >&2
+    return 1
+  fi
+  if ! printf 'unstaged-diff\0%s\0' "${digest}" >>"${manifest}"; then
+    echo "obstacle-course: could not record unstaged source state" >&2
+    return 1
+  fi
+  if ! digest="$(tachiko_sha256_digest "${index_entries}")"; then
+    echo "obstacle-course: could not hash exact index state" >&2
+    return 1
+  fi
+  if ! printf 'index-entries\0%s\0' "${digest}" >>"${manifest}"; then
+    echo "obstacle-course: could not record exact index state" >&2
+    return 1
+  fi
+
+  while IFS= read -r -d '' path; do
+    absolute="${repo_root}/${path}"
+    if [[ -L "${absolute}" ]]; then
+      kind="tracked-symlink"
+      if ! readlink "${absolute}" >"${link_bytes}"; then
+        echo "obstacle-course: could not read tracked symlink '${path}'" >&2
+        return 1
+      fi
+      if ! digest="$(tachiko_sha256_digest "${link_bytes}")"; then
+        echo "obstacle-course: could not hash tracked symlink '${path}'" >&2
+        return 1
+      fi
+    elif [[ -f "${absolute}" ]]; then
+      if [[ -x "${absolute}" ]]; then
+        kind="tracked-file-755"
+      else
+        kind="tracked-file-644"
+      fi
+      if ! digest="$(tachiko_sha256_digest "${absolute}")"; then
+        echo "obstacle-course: could not hash tracked file '${path}'" >&2
+        return 1
+      fi
+    elif [[ ! -e "${absolute}" ]]; then
+      kind="tracked-missing"
+      digest="-"
+    else
+      echo "obstacle-course: unsupported tracked source path '${path}'" >&2
+      return 1
+    fi
+    if ! printf '%s\0%s\0%s\0' "${kind}" "${path}" "${digest}" \
+      >>"${manifest}"; then
+      echo "obstacle-course: could not record tracked source path '${path}'" >&2
+      return 1
+    fi
+  done <"${tracked_paths}"
+
+  while IFS= read -r -d '' path; do
+    absolute="${repo_root}/${path}"
+    if [[ -L "${absolute}" ]]; then
+      kind="symlink"
+      if ! readlink "${absolute}" >"${link_bytes}"; then
+        echo "obstacle-course: could not read untracked symlink '${path}'" >&2
+        return 1
+      fi
+      if ! digest="$(tachiko_sha256_digest "${link_bytes}")"; then
+        echo "obstacle-course: could not hash untracked symlink '${path}'" >&2
+        return 1
+      fi
+    elif [[ -f "${absolute}" ]]; then
+      if [[ -x "${absolute}" ]]; then
+        kind="file-755"
+      else
+        kind="file-644"
+      fi
+      if ! digest="$(tachiko_sha256_digest "${absolute}")"; then
+        echo "obstacle-course: could not hash untracked file '${path}'" >&2
+        return 1
+      fi
+    else
+      echo "obstacle-course: unsupported untracked source path '${path}'" >&2
+      return 1
+    fi
+    if ! printf '%s\0%s\0%s\0' "${kind}" "${path}" "${digest}" \
+      >>"${manifest}"; then
+      echo "obstacle-course: could not record untracked source path '${path}'" >&2
+      return 1
+    fi
+  done <"${untracked_paths}"
+
+  if ! tachiko_sha256_digest "${manifest}"; then
+    echo "obstacle-course: could not hash source-state manifest" >&2
+    return 1
+  fi
+}
+
 if ! head_commit="$(git -C "${repo_root}" rev-parse HEAD)"; then
   echo "obstacle-course: could not determine HEAD" >&2
   exit 1
@@ -208,9 +359,12 @@ fi
 if ! worktree_state="$(current_worktree_state)"; then
   exit 1
 fi
-rust_identity="$(rustc --version | tr ' ' '_')"
+if ! source_state_fingerprint="$(repository_state_fingerprint)"; then
+  exit 1
+fi
+rust_identity="$("${rustc_command}" --version | tr ' ' '_')"
 os_identity="$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
-native_target="$(rustc -vV | sed -n 's/^host: //p')"
+native_target="$("${rustc_command}" -vV | sed -n 's/^host: //p')"
 if [[ -z "${native_target}" ]]; then
   echo "obstacle-course: could not determine the native Rust target" >&2
   exit 1
@@ -223,7 +377,7 @@ tachiko_bin="${course_target_dir}/${native_target}/release/${executable_name}"
 
 verify_source_identity() {
   local checkpoint="$1"
-  local observed_head observed_worktree_state
+  local observed_head observed_worktree_state observed_source_state_fingerprint
   if ! observed_head="$(git -C "${repo_root}" rev-parse HEAD)"; then
     echo "EVIDENCE FAIL: could not determine HEAD checkpoint=${checkpoint}" >&2
     return 1
@@ -232,9 +386,14 @@ verify_source_identity() {
     echo "EVIDENCE FAIL: could not determine worktree state checkpoint=${checkpoint}" >&2
     return 1
   fi
+  if ! observed_source_state_fingerprint="$(repository_state_fingerprint)"; then
+    echo "EVIDENCE FAIL: could not fingerprint source state checkpoint=${checkpoint}" >&2
+    return 1
+  fi
   if [[ "${observed_head}" != "${head_commit}" || \
-    "${observed_worktree_state}" != "${worktree_state}" ]]; then
-    echo "EVIDENCE FAIL: source identity changed checkpoint=${checkpoint} expected_commit=${head_commit} observed_commit=${observed_head} expected_worktree=${worktree_state} observed_worktree=${observed_worktree_state}" >&2
+    "${observed_worktree_state}" != "${worktree_state}" || \
+    "${observed_source_state_fingerprint}" != "${source_state_fingerprint}" ]]; then
+    echo "EVIDENCE FAIL: source identity changed checkpoint=${checkpoint} expected_commit=${head_commit} observed_commit=${observed_head} expected_worktree=${worktree_state} observed_worktree=${observed_worktree_state} expected_state=${source_state_fingerprint} observed_state=${observed_source_state_fingerprint}" >&2
     return 1
   fi
 }

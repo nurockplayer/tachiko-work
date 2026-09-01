@@ -128,6 +128,7 @@ native_target="x86_64-pc-windows-msvc"
 normal_tmp="${test_dir}/normal-tmp"
 persistent_target_dir="${normal_repo}/target/obstacle-course"
 stale_tachiko_bin="${persistent_target_dir}/${native_target}/release/tachiko.exe"
+tracked_raw_file="${normal_repo}/tracked-fixture"
 mkdir -p \
   "${normal_repo}/.cargo" \
   "${normal_repo}/scripts" \
@@ -153,6 +154,7 @@ for fixture in \
   printf 'fake obstacle fixture: %s\n' "${fixture}" \
     >"${normal_repo}/${fixture}"
 done
+printf 'raw tracked bytes before\n' >"${tracked_raw_file}"
 
 cat >"${normal_repo}/.cargo/config.toml" <<'EOF'
 [build]
@@ -162,6 +164,12 @@ EOF
 
 cat >"${normal_repo}/scripts/git-ci-smoke.sh" <<'EOF'
 #!/usr/bin/env bash
+set -euo pipefail
+
+printf 'git-smoke config_global=%s config_nosystem=%s config_count=%s config_parameters=%s\n' \
+  "${GIT_CONFIG_GLOBAL:-unset}" "${GIT_CONFIG_NOSYSTEM:-unset}" \
+  "${GIT_CONFIG_COUNT:-unset}" "${GIT_CONFIG_PARAMETERS:-unset}" \
+  >>"${FAKE_TOOLCHAIN_LOG}"
 exit 99
 EOF
 chmod +x "${normal_repo}/scripts/git-ci-smoke.sh"
@@ -176,12 +184,22 @@ printf 'git args=%s git_dir=%s git_work_tree=%s\n' \
 
 for variable in \
   GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
-  GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE; do
+  GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE \
+  GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_CONFIG_SYSTEM GIT_TEMPLATE_DIR \
+  GIT_CEILING_DIRECTORIES GIT_EXTERNAL_DIFF GIT_DIFF_OPTS \
+  GIT_REPLACE_REF_BASE; do
   if [[ -n "${!variable:-}" ]]; then
     echo "fake git: inherited ${variable}" >&2
     exit 93
   fi
 done
+if [[ "${GIT_CONFIG_GLOBAL:-}" != "/dev/null" || \
+  "${GIT_CONFIG_NOSYSTEM:-}" != "1" || \
+  "${GIT_ATTR_NOSYSTEM:-}" != "1" || \
+  "${GIT_NO_REPLACE_OBJECTS:-}" != "1" ]]; then
+  echo "fake git: user/system configuration is not isolated" >&2
+  exit 93
+fi
 
 if [[ "${1:-}" != "-C" || "${2:-}" != "${FAKE_REPO_ROOT}" ]]; then
   echo "fake git: query is not bound to ${FAKE_REPO_ROOT}: $*" >&2
@@ -196,6 +214,18 @@ elif [[ "${1:-}" == "status" ]]; then
     echo "fake git: intentional status failure" >&2
     exit 95
   fi
+  if [[ "${FAKE_GIT_DIRTY:-0}" == "1" ]]; then
+    echo " M tracked-fixture"
+  fi
+  exit 0
+elif [[ "${1:-}" == "diff" ]]; then
+  echo "normalized tracked diff"
+elif [[ "${1:-}" == "ls-files" ]]; then
+  if [[ " $* " == *" --cached "* ]]; then
+    printf 'tracked-fixture\0'
+  elif [[ " $* " == *" --stage "* ]]; then
+    printf '100644 fake-index-object 0\ttracked-fixture\0'
+  fi
   exit 0
 else
   echo "fake git: unexpected arguments: $*" >&2
@@ -204,7 +234,7 @@ fi
 EOF
 chmod +x "${normal_bin_dir}/git"
 
-cat >"${normal_bin_dir}/rustc" <<'EOF'
+cat >"${normal_bin_dir}/cargo-rustc" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -222,6 +252,22 @@ case "${1:-}" in
     ;;
 esac
 EOF
+chmod +x "${normal_bin_dir}/cargo-rustc"
+
+cat >"${normal_bin_dir}/rustc" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "${1:-}" in
+  --version)
+    echo "rustc 0.0.0 (wrong PATH compiler)"
+    ;;
+  -vV)
+    printf 'rustc 0.0.0 (wrong PATH compiler)\nhost: wrong-path-target\n'
+    ;;
+  *) exit 2 ;;
+esac
+EOF
 chmod +x "${normal_bin_dir}/rustc"
 
 cat >"${test_dir}/fake-tachiko" <<'EOF'
@@ -231,6 +277,9 @@ set -euo pipefail
 printf 'stage-bin path=%s target_dir=%s build_target=%s\n' \
   "$0" "${CARGO_TARGET_DIR:-unset}" "${CARGO_BUILD_TARGET:-unset}" \
   >>"${FAKE_TOOLCHAIN_LOG}"
+if [[ "${FAKE_TRIGGER_FINGERPRINT_DRIFT:-0}" == "1" ]]; then
+  printf 'raw tracked bytes after\r\n' >"${FAKE_TRACKED_RAW_FILE}"
+fi
 exit 97
 EOF
 chmod +x "${test_dir}/fake-tachiko"
@@ -309,13 +358,16 @@ chmod +x "${normal_bin_dir}/cargo"
 
 run_normal_course() {
   local status_fail="$1"
-  local stdout_file="$2"
-  local stderr_file="$3"
+  local git_dirty="$2"
+  local trigger_fingerprint_drift="$3"
+  local stdout_file="$4"
+  local stderr_file="$5"
   PATH="${normal_bin_dir}:${PATH}" \
     TMPDIR="${normal_tmp}" \
     CARGO_HOME="${test_dir}/normal-cargo-home" \
     CARGO_TARGET_DIR="${test_dir}/conflicting-env-target" \
     CARGO_BUILD_TARGET=conflicting-env-target \
+    RUSTC="${normal_bin_dir}/cargo-rustc" \
     GIT_DIR="${test_dir}/hostile.git" \
     GIT_WORK_TREE="${test_dir}/hostile-worktree" \
     GIT_INDEX_FILE="${test_dir}/hostile-index" \
@@ -323,7 +375,24 @@ run_normal_course() {
     GIT_ALTERNATE_OBJECT_DIRECTORIES="${test_dir}/hostile-alternates" \
     GIT_COMMON_DIR="${test_dir}/hostile-common" \
     GIT_NAMESPACE=hostile-namespace \
+    GIT_CONFIG_GLOBAL="${test_dir}/hostile-global-config" \
+    GIT_CONFIG_SYSTEM="${test_dir}/hostile-system-config" \
+    GIT_CONFIG_NOSYSTEM=0 \
+    GIT_CONFIG_COUNT=1 \
+    GIT_CONFIG_KEY_0=commit.gpgSign \
+    GIT_CONFIG_VALUE_0=true \
+    GIT_CONFIG_PARAMETERS=hostile-parameters \
+    GIT_TEMPLATE_DIR="${test_dir}/hostile-template" \
+    GIT_ATTR_NOSYSTEM=0 \
+    GIT_CEILING_DIRECTORIES="${test_dir}" \
+    GIT_EXTERNAL_DIFF="${test_dir}/hostile-diff" \
+    GIT_DIFF_OPTS=--unified=99 \
+    GIT_REPLACE_REF_BASE=refs/replace/hostile \
+    GIT_NO_REPLACE_OBJECTS=0 \
     FAKE_GIT_STATUS_FAIL="${status_fail}" \
+    FAKE_GIT_DIRTY="${git_dirty}" \
+    FAKE_TRIGGER_FINGERPRINT_DRIFT="${trigger_fingerprint_drift}" \
+    FAKE_TRACKED_RAW_FILE="${tracked_raw_file}" \
     FAKE_NATIVE_TARGET="${native_target}" \
     FAKE_REPO_ROOT="${normal_repo}" \
     FAKE_PERSISTENT_TARGET_DIR="${persistent_target_dir}" \
@@ -333,7 +402,8 @@ run_normal_course() {
     >"${stdout_file}" 2>"${stderr_file}"
 }
 
-if run_normal_course 0 "${test_dir}/normal.out" "${test_dir}/normal.err"; then
+if run_normal_course 0 0 0 \
+  "${test_dir}/normal.out" "${test_dir}/normal.err"; then
   echo "obstacle-course test: intentionally failing fake stage unexpectedly passed" >&2
   exit 1
 fi
@@ -368,6 +438,8 @@ require_normal_log \
   "stage-bin path=${expected_tachiko_bin} target_dir=${observed_target_dir} build_target=${native_target}"
 require_normal_log \
   "git args=-C ${normal_repo} rev-parse HEAD git_dir=unset git_work_tree=unset"
+require_normal_log \
+  "git-smoke config_global=/dev/null config_nosystem=1 config_count=unset config_parameters=unset"
 if grep -Fq "stale-stage-bin" "${normal_log}"; then
   echo "obstacle-course test: persistent stale CLI was executed" >&2
   exit 1
@@ -381,7 +453,7 @@ grep -F \
   "${test_dir}/normal.out" >/dev/null
 
 : >"${normal_log}"
-if run_normal_course 1 \
+if run_normal_course 1 0 0 \
   "${test_dir}/status-fail.out" "${test_dir}/status-fail.err"; then
   echo "obstacle-course test: failed Git status unexpectedly produced evidence" >&2
   exit 1
@@ -390,6 +462,24 @@ grep -F "obstacle-course: could not determine worktree state" \
   "${test_dir}/status-fail.err" >/dev/null
 if grep -Fq "cargo command=" "${normal_log}"; then
   echo "obstacle-course test: setup ran after Git identity failure" >&2
+  exit 1
+fi
+
+: >"${normal_log}"
+printf 'raw tracked bytes before\n' >"${tracked_raw_file}"
+if run_normal_course 0 1 1 \
+  "${test_dir}/fingerprint-drift.out" \
+  "${test_dir}/fingerprint-drift.err"; then
+  echo "obstacle-course test: dirty source mutation unexpectedly produced stable evidence" >&2
+  exit 1
+fi
+grep -F "EVIDENCE FAIL: source identity changed checkpoint=after-repository-dogfood" \
+  "${test_dir}/fingerprint-drift.err" >/dev/null
+grep -F "expected_worktree=dirty observed_worktree=dirty" \
+  "${test_dir}/fingerprint-drift.err" >/dev/null
+if grep -Fq "EVIDENCE source_identity=stable" \
+  "${test_dir}/fingerprint-drift.out"; then
+  echo "obstacle-course test: changed dirty source was reported stable" >&2
   exit 1
 fi
 
