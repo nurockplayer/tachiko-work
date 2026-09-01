@@ -142,8 +142,27 @@ function fakeFetch(
       JSON.stringify({ status: "ahead", merge_base_commit: { sha: MAIN } }),
       { status: 200, headers: { "Content-Type": "application/json" } },
     );
-  }) as typeof fetch;
+  });
   return { implementation, requests };
+}
+
+function fetchForGraph(graph: ReturnType<typeof graphResponse>): typeof fetch {
+  return (async (input: string | URL | Request) => {
+    const url = typeof input === "string"
+      ? input
+      : input instanceof URL
+        ? input.href
+        : input.url;
+    return url.endsWith("/graphql")
+      ? new Response(JSON.stringify(graph), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      : new Response(
+          JSON.stringify({ status: "ahead", merge_base_commit: { sha: MAIN } }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+  });
 }
 
 function fakeBehindAuthorityFetch() {
@@ -175,6 +194,7 @@ function fakeBehindAuthorityFetch() {
             { filename: "docs/product/engine-integration-strategy.md" },
             { filename: ".github/workflows/ci.yml" },
             { filename: "scripts/release-check.sh" },
+            { filename: "crates/cli/AGENTS.md" },
             {
               filename: "docs/discussions/renamed-authority.md",
               previous_filename: "docs/decisions/ADR-renamed.md",
@@ -414,6 +434,41 @@ describe("GitHub observation adapter", () => {
     });
   });
 
+  it("keeps handoff ownership overlap incomplete when review threads are truncated", async () => {
+    const graph = graphResponse();
+    const pull = graph.data.repository.pullRequests.nodes[0];
+    if (pull === undefined) throw new Error("fixture missing pull request");
+    pull.reviewThreads.pageInfo.hasNextPage = true;
+
+    const observation = await observeRepository({ fetchImpl: fetchForGraph(graph) });
+    expect(observation.pullRequests[0]?.commentsAvailability).toBe("incomplete");
+    expect(observation.implementationLinkageAvailability).toBe("incomplete");
+    expect(normalizeRepository(observation).deliveries[0]?.authority.state).toBe("unknown");
+  });
+
+  it("retains usable partial data when GraphQL nulls top-level nodes", async () => {
+    const graph = graphResponse(false, false, true, false, false, true);
+    const issues = graph.data.repository.issues.nodes;
+    const pulls = graph.data.repository.pullRequests.nodes;
+    const recent = graph.data.repository.recent.nodes;
+    const appendNull = (nodes: unknown[]) => nodes.push(null);
+    appendNull(issues);
+    appendNull(pulls);
+    appendNull(recent);
+
+    const observation = await observeRepository({ fetchImpl: fetchForGraph(graph) });
+    expect(observation).toMatchObject({
+      availability: "incomplete",
+      issuesAvailability: "incomplete",
+      pullsAvailability: "incomplete",
+      implementationLinkageAvailability: "incomplete",
+      recentActivityAvailability: "incomplete",
+    });
+    expect(observation.issues).toHaveLength(1);
+    expect(observation.pullRequests).toHaveLength(1);
+    expect(normalizeRepository(observation).fetchHealth).toBe("partial");
+  });
+
   it("keeps concurrent comparison errors in pull-request order", async () => {
     const observation = await observeRepository({ fetchImpl: fakeComparisonFailureFetch() });
 
@@ -454,6 +509,7 @@ describe("GitHub observation adapter", () => {
       "docs/product/engine-integration-strategy.md",
       ".github/workflows/ci.yml",
       "scripts/release-check.sh",
+      "crates/cli/AGENTS.md",
       "docs/decisions/ADR-renamed.md",
       ".github/workflows/renamed.yml",
       "docs/governance/renamed-in.md",

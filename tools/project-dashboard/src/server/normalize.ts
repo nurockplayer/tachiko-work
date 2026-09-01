@@ -306,18 +306,19 @@ function trustedHandoffIssueClaims(
   repository: RepositoryObservation,
   pull: RawPullRequest,
   issues: readonly RawIssue[],
-): { current: number[]; stale: number[]; ambiguous: number[] } {
-  if (repository.main === null) return { current: [], stale: [], ambiguous: [] };
+): { current: number[]; stale: number[]; ambiguous: number[]; unscoped: boolean } {
+  if (repository.main === null) {
+    return { current: [], stale: [], ambiguous: [], unscoped: false };
+  }
   const current = new Set<number>();
   const stale = new Set<number>();
   const ambiguous = new Set<number>();
+  let unscoped = false;
   for (const source of commentSources(pull, repository.repository)) {
+    if (!source.metadata.trustedProducer || !source.metadata.topLevel) continue;
     const identity = boundedHandoffIdentity(source.body);
-    if (
-      identity === null ||
-      !source.metadata.trustedProducer ||
-      !source.metadata.topLevel
-    ) {
+    if (identity === null) {
+      if (hasExactHandoffMarker(source.body)) unscoped = true;
       continue;
     }
     for (const issueNumber of identity.issues) {
@@ -347,7 +348,16 @@ function trustedHandoffIssueClaims(
       }
     }
   }
-  return { current: [...current], stale: [...stale], ambiguous: [...ambiguous] };
+  return {
+    current: [...current],
+    stale: [...stale],
+    ambiguous: [...ambiguous],
+    unscoped,
+  };
+}
+
+function hasExactHandoffMarker(body: string): boolean {
+  return body.replaceAll("\r\n", "\n").split("\n").includes("<!-- agent-handoff:v1 -->");
 }
 
 function boundedHandoffIdentity(
@@ -1054,6 +1064,9 @@ export function normalizeRepository(
   const handoffClaims = observation.pullRequests.map((pull) =>
     trustedHandoffIssueClaims(observation, pull, observation.issues),
   );
+  const effectiveObservation = handoffClaims.some((claim) => claim.unscoped)
+    ? { ...observation, implementationLinkageAvailability: "incomplete" as const }
+    : observation;
   const implementationDefiniteIssueNumbers = observation.pullRequests.map(
     (pull, index) =>
       new Set([
@@ -1096,14 +1109,14 @@ export function normalizeRepository(
     const issue = issueNumber === undefined ? undefined : issuesByNumber.get(issueNumber);
     if (issue === undefined) {
       return unlinkedPullLane(
-        observation,
+        effectiveObservation,
         pull,
         implementationOverlap,
         roadmap.state === "satisfied",
       );
     }
     return pullLane(
-      observation,
+      effectiveObservation,
       issue,
       pull,
       implementationOverlap,
@@ -1120,7 +1133,7 @@ export function normalizeRepository(
   deliveries.push(
     ...readyOrOwnedIssues.map((issue) =>
       issueLane(
-        observation,
+        effectiveObservation,
         issue,
         roadmap.state === "satisfied",
         roadmap.state === "satisfied" ? roadmap.value : null,
@@ -1208,7 +1221,7 @@ export function normalizeRepository(
     complete
       ? { state: "satisfied" as const, value, source }
       : { state: "unknown" as const, value: "Unknown" as const, source };
-  const linkageComplete = observation.implementationLinkageAvailability === "complete";
+  const linkageComplete = effectiveObservation.implementationLinkageAvailability === "complete";
   const issuesComplete =
     observation.issuesAvailability === "complete" &&
     observation.issues.every(

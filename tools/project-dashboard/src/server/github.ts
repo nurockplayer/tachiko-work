@@ -177,6 +177,27 @@ interface GraphPull {
   } | null;
 }
 
+interface GraphIssue {
+  number: number;
+  title: string;
+  url: string;
+  state: "OPEN" | "CLOSED";
+  labels: { pageInfo: PageInfo; nodes: { name: string }[] };
+  milestone: { title: string } | null;
+  blockedBy: {
+    pageInfo: PageInfo;
+    nodes: { number: number; state: "OPEN" | "CLOSED"; url: string }[];
+  };
+}
+
+interface GraphRecentPull {
+  number: number;
+  title: string;
+  url: string;
+  mergedAt: string | null;
+  mergeCommit: { oid: string } | null;
+}
+
 interface GraphRepository {
   url: string;
   defaultBranchRef: {
@@ -186,29 +207,12 @@ interface GraphRepository {
   roadmap: { text: string; oid: string } | null;
   issues: {
     pageInfo: PageInfo;
-    nodes: {
-      number: number;
-      title: string;
-      url: string;
-      state: "OPEN" | "CLOSED";
-      labels: { pageInfo: PageInfo; nodes: { name: string }[] };
-      milestone: { title: string } | null;
-      blockedBy: {
-        pageInfo: PageInfo;
-        nodes: { number: number; state: "OPEN" | "CLOSED"; url: string }[];
-      };
-    }[];
+    nodes: (GraphIssue | null)[];
   };
-  pullRequests: { pageInfo: PageInfo; nodes: GraphPull[] };
+  pullRequests: { pageInfo: PageInfo; nodes: (GraphPull | null)[] };
   recent: {
     pageInfo: PageInfo;
-    nodes: {
-      number: number;
-      title: string;
-      url: string;
-      mergedAt: string | null;
-      mergeCommit: { oid: string } | null;
-    }[];
+    nodes: (GraphRecentPull | null)[];
   };
 }
 
@@ -333,7 +337,7 @@ function commentsTruncated(pull: GraphPull): boolean {
 
 function isAuthorityPath(path: string): boolean {
   return (
-    path === "AGENTS.md" ||
+    (path === "AGENTS.md" || path.endsWith("/AGENTS.md")) ||
     path === "CONTRIBUTING.md" ||
     path === "SECURITY.md" ||
     path === ROADMAP_PATH ||
@@ -456,6 +460,20 @@ export async function observeRepository(
     return unavailableObservation("observation-incomplete");
   }
 
+  const issueNodes = repository.issues.nodes.filter(
+    (issue): issue is GraphIssue => issue !== null,
+  );
+  const pullNodes = repository.pullRequests.nodes.filter(
+    (pull): pull is GraphPull => pull !== null,
+  );
+  const recentNodes = repository.recent.nodes.filter(
+    (pull): pull is GraphRecentPull => pull !== null,
+  );
+  const issueNodeMissing = issueNodes.length !== repository.issues.nodes.length;
+  const pullNodeMissing = pullNodes.length !== repository.pullRequests.nodes.length;
+  const recentNodeMissing = recentNodes.length !== repository.recent.nodes.length;
+  const nullNodeObserved = issueNodeMissing || pullNodeMissing || recentNodeMissing;
+
   const errors: RepositoryObservation["errors"] = [];
   if ((response.errors?.length ?? 0) > 0) {
     errors.push({ source: "GitHub GraphQL", url: GRAPHQL_URL, reason: "observation-incomplete" });
@@ -466,16 +484,16 @@ export async function observeRepository(
   const topLevelTruncated =
     repository.issues.pageInfo.hasNextPage ||
     repository.pullRequests.pageInfo.hasNextPage;
-  const issueTruncated = repository.issues.nodes.some(
+  const issueTruncated = issueNodes.some(
     (issue) => issue.labels.pageInfo.hasNextPage || issue.blockedBy.pageInfo.hasNextPage,
   );
-  const pullTruncated = repository.pullRequests.nodes.some(hasNestedTruncation);
-  if (topLevelTruncated || issueTruncated || pullTruncated) {
+  const pullTruncated = pullNodes.some(hasNestedTruncation);
+  if (topLevelTruncated || issueTruncated || pullTruncated || nullNodeObserved) {
     errors.push({ source: "GitHub GraphQL", url: GRAPHQL_URL, reason: "observation-incomplete" });
   }
 
   const comparisons = await Promise.all(
-    repository.pullRequests.nodes.map(async (pull) => {
+    pullNodes.map(async (pull) => {
       try {
         return await comparePull(main.oid, pull.headRefOid, options);
       } catch {
@@ -490,7 +508,7 @@ export async function observeRepository(
   );
   comparisons.forEach((comparison, index) => {
     if (comparison.authorityAvailability !== "complete") {
-      const pull = repository.pullRequests.nodes[index];
+      const pull = pullNodes[index];
       if (pull !== undefined) {
         errors.push({
           source: `PR #${String(pull.number)} authority comparison`,
@@ -503,7 +521,7 @@ export async function observeRepository(
       }
     }
   });
-  const pullRequests = repository.pullRequests.nodes.map((pull, index): RawPullRequest => {
+  const pullRequests = pullNodes.map((pull, index): RawPullRequest => {
     const comparison = comparisons[index] ?? {
       mergeBaseSha: null,
       relation: "unknown" as const,
@@ -591,7 +609,7 @@ export async function observeRepository(
           markdown: repository.roadmap.text,
           url: `https://github.com/${REPOSITORY}/blob/${main.oid}/${ROADMAP_PATH}`,
         },
-    issues: repository.issues.nodes.map((issue) => ({
+    issues: issueNodes.map((issue) => ({
       number: issue.number,
       title: issue.title,
       url: issue.url,
@@ -603,22 +621,26 @@ export async function observeRepository(
       dependencyAvailability: issue.blockedBy.pageInfo.hasNextPage ? "incomplete" : "complete",
     })),
     issuesAvailability:
-      repository.issues.pageInfo.hasNextPage || issueTruncated ? "incomplete" : "complete",
+      repository.issues.pageInfo.hasNextPage || issueTruncated || issueNodeMissing
+        ? "incomplete"
+        : "complete",
     pullRequests,
     pullsAvailability:
-      repository.pullRequests.pageInfo.hasNextPage || pullTruncated ? "incomplete" : "complete",
+      repository.pullRequests.pageInfo.hasNextPage || pullTruncated || pullNodeMissing
+        ? "incomplete"
+        : "complete",
     implementationLinkageAvailability:
       (response.errors?.length ?? 0) > 0 ||
       repository.pullRequests.pageInfo.hasNextPage ||
-      repository.pullRequests.nodes.some(
+      pullNodeMissing ||
+      pullNodes.some(
         (pull) =>
           pull.closingIssuesReferences.pageInfo.hasNextPage ||
-          pull.comments.pageInfo.hasNextPage ||
-          pull.reviews.pageInfo.hasNextPage,
+          commentsTruncated(pull),
       )
         ? "incomplete"
         : "complete",
-    recentActivity: repository.recent.nodes.flatMap((pull) =>
+    recentActivity: recentNodes.flatMap((pull) =>
       pull.mergedAt === null || pull.mergeCommit === null
         ? []
         : [{
@@ -630,7 +652,7 @@ export async function observeRepository(
           }],
     ),
     // Recent activity is intentionally a bounded context window, not a complete history query.
-    recentActivityAvailability: "complete",
+    recentActivityAvailability: recentNodeMissing ? "incomplete" : "complete",
     errors,
     ...(token === undefined || token.length === 0 ? {} : { serverCredential: "present" }),
   };

@@ -917,7 +917,8 @@ describe("normalizeRepository", () => {
       })),
     });
 
-    const lanes = normalizeRepository(observation).deliveries.filter(
+    const projection = normalizeRepository(observation);
+    const lanes = projection.deliveries.filter(
       (lane) => lane.pullRequest?.number === 225 || lane.pullRequest?.number === 226,
     );
     expect(lanes).toHaveLength(2);
@@ -948,6 +949,22 @@ describe("normalizeRepository", () => {
       (body: string) => `Leading trusted prose\n${body.replace("PR: 225", "PR: 226")}`,
     ],
     [
+      "missing Issue",
+      (body: string) => body.replace("ISSUE: 169\n", "").replace("PR: 225", "PR: 226"),
+    ],
+    [
+      "nonnumeric Issue",
+      (body: string) => body
+        .replace("ISSUE: 169", "ISSUE: unknown")
+        .replace("PR: 225", "PR: 226"),
+    ],
+    [
+      "Issue with trailing whitespace",
+      (body: string) => body
+        .replace("ISSUE: 169", "ISSUE: 169 ")
+        .replace("PR: 225", "PR: 226"),
+    ],
+    [
       "conflicting duplicate PR",
       (body: string) => body.replace("PR: 225", "PR: 226\nPR: 999"),
     ],
@@ -976,15 +993,22 @@ describe("normalizeRepository", () => {
       threads: [],
     });
 
-    const lanes = normalizeRepository(observation).deliveries.filter(
+    const projection = normalizeRepository(observation);
+    const lanes = projection.deliveries.filter(
       (lane) => lane.pullRequest?.number === 225 || lane.pullRequest?.number === 226,
     );
     expect(lanes).toHaveLength(2);
     for (const lane of lanes) {
       expect(lane).toMatchObject({
-        authority: { state: "unknown", reason: "source-identity-conflict" },
+        authority: { state: "unknown" },
         mergeGate: { state: "unknown" },
         phase: "unknown",
+      });
+    }
+    if (["missing Issue", "nonnumeric Issue", "Issue with trailing whitespace"].includes(_case)) {
+      expect(projection.executive.readyCount).toMatchObject({
+        state: "unknown",
+        value: "Unknown",
       });
     }
   });
@@ -1065,7 +1089,10 @@ describe("normalizeRepository", () => {
     expect(projection.executive.readyCount).toMatchObject({ state: "satisfied", value: 1 });
   });
 
-  it("does not treat untrusted handoff prose as implementation ownership", () => {
+  it.each([
+    ["untrusted", { trustedProducer: false }],
+    ["non-top-level", { topLevel: false }],
+  ] as const)("does not treat %s handoff prose as implementation ownership", (_case, metadata) => {
     const observation = healthyObservation();
     addGreenOperationalEvidence(observation);
     const source = observation.pullRequests[0];
@@ -1079,7 +1106,7 @@ describe("normalizeRepository", () => {
       comments: source.comments.map((comment) => ({
         ...comment,
         id: `untrusted-${comment.id}`,
-        trustedProducer: false,
+        ...metadata,
         body: comment.body.replace("PR: 225", "PR: 226"),
       })),
     });
