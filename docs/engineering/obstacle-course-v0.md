@@ -32,9 +32,13 @@ The reported identity and native target therefore come from the same compiler
 used by Cargo. The runner also clears the complete inherited
 `CARGO_PROFILE_RELEASE_*` prefix before setup or internal stage dispatch, so an
 ambient profile override cannot silently change the meaning of release-mode
-evidence. Native test execution normalizes the exact target runner to an `env`
-passthrough, overriding user or repository Cargo runner configuration. `--list`
-prints the closed v0 stage registry without building or running it.
+evidence. It also exports an empty `CARGO_ENCODED_RUSTFLAGS`, Cargo's
+first-priority and mutually exclusive rustflags source, so inherited
+`RUSTFLAGS` and build/target rustflags from Cargo configuration cannot append
+compiler behavior to course-owned builds. Native test execution normalizes the
+exact target runner to an `env` passthrough, overriding user or repository Cargo
+runner configuration. `--list` prints the closed v0 stage registry without
+building or running it.
 
 ## v0 course
 

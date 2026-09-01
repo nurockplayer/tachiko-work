@@ -166,9 +166,11 @@ target-dir = "conflicting-config-target-dir"
 rustc = "conflicting-config-rustc"
 rustc-wrapper = "conflicting-config-rustc-wrapper"
 rustc-workspace-wrapper = "conflicting-config-workspace-wrapper"
+rustflags = ["--cfg", "hostile_build_rustflags"]
 
 [target.x86_64-pc-windows-msvc]
 runner = ["conflicting-config-runner", "--from-config"]
+rustflags = ["--cfg", "hostile_target_rustflags"]
 EOF
 
 cat >"${normal_repo}/scripts/git-ci-smoke.sh" <<'EOF'
@@ -339,7 +341,11 @@ grep -Fx 'rustc-wrapper = "conflicting-config-rustc-wrapper"' \
   "${FAKE_REPO_ROOT}/.cargo/config.toml" >/dev/null
 grep -Fx 'rustc-workspace-wrapper = "conflicting-config-workspace-wrapper"' \
   "${FAKE_REPO_ROOT}/.cargo/config.toml" >/dev/null
+grep -Fx 'rustflags = ["--cfg", "hostile_build_rustflags"]' \
+  "${FAKE_REPO_ROOT}/.cargo/config.toml" >/dev/null
 grep -Fx 'runner = ["conflicting-config-runner", "--from-config"]' \
+  "${FAKE_REPO_ROOT}/.cargo/config.toml" >/dev/null
+grep -Fx 'rustflags = ["--cfg", "hostile_target_rustflags"]' \
   "${FAKE_REPO_ROOT}/.cargo/config.toml" >/dev/null
 if [[ "${RUSTC:-}" != "${FAKE_CARGO_RUSTC}" || \
   -n "${CARGO_BUILD_RUSTC:-}" ]]; then
@@ -360,6 +366,13 @@ fi
 release_profile_overrides=("${!CARGO_PROFILE_RELEASE_@}")
 if [[ "${#release_profile_overrides[@]}" -ne 0 ]]; then
   echo "fake cargo: inherited release profile override ${release_profile_overrides[*]}" >&2
+  exit 94
+fi
+if [[ "${CARGO_ENCODED_RUSTFLAGS+x}" != "x" ]]; then
+  echo "fake cargo: encoded Rust flags precedence is not pinned" >&2
+  exit 94
+elif [[ -n "${CARGO_ENCODED_RUSTFLAGS}" ]]; then
+  echo "fake cargo: encoded Rust flags were not neutralized" >&2
   exit 94
 fi
 
@@ -439,6 +452,8 @@ run_normal_course() {
     CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true \
     CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true \
     CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_OPT_LEVEL=3 \
+    RUSTFLAGS="--cfg hostile_rustflags" \
+    CARGO_ENCODED_RUSTFLAGS=$'--cfg\x1fhostile_encoded_rustflags' \
     GIT_DIR="${test_dir}/hostile.git" \
     GIT_WORK_TREE="${test_dir}/hostile-worktree" \
     GIT_INDEX_FILE="${test_dir}/hostile-index" \
@@ -532,7 +547,7 @@ if [[ -e "${observed_target_dir}" ]]; then
   exit 1
 fi
 grep -F \
-  "native_target=${native_target} cargo_target=run-scoped/${native_target} native_runner=env-passthrough release_profile_env=neutralized" \
+  "native_target=${native_target} cargo_target=run-scoped/${native_target} native_runner=env-passthrough release_profile_env=neutralized cargo_rustflags=neutralized" \
   "${test_dir}/normal.out" >/dev/null
 
 : >"${normal_log}"
