@@ -100,15 +100,17 @@ diagnostic semantics without deciding plugin runtime mechanics.
 
 | Document | Read it for | Authority caution |
 | --- | --- | --- |
-| [`collaboration-model.md`](collaboration-model.md) | Current merge behavior, ADR-0030 canonical delta evidence, and broader collaboration direction | Semantic merge, ADR-0029's snapshot/history boundary, and ADR-0030's direct-state evidence boundary are Accepted; broader collaboration remains Open Question |
-| [`conflict-resolution.md`](conflict-resolution.md) | Current conflict behavior, its relationship to ADR-0030 delta evidence, and the future conflict model | ADR-0011 merge behavior and ADR-0030's delta boundary are Accepted; #46's versioned conflict-object protocol remains Open Question |
+| [`collaboration-model.md`](collaboration-model.md) | Current merge behavior, Accepted Semantic Conflict v1 evidence, ADR-0030 canonical delta evidence, and broader collaboration direction | ADR-0011 merge behavior, ADR-0031 conflict evidence, ADR-0029 snapshot/history boundary, and ADR-0030 direct-state evidence are Accepted; broader collaboration remains Open Question |
+| [`conflict-resolution.md`](conflict-resolution.md) | Normative `tachiko.semantic-conflict/v1` logical contract: typed targets/facets, three structural conflict kinds, logical identity, canonical ordering, and separation from semantic finalization failure | Accepted under ADR-0031; the current `merge-engine` path-oriented conflict DTO/codec remains Provisional implementation evidence and production realization requires a separate Ready implementation Issue |
 | [`operation-log-model.md`](operation-log-model.md) | Optional retained-history proposal | ADR-0029 makes general history optional and non-authoritative; concrete profiles remain Open Questions |
 | [`event-sourcing-model.md`](event-sourcing-model.md) | Optional event-sourcing-technique hypothesis | ADR-0029 rejects event sourcing as the core persistence model; bounded optional techniques remain Open Questions |
 
 Do not infer that event sourcing, universal CRDT/OT, or a persisted operation
 log are selected merely because design documents exist for them. ADR-0029
 accepts complete current-state snapshots and optional non-authoritative history
-as the governing boundary.
+as the governing boundary. ADR-0031 additionally fixes the structural conflict
+evidence contract without selecting retained history, realtime transport, or
+conflict-resolution UI.
 
 ## Choosing the right source
 

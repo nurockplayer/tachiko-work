@@ -13,9 +13,12 @@ Related authority: [ADR-0003](ADR-0003-ro-and-roproj-representation.md),
 [ADR-0025](ADR-0025-portable-package-v1.md), and
 [ADR-0026](ADR-0026-scoped-semantic-authorization-and-approval.md)
 
-Subsequent authority: [ADR-0030](ADR-0030-canonical-semantic-delta.md)
-resolves the deferred machine-readable Semantic Delta contract without changing
-this current-state/history boundary.
+Subsequent authority:
+[ADR-0030](ADR-0030-canonical-semantic-delta.md) resolves the deferred
+machine-readable Semantic Delta contract, and
+[ADR-0031](ADR-0031-semantic-merge-conflict-protocol.md) resolves the deferred
+deterministic semantic conflict-object contract. Neither changes this
+current-state/history boundary.
 
 ## Context
 
@@ -121,10 +124,10 @@ checkpoint cadence, signing, or trust policy.
 
 This ADR authorizes no production implementation. Its machine-readable semantic
 delta deferral in [Issue #45](https://github.com/nurockplayer/tachiko-work/issues/45)
-is resolved separately by ADR-0030. The following remain open:
+is resolved by ADR-0030, and its deterministic merge/conflict-object deferral in
+[Issue #46](https://github.com/nurockplayer/tachiko-work/issues/46) is resolved by
+ADR-0031. The following remain open:
 
-- [Issue #46](https://github.com/nurockplayer/tachiko-work/issues/46):
-  deterministic merge and conflict objects;
 - [Issue #47](https://github.com/nurockplayer/tachiko-work/issues/47):
   compatibility migration and cross-version branch behavior;
 - [Issue #48](https://github.com/nurockplayer/tachiko-work/issues/48):
@@ -135,6 +138,10 @@ is resolved separately by ADR-0030. The following remain open:
   recovery, and semantic-revision/checkpoint-to-Git association mapping; and
 - [Issue #50](https://github.com/nurockplayer/tachiko-work/issues/50): offline
   causality, selective CRDT/OT boundaries, and resynchronization.
+
+Production realization of ADR-0030 Semantic Delta or ADR-0031 Semantic Conflict
+is not implicitly authorized merely because those logical contracts are
+Accepted; each requires separately Ready implementation work.
 
 Durable revision IDs, event/receipt DTOs, checkpoint formats or cadence,
 history storage, replay/upcasters, causal clocks, Git mapping, and
