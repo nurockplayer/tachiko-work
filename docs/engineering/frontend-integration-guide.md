@@ -117,15 +117,17 @@ dogfood/product-gaps.roproj
 ```
 
 It contains Text, Number, Boolean, and formula-backed fields in a domain unrelated
-to the original Moonfall demo. Copy it into your repository or select it from a
-local Tachiko checkout.
+to the original Moonfall demo. You may copy it into your repository only as a
+local pilot fixture, or select it from a local Tachiko checkout. It remains
+repository product evidence, not a public template or delivery source.
 
 ### 3. Open it and render the first table
 
-The current browser path uses a directory input:
+The current browser path uses a directory input and an ordinary error surface:
 
 ```html
 <input id="project" type="file" webkitdirectory />
+<p id="project-error" role="alert"></p>
 ```
 
 ```ts
@@ -135,23 +137,34 @@ import {
   type TableProjection,
 } from "../vendor/tachiko/experimental-client.js";
 
-const input = document.querySelector<HTMLInputElement>("#project");
-if (input === null) throw new Error("Project input is missing.");
+const inputCandidate = document.querySelector<HTMLInputElement>("#project");
+const errorCandidate = document.querySelector<HTMLElement>("#project-error");
+if (inputCandidate === null || errorCandidate === null) {
+  throw new Error("Project controls are missing.");
+}
+const projectInput = inputCandidate;
+const projectError = errorCandidate;
 
 const client = createExperimentalDesignerClient();
 let currentTable: TableProjection | null = null;
 
-input.addEventListener("change", () => {
-  void openSelectedProject();
+projectInput.addEventListener("change", () => {
+  void openSelectedProject().catch(renderProjectError);
 });
 
 async function openSelectedProject(): Promise<void> {
-  if (input.files === null) return;
+  const files = projectInput.files;
+  if (files === null) return;
 
-  const transfer = await projectTransferFromFiles(input.files);
+  projectError.textContent = "";
+  const transfer = await projectTransferFromFiles(files);
   const opened = await client.openProject(transfer);
   currentTable = opened.table;
   renderTable(opened.table);
+}
+
+function renderProjectError(error: unknown): void {
+  projectError.textContent = error instanceof Error ? error.message : String(error);
 }
 
 function renderTable(table: TableProjection): void {
@@ -163,7 +176,8 @@ function renderTable(table: TableProjection): void {
 ```
 
 `openProject` already returns the initial table. No second query is needed for
-the first useful screen.
+the first useful screen. Keep the rejection handler in the real UI so invalid
+project admission and Worker failures do not become invisible promise errors.
 
 ### 4. Publish an edit and refresh from Tachiko
 
@@ -171,15 +185,23 @@ Use a field target returned by the projection. Never build a target from a row
 number, label, JSON path, or DOM coordinate.
 
 ```ts
-async function editFirstNumber(inputValue: string): Promise<void> {
+async function editProductGapImpact(inputValue: string): Promise<void> {
   const table = currentTable;
   if (table === null) throw new Error("Open a project first.");
 
-  const row = table.rows[0];
-  const field = row?.fields.find(
-    (candidate) => candidate.editable_scalar === "number",
+  const row = table.rows.find(
+    (candidate) => candidate.key === "designer_profile_bound",
   );
-  if (field === undefined) throw new Error("No editable Number field was found.");
+  const column = table.columns.find((candidate) => candidate.key === "impact");
+  if (row === undefined || column === undefined) {
+    throw new Error("The Product Gap impact target is unavailable.");
+  }
+  const field = row.fields.find(
+    (candidate) => candidate.target.field === column.id,
+  );
+  if (field === undefined || field.editable_scalar !== "number") {
+    throw new Error("The Product Gap impact field is not editable as a Number.");
+  }
 
   const publication = await client.editNumber(
     table.revision,
