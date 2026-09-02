@@ -153,7 +153,14 @@ const client = createExperimentalDesignerClient();
 let currentTable: TableProjection | null = null;
 
 projectInput.addEventListener("change", () => {
-  void openSelectedProject().catch(renderProjectError);
+  // Serialize project opens in this bounded sample. A richer UI may use a
+  // request-generation token or cancellation instead.
+  projectInput.disabled = true;
+  void openSelectedProject()
+    .catch(renderProjectError)
+    .finally(() => {
+      projectInput.disabled = false;
+    });
 });
 
 async function openSelectedProject(): Promise<void> {
@@ -182,6 +189,7 @@ function renderTable(table: TableProjection): void {
 `openProject` already returns the initial table. No second query is needed for
 the first useful screen. Keep the rejection handler in the real UI so invalid
 project admission and Worker failures do not become invisible promise errors.
+Do not let an older overlapping open completion replace a newer selection.
 
 ### 4. Publish an edit and refresh from Tachiko
 
