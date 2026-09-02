@@ -58,7 +58,7 @@ Worker + Rust/WASM runtime
 | Temporary input and edit buffers | Formula calculation |
 | Loading and error presentation | Validation and diagnostics |
 | Disposable revision-keyed caches | Revision and stale-edit decisions |
-| Local display-only sorting/grouping | Canonical `.roproj` admission and export |
+| Host persistence and discard confirmation | Canonical `.roproj` admission and export bytes |
 
 You can reach the first table without reading Rust internals, the raw WASM ABI,
 `.roproj` serialization rules, the formula engine, or the ADR collection.
@@ -151,8 +151,14 @@ const projectError = errorCandidate;
 
 const client = createExperimentalDesignerClient();
 let currentTable: TableProjection | null = null;
+let durableRevision: string | null = null;
 
 projectInput.addEventListener("change", () => {
+  if (!confirmDiscardUnpersistedChanges()) {
+    projectInput.value = "";
+    return;
+  }
+
   // Serialize project opens in this bounded sample. A richer UI may use a
   // request-generation token or cancellation instead.
   projectInput.disabled = true;
@@ -171,7 +177,19 @@ async function openSelectedProject(): Promise<void> {
   const transfer = await projectTransferFromFiles(files);
   const opened = await client.openProject(transfer);
   currentTable = opened.table;
+  durableRevision = opened.table.revision;
   renderTable(opened.table);
+}
+
+function hasUnpersistedChanges(): boolean {
+  return currentTable !== null && currentTable.revision !== durableRevision;
+}
+
+function confirmDiscardUnpersistedChanges(): boolean {
+  return (
+    !hasUnpersistedChanges() ||
+    window.confirm("Discard accepted Tachiko changes that have not been saved?")
+  );
 }
 
 function renderProjectError(error: unknown): void {
@@ -189,7 +207,8 @@ function renderTable(table: TableProjection): void {
 `openProject` already returns the initial table. No second query is needed for
 the first useful screen. Keep the rejection handler in the real UI so invalid
 project admission and Worker failures do not become invisible promise errors.
-Do not let an older overlapping open completion replace a newer selection.
+Do not let an older overlapping open completion replace a newer selection, and
+do not replace a project with unpersisted accepted changes without confirmation.
 
 ### 4. Publish an edit and refresh from Tachiko
 
@@ -249,36 +268,46 @@ all returned field projections into the cache, and advance the cache revision in
 the same state update. Updating only the revision or only one edited field leaves
 the UI internally stale.
 
-### 5. Export or close
+### 5. Persist, then close
 
-Always export against the revision currently rendered by your cache. Keep export
-and teardown behind explicit UI actions, not module initialization:
+`exportProject` returns canonical bytes, but returning bytes is not itself a
+durable save. The host must persist them successfully before the frontend marks
+that revision durable.
 
 ```ts
-async function exportCurrentProject(): Promise<ArrayBuffer> {
+async function persistCurrentProject(
+  persist: (bytes: ArrayBuffer) => Promise<void>,
+): Promise<void> {
   const table = currentTable;
   if (table === null) throw new Error("Open a project first.");
 
   const exported = await client.exportProject(table.revision);
-  return exported.bytes;
+  await persist(exported.bytes); // IndexedDB, native host, File System Access, etc.
+  durableRevision = exported.revision;
 }
 
-async function closeDesignerClient(): Promise<void> {
+async function requestCloseDesignerClient(): Promise<boolean> {
+  if (!confirmDiscardUnpersistedChanges()) return false;
+
   try {
     await client.closeProject();
   } finally {
     currentTable = null;
+    durableRevision = null;
     await client.close();
   }
+  return true;
 }
 ```
 
-Call teardown from a UI action and route its rejected promise to the visible
-error surface. The `finally` block always clears the disposable cache and
-terminates the Worker, even when closing the resident project reports a failure.
+Call both functions from explicit UI actions and route rejected promises to the
+visible error surface. The close path refuses to discard an accepted but
+unpersisted revision unless the user confirms. Its `finally` block always clears
+the disposable cache and terminates the Worker once teardown begins, even when
+closing the resident project reports a failure.
 
 The exported bytes are an opaque canonical project bundle. Do not edit them in
-frontend code.
+frontend code, and do not set `durableRevision` until host persistence succeeds.
 
 ## How to read a projection
 
@@ -321,7 +350,7 @@ Do not collapse these into one mutable cell value.
 | `editNumber(revision, target, input)` | Publish a Number edit |
 | `editText(revision, target, value)` | Publish a Text edit |
 | `editBoolean(revision, target, value)` | Publish a Boolean edit |
-| `exportProject(revision)` | Export the exact current canonical project bytes |
+| `exportProject(revision)` | Produce canonical bytes for host-owned persistence |
 | `closeProject()` | Destroy the current resident project occurrence |
 | `close()` | Terminate the Worker |
 
@@ -331,11 +360,13 @@ TypeScript shapes. Every concrete shape remains experimental.
 ## The revision rule
 
 ```text
-render R0
+render R0 (durable)
    ↓ edit with expected R0
-Tachiko accepts and publishes R1
+Tachiko accepts and publishes R1 (resident only)
    ↓ replace or fully patch the cache at R1
 render R1
+   ↓ export R1 + host persistence succeeds
+mark R1 durable
 ```
 
 An edit still based on `R0` after the runtime reaches `R1` throws
@@ -354,6 +385,8 @@ Do not:
 - implement a second formula evaluator or validator;
 - maintain a JavaScript `Document` as competing canonical state;
 - treat failed or stale edits as published;
+- treat returned export bytes as durable before the host saves them;
+- discard accepted resident changes without saving or confirmation;
 - describe the kit as a stable or supported public SDK.
 
 The current experiment is intentionally limited to:
@@ -381,7 +414,7 @@ A first pilot repository should:
 4. publish one revision-safe scalar edit;
 5. show formula or diagnostic evidence returned by Tachiko;
 6. handle a stale or rejected edit honestly;
-7. export or reopen the accepted state;
+7. persist or reopen the accepted state without silent data loss;
 8. record what was confusing.
 
 Visual polish is welcome, but the authority boundary is the actual experiment.
