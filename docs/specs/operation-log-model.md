@@ -164,8 +164,9 @@ later failure does not erase an installed revision; recovery reconciles current
 snapshots plus genuine evidence and moves forward through a new authorized
 command when semantic compensation is needed. An uncertain external outcome is
 reconciled before retry. External correlation, delivery deduplication, and
-idempotency MUST NOT derive from semantic proposal, revision, snapshot,
-transition, receipt, checkpoint, or Git identity.
+idempotency MUST NOT be derived by requirement from semantic proposal,
+revision, snapshot, transition, receipt, checkpoint, or Git identity; the
+authoritative effect boundary owns its separately Deferred mechanism.
 
 Concrete public DTOs, wire mappings, codecs, storage layouts, checkpoint/replay
 engines, retention tooling, Git adapters, cross-effect coordinators, and
