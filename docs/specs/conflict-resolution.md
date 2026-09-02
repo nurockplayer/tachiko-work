@@ -384,9 +384,11 @@ transport, network/SDK shape, hash/UUID identity, storage format, resolver UI,
 or Git merge driver.
 
 Issue [#47](https://github.com/nurockplayer/tachiko-work/issues/47) retains
-cross-version migration work, and
-[#50](https://github.com/nurockplayer/tachiko-work/issues/50) retains
-causality/CRDT work.
+cross-version migration work.
+[ADR-0035](../decisions/ADR-0035-collaboration-causality-and-selective-convergence-boundary.md)
+resolves causality/selective-convergence boundaries while preserving ordinary
+Semantic Conflict for structured meaning; concrete collaboration mechanics
+remain separately owned.
 [ADR-0033](../decisions/ADR-0033-snapshot-first-semantic-history-and-checkpoints.md)
 fixes the bounded logical history/checkpoint/Git-association contract; concrete
 implementations require separately Ready work.

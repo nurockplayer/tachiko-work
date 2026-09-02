@@ -18,6 +18,12 @@ Related authority:
 [ADR-0032](ADR-0032-semantic-execution-and-transition-taxonomy.md), and
 [ADR-0033](ADR-0033-snapshot-first-semantic-history-and-checkpoints.md)
 
+Successor resolution:
+[ADR-0035](ADR-0035-collaboration-causality-and-selective-convergence-boundary.md)
+resolves Issue #50's deferred offline causality, resynchronization, and
+selective-convergence boundary. The Issue #50 references below record ownership
+when this ADR was accepted; they no longer identify an open decision.
+
 ## Context
 
 ADR-0026 defines the provider-neutral MVP authorization and approval contract:
@@ -237,8 +243,9 @@ Separately Ready Issues must own any concrete:
 - runtime authorization or host persistence changes; or
 - offline causality, CRDT, OT, or resynchronization work.
 
-Issue #47 retains cross-version migration behavior, Issue #50 retains offline
-causality and selective CRDT/OT, and Issue #53 retains exact commitment bytes,
+Issue #47 retains cross-version migration behavior. ADR-0035 resolves Issue #50's
+logical offline causality and selective-convergence boundary while concrete
+mechanisms remain separately owned. Issue #53 retains exact commitment bytes,
 digest/signature algorithms, and trust semantics.
 
 ## Required pressure tests

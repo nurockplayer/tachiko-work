@@ -2,8 +2,8 @@
 
 Decision state: Mixed — core event sourcing Rejected by ADR-0029; ADR-0032
 semantic-event meaning and ADR-0033 bounded snapshot-first history techniques
-Accepted; ADR-0034 forward-recovery constraints Accepted; concrete
-implementations Deferred
+Accepted; ADR-0034 forward-recovery and ADR-0035 causal-evidence constraints
+Accepted; concrete implementations Deferred
 
 Implementation state: Not implemented
 
@@ -14,7 +14,9 @@ and
 with optional history profiles defined by
 [ADR-0033](../decisions/ADR-0033-snapshot-first-semantic-history-and-checkpoints.md)
 and cross-effect recovery constrained by
-[ADR-0034](../decisions/ADR-0034-team-workspace-policy-and-recovery-boundary.md)
+[ADR-0034](../decisions/ADR-0034-team-workspace-policy-and-recovery-boundary.md),
+with collaboration causal evidence separated by
+[ADR-0035](../decisions/ADR-0035-collaboration-causality-and-selective-convergence-boundary.md)
 
 Decision provenance: [#49](https://github.com/nurockplayer/tachiko-work/issues/49)
 
@@ -97,7 +99,8 @@ mirroring, or migration creates new association evidence rather than silently
 retargeting an existing association. Exact integrity bytes, signatures, and
 trust remain with #53; concrete Git adapters require separately Ready work.
 
-Issue #50 owns offline causality and selective CRDT/OT mechanics.
+ADR-0035 resolves the logical offline-causality and selective-convergence
+boundary while concrete causal and CRDT/OT mechanics remain separately owned.
 
 ## Constraints already accepted
 
