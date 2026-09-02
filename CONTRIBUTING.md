@@ -69,6 +69,7 @@ focused gate uses pnpm 11.25.0 for lint, typecheck, tests, build, and Chromium
 browser journeys:
 
 ```sh
+pnpm --dir tools/project-dashboard install --frozen-lockfile
 pnpm --dir tools/project-dashboard exec playwright install chromium
 bash scripts/project-dashboard-check.sh
 ```

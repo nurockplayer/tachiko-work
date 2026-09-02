@@ -103,7 +103,9 @@ function executiveStrip(projection: DashboardProjection): HTMLElement {
         : `${String(projection.executive.activeCount.value)} / ${String(projection.executive.readyCount.value)}`,
       availability: projection.executive.activeCount.availability === "complete" && projection.executive.readyCount.availability === "complete"
         ? "complete"
-        : "partial",
+        : projection.executive.activeCount.availability === "unavailable" && projection.executive.readyCount.availability === "unavailable"
+          ? "unavailable"
+          : "partial",
       source: projection.executive.activeCount.source,
     }),
     executiveValue("HUMAN ACTION", projection.executive.humanAction),

@@ -79,6 +79,29 @@ test("renders source failure as partial and Unknown", async ({ page }) => {
   ).toBeVisible();
 });
 
+test("preserves unavailable state for wholly unavailable counts", async ({ page }) => {
+  await page.route("**/api/project", async (route) => {
+    const response = await route.fetch();
+    const projection = (await response.json()) as DashboardProjection;
+    await route.fulfill({
+      response,
+      json: {
+        ...projection,
+        executive: {
+          ...projection.executive,
+          activeCount: { ...projection.executive.activeCount, value: null, availability: "unavailable" },
+          readyCount: { ...projection.executive.readyCount, value: null, availability: "unavailable" },
+        },
+      },
+    });
+  });
+  await page.goto("/");
+
+  const counts = page.locator(".executive-cell").filter({ hasText: "ACTIVE / READY" });
+  await expect(counts.getByText("Unknown", { exact: true })).toBeVisible();
+  await expect(counts.getByText("unavailable", { exact: true })).toBeVisible();
+});
+
 test("shows direct GitHub and Steward facts without a final verdict", async ({ page }) => {
   await page.goto("/");
 
