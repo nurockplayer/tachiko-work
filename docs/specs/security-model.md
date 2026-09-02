@@ -5,8 +5,9 @@ Decision state: Mixed. The semantic authorization laws summarized from
 [ADR-0026](../decisions/ADR-0026-scoped-semantic-authorization-and-approval.md)
 are Accepted;
 [ADR-0034](../decisions/ADR-0034-team-workspace-policy-and-recovery-boundary.md)
-additionally fixes the trusted-host reusable-policy, Human administration, and
-team-audit boundary; ADR-0019 owns diagnostic-code meaning.
+additionally fixes, at its Accepted logical boundary, trusted-host reusable
+policy, Human administration, and team-audit rules; ADR-0019 owns
+diagnostic-code meaning.
 Issue #29 supplies the provisional trusted in-process authorization/Approval
 lifecycle seam, and #30 supplies a provisional provider-facing instruction/data,
 bypass-denial, safe-code, and host-effect-denial adapter over it. Semantic

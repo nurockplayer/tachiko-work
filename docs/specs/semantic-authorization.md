@@ -480,7 +480,7 @@ Normative laws:
    by naming or grouping a subject.
 4. Policy and Grant administration require an explicitly authorized Human
    action at the trusted host boundary. Human PrincipalKind alone grants no
-   administration power. A Delegated principal cannot issue or widen its own
+   administration power. A Delegated principal cannot self-grant, expand its
    authority, change effective policy, or transitively delegate
    administration. Trusted host policy MUST NOT independently issue a Grant
    under this team-policy profile.
@@ -497,9 +497,11 @@ Normative laws:
    possible future versioned host-policy capabilities, not universal semantic-
    core requirements.
 8. Additional administration, policy, review, coordination, and external-effect
-   audit is evidence rather than semantic or authorization authority. Any
-   retention, redaction, or loss MUST disclose gaps truthfully and MUST NOT
-   replace the independently required minimum provenance below.
+   audit is evidence rather than mutation input, Approval, authorization,
+   semantic publication, revision, retained-transition, or semantic-state
+   authority. Retention, redaction, compaction, or loss MUST disclose gaps
+   truthfully, MUST NOT manufacture any such fact, and MUST NOT replace the
+   independently required minimum provenance below.
 
 Exact policy/role catalogues, organization and tenancy models, IAM/SSO/SCIM,
 administration DTOs/storage/UI, quorum workflows, audit profiles, and runtime

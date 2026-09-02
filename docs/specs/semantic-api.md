@@ -731,10 +731,11 @@ recognized Query and Command families. It does not introduce a common
 **Transaction** is also non-normative in this contract. Under ADR-0034, ordered
 AtomicBatch is the only Accepted semantic all-or-nothing publication unit and
 applies to one exact-base document publication. Multi-document workflows are
-orchestration over separately authorized publications with explicit partial
-success. Semantic publication, host persistence, required provenance, optional
-history, Git, and external effects retain separate truthful outcomes; concrete
-transaction/coordinator mechanisms remain Deferred.
+orchestration over separately exact-base, separately authorized publications
+with explicit partial success. Semantic publication, host persistence, required
+provenance, optional history, Git, external effects, and collaboration
+coordination retain separate truthful outcomes; concrete transaction/coordinator
+mechanisms remain Deferred.
 
 The Accepted semantic execution intents are:
 

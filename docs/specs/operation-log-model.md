@@ -163,11 +163,12 @@ effects, and collaboration coordination retain separate truthful outcomes. A
 later failure does not erase an installed revision; recovery reconciles current
 snapshots plus genuine evidence and moves forward through a new authorized
 command when semantic compensation is needed. An uncertain external outcome is
-reconciled before retry, and effect idempotency/correlation never derives from
-semantic or history identity.
+reconciled before retry. External correlation, delivery deduplication, and
+idempotency MUST NOT derive from semantic proposal, revision, snapshot,
+transition, receipt, checkpoint, or Git identity.
 
 Concrete public DTOs, wire mappings, codecs, storage layouts, checkpoint/replay
 engines, retention tooling, Git adapters, cross-effect coordinators, and
-external-effect protocols require separately Ready implementation work. Issue
-#50 owns offline causal metadata, DAG/clock mechanics, resynchronization, and
-selective CRDT/OT. Issue #47 owns cross-version branch migration behavior.
+external-effect protocols require separately Ready implementation work.
+Issue #50 owns offline causal metadata, DAG/clock mechanics, resynchronization,
+and selective CRDT/OT. Issue #47 owns cross-version branch migration behavior.
