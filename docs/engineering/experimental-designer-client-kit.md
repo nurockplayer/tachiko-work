@@ -4,6 +4,11 @@ Status: bounded Issue #232 experiment. This is not a stable/public SDK, npm
 package, wire protocol, plugin ABI, or compatibility promise. The kit may
 change or disappear after the first external-frontend pilot.
 
+New to Tachiko frontend work? Start with
+[Build an experimental Tachiko frontend](frontend-integration-guide.md) for the
+human-first mental model, responsibility split, pilot limits, and feedback
+format. Return here when you are ready to wire the current kit.
+
 The browser frontend receives **projections**: derived semantic facts intended
 for rendering. Every edit carries an **expected revision**, so a stale UI cannot
 silently overwrite a newer authoritative state. The resident Rust **runtime is
