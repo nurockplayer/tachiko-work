@@ -201,6 +201,20 @@ if [[ "${1:-}" == "--internal-run-stage" ]]; then
   exit
 fi
 
+isolated_course=0
+expected_source_head=""
+if [[ "${1:-}" == "--internal-run-course" ]]; then
+  expected_source_head="${2:-}"
+  if [[ "${TACHIKO_OBSTACLE_INTERNAL:-}" != "1" || "$#" -ne 2 || \
+    "${#expected_source_head}" -ne 40 || \
+    "${expected_source_head}" == *[!0-9a-f]* ]]; then
+    usage
+    exit 2
+  fi
+  isolated_course=1
+  set --
+fi
+
 if [[ "$#" -eq 0 ]]; then
   :
 elif [[ "$#" -eq 1 && "$1" == "--list" ]]; then
@@ -262,10 +276,72 @@ if ! run_dir="$(mktemp -d "${physical_temp_root}/tachiko-obstacle.XXXXXX")"; the
   echo "obstacle-course: could not create run directory outside repository" >&2
   exit 1
 fi
+materialization_repo_root="${repo_root}"
+materialized_source_root=""
 cleanup() {
+  if [[ -n "${materialized_source_root}" ]]; then
+    git -C "${materialization_repo_root}" -c core.hooksPath=/dev/null \
+      worktree remove --force "${materialized_source_root}" >/dev/null 2>&1 || true
+  fi
   rm -rf -- "${run_dir}"
 }
 trap cleanup EXIT
+
+if [[ "${isolated_course}" -eq 0 ]]; then
+  if ! requested_head="$(git -C "${repo_root}" rev-parse HEAD)"; then
+    echo "obstacle-course: could not determine exact HEAD to materialize" >&2
+    exit 1
+  fi
+  materialized_source_root="${run_dir}/source"
+  if ! git -C "${repo_root}" -c core.hooksPath=/dev/null \
+    worktree add --detach "${materialized_source_root}" "${requested_head}"; then
+    echo "obstacle-course: could not materialize isolated exact-HEAD source" >&2
+    exit 1
+  fi
+  set +e
+  TACHIKO_OBSTACLE_INTERNAL=1 \
+    bash "${materialized_source_root}/scripts/obstacle-course.sh" \
+      --internal-run-course "${requested_head}"
+  course_status=$?
+  set -e
+  if ! git -C "${repo_root}" -c core.hooksPath=/dev/null \
+    worktree remove --force "${materialized_source_root}"; then
+    echo "obstacle-course: could not remove isolated exact-HEAD source" >&2
+    exit 1
+  fi
+  materialized_source_root=""
+  exit "${course_status}"
+fi
+
+if ! observed_source_head="$(git -C "${repo_root}" rev-parse HEAD)" || \
+  [[ "${observed_source_head}" != "${expected_source_head}" ]]; then
+  echo "obstacle-course: isolated source does not match requested exact HEAD" >&2
+  exit 1
+fi
+if ! source_git_dir="$(git -C "${repo_root}" rev-parse --git-dir)" || \
+  ! source_common_dir="$(git -C "${repo_root}" rev-parse --git-common-dir)" || \
+  [[ "${source_git_dir}" == "${source_common_dir}" ]]; then
+  echo "obstacle-course: source is not an isolated linked worktree" >&2
+  exit 1
+fi
+case "${physical_repo_root}" in
+  "${physical_temp_root}"/tachiko-obstacle.*/source) ;;
+  *)
+    echo "obstacle-course: isolated source is not run-scoped outside the repository" >&2
+    exit 1
+    ;;
+esac
+if ! isolated_source_state="$(git -C "${repo_root}" status \
+  --porcelain --untracked-files=all --ignored=matching)"; then
+  echo "obstacle-course: could not determine worktree state" >&2
+  exit 1
+fi
+if [[ -n "${isolated_source_state}" ]]; then
+  echo "obstacle-course: isolated exact-HEAD source is not clean" >&2
+  exit 1
+fi
+export TACHIKO_OBSTACLE_SOURCE_ROOT="${repo_root}"
+
 performance_log="${run_dir}/performance.log"
 : >"${performance_log}"
 
@@ -616,7 +692,7 @@ verify_workload_identity() {
 }
 
 echo "COURSE ${course_version} commit=${head_commit} worktree=${worktree_state} profile=release network=offline correctness_stages=${correctness_stage_count}"
-echo "ENV os=${os_identity} rustc=${rust_identity} native_target=${native_target} cargo_target=run-scoped/${native_target} native_runner=env-passthrough release_profile_env=neutralized cargo_rustflags=neutralized"
+echo "ENV os=${os_identity} rustc=${rust_identity} native_target=${native_target} source=isolated-exact-head cargo_target=run-scoped/${native_target} native_runner=env-passthrough release_profile_env=neutralized cargo_rustflags=neutralized"
 echo "WORKLOAD stage=repository-dogfood id=product-gaps-roproj/v1 sha256=${dogfood_digest}"
 echo "WORKLOAD stage=git-review-roundtrip id=game-balance-git-review/v0 sha256=${git_review_digest}"
 echo "WORKLOAD stage=semantic-runtime id=focused-semantic-runtime/v0 sha256=${semantic_digest}"

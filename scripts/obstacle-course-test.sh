@@ -126,15 +126,19 @@ done
 normal_repo="${test_dir}/normal-repo"
 normal_bin_dir="${test_dir}/normal-bin"
 normal_log="${test_dir}/normal-toolchain.log"
+normal_materialization_template="${test_dir}/normal-materialization-template"
 native_target="x86_64-pc-windows-msvc"
 normal_tmp="${test_dir}/normal-tmp"
 persistent_target_dir="${normal_repo}/target/obstacle-course"
 stale_tachiko_bin="${persistent_target_dir}/${native_target}/release/tachiko.exe"
 tracked_raw_file="${normal_repo}/tracked-fixture"
+ignored_cargo_input_relative="crates/workspace-engine/build.rs"
+ignored_cargo_input="${normal_repo}/${ignored_cargo_input_relative}"
 mkdir -p \
   "${normal_repo}/.cargo" \
   "${normal_repo}/scripts" \
   "${normal_bin_dir}" \
+  "${normal_materialization_template}" \
   "${test_dir}/normal-cargo-home" \
   "${normal_tmp}" \
   "$(dirname "${stale_tachiko_bin}")"
@@ -158,6 +162,7 @@ for fixture in \
     >"${normal_repo}/${fixture}"
 done
 printf 'raw tracked bytes before\n' >"${tracked_raw_file}"
+printf '/%s\n' "${ignored_cargo_input_relative}" >"${normal_repo}/.gitignore"
 
 cat >"${normal_repo}/.cargo/config.toml" <<'EOF'
 [build]
@@ -188,6 +193,13 @@ exit 99
 EOF
 chmod +x "${normal_repo}/scripts/git-ci-smoke.sh"
 
+cp -R "${normal_repo}/." "${normal_materialization_template}"
+rm -rf -- "${normal_materialization_template}/target"
+mkdir -p "$(dirname "${ignored_cargo_input}")"
+printf '%s\n' \
+  'compile_error!("ignored live-checkout build script must stay isolated");' \
+  >"${ignored_cargo_input}"
+
 cat >"${normal_bin_dir}/git" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -216,14 +228,56 @@ if [[ "${GIT_CONFIG_GLOBAL:-}" != "/dev/null" || \
   exit 93
 fi
 
-if [[ "${1:-}" != "-C" || "${2:-}" != "${FAKE_REPO_ROOT}" ]]; then
-  echo "fake git: query is not bound to ${FAKE_REPO_ROOT}: $*" >&2
+if [[ "${1:-}" != "-C" ]]; then
+  echo "fake git: query is not repository-bound: $*" >&2
   exit 2
 fi
+query_root="${2:-}"
+case "${query_root}" in
+  "${FAKE_REPO_ROOT}") ;;
+  "${FAKE_COURSE_TMP_ROOT}"/tachiko-obstacle.*/source) ;;
+  *)
+    echo "fake git: query is not bound to the live or isolated source: $*" >&2
+    exit 2
+    ;;
+esac
 shift 2
 
-if [[ "${1:-}" == "rev-parse" && "${2:-}" == "HEAD" ]]; then
+while [[ "${1:-}" == "-c" ]]; do
+  if [[ "$#" -lt 2 || "${2:-}" != "core.hooksPath=/dev/null" ]]; then
+    echo "fake git: unexpected command-scoped configuration: $*" >&2
+    exit 2
+  fi
+  shift 2
+done
+
+if [[ "${1:-}" == "worktree" && "${2:-}" == "add" ]]; then
+  if [[ "${query_root}" != "${FAKE_REPO_ROOT}" || "$#" -ne 5 || \
+    "${3:-}" != "--detach" || "${5:-}" != "0123456789abcdef0123456789abcdef01234567" ]]; then
+    echo "fake git: malformed isolated worktree materialization: $*" >&2
+    exit 2
+  fi
+  mkdir -p "${4}"
+  cp -R "${FAKE_MATERIALIZATION_TEMPLATE}/." "${4}"
+  exit 0
+elif [[ "${1:-}" == "worktree" && "${2:-}" == "remove" ]]; then
+  if [[ "${query_root}" != "${FAKE_REPO_ROOT}" || "$#" -ne 4 || \
+    "${3:-}" != "--force" ]]; then
+    echo "fake git: malformed isolated worktree cleanup: $*" >&2
+    exit 2
+  fi
+  rm -rf -- "${4}"
+  exit 0
+elif [[ "${1:-}" == "rev-parse" && "${2:-}" == "HEAD" ]]; then
   echo "0123456789abcdef0123456789abcdef01234567"
+elif [[ "${1:-}" == "rev-parse" && "${2:-}" == "--git-dir" ]]; then
+  if [[ "${query_root}" == "${FAKE_REPO_ROOT}" ]]; then
+    echo "${FAKE_REPO_ROOT}/.git"
+  else
+    echo "${FAKE_REPO_ROOT}/.git/worktrees/isolated-source"
+  fi
+elif [[ "${1:-}" == "rev-parse" && "${2:-}" == "--git-common-dir" ]]; then
+  echo "${FAKE_REPO_ROOT}/.git"
 elif [[ "${1:-}" == "status" ]]; then
   if [[ "${FAKE_GIT_STATUS_FAIL:-0}" == "1" ]]; then
     echo "fake git: intentional status failure" >&2
@@ -237,8 +291,9 @@ elif [[ "${1:-}" == "diff" ]]; then
   echo "normalized tracked diff"
 elif [[ "${1:-}" == "ls-files" ]]; then
   if [[ " $* " == *" --cached "* ]]; then
-    printf 'tracked-fixture\0'
+    printf '.gitignore\0tracked-fixture\0'
   elif [[ " $* " == *" --stage "* ]]; then
+    printf '100644 fake-ignore-object 0\t.gitignore\0'
     printf '100644 fake-index-object 0\ttracked-fixture\0'
   fi
   exit 0
@@ -249,7 +304,8 @@ elif [[ "${1:-}" == "check-ignore" ]]; then
   fi
   candidate="${!#}"
   if [[ -n "${FAKE_GIT_IGNORED_PATH:-}" && \
-    "${candidate}" == "${FAKE_GIT_IGNORED_PATH}" ]]; then
+    "${candidate}" == "${FAKE_GIT_IGNORED_PATH}" ]] || \
+    [[ "${candidate}" == "${FAKE_IGNORED_CARGO_INPUT_RELATIVE:-}" ]]; then
     exit 0
   fi
   exit 1
@@ -304,13 +360,15 @@ printf 'stage-bin path=%s target_dir=%s build_target=%s\n' \
   "$0" "${CARGO_TARGET_DIR:-unset}" "${CARGO_BUILD_TARGET:-unset}" \
   >>"${FAKE_TOOLCHAIN_LOG}"
 if [[ "${FAKE_TRIGGER_FINGERPRINT_DRIFT:-0}" == "1" ]]; then
-  printf 'raw tracked bytes after\r\n' >"${FAKE_TRACKED_RAW_FILE}"
+  printf 'raw tracked bytes after\r\n' \
+    >"${TACHIKO_OBSTACLE_SOURCE_ROOT}/${FAKE_TRACKED_RAW_RELATIVE}"
 fi
 if [[ "${FAKE_TRIGGER_IGNORED_DRIFT:-0}" == "1" ]]; then
-  printf 'ignored host artifact\n' >"${FAKE_IGNORED_RAW_FILE}"
+  printf 'ignored host artifact\n' \
+    >"${TACHIKO_OBSTACLE_SOURCE_ROOT}/${FAKE_IGNORED_RAW_RELATIVE}"
 fi
 if [[ "${FAKE_TRIGGER_EMPTY_DIRECTORY_DRIFT:-0}" == "1" ]]; then
-  mkdir -p "${FAKE_EMPTY_DIRECTORY}"
+  mkdir -p "${TACHIKO_OBSTACLE_SOURCE_ROOT}/${FAKE_EMPTY_DIRECTORY_RELATIVE}"
 fi
 exit 97
 EOF
@@ -331,22 +389,42 @@ cat >"${normal_bin_dir}/cargo" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
+source_root="${TACHIKO_OBSTACLE_SOURCE_ROOT:?}"
+case "${source_root}" in
+  "${FAKE_COURSE_TMP_ROOT}"/tachiko-obstacle.*/source) ;;
+  *)
+    echo "fake cargo: source is not run-scoped and isolated: ${source_root}" >&2
+    exit 94
+    ;;
+esac
+if [[ -e "${source_root}/${FAKE_IGNORED_CARGO_INPUT_RELATIVE}" ]]; then
+  echo "fake cargo: ignored live-checkout Cargo input entered isolated source" >&2
+  exit 94
+fi
+if ! git -C "${source_root}" check-ignore -q -- \
+  "${FAKE_IGNORED_CARGO_INPUT_RELATIVE}"; then
+  echo "fake cargo: hostile Cargo input is not classified as ignored" >&2
+  exit 94
+fi
+printf 'cargo-source root=%s ignored_live_input=absent\n' \
+  "${source_root}" >>"${FAKE_TOOLCHAIN_LOG}"
+
 grep -Fx 'target = "conflicting-config-target"' \
-  "${FAKE_REPO_ROOT}/.cargo/config.toml" >/dev/null
+  "${source_root}/.cargo/config.toml" >/dev/null
 grep -Fx 'target-dir = "conflicting-config-target-dir"' \
-  "${FAKE_REPO_ROOT}/.cargo/config.toml" >/dev/null
+  "${source_root}/.cargo/config.toml" >/dev/null
 grep -Fx 'rustc = "conflicting-config-rustc"' \
-  "${FAKE_REPO_ROOT}/.cargo/config.toml" >/dev/null
+  "${source_root}/.cargo/config.toml" >/dev/null
 grep -Fx 'rustc-wrapper = "conflicting-config-rustc-wrapper"' \
-  "${FAKE_REPO_ROOT}/.cargo/config.toml" >/dev/null
+  "${source_root}/.cargo/config.toml" >/dev/null
 grep -Fx 'rustc-workspace-wrapper = "conflicting-config-workspace-wrapper"' \
-  "${FAKE_REPO_ROOT}/.cargo/config.toml" >/dev/null
+  "${source_root}/.cargo/config.toml" >/dev/null
 grep -Fx 'rustflags = ["--cfg", "hostile_build_rustflags"]' \
-  "${FAKE_REPO_ROOT}/.cargo/config.toml" >/dev/null
+  "${source_root}/.cargo/config.toml" >/dev/null
 grep -Fx 'runner = ["conflicting-config-runner", "--from-config"]' \
-  "${FAKE_REPO_ROOT}/.cargo/config.toml" >/dev/null
+  "${source_root}/.cargo/config.toml" >/dev/null
 grep -Fx 'rustflags = ["--cfg", "hostile_target_rustflags"]' \
-  "${FAKE_REPO_ROOT}/.cargo/config.toml" >/dev/null
+  "${source_root}/.cargo/config.toml" >/dev/null
 if [[ "${RUSTC:-}" != "${FAKE_CARGO_RUSTC}" || \
   -n "${CARGO_BUILD_RUSTC:-}" ]]; then
   echo "fake cargo: compiler selection is not normalized" >&2
@@ -486,13 +564,16 @@ run_normal_course() {
     FAKE_TRIGGER_FINGERPRINT_DRIFT="${trigger_fingerprint_drift}" \
     FAKE_TRIGGER_IGNORED_DRIFT="${trigger_ignored_drift}" \
     FAKE_TRIGGER_EMPTY_DIRECTORY_DRIFT="${trigger_empty_directory_drift}" \
-    FAKE_TRACKED_RAW_FILE="${tracked_raw_file}" \
-    FAKE_IGNORED_RAW_FILE="${normal_repo}/crates/workspace-engine/tests/common/.DS_Store" \
-    FAKE_EMPTY_DIRECTORY="${normal_repo}/crates/workspace-engine/tests/common/empty-host-directory" \
+    FAKE_TRACKED_RAW_RELATIVE=tracked-fixture \
+    FAKE_IGNORED_RAW_RELATIVE=crates/workspace-engine/tests/common/.DS_Store \
+    FAKE_EMPTY_DIRECTORY_RELATIVE=crates/workspace-engine/tests/common/empty-host-directory \
     FAKE_GIT_IGNORED_PATH=crates/workspace-engine/tests/common/.DS_Store \
     FAKE_NATIVE_TARGET="${native_target}" \
     FAKE_CARGO_RUSTC="${normal_bin_dir}/cargo-rustc" \
     FAKE_REPO_ROOT="${normal_repo}" \
+    FAKE_COURSE_TMP_ROOT="${normal_tmp}" \
+    FAKE_MATERIALIZATION_TEMPLATE="${normal_materialization_template}" \
+    FAKE_IGNORED_CARGO_INPUT_RELATIVE="${ignored_cargo_input_relative}" \
     FAKE_PERSISTENT_TARGET_DIR="${persistent_target_dir}" \
     FAKE_TACHIKO_TEMPLATE="${test_dir}/fake-tachiko" \
     FAKE_TOOLCHAIN_LOG="${normal_log}" \
@@ -518,10 +599,21 @@ require_normal_log() {
 observed_target_dir="$(sed -n \
   's/^cargo command=build target_dir=\([^ ]*\) build_target=.*/\1/p' \
   "${normal_log}")"
+observed_source_root="$(sed -n \
+  's/^cargo-source root=\([^ ]*\) ignored_live_input=absent$/\1/p' \
+  "${normal_log}" | head -n 1)"
 case "${observed_target_dir}" in
   "${normal_tmp}"/tachiko-obstacle.*/cargo-target) ;;
   *)
     echo "obstacle-course test: Cargo target is not run-scoped: ${observed_target_dir}" >&2
+    sed 's/^/  /' "${normal_log}" >&2
+    exit 1
+    ;;
+esac
+case "${observed_source_root}" in
+  "${normal_tmp}"/tachiko-obstacle.*/source) ;;
+  *)
+    echo "obstacle-course test: Cargo source is not isolated: ${observed_source_root}" >&2
     sed 's/^/  /' "${normal_log}" >&2
     exit 1
     ;;
@@ -546,8 +638,12 @@ if [[ -e "${observed_target_dir}" ]]; then
   echo "obstacle-course test: run-scoped Cargo target survived cleanup" >&2
   exit 1
 fi
+if [[ -e "${observed_source_root}" ]]; then
+  echo "obstacle-course test: isolated source survived cleanup" >&2
+  exit 1
+fi
 grep -F \
-  "native_target=${native_target} cargo_target=run-scoped/${native_target} native_runner=env-passthrough release_profile_env=neutralized cargo_rustflags=neutralized" \
+  "native_target=${native_target} source=isolated-exact-head cargo_target=run-scoped/${native_target} native_runner=env-passthrough release_profile_env=neutralized cargo_rustflags=neutralized" \
   "${test_dir}/normal.out" >/dev/null
 
 : >"${normal_log}"
@@ -581,19 +677,19 @@ fi
 
 : >"${normal_log}"
 printf 'raw tracked bytes before\n' >"${tracked_raw_file}"
-if run_normal_course 0 1 1 0 0 \
+if run_normal_course 0 0 1 0 0 \
   "${test_dir}/fingerprint-drift.out" \
   "${test_dir}/fingerprint-drift.err"; then
-  echo "obstacle-course test: dirty source mutation unexpectedly produced stable evidence" >&2
+  echo "obstacle-course test: isolated source mutation unexpectedly produced stable evidence" >&2
   exit 1
 fi
 grep -F "EVIDENCE FAIL: source identity changed checkpoint=after-repository-dogfood" \
   "${test_dir}/fingerprint-drift.err" >/dev/null
-grep -F "expected_worktree=dirty observed_worktree=dirty" \
+grep -F "expected_worktree=clean observed_worktree=clean" \
   "${test_dir}/fingerprint-drift.err" >/dev/null
 if grep -Fq "EVIDENCE source_identity=stable" \
   "${test_dir}/fingerprint-drift.out"; then
-  echo "obstacle-course test: changed dirty source was reported stable" >&2
+  echo "obstacle-course test: changed isolated source was reported stable" >&2
   exit 1
 fi
 
@@ -604,13 +700,16 @@ printf 'preexisting ignored host artifact\n' \
 if run_normal_course 0 0 0 0 0 \
   "${test_dir}/ignored-initial.out" \
   "${test_dir}/ignored-initial.err"; then
-  echo "obstacle-course test: preexisting ignored workload input unexpectedly passed" >&2
+  echo "obstacle-course test: intentionally failing fake stage unexpectedly passed" >&2
   exit 1
 fi
-grep -F "obstacle-course: ignored entry cannot be a workload input 'crates/workspace-engine/tests/common/.DS_Store'" \
-  "${test_dir}/ignored-initial.err" >/dev/null
-if grep -Fq "cargo command=" "${normal_log}"; then
-  echo "obstacle-course test: setup ran after ignored workload rejection" >&2
+if grep -Fq "ignored entry cannot be a workload input" \
+  "${test_dir}/ignored-initial.err"; then
+  echo "obstacle-course test: live ignored workload input entered isolated source" >&2
+  exit 1
+fi
+if ! grep -Fq "cargo command=build" "${normal_log}"; then
+  echo "obstacle-course test: setup did not run from isolated source" >&2
   exit 1
 fi
 
@@ -621,13 +720,16 @@ ln -s ignored-host-target \
 if run_normal_course 0 0 0 0 0 \
   "${test_dir}/ignored-symlink.out" \
   "${test_dir}/ignored-symlink.err"; then
-  echo "obstacle-course test: ignored workload symlink unexpectedly passed" >&2
+  echo "obstacle-course test: intentionally failing fake stage unexpectedly passed" >&2
   exit 1
 fi
-grep -F "obstacle-course: ignored entry cannot be a workload input 'crates/workspace-engine/tests/common/.DS_Store'" \
-  "${test_dir}/ignored-symlink.err" >/dev/null
-if grep -Fq "cargo command=" "${normal_log}"; then
-  echo "obstacle-course test: setup ran after ignored symlink rejection" >&2
+if grep -Fq "ignored entry cannot be a workload input" \
+  "${test_dir}/ignored-symlink.err"; then
+  echo "obstacle-course test: live ignored workload symlink entered isolated source" >&2
+  exit 1
+fi
+if ! grep -Fq "cargo command=build" "${normal_log}"; then
+  echo "obstacle-course test: setup did not run from isolated source" >&2
   exit 1
 fi
 

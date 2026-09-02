@@ -40,6 +40,13 @@ exact target runner to an `env` passthrough, overriding user or repository Cargo
 runner configuration. `--list` prints the closed v0 stage registry without
 building or running it.
 
+Before setup, the runner materializes the requested full Git `HEAD` as a clean,
+detached linked worktree under its temporary run root and re-executes the
+course-owned runner from that source. Cargo, build scripts, workload fixtures,
+and correctness stages therefore cannot observe ignored or untracked source
+inputs from the invoking checkout. This is a bounded source-isolation boundary,
+not a general hermetic-build or sandbox contract.
+
 ## v0 course
 
 The course has exactly four correctness stages. All production behavior and
@@ -107,30 +114,31 @@ change in ignore polarity cannot silently skip the selected test body.
 
 Before running, the command reports:
 
-- the full 40-character Git commit and `clean`/`dirty` state;
+- the full 40-character Git commit and clean isolated-source state;
 - release profile and offline network policy;
 - OS/architecture and Rust compiler identity;
 - a versioned workload ID and SHA-256 manifest digest for every stage.
 
-A dirty run is provisional because the commit alone does not identify its
-source. Final evidence must come from a clean exact HEAD. The runner rechecks
-the commit, clean/dirty state, and a byte-sensitive fingerprint of tracked
-changes plus relevant untracked file contents after setup and after every stage.
-It also recomputes each exact workload-tree manifest at those checkpoints.
-Regular files and every directory path, including empty directories, are bound
-to that manifest. Ignored entries, symlinks, and special entries inside a
-workload path are rejected before execution and at checkpoints, because a
-stage could observe them even though Git excludes them from ordinary
-source-state enumeration. The run is rejected if source or workload identity
-changes while evidence is being collected. Repository-selecting and
-command-scoped Git environment variables, including inherited author/committer
-identity and dates, are cleared; every identity query is bound to the course
-checkout; and the Git-review stage ignores user/system Git configuration such
-as commit signing and hook paths. The runner rejects a `TMPDIR` that resolves
-to the checkout or one of its descendants, keeping its own transient evidence
-outside the source fingerprint. It also creates a fresh run-scoped Cargo target
-directory, derives and pins the native host target from the compiler Cargo uses,
-and uses
+The runner verifies that its source is a clean, detached linked worktree at the
+requested full commit before collecting evidence. It then rechecks the commit,
+clean state, and a byte-sensitive fingerprint of tracked changes plus any
+untracked file contents introduced inside that isolated source after setup and
+after every stage. It also recomputes each exact workload-tree manifest at those
+checkpoints. Regular files and every directory path, including empty
+directories, are bound to that manifest. Ignored entries, symlinks, and special
+entries introduced inside a workload path are rejected before execution or at
+checkpoints, because a stage could observe them even though Git excludes them
+from ordinary source-state enumeration. The run is rejected if source or
+workload identity changes while evidence is being collected.
+Repository-selecting and command-scoped Git environment variables, including
+inherited author/committer identity and dates, are cleared; every identity query
+is bound to the isolated course source; and materialization suppresses Git hook
+execution. The Git-review stage also ignores user/system Git configuration such
+as commit signing and hook paths. The runner rejects a `TMPDIR` that resolves to
+the invoking checkout or one of its descendants, keeping the isolated source
+and transient evidence outside it. It also creates a fresh run-scoped Cargo
+target directory, derives and pins the native host target from the compiler
+Cargo uses, and uses
 `<run-target>/<native-target>/release/`. Every CLI stage therefore uses the
 platform-named release binary built by the same run rather than an inherited,
 Cargo-config-selected, concurrently written, or stale artifact. The run target
@@ -199,8 +207,9 @@ hide a current regression.
   service, model call, or hostname-specific behavior is introduced.
 
 The public registry/fail-closed option seam, exact-test execution, compiler/Git
-environment isolation, ignored-workload rejection, and run-scoped native
-artifact binding have a focused check:
+environment isolation, exact-HEAD source materialization (including a hostile
+ignored Cargo input), ignored-workload rejection, and run-scoped native artifact
+binding have a focused check:
 
 ```sh
 bash scripts/obstacle-course-test.sh
