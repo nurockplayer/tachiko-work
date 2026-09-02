@@ -2,8 +2,8 @@
 
 Decision state: Mixed — current merge behavior, the deterministic Semantic
 Conflict v1 protocol, ADR-0029 history boundary, ADR-0030 canonical delta
-evidence, and ADR-0032 execution/transition taxonomy are Accepted; broader
-collaboration remains Open Question.
+evidence, ADR-0032 execution/transition taxonomy, and ADR-0033 snapshot-first
+history profiles are Accepted; broader collaboration remains Open Question.
 
 Authority: [ADR-0011](../decisions/ADR-0011-semantic-three-way-merge.md),
 [ADR-0031](../decisions/ADR-0031-semantic-merge-conflict-protocol.md), and
@@ -12,6 +12,8 @@ with canonical direct-state delta evidence defined by
 [ADR-0030](../decisions/ADR-0030-canonical-semantic-delta.md), execution and
 retained-transition taxonomy defined by
 [ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md),
+snapshot-first history/checkpoint guarantees defined by
+[ADR-0033](../decisions/ADR-0033-snapshot-first-semantic-history-and-checkpoints.md),
 and deterministic conflict evidence specified by
 [`conflict-resolution.md`](conflict-resolution.md).
 
@@ -71,22 +73,36 @@ A structurally conflict-free merge that creates an invalid reference or formula
 state is rejected by ordinary semantic finalization; it does not invent another
 conflict kind.
 
-## Accepted taxonomy and still-open mechanics
+## Accepted taxonomy and bounded history
 
 - operation/revision/optional-event taxonomy is fixed by
   [ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md)
-- optional retained history, checkpoints, replay, compaction, and Git association
-  (#49)
+- optional history declares snapshot-only, retained-evidence, or verified-tail
+  capability under
+  [ADR-0033](../decisions/ADR-0033-snapshot-first-semantic-history-and-checkpoints.md)
+- a verified tail requires one complete checkpoint, one contiguous supported
+  version-pinned replay segment, and canonical equality with the exact later
+  authoritative snapshot
+- retained transitions and Semantic Delta remain evidence rather than the
+  replay program; replay-capable history additionally retains deterministic
+  version-pinned `Command | AtomicBatch` input and required semantic resources
+- compaction, redaction, snapshot/history failure, forward-only undo, and
+  optional many-to-many Git association preserve explicit coverage and
+  snapshot-first authority under ADR-0033
+- concrete history DTOs, storage, checkpoint/replay engines, retention tooling,
+  and Git adapters remain separately owned implementation work
 - offline causality and selectively justified CRDT/OT boundaries (#50)
 - cross-version migration/branch behavior (#47)
+- broader multi-effect transaction/rollback and team recovery policy (#11)
+- exact commitment bytes, signatures, and trust semantics (#53)
 - interactive conflict-resolution UX and broader review workflow
 - realtime collaboration transport and service topology
 
 ## Future
 
-Possible foundations include:
+Possible implementation foundations include:
 
-- optional retained semantic transition history;
+- optional retained evidence or a verified checkpoint tail under ADR-0033;
 - selectively justified CRDT/OT adapters for named structures;
 - Git adapters and review workflows; and
 - AI assistance that explains or proposes conflict resolution while deterministic
