@@ -2,8 +2,9 @@
 
 Decision state: Mixed — current merge behavior, the deterministic Semantic
 Conflict v1 protocol, ADR-0029 history boundary, ADR-0030 canonical delta
-evidence, ADR-0032 execution/transition taxonomy, and ADR-0033 snapshot-first
-history profiles are Accepted; broader collaboration remains Open Question.
+evidence, ADR-0032 execution/transition taxonomy, ADR-0033 snapshot-first
+history profiles, and ADR-0034 team policy/recovery boundary are Accepted;
+broader collaboration remains Open Question.
 
 Authority: [ADR-0011](../decisions/ADR-0011-semantic-three-way-merge.md),
 [ADR-0031](../decisions/ADR-0031-semantic-merge-conflict-protocol.md), and
@@ -14,6 +15,8 @@ retained-transition taxonomy defined by
 [ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md),
 snapshot-first history/checkpoint guarantees defined by
 [ADR-0033](../decisions/ADR-0033-snapshot-first-semantic-history-and-checkpoints.md),
+team policy and cross-effect recovery constrained by
+[ADR-0034](../decisions/ADR-0034-team-workspace-policy-and-recovery-boundary.md),
 and deterministic conflict evidence specified by
 [`conflict-resolution.md`](conflict-resolution.md).
 
@@ -94,7 +97,11 @@ conflict kind.
   and Git adapters remain separately owned implementation work
 - offline causality and selectively justified CRDT/OT boundaries (#50)
 - cross-version migration/branch behavior (#47)
-- broader multi-effect transaction/rollback and team recovery policy (#11)
+- multi-document workflows remain orchestration over separately exact-base,
+  authorized publications; partial success is explicit under ADR-0034
+- semantic publication, persistence, required provenance, optional history,
+  Git, external effects, and coordination retain separate truthful outcomes;
+  concrete transaction/coordinator mechanisms remain Deferred
 - exact commitment bytes, signatures, and trust semantics (#53)
 - interactive conflict-resolution UX and broader review workflow
 - realtime collaboration transport and service topology

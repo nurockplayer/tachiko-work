@@ -3,7 +3,10 @@
 Decision state: Accepted under
 [ADR-0026](../decisions/ADR-0026-scoped-semantic-authorization-and-approval.md),
 with receipt/retained-transition separation reconciled by
-[ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md).
+[ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md)
+and reusable team-policy, administration, recovery, and audit boundaries
+constrained by
+[ADR-0034](../decisions/ADR-0034-team-workspace-policy-and-recovery-boundary.md).
 
 Implementation state: partially implemented by the provisional
 `workspace-engine::patch_lifecycle` module under Issue #29. It provides one
@@ -22,7 +25,9 @@ resident session, opaque monotonic revision, and guarded in-process state
 installation through that existing publication seam. Concrete identity
 provisioning, durable registry/receipt storage, public DTO/wire integrity,
 broader cross-host concurrency, and transaction/recovery mechanics remain
-unimplemented. Current convenience `Suggestion` remains inert and is not a
+unimplemented. Reusable team policy and administration are Accepted only at the
+logical boundary defined by ADR-0034; no concrete policy/IAM runtime is
+implemented. Current convenience `Suggestion` remains inert and is not a
 SemanticPatch, Grant, Approval, execution credential, or public protocol.
 
 Decision issue: [#28](https://github.com/nurockplayer/tachiko-work/issues/28)
@@ -34,7 +39,9 @@ Related authority:
 [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md),
 [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md),
 [ADR-0024](../decisions/ADR-0024-revision-pinned-semantic-patch.md), and
-[ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md).
+[ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md),
+and
+[ADR-0034](../decisions/ADR-0034-team-workspace-policy-and-recovery-boundary.md).
 
 ## Purpose
 
@@ -447,6 +454,51 @@ Normative laws:
 Exact Grant DTOs, identifiers, storage, administration, expiry/clock encoding,
 and bootstrap remain Provisional.
 
+## Reusable team policy and administration
+
+ADR-0034 permits a trusted host to administer reusable policy only as a
+selector or constraint over this specification's existing action,
+OperationFamily, MutationClass, and document-local stable-ID scope
+requirements.
+
+Normative laws:
+
+1. Reusable policy MUST NOT mint authority by itself or replace applicable live
+   Grants, exact Approval, trusted footprint derivation, effective-policy, or
+   publication-boundary checks.
+2. Policy MUST NOT create ambient session trust, provider/model privilege,
+   transferable authority, delegated self-escalation, or another semantic scope
+   model.
+3. Team, project, workspace, organization, directory, group, path, branch, Git,
+   storage, provider, model, login, and display-name facts MAY help the trusted
+   host select policy. They MUST NOT become semantic identity or scope merely
+   by naming or grouping a subject.
+4. Policy and Grant administration require an explicitly authorized Human
+   action at the trusted host boundary. Human PrincipalKind alone grants no
+   administration power. A Delegated principal cannot issue or widen its own
+   authority, change effective policy, or transitively delegate
+   administration.
+5. Policy meaning and selection obey this specification's immutable-version
+   and uninterrupted-selection laws. A transition away and back MUST NOT revive
+   an older Approval.
+6. Host policy MAY require a fresh explicit Human review gate for additional
+   Human-originated schema, destructive, publication, permission, or
+   administration actions. For semantic publication that gate composes with
+   exact Approval; it MUST NOT redefine Approval as authority for non-semantic
+   administration or waive Approval required for Delegated-origin or
+   Delegated-authority semantic publication.
+7. Separation of duties, quorum, multi-party approval, and approval chains are
+   possible future versioned host-policy capabilities, not universal semantic-
+   core requirements.
+8. Additional administration, policy, review, coordination, and external-effect
+   audit is evidence rather than semantic or authorization authority. Any
+   retention, redaction, or loss MUST disclose gaps truthfully and MUST NOT
+   replace the independently required minimum provenance below.
+
+Exact policy/role catalogues, organization and tenancy models, IAM/SSO/SCIM,
+administration DTOs/storage/UI, quorum workflows, audit profiles, and runtime
+enforcement changes require separately Ready work.
+
 ## Disclosure and review contract
 
 1. Propose authority does not imply Query authority.
@@ -682,10 +734,11 @@ Active -> Consumed | Revoked | Expired
   only when that fresh boundary Query decision permits the detail; otherwise
   the executor receives authorization denial. Issue #93 supplies the current
   in-process revision and guarded state installation; broader cross-host
-  concurrency and transaction/recovery remain with #11. ADR-0032 fixes the
-  transition/receipt/event taxonomy, while ADR-0033 fixes the snapshot-first
-  logical history, checkpoint, replay, and retention boundaries. Concrete
-  persistence and operational mechanics require separately Ready work.
+  concurrency remains Deferred. ADR-0032 fixes the transition/receipt/event
+  taxonomy, ADR-0033 fixes the snapshot-first logical history, checkpoint,
+  replay, and retention boundaries, and ADR-0034 fixes cross-effect recovery
+  without selecting a transaction coordinator. Concrete persistence and
+  operational mechanics require separately Ready work.
 - The current direct-Human path resolves the proposal originator's retained
   immutable PrincipalKind without making originator activity a common
   publication condition; the executor must remain an active Human with live
@@ -1239,7 +1292,9 @@ disclosure scope.
 | External-effect capability vocabulary | Deferred |
 | Roles/groups/ABAC/policy DSL/SSO/SCIM/tenancy | Deferred |
 | Auto-approval, autonomous mutation, quorum/multi-party approval | Deferred |
-| Broader transaction/recovery and event sourcing/operation log/undo/history protocol | Transaction/recovery Deferred to #11; ADR-0032 fixes history taxonomy and ADR-0033 fixes snapshot-first logical profiles while concrete mechanics remain Deferred to separately Ready work |
+| Reusable team policy as a trusted-host selector/constraint over existing ADR-0026 authority; explicit Human authority for administration; additional team audit as non-authoritative evidence | Accepted under ADR-0034 |
+| Exact policy/role catalogue, organization/tenancy model, IAM/SSO/SCIM, quorum workflow, audit profile, and runtime administration mechanics | Deferred |
+| Broader transaction/recovery and event sourcing/operation log/undo/history protocol | ADR-0034 fixes truthful cross-effect outcomes, forward reconciliation, and multi-document orchestration; ADR-0032 fixes history taxonomy and ADR-0033 fixes snapshot-first logical profiles while concrete mechanics remain Deferred to separately Ready work |
 | Public Rust/Serde/wire authorization DTO | Deferred |
 
 ## Ownership boundaries
@@ -1262,8 +1317,9 @@ disclosure scope.
   denial, and security regression seam.
 - #93 implements current internal resident session/revision/state-installation
   mechanics; broader cross-host concurrency remains Deferred.
-- #11 owns broader team/enterprise permissions, reusable policy questions, and
-  transaction/recovery architecture.
+- ADR-0034 owns the broader trusted-host team-policy, Human-administration,
+  multi-document orchestration, cross-effect recovery, and team-audit boundary
+  without selecting concrete mechanisms.
 - ADR-0032 owns transition/receipt/event taxonomy; ADR-0033 owns snapshot-first
   history profiles, checkpoints, replay/compaction, undo, and retention
   boundaries under ADR-0029. Concrete persisted mechanics remain separately
