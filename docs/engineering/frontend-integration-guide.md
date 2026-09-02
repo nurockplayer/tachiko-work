@@ -264,11 +264,18 @@ async function exportCurrentProject(): Promise<ArrayBuffer> {
 }
 
 async function closeDesignerClient(): Promise<void> {
-  currentTable = null;
-  await client.closeProject();
-  await client.close();
+  try {
+    await client.closeProject();
+  } finally {
+    currentTable = null;
+    await client.close();
+  }
 }
 ```
+
+Call teardown from a UI action and route its rejected promise to the visible
+error surface. The `finally` block always clears the disposable cache and
+terminates the Worker, even when closing the resident project reports a failure.
 
 The exported bytes are an opaque canonical project bundle. Do not edit them in
 frontend code.
