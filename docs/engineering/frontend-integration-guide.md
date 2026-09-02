@@ -164,7 +164,7 @@ function confirmDiscardUnpersistedChanges(): boolean {
 }
 
 function handleBeforeUnload(event: BeforeUnloadEvent): void {
-  if (!hasUnpersistedChanges()) return;
+  if (!lifecycleBusy && !hasUnpersistedChanges()) return;
   event.preventDefault();
   event.returnValue = "";
 }
@@ -176,6 +176,10 @@ Call every open, edit, persistence, and close action through `runExclusive`.
 This bounded sample rejects an overlapping action instead of guessing which
 completion should win. A richer UI may use a proper queue, cancellation, or
 generation tokens, but it must preserve the same ordering and freshness rules.
+
+The unload guard is deliberately conservative while any lifecycle operation is
+in flight. This closes the interval in which Rust may have accepted an edit but
+the JavaScript continuation has not yet recorded its resulting revision.
 
 `currentRevision` follows the resident Rust runtime, even when refreshing the UI
 fails. `currentTable` is only the last completely rendered table. A mismatch
@@ -366,10 +370,10 @@ exclusive gate, an older save cannot complete after a newer local save and
 silently replace its durability state.
 
 The `beforeunload` handler protects reload, tab close, and navigation while an
-accepted revision is not durable. The explicit close path requires the same save
-or discard decision. Its `finally` block always clears disposable state and
-terminates the Worker once teardown begins, even when closing the resident
-project reports a failure.
+operation is in flight or an accepted revision is not durable. The explicit
+close path requires the same save or discard decision. Its `finally` block always
+clears disposable state and terminates the Worker once teardown begins, even
+when closing the resident project reports a failure.
 
 The exported bytes are an opaque canonical project bundle. Do not edit them in
 frontend code, and do not set `durableRevision` until host persistence succeeds.
