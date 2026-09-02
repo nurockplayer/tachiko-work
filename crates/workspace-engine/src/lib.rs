@@ -19,8 +19,12 @@ pub use tachiko_formula_engine::{
     CalculationError, CalculationFailure, CanonicalAuthoringProjectionError,
     ExpressionComplexityError, ReferenceFailure,
 };
-pub use tachiko_merge_engine::{MergeConflict, MergeValue};
-use tachiko_merge_engine::{MergeOutcome, merge};
+pub use tachiko_merge_engine::{
+    ConflictFacet, ConflictFact, ConflictKind, ConflictTarget, EntitySubject, MergeConflict,
+    MergeValue, SEMANTIC_CONFLICT_V1, SchemaFieldSubject, SchemaSubject, SemanticConflictContract,
+    UnsupportedConflictContract, UnsupportedConflictKind, UnsupportedTargetFacet,
+};
+use tachiko_merge_engine::{MergeOutcome, UnmaterializedStoredFact, merge};
 use tachiko_semantic_core::{
     AddressIndex, AddressIndexError, is_valid_identifier, validate_document_core,
 };
@@ -62,6 +66,8 @@ pub mod diagnostic_codes {
         DiagnosticCode::new("formula.division_by_zero");
     pub const FORMULA_NON_FINITE_RESULT: DiagnosticCode =
         DiagnosticCode::new("formula.non_finite_result");
+    pub const MERGE_UNMATERIALIZED_QUALIFIED_FIELD: DiagnosticCode =
+        DiagnosticCode::new("merge.unmaterialized_qualified_field");
 }
 
 /// Authoritative first-party semantic validation result for one snapshot.
@@ -448,6 +454,14 @@ pub enum WorkspaceError {
     Calculation(#[from] CalculationError),
     #[error("could not compare edited document: {0}")]
     Diff(#[from] DiffError),
+    #[error(
+        "merge inputs belong to different documents: base '{base}', left '{left}', right '{right}'"
+    )]
+    DifferentMergeDocument {
+        base: DocumentId,
+        left: DocumentId,
+        right: DocumentId,
+    },
 }
 
 /// Create a document through the host-supplied stable-ID boundary.
@@ -816,12 +830,30 @@ pub fn merge_documents(
     ours: &Document,
     theirs: &Document,
 ) -> Result<WorkspaceMergeOutcome, WorkspaceError> {
+    if base.id != ours.id || base.id != theirs.id {
+        return Err(WorkspaceError::DifferentMergeDocument {
+            base: base.id.clone(),
+            left: ours.id.clone(),
+            right: theirs.id.clone(),
+        });
+    }
     require_validated_calculation_for(base, ValidationRole::MergeBase)?;
     require_validated_calculation_for(ours, ValidationRole::MergeOurs)?;
     require_validated_calculation_for(theirs, ValidationRole::MergeTheirs)?;
     match merge(base, ours, theirs) {
-        MergeOutcome::Merged(document) => {
-            require_validated_calculation_for(&document, ValidationRole::MergeCandidate)?;
+        MergeOutcome::Merged(candidate) => {
+            let (document, unmaterialized_fields) = candidate.into_parts();
+            let (report, _calculation) = semantic_validation(&document);
+            let mut diagnostics = report.into_diagnostics();
+            diagnostics.extend(
+                unmaterialized_fields
+                    .iter()
+                    .map(unmaterialized_qualified_field_diagnostic),
+            );
+            let report = ValidationReport::new(diagnostics);
+            if !report.is_valid() {
+                return Err(invalid_document(report, ValidationRole::MergeCandidate));
+            }
             preflight_formula_projections(&document)?;
             let diff = diff(base, &document)?;
             Ok(WorkspaceMergeOutcome::Merged(Box::new(EditPreview {
@@ -1603,6 +1635,47 @@ fn invalid_document(report: ValidationReport, role: ValidationRole) -> Workspace
         summary: format_diagnostics(report.diagnostics()),
         report,
     }
+}
+
+const MERGE_PROVIDER: DiagnosticProvider = DiagnosticProvider::new("tachiko.merge-engine");
+
+fn unmaterialized_qualified_field_diagnostic(fact: &UnmaterializedStoredFact) -> Diagnostic {
+    Diagnostic::new(
+        diagnostic_codes::MERGE_UNMATERIALIZED_QUALIFIED_FIELD,
+        DiagnosticSeverity::Error,
+        vec![SemanticSubject::EntityField(FieldRef::new(
+            fact.entity().clone(),
+            fact.field().clone(),
+        ))],
+        MERGE_PROVIDER,
+    )
+    .with_related_subjects(vec![
+        SemanticSubject::SchemaField {
+            schema: fact.source_schema().clone(),
+            field: fact.field().clone(),
+        },
+        SemanticSubject::SchemaField {
+            schema: fact.selected_schema().clone(),
+            field: fact.field().clone(),
+        },
+    ])
+    .with_fact(DiagnosticFact::new(
+        "source_schema",
+        fact.source_schema().as_str(),
+    ))
+    .with_fact(DiagnosticFact::new(
+        "selected_schema",
+        fact.selected_schema().as_str(),
+    ))
+    .with_presentation(
+        format!("entities.{}.fields.{}", fact.entity(), fact.field()),
+        format!(
+            "field '{}' selected under schema '{}' cannot be represented after schema '{}' was selected",
+            fact.field(),
+            fact.source_schema(),
+            fact.selected_schema()
+        ),
+    )
 }
 
 const FORMULA_PROVIDER: DiagnosticProvider = DiagnosticProvider::new("tachiko.formula-engine");
