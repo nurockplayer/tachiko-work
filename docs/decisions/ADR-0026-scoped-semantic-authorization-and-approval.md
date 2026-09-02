@@ -11,6 +11,13 @@ Specified by: [`semantic-authorization.md`](../specs/semantic-authorization.md)
 Related authority: ADR-0007, ADR-0015, ADR-0019, ADR-0020, ADR-0022,
 ADR-0024
 
+Successor amendment:
+[ADR-0034](ADR-0034-team-workspace-policy-and-recovery-boundary.md) resolves
+Issue #11's deferred team-policy and recovery boundary and narrows the
+Provisional trusted-host-policy Grant-issuance alternative for that profile.
+The #11 references below record ownership when this ADR was accepted; they no
+longer identify an open decision.
+
 Related implementation: [#29](https://github.com/nurockplayer/tachiko-work/issues/29),
 [#30](https://github.com/nurockplayer/tachiko-work/issues/30), and
 [#93](https://github.com/nurockplayer/tachiko-work/issues/93)
@@ -640,8 +647,9 @@ authority.
   mutation bypass prevention, external-effect enforcement, and security tests.
 - #93 owns concrete semantic revision token, resident session, revision
   advance, concurrency, and state installation.
-- #11 owns broader enterprise/team permissions, transaction/recovery, and
-  reusable policy questions.
+- #11 originally owned broader enterprise/team permissions,
+  transaction/recovery, and reusable policy questions; ADR-0034 now resolves
+  their logical boundary while concrete mechanisms remain separately owned.
 - ADR-0032 owns the transition/receipt/event taxonomy; #49 owns persisted
   history profiles, checkpoints, replay/compaction, undo, and retention
   architecture under ADR-0029.
@@ -993,8 +1001,9 @@ Costs:
   external-effect enforcement, safe denials, and security tests.
 - #93 supplies concrete session/revision/concurrency mechanics without changing
   proposal or authorization meaning.
-- #11 retains broader permissions, reusable policies, and transaction/recovery;
-  ADR-0032 resolves the history taxonomy while #49 retains history architecture
+- #11 originally retained broader permissions, reusable policies, and
+  transaction/recovery; ADR-0034 now resolves that logical boundary, while
+  ADR-0032 resolves the history taxonomy and #49 retains history architecture
   under ADR-0029.
 - Issue #28 receives a Decision Capsule only after this authority package is
   reviewed and merged.

@@ -11,6 +11,9 @@ under [ADR-0026](../decisions/ADR-0026-scoped-semantic-authorization-and-approva
 The Execute-attempt, `NoChange`, revision-occurrence, retry, and optional
 retained-transition taxonomy is Accepted under
 [ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md).
+The document-local semantic atomicity, multi-document orchestration, and
+cross-effect recovery boundary is Accepted under
+[ADR-0034](../decisions/ADR-0034-team-workspace-policy-and-recovery-boundary.md).
 Runtime ownership, resident interactive topology, host separation, explicit
 snapshot boundaries, and native/WASM semantic parity are Accepted under
 [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md).
@@ -725,10 +728,14 @@ ADR-0026 `operation-family` remains a capability-addressing dimension for
 recognized Query and Command families. It does not introduce a common
 `Operation` object.
 
-**Transaction** is also non-normative in this contract. Ordered AtomicBatch is
-the only Accepted semantic all-or-nothing publication unit. Broader
-multi-document, host, external-effect, durability, rollback, and recovery
-transaction semantics remain with Issue #11.
+**Transaction** is also non-normative in this contract. Under ADR-0034, ordered
+AtomicBatch is the only Accepted semantic all-or-nothing publication unit and
+applies to one exact-base document publication. Multi-document workflows are
+orchestration over separately exact-base, separately authorized publications
+with explicit partial success. Semantic publication, host persistence, required
+provenance, optional history, Git, external effects, and collaboration
+coordination retain separate truthful outcomes; concrete transaction/coordinator
+mechanisms remain Deferred.
 
 The Accepted semantic execution intents are:
 
@@ -1655,8 +1662,10 @@ across those revisions, consumes the same invalidation derivation, and falls
 back to full recomputation when impact is unsafe. Public session handles,
 exact public result/invalidation shapes, cross-host concurrency, Worker lifecycle,
 IPC/FFI/network serialization/ABI, and native/browser persistence/recovery
-remain Deferred to future host/transport work. Issue #11 retains broader
-transaction/recovery architecture. Under
+remain Deferred to future host/transport work.
+[ADR-0034](../decisions/ADR-0034-team-workspace-policy-and-recovery-boundary.md)
+fixes the broader transaction/recovery boundary without authorizing those
+mechanics. Under
 [ADR-0029](../decisions/ADR-0029-current-state-authority-and-optional-history.md),
 [ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md)
 fixes the execution/revision/retained-transition taxonomy, while
