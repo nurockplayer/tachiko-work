@@ -19,8 +19,12 @@ machine-readable Semantic Delta contract, and
 [ADR-0031](ADR-0031-semantic-merge-conflict-protocol.md) resolves the deferred
 deterministic semantic conflict-object contract.
 [ADR-0032](ADR-0032-semantic-execution-and-transition-taxonomy.md) resolves the
-deferred execution/revision/optional-event taxonomy. None changes this
-current-state/history boundary.
+deferred execution/revision/optional-event taxonomy,
+[ADR-0033](ADR-0033-snapshot-first-semantic-history-and-checkpoints.md) resolves
+the deferred snapshot-first history/checkpoint guarantees, and
+[ADR-0034](ADR-0034-team-workspace-policy-and-recovery-boundary.md) resolves the
+deferred cross-effect recovery boundary. None changes this current-state/
+history boundary.
 
 ## Context
 
