@@ -206,14 +206,12 @@ projectInput.addEventListener("change", () => {
 
   projectInput.disabled = true;
   void runExclusive(async () => {
-    if (!confirmDiscardUnpersistedChanges()) {
-      projectInput.value = "";
-      return;
-    }
+    if (!confirmDiscardUnpersistedChanges()) return;
     await openSelectedProject(files);
   })
     .catch(renderProjectError)
     .finally(() => {
+      projectInput.value = "";
       projectInput.disabled = false;
     });
 });
@@ -245,7 +243,9 @@ function renderTable(table: TableProjection): void {
 the first useful screen. A rejected candidate leaves the current resident
 occurrence unchanged, so update frontend state only after `openProject` succeeds.
 Do not replace a project containing unpersisted accepted changes without an
-explicit user decision.
+explicit user decision. Clearing the file input after every attempt lets the
+user select the same directory again after a success, rejection, or cancelled
+discard decision.
 
 ### 5. Publish an edit and refresh from Tachiko
 
