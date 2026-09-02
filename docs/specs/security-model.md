@@ -1,9 +1,12 @@
 # Security Model
 
 Decision state: Mixed. The semantic authorization laws summarized from
-ADR-0007 and ADR-0026 are Accepted; ADR-0034 additionally fixes the trusted-
-host reusable-policy, Human administration, and team-audit boundary; ADR-0019
-owns diagnostic-code meaning.
+[ADR-0007](../decisions/ADR-0007-ai-semantic-interaction-model.md) and
+[ADR-0026](../decisions/ADR-0026-scoped-semantic-authorization-and-approval.md)
+are Accepted;
+[ADR-0034](../decisions/ADR-0034-team-workspace-policy-and-recovery-boundary.md)
+additionally fixes the trusted-host reusable-policy, Human administration, and
+team-audit boundary; ADR-0019 owns diagnostic-code meaning.
 Issue #29 supplies the provisional trusted in-process authorization/Approval
 lifecycle seam, and #30 supplies a provisional provider-facing instruction/data,
 bypass-denial, safe-code, and host-effect-denial adapter over it. Semantic
@@ -64,7 +67,8 @@ The MVP does not select canonical approval bytes, a digest/hash/signature/MAC,
 portable bearer token, public Rust/wire DTO, enterprise IAM, or generic policy
 language.
 
-ADR-0034 permits a trusted host to select or narrow the existing ADR-0026
+[ADR-0034](../decisions/ADR-0034-team-workspace-policy-and-recovery-boundary.md)
+permits a trusted host to select or narrow the existing ADR-0026
 action, operation-family, mutation-class, and document-local stable-ID scope
 requirements through reusable policy. Policy and Grant administration require
 explicit Human authority; Human kind alone is insufficient, and Delegated
