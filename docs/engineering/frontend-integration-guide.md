@@ -145,6 +145,7 @@ if (input === null) throw new Error("Project input is missing.");
 
 const client = createExperimentalDesignerClient();
 let currentTable: TableProjection | null = null;
+let currentRevision: string | null = null;
 
 input.addEventListener("change", () => {
   void openSelectedProject();
@@ -156,6 +157,7 @@ async function openSelectedProject(): Promise<void> {
   const transfer = await projectTransferFromFiles(input.files);
   const opened = await client.openProject(transfer);
   currentTable = opened.table;
+  currentRevision = opened.table.revision;
 
   renderTable(opened.table);
 }
@@ -177,7 +179,9 @@ Use a field target returned by the projection. Never build a target from a row
 number, label, JSON path, or DOM coordinate.
 
 ```ts
-if (currentTable === null) throw new Error("Open a project first.");
+if (currentTable === null || currentRevision === null) {
+  throw new Error("Open a project first.");
+}
 
 const row = currentTable.rows[0];
 const field = row?.fields.find(
@@ -186,7 +190,7 @@ const field = row?.fields.find(
 if (field === undefined) throw new Error("No editable Number field was found.");
 
 const publication = await client.editNumber(
-  currentTable.revision,
+  currentRevision,
   field.target,
   "3",
 );
@@ -195,19 +199,23 @@ const refreshed = await client.queryFields(publication.resulting_revision, [
   field.target,
   ...publication.affected_calculations,
 ]);
+currentRevision = refreshed.revision;
 
 console.log(refreshed.fields);
 ```
 
 The client also exposes `editText` and `editBoolean`.
 
-Do not recalculate dependent formulas in JavaScript. Query Tachiko at the
-resulting revision and render the returned calculation and diagnostic evidence.
+Do not recalculate dependent formulas in JavaScript. Patch your disposable UI
+cache from `refreshed.fields`, or query the table again, and use
+`refreshed.revision` for the next edit. Never keep editing with the old revision.
 
 Export or close with:
 
 ```ts
-const exported = await client.exportProject(publication.resulting_revision);
+if (currentRevision === null) throw new Error("Open a project first.");
+
+const exported = await client.exportProject(currentRevision);
 console.log(exported.bytes); // opaque canonical project bytes
 
 await client.closeProject();
