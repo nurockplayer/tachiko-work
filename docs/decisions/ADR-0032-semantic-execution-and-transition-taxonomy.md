@@ -16,6 +16,12 @@ Related authority:
 [ADR-0030](ADR-0030-canonical-semantic-delta.md), and
 [ADR-0031](ADR-0031-semantic-merge-conflict-protocol.md)
 
+Successor resolution:
+[ADR-0034](ADR-0034-team-workspace-policy-and-recovery-boundary.md) resolves
+Issue #11's deferred team-policy, multi-document, cross-effect, and recovery
+boundary. The Issue #11 references below record ownership when this ADR was
+accepted; they no longer identify an open decision.
+
 ## Context
 
 The existing Accepted contracts already separate typed semantic intent,
@@ -50,8 +56,9 @@ Query and Command families; it does not imply a general `Operation` object.
 
 **Transaction** is likewise non-normative here. `AtomicBatch` is the only
 Accepted semantic all-or-nothing publication unit. Multi-document, host,
-external-effect, durability, rollback, and recovery transactions remain with
-[Issue #11](https://github.com/nurockplayer/tachiko-work/issues/11).
+external-effect, durability, rollback, and recovery questions were assigned to
+[Issue #11](https://github.com/nurockplayer/tachiko-work/issues/11) and are now
+resolved at the logical boundary by ADR-0034.
 
 ### 2. An Execute attempt may publish zero or one semantic revision
 
@@ -206,9 +213,11 @@ This decision authorizes no production implementation.
 - [Issue #50](https://github.com/nurockplayer/tachiko-work/issues/50) owns
   offline parent/causal metadata, DAG/clock mechanics, resynchronization, and
   selective CRDT/OT.
-- [Issue #11](https://github.com/nurockplayer/tachiko-work/issues/11) owns
-  broader team policy, multi-document or host transaction semantics,
-  external-effect recovery, and stronger administration/review rules.
+- [Issue #11](https://github.com/nurockplayer/tachiko-work/issues/11) originally
+  owned broader team policy, multi-document or host transaction semantics,
+  external-effect recovery, and stronger administration/review rules;
+  ADR-0034 now resolves their logical boundary while concrete mechanisms remain
+  separately owned.
 
 Public Rust types, wire DTOs, persisted history/event storage, replay,
 checkpoints, event sourcing, transaction infrastructure, CRDT/OT, and the exact
