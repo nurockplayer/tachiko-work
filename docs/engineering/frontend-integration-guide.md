@@ -77,6 +77,10 @@ Tachiko checkout you are testing.
 
 ## Quick start
 
+The snippets below explain one step at a time. The complete assembled flow lives
+in [`examples/experimental-designer-client/src/main.ts`](../../examples/experimental-designer-client/src/main.ts)
+and is exercised by the repository's Designer browser checks.
+
 ### 1. Prepare your repository and export the kit
 
 Keep your frontend outside `nurockplayer/tachiko-work`:
@@ -221,6 +225,9 @@ async function editProductGapImpact(inputValue: string): Promise<void> {
 }
 ```
 
+Wire this function to an edit event and send rejected promises to the same UI
+error surface used for project opening.
+
 The client also exposes `editText` and `editBoolean`.
 
 Do not recalculate dependent formulas in JavaScript. The simple pilot path above
@@ -236,20 +243,27 @@ the UI internally stale.
 
 ### 5. Export or close
 
-Always export against the revision currently rendered by your cache:
+Always export against the revision currently rendered by your cache. Keep export
+and teardown behind explicit UI actions, not module initialization:
 
 ```ts
-const table = currentTable;
-if (table === null) throw new Error("Open a project first.");
+async function exportCurrentProject(): Promise<ArrayBuffer> {
+  const table = currentTable;
+  if (table === null) throw new Error("Open a project first.");
 
-const exported = await client.exportProject(table.revision);
-console.log(exported.bytes); // opaque canonical project bytes
+  const exported = await client.exportProject(table.revision);
+  return exported.bytes;
+}
 
-await client.closeProject();
-await client.close();
+async function closeDesignerClient(): Promise<void> {
+  currentTable = null;
+  await client.closeProject();
+  await client.close();
+}
 ```
 
-Do not edit exported bytes in frontend code.
+The exported bytes are an opaque canonical project bundle. Do not edit them in
+frontend code.
 
 ## How to read a projection
 
