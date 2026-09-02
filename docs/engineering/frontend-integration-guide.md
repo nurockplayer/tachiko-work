@@ -24,13 +24,8 @@ your interaction and visual design
 a useful frontend
 ```
 
-You are **not** being asked to build another Tachiko engine:
-
-```text
-Do not parse Tachiko storage
-Do not rebuild formulas or validation
-Do not invent revision behavior
-```
+You are **not** being asked to parse Tachiko storage, rebuild formulas or
+validation, or invent revision behavior. That would create a second engine.
 
 ## Three concepts are enough to start
 
@@ -145,7 +140,6 @@ if (input === null) throw new Error("Project input is missing.");
 
 const client = createExperimentalDesignerClient();
 let currentTable: TableProjection | null = null;
-let currentRevision: string | null = null;
 
 input.addEventListener("change", () => {
   void openSelectedProject();
@@ -157,8 +151,6 @@ async function openSelectedProject(): Promise<void> {
   const transfer = await projectTransferFromFiles(input.files);
   const opened = await client.openProject(transfer);
   currentTable = opened.table;
-  currentRevision = opened.table.revision;
-
   renderTable(opened.table);
 }
 
@@ -179,43 +171,56 @@ Use a field target returned by the projection. Never build a target from a row
 number, label, JSON path, or DOM coordinate.
 
 ```ts
-if (currentTable === null || currentRevision === null) {
-  throw new Error("Open a project first.");
+async function editFirstNumber(inputValue: string): Promise<void> {
+  const table = currentTable;
+  if (table === null) throw new Error("Open a project first.");
+
+  const row = table.rows[0];
+  const field = row?.fields.find(
+    (candidate) => candidate.editable_scalar === "number",
+  );
+  if (field === undefined) throw new Error("No editable Number field was found.");
+
+  const publication = await client.editNumber(
+    table.revision,
+    field.target,
+    inputValue,
+  );
+
+  // Keep the first integration simple and correct: fetch one fresh table after
+  // Tachiko accepts the edit, then replace the old revision-keyed cache.
+  const refreshedTable = await client.queryTable(table.collection.key);
+  if (refreshedTable.revision !== publication.resulting_revision) {
+    throw new Error("Table refresh did not reach the published revision.");
+  }
+
+  currentTable = refreshedTable;
+  renderTable(refreshedTable);
 }
-
-const row = currentTable.rows[0];
-const field = row?.fields.find(
-  (candidate) => candidate.editable_scalar === "number",
-);
-if (field === undefined) throw new Error("No editable Number field was found.");
-
-const publication = await client.editNumber(
-  currentRevision,
-  field.target,
-  "3",
-);
-
-const refreshed = await client.queryFields(publication.resulting_revision, [
-  field.target,
-  ...publication.affected_calculations,
-]);
-currentRevision = refreshed.revision;
-
-console.log(refreshed.fields);
 ```
 
 The client also exposes `editText` and `editBoolean`.
 
-Do not recalculate dependent formulas in JavaScript. Patch your disposable UI
-cache from `refreshed.fields`, or query the table again, and use
-`refreshed.revision` for the next edit. Never keep editing with the old revision.
+Do not recalculate dependent formulas in JavaScript. The simple pilot path above
+re-queries the table so stored values, calculated values, diagnostics, and the
+revision advance together.
 
-Export or close with:
+After that path works, a larger UI may optimize with `queryFields`. Query the
+deduplicated union of `publication.fields` and
+`publication.affected_calculations` at `publication.resulting_revision`, merge
+all returned field projections into the cache, and advance the cache revision in
+the same state update. Updating only the revision or only one edited field leaves
+the UI internally stale.
+
+### 5. Export or close
+
+Always export against the revision currently rendered by your cache:
 
 ```ts
-if (currentRevision === null) throw new Error("Open a project first.");
+const table = currentTable;
+if (table === null) throw new Error("Open a project first.");
 
-const exported = await client.exportProject(currentRevision);
+const exported = await client.exportProject(table.revision);
 console.log(exported.bytes); // opaque canonical project bytes
 
 await client.closeProject();
@@ -260,7 +265,7 @@ Do not collapse these into one mutable cell value.
 | Call | Purpose |
 | --- | --- |
 | `openProject(bytes)` | Open a canonical project and receive bootstrap plus the first table |
-| `queryTable(collection)` | Switch to another typed collection |
+| `queryTable(collection)` | Fetch a typed collection at the current revision |
 | `queryFields(revision, targets)` | Refresh selected values, calculations, and diagnostics |
 | `editNumber(revision, target, input)` | Publish a Number edit |
 | `editText(revision, target, value)` | Publish a Text edit |
@@ -278,7 +283,7 @@ TypeScript shapes. Every concrete shape remains experimental.
 render R0
    ↓ edit with expected R0
 Tachiko accepts and publishes R1
-   ↓ query affected fields at R1
+   ↓ replace or fully patch the cache at R1
 render R1
 ```
 
