@@ -422,7 +422,10 @@ Normative laws:
    new Grant occurrence and MUST NOT reactivate or reuse the old GrantId.
 3. Grants may be issued only through a trusted host authorization authority,
    which may act on an explicitly authorized Human provisioning action or
-   trusted host policy. Human principal class alone grants no issuance power.
+   trusted host policy. Under the ADR-0034 reusable team-policy profile, trusted
+   host policy MUST NOT independently issue a Grant: every issuance requires an
+   explicitly authorized Human provisioning action. Human principal class alone
+   grants no issuance power.
 4. A Delegated principal MUST NOT self-grant, expand, or transitively delegate
    authority.
 5. Authorization is allow-only and default-deny.
@@ -463,9 +466,11 @@ requirements.
 
 Normative laws:
 
-1. Reusable policy MUST NOT mint authority by itself or replace applicable live
-   Grants, exact Approval, trusted footprint derivation, effective-policy, or
-   publication-boundary checks.
+1. Reusable policy may select which already-required profile applies and may
+   deny or add stricter conditions. It MUST NOT remove a tuple from the trusted
+   `AuthorizationFootprint`, weaken complete Grant coverage, mint authority by
+   itself, or replace applicable live Grants, exact Approval, trusted footprint
+   derivation, effective-policy, or publication-boundary checks.
 2. Policy MUST NOT create ambient session trust, provider/model privilege,
    transferable authority, delegated self-escalation, or another semantic scope
    model.
@@ -477,7 +482,8 @@ Normative laws:
    action at the trusted host boundary. Human PrincipalKind alone grants no
    administration power. A Delegated principal cannot issue or widen its own
    authority, change effective policy, or transitively delegate
-   administration.
+   administration. Trusted host policy MUST NOT independently issue a Grant
+   under this team-policy profile.
 5. Policy meaning and selection obey this specification's immutable-version
    and uninterrupted-selection laws. A transition away and back MUST NOT revive
    an older Approval.
@@ -1292,7 +1298,7 @@ disclosure scope.
 | External-effect capability vocabulary | Deferred |
 | Roles/groups/ABAC/policy DSL/SSO/SCIM/tenancy | Deferred |
 | Auto-approval, autonomous mutation, quorum/multi-party approval | Deferred |
-| Reusable team policy as a trusted-host selector/constraint over existing ADR-0026 authority; explicit Human authority for administration; additional team audit as non-authoritative evidence | Accepted under ADR-0034 |
+| Reusable team policy as a trusted-host selector/stricter constraint over existing ADR-0026 authority without shrinking required footprint coverage; explicit Human authority for administration and team-profile Grant issuance; additional team audit as non-authoritative evidence | Accepted under ADR-0034 |
 | Exact policy/role catalogue, organization/tenancy model, IAM/SSO/SCIM, quorum workflow, audit profile, and runtime administration mechanics | Deferred |
 | Broader transaction/recovery and event sourcing/operation log/undo/history protocol | ADR-0034 fixes truthful cross-effect outcomes, forward reconciliation, and multi-document orchestration; ADR-0032 fixes history taxonomy and ADR-0033 fixes snapshot-first logical profiles while concrete mechanics remain Deferred to separately Ready work |
 | Public Rust/Serde/wire authorization DTO | Deferred |

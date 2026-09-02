@@ -141,6 +141,11 @@ existing ADR-0026 authorization requirements across:
 - Value, Formula, Structure, Schema, and Destructive mutation classes; and
 - the existing document-local stable-ID semantic scope atoms.
 
+Selection determines which already-required policy profile applies;
+constraint may deny or add stricter conditions. Policy MUST NOT remove a tuple
+from the trusted `AuthorizationFootprint`, weaken complete Grant coverage, or
+otherwise reduce authority required by ADR-0026.
+
 Reusable policy does not mint semantic authority by itself. Concrete authority
 still resolves through the trusted authorization domain and the applicable live
 ADR-0026 Grants, Approval, footprint, policy-version, and publication checks.
@@ -168,6 +173,14 @@ at the trusted host boundary. Human principal class alone does not grant
 administration authority. A Delegated principal cannot self-grant, expand its
 authority, change the effective policy, or transitively delegate administration
 authority.
+
+For reusable team policy, this requirement narrows ADR-0026's Provisional
+Grant-issuance alternative: trusted host policy may select and enforce
+provisioning constraints, but it MUST NOT independently issue a Grant without
+an explicitly authorized Human provisioning action. ADR-0026's allowance for
+issuance by trusted host policy therefore does not apply to this team-policy
+profile. Exact non-team provisioning defaults remain Provisional under
+ADR-0026.
 
 Revocation, expiry, disablement, replacement, and effective-policy transitions
 take effect through the existing live ADR-0026 checks. Reusable policy MUST NOT

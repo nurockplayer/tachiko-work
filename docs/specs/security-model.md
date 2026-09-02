@@ -68,10 +68,12 @@ portable bearer token, public Rust/wire DTO, enterprise IAM, or generic policy
 language.
 
 [ADR-0034](../decisions/ADR-0034-team-workspace-policy-and-recovery-boundary.md)
-permits a trusted host to select or narrow the existing ADR-0026
-action, operation-family, mutation-class, and document-local stable-ID scope
-requirements through reusable policy. Policy and Grant administration require
-explicit Human authority; Human kind alone is insufficient, and Delegated
+permits a trusted host to select the applicable existing ADR-0026 requirements
+and add stricter reusable-policy conditions. Policy MUST NOT remove a tuple
+from the trusted `AuthorizationFootprint`, weaken complete Grant coverage, or
+otherwise narrow the required authority. Policy and Grant administration
+require explicit Human authority; trusted host policy cannot independently
+issue a team-policy Grant, Human kind alone is insufficient, and Delegated
 principals cannot self-escalate. Team/organization/role/path/provider facts may
 select host policy but do not become semantic scope or authority. Additional
 admin/policy/effect audit remains evidence, must disclose retention/redaction
