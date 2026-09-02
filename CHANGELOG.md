@@ -45,6 +45,14 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- A deterministic repository command now exports a self-contained, explicitly
+  unstable Designer frontend client kit containing a bounded TypeScript/ESM
+  wrapper, Worker support, and the Rust-authoritative WASM runtime without npm
+  publication or a stable SDK/wire promise. A separate throwaway consumer uses
+  only the generated kit to open the Product Gap dogfood project, query a typed
+  table, publish a revision-safe scalar edit, observe calculation/diagnostic
+  projections, prove stale-edit no-drift from exact exported bytes, and reopen
+  the canonical round trip.
 - The first-party browser Designer now admits a second bounded ordinary domain
   without Moonfall-specific collection or control-formula requirements. A
   repository-owned canonical Product Gap project dogfoods opaque semantic IDs,
