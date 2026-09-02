@@ -268,7 +268,7 @@ ADR-0007, ADR-0020, ADR-0029, ADR-0021, ADR-0022, ADR-0023, ADR-0024,
 ADR-0025, and ADR-0026 respectively.
 #11 is resolved by ADR-0034 and the reconciled authorization/API/history/
 collaboration specifications without authorizing production implementation.
-#50 is resolved by ADR-0035 and the reconciled collaboration specification/
+Issue `#50` is resolved by ADR-0035 and the reconciled collaboration specification/
 architecture without authorizing production implementation.
 #14 is separately resolved by ADR-0027 without promoting concrete external-format
 adapters into the current milestone.
