@@ -105,6 +105,12 @@ history/revision context. It declares:
 - continuity and coverage; and
 - every disclosed gap or closed predecessor boundary.
 
+When a segment starts from a checkpoint, its start boundary MUST bind the
+checkpoint's exact snapshot commitment to the first replay record's exact
+semantic base and `before` state. That binding establishes a new segment-start
+occurrence in the owning context; it does not resurrect an old runtime revision
+token. A mismatched or unprovable start binding is a gap, not a contiguous tail.
+
 Within a contiguous transition range, each retained transition's `before`
 occurrence MUST match the preceding transition's `after` occurrence in that
 same context. A missing, unsupported, corrupt, redacted, or mismatched required
@@ -146,6 +152,12 @@ complete validated checkpoint
 
 Replay MUST be deterministic and side-effect free. It MUST NOT invoke an LLM,
 network call, wall clock, random source, Git operation, or external effect.
+Before the first replay step, the exact checkpoint snapshot MUST satisfy the
+segment-start binding. After every step, the reconstructed outcome and canonical
+before-to-after evidence MUST match the recorded outcome and retained transition
+before the candidate becomes the next exact replay base. Final snapshot equality
+is an additional end-to-end check, not a substitute for start or per-step
+verification.
 
 Missing or corrupt records, unsupported contracts, discontinuity,
 non-deterministic dependencies, invalid transitions, or canonical snapshot

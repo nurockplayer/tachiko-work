@@ -60,6 +60,11 @@ and the recorded outcome. Imports, migrations, merges/rebaselines, and other
 unsupported intent boundaries begin a new verified checkpoint or disclosed
 boundary instead of being represented as synthetic Commands.
 
+The checkpoint snapshot commitment binds to the first replay record's exact base
+and `before` state. Replay verifies that start binding and every reconstructed
+outcome/transition before using it as the next exact base; canonical equality at
+the final snapshot is an additional end-to-end check.
+
 Replay is deterministic and side-effect free. Missing, corrupt, unsupported,
 non-deterministic, discontinuous, or mismatching history fails the history
 capability closed without replacing or reinterpreting an independently valid

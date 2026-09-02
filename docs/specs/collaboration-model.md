@@ -82,7 +82,8 @@ conflict kind.
   [ADR-0033](../decisions/ADR-0033-snapshot-first-semantic-history-and-checkpoints.md)
 - a verified tail requires one complete checkpoint, one contiguous supported
   version-pinned replay segment, and canonical equality with the exact later
-  authoritative snapshot
+  authoritative snapshot, with the checkpoint bound to the first exact base and
+  every recorded outcome/transition verified before the next step
 - retained transitions and Semantic Delta remain evidence rather than the
   replay program; replay-capable history additionally retains deterministic
   version-pinned `Command | AtomicBatch` input and required semantic resources

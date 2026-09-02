@@ -97,7 +97,9 @@ and one owning history/revision context. Each segment declares an exact start
 checkpoint or boundary, exact end, segment-local order, required contract
 versions, continuity, coverage, and gaps. Each transition's `before` occurrence
 matches the preceding `after` occurrence within a contiguous range. Segment
-order implies neither global time nor multi-parent causality.
+order implies neither global time nor multi-parent causality. A checkpoint-start
+boundary binds the checkpoint snapshot commitment to the first replay record's
+exact base and `before` state; a mismatch is a gap.
 
 ## Replay and equality verification
 
@@ -105,7 +107,9 @@ A retained transition and its Semantic Delta are publication evidence, not the
 replay program. A replay-capable segment additionally retains the exact
 deterministic, version-pinned replay input, normally the accepted
 `Command | AtomicBatch`, plus every required semantic configuration/resource
-and the recorded outcome.
+and the recorded outcome. Replay verifies the start binding and each
+reconstructed outcome/transition before advancing to the next exact base;
+endpoint equality cannot replace those checks.
 
 Replay runs only from a complete checkpoint through a complete contiguous
 supported tail. It is side-effect free and must not use an LLM, network, wall
