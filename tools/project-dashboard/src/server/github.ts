@@ -240,6 +240,11 @@ function trustedProducer(comment: GraphComment): boolean {
   return comment.author?.login === OWNER && comment.authorAssociation === "OWNER";
 }
 
+function hasTrustedEvidenceMarker(comments: GraphComment[]): boolean {
+  return ["<!-- agent-handoff:v1 -->", "<!-- project-steward-watch:v1 -->"]
+    .some((marker) => candidateComments(comments, marker).some(trustedProducer));
+}
+
 function structuredSource(comment: GraphComment): StructuredCommentSource {
   return {
     body: comment.body,
@@ -480,11 +485,11 @@ function unavailableProjection(observedAt: string): DashboardProjection {
 function evidenceRelevant(
   pull: PullRequestFact,
   issuesByNumber: ReadonlyMap<number, IssueFact>,
+  trustedEvidencePullNumbers: ReadonlySet<number>,
 ): boolean {
   return pull.linkedIssueNumbers.some((number) =>
     issuesByNumber.get(number)?.labels.includes(OWNER_TOKEN) === true) ||
-    pull.handoff.source !== null ||
-    pull.stewardWatch.source !== null;
+    trustedEvidencePullNumbers.has(pull.number);
 }
 
 export function projectGraphResponse(
@@ -589,8 +594,10 @@ export function projectGraphResponse(
       issue.dependenciesAvailability !== "complete"),
   );
   const countAvailability = issueDiscoveryAvailability;
+  const trustedEvidencePullNumbers = new Set(pullNodes.flatMap((pull) =>
+    pull !== null && hasTrustedEvidenceMarker(present(pull.comments)) ? [pull.number] : []));
   const relevantPullRequests = pullRequests.filter((pull) =>
-    evidenceRelevant(pull, issuesByNumber));
+    evidenceRelevant(pull, issuesByNumber, trustedEvidencePullNumbers));
   const watchFacts = relevantPullRequests.map((pull) => pull.stewardWatch);
   const currentWatchSources = watchFacts.flatMap((watch) =>
     watch.status === "current" && watch.source !== null ? [watch.source] : []);
@@ -665,7 +672,7 @@ export function projectGraphResponse(
     });
   }
   for (const pull of pullRequests) {
-    if (!evidenceRelevant(pull, issuesByNumber)) continue;
+    if (!evidenceRelevant(pull, issuesByNumber, trustedEvidencePullNumbers)) continue;
     for (const [label, fact] of [["Agent handoff", pull.handoff], ["Steward watch", pull.stewardWatch]] as const) {
       if (fact.status !== "current") {
         attention.push({

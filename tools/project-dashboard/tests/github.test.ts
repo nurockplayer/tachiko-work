@@ -246,6 +246,48 @@ describe("Dashboard GitHub observation", () => {
     });
   });
 
+  it("does not let an untrusted marker make an unrelated PR relevant", () => {
+    const response = graph();
+    const pulls = response.data?.repository?.pullRequests;
+    const pull = pulls?.nodes?.[0];
+    const watch = pull?.comments?.nodes?.[1];
+    if (
+      pulls !== undefined &&
+      pull !== null &&
+      pull !== undefined &&
+      watch !== null &&
+      watch !== undefined
+    ) {
+      pulls.nodes?.push({
+        ...pull,
+        number: 231,
+        url: "https://github.example/pulls/231",
+        closingIssuesReferences: {
+          pageInfo: { hasNextPage: false },
+          nodes: [{ number: 999 }],
+        },
+        comments: {
+          pageInfo: { hasNextPage: false },
+          nodes: [{
+            ...watch,
+            id: "untrusted-watch",
+            url: "https://github.example/comments/untrusted-watch",
+            author: { login: "attacker" },
+            authorAssociation: "NONE",
+          }],
+        },
+      });
+    }
+
+    const projection = projectGraphResponse(response);
+    expect(projection.deliveries.find((lane) => lane.pullRequest?.number === 231)?.pullRequest)
+      .toMatchObject({ stewardWatch: { status: "unknown", reason: "Steward watch producer-untrusted" } });
+    expect(projection.executive.humanAction).toMatchObject({
+      value: "None in current watches",
+      availability: "complete",
+    });
+  });
+
   it("marks omitted recent merge identities partial instead of silently complete", () => {
     const response = graph();
     const recent = response.data?.repository?.recent.nodes?.[0];
