@@ -1073,10 +1073,13 @@ authorization. A future history profile may carry both only while preserving
 their independent contracts and identity namespaces. Durable denial or audit
 evidence is not a semantic event.
 
-History profiles, durable storage, checkpoints, replay/verification,
-compaction, retention/redaction, crash recovery, and optional Git association
-remain Issue #49. Offline parent/causal metadata, DAG/clock mechanics,
-resynchronization, and selective CRDT/OT remain Issue #50.
+[ADR-0033](../decisions/ADR-0033-snapshot-first-semantic-history-and-checkpoints.md)
+fixes snapshot-first history profiles and the logical checkpoint,
+replay/verification, compaction, retention/redaction, crash-recovery, and
+optional Git-association boundaries. Concrete durable storage and operational
+mechanics require separately Ready implementation work. Offline parent/causal
+metadata, DAG/clock mechanics, resynchronization, and selective CRDT/OT remain
+Issue #50.
 
 ## Semantic atomicity
 
@@ -1656,8 +1659,10 @@ remain Deferred to future host/transport work. Issue #11 retains broader
 transaction/recovery architecture. Under
 [ADR-0029](../decisions/ADR-0029-current-state-authority-and-optional-history.md),
 [ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md)
-fixes the execution/revision/retained-transition taxonomy, while Issue #49
-retains optional persisted-history mechanics.
+fixes the execution/revision/retained-transition taxonomy, while
+[ADR-0033](../decisions/ADR-0033-snapshot-first-semantic-history-and-checkpoints.md)
+fixes bounded optional-history guarantees. Concrete persisted-history mechanics
+require separately Ready implementation work.
 
 Every mapping MUST preserve the Semantic API Stable laws and outcomes. Runtime
 or transport topology is not independent semantic authority. A mapping of

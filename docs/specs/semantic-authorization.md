@@ -683,8 +683,9 @@ Active -> Consumed | Revoked | Expired
   the executor receives authorization denial. Issue #93 supplies the current
   in-process revision and guarded state installation; broader cross-host
   concurrency and transaction/recovery remain with #11. ADR-0032 fixes the
-  transition/receipt/event taxonomy, while deferred history protocols and
-  mechanics remain with #49 under ADR-0029.
+  transition/receipt/event taxonomy, while ADR-0033 fixes the snapshot-first
+  logical history, checkpoint, replay, and retention boundaries. Concrete
+  persistence and operational mechanics require separately Ready work.
 - The current direct-Human path resolves the proposal originator's retained
   immutable PrincipalKind without making originator activity a common
   publication condition; the executor must remain an active Human with live
@@ -961,9 +962,10 @@ references, the trusted AuthorizationFootprint and policy version, relevant
 input and resulting revisions, and gate/result evidence. This permission does
 not require a receipt or freeze its shape. Issue #29 now supplies a provisional
 in-memory receipt; ADR-0032 fixes the public receipt/event distinction and
-retained-transition taxonomy without defining concrete receipt DTOs. Durable
-storage, retention, and broader history architecture remain #49 work under
-[ADR-0029](../decisions/ADR-0029-current-state-authority-and-optional-history.md).
+retained-transition taxonomy without defining concrete receipt DTOs.
+[ADR-0033](../decisions/ADR-0033-snapshot-first-semantic-history-and-checkpoints.md)
+fixes logical history profiles and retention boundaries; durable receipt/history
+storage and concrete operations require separately Ready implementation work.
 
 Additional Approval-gated provenance laws:
 
@@ -979,8 +981,8 @@ Additional Approval-gated provenance laws:
    ledger is not required.
 6. Issue #29's in-memory receipt is implementation evidence only. ADR-0032
    fixes the receipt/event distinction without defining a public DTO; durable
-   storage, retention, redaction, and history UI remain Deferred to #49 and
-   later adapter work.
+   storage, retention, redaction, and history UI remain Deferred to separately
+   Ready implementation and later adapter work under ADR-0033.
 
 ## Semantic and external-effect separation
 
@@ -1237,7 +1239,7 @@ disclosure scope.
 | External-effect capability vocabulary | Deferred |
 | Roles/groups/ABAC/policy DSL/SSO/SCIM/tenancy | Deferred |
 | Auto-approval, autonomous mutation, quorum/multi-party approval | Deferred |
-| Broader transaction/recovery and event sourcing/operation log/undo/history protocol | Transaction/recovery Deferred to #11; ADR-0032 fixes history taxonomy while profile mechanics remain Deferred to #49 under ADR-0029 |
+| Broader transaction/recovery and event sourcing/operation log/undo/history protocol | Transaction/recovery Deferred to #11; ADR-0032 fixes history taxonomy and ADR-0033 fixes snapshot-first logical profiles while concrete mechanics remain Deferred to separately Ready work |
 | Public Rust/Serde/wire authorization DTO | Deferred |
 
 ## Ownership boundaries
@@ -1262,9 +1264,10 @@ disclosure scope.
   mechanics; broader cross-host concurrency remains Deferred.
 - #11 owns broader team/enterprise permissions, reusable policy questions, and
   transaction/recovery architecture.
-- ADR-0032 owns transition/receipt/event taxonomy; #49 owns persisted
-  history profiles, checkpoints, replay/compaction, undo, and retention under
-  ADR-0029.
+- ADR-0032 owns transition/receipt/event taxonomy; ADR-0033 owns snapshot-first
+  history profiles, checkpoints, replay/compaction, undo, and retention
+  boundaries under ADR-0029. Concrete persisted mechanics remain separately
+  owned implementation work.
 - `workspace-engine` remains shared semantic transition/gate authority;
   authorization must not exist only in `ai-api`, UI, or client convention.
 - host/storage adapters remain separate effect authorities.

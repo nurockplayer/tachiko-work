@@ -1,16 +1,19 @@
 # Event Sourcing Model
 
 Decision state: Mixed — core event sourcing Rejected by ADR-0029; ADR-0032
-semantic-event meaning Accepted; optional history techniques Open Question
+semantic-event meaning and ADR-0033 bounded snapshot-first history techniques
+Accepted; concrete implementations Deferred
 
 Implementation state: Not implemented
 
 Authority:
 [ADR-0029](../decisions/ADR-0029-current-state-authority-and-optional-history.md)
 and
-[ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md)
+[ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md),
+with optional history profiles defined by
+[ADR-0033](../decisions/ADR-0033-snapshot-first-semantic-history-and-checkpoints.md)
 
-Decision owner for optional history mechanics: #49
+Decision provenance: [#49](https://github.com/nurockplayer/tachiko-work/issues/49)
 
 ## Authority note
 
@@ -36,29 +39,42 @@ A semantic event is not:
 General retention is optional. Required ADR-0026 security/provenance evidence
 survives independently when no semantic-event history is retained.
 
-## Optional-profile hypothesis
+## Accepted optional profiles
 
-A future optional history profile may use event-sourcing techniques for one
-declared verification or reconstruction guarantee:
+ADR-0033 defines three explicit logical capability levels: snapshot-only,
+retained evidence, and verified tail. Only the verified-tail profile makes a
+replay claim, and that claim has this shape:
 
 ```text
-Declared complete checkpoint
-      |
-      v
-Complete retained semantic-transition tail
-      |
-      v
-Verified state equal to the authoritative snapshot
+complete validated checkpoint
++ complete contiguous supported replay tail
+-> reconstructed candidate
+-> canonical equality with the recorded authoritative snapshot
 ```
 
-Such a profile must define its contract/version, retained-transition identity,
-completeness boundary, storage, retention, replay/verification, compaction,
-migration, failure recovery, and snapshot-equality rules. It remains an
-optional evidence/recovery profile and cannot reverse current-state authority.
+A retained semantic transition and its Semantic Delta remain publication
+evidence, not replay instructions. A replay-capable tail additionally retains
+sufficient deterministic, version-pinned replay input, normally the exact
+accepted `Command | AtomicBatch`, required semantic configuration/resources,
+and the recorded outcome. Imports, migrations, merges/rebaselines, and other
+unsupported intent boundaries begin a new verified checkpoint or disclosed
+boundary instead of being represented as synthetic Commands.
 
-Potential benefits to investigate include semantic history, collaboration,
-debugging, auditability, and reproducible verification. They do not establish
-those guarantees by themselves.
+The checkpoint snapshot commitment binds to the first replay record's exact base
+and `before` state. Replay verifies that start binding and every reconstructed
+outcome/transition before using it as the next exact base; canonical equality at
+the final snapshot is an additional end-to-end check.
+
+Replay is deterministic and side-effect free. Missing, corrupt, unsupported,
+non-deterministic, discontinuous, or mismatching history fails the history
+capability closed without replacing or reinterpreting an independently valid
+authoritative snapshot. V1 defines no unqualified `full history` profile.
+
+Physical repack preserves logical records and coverage. Retention compaction or
+redaction first establishes a verified complete checkpoint, then mints new
+history/checkpoint identity and discloses the new boundary. Snapshot/history
+partial failures are reported truthfully; repair recovers real evidence or
+declares a new boundary and never manufactures continuity.
 
 ## Relationship with Git
 
@@ -67,9 +83,14 @@ retains domain-level transition evidence that raw Git cannot express directly.
 Neither history is semantic state authority. A Git commit, tree, blob, ref,
 repository, or host is not revision-occurrence or semantic-event identity.
 
-Issue #49 owns optional Git association together with history profiles,
-checkpoints, replay/verification, compaction, retention/redaction, and crash
-recovery. Issue #50 owns offline causality and selective CRDT/OT mechanics.
+ADR-0033 defines Git association as optional immutable evidence with many-to-
+many cardinality between Tachiko checkpoint/history commitments and Git
+commits/repositories. Mutable refs are locators. Rebase, squash, recommit,
+mirroring, or migration creates new association evidence rather than silently
+retargeting an existing association. Exact integrity bytes, signatures, and
+trust remain with #53; concrete Git adapters require separately Ready work.
+
+Issue #50 owns offline causality and selective CRDT/OT mechanics.
 
 ## Constraints already accepted
 
@@ -80,6 +101,11 @@ Any future profile must preserve these constraints:
 - pre-publication failure and `NoChange` create no semantic event;
 - a post-install failure does not erase the installed revision occurrence;
 - retained transitions and security/provenance receipts remain distinct;
+- replay input remains distinct from retained transition and delta evidence;
 - Semantic Delta remains evidence, not an apply language;
 - Git remains optional and non-semantic; and
 - collaboration convenience must not silently discard disputed human intent.
+
+Concrete retained-history DTOs, codecs, storage, checkpoint/replay engines,
+retention tooling, and Git adapters are not implemented or authorized by this
+specification.

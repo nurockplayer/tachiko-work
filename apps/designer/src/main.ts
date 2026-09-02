@@ -9,4 +9,14 @@ if (root === null) {
   throw new Error("Designer application root is missing.");
 }
 
-mountDesigner(root, new WorkerDesignerClient(), new BrowserProjectHost());
+mountDesigner(
+  root,
+  new WorkerDesignerClient(
+    () =>
+      new Worker(new URL("./runtime/designer.worker.ts", import.meta.url), {
+        type: "module",
+        name: "tachiko-designer-runtime",
+      }),
+  ),
+  new BrowserProjectHost(),
+);

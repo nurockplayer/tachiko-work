@@ -21,16 +21,15 @@ type PendingRequest = {
   reject(error: Error): void;
 };
 
+export type DesignerWorkerFactory = () => Worker;
+
 export class WorkerDesignerClient implements DesignerClient {
   readonly #worker: Worker;
   readonly #pending = new Map<number, PendingRequest>();
   #nextId = 1;
 
-  constructor() {
-    this.#worker = new Worker(new URL("./designer.worker.ts", import.meta.url), {
-      type: "module",
-      name: "tachiko-designer-runtime",
-    });
+  constructor(createWorker: DesignerWorkerFactory) {
+    this.#worker = createWorker();
     this.#worker.addEventListener("message", (event: MessageEvent<WorkerReply>) => {
       const pending = this.#pending.get(event.data.id);
       if (pending === undefined) return;

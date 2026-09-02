@@ -1,54 +1,5 @@
 /// <reference lib="webworker" />
 
-import type { FailureProjection, WorkerRequest } from "./protocol.ts";
-import { createDesignerWasmBridge } from "./wasm-bridge.ts";
+import { startDesignerWorker } from "./worker-runtime.ts";
 
-const scope = self as DedicatedWorkerGlobalScope;
-const bridge = createDesignerWasmBridge("/designer_runtime.wasm");
-
-scope.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
-  void (async () => {
-    try {
-      const runtime = await bridge;
-      switch (event.data.kind) {
-        case "command": {
-          const reply = runtime.request(event.data.request);
-          scope.postMessage({ id: event.data.id, ...reply });
-          break;
-        }
-        case "open_project": {
-          const reply = runtime.openProject(
-            new Uint8Array(event.data.bytes),
-            event.data.occurrence_id,
-          );
-          scope.postMessage({ id: event.data.id, ...reply });
-          break;
-        }
-        case "export_project": {
-          const reply = runtime.exportProject(event.data.expected_revision);
-          if (reply.status === "error") {
-            scope.postMessage({ id: event.data.id, ...reply });
-          } else {
-            scope.postMessage(
-              { id: event.data.id, status: "project_exported", export: reply.export },
-              [reply.export.bytes],
-            );
-          }
-          break;
-        }
-        case "close_project":
-          runtime.closeProject();
-          scope.postMessage({ id: event.data.id, status: "closed" });
-          break;
-      }
-    } catch (error) {
-      const failure: FailureProjection = {
-        code: "worker_failure",
-        message: error instanceof Error ? error.message : String(error),
-        current_revision: "unavailable",
-        diagnostics: [],
-      };
-      scope.postMessage({ id: event.data.id, status: "error", error: failure });
-    }
-  })();
-});
+startDesignerWorker("/designer_runtime.wasm");
