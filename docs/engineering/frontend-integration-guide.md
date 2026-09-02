@@ -4,21 +4,17 @@ Status: onboarding guide for the Issue #231 external-frontend pilot. This is
 implementation guidance, not a stable SDK, wire protocol, compatibility promise,
 or normative Tachiko contract.
 
-This guide is for a frontend engineer who wants to build a Tachiko UI in a
-separate GitHub repository.
+This guide is for a frontend engineer building a Tachiko UI in a separate GitHub
+repository.
 
-## Your assignment
+## What you are building
 
 Build a useful graphical client over Tachiko's existing runtime.
 
-You may use React, Svelte, Vue, Solid, vanilla TypeScript, or another browser
-stack. You may design a spreadsheet-like editor, a focused domain tool, a mobile-
-shaped interface, or another presentation that makes sense to you.
-
-You do **not** need to copy the first-party Designer. Different interpretations
-are useful evidence for this pilot.
-
-Your job is:
+Use React, Svelte, Vue, Solid, vanilla TypeScript, or another browser stack. A
+spreadsheet-like editor, focused domain tool, or another presentation is welcome.
+Do not copy the first-party Designer by default. Different interpretations are
+useful pilot evidence.
 
 ```text
 Tachiko projections
@@ -28,106 +24,75 @@ your interaction and visual design
 a useful frontend
 ```
 
-Your job is not:
+You are **not** being asked to build another Tachiko engine:
 
 ```text
-parse Tachiko storage
-+ rebuild formulas
-+ rebuild validation
-+ invent revision rules
-= a second Tachiko engine
+Do not parse Tachiko storage
+Do not rebuild formulas or validation
+Do not invent revision behavior
 ```
 
-## The 30-second mental model
+## Three concepts are enough to start
 
 ```text
 your frontend
-  layout, selection, viewport, draft input, visual state
+  layout, selection, viewport, draft input
         |
-        | typed queries and revision-pinned edits
+        | typed queries + revision-pinned edits
         v
-experimental Designer client kit
+experimental client kit
         |
         v
-Worker + Rust/WASM resident runtime
-  canonical values, formulas, validation, revisions, export
+Worker + Rust/WASM runtime
+  values, formulas, validation, revisions, export
 ```
 
-The frontend renders **projections** returned by Tachiko. A projection is a
-UI-facing view of semantic facts. It is safe to cache by revision and safe to
-throw away.
+1. **Projection** is UI-facing data returned by Tachiko. Cache it by revision or
+   discard it freely.
+2. **Expected revision** protects an edit from overwriting newer state. A stale
+   edit is rejected.
+3. **Runtime authority** means formula results, diagnostics, semantic IDs,
+   revisions, and canonical export come from Tachiko, not frontend code.
 
-Every edit supplies an **expected revision**. Tachiko rejects a stale edit rather
-than silently overwriting a newer state.
-
-The Rust **runtime is authoritative**. Formula results, validation findings,
-semantic identity, revisions, and canonical export come from Tachiko, not from
-frontend code.
-
-## What each side owns
+## Who owns what
 
 | Your frontend owns | Tachiko owns |
 | --- | --- |
 | Layout and visual design | Canonical semantic values |
-| Selection, focus, viewport, open panels | Stable semantic identity |
-| Temporary text and edit buffers | Formula calculation |
-| Loading, error, and interaction presentation | Validation and diagnostics |
-| Disposable revision-keyed projection caches | Revision and stale-edit decisions |
-| Local sorting or grouping used only for display | Canonical `.roproj` admission and export |
+| Selection, focus, viewport, panels | Stable semantic identity |
+| Temporary input and edit buffers | Formula calculation |
+| Loading and error presentation | Validation and diagnostics |
+| Disposable revision-keyed caches | Revision and stale-edit decisions |
+| Local display-only sorting/grouping | Canonical `.roproj` admission and export |
 
-A local UI state may look newer than the last runtime response, but it does not
-become semantic truth until Tachiko accepts and publishes the edit.
+You can reach the first table without reading Rust internals, the raw WASM ABI,
+`.roproj` serialization rules, the formula engine, or the ADR collection.
 
-## You do not need to learn these first
+## Current proven path
 
-You can reach the first table without understanding:
+The pilot currently targets a browser app using ES modules, Web Workers, and
+WebAssembly.
 
-- Rust crate internals;
-- the raw WASM memory arena or ABI;
-- `.roproj` serialization rules;
-- the formula evaluator;
-- the validation engine;
-- the complete Semantic API specification;
-- repository ADR history.
+The repository proves Vite + Chromium. Other bundlers and browsers may work, but
+are not yet pilot evidence. Keep every generated kit file together, and serve
+`.wasm` with the correct WebAssembly MIME type.
 
-Those materials remain available for deeper work, but they are not an onboarding
-tax.
+The kit is vendored output, not an npm package. Generate it from the exact
+Tachiko checkout you are testing.
 
-## Current proven environment
+## Quick start
 
-The pilot currently targets a browser frontend using ES modules, Web Workers,
-and WebAssembly.
+### 1. Prepare your repository and export the kit
 
-The repository smoke consumer proves the flow with Vite and Chromium. Other
-bundlers and browsers may work, but they are not yet pilot evidence. A server
-must serve `.wasm` with an appropriate WebAssembly MIME type and keep the
-exported kit files together so relative Worker and runtime URLs continue to
-resolve.
-
-The kit is vendored source and runtime output, not an npm package. Regenerate it
-from the exact Tachiko checkout you intend to test.
-
-## Fast path to the first table
-
-### 1. Create your own repository
-
-Keep your frontend outside `nurockplayer/tachiko-work`.
-
-A simple shape is enough:
+Keep your frontend outside `nurockplayer/tachiko-work`:
 
 ```text
 my-tachiko-ui/
 ├── src/
-├── public/
 ├── samples/
 └── vendor/
     └── tachiko/
 ```
-
-Use your preferred framework and repository conventions. The pilot does not
-require a particular component library or visual design.
-
-### 2. Export the client kit
 
 From a clean Tachiko Work checkout with Rust, the
 `wasm32-unknown-unknown` target, and pnpm 11.25.0 installed:
@@ -137,8 +102,7 @@ bash scripts/export-experimental-designer-client.sh \
   /path/to/my-tachiko-ui/vendor/tachiko
 ```
 
-The destination must be absent or empty. Keep the generated directory intact
-and import only its intended entry:
+The destination must be absent or empty. Import only the intended entry:
 
 ```ts
 import {
@@ -147,26 +111,23 @@ import {
 } from "../vendor/tachiko/experimental-client.js";
 ```
 
-Do not import neighboring `runtime/` or `host/` modules directly. They are
-private support files that may change without notice.
+Do not import neighboring `runtime/` or `host/` modules directly.
 
-### 3. Copy the sample project
+### 2. Use the Product Gap sample
 
-The first pilot sample is:
+Start with:
 
 ```text
 dogfood/product-gaps.roproj
 ```
 
 It contains Text, Number, Boolean, and formula-backed fields in a domain unrelated
-to the original Moonfall demo.
-
-You may copy it into your repository for the pilot, or select it directly from a
+to the original Moonfall demo. Copy it into your repository or select it from a
 local Tachiko checkout.
 
-### 4. Open it and render the returned table
+### 3. Open it and render the first table
 
-Use a browser directory input for the current `.roproj/v1` path:
+The current browser path uses a directory input:
 
 ```html
 <input id="project" type="file" webkitdirectory />
@@ -183,6 +144,7 @@ const input = document.querySelector<HTMLInputElement>("#project");
 if (input === null) throw new Error("Project input is missing.");
 
 const client = createExperimentalDesignerClient();
+let currentTable: TableProjection | null = null;
 
 input.addEventListener("change", () => {
   void openSelectedProject();
@@ -193,42 +155,38 @@ async function openSelectedProject(): Promise<void> {
 
   const transfer = await projectTransferFromFiles(input.files);
   const opened = await client.openProject(transfer);
+  currentTable = opened.table;
 
   renderTable(opened.table);
 }
 
 function renderTable(table: TableProjection): void {
   console.log(table.collection.key, table.revision);
-  console.table(
-    table.rows.map((row) => ({
-      key: row.key,
-      fields: row.fields,
-    })),
-  );
+  console.table(table.rows.map((row) => ({ key: row.key, fields: row.fields })));
 
-  // Replace this function with your components and interaction design.
+  // Replace this with your components and interaction design.
 }
 ```
 
-`openProject` already returns an initial `table`. You do not need another query
-to render the first useful screen.
+`openProject` already returns the initial table. No second query is needed for
+the first useful screen.
 
-### 5. Publish one edit
+### 4. Publish an edit and refresh from Tachiko
 
-Use a field target returned by the projection. Do not construct a target from a
-row number, label, JSON path, or DOM coordinate.
+Use a field target returned by the projection. Never build a target from a row
+number, label, JSON path, or DOM coordinate.
 
 ```ts
-const table = opened.table;
-const row = table.rows[0];
+if (currentTable === null) throw new Error("Open a project first.");
+
+const row = currentTable.rows[0];
 const field = row?.fields.find(
   (candidate) => candidate.editable_scalar === "number",
 );
-
 if (field === undefined) throw new Error("No editable Number field was found.");
 
 const publication = await client.editNumber(
-  table.revision,
+  currentTable.revision,
   field.target,
   "3",
 );
@@ -241,34 +199,24 @@ const refreshed = await client.queryFields(publication.resulting_revision, [
 console.log(refreshed.fields);
 ```
 
-The same client exposes `editText` and `editBoolean`.
+The client also exposes `editText` and `editBoolean`.
 
-Do not recalculate dependent formulas in JavaScript. Use the publication's
-affected targets and query Tachiko for the new calculated and diagnostic
-projections.
+Do not recalculate dependent formulas in JavaScript. Query Tachiko at the
+resulting revision and render the returned calculation and diagnostic evidence.
 
-### 6. Export or close
-
-Export requires the exact current revision:
+Export or close with:
 
 ```ts
 const exported = await client.exportProject(publication.resulting_revision);
-console.log(exported.bytes);
-```
+console.log(exported.bytes); // opaque canonical project bytes
 
-The bytes are an opaque canonical project bundle for host-owned persistence or a
-later `openProject` round trip. Do not edit the bytes in frontend code.
-
-Clean up both the project occurrence and Worker:
-
-```ts
 await client.closeProject();
 await client.close();
 ```
 
-## Read the projection without learning the engine
+Do not edit exported bytes in frontend code.
 
-The first response is shaped approximately like this:
+## How to read a projection
 
 ```text
 OpenedProjection
@@ -291,114 +239,92 @@ OpenedProjection
             └── editable_scalar
 ```
 
-The distinctions matter:
+- `stored` is direct input.
+- `formula` describes formula-backed meaning.
+- `calculated` is Tachiko's current formula result.
+- `diagnostics` contains validation or calculation evidence.
+- `editable_scalar` tells the pilot UI whether direct scalar editing is allowed.
 
-- `stored` is directly stored input;
-- `formula` describes formula-backed meaning;
-- `calculated` is Tachiko's current formula outcome;
-- `diagnostics` is Tachiko's validation/calculation evidence;
-- `editable_scalar` tells the current pilot UI whether direct scalar editing is
-  supported.
+Do not collapse these into one mutable cell value.
 
-Do not collapse all five into one mutable cell value.
+## API cheat sheet
 
-## Client API cheat sheet
-
-| Call | Use it for |
+| Call | Purpose |
 | --- | --- |
-| `openProject(bytes)` | Admit one canonical project and receive bootstrap plus the first table |
+| `openProject(bytes)` | Open a canonical project and receive bootstrap plus the first table |
 | `queryTable(collection)` | Switch to another typed collection |
-| `queryFields(revision, targets)` | Refresh selected stored, calculated, and diagnostic projections |
-| `editNumber(revision, target, input)` | Publish a Number edit through Tachiko authority |
-| `editText(revision, target, value)` | Publish a Text edit through Tachiko authority |
-| `editBoolean(revision, target, value)` | Publish a Boolean edit through Tachiko authority |
+| `queryFields(revision, targets)` | Refresh selected values, calculations, and diagnostics |
+| `editNumber(revision, target, input)` | Publish a Number edit |
+| `editText(revision, target, value)` | Publish a Text edit |
+| `editBoolean(revision, target, value)` | Publish a Boolean edit |
 | `exportProject(revision)` | Export the exact current canonical project bytes |
 | `closeProject()` | Destroy the current resident project occurrence |
-| `close()` | Terminate the client Worker |
+| `close()` | Terminate the Worker |
 
-The generated `experimental-client.d.ts` is the most direct reference for the
-current concrete TypeScript shapes. Those shapes are experimental and may change.
+The generated `experimental-client.d.ts` is the direct reference for current
+TypeScript shapes. Every concrete shape remains experimental.
 
 ## The revision rule
 
-Treat the revision as part of every edit, not as display decoration:
-
 ```text
-render revision R0
-        |
-        | edit target using expected R0
-        v
-Tachiko accepts
-        |
-        v
-publication says resulting revision R1
-        |
-        | query affected fields at R1
-        v
-render revision R1
+render R0
+   ↓ edit with expected R0
+Tachiko accepts and publishes R1
+   ↓ query affected fields at R1
+render R1
 ```
 
-When another accepted edit has already moved the runtime to `R1`, an edit still
-based on `R0` fails with `DesignerRuntimeError` and
-`failure.code === "stale_revision"`.
+An edit still based on `R0` after the runtime reaches `R1` throws
+`DesignerRuntimeError` with `failure.code === "stale_revision"`.
 
-Do not silently replay that edit against the newer state. Show the conflict,
-refresh the required projection, and let the user decide what to submit next.
+Do not silently replay it against the newer state. Refresh the required
+projection, show the conflict, and let the user decide what to submit next.
 
-## Things that will invalidate the experiment
+## Pilot boundaries
 
 Do not:
 
-- import private Tachiko application source from `apps/designer`;
-- copy only selected Worker/WASM internals and call them directly;
-- parse or rewrite `.roproj` semantic content in the frontend;
+- import private source from `apps/designer`;
+- call Worker support modules or raw WASM exports directly;
+- parse or rewrite `.roproj` meaning in the frontend;
 - implement a second formula evaluator or validator;
-- maintain a JavaScript `Document` as a competing canonical edit model;
-- derive stable targets from names, table positions, or storage paths;
-- treat a failed or stale edit as published;
-- describe the current kit as a stable or supported public SDK.
+- maintain a JavaScript `Document` as competing canonical state;
+- treat failed or stale edits as published;
+- describe the kit as a stable or supported public SDK.
 
-If the only practical way forward appears to require one of these, stop and
-record the friction. That is valuable architecture evidence for Issue #231.
+The current experiment is intentionally limited to:
 
-## Known pilot limits
+- browser + Worker + WASM;
+- exact canonical `.roproj/v1` directory selection;
+- direct Text, Number, and Boolean edits;
+- no schema or formula authoring contract;
+- no npm or semantic-version compatibility promise;
+- no network, cloud, authentication, or collaboration API;
+- no autosave, same-path overwrite, or general persistence API;
+- one resident project at a time per client;
+- filenames, DTOs, revisions, and browser requirements that may change.
 
-The current experiment is intentionally narrow:
+When a useful UI seems to require breaking a boundary, stop and report the
+friction instead of hiding it behind a new abstraction.
 
-- browser + Worker + WASM only;
-- an exact canonical `.roproj/v1` directory is opened through a browser directory
-  selection;
-- direct Text, Number, and Boolean edits only;
-- no schema or formula authoring UI contract;
-- no npm publication or semantic-version compatibility promise;
-- no network, cloud, authentication, or collaboration client contract;
-- no autosave, same-path overwrite, or generalized persistence API;
-- one resident project occurrence per client instance;
-- the exported filenames, DTOs, revision spelling, and browser requirements may
-  change or disappear.
+## What counts as success
 
-Do not spend pilot time hiding these limits behind a new abstraction. Report the
-ones that materially block your UI.
+A first pilot repository should:
 
-## What counts as a successful pilot client
+1. import only the generated kit;
+2. open the Product Gap sample;
+3. render a useful typed view;
+4. publish one revision-safe scalar edit;
+5. show formula or diagnostic evidence returned by Tachiko;
+6. handle a stale or rejected edit honestly;
+7. export or reopen the accepted state;
+8. record what was confusing.
 
-A first external repository should demonstrate:
+Visual polish is welcome, but the authority boundary is the actual experiment.
 
-1. it imports only the generated kit;
-2. it opens the Product Gap sample;
-3. it renders a useful typed view;
-4. it publishes at least one revision-safe Text, Number, or Boolean edit;
-5. it displays formula or diagnostic evidence returned by Tachiko;
-6. it handles a stale or rejected edit without claiming success;
-7. it exports or reopens the accepted state;
-8. it records where onboarding or the client boundary was confusing.
+## Record friction
 
-Visual polish is welcome, but it is not a substitute for proving the authority
-boundary.
-
-## Record friction while it is fresh
-
-Please capture this small report in your repository or in Issue #231:
+Add this report to your repository or Issue #231:
 
 ```md
 ## External frontend pilot report
@@ -409,36 +335,29 @@ Please capture this small report in your repository or in Issue #231:
 - Time to first table:
 - Time to first accepted edit:
 - What worked without explanation:
-- What required reading Tachiko internals:
+- What required Tachiko-internal reading:
 - Where I wanted to duplicate semantic logic:
 - Missing or awkward client operation:
 - Error or revision behavior that was unclear:
 - One thing I would simplify:
-- Would I continue building on this boundary? Why?
+- Would I continue on this boundary? Why?
 ```
 
-Questions that sound basic are especially useful. If rendering one table requires
-learning an internal concept, the boundary or documentation may be wrong.
-
-## Where the work lives
-
-Participants own and operate their external repositories. During the current
-legal/contribution gate, share repository links, screenshots, issue reports, and
-architecture observations rather than opening an implementation or normative-
-specification PR against `tachiko-work`.
+Participants own their external repositories. During the current legal and
+contribution gate, share links, screenshots, issue reports, and architecture
+observations rather than opening an implementation or normative-specification PR
+against `tachiko-work`.
 
 Record pilot evidence in
 [Issue #231](https://github.com/nurockplayer/tachiko-work/issues/231).
 
 ## Read next only when needed
 
-- [Experimental client-kit technical guide](experimental-designer-client-kit.md)
-  covers exact export, assets, and the executable Product Gap walkthrough.
+- [Client-kit technical guide](experimental-designer-client-kit.md) covers exact
+  export, generated assets, and the executable Product Gap walkthrough.
 - [External-style smoke consumer](../../examples/experimental-designer-client/)
-  is the smallest working reference implementation.
+  is the smallest working reference.
 - [Frontend/backend boundary](../architecture/frontend-backend-boundary.md)
   explains the accepted authority split.
 - [Semantic API specification](../specs/semantic-api.md) explains deeper logical
-  operation meaning without making the current kit stable.
-- [Issue #231](https://github.com/nurockplayer/tachiko-work/issues/231) owns the
-  pilot and its evidence.
+  operation meaning without making this kit stable.
