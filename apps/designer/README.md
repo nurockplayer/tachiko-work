@@ -71,8 +71,13 @@ Export it to a caller-owned directory with:
 bash scripts/export-experimental-designer-client.sh /path/to/external-ui/vendor/tachiko
 ```
 
-Start with the short
-[`Product Gap` first-contact guide](../../docs/engineering/experimental-designer-client-kit.md).
-The external-style smoke consumer lives under
+Frontend engineers should start with
+[Build an experimental Tachiko frontend](../../docs/engineering/frontend-integration-guide.md),
+which explains the assignment, responsibility split, first useful milestone,
+current limits, and pilot feedback format without requiring engine knowledge.
+
+Use the
+[client-kit technical guide](../../docs/engineering/experimental-designer-client-kit.md)
+while wiring the generated assets. The external-style smoke consumer lives under
 [`examples/experimental-designer-client`](../../examples/experimental-designer-client/)
 and imports only the generated kit.
