@@ -56,9 +56,12 @@ import {
   projectTransferFromFiles,
 } from "./vendor/tachiko/experimental-client.js";
 
-const input = document.querySelector<HTMLInputElement>("#project")!;
+const input = document.querySelector<HTMLInputElement>("#project");
+if (input === null || input.files === null) {
+  throw new Error("Select a canonical .roproj directory first.");
+}
 const client = createExperimentalDesignerClient();
-const transfer = await projectTransferFromFiles(input.files!);
+const transfer = await projectTransferFromFiles(input.files);
 const opened = await client.openProject(transfer);
 const table = await client.queryTable(opened.bootstrap.default_collection);
 

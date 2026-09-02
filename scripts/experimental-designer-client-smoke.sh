@@ -32,6 +32,9 @@ if rg -n '\.ts"' "${vendor_dir}" -g '*.js'; then
   echo "experimental-designer-client-smoke: emitted JavaScript retains source-only imports" >&2
   exit 1
 fi
+pnpm --dir "${repo_root}/apps/designer" exec node \
+  --eval 'const manifest = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")); if (manifest.private !== true || manifest.packageManager !== "pnpm@11.25.0") process.exit(1);' \
+  "${vendor_dir}/package.json"
 
 pnpm --dir "${repo_root}/apps/designer" exec tsc \
   --project "${consumer_dir}/tsconfig.json" \
