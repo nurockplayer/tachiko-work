@@ -241,6 +241,23 @@ function renderTable(table: TableProjection): void {
 
   // Replace this with your components and interaction design.
 }
+
+async function refreshRenderedTable(): Promise<void> {
+  const table = currentTable;
+  const revision = currentRevision;
+  if (table === null || revision === null) {
+    throw new Error("Open a project first.");
+  }
+  if (table.revision === revision) return;
+
+  const refreshedTable = await client.queryTable(table.collection.key);
+  if (refreshedTable.revision !== revision) {
+    throw new Error("Table refresh did not reach the resident revision.");
+  }
+
+  currentTable = refreshedTable;
+  renderTable(refreshedTable);
+}
 ```
 
 `openProject` already returns the initial table. No second query is needed for
@@ -297,17 +314,21 @@ async function editProductGapImpact(inputValue: string): Promise<void> {
 }
 ```
 
-Wire the edit action like this:
+Wire the edit and explicit refresh actions like this:
 
 ```ts
 void runExclusive(() => editProductGapImpact("3")).catch(renderProjectError);
+void runExclusive(refreshRenderedTable).catch(renderProjectError);
 ```
 
 The client also exposes `editText` and `editBoolean`.
 
 Do not recalculate dependent formulas in JavaScript. The simple pilot path above
 re-queries the table so stored values, calculated values, diagnostics, and the
-rendered revision advance together.
+rendered revision advance together. If publication succeeds but that refresh
+fails, `currentRevision` still records the accepted resident revision. Retry
+`refreshRenderedTable` before another edit instead of saving/reopening or
+publishing against the stale rendered table.
 
 After that path works, a larger UI may optimize with `queryFields`. Query the
 deduplicated union of `publication.fields` and
