@@ -383,11 +383,13 @@ realization does not select or stabilize a serialization codec, WASM/public
 transport, network/SDK shape, hash/UUID identity, storage format, resolver UI,
 or Git merge driver.
 
-Issues [#47](https://github.com/nurockplayer/tachiko-work/issues/47),
-[#49](https://github.com/nurockplayer/tachiko-work/issues/49), and
-[#50](https://github.com/nurockplayer/tachiko-work/issues/50) retain cross-version
-migration, history/checkpoint/Git association, and causality/CRDT work
-respectively.
+Issue [#47](https://github.com/nurockplayer/tachiko-work/issues/47) retains
+cross-version migration work, and
+[#50](https://github.com/nurockplayer/tachiko-work/issues/50) retains
+causality/CRDT work.
+[ADR-0033](../decisions/ADR-0033-snapshot-first-semantic-history-and-checkpoints.md)
+fixes the bounded logical history/checkpoint/Git-association contract; concrete
+implementations require separately Ready work.
 [ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md)
 separately fixes operation/revision/event taxonomy without changing this
 conflict contract.

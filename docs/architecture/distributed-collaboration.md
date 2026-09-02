@@ -80,5 +80,8 @@ Issue #46's deterministic structural conflict evidence; Issue #223 realizes its
 logical production merge boundary without selecting a stable codec, transport,
 wire, or SDK contract. ADR-0032 resolves Issue #48's
 operation/revision/optional-event taxonomy without selecting history mechanics.
-Issues #47, #49, and #50 own the remaining cross-version,
-history/checkpoint/Git-association, and causality/CRDT mechanics.
+[ADR-0033](../decisions/ADR-0033-snapshot-first-semantic-history-and-checkpoints.md)
+resolves Issue #49's snapshot-first logical history/checkpoint/Git-association
+boundary without selecting concrete implementations. Issues #47 and #50 own
+the remaining cross-version and causality/CRDT mechanics; concrete history
+engines and adapters require separately Ready work.

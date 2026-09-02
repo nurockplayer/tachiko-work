@@ -67,6 +67,28 @@ The model itself is the compatibility boundary for future representations.
 - CI validation
 - reviewable data changes
 
+## Optional history and checkpoint association
+
+[ADR-0033](../decisions/ADR-0033-snapshot-first-semantic-history-and-checkpoints.md)
+defines optional Git association as immutable external evidence, never semantic,
+revision, checkpoint, history, or commitment identity. One Tachiko checkpoint
+or history commitment may appear in zero, one, or many commits or repositories,
+and one Git commit may contain zero, one, or many Tachiko checkpoints plus
+unrelated files.
+
+An association identifies the Git object plus the repository and hash-algorithm
+context needed to interpret it. Mutable refs are locators. Rebase, squash,
+recommit, mirroring, or migration creates new association evidence; existing
+associations are not silently retargeted. Git absence or unreachable historical
+commits do not invalidate semantic state or a self-contained checkpoint, and
+bytes obtained from Git re-enter ordinary Tachiko admission and validation.
+
+This logical association does not select an adapter, storage representation,
+checkpoint cadence, canonical commitment bytes, digest/signature algorithm, or
+trust policy. Exact integrity and trust semantics remain with
+[Issue #53](https://github.com/nurockplayer/tachiko-work/issues/53), and concrete
+Git/history implementation requires separately Ready work.
+
 ## Goal
 
 Make non-programmers first-class participants in Git-based workflows without making Git itself the user interface.

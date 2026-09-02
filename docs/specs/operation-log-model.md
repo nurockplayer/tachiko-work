@@ -1,16 +1,19 @@
 # Semantic Operation Log Model
 
-Decision state: Mixed — ADR-0029 history boundary and ADR-0032 transition
-taxonomy Accepted; retained-history profiles and mechanics Open Question
+Decision state: Mixed — ADR-0029 history boundary, ADR-0032 transition
+taxonomy, and ADR-0033 snapshot-first retained-history profiles Accepted;
+concrete DTO, wire, storage, and operational mechanics Deferred
 
 Implementation state: No first-class persisted semantic operation/history log
 
 Authority:
 [ADR-0029](../decisions/ADR-0029-current-state-authority-and-optional-history.md)
 and
-[ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md)
+[ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md),
+with history profiles, checkpoints, and replay verification defined by
+[ADR-0033](../decisions/ADR-0033-snapshot-first-semantic-history-and-checkpoints.md)
 
-Decision owner for retained-history mechanics: #49
+Decision provenance: [#49](https://github.com/nurockplayer/tachiko-work/issues/49)
 
 ## Overview
 
@@ -62,34 +65,97 @@ Current runtime Commands and internal revision tokens are implementation
 evidence. They are not a canonical persisted log, globally meaningful revision
 identity, or a public retained-transition DTO.
 
-## Potential optional-history benefits
+## Accepted history capability profiles
 
-A retained semantic-history profile may support:
+History guarantees are declared explicitly rather than inferred from retained
+files:
 
-- meaningful history and semantic review;
-- AI explanation and conflict explanation;
-- audit, recovery, or verification guarantees; and
-- collaboration workflows.
+- **Snapshot-only** provides no general semantic-history guarantee.
+- **Retained evidence** may preserve immutable transitions, receipts, or related
+  evidence, but declares the set incomplete and non-replayable.
+- **Verified tail** binds one complete checkpoint to one contiguous, supported,
+  version-pinned replay segment ending at an exact later authoritative snapshot,
+  verified by canonical snapshot equality.
 
-These benefits justify bounded profiles; they do not require event sourcing or
-a permanently retained operation log.
+V1 defines no unqualified `full history` profile. Imports, merges, migrations,
+redaction, compaction, and future causal branches require explicit boundaries
+and gaps rather than an undefined completeness claim.
 
-## Deferred mechanics
+## Checkpoints and bounded segments
 
-Issue #49 must define any retained-history profile, including:
+A checkpoint has an immutable logical identity distinct from revision,
+snapshot/content, transition, receipt, segment, representation, and Git
+identities. It binds one `DocumentId`, a complete validated canonical snapshot,
+required semantic and representation versions, the history-profile version,
+explicit coverage, and declared included segment/evidence commitments. A
+standalone checkpoint resolves its complete snapshot without unavailable Git,
+network, server, or host-local state. Reopening it creates a new live runtime
+occurrence rather than reviving an old internal revision token.
 
-- the exact logical contract/version and DTO/wire mapping for retained
-  transitions;
-- durable storage and retention/redaction guarantees;
-- parent/history structure, checkpoints, replay/verification, compaction, and
-  crash recovery;
-- how incomplete post-install evidence is reconciled truthfully; and
-- optional Git association without making Git semantic identity.
+History is retained in immutable bounded segments scoped to one `DocumentId`
+and one owning history/revision context. Each segment declares an exact start
+checkpoint or boundary, exact end, segment-local order, required contract
+versions, continuity, coverage, and gaps. Each transition's `before` occurrence
+matches the preceding `after` occurrence within a contiguous range. Segment
+order implies neither global time nor multi-parent causality. A checkpoint-start
+boundary binds the checkpoint snapshot commitment to the first replay record's
+exact base and `before` state; a mismatch is a gap.
 
-Issue #50 owns offline causal metadata, DAG/clock mechanics,
-resynchronization, and selective CRDT/OT. Issue #11 owns multi-document, host,
-external-effect, durability, rollback, and recovery transaction semantics.
+## Replay and equality verification
 
-Until those decisions are Accepted, operation-log persistence remains an Open
-Question and may not reopen ADR-0029's current-state authority or complete
-standalone snapshot boundary.
+A retained transition and its Semantic Delta are publication evidence, not the
+replay program. A replay-capable segment additionally retains the exact
+deterministic, version-pinned replay input, normally the accepted
+`Command | AtomicBatch`, plus every required semantic configuration/resource
+and the recorded outcome. Replay verifies the start binding and each
+reconstructed outcome/transition before advancing to the next exact base;
+endpoint equality cannot replace those checks.
+
+Replay runs only from a complete checkpoint through a complete contiguous
+supported tail. It is side-effect free and must not use an LLM, network, wall
+clock, random source, Git operation, or external effect. Canonical equality with
+the recorded authoritative snapshot verifies the claim. Missing, corrupt,
+unsupported, non-deterministic, discontinuous, or mismatching history fails the
+history capability closed without replacing or reinterpreting a valid snapshot.
+
+Imports, migrations, merge/rebaseline boundaries, and other changes that cannot
+be expressed faithfully through the supported intent contract establish a new
+verified checkpoint or explicit boundary rather than synthetic Commands.
+
+## Retention, failure, and repair
+
+A physical repack may change representation identity while preserving every
+logical record, order, commitment, and coverage guarantee. Retention compaction
+that discards, coalesces, redacts, or closes history first verifies a complete
+checkpoint, then mints new checkpoint/history identity and declares the new
+coverage boundary. Privacy policy may sever predecessor links, but general
+history retention cannot waive ADR-0026 minimum provenance or replay-protection
+obligations.
+
+Snapshot and history admission are separate. A profile reports snapshot-ahead,
+history-ahead, missing required evidence, unsupported/corrupt/redacted/incomplete
+history, and snapshot/history mismatch. History-ahead never advances current
+state automatically; snapshot-ahead is an explicit gap unless real evidence is
+recovered. Repair recovers genuine records or establishes a new boundary and
+never fabricates history.
+
+Undo/revert moves forward through a newly authorized `Command | AtomicBatch`
+against the current base. Prior-equivalent content is a new revision occurrence;
+history is not erased or rewound.
+
+## Logical commitments and deferred implementation
+
+ADR-0033 distinguishes snapshot, history-segment, and checkpoint commitment
+scopes without selecting canonical bytes, digest/signature algorithms, or trust
+semantics; those remain with #53. Git association is optional many-to-many
+immutable evidence and never supplies semantic, checkpoint, or history identity.
+Every checkpoint, transition, replay input, and history profile pins its
+interpretation contracts; unsupported versions fail the capability closed and
+a new verified checkpoint may explicitly close an older replay range.
+
+Concrete public DTOs, wire mappings, codecs, storage layouts, checkpoint/replay
+engines, retention tooling, and Git adapters require separately Ready
+implementation work. Issue #50 owns offline causal metadata, DAG/clock
+mechanics, resynchronization, and selective CRDT/OT. Issue #11 owns broader
+multi-document, host, external-effect, durability, rollback, and recovery
+transaction semantics. Issue #47 owns cross-version branch migration behavior.

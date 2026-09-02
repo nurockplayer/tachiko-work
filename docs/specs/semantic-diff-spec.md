@@ -226,10 +226,13 @@ may consume canonical delta as merge/conflict evidence without treating it as
 an apply language.
 [ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md)
 consumes canonical delta as retained-transition evidence without turning it
-into an event or apply language. Issues
-[#49](https://github.com/nurockplayer/tachiko-work/issues/49) and
-[#50](https://github.com/nurockplayer/tachiko-work/issues/50) retain public
-history/Git and causality/CRDT decisions respectively.
+into an event or apply language.
+[ADR-0033](../decisions/ADR-0033-snapshot-first-semantic-history-and-checkpoints.md)
+keeps delta as evidence rather than replay input while fixing bounded optional
+history and Git-association guarantees. Issue
+[#50](https://github.com/nurockplayer/tachiko-work/issues/50) retains
+causality/CRDT decisions; concrete public history/Git implementations require
+separately Ready work.
 
 ## Principle
 
