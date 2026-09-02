@@ -23,8 +23,10 @@ deferred execution/revision/optional-event taxonomy,
 [ADR-0033](ADR-0033-snapshot-first-semantic-history-and-checkpoints.md) resolves
 the deferred snapshot-first history/checkpoint guarantees, and
 [ADR-0034](ADR-0034-team-workspace-policy-and-recovery-boundary.md) resolves the
-deferred cross-effect recovery boundary. None changes this current-state/
-history boundary.
+deferred cross-effect recovery boundary, and
+[ADR-0035](ADR-0035-collaboration-causality-and-selective-convergence-boundary.md)
+resolves the deferred offline causality, resynchronization, and selective-
+convergence boundary. None changes this current-state/history boundary.
 
 ## Context
 
@@ -136,25 +138,25 @@ ADR-0031. Its command/operation/transaction/event taxonomy deferral in
 [Issue #48](https://github.com/nurockplayer/tachiko-work/issues/48) is resolved
 by ADR-0032. Issue #49's logical history-profile, checkpoint, replay,
 compaction, retention, recovery, and Git-association boundary is resolved by
-ADR-0033, while ADR-0034 resolves the cross-effect recovery boundary. Those
-Issues retain historical provenance, and concrete mechanisms remain Deferred.
-The following decision work remains open:
+ADR-0033, ADR-0034 resolves the cross-effect recovery boundary, and Issue #50's
+logical causality, resynchronization, and selective-convergence boundary is
+resolved by ADR-0035. Those Issues retain historical provenance, and concrete
+mechanisms remain Deferred. The following decision work remains open:
 
 - [Issue #47](https://github.com/nurockplayer/tachiko-work/issues/47):
   compatibility migration and cross-version branch behavior;
-- [Issue #50](https://github.com/nurockplayer/tachiko-work/issues/50): offline
-  causality, selective CRDT/OT boundaries, and resynchronization.
 
-Production realization of ADR-0030 Semantic Delta or ADR-0031 Semantic Conflict
-or the logical ADR-0033/ADR-0034 guarantees is not implicitly authorized merely
-because those contracts are Accepted; each concrete mechanism requires
-separately Ready implementation work.
+Production realization of ADR-0030 Semantic Delta or ADR-0031 Semantic Conflict,
+or the logical ADR-0033/ADR-0034/ADR-0035 guarantees, is not implicitly
+authorized merely because those contracts are Accepted; each concrete mechanism
+requires separately Ready implementation work.
 
 Concrete public revision/event/receipt DTOs, checkpoint formats or cadence,
 history storage, replay/upcasters, causal clocks, Git mapping, and
 collaboration/server topology are not selected here. ADR-0032 fixes their
 logical taxonomy and identity separation, ADR-0033 fixes bounded snapshot-first
-history guarantees, and ADR-0034 fixes truthful cross-effect recovery.
+history guarantees, ADR-0034 fixes truthful cross-effect recovery, and ADR-0035
+fixes the logical causality and selective-convergence boundary.
 
 ## Consequences
 

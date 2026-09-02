@@ -1,9 +1,10 @@
 # Semantic Operation Log Model
 
 Decision state: Mixed — ADR-0029 history boundary, ADR-0032 transition
-taxonomy, ADR-0033 snapshot-first retained-history profiles, and ADR-0034
-cross-effect recovery boundary Accepted; concrete DTO, wire, storage, and
-operational mechanics Deferred
+taxonomy, ADR-0033 snapshot-first retained-history profiles, ADR-0034
+cross-effect recovery boundary, and ADR-0035 causal-evidence separation
+Accepted; concrete DTO, wire, storage, causal, and operational mechanics
+Deferred
 
 Implementation state: No first-class persisted semantic operation/history log
 
@@ -14,7 +15,9 @@ and
 with history profiles, checkpoints, and replay verification defined by
 [ADR-0033](../decisions/ADR-0033-snapshot-first-semantic-history-and-checkpoints.md)
 and cross-effect recovery constrained by
-[ADR-0034](../decisions/ADR-0034-team-workspace-policy-and-recovery-boundary.md)
+[ADR-0034](../decisions/ADR-0034-team-workspace-policy-and-recovery-boundary.md),
+with collaboration causal evidence separated by
+[ADR-0035](../decisions/ADR-0035-collaboration-causality-and-selective-convergence-boundary.md)
 
 Decision provenance: [#49](https://github.com/nurockplayer/tachiko-work/issues/49)
 
@@ -171,5 +174,7 @@ authoritative effect boundary owns its separately Deferred mechanism.
 Concrete public DTOs, wire mappings, codecs, storage layouts, checkpoint/replay
 engines, retention tooling, Git adapters, cross-effect coordinators, and
 external-effect protocols require separately Ready implementation work.
-Issue #50 owns offline causal metadata, DAG/clock mechanics, resynchronization,
-and selective CRDT/OT. Issue #47 owns cross-version branch migration behavior.
+ADR-0035 resolves the logical offline-causality, resynchronization, and
+selective-convergence boundary while concrete clocks, DAGs, engines, and
+CRDT/OT mechanisms remain separately owned. Issue #47 owns cross-version branch
+migration behavior.

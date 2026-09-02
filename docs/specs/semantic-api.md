@@ -14,6 +14,9 @@ retained-transition taxonomy is Accepted under
 The document-local semantic atomicity, multi-document orchestration, and
 cross-effect recovery boundary is Accepted under
 [ADR-0034](../decisions/ADR-0034-team-workspace-policy-and-recovery-boundary.md).
+The collaboration causality and selective-convergence boundary is Accepted under
+[ADR-0035](../decisions/ADR-0035-collaboration-causality-and-selective-convergence-boundary.md)
+without adding another mutation or publication vocabulary.
 Runtime ownership, resident interactive topology, host separation, explicit
 snapshot boundaries, and native/WASM semantic parity are Accepted under
 [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md).
@@ -1084,9 +1087,9 @@ evidence is not a semantic event.
 fixes snapshot-first history profiles and the logical checkpoint,
 replay/verification, compaction, retention/redaction, crash-recovery, and
 optional Git-association boundaries. Concrete durable storage and operational
-mechanics require separately Ready implementation work. Offline parent/causal
-metadata, DAG/clock mechanics, resynchronization, and selective CRDT/OT remain
-Issue #50.
+mechanics require separately Ready implementation work. ADR-0035 resolves the
+logical offline-causality, resynchronization, and selective-convergence boundary;
+concrete parent/clock/DAG and CRDT/OT mechanics require separately Ready work.
 
 ## Semantic atomicity
 
@@ -1739,6 +1742,7 @@ to semantic core by virtue of using the API.
 - [ADR-0029](../decisions/ADR-0029-current-state-authority-and-optional-history.md)
 - [ADR-0030](../decisions/ADR-0030-canonical-semantic-delta.md)
 - [ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md)
+- [ADR-0035](../decisions/ADR-0035-collaboration-causality-and-selective-convergence-boundary.md)
 - [Semantic authorization](semantic-authorization.md)
 - [Diagnostics contract](diagnostics-contract.md)
 - [Validation engine](validation-engine.md)
