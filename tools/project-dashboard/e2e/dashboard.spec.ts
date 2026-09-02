@@ -285,5 +285,7 @@ test("refresh failure retains the current observation and recovery control", asy
   await expect(
     page.locator(".executive-cell").filter({ hasText: "FETCH" }).getByText("UNAVAILABLE", { exact: true }).first(),
   ).toBeVisible();
+  await expect(page.locator(".availability-complete")).toHaveCount(0);
+  await expect(page.locator(".structured-status").filter({ hasText: "current" })).toHaveCount(0);
   await expect(page.locator("[aria-live='polite']")).toContainText("refresh failed");
 });

@@ -392,6 +392,59 @@ function render(projection: DashboardProjection, warning?: string): void {
   app.replaceChildren(main);
 }
 
+function staleObserved<T>(observed: ObservedValue<T>): ObservedValue<T> {
+  return { ...observed, availability: "unavailable" };
+}
+
+function staleStructured(value: StructuredFact): StructuredFact {
+  return {
+    ...value,
+    status: "unknown",
+    value: null,
+    reason: "Retained from the last successful observation; current state is Unknown",
+  };
+}
+
+function staleProjection(projection: DashboardProjection): DashboardProjection {
+  return {
+    ...projection,
+    fetchHealth: "unavailable",
+    executive: {
+      mainSha: staleObserved(projection.executive.mainSha),
+      productHorizon: staleObserved(projection.executive.productHorizon),
+      activeCount: staleObserved(projection.executive.activeCount),
+      readyCount: staleObserved(projection.executive.readyCount),
+      humanAction: staleObserved(projection.executive.humanAction),
+    },
+    deliveries: projection.deliveries.map((lane) => ({
+      ...lane,
+      linkageAvailability: "unavailable",
+      issue: lane.issue === null ? null : {
+        ...lane.issue,
+        labelsAvailability: "unavailable",
+        milestoneAvailability: "unavailable",
+        dependenciesAvailability: "unavailable",
+        identityAvailability: "unavailable",
+        availability: "unavailable",
+      },
+      pullRequest: lane.pullRequest === null ? null : {
+        ...lane.pullRequest,
+        linkageAvailability: "unavailable",
+        identityAvailability: "unavailable",
+        nativeAvailability: "unavailable",
+        checks: { ...lane.pullRequest.checks, availability: "unavailable" },
+        reviews: { ...lane.pullRequest.reviews, availability: "unavailable" },
+        handoff: staleStructured(lane.pullRequest.handoff),
+        stewardWatch: staleStructured(lane.pullRequest.stewardWatch),
+        availability: "unavailable",
+      },
+    })),
+    deliveriesAvailability: "unavailable",
+    criticalPath: { ...projection.criticalPath, availability: "unavailable" },
+    recentActivity: { ...projection.recentActivity, availability: "unavailable" },
+  };
+}
+
 async function refreshProjection(restoreFocus: boolean): Promise<void> {
   const active = document.activeElement;
   const refresh = document.querySelector<HTMLButtonElement>(".refresh-button");
@@ -410,7 +463,7 @@ async function refreshProjection(restoreFocus: boolean): Promise<void> {
   } catch {
     if (lastProjection !== null) {
       render(
-        { ...lastProjection, fetchHealth: "unavailable" },
+        staleProjection(lastProjection),
         "Refresh failed · displayed facts are retained as stale · current live state Unknown",
       );
       const nextRefresh = document.querySelector<HTMLButtonElement>(".refresh-button");

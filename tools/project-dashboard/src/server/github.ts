@@ -608,11 +608,11 @@ export function projectGraphResponse(
     watchDiscoveryAvailability === "complete" &&
     watchFacts.length > 0 &&
     watchFacts.every((watch) => watch.status === "current");
-  const humanAction = requiredWatch !== undefined
-    ? "Required"
-    : allWatchesCurrent
-      ? "None in current watches"
-      : null;
+  const humanAction = allWatchesCurrent
+    ? requiredWatch !== undefined
+      ? "Required"
+      : "None in current watches"
+    : null;
 
   const nodes = new Map<number, { issueNumber: number; label: string; state: string; url: string }>();
   const edges: { from: number; to: number; state: string }[] = [];

@@ -465,6 +465,39 @@ describe("Dashboard GitHub observation", () => {
     });
   });
 
+  it("keeps human action Unknown when a relevant watch is incomplete", () => {
+    const response = graph();
+    const repository = response.data?.repository;
+    const pulls = repository?.pullRequests;
+    const pull = pulls?.nodes?.[0];
+    const watch = pull?.comments?.nodes?.[1];
+    if (
+      pulls !== undefined &&
+      pull !== null &&
+      pull !== undefined &&
+      watch !== null &&
+      watch !== undefined
+    ) {
+      watch.body = watch.body.replace("HUMAN_ACTION: none", "HUMAN_ACTION: required");
+      pulls.nodes?.push({
+        ...pull,
+        number: 231,
+        title: "Incomplete relevant watch",
+        url: "https://github.example/pulls/231",
+        comments: {
+          pageInfo: { hasNextPage: false },
+          nodes: [],
+        },
+      });
+    }
+
+    const projection = projectGraphResponse(response);
+    expect(projection.executive.humanAction).toMatchObject({
+      value: null,
+      availability: "partial",
+    });
+  });
+
   it("does not invent a status-context head when GitHub omits its commit", () => {
     const response = graph();
     const pull = response.data?.repository?.pullRequests.nodes?.[0];
