@@ -1,0 +1,11 @@
+{
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./experimental-client.d.ts",
+      "import": "./experimental-client.js"
+    }
+  },
+  "tachikoExperimentalArtifact": "designer-client-kit/v0"
+}
