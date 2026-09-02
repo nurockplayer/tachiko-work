@@ -192,6 +192,8 @@ The current browser path uses a directory input and an ordinary error surface:
 
 ```html
 <input id="project" type="file" webkitdirectory />
+<button id="edit-impact" type="button">Set impact to 3</button>
+<button id="refresh-table" type="button">Retry refresh</button>
 <p id="project-error" role="alert"></p>
 ```
 
@@ -314,11 +316,23 @@ async function editProductGapImpact(inputValue: string): Promise<void> {
 }
 ```
 
-Wire the edit and explicit refresh actions like this:
+Register edit and refresh actions from UI events so they run only when the user
+asks for them, not while the module is initializing:
 
 ```ts
-void runExclusive(() => editProductGapImpact("3")).catch(renderProjectError);
-void runExclusive(refreshRenderedTable).catch(renderProjectError);
+const editImpactButton = document.querySelector<HTMLButtonElement>("#edit-impact");
+const refreshTableButton = document.querySelector<HTMLButtonElement>("#refresh-table");
+if (editImpactButton === null || refreshTableButton === null) {
+  throw new Error("Edit controls are missing.");
+}
+
+editImpactButton.addEventListener("click", () => {
+  void runExclusive(() => editProductGapImpact("3")).catch(renderProjectError);
+});
+
+refreshTableButton.addEventListener("click", () => {
+  void runExclusive(refreshRenderedTable).catch(renderProjectError);
+});
 ```
 
 The client also exposes `editText` and `editBoolean`.
