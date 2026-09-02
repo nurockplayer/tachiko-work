@@ -53,8 +53,10 @@ Accepted semantic merge includes:
 
 The merge contract covers document title, schemas and schema fields, entity
 membership, references, and stored values through typed three-way reconciliation.
-The current production conflict DTO remains implementation evidence until a
-separate Ready implementation Issue realizes the accepted v1 logical protocol.
+Issue #223 realizes the accepted v1 logical protocol in the production
+merge/workspace boundary. Its concrete Rust DTO and CLI rendering remain
+replaceable implementation evidence rather than a stabilized codec, wire, or SDK
+contract.
 
 Example:
 

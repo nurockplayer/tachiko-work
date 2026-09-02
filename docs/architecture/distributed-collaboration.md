@@ -34,10 +34,11 @@ Current v0.1 behavior:
 
 - branch-based collaboration uses deterministic semantic three-way merge on
   admitted Tachiko documents;
-- current production conflicts expose typed base/ours/theirs payloads through a
-  provisional path-oriented address;
-- ADR-0031 now defines the accepted `tachiko.semantic-conflict/v1` logical
-  protocol that future production DTO/codec/runtime work must realize;
+- Issue #223 realizes the accepted `tachiko.semantic-conflict/v1` logical
+  protocol in the production merge/workspace boundary with typed stable targets,
+  direct facets, canonical facts, and deterministic ordering;
+- the concrete Rust DTO and CLI rendering remain implementation-level rather
+  than a stabilized codec, transport, wire, or SDK contract;
 - no realtime/collaborative cursor model is implemented.
 
 ## Goals
@@ -74,9 +75,10 @@ not converted into a structural conflict kind.
 Future adapters may use bounded retained-history or selectively justified
 CRDT/OT techniques, but they may not make replay authoritative, replace a
 complete standalone snapshot, or use Git as semantic identity. ADR-0030 resolves
-Issue #45 without making delta an operation or event. ADR-0031 resolves Issue
-Issue #46's deterministic structural conflict evidence without selecting production
-DTO/transport/runtime realization. ADR-0032 resolves Issue #48's
+Issue #45 without making delta an operation or event. ADR-0031 resolves
+Issue #46's deterministic structural conflict evidence; Issue #223 realizes its
+logical production merge boundary without selecting a stable codec, transport,
+wire, or SDK contract. ADR-0032 resolves Issue #48's
 operation/revision/optional-event taxonomy without selecting history mechanics.
 Issues #47, #49, and #50 own the remaining cross-version,
 history/checkpoint/Git-association, and causality/CRDT mechanics.

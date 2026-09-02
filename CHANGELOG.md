@@ -6,6 +6,12 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Changed
 
+- Semantic merge now admits only fully validated, completely calculated states
+  of one continuing `DocumentId`; emits deterministic
+  `tachiko.semantic-conflict/v1` evidence with typed stable targets, direct
+  facets, explicit absence, three closed conflict kinds, parent suppression,
+  and canonical semantic ordering; and keeps conflict-free candidate
+  validation/calculation failures in the existing diagnostic boundary.
 - Semantic document, schema, field, and entity identity is now opaque and
   stable, while mutable human keys remain the authoring address. Renames retain
   bound references/formulas and diff/merge continuity instead of rewriting or
