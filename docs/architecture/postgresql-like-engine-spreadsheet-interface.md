@@ -4,7 +4,7 @@ Authority: Explanatory product and architecture synthesis
 
 Decision state: Founder framing / Strategy under GitHub Issue [#234](https://github.com/nurockplayer/tachiko-work/issues/234). This document does not independently create Accepted architecture authority.
 
-Recorded: 2026-09-03
+Recorded: 2026-09-03 JST (2026-09-02 UTC)
 
 ## Why this document exists
 
@@ -174,12 +174,15 @@ validation + authorization + impact/explanation
                     ▼
        one authoritative publication result
                     ▼
-all clients observe the same resulting semantic state
+       one authoritative canonical state
+                    ▼
+each client receives an authorized,
+revision-consistent projection of that state
 ```
 
-The visible workflow may differ by client. The meaning, validation, authorization, revision, and publication rules must not be reimplemented as unrelated UI logic.
+The canonical semantic state remains singular, but disclosure is grant-scoped: different clients may legitimately receive different projections or execution facts. The visible workflow may differ by client, while meaning, validation, authorization, revision, and publication rules must not be reimplemented as unrelated UI logic.
 
-This consumes the accepted direction in [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md), [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md), and the [frontend/backend boundary](frontend-backend-boundary.md).
+This consumes the accepted direction in [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md), [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md), [the semantic-authorization specification](../specs/semantic-authorization.md), and the [frontend/backend boundary](frontend-backend-boundary.md).
 
 ## Core, reusable capability, domain solution, or interface
 
@@ -294,14 +297,16 @@ The central falsifiable question is:
 Evidence should eventually demonstrate:
 
 1. at least two materially different domains reuse the same primitives;
-2. a spreadsheet-like client and at least one headless client use the same semantic operations and authoritative state;
+2. a spreadsheet-like client and at least one headless client use the same semantic operations and authoritative state, with disclosure remaining grant-scoped;
 3. domain-specific UX remains strong without putting domain truth into frontend state;
 4. reusable assets, Skills, connectors/extensions, domain solutions, and specialized services retain understandable boundaries; and
 5. counterexamples are recorded where a behavior cannot honestly fit the shared-engine model.
 
 A failed test is useful. If each serious domain repeatedly needs an incompatible semantic engine, the hypothesis should be narrowed rather than protected through vague abstractions.
 
-## Architecture review checklist
+## Non-normative architecture review checklist
+
+The questions below are a review aid for applying the framing. They do not independently create acceptance criteria or override Accepted ADR/spec authority.
 
 Before approving a new feature, abstraction, or public contract, ask:
 
