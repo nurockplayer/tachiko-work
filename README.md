@@ -456,12 +456,13 @@ producing new semantic inputs and rerunning the command.
 
 ## Architecture overview
 
-![High-level architecture overview: React/Tauri frontend, Rust semantic backend, Tachiko formats (.roproj/.ro), and external integrations.](docs/architecture/tachiko-work-architecture-overview.png)
+![Product-surface architecture overview: independent product frontends connect through the Semantic API to one shared semantic core.](docs/architecture/tachiko-work-product-surfaces-overview.webp)
 
-High-level architecture overview: React/Tauri frontend, Rust semantic backend, Tachiko formats (.roproj/.ro), and external integrations.
-This diagram shows the current product architecture direction. Internal crate boundaries and semantic model details may evolve and are documented separately.
+Tachiko Work does not require one universal frontend. Different product surfaces may use different frontend architectures, visual languages, and interaction models while sharing semantic authority through the Semantic API and the same Rust-owned semantic/application runtime where their underlying meaning is shared. A shared frontend toolkit is optional, not a platform requirement.
 
-For details, see the [architecture docs index](docs/architecture/README.md).
+The illustrated Project, CRM, Inventory, and Finance surfaces are examples of the long-term open-ecosystem direction, not claims that those applications are implemented today. Internal crate boundaries, runtime seams, and semantic-model details may evolve and are documented separately.
+
+For the detailed architecture and authority notes, see the [architecture docs index](docs/architecture/README.md). The replaceable-stack framing is preserved as discussion history in [Office as a Replaceable Stack](docs/discussions/2026-09-03-office-as-replaceable-stack.md).
 
 For a fast contributor check after an edit, run:
 
