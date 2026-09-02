@@ -144,3 +144,21 @@ Do not begin with a universal ontology, type system, formula language, plugin AB
 Prefer concrete workflows first, introduce the minimum semantic abstraction they require, pressure-test it against additional domains, and generalize only when evidence demands it.
 
 If evidence invalidates an assumption, revise the model through an explicit Decision Issue/ADR/reconciliation instead of preserving an elegant abstraction by redefining its meaning.
+
+## 13. Human Flow and User Happiness
+
+Tachiko Work should make correct, powerful work feel natural and pleasant to perform.
+
+The system may be complex inside. Typed semantics, validation, stable identity, deterministic computation, revision tracking, migration evidence, and other strong machinery should absorb complexity on the user's behalf rather than turn internal architecture into ordinary-user ceremony.
+
+For a Driver, the first useful interaction should usually be task-native: enter, paste, edit, calculate, organize, review, or export. Platform concepts should appear only when they provide meaningful control. Stronger structure should be progressively discoverable instead of becoming a toll gate before useful work can begin.
+
+Depth should remain available to Enthusiasts and Builders without becoming a prerequisite for Drivers.
+
+Low friction does not mean hidden magic. Tachiko must keep ambiguity, lossy conversion, invalid state, and unsupported behavior visible when trust requires it. The aim is to remove unnecessary effort, not necessary truth.
+
+Prefer recoverable actions, good defaults, progressive disclosure, and tools that help users stay focused on their work. When two designs are equally correct and safe, prefer the one that asks less unnecessary work from the user.
+
+A useful shorthand is:
+
+> **Correct underneath, delightful on the surface.**
