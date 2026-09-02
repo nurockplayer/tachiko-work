@@ -18,7 +18,7 @@ Aim for a blend of:
 
 The result should feel like a designed product platform, not a raw infrastructure diagram.
 
-![Tachiko Work architecture visual north star](assets/architecture-visual-north-star-v1.jpg)
+![Tachiko Work architecture visual north star](assets/architecture-visual-north-star-v1.webp)
 
 ## Default visual language
 
