@@ -24,7 +24,7 @@ your interaction and visual design
 a useful frontend
 ```
 
-You are **not** being asked to parse Tachiko storage, rebuild formulas or
+You are not being asked to parse Tachiko storage, rebuild formulas or
 validation, or invent revision behavior. That would create a second engine.
 
 ## Three concepts are enough to start
@@ -77,8 +77,8 @@ Tachiko checkout you are testing.
 
 ## Quick start
 
-The snippets below explain one step at a time. The complete assembled flow lives
-in [`examples/experimental-designer-client/src/main.ts`](../../examples/experimental-designer-client/src/main.ts)
+The snippets below explain one step at a time. The executable reference lives in
+[`examples/experimental-designer-client/src/main.ts`](../../examples/experimental-designer-client/src/main.ts)
 and is exercised by the repository's Designer browser checks.
 
 ### 1. Prepare your repository and export the kit
@@ -125,7 +125,64 @@ to the original Moonfall demo. You may copy it into your repository only as a
 local pilot fixture, or select it from a local Tachiko checkout. It remains
 repository product evidence, not a public template or delivery source.
 
-### 3. Open it and render the first table
+### 3. Keep one small lifecycle state
+
+The runtime revision, rendered table revision, and last durably saved revision
+are related but not interchangeable:
+
+```ts
+import type { TableProjection } from "../vendor/tachiko/experimental-client.js";
+
+const client = createExperimentalDesignerClient();
+let currentTable: TableProjection | null = null;
+let currentRevision: string | null = null;
+let durableRevision: string | null = null;
+let lifecycleBusy = false;
+
+async function runExclusive<T>(operation: () => Promise<T>): Promise<T> {
+  if (lifecycleBusy) {
+    throw new Error("Another Tachiko open, edit, save, or close is still running.");
+  }
+
+  lifecycleBusy = true;
+  try {
+    return await operation();
+  } finally {
+    lifecycleBusy = false;
+  }
+}
+
+function hasUnpersistedChanges(): boolean {
+  return currentRevision !== null && currentRevision !== durableRevision;
+}
+
+function confirmDiscardUnpersistedChanges(): boolean {
+  return (
+    !hasUnpersistedChanges() ||
+    window.confirm("Discard accepted Tachiko changes that have not been saved?")
+  );
+}
+
+function handleBeforeUnload(event: BeforeUnloadEvent): void {
+  if (!hasUnpersistedChanges()) return;
+  event.preventDefault();
+  event.returnValue = "";
+}
+
+window.addEventListener("beforeunload", handleBeforeUnload);
+```
+
+Call every open, edit, persistence, and close action through `runExclusive`.
+This bounded sample rejects an overlapping action instead of guessing which
+completion should win. A richer UI may use a proper queue, cancellation, or
+generation tokens, but it must preserve the same ordering and freshness rules.
+
+`currentRevision` follows the resident Rust runtime, even when refreshing the UI
+fails. `currentTable` is only the last completely rendered table. A mismatch
+means the table must be refreshed before another edit. `durableRevision` advances
+only after host persistence succeeds.
+
+### 4. Open and render the first table
 
 The current browser path uses a directory input and an ordinary error surface:
 
@@ -135,12 +192,6 @@ The current browser path uses a directory input and an ordinary error surface:
 ```
 
 ```ts
-import {
-  createExperimentalDesignerClient,
-  projectTransferFromFiles,
-  type TableProjection,
-} from "../vendor/tachiko/experimental-client.js";
-
 const inputCandidate = document.querySelector<HTMLInputElement>("#project");
 const errorCandidate = document.querySelector<HTMLElement>("#project-error");
 if (inputCandidate === null || errorCandidate === null) {
@@ -149,47 +200,33 @@ if (inputCandidate === null || errorCandidate === null) {
 const projectInput = inputCandidate;
 const projectError = errorCandidate;
 
-const client = createExperimentalDesignerClient();
-let currentTable: TableProjection | null = null;
-let durableRevision: string | null = null;
-
 projectInput.addEventListener("change", () => {
-  if (!confirmDiscardUnpersistedChanges()) {
-    projectInput.value = "";
-    return;
-  }
+  const files = projectInput.files;
+  if (files === null) return;
 
-  // Serialize project opens in this bounded sample. A richer UI may use a
-  // request-generation token or cancellation instead.
   projectInput.disabled = true;
-  void openSelectedProject()
+  void runExclusive(async () => {
+    if (!confirmDiscardUnpersistedChanges()) {
+      projectInput.value = "";
+      return;
+    }
+    await openSelectedProject(files);
+  })
     .catch(renderProjectError)
     .finally(() => {
       projectInput.disabled = false;
     });
 });
 
-async function openSelectedProject(): Promise<void> {
-  const files = projectInput.files;
-  if (files === null) return;
-
+async function openSelectedProject(files: FileList): Promise<void> {
   projectError.textContent = "";
   const transfer = await projectTransferFromFiles(files);
   const opened = await client.openProject(transfer);
+
   currentTable = opened.table;
+  currentRevision = opened.table.revision;
   durableRevision = opened.table.revision;
   renderTable(opened.table);
-}
-
-function hasUnpersistedChanges(): boolean {
-  return currentTable !== null && currentTable.revision !== durableRevision;
-}
-
-function confirmDiscardUnpersistedChanges(): boolean {
-  return (
-    !hasUnpersistedChanges() ||
-    window.confirm("Discard accepted Tachiko changes that have not been saved?")
-  );
 }
 
 function renderProjectError(error: unknown): void {
@@ -205,12 +242,12 @@ function renderTable(table: TableProjection): void {
 ```
 
 `openProject` already returns the initial table. No second query is needed for
-the first useful screen. Keep the rejection handler in the real UI so invalid
-project admission and Worker failures do not become invisible promise errors.
-Do not let an older overlapping open completion replace a newer selection, and
-do not replace a project with unpersisted accepted changes without confirmation.
+the first useful screen. A rejected candidate leaves the current resident
+occurrence unchanged, so update frontend state only after `openProject` succeeds.
+Do not replace a project containing unpersisted accepted changes without an
+explicit user decision.
 
-### 4. Publish an edit and refresh from Tachiko
+### 5. Publish an edit and refresh from Tachiko
 
 Use a field target returned by the projection. Never build a target from a row
 number, label, JSON path, or DOM coordinate.
@@ -218,7 +255,13 @@ number, label, JSON path, or DOM coordinate.
 ```ts
 async function editProductGapImpact(inputValue: string): Promise<void> {
   const table = currentTable;
-  if (table === null) throw new Error("Open a project first.");
+  const revision = currentRevision;
+  if (table === null || revision === null) {
+    throw new Error("Open a project first.");
+  }
+  if (table.revision !== revision) {
+    throw new Error("Refresh the rendered table before editing again.");
+  }
 
   const row = table.rows.find(
     (candidate) => candidate.key === "designer_profile_bound",
@@ -234,16 +277,14 @@ async function editProductGapImpact(inputValue: string): Promise<void> {
     throw new Error("The Product Gap impact field is not editable as a Number.");
   }
 
-  const publication = await client.editNumber(
-    table.revision,
-    field.target,
-    inputValue,
-  );
+  const publication = await client.editNumber(revision, field.target, inputValue);
 
-  // Keep the first integration simple and correct: fetch one fresh table after
-  // Tachiko accepts the edit, then replace the old revision-keyed cache.
+  // Publication has already happened. Record the resident revision before any
+  // fallible UI refresh so dirty-state protection remains truthful.
+  currentRevision = publication.resulting_revision;
+
   const refreshedTable = await client.queryTable(table.collection.key);
-  if (refreshedTable.revision !== publication.resulting_revision) {
+  if (refreshedTable.revision !== currentRevision) {
     throw new Error("Table refresh did not reach the published revision.");
   }
 
@@ -252,14 +293,17 @@ async function editProductGapImpact(inputValue: string): Promise<void> {
 }
 ```
 
-Wire this function to an edit event and send rejected promises to the same UI
-error surface used for project opening.
+Wire the edit action like this:
+
+```ts
+void runExclusive(() => editProductGapImpact("3")).catch(renderProjectError);
+```
 
 The client also exposes `editText` and `editBoolean`.
 
 Do not recalculate dependent formulas in JavaScript. The simple pilot path above
 re-queries the table so stored values, calculated values, diagnostics, and the
-revision advance together.
+rendered revision advance together.
 
 After that path works, a larger UI may optimize with `queryFields`. Query the
 deduplicated union of `publication.fields` and
@@ -268,7 +312,7 @@ all returned field projections into the cache, and advance the cache revision in
 the same state update. Updating only the revision or only one edited field leaves
 the UI internally stale.
 
-### 5. Persist, then close
+### 6. Persist, then close
 
 `exportProject` returns canonical bytes, but returning bytes is not itself a
 durable save. The host must persist them successfully before the frontend marks
@@ -278,10 +322,14 @@ that revision durable.
 async function persistCurrentProject(
   persist: (bytes: ArrayBuffer) => Promise<void>,
 ): Promise<void> {
-  const table = currentTable;
-  if (table === null) throw new Error("Open a project first.");
+  const revision = currentRevision;
+  if (revision === null) throw new Error("Open a project first.");
 
-  const exported = await client.exportProject(table.revision);
+  const exported = await client.exportProject(revision);
+  if (exported.revision !== revision) {
+    throw new Error("Export did not match the requested resident revision.");
+  }
+
   await persist(exported.bytes); // IndexedDB, native host, File System Access, etc.
   durableRevision = exported.revision;
 }
@@ -293,18 +341,35 @@ async function requestCloseDesignerClient(): Promise<boolean> {
     await client.closeProject();
   } finally {
     currentTable = null;
+    currentRevision = null;
     durableRevision = null;
+    window.removeEventListener("beforeunload", handleBeforeUnload);
     await client.close();
   }
   return true;
 }
 ```
 
-Call both functions from explicit UI actions and route rejected promises to the
-visible error surface. The close path refuses to discard an accepted but
-unpersisted revision unless the user confirms. Its `finally` block always clears
-the disposable cache and terminates the Worker once teardown begins, even when
-closing the resident project reports a failure.
+Invoke persistence and close through the same lifecycle gate:
+
+```ts
+void runExclusive(() => persistCurrentProject(saveBytesToYourHost)).catch(
+  renderProjectError,
+);
+
+void runExclusive(requestCloseDesignerClient).catch(renderProjectError);
+```
+
+Replace `saveBytesToYourHost` with one host function that resolves only after the
+bytes are durably committed. Since edits, open, save, and close share the same
+exclusive gate, an older save cannot complete after a newer local save and
+silently replace its durability state.
+
+The `beforeunload` handler protects reload, tab close, and navigation while an
+accepted revision is not durable. The explicit close path requires the same save
+or discard decision. Its `finally` block always clears disposable state and
+terminates the Worker once teardown begins, even when closing the resident
+project reports a failure.
 
 The exported bytes are an opaque canonical project bundle. Do not edit them in
 frontend code, and do not set `durableRevision` until host persistence succeeds.
@@ -357,16 +422,16 @@ Do not collapse these into one mutable cell value.
 The generated `experimental-client.d.ts` is the direct reference for current
 TypeScript shapes. Every concrete shape remains experimental.
 
-## The revision rule
+## The revision and durability rule
 
 ```text
 render R0 (durable)
    ↓ edit with expected R0
 Tachiko accepts and publishes R1 (resident only)
-   ↓ replace or fully patch the cache at R1
-render R1
+   ↓ mark currentRevision = R1 immediately
+refresh and render R1
    ↓ export R1 + host persistence succeeds
-mark R1 durable
+mark durableRevision = R1
 ```
 
 An edit still based on `R0` after the runtime reaches `R1` throws
@@ -387,6 +452,7 @@ Do not:
 - treat failed or stale edits as published;
 - treat returned export bytes as durable before the host saves them;
 - discard accepted resident changes without saving or confirmation;
+- let open, edit, persistence, and close race one another;
 - describe the kit as a stable or supported public SDK.
 
 The current experiment is intentionally limited to:
