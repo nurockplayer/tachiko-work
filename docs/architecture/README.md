@@ -17,6 +17,7 @@ For repository-derived, revision-pinned architecture maps and Architecture Delta
 ### Semantic core and Semantic API
 
 - [`semantic-core-rationale.md`](semantic-core-rationale.md) — why the project is semantic-first; explanatory rationale, not a replacement for ADR authority.
+- [`postgresql-like-engine-spreadsheet-interface.md`](postgresql-like-engine-spreadsheet-interface.md): explanatory founder framing that Tachiko is an extensible semantic work engine whose default human interface is spreadsheet-first; the spreadsheet is a client/projection, not semantic authority. Tracking strategy: #234.
 - [`document-model.md`](document-model.md) — accepted semantic-document direction under ADR-0021 progressive strengthening; concrete future mixed-content graph mechanics remain Deferred.
 - [`unified-semantic-model.md`](unified-semantic-model.md) — accepted unified-semantic direction across structured data, formulas, views, and AI operations.
 - [`rust-crate-architecture.md`](rust-crate-architecture.md) — current implemented crate graph, ADR-0016 ownership, ADR-0020 first-class Semantic API mapping, ADR-0024 proposal ownership, ADR-0026 authorization boundary, and ADR-0022 runtime-host ownership without stabilizing the current Rust source surface.
