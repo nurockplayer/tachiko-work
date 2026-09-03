@@ -940,6 +940,9 @@ if [[ -n "$("${filter_git[@]}" -C "${filter_repo}" status --porcelain)" ]]; then
   exit 1
 fi
 
+# Git records executable status, not the umask-dependent non-executable bits.
+umask 077
+
 cat >"${filter_bin_dir}/cargo" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail

@@ -82,22 +82,6 @@ normalize_native_target_runner() {
   export "${runner_variable}=env"
 }
 
-materialized_source_mode() {
-  local path="$1"
-  local mode
-
-  if [[ "$(uname -s)" == "Darwin" ]]; then
-    if ! mode="$(stat -f '%Lp' "${path}")"; then
-      return 1
-    fi
-  else
-    if ! mode="$(stat -c '%a' "${path}")"; then
-      return 1
-    fi
-  fi
-  printf '%s\n' "${mode#0}"
-}
-
 verify_materialized_source_tree() {
   local source_root="$1"
   local expected_commit="$2"
@@ -143,11 +127,11 @@ verify_materialized_source_tree() {
           observed_type="symlink"
         elif [[ -f "${absolute}" ]]; then
           observed_type="regular-file"
-          if ! observed_mode="$(materialized_source_mode "${absolute}")"; then
-            echo "obstacle-course: could not inspect materialized source mode checkpoint=${checkpoint} path=${path}" >&2
-            return 1
+          if [[ -x "${absolute}" ]]; then
+            observed_mode="100755"
+          else
+            observed_mode="100644"
           fi
-          observed_mode="100${observed_mode}"
         elif [[ -e "${absolute}" ]]; then
           observed_type="special"
         fi
@@ -374,7 +358,7 @@ export GIT_CONFIG_NOSYSTEM=1
 export GIT_ATTR_NOSYSTEM=1
 export GIT_NO_REPLACE_OBJECTS=1
 
-for required_command in cargo env git ln readlink stat; do
+for required_command in cargo env git ln readlink; do
   if ! command -v "${required_command}" >/dev/null 2>&1; then
     echo "obstacle-course: ${required_command} is required" >&2
     exit 1
