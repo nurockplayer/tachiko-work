@@ -8,12 +8,14 @@
 //! and verification boundary.
 
 use tachiko_workspace_engine::{
-    Document, ValidationReport,
+    Document, FieldRef, ValidationReport,
+    capability_discovery::FieldCapabilityQueryResult,
     patch_lifecycle::{
         ApprovalId, ExecutionReceipt, PatchLifecycle, PatchLifecycleError, PrincipalId, ProposalId,
         ProposalRequest, SemanticPatch, SemanticPatchBody, SemanticPublicationAuthority,
         SemanticRevision, TrustedInstant,
     },
+    resident_session::ResidentSnapshot,
 };
 use thiserror::Error;
 
@@ -150,6 +152,7 @@ pub enum HostEffect {
 /// Closed provider-facing operation classification.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AiBoundaryOperation {
+    SemanticQuery,
     SemanticProposal,
     SemanticExecution,
     RawMutation(RawMutationKind),
@@ -207,19 +210,23 @@ impl AiBoundaryError {
     }
 }
 
-/// Check whether a provider-facing operation belongs to the semantic adapter.
+/// Check whether a provider-facing Semantic Query or typed proposal/execution
+/// operation belongs to the semantic adapter.
 ///
-/// Admission of a typed semantic operation is not authorization. Proposal and
-/// execution must still use [`submit_semantic_proposal`] or
-/// [`execute_semantic_proposal`], which delegate to the trusted lifecycle.
+/// Admission of a typed semantic operation is not authorization. Capability
+/// discovery still uses [`query_field_capabilities`], while proposal and
+/// execution use [`submit_semantic_proposal`] or
+/// [`execute_semantic_proposal`]; all delegate to the trusted lifecycle.
 ///
 /// # Errors
 ///
 /// Returns a stable raw-mutation or host-effect denial for every operation
-/// outside the typed semantic proposal/execution boundary.
+/// outside the typed semantic Query/proposal/execution boundary.
 pub const fn admit_operation(operation: AiBoundaryOperation) -> Result<(), AiBoundaryError> {
     match operation {
-        AiBoundaryOperation::SemanticProposal | AiBoundaryOperation::SemanticExecution => Ok(()),
+        AiBoundaryOperation::SemanticQuery
+        | AiBoundaryOperation::SemanticProposal
+        | AiBoundaryOperation::SemanticExecution => Ok(()),
         AiBoundaryOperation::RawMutation(kind) => Err(AiBoundaryError::RawMutationDenied { kind }),
         AiBoundaryOperation::HostEffect(effect) => {
             Err(AiBoundaryError::HostEffectDenied { effect })
@@ -237,6 +244,52 @@ pub const fn admit_operation(operation: AiBoundaryOperation) -> Result<(), AiBou
 pub trait TrustedAiRequestContext {
     fn effective_principal(&self) -> Option<&PrincipalId>;
     fn trusted_instant(&self) -> Option<TrustedInstant>;
+}
+
+/// Untrusted stable field target for a Semantic API capability Query.
+///
+/// The exact source snapshot is trusted host composition supplied separately
+/// to [`query_field_capabilities`]; a request cannot choose its own semantic
+/// snapshot evidence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FieldCapabilityQueryRequest {
+    field: FieldRef,
+}
+
+impl FieldCapabilityQueryRequest {
+    #[must_use]
+    pub fn new(field: FieldRef) -> Self {
+        Self { field }
+    }
+
+    #[must_use]
+    pub fn field(&self) -> &FieldRef {
+        &self.field
+    }
+}
+
+/// Query field capabilities through the trusted AI/client boundary.
+///
+/// The workspace lifecycle performs disclosure authorization before semantic
+/// classification. The delegated context supplies identity and time; the
+/// host supplies the exact paired source snapshot; the request supplies only the
+/// stable target. The returned projection grants no later operation authority.
+///
+/// # Errors
+///
+/// Returns a disclosure-safe AI boundary error when trusted context is
+/// unavailable or the workspace Query is not authorized.
+pub fn query_field_capabilities(
+    lifecycle: &PatchLifecycle,
+    context: &impl TrustedAiRequestContext,
+    snapshot: &ResidentSnapshot,
+    request: &FieldCapabilityQueryRequest,
+) -> Result<FieldCapabilityQueryResult, AiBoundaryError> {
+    admit_operation(AiBoundaryOperation::SemanticQuery)?;
+    let (principal, now) = trusted_delegated_context(lifecycle, context)?;
+    lifecycle
+        .query_field_capabilities(snapshot, &request.field, &principal, now)
+        .map_err(map_lifecycle_error)
 }
 
 /// Untrusted typed proposal intent plus non-authoritative evidence.
