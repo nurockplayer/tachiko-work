@@ -40,6 +40,19 @@ run_gc() {
     --codex-root "${codex_root}" "$@"
 }
 
+run_gc_from() {
+  local working_directory="$1"
+  local repository="$2"
+  shift 2
+  (
+    cd "${working_directory}"
+    CODEX_WORKTREE_GC_GIT="${fake_git}" \
+      CODEX_WORKTREE_GC_GH="${fake_gh}" \
+      bash "${gc_script}" --repository "${repository}" \
+      --codex-root "${codex_root}" "$@"
+  )
+}
+
 codex_root="${test_dir}/codex-worktrees"
 primary="${codex_root}/primary"
 mkdir -p "${primary}"
@@ -79,6 +92,10 @@ mkdir -p "$(dirname "${detached_path}")"
 outside_path="${test_dir}/developer-worktree"
 "${real_git}" -C "${primary}" worktree add --quiet -b codex/outside \
   "${outside_path}" HEAD
+outside_stale_path="${test_dir}/developer-stale-worktree"
+"${real_git}" -C "${primary}" worktree add --quiet -b codex/outside-stale \
+  "${outside_stale_path}" HEAD
+rm -r -- "${outside_stale_path}"
 
 printf 'tracked change\n' >>"${tracked_dirty_path}/tracked.txt"
 printf 'untracked change\n' >"${untracked_dirty_path}/untracked.txt"
@@ -202,7 +219,8 @@ after_dry_list="$("${real_git}" -C "${primary}" worktree list --porcelain)"
 
 current_output="${test_dir}/current.txt"
 current_status=0
-run_gc "${current_path}" >"${current_output}" 2>"${test_dir}/current.err" ||
+run_gc_from "${current_path}" "${primary}" >"${current_output}" \
+  2>"${test_dir}/current.err" ||
   current_status="$?"
 [[ "${current_status}" -eq 2 ]]
 assert_contains "${current_output}" "PROTECTED"
@@ -237,9 +255,20 @@ assert_contains "${foreign_origin_output}" "repository origin identity is unreso
 "${real_git}" -C "${primary}" remote set-url origin \
   git@github.com:nurockplayer/tachiko-work.git
 
+blocked_apply_output="${test_dir}/blocked-apply.txt"
+blocked_apply_status=0
+run_gc_from "${current_path}" "${primary}" --apply >"${blocked_apply_output}" \
+  2>"${test_dir}/blocked-apply.err" || blocked_apply_status="$?"
+[[ "${blocked_apply_status}" -eq 2 ]]
+assert_contains "${blocked_apply_output}" "out-of-scope prunable worktree"
+[[ -d "${merged_path}" ]]
+[[ ! -e "${prune_log}" ]]
+"${real_git}" -C "${primary}" worktree prune --expire=now >/dev/null
+
 apply_output="${test_dir}/apply.txt"
 apply_status=0
-run_gc "${current_path}" --apply >"${apply_output}" 2>"${test_dir}/apply.err" ||
+run_gc_from "${current_path}" "${primary}" --apply >"${apply_output}" \
+  2>"${test_dir}/apply.err" ||
   apply_status="$?"
 [[ "${apply_status}" -eq 2 ]]
 assert_contains "${apply_output}" "DELETE"
@@ -268,7 +297,8 @@ fi
 
 repeat_output="${test_dir}/repeat.txt"
 repeat_status=0
-run_gc "${current_path}" --apply >"${repeat_output}" 2>"${test_dir}/repeat.err" ||
+run_gc_from "${current_path}" "${primary}" --apply >"${repeat_output}" \
+  2>"${test_dir}/repeat.err" ||
   repeat_status="$?"
 [[ "${repeat_status}" -eq 2 ]]
 assert_not_contains "${repeat_output}" "DELETE"

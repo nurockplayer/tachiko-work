@@ -63,10 +63,14 @@ result. Other safe classifications do not authorize deletion.
 
 Dry-run mode does not invoke `git worktree remove` or `git worktree prune`.
 Apply mode rechecks each candidate against live local/GitHub state, removes it
-without `--force`, and then invokes `git worktree prune --verbose`. Prune is
-part of the post-terminal registration lifecycle; it does not authorize
-removal of a worktree. The command never deletes the worktree in which it is
-running.
+without `--force`, and then invokes `git worktree prune --verbose` only after a
+fresh scope guard proves that no prunable registration exists outside the Codex
+root. If an out-of-scope prunable registration appears, apply performs no
+candidate removal before the guard and skips prune after a race; it reports a
+blocked result. Prune is part of the post-terminal registration lifecycle; it
+does not authorize removal of a worktree. The command protects both the
+selected `--repository` checkout and the actual worktree containing its
+invoking process, so it never deletes the worktree in which it runs.
 
 The summary reports the number of registered Codex worktrees, each
 classification, and estimated/proven reclaimable space from `du`. An
@@ -146,10 +150,12 @@ The GC fixture records the safety boundary without mutating a live repository:
 dry-run classified an open PR as `KEEP`, a clean merged PR as `DELETE`, tracked
 and untracked changes as `DIRTY`, and ambiguous, unavailable, detached, or
 identity-mismatched state as `UNKNOWN`; primary and selected current were
-`PROTECTED`. Dry-run performed no remove/prune. Apply removed only the proven
-merged fixture, ran `git worktree prune`, and a repeated apply found no delete
-candidate while remaining idempotent. The fixture exits 2 while any unknown
-state remains.
+`PROTECTED`. It also proved that a stale developer registration outside the
+Codex root blocks apply before removal/prune. Dry-run performed no remove/prune.
+After that stale registration was cleared in the temporary fixture, apply
+removed only the proven merged fixture, ran `git worktree prune`, and a repeated
+apply found no delete candidate while remaining idempotent. The fixture exits 2
+while any unknown state remains.
 
 ## Local checks and recovery
 

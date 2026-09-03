@@ -152,6 +152,11 @@ git_command="${CODEX_WORKTREE_GC_GIT:-git}"
 gh_command="${CODEX_WORKTREE_GC_GH:-gh}"
 command_available "${git_command}" || die "git is required"
 
+invoking_root=""
+if invoking_root="$(run_git rev-parse --show-toplevel 2>/dev/null)"; then
+  invoking_root="$(canonical_directory "${invoking_root}")"
+fi
+
 if [[ -n "${repository_arg}" ]]; then
   [[ -d "${repository_arg}" ]] || die "repository path does not exist: ${repository_arg}"
   repository_arg="$(canonical_directory "${repository_arg}")"
@@ -234,6 +239,14 @@ if ((${#worktree_paths[@]} > 0)); then
   primary_root="$(canonical_directory "${worktree_paths[0]}")"
 fi
 current_root="$(canonical_directory "${repo_root}")"
+
+path_is_in_codex_root() {
+  local registered_path="$1"
+  local candidate_path
+  candidate_path="$(canonical_directory "${registered_path}")"
+  path_is_below "${candidate_path}" "${codex_root}" ||
+    path_is_below "${registered_path}" "${codex_root}"
+}
 
 github_checked="0"
 github_ready="0"
@@ -403,7 +416,8 @@ classify_worktree() {
     classification_reason="disk usage is unavailable"
   fi
 
-  if [[ "${path}" == "${primary_root}" || "${path}" == "${current_root}" ]]; then
+  if [[ "${path}" == "${primary_root}" || "${path}" == "${current_root}" ||
+    ( -n "${invoking_root}" && "${path}" == "${invoking_root}" ) ]]; then
     classification="PROTECTED"
     classification_reason="primary/current protected checkout"
     return
@@ -529,6 +543,43 @@ for index in "${!worktree_paths[@]}"; do
   esac
 done
 
+prune_scope_reason=""
+check_prune_scope() {
+  local fresh_listing=""
+  local line
+  local registered_path=""
+  local registered_prunable="0"
+
+  if ! fresh_listing="$(run_git -C "${repo_root}" worktree list --porcelain 2>/dev/null)"; then
+    prune_scope_reason="Git worktree listing is unavailable"
+    return 2
+  fi
+
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    case "${line}" in
+      worktree\ *)
+        if [[ -n "${registered_path}" && "${registered_prunable}" == "1" ]] &&
+          ! path_is_in_codex_root "${registered_path}"; then
+          prune_scope_reason="out-of-scope prunable worktree: ${registered_path}"
+          return 1
+        fi
+        registered_path="${line#worktree }"
+        registered_prunable="0"
+        ;;
+      prunable*)
+        registered_prunable="1"
+        ;;
+    esac
+  done <<< "${fresh_listing}"
+
+  if [[ -n "${registered_path}" && "${registered_prunable}" == "1" ]] &&
+    ! path_is_in_codex_root "${registered_path}"; then
+    prune_scope_reason="out-of-scope prunable worktree: ${registered_path}"
+    return 1
+  fi
+  return 0
+}
+
 printf 'SUMMARY active=%d keep=%d delete=%d dirty=%d protected=%d unknown=%d\n' \
   "${active_count}" "${keep_count}" "${delete_count}" "${dirty_count}" \
   "${protected_count}" "${unknown_count}"
@@ -543,6 +594,17 @@ else
 fi
 
 if [[ "${mode}" == "apply" ]]; then
+  prune_scope_status=0
+  check_prune_scope || prune_scope_status="$?"
+  if ((prune_scope_status == 2)); then
+    die "cannot prove prune scope: ${prune_scope_reason}"
+  fi
+  if ((prune_scope_status == 1)); then
+    echo "PRUNE skipped (${prune_scope_reason})"
+    echo "RESULT blocked: ${prune_scope_reason}"
+    exit 2
+  fi
+
   if ((${#delete_indices[@]} > 0)); then
     for index in "${delete_indices[@]}"; do
       github_checked="0"
@@ -554,6 +616,17 @@ if [[ "${mode}" == "apply" ]]; then
       fi
       run_git -C "${repo_root}" worktree remove "${worktree_paths[index]}"
     done
+  fi
+
+  prune_scope_status=0
+  check_prune_scope || prune_scope_status="$?"
+  if ((prune_scope_status == 2)); then
+    die "cannot prove prune scope: ${prune_scope_reason}"
+  fi
+  if ((prune_scope_status == 1)); then
+    echo "PRUNE skipped (${prune_scope_reason})"
+    echo "RESULT blocked: ${prune_scope_reason}"
+    exit 2
   fi
 
   prune_output=""
