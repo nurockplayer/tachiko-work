@@ -121,9 +121,11 @@ bypassed, and the helper enables sccache's `SCCACHE_IGNORE_SERVER_IO_ERROR=1`
 fallback so a server-I/O outage uses direct `rustc`; a real compiler failure is
 never retried as a cache failure. A cache miss or outage therefore cannot change
 semantic results or make the repository correctness gates unavailable. The
-cache is an optimization, not a correctness dependency. Cache hit/miss and
-incremental on/off timing and disk evidence belong in the Issue/PR evidence
-record.
+cache is an optimization, not a correctness dependency. The portable Cargo
+fixture probes propagation of the server-I/O fallback contract, while a
+separate missing-binary integration path proves an uncached build succeeds.
+Cache hit/miss and incremental on/off timing and disk evidence belong in the
+Issue/PR evidence record.
 
 ## Issue #271 evidence
 

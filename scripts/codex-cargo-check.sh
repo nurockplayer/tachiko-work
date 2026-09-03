@@ -33,27 +33,29 @@ cat >"${test_dir}/src/main.rs" <<'EOF'
 fn main() {}
 EOF
 
-fallback_sccache="${test_dir}/sccache-server-fallback"
-cat >"${fallback_sccache}" <<'EOF'
+server_fallback_contract="${test_dir}/sccache-server-fallback-contract"
+cat >"${server_fallback_contract}" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+# Portable contract probe: sccache's server-I/O fallback must receive this
+# setting and then use the compiler directly.
 [[ "${SCCACHE_IGNORE_SERVER_IO_ERROR:-}" == "1" ]]
 exec "$@"
 EOF
-chmod +x "${fallback_sccache}"
+chmod +x "${server_fallback_contract}"
 
-fallback_output="${test_dir}/fallback.out"
-fallback_error="${test_dir}/fallback.err"
+server_fallback_output="${test_dir}/server-fallback.out"
+server_fallback_error="${test_dir}/server-fallback.err"
 env -u CARGO_INCREMENTAL -u SCCACHE_IGNORE_SERVER_IO_ERROR \
-  CARGO_TARGET_DIR="${test_dir}/fallback-target" \
+  CARGO_TARGET_DIR="${test_dir}/server-fallback-target" \
   TACHIKO_CODEX_SCCACHE=1 \
-  TACHIKO_CODEX_SCCACHE_BIN="${fallback_sccache}" \
+  TACHIKO_CODEX_SCCACHE_BIN="${server_fallback_contract}" \
   bash "${cargo_script}" check --manifest-path "${test_dir}/Cargo.toml" \
-  >"${fallback_output}" 2>"${fallback_error}"
-assert_contains "${fallback_error}" "incremental=0"
-assert_contains "${fallback_error}" "sccache=enabled"
-[[ -x "${test_dir}/fallback-target/debug/codex-cargo-fixture" ||
-  -e "${test_dir}/fallback-target/debug/deps" ]]
+  >"${server_fallback_output}" 2>"${server_fallback_error}"
+assert_contains "${server_fallback_error}" "incremental=0"
+assert_contains "${server_fallback_error}" "sccache=enabled"
+[[ -x "${test_dir}/server-fallback-target/debug/codex-cargo-fixture" ||
+  -e "${test_dir}/server-fallback-target/debug/deps" ]]
 
 direct_output="${test_dir}/direct.out"
 direct_error="${test_dir}/direct.err"
@@ -64,6 +66,7 @@ env -u CARGO_INCREMENTAL \
   bash "${cargo_script}" check --manifest-path "${test_dir}/Cargo.toml" \
   >"${direct_output}" 2>"${direct_error}"
 assert_contains "${direct_error}" "sccache=unavailable; direct rustc"
+[[ -e "${test_dir}/direct-target/debug/deps" ]]
 
 incremental_output="${test_dir}/incremental.out"
 incremental_error="${test_dir}/incremental.err"
