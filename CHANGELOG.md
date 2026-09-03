@@ -45,6 +45,12 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- A provisional subject-first Semantic API field capability discovery Query
+  now projects the existing Number, Text, Boolean, Reference, and Formula
+  operation rules through workspace-engine and the AI boundary. Discovery and
+  mutation share type/formula applicability authority, disclosure remains an
+  independent Query capability, Reference targets are not enumerated, and no
+  conversions are advertised.
 - A deterministic repository command now exports a self-contained, explicitly
   unstable Designer frontend client kit containing a bounded TypeScript/ESM
   wrapper, Worker support, and the Rust-authoritative WASM runtime without npm

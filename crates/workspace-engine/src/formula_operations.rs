@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use tachiko_formula_engine::FormulaBindError;
 use thiserror::Error;
 
+pub use crate::SemanticValueKind;
 use crate::patch_lifecycle::{
     DisclosureRequirement, DocumentScopeId, FormulaUpdateCommand, OperationFamily, PatchLifecycle,
     PatchLifecycleError, PrincipalId, ProposalId, ProposalRequest, ScopedSemanticSubject,
@@ -176,16 +177,6 @@ pub enum FormulaOperationError {
     ScenarioEnvelope(#[from] ScenarioEnvelopeError),
     #[error(transparent)]
     Lifecycle(#[from] PatchLifecycleError),
-}
-
-/// Existing semantic value classification for structured unsupported outcomes.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SemanticValueKind {
-    Number,
-    Formula,
-    Text,
-    Boolean,
-    Reference,
 }
 
 /// Authorized semantic classification failure for one override.
@@ -639,7 +630,7 @@ impl PatchLifecycle {
                 None => Some(ScenarioOverrideFailure::UnresolvedTarget {
                     target: overrode.target.clone(),
                 }),
-                Some(Value::Number(_)) => None,
+                Some(value) if number_override_target_is_applicable(value) => None,
                 Some(value) => Some(ScenarioOverrideFailure::UnsupportedKind {
                     target: overrode.target.clone(),
                     actual: value_kind(value),
@@ -952,10 +943,11 @@ fn scenario_candidate(
             .entities
             .get_mut(&overrode.target.entity)
             .ok_or(())?;
-        if !matches!(
-            entity.fields.get(&overrode.target.field),
-            Some(Value::Number(_))
-        ) {
+        if !entity
+            .fields
+            .get(&overrode.target.field)
+            .is_some_and(number_override_target_is_applicable)
+        {
             return Err(());
         }
         entity
@@ -966,13 +958,12 @@ fn scenario_candidate(
 }
 
 fn value_kind(value: &Value) -> SemanticValueKind {
-    match value {
-        Value::Number(_) => SemanticValueKind::Number,
-        Value::Formula(_) => SemanticValueKind::Formula,
-        Value::Text(_) => SemanticValueKind::Text,
-        Value::Boolean(_) => SemanticValueKind::Boolean,
-        Value::Reference(_) => SemanticValueKind::Reference,
-    }
+    crate::semantic_value_kind(value)
+}
+
+/// Authoritative current-value rule for `NumberOverrideScenario` admission.
+pub(crate) fn number_override_target_is_applicable(value: &Value) -> bool {
+    matches!(value, Value::Number(_))
 }
 
 pub(crate) fn calculation_dependencies(

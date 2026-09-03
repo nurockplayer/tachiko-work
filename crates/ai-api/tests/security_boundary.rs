@@ -2,13 +2,14 @@ use std::collections::BTreeMap;
 
 use tachiko_ai_api::security_boundary::{
     AiBoundaryOperation, AiContextSource, AiContextTreatment, AiExecutionRequest,
-    AiProposalRequest, HostEffect, RawMutationKind, TrustedAiRequestContext, UntrustedData,
-    UntrustedDataSource, admit_operation, boundary_codes, execute_semantic_proposal,
-    submit_semantic_proposal,
+    AiProposalRequest, FieldCapabilityQueryRequest, HostEffect, RawMutationKind,
+    TrustedAiRequestContext, UntrustedData, UntrustedDataSource, admit_operation, boundary_codes,
+    execute_semantic_proposal, query_field_capabilities, submit_semantic_proposal,
 };
 use tachiko_workspace_engine::{
     Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
     FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
+    capability_discovery::{FieldCapabilityQueryOutcome, describe_field_capabilities},
     patch_lifecycle::{
         ApprovalId, ApprovalRequest, AuthorizationAction, AuthorizationDomainId,
         AuthorizationPolicyVersion, DocumentScopeId, Grant, GrantId, GrantRequirement,
@@ -126,6 +127,10 @@ fn grant(
 
 fn query_requirement() -> GrantRequirement {
     GrantRequirement::query(OperationFamily::SetFieldValue, document_scope())
+}
+
+fn capability_query_requirement() -> GrantRequirement {
+    GrantRequirement::query(OperationFamily::FieldCapabilityDiscovery, document_scope())
 }
 
 fn mutation_requirement(
@@ -331,6 +336,71 @@ fn typed_mutation_without_capability_is_denied_without_changing_state() {
 
     assert_eq!(error.code(), boundary_codes::AUTHORIZATION_DENIED);
     assert_eq!(document, original);
+}
+
+#[test]
+fn ai_capability_query_uses_authorized_workspace_projection() {
+    let document = security_document("ordinary data");
+    let request = FieldCapabilityQueryRequest::new(FieldRef::new("goblin", "damage"));
+    let mut lifecycle = lifecycle();
+
+    let error = query_field_capabilities(
+        &lifecycle,
+        &TestContext::agent(),
+        &document_scope_id(),
+        &document,
+        &revision("r1"),
+        &request,
+    )
+    .expect_err("discovery requires its own Query grant");
+    assert_eq!(error.code(), boundary_codes::AUTHORIZATION_DENIED);
+
+    grant(
+        &mut lifecycle,
+        "agent-field-capabilities",
+        "agent",
+        vec![capability_query_requirement()],
+    );
+    let result = query_field_capabilities(
+        &lifecycle,
+        &TestContext::agent(),
+        &document_scope_id(),
+        &document,
+        &revision("r1"),
+        &request,
+    )
+    .expect("authorized AI discovery should delegate to workspace authority");
+    assert_eq!(result.context.source_revision(), &revision("r1"));
+    let FieldCapabilityQueryOutcome::Field(capabilities) = result.outcome else {
+        panic!("damage is an existing field");
+    };
+    assert_eq!(
+        capabilities,
+        describe_field_capabilities(&document, request.field()).unwrap()
+    );
+}
+
+#[test]
+fn ai_capability_query_keeps_human_context_outside_delegated_boundary() {
+    let document = security_document("ordinary data");
+    let mut lifecycle = lifecycle();
+    grant(
+        &mut lifecycle,
+        "human-field-capabilities",
+        "authority",
+        vec![capability_query_requirement()],
+    );
+
+    let error = query_field_capabilities(
+        &lifecycle,
+        &TestContext::human(),
+        &document_scope_id(),
+        &document,
+        &revision("r1"),
+        &FieldCapabilityQueryRequest::new(FieldRef::new("goblin", "damage")),
+    )
+    .expect_err("AI adapter must require a Delegated lifecycle principal");
+    assert_eq!(error.code(), boundary_codes::AUTHORIZATION_DENIED);
 }
 
 #[test]
