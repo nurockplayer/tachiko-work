@@ -2180,6 +2180,19 @@ fn top_level_help_describes_the_complete_first_user_workflow() {
 }
 
 #[test]
+fn set_help_describes_date_values() {
+    let output = run(&["set", "--help"]);
+
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains("Date"), "missing Date help text: {text}");
+    assert!(
+        text.contains("YYYY-MM-DD"),
+        "missing canonical Date spelling: {text}"
+    );
+}
+
+#[test]
 fn entity_help_makes_lifecycle_operations_discoverable() {
     let output = run(&["entity", "--help"]);
 
