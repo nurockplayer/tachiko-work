@@ -329,6 +329,51 @@ describe("Dashboard GitHub observation", () => {
     });
   });
 
+  it("empties values from incomplete current connections", () => {
+    const response = graph();
+    const repository = response.data?.repository;
+    const issue = repository?.issues.nodes?.[0];
+    const pull = repository?.pullRequests.nodes?.[0];
+    const recent = repository?.recent;
+    if (issue !== null && issue !== undefined) {
+      issue.labels?.nodes?.push({ name: "unverified-label" });
+      if (issue.labels !== null) issue.labels.pageInfo.hasNextPage = true;
+      issue.blockedBy?.nodes?.push({ number: 201, state: "OPEN", url: "https://github.example/issues/201" });
+      if (issue.blockedBy !== null) issue.blockedBy.pageInfo.hasNextPage = true;
+    }
+    if (pull !== null && pull !== undefined) {
+      if (pull.statusCheckRollup !== null) pull.statusCheckRollup.contexts.pageInfo.hasNextPage = true;
+      if (pull.reviews !== null) pull.reviews.pageInfo.hasNextPage = true;
+    }
+    recent?.nodes?.push(null);
+
+    const projection = projectGraphResponse(response);
+    const observedIssue = projection.deliveries.find((lane) => lane.issue?.number === 229)?.issue;
+    const observedPull = projection.deliveries.find((lane) => lane.pullRequest?.number === 230)?.pullRequest;
+
+    expect(observedIssue).toMatchObject({
+      labels: [],
+      blockedBy: [],
+      labelsAvailability: "partial",
+      dependenciesAvailability: "partial",
+    });
+    expect(observedPull).toMatchObject({
+      linkedIssueNumbers: [229],
+      linkageAvailability: "complete",
+      checks: { items: [], availability: "partial" },
+      reviews: { items: [], availability: "partial" },
+    });
+    expect(projection.criticalPath).toMatchObject({
+      availability: "partial",
+      nodes: [],
+      edges: [],
+    });
+    expect(projection.recentActivity).toMatchObject({
+      availability: "partial",
+      items: [],
+    });
+  });
+
   it("does not use truncated closing-Issue references as exact evidence context", () => {
     const response = graph();
     const pull = response.data?.repository?.pullRequests.nodes?.[0];
@@ -341,8 +386,10 @@ describe("Dashboard GitHub observation", () => {
     }
 
     const projection = projectGraphResponse(response);
-    expect(projection.deliveries[0]?.pullRequest).toMatchObject({
+    const pullRequest = projection.deliveries.find((lane) => lane.pullRequest?.number === 230)?.pullRequest;
+    expect(pullRequest).toMatchObject({
       linkageAvailability: "partial",
+      linkedIssueNumbers: [],
       handoff: { status: "unknown", reason: "Issue linkage Unknown" },
       stewardWatch: { status: "unknown", reason: "Issue linkage Unknown" },
     });
@@ -465,7 +512,7 @@ describe("Dashboard GitHub observation", () => {
     });
   });
 
-  it("keeps human action Unknown when a relevant watch is incomplete", () => {
+  it("preserves Required when another relevant watch is incomplete", () => {
     const response = graph();
     const repository = response.data?.repository;
     const pulls = repository?.pullRequests;
@@ -493,8 +540,18 @@ describe("Dashboard GitHub observation", () => {
 
     const projection = projectGraphResponse(response);
     expect(projection.executive.humanAction).toMatchObject({
-      value: null,
-      availability: "partial",
+      value: "Required",
+      availability: "complete",
+      source: { url: "https://github.example/comments/watch" },
+    });
+  });
+
+  it("leaves a CheckRun head unknown when its commit identity is not observed", () => {
+    const projection = projectGraphResponse(graph());
+
+    expect(projection.deliveries[0]?.pullRequest?.checks.items[0]).toMatchObject({
+      name: "build",
+      headSha: null,
     });
   });
 

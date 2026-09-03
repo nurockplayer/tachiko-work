@@ -181,6 +181,10 @@ function present<T>(page: Page<T> | null): T[] {
   return (page?.nodes ?? []).filter((node): node is T => node !== null);
 }
 
+function completeNodes<T>(page: Page<T> | null): T[] {
+  return page === null || pagePartial(page) ? [] : present(page);
+}
+
 function pagePartial<T>(page: Page<T> | null): boolean {
   return page === null || page.nodes === null || page.pageInfo.hasNextPage || page.nodes.some((node) => node === null);
 }
@@ -333,11 +337,11 @@ function issueFact(issue: GraphIssue, observation: IssuePartial): IssueFact {
     title: issue.title,
     url: issue.url,
     state: issue.state,
-    labels: present(issue.labels).map((label) => label.name),
+    labels: labelsAvailability === "complete" ? completeNodes(issue.labels).map((label) => label.name) : [],
     labelsAvailability,
-    milestone: issue.milestone?.title ?? null,
+    milestone: observation.milestone ? null : issue.milestone?.title ?? null,
     milestoneAvailability: sectionAvailability(observation.milestone),
-    blockedBy: present(issue.blockedBy),
+    blockedBy: dependenciesAvailability === "complete" ? completeNodes(issue.blockedBy) : [],
     dependenciesAvailability,
     identityAvailability,
     availability: sectionAvailability(partial),
@@ -356,8 +360,10 @@ function pullRequestFact(
     checks: boolean;
   },
 ): PullRequestFact {
-  const linkedIssueNumbers = present(pull.closingIssuesReferences).map((issue) => issue.number);
   const linkagePartial = observation.linkage || pagePartial(pull.closingIssuesReferences);
+  const linkedIssueNumbers = linkagePartial
+    ? []
+    : completeNodes(pull.closingIssuesReferences).map((issue) => issue.number);
   const comments = present(pull.comments);
   const commentsPartial = observation.comments || pagePartial(pull.comments);
   const context = !linkagePartial && linkedIssueNumbers.length === 1
@@ -399,13 +405,13 @@ function pullRequestFact(
     nativeAvailability,
     checks: {
       availability: sectionAvailability(checksPartial),
-      items: present(checkPage).map((check) => check.__typename === "CheckRun"
+      items: checksPartial ? [] : present(checkPage).map((check) => check.__typename === "CheckRun"
         ? {
             name: check.name,
             status: check.status,
             conclusion: check.conclusion,
             url: check.detailsUrl ?? check.url ?? pull.url,
-            headSha: pull.headRefOid,
+            headSha: null,
           }
         : {
             name: check.context,
@@ -417,7 +423,7 @@ function pullRequestFact(
     },
     reviews: {
       availability: sectionAvailability(reviewsPartial),
-      items: present(pull.reviews).map((review) => ({
+      items: reviewsPartial ? [] : present(pull.reviews).map((review) => ({
         author: review.author?.login ?? "Unknown",
         state: review.state,
         commitSha: review.commit?.oid ?? null,
@@ -509,8 +515,8 @@ export function projectGraphResponse(
   const pullPath = ["repository", "pullRequests"] as const;
   const issuePagePartial = pagePartial(repository.issues) || connectionAffected(errors, issuePath);
   const pullPagePartial = pagePartial(repository.pullRequests) || connectionAffected(errors, pullPath);
-  const issueNodes = repository.issues.nodes ?? [];
-  const pullNodes = repository.pullRequests.nodes ?? [];
+  const issueNodes = issuePagePartial ? [] : repository.issues.nodes ?? [];
+  const pullNodes = pullPagePartial ? [] : repository.pullRequests.nodes ?? [];
   const issues = issueNodes.flatMap((issue, index) => issue === null
     ? []
     : [issueFact(issue, {
@@ -594,8 +600,13 @@ export function projectGraphResponse(
       issue.dependenciesAvailability !== "complete"),
   );
   const countAvailability = issueDiscoveryAvailability;
-  const trustedEvidencePullNumbers = new Set(pullNodes.flatMap((pull) =>
-    pull !== null && hasTrustedEvidenceMarker(present(pull.comments)) ? [pull.number] : []));
+  const trustedEvidencePullNumbers = new Set(pullNodes.flatMap((pull, index) =>
+    pull !== null &&
+      !pagePartial(pull.comments) &&
+      !pathAffected(errors, [...pullPath, "nodes", index, "comments"]) &&
+      hasTrustedEvidenceMarker(present(pull.comments))
+      ? [pull.number]
+      : []));
   const relevantPullRequests = pullRequests.filter((pull) =>
     evidenceRelevant(pull, issuesByNumber, trustedEvidencePullNumbers));
   const watchFacts = relevantPullRequests.map((pull) => pull.stewardWatch);
@@ -608,11 +619,11 @@ export function projectGraphResponse(
     watchDiscoveryAvailability === "complete" &&
     watchFacts.length > 0 &&
     watchFacts.every((watch) => watch.status === "current");
-  const humanAction = allWatchesCurrent
-    ? requiredWatch !== undefined
-      ? "Required"
-      : "None in current watches"
-    : null;
+  const humanAction = requiredWatch !== undefined
+    ? "Required"
+    : allWatchesCurrent
+      ? "None in current watches"
+      : null;
 
   const nodes = new Map<number, { issueNumber: number; label: string; state: string; url: string }>();
   const edges: { from: number; to: number; state: string }[] = [];
@@ -642,7 +653,7 @@ export function projectGraphResponse(
     pathAffected(errors, ["repository", "recent"]) || recentNodeMissing || recentDropped,
   );
   const recentItems = recentNodes.flatMap((pull) =>
-    pull.mergedAt === null || pull.mergeCommit === null
+    recentAvailability !== "complete" || pull.mergedAt === null || pull.mergeCommit === null
       ? []
       : [{
           number: pull.number,
@@ -709,7 +720,7 @@ export function projectGraphResponse(
       : "healthy",
     executive: {
       mainSha: {
-        value: main.oid,
+        value: pathAffected(errors, ["repository", "defaultBranchRef"]) ? null : main.oid,
         availability: sectionAvailability(pathAffected(errors, ["repository", "defaultBranchRef"])),
         source: source("Live main", main.url),
       },
@@ -745,8 +756,10 @@ export function projectGraphResponse(
     deliveriesAvailability,
     criticalPath: {
       availability: criticalPathAvailability,
-      nodes: [...nodes.values()].sort((left, right) => left.issueNumber - right.issueNumber),
-      edges,
+      nodes: criticalPathAvailability === "complete"
+        ? [...nodes.values()].sort((left, right) => left.issueNumber - right.issueNumber)
+        : [],
+      edges: criticalPathAvailability === "complete" ? edges : [],
       source: repositorySource,
     },
     recentActivity: {

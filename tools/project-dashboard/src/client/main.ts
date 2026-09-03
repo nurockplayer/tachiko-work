@@ -359,10 +359,13 @@ function render(projection: DashboardProjection, warning?: string): void {
   ambient.setAttribute("aria-hidden", "true");
   const header = element("header", "site-header");
   const identity = element("div");
+  const observationStamp = projection.fetchHealth === "unavailable"
+    ? `${projection.repository} · current observation unavailable · attempted ${projection.observedAt}`
+    : `${projection.repository} · observed ${projection.observedAt}`;
   identity.append(
     element("p", "eyebrow", "TW / LIVE · READ ONLY"),
     element("h1", undefined, "Live Project Control Room"),
-    element("p", "header-copy", `${projection.repository} · observed ${projection.observedAt}`),
+    element("p", "header-copy", observationStamp),
   );
   const refresh = element("button", "refresh-button", "Refresh observation");
   refresh.type = "button";
@@ -392,56 +395,33 @@ function render(projection: DashboardProjection, warning?: string): void {
   app.replaceChildren(main);
 }
 
-function staleObserved<T>(observed: ObservedValue<T>): ObservedValue<T> {
-  return { ...observed, availability: "unavailable" };
+function unavailableObserved<T>(observed: ObservedValue<T>): ObservedValue<T> {
+  return { ...observed, value: null, availability: "unavailable" };
 }
 
-function staleStructured(value: StructuredFact): StructuredFact {
-  return {
-    ...value,
-    status: "unknown",
-    value: null,
-    reason: "Retained from the last successful observation; current state is Unknown",
-  };
-}
-
-function staleProjection(projection: DashboardProjection): DashboardProjection {
+function unavailableProjection(projection: DashboardProjection): DashboardProjection {
+  const repositorySource = projection.sources[0] ?? projection.executive.mainSha.source;
   return {
     ...projection,
+    observedAt: new Date().toISOString(),
     fetchHealth: "unavailable",
     executive: {
-      mainSha: staleObserved(projection.executive.mainSha),
-      productHorizon: staleObserved(projection.executive.productHorizon),
-      activeCount: staleObserved(projection.executive.activeCount),
-      readyCount: staleObserved(projection.executive.readyCount),
-      humanAction: staleObserved(projection.executive.humanAction),
+      mainSha: unavailableObserved(projection.executive.mainSha),
+      productHorizon: unavailableObserved(projection.executive.productHorizon),
+      activeCount: unavailableObserved(projection.executive.activeCount),
+      readyCount: unavailableObserved(projection.executive.readyCount),
+      humanAction: unavailableObserved(projection.executive.humanAction),
     },
-    deliveries: projection.deliveries.map((lane) => ({
-      ...lane,
-      linkageAvailability: "unavailable",
-      issue: lane.issue === null ? null : {
-        ...lane.issue,
-        labelsAvailability: "unavailable",
-        milestoneAvailability: "unavailable",
-        dependenciesAvailability: "unavailable",
-        identityAvailability: "unavailable",
-        availability: "unavailable",
-      },
-      pullRequest: lane.pullRequest === null ? null : {
-        ...lane.pullRequest,
-        linkageAvailability: "unavailable",
-        identityAvailability: "unavailable",
-        nativeAvailability: "unavailable",
-        checks: { ...lane.pullRequest.checks, availability: "unavailable" },
-        reviews: { ...lane.pullRequest.reviews, availability: "unavailable" },
-        handoff: staleStructured(lane.pullRequest.handoff),
-        stewardWatch: staleStructured(lane.pullRequest.stewardWatch),
-        availability: "unavailable",
-      },
-    })),
+    deliveries: [],
     deliveriesAvailability: "unavailable",
-    criticalPath: { ...projection.criticalPath, availability: "unavailable" },
-    recentActivity: { ...projection.recentActivity, availability: "unavailable" },
+    criticalPath: { ...projection.criticalPath, availability: "unavailable", nodes: [], edges: [] },
+    recentActivity: { ...projection.recentActivity, availability: "unavailable", items: [] },
+    attention: [{
+      level: "unknown",
+      label: "Current observation unavailable",
+      detail: "Live repository facts are Unknown. The prior response is retained only for retry and is not shown as current.",
+      sources: [repositorySource],
+    }],
   };
 }
 
@@ -463,12 +443,12 @@ async function refreshProjection(restoreFocus: boolean): Promise<void> {
   } catch {
     if (lastProjection !== null) {
       render(
-        staleProjection(lastProjection),
-        "Refresh failed · displayed facts are retained as stale · current live state Unknown",
+        unavailableProjection(lastProjection),
+        "Refresh failed · current observation is Unknown",
       );
       const nextRefresh = document.querySelector<HTMLButtonElement>(".refresh-button");
       const status = document.querySelector<HTMLElement>("#refresh-status");
-      if (status !== null) status.textContent = "Observation refresh failed · current display retained as stale";
+      if (status !== null) status.textContent = "Observation refresh failed · current display is Unknown";
       if (shouldRestoreFocus) nextRefresh?.focus();
       return;
     }

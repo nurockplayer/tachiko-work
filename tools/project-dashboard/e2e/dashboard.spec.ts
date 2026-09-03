@@ -266,7 +266,7 @@ test("refresh preserves keyboard focus and announces completion", async ({ page 
   await expect(page.locator("[aria-live='polite']")).toContainText("Observation refreshed");
 });
 
-test("refresh failure retains the current observation and recovery control", async ({ page }) => {
+test("refresh failure renders an Unknown current surface and recovery control", async ({ page }) => {
   let requests = 0;
   await page.route("**/api/project", async (route) => {
     requests += 1;
@@ -281,10 +281,17 @@ test("refresh failure retains the current observation and recovery control", asy
   await expect(page.getByRole("heading", { name: "Live Project Control Room" })).toBeVisible();
   await expect(refresh).toBeEnabled();
   await expect(refresh).toBeFocused();
-  await expect(page.getByRole("alert")).toContainText("retained as stale · current live state Unknown");
+  await expect(page.getByRole("alert")).toContainText("current observation is Unknown");
   await expect(
     page.locator(".executive-cell").filter({ hasText: "FETCH" }).getByText("UNAVAILABLE", { exact: true }).first(),
   ).toBeVisible();
+  await expect(page.getByText("1111111111111111111111111111111111111111", { exact: true })).toHaveCount(0);
+  await expect(page.locator(".lane-card")).toHaveCount(0);
+  await expect(page.getByText("Delivery observation Unknown", { exact: true })).toBeVisible();
+  await expect(page.locator("#critical-path .path-node")).toHaveCount(0);
+  await expect(page.locator("#recent-activity .activity-item")).toHaveCount(0);
+  await expect(page.getByText("Current observation unavailable", { exact: true })).toBeVisible();
+  await expect(page.getByText("Observed native policy facts", { exact: true })).toHaveCount(0);
   await expect(page.locator(".availability-complete")).toHaveCount(0);
   await expect(page.locator(".structured-status").filter({ hasText: "current" })).toHaveCount(0);
   await expect(page.locator("[aria-live='polite']")).toContainText("refresh failed");
