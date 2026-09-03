@@ -42,6 +42,10 @@ All notable changes to Tachiko Work are documented in this file.
   presentation-only paths/messages. Workspace validation is shared across
   queries, mutations, and merge finalization while authoring projection remains
   an explicit operation gate.
+- Field capability discovery now requires disclosure coverage for both the
+  concrete `EntityField` and corresponding schema-owned `SchemaField`, so a
+  fine-grained field grant cannot disclose declared type or Reference target
+  schema metadata.
 
 ### Added
 
