@@ -152,11 +152,12 @@ pub(crate) fn describe_field_capabilities(
     let declared_type = definition.field_type.clone();
     let current_value_kind = semantic_value_kind(existing);
 
-    let mut capabilities = Vec::with_capacity(7);
+    let mut capabilities = Vec::with_capacity(8);
     for input_kind in [
         SemanticValueKind::Number,
         SemanticValueKind::Text,
         SemanticValueKind::Boolean,
+        SemanticValueKind::Date,
         SemanticValueKind::Reference,
     ] {
         capabilities.push(FieldCapability {

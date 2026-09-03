@@ -584,6 +584,88 @@ describe("Designer application seam", () => {
     app.destroy();
   });
 
+  it("preserves a Date draft across rerenders, marks it unsaved, and clears it after Apply", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const memoryHost = new MemoryHost();
+    const prompt = vi
+      .fn<Window["prompt"]>()
+      .mockReturnValueOnce("baseline.roproj")
+      .mockReturnValueOnce("dated.roproj");
+    const addEventListener = vi.spyOn(window, "addEventListener");
+    const removeEventListener = vi.spyOn(window, "removeEventListener");
+    vi.stubGlobal("prompt", prompt);
+    const client = new DateClient();
+    const app = mountDesigner(root, client, memoryHost);
+    await app.ready;
+
+    root.querySelector<HTMLButtonElement>("[data-save-as]")?.click();
+    await vi.waitFor(() => {
+      expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+        "Saved",
+      );
+    });
+    addEventListener.mockClear();
+    removeEventListener.mockClear();
+
+    const draft = root.querySelector<HTMLInputElement>(
+      'input[type="date"][aria-label="Published for Launch"]',
+    );
+    if (draft === null) throw new Error("date control is required");
+    draft.value = "2025-01-01";
+    draft.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+      "Unsaved changes",
+    );
+    expect(addEventListener).toHaveBeenCalledWith("beforeunload", expect.any(Function));
+
+    const collection = root.querySelector<HTMLSelectElement>("[data-collection-select]");
+    if (collection === null) throw new Error("collection selector is required");
+    collection.value = "events";
+    collection.dispatchEvent(new Event("change", { bubbles: true }));
+    await vi.waitFor(() => {
+      expect(
+        root.querySelector<HTMLInputElement>(
+          'input[type="date"][aria-label="Published for Launch"]',
+        )?.value,
+      ).toBe("2025-01-01");
+    });
+    expect(client.dateEditRequests).toHaveLength(0);
+
+    const applied = root.querySelector<HTMLInputElement>(
+      'input[type="date"][aria-label="Published for Launch"]',
+    );
+    if (applied === null || applied.form === null) throw new Error("date form is required");
+    applied.form.requestSubmit();
+    await vi.waitFor(() => {
+      expect(root.querySelector('[data-testid="revision"]')?.textContent).toContain(
+        "resident/3",
+      );
+    });
+    expect(client.dateEditRequests).toHaveLength(1);
+    expect(
+      root.querySelector<HTMLInputElement>(
+        'input[type="date"][aria-label="Published for Launch"]',
+      )?.value,
+    ).toBe("2025-01-01");
+
+    root.querySelector<HTMLButtonElement>("[data-save-as]")?.click();
+    await vi.waitFor(() => {
+      expect(memoryHost.projects.has("dated.roproj")).toBe(true);
+    });
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain("Saved");
+    expect(removeEventListener).toHaveBeenCalledWith(
+      "beforeunload",
+      expect.any(Function),
+    );
+
+    app.destroy();
+    addEventListener.mockRestore();
+    removeEventListener.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
   it("preserves an unsubmitted Text draft across an unrelated scalar publication", async () => {
     document.body.innerHTML = '<div id="app"></div>';
     const root = document.querySelector<HTMLElement>("#app");

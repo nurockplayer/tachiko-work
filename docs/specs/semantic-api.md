@@ -245,7 +245,7 @@ editor hint, label, formatter, or presentation model.
 
 The v1 implementation recognizes only existing rules:
 
-- `SetFieldValue` exposes the finite `Number`, `Text`, `Boolean`, and
+- `SetFieldValue` exposes the finite `Number`, `Text`, `Boolean`, `Date`, and
   `Reference` typed inputs. Its applicability and `FormulaEdit`/
   `TypeMismatch` reasons come from the same current-formula and
   `value_matches_type` rule used by field candidate construction.
@@ -1649,7 +1649,8 @@ and transport conformance remains later work. Issues #93–#94 add production
 resident session/revision/selective-projection conformance on native and WASM.
 Issue #268 adds Number, Text, Boolean, Reference, Formula-on-Number, shared
 mutation/formula-rule parity, authorization ordering, and machine-readable
-inapplicability evidence for the bounded field projection.
+inapplicability evidence for the bounded field projection. Issue #267 adds
+Date to the same finite SetFieldValue projection with mutation-rule parity.
 
 ## Stability classification
 

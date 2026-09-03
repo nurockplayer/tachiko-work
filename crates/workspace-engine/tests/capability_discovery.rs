@@ -37,6 +37,17 @@ fn number(value: f64) -> Value {
     Value::Number(Number::new(value).unwrap())
 }
 
+fn date(value: &str) -> Value {
+    Value::Date(value.parse().unwrap())
+}
+
+fn date_field() -> (FieldId, FieldDefinition) {
+    (
+        FieldId::from("published"),
+        field("published", FieldType::Date),
+    )
+}
+
 fn reference(entity: &str, field: &str) -> Expression {
     Expression::Reference(FieldRef::new(entity, field))
 }
@@ -60,6 +71,7 @@ fn document() -> Document {
                             FieldId::from("enabled"),
                             field("enabled", FieldType::Boolean),
                         ),
+                        date_field(),
                         (
                             FieldId::from("target"),
                             field(
@@ -99,6 +111,7 @@ fn document() -> Document {
                         (FieldId::from("amount"), number(10.0)),
                         (FieldId::from("label"), Value::Text("old".to_owned())),
                         (FieldId::from("enabled"), Value::Boolean(true)),
+                        (FieldId::from("published"), date("2024-02-29")),
                         (
                             FieldId::from("target"),
                             Value::Reference(EntityId::from("target-row")),
@@ -331,7 +344,7 @@ fn value_for_kind(kind: SemanticValueKind) -> Value {
 }
 
 #[test]
-fn discovery_projects_number_text_boolean_and_reference_rules() {
+fn discovery_projects_number_text_boolean_date_and_reference_rules() {
     let document = document();
     for (name, expected_type, expected_kind, accepted_value) in [
         (
@@ -351,6 +364,12 @@ fn discovery_projects_number_text_boolean_and_reference_rules() {
             FieldType::Boolean,
             SemanticValueKind::Boolean,
             Value::Boolean(false),
+        ),
+        (
+            "published",
+            FieldType::Date,
+            SemanticValueKind::Date,
+            Value::Date("2025-01-01".parse().unwrap()),
         ),
         (
             "target",
@@ -376,6 +395,7 @@ fn discovery_projects_number_text_boolean_and_reference_rules() {
             SemanticValueKind::Number,
             SemanticValueKind::Text,
             SemanticValueKind::Boolean,
+            SemanticValueKind::Date,
             SemanticValueKind::Reference,
         ] {
             if input_kind != expected_kind {
@@ -393,6 +413,7 @@ fn discovery_and_field_propose_share_typed_input_rule() {
         ("amount", FieldType::Number, SemanticValueKind::Number),
         ("label", FieldType::Text, SemanticValueKind::Text),
         ("enabled", FieldType::Boolean, SemanticValueKind::Boolean),
+        ("published", FieldType::Date, SemanticValueKind::Date),
         (
             "target",
             FieldType::Reference {
@@ -410,6 +431,7 @@ fn discovery_and_field_propose_share_typed_input_rule() {
             SemanticValueKind::Number,
             SemanticValueKind::Text,
             SemanticValueKind::Boolean,
+            SemanticValueKind::Date,
             SemanticValueKind::Reference,
         ]
         .into_iter()
@@ -447,6 +469,44 @@ fn discovery_and_field_propose_share_typed_input_rule() {
 }
 
 #[test]
+fn discovery_and_date_propose_share_typed_input_rule() {
+    let document = document();
+    let date_field = field_ref("published");
+    let capabilities = capabilities_for(&document, &date_field);
+    assert_eq!(capabilities.current_value_kind, SemanticValueKind::Date);
+    assert_applicable(
+        &capabilities,
+        FieldCapabilityInput::TypedValue {
+            kind: SemanticValueKind::Date,
+        },
+    );
+
+    let mut lifecycle = lifecycle();
+    grant_value_propose(&mut lifecycle);
+    let patch = lifecycle
+        .propose(
+            &DocumentScopeId::from("game-occurrence"),
+            &document,
+            &SemanticRevision::from("r1"),
+            ProposalRequest::new(
+                ProposalId::from("date-value-parity"),
+                SemanticRevision::from("r1"),
+                SemanticPatchBody::command(SemanticCommand::set_field_value(
+                    date_field,
+                    Value::Date("2025-01-01".parse().unwrap()),
+                )),
+                PrincipalId::from("agent"),
+            ),
+            NOW,
+        )
+        .expect("an applicable Date value must reach the authoritative Propose path");
+    assert_eq!(
+        patch.exact_change().base_revision(),
+        &SemanticRevision::from("r1")
+    );
+}
+
+#[test]
 fn discovery_and_mutation_share_formula_edit_and_formula_target_rules() {
     let document = document();
     let formula_field = field_ref("computed");
@@ -456,6 +516,7 @@ fn discovery_and_mutation_share_formula_edit_and_formula_target_rules() {
         SemanticValueKind::Number,
         SemanticValueKind::Text,
         SemanticValueKind::Boolean,
+        SemanticValueKind::Date,
         SemanticValueKind::Reference,
     ] {
         assert_eq!(
@@ -904,6 +965,13 @@ fn discovery_projection_has_no_presentation_or_conversion_capability() {
                 FieldCapabilityKind::Edit,
                 FieldCapabilityInput::TypedValue {
                     kind: SemanticValueKind::Boolean,
+                },
+            ),
+            (
+                OperationFamily::SetFieldValue,
+                FieldCapabilityKind::Edit,
+                FieldCapabilityInput::TypedValue {
+                    kind: SemanticValueKind::Date,
                 },
             ),
             (

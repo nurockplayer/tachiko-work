@@ -46,8 +46,11 @@ export function mountDesigner(
   let occurrenceClosed = false;
   const pendingTextBuffers = new Map<string, string>();
   const pendingBooleanBuffers = new Map<string, boolean>();
+  const pendingDateBuffers = new Map<string, string>();
   const hasPendingScalarDrafts = (): boolean =>
-    pendingTextBuffers.size > 0 || pendingBooleanBuffers.size > 0;
+    pendingTextBuffers.size > 0 ||
+    pendingBooleanBuffers.size > 0 ||
+    pendingDateBuffers.size > 0;
   let savedProjects: SavedProjectSummary[] = [];
   let selectedSavedProject = "";
   const durability = createDurabilityState();
@@ -190,7 +193,14 @@ export function mountDesigner(
     );
 
   const commitDate = (target: FieldTarget, value: string): Promise<void> =>
-    commitScalar(target, (expectedRevision) => client.editDate(expectedRevision, target, value));
+    commitScalar(
+      target,
+      (expectedRevision) => client.editDate(expectedRevision, target, value),
+      () => {
+        pendingDateBuffers.delete(textBufferKey(target));
+        syncBeforeUnloadGuard();
+      },
+    );
 
   const selectCollection = async (collection: string): Promise<void> => {
     if (bootstrap === null || store === null || busy) return;
@@ -224,6 +234,7 @@ export function mountDesigner(
     const nextStore = createProjectionStore(table);
     pendingTextBuffers.clear();
     pendingBooleanBuffers.clear();
+    pendingDateBuffers.clear();
     bootstrap = candidate;
     store = nextStore;
     selectedCollection = candidate.default_collection;
@@ -236,6 +247,7 @@ export function mountDesigner(
     const nextStore = createProjectionStore(opened.table);
     pendingTextBuffers.clear();
     pendingBooleanBuffers.clear();
+    pendingDateBuffers.clear();
     bootstrap = opened.bootstrap;
     store = nextStore;
     selectedCollection = opened.bootstrap.default_collection;
@@ -382,6 +394,7 @@ export function mountDesigner(
       await client.closeProject();
       pendingTextBuffers.clear();
       pendingBooleanBuffers.clear();
+      pendingDateBuffers.clear();
       bootstrap = null;
       store = null;
       selectedCollection = "";
@@ -406,6 +419,7 @@ export function mountDesigner(
     root.querySelectorAll<HTMLFormElement>("[data-edit-form]").forEach((form) => {
       const draftControl = form.querySelector<HTMLTextAreaElement>("textarea");
       const draftBoolean = form.querySelector<HTMLInputElement>('input[type="checkbox"]');
+      const draftDate = form.querySelector<HTMLInputElement>('input[type="date"]');
       const draftEntity = decodeOpaqueAttribute(form.dataset.entity);
       const draftField = decodeOpaqueAttribute(form.dataset.field);
       if (draftControl !== null && draftEntity !== undefined && draftField !== undefined) {
@@ -431,6 +445,18 @@ export function mountDesigner(
           reflectUnsavedState();
         };
         draftBoolean.addEventListener("change", recordDraft);
+      }
+      if (draftDate !== null && draftEntity !== undefined && draftField !== undefined) {
+        const recordDraft = (): void => {
+          const key = textBufferKey({ entity: draftEntity, field: draftField });
+          if (draftDate.value === draftDate.dataset.initialDate) {
+            pendingDateBuffers.delete(key);
+          } else {
+            pendingDateBuffers.set(key, draftDate.value);
+          }
+          reflectUnsavedState();
+        };
+        draftDate.addEventListener("input", recordDraft);
       }
       form.addEventListener("submit", (event) => {
         event.preventDefault();
@@ -485,9 +511,18 @@ export function mountDesigner(
             void commitBoolean({ entity, field }, control.checked);
             break;
           }
-          case "date":
+          case "date": {
+            if (!(control instanceof HTMLInputElement)) return;
+            const dateKey = textBufferKey({ entity, field });
+            if (control.value === control.dataset.initialDate) {
+              pendingDateBuffers.delete(dateKey);
+            } else {
+              pendingDateBuffers.set(dateKey, control.value);
+            }
+            reflectUnsavedState();
             void commitDate({ entity, field }, control.value);
             break;
+          }
         }
       });
     });
@@ -547,6 +582,18 @@ export function mountDesigner(
         if (pending !== undefined) checkbox.checked = pending;
       }
     });
+    root.querySelectorAll<HTMLInputElement>('input[type="date"][data-initial-date]').forEach(
+      (dateInput) => {
+        const entity = decodeOpaqueAttribute(dateInput.form?.dataset.entity);
+        const field = decodeOpaqueAttribute(dateInput.form?.dataset.field);
+        if (entity !== undefined && field !== undefined) {
+          dateInput.value =
+            pendingDateBuffers.get(textBufferKey({ entity, field })) ??
+            dateInput.dataset.initialDate ??
+            "";
+        }
+      },
+    );
   };
 
   render();
@@ -876,6 +923,7 @@ function fieldMarkup(
         )}" data-field="${encodeOpaqueAttribute(field.target.field)}" data-edit-kind="date">
           <input
             type="date"
+            data-initial-date="${escapeHtml(field.stored.value)}"
             value="${escapeHtml(field.stored.value)}"
             aria-label="${escapeHtml(humanize(fieldKey))} for ${escapeHtml(
               humanize(entityKey),

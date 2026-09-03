@@ -56,7 +56,7 @@ All notable changes to Tachiko Work are documented in this file.
 ### Added
 
 - A provisional subject-first Semantic API field capability discovery Query
-  now projects the existing Number, Text, Boolean, Reference, and Formula
+  now projects the existing Number, Text, Boolean, Date, Reference, and Formula
   operation rules through workspace-engine and the AI boundary. Discovery and
   mutation share type/formula applicability authority, disclosure remains an
   independent Query capability, Reference targets are not enumerated, and no

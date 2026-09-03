@@ -345,7 +345,7 @@ authorization/disclosure boundary is separate from that projection, and client
 presentation is a third layer. A discovery Query grant does not imply the
 listed family's Query, Propose, Execute, or Approval authority; those operations
 re-evaluate live authority and semantic rules. v1 covers Number, Text, Boolean,
-Reference, and Formula values already in the core model, with no conversions or
+Date, Reference, and Formula values already in the core model, with no conversions or
 Reference valid-target enumeration (#254). For a resolvable target, the trusted
 discovery boundary requires `FieldCapabilityDiscovery` Query coverage for both
 the concrete `EntityField` and corresponding schema-owned `SchemaField` before
