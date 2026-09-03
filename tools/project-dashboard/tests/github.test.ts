@@ -467,6 +467,17 @@ describe("Dashboard GitHub observation", () => {
     });
   });
 
+  it("clears a roadmap scalar when its response path is affected", () => {
+    const response = graph();
+    response.errors = [{ message: "Roadmap unavailable", path: ["repository", "roadmap"] }];
+
+    const projection = projectGraphResponse(response);
+    expect(projection.executive.productHorizon).toMatchObject({
+      value: null,
+      availability: "partial",
+    });
+  });
+
   it("keeps structured evidence current when only check observation errors", () => {
     const response = graph();
     response.errors = [{
@@ -544,6 +555,23 @@ describe("Dashboard GitHub observation", () => {
       availability: "complete",
       source: { url: "https://github.example/comments/watch" },
     });
+  });
+
+  it("preserves Required from an observed watch when the pull connection is incomplete", () => {
+    const response = graph();
+    const repository = response.data?.repository;
+    const pull = repository?.pullRequests.nodes?.[0];
+    const watch = pull?.comments?.nodes?.[1];
+    if (watch !== null && watch !== undefined) watch.body = watch.body.replace("HUMAN_ACTION: none", "HUMAN_ACTION: required");
+    if (repository !== null && repository !== undefined) repository.pullRequests.pageInfo.hasNextPage = true;
+
+    const projection = projectGraphResponse(response);
+    expect(projection.executive.humanAction).toMatchObject({
+      value: "Required",
+      availability: "complete",
+      source: { url: "https://github.example/comments/watch" },
+    });
+    expect(projection.deliveries).toEqual([]);
   });
 
   it("leaves a CheckRun head unknown when its commit identity is not observed", () => {

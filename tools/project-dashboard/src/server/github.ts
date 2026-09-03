@@ -516,7 +516,7 @@ export function projectGraphResponse(
   const issuePagePartial = pagePartial(repository.issues) || connectionAffected(errors, issuePath);
   const pullPagePartial = pagePartial(repository.pullRequests) || connectionAffected(errors, pullPath);
   const issueNodes = issuePagePartial ? [] : repository.issues.nodes ?? [];
-  const pullNodes = pullPagePartial ? [] : repository.pullRequests.nodes ?? [];
+  const pullNodes = repository.pullRequests.nodes ?? [];
   const issues = issueNodes.flatMap((issue, index) => issue === null
     ? []
     : [issueFact(issue, {
@@ -584,12 +584,18 @@ export function projectGraphResponse(
   deliveries.sort((left, right) =>
     (left.issue?.number ?? left.pullRequest?.number ?? 0) -
     (right.issue?.number ?? right.pullRequest?.number ?? 0));
+  const currentDeliveries = issuePagePartial
+    ? []
+    : pullPagePartial
+      ? deliveries.filter((lane) => lane.pullRequest === null)
+      : deliveries;
 
   const roadmapSource = source(
     "Product Roadmap",
     `https://github.com/${REPOSITORY}/blob/${main.oid}/${ROADMAP_PATH}`,
     "repository",
   );
+  const roadmapAffected = pathAffected(errors, ["repository", "roadmap"]);
   const roadmapText = repository.roadmap?.text;
   const horizon = typeof roadmapText === "string" ? parseProductHorizon(roadmapText) : null;
   const activeIssues = issues.filter((issue) => issue.labels.includes(OWNER_TOKEN));
@@ -725,8 +731,8 @@ export function projectGraphResponse(
         source: source("Live main", main.url),
       },
       productHorizon: {
-        value: horizon,
-        availability: horizon === null || pathAffected(errors, ["repository", "roadmap"])
+        value: roadmapAffected ? null : horizon,
+        availability: horizon === null || roadmapAffected
           ? "partial"
           : "complete",
         source: roadmapSource,
@@ -752,7 +758,7 @@ export function projectGraphResponse(
           : {}),
       },
     },
-    deliveries,
+    deliveries: currentDeliveries,
     deliveriesAvailability,
     criticalPath: {
       availability: criticalPathAvailability,
