@@ -516,7 +516,11 @@ impl RetainedCalculationState {
             .iter()
             .filter_map(|(field, value)| match value {
                 Value::Formula(expression) => Some((field.clone(), expression)),
-                Value::Number(_) | Value::Text(_) | Value::Boolean(_) | Value::Reference(_) => None,
+                Value::Number(_)
+                | Value::Text(_)
+                | Value::Boolean(_)
+                | Value::Date(_)
+                | Value::Reference(_) => None,
             })
             .collect::<FormulaNodes<'_>>();
 
@@ -977,7 +981,13 @@ fn calculation_value<'document>(
 fn formula_dependencies(document: &Document, field: &FieldRef) -> Option<BTreeSet<FieldRef>> {
     match calculation_value(document, field) {
         Some(Value::Formula(expression)) => Some(extract_dependencies(expression)),
-        Some(Value::Number(_) | Value::Text(_) | Value::Boolean(_) | Value::Reference(_))
+        Some(
+            Value::Number(_)
+            | Value::Text(_)
+            | Value::Boolean(_)
+            | Value::Date(_)
+            | Value::Reference(_),
+        )
         | None => None,
     }
 }
@@ -1250,7 +1260,7 @@ fn reference_failure(document: &Document, field: &FieldRef) -> Option<ReferenceF
     }
     match entity.fields.get(&field.field) {
         Some(Value::Number(_) | Value::Formula(_)) => None,
-        Some(Value::Text(_) | Value::Boolean(_) | Value::Reference(_)) => {
+        Some(Value::Text(_) | Value::Boolean(_) | Value::Date(_) | Value::Reference(_)) => {
             Some(ReferenceFailure::NonNumeric)
         }
         None => Some(ReferenceFailure::Missing),

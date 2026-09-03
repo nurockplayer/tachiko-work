@@ -2278,7 +2278,7 @@ impl PatchLifecycle {
                     self.insert_field_disclosure_for(family, before, after, &field, disclosures)?;
                 }
             }
-            Value::Number(_) | Value::Text(_) | Value::Boolean(_) => {}
+            Value::Number(_) | Value::Text(_) | Value::Boolean(_) | Value::Date(_) => {}
         }
         Ok(())
     }

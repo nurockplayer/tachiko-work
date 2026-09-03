@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 use tachiko_semantic_core::{
-    Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldDefinition, FieldId,
+    Date, Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldDefinition, FieldId,
     FieldKey, FieldRef, FieldType, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, Schema,
     SchemaId, SchemaKey, Value,
 };
@@ -50,6 +50,7 @@ pub(crate) enum FieldTypeV2 {
     Number,
     Text,
     Boolean,
+    Date,
     Reference { schema: String },
 }
 
@@ -73,6 +74,7 @@ pub(crate) enum ValueV2 {
     Number(f64),
     Text(String),
     Boolean(bool),
+    Date(Date),
     Reference(String),
     Formula(ExpressionV2),
 }
@@ -260,6 +262,7 @@ impl FieldTypeV2 {
             FieldType::Number => Self::Number,
             FieldType::Text => Self::Text,
             FieldType::Boolean => Self::Boolean,
+            FieldType::Date => Self::Date,
             FieldType::Reference { schema } => Self::Reference {
                 schema: schema.to_string(),
             },
@@ -271,6 +274,7 @@ impl FieldTypeV2 {
             Self::Number => FieldType::Number,
             Self::Text => FieldType::Text,
             Self::Boolean => FieldType::Boolean,
+            Self::Date => FieldType::Date,
             Self::Reference { schema } => FieldType::Reference {
                 schema: SchemaId::from(schema),
             },
@@ -343,6 +347,7 @@ impl ValueV2 {
             Value::Number(number) => Self::Number(number.get()),
             Value::Text(text) => Self::Text(text.clone()),
             Value::Boolean(boolean) => Self::Boolean(*boolean),
+            Value::Date(date) => Self::Date(*date),
             Value::Reference(entity) => Self::Reference(entity.to_string()),
             Value::Formula(expression) => Self::Formula(ExpressionV2::from_semantic(expression)),
         }
@@ -355,7 +360,7 @@ impl ValueV2 {
     ) -> Result<(), CodecError> {
         match self {
             Self::Number(number) => validate_number(*number),
-            Self::Text(_) | Self::Boolean(_) => Ok(()),
+            Self::Text(_) | Self::Boolean(_) | Self::Date(_) => Ok(()),
             Self::Reference(entity) => {
                 if entities.contains_key(entity) {
                     Ok(())
@@ -372,6 +377,7 @@ impl ValueV2 {
             Self::Number(number) => Value::Number(number_value(number)?),
             Self::Text(text) => Value::Text(text),
             Self::Boolean(boolean) => Value::Boolean(boolean),
+            Self::Date(date) => Value::Date(date),
             Self::Reference(entity) => Value::Reference(EntityId::from(entity)),
             Self::Formula(expression) => Value::Formula(expression.into_semantic()?),
         })
@@ -630,6 +636,7 @@ fn write_field_type(
         FieldTypeV2::Number => member_string(output, indent + 1, "type", "number", false)?,
         FieldTypeV2::Text => member_string(output, indent + 1, "type", "text", false)?,
         FieldTypeV2::Boolean => member_string(output, indent + 1, "type", "boolean", false)?,
+        FieldTypeV2::Date => member_string(output, indent + 1, "type", "date", false)?,
         FieldTypeV2::Reference { schema } => {
             member_string(output, indent + 1, "type", "reference", true)?;
             member_string(output, indent + 1, "schema", schema, false)?;
@@ -668,6 +675,10 @@ fn write_value(output: &mut String, value: &ValueV2, indent: usize) -> Result<()
         ValueV2::Boolean(boolean) => {
             member_string(output, indent + 1, "kind", "boolean", true)?;
             member_bool(output, indent + 1, "value", *boolean, false)?;
+        }
+        ValueV2::Date(date) => {
+            member_string(output, indent + 1, "kind", "date", true)?;
+            member_string(output, indent + 1, "value", &date.to_string(), false)?;
         }
         ValueV2::Reference(entity) => {
             member_string(output, indent + 1, "kind", "reference", true)?;

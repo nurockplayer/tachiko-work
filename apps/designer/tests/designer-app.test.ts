@@ -8,6 +8,7 @@ import {
 import type {
   BootstrapProjection,
   FieldBatchProjection,
+  FieldProjection,
   FieldTarget,
   OpenedProjection,
   PublicationProjection,
@@ -98,6 +99,30 @@ const openedProjection = (): OpenedProjection => ({
   table: structuredClone(table),
 });
 
+const dateBootstrap: BootstrapProjection = {
+  title: "Date Project",
+  revision: "resident/0",
+  default_collection: "events",
+  collections: [{ id: "events", key: "events", entity_count: 1 }],
+};
+
+const dateField = (value: string): FieldProjection => ({
+  target: { entity: "launch", field: "published" },
+  address: "launch.published",
+  stored: { kind: "date", value },
+  formula: null,
+  calculated: null,
+  diagnostics: [],
+  editable_scalar: "date",
+});
+
+const dateTable = (value = "2024-02-29"): TableProjection => ({
+  revision: "resident/0",
+  collection: { id: "events", key: "events", entity_count: 1 },
+  columns: [{ id: "published", key: "published", field_type: "date" }],
+  rows: [{ id: "launch", key: "launch", fields: [dateField(value)] }],
+});
+
 class FakeClient implements DesignerClient {
   queryRequests: FieldTarget[][] = [];
   editRequests: Array<{
@@ -114,6 +139,11 @@ class FakeClient implements DesignerClient {
     expectedRevision: string;
     target: FieldTarget;
     value: boolean;
+  }> = [];
+  dateEditRequests: Array<{
+    expectedRevision: string;
+    target: FieldTarget;
+    value: string;
   }> = [];
 
   async bootstrap(): Promise<BootstrapProjection> {
@@ -208,6 +238,25 @@ class FakeClient implements DesignerClient {
     };
   }
 
+  async editDate(
+    expectedRevision: string,
+    target: FieldTarget,
+    value: string,
+  ): Promise<PublicationProjection> {
+    this.dateEditRequests.push({
+      expectedRevision,
+      target: structuredClone(target),
+      value,
+    });
+    return {
+      base_revision: expectedRevision,
+      resulting_revision: "resident/3",
+      entities: [],
+      fields: [structuredClone(target)],
+      affected_calculations: [],
+    };
+  }
+
   close(): void {}
 }
 
@@ -238,6 +287,32 @@ class ScalarClient extends FakeClient {
         }
         return refreshed;
       }),
+    };
+  }
+}
+
+class DateClient extends FakeClient {
+  override async bootstrap(): Promise<BootstrapProjection> {
+    return structuredClone(dateBootstrap);
+  }
+
+  override async queryTable(): Promise<TableProjection> {
+    return dateTable(this.dateEditRequests.at(-1)?.value);
+  }
+
+  override async queryFields(
+    revision: string,
+    fields: FieldTarget[],
+  ): Promise<FieldBatchProjection> {
+    this.queryRequests.push(structuredClone(fields));
+    const value = this.dateEditRequests.at(-1)?.value ?? "2024-02-29";
+    return {
+      revision,
+      fields: fields.map((target) => ({
+        ...dateField(value),
+        target: structuredClone(target),
+        address: `${target.entity}.${target.field}`,
+      })),
     };
   }
 }
@@ -469,6 +544,126 @@ describe("Designer application seam", () => {
         ?.checked,
     ).toBe(false);
     app.destroy();
+  });
+
+  it("publishes a Date control through the typed runtime client seam", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const client = new DateClient();
+    const app = mountDesigner(root, client, host);
+    await app.ready;
+
+    const published = root.querySelector<HTMLInputElement>(
+      'input[type="date"][aria-label="Published for Launch"]',
+    );
+    if (published === null || published.form === null) {
+      throw new Error("date edit form is required");
+    }
+    expect(published.value).toBe("2024-02-29");
+    published.value = "2025-01-01";
+    published.form.requestSubmit();
+
+    await vi.waitFor(() => {
+      expect(root.querySelector('[data-testid="revision"]')?.textContent).toContain(
+        "resident/3",
+      );
+    });
+    expect(client.dateEditRequests).toEqual([
+      {
+        expectedRevision: "resident/0",
+        target: { entity: "launch", field: "published" },
+        value: "2025-01-01",
+      },
+    ]);
+    expect(
+      root.querySelector<HTMLInputElement>(
+        'input[type="date"][aria-label="Published for Launch"]',
+      )?.value,
+    ).toBe("2025-01-01");
+    app.destroy();
+  });
+
+  it("preserves a Date draft across rerenders, marks it unsaved, and clears it after Apply", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const memoryHost = new MemoryHost();
+    const prompt = vi
+      .fn<Window["prompt"]>()
+      .mockReturnValueOnce("baseline.roproj")
+      .mockReturnValueOnce("dated.roproj");
+    const addEventListener = vi.spyOn(window, "addEventListener");
+    const removeEventListener = vi.spyOn(window, "removeEventListener");
+    vi.stubGlobal("prompt", prompt);
+    const client = new DateClient();
+    const app = mountDesigner(root, client, memoryHost);
+    await app.ready;
+
+    root.querySelector<HTMLButtonElement>("[data-save-as]")?.click();
+    await vi.waitFor(() => {
+      expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+        "Saved",
+      );
+    });
+    addEventListener.mockClear();
+    removeEventListener.mockClear();
+
+    const draft = root.querySelector<HTMLInputElement>(
+      'input[type="date"][aria-label="Published for Launch"]',
+    );
+    if (draft === null) throw new Error("date control is required");
+    draft.value = "2025-01-01";
+    draft.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
+      "Unsaved changes",
+    );
+    expect(addEventListener).toHaveBeenCalledWith("beforeunload", expect.any(Function));
+
+    const collection = root.querySelector<HTMLSelectElement>("[data-collection-select]");
+    if (collection === null) throw new Error("collection selector is required");
+    collection.value = "events";
+    collection.dispatchEvent(new Event("change", { bubbles: true }));
+    await vi.waitFor(() => {
+      expect(
+        root.querySelector<HTMLInputElement>(
+          'input[type="date"][aria-label="Published for Launch"]',
+        )?.value,
+      ).toBe("2025-01-01");
+    });
+    expect(client.dateEditRequests).toHaveLength(0);
+
+    const applied = root.querySelector<HTMLInputElement>(
+      'input[type="date"][aria-label="Published for Launch"]',
+    );
+    if (applied === null || applied.form === null) throw new Error("date form is required");
+    applied.form.requestSubmit();
+    await vi.waitFor(() => {
+      expect(root.querySelector('[data-testid="revision"]')?.textContent).toContain(
+        "resident/3",
+      );
+    });
+    expect(client.dateEditRequests).toHaveLength(1);
+    expect(
+      root.querySelector<HTMLInputElement>(
+        'input[type="date"][aria-label="Published for Launch"]',
+      )?.value,
+    ).toBe("2025-01-01");
+
+    root.querySelector<HTMLButtonElement>("[data-save-as]")?.click();
+    await vi.waitFor(() => {
+      expect(memoryHost.projects.has("dated.roproj")).toBe(true);
+    });
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain("Saved");
+    expect(removeEventListener).toHaveBeenCalledWith(
+      "beforeunload",
+      expect.any(Function),
+    );
+
+    app.destroy();
+    addEventListener.mockRestore();
+    removeEventListener.mockRestore();
+    vi.unstubAllGlobals();
   });
 
   it("preserves an unsubmitted Text draft across an unrelated scalar publication", async () => {

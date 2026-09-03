@@ -161,6 +161,22 @@ export class WorkerDesignerClient implements DesignerClient {
     );
   }
 
+  async editDate(
+    expectedRevision: string,
+    target: FieldTarget,
+    value: string,
+  ): Promise<PublicationProjection> {
+    return expectResponse(
+      "published",
+      await this.#command({
+        type: "edit_scalar",
+        expected_revision: expectedRevision,
+        target,
+        input: { kind: "date", value },
+      }),
+    );
+  }
+
   close(): void {
     this.#worker.terminate();
     const error = new Error("The Designer runtime was closed.");

@@ -94,6 +94,33 @@ fn empty_document_emits_the_normative_eighteen_file_tree() {
 }
 
 #[test]
+fn frozen_roproj_v1_rejects_date_instead_of_widening_the_contract() {
+    let document = Document {
+        id: "doc-date".into(),
+        title: "Date".to_owned(),
+        schemas: BTreeMap::from([(
+            SchemaId::from("schema-date"),
+            Schema {
+                id: SchemaId::from("schema-date"),
+                key: SchemaKey::from("date"),
+                fields: BTreeMap::from([(
+                    FieldId::from("day"),
+                    field("day", "day", FieldType::Date, true),
+                )]),
+            },
+        )]),
+        entities: BTreeMap::new(),
+    };
+
+    let error = encode_roproj_v1(&document).unwrap_err();
+    assert!(matches!(
+        error,
+        FormatError::InvalidRoProjectRepresentation { message }
+            if message.contains("Date is not representable in frozen .roproj/v1")
+    ));
+}
+
+#[test]
 fn nonempty_document_emits_the_normative_schema_and_entity_golden_bytes() {
     let tree = encode_roproj_v1(&character_document()).unwrap();
 

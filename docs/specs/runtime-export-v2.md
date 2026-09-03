@@ -27,7 +27,10 @@ entities
 - `entities` is ordered and keyed by current human `EntityKey`.
 - Each entity records its current human `SchemaKey` and an ordered field map
   keyed by current human `FieldKey`.
-- Stored numeric/text/Boolean inputs become JSON scalars.
+- Stored numeric/text/Boolean inputs become JSON scalars. Stored Date inputs
+  become their canonical `YYYY-MM-DD` JSON string; the export remains a
+  derived ergonomic projection and is not a lossless semantic persistence
+  format.
 - Formula fields become their normalized calculated Number.
 - Entity references become `{"reference": "current_entity_key"}`.
 

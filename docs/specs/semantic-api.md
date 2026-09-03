@@ -245,7 +245,7 @@ editor hint, label, formatter, or presentation model.
 
 The v1 implementation recognizes only existing rules:
 
-- `SetFieldValue` exposes the finite `Number`, `Text`, `Boolean`, and
+- `SetFieldValue` exposes the finite `Number`, `Text`, `Boolean`, `Date`, and
   `Reference` typed inputs. Its applicability and `FormulaEdit`/
   `TypeMismatch` reasons come from the same current-formula and
   `value_matches_type` rule used by field candidate construction.
@@ -1559,9 +1559,12 @@ cannot become an inference oracle. The portable production-semantic corpus
 executes fixed successful, structured-failure, authorization, and
 paired-context Analysis records natively and under `wasm32-unknown-unknown`.
 
-The current finite limits, equality/Number-ordering predicate catalogue,
-stable-ID output order, Rust types, CLI grammar, and JSON projection are
-Provisional implementation evidence. No Deferred analysis behavior is added.
+The current finite limits, equality predicate, and deterministic ordering
+predicate catalogue for `Number` and date-only `Date`, stable-ID output order,
+Rust types, CLI grammar, and JSON projection are Provisional implementation
+evidence. Date ordering is limited to deterministic sort, filter, and
+comparison; it does not authorize Date arithmetic, `DateTime`, `Duration`, or
+broader temporal semantics. No Deferred analysis behavior is added.
 
 ## M04 formula/scenario conformance evidence
 
@@ -1646,7 +1649,8 @@ and transport conformance remains later work. Issues #93–#94 add production
 resident session/revision/selective-projection conformance on native and WASM.
 Issue #268 adds Number, Text, Boolean, Reference, Formula-on-Number, shared
 mutation/formula-rule parity, authorization ordering, and machine-readable
-inapplicability evidence for the bounded field projection.
+inapplicability evidence for the bounded field projection. Issue #267 adds
+Date to the same finite SetFieldValue projection with mutation-rule parity.
 
 ## Stability classification
 

@@ -14,7 +14,7 @@ use tachiko_storage::{
     encode_roproj_v1,
 };
 use tachiko_workspace_engine::{
-    CalculationFailure, Document, Expression, FieldDefinition, FieldId, FieldKey, FieldRef,
+    CalculationFailure, Date, Document, Expression, FieldDefinition, FieldId, FieldKey, FieldRef,
     FieldType, IdGenerator, Number, SemanticIdKind, StarterTemplate, Value, WorkspaceError,
     analyze_field, create_document,
     formula_operations::FormulaCalculationOutcome,
@@ -144,6 +144,7 @@ pub enum ScalarKind {
     Number,
     Text,
     Boolean,
+    Date,
 }
 
 /// Private typed input for one directly stored scalar edit.
@@ -153,6 +154,7 @@ pub enum ScalarEditInput {
     Number { input: String },
     Text { value: String },
     Boolean { value: bool },
+    Date { value: String },
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -161,6 +163,7 @@ pub enum StoredValueProjection {
     Number { value: f64 },
     Text { value: String },
     Boolean { value: bool },
+    Date { value: Date },
     Reference { entity: String },
 }
 
@@ -169,7 +172,10 @@ impl StoredValueProjection {
     pub const fn number(&self) -> Option<f64> {
         match self {
             Self::Number { value } => Some(*value),
-            Self::Text { .. } | Self::Boolean { .. } | Self::Reference { .. } => None,
+            Self::Text { .. }
+            | Self::Boolean { .. }
+            | Self::Date { .. }
+            | Self::Reference { .. } => None,
         }
     }
 }
@@ -306,6 +312,8 @@ pub enum DesignerError {
     Lifecycle(#[from] PatchLifecycleError),
     #[error("'{input}' is not a finite Number")]
     InvalidNumberInput { input: String },
+    #[error("'{input}' is not a valid Date (expected YYYY-MM-DD)")]
+    InvalidDateInput { input: String },
     #[error("field '{field}' is not editable through this directly stored scalar path")]
     UnsupportedScalarEdit { field: FieldRef },
     #[error("requested revision '{requested}' is stale; current revision is '{current}'")]
@@ -333,6 +341,7 @@ impl DesignerError {
                 ("edit_rejected", Vec::new())
             }
             Self::InvalidNumberInput { .. } => ("invalid_number", Vec::new()),
+            Self::InvalidDateInput { .. } => ("invalid_date", Vec::new()),
             Self::UnsupportedScalarEdit { .. } => ("unsupported_edit", Vec::new()),
             Self::Storage(_)
             | Self::InvalidProjectWorkspace { .. }
@@ -707,6 +716,11 @@ impl DesignerRuntime {
             }
             (Some(Value::Text(_)), ScalarEditInput::Text { value }) => Value::Text(value.clone()),
             (Some(Value::Boolean(_)), ScalarEditInput::Boolean { value }) => Value::Boolean(*value),
+            (Some(Value::Date(_)), ScalarEditInput::Date { value }) => Value::Date(
+                Date::parse(value).map_err(|_| DesignerError::InvalidDateInput {
+                    input: value.clone(),
+                })?,
+            ),
             _ => return Err(DesignerError::UnsupportedScalarEdit { field }),
         };
         self.ensure_scalar_edit_projection(&field, &value)?;
@@ -1282,7 +1296,7 @@ fn ensure_cheap_entity_profile(
                         });
                     }
                 }
-                Value::Number(_) | Value::Boolean(_) => {}
+                Value::Number(_) | Value::Boolean(_) | Value::Date(_) => {}
             }
         }
         profile.0 = profile.0.saturating_add(1);
@@ -1604,6 +1618,7 @@ fn stored_value_projection(value: &Value) -> StoredValueProjection {
             value: value.clone(),
         },
         Value::Boolean(value) => StoredValueProjection::Boolean { value: *value },
+        Value::Date(value) => StoredValueProjection::Date { value: *value },
         Value::Reference(entity) => StoredValueProjection::Reference {
             entity: entity.to_string(),
         },
@@ -1616,6 +1631,7 @@ const fn scalar_kind(value: Option<&Value>) -> Option<ScalarKind> {
         Some(Value::Number(_)) => Some(ScalarKind::Number),
         Some(Value::Text(_)) => Some(ScalarKind::Text),
         Some(Value::Boolean(_)) => Some(ScalarKind::Boolean),
+        Some(Value::Date(_)) => Some(ScalarKind::Date),
         Some(Value::Reference(_) | Value::Formula(_)) | None => None,
     }
 }
@@ -1664,6 +1680,7 @@ const fn field_type_name(field_type: &FieldType) -> &'static str {
         FieldType::Number => "number",
         FieldType::Text => "text",
         FieldType::Boolean => "boolean",
+        FieldType::Date => "date",
         FieldType::Reference { .. } => "reference",
     }
 }

@@ -167,6 +167,180 @@ impl<'de> Deserialize<'de> for Number {
     }
 }
 
+/// A date-only civil value in the proleptic Gregorian calendar.
+///
+/// The semantic domain is deliberately independent of time zones, time of
+/// day, epochs, and locale. Years are limited to the four-digit range used by
+/// the canonical `YYYY-MM-DD` representation.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct Date {
+    year: u16,
+    month: u8,
+    day: u8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InvalidDate;
+
+impl Date {
+    /// Construct a valid proleptic Gregorian date.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvalidDate`] when the date is outside the `0001..=9999`
+    /// year range or is not a valid Gregorian civil date.
+    pub fn new(year: u16, month: u8, day: u8) -> Result<Self, InvalidDate> {
+        if !(1..=9_999).contains(&year)
+            || !(1..=12).contains(&month)
+            || day == 0
+            || day > days_in_month(year, month)
+        {
+            return Err(InvalidDate);
+        }
+        Ok(Self { year, month, day })
+    }
+
+    /// Alias for [`Date::new`] that makes the civil components explicit at
+    /// call sites.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvalidDate`] when the components do not form a valid
+    /// proleptic Gregorian date.
+    pub fn from_ymd(year: u16, month: u8, day: u8) -> Result<Self, InvalidDate> {
+        Self::new(year, month, day)
+    }
+
+    /// Parse the exact canonical `YYYY-MM-DD` spelling.
+    ///
+    /// Two-digit years, alternate separators, surrounding whitespace, and
+    /// non-canonical numeric spellings are rejected.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvalidDate`] when the input is not the exact canonical
+    /// spelling of a valid proleptic Gregorian date.
+    pub fn parse(input: &str) -> Result<Self, InvalidDate> {
+        let bytes = input.as_bytes();
+        if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-' {
+            return Err(InvalidDate);
+        }
+        if !bytes
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| matches!(index, 4 | 7) || byte.is_ascii_digit())
+        {
+            return Err(InvalidDate);
+        }
+        let year = decimal_component(&bytes[0..4]);
+        let month = u8::try_from(decimal_component(&bytes[5..7])).map_err(|_| InvalidDate)?;
+        let day = u8::try_from(decimal_component(&bytes[8..10])).map_err(|_| InvalidDate)?;
+        Self::new(year, month, day)
+    }
+
+    #[must_use]
+    pub const fn year(self) -> u16 {
+        self.year
+    }
+
+    #[must_use]
+    pub const fn month(self) -> u8 {
+        self.month
+    }
+
+    #[must_use]
+    pub const fn day(self) -> u8 {
+        self.day
+    }
+
+    /// Return the canonical `YYYY-MM-DD` spelling.
+    #[must_use]
+    pub fn to_canonical_string(self) -> String {
+        format!("{:04}-{:02}-{:02}", self.year, self.month, self.day)
+    }
+}
+
+impl std::str::FromStr for Date {
+    type Err = InvalidDate;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        Self::parse(input)
+    }
+}
+
+impl TryFrom<&str> for Date {
+    type Error = InvalidDate;
+
+    fn try_from(input: &str) -> Result<Self, Self::Error> {
+        Self::parse(input)
+    }
+}
+
+impl TryFrom<String> for Date {
+    type Error = InvalidDate;
+
+    fn try_from(input: String) -> Result<Self, Self::Error> {
+        Self::parse(&input)
+    }
+}
+
+impl fmt::Display for Date {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{:04}-{:02}-{:02}",
+            self.year, self.month, self.day
+        )
+    }
+}
+
+impl fmt::Display for InvalidDate {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("semantic dates must be valid Gregorian dates in YYYY-MM-DD range")
+    }
+}
+
+impl std::error::Error for InvalidDate {}
+
+impl Serialize for Date {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for Date {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let input = String::deserialize(deserializer)?;
+        Self::parse(&input).map_err(D::Error::custom)
+    }
+}
+
+const fn is_leap_year(year: u16) -> bool {
+    (year % 4 == 0) && (year % 100 != 0 || year % 400 == 0)
+}
+
+const fn days_in_month(year: u16, month: u8) -> u8 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if is_leap_year(year) => 29,
+        2 => 28,
+        _ => 0,
+    }
+}
+
+fn decimal_component(bytes: &[u8]) -> u16 {
+    bytes
+        .iter()
+        .fold(0_u16, |value, byte| value * 10 + u16::from(byte - b'0'))
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Document {
@@ -211,6 +385,7 @@ pub enum FieldType {
     Number,
     Text,
     Boolean,
+    Date,
     Reference { schema: SchemaId },
 }
 
@@ -229,6 +404,7 @@ pub enum Value {
     Number(Number),
     Text(String),
     Boolean(bool),
+    Date(Date),
     Reference(EntityId),
     Formula(Expression),
 }
