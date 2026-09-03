@@ -1482,9 +1482,12 @@ cannot become an inference oracle. The portable production-semantic corpus
 executes fixed successful, structured-failure, authorization, and
 paired-context Analysis records natively and under `wasm32-unknown-unknown`.
 
-The current finite limits, equality/Number-ordering predicate catalogue,
-stable-ID output order, Rust types, CLI grammar, and JSON projection are
-Provisional implementation evidence. No Deferred analysis behavior is added.
+The current finite limits, equality predicate, and deterministic ordering
+predicate catalogue for `Number` and date-only `Date`, stable-ID output order,
+Rust types, CLI grammar, and JSON projection are Provisional implementation
+evidence. Date ordering is limited to deterministic sort, filter, and
+comparison; it does not authorize Date arithmetic, `DateTime`, `Duration`, or
+broader temporal semantics. No Deferred analysis behavior is added.
 
 ## M04 formula/scenario conformance evidence
 
