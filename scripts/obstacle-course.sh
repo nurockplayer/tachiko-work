@@ -35,6 +35,36 @@ normalize_release_build_environment() {
   export CARGO_ENCODED_RUSTFLAGS=
 }
 
+prepare_course_cargo_home() {
+  local user_cargo_home="$1"
+  local course_cargo_home="$2"
+  local cache_name cache_source
+
+  if [[ -n "${user_cargo_home}" && -d "${user_cargo_home}" ]]; then
+    if ! user_cargo_home="$(cd "${user_cargo_home}" && pwd -P)"; then
+      echo "obstacle-course: could not resolve the user Cargo home" >&2
+      return 1
+    fi
+  fi
+  if ! mkdir -p "${course_cargo_home}"; then
+    echo "obstacle-course: could not create run-scoped Cargo home" >&2
+    return 1
+  fi
+  for cache_name in registry git; do
+    cache_source=""
+    if [[ -n "${user_cargo_home}" ]]; then
+      cache_source="${user_cargo_home}/${cache_name}"
+    fi
+    if [[ -n "${cache_source}" && ( -d "${cache_source}" || -L "${cache_source}" ) ]]; then
+      if ! ln -s "${cache_source}" "${course_cargo_home}/${cache_name}"; then
+        echo "obstacle-course: could not preserve Cargo ${cache_name} cache" >&2
+        return 1
+      fi
+    fi
+  done
+  export CARGO_HOME="${course_cargo_home}"
+}
+
 normalize_native_target_runner() {
   local target="$1"
   local runner_variable
@@ -239,7 +269,7 @@ export GIT_CONFIG_NOSYSTEM=1
 export GIT_ATTR_NOSYSTEM=1
 export GIT_NO_REPLACE_OBJECTS=1
 
-for required_command in cargo env git; do
+for required_command in cargo env git ln; do
   if ! command -v "${required_command}" >/dev/null 2>&1; then
     echo "obstacle-course: ${required_command} is required" >&2
     exit 1
@@ -278,9 +308,13 @@ if ! run_dir="$(mktemp -d "${physical_temp_root}/tachiko-obstacle.XXXXXX")"; the
 fi
 materialization_repo_root="${repo_root}"
 materialized_source_root=""
+git_worktree_config=(
+  -c core.hooksPath=/dev/null
+  -c core.autocrlf=false
+)
 cleanup() {
   if [[ -n "${materialized_source_root}" ]]; then
-    git -C "${materialization_repo_root}" -c core.hooksPath=/dev/null \
+    git -C "${materialization_repo_root}" "${git_worktree_config[@]}" \
       worktree remove --force "${materialized_source_root}" >/dev/null 2>&1 || true
   fi
   rm -rf -- "${run_dir}"
@@ -293,7 +327,7 @@ if [[ "${isolated_course}" -eq 0 ]]; then
     exit 1
   fi
   materialized_source_root="${run_dir}/source"
-  if ! git -C "${repo_root}" -c core.hooksPath=/dev/null \
+  if ! git -C "${repo_root}" "${git_worktree_config[@]}" \
     worktree add --detach "${materialized_source_root}" "${requested_head}"; then
     echo "obstacle-course: could not materialize isolated exact-HEAD source" >&2
     exit 1
@@ -304,7 +338,7 @@ if [[ "${isolated_course}" -eq 0 ]]; then
       --internal-run-course "${requested_head}"
   course_status=$?
   set -e
-  if ! git -C "${repo_root}" -c core.hooksPath=/dev/null \
+  if ! git -C "${repo_root}" "${git_worktree_config[@]}" \
     worktree remove --force "${materialized_source_root}"; then
     echo "obstacle-course: could not remove isolated exact-HEAD source" >&2
     exit 1
@@ -341,6 +375,14 @@ if [[ -n "${isolated_source_state}" ]]; then
   exit 1
 fi
 export TACHIKO_OBSTACLE_SOURCE_ROOT="${repo_root}"
+
+user_cargo_home="${CARGO_HOME:-}"
+if [[ -z "${user_cargo_home}" && -n "${HOME:-}" ]]; then
+  user_cargo_home="${HOME}/.cargo"
+fi
+if ! prepare_course_cargo_home "${user_cargo_home}" "${run_dir}/cargo-home"; then
+  exit 1
+fi
 
 performance_log="${run_dir}/performance.log"
 : >"${performance_log}"
@@ -692,7 +734,7 @@ verify_workload_identity() {
 }
 
 echo "COURSE ${course_version} commit=${head_commit} worktree=${worktree_state} profile=release network=offline correctness_stages=${correctness_stage_count}"
-echo "ENV os=${os_identity} rustc=${rust_identity} native_target=${native_target} source=isolated-exact-head cargo_target=run-scoped/${native_target} native_runner=env-passthrough release_profile_env=neutralized cargo_rustflags=neutralized"
+echo "ENV os=${os_identity} rustc=${rust_identity} native_target=${native_target} source=isolated-exact-head cargo_target=run-scoped/${native_target} cargo_home=run-scoped-config-free offline_caches=registry,git native_runner=env-passthrough release_profile_env=neutralized cargo_rustflags=neutralized"
 echo "WORKLOAD stage=repository-dogfood id=product-gaps-roproj/v1 sha256=${dogfood_digest}"
 echo "WORKLOAD stage=git-review-roundtrip id=game-balance-git-review/v0 sha256=${git_review_digest}"
 echo "WORKLOAD stage=semantic-runtime id=focused-semantic-runtime/v0 sha256=${semantic_digest}"

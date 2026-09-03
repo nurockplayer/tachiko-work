@@ -129,6 +129,9 @@ normal_log="${test_dir}/normal-toolchain.log"
 normal_materialization_template="${test_dir}/normal-materialization-template"
 native_target="x86_64-pc-windows-msvc"
 normal_tmp="${test_dir}/normal-tmp"
+normal_cargo_home="${test_dir}/normal-cargo-home"
+normal_cargo_registry="${normal_cargo_home}/registry"
+normal_cargo_git="${normal_cargo_home}/git"
 persistent_target_dir="${normal_repo}/target/obstacle-course"
 stale_tachiko_bin="${persistent_target_dir}/${native_target}/release/tachiko.exe"
 tracked_raw_file="${normal_repo}/tracked-fixture"
@@ -139,11 +142,24 @@ mkdir -p \
   "${normal_repo}/scripts" \
   "${normal_bin_dir}" \
   "${normal_materialization_template}" \
-  "${test_dir}/normal-cargo-home" \
+  "${normal_cargo_registry}" \
+  "${normal_cargo_git}" \
   "${normal_tmp}" \
   "$(dirname "${stale_tachiko_bin}")"
 normal_tmp="$(cd "${normal_tmp}" && pwd -P)"
+normal_cargo_home="$(cd "${normal_cargo_home}" && pwd -P)"
+normal_cargo_registry="${normal_cargo_home}/registry"
+normal_cargo_git="${normal_cargo_home}/git"
 : >"${normal_log}"
+printf 'registry cache fixture\n' >"${normal_cargo_registry}/cache-marker"
+printf 'git source cache fixture\n' >"${normal_cargo_git}/cache-marker"
+cat >"${normal_cargo_home}/config.toml" <<EOF
+[profile.release]
+opt-level = 0
+
+[build]
+target-dir = "${test_dir}/hostile-cargo-target"
+EOF
 cp "${runner}" "${normal_repo}/scripts/obstacle-course.sh"
 cp "${repo_root}/scripts/release-lib.sh" \
   "${normal_repo}/scripts/release-lib.sh"
@@ -243,18 +259,31 @@ case "${query_root}" in
 esac
 shift 2
 
+git_config_args=()
+
 while [[ "${1:-}" == "-c" ]]; do
-  if [[ "$#" -lt 2 || "${2:-}" != "core.hooksPath=/dev/null" ]]; then
+  if [[ "$#" -lt 2 ]]; then
     echo "fake git: unexpected command-scoped configuration: $*" >&2
     exit 2
   fi
+  case "${2:-}" in
+    core.hooksPath=/dev/null|core.autocrlf=false) ;;
+    *)
+      echo "fake git: unexpected command-scoped configuration: $*" >&2
+      exit 2
+      ;;
+  esac
+  git_config_args+=("${2}")
   shift 2
 done
 
 if [[ "${1:-}" == "worktree" && "${2:-}" == "add" ]]; then
   if [[ "${query_root}" != "${FAKE_REPO_ROOT}" || "$#" -ne 5 || \
-    "${3:-}" != "--detach" || "${5:-}" != "0123456789abcdef0123456789abcdef01234567" ]]; then
-    echo "fake git: malformed isolated worktree materialization: $*" >&2
+    "${3:-}" != "--detach" || "${5:-}" != "0123456789abcdef0123456789abcdef01234567" || \
+    "${#git_config_args[@]}" -ne 2 || \
+    "${git_config_args[0]:-}" != "core.hooksPath=/dev/null" || \
+    "${git_config_args[1]:-}" != "core.autocrlf=false" ]]; then
+    echo "fake git: ambient core.autocrlf=true was not neutralized for isolated worktree: $*" >&2
     exit 2
   fi
   mkdir -p "${4}"
@@ -397,6 +426,30 @@ case "${source_root}" in
     exit 94
     ;;
 esac
+course_cargo_home="${CARGO_HOME:?}"
+case "${course_cargo_home}" in
+  "${FAKE_COURSE_TMP_ROOT}"/tachiko-obstacle.*/cargo-home) ;;
+  *)
+    echo "fake cargo: Cargo home is not run-scoped: ${course_cargo_home}" >&2
+    exit 94
+    ;;
+esac
+if [[ -e "${course_cargo_home}/config.toml" ]]; then
+  echo "fake cargo: user Cargo configuration entered course home" >&2
+  exit 94
+fi
+if [[ ! -L "${course_cargo_home}/registry" || \
+  "$(readlink "${course_cargo_home}/registry")" != "${FAKE_USER_CARGO_HOME}/registry" || \
+  ! -L "${course_cargo_home}/git" || \
+  "$(readlink "${course_cargo_home}/git")" != "${FAKE_USER_CARGO_HOME}/git" ]]; then
+  echo "fake cargo: offline dependency/source caches were not preserved" >&2
+  exit 94
+fi
+if ! grep -Fx 'registry cache fixture' "${course_cargo_home}/registry/cache-marker" >/dev/null || \
+  ! grep -Fx 'git source cache fixture' "${course_cargo_home}/git/cache-marker" >/dev/null; then
+  echo "fake cargo: preserved offline cache trees are not readable" >&2
+  exit 94
+fi
 if [[ -e "${source_root}/${FAKE_IGNORED_CARGO_INPUT_RELATIVE}" ]]; then
   echo "fake cargo: ignored live-checkout Cargo input entered isolated source" >&2
   exit 94
@@ -408,6 +461,8 @@ if ! git -C "${source_root}" check-ignore -q -- \
 fi
 printf 'cargo-source root=%s ignored_live_input=absent\n' \
   "${source_root}" >>"${FAKE_TOOLCHAIN_LOG}"
+printf 'cargo-home root=%s config=absent registry_cache=preserved git_cache=preserved\n' \
+  "${course_cargo_home}" >>"${FAKE_TOOLCHAIN_LOG}"
 
 grep -Fx 'target = "conflicting-config-target"' \
   "${source_root}/.cargo/config.toml" >/dev/null
@@ -517,7 +572,7 @@ run_normal_course() {
   local course_tmpdir="${8:-${normal_tmp}}"
   PATH="${normal_bin_dir}:${PATH}" \
     TMPDIR="${course_tmpdir}" \
-    CARGO_HOME="${test_dir}/normal-cargo-home" \
+    CARGO_HOME="${normal_cargo_home}" \
     CARGO_TARGET_DIR="${test_dir}/conflicting-env-target" \
     CARGO_BUILD_TARGET=conflicting-env-target \
     CARGO_BUILD_RUSTC="${normal_bin_dir}/cargo-rustc" \
@@ -561,6 +616,7 @@ run_normal_course() {
     GIT_COMMITTER_DATE=not-a-date \
     FAKE_GIT_STATUS_FAIL="${status_fail}" \
     FAKE_GIT_DIRTY="${git_dirty}" \
+    FAKE_GIT_AMBIENT_AUTOCRLF=1 \
     FAKE_TRIGGER_FINGERPRINT_DRIFT="${trigger_fingerprint_drift}" \
     FAKE_TRIGGER_IGNORED_DRIFT="${trigger_ignored_drift}" \
     FAKE_TRIGGER_EMPTY_DIRECTORY_DRIFT="${trigger_empty_directory_drift}" \
@@ -572,6 +628,7 @@ run_normal_course() {
     FAKE_CARGO_RUSTC="${normal_bin_dir}/cargo-rustc" \
     FAKE_REPO_ROOT="${normal_repo}" \
     FAKE_COURSE_TMP_ROOT="${normal_tmp}" \
+    FAKE_USER_CARGO_HOME="${normal_cargo_home}" \
     FAKE_MATERIALIZATION_TEMPLATE="${normal_materialization_template}" \
     FAKE_IGNORED_CARGO_INPUT_RELATIVE="${ignored_cargo_input_relative}" \
     FAKE_PERSISTENT_TARGET_DIR="${persistent_target_dir}" \
@@ -596,11 +653,23 @@ require_normal_log() {
   fi
 }
 
+require_normal_log_contains() {
+  local expected="$1"
+  if ! grep -F "${expected}" "${normal_log}" >/dev/null; then
+    echo "obstacle-course test: missing normal-mode evidence containing: ${expected}" >&2
+    sed 's/^/  /' "${normal_log}" >&2
+    exit 1
+  fi
+}
+
 observed_target_dir="$(sed -n \
   's/^cargo command=build target_dir=\([^ ]*\) build_target=.*/\1/p' \
   "${normal_log}")"
 observed_source_root="$(sed -n \
   's/^cargo-source root=\([^ ]*\) ignored_live_input=absent$/\1/p' \
+  "${normal_log}" | head -n 1)"
+observed_cargo_home="$(sed -n \
+  's/^cargo-home root=\([^ ]*\) config=absent registry_cache=preserved git_cache=preserved$/\1/p' \
   "${normal_log}" | head -n 1)"
 case "${observed_target_dir}" in
   "${normal_tmp}"/tachiko-obstacle.*/cargo-target) ;;
@@ -618,6 +687,14 @@ case "${observed_source_root}" in
     exit 1
     ;;
 esac
+case "${observed_cargo_home}" in
+  "${normal_tmp}"/tachiko-obstacle.*/cargo-home) ;;
+  *)
+    echo "obstacle-course test: Cargo home is not run-scoped: ${observed_cargo_home}" >&2
+    sed 's/^/  /' "${normal_log}" >&2
+    exit 1
+    ;;
+esac
 expected_tachiko_bin="${observed_target_dir}/${native_target}/release/tachiko.exe"
 
 require_normal_log \
@@ -625,7 +702,13 @@ require_normal_log \
 require_normal_log \
   "cargo command=test target_dir=${observed_target_dir} build_target=${native_target} explicit_target_count=1 explicit_target=${native_target} no_run=1"
 require_normal_log \
+  "cargo-home root=${observed_cargo_home} config=absent registry_cache=preserved git_cache=preserved"
+require_normal_log \
   "stage-bin path=${expected_tachiko_bin} target_dir=${observed_target_dir} build_target=${native_target}"
+require_normal_log_contains \
+  "git args=-C ${normal_repo} -c core.hooksPath=/dev/null -c core.autocrlf=false worktree add --detach"
+require_normal_log_contains \
+  "git args=-C ${normal_repo} -c core.hooksPath=/dev/null -c core.autocrlf=false worktree remove --force"
 require_normal_log \
   "git args=-C ${normal_repo} rev-parse HEAD git_dir=unset git_work_tree=unset"
 require_normal_log \
@@ -643,7 +726,7 @@ if [[ -e "${observed_source_root}" ]]; then
   exit 1
 fi
 grep -F \
-  "native_target=${native_target} source=isolated-exact-head cargo_target=run-scoped/${native_target} native_runner=env-passthrough release_profile_env=neutralized cargo_rustflags=neutralized" \
+  "native_target=${native_target} source=isolated-exact-head cargo_target=run-scoped/${native_target} cargo_home=run-scoped-config-free offline_caches=registry,git native_runner=env-passthrough release_profile_env=neutralized cargo_rustflags=neutralized" \
   "${test_dir}/normal.out" >/dev/null
 
 : >"${normal_log}"

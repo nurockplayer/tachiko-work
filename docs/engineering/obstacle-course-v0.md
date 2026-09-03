@@ -41,11 +41,16 @@ runner configuration. `--list` prints the closed v0 stage registry without
 building or running it.
 
 Before setup, the runner materializes the requested full Git `HEAD` as a clean,
-detached linked worktree under its temporary run root and re-executes the
-course-owned runner from that source. Cargo, build scripts, workload fixtures,
-and correctness stages therefore cannot observe ignored or untracked source
-inputs from the invoking checkout. This is a bounded source-isolation boundary,
-not a general hermetic-build or sandbox contract.
+detached linked worktree under its temporary run root with command-scoped
+`core.autocrlf=false`, then re-executes the course-owned runner from that source.
+Cargo, build scripts, workload fixtures, and correctness stages
+therefore cannot observe ignored or untracked source inputs from the invoking
+checkout. Course-owned Cargo invocations also use a fresh run-scoped
+`CARGO_HOME` with no user configuration; existing `registry` and `git` cache
+trees are linked into it for offline dependency/source reuse, while the
+isolated source's checked-in `.cargo` configuration remains discoverable. This
+is a bounded source/configuration-isolation boundary, not a general
+hermetic-build or sandbox contract.
 
 ## v0 course
 
@@ -136,9 +141,10 @@ is bound to the isolated course source; and materialization suppresses Git hook
 execution. The Git-review stage also ignores user/system Git configuration such
 as commit signing and hook paths. The runner rejects a `TMPDIR` that resolves to
 the invoking checkout or one of its descendants, keeping the isolated source
-and transient evidence outside it. It also creates a fresh run-scoped Cargo
-target directory, derives and pins the native host target from the compiler
-Cargo uses, and uses
+and transient evidence outside it. It also creates a fresh run-scoped Cargo home
+without user configuration (preserving only offline dependency/source cache
+trees) and Cargo target directory, derives and pins the native host target from
+the compiler Cargo uses, and uses
 `<run-target>/<native-target>/release/`. Every CLI stage therefore uses the
 platform-named release binary built by the same run rather than an inherited,
 Cargo-config-selected, concurrently written, or stale artifact. The run target
