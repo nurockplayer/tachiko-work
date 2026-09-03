@@ -149,15 +149,13 @@ If evidence invalidates an assumption, revise the model through an explicit Deci
 
 Tachiko Work should make correct, powerful work feel natural and pleasant to perform.
 
-The system may be complex inside. Typed semantics, validation, stable identity, deterministic computation, revision tracking, migration evidence, and other strong machinery should absorb complexity on the user's behalf rather than turn internal architecture into ordinary-user ceremony.
+The system may be complex inside. Typed semantics, validation, stable identity, deterministic computation, revision tracking, migration evidence, and other strong machinery should absorb complexity on the user's behalf rather than turn internal architecture into user ceremony.
 
-For a Driver, the first useful interaction should usually be task-native: enter, paste, edit, calculate, organize, review, or export. Platform concepts should appear only when they provide meaningful control. Stronger structure should be progressively discoverable instead of becoming a toll gate before useful work can begin.
-
-Depth should remain available to Enthusiasts and Builders without becoming a prerequisite for Drivers.
+Product and interaction design should begin from the user's job, not from what is convenient to expose from the architecture. Platform concepts, setup steps, and structural choices should earn their place by providing meaningful control or trust.
 
 Low friction does not mean hidden magic. Tachiko must keep ambiguity, lossy conversion, invalid state, and unsupported behavior visible when trust requires it. The aim is to remove unnecessary effort, not necessary truth.
 
-Prefer recoverable actions, good defaults, progressive disclosure, and tools that help users stay focused on their work. When two designs are equally correct and safe, prefer the one that asks less unnecessary work from the user.
+Prefer recoverable actions, good defaults, clear feedback, and workflows that help users stay focused on their work. When two designs are equally correct, safe, and capable, prefer the one that asks less unnecessary work and explanation from the user.
 
 A useful shorthand is:
 
