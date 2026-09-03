@@ -2,6 +2,11 @@
 
 pub mod security_boundary;
 
+pub use tachiko_workspace_engine::capability_discovery::{
+    FieldCapabilities, FieldCapability, FieldCapabilityApplicability,
+    FieldCapabilityInapplicability, FieldCapabilityInput, FieldCapabilityKind,
+    FieldCapabilityQueryContext, FieldCapabilityQueryOutcome, FieldCapabilityQueryResult,
+};
 use tachiko_workspace_engine::{
     CalculationError, CanonicalAuthoringProjectionError, DiffError, Document, DocumentId, EntityId,
     EntityKey, Expression, ExpressionComplexityError, FieldId, FieldKey, FieldRef, FieldType,
@@ -11,8 +16,8 @@ use tachiko_workspace_engine::{
 };
 pub use tachiko_workspace_engine::{
     ChangeAnalysis, DocumentInspection, DownstreamImpact, EntityInspection, FieldAnalysis,
-    SchemaInspection, SourceStateEvidence, ValidationAnalysis, analyze_changes, analyze_field,
-    analyze_validation, inspect_document,
+    SchemaInspection, SemanticValueKind, SourceStateEvidence, ValidationAnalysis, analyze_changes,
+    analyze_field, analyze_validation, inspect_document,
 };
 use thiserror::Error;
 
