@@ -9,7 +9,9 @@ use std::collections::BTreeSet;
 
 use serde::Serialize;
 
-use crate::formula_operations::number_override_target_is_applicable;
+use crate::formula_operations::{
+    formula_reasoning_target_is_applicable, number_override_target_is_applicable,
+};
 use crate::patch_lifecycle::{
     DisclosureRequirement, OperationFamily, PatchLifecycle, PatchLifecycleError, PrincipalId,
     ScopedSemanticSubject, SemanticRevision, SemanticScope, TrustedInstant,
@@ -175,7 +177,7 @@ pub(crate) fn describe_field_capabilities(
         family: OperationFamily::FormulaReasoning,
         kind: FieldCapabilityKind::Query,
         input: FieldCapabilityInput::None,
-        applicability: if matches!(existing, Value::Formula(_)) {
+        applicability: if formula_reasoning_target_is_applicable(existing) {
             FieldCapabilityApplicability::Applicable
         } else {
             FieldCapabilityApplicability::Inapplicable {

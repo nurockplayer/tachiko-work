@@ -329,7 +329,10 @@ impl PatchLifecycle {
             target,
         )]);
         let outcome = match value {
-            Value::Formula(expression) => {
+            formula if formula_reasoning_target_is_applicable(formula) => {
+                let Value::Formula(expression) = formula else {
+                    unreachable!("formula reasoning applicability checked above")
+                };
                 let calculation = calculate_complete(document);
                 let dependencies = calculation_dependencies(&calculation);
                 let direct_inputs = dependencies
@@ -964,6 +967,11 @@ fn value_kind(value: &Value) -> SemanticValueKind {
 /// Authoritative current-value rule for `NumberOverrideScenario` admission.
 pub(crate) fn number_override_target_is_applicable(value: &Value) -> bool {
     matches!(value, Value::Number(_))
+}
+
+/// Authoritative current-value rule for `FormulaReasoning` admission.
+pub(crate) fn formula_reasoning_target_is_applicable(value: &Value) -> bool {
+    matches!(value, Value::Formula(_))
 }
 
 pub(crate) fn calculation_dependencies(
