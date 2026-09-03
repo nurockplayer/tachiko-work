@@ -129,6 +129,8 @@ normal_log="${test_dir}/normal-toolchain.log"
 normal_materialization_template="${test_dir}/normal-materialization-template"
 native_target="x86_64-pc-windows-msvc"
 normal_tmp="${test_dir}/normal-tmp"
+ancestor_tmp_root="${test_dir}/ancestor-tmp-root"
+ancestor_tmpdir="${ancestor_tmp_root}/nested"
 normal_cargo_home="${test_dir}/normal-cargo-home"
 normal_cargo_registry="${normal_cargo_home}/registry"
 normal_cargo_git="${normal_cargo_home}/git"
@@ -145,8 +147,12 @@ mkdir -p \
   "${normal_cargo_registry}" \
   "${normal_cargo_git}" \
   "${normal_tmp}" \
+  "${ancestor_tmp_root}/.cargo" \
+  "${ancestor_tmpdir}" \
   "$(dirname "${stale_tachiko_bin}")"
 normal_tmp="$(cd "${normal_tmp}" && pwd -P)"
+ancestor_tmp_root="$(cd "${ancestor_tmp_root}" && pwd -P)"
+ancestor_tmpdir="${ancestor_tmp_root}/nested"
 normal_cargo_home="$(cd "${normal_cargo_home}" && pwd -P)"
 normal_cargo_registry="${normal_cargo_home}/registry"
 normal_cargo_git="${normal_cargo_home}/git"
@@ -192,6 +198,11 @@ rustflags = ["--cfg", "hostile_build_rustflags"]
 [target.x86_64-pc-windows-msvc]
 runner = ["conflicting-config-runner", "--from-config"]
 rustflags = ["--cfg", "hostile_target_rustflags"]
+EOF
+
+cat >"${ancestor_tmp_root}/.cargo/config.toml" <<'EOF'
+[profile.release]
+opt-level = 0
 EOF
 
 cat >"${normal_repo}/scripts/git-ci-smoke.sh" <<'EOF'
@@ -607,6 +618,11 @@ run_normal_course() {
   local stdout_file="$6"
   local stderr_file="$7"
   local course_tmpdir="${8:-${normal_tmp}}"
+  local course_tmp_root
+  if ! course_tmp_root="$(cd "${course_tmpdir}" && pwd -P)"; then
+    echo "obstacle-course test: could not resolve course TMPDIR '${course_tmpdir}'" >&2
+    exit 1
+  fi
   PATH="${normal_bin_dir}:${PATH}" \
     TMPDIR="${course_tmpdir}" \
     CARGO_HOME="${normal_cargo_home}" \
@@ -663,7 +679,7 @@ run_normal_course() {
     FAKE_NATIVE_TARGET="${native_target}" \
     FAKE_CARGO_RUSTC="${normal_bin_dir}/cargo-rustc" \
     FAKE_REPO_ROOT="${normal_repo}" \
-    FAKE_COURSE_TMP_ROOT="${normal_tmp}" \
+    FAKE_COURSE_TMP_ROOT="${course_tmp_root}" \
     FAKE_USER_CARGO_HOME="${normal_cargo_home}" \
     FAKE_MATERIALIZATION_TEMPLATE="${normal_materialization_template}" \
     FAKE_IGNORED_CARGO_INPUT_RELATIVE="${ignored_cargo_input_relative}" \
@@ -791,6 +807,24 @@ grep -F "obstacle-course: TMPDIR must resolve outside repository" \
   "${test_dir}/in-repository-tmp.err" >/dev/null
 if grep -Eq "^(cargo command|git args)=" "${normal_log}"; then
   echo "obstacle-course test: setup ran with an in-repository TMPDIR" >&2
+  exit 1
+fi
+
+: >"${normal_log}"
+if run_normal_course 0 0 0 0 0 \
+  "${test_dir}/ancestor-cargo-config.out" \
+  "${test_dir}/ancestor-cargo-config.err" \
+  "${ancestor_tmpdir}"; then
+  echo "obstacle-course test: ancestor Cargo configuration unexpectedly produced evidence" >&2
+  exit 1
+fi
+grep -F "obstacle-course: ambient Cargo configuration outside isolated source" \
+  "${test_dir}/ancestor-cargo-config.err" >/dev/null
+grep -F "${ancestor_tmp_root}/.cargo/config.toml" \
+  "${test_dir}/ancestor-cargo-config.err" >/dev/null
+if grep -Eq "^(cargo command|cargo-source|cargo-home)" "${normal_log}"; then
+  echo "obstacle-course test: Cargo produced evidence before rejecting ancestor configuration" >&2
+  sed 's/^/  /' "${normal_log}" >&2
   exit 1
 fi
 

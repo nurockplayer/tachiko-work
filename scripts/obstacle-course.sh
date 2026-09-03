@@ -65,6 +65,33 @@ prepare_course_cargo_home() {
   export CARGO_HOME="${course_cargo_home}"
 }
 
+reject_ambient_cargo_config() {
+  local source_root="$1"
+  local ancestor config_name config_path next_ancestor
+
+  if ! ancestor="$(cd "${source_root}/.." && pwd -P)"; then
+    echo "obstacle-course: could not resolve source ancestors for Cargo configuration check" >&2
+    return 1
+  fi
+  while :; do
+    for config_name in config.toml config; do
+      config_path="${ancestor}/.cargo/${config_name}"
+      if [[ -e "${config_path}" || -L "${config_path}" ]]; then
+        echo "obstacle-course: ambient Cargo configuration outside isolated source: '${config_path}'" >&2
+        return 1
+      fi
+    done
+    if [[ "${ancestor}" == "/" ]]; then
+      break
+    fi
+    next_ancestor="${ancestor%/*}"
+    if [[ -z "${next_ancestor}" ]]; then
+      next_ancestor="/"
+    fi
+    ancestor="${next_ancestor}"
+  done
+}
+
 normalize_native_target_runner() {
   local target="$1"
   local runner_variable
@@ -315,6 +342,10 @@ if [[ "${1:-}" == "--internal-run-stage" ]]; then
   if ! normalize_native_target_runner "${CARGO_BUILD_TARGET}"; then
     exit 2
   fi
+  if ! stage_source_root="$(cd "${repo_root}" && pwd -P)" || \
+    ! reject_ambient_cargo_config "${stage_source_root}"; then
+    exit 1
+  fi
   cd "${repo_root}"
   run_internal_stage "$2"
   exit
@@ -468,6 +499,10 @@ if [[ -n "${isolated_source_state}" ]]; then
   exit 1
 fi
 export TACHIKO_OBSTACLE_SOURCE_ROOT="${repo_root}"
+
+if ! reject_ambient_cargo_config "${physical_repo_root}"; then
+  exit 1
+fi
 
 user_cargo_home="${CARGO_HOME:-}"
 if [[ -z "${user_cargo_home}" && -n "${HOME:-}" ]]; then

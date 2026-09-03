@@ -53,6 +53,10 @@ from the invoking checkout. Course-owned Cargo invocations also use a fresh
 run-scoped `CARGO_HOME` with no user configuration; existing `registry` and
 `git` cache trees are linked into it for offline dependency/source reuse, while
 the isolated source's checked-in `.cargo` configuration remains discoverable.
+Before any course-owned Cargo invocation, the runner rejects a `.cargo/config.toml`
+or legacy `.cargo/config` found in an ancestor of the isolated source outside
+that source. This finite parent-file check closes Cargo's hierarchical lookup
+without enumerating Cargo keys or introducing a generic configuration sandbox.
 This is a bounded source-evidence boundary, not a hermetic-build,
 reproducible-build, toolchain-attestation, or security boundary.
 
@@ -153,7 +157,9 @@ as commit signing and hook paths. The runner rejects a `TMPDIR` that resolves to
 the invoking checkout or one of its descendants, keeping the isolated source
 and transient evidence outside it. It also creates a fresh run-scoped Cargo home
 without user configuration (preserving only offline dependency/source cache
-trees) and Cargo target directory, derives and pins the native host target from
+trees), rejects `.cargo/config.toml` and legacy `.cargo/config` in ancestors
+outside the isolated source, and creates a Cargo target directory, derives and
+pins the native host target from
 the compiler Cargo uses, and uses
 `<run-target>/<native-target>/release/`. Every CLI stage therefore uses the
 platform-named release binary built by the same run rather than an inherited,
