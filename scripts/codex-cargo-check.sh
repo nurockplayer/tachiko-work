@@ -20,6 +20,16 @@ assert_contains() {
   fi
 }
 
+assert_compilation_artifact() {
+  local target_dir="$1"
+  local artifact="${target_dir}/debug/codex-cargo-fixture"
+  if [[ ! -s "${artifact}" ]]; then
+    echo "codex-cargo-check: no non-empty Rust artifact in ${target_dir}" >&2
+    find "${target_dir}" -maxdepth 3 -type f -print >&2
+    exit 1
+  fi
+}
+
 mkdir -p "${test_dir}/src"
 cat >"${test_dir}/Cargo.toml" <<'EOF'
 [package]
@@ -50,12 +60,11 @@ env -u CARGO_INCREMENTAL -u SCCACHE_IGNORE_SERVER_IO_ERROR \
   CARGO_TARGET_DIR="${test_dir}/server-fallback-target" \
   TACHIKO_CODEX_SCCACHE=1 \
   TACHIKO_CODEX_SCCACHE_BIN="${server_fallback_contract}" \
-  bash "${cargo_script}" check --manifest-path "${test_dir}/Cargo.toml" \
+  bash "${cargo_script}" build --manifest-path "${test_dir}/Cargo.toml" \
   >"${server_fallback_output}" 2>"${server_fallback_error}"
 assert_contains "${server_fallback_error}" "incremental=0"
 assert_contains "${server_fallback_error}" "sccache=enabled"
-[[ -x "${test_dir}/server-fallback-target/debug/codex-cargo-fixture" ||
-  -e "${test_dir}/server-fallback-target/debug/deps" ]]
+assert_compilation_artifact "${test_dir}/server-fallback-target"
 
 direct_output="${test_dir}/direct.out"
 direct_error="${test_dir}/direct.err"
@@ -63,19 +72,20 @@ env -u CARGO_INCREMENTAL \
   CARGO_TARGET_DIR="${test_dir}/direct-target" \
   TACHIKO_CODEX_SCCACHE=1 \
   TACHIKO_CODEX_SCCACHE_BIN="${test_dir}/missing-sccache" \
-  bash "${cargo_script}" check --manifest-path "${test_dir}/Cargo.toml" \
+  bash "${cargo_script}" build --manifest-path "${test_dir}/Cargo.toml" \
   >"${direct_output}" 2>"${direct_error}"
 assert_contains "${direct_error}" "sccache=unavailable; direct rustc"
-[[ -e "${test_dir}/direct-target/debug/deps" ]]
+assert_compilation_artifact "${test_dir}/direct-target"
 
 incremental_output="${test_dir}/incremental.out"
 incremental_error="${test_dir}/incremental.err"
 CARGO_INCREMENTAL=1 CARGO_TARGET_DIR="${test_dir}/incremental-target" \
   TACHIKO_CODEX_SCCACHE=0 \
-  bash "${cargo_script}" check --manifest-path "${test_dir}/Cargo.toml" \
+  bash "${cargo_script}" build --manifest-path "${test_dir}/Cargo.toml" \
   >"${incremental_output}" 2>"${incremental_error}"
 assert_contains "${incremental_error}" "incremental=1"
 assert_contains "${incremental_error}" "sccache=disabled"
+assert_compilation_artifact "${test_dir}/incremental-target"
 
 compiler_count="${test_dir}/compiler-count"
 compiler_fixture="${test_dir}/failing-compiler"
@@ -119,10 +129,10 @@ inherited_error="${test_dir}/inherited.err"
 GIT_DIR="${foreign_repo}/.git" GIT_WORK_TREE="${foreign_repo}" \
   GIT_COMMON_DIR="${foreign_repo}/.git" GIT_CEILING_DIRECTORIES="${foreign_repo}" \
   CARGO_TARGET_DIR="${test_dir}/inherited-target" \
-  bash "${cargo_script}" check --manifest-path "${test_dir}/Cargo.toml" \
+  bash "${cargo_script}" build --manifest-path "${test_dir}/Cargo.toml" \
   >"${inherited_output}" 2>"${inherited_error}"
 assert_contains "${inherited_error}" "target=${test_dir}/inherited-target"
-[[ -e "${test_dir}/inherited-target/debug/deps" ]]
+assert_compilation_artifact "${test_dir}/inherited-target"
 
 outside_error="${test_dir}/outside.err"
 outside_status=0
