@@ -188,8 +188,12 @@ codex_root="$(canonical_directory "${codex_root}")"
 
 repo_remote=""
 repo_slug=""
+repo_locator=""
 if repo_remote="$(run_git -C "${repo_root}" remote get-url origin 2>/dev/null)"; then
   repo_slug="$(remote_slug "${repo_remote}" 2>/dev/null || true)"
+fi
+if [[ -n "${repo_slug}" ]]; then
+  repo_locator="github.com/${repo_slug}"
 fi
 
 worktree_listing="$(run_git -C "${repo_root}" worktree list --porcelain 2>/dev/null)" ||
@@ -266,7 +270,7 @@ load_github_default_branch() {
     github_reason="GitHub CLI is unavailable"
     return 1
   fi
-  if ! github_default_branch="$(run_gh repo view "${repo_slug}" \
+  if ! github_default_branch="$(run_gh repo view "${repo_locator}" \
     --json defaultBranchRef --jq '.defaultBranchRef.name // empty' 2>/dev/null)"; then
     github_reason="GitHub repository state is unavailable"
     return 1
@@ -300,7 +304,7 @@ lookup_pr() {
     pr_reason="${github_reason}"
     return 1
   fi
-  if ! pr_rows="$(run_gh pr list --repo "${repo_slug}" --head "${branch}" \
+  if ! pr_rows="$(run_gh pr list --repo "${repo_locator}" --head "${branch}" \
     --state all --limit 100 \
     --json number,state,mergedAt,headRefName,headRefOid,baseRefName,headRepository \
     --jq '[.[] | [(.number | tostring), .state, (.mergedAt // "-"), .headRefName, .headRefOid, .baseRefName, (.headRepository.nameWithOwner // "")] | @tsv] | .[]' \

@@ -108,6 +108,10 @@ cat >"${fake_gh}" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ -n "${GC_TEST_GH_ARGS_LOG:-}" ]]; then
+  printf '%s\n' "$@" >>"${GC_TEST_GH_ARGS_LOG}"
+fi
+
 if [[ "${1:-}" == "repo" && "${2:-}" == "view" ]]; then
   printf 'main\n'
   exit 0
@@ -186,6 +190,8 @@ EOF
 chmod +x "${fake_git}"
 export GC_TEST_REAL_GIT="${real_git}"
 export GC_TEST_PRUNE_LOG="${prune_log}"
+gh_args_log="${test_dir}/gh-args.log"
+export GC_TEST_GH_ARGS_LOG="${gh_args_log}"
 
 before_list="$("${real_git}" -C "${primary}" worktree list --porcelain)"
 dry_output="${test_dir}/dry-run.txt"
@@ -212,6 +218,7 @@ assert_contains "${dry_output}" "worktree is detached"
 assert_contains "${dry_output}" "SUMMARY active=13"
 assert_contains "${dry_output}" "PRUNE skipped (dry-run; no mutation)"
 assert_not_contains "${dry_output}" "developer-worktree"
+assert_contains "${gh_args_log}" "github.com/nurockplayer/tachiko-work"
 [[ ! -e "${prune_log}" ]]
 [[ -d "${merged_path}" ]]
 after_dry_list="$("${real_git}" -C "${primary}" worktree list --porcelain)"

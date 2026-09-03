@@ -33,24 +33,25 @@ cat >"${test_dir}/src/main.rs" <<'EOF'
 fn main() {}
 EOF
 
-failing_sccache="${test_dir}/sccache-unavailable"
-cat >"${failing_sccache}" <<'EOF'
+fallback_sccache="${test_dir}/sccache-server-fallback"
+cat >"${fallback_sccache}" <<'EOF'
 #!/usr/bin/env bash
-exit 42
+set -euo pipefail
+[[ "${SCCACHE_IGNORE_SERVER_IO_ERROR:-}" == "1" ]]
+exec "$@"
 EOF
-chmod +x "${failing_sccache}"
+chmod +x "${fallback_sccache}"
 
 fallback_output="${test_dir}/fallback.out"
 fallback_error="${test_dir}/fallback.err"
-env -u CARGO_INCREMENTAL \
+env -u CARGO_INCREMENTAL -u SCCACHE_IGNORE_SERVER_IO_ERROR \
   CARGO_TARGET_DIR="${test_dir}/fallback-target" \
   TACHIKO_CODEX_SCCACHE=1 \
-  TACHIKO_CODEX_SCCACHE_BIN="${failing_sccache}" \
+  TACHIKO_CODEX_SCCACHE_BIN="${fallback_sccache}" \
   bash "${cargo_script}" check --manifest-path "${test_dir}/Cargo.toml" \
   >"${fallback_output}" 2>"${fallback_error}"
 assert_contains "${fallback_error}" "incremental=0"
 assert_contains "${fallback_error}" "sccache=enabled"
-assert_contains "${fallback_error}" "sccache invocation failed; falling back to direct rustc"
 [[ -x "${test_dir}/fallback-target/debug/codex-cargo-fixture" ||
   -e "${test_dir}/fallback-target/debug/deps" ]]
 
@@ -72,6 +73,41 @@ CARGO_INCREMENTAL=1 CARGO_TARGET_DIR="${test_dir}/incremental-target" \
   >"${incremental_output}" 2>"${incremental_error}"
 assert_contains "${incremental_error}" "incremental=1"
 assert_contains "${incremental_error}" "sccache=disabled"
+
+compiler_count="${test_dir}/compiler-count"
+compiler_fixture="${test_dir}/failing-compiler"
+cat >"${compiler_fixture}" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+count=0
+if [[ -f "${CODEX_TEST_COMPILER_COUNT}" ]]; then
+  count="$(<"${CODEX_TEST_COMPILER_COUNT}")"
+fi
+printf '%s\n' "$((count + 1))" >"${CODEX_TEST_COMPILER_COUNT}"
+exit 17
+EOF
+chmod +x "${compiler_fixture}"
+
+passthrough_sccache="${test_dir}/sccache-passthrough"
+cat >"${passthrough_sccache}" <<'EOF'
+#!/usr/bin/env bash
+set -u
+exec "$@"
+EOF
+chmod +x "${passthrough_sccache}"
+
+compiler_error="${test_dir}/compiler-error.err"
+compiler_status=0
+CODEX_TEST_COMPILER_COUNT="${compiler_count}" \
+  TACHIKO_CODEX_SCCACHE_BIN="${passthrough_sccache}" \
+  bash "${repo_root}/scripts/codex-rustc-wrapper.sh" "${compiler_fixture}" \
+  >"${test_dir}/compiler-error.out" 2>"${compiler_error}" || compiler_status="$?"
+[[ "${compiler_status}" -eq 17 ]]
+[[ "$(<"${compiler_count}")" -eq 1 ]]
+if grep -F -- "falling back" "${compiler_error}" >/dev/null; then
+  echo "codex-cargo-check: compiler failure was retried as a cache failure" >&2
+  exit 1
+fi
 
 foreign_repo="${test_dir}/foreign-repo"
 git init --quiet "${foreign_repo}"
@@ -123,4 +159,4 @@ env -u CARGO_INCREMENTAL CARGO_TARGET_DIR="${test_dir}/delimiter-target" \
 assert_contains "${delimiter_error}" "sccache=disabled"
 [[ -x "${test_dir}/delimiter-target/debug/codex-cargo-fixture" ]]
 
-echo "codex Cargo check passed: private target guard, incremental default, sccache opt-in, and uncached fallback"
+echo "codex Cargo check passed: private target guard, incremental default, server-I/O fallback, and single compiler failure"

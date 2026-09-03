@@ -116,11 +116,14 @@ TACHIKO_CODEX_SCCACHE=1 \
 
 When enabled, each worktree still has its own `target/`; only compiler outputs
 may be shared through the bounded cache. `scripts/codex-rustc-wrapper.sh`
-falls back to direct `rustc` when the cache binary is missing or an invocation
-fails. A cache miss or outage therefore cannot change semantic results or make
-the repository correctness gates unavailable. The cache is an optimization,
-not a correctness dependency. Cache hit/miss and incremental on/off timing and
-disk evidence belong in the Issue/PR evidence record.
+delegates each compiler invocation exactly once. A missing cache binary is
+bypassed, and the helper enables sccache's `SCCACHE_IGNORE_SERVER_IO_ERROR=1`
+fallback so a server-I/O outage uses direct `rustc`; a real compiler failure is
+never retried as a cache failure. A cache miss or outage therefore cannot change
+semantic results or make the repository correctness gates unavailable. The
+cache is an optimization, not a correctness dependency. Cache hit/miss and
+incremental on/off timing and disk evidence belong in the Issue/PR evidence
+record.
 
 ## Issue #271 evidence
 

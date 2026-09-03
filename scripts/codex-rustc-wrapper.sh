@@ -10,10 +10,10 @@ compiler="$1"
 shift
 sccache_bin="${TACHIKO_CODEX_SCCACHE_BIN:-}"
 if [[ -n "${sccache_bin}" && -x "${sccache_bin}" ]]; then
-  if "${sccache_bin}" "${compiler}" "$@"; then
-    exit 0
-  fi
-  echo "codex-rustc-wrapper: sccache invocation failed; falling back to direct rustc" >&2
+  # Let sccache distinguish server-I/O fallback from a real rustc failure.
+  # Retrying every non-zero result would duplicate compiler diagnostics and
+  # could double the latency of an ordinary failed compilation.
+  exec "${sccache_bin}" "${compiler}" "$@"
 fi
 
 exec "${compiler}" "$@"

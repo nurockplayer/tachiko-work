@@ -9,7 +9,7 @@ Run an ephemeral-agent Cargo command with a private target directory. The
 default target is the current worktree's target/. CARGO_INCREMENTAL defaults to
 0 for this process only. A shared sccache is opt-in with
 TACHIKO_CODEX_SCCACHE=1; it is bounded by SCCACHE_CACHE_SIZE (5G by default)
-and cache failures fall back to direct rustc.
+and server-I/O failures use sccache's direct-rustc fallback.
 EOF
 }
 
@@ -88,6 +88,7 @@ case "${sccache_mode}" in
     fi
     if [[ -n "${sccache_bin}" && -x "${sccache_bin}" ]]; then
       export SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-5G}"
+      export SCCACHE_IGNORE_SERVER_IO_ERROR=1
       export TACHIKO_CODEX_SCCACHE_BIN="${sccache_bin}"
       export RUSTC_WRAPPER="${repo_root}/scripts/codex-rustc-wrapper.sh"
       sccache_status="enabled (${sccache_bin}, limit ${SCCACHE_CACHE_SIZE})"
