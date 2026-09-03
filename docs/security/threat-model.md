@@ -1,11 +1,15 @@
 # Threat Model
 
 Decision state: Mixed. The semantic authorization threats and laws summarized
-from ADR-0007 and ADR-0026 are Accepted. The current `ai-api` context labels,
-host-context trait, denial-code spelling, and adapter shapes implemented by #30
-are Provisional. Supply-chain controls, concrete authentication/transport
-integrity, durable audit, and actual host-effect capability mechanisms remain
-Deferred or separately owned by their domain decisions.
+from [ADR-0007](../decisions/ADR-0007-ai-semantic-interaction-model.md),
+[ADR-0026](../decisions/ADR-0026-scoped-semantic-authorization-and-approval.md),
+and the team-policy logical boundary in
+[ADR-0034](../decisions/ADR-0034-team-workspace-policy-and-recovery-boundary.md)
+are Accepted. The current `ai-api` context labels, host-context trait,
+denial-code spelling, and adapter shapes implemented by #30 are Provisional.
+Supply-chain controls, concrete authentication/transport integrity, durable
+audit, and actual host-effect capability mechanisms remain Deferred or
+separately owned by their domain decisions.
 
 Implementation state: `tachiko-ai-api::security_boundary` now treats document,
 import, plugin, model, and client-request content as untrusted data; excludes
@@ -98,7 +102,14 @@ The platform must prevent at least:
   or is consumed;
 - replay or concurrent double use of one ApprovalId;
 - provider/model identity becoming privilege;
+- team, workspace, organization, role, path, branch, provider, login, or other
+  administration facts becoming semantic identity, scope, or authority;
+- reusable team policy shrinking the trusted authorization footprint, replacing
+  live Grant coverage, or independently issuing a Grant without explicitly
+  authorized Human provisioning;
 - Delegated self-approval satisfying the Human approval requirement;
+- a Delegated principal self-granting, expanding its authority, changing
+  effective policy, or transitively delegating administration authority;
 - raw semantic-core, storage, `.roproj`, filesystem, or host mutation bypassing
   the authorized Execute path; and
 - ordinary semantic authority granting network, process, Git, plugin,
@@ -106,7 +117,8 @@ The platform must prevent at least:
 
 ## Required Security Laws
 
-The normative authorization contract is ADR-0026 and
+The normative authorization contract is ADR-0026, ADR-0034's Accepted logical
+team-policy boundary, and
 [`semantic-authorization.md`](../specs/semantic-authorization.md). This
 threat-oriented summary maps risks to that authority and does not create an
 independent authorization contract.
@@ -122,6 +134,12 @@ independent authorization contract.
   operation family is independently capability-addressable.
 - Value, Formula, Structure, Schema, and Destructive mutation authority are
   independently grantable and additive.
+- Reusable team policy may select an applicable profile or add stricter
+  conditions, but cannot shrink the trusted footprint, weaken Grant coverage,
+  or mint authority.
+- Team-policy and Grant administration, including team-profile Grant issuance,
+  requires an explicitly authorized Human action; Human kind alone is not
+  administration authority and Delegated principals cannot self-escalate.
 - Grants use finite unions of stable-ID, document-local scope atoms; paths,
   JSON Pointers, UI/Git/storage coordinates, wildcards, and natural-language
   scope are not authority.
@@ -155,7 +173,8 @@ independent authorization contract.
 
 ## Effect Separation
 
-ADR-0007, ADR-0022, and ADR-0026 keep these authority domains separate:
+ADR-0007, ADR-0022, ADR-0026, and ADR-0034 keep these authority domains
+separate:
 
 - semantic Query/Propose/Approve/Execute;
 - durable storage/materialization;

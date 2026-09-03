@@ -1,0 +1,12 @@
+{
+  "private": true,
+  "packageManager": "pnpm@11.25.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./experimental-client.d.ts",
+      "import": "./experimental-client.js"
+    }
+  },
+  "tachikoExperimentalArtifact": "designer-client-kit/v0"
+}

@@ -24,8 +24,9 @@ merge/conflicts, history policy, permissions, and team review workflows.
 
 > **Public pre-alpha:** the repository is intentionally public for inspection and
 > early feedback. There is no tagged binary release yet, the graphical Designer
-> is not packaged or released yet, and APIs, formats, contribution policy, and the
-> long-term licensing boundary are still evolving.
+> is not packaged or released yet, and APIs, formats, and contribution policy are
+> still evolving. The licensing direction is founder-accepted, while its legal
+> implementation remains pending under issue #202.
 
 ## What works today
 
@@ -44,11 +45,13 @@ On current `main`, Tachiko already provides an end-to-end game-balance proof wit
 - a Rust-authoritative resident runtime with revision-safe commands, bounded
   projections/invalidation, retained incremental state, and native/WASM
   conformance evidence;
-- a first-party browser/Worker/WASM Designer slice that browses the Moonfall
-  weapons table, opens canonical `.roproj/v1` directories, applies a
-  revision-safe Number edit, selectively refreshes DPS, atomically Saves As a
-  new browser-local project, and reopens that exact state after resident
-  teardown without treating frontend state as canonical.
+- a first-party browser/Worker/WASM Designer slice that opens bounded canonical
+  `.roproj/v1` projects, browses typed tables, applies revision-safe
+  Text/Number/Boolean edits, selectively refreshes formulas, atomically Saves As
+  a new browser-local project, and reopens that exact state after resident
+  teardown without treating frontend state as canonical. The built-in Moonfall
+  demo and repository-owned Product Gap dogfood project exercise two distinct
+  domains over the same runtime.
 
 The current product deliberately does **not** claim a completed spreadsheet UI,
 Office compatibility, realtime collaboration, cloud SaaS, or production
@@ -71,6 +74,7 @@ the user interface. AI is a semantic client, not an alternate source of truth.
 - **Run the proof:** [Try it in five minutes](#try-it-in-five-minutes)
 - **Run the Designer slice:** [`apps/designer/`](apps/designer/README.md)
 - **See the durable example:** [`examples/game-balance/`](examples/game-balance/README.md)
+- **Inspect the self-dogfood project:** [`dogfood/product-gaps.roproj/`](dogfood/product-gaps.roproj/)
 - **See where the product is going:** [Product Roadmap](docs/product/product-roadmap.md)
 - **Understand the system:** [Architecture overview](#architecture-overview)
 - **Understand contribution status:** [`CONTRIBUTING.md`](CONTRIBUTING.md)
@@ -187,8 +191,9 @@ bypassing its security policy.
 Every archive also includes `THIRD_PARTY_LICENSES.md`, the generated inventory
 and exact license/notice texts for the locked dependencies used by the CLI.
 Revisions already published under `Apache-2.0 OR MIT` retain those historical
-license grants. The long-term license-by-component policy is still being decided
-in issue #15; see [`docs/governance/licensing-posture.md`](docs/governance/licensing-posture.md).
+license grants. Issue #15 records the founder-accepted long-term direction,
+while issue #202 remains the legal implementation gate; see
+[`docs/governance/licensing-posture.md`](docs/governance/licensing-posture.md).
 
 ## Try it in five minutes
 
@@ -485,8 +490,8 @@ bash scripts/release-check.sh
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the current contribution boundary,
 [`SECURITY.md`](SECURITY.md) for responsible reporting, the
-[`licensing posture`](docs/governance/licensing-posture.md) for provisional
-governance, and the
+[`licensing posture`](docs/governance/licensing-posture.md) for the
+founder-accepted direction and pending legal implementation gate, and the
 [`release-owner runbook`](docs/governance/release-process.md) for the tag and
 publication boundary.
 

@@ -3,7 +3,7 @@
 Status: Discussion history / product-strategy synthesis. **Not authoritative by itself.**
 
 Captured: 2026-09-01  
-Primary tracking issue: #215
+Tracking issue: #215
 
 ## Why this discussion matters
 

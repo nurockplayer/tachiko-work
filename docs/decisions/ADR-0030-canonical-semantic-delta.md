@@ -127,8 +127,9 @@ contract and separately declare its own compatibility and resource limits.
   equality.
 - Issue #46 can define deterministic conflict-object protocol behavior without
   treating delta as an apply language.
-- Issue #48 can define operation/revision/event taxonomy without making delta
-  an operation or event; #49 and #50 retain history/Git and causality/CRDT work.
+- ADR-0032 defines operation/revision/event taxonomy without making delta an
+  operation or event; ADR-0033 resolves history/Git guarantees and ADR-0035
+  resolves causality/selective-convergence without changing delta.
 - Production DTO and codec work requires a separately Ready implementation
   issue.
 
@@ -157,6 +158,8 @@ authority.
 - [Issue #45](https://github.com/nurockplayer/tachiko-work/issues/45)
 - [Issue #46](https://github.com/nurockplayer/tachiko-work/issues/46)
 - [Issue #48](https://github.com/nurockplayer/tachiko-work/issues/48)
+- [ADR-0032 semantic execution and retained-transition taxonomy](ADR-0032-semantic-execution-and-transition-taxonomy.md)
 - [Issue #49](https://github.com/nurockplayer/tachiko-work/issues/49)
 - [Issue #50](https://github.com/nurockplayer/tachiko-work/issues/50)
+- [ADR-0035 collaboration causality and selective convergence](ADR-0035-collaboration-causality-and-selective-convergence-boundary.md)
 - [Decision traceability protocol](../governance/decision-traceability.md)

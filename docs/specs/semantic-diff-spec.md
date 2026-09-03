@@ -223,10 +223,17 @@ above, and this specification does not authorize that production change.
 Tracking issue: a separately Ready implementation issue is required for a
 concrete DTO or transport mapping. [Issue #46](https://github.com/nurockplayer/tachiko-work/issues/46)
 may consume canonical delta as merge/conflict evidence without treating it as
-an apply language. Issues [#48](https://github.com/nurockplayer/tachiko-work/issues/48),
-[#49](https://github.com/nurockplayer/tachiko-work/issues/49), and
-[#50](https://github.com/nurockplayer/tachiko-work/issues/50) retain public
-revision/event, history/Git, and causality/CRDT decisions respectively.
+an apply language.
+[ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md)
+consumes canonical delta as retained-transition evidence without turning it
+into an event or apply language.
+[ADR-0033](../decisions/ADR-0033-snapshot-first-semantic-history-and-checkpoints.md)
+keeps delta as evidence rather than replay input while fixing bounded optional
+history and Git-association guarantees.
+[ADR-0035](../decisions/ADR-0035-collaboration-causality-and-selective-convergence-boundary.md)
+fixes causality/selective-convergence boundaries without making delta causal or
+convergent mutation input; concrete implementations require separately Ready
+work.
 
 ## Principle
 

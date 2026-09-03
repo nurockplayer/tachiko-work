@@ -2117,7 +2117,11 @@ fn merge_reports_typed_conflicts_without_creating_output() {
 
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains("entities.sword.fields.damage"));
+    assert!(stderr.contains("StoredEntityField"));
+    assert!(stderr.contains("EntityId(\"sword\")"));
+    assert!(stderr.contains("SchemaId(\"weapon\")"));
+    assert!(stderr.contains("FieldId(\"damage\")"));
+    assert!(stderr.contains("StoredValue / ConcurrentChange"));
     assert!(stderr.contains("FieldValue(Number(Number(100.0)))"));
     assert!(stderr.contains("FieldValue(Number(Number(120.0)))"));
     assert!(stderr.contains("FieldValue(Number(Number(140.0)))"));

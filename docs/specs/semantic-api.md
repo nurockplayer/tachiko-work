@@ -8,6 +8,15 @@ binding law are Accepted under
 The authorization, stable-ID scope, trusted footprint, exact Human Approval,
 and provenance laws that consume this operation/proposal meaning are Accepted
 under [ADR-0026](../decisions/ADR-0026-scoped-semantic-authorization-and-approval.md).
+The Execute-attempt, `NoChange`, revision-occurrence, retry, and optional
+retained-transition taxonomy is Accepted under
+[ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md).
+The document-local semantic atomicity, multi-document orchestration, and
+cross-effect recovery boundary is Accepted under
+[ADR-0034](../decisions/ADR-0034-team-workspace-policy-and-recovery-boundary.md).
+The collaboration causality and selective-convergence boundary is Accepted under
+[ADR-0035](../decisions/ADR-0035-collaboration-causality-and-selective-convergence-boundary.md)
+without adding another mutation or publication vocabulary.
 Runtime ownership, resident interactive topology, host separation, explicit
 snapshot boundaries, and native/WASM semantic parity are Accepted under
 [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md).
@@ -61,14 +70,16 @@ Decision issues: [#10](https://github.com/nurockplayer/tachiko-work/issues/10),
 [#27](https://github.com/nurockplayer/tachiko-work/issues/27),
 [#28](https://github.com/nurockplayer/tachiko-work/issues/28),
 [#32](https://github.com/nurockplayer/tachiko-work/issues/32),
-[#33](https://github.com/nurockplayer/tachiko-work/issues/33)
+[#33](https://github.com/nurockplayer/tachiko-work/issues/33),
+[#48](https://github.com/nurockplayer/tachiko-work/issues/48)
 
 ## Purpose
 
 Define the smallest transport-neutral semantic command/query/result contract
 that GUI, CLI, AI, automation, and future first-party clients must share,
 including the representation-neutral proposal contract that binds review to one
-exact semantic change and semantic base.
+exact semantic change and semantic base, and the logical lifecycle taxonomy
+that distinguishes an Execute attempt from an actual semantic publication.
 
 This specification answers **what semantic operations mean**. ADR-0022 answers
 the durable runtime/host ownership rules. Neither specification freezes how
@@ -708,6 +719,27 @@ layers may consume the structured result without becoming semantic authority.
 
 ## Query, Propose, and Execute
 
+### Operation and transaction terminology
+
+`Operation` is not a normative Semantic API value. In prose, **operation** may
+be used as an umbrella for activity at this boundary, while the normative
+request and intent concepts remain Query, Command, ordered AtomicBatch,
+Propose, Execute, and SemanticPatch. No general `Operation` DTO, mutation body,
+or apply language is implied.
+
+ADR-0026 `operation-family` remains a capability-addressing dimension for
+recognized Query and Command families. It does not introduce a common
+`Operation` object.
+
+**Transaction** is also non-normative in this contract. Under ADR-0034, ordered
+AtomicBatch is the only Accepted semantic all-or-nothing publication unit and
+applies to one exact-base document publication. Multi-document workflows are
+orchestration over separately exact-base, separately authorized publications
+with explicit partial success. Semantic publication, host persistence, required
+provenance, optional history, Git, external effects, and collaboration
+coordination retain separate truthful outcomes; concrete transaction/coordinator
+mechanisms remain Deferred.
+
 The Accepted semantic execution intents are:
 
 ```text
@@ -716,7 +748,7 @@ Query
 
 Propose(Command | AtomicBatch)
   -> evaluate the semantic intent and authoritative rules
-  -> do not publish the semantic transition
+  -> do not install semantic state
 
 Execute(Command | AtomicBatch)
   -> evaluate the same semantic intent and authoritative rules
@@ -951,12 +983,120 @@ SemanticRevision ownership, equality, and commit mechanics. Exact public
 proposal-ID/revision-token encodings and public Approval/session DTOs remain
 Provisional or Deferred to transport work.
 
+### Execute attempt and publication outcomes
+
+One admitted Execute attempt evaluates one Command or ordered AtomicBatch
+against one exact current semantic base and may install zero or one final
+semantic state. Batch members do not create intermediate revision
+occurrences.
+
+Unsupported contract, authorization or Approval denial, stale base, admission
+or construction failure, semantic-precondition failure, conflict,
+authoritative gate rejection, or finalization failure before installation
+publishes nothing and creates no semantic revision occurrence.
+
+If authoritative evaluation produces a candidate semantically equal to the
+exact current base, the result is **`NoChange`**. `NoChange` installs no new
+semantic state, creates no semantic revision occurrence or retained semantic
+transition/event, and follows ADR-0026's existing no-publication Approval laws.
+Private attempt, cache, metric, or bookkeeping tokens may still change, but
+they are not semantic revision occurrences.
+
+An actual non-no-op installation creates exactly one semantic revision
+occurrence. Failure during later verification, receipt persistence, response,
+or reporting does not erase it and MUST NOT be represented as pre-publication
+failure or `NoChange`. Where Approval applies, publication and Approval
+consumption have already occurred under ADR-0026.
+
+### Revision occurrence reference
+
+A logical **`RevisionOccurrenceRef`** identifies one actual semantic state
+occurrence for one continuing `DocumentId` inside one owning revision
+context/domain. Equality is meaningful only under that same context/domain and
+`DocumentId`; it is occurrence equality even when snapshot contents are
+equivalent.
+
+The reference implies neither global uniqueness nor ordering. It is distinct
+from semantic object and snapshot/content identity, SemanticPatch proposal
+identity, Semantic Delta, retained-transition identity, security receipt,
+checkpoint, timestamp, storage, transport, and Git identity. Parent, DAG, and
+causal-clock meaning is not implied.
+
+A mapping may carry its owning context/domain and `DocumentId` or establish
+them unambiguously outside the encoded reference. Exact public shape,
+generation, scope transport, persistence, and collision handling remain
+Deferred. Current internal `resident/N`-style revisions may supply private
+runtime equality but are not global or durable identity by inference.
+
+### Retry and idempotency
+
+A retry is another request to obtain or reconcile an Execute outcome; it is not
+semantic occurrence identity. Proposal occurrence identity is not an
+idempotency key. Every retry that reaches authoritative Execute rechecks the
+current base, authorization, Approval where applicable, and semantic gates.
+
+After a revision-pinned SemanticPatch publishes, its base is stale and it
+cannot silently publish again. Re-proposal creates a new proposal occurrence.
+A repeated direct Command is a new Execute attempt and may produce `NoChange`
+against the now-current state.
+
+Adapters or transports may later deduplicate repeated delivery against a
+previously established attempt outcome, but their keys cannot redefine
+proposal, revision, retained-transition, or content identity. An uncertain
+caller must reconcile authoritative state rather than assume blind retry is
+semantically idempotent. Exact request/attempt identifiers and deduplication
+mechanics remain Deferred.
+
+### Optional retained semantic transition/event
+
+There is one optional retained concept: a **retained semantic transition**.
+The phrase **semantic event** means that same concept and does not name a
+second event type.
+
+A retained semantic transition is immutable evidence of one actual non-no-op
+semantic publication. It relates the continuing `DocumentId`, exact before and
+after `RevisionOccurrenceRef` values, and canonical ADR-0030 A-to-B Semantic
+Delta evidence under its supported logical contract.
+
+It is not Command or AtomicBatch intent, a SemanticPatch, Execute input, a
+mutation program, authoritative state, a checkpoint, or a replay requirement.
+Pre-publication failure and `NoChange` create none, although separately
+authorized attempt, denial, security, or audit evidence may exist. General
+retention remains optional under ADR-0029.
+
+A future public retained-transition contract must declare its own logical
+contract/version, fail closed when unsupported, and use an opaque retained-
+transition occurrence identity. ADR-0032 deliberately fixes no version
+identifier, DTO, wire encoding, storage envelope, retention profile, or replay
+mechanics.
+
+### Receipt boundary
+
+ADR-0026 security/provenance receipts and retained semantic transitions are
+distinct guarantees. A receipt preserves required authorization, Approval,
+principal, policy, gate, and publication provenance. A retained transition
+preserves the semantic before-to-after publication relationship.
+
+Neither implies the other. Required security/provenance evidence survives when
+general history is disabled; retaining a semantic transition does not prove
+authorization. A future history profile may carry both only while preserving
+their independent contracts and identity namespaces. Durable denial or audit
+evidence is not a semantic event.
+
+[ADR-0033](../decisions/ADR-0033-snapshot-first-semantic-history-and-checkpoints.md)
+fixes snapshot-first history profiles and the logical checkpoint,
+replay/verification, compaction, retention/redaction, crash-recovery, and
+optional Git-association boundaries. Concrete durable storage and operational
+mechanics require separately Ready implementation work. ADR-0035 resolves the
+logical offline-causality, resynchronization, and selective-convergence boundary;
+concrete parent/clock/DAG and CRDT/OT mechanics require separately Ready work.
+
 ## Semantic atomicity
 
 ### Single command
 
-A semantic command either publishes the complete authoritative semantic
-transition or publishes no semantic transition.
+A semantic command either installs its complete authoritative semantic state
+change or installs none of it.
 
 ### Atomic command batch
 
@@ -964,7 +1104,7 @@ An Atomic Command Batch:
 
 - is an ordered collection of semantic commands evaluated against one semantic
   base/context;
-- forms one candidate semantic transition; and
+- forms one final candidate state change; and
 - publishes all of that final transition or none of it.
 
 No failed batch prefix becomes authoritative semantic state.
@@ -1378,7 +1518,7 @@ structured fixtures. At minimum, the current game-balance domain demonstrates:
    unless Query-authorized for external projection; a later validation, gate, or
    stale rejection retaining immutable non-authoritative proposal and diagnostic
    evidence only when a reviewable proposal was validly issued; and each
-   command's authoritative semantic transition publishing atomically in full or
+   command's authoritative semantic state change publishing atomically in full or
    not at all;
 8. Query disclosure limits applying independently to reasoning, scenarios,
    formula authoring/admission, and proposal preview evidence, including
@@ -1484,6 +1624,9 @@ resident session/revision/selective-projection conformance on native and WASM.
 | Exact semantic result tagged union / field spelling | Provisional |
 | Exact effect/diff projection shape | Provisional |
 | Revision/concurrency/precondition token | Internal monotonic precondition implemented by #93; public/concurrent transport contract Provisional |
+| Execute attempt versus revision occurrence and `NoChange` meaning | Accepted under ADR-0032 |
+| Logical `RevisionOccurrenceRef` scope and equality | Accepted under ADR-0032; exact public shape/encoding Deferred |
+| Optional retained semantic-transition/event meaning and receipt separation | Accepted under ADR-0032; contract identifier, DTO, storage, and replay Deferred |
 | Intra-batch temporary-object handle syntax | Provisional |
 | Public embedded Rust SDK / dedicated API crate | Deferred |
 | Native/WASM/IPC/FFI/network serialization | ADR-0022-constrained future transport work / Deferred |
@@ -1522,11 +1665,16 @@ across those revisions, consumes the same invalidation derivation, and falls
 back to full recomputation when impact is unsafe. Public session handles,
 exact public result/invalidation shapes, cross-host concurrency, Worker lifecycle,
 IPC/FFI/network serialization/ABI, and native/browser persistence/recovery
-remain Deferred to future host/transport work. Issue #11 retains broader
-transaction/recovery architecture. Under
+remain Deferred to future host/transport work.
+[ADR-0034](../decisions/ADR-0034-team-workspace-policy-and-recovery-boundary.md)
+fixes the broader transaction/recovery boundary without authorizing those
+mechanics. Under
 [ADR-0029](../decisions/ADR-0029-current-state-authority-and-optional-history.md),
-Issues #48 and #49 retain deferred event-taxonomy and optional persisted-history
-work respectively.
+[ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md)
+fixes the execution/revision/retained-transition taxonomy, while
+[ADR-0033](../decisions/ADR-0033-snapshot-first-semantic-history-and-checkpoints.md)
+fixes bounded optional-history guarantees. Concrete persisted-history mechanics
+require separately Ready implementation work.
 
 Every mapping MUST preserve the Semantic API Stable laws and outcomes. Runtime
 or transport topology is not independent semantic authority. A mapping of
@@ -1556,6 +1704,12 @@ to semantic core by virtue of using the API.
 - canonical proposal bytes, hash, digest, signature, or MAC;
 - exact Approval/capability/Grant/provenance/expiry/replay/revocation DTO or
   wire format;
+- public `RevisionOccurrenceRef`, retained-transition, receipt, or attempt DTO
+  and encoding;
+- retained-history profiles, storage, checkpoints, replay/verification,
+  compaction, retention/redaction, crash recovery, or Git association;
+- offline parent/causal metadata, DAG/clock mechanics, resynchronization, or
+  selective CRDT/OT;
 - projection patch/delivery/invalidation protocol;
 - native/browser persistence/recovery implementation;
 - plugin ABI/runtime/sandbox;
@@ -1568,7 +1722,7 @@ to semantic core by virtue of using the API.
   subqueries, windows, arbitrary query expressions/UDFs, Sum/Mean, ranking,
   top-k, outliers, percentiles, partial aggregates, persisted analysis objects,
   or an analytics datastore;
-- event sourcing / operation log / undo history;
+- event sourcing / operation-log storage / undo history;
 - complete Stable operation catalogue;
 - stable public Rust SDK; or
 - Project Memory/provenance domain semantics.
@@ -1585,7 +1739,12 @@ to semantic core by virtue of using the API.
 - [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md)
 - [ADR-0024](../decisions/ADR-0024-revision-pinned-semantic-patch.md)
 - [ADR-0026](../decisions/ADR-0026-scoped-semantic-authorization-and-approval.md)
+- [ADR-0029](../decisions/ADR-0029-current-state-authority-and-optional-history.md)
+- [ADR-0030](../decisions/ADR-0030-canonical-semantic-delta.md)
+- [ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md)
+- [ADR-0035](../decisions/ADR-0035-collaboration-causality-and-selective-convergence-boundary.md)
 - [Semantic authorization](semantic-authorization.md)
 - [Diagnostics contract](diagnostics-contract.md)
 - [Validation engine](validation-engine.md)
-- Issues #10, #17, #27, #28, #29, #32, #33, #93, #94, #95, #104
+- Issues #10, #17, #27, #28, #29, #32, #33, #48, #49, #50, #93, #94,
+  #95, #104

@@ -1,0 +1,64 @@
+[
+  {
+    "id": "d8b3db6e-a2ca-48f1-82f5-4e44630418dc",
+    "key": "product_gaps",
+    "fields": [
+      {
+        "id": "197ae0df-85bd-4c9a-8a9d-0ea27a599881",
+        "key": "title",
+        "field_type": {
+          "type": "text"
+        },
+        "required": true
+      },
+      {
+        "id": "3f49496c-1764-438b-a106-5563246ad8d3",
+        "key": "area",
+        "field_type": {
+          "type": "text"
+        },
+        "required": true
+      },
+      {
+        "id": "52a0f7e9-4d6b-4628-ad7d-6b649f8c8a77",
+        "key": "impact",
+        "field_type": {
+          "type": "number"
+        },
+        "required": true
+      },
+      {
+        "id": "6b529d6d-f003-42ff-aa22-5e317a3e5f37",
+        "key": "friction",
+        "field_type": {
+          "type": "number"
+        },
+        "required": true
+      },
+      {
+        "id": "75f3d634-452c-4838-925b-8c52e54fc972",
+        "key": "priority",
+        "field_type": {
+          "type": "number"
+        },
+        "required": true
+      },
+      {
+        "id": "8e1647d7-1a4c-48f7-bbf0-14527730619f",
+        "key": "confirmed",
+        "field_type": {
+          "type": "boolean"
+        },
+        "required": true
+      },
+      {
+        "id": "9c3c9df1-ac56-4211-9d9d-846ce8c4afbd",
+        "key": "github_issue",
+        "field_type": {
+          "type": "text"
+        },
+        "required": true
+      }
+    ]
+  }
+]

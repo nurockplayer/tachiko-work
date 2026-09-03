@@ -1,8 +1,13 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { expect, test, type Page } from "@playwright/test";
+
+const PRODUCT_GAPS_PROJECT = fileURLToPath(
+  new URL("../../../dogfood/product-gaps.roproj", import.meta.url),
+);
 
 test("Moonfall Number edit selectively refreshes DPS and rejects an invalid candidate", async ({
   page,
@@ -14,7 +19,6 @@ test("Moonfall Number edit selectively refreshes DPS and rejects an invalid cand
   await expect(page.getByTestId("revision")).toContainText("resident/0");
   await expect(page.getByLabel("Damage for Iron Sword")).toHaveValue("36");
   await expect(page.locator('[data-field="iron_sword.dps"] output')).toHaveText("40");
-  await expect(page.getByTestId("control-value")).toHaveText("200");
 
   await page.getByLabel("Damage for Iron Sword").fill("45");
   await page
@@ -25,7 +29,6 @@ test("Moonfall Number edit selectively refreshes DPS and rejects an invalid cand
   await expect(page.getByTestId("revision")).toContainText("resident/1");
   await expect(page.getByLabel("Damage for Iron Sword")).toHaveValue("45");
   await expect(page.locator('[data-field="iron_sword.dps"] output')).toHaveText("50");
-  await expect(page.getByTestId("control-value")).toHaveText("200");
   await expect(page.locator(".notice.success")).toContainText("Publication complete");
 
   await page.getByLabel("Attack Interval for Iron Sword").fill("0");
@@ -40,7 +43,88 @@ test("Moonfall Number edit selectively refreshes DPS and rejects an invalid cand
   await expect(page.getByLabel("Attack Interval for Iron Sword")).toHaveValue("0.9");
   await expect(page.getByLabel("Damage for Iron Sword")).toHaveValue("45");
   await expect(page.locator('[data-field="iron_sword.dps"] output')).toHaveText("50");
-  await expect(page.getByTestId("control-value")).toHaveText("200");
+});
+
+test("canonical Product Gap project edits typed values, refreshes priority, and round-trips", async ({
+  page,
+}) => {
+  await page.goto("/");
+
+  page.once("dialog", async (dialog) => dialog.accept());
+  await page.locator("[data-import-project]").setInputFiles(PRODUCT_GAPS_PROJECT);
+  await expect(page.locator(".notice.success")).toContainText("Project opened");
+  await expect(page.getByRole("heading", { name: "Tachiko Work Product Gaps" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Product Gaps", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByTestId("revision")).toContainText("resident/0");
+
+  const designerRow = page.getByRole("row", { name: /Designer Profile Bound/ });
+  const authoringRow = page.getByRole("row", { name: /Schema Authoring Missing/ });
+  await expect(designerRow.locator(".formula-cell output")).toHaveText("10");
+  await expect(authoringRow.locator(".formula-cell output")).toHaveText("9");
+  await expect(page.getByLabel("Title for Schema Authoring Missing")).toHaveValue(
+    "Schema and field authoring is not exposed",
+  );
+
+  const title = page.getByLabel("Title for Designer Profile Bound");
+  await title.fill("Designer admits ordinary projects");
+  await title.locator("xpath=ancestor::form").getByRole("button", { name: "Apply" }).click();
+  await expect(page.getByTestId("revision")).toContainText("resident/1");
+  await expect(title).toHaveValue("Designer admits ordinary projects");
+
+  const impact = page.getByLabel("Impact for Designer Profile Bound");
+  await impact.fill("3");
+  await impact.locator("xpath=ancestor::form").getByRole("button", { name: "Apply" }).click();
+  await expect(page.getByTestId("revision")).toContainText("resident/2");
+  await expect(designerRow.locator(".formula-cell output")).toHaveText("8");
+  await expect(authoringRow.locator(".formula-cell output")).toHaveText("9");
+  await expect(page.getByLabel("Title for Schema Authoring Missing")).toHaveValue(
+    "Schema and field authoring is not exposed",
+  );
+
+  const confirmed = page.getByLabel("Confirmed for Designer Profile Bound");
+  await confirmed.uncheck();
+  await confirmed.locator("xpath=ancestor::form").getByRole("button", { name: "Apply" }).click();
+  await expect(page.getByTestId("revision")).toContainText("resident/3");
+  await expect(confirmed).not.toBeChecked();
+
+  await impact.fill("");
+  await impact.locator("xpath=ancestor::form").getByRole("button", { name: "Apply" }).click();
+  await expect(page.getByRole("alert")).toContainText("Edit not published");
+  await expect(page.getByRole("alert")).toContainText("not a finite Number");
+  await expect(page.getByTestId("revision")).toContainText("resident/3");
+  await expect(impact).toHaveValue("3");
+  await expect(designerRow.locator(".formula-cell output")).toHaveText("8");
+
+  page.once("dialog", async (dialog) => dialog.accept("product-gaps-edited.roproj"));
+  await page.getByRole("button", { name: "Save As" }).click();
+  await expect(page.locator(".notice.success")).toContainText("Save As complete");
+  await expect(page.getByTestId("durability")).toContainText("Saved");
+
+  await page.getByRole("button", { name: "Close" }).click();
+  await expect(page.getByRole("heading", { name: "No project open" })).toBeVisible();
+  await page.getByLabel("Saved project").selectOption("product-gaps-edited.roproj");
+  await page.getByRole("button", { name: "Open project" }).click();
+
+  await expect(page.getByRole("heading", { name: "Tachiko Work Product Gaps" })).toBeVisible();
+  await expect(page.getByTestId("revision")).toContainText("resident/0");
+  await expect(page.getByLabel("Title for Designer Profile Bound")).toHaveValue(
+    "Designer admits ordinary projects",
+  );
+  await expect(page.getByLabel("Impact for Designer Profile Bound")).toHaveValue("3");
+  await expect(page.getByLabel("Confirmed for Designer Profile Bound")).not.toBeChecked();
+  await expect(
+    page
+      .getByRole("row", { name: /Designer Profile Bound/ })
+      .locator(".formula-cell output"),
+  ).toHaveText("8");
+  await expect(
+    page
+      .getByRole("row", { name: /Schema Authoring Missing/ })
+      .locator(".formula-cell output"),
+  ).toHaveText("9");
+  await expect(page.getByTestId("durability")).toContainText("Saved");
 });
 
 test("canonical Save As survives close and reload while existing destinations remain unchanged", async ({

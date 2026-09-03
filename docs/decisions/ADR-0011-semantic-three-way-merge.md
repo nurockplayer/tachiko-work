@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted
+Accepted, with the DocumentId admission boundary amended by
+[ADR-0031](ADR-0031-semantic-merge-conflict-protocol.md).
 
 ## Context
 
@@ -58,10 +59,27 @@ The merge engine applies the standard three-way rule at each semantic unit:
 - independent field changes inside the same existing schema or entity merge;
 - delete-versus-modify and different concurrent additions conflict.
 
-Merge covers document identity/title, schema additions/removals and field
-definitions, entity additions/removals and schema membership, and stored or
-computed field values. Conflict order follows stable semantic paths in the
-current implemented contract.
+The original v0.1 implementation applied that rule to document identity/title,
+schema additions/removals and field definitions, entity additions/removals and
+schema membership, and stored or computed field values. ADR-0031 subsequently
+narrows exactly one part of that surface: `DocumentId` is now the continuing
+semantic identity that admits one three-way reconciliation and is **not** a
+mergeable direct facet. `base`, `left`, and `right` MUST therefore carry the same
+`DocumentId`; a different-Document input is a contract/admission failure rather
+than a one-sided identity change or `SemanticConflict`.
+
+This amendment supersedes only ADR-0011's original treatment of `Document.id` as
+an ordinary three-way-selected unit. Document title remains a direct merge facet,
+and the other merge laws in this ADR remain Accepted. The current merge-engine
+code that still applies ordinary three-way selection to `Document.id` is
+implementation lag to be removed by the separately Ready ADR-0031 production
+realization work; this authority change does not modify runtime code in place.
+
+Conflict order follows stable semantic paths in the original implemented
+contract. ADR-0031 separately replaces path-oriented conflict identity as public
+protocol authority with typed stable targets, direct facets, and deterministic
+Semantic Conflict v1 ordering; the current path form remains implementation
+evidence until production realization catches up.
 
 A conflict is an expected structured outcome, not a partially-written document.
 A conflict-free candidate must pass semantic validation and complete formula
@@ -71,18 +89,24 @@ input or existing file.
 The initial release does not mutate Git configuration or implement a Git merge
 driver. The model-level API is the prerequisite for that later adapter.
 
-Broader protocol questions such as versioned machine-readable deltas, durable
-conflict identity, future `.roproj` layout interactions, and cross-version merge
-remain separate hardening work rather than being implied by this ADR.
+Broader protocol questions such as machine-readable delta transport, concrete
+conflict DTO/codec mapping, future `.roproj` layout interactions, and
+cross-version merge remain separate hardening or implementation work rather than
+being implied by this ADR. ADR-0030 owns the Accepted canonical direct-state
+Semantic Delta boundary; ADR-0031 owns the Accepted logical Semantic Conflict v1
+boundary.
 
 ## Consequences
 
 Positive:
 
 - independent game-balance changes can merge without raw JSON conflict work;
-- conflicts name the exact semantic path and preserve base/ours/theirs values;
+- semantic conflicts preserve deterministic base/left/right evidence while
+  ADR-0031 supplies stable typed conflict identity independent of paths;
 - invalid combined meaning is rejected before a file enters the repository;
-- future CLI, graphical, Git-driver, and AI adapters share one merge contract.
+- future CLI, graphical, Git-driver, and AI adapters share one merge contract;
+- a merge can no longer silently turn one semantic document identity into
+  another, aligning merge continuity with ADR-0015 and ADR-0030.
 
 Negative:
 
@@ -90,4 +114,7 @@ Negative:
 - conflicts do not yet have an interactive resolver;
 - adding the same new entity differently on both branches conflicts even when
   its fields might be mechanically combinable, because there is no shared
-  intent to justify that merge.
+  intent to justify that merge;
+- current production merge-engine behavior for changed `Document.id` is
+  temporarily behind the Accepted ADR-0031 boundary until separate
+  implementation work lands.

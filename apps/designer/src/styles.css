@@ -224,8 +224,7 @@ code {
 }
 
 .workspace-title h1,
-.table-heading h2,
-.control-witness h2 {
+.table-heading h2 {
   margin: 0;
   font-family: Georgia, "Times New Roman", serif;
   font-weight: 500;
@@ -299,48 +298,6 @@ code {
   border-radius: 8px;
   background: var(--paper);
   color: var(--ink);
-}
-
-.control-witness {
-  position: relative;
-  overflow: hidden;
-  margin-top: 18px;
-  padding: 22px;
-  border: 1px solid #cfd4e8;
-  border-radius: 4px 18px 4px 18px;
-  background: var(--paper);
-  box-shadow: var(--shadow);
-}
-
-.control-witness::before {
-  content: "";
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 4px;
-  background: var(--mint);
-}
-
-.control-witness h2 {
-  font-size: 18px;
-}
-
-.control-witness output {
-  display: block;
-  margin: 17px 0 6px;
-  font-family: Georgia, serif;
-  font-size: 38px;
-}
-
-.control-witness p:not(.eyebrow) {
-  margin: 0 0 16px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.control-witness code {
-  color: var(--muted);
-  font-size: 10px;
 }
 
 .table-workbench {
@@ -637,12 +594,6 @@ td {
 
   .collection-rail select {
     grid-column: 1;
-  }
-
-  .control-witness {
-    grid-column: 2;
-    grid-row: 1 / span 2;
-    margin: 0;
   }
 
   .workspace-actions {
