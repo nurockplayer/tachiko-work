@@ -266,13 +266,19 @@ and presentation/editor choices are not field-local capability facts and remain
 on their existing boundaries.
 
 The discovery Query has its own provisional `FieldCapabilityDiscovery` family
-and independent Query disclosure scope. The lifecycle authorizes that Query
-before semantic classification or external exposure (deriving only the
-non-disclosing scope atom needed for authorization), returns one disclosure-safe
-unresolved outcome when a safely authorized target is absent, and does not let
-the returned projection grant Query, Propose, Execute, or Approval authority
-for any listed family. Actual Propose/Execute/candidate/formula paths
-re-evaluate their live grants and authoritative rules.
+and independent Query disclosure scope. For a resolvable field, its trusted
+disclosure footprint retains both the concrete `EntityField` instance and the
+corresponding `SchemaField` definition under that same family; an
+`EntityField`-only grant therefore cannot disclose schema-owned `declared_type`
+or a Reference target-schema contract. Existing containment law still lets a
+`Schema` or `Document` grant cover both requirements. The lifecycle derives and
+authorizes these requirements before semantic classification or external
+exposure. If a narrower field scope cannot be derived safely, it retains the
+existing conservative document requirement and returns only the disclosure-safe
+unresolved outcome after that broader authorization succeeds. The returned
+projection does not grant Query, Propose, Execute, or Approval authority for
+any listed family. Actual Propose/Execute/candidate/formula paths re-evaluate
+their live grants and authoritative rules.
 
 The workspace projection is the shared source for the current AI adapter. GUI
 and other clients must consume the same structured facts rather than copy

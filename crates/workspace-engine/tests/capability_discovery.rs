@@ -198,6 +198,37 @@ fn document_scope() -> ScopedSemanticSubject {
     )
 }
 
+fn source_schema_scope() -> ScopedSemanticSubject {
+    ScopedSemanticSubject::new(
+        DocumentScopeId::from("game-occurrence"),
+        DocumentId::from("game"),
+        SemanticScope::Schema(SchemaId::from("source")),
+    )
+}
+
+fn entity_field_scope(field: &FieldRef) -> ScopedSemanticSubject {
+    ScopedSemanticSubject::new(
+        DocumentScopeId::from("game-occurrence"),
+        DocumentId::from("game"),
+        SemanticScope::EntityField {
+            entity: field.entity.clone(),
+            schema: SchemaId::from("source"),
+            field: field.field.clone(),
+        },
+    )
+}
+
+fn schema_field_scope(field: &FieldRef) -> ScopedSemanticSubject {
+    ScopedSemanticSubject::new(
+        DocumentScopeId::from("game-occurrence"),
+        DocumentId::from("game"),
+        SemanticScope::SchemaField {
+            schema: SchemaId::from("source"),
+            field: field.field.clone(),
+        },
+    )
+}
+
 fn grant_discovery(lifecycle: &mut PatchLifecycle) {
     grant_query(
         lifecycle,
@@ -762,6 +793,83 @@ fn capability_query_authorizes_disclosure_before_classification_and_pins_revisio
         unresolved.outcome,
         FieldCapabilityQueryOutcome::UnresolvedTarget { .. }
     ));
+}
+
+#[test]
+fn capability_query_requires_entity_and_schema_field_disclosure() {
+    let document = document();
+    let field = field_ref("target");
+    let snapshot =
+        ResidentWorkspaceSession::new(DocumentScopeId::from("game-occurrence"), document)
+            .export_snapshot();
+
+    let mut entity_field_only = lifecycle();
+    grant(
+        &mut entity_field_only,
+        "entity-field-only",
+        vec![GrantRequirement::query(
+            OperationFamily::FieldCapabilityDiscovery,
+            entity_field_scope(&field),
+        )],
+    );
+    let error = entity_field_only
+        .query_field_capabilities(&snapshot, &field, &PrincipalId::from("agent"), NOW)
+        .expect_err("field instance authority must not disclose schema metadata");
+    assert!(matches!(error, PatchLifecycleError::DisclosureDenied));
+
+    let mut complete = lifecycle();
+    grant(
+        &mut complete,
+        "entity-and-schema-field",
+        vec![
+            GrantRequirement::query(
+                OperationFamily::FieldCapabilityDiscovery,
+                entity_field_scope(&field),
+            ),
+            GrantRequirement::query(
+                OperationFamily::FieldCapabilityDiscovery,
+                schema_field_scope(&field),
+            ),
+        ],
+    );
+    let result = complete
+        .query_field_capabilities(&snapshot, &field, &PrincipalId::from("agent"), NOW)
+        .expect("both disclosure requirements should authorize discovery");
+    assert!(matches!(
+        result.outcome,
+        FieldCapabilityQueryOutcome::Field(_)
+    ));
+}
+
+#[test]
+fn capability_query_keeps_document_and_schema_containment() {
+    let document = document();
+    let field = field_ref("target");
+    let snapshot =
+        ResidentWorkspaceSession::new(DocumentScopeId::from("game-occurrence"), document)
+            .export_snapshot();
+
+    for (grant_id, scope) in [
+        ("document", document_scope()),
+        ("schema", source_schema_scope()),
+    ] {
+        let mut lifecycle = lifecycle();
+        grant(
+            &mut lifecycle,
+            grant_id,
+            vec![GrantRequirement::query(
+                OperationFamily::FieldCapabilityDiscovery,
+                scope,
+            )],
+        );
+        let result = lifecycle
+            .query_field_capabilities(&snapshot, &field, &PrincipalId::from("agent"), NOW)
+            .expect("existing broader scope containment must cover both requirements");
+        assert!(matches!(
+            result.outcome,
+            FieldCapabilityQueryOutcome::Field(_)
+        ));
+    }
 }
 
 #[test]

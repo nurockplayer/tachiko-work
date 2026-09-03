@@ -259,9 +259,10 @@ impl PatchLifecycle {
     /// # Errors
     ///
     /// Returns disclosure denial before semantic facts when the caller lacks
-    /// the independent field-capability Query grant. A target that is safely
-    /// unresolved after authorized document-scope disclosure is returned as a
-    /// structured unresolved outcome.
+    /// the independent field-capability Query grants for both a resolvable
+    /// field instance and its corresponding schema definition. A target that
+    /// is safely unresolved after authorized document-scope disclosure is
+    /// returned as a structured unresolved outcome.
     pub fn query_field_capabilities(
         &self,
         snapshot: &ResidentSnapshot,
@@ -274,17 +275,39 @@ impl PatchLifecycle {
         self.require_document(document_scope, document)?;
         self.require_active_principal(principal)?;
         let context = FieldCapabilityQueryContext::trusted(snapshot.revision().clone());
-        let scope = self.field_scope(document, target).unwrap_or_else(|_| {
-            ScopedSemanticSubject::new(
-                document_scope.clone(),
-                document.id.clone(),
-                SemanticScope::Document,
-            )
-        });
-        let requirements = BTreeSet::from([DisclosureRequirement {
-            family: OperationFamily::FieldCapabilityDiscovery,
-            scope,
-        }]);
+        let requirements = match self.field_scope(document, target) {
+            Ok(entity_field_scope) => {
+                let schema_field_scope = match entity_field_scope.subject() {
+                    SemanticScope::EntityField { schema, field, .. } => ScopedSemanticSubject::new(
+                        entity_field_scope.document_scope().clone(),
+                        entity_field_scope.document().clone(),
+                        SemanticScope::SchemaField {
+                            schema: schema.clone(),
+                            field: field.clone(),
+                        },
+                    ),
+                    _ => unreachable!("field_scope must return an EntityField scope"),
+                };
+                BTreeSet::from([
+                    DisclosureRequirement {
+                        family: OperationFamily::FieldCapabilityDiscovery,
+                        scope: entity_field_scope,
+                    },
+                    DisclosureRequirement {
+                        family: OperationFamily::FieldCapabilityDiscovery,
+                        scope: schema_field_scope,
+                    },
+                ])
+            }
+            Err(_) => BTreeSet::from([DisclosureRequirement {
+                family: OperationFamily::FieldCapabilityDiscovery,
+                scope: ScopedSemanticSubject::new(
+                    document_scope.clone(),
+                    document.id.clone(),
+                    SemanticScope::Document,
+                ),
+            }]),
+        };
         self.authorize_query(principal, &requirements, now)
             .map_err(|error| match error {
                 PatchLifecycleError::InsufficientCapability { .. } => {
