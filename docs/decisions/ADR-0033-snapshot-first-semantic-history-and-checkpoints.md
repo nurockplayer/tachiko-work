@@ -16,6 +16,15 @@ Related authority:
 [ADR-0030](ADR-0030-canonical-semantic-delta.md), and
 [ADR-0032](ADR-0032-semantic-execution-and-transition-taxonomy.md)
 
+Successor resolution:
+[ADR-0034](ADR-0034-team-workspace-policy-and-recovery-boundary.md) resolves
+Issue #11's deferred multi-document, cross-effect, transaction, and team-
+recovery boundary, and
+[ADR-0035](ADR-0035-collaboration-causality-and-selective-convergence-boundary.md)
+resolves Issue #50's deferred offline causality, resynchronization, and
+selective-convergence boundary. The Issue #11/#50 references below record
+ownership when this ADR was accepted; they no longer identify open decisions.
+
 ## Context
 
 ADR-0029 makes the semantic `Document` authoritative for current meaning and
@@ -117,9 +126,9 @@ same context. A missing, unsupported, corrupt, redacted, or mismatched required
 record breaks continuity and therefore the stronger capability claim.
 
 Segment-local order does not create global time, a universal revision order,
-multi-parent causality, or a universal DAG. Offline parent/branch identity,
-logical clocks, resynchronization, and selective CRDT/OT remain with
-[Issue #50](https://github.com/nurockplayer/tachiko-work/issues/50).
+multi-parent causality, or a universal DAG. ADR-0035 now resolves the logical
+offline causality, resynchronization, and selective-convergence boundary without
+giving history-segment order causal authority or selecting concrete mechanics.
 
 ### 4. Replay input is distinct from retained transition evidence
 
@@ -192,9 +201,10 @@ publication MUST preserve the known truth that publication occurred.
 Repair may recover genuine records or establish a new declared checkpoint and
 coverage boundary. It MUST NOT synthesize false history. Semantic publication,
 checkpoint persistence, retained-transition persistence, receipt persistence,
-and Git commit remain separate effects; broader multi-effect transaction,
-rollback, and recovery policy remains with
-[Issue #11](https://github.com/nurockplayer/tachiko-work/issues/11).
+and Git commit remain separate effects. Broader multi-effect transaction,
+rollback, and recovery policy was assigned to
+[Issue #11](https://github.com/nurockplayer/tachiko-work/issues/11) and is now
+resolved at the logical boundary by ADR-0034.
 
 ### 7. Repack and retention compaction have different semantics
 
@@ -315,12 +325,14 @@ This ADR authorizes no production implementation.
 - [Issue #47](https://github.com/nurockplayer/tachiko-work/issues/47) owns
   representation/semantic migration, write-version pinning, and cross-version
   branch behavior.
-- [Issue #50](https://github.com/nurockplayer/tachiko-work/issues/50) owns causal
-  parents/DAGs, offline branch identity, logical clocks, resynchronization, and
-  selective CRDT/OT.
-- [Issue #11](https://github.com/nurockplayer/tachiko-work/issues/11) owns
-  broader multi-document, host, external-effect, transaction/rollback, and team
-  recovery policy.
+- [Issue #50](https://github.com/nurockplayer/tachiko-work/issues/50) originally
+  owned causal parents/DAGs, offline branch identity, logical clocks,
+  resynchronization, and selective CRDT/OT; ADR-0035 now resolves the logical
+  boundary while concrete mechanisms remain separately owned.
+- [Issue #11](https://github.com/nurockplayer/tachiko-work/issues/11) originally
+  owned broader multi-document, host, external-effect, transaction/rollback,
+  and team recovery policy; ADR-0034 now resolves the logical boundary while
+  concrete mechanisms remain separately owned.
 - [Issue #53](https://github.com/nurockplayer/tachiko-work/issues/53) owns exact
   integrity-root algorithms, canonical commitment bytes, signatures, and trust
   semantics.

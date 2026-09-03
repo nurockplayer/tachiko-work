@@ -2,8 +2,11 @@
 
 Decision state: Mixed — current merge behavior, the deterministic Semantic
 Conflict v1 protocol, ADR-0029 history boundary, ADR-0030 canonical delta
-evidence, ADR-0032 execution/transition taxonomy, and ADR-0033 snapshot-first
-history profiles are Accepted; broader collaboration remains Open Question.
+evidence, ADR-0032 execution/transition taxonomy, ADR-0033 snapshot-first
+history profiles, ADR-0034 team policy/recovery boundary, and ADR-0035
+causality/selective-convergence boundary are Accepted; concrete realtime,
+transport, causal encoding, and text/ordered datatype implementations remain
+Deferred.
 
 Authority: [ADR-0011](../decisions/ADR-0011-semantic-three-way-merge.md),
 [ADR-0031](../decisions/ADR-0031-semantic-merge-conflict-protocol.md), and
@@ -14,6 +17,10 @@ retained-transition taxonomy defined by
 [ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md),
 snapshot-first history/checkpoint guarantees defined by
 [ADR-0033](../decisions/ADR-0033-snapshot-first-semantic-history-and-checkpoints.md),
+team policy and cross-effect recovery constrained by
+[ADR-0034](../decisions/ADR-0034-team-workspace-policy-and-recovery-boundary.md),
+collaboration causality and selective convergence constrained by
+[ADR-0035](../decisions/ADR-0035-collaboration-causality-and-selective-convergence-boundary.md),
 and deterministic conflict evidence specified by
 [`conflict-resolution.md`](conflict-resolution.md).
 
@@ -92,19 +99,68 @@ conflict kind.
   snapshot-first authority under ADR-0033
 - concrete history DTOs, storage, checkpoint/replay engines, retention tooling,
   and Git adapters remain separately owned implementation work
-- offline causality and selectively justified CRDT/OT boundaries (#50)
+- concrete causal parent/clock/replica encodings, synchronization engines, and
+  text/ordered datatype implementations under the ADR-0035 boundary
 - cross-version migration/branch behavior (#47)
-- broader multi-effect transaction/rollback and team recovery policy (#11)
+- multi-document workflows remain orchestration over separately exact-base,
+  authorized publications; partial success is explicit under ADR-0034
+- semantic publication, persistence, required provenance, optional history,
+  Git, external effects, and coordination retain separate truthful outcomes;
+  concrete transaction/coordinator mechanisms remain Deferred
 - exact commitment bytes, signatures, and trust semantics (#53)
 - interactive conflict-resolution UX and broader review workflow
 - realtime collaboration transport and service topology
+
+## Accepted causality and selective-convergence boundary
+
+Collaboration causality is optional evidence within one declared collaboration
+scope. A profile claiming offline continuity distinguishes known causal
+succession, causal concurrency proved by sufficient valid evidence within
+declared coverage, and unknown or broken continuity. Wall-clock or Git order
+alone establishes none of those relationships, and a
+`RevisionOccurrenceRef` does not acquire parent, DAG, or clock meaning by
+inference.
+
+The complete admitted current snapshot remains the full-resynchronization root.
+Missing, corrupt, unsupported, compacted, or discontinuous causal evidence
+downgrades the collaboration-continuity guarantee without invalidating an
+independently valid snapshot or fabricating history. Resynchronization after an
+unprovable gap establishes a declared new collaboration boundary unless genuine
+evidence proves continuity.
+
+Automatic convergence is capability- and datatype-selective:
+
+- presence and transient UI collaboration may converge without creating
+  semantic revisions;
+- no text or ordered semantic datatype is selected by the current contract;
+  later Accepted work must name and version one before it becomes eligible;
+- structured semantic fields, schemas, formulas, references, and disputed intent
+  remain under deterministic semantic merge, Semantic Conflict evidence, and
+  semantic validation;
+- authorization and Approval remain outside semantic state and merge, are not
+  convergent, and remain subject to live ADR-0026/ADR-0034 host-authority checks;
+  and
+- unrecognized capability or datatype versions fail closed rather than
+  receiving a generic CRDT/OT or last-writer-wins rule.
+
+Any collaboration result that changes semantic meaning re-enters the existing
+exact-base admission, live authorization/Approval, merge/conflict,
+validation/calculation, and publication boundary. Causal descent, convergence,
+timestamp order, or Git association cannot authorize or publish a semantic
+change.
+
+Git remains optional provenance or transport evidence, not collaboration causal
+identity. Concrete clocks, parents/DAGs, replica/activity IDs, public or wire
+DTOs, persistence, transport/server topology, CRDT/OT engines or libraries,
+compaction, and realtime collaboration remain separately Ready work.
 
 ## Future
 
 Possible implementation foundations include:
 
 - optional retained evidence or a verified checkpoint tail under ADR-0033;
-- selectively justified CRDT/OT adapters for named structures;
+- separately Accepted CRDT/OT adapters for explicitly named and versioned text
+  or ordered datatypes under ADR-0035;
 - Git adapters and review workflows; and
 - AI assistance that explains or proposes conflict resolution while deterministic
   conflict evidence remains authoritative.

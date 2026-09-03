@@ -225,8 +225,9 @@ conflict identity or authority.
   admission correction, require a separately Ready implementation Issue after
   this authority lands.
 - ADR-0032 defines operation/revision/optional-event taxonomy without reopening
-  merge conflict meaning; #49/#50 retain history/checkpoint and causality/CRDT
-  work.
+  merge conflict meaning; ADR-0033 resolves history/checkpoint guarantees and
+  ADR-0035 resolves causality/selective-convergence while preserving ordinary
+  semantic conflicts for structured meaning.
 
 ## Rejected alternatives
 
@@ -258,3 +259,4 @@ conflict identity or authority.
 - [ADR-0032 semantic execution and retained-transition taxonomy](ADR-0032-semantic-execution-and-transition-taxonomy.md)
 - [Issue #49](https://github.com/nurockplayer/tachiko-work/issues/49)
 - [Issue #50](https://github.com/nurockplayer/tachiko-work/issues/50)
+- [ADR-0035 collaboration causality and selective convergence](ADR-0035-collaboration-causality-and-selective-convergence-boundary.md)

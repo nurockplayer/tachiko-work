@@ -229,10 +229,11 @@ consumes canonical delta as retained-transition evidence without turning it
 into an event or apply language.
 [ADR-0033](../decisions/ADR-0033-snapshot-first-semantic-history-and-checkpoints.md)
 keeps delta as evidence rather than replay input while fixing bounded optional
-history and Git-association guarantees. Issue
-[#50](https://github.com/nurockplayer/tachiko-work/issues/50) retains
-causality/CRDT decisions; concrete public history/Git implementations require
-separately Ready work.
+history and Git-association guarantees.
+[ADR-0035](../decisions/ADR-0035-collaboration-causality-and-selective-convergence-boundary.md)
+fixes causality/selective-convergence boundaries without making delta causal or
+convergent mutation input; concrete implementations require separately Ready
+work.
 
 ## Principle
 

@@ -28,8 +28,8 @@ The semantic model owns meaning. Physical formats are representations. ADR-0017 
 
 | Document | Read it for |
 | --- | --- |
-| [`semantic-api.md`](semantic-api.md) | ADR-0020 first-class transport-neutral Semantic API, ADR-0024 SemanticPatch, ADR-0026 authorization/approval, and ADR-0032 Execute-attempt/`NoChange`/revision-occurrence/optional-transition taxonomy, including #32/#33's Accepted query/command additions; ADR-0022 runtime-host constraints still apply and exact DTO/session/transport/history mechanics remain Deferred |
-| [`semantic-authorization.md`](semantic-authorization.md) | ADR-0026 principal, capability, stable-ID scope, trusted footprint, Grant, exact Human Approval, expiry/replay/revocation, provenance, and effect-domain contract |
+| [`semantic-api.md`](semantic-api.md) | ADR-0020 first-class transport-neutral Semantic API, ADR-0024 SemanticPatch, ADR-0026 authorization/approval, ADR-0032 Execute-attempt/`NoChange`/revision-occurrence/optional-transition taxonomy, ADR-0034 document-local atomicity/cross-effect boundary, and ADR-0035 rule that collaboration adds no mutation/publication vocabulary, including #32/#33's Accepted query/command additions; ADR-0022 runtime-host constraints still apply and exact DTO/session/transport/history/collaboration mechanics remain Deferred |
+| [`semantic-authorization.md`](semantic-authorization.md) | ADR-0026 principal, capability, stable-ID scope, trusted footprint, Grant, exact Human Approval, expiry/replay/revocation, and provenance, plus ADR-0034 trusted-host reusable-policy, Human-administration, and team-audit constraints |
 | [`semantic-data-model.md`](semantic-data-model.md) | Semantic data-model contract and terminology |
 | [`schema-system.md`](schema-system.md) | Durable schema declaration behavior and the boundary from runtime validation policy |
 | [`validation-engine.md`](validation-engine.md) | ADR-0019 staged validation, candidate/finalization semantics, full-validation oracle, and operation gating |
@@ -100,10 +100,10 @@ diagnostic semantics without deciding plugin runtime mechanics.
 
 | Document | Read it for | Authority caution |
 | --- | --- | --- |
-| [`collaboration-model.md`](collaboration-model.md) | Current merge behavior, Accepted Semantic Conflict v1 evidence, ADR-0030 canonical delta evidence, ADR-0032 execution/transition taxonomy, ADR-0033 snapshot-first history profiles, and broader collaboration direction | ADR-0011 merge behavior, ADR-0031 conflict evidence, ADR-0029 snapshot/history boundary, ADR-0030 direct-state evidence, ADR-0032 taxonomy, and ADR-0033 bounded history/checkpoint guarantees are Accepted; broader collaboration remains Open Question |
+| [`collaboration-model.md`](collaboration-model.md) | Current merge behavior, Accepted Semantic Conflict v1 evidence, ADR-0030 canonical delta evidence, ADR-0032 execution/transition taxonomy, ADR-0033 snapshot-first history profiles, ADR-0034 multi-document/partial-success boundary, and ADR-0035 causality/selective-convergence boundary | ADR-0011 merge behavior, ADR-0031 conflict evidence, ADR-0029 snapshot/history boundary, ADR-0030 direct-state evidence, ADR-0032 taxonomy, ADR-0033 bounded history/checkpoint guarantees, ADR-0034 team policy/recovery constraints, and ADR-0035 logical collaboration boundary are Accepted; concrete clocks, DTOs, transport/topology, named text/ordered convergent datatypes, libraries, compaction, and runtime implementation remain Deferred |
 | [`conflict-resolution.md`](conflict-resolution.md) | Normative `tachiko.semantic-conflict/v1` logical contract: typed targets/facets, three structural conflict kinds, logical identity, canonical ordering, and separation from semantic finalization failure | Accepted under ADR-0031 and realized by #223 in the production merge/workspace boundary; concrete Rust/CLI shapes remain replaceable and no codec, wire, or SDK contract is stabilized |
-| [`operation-log-model.md`](operation-log-model.md) | Reconciled Command/attempt/revision/delta/receipt/optional-transition vocabulary plus ADR-0033 history profiles, checkpoints, replay verification, compaction, failure recovery, and Git boundary | ADR-0029, ADR-0032, and ADR-0033 logical guarantees are Accepted; concrete DTO/wire/storage/engine/adapter mechanics remain Deferred to separately Ready work |
-| [`event-sourcing-model.md`](event-sourcing-model.md) | Reconciled semantic-event meaning and bounded snapshot-first use of event-sourcing techniques | ADR-0029 rejects core event sourcing, ADR-0032 defines semantic event as optional retained publication evidence, and ADR-0033 accepts only explicit retained-evidence or verified-tail techniques; concrete implementation remains Deferred |
+| [`operation-log-model.md`](operation-log-model.md) | Reconciled Command/attempt/revision/delta/receipt/optional-transition vocabulary plus ADR-0033 history profiles, ADR-0034 cross-effect recovery, and ADR-0035 causal-evidence separation | ADR-0029, ADR-0032, ADR-0033, ADR-0034, and ADR-0035 logical guarantees are Accepted; concrete DTO/wire/storage/causal/engine/adapter/coordinator mechanics remain Deferred to separately Ready work |
+| [`event-sourcing-model.md`](event-sourcing-model.md) | Reconciled semantic-event meaning, bounded snapshot-first use of event-sourcing techniques, ADR-0034 forward recovery, and ADR-0035 causal-evidence separation | ADR-0029 rejects core event sourcing, ADR-0032 defines semantic event as optional retained publication evidence, ADR-0033 accepts only explicit retained-evidence or verified-tail techniques, ADR-0034 forbids false cross-effect rollback, and ADR-0035 keeps causal collaboration evidence non-authoritative; concrete implementation remains Deferred |
 
 Do not infer that event sourcing, universal CRDT/OT, or a persisted operation
 log are selected merely because design documents exist for them. ADR-0029
@@ -113,8 +113,11 @@ taxonomy and receipt separation. ADR-0033 fixes the bounded snapshot-only,
 retained-evidence, and verified-tail profiles plus checkpoint, replay,
 compaction, failure-recovery, commitment, and Git-association boundaries without
 selecting production DTOs or mechanisms. ADR-0031 separately fixes the
-structural conflict evidence contract without selecting realtime transport or
-conflict-resolution UI.
+structural conflict evidence contract. ADR-0035 fixes causality as optional
+collaboration evidence, snapshot-rooted resynchronization, selective declared
+convergence, ordinary semantic merge/authorization/validation for structured
+meaning, and Git non-causal identity without selecting concrete collaboration
+mechanics.
 
 ## Choosing the right source
 

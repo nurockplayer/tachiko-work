@@ -2,6 +2,7 @@
 
 Decision state: Mixed — core event sourcing Rejected by ADR-0029; ADR-0032
 semantic-event meaning and ADR-0033 bounded snapshot-first history techniques
+Accepted; ADR-0034 forward-recovery and ADR-0035 causal-evidence constraints
 Accepted; concrete implementations Deferred
 
 Implementation state: Not implemented
@@ -12,6 +13,10 @@ and
 [ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md),
 with optional history profiles defined by
 [ADR-0033](../decisions/ADR-0033-snapshot-first-semantic-history-and-checkpoints.md)
+and cross-effect recovery constrained by
+[ADR-0034](../decisions/ADR-0034-team-workspace-policy-and-recovery-boundary.md),
+with collaboration causal evidence separated by
+[ADR-0035](../decisions/ADR-0035-collaboration-causality-and-selective-convergence-boundary.md)
 
 Decision provenance: [#49](https://github.com/nurockplayer/tachiko-work/issues/49)
 
@@ -75,6 +80,10 @@ redaction first establishes a verified complete checkpoint, then mints new
 history/checkpoint identity and discloses the new boundary. Snapshot/history
 partial failures are reported truthfully; repair recovers real evidence or
 declares a new boundary and never manufactures continuity.
+ADR-0034 generalizes that rule across coordinated effect domains: an installed
+semantic revision is not rewound because optional history, Git, an external
+effect, or coordination later fails. Recovery moves forward from observed
+truth, and an unknown external outcome is reconciled before retry.
 
 ## Relationship with Git
 
@@ -90,7 +99,8 @@ mirroring, or migration creates new association evidence rather than silently
 retargeting an existing association. Exact integrity bytes, signatures, and
 trust remain with #53; concrete Git adapters require separately Ready work.
 
-Issue #50 owns offline causality and selective CRDT/OT mechanics.
+ADR-0035 resolves the logical offline-causality and selective-convergence
+boundary while concrete causal and CRDT/OT mechanics remain separately owned.
 
 ## Constraints already accepted
 
@@ -100,6 +110,8 @@ Any future profile must preserve these constraints:
   history;
 - pre-publication failure and `NoChange` create no semantic event;
 - a post-install failure does not erase the installed revision occurrence;
+- cross-effect recovery moves forward from observed truth rather than claiming
+  multi-domain rollback;
 - retained transitions and security/provenance receipts remain distinct;
 - replay input remains distinct from retained transition and delta evidence;
 - Semantic Delta remains evidence, not an apply language;

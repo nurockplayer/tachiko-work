@@ -1,8 +1,10 @@
 # Semantic Operation Log Model
 
 Decision state: Mixed — ADR-0029 history boundary, ADR-0032 transition
-taxonomy, and ADR-0033 snapshot-first retained-history profiles Accepted;
-concrete DTO, wire, storage, and operational mechanics Deferred
+taxonomy, ADR-0033 snapshot-first retained-history profiles, ADR-0034
+cross-effect recovery boundary, and ADR-0035 causal-evidence separation
+Accepted; concrete DTO, wire, storage, causal, and operational mechanics
+Deferred
 
 Implementation state: No first-class persisted semantic operation/history log
 
@@ -12,6 +14,10 @@ and
 [ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md),
 with history profiles, checkpoints, and replay verification defined by
 [ADR-0033](../decisions/ADR-0033-snapshot-first-semantic-history-and-checkpoints.md)
+and cross-effect recovery constrained by
+[ADR-0034](../decisions/ADR-0034-team-workspace-policy-and-recovery-boundary.md),
+with collaboration causal evidence separated by
+[ADR-0035](../decisions/ADR-0035-collaboration-causality-and-selective-convergence-boundary.md)
 
 Decision provenance: [#49](https://github.com/nurockplayer/tachiko-work/issues/49)
 
@@ -153,9 +159,22 @@ Every checkpoint, transition, replay input, and history profile pins its
 interpretation contracts; unsupported versions fail the capability closed and
 a new verified checkpoint may explicitly close an older replay range.
 
+Under ADR-0034, multi-document work is orchestration over separate exact-base,
+authorized publications. Semantic publication, host persistence, required
+security/provenance evidence, optional history/checkpoints, Git, external
+effects, and collaboration coordination retain separate truthful outcomes. A
+later failure does not erase an installed revision; recovery reconciles current
+snapshots plus genuine evidence and moves forward through a new authorized
+command when semantic compensation is needed. An uncertain external outcome is
+reconciled before retry. External correlation, delivery deduplication, and
+idempotency MUST NOT be derived by requirement from semantic proposal,
+revision, snapshot, transition, receipt, checkpoint, or Git identity; the
+authoritative effect boundary owns its separately Deferred mechanism.
+
 Concrete public DTOs, wire mappings, codecs, storage layouts, checkpoint/replay
-engines, retention tooling, and Git adapters require separately Ready
-implementation work. Issue #50 owns offline causal metadata, DAG/clock
-mechanics, resynchronization, and selective CRDT/OT. Issue #11 owns broader
-multi-document, host, external-effect, durability, rollback, and recovery
-transaction semantics. Issue #47 owns cross-version branch migration behavior.
+engines, retention tooling, Git adapters, cross-effect coordinators, and
+external-effect protocols require separately Ready implementation work.
+ADR-0035 resolves the logical offline-causality, resynchronization, and
+selective-convergence boundary while concrete clocks, DAGs, engines, and
+CRDT/OT mechanisms remain separately owned. Issue #47 owns cross-version branch
+migration behavior.

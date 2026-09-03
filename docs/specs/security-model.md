@@ -1,7 +1,13 @@
 # Security Model
 
 Decision state: Mixed. The semantic authorization laws summarized from
-ADR-0007 and ADR-0026 are Accepted; ADR-0019 owns diagnostic-code meaning.
+[ADR-0007](../decisions/ADR-0007-ai-semantic-interaction-model.md) and
+[ADR-0026](../decisions/ADR-0026-scoped-semantic-authorization-and-approval.md)
+are Accepted;
+[ADR-0034](../decisions/ADR-0034-team-workspace-policy-and-recovery-boundary.md)
+additionally fixes, at its Accepted logical boundary, trusted-host reusable
+policy, Human administration, and team-audit rules; ADR-0019 owns
+diagnostic-code meaning.
 Issue #29 supplies the provisional trusted in-process authorization/Approval
 lifecycle seam, and #30 supplies a provisional provider-facing instruction/data,
 bypass-denial, safe-code, and host-effect-denial adapter over it. Semantic
@@ -31,6 +37,9 @@ independent prerequisites; none substitutes for another.
 - migration sandboxing
 - untrusted file handling
 - replay/revocation and provenance
+- explicit Human authority for policy and Grant administration
+- reusable team policy that only selects or constrains ADR-0026 authority
+- team audit as evidence rather than semantic or authorization authority
 - separate filesystem/network/process/Git/plugin/deployment authority
 - future cross-boundary cryptographic integrity profiles
 
@@ -58,6 +67,20 @@ the provider-neutral MVP contract:
 The MVP does not select canonical approval bytes, a digest/hash/signature/MAC,
 portable bearer token, public Rust/wire DTO, enterprise IAM, or generic policy
 language.
+
+[ADR-0034](../decisions/ADR-0034-team-workspace-policy-and-recovery-boundary.md)
+permits a trusted host to select the applicable existing ADR-0026 requirements
+and add stricter reusable-policy conditions. Policy MUST NOT remove a tuple
+from the trusted `AuthorizationFootprint`, weaken complete Grant coverage, or
+otherwise narrow the required authority. Policy and Grant administration
+require explicit Human authority; trusted host policy cannot independently
+issue a team-policy Grant, Human kind alone is insufficient, and Delegated
+principals cannot self-escalate. Team/organization/role/path/provider facts may
+select host policy but do not become semantic scope or authority. Additional
+admin/policy/effect audit remains evidence, must disclose retention/redaction
+gaps truthfully, and cannot replace ADR-0026 minimum provenance. Exact roles,
+IAM/SSO/SCIM, quorum, audit storage, external-effect mechanisms, and runtime
+authorization changes remain Deferred.
 
 Denials remain machine-distinguishable from semantic `ValidationReport` and
 must not disclose semantic subjects outside Query authority.
