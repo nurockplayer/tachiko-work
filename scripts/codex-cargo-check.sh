@@ -73,6 +73,18 @@ CARGO_INCREMENTAL=1 CARGO_TARGET_DIR="${test_dir}/incremental-target" \
 assert_contains "${incremental_error}" "incremental=1"
 assert_contains "${incremental_error}" "sccache=disabled"
 
+foreign_repo="${test_dir}/foreign-repo"
+git init --quiet "${foreign_repo}"
+inherited_output="${test_dir}/inherited.out"
+inherited_error="${test_dir}/inherited.err"
+GIT_DIR="${foreign_repo}/.git" GIT_WORK_TREE="${foreign_repo}" \
+  GIT_COMMON_DIR="${foreign_repo}/.git" GIT_CEILING_DIRECTORIES="${foreign_repo}" \
+  CARGO_TARGET_DIR="${test_dir}/inherited-target" \
+  bash "${cargo_script}" check --manifest-path "${test_dir}/Cargo.toml" \
+  >"${inherited_output}" 2>"${inherited_error}"
+assert_contains "${inherited_error}" "target=${test_dir}/inherited-target"
+[[ -e "${test_dir}/inherited-target/debug/deps" ]]
+
 outside_error="${test_dir}/outside.err"
 outside_status=0
 CARGO_TARGET_DIR="${repo_root}/../shared-codex-target" \

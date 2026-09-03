@@ -35,6 +35,12 @@ command -v cargo >/dev/null 2>&1 || die "cargo is required"
   usage >&2
   exit 1
 }
+
+# Git environment overrides can make rev-parse resolve a different checkout
+# from the directory in which this helper was invoked. They would also leak
+# that foreign repository context into Cargo's child process.
+unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_CEILING_DIRECTORIES
+
 for cargo_argument in "$@"; do
   [[ "${cargo_argument}" == "--" ]] && break
   case "${cargo_argument}" in

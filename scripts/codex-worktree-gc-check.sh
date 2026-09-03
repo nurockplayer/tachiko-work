@@ -265,6 +265,23 @@ assert_contains "${blocked_apply_output}" "out-of-scope prunable worktree"
 [[ ! -e "${prune_log}" ]]
 "${real_git}" -C "${primary}" worktree prune --expire=now >/dev/null
 
+in_scope_stale_path="${codex_root}/stale-in-scope/tachiko-work"
+mkdir -p "$(dirname "${in_scope_stale_path}")"
+"${real_git}" -C "${primary}" worktree add --quiet -b codex/in-scope-stale \
+  "${in_scope_stale_path}" HEAD
+rm -r -- "${in_scope_stale_path}"
+
+in_scope_blocked_output="${test_dir}/in-scope-blocked-apply.txt"
+in_scope_blocked_status=0
+run_gc_from "${current_path}" "${primary}" --apply >"${in_scope_blocked_output}" \
+  2>"${test_dir}/in-scope-blocked-apply.err" || in_scope_blocked_status="$?"
+[[ "${in_scope_blocked_status}" -eq 2 ]]
+assert_contains "${in_scope_blocked_output}" "in-scope prunable worktree"
+[[ -d "${merged_path}" ]]
+[[ ! -e "${prune_log}" ]]
+"${real_git}" -C "${primary}" worktree prune --expire=now >/dev/null
+[[ ! -e "${in_scope_stale_path}" ]]
+
 apply_output="${test_dir}/apply.txt"
 apply_status=0
 run_gc_from "${current_path}" "${primary}" --apply >"${apply_output}" \

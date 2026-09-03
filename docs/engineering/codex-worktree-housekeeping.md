@@ -64,13 +64,14 @@ result. Other safe classifications do not authorize deletion.
 Dry-run mode does not invoke `git worktree remove` or `git worktree prune`.
 Apply mode rechecks each candidate against live local/GitHub state, removes it
 without `--force`, and then invokes `git worktree prune --verbose` only after a
-fresh scope guard proves that no prunable registration exists outside the Codex
-root. If an out-of-scope prunable registration appears, apply performs no
-candidate removal before the guard and skips prune after a race; it reports a
-blocked result. Prune is part of the post-terminal registration lifecycle; it
-does not authorize removal of a worktree. The command protects both the
-selected `--repository` checkout and the actual worktree containing its
-invoking process, so it never deletes the worktree in which it runs.
+fresh guard proves that no prunable registration exists anywhere in the
+repository. An in-scope or out-of-scope prunable registration blocks apply
+before candidate removal and skips prune after a race; it reports a blocked
+result rather than discarding an unresolved registration. Prune is part of the
+post-terminal registration lifecycle; it does not authorize removal of a
+worktree. The command protects both the selected `--repository` checkout and
+the actual worktree containing its invoking process, so it never deletes the
+worktree in which it runs.
 
 The summary reports the number of registered Codex worktrees, each
 classification, and estimated/proven reclaimable space from `du`. An

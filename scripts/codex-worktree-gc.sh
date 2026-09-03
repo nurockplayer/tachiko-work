@@ -559,7 +559,11 @@ check_prune_scope() {
     case "${line}" in
       worktree\ *)
         if [[ -n "${registered_path}" && "${registered_prunable}" == "1" ]] &&
-          ! path_is_in_codex_root "${registered_path}"; then
+          path_is_in_codex_root "${registered_path}"; then
+          prune_scope_reason="in-scope prunable worktree: ${registered_path}"
+          return 1
+        fi
+        if [[ -n "${registered_path}" && "${registered_prunable}" == "1" ]]; then
           prune_scope_reason="out-of-scope prunable worktree: ${registered_path}"
           return 1
         fi
@@ -573,7 +577,11 @@ check_prune_scope() {
   done <<< "${fresh_listing}"
 
   if [[ -n "${registered_path}" && "${registered_prunable}" == "1" ]] &&
-    ! path_is_in_codex_root "${registered_path}"; then
+    path_is_in_codex_root "${registered_path}"; then
+    prune_scope_reason="in-scope prunable worktree: ${registered_path}"
+    return 1
+  fi
+  if [[ -n "${registered_path}" && "${registered_prunable}" == "1" ]]; then
     prune_scope_reason="out-of-scope prunable worktree: ${registered_path}"
     return 1
   fi
