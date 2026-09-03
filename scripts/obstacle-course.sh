@@ -102,8 +102,8 @@ verify_materialized_source_tree() {
   local source_root="$1"
   local expected_commit="$2"
   local checkpoint="$3"
-  local tree_entries entry metadata mode type object path absolute
-  local observed_type observed_mode observed_blob
+  local tree_entries entry metadata mode type expected_blob path absolute
+  local expected_type expected_mode observed_type observed_mode observed_blob
 
   tree_entries="${run_dir}/source-tree-${checkpoint}.entries"
   if ! LC_ALL=C git -C "${source_root}" ls-tree -r -z --full-tree \
@@ -122,8 +122,10 @@ verify_materialized_source_tree() {
     mode="${metadata%% *}"
     metadata="${metadata#* }"
     type="${metadata%% *}"
-    object="${metadata#* }"
+    expected_blob="${metadata#* }"
     absolute="${source_root}/${path}"
+    expected_type=""
+    expected_mode=""
     observed_type="missing"
     observed_mode="-"
     observed_blob="-"
@@ -135,6 +137,8 @@ verify_materialized_source_tree() {
 
     case "${mode}" in
       100644|100755)
+        expected_type="regular-file"
+        expected_mode="${mode}"
         if [[ -L "${absolute}" ]]; then
           observed_type="symlink"
         elif [[ -f "${absolute}" ]]; then
@@ -156,6 +160,8 @@ verify_materialized_source_tree() {
         fi
         ;;
       120000)
+        expected_type="symlink"
+        expected_mode="120000"
         if [[ -L "${absolute}" ]]; then
           observed_type="symlink"
           observed_mode="120000"
@@ -172,20 +178,10 @@ verify_materialized_source_tree() {
         ;;
     esac
 
-    if [[ "${mode}" == "100644" || "${mode}" == "100755" ]]; then
-      if [[ "${observed_type}" != "regular-file" || \
-        "${observed_mode}" != "${mode}" ]]; then
-        echo "obstacle-course: blob-exact source mismatch checkpoint=${checkpoint} path=${path} expected_type=regular-file expected_mode=${mode} expected_blob=${object} observed_type=${observed_type} observed_mode=${observed_mode} observed_blob=${observed_blob}" >&2
-        return 1
-      fi
-    elif [[ "${observed_type}" != "symlink" || \
-      "${observed_mode}" != "120000" ]]; then
-      echo "obstacle-course: blob-exact source mismatch checkpoint=${checkpoint} path=${path} expected_type=symlink expected_mode=120000 expected_blob=${object} observed_type=${observed_type} observed_mode=${observed_mode} observed_blob=${observed_blob}" >&2
-      return 1
-    fi
-
-    if [[ "${observed_blob}" != "${object}" ]]; then
-      echo "obstacle-course: blob-exact source mismatch checkpoint=${checkpoint} path=${path} expected_type=${type} expected_mode=${mode} expected_blob=${object} observed_type=${observed_type} observed_mode=${observed_mode} observed_blob=${observed_blob}" >&2
+    if [[ "${observed_type}" != "${expected_type}" || \
+      "${observed_mode}" != "${expected_mode}" || \
+      "${observed_blob}" != "${expected_blob}" ]]; then
+      echo "obstacle-course: blob-exact source mismatch checkpoint=${checkpoint} path=${path} expected_type=${expected_type} expected_mode=${expected_mode} expected_blob=${expected_blob} observed_type=${observed_type} observed_mode=${observed_mode} observed_blob=${observed_blob}" >&2
       return 1
     fi
   done <"${tree_entries}"

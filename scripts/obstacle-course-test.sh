@@ -931,6 +931,9 @@ chmod +x "${filter_command}"
 "${filter_git[@]}" -C "${filter_repo}" config filter.roundtrip.smudge \
   "${filter_command} smudge"
 "${filter_git[@]}" -C "${filter_repo}" config filter.roundtrip.required true
+expected_filter_blob="$("${filter_git[@]}" -C "${filter_repo}" rev-parse HEAD:filtered-fixture)"
+observed_filter_blob="$(printf 'filtered fixture materialized\n' | \
+  "${filter_git[@]}" -C "${filter_repo}" hash-object --no-filters --stdin)"
 
 if [[ -n "$("${filter_git[@]}" -C "${filter_repo}" status --porcelain)" ]]; then
   echo "obstacle-course test: filter fixture is not clean before execution" >&2
@@ -965,7 +968,8 @@ if PATH="${filter_bin_dir}:${PATH}" \
   echo "obstacle-course test: clean/smudge filter unexpectedly passed exact-head verification" >&2
   exit 1
 fi
-if ! grep -F "blob-exact source mismatch checkpoint=before-execution path=filtered-fixture" \
+expected_filter_error="obstacle-course: blob-exact source mismatch checkpoint=before-execution path=filtered-fixture expected_type=regular-file expected_mode=100644 expected_blob=${expected_filter_blob} observed_type=regular-file observed_mode=100644 observed_blob=${observed_filter_blob}"
+if ! grep -Fqx "${expected_filter_error}" \
   "${filter_err}" >/dev/null; then
   sed 's/^/  /' "${filter_err}" >&2
   echo "obstacle-course test: filter materialization mismatch was not rejected" >&2
