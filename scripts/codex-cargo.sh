@@ -36,6 +36,7 @@ command -v cargo >/dev/null 2>&1 || die "cargo is required"
   exit 1
 }
 for cargo_argument in "$@"; do
+  [[ "${cargo_argument}" == "--" ]] && break
   case "${cargo_argument}" in
     --target-dir|--target-dir=*)
       die "pass a worktree-local CARGO_TARGET_DIR; --target-dir is not allowed"

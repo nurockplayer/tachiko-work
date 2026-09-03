@@ -73,6 +73,9 @@ repo_mismatch_path="$(add_worktree repo-mismatch codex/repo-mismatch)"
 github_unavailable_path="$(add_worktree gh-unavailable codex/gh-unavailable)"
 closed_path="$(add_worktree closed codex/closed)"
 current_path="$(add_worktree current codex/current)"
+detached_path="${codex_root}/detached/tachiko-work"
+mkdir -p "$(dirname "${detached_path}")"
+"${real_git}" -C "${primary}" worktree add --quiet --detach "${detached_path}" HEAD
 outside_path="${test_dir}/developer-worktree"
 "${real_git}" -C "${primary}" worktree add --quiet -b codex/outside \
   "${outside_path}" HEAD
@@ -187,7 +190,9 @@ assert_contains "${dry_output}" "branch-mismatch/tachiko-work"
 assert_contains "${dry_output}" "repo-mismatch/tachiko-work"
 assert_contains "${dry_output}" "gh-unavailable/tachiko-work"
 assert_contains "${dry_output}" "closed unmerged PR #108"
-assert_contains "${dry_output}" "SUMMARY active=12"
+assert_contains "${dry_output}" "detached/tachiko-work"
+assert_contains "${dry_output}" "worktree is detached"
+assert_contains "${dry_output}" "SUMMARY active=13"
 assert_contains "${dry_output}" "PRUNE skipped (dry-run; no mutation)"
 assert_not_contains "${dry_output}" "developer-worktree"
 [[ ! -e "${prune_log}" ]]
@@ -221,6 +226,17 @@ assert_contains "${unavailable_output}" "UNKNOWN"
 assert_contains "${unavailable_output}" "GitHub repository state is unavailable"
 [[ ! -e "${prune_log}" ]]
 
+foreign_origin_output="${test_dir}/foreign-origin.txt"
+"${real_git}" -C "${primary}" remote set-url origin \
+  git@gitlab.example.invalid:nurockplayer/tachiko-work.git
+foreign_origin_status=0
+run_gc "${primary}" >"${foreign_origin_output}" 2>"${test_dir}/foreign-origin.err" ||
+  foreign_origin_status="$?"
+[[ "${foreign_origin_status}" -eq 2 ]]
+assert_contains "${foreign_origin_output}" "repository origin identity is unresolved"
+"${real_git}" -C "${primary}" remote set-url origin \
+  git@github.com:nurockplayer/tachiko-work.git
+
 apply_output="${test_dir}/apply.txt"
 apply_status=0
 run_gc "${current_path}" --apply >"${apply_output}" 2>"${test_dir}/apply.err" ||
@@ -247,6 +263,7 @@ fi
 [[ -d "${github_unavailable_path}" ]]
 [[ -d "${closed_path}" ]]
 [[ -d "${current_path}" ]]
+[[ -d "${detached_path}" ]]
 [[ -d "${outside_path}" ]]
 
 repeat_output="${test_dir}/repeat.txt"

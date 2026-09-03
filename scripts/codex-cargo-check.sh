@@ -103,4 +103,12 @@ CARGO_TARGET_DIR="${repo_root}/target" \
 assert_contains "${cli_target_error}" "--target-dir is not allowed"
 [[ ! -e "${repo_root}/../shared-codex-target-cli" ]]
 
+delimiter_error="${test_dir}/delimiter.err"
+env -u CARGO_INCREMENTAL CARGO_TARGET_DIR="${test_dir}/delimiter-target" \
+  TACHIKO_CODEX_SCCACHE=0 bash "${cargo_script}" run \
+  --manifest-path "${test_dir}/Cargo.toml" -- --target-dir \
+  >"${test_dir}/delimiter.out" 2>"${delimiter_error}"
+assert_contains "${delimiter_error}" "sccache=disabled"
+[[ -x "${test_dir}/delimiter-target/debug/codex-cargo-fixture" ]]
+
 echo "codex Cargo check passed: private target guard, incremental default, sccache opt-in, and uncached fallback"

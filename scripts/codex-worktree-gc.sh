@@ -94,14 +94,21 @@ run_gh() {
 
 remote_slug() {
   local remote="$1"
+  local host
   remote="${remote%/}"
   remote="${remote%.git}"
   case "${remote}" in
     git@*:*)
+      host="${remote#git@}"
+      host="${host%%:*}"
+      [[ "${host}" == "github.com" ]] || return 1
       remote="${remote#*:}"
       ;;
     ssh://*/*|https://*/*|http://*/*)
       remote="${remote#*://}"
+      host="${remote%%/*}"
+      host="${host##*@}"
+      [[ "${host}" == "github.com" ]] || return 1
       remote="${remote#*/}"
       ;;
     *)
