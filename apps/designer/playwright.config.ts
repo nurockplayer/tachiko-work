@@ -2,6 +2,7 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
+  testIgnore: "experimental-client.spec.ts",
   fullyParallel: false,
   retries: 0,
   reporter: "line",

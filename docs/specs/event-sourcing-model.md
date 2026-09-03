@@ -1,66 +1,123 @@
 # Event Sourcing Model
 
-Decision state: Mixed — core event sourcing Rejected by ADR-0029; optional techniques Open Question
+Decision state: Mixed — core event sourcing Rejected by ADR-0029; ADR-0032
+semantic-event meaning and ADR-0033 bounded snapshot-first history techniques
+Accepted; ADR-0034 forward-recovery and ADR-0035 causal-evidence constraints
+Accepted; concrete implementations Deferred
 
-Implementation state: Not implemented in v0.1
+Implementation state: Not implemented
 
 Authority:
 [ADR-0029](../decisions/ADR-0029-current-state-authority-and-optional-history.md)
+and
+[ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md),
+with optional history profiles defined by
+[ADR-0033](../decisions/ADR-0033-snapshot-first-semantic-history-and-checkpoints.md)
+and cross-effect recovery constrained by
+[ADR-0034](../decisions/ADR-0034-team-workspace-policy-and-recovery-boundary.md),
+with collaboration causal evidence separated by
+[ADR-0035](../decisions/ADR-0035-collaboration-causality-and-selective-convergence-boundary.md)
 
-Decision owner for optional history mechanics: #49
+Decision provenance: [#49](https://github.com/nurockplayer/tachiko-work/issues/49)
 
 ## Authority note
 
-Event sourcing is not Tachiko Work's core persistence model.
+Event sourcing is not Tachiko Work's core persistence model. Current semantic
+state and complete standalone snapshots are authoritative. A retained event
+stream is not the system of record, and a snapshot is not merely a replay
+optimization.
 
-ADR-0029 accepts current semantic state and complete standalone snapshots as
-authoritative. A retained event stream is not the system of record, and a
-snapshot is not merely a replay optimization. Whether an optional history
-profile should use event-sourcing techniques for a declared bounded guarantee
-remains unresolved.
+When Tachiko documentation uses **semantic event**, it means ADR-0032's one
+optional **retained semantic transition** concept: immutable evidence that one
+actual non-no-op semantic publication occurred, relating the exact before and
+after revision occurrences and canonical ADR-0030 A-to-B Semantic Delta
+evidence.
 
-This document preserves the conceptual model and benefits worth evaluating. It must not be used as authority to make the semantic core or `.ro` / `.roproj` persistence depend on replaying an event stream.
+A semantic event is not:
 
-## Optional-profile hypothesis
+- a Command, AtomicBatch, SemanticPatch, Execute request, or mutation program;
+- a pre-publication attempt, denial, stale result, conflict, or `NoChange`;
+- authoritative current state or a mandatory replay input;
+- an ADR-0026 security/provenance receipt; or
+- checkpoint, content, Git, timestamp, path, provider, or human identity.
 
-An optional Tachiko history profile may make one state transition explainable
-as the result of applying retained semantic events from a declared complete
-checkpoint:
+General retention is optional. Required ADR-0026 security/provenance evidence
+survives independently when no semantic-event history is retained.
+
+## Accepted optional profiles
+
+ADR-0033 defines three explicit logical capability levels: snapshot-only,
+retained evidence, and verified tail. Only the verified-tail profile makes a
+replay claim, and that claim has this shape:
 
 ```text
-Declared complete checkpoint
-      |
-      v
-Complete retained event tail
-      |
-      v
-Verified state equal to the authoritative snapshot
+complete validated checkpoint
++ complete contiguous supported replay tail
+-> reconstructed candidate
+-> canonical equality with the recorded authoritative snapshot
 ```
 
-Potential benefits to investigate include:
+A retained semantic transition and its Semantic Delta remain publication
+evidence, not replay instructions. A replay-capable tail additionally retains
+sufficient deterministic, version-pinned replay input, normally the exact
+accepted `Command | AtomicBatch`, required semantic configuration/resources,
+and the recorded outcome. Imports, migrations, merges/rebaselines, and other
+unsupported intent boundaries begin a new verified checkpoint or disclosed
+boundary instead of being represented as synthetic Commands.
 
-- semantic history
-- reproducible states
-- collaboration support
-- AI reasoning over changes
-- debugging and auditability
+The checkpoint snapshot commitment binds to the first replay record's exact base
+and `before` state. Replay verifies that start binding and every reconstructed
+outcome/transition before using it as the next exact base; canonical equality at
+the final snapshot is an additional end-to-end check.
+
+Replay is deterministic and side-effect free. Missing, corrupt, unsupported,
+non-deterministic, discontinuous, or mismatching history fails the history
+capability closed without replacing or reinterpreting an independently valid
+authoritative snapshot. V1 defines no unqualified `full history` profile.
+
+Physical repack preserves logical records and coverage. Retention compaction or
+redaction first establishes a verified complete checkpoint, then mints new
+history/checkpoint identity and discloses the new boundary. Snapshot/history
+partial failures are reported truthfully; repair recovers real evidence or
+declares a new boundary and never manufactures continuity.
+ADR-0034 generalizes that rule across coordinated effect domains: an installed
+semantic revision is not rewound because optional history, Git, an external
+effect, or coordination later fails. Recovery moves forward from observed
+truth, and an unknown external outcome is reconciled before retry.
 
 ## Relationship with Git
 
-Git already records repository history.
+Git may retain repository history while an optional Tachiko history profile
+retains domain-level transition evidence that raw Git cannot express directly.
+Neither history is semantic state authority. A Git commit, tree, blob, ref,
+repository, or host is not revision-occurrence or semantic-event identity.
 
-A future Tachiko semantic history layer could record domain-level intent or applied semantic changes that raw Git history cannot express directly.
+ADR-0033 defines Git association as optional immutable evidence with many-to-
+many cardinality between Tachiko checkpoint/history commitments and Git
+commits/repositories. Mutable refs are locators. Rebase, squash, recommit,
+mirroring, or migration creates new association evidence rather than silently
+retargeting an existing association. Exact integrity bytes, signatures, and
+trust remain with #53; concrete Git adapters require separately Ready work.
 
-Those histories must remain optional and non-authoritative. Their retention,
-checkpoint, compaction, and reconstruction guarantees are Open Questions owned
-by #49.
+ADR-0035 resolves the logical offline-causality and selective-convergence
+boundary while concrete causal and CRDT/OT mechanics remain separately owned.
 
 ## Constraints already accepted
 
-Any future history design must preserve these existing constraints:
+Any future profile must preserve these constraints:
 
-- current semantic state remains meaningful independently of raw storage representation;
-- Git is storage/collaboration infrastructure, not the semantic model;
-- event sourcing and CRDT are not current MVP dependencies;
-- history machinery must not silently redefine document meaning;
-- collaboration convenience must not require silent loss of disputed human intent.
+- complete current semantic state remains usable without replay or retained
+  history;
+- pre-publication failure and `NoChange` create no semantic event;
+- a post-install failure does not erase the installed revision occurrence;
+- cross-effect recovery moves forward from observed truth rather than claiming
+  multi-domain rollback;
+- retained transitions and security/provenance receipts remain distinct;
+- replay input remains distinct from retained transition and delta evidence;
+- Semantic Delta remains evidence, not an apply language;
+- Git remains optional and non-semantic; and
+- collaboration convenience must not silently discard disputed human intent.
+
+Concrete retained-history DTOs, codecs, storage, checkpoint/replay engines,
+retention tooling, and Git adapters are not implemented or authorized by this
+specification.

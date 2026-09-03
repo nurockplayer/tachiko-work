@@ -11,10 +11,11 @@ Authority: [ADR-0031](../decisions/ADR-0031-semantic-merge-conflict-protocol.md)
 
 Decision issue: [#46](https://github.com/nurockplayer/tachiko-work/issues/46)
 
-The current `merge-engine` Rust conflict shape is implementation evidence. Its
-path-oriented address, concrete enum/serialization shape, and legacy
-three-way-selection of `Document.id` are not this protocol DTO and must not be
-treated as permanent public meaning.
+Issue #223 makes the current `merge-engine` Rust conflict shape implementation
+evidence for this logical contract: same-Document admission and typed
+target/facet/kind/fact semantics are realized in the production merge/workspace
+boundary. The concrete Rust/CLI shape is not a stabilized codec, wire, or public
+SDK contract and must not be treated as permanent public meaning.
 
 ## Principle
 
@@ -50,8 +51,9 @@ conflict-free combined candidate is finalized again as specified below.
 This same-Document rule is the explicit ADR-0031 amendment to ADR-0011's
 original v0.1 merge surface, which treated `Document.id` as an ordinary
 three-way-selected unit. Document title and the remaining ADR-0011 merge laws
-are unchanged. Until separate production realization work lands, the current
-merge-engine behavior that still selects `Document.id` is implementation lag.
+are unchanged. The pre-#223 merge-engine behavior that selected `Document.id`
+is historical implementation lag; #223 removes that selection at the production
+merge/workspace boundary without stabilizing a codec, wire, or SDK shape.
 
 The existing CLI's `ours` and `theirs` terminology maps to logical `left` and
 `right`. Those presentation labels are not conflict identity.
@@ -367,26 +369,32 @@ base/left/right facts.
 
 ## Implementation status and follow-up
 
-The current `merge-engine` demonstrates deterministic three-way selection,
-typed base/ours/theirs payload, stable-ID-aware semantic behavior inherited from
-the current model, and no partial output on conflict. Its current `path` address,
-concrete Rust conflict shape, and three-way selection of `Document.id` are
-Provisional implementation evidence and do not satisfy the complete logical v1
-protocol above by themselves.
+The production merge/workspace boundary realizes this logical v1 contract under
+[Issue #223](https://github.com/nurockplayer/tachiko-work/issues/223). It enforces
+same-Document finalized-input admission, removes three-way selection of
+`Document.id`, returns the typed target/facet/kind/fact conflict object in
+canonical semantic order, qualifies stored fields by each Entity state's stored
+`SchemaId`, preserves parent-child suppression, and executes all 13 normative
+logical fixtures above. Candidate validation and complete calculation remain
+workspace finalization evidence rather than another conflict kind.
 
-This authority/specification does not authorize production DTO, codec, CLI
-output, WASM/public transport, or merge-engine changes. After this authority is
-merged, a separate Ready implementation Issue must own production realization,
-including same-Document admission enforcement, removal of mergeable
-`Document.id`, and concrete executable fixtures for the accepted logical fixtures
-above.
+The concrete Rust DTO and CLI rendering remain implementation-level. This
+realization does not select or stabilize a serialization codec, WASM/public
+transport, network/SDK shape, hash/UUID identity, storage format, resolver UI,
+or Git merge driver.
 
-Issues [#47](https://github.com/nurockplayer/tachiko-work/issues/47),
-[#48](https://github.com/nurockplayer/tachiko-work/issues/48),
-[#49](https://github.com/nurockplayer/tachiko-work/issues/49), and
-[#50](https://github.com/nurockplayer/tachiko-work/issues/50) retain cross-version
-migration, operation/revision/event taxonomy, history/checkpoint/Git association,
-and causality/CRDT work respectively.
+Issue [#47](https://github.com/nurockplayer/tachiko-work/issues/47) retains
+cross-version migration work.
+[ADR-0035](../decisions/ADR-0035-collaboration-causality-and-selective-convergence-boundary.md)
+resolves causality/selective-convergence boundaries while preserving ordinary
+Semantic Conflict for structured meaning; concrete collaboration mechanics
+remain separately owned.
+[ADR-0033](../decisions/ADR-0033-snapshot-first-semantic-history-and-checkpoints.md)
+fixes the bounded logical history/checkpoint/Git-association contract; concrete
+implementations require separately Ready work.
+[ADR-0032](../decisions/ADR-0032-semantic-execution-and-transition-taxonomy.md)
+separately fixes operation/revision/event taxonomy without changing this
+conflict contract.
 
 ## Goals
 

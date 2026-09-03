@@ -1,9 +1,12 @@
 use std::collections::BTreeMap;
 
 use tachiko_formula_engine::calculate;
-use tachiko_merge_engine::{MergeOutcome, MergeValue, merge};
+use tachiko_merge_engine::{
+    ConflictFacet, ConflictFact, ConflictKind, ConflictTarget, MergeOutcome, MergeValue,
+    SchemaFieldSubject, merge,
+};
 use tachiko_semantic_core::{
-    Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
+    Date, Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
     FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
 };
 
@@ -99,6 +102,23 @@ fn with_bonus(mut document: Document) -> Document {
     document
 }
 
+fn with_release_date(mut document: Document, value: &str) -> Document {
+    document.schemas.get_mut("weapon").unwrap().fields.insert(
+        FieldId::from("release_date"),
+        field("release_date", FieldType::Date, false),
+    );
+    document
+        .entities
+        .get_mut("iron_sword")
+        .unwrap()
+        .fields
+        .insert(
+            FieldId::from("release_date"),
+            Value::Date(value.parse::<Date>().unwrap()),
+        );
+    document
+}
+
 fn with_marker_schema(mut document: Document) -> Document {
     document.schemas.insert(
         SchemaId::from("marker"),
@@ -182,18 +202,23 @@ fn divergent_key_renames_conflict_on_the_same_stable_object() {
     };
 
     assert_eq!(conflicts.len(), 1);
-    assert_eq!(conflicts[0].path, "entities.iron_sword.key");
     assert_eq!(
-        conflicts[0].base,
-        Some(MergeValue::EntityKey("iron_sword".into()))
+        conflicts[0].target(),
+        &ConflictTarget::Entity("iron_sword".into())
+    );
+    assert_eq!(conflicts[0].facet(), ConflictFacet::Key);
+    assert_eq!(conflicts[0].kind(), ConflictKind::ConcurrentChange);
+    assert_eq!(
+        conflicts[0].base(),
+        &ConflictFact::Present(MergeValue::EntityKey("iron_sword".into()))
     );
     assert_eq!(
-        conflicts[0].ours,
-        Some(MergeValue::EntityKey("moonblade".into()))
+        conflicts[0].left(),
+        &ConflictFact::Present(MergeValue::EntityKey("moonblade".into()))
     );
     assert_eq!(
-        conflicts[0].theirs,
-        Some(MergeValue::EntityKey("sunblade".into()))
+        conflicts[0].right(),
+        &ConflictFact::Present(MergeValue::EntityKey("sunblade".into()))
     );
 }
 
@@ -210,34 +235,43 @@ fn identical_two_sided_change_is_not_a_conflict() {
 }
 
 #[test]
-fn independent_document_id_and_title_changes_merge() {
-    let base = balance_document(36.0, 0.9);
-    let mut ours = base.clone();
-    ours.id = DocumentId::from("rebalanced");
-    let mut theirs = base.clone();
-    theirs.title = "Rebalanced".to_owned();
+fn divergent_date_edits_are_typed_stored_value_conflicts() {
+    let base = with_release_date(balance_document(36.0, 0.9), "2024-01-01");
+    let ours = with_release_date(base.clone(), "2024-02-29");
+    let theirs = with_release_date(base.clone(), "2025-01-01");
 
-    let MergeOutcome::Merged(merged) = merge(&base, &ours, &theirs) else {
-        panic!("independent document identity changes should merge");
+    let MergeOutcome::Conflicted(conflicts) = merge(&base, &ours, &theirs) else {
+        panic!("divergent date edits should conflict")
     };
 
-    assert_eq!(merged.id, DocumentId::from("rebalanced"));
-    assert_eq!(merged.title, "Rebalanced");
-}
-
-#[test]
-fn identical_two_sided_document_identity_change_merges() {
-    let base = balance_document(36.0, 0.9);
-    let mut changed = base.clone();
-    changed.id = DocumentId::from("rebalanced");
-    changed.title = "Rebalanced".to_owned();
-
-    let MergeOutcome::Merged(merged) = merge(&base, &changed, &changed) else {
-        panic!("identical document identity changes should merge");
-    };
-
-    assert_eq!(merged.id, DocumentId::from("rebalanced"));
-    assert_eq!(merged.title, "Rebalanced");
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(conflicts[0].facet(), ConflictFacet::StoredValue);
+    assert_eq!(
+        conflicts[0].target(),
+        &ConflictTarget::StoredEntityField {
+            entity: "iron_sword".into(),
+            schema: "weapon".into(),
+            field: "release_date".into(),
+        }
+    );
+    assert_eq!(
+        conflicts[0].base(),
+        &ConflictFact::Present(MergeValue::FieldValue(Value::Date(
+            "2024-01-01".parse().unwrap(),
+        )))
+    );
+    assert_eq!(
+        conflicts[0].left(),
+        &ConflictFact::Present(MergeValue::FieldValue(Value::Date(
+            "2024-02-29".parse().unwrap(),
+        )))
+    );
+    assert_eq!(
+        conflicts[0].right(),
+        &ConflictFact::Present(MergeValue::FieldValue(Value::Date(
+            "2025-01-01".parse().unwrap(),
+        )))
+    );
 }
 
 #[test]
@@ -614,6 +648,49 @@ fn entity_schema_membership_change_merges_when_the_other_side_is_unchanged() {
 }
 
 #[test]
+fn schema_change_preserves_unmaterialized_old_schema_field_evidence() {
+    let mut base = balance_document(36.0, 0.9);
+    base.schemas
+        .get_mut("weapon")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("bonus"), optional_number_field("bonus"));
+    let mut alternate = base.schemas["weapon"].clone();
+    alternate.id = SchemaId::from("alternate_weapon");
+    alternate.key = SchemaKey::from("alternate_weapon");
+    base.schemas
+        .insert(SchemaId::from("alternate_weapon"), alternate);
+
+    let mut ours = base.clone();
+    ours.entities.get_mut("iron_sword").unwrap().schema = SchemaId::from("alternate_weapon");
+    let mut theirs = base.clone();
+    theirs
+        .entities
+        .get_mut("iron_sword")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("bonus"), number(4.0));
+
+    let MergeOutcome::Merged(candidate) = merge(&base, &ours, &theirs) else {
+        panic!("qualified one-sided field addition should structurally reconcile");
+    };
+
+    assert!(
+        !candidate.entities["iron_sword"]
+            .fields
+            .contains_key("bonus")
+    );
+    let [fact] = candidate.unmaterialized_fields() else {
+        panic!("the selected old-schema field fact must be retained for finalization")
+    };
+    assert_eq!(fact.entity(), &EntityId::from("iron_sword"));
+    assert_eq!(fact.source_schema(), &SchemaId::from("weapon"));
+    assert_eq!(fact.selected_schema(), &SchemaId::from("alternate_weapon"));
+    assert_eq!(fact.field(), &FieldId::from("bonus"));
+    assert_eq!(fact.value(), &number(4.0));
+}
+
+#[test]
 fn same_field_divergence_returns_the_typed_conflict_payload() {
     let base = balance_document(36.0, 0.9);
     let ours = balance_document(45.0, 0.9);
@@ -624,18 +701,27 @@ fn same_field_divergence_returns_the_typed_conflict_payload() {
     };
 
     assert_eq!(conflicts.len(), 1);
-    assert_eq!(conflicts[0].path, "entities.iron_sword.fields.damage");
     assert_eq!(
-        conflicts[0].base,
-        Some(MergeValue::FieldValue(number(36.0)))
+        conflicts[0].target(),
+        &ConflictTarget::StoredEntityField {
+            entity: "iron_sword".into(),
+            schema: "weapon".into(),
+            field: "damage".into(),
+        }
+    );
+    assert_eq!(conflicts[0].facet(), ConflictFacet::StoredValue);
+    assert_eq!(conflicts[0].kind(), ConflictKind::ConcurrentChange);
+    assert_eq!(
+        conflicts[0].base(),
+        &ConflictFact::Present(MergeValue::FieldValue(number(36.0)))
     );
     assert_eq!(
-        conflicts[0].ours,
-        Some(MergeValue::FieldValue(number(45.0)))
+        conflicts[0].left(),
+        &ConflictFact::Present(MergeValue::FieldValue(number(45.0)))
     );
     assert_eq!(
-        conflicts[0].theirs,
-        Some(MergeValue::FieldValue(number(50.0)))
+        conflicts[0].right(),
+        &ConflictFact::Present(MergeValue::FieldValue(number(50.0)))
     );
 }
 
@@ -661,12 +747,15 @@ fn delete_versus_modify_returns_the_optional_entry_conflict_payload() {
     };
 
     assert_eq!(conflicts.len(), 1);
-    assert_eq!(conflicts[0].path, "entities.iron_sword.fields.bonus");
-    assert_eq!(conflicts[0].base, Some(MergeValue::FieldValue(number(4.0))));
-    assert_eq!(conflicts[0].ours, None);
+    assert_eq!(conflicts[0].kind(), ConflictKind::DeleteModify);
     assert_eq!(
-        conflicts[0].theirs,
-        Some(MergeValue::FieldValue(number(8.0)))
+        conflicts[0].base(),
+        &ConflictFact::Present(MergeValue::FieldValue(number(4.0)))
+    );
+    assert_eq!(conflicts[0].left(), &ConflictFact::Absent);
+    assert_eq!(
+        conflicts[0].right(),
+        &ConflictFact::Present(MergeValue::FieldValue(number(8.0)))
     );
 }
 
@@ -692,20 +781,32 @@ fn different_concurrent_field_additions_return_the_typed_conflict_payload() {
     };
 
     assert_eq!(conflicts.len(), 1);
-    assert_eq!(conflicts[0].path, "schemas.weapon.fields.weight");
-    assert_eq!(conflicts[0].base, None);
     assert_eq!(
-        conflicts[0].ours,
-        Some(MergeValue::FieldDefinition(optional_number_field("weight")))
+        conflicts[0].target(),
+        &ConflictTarget::SchemaField {
+            schema: "weapon".into(),
+            field: "weight".into(),
+        }
+    );
+    assert_eq!(conflicts[0].facet(), ConflictFacet::Subject);
+    assert_eq!(conflicts[0].kind(), ConflictKind::ConcurrentAddition);
+    assert_eq!(conflicts[0].base(), &ConflictFact::Absent);
+    assert_eq!(
+        conflicts[0].left(),
+        &ConflictFact::Present(MergeValue::SchemaFieldSubject(SchemaFieldSubject::from(
+            &optional_number_field("weight")
+        )))
     );
     assert_eq!(
-        conflicts[0].theirs,
-        Some(MergeValue::FieldDefinition(text_field("weight")))
+        conflicts[0].right(),
+        &ConflictFact::Present(MergeValue::SchemaFieldSubject(SchemaFieldSubject::from(
+            &text_field("weight")
+        )))
     );
 }
 
 #[test]
-fn conflicts_are_returned_in_lexical_path_order() {
+fn conflicts_are_returned_in_semantic_target_order() {
     let base = balance_document(36.0, 0.9);
     let ours = balance_document(45.0, 0.8);
     let theirs = balance_document(50.0, 0.7);
@@ -717,11 +818,23 @@ fn conflicts_are_returned_in_lexical_path_order() {
     assert_eq!(
         conflicts
             .iter()
-            .map(|conflict| conflict.path.as_str())
+            .map(MergeConflictObservation::from)
             .collect::<Vec<_>>(),
         [
-            "entities.iron_sword.fields.attack_interval",
-            "entities.iron_sword.fields.damage",
+            MergeConflictObservation("attack_interval"),
+            MergeConflictObservation("damage"),
         ]
     );
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct MergeConflictObservation<'a>(&'a str);
+
+impl<'a> From<&'a tachiko_merge_engine::MergeConflict> for MergeConflictObservation<'a> {
+    fn from(conflict: &'a tachiko_merge_engine::MergeConflict) -> Self {
+        let ConflictTarget::StoredEntityField { field, .. } = conflict.target() else {
+            panic!("expected stored field target")
+        };
+        Self(field.as_str())
+    }
 }

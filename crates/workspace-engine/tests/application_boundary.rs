@@ -2,9 +2,10 @@ mod common;
 
 use common::game_balance_document;
 use tachiko_workspace_engine::{
-    FieldAddress, FieldRef, Number, RuntimeValue, SemanticChange, Value, WorkspaceError,
-    WorkspaceMergeOutcome, analyze_formula, calculate_fields, compare_documents, diagnostic_codes,
-    merge_documents, runtime_export, set_scalar, validate, validate_field_value_suggestion,
+    ConflictTarget, FieldAddress, FieldRef, Number, RuntimeValue, SemanticChange, Value,
+    WorkspaceError, WorkspaceMergeOutcome, analyze_formula, calculate_fields, compare_documents,
+    diagnostic_codes, merge_documents, runtime_export, set_scalar, validate,
+    validate_field_value_suggestion,
 };
 
 fn number(value: f64) -> Value {
@@ -91,7 +92,14 @@ fn comparison_and_merge_are_workspace_owned_orchestration() {
         panic!("divergent changes must conflict");
     };
     assert_eq!(conflicts.len(), 1);
-    assert!(conflicts[0].path.ends_with(".fields.damage"));
+    assert_eq!(
+        conflicts[0].target(),
+        &ConflictTarget::StoredEntityField {
+            entity: "iron_sword".into(),
+            schema: "weapons".into(),
+            field: "damage".into(),
+        }
+    );
 }
 
 #[test]

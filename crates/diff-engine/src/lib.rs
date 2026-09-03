@@ -617,6 +617,7 @@ fn format_definition(definition: &FieldDefinition, document: &Document) -> Strin
         tachiko_semantic_core::FieldType::Number => "number".to_owned(),
         tachiko_semantic_core::FieldType::Text => "text".to_owned(),
         tachiko_semantic_core::FieldType::Boolean => "boolean".to_owned(),
+        tachiko_semantic_core::FieldType::Date => "date".to_owned(),
         tachiko_semantic_core::FieldType::Reference { schema } => {
             format!("reference({})", schema_key(document, schema))
         }
@@ -634,6 +635,7 @@ fn format_value(value: &Value, document: &Document) -> String {
         Value::Number(number) => format_number(*number),
         Value::Text(text) => format!("\"{text}\""),
         Value::Boolean(boolean) => boolean.to_string(),
+        Value::Date(date) => date.to_string(),
         Value::Reference(entity) => format!(
             "reference({})",
             document

@@ -17,6 +17,7 @@ For repository-derived, revision-pinned architecture maps and Architecture Delta
 ### Semantic core and Semantic API
 
 - [`semantic-core-rationale.md`](semantic-core-rationale.md) — why the project is semantic-first; explanatory rationale, not a replacement for ADR authority.
+- [`postgresql-like-engine-spreadsheet-interface.md`](postgresql-like-engine-spreadsheet-interface.md): explanatory founder framing that Tachiko is an extensible semantic work engine whose default human interface is spreadsheet-first; the spreadsheet is a client/projection, not semantic authority. Tracking strategy: #234.
 - [`document-model.md`](document-model.md) — accepted semantic-document direction under ADR-0021 progressive strengthening; concrete future mixed-content graph mechanics remain Deferred.
 - [`unified-semantic-model.md`](unified-semantic-model.md) — accepted unified-semantic direction across structured data, formulas, views, and AI operations.
 - [`rust-crate-architecture.md`](rust-crate-architecture.md) — current implemented crate graph, ADR-0016 ownership, ADR-0020 first-class Semantic API mapping, ADR-0024 proposal ownership, ADR-0026 authorization boundary, and ADR-0022 runtime-host ownership without stabilizing the current Rust source surface.
@@ -66,7 +67,7 @@ transport remain deferred.
 
 ### Collaboration and future presentation
 
-- [`distributed-collaboration.md`](distributed-collaboration.md) — future collaboration hypothesis/Open Question beyond the implemented semantic merge baseline.
+- [`distributed-collaboration.md`](distributed-collaboration.md) — Accepted semantic merge/history, ADR-0034 team-policy/recovery, and ADR-0035 causality/selective-convergence boundaries; concrete realtime, transport, clock, datatype, and runtime mechanics remain Deferred.
 - [`rendering-system.md`](rendering-system.md) — future rendering and semantic-projection hypothesis, including the research → Git-reviewed knowledge → presentation use case tracked in #67, for later Designer MVP work.
 
 ## Maturity map
@@ -84,7 +85,7 @@ Use these broad cues together with the reconciliation register:
 | AI as delegated semantic client | Accepted under amended ADR-0007; scoped authorization and exact Human Approval Accepted under ADR-0026; #29 provider-neutral lifecycle, #30 provider-facing hostile boundary, and #93 resident publication composition implemented, while public transport/authentication remain Deferred |
 | Revision-pinned SemanticPatch proposal | Accepted under ADR-0024; ADR-0026 consumes its structural binding without selecting canonical bytes/digest/token; #29 provisional Rust lifecycle and #93 internal resident revision mechanics implemented while public wire remains Deferred |
 | Resident Native/WASM runtime and host separation | Accepted under ADR-0022; #93 implements the first production in-process resident session, #94 its internal selective projections/invalidation facts, and #95 rebuildable full-oracle-equivalent retained state with native/WASM evidence; public transport/persistence mechanics remain Deferred |
-| Distributed collaboration beyond semantic merge | Hypothesis / Open Question |
+| Distributed collaboration beyond semantic merge | ADR-0034 team-policy/multi-effect recovery and ADR-0035 causality/selective-convergence boundaries Accepted; concrete realtime, transport, clock, datatype, and runtime mechanisms Deferred |
 | Rendering/UI and cross-view projection architecture | Future hypothesis |
 
 ## Reading rule for architecture work

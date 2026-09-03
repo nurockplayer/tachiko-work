@@ -60,3 +60,24 @@ starting Vite, so a clean checkout never serves without its Worker artifact.
 Schema/entity authoring, formula authoring, overwrite/update-in-place,
 autosave/recovery, and public transport/storage/SDK stabilization are outside
 this slice.
+
+## Experimental external client kit
+
+Issue #232 adds one deliberately unstable, vendorable frontend kit over this
+same private Worker/WASM seam. It is not a published package or stable SDK.
+Export it to a caller-owned directory with:
+
+```sh
+bash scripts/export-experimental-designer-client.sh /path/to/external-ui/vendor/tachiko
+```
+
+Frontend engineers should start with
+[Build an experimental Tachiko frontend](../../docs/engineering/frontend-integration-guide.md),
+which explains the assignment, responsibility split, first useful milestone,
+current limits, and pilot feedback format without requiring engine knowledge.
+
+Use the
+[client-kit technical guide](../../docs/engineering/experimental-designer-client-kit.md)
+while wiring the generated assets. The external-style smoke consumer lives under
+[`examples/experimental-designer-client`](../../examples/experimental-designer-client/)
+and imports only the generated kit.

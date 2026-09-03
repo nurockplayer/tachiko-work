@@ -12,9 +12,9 @@ use tachiko_formula_engine::{
     ReferenceFailure, calculate, calculate_complete, project_expression,
 };
 use tachiko_semantic_core::{
-    DiagnosticCode, DiagnosticSeverity, Document, DocumentId, Entity, EntityId, EntityKey,
-    Expression, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, Number, Schema, SchemaId,
-    SchemaKey, SemanticSubject, Value,
+    Date, DiagnosticCode, DiagnosticSeverity, Document, DocumentId, Entity, EntityId, EntityKey,
+    Expression, FieldAddress, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, Number,
+    Schema, SchemaId, SchemaKey, SemanticSubject, Value,
 };
 use tachiko_storage::{
     FormatError as StorageFormatError, NORMAL_DIRECT_JSON_MAX_INPUT_BYTES, ROPROJ_V1_PATHS,
@@ -23,7 +23,7 @@ use tachiko_storage::{
     from_str as storage_from_str, portable_package_payload_root, to_canonical_string,
 };
 use tachiko_workspace_engine::{
-    ValidationReport, calculate_fields, diagnostic_codes,
+    RuntimeValue, ValidationReport,
     analysis_operations::{
         AnalysisBucket, AnalysisCollectionKind, AnalysisDefinition, AnalysisDerivation,
         AnalysisFailure, AnalysisFieldRole, AnalysisGroup, AnalysisGroupKey, AnalysisLineage,
@@ -32,6 +32,7 @@ use tachiko_workspace_engine::{
         AnalysisValueKind, MetricIncompleteReason, NumericAggregateOutcome,
         PairedAnalysisQueryResult, PredicateOperand,
     },
+    calculate_fields, diagnostic_codes,
     formula_operations::{
         FormulaCalculationOutcome, FormulaReasoningOutcome, FormulaUpdateRequest, NumberOverride,
         ScenarioOutcome, ScenarioRequest, ScenarioTargetOutcome, ValidatorConfiguration,
@@ -45,10 +46,10 @@ use tachiko_workspace_engine::{
         SemanticRevision, SemanticScope, TrustedInstant,
     },
     resident_session::{ResidentWorkspaceSession, TrustedPublicationTimeSource},
-    validation_report,
+    runtime_export, set_scalar, validate, validation_report,
 };
 
-const CASE_COUNT: u32 = 55;
+const CASE_COUNT: u32 = 56;
 const VALUE: u32 = 0;
 const DIVISION_BY_ZERO: u32 = 1;
 const NON_FINITE: u32 = 2;
@@ -65,6 +66,7 @@ const ANALYSIS_COMPLETE: u32 = 12;
 const ANALYSIS_FAILURE: u32 = 13;
 const ANALYSIS_PAIRED_AUTHORIZATION: u32 = 14;
 const RESIDENT_SESSION: u32 = 15;
+const DATE: u32 = 16;
 const UNEXPECTED: u32 = 255;
 
 const VALIDATION_ACCUMULATION_COUNT: usize = 16;
@@ -188,6 +190,113 @@ fn calculated_record(document: &Document) -> Record {
 fn storage_number_source(number: &str) -> String {
     r#"{"format_version":2,"id":"doc","title":"Portable storage conformance","schemas":{"schema":{"id":"schema","key":"schema","fields":{"number":{"id":"number","key":"number","field_type":{"type":"number"},"required":true}}}},"entities":{"entity":{"id":"entity","key":"entity","schema":"schema","fields":{"number":{"kind":"number","value":NUMBER}}}}}"#
         .replace("NUMBER", number)
+}
+
+fn storage_date_source(date: &str) -> String {
+    r#"{"format_version":2,"id":"doc","title":"Portable date conformance","schemas":{"schema":{"id":"schema","key":"schema","fields":{"date":{"id":"date","key":"date","field_type":{"type":"date"},"required":true}}}},"entities":{"entity":{"id":"entity","key":"entity","schema":"schema","fields":{"date":{"kind":"date","value":"DATE"}}}}}"#
+        .replace("DATE", date)
+}
+
+fn date_document(value: Date) -> Document {
+    let schema_id = SchemaId::from("date-schema");
+    let entity_id = EntityId::from("date-entity");
+    let field_id = FieldId::from("date-value");
+    Document {
+        id: DocumentId::from("date-document"),
+        title: "Portable Date conformance".to_owned(),
+        schemas: BTreeMap::from([(
+            schema_id.clone(),
+            Schema {
+                id: schema_id.clone(),
+                key: SchemaKey::from("dates"),
+                fields: BTreeMap::from([(
+                    field_id.clone(),
+                    FieldDefinition {
+                        id: field_id.clone(),
+                        key: FieldKey::from("value"),
+                        field_type: FieldType::Date,
+                        required: true,
+                    },
+                )]),
+            },
+        )]),
+        entities: BTreeMap::from([(
+            entity_id.clone(),
+            Entity {
+                id: entity_id,
+                key: EntityKey::from("event"),
+                schema: schema_id,
+                fields: BTreeMap::from([(field_id, Value::Date(value))]),
+            },
+        )]),
+    }
+}
+
+fn date_record() -> Record {
+    let initial = Date::parse("2024-02-29").expect("portable date fixture is valid");
+    let edited = Date::parse("2025-01-01").expect("portable date fixture is valid");
+    if Date::parse("1900-02-29").is_ok() || Date::parse("2024-04-31").is_ok() || initial >= edited {
+        return Record::failure(UNEXPECTED, 55_u64 << 32);
+    }
+
+    let document = date_document(initial);
+    if validate(&document).is_err() {
+        return Record::failure(UNEXPECTED, (55_u64 << 32) | 1);
+    }
+    let Ok(exported) = runtime_export(&document) else {
+        return Record::failure(UNEXPECTED, (55_u64 << 32) | 2);
+    };
+    if exported.entities["event"].fields["value"] != RuntimeValue::Date(initial) {
+        return Record::failure(UNEXPECTED, (55_u64 << 32) | 3);
+    }
+
+    let Ok(edit) = set_scalar(
+        &document,
+        &FieldAddress::new("event", "value"),
+        "2025-01-01",
+    ) else {
+        return Record::failure(UNEXPECTED, (55_u64 << 32) | 4);
+    };
+    if edit.document.entities["date-entity"].fields["date-value"] != Value::Date(edited) {
+        return Record::failure(UNEXPECTED, (55_u64 << 32) | 5);
+    }
+
+    let Ok(stored) = storage_from_str(&storage_date_source("2024-02-29")) else {
+        return Record::failure(UNEXPECTED, (55_u64 << 32) | 6);
+    };
+    if stored.entities["entity"].fields["date"] != Value::Date(initial) {
+        return Record::failure(UNEXPECTED, (55_u64 << 32) | 7);
+    }
+    let Ok(canonical) = to_canonical_string(&stored) else {
+        return Record::failure(UNEXPECTED, (55_u64 << 32) | 8);
+    };
+    let Ok(round_trip) = storage_from_str(&canonical) else {
+        return Record::failure(UNEXPECTED, (55_u64 << 32) | 9);
+    };
+    if round_trip != stored
+        || !canonical.contains(r#""type": "date""#)
+        || !canonical.contains(r#""value": "2024-02-29""#)
+        || storage_from_str(&storage_date_source("1900-02-29")).is_ok()
+    {
+        return Record::failure(UNEXPECTED, (55_u64 << 32) | 10);
+    }
+
+    let session =
+        ResidentWorkspaceSession::new(DocumentScopeId::from("portable-date-occurrence"), document);
+    let Ok(query) = session.query_fields(&[FieldRef::new("date-entity", "date-value")]) else {
+        return Record::failure(UNEXPECTED, (55_u64 << 32) | 11);
+    };
+    if query.value()[0].stored_value != Some(Value::Date(initial)) {
+        return Record::failure(UNEXPECTED, (55_u64 << 32) | 12);
+    }
+
+    Record {
+        class: DATE,
+        bits: (u64::from(edited.year()) << 32)
+            | (u64::from(edited.month()) << 16)
+            | u64::from(edited.day()),
+        auxiliary: fnv1a64(canonical.as_bytes()),
+    }
 }
 
 fn fnv1a64(bytes: &[u8]) -> u64 {
@@ -1785,6 +1894,10 @@ fn analysis_hash_number(hash: &mut u64, value: Number) {
     mix_framed(hash, b"number", &value.to_bits().to_le_bytes());
 }
 
+fn analysis_hash_date(hash: &mut u64, value: Date) {
+    mix_framed(hash, b"date", value.to_string().as_bytes());
+}
+
 fn analysis_hash_field_ref(hash: &mut u64, value: &FieldRef) {
     mix_framed(hash, b"field-ref", value.entity.as_str().as_bytes());
     mix_framed(hash, b"field-ref", value.field.as_str().as_bytes());
@@ -1807,6 +1920,7 @@ fn analysis_hash_predicate(hash: &mut u64, predicate: &AnalysisPredicate) {
         PredicateOperand::Number(value) => analysis_hash_number(hash, *value),
         PredicateOperand::Text(value) => analysis_hash_text(hash, value),
         PredicateOperand::Boolean(value) => mix_framed(hash, b"boolean", &[*value as u8]),
+        PredicateOperand::Date(value) => analysis_hash_date(hash, *value),
         PredicateOperand::Reference(value) => analysis_hash_text(hash, value.as_str()),
     }
 }
@@ -1983,6 +2097,7 @@ fn analysis_hash_outcome(hash: &mut u64, outcome: &AnalysisOutcome) {
                     AnalysisGroupKey::Boolean(value) => {
                         mix_framed(hash, b"boolean", &[*value as u8]);
                     }
+                    AnalysisGroupKey::Date(value) => analysis_hash_date(hash, *value),
                     AnalysisGroupKey::Reference(value) => analysis_hash_text(hash, value.as_str()),
                 }
                 analysis_hash_bucket(hash, bucket);
@@ -2039,6 +2154,7 @@ fn analysis_hash_failure(hash: &mut u64, failure: &AnalysisFailure) {
                     FieldType::Number => "number",
                     FieldType::Text => "text",
                     FieldType::Boolean => "boolean",
+                    FieldType::Date => "date",
                     FieldType::Reference { schema } => schema.as_str(),
                 },
             );
@@ -2111,6 +2227,7 @@ fn analysis_hash_value_kind(hash: &mut u64, kind: &AnalysisValueKind) {
             AnalysisValueKind::Formula => "formula",
             AnalysisValueKind::Text => "text",
             AnalysisValueKind::Boolean => "boolean",
+            AnalysisValueKind::Date => "date",
             AnalysisValueKind::Reference => "reference",
         },
     );
@@ -2702,6 +2819,7 @@ fn case_record(index: u32) -> Record {
         52 => analysis_failure_record(),
         53 => analysis_paired_authorization_record(),
         54 => resident_session_record(),
+        55 => date_record(),
         _ => Record::failure(UNEXPECTED, 0),
     }
 }

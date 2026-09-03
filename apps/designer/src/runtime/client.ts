@@ -34,6 +34,11 @@ export interface DesignerClient {
     target: FieldTarget,
     value: boolean,
   ): Promise<PublicationProjection>;
+  editDate(
+    expectedRevision: string,
+    target: FieldTarget,
+    value: string,
+  ): Promise<PublicationProjection>;
   close(): void | Promise<void>;
 }
 

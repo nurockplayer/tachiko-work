@@ -239,6 +239,14 @@ Changing the shard count/function, paths, file split, record framing, or other
 canonical tree property is a future representation version with an explicit,
 version-labelled migration, not an in-place layout convention.
 
+The same closed-world rule applies to the v1 DTO meaning: a semantic `Date`
+cannot be encoded by `.roproj/v1`. The current encoder rejects a Date-bearing
+document as an invalid representation instead of silently widening the frozen
+v1 tree. Date persistence is available through the current direct-ro/v2
+representation; a future `.roproj` representation version must be accepted
+explicitly before project-directory or portable-package persistence can carry
+Date values.
+
 ## Direct-JSON error precedence and machine meaning
 
 Storage-domain failures should preserve at least the following machine-distinguishable meanings:

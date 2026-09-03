@@ -49,6 +49,16 @@ rename leaves the stable ID unchanged. Deterministic runtime indexes resolve
 human keys before an operation stores or executes a bound relationship; those
 indexes are derived state and are not persisted.
 
+The closed scalar profile currently includes finite `Number`, `Text`,
+`Boolean`, and date-only `Date` values. The M07 `Date` addition is the explicit
+semantic transition accepted by [Issue #266](https://github.com/nurockplayer/tachiko-work/issues/266)
+and implemented by [Issue #267](https://github.com/nurockplayer/tachiko-work/issues/267)
+through the existing [ADR-0020 Semantic API](../decisions/ADR-0020-first-class-headless-semantic-api.md).
+It extends this closed profile only; it does not promote the broader document
+graph or introduce a new type architecture. `Date` is a proleptic Gregorian
+civil date in the bounded `0001..=9999` range, canonically represented as
+`YYYY-MM-DD` without time or timezone semantics.
+
 ### Document
 
 A document is a graph containing semantic blocks.

@@ -2117,7 +2117,11 @@ fn merge_reports_typed_conflicts_without_creating_output() {
 
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains("entities.sword.fields.damage"));
+    assert!(stderr.contains("StoredEntityField"));
+    assert!(stderr.contains("EntityId(\"sword\")"));
+    assert!(stderr.contains("SchemaId(\"weapon\")"));
+    assert!(stderr.contains("FieldId(\"damage\")"));
+    assert!(stderr.contains("StoredValue / ConcurrentChange"));
     assert!(stderr.contains("FieldValue(Number(Number(100.0)))"));
     assert!(stderr.contains("FieldValue(Number(Number(120.0)))"));
     assert!(stderr.contains("FieldValue(Number(Number(140.0)))"));
@@ -2173,6 +2177,19 @@ fn top_level_help_describes_the_complete_first_user_workflow() {
     ] {
         assert!(text.contains(phrase), "missing help text: {phrase}\n{text}");
     }
+}
+
+#[test]
+fn set_help_describes_date_values() {
+    let output = run(&["set", "--help"]);
+
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains("Date"), "missing Date help text: {text}");
+    assert!(
+        text.contains("YYYY-MM-DD"),
+        "missing canonical Date spelling: {text}"
+    );
 }
 
 #[test]

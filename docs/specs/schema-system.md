@@ -35,12 +35,16 @@ The implemented semantic schema model currently includes:
 - mutable human-facing `SchemaKey`;
 - stable `FieldId` identity;
 - mutable human-facing `FieldKey`;
-- `FieldType` with Number, Text, Boolean, and stable-schema Reference variants;
+- `FieldType` with Number, Text, Boolean, Date, and stable-schema Reference variants;
 - field `required` declaration; and
 - stable target `SchemaId` for reference field types.
 
 Entity membership in a schema, typed field values, stable entity references,
 and ADR-0018 bound formulas consume those declarations as semantic facts.
+
+`Date` is a date-only civil Gregorian semantic value with no time or timezone;
+its canonical textual form is `YYYY-MM-DD`. This declaration does not add
+DateTime, Duration, date arithmetic, or generalized temporal semantics.
 
 The current `Entity` model remains schema-required. ADR-0021 does not change it
 to `Option<SchemaId>`, a dynamic property bag, or a universal weak mode. Future
