@@ -20,6 +20,16 @@ assert_contains() {
   fi
 }
 
+assert_compilation_artifact() {
+  local target_dir="$1"
+  local artifact="${target_dir}/debug/codex-cargo-fixture"
+  if [[ ! -s "${artifact}" ]]; then
+    echo "codex-cargo-check: no non-empty Rust artifact in ${target_dir}" >&2
+    find "${target_dir}" -maxdepth 3 -type f -print >&2
+    exit 1
+  fi
+}
+
 mkdir -p "${test_dir}/src"
 cat >"${test_dir}/Cargo.toml" <<'EOF'
 [package]
@@ -33,26 +43,28 @@ cat >"${test_dir}/src/main.rs" <<'EOF'
 fn main() {}
 EOF
 
-failing_sccache="${test_dir}/sccache-unavailable"
-cat >"${failing_sccache}" <<'EOF'
+server_fallback_contract="${test_dir}/sccache-server-fallback-contract"
+cat >"${server_fallback_contract}" <<'EOF'
 #!/usr/bin/env bash
-exit 42
+set -euo pipefail
+# Portable contract probe: sccache's server-I/O fallback must receive this
+# setting and then use the compiler directly.
+[[ "${SCCACHE_IGNORE_SERVER_IO_ERROR:-}" == "1" ]]
+exec "$@"
 EOF
-chmod +x "${failing_sccache}"
+chmod +x "${server_fallback_contract}"
 
-fallback_output="${test_dir}/fallback.out"
-fallback_error="${test_dir}/fallback.err"
-env -u CARGO_INCREMENTAL \
-  CARGO_TARGET_DIR="${test_dir}/fallback-target" \
+server_fallback_output="${test_dir}/server-fallback.out"
+server_fallback_error="${test_dir}/server-fallback.err"
+env -u CARGO_INCREMENTAL -u SCCACHE_IGNORE_SERVER_IO_ERROR \
+  CARGO_TARGET_DIR="${test_dir}/server-fallback-target" \
   TACHIKO_CODEX_SCCACHE=1 \
-  TACHIKO_CODEX_SCCACHE_BIN="${failing_sccache}" \
-  bash "${cargo_script}" check --manifest-path "${test_dir}/Cargo.toml" \
-  >"${fallback_output}" 2>"${fallback_error}"
-assert_contains "${fallback_error}" "incremental=0"
-assert_contains "${fallback_error}" "sccache=enabled"
-assert_contains "${fallback_error}" "sccache invocation failed; falling back to direct rustc"
-[[ -x "${test_dir}/fallback-target/debug/codex-cargo-fixture" ||
-  -e "${test_dir}/fallback-target/debug/deps" ]]
+  TACHIKO_CODEX_SCCACHE_BIN="${server_fallback_contract}" \
+  bash "${cargo_script}" build --manifest-path "${test_dir}/Cargo.toml" \
+  >"${server_fallback_output}" 2>"${server_fallback_error}"
+assert_contains "${server_fallback_error}" "incremental=0"
+assert_contains "${server_fallback_error}" "sccache=enabled"
+assert_compilation_artifact "${test_dir}/server-fallback-target"
 
 direct_output="${test_dir}/direct.out"
 direct_error="${test_dir}/direct.err"
@@ -60,18 +72,55 @@ env -u CARGO_INCREMENTAL \
   CARGO_TARGET_DIR="${test_dir}/direct-target" \
   TACHIKO_CODEX_SCCACHE=1 \
   TACHIKO_CODEX_SCCACHE_BIN="${test_dir}/missing-sccache" \
-  bash "${cargo_script}" check --manifest-path "${test_dir}/Cargo.toml" \
+  bash "${cargo_script}" build --manifest-path "${test_dir}/Cargo.toml" \
   >"${direct_output}" 2>"${direct_error}"
 assert_contains "${direct_error}" "sccache=unavailable; direct rustc"
+assert_compilation_artifact "${test_dir}/direct-target"
 
 incremental_output="${test_dir}/incremental.out"
 incremental_error="${test_dir}/incremental.err"
 CARGO_INCREMENTAL=1 CARGO_TARGET_DIR="${test_dir}/incremental-target" \
   TACHIKO_CODEX_SCCACHE=0 \
-  bash "${cargo_script}" check --manifest-path "${test_dir}/Cargo.toml" \
+  bash "${cargo_script}" build --manifest-path "${test_dir}/Cargo.toml" \
   >"${incremental_output}" 2>"${incremental_error}"
 assert_contains "${incremental_error}" "incremental=1"
 assert_contains "${incremental_error}" "sccache=disabled"
+assert_compilation_artifact "${test_dir}/incremental-target"
+
+compiler_count="${test_dir}/compiler-count"
+compiler_fixture="${test_dir}/failing-compiler"
+cat >"${compiler_fixture}" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+count=0
+if [[ -f "${CODEX_TEST_COMPILER_COUNT}" ]]; then
+  count="$(<"${CODEX_TEST_COMPILER_COUNT}")"
+fi
+printf '%s\n' "$((count + 1))" >"${CODEX_TEST_COMPILER_COUNT}"
+exit 17
+EOF
+chmod +x "${compiler_fixture}"
+
+passthrough_sccache="${test_dir}/sccache-passthrough"
+cat >"${passthrough_sccache}" <<'EOF'
+#!/usr/bin/env bash
+set -u
+exec "$@"
+EOF
+chmod +x "${passthrough_sccache}"
+
+compiler_error="${test_dir}/compiler-error.err"
+compiler_status=0
+CODEX_TEST_COMPILER_COUNT="${compiler_count}" \
+  TACHIKO_CODEX_SCCACHE_BIN="${passthrough_sccache}" \
+  bash "${repo_root}/scripts/codex-rustc-wrapper.sh" "${compiler_fixture}" \
+  >"${test_dir}/compiler-error.out" 2>"${compiler_error}" || compiler_status="$?"
+[[ "${compiler_status}" -eq 17 ]]
+[[ "$(<"${compiler_count}")" -eq 1 ]]
+if grep -F -- "falling back" "${compiler_error}" >/dev/null; then
+  echo "codex-cargo-check: compiler failure was retried as a cache failure" >&2
+  exit 1
+fi
 
 foreign_repo="${test_dir}/foreign-repo"
 git init --quiet "${foreign_repo}"
@@ -80,10 +129,10 @@ inherited_error="${test_dir}/inherited.err"
 GIT_DIR="${foreign_repo}/.git" GIT_WORK_TREE="${foreign_repo}" \
   GIT_COMMON_DIR="${foreign_repo}/.git" GIT_CEILING_DIRECTORIES="${foreign_repo}" \
   CARGO_TARGET_DIR="${test_dir}/inherited-target" \
-  bash "${cargo_script}" check --manifest-path "${test_dir}/Cargo.toml" \
+  bash "${cargo_script}" build --manifest-path "${test_dir}/Cargo.toml" \
   >"${inherited_output}" 2>"${inherited_error}"
 assert_contains "${inherited_error}" "target=${test_dir}/inherited-target"
-[[ -e "${test_dir}/inherited-target/debug/deps" ]]
+assert_compilation_artifact "${test_dir}/inherited-target"
 
 outside_error="${test_dir}/outside.err"
 outside_status=0
@@ -123,4 +172,4 @@ env -u CARGO_INCREMENTAL CARGO_TARGET_DIR="${test_dir}/delimiter-target" \
 assert_contains "${delimiter_error}" "sccache=disabled"
 [[ -x "${test_dir}/delimiter-target/debug/codex-cargo-fixture" ]]
 
-echo "codex Cargo check passed: private target guard, incremental default, sccache opt-in, and uncached fallback"
+echo "codex Cargo check passed: private target guard, incremental default, server-I/O fallback, and single compiler failure"
