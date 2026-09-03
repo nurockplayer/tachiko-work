@@ -82,6 +82,115 @@ normalize_native_target_runner() {
   export "${runner_variable}=env"
 }
 
+materialized_source_mode() {
+  local path="$1"
+  local mode
+
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    if ! mode="$(stat -f '%Lp' "${path}")"; then
+      return 1
+    fi
+  else
+    if ! mode="$(stat -c '%a' "${path}")"; then
+      return 1
+    fi
+  fi
+  printf '%s\n' "${mode#0}"
+}
+
+verify_materialized_source_tree() {
+  local source_root="$1"
+  local expected_commit="$2"
+  local checkpoint="$3"
+  local tree_entries entry metadata mode type object path absolute
+  local observed_type observed_mode observed_blob
+
+  tree_entries="${run_dir}/source-tree-${checkpoint}.entries"
+  if ! LC_ALL=C git -C "${source_root}" ls-tree -r -z --full-tree \
+    "${expected_commit}" >"${tree_entries}"; then
+    echo "obstacle-course: could not enumerate Git tree checkpoint=${checkpoint}" >&2
+    return 1
+  fi
+
+  while IFS= read -r -d '' entry; do
+    metadata="${entry%%$'\t'*}"
+    path="${entry#*$'\t'}"
+    if [[ "${metadata}" == "${entry}" || -z "${path}" ]]; then
+      echo "obstacle-course: malformed Git tree entry checkpoint=${checkpoint}" >&2
+      return 1
+    fi
+    mode="${metadata%% *}"
+    metadata="${metadata#* }"
+    type="${metadata%% *}"
+    object="${metadata#* }"
+    absolute="${source_root}/${path}"
+    observed_type="missing"
+    observed_mode="-"
+    observed_blob="-"
+
+    if [[ "${type}" != "blob" ]]; then
+      echo "obstacle-course: unsupported Git tree entry checkpoint=${checkpoint} path=${path} mode=${mode} type=${type}" >&2
+      return 1
+    fi
+
+    case "${mode}" in
+      100644|100755)
+        if [[ -L "${absolute}" ]]; then
+          observed_type="symlink"
+        elif [[ -f "${absolute}" ]]; then
+          observed_type="regular-file"
+          if ! observed_mode="$(materialized_source_mode "${absolute}")"; then
+            echo "obstacle-course: could not inspect materialized source mode checkpoint=${checkpoint} path=${path}" >&2
+            return 1
+          fi
+          observed_mode="100${observed_mode}"
+        elif [[ -e "${absolute}" ]]; then
+          observed_type="special"
+        fi
+        if [[ "${observed_type}" == "regular-file" ]]; then
+          if ! observed_blob="$(git -C "${source_root}" hash-object --no-filters -- \
+            "${absolute}")"; then
+            echo "obstacle-course: could not hash materialized source checkpoint=${checkpoint} path=${path}" >&2
+            return 1
+          fi
+        fi
+        ;;
+      120000)
+        if [[ -L "${absolute}" ]]; then
+          observed_type="symlink"
+          observed_mode="120000"
+          if ! observed_blob="$(readlink -n "${absolute}" | \
+            git -C "${source_root}" hash-object --no-filters --stdin)"; then
+            echo "obstacle-course: could not hash materialized source symlink checkpoint=${checkpoint} path=${path}" >&2
+            return 1
+          fi
+        fi
+        ;;
+      *)
+        echo "obstacle-course: unsupported Git tree mode checkpoint=${checkpoint} path=${path} mode=${mode}" >&2
+        return 1
+        ;;
+    esac
+
+    if [[ "${mode}" == "100644" || "${mode}" == "100755" ]]; then
+      if [[ "${observed_type}" != "regular-file" || \
+        "${observed_mode}" != "${mode}" ]]; then
+        echo "obstacle-course: blob-exact source mismatch checkpoint=${checkpoint} path=${path} expected_type=regular-file expected_mode=${mode} expected_blob=${object} observed_type=${observed_type} observed_mode=${observed_mode} observed_blob=${observed_blob}" >&2
+        return 1
+      fi
+    elif [[ "${observed_type}" != "symlink" || \
+      "${observed_mode}" != "120000" ]]; then
+      echo "obstacle-course: blob-exact source mismatch checkpoint=${checkpoint} path=${path} expected_type=symlink expected_mode=120000 expected_blob=${object} observed_type=${observed_type} observed_mode=${observed_mode} observed_blob=${observed_blob}" >&2
+      return 1
+    fi
+
+    if [[ "${observed_blob}" != "${object}" ]]; then
+      echo "obstacle-course: blob-exact source mismatch checkpoint=${checkpoint} path=${path} expected_type=${type} expected_mode=${mode} expected_blob=${object} observed_type=${observed_type} observed_mode=${observed_mode} observed_blob=${observed_blob}" >&2
+      return 1
+    fi
+  done <"${tree_entries}"
+}
+
 # Ambient Cargo profile and compiler-flag overrides must not change release evidence.
 normalize_release_build_environment
 
@@ -269,7 +378,7 @@ export GIT_CONFIG_NOSYSTEM=1
 export GIT_ATTR_NOSYSTEM=1
 export GIT_NO_REPLACE_OBJECTS=1
 
-for required_command in cargo env git ln; do
+for required_command in cargo env git ln readlink stat; do
   if ! command -v "${required_command}" >/dev/null 2>&1; then
     echo "obstacle-course: ${required_command} is required" >&2
     exit 1
@@ -310,7 +419,6 @@ materialization_repo_root="${repo_root}"
 materialized_source_root=""
 git_worktree_config=(
   -c core.hooksPath=/dev/null
-  -c core.autocrlf=false
 )
 cleanup() {
   if [[ -n "${materialized_source_root}" ]]; then
@@ -330,6 +438,11 @@ if [[ "${isolated_course}" -eq 0 ]]; then
   if ! git -C "${repo_root}" "${git_worktree_config[@]}" \
     worktree add --detach "${materialized_source_root}" "${requested_head}"; then
     echo "obstacle-course: could not materialize isolated exact-HEAD source" >&2
+    exit 1
+  fi
+  if ! verify_materialized_source_tree "${materialized_source_root}" \
+    "${requested_head}" before-execution; then
+    echo "obstacle-course: isolated source failed blob-exact HEAD verification" >&2
     exit 1
   fi
   set +e
@@ -545,6 +658,9 @@ if ! head_commit="$(git -C "${repo_root}" rev-parse HEAD)"; then
   echo "obstacle-course: could not determine HEAD" >&2
   exit 1
 fi
+if ! verify_materialized_source_tree "${repo_root}" "${head_commit}" before-setup; then
+  exit 1
+fi
 if ! worktree_state="$(current_worktree_state)"; then
   exit 1
 fi
@@ -572,6 +688,11 @@ verify_source_identity() {
   local observed_head observed_worktree_state observed_source_state_fingerprint
   if ! observed_head="$(git -C "${repo_root}" rev-parse HEAD)"; then
     echo "EVIDENCE FAIL: could not determine HEAD checkpoint=${checkpoint}" >&2
+    return 1
+  fi
+  if ! verify_materialized_source_tree "${repo_root}" "${head_commit}" \
+    "${checkpoint}"; then
+    echo "EVIDENCE FAIL: source identity changed checkpoint=${checkpoint} reason=blob-exact-source-tree" >&2
     return 1
   fi
   if ! observed_worktree_state="$(current_worktree_state)"; then

@@ -267,7 +267,7 @@ while [[ "${1:-}" == "-c" ]]; do
     exit 2
   fi
   case "${2:-}" in
-    core.hooksPath=/dev/null|core.autocrlf=false) ;;
+    core.hooksPath=/dev/null) ;;
     *)
       echo "fake git: unexpected command-scoped configuration: $*" >&2
       exit 2
@@ -280,10 +280,9 @@ done
 if [[ "${1:-}" == "worktree" && "${2:-}" == "add" ]]; then
   if [[ "${query_root}" != "${FAKE_REPO_ROOT}" || "$#" -ne 5 || \
     "${3:-}" != "--detach" || "${5:-}" != "0123456789abcdef0123456789abcdef01234567" || \
-    "${#git_config_args[@]}" -ne 2 || \
-    "${git_config_args[0]:-}" != "core.hooksPath=/dev/null" || \
-    "${git_config_args[1]:-}" != "core.autocrlf=false" ]]; then
-    echo "fake git: ambient core.autocrlf=true was not neutralized for isolated worktree: $*" >&2
+    "${#git_config_args[@]}" -ne 1 || \
+    "${git_config_args[0]:-}" != "core.hooksPath=/dev/null" ]]; then
+    echo "fake git: isolated worktree was not created with hook suppression: $*" >&2
     exit 2
   fi
   mkdir -p "${4}"
@@ -318,6 +317,44 @@ elif [[ "${1:-}" == "status" ]]; then
   exit 0
 elif [[ "${1:-}" == "diff" ]]; then
   echo "normalized tracked diff"
+elif [[ "${1:-}" == "ls-tree" ]]; then
+  if [[ "${2:-}" != "-r" || "${3:-}" != "-z" || \
+    "${4:-}" != "--full-tree" || "$#" -ne 5 ]]; then
+    echo "fake git: malformed Git tree query: $*" >&2
+    exit 2
+  fi
+  while IFS= read -r -d '' fake_path; do
+    relative="${fake_path#${FAKE_MATERIALIZATION_TEMPLATE}/}"
+    if [[ -L "${fake_path}" ]]; then
+      mode=120000
+    elif [[ -f "${fake_path}" ]]; then
+      if [[ -x "${fake_path}" ]]; then
+        mode=100755
+      else
+        mode=100644
+      fi
+    else
+      continue
+    fi
+    printf '%s blob 1111111111111111111111111111111111111111\t%s\0' \
+      "${mode}" "${relative}"
+  done < <(find "${FAKE_MATERIALIZATION_TEMPLATE}" \
+    \( -type f -o -type l \) -print0)
+  exit 0
+elif [[ "${1:-}" == "hash-object" ]]; then
+  if [[ "${2:-}" == "--no-filters" && "${3:-}" == "--" ]]; then
+    if [[ ! -f "${!#}" && ! -L "${!#}" ]]; then
+      echo "fake git: missing hash-object path: $*" >&2
+      exit 2
+    fi
+  elif [[ "${2:-}" == "--no-filters" && "${3:-}" == "--stdin" ]]; then
+    cat >/dev/null
+  else
+    echo "fake git: malformed hash-object query: $*" >&2
+    exit 2
+  fi
+  echo 1111111111111111111111111111111111111111
+  exit 0
 elif [[ "${1:-}" == "ls-files" ]]; then
   if [[ " $* " == *" --cached "* ]]; then
     printf '.gitignore\0tracked-fixture\0'
@@ -616,7 +653,6 @@ run_normal_course() {
     GIT_COMMITTER_DATE=not-a-date \
     FAKE_GIT_STATUS_FAIL="${status_fail}" \
     FAKE_GIT_DIRTY="${git_dirty}" \
-    FAKE_GIT_AMBIENT_AUTOCRLF=1 \
     FAKE_TRIGGER_FINGERPRINT_DRIFT="${trigger_fingerprint_drift}" \
     FAKE_TRIGGER_IGNORED_DRIFT="${trigger_ignored_drift}" \
     FAKE_TRIGGER_EMPTY_DIRECTORY_DRIFT="${trigger_empty_directory_drift}" \
@@ -706,9 +742,9 @@ require_normal_log \
 require_normal_log \
   "stage-bin path=${expected_tachiko_bin} target_dir=${observed_target_dir} build_target=${native_target}"
 require_normal_log_contains \
-  "git args=-C ${normal_repo} -c core.hooksPath=/dev/null -c core.autocrlf=false worktree add --detach"
+  "git args=-C ${normal_repo} -c core.hooksPath=/dev/null worktree add --detach"
 require_normal_log_contains \
-  "git args=-C ${normal_repo} -c core.hooksPath=/dev/null -c core.autocrlf=false worktree remove --force"
+  "git args=-C ${normal_repo} -c core.hooksPath=/dev/null worktree remove --force"
 require_normal_log \
   "git args=-C ${normal_repo} rev-parse HEAD git_dir=unset git_work_tree=unset"
 require_normal_log \
@@ -855,4 +891,97 @@ if grep -Fq "EVIDENCE source_identity=stable" \
   exit 1
 fi
 
-echo "obstacle-course test passed: registry + exact-test execution + fail-closed run identity"
+filter_repo="${test_dir}/filter-repo"
+filter_bin_dir="${test_dir}/filter-bin"
+filter_tmp="${test_dir}/filter-tmp"
+filter_cargo_home="${test_dir}/filter-cargo-home"
+filter_log="${test_dir}/filter.log"
+filter_cargo_log="${test_dir}/filter-cargo.log"
+filter_command="${test_dir}/roundtrip-filter"
+filter_out="${test_dir}/filter.out"
+filter_err="${test_dir}/filter.err"
+real_git="$(command -v git)"
+filter_git=(env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 "${real_git}")
+
+mkdir -p "${filter_repo}" "${filter_bin_dir}" "${filter_tmp}" \
+  "${filter_cargo_home}"
+cp -R "${normal_materialization_template}/." "${filter_repo}"
+printf 'filtered fixture canonical\n' >"${filter_repo}/filtered-fixture"
+printf 'filtered-fixture filter=roundtrip\n' >"${filter_repo}/.gitattributes"
+
+"${filter_git[@]}" -C "${filter_repo}" init -q
+"${filter_git[@]}" -C "${filter_repo}" config user.name obstacle-course-test
+"${filter_git[@]}" -C "${filter_repo}" config user.email obstacle-course-test@invalid
+"${filter_git[@]}" -C "${filter_repo}" add --all
+"${filter_git[@]}" -C "${filter_repo}" commit -q -m 'filter regression fixture'
+
+cat >"${filter_command}" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "\${1:-}" >>"${filter_log}"
+case "\${1:-}" in
+  clean) sed 's/^filtered fixture materialized$/filtered fixture canonical/' ;;
+  smudge) sed 's/^filtered fixture canonical$/filtered fixture materialized/' ;;
+  *) echo "unexpected filter mode: \${1:-}" >&2; exit 2 ;;
+esac
+EOF
+chmod +x "${filter_command}"
+"${filter_git[@]}" -C "${filter_repo}" config filter.roundtrip.clean \
+  "${filter_command} clean"
+"${filter_git[@]}" -C "${filter_repo}" config filter.roundtrip.smudge \
+  "${filter_command} smudge"
+"${filter_git[@]}" -C "${filter_repo}" config filter.roundtrip.required true
+
+if [[ -n "$("${filter_git[@]}" -C "${filter_repo}" status --porcelain)" ]]; then
+  echo "obstacle-course test: filter fixture is not clean before execution" >&2
+  exit 1
+fi
+
+cat >"${filter_bin_dir}/cargo" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'cargo invoked\n' >>"${filter_cargo_log}"
+exit 99
+EOF
+chmod +x "${filter_bin_dir}/cargo"
+cat >"${filter_bin_dir}/rustc" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  --version) echo "rustc 1.85.0 (filter regression)" ;;
+  -vV) printf 'rustc 1.85.0 (filter regression)\nhost: x86_64-apple-darwin\n' ;;
+  *) echo "unexpected rustc arguments: $*" >&2; exit 2 ;;
+esac
+EOF
+chmod +x "${filter_bin_dir}/rustc"
+
+if PATH="${filter_bin_dir}:${PATH}" \
+  TMPDIR="${filter_tmp}" \
+  CARGO_HOME="${filter_cargo_home}" \
+  RUSTC="${filter_bin_dir}/rustc" \
+  CARGO_BUILD_RUSTC='' \
+  bash "${filter_repo}/scripts/obstacle-course.sh" \
+  >"${filter_out}" 2>"${filter_err}"; then
+  echo "obstacle-course test: clean/smudge filter unexpectedly passed exact-head verification" >&2
+  exit 1
+fi
+if ! grep -F "blob-exact source mismatch checkpoint=before-execution path=filtered-fixture" \
+  "${filter_err}" >/dev/null; then
+  sed 's/^/  /' "${filter_err}" >&2
+  echo "obstacle-course test: filter materialization mismatch was not rejected" >&2
+  exit 1
+fi
+if ! grep -Fx 'smudge' "${filter_log}" >/dev/null; then
+  echo "obstacle-course test: repository-local smudge filter did not run" >&2
+  exit 1
+fi
+if [[ -s "${filter_cargo_log}" ]]; then
+  echo "obstacle-course test: Cargo ran before blob-exact source verification" >&2
+  exit 1
+fi
+if [[ -n "$("${filter_git[@]}" -C "${filter_repo}" status --porcelain)" ]]; then
+  echo "obstacle-course test: reversible filter left the source repository dirty" >&2
+  exit 1
+fi
+
+echo "obstacle-course test passed: registry + exact-test execution + blob-exact filter rejection + fail-closed run identity"

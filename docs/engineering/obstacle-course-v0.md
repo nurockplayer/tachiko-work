@@ -40,17 +40,21 @@ exact target runner to an `env` passthrough, overriding user or repository Cargo
 runner configuration. `--list` prints the closed v0 stage registry without
 building or running it.
 
-Before setup, the runner materializes the requested full Git `HEAD` as a clean,
-detached linked worktree under its temporary run root with command-scoped
-`core.autocrlf=false`, then re-executes the course-owned runner from that source.
-Cargo, build scripts, workload fixtures, and correctness stages
-therefore cannot observe ignored or untracked source inputs from the invoking
-checkout. Course-owned Cargo invocations also use a fresh run-scoped
-`CARGO_HOME` with no user configuration; existing `registry` and `git` cache
-trees are linked into it for offline dependency/source reuse, while the
-isolated source's checked-in `.cargo` configuration remains discoverable. This
-is a bounded source/configuration-isolation boundary, not a general
-hermetic-build or sandbox contract.
+Before setup, the runner materializes the requested full Git `HEAD` as a
+detached linked worktree under its temporary run root. Before executing any code
+from that worktree, it enumerates the requested Git tree and verifies every
+supported repository-tracked entry's type, mode, and raw bytes against its Git
+blob identity. Raw regular-file bytes are hashed with
+`git hash-object --no-filters`; symlink target bytes are checked the same way.
+This rejects clean/smudge, EOL, encoding, and other worktree-filter changes even
+when Git status remains clean. Cargo, build scripts, workload fixtures, and
+correctness stages therefore cannot observe ignored or untracked source inputs
+from the invoking checkout. Course-owned Cargo invocations also use a fresh
+run-scoped `CARGO_HOME` with no user configuration; existing `registry` and
+`git` cache trees are linked into it for offline dependency/source reuse, while
+the isolated source's checked-in `.cargo` configuration remains discoverable.
+This is a bounded source-evidence boundary, not a hermetic-build,
+reproducible-build, toolchain-attestation, or security boundary.
 
 ## v0 course
 
@@ -124,17 +128,23 @@ Before running, the command reports:
 - OS/architecture and Rust compiler identity;
 - a versioned workload ID and SHA-256 manifest digest for every stage.
 
-The runner verifies that its source is a clean, detached linked worktree at the
-requested full commit before collecting evidence. It then rechecks the commit,
-clean state, and a byte-sensitive fingerprint of tracked changes plus any
-untracked file contents introduced inside that isolated source after setup and
-after every stage. It also recomputes each exact workload-tree manifest at those
-checkpoints. Regular files and every directory path, including empty
-directories, are bound to that manifest. Ignored entries, symlinks, and special
-entries introduced inside a workload path are rejected before execution or at
-checkpoints, because a stage could observe them even though Git excludes them
-from ordinary source-state enumeration. The run is rejected if source or
-workload identity changes while evidence is being collected.
+Before executing code from the isolated source and before collecting evidence,
+the runner enumerates the requested commit's full Git tree with
+`git ls-tree -r -z --full-tree` and verifies each supported regular-file or
+symlink entry's type, mode, and raw bytes against the listed blob object using
+`git hash-object --no-filters`. The same blob-exact invariant is rechecked before
+setup, after setup, and after every course checkpoint. This source check is
+independent of clean/smudge, EOL, encoding, and other worktree filters. The
+runner separately rechecks the commit, clean state, and a byte-sensitive
+fingerprint of tracked changes plus any untracked file contents introduced
+inside that isolated source. It also recomputes each exact workload-tree
+manifest at those checkpoints. Regular files and every directory path,
+including empty directories, are bound to that manifest. Ignored entries,
+symlinks, and special entries introduced inside a workload path are rejected
+before execution or at checkpoints, because a stage could observe them even
+though Git excludes them from ordinary source-state enumeration. The run is
+rejected if source or workload identity changes while evidence is being
+collected.
 Repository-selecting and command-scoped Git environment variables, including
 inherited author/committer identity and dates, are cleared; every identity query
 is bound to the isolated course source; and materialization suppresses Git hook
@@ -213,9 +223,9 @@ hide a current regression.
   service, model call, or hostname-specific behavior is introduced.
 
 The public registry/fail-closed option seam, exact-test execution, compiler/Git
-environment isolation, exact-HEAD source materialization (including a hostile
-ignored Cargo input), ignored-workload rejection, and run-scoped native artifact
-binding have a focused check:
+environment isolation, blob-exact source verification (including a reversible
+repository-local clean/smudge filter), ignored-workload rejection, and
+run-scoped native artifact binding have a focused check:
 
 ```sh
 bash scripts/obstacle-course-test.sh
