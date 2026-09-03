@@ -6,6 +6,10 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Changed
 
+- Dashboard refresh failures now clear current values to explicit Unknown/empty
+  surfaces; incomplete connection values are not rendered as current, missing
+  CheckRun commit identity remains Unknown, and an observed required-action
+  watch remains visible when other watches are incomplete.
 - Semantic merge now admits only fully validated, completely calculated states
   of one continuing `DocumentId`; emits deterministic
   `tachiko.semantic-conflict/v1` evidence with typed stable targets, direct
