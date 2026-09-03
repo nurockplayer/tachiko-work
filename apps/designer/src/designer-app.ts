@@ -189,6 +189,9 @@ export function mountDesigner(
       },
     );
 
+  const commitDate = (target: FieldTarget, value: string): Promise<void> =>
+    commitScalar(target, (expectedRevision) => client.editDate(expectedRevision, target, value));
+
   const selectCollection = async (collection: string): Promise<void> => {
     if (bootstrap === null || store === null || busy) return;
     busy = true;
@@ -482,6 +485,9 @@ export function mountDesigner(
             void commitBoolean({ entity, field }, control.checked);
             break;
           }
+          case "date":
+            void commitDate({ entity, field }, control.value);
+            break;
         }
       });
     });
@@ -862,6 +868,27 @@ function fieldMarkup(
       </td>
     `;
   }
+  if (field.editable_scalar === "date" && field.stored?.kind === "date") {
+    return `
+      <td data-field="${escapeHtml(key)}" class="stored-cell">
+        <form data-edit-form data-entity="${encodeOpaqueAttribute(
+          field.target.entity,
+        )}" data-field="${encodeOpaqueAttribute(field.target.field)}" data-edit-kind="date">
+          <input
+            type="date"
+            value="${escapeHtml(field.stored.value)}"
+            aria-label="${escapeHtml(humanize(fieldKey))} for ${escapeHtml(
+              humanize(entityKey),
+            )}"
+            ${busy ? "disabled" : ""}
+          />
+          <button type="submit" ${busy ? "disabled" : ""}>Apply</button>
+        </form>
+        <small class="value-kind">Stored · Date</small>
+        ${diagnostics}
+      </td>
+    `;
+  }
   if (field.formula !== null) {
     return `
       <td data-field="${escapeHtml(key)}" class="formula-cell">
@@ -916,6 +943,8 @@ function storedValue(field: FieldProjection): string {
       return stored.value;
     case "boolean":
       return stored.value ? "True" : "False";
+    case "date":
+      return stored.value;
     case "reference":
       return `→ ${stored.entity}`;
   }

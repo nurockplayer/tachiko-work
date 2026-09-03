@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use tachiko_diff_engine::{SemanticChange, diff};
 use tachiko_semantic_core::{
-    Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
+    Date, Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
     FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
 };
 
@@ -91,6 +91,19 @@ fn reference(entity: &str, field: &str) -> Expression {
     Expression::Reference(FieldRef::new(entity, field))
 }
 
+fn date_document(value: &str) -> Document {
+    let mut document = balance_document(100.0);
+    document.schemas.get_mut("weapon").unwrap().fields.insert(
+        FieldId::from("release_date"),
+        field("release_date", FieldType::Date, false),
+    );
+    document.entities.get_mut("sword").unwrap().fields.insert(
+        FieldId::from("release_date"),
+        Value::Date(value.parse::<Date>().unwrap()),
+    );
+    document
+}
+
 #[test]
 fn changed_balance_value_reports_direct_and_derived_meaning() {
     let before = balance_document(100.0);
@@ -115,6 +128,27 @@ fn changed_balance_value_reports_direct_and_derived_meaning() {
         SemanticChange::FormulaImpact { field, causes, .. }
             if field == &FieldRef::new("sword", "dps")
                 && causes == &vec![FieldRef::new("sword", "damage")]
+    )));
+}
+
+#[test]
+fn date_changes_use_semantic_equality_and_canonical_rendering() {
+    let before = date_document("2024-02-29");
+    let after = date_document("2025-01-01");
+
+    let semantic_diff = diff(&before, &after).unwrap();
+
+    assert!(
+        semantic_diff
+            .render_text()
+            .contains("release_date: 2024-02-29 -> 2025-01-01")
+    );
+    assert!(semantic_diff.changes().iter().any(|change| matches!(
+        change,
+        SemanticChange::FieldChanged { field, before, after }
+            if field == &FieldRef::new("sword", "release_date")
+                && before == &Value::Date("2024-02-29".parse().unwrap())
+                && after == &Value::Date("2025-01-01".parse().unwrap())
     )));
 }
 

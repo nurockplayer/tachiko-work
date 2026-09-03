@@ -116,7 +116,10 @@ field store member name must equal nested `id`.
 }
 ```
 
-Field-type discriminators are `number`, `text`, `boolean`, and `reference`.
+Field-type discriminators are `number`, `text`, `boolean`, `date`, and
+`reference`. `date` is a date-only proleptic Gregorian value in the canonical
+`YYYY-MM-DD` spelling; it has no time, timezone, epoch, or Excel serial
+meaning.
 Reference member order is `type`, then `schema`; `schema` stores the target
 stable `SchemaId`:
 
@@ -145,7 +148,15 @@ member names are stable `FieldId` tokens declared by that schema.
 ### Values
 
 Values retain v1's adjacent `kind`, `value` record order and exact
-discriminators: `number`, `text`, `boolean`, `reference`, and `formula`.
+discriminators: `number`, `text`, `boolean`, `date`, `reference`, and
+`formula`. A Date value stores the canonical `YYYY-MM-DD` string:
+
+```json
+{
+  "kind": "date",
+  "value": "2024-02-29"
+}
+```
 Reference values store a stable target `EntityId`:
 
 ```json

@@ -185,6 +185,7 @@ pub enum SemanticValueKind {
     Formula,
     Text,
     Boolean,
+    Date,
     Reference,
 }
 
@@ -971,6 +972,7 @@ fn value_kind(value: &Value) -> SemanticValueKind {
         Value::Formula(_) => SemanticValueKind::Formula,
         Value::Text(_) => SemanticValueKind::Text,
         Value::Boolean(_) => SemanticValueKind::Boolean,
+        Value::Date(_) => SemanticValueKind::Date,
         Value::Reference(_) => SemanticValueKind::Reference,
     }
 }

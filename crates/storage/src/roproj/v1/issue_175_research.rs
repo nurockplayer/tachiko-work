@@ -113,6 +113,7 @@ enum FieldTypeFact {
     Number,
     Text,
     Boolean,
+    Date,
     Reference { schema: String },
 }
 
@@ -1815,6 +1816,7 @@ fn field_type_fact(field_type: &FieldType) -> FieldTypeFact {
         FieldType::Number => FieldTypeFact::Number,
         FieldType::Text => FieldTypeFact::Text,
         FieldType::Boolean => FieldTypeFact::Boolean,
+        FieldType::Date => FieldTypeFact::Date,
         FieldType::Reference { schema } => FieldTypeFact::Reference {
             schema: schema.to_string(),
         },
@@ -2487,7 +2489,7 @@ fn wide_field_document(entity_count: usize, field_count: usize) -> Document {
                         }
                         FieldType::Text => Value::Text(format!("wide value {index}/{offset}")),
                         FieldType::Boolean => Value::Boolean((index + offset) % 2 == 0),
-                        FieldType::Reference { .. } => unreachable!(),
+                        FieldType::Date | FieldType::Reference { .. } => unreachable!(),
                     };
                     (field.clone(), value)
                 })

@@ -49,6 +49,11 @@ rename leaves the stable ID unchanged. Deterministic runtime indexes resolve
 human keys before an operation stores or executes a bound relationship; those
 indexes are derived state and are not persisted.
 
+The closed scalar profile currently includes finite `Number`, `Text`,
+`Boolean`, and date-only `Date` values. `Date` is a proleptic Gregorian civil
+date in the bounded `0001..=9999` range, canonically represented as
+`YYYY-MM-DD` without time or timezone semantics.
+
 ### Document
 
 A document is a graph containing semantic blocks.

@@ -29,7 +29,7 @@ use tachiko_semantic_core::{
     AddressIndex, AddressIndexError, is_valid_identifier, validate_document_core,
 };
 pub use tachiko_semantic_core::{
-    Diagnostic, DiagnosticCode, DiagnosticFact, DiagnosticLocation, DiagnosticProvider,
+    Date, Diagnostic, DiagnosticCode, DiagnosticFact, DiagnosticLocation, DiagnosticProvider,
     DiagnosticSeverity, Document, DocumentId, Entity, EntityId, EntityKey, Expression,
     FieldAddress, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, Number, Schema,
     SchemaId, SchemaKey, SemanticSubject, StableDiagnosticObservation, Value,
@@ -352,6 +352,7 @@ pub enum RuntimeValue {
     Number(Number),
     Text(String),
     Boolean(bool),
+    Date(Date),
     Reference { reference: String },
 }
 
@@ -627,7 +628,11 @@ pub fn analyze_field(
                 }
             })?)
         }
-        Value::Number(_) | Value::Text(_) | Value::Boolean(_) | Value::Reference(_) => None,
+        Value::Number(_)
+        | Value::Text(_)
+        | Value::Boolean(_)
+        | Value::Date(_)
+        | Value::Reference(_) => None,
     };
     let direct_dependencies = calculation
         .dependencies_of(field)
@@ -1002,7 +1007,9 @@ fn field_kind(
                 target_schema: target.key.clone(),
             })
         }
-        Value::Number(_) | Value::Text(_) | Value::Boolean(_) => Ok(FieldKind::Input),
+        Value::Number(_) | Value::Text(_) | Value::Boolean(_) | Value::Date(_) => {
+            Ok(FieldKind::Input)
+        }
     }
 }
 
@@ -1442,7 +1449,7 @@ fn value_references_entity(value: &Value, target: &EntityId) -> bool {
     match value {
         Value::Reference(reference) => reference == target,
         Value::Formula(expression) => expression_references_entity(expression, target),
-        Value::Number(_) | Value::Text(_) | Value::Boolean(_) => false,
+        Value::Number(_) | Value::Text(_) | Value::Boolean(_) | Value::Date(_) => false,
     }
 }
 
@@ -1551,6 +1558,7 @@ fn value_matches_type(value: &Value, field_type: &FieldType) -> bool {
         (Value::Number(_) | Value::Formula(_), FieldType::Number)
             | (Value::Text(_), FieldType::Text)
             | (Value::Boolean(_), FieldType::Boolean)
+            | (Value::Date(_), FieldType::Date)
             | (Value::Reference(_), FieldType::Reference { .. })
     )
 }
@@ -2097,7 +2105,11 @@ fn drop_expression_iteratively(expression: Expression) {
 fn drop_value_iteratively(value: Value) {
     match value {
         Value::Formula(expression) => drop_expression_iteratively(expression),
-        Value::Number(_) | Value::Text(_) | Value::Boolean(_) | Value::Reference(_) => {}
+        Value::Number(_)
+        | Value::Text(_)
+        | Value::Boolean(_)
+        | Value::Date(_)
+        | Value::Reference(_) => {}
     }
 }
 
@@ -2144,6 +2156,9 @@ fn parse_scalar(
             .parse::<bool>()
             .map(Value::Boolean)
             .map_err(|_| invalid("boolean (true or false)")),
+        FieldType::Date => Date::parse(input)
+            .map(Value::Date)
+            .map_err(|_| invalid("date (YYYY-MM-DD)")),
         FieldType::Reference { .. } => {
             let target = AddressIndex::build(document)?
                 .entity_id(&EntityKey::from(input))
@@ -2164,6 +2179,7 @@ fn runtime_value(
         Value::Number(number) => Ok(RuntimeValue::Number(*number)),
         Value::Text(text) => Ok(RuntimeValue::Text(text.clone())),
         Value::Boolean(boolean) => Ok(RuntimeValue::Boolean(*boolean)),
+        Value::Date(date) => Ok(RuntimeValue::Date(*date)),
         Value::Reference(entity) => {
             let target =
                 document
@@ -2564,6 +2580,7 @@ fn format_value(document: &Document, value: &Value) -> String {
         Value::Number(number) => format_number(*number),
         Value::Text(text) => text.clone(),
         Value::Boolean(boolean) => boolean.to_string(),
+        Value::Date(date) => date.to_string(),
         Value::Reference(entity) => document.entities.get(entity).map_or_else(
             || format!("→ <missing:{entity}>"),
             |entity| format!("→ {}", entity.key),

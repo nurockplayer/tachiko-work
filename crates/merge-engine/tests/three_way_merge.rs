@@ -6,7 +6,7 @@ use tachiko_merge_engine::{
     SchemaFieldSubject, merge,
 };
 use tachiko_semantic_core::{
-    Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
+    Date, Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
     FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
 };
 
@@ -99,6 +99,23 @@ fn with_bonus(mut document: Document) -> Document {
         .unwrap()
         .fields
         .insert(FieldId::from("bonus"), number(4.0));
+    document
+}
+
+fn with_release_date(mut document: Document, value: &str) -> Document {
+    document.schemas.get_mut("weapon").unwrap().fields.insert(
+        FieldId::from("release_date"),
+        field("release_date", FieldType::Date, false),
+    );
+    document
+        .entities
+        .get_mut("iron_sword")
+        .unwrap()
+        .fields
+        .insert(
+            FieldId::from("release_date"),
+            Value::Date(value.parse::<Date>().unwrap()),
+        );
     document
 }
 
@@ -215,6 +232,46 @@ fn identical_two_sided_change_is_not_a_conflict() {
         merge(&base, &ours, &theirs),
         MergeOutcome::Merged(_)
     ));
+}
+
+#[test]
+fn divergent_date_edits_are_typed_stored_value_conflicts() {
+    let base = with_release_date(balance_document(36.0, 0.9), "2024-01-01");
+    let ours = with_release_date(base.clone(), "2024-02-29");
+    let theirs = with_release_date(base.clone(), "2025-01-01");
+
+    let MergeOutcome::Conflicted(conflicts) = merge(&base, &ours, &theirs) else {
+        panic!("divergent date edits should conflict")
+    };
+
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(conflicts[0].facet(), ConflictFacet::StoredValue);
+    assert_eq!(
+        conflicts[0].target(),
+        &ConflictTarget::StoredEntityField {
+            entity: "iron_sword".into(),
+            schema: "weapon".into(),
+            field: "release_date".into(),
+        }
+    );
+    assert_eq!(
+        conflicts[0].base(),
+        &ConflictFact::Present(MergeValue::FieldValue(Value::Date(
+            "2024-01-01".parse().unwrap(),
+        )))
+    );
+    assert_eq!(
+        conflicts[0].left(),
+        &ConflictFact::Present(MergeValue::FieldValue(Value::Date(
+            "2024-02-29".parse().unwrap(),
+        )))
+    );
+    assert_eq!(
+        conflicts[0].right(),
+        &ConflictFact::Present(MergeValue::FieldValue(Value::Date(
+            "2025-01-01".parse().unwrap(),
+        )))
+    );
 }
 
 #[test]

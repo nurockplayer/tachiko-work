@@ -15,7 +15,7 @@ use crate::patch_lifecycle::{
     PrincipalId, ScopedSemanticSubject, SemanticRevision, SemanticScope, TrustedInstant,
 };
 use crate::{
-    CalculationFailure, Document, DocumentId, EntityId, FieldId, FieldRef, FieldType, Number,
+    CalculationFailure, Date, Document, DocumentId, EntityId, FieldId, FieldRef, FieldType, Number,
     SchemaId, Value,
 };
 
@@ -116,6 +116,7 @@ pub enum PredicateOperand {
     Number(Number),
     Text(String),
     Boolean(bool),
+    Date(Date),
     Reference(EntityId),
 }
 
@@ -166,6 +167,7 @@ pub enum AnalysisValueKind {
     Formula,
     Text,
     Boolean,
+    Date,
     Reference,
 }
 
@@ -313,6 +315,7 @@ pub enum AnalysisGroupKey {
     Number(Number),
     Text(String),
     Boolean(bool),
+    Date(Date),
     Reference(EntityId),
 }
 
@@ -956,13 +959,17 @@ fn predicate_is_typed(field_type: FieldType, predicate: &AnalysisPredicate) -> b
         (FieldType::Number, PredicateOperand::Number(_))
             | (FieldType::Text, PredicateOperand::Text(_))
             | (FieldType::Boolean, PredicateOperand::Boolean(_))
+            | (FieldType::Date, PredicateOperand::Date(_))
             | (FieldType::Reference { .. }, PredicateOperand::Reference(_))
     );
     operand_matches
         && (matches!(
             predicate.operator,
             AnalysisPredicateOperator::Equal | AnalysisPredicateOperator::NotEqual
-        ) || matches!(predicate.operand, PredicateOperand::Number(_)))
+        ) || matches!(
+            predicate.operand,
+            PredicateOperand::Number(_) | PredicateOperand::Date(_)
+        ))
 }
 
 fn select_entities(
@@ -1055,6 +1062,7 @@ fn effective_predicate_value(
         Value::Number(value) => Ok(PredicateOperand::Number(*value)),
         Value::Text(value) => Ok(PredicateOperand::Text(value.clone())),
         Value::Boolean(value) => Ok(PredicateOperand::Boolean(*value)),
+        Value::Date(value) => Ok(PredicateOperand::Date(*value)),
         Value::Reference(value) => Ok(PredicateOperand::Reference(value.clone())),
         Value::Formula(_) => effective_formula_number(
             &FieldRef::new(entity.clone(), field.clone()),
@@ -1071,6 +1079,7 @@ const fn operand_kinds_match(left: &PredicateOperand, right: &PredicateOperand) 
         (PredicateOperand::Number(_), PredicateOperand::Number(_))
             | (PredicateOperand::Text(_), PredicateOperand::Text(_))
             | (PredicateOperand::Boolean(_), PredicateOperand::Boolean(_))
+            | (PredicateOperand::Date(_), PredicateOperand::Date(_))
             | (
                 PredicateOperand::Reference(_),
                 PredicateOperand::Reference(_)
@@ -1117,6 +1126,7 @@ fn group_entities(
             (FieldType::Number, Value::Number(value)) => AnalysisGroupKey::Number(*value),
             (FieldType::Text, Value::Text(value)) => AnalysisGroupKey::Text(value.clone()),
             (FieldType::Boolean, Value::Boolean(value)) => AnalysisGroupKey::Boolean(*value),
+            (FieldType::Date, Value::Date(value)) => AnalysisGroupKey::Date(*value),
             (FieldType::Reference { schema }, Value::Reference(value)) => {
                 if !reference_value_is_typed(document, schema, value) {
                     return Err(AnalysisFailure::InvalidGroupValue {
@@ -1420,6 +1430,7 @@ const fn value_kind(value: &Value) -> AnalysisValueKind {
         Value::Formula(_) => AnalysisValueKind::Formula,
         Value::Text(_) => AnalysisValueKind::Text,
         Value::Boolean(_) => AnalysisValueKind::Boolean,
+        Value::Date(_) => AnalysisValueKind::Date,
         Value::Reference(_) => AnalysisValueKind::Reference,
     }
 }

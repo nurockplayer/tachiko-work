@@ -21,9 +21,9 @@ use tachiko_workspace_engine::analysis_operations::{
     AnalysisResultValue, MetricIncompleteReason, NumericAggregateOutcome, PredicateOperand,
 };
 use tachiko_workspace_engine::{
-    CalculationFailure, Document, EditPreview, ExpressionComplexityError, FieldAddress, FieldKind,
-    FieldRef, IdGenerator, MergeConflict, ReferenceFailure, SemanticChange, SemanticIdKind,
-    StarterTemplate, ValidationReport, WorkspaceError, WorkspaceMergeOutcome,
+    CalculationFailure, Date, Document, EditPreview, ExpressionComplexityError, FieldAddress,
+    FieldKind, FieldRef, IdGenerator, MergeConflict, ReferenceFailure, SemanticChange,
+    SemanticIdKind, StarterTemplate, ValidationReport, WorkspaceError, WorkspaceMergeOutcome,
     analyze_changes as analyze_semantic_changes, analyze_field as analyze_semantic_field,
     analyze_validation as analyze_semantic_validation, calculate_fields, compare_documents,
     create_document, duplicate_entity, explain_field, inspect_document,
@@ -1066,6 +1066,14 @@ fn parse_analysis_predicate(value: &str) -> Result<AnalysisPredicate, CommandErr
                 });
             }
         },
+        "date" => parts[3]
+            .parse::<Date>()
+            .map(PredicateOperand::Date)
+            .map_err(|_| CommandError::InvalidAnalysisSyntax {
+                kind: "predicate",
+                value: value.to_owned(),
+                expected: "a canonical Gregorian date operand (YYYY-MM-DD)",
+            })?,
         "reference" => {
             PredicateOperand::Reference(tachiko_workspace_engine::EntityId::from(parts[3]))
         }
@@ -1073,7 +1081,7 @@ fn parse_analysis_predicate(value: &str) -> Result<AnalysisPredicate, CommandErr
             return Err(CommandError::InvalidAnalysisSyntax {
                 kind: "predicate",
                 value: value.to_owned(),
-                expected: "type number, text, boolean, or reference",
+                expected: "type number, text, boolean, date, or reference",
             });
         }
     };
@@ -1170,6 +1178,7 @@ fn analysis_operand_output(operand: &PredicateOperand) -> serde_json::Value {
         PredicateOperand::Number(v) => json!({ "type": "number", "value": v }),
         PredicateOperand::Text(v) => json!({ "type": "text", "value": v }),
         PredicateOperand::Boolean(v) => json!({ "type": "boolean", "value": v }),
+        PredicateOperand::Date(v) => json!({ "type": "date", "value": v }),
         PredicateOperand::Reference(v) => json!({ "type": "reference", "value": v }),
     }
 }
@@ -1223,6 +1232,7 @@ fn analysis_group_key_output(key: &AnalysisGroupKey) -> serde_json::Value {
         AnalysisGroupKey::Number(v) => json!({ "type": "number", "value": v }),
         AnalysisGroupKey::Text(v) => json!({ "type": "text", "value": v }),
         AnalysisGroupKey::Boolean(v) => json!({ "type": "boolean", "value": v }),
+        AnalysisGroupKey::Date(v) => json!({ "type": "date", "value": v }),
         AnalysisGroupKey::Reference(v) => json!({ "type": "reference", "value": v }),
     }
 }
@@ -1355,6 +1365,7 @@ const fn analysis_value_kind_name(
         tachiko_workspace_engine::analysis_operations::AnalysisValueKind::Formula => "formula",
         tachiko_workspace_engine::analysis_operations::AnalysisValueKind::Text => "text",
         tachiko_workspace_engine::analysis_operations::AnalysisValueKind::Boolean => "boolean",
+        tachiko_workspace_engine::analysis_operations::AnalysisValueKind::Date => "date",
         tachiko_workspace_engine::analysis_operations::AnalysisValueKind::Reference => "reference",
     }
 }
@@ -1384,6 +1395,7 @@ const fn value_kind_name(kind: SemanticValueKind) -> &'static str {
         SemanticValueKind::Formula => "formula",
         SemanticValueKind::Text => "text",
         SemanticValueKind::Boolean => "boolean",
+        SemanticValueKind::Date => "date",
         SemanticValueKind::Reference => "reference",
     }
 }

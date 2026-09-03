@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use tachiko_workspace_engine::{
-    Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldDefinition, FieldId,
+    Date, Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldDefinition, FieldId,
     FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
     analysis_operations::{
         AnalysisCollectionKind, AnalysisDefinition, AnalysisFailure, AnalysisGroupKey,
@@ -152,6 +152,30 @@ fn analysis_document_with_wrong_schema_reference() -> Document {
         FieldId::from("category_ref"),
         Value::Reference(EntityId::from("wrong-category")),
     );
+    document
+}
+
+fn date_analysis_document() -> Document {
+    let mut document = analysis_document();
+    document.schemas.get_mut("weapons").unwrap().fields.insert(
+        FieldId::from("published"),
+        FieldDefinition {
+            id: FieldId::from("published"),
+            key: FieldKey::from("published"),
+            field_type: FieldType::Date,
+            required: true,
+        },
+    );
+    for (entity, value) in [
+        ("alpha", "2024-02-29"),
+        ("beta", "2025-01-01"),
+        ("gamma", "2024-02-29"),
+    ] {
+        document.entities.get_mut(entity).unwrap().fields.insert(
+            FieldId::from("published"),
+            Value::Date(value.parse::<Date>().unwrap()),
+        );
+    }
     document
 }
 
@@ -351,6 +375,59 @@ fn typed_filter_uses_optional_missing_as_false_and_stable_ids_as_a_narrowing_int
             },
         ]
     );
+}
+
+#[test]
+fn date_predicates_order_and_grouping_use_the_closed_semantic_value() {
+    let document = date_analysis_document();
+    let mut lifecycle = lifecycle();
+    grant_query(&mut lifecycle, "document-query", vec![document_scope()]);
+    let threshold = "2025-01-01".parse::<Date>().unwrap();
+    let filtered = AnalysisDefinition::new(
+        SchemaId::from("weapons"),
+        None,
+        vec![AnalysisPredicate::new(
+            FieldId::from("published"),
+            AnalysisPredicateOperator::GreaterThanOrEqual,
+            PredicateOperand::Date(threshold),
+        )],
+        None,
+        vec![
+            AnalysisResultRequest::Membership,
+            AnalysisResultRequest::Count,
+        ],
+    );
+    assert_eq!(
+        complete_values(run(&lifecycle, &document, &filtered).unwrap()),
+        vec![
+            AnalysisResultValue::Membership(vec![EntityId::from("beta")]),
+            AnalysisResultValue::Count(1),
+        ]
+    );
+
+    let grouped = AnalysisDefinition::new(
+        SchemaId::from("weapons"),
+        None,
+        vec![],
+        Some(FieldId::from("published")),
+        vec![AnalysisResultRequest::Count],
+    );
+    let AnalysisOutcome::Complete(AnalysisProjection::Grouped(groups)) =
+        run(&lifecycle, &document, &grouped).unwrap().outcome
+    else {
+        panic!("expected date grouping")
+    };
+    assert_eq!(groups.len(), 2);
+    assert_eq!(
+        groups[0].key,
+        AnalysisGroupKey::Date("2024-02-29".parse().unwrap())
+    );
+    assert_eq!(groups[0].bucket.values, vec![AnalysisResultValue::Count(2)]);
+    assert_eq!(
+        groups[1].key,
+        AnalysisGroupKey::Date("2025-01-01".parse().unwrap())
+    );
+    assert_eq!(groups[1].bucket.values, vec![AnalysisResultValue::Count(1)]);
 }
 
 #[test]

@@ -439,7 +439,8 @@ fn validate_value(
     match (expected, value) {
         (FieldType::Number, Value::Number(_))
         | (FieldType::Text, Value::Text(_))
-        | (FieldType::Boolean, Value::Boolean(_)) => {}
+        | (FieldType::Boolean, Value::Boolean(_))
+        | (FieldType::Date, Value::Date(_)) => {}
         (FieldType::Number, Value::Formula(expression)) => {
             if include_formula_references {
                 validate_expression(document, field, expression, path, diagnostics);
@@ -600,6 +601,7 @@ fn field_type_name(field_type: &FieldType) -> &'static str {
         FieldType::Number => "number",
         FieldType::Text => "text",
         FieldType::Boolean => "boolean",
+        FieldType::Date => "date",
         FieldType::Reference { .. } => "reference",
     }
 }
@@ -609,6 +611,7 @@ fn value_type_name(value: &Value) -> &'static str {
         Value::Number(_) => "number",
         Value::Text(_) => "text",
         Value::Boolean(_) => "boolean",
+        Value::Date(_) => "date",
         Value::Reference(_) => "reference",
         Value::Formula(_) => "formula",
     }
@@ -1040,7 +1043,8 @@ mod issue_175_research {
         match (expected, value) {
             (FieldType::Number, Value::Number(_))
             | (FieldType::Text, Value::Text(_))
-            | (FieldType::Boolean, Value::Boolean(_)) => {}
+            | (FieldType::Boolean, Value::Boolean(_))
+            | (FieldType::Date, Value::Date(_)) => {}
             (FieldType::Number, Value::Formula(expression)) => {
                 if include_formula_references {
                     validate_expression(document, field, expression, path, diagnostics, cancelled)?;

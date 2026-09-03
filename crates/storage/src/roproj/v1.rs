@@ -347,13 +347,13 @@ fn encode_validated(document: &Document) -> Result<CanonicalRoProjectV1, FormatE
         .schemas
         .values()
         .map(SchemaV1::from_semantic)
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, _>>()?;
     schemas.sort_by(|left, right| left.id.as_bytes().cmp(right.id.as_bytes()));
     let mut entities = document
         .entities
         .values()
         .map(EntityV1::from_semantic)
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, _>>()?;
     entities.sort_by(|left, right| left.id.as_bytes().cmp(right.id.as_bytes()));
 
     let mut files = Vec::with_capacity(ROPROJ_V1_PATHS.len());
@@ -849,70 +849,80 @@ impl ManifestV1 {
 }
 
 impl SchemaV1 {
-    fn from_semantic(schema: &Schema) -> Self {
+    fn from_semantic(schema: &Schema) -> Result<Self, FormatError> {
         let mut fields = schema
             .fields
             .values()
             .map(FieldDefinitionV1::from_semantic)
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, _>>()?;
         fields.sort_by(|left, right| left.id.as_bytes().cmp(right.id.as_bytes()));
-        Self {
+        Ok(Self {
             id: schema.id.to_string(),
             key: schema.key.to_string(),
             fields,
-        }
+        })
     }
 }
 
 impl FieldDefinitionV1 {
-    fn from_semantic(field: &FieldDefinition) -> Self {
-        Self {
+    fn from_semantic(field: &FieldDefinition) -> Result<Self, FormatError> {
+        Ok(Self {
             id: field.id.to_string(),
             key: field.key.to_string(),
-            field_type: FieldTypeV1::from_semantic(&field.field_type),
+            field_type: FieldTypeV1::from_semantic(&field.field_type)?,
             required: field.required,
-        }
+        })
     }
 }
 
 impl FieldTypeV1 {
-    fn from_semantic(field_type: &FieldType) -> Self {
-        match field_type {
+    fn from_semantic(field_type: &FieldType) -> Result<Self, FormatError> {
+        Ok(match field_type {
             FieldType::Number => Self::Number,
             FieldType::Text => Self::Text,
             FieldType::Boolean => Self::Boolean,
+            FieldType::Date => {
+                return invalid_representation(
+                    "Date is not representable in frozen .roproj/v1; use direct-ro/v2".to_owned(),
+                );
+            }
             FieldType::Reference { schema } => Self::Reference {
                 schema: schema.to_string(),
             },
-        }
+        })
     }
 }
 
 impl EntityV1 {
-    fn from_semantic(entity: &Entity) -> Self {
+    fn from_semantic(entity: &Entity) -> Result<Self, FormatError> {
         let fields = entity
             .fields
             .iter()
-            .map(|(id, value)| (id.to_string(), ValueV1::from_semantic(value)))
-            .collect();
-        Self {
+            .map(|(id, value)| Ok((id.to_string(), ValueV1::from_semantic(value)?)))
+            .collect::<Result<_, FormatError>>()?;
+        Ok(Self {
             id: entity.id.to_string(),
             key: entity.key.to_string(),
             schema: entity.schema.to_string(),
             fields,
-        }
+        })
     }
 }
 
 impl ValueV1 {
-    fn from_semantic(value: &Value) -> Self {
-        match value {
+    fn from_semantic(value: &Value) -> Result<Self, FormatError> {
+        Ok(match value {
             Value::Number(number) => Self::Number(NumberV1(number.get())),
             Value::Text(text) => Self::Text(text.clone()),
             Value::Boolean(boolean) => Self::Boolean(*boolean),
+            Value::Date(_) => {
+                return invalid_representation(
+                    "Date is not representable in frozen .roproj/v1; use direct-ro/v2".to_owned(),
+                );
+            }
             Value::Reference(entity) => Self::Reference(entity.to_string()),
             Value::Formula(expression) => Self::Formula(ExpressionV1::from_semantic(expression)),
-        }
+        })
     }
 }
 

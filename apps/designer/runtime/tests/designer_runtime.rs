@@ -6,9 +6,9 @@ use tachiko_designer_runtime::{
     process_wire_request,
 };
 use tachiko_workspace_engine::{
-    Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldAddress, FieldDefinition,
-    FieldId, FieldKey, FieldRef, FieldType, IdGenerator, Number, Schema, SchemaId, SchemaKey,
-    SemanticIdKind, StarterTemplate, Value, create_document,
+    Date, Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldAddress,
+    FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, IdGenerator, Number, Schema, SchemaId,
+    SchemaKey, SemanticIdKind, StarterTemplate, Value, create_document,
 };
 
 const OCCURRENCE_ZERO: &str = "00000000-0000-4000-8000-000000000000";
@@ -179,6 +179,41 @@ fn product_gap_entities_without_formulas() -> BTreeMap<EntityId, Entity> {
             },
         ),
     ])
+}
+
+fn date_document() -> Document {
+    Document {
+        id: DocumentId::from("date_project"),
+        title: "Date Project".to_owned(),
+        schemas: BTreeMap::from([(
+            SchemaId::from("events"),
+            Schema {
+                id: SchemaId::from("events"),
+                key: SchemaKey::from("events"),
+                fields: BTreeMap::from([(
+                    FieldId::from("published"),
+                    FieldDefinition {
+                        id: FieldId::from("published"),
+                        key: FieldKey::from("published"),
+                        field_type: FieldType::Date,
+                        required: true,
+                    },
+                )]),
+            },
+        )]),
+        entities: BTreeMap::from([(
+            EntityId::from("launch"),
+            Entity {
+                id: EntityId::from("launch"),
+                key: EntityKey::from("launch"),
+                schema: SchemaId::from("events"),
+                fields: BTreeMap::from([(
+                    FieldId::from("published"),
+                    Value::Date(Date::parse("2024-02-29").unwrap()),
+                )]),
+            },
+        )]),
+    }
 }
 
 #[test]
@@ -895,6 +930,80 @@ fn table_query_keeps_stored_formula_and_calculated_values_distinct() {
         Some(40.0)
     );
     assert_eq!(dps.editable_scalar, None);
+}
+
+#[test]
+fn date_projection_and_edit_use_the_rust_semantic_authority() {
+    let mut runtime = DesignerRuntime::from_document(date_document(), OCCURRENCE_ONE)
+        .expect("date project should fit the bounded Designer profile");
+
+    let DesignerResponse::Table(table) = runtime
+        .handle(DesignerRequest::QueryTable {
+            collection: "events".to_owned(),
+        })
+        .expect("date table should be queryable")
+    else {
+        panic!("expected table response");
+    };
+    assert_eq!(table.columns[0].field_type, "date");
+    assert!(matches!(
+        table.rows[0].fields[0].stored,
+        Some(StoredValueProjection::Date { value }) if value == Date::parse("2024-02-29").unwrap()
+    ));
+    assert_eq!(
+        table.rows[0].fields[0].editable_scalar,
+        Some(ScalarKind::Date)
+    );
+
+    let DesignerResponse::Published(publication) = runtime
+        .handle(DesignerRequest::EditScalar {
+            expected_revision: "resident/0".to_owned(),
+            target: "launch.published".into(),
+            input: ScalarEditInput::Date {
+                value: "2025-01-01".to_owned(),
+            },
+        })
+        .expect("valid date edit should publish")
+    else {
+        panic!("expected publication response");
+    };
+    assert_eq!(publication.resulting_revision, "resident/1");
+
+    let DesignerResponse::Fields(fields) = runtime
+        .handle(DesignerRequest::QueryFields {
+            expected_revision: "resident/1".to_owned(),
+            fields: vec!["launch.published".into()],
+        })
+        .expect("edited date should be queryable")
+    else {
+        panic!("expected fields response");
+    };
+    assert!(matches!(
+        fields.fields[0].stored,
+        Some(StoredValueProjection::Date { value }) if value == Date::parse("2025-01-01").unwrap()
+    ));
+
+    let invalid = runtime
+        .handle(DesignerRequest::EditScalar {
+            expected_revision: "resident/1".to_owned(),
+            target: "launch.published".into(),
+            input: ScalarEditInput::Date {
+                value: "1900-02-29".to_owned(),
+            },
+        })
+        .expect_err("fake Gregorian dates must not publish");
+    assert_eq!(
+        invalid.failure_projection("resident/1").code,
+        "invalid_date"
+    );
+
+    let export_error = runtime
+        .export_project("resident/1")
+        .expect_err("frozen .roproj/v1 must not be widened for Date");
+    assert_eq!(
+        export_error.failure_projection("resident/1").code,
+        "invalid_project"
+    );
 }
 
 #[test]
