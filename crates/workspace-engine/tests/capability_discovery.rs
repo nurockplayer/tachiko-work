@@ -6,7 +6,6 @@ use tachiko_workspace_engine::{
     capability_discovery::{
         FieldCapabilities, FieldCapabilityApplicability, FieldCapabilityInapplicability,
         FieldCapabilityInput, FieldCapabilityKind, FieldCapabilityQueryOutcome,
-        describe_field_capabilities,
     },
     formula_operations::{
         FormulaReasoningOutcome, FormulaUpdateRequest, NumberOverride, ScenarioOutcome,
@@ -19,6 +18,7 @@ use tachiko_workspace_engine::{
         ProposalRequest, ScopedSemanticSubject, SemanticApiContract, SemanticCommand,
         SemanticPatchBody, SemanticRevision, SemanticScope, TrustedInstant,
     },
+    resident_session::ResidentWorkspaceSession,
     validate_field_value_suggestion,
 };
 
@@ -175,6 +175,21 @@ fn lifecycle() -> PatchLifecycle {
     lifecycle
 }
 
+fn capabilities_for(document: &Document, field: &FieldRef) -> FieldCapabilities {
+    let mut lifecycle = lifecycle();
+    grant_discovery(&mut lifecycle);
+    let snapshot =
+        ResidentWorkspaceSession::new(DocumentScopeId::from("game-occurrence"), document.clone())
+            .export_snapshot();
+    let result = lifecycle
+        .query_field_capabilities(&snapshot, field, &PrincipalId::from("agent"), NOW)
+        .expect("authorized discovery should project an existing field");
+    let FieldCapabilityQueryOutcome::Field(capabilities) = result.outcome else {
+        panic!("test fixture field should resolve");
+    };
+    capabilities
+}
+
 fn document_scope() -> ScopedSemanticSubject {
     ScopedSemanticSubject::new(
         DocumentScopeId::from("game-occurrence"),
@@ -315,7 +330,7 @@ fn discovery_projects_number_text_boolean_and_reference_rules() {
         ),
     ] {
         let field = field_ref(name);
-        let capabilities = describe_field_capabilities(&document, &field).unwrap();
+        let capabilities = capabilities_for(&document, &field);
         assert_eq!(capabilities.field, field);
         assert_eq!(capabilities.declared_type, expected_type.clone());
         assert_eq!(capabilities.current_value_kind, expected_kind);
@@ -358,7 +373,7 @@ fn discovery_and_field_propose_share_typed_input_rule() {
     .enumerate()
     {
         let field = field_ref(name);
-        let capabilities = describe_field_capabilities(&document, &field).unwrap();
+        let capabilities = capabilities_for(&document, &field);
         for (wrong_index, input_kind) in [
             SemanticValueKind::Number,
             SemanticValueKind::Text,
@@ -403,7 +418,7 @@ fn discovery_and_field_propose_share_typed_input_rule() {
 fn discovery_and_mutation_share_formula_edit_and_formula_target_rules() {
     let document = document();
     let formula_field = field_ref("computed");
-    let capabilities = describe_field_capabilities(&document, &formula_field).unwrap();
+    let capabilities = capabilities_for(&document, &formula_field);
     assert_eq!(capabilities.current_value_kind, SemanticValueKind::Formula);
     for input_kind in [
         SemanticValueKind::Number,
@@ -459,7 +474,7 @@ fn discovery_and_mutation_share_formula_edit_and_formula_target_rules() {
 fn discovery_and_formula_propose_share_formula_target_rule() {
     let document = document();
     let formula_field = field_ref("computed");
-    let capabilities = describe_field_capabilities(&document, &formula_field).unwrap();
+    let capabilities = capabilities_for(&document, &formula_field);
     assert_eq!(
         &capability(
             &capabilities,
@@ -493,7 +508,7 @@ fn discovery_and_formula_propose_share_formula_target_rule() {
     );
 
     let text_field = field_ref("label");
-    let text_capabilities = describe_field_capabilities(&document, &text_field).unwrap();
+    let text_capabilities = capabilities_for(&document, &text_field);
     assert_eq!(
         &capability(
             &text_capabilities,
@@ -530,7 +545,7 @@ fn discovery_and_formula_propose_share_formula_target_rule() {
 #[test]
 fn discovery_reports_query_applicability_from_current_value_kind() {
     let document = document();
-    let number_capabilities = describe_field_capabilities(&document, &field_ref("amount")).unwrap();
+    let number_capabilities = capabilities_for(&document, &field_ref("amount"));
     assert_eq!(
         &capability(
             &number_capabilities,
@@ -552,8 +567,7 @@ fn discovery_reports_query_applicability_from_current_value_kind() {
         }
     );
 
-    let formula_capabilities =
-        describe_field_capabilities(&document, &field_ref("computed")).unwrap();
+    let formula_capabilities = capabilities_for(&document, &field_ref("computed"));
     assert_eq!(
         &capability(
             &formula_capabilities,
@@ -581,7 +595,7 @@ fn discovery_query_applicability_matches_existing_formula_query_paths() {
         OperationFamily::FormulaReasoning,
     );
 
-    let formula_capabilities = describe_field_capabilities(&document, &computed).unwrap();
+    let formula_capabilities = capabilities_for(&document, &computed);
     let formula_result = lifecycle
         .query_formula_reasoning(
             &DocumentScopeId::from("game-occurrence"),
@@ -643,8 +657,8 @@ fn discovery_number_scenario_matches_existing_scenario_query_path() {
         OperationFamily::NumberOverrideScenario,
     );
 
-    let number_capabilities = describe_field_capabilities(&document, &amount).unwrap();
-    let formula_capabilities = describe_field_capabilities(&document, &computed).unwrap();
+    let number_capabilities = capabilities_for(&document, &amount);
+    let formula_capabilities = capabilities_for(&document, &computed);
     let scenario_result = lifecycle
         .query_number_override_scenario(
             &DocumentScopeId::from("game-occurrence"),
@@ -714,16 +728,12 @@ fn discovery_number_scenario_matches_existing_scenario_query_path() {
 fn capability_query_authorizes_disclosure_before_classification_and_pins_revision() {
     let document = document();
     let field = field_ref("amount");
+    let snapshot =
+        ResidentWorkspaceSession::new(DocumentScopeId::from("game-occurrence"), document.clone())
+            .export_snapshot();
     let mut lifecycle = lifecycle();
     let error = lifecycle
-        .query_field_capabilities(
-            &DocumentScopeId::from("game-occurrence"),
-            &document,
-            &SemanticRevision::from("r1"),
-            &field,
-            &PrincipalId::from("agent"),
-            NOW,
-        )
+        .query_field_capabilities(&snapshot, &field, &PrincipalId::from("agent"), NOW)
         .expect_err("discovery is independently authorized");
     assert!(matches!(
         error,
@@ -732,19 +742,9 @@ fn capability_query_authorizes_disclosure_before_classification_and_pins_revisio
 
     grant_discovery(&mut lifecycle);
     let result = lifecycle
-        .query_field_capabilities(
-            &DocumentScopeId::from("game-occurrence"),
-            &document,
-            &SemanticRevision::from("r1"),
-            &field,
-            &PrincipalId::from("agent"),
-            NOW,
-        )
+        .query_field_capabilities(&snapshot, &field, &PrincipalId::from("agent"), NOW)
         .unwrap();
-    assert_eq!(
-        result.context.source_revision(),
-        &SemanticRevision::from("r1")
-    );
+    assert_eq!(result.context.source_revision(), snapshot.revision());
     let FieldCapabilityQueryOutcome::Field(capabilities) = result.outcome else {
         panic!("authorized existing target should disclose capabilities");
     };
@@ -752,9 +752,7 @@ fn capability_query_authorizes_disclosure_before_classification_and_pins_revisio
 
     let unresolved = lifecycle
         .query_field_capabilities(
-            &DocumentScopeId::from("game-occurrence"),
-            &document,
-            &SemanticRevision::from("r1"),
+            &snapshot,
             &FieldRef::new("row", "missing"),
             &PrincipalId::from("agent"),
             NOW,
@@ -768,16 +766,58 @@ fn capability_query_authorizes_disclosure_before_classification_and_pins_revisio
 
 #[test]
 fn discovery_projection_has_no_presentation_or_conversion_capability() {
-    let capabilities = describe_field_capabilities(&document(), &field_ref("target")).unwrap();
-    assert!(capabilities.capabilities.iter().all(|capability| {
-        matches!(
-            capability.kind,
-            FieldCapabilityKind::Edit | FieldCapabilityKind::Query
-        )
-    }));
-    assert!(!capabilities.capabilities.iter().any(|capability| matches!(
-        capability.input,
-        FieldCapabilityInput::Formula
-    ) && capability.family
-        == OperationFamily::SetFieldValue));
+    let capabilities = capabilities_for(&document(), &field_ref("target"));
+    let actual = capabilities
+        .capabilities
+        .iter()
+        .map(|capability| (capability.family, capability.kind, capability.input))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        actual,
+        vec![
+            (
+                OperationFamily::SetFieldValue,
+                FieldCapabilityKind::Edit,
+                FieldCapabilityInput::TypedValue {
+                    kind: SemanticValueKind::Number,
+                },
+            ),
+            (
+                OperationFamily::SetFieldValue,
+                FieldCapabilityKind::Edit,
+                FieldCapabilityInput::TypedValue {
+                    kind: SemanticValueKind::Text,
+                },
+            ),
+            (
+                OperationFamily::SetFieldValue,
+                FieldCapabilityKind::Edit,
+                FieldCapabilityInput::TypedValue {
+                    kind: SemanticValueKind::Boolean,
+                },
+            ),
+            (
+                OperationFamily::SetFieldValue,
+                FieldCapabilityKind::Edit,
+                FieldCapabilityInput::TypedValue {
+                    kind: SemanticValueKind::Reference,
+                },
+            ),
+            (
+                OperationFamily::FormulaUpdate,
+                FieldCapabilityKind::Edit,
+                FieldCapabilityInput::Formula,
+            ),
+            (
+                OperationFamily::FormulaReasoning,
+                FieldCapabilityKind::Query,
+                FieldCapabilityInput::None,
+            ),
+            (
+                OperationFamily::NumberOverrideScenario,
+                FieldCapabilityKind::Query,
+                FieldCapabilityInput::Number,
+            ),
+        ]
+    );
 }

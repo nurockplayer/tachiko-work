@@ -120,12 +120,12 @@ execute_semantic_proposal(trusted_host_context, exact_proposal, optional_approva
 The same seam also exposes the bounded, read-only field capability Query:
 
 ```text
-query_field_capabilities(trusted_host_context, exact_source_revision, FieldRef)
+query_field_capabilities(trusted_host_context, exact_source_snapshot, FieldRef)
 ```
 
 The request contributes only a stable target. Trusted host composition supplies
-the document snapshot and matching source revision as one exact context, along
-with identity and time; the workspace lifecycle authorizes the independent
+one paired document-snapshot/source-revision context, along with identity and
+time; the workspace lifecycle authorizes the independent
 discovery Query before returning the shared projection. The adapter does not
 infer or rewrite the opaque revision encoding. The result does not grant any
 listed family, does not reveal UI/presentation decisions, does not enumerate

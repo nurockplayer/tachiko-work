@@ -11,9 +11,10 @@ use serde::Serialize;
 
 use crate::formula_operations::number_override_target_is_applicable;
 use crate::patch_lifecycle::{
-    DisclosureRequirement, DocumentScopeId, OperationFamily, PatchLifecycle, PatchLifecycleError,
-    PrincipalId, ScopedSemanticSubject, SemanticRevision, SemanticScope, TrustedInstant,
+    DisclosureRequirement, OperationFamily, PatchLifecycle, PatchLifecycleError, PrincipalId,
+    ScopedSemanticSubject, SemanticRevision, SemanticScope, TrustedInstant,
 };
+use crate::resident_session::ResidentSnapshot;
 use crate::{
     Document, DocumentId, FieldRef, FieldType, SemanticValueKind, Value, WorkspaceError,
     field_definition, field_value_input_rule, formula_update_target_rule, semantic_value_kind,
@@ -128,7 +129,7 @@ pub struct FieldCapabilityQueryResult {
 ///
 /// Returns a typed lookup error when the stable field, its entity, or its
 /// schema definition is absent.
-pub fn describe_field_capabilities(
+pub(crate) fn describe_field_capabilities(
     document: &Document,
     field: &FieldRef,
 ) -> Result<FieldCapabilities, WorkspaceError> {
@@ -247,6 +248,8 @@ impl PatchLifecycle {
     /// Query the existing semantic capabilities for one stable field target.
     ///
     /// Authorization is performed before target/type/value classification.
+    /// The host-provided [`ResidentSnapshot`] keeps the document, occurrence,
+    /// and opaque revision paired for the whole Query.
     /// The discovery Query itself does not imply Query, Propose, Execute, or
     /// Approval authority for any family in the returned projection; each
     /// later operation re-evaluates its own live rules and grants.
@@ -259,16 +262,16 @@ impl PatchLifecycle {
     /// structured unresolved outcome.
     pub fn query_field_capabilities(
         &self,
-        document_scope: &DocumentScopeId,
-        document: &Document,
-        source_revision: &SemanticRevision,
+        snapshot: &ResidentSnapshot,
         target: &FieldRef,
         principal: &PrincipalId,
         now: TrustedInstant,
     ) -> Result<FieldCapabilityQueryResult, PatchLifecycleError> {
+        let document_scope = snapshot.document_scope();
+        let document = snapshot.document();
         self.require_document(document_scope, document)?;
         self.require_active_principal(principal)?;
-        let context = FieldCapabilityQueryContext::trusted(source_revision.clone());
+        let context = FieldCapabilityQueryContext::trusted(snapshot.revision().clone());
         let scope = self.field_scope(document, target).unwrap_or_else(|_| {
             ScopedSemanticSubject::new(
                 document_scope.clone(),

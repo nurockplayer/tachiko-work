@@ -230,8 +230,10 @@ revision as one exact source-context binding. Discovery does not infer a
 revision from document content, consult resident history, or validate a
 host-owned revision encoding; the host must not pair a revision from one
 snapshot with another document. This preserves the existing Semantic API
-context boundary while keeping revision spelling and transport mechanics
-Provisional.
+context boundary. The current in-process Rust adapter represents that binding
+with the existing host-owned `ResidentSnapshot`; this is implementation
+evidence, not a public wire/SDK DTO, and revision spelling and transport
+mechanics remain Provisional.
 
 The provisional projection contains the stable field, its declared `FieldType`,
 the current finite `SemanticValueKind` where disclosure permits, and a bounded

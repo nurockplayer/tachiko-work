@@ -11,10 +11,11 @@ use tachiko_workspace_engine::{
     Document, FieldRef, ValidationReport,
     capability_discovery::FieldCapabilityQueryResult,
     patch_lifecycle::{
-        ApprovalId, DocumentScopeId, ExecutionReceipt, PatchLifecycle, PatchLifecycleError,
-        PrincipalId, ProposalId, ProposalRequest, SemanticPatch, SemanticPatchBody,
-        SemanticPublicationAuthority, SemanticRevision, TrustedInstant,
+        ApprovalId, ExecutionReceipt, PatchLifecycle, PatchLifecycleError, PrincipalId, ProposalId,
+        ProposalRequest, SemanticPatch, SemanticPatchBody, SemanticPublicationAuthority,
+        SemanticRevision, TrustedInstant,
     },
+    resident_session::ResidentSnapshot,
 };
 use thiserror::Error;
 
@@ -247,7 +248,7 @@ pub trait TrustedAiRequestContext {
 
 /// Untrusted stable field target for a Semantic API capability Query.
 ///
-/// The exact source revision is trusted host composition supplied separately
+/// The exact source snapshot is trusted host composition supplied separately
 /// to [`query_field_capabilities`]; a request cannot choose its own semantic
 /// snapshot evidence.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -271,7 +272,7 @@ impl FieldCapabilityQueryRequest {
 ///
 /// The workspace lifecycle performs disclosure authorization before semantic
 /// classification. The delegated context supplies identity and time; the
-/// host supplies the exact source revision; the request supplies only the
+/// host supplies the exact paired source snapshot; the request supplies only the
 /// stable target. The returned projection grants no later operation authority.
 ///
 /// # Errors
@@ -281,22 +282,13 @@ impl FieldCapabilityQueryRequest {
 pub fn query_field_capabilities(
     lifecycle: &PatchLifecycle,
     context: &impl TrustedAiRequestContext,
-    document_scope: &DocumentScopeId,
-    document: &Document,
-    source_revision: &SemanticRevision,
+    snapshot: &ResidentSnapshot,
     request: &FieldCapabilityQueryRequest,
 ) -> Result<FieldCapabilityQueryResult, AiBoundaryError> {
     admit_operation(AiBoundaryOperation::SemanticQuery)?;
     let (principal, now) = trusted_delegated_context(lifecycle, context)?;
     lifecycle
-        .query_field_capabilities(
-            document_scope,
-            document,
-            source_revision,
-            &request.field,
-            &principal,
-            now,
-        )
+        .query_field_capabilities(snapshot, &request.field, &principal, now)
         .map_err(map_lifecycle_error)
 }
 

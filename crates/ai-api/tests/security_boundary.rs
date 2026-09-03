@@ -9,7 +9,7 @@ use tachiko_ai_api::security_boundary::{
 use tachiko_workspace_engine::{
     Document, DocumentId, Entity, EntityId, Expression, FieldDefinition, FieldId, FieldKey,
     FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
-    capability_discovery::{FieldCapabilityQueryOutcome, describe_field_capabilities},
+    capability_discovery::FieldCapabilityQueryOutcome,
     patch_lifecycle::{
         ApprovalId, ApprovalRequest, AuthorizationAction, AuthorizationDomainId,
         AuthorizationPolicyVersion, DocumentScopeId, Grant, GrantId, GrantRequirement,
@@ -341,18 +341,13 @@ fn typed_mutation_without_capability_is_denied_without_changing_state() {
 #[test]
 fn ai_capability_query_uses_authorized_workspace_projection() {
     let document = security_document("ordinary data");
+    let snapshot =
+        ResidentWorkspaceSession::new(document_scope_id(), document.clone()).export_snapshot();
     let request = FieldCapabilityQueryRequest::new(FieldRef::new("goblin", "damage"));
     let mut lifecycle = lifecycle();
 
-    let error = query_field_capabilities(
-        &lifecycle,
-        &TestContext::agent(),
-        &document_scope_id(),
-        &document,
-        &revision("r1"),
-        &request,
-    )
-    .expect_err("discovery requires its own Query grant");
+    let error = query_field_capabilities(&lifecycle, &TestContext::agent(), &snapshot, &request)
+        .expect_err("discovery requires its own Query grant");
     assert_eq!(error.code(), boundary_codes::AUTHORIZATION_DENIED);
 
     grant(
@@ -361,28 +356,23 @@ fn ai_capability_query_uses_authorized_workspace_projection() {
         "agent",
         vec![capability_query_requirement()],
     );
-    let result = query_field_capabilities(
-        &lifecycle,
-        &TestContext::agent(),
-        &document_scope_id(),
-        &document,
-        &revision("r1"),
-        &request,
-    )
-    .expect("authorized AI discovery should delegate to workspace authority");
-    assert_eq!(result.context.source_revision(), &revision("r1"));
+    let result = query_field_capabilities(&lifecycle, &TestContext::agent(), &snapshot, &request)
+        .expect("authorized AI discovery should delegate to workspace authority");
+    assert_eq!(result.context.source_revision(), snapshot.revision());
+    let workspace_result = lifecycle
+        .query_field_capabilities(&snapshot, request.field(), &principal("agent"), NOW)
+        .expect("the workspace authority should return the same projection");
+    assert_eq!(result, workspace_result);
     let FieldCapabilityQueryOutcome::Field(capabilities) = result.outcome else {
         panic!("damage is an existing field");
     };
-    assert_eq!(
-        capabilities,
-        describe_field_capabilities(&document, request.field()).unwrap()
-    );
+    assert_eq!(capabilities.field, *request.field());
 }
 
 #[test]
 fn ai_capability_query_keeps_human_context_outside_delegated_boundary() {
     let document = security_document("ordinary data");
+    let snapshot = ResidentWorkspaceSession::new(document_scope_id(), document).export_snapshot();
     let mut lifecycle = lifecycle();
     grant(
         &mut lifecycle,
@@ -394,9 +384,7 @@ fn ai_capability_query_keeps_human_context_outside_delegated_boundary() {
     let error = query_field_capabilities(
         &lifecycle,
         &TestContext::human(),
-        &document_scope_id(),
-        &document,
-        &revision("r1"),
+        &snapshot,
         &FieldCapabilityQueryRequest::new(FieldRef::new("goblin", "damage")),
     )
     .expect_err("AI adapter must require a Delegated lifecycle principal");
