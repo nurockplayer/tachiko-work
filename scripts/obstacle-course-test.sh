@@ -129,6 +129,8 @@ normal_log="${test_dir}/normal-toolchain.log"
 normal_materialization_template="${test_dir}/normal-materialization-template"
 native_target="x86_64-pc-windows-msvc"
 normal_tmp="${test_dir}/normal-tmp"
+relative_tmp_root="${test_dir}/relative-tmp-root"
+relative_course_tmpdir="../relative-tmp-root/nested"
 ancestor_tmp_root="${test_dir}/ancestor-tmp-root"
 ancestor_tmpdir="${ancestor_tmp_root}/nested"
 normal_cargo_home="${test_dir}/normal-cargo-home"
@@ -147,6 +149,7 @@ mkdir -p \
   "${normal_cargo_registry}" \
   "${normal_cargo_git}" \
   "${normal_tmp}" \
+  "${relative_tmp_root}/nested" \
   "${ancestor_tmp_root}/.cargo" \
   "${ancestor_tmpdir}" \
   "$(dirname "${stale_tachiko_bin}")"
@@ -807,6 +810,29 @@ grep -F "obstacle-course: TMPDIR must resolve outside repository" \
   "${test_dir}/in-repository-tmp.err" >/dev/null
 if grep -Eq "^(cargo command|git args)=" "${normal_log}"; then
   echo "obstacle-course test: setup ran with an in-repository TMPDIR" >&2
+  exit 1
+fi
+
+: >"${normal_log}"
+if (
+  cd "${normal_repo}"
+  run_normal_course 0 0 0 0 0 \
+    "${test_dir}/relative-tmpdir.out" \
+    "${test_dir}/relative-tmpdir.err" \
+    "${relative_course_tmpdir}"
+); then
+  echo "obstacle-course test: relative TMPDIR fake stage unexpectedly passed" >&2
+  exit 1
+fi
+if grep -Fq "obstacle-course: TMPDIR is not a directory" \
+  "${test_dir}/relative-tmpdir.err"; then
+  echo "obstacle-course test: valid relative TMPDIR was not preserved across isolated re-exec" >&2
+  sed 's/^/  /' "${test_dir}/relative-tmpdir.err" >&2
+  exit 1
+fi
+if ! grep -F "cargo command=build" "${normal_log}" >/dev/null; then
+  echo "obstacle-course test: relative TMPDIR did not reach the isolated Cargo stage" >&2
+  sed 's/^/  /' "${normal_log}" >&2
   exit 1
 fi
 

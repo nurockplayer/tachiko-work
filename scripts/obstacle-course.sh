@@ -458,6 +458,7 @@ if [[ "${isolated_course}" -eq 0 ]]; then
   fi
   set +e
   TACHIKO_OBSTACLE_INTERNAL=1 \
+    TMPDIR="${physical_temp_root}" \
     bash "${materialized_source_root}/scripts/obstacle-course.sh" \
       --internal-run-course "${requested_head}"
   course_status=$?

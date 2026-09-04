@@ -155,7 +155,10 @@ is bound to the isolated course source; and materialization suppresses Git hook
 execution. The Git-review stage also ignores user/system Git configuration such
 as commit signing and hook paths. The runner rejects a `TMPDIR` that resolves to
 the invoking checkout or one of its descendants, keeping the isolated source
-and transient evidence outside it. It also creates a fresh run-scoped Cargo home
+and transient evidence outside it. It resolves the accepted temp root before
+materializing the source and passes that physical root to the isolated child, so
+valid relative `TMPDIR` values retain the same run-scoped location across
+re-exec. It also creates a fresh run-scoped Cargo home
 without user configuration (preserving only offline dependency/source cache
 trees), rejects `.cargo/config.toml` and legacy `.cargo/config` in ancestors
 outside the isolated source, and creates a Cargo target directory, derives and
