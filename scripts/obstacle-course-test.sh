@@ -137,6 +137,11 @@ ancestor_tmpdir="${ancestor_tmp_root}/nested"
 normal_cargo_home="${test_dir}/normal-cargo-home"
 normal_cargo_registry="${normal_cargo_home}/registry"
 normal_cargo_git="${normal_cargo_home}/git"
+normal_cargo_registry_index="${normal_cargo_registry}/index"
+normal_cargo_registry_cache="${normal_cargo_registry}/cache"
+normal_cargo_registry_src="${normal_cargo_registry}/src"
+normal_cargo_git_db="${normal_cargo_git}/db"
+normal_cargo_git_checkouts="${normal_cargo_git}/checkouts"
 persistent_target_dir="${normal_repo}/target/obstacle-course"
 stale_tachiko_bin="${persistent_target_dir}/${native_target}/release/tachiko.exe"
 tracked_raw_file="${normal_repo}/tracked-fixture"
@@ -147,8 +152,11 @@ mkdir -p \
   "${normal_repo}/scripts" \
   "${normal_bin_dir}" \
   "${normal_materialization_template}" \
-  "${normal_cargo_registry}" \
-  "${normal_cargo_git}" \
+  "${normal_cargo_registry_index}" \
+  "${normal_cargo_registry_cache}" \
+  "${normal_cargo_registry_src}/hostile-crate" \
+  "${normal_cargo_git_db}" \
+  "${normal_cargo_git_checkouts}/hostile-checkout" \
   "${normal_tmp}" \
   "${relative_tmp_root}/nested" \
   "${ancestor_tmp_root}/.cargo" \
@@ -160,9 +168,19 @@ ancestor_tmpdir="${ancestor_tmp_root}/nested"
 normal_cargo_home="$(cd "${normal_cargo_home}" && pwd -P)"
 normal_cargo_registry="${normal_cargo_home}/registry"
 normal_cargo_git="${normal_cargo_home}/git"
+normal_cargo_registry_index="${normal_cargo_registry}/index"
+normal_cargo_registry_cache="${normal_cargo_registry}/cache"
+normal_cargo_registry_src="${normal_cargo_registry}/src"
+normal_cargo_git_db="${normal_cargo_git}/db"
+normal_cargo_git_checkouts="${normal_cargo_git}/checkouts"
 : >"${normal_log}"
-printf 'registry cache fixture\n' >"${normal_cargo_registry}/cache-marker"
-printf 'git source cache fixture\n' >"${normal_cargo_git}/cache-marker"
+printf 'registry index cache fixture\n' >"${normal_cargo_registry_index}/index-marker"
+printf 'registry archive cache fixture\n' >"${normal_cargo_registry_cache}/archive-marker"
+printf 'user-modified extracted registry source\n' \
+  >"${normal_cargo_registry_src}/hostile-crate/lib.rs"
+printf 'git object cache fixture\n' >"${normal_cargo_git_db}/object-marker"
+printf 'user-modified Git checkout\n' \
+  >"${normal_cargo_git_checkouts}/hostile-checkout/README"
 cat >"${normal_cargo_home}/config.toml" <<EOF
 [profile.release]
 opt-level = 0
@@ -455,6 +473,17 @@ exit 97
 EOF
 chmod +x "${test_dir}/fake-tachiko"
 
+cat >"${test_dir}/hostile-tachiko" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf 'hostile-stage-bin path=%s target_dir=%s build_target=%s\n' \
+  "$0" "${CARGO_TARGET_DIR:-unset}" "${CARGO_BUILD_TARGET:-unset}" \
+  >>"${FAKE_TOOLCHAIN_LOG}"
+exit 0
+EOF
+chmod +x "${test_dir}/hostile-tachiko"
+
 cat >"${stale_tachiko_bin}" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -486,20 +515,75 @@ case "${course_cargo_home}" in
     exit 94
     ;;
 esac
+if [[ "${FAKE_CARGO_MODE:-normal}" == "registry-source-hostile" ]]; then
+  command_name="${1:-}"
+  case "${command_name}" in
+    build)
+      artifact_dir="${CARGO_TARGET_DIR:?}/${CARGO_BUILD_TARGET:?}/release"
+      executable_name=tachiko
+      if [[ "${CARGO_BUILD_TARGET}" == *-windows-* ]]; then
+        executable_name=tachiko.exe
+      fi
+      mkdir -p "${artifact_dir}"
+      hostile_source_visible=0
+      if [[ -e "${course_cargo_home}/registry/src/hostile-crate/lib.rs" || \
+        -e "${course_cargo_home}/git/checkouts/hostile-checkout/README" ]]; then
+        hostile_source_visible=1
+        cp "${FAKE_HOSTILE_TACHIKO_TEMPLATE:?}" \
+          "${artifact_dir}/${executable_name}"
+      else
+        cp "${FAKE_TACHIKO_TEMPLATE:?}" \
+          "${artifact_dir}/${executable_name}"
+      fi
+      chmod +x "${artifact_dir}/${executable_name}"
+      printf 'hostile-cargo source_visible=%s\n' \
+        "${hostile_source_visible}" >>"${FAKE_TOOLCHAIN_LOG}"
+      ;;
+    test)
+      printf 'hostile-cargo command=test source_visible=unobserved\n' \
+        >>"${FAKE_TOOLCHAIN_LOG}"
+      ;;
+    *)
+      echo "fake cargo: hostile mode saw unexpected command ${command_name}" >&2
+      exit 2
+      ;;
+  esac
+  exit 0
+fi
 if [[ -e "${course_cargo_home}/config.toml" ]]; then
   echo "fake cargo: user Cargo configuration entered course home" >&2
   exit 94
 fi
-if [[ ! -L "${course_cargo_home}/registry" || \
-  "$(readlink "${course_cargo_home}/registry")" != "${FAKE_USER_CARGO_HOME}/registry" || \
-  ! -L "${course_cargo_home}/git" || \
-  "$(readlink "${course_cargo_home}/git")" != "${FAKE_USER_CARGO_HOME}/git" ]]; then
-  echo "fake cargo: offline dependency/source caches were not preserved" >&2
+if [[ -L "${course_cargo_home}/registry" || \
+  -L "${course_cargo_home}/git" || \
+  ! -d "${course_cargo_home}/registry/src" || \
+  -L "${course_cargo_home}/registry/src" || \
+  ! -d "${course_cargo_home}/git/checkouts" || \
+  -L "${course_cargo_home}/git/checkouts" ]]; then
+  echo "fake cargo: dependency source trees were not materialized in the run-scoped Cargo home" >&2
   exit 94
 fi
-if ! grep -Fx 'registry cache fixture' "${course_cargo_home}/registry/cache-marker" >/dev/null || \
-  ! grep -Fx 'git source cache fixture' "${course_cargo_home}/git/cache-marker" >/dev/null; then
-  echo "fake cargo: preserved offline cache trees are not readable" >&2
+if [[ ! -L "${course_cargo_home}/registry/index" || \
+  "$(readlink "${course_cargo_home}/registry/index")" != "${FAKE_USER_CARGO_HOME}/registry/index" || \
+  ! -L "${course_cargo_home}/registry/cache" || \
+  "$(readlink "${course_cargo_home}/registry/cache")" != "${FAKE_USER_CARGO_HOME}/registry/cache" || \
+  ! -L "${course_cargo_home}/git/db" || \
+  "$(readlink "${course_cargo_home}/git/db")" != "${FAKE_USER_CARGO_HOME}/git/db" ]]; then
+  echo "fake cargo: offline cache seeds were not preserved" >&2
+  exit 94
+fi
+if ! grep -Fx 'registry index cache fixture' \
+  "${course_cargo_home}/registry/index/index-marker" >/dev/null || \
+  ! grep -Fx 'registry archive cache fixture' \
+  "${course_cargo_home}/registry/cache/archive-marker" >/dev/null || \
+  ! grep -Fx 'git object cache fixture' \
+  "${course_cargo_home}/git/db/object-marker" >/dev/null; then
+  echo "fake cargo: preserved offline cache seeds are not readable" >&2
+  exit 94
+fi
+if [[ -e "${course_cargo_home}/registry/src/hostile-crate/lib.rs" || \
+  -e "${course_cargo_home}/git/checkouts/hostile-checkout/README" ]]; then
+  echo "fake cargo: user-modified dependency source entered the isolated Cargo home" >&2
   exit 94
 fi
 if [[ -e "${source_root}/${FAKE_IGNORED_CARGO_INPUT_RELATIVE}" ]]; then
@@ -513,7 +597,7 @@ if ! git -C "${source_root}" check-ignore -q -- \
 fi
 printf 'cargo-source root=%s ignored_live_input=absent\n' \
   "${source_root}" >>"${FAKE_TOOLCHAIN_LOG}"
-printf 'cargo-home root=%s config=absent registry_cache=preserved git_cache=preserved\n' \
+printf 'cargo-home root=%s config=absent registry_index=preserved registry_cache=preserved registry_src=run-scoped git_db=preserved git_checkouts=run-scoped\n' \
   "${course_cargo_home}" >>"${FAKE_TOOLCHAIN_LOG}"
 
 grep -Fx 'target = "conflicting-config-target"' \
@@ -623,6 +707,7 @@ run_normal_course() {
   local stderr_file="$7"
   local course_tmpdir="${8:-${normal_tmp}}"
   local course_cargo_home="${9:-${normal_cargo_home}}"
+  local fake_cargo_mode="${10:-normal}"
   local course_tmp_root course_cargo_root
   if ! course_tmp_root="$(cd "${course_tmpdir}" && pwd -P)"; then
     echo "obstacle-course test: could not resolve course TMPDIR '${course_tmpdir}'" >&2
@@ -694,6 +779,8 @@ run_normal_course() {
     FAKE_IGNORED_CARGO_INPUT_RELATIVE="${ignored_cargo_input_relative}" \
     FAKE_PERSISTENT_TARGET_DIR="${persistent_target_dir}" \
     FAKE_TACHIKO_TEMPLATE="${test_dir}/fake-tachiko" \
+    FAKE_HOSTILE_TACHIKO_TEMPLATE="${test_dir}/hostile-tachiko" \
+    FAKE_CARGO_MODE="${fake_cargo_mode}" \
     FAKE_TOOLCHAIN_LOG="${normal_log}" \
     bash "${normal_repo}/scripts/obstacle-course.sh" \
     >"${stdout_file}" 2>"${stderr_file}"
@@ -730,7 +817,7 @@ observed_source_root="$(sed -n \
   's/^cargo-source root=\([^ ]*\) ignored_live_input=absent$/\1/p' \
   "${normal_log}" | head -n 1)"
 observed_cargo_home="$(sed -n \
-  's/^cargo-home root=\([^ ]*\) config=absent registry_cache=preserved git_cache=preserved$/\1/p' \
+  's/^cargo-home root=\([^ ]*\) config=absent registry_index=preserved registry_cache=preserved registry_src=run-scoped git_db=preserved git_checkouts=run-scoped$/\1/p' \
   "${normal_log}" | head -n 1)"
 case "${observed_target_dir}" in
   "${normal_tmp}"/tachiko-obstacle.*/cargo-target) ;;
@@ -763,7 +850,7 @@ require_normal_log \
 require_normal_log \
   "cargo command=test target_dir=${observed_target_dir} build_target=${native_target} explicit_target_count=1 explicit_target=${native_target} no_run=1"
 require_normal_log \
-  "cargo-home root=${observed_cargo_home} config=absent registry_cache=preserved git_cache=preserved"
+  "cargo-home root=${observed_cargo_home} config=absent registry_index=preserved registry_cache=preserved registry_src=run-scoped git_db=preserved git_checkouts=run-scoped"
 require_normal_log \
   "stage-bin path=${expected_tachiko_bin} target_dir=${observed_target_dir} build_target=${native_target}"
 require_normal_log_contains \
@@ -787,8 +874,30 @@ if [[ -e "${observed_source_root}" ]]; then
   exit 1
 fi
 grep -F \
-  "native_target=${native_target} source=isolated-exact-head cargo_target=run-scoped/${native_target} cargo_home=run-scoped-config-free offline_caches=registry,git native_runner=env-passthrough release_profile_env=neutralized cargo_rustflags=neutralized" \
+  "native_target=${native_target} source=isolated-exact-head cargo_target=run-scoped/${native_target} cargo_home=run-scoped-config-free offline_cache_seeds=registry/index,registry/cache,git/db dependency_sources=run-scoped native_runner=env-passthrough release_profile_env=neutralized cargo_rustflags=neutralized" \
   "${test_dir}/normal.out" >/dev/null
+
+: >"${normal_log}"
+if run_normal_course 0 0 0 0 0 \
+  "${test_dir}/registry-source-hostile.out" \
+  "${test_dir}/registry-source-hostile.err" \
+  "${normal_tmp}" \
+  "${normal_cargo_home}" \
+  registry-source-hostile; then
+  echo "obstacle-course test: modified dependency source altered a successful course result" >&2
+  sed 's/^/  /' "${test_dir}/registry-source-hostile.out" >&2
+  exit 1
+fi
+if grep -Fq "hostile-stage-bin" "${normal_log}"; then
+  echo "obstacle-course test: modified dependency source supplied a passing stage artifact" >&2
+  sed 's/^/  /' "${normal_log}" >&2
+  exit 1
+fi
+if ! grep -Fx "hostile-cargo source_visible=0" "${normal_log}" >/dev/null; then
+  echo "obstacle-course test: modified dependency source was visible to course Cargo" >&2
+  sed 's/^/  /' "${normal_log}" >&2
+  exit 1
+fi
 
 : >"${normal_log}"
 if run_normal_course 1 0 0 0 0 \
@@ -854,7 +963,7 @@ if (
   echo "obstacle-course test: relative CARGO_HOME fake stage unexpectedly passed" >&2
   exit 1
 fi
-if grep -Fq "fake cargo: offline dependency/source caches were not preserved" \
+if grep -Fq "fake cargo: offline cache seeds were not preserved" \
   "${test_dir}/relative-cargo-home.err"; then
   echo "obstacle-course test: valid relative CARGO_HOME was not preserved across isolated re-exec" >&2
   sed 's/^/  /' "${test_dir}/relative-cargo-home.err" >&2
@@ -1081,4 +1190,4 @@ if [[ -n "$("${filter_git[@]}" -C "${filter_repo}" status --porcelain)" ]]; then
   exit 1
 fi
 
-echo "obstacle-course test passed: registry + exact-test execution + blob-exact filter rejection + fail-closed run identity"
+echo "obstacle-course test passed: cache-seed/source materialization + exact-test execution + blob-exact filter rejection + fail-closed run identity"

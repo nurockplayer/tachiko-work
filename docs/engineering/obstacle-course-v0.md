@@ -50,9 +50,12 @@ This rejects clean/smudge, EOL, encoding, and other worktree-filter changes even
 when Git status remains clean. Cargo, build scripts, workload fixtures, and
 correctness stages therefore cannot observe ignored or untracked source inputs
 from the invoking checkout. Course-owned Cargo invocations also use a fresh
-run-scoped `CARGO_HOME` with no user configuration; existing `registry` and
-`git` cache trees are linked into it for offline dependency/source reuse, while
-the isolated source's checked-in `.cargo` configuration remains discoverable.
+run-scoped `CARGO_HOME` with no user configuration. Only offline cache seeds
+are linked into it: registry index and archive trees plus the Git object
+database. Extracted registry sources and Git checkouts remain run-scoped so
+Cargo materializes them at the locked revisions instead of reusing mutable
+user-owned trees. The isolated source's checked-in `.cargo` configuration
+remains discoverable.
 Before any course-owned Cargo invocation, the runner rejects a `.cargo/config.toml`
 or legacy `.cargo/config` found in an ancestor of the isolated source outside
 that source. This finite parent-file check closes Cargo's hierarchical lookup
@@ -162,8 +165,9 @@ re-exec. It likewise resolves the effective user Cargo home before
 materializing the source and passes that physical path to the isolated child,
 so valid relative `CARGO_HOME` values preserve their offline cache location
 across re-exec. The child still creates a fresh run-scoped Cargo home
-without user configuration (preserving only offline dependency/source cache
-trees), rejects `.cargo/config.toml` and legacy `.cargo/config` in ancestors
+without user configuration (preserving only offline registry index/archive
+and Git object cache seeds; dependency source trees remain run-scoped),
+rejects `.cargo/config.toml` and legacy `.cargo/config` in ancestors
 outside the isolated source, and creates a Cargo target directory, derives and
 pins the native host target from
 the compiler Cargo uses, and uses
@@ -234,7 +238,7 @@ hide a current regression.
 - No CI/release refactor, benchmark framework, Dashboard dependency, network
   service, model call, or hostname-specific behavior is introduced.
 
-The public registry/fail-closed option seam, exact-test execution, compiler/Git
+The public registry/cache-seed boundary, exact-test execution, compiler/Git
 environment isolation, blob-exact source verification (including a reversible
 repository-local clean/smudge filter), ignored-workload rejection, and
 run-scoped native artifact binding have a focused check:

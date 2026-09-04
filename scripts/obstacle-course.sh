@@ -38,7 +38,7 @@ normalize_release_build_environment() {
 prepare_course_cargo_home() {
   local user_cargo_home="$1"
   local course_cargo_home="$2"
-  local cache_name cache_source
+  local cache_path cache_source cache_parent
 
   if [[ -n "${user_cargo_home}" && -d "${user_cargo_home}" ]]; then
     if ! user_cargo_home="$(cd "${user_cargo_home}" && pwd -P)"; then
@@ -50,14 +50,23 @@ prepare_course_cargo_home() {
     echo "obstacle-course: could not create run-scoped Cargo home" >&2
     return 1
   fi
-  for cache_name in registry git; do
+  if ! mkdir -p \
+    "${course_cargo_home}/registry/src" \
+    "${course_cargo_home}/git/checkouts"; then
+    echo "obstacle-course: could not create run-scoped Cargo source trees" >&2
+    return 1
+  fi
+  # Keep dependency source/checkouts run-scoped; only offline cache seeds cross.
+  for cache_path in registry/index registry/cache git/db; do
     cache_source=""
     if [[ -n "${user_cargo_home}" ]]; then
-      cache_source="${user_cargo_home}/${cache_name}"
+      cache_source="${user_cargo_home}/${cache_path}"
     fi
     if [[ -n "${cache_source}" && ( -d "${cache_source}" || -L "${cache_source}" ) ]]; then
-      if ! ln -s "${cache_source}" "${course_cargo_home}/${cache_name}"; then
-        echo "obstacle-course: could not preserve Cargo ${cache_name} cache" >&2
+      cache_parent="${cache_path%/*}"
+      if ! mkdir -p "${course_cargo_home}/${cache_parent}" || \
+        ! ln -s "${cache_source}" "${course_cargo_home}/${cache_path}"; then
+        echo "obstacle-course: could not preserve Cargo cache seed '${cache_path}'" >&2
         return 1
       fi
     fi
@@ -882,7 +891,7 @@ verify_workload_identity() {
 }
 
 echo "COURSE ${course_version} commit=${head_commit} worktree=${worktree_state} profile=release network=offline correctness_stages=${correctness_stage_count}"
-echo "ENV os=${os_identity} rustc=${rust_identity} native_target=${native_target} source=isolated-exact-head cargo_target=run-scoped/${native_target} cargo_home=run-scoped-config-free offline_caches=registry,git native_runner=env-passthrough release_profile_env=neutralized cargo_rustflags=neutralized"
+echo "ENV os=${os_identity} rustc=${rust_identity} native_target=${native_target} source=isolated-exact-head cargo_target=run-scoped/${native_target} cargo_home=run-scoped-config-free offline_cache_seeds=registry/index,registry/cache,git/db dependency_sources=run-scoped native_runner=env-passthrough release_profile_env=neutralized cargo_rustflags=neutralized"
 echo "WORKLOAD stage=repository-dogfood id=product-gaps-roproj/v1 sha256=${dogfood_digest}"
 echo "WORKLOAD stage=git-review-roundtrip id=game-balance-git-review/v0 sha256=${git_review_digest}"
 echo "WORKLOAD stage=semantic-runtime id=focused-semantic-runtime/v0 sha256=${semantic_digest}"
