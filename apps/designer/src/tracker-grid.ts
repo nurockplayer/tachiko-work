@@ -174,7 +174,7 @@ export class TrackerGrid {
         const editor = root.querySelector<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>("[aria-label='Cell value']");
         if (editor instanceof HTMLTextAreaElement) {
             const column = this.#table?.columns[this.#focus[1]];
-            editor.value = this.#draft ?? displayField(this.#rows()[this.#focus[0]]?.fields.find(field => field.target.field === column?.id));
+            editor.value = normalizeLineEndings(this.#draft ?? displayField(this.#rows()[this.#focus[0]]?.fields.find(field => field.target.field === column?.id)));
         }
         editor?.addEventListener("input", () => { this.#draft = editor.value; this.#options.changed(); });
         root.querySelector("[data-tracker-edit]")?.addEventListener("submit", event => { event.preventDefault(); if (editor)

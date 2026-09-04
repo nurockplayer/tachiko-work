@@ -8,8 +8,10 @@ afterEach(() => { mounted?.destroy(); document.body.replaceChildren(); vi.restor
 function fixture(): TableProjection {
     return { revision: "resident/0", collection: { id: "tracker", key: "tracker", entity_count: 1 }, columns: [{ id: "task", key: "task", field_type: "Text" }, { id: "estimate", key: "estimate", field_type: "Number" }, { id: "done", key: "done", field_type: "Boolean", dropdown_options: ["true", "false"] }], rows: [{ id: "item", key: "item", fields: [{ target: { entity: "item", field: "task" }, address: "item.task", stored: { kind: "text", value: "Accepted work" }, formula: null, calculated: null, diagnostics: [], editable_scalar: "text" }] }] };
 }
-async function setup() {
+async function setup(original = "Accepted work") {
     let table = fixture();
+    const field = table.rows[0]?.fields[0];
+    if (field) field.stored = {kind: "text", value: original};
     const queryTable = vi.fn(async () => structuredClone(table));
     const trackerCommand = vi.fn(async () => {
         const base = table.revision;
@@ -70,4 +72,26 @@ it("a pending tracker draft cannot be silently saved or retargeted by filtering"
     expect(root.querySelector<HTMLInputElement>('[aria-label="Cell value"]')?.value).toBe("Unapplied draft");
     expect(root.querySelector("[role=gridcell]")?.textContent).toBe("Accepted work");
     expect(trackerCommand).not.toHaveBeenCalled();
+});
+
+
+it("tracker Text editor preserves multiline values and rejects silent CRLF normalization", async () => {
+    const original = "\nFirst\r\nSecond";
+    const {root, trackerCommand} = await setup(original);
+    const editor = root.querySelector<HTMLTextAreaElement>('textarea[aria-label="Cell value"]');
+    expect(editor).not.toBeNull();
+    if (!editor) throw new Error("No text editor");
+    expect(editor.value).toBe("\nFirst\nSecond");
+    root.querySelector<HTMLFormElement>("[data-tracker-edit]")?.dispatchEvent(new Event("submit", {bubbles: true, cancelable: true}));
+    await vi.waitFor(() => { expect(trackerCommand).toHaveBeenCalledOnce(); });
+    expect(trackerCommand.mock.calls[0]).toEqual([expect.objectContaining({rows: [[original]]})]);
+    await vi.waitFor(() => { expect(root.querySelector<HTMLButtonElement>('[data-tracker="undo"]')?.disabled).toBe(false); });
+    const changedEditor = root.querySelector<HTMLTextAreaElement>('textarea[aria-label="Cell value"]');
+    if (!changedEditor) throw new Error("No text editor");
+    changedEditor.value = "Modified\nSecond";
+    changedEditor.dispatchEvent(new Event("input", {bubbles: true}));
+    root.querySelector<HTMLFormElement>("[data-tracker-edit]")?.dispatchEvent(new Event("submit", {bubbles: true, cancelable: true}));
+    await vi.waitFor(() => { expect(root.textContent).toContain("original bytes remain unchanged"); });
+    expect(trackerCommand).toHaveBeenCalledTimes(1);
+    expect(root.querySelector<HTMLTextAreaElement>('[aria-label="Cell value"]')?.value).toBe("Modified\nSecond");
 });

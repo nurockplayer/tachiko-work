@@ -170,3 +170,19 @@ test("stale Save preserves current edits and another tab's durable project", asy
   await other.getByRole("button", { name: "Open project", exact: true }).click();
   await expect(cell(other, 0, 0)).toHaveText("Saved by other tab");
 });
+
+test("empty tracker accepts quoted multiline clipboard text and keeps multiline edits after reopen", async ({ page }) => {
+  await page.goto("/");
+  page.once("dialog", dialog => dialog.accept());
+  await page.getByRole("button", {name: "New Tracker", exact: true}).click();
+  await page.getByRole("gridcell", {name: "Paste rows here, or choose Append row."}).click();
+  await paste(page, '"\nFirst\nSecond"\t1\tfalse');
+  await expect(page.getByLabel("Cell value", {exact: true})).toHaveValue("\nFirst\nSecond");
+  await page.getByLabel("Cell value", {exact: true}).fill("\nEdited\nSecond");
+  await page.getByRole("button", {name: "Apply to selection", exact: true}).click();
+  await expect(page.getByLabel("Cell value", {exact: true})).toHaveValue("\nEdited\nSecond");
+  await saveAs(page);
+  await page.getByRole("button", {name: "Close", exact: true}).click();
+  await page.getByRole("button", {name: "Open project", exact: true}).click();
+  await expect(page.getByLabel("Cell value", {exact: true})).toHaveValue("\nEdited\nSecond");
+});
