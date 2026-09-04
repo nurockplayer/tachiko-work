@@ -6,7 +6,7 @@ Accepted
 
 Decision issue: [#14](https://github.com/nurockplayer/tachiko-work/issues/14)
 
-Amendment source: [#275](https://github.com/nurockplayer/tachiko-work/issues/275). The #275 amendment becomes Accepted only in the repository revision where the focused authority PR that records it is merged; #275 alone is not Accepted authority.
+Amendment decision source: [Issue #275](https://github.com/nurockplayer/tachiko-work/issues/275). This focused authority revision records the amendment and is the acceptance event: the amendment becomes Accepted only in the repository revision where this PR is merged. Issue #275 alone is not Accepted authority.
 
 Related authority: ADR-0003, ADR-0017, ADR-0023, ADR-0025, the Product Constitution, and the Design Principles
 
@@ -23,7 +23,7 @@ Since Issue #14 was opened, later Accepted decisions and production evidence hav
 
 The remaining need is therefore a policy for deciding when Tachiko Work should adopt, extend, wrap, or replace external standards without either reinventing mature infrastructure or allowing compatibility formats to distort the semantic model.
 
-The amendment authorized by Issue #275 clarifies a complementary product constraint: keeping Excel and OOXML outside the semantic core does not make practical spreadsheet interoperability optional. Established Excel workflows are a first-class product interoperability target even though their historical representation and behavior remain boundary concerns.
+This authority revision records an amendment sourced from Issue #275 that clarifies a complementary product constraint: keeping Excel and OOXML outside the semantic core does not make practical spreadsheet interoperability optional. Established Excel workflows are a first-class product interoperability target even though their historical representation and behavior remain boundary concerns.
 
 ## Decision
 
