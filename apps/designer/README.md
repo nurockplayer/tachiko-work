@@ -35,9 +35,8 @@ existing project name is never overwritten and the UI marks only the confirmed
 revision durable. Dirty occurrences guard in-app replacement/close and browser
 unload; the unload guard is removed after Save As or occurrence teardown.
 Browser projects survive Worker teardown and page reload, but
-remain browser-origin data and can be removed by clearing site data. Same-name
-replacement, autosave, recovery/history, cloud persistence, and distribution
-remain outside this slice.
+remain browser-origin data and can be removed by clearing site data. The Tracker workflow below adds explicit same-project Save and bounded session
+undo; autosave, cloud persistence, and distribution remain separate work.
 
 ## Development
 
@@ -57,9 +56,8 @@ pnpm --dir apps/designer test:browser
 `build` compiles the private Rust adapter for `wasm32-unknown-unknown` before
 Vite assembles the application. `dev` performs the same runtime build before
 starting Vite, so a clean checkout never serves without its Worker artifact.
-Schema/entity authoring, formula authoring, overwrite/update-in-place,
-autosave/recovery, and public transport/storage/SDK stabilization are outside
-this slice.
+General schema authoring, formula authoring, autosave/recovery history, and
+public transport/storage/SDK stabilization remain outside this slice.
 
 ## Experimental external client kit
 
@@ -81,3 +79,54 @@ Use the
 while wiring the generated assets. The external-style smoke consumer lives under
 [`examples/experimental-designer-client`](../../examples/experimental-designer-client/)
 and imports only the generated kit.
+
+
+## Driver Tracker (#257)
+
+Choose **New Tracker**, then paste into the empty grid or append a row. The
+stock tracker has three required fields: **task** (Text), **estimate** (finite
+Number), and **done** (Boolean). The Boolean dropdown projects the Rust type
+constraint; this slice does not introduce custom enum or schema-rule authoring.
+The checked-in [operations tracker](../../dogfood/operations-tracker.roproj/)
+contains 40 practical operational tasks and is generated through this same
+runtime from the [clipboard fixture](e2e/fixtures/operations-tracker.tsv).
+
+- Click/Shift-click selects cells/ranges. Arrow keys, Tab, Home/End and
+  Page Up/Down navigate; Enter focuses the cell editor. Apply to selection is
+  one atomic typed operation. Apply or cancel drafts before changing selection.
+- Clipboard interchange supports rectangular plain TSV, including quoted
+  tabs/newlines and escaped quotes. Number input uses decimal `.` with no
+  locale-specific thousands separators; Boolean paste accepts exactly `true`
+  or `false`. Unsupported or malformed input rejects the entire operation.
+  Copy exports the selected displayed values as TSV, never internal IDs.
+- Paste extends rows atomically, up to 128 rows, 3 columns, 48,000 clipboard
+  characters and the runtime's existing 64 KiB projection admission budget.
+  Oversized cell contents can reach that budget before 128 rows. Rejection
+  leaves accepted work intact. Multi-row paste/range editing requires original
+  order and no filter; **Original order** clears manual row moves.
+- Append/remove operate on stable entity IDs. Move rows changes only the view.
+  This fixed stock schema needs no column-schema editing. Sort is stable and
+  uses numeric/Boolean ordering or case-sensitive UTF-16 code-unit string comparison;
+  ties retain manual order, then canonical order. Missing values sort after
+  values and diagnostics after missing in both directions. Find/filter is a
+  case-insensitive literal search across displayed fields. Sort/filter is
+  session-only and never changes canonical row identity.
+- Bold, fill, wrapping, borders, alignment, header emphasis and bounded column
+  widths/row heights are stable-ID presentation data. Sticky column headers
+  keep context across the representative 40-row workload. The private browser
+  sidecar saves formatting and manual order with canonical bytes in one
+  IndexedDB transaction. It is not a new canonical `.roproj` format: opening a
+  folder from outside the browser has default formatting.
+- **Save** updates the current browser project only if both its original bytes
+  and presentation still match; a stale destination or failed transaction keeps
+  accepted local edits dirty and offers Save As/reopen. **Save As** remains
+  create-only. Save, close and reopen retains document and row identities.
+  Browser storage is origin-local and clearing site data removes it.
+- Undo/redo covers supported semantic edits and formatting in the current open
+  session (last 64 combined actions). Semantic undo/redo uses Rust-authoritative
+  inverse atomic batches. Reopening starts a fresh undo stack. A failed refresh
+  leaves the accepted revision saveable and provides **Retry refresh**.
+
+This closes only the bounded tracker journey, not Excel parity or the public
+launch gate. No CSV/XLSX compatibility, multi-sheet, formula expansion, custom
+validation engine, cloud sync, or durable history is added.

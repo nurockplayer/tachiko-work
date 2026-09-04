@@ -7,6 +7,7 @@ type ProjectRecord = {
   name: string;
   bytes: ArrayBuffer;
   saved_at: string;
+  presentation?: string;
 };
 
 export type SavedProjectSummary = {
@@ -18,11 +19,14 @@ export type SavedProjectSummary = {
 export interface DesignerProjectHost {
   list(): Promise<SavedProjectSummary[]>;
   read(name: string): Promise<ArrayBuffer>;
-  publish(name: string, bytes: ArrayBuffer): Promise<void>;
+  readSnapshot?(name: string): Promise<{ bytes: ArrayBuffer; presentation?: string }>;
+  publish(name: string, bytes: ArrayBuffer, presentation?: string): Promise<void>;
+  readPresentation?(name: string): Promise<string | undefined>;
+  update?(name: string, bytes: ArrayBuffer, expectedBytes: ArrayBuffer, presentation?: string, expectedPresentation?: string): Promise<void>;
 }
 
 export class ProjectHostError extends Error {
-  readonly code: "destination_exists" | "not_found" | "invalid_name" | "host_failure";
+  readonly code: "destination_exists" | "not_found" | "invalid_name" | "stale_project" | "host_failure";
 
   constructor(
     code: ProjectHostError["code"],
@@ -61,6 +65,10 @@ export class BrowserProjectHost implements DesignerProjectHost {
   }
 
   async read(name: string): Promise<ArrayBuffer> {
+    return (await this.readSnapshot(name)).bytes;
+  }
+
+  async readSnapshot(name: string): Promise<{ bytes: ArrayBuffer; presentation?: string }> {
     const canonicalName = projectName(name);
     const database = await this.#database;
     const transaction = database.transaction(PROJECT_STORE, "readonly");
@@ -77,10 +85,17 @@ export class BrowserProjectHost implements DesignerProjectHost {
         `Saved project '${canonicalName}' is no longer available.`,
       );
     }
-    return record.bytes.slice(0);
+    return {
+      bytes: record.bytes.slice(0),
+      ...(record.presentation === undefined ? {} : { presentation: record.presentation }),
+    };
   }
 
-  async publish(name: string, bytes: ArrayBuffer): Promise<void> {
+  async readPresentation(name: string): Promise<string | undefined> {
+    return (await this.readSnapshot(name)).presentation;
+  }
+
+  async publish(name: string, bytes: ArrayBuffer, presentation?: string): Promise<void> {
     const canonicalName = projectName(name);
     const database = await this.#database;
     const transaction = database.transaction(
@@ -92,6 +107,7 @@ export class BrowserProjectHost implements DesignerProjectHost {
       name: canonicalName,
       bytes: bytes.slice(0),
       saved_at: savedAt,
+      ...(presentation === undefined ? {} : { presentation }),
     } satisfies ProjectRecord);
     const summaryRequest = transaction.objectStore(PROJECT_SUMMARY_STORE).add({
       name: canonicalName,
@@ -119,6 +135,72 @@ export class BrowserProjectHost implements DesignerProjectHost {
       );
     }
   }
+
+  async update(name: string, bytes: ArrayBuffer, expectedBytes: ArrayBuffer, presentation?: string, expectedPresentation?: string): Promise<void> {
+    const canonicalName = projectName(name);
+    // Snapshot caller-owned buffers before the first asynchronous boundary.
+    const candidate = bytes.slice(0);
+    const expected = expectedBytes.slice(0);
+    const database = await this.#database;
+    const transaction = database.transaction(
+      [PROJECT_STORE, PROJECT_SUMMARY_STORE],
+      "readwrite",
+    );
+    const completion = transactionComplete(transaction);
+    let failure: unknown;
+    const store = transaction.objectStore(PROJECT_STORE);
+    const request = store.get(canonicalName) as IDBRequest<ProjectRecord | undefined>;
+    // Compare and replace in the same transaction: concurrent tabs cannot both
+    // publish against the same prior bytes, or resurrect a removed project.
+    request.addEventListener("success", () => {
+      try {
+        const record = request.result;
+        if (record === undefined) {
+          throw new ProjectHostError(
+            "not_found",
+            `Saved project '${canonicalName}' is no longer available. Use Save As to create a new project.`,
+          );
+        }
+        if (!sameBytes(record.bytes, expected) || record.presentation !== expectedPresentation) {
+          throw new ProjectHostError(
+            "stale_project",
+            `Saved project '${canonicalName}' changed elsewhere. Reopen it or use Save As to preserve your edits.`,
+          );
+        }
+        const savedAt = new Date().toISOString();
+        store.put({
+          name: canonicalName,
+          bytes: candidate,
+          saved_at: savedAt,
+          ...(presentation === undefined ? {} : { presentation }),
+        } satisfies ProjectRecord);
+        transaction.objectStore(PROJECT_SUMMARY_STORE).put({
+          name: canonicalName,
+          byte_length: candidate.byteLength,
+          saved_at: savedAt,
+        } satisfies SavedProjectSummary);
+      } catch (error) {
+        failure = error;
+        transaction.abort();
+      }
+    });
+    try {
+      await completion;
+    } catch (error) {
+      if (failure instanceof ProjectHostError) throw failure;
+      throw new ProjectHostError(
+        "host_failure",
+        `The browser could not save '${canonicalName}'.`,
+        { cause: failure ?? error },
+      );
+    }
+  }
+}
+
+function sameBytes(left: ArrayBuffer, right: ArrayBuffer): boolean {
+  if (left.byteLength !== right.byteLength) return false;
+  const rightBytes = new Uint8Array(right);
+  return new Uint8Array(left).every((value, index) => value === rightBytes[index]);
 }
 
 function projectName(input: string): string {

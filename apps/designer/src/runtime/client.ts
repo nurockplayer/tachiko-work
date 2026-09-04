@@ -1,4 +1,5 @@
 import type {
+  TrackerCommand,
   BootstrapProjection,
   FieldBatchProjection,
   FieldTarget,
@@ -10,6 +11,8 @@ import type {
 } from "./protocol.ts";
 
 export interface DesignerClient {
+  newTracker?(): Promise<OpenedProjection>;
+  trackerCommand?(request: TrackerCommand): Promise<PublicationProjection>;
   bootstrap(): Promise<BootstrapProjection>;
   openProject(bytes: ArrayBuffer): Promise<OpenedProjection>;
   exportProject(expectedRevision: string): Promise<ProjectExport>;

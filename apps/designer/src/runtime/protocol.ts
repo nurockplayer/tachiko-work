@@ -52,7 +52,7 @@ export type FieldProjection = {
 export type TableProjection = {
   revision: string;
   collection: CollectionSummary;
-  columns: Array<{ id: string; key: string; field_type: string }>;
+  columns: Array<{ id: string; key: string; field_type: string; dropdown_options?: string[] }>;
   rows: Array<{ id: string; key: string; fields: FieldProjection[] }>;
 };
 
@@ -86,7 +86,15 @@ export type FailureProjection = {
   diagnostics: DiagnosticProjection[];
 };
 
+export type TrackerCommand =
+  | { type: "paste_cells"; expected_revision: string; collection: string; start_entity: string | null; start_field: string; rows: string[][] }
+  | { type: "append_row"; expected_revision: string; collection: string }
+  | { type: "remove_rows"; expected_revision: string; entities: string[] }
+  | { type: "undo" | "redo"; expected_revision: string };
+
 export type DesignerRequest =
+  | TrackerCommand
+  | { type: "new_tracker"; occurrence_id: string }
   | { type: "bootstrap"; occurrence_id: string }
   | { type: "query_table"; collection: string }
   | {

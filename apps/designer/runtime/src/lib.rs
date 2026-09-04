@@ -14,9 +14,9 @@ use tachiko_storage::{
     encode_roproj_v1,
 };
 use tachiko_workspace_engine::{
-    CalculationFailure, Date, Document, Expression, FieldDefinition, FieldId, FieldKey, FieldRef,
-    FieldType, IdGenerator, Number, SemanticIdKind, StarterTemplate, Value, WorkspaceError,
-    analyze_field, create_document,
+    CalculationFailure, Date, Document, Entity, EntityId, EntityKey, Expression, FieldDefinition,
+    FieldId, FieldKey, FieldRef, FieldType, IdGenerator, Number, Schema, SchemaId, SchemaKey,
+    SemanticIdKind, StarterTemplate, Value, WorkspaceError, analyze_field, create_document,
     formula_operations::FormulaCalculationOutcome,
     patch_lifecycle::{
         AuthorizationAction, AuthorizationDomainId, AuthorizationPolicyVersion, DocumentScopeId,
@@ -35,9 +35,9 @@ mod wasm;
 
 const MAX_COLLECTIONS: usize = 32;
 const MAX_TABLE_FIELDS: usize = 32;
-const MAX_TABLE_ROWS: usize = 32;
-const MAX_TOTAL_ENTITIES: usize = MAX_COLLECTIONS * MAX_TABLE_ROWS;
-const MAX_FIELD_QUERY_TARGETS: usize = MAX_TABLE_FIELDS * MAX_TABLE_ROWS;
+const MAX_TABLE_ROWS: usize = 128;
+const MAX_TOTAL_ENTITIES: usize = 1024;
+const MAX_FIELD_QUERY_TARGETS: usize = 1024;
 const MAX_FORMULAS: usize = 32;
 const MAX_FORMULA_PROFILE_NODES: usize = 256;
 const MAX_PROFILE_STRING_BYTES: usize = 4_096;
@@ -56,6 +56,34 @@ const MOONFALL_BOOLEAN_FIXTURE_COLLECTION: &str = "weapons";
 pub enum DesignerRequest {
     Bootstrap {
         occurrence_id: String,
+    },
+    NewTracker {
+        occurrence_id: String,
+    },
+    EditCells {
+        expected_revision: String,
+        edits: Vec<CellEdit>,
+    },
+    PasteCells {
+        expected_revision: String,
+        collection: String,
+        start_entity: Option<String>,
+        start_field: String,
+        rows: Vec<Vec<String>>,
+    },
+    AppendRow {
+        expected_revision: String,
+        collection: String,
+    },
+    RemoveRows {
+        expected_revision: String,
+        entities: Vec<String>,
+    },
+    Undo {
+        expected_revision: String,
+    },
+    Redo {
+        expected_revision: String,
     },
     QueryTable {
         collection: String,
@@ -112,11 +140,19 @@ pub struct TableProjection {
     pub rows: Vec<RowProjection>,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct CellEdit {
+    pub target: FieldTarget,
+    pub input: ScalarEditInput,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ColumnProjection {
     pub id: String,
     pub key: String,
     pub field_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dropdown_options: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -320,6 +356,8 @@ pub enum DesignerError {
     StaleQuery { requested: String, current: String },
     #[error("successful publication did not yield matching invalidation facts")]
     MissingInvalidation,
+    #[error("tracker operation rejected: {message}")]
+    InvalidTrackerOperation { message: String },
 }
 
 impl DesignerError {
@@ -340,6 +378,7 @@ impl DesignerError {
             Self::Lifecycle(PatchLifecycleError::CommandRejected { .. }) => {
                 ("edit_rejected", Vec::new())
             }
+            Self::InvalidTrackerOperation { .. } => ("invalid_tracker_operation", Vec::new()),
             Self::InvalidNumberInput { .. } => ("invalid_number", Vec::new()),
             Self::InvalidDateInput { .. } => ("invalid_date", Vec::new()),
             Self::UnsupportedScalarEdit { .. } => ("unsupported_edit", Vec::new()),
@@ -380,6 +419,16 @@ pub struct DesignerRuntime {
     principal: PrincipalId,
     clock: DesignerClock,
     proposal_serial: u64,
+    row_serial: usize,
+    row_namespace: String,
+    undo: Vec<HistoryEntry>,
+    redo: Vec<HistoryEntry>,
+}
+
+#[derive(Clone)]
+struct HistoryEntry {
+    forward: Vec<SemanticCommand>,
+    inverse: Vec<SemanticCommand>,
 }
 
 #[derive(Clone)]
@@ -436,6 +485,16 @@ impl DesignerRuntime {
         let formula_sources = formula_sources(&document)?;
         let principal = PrincipalId::from(DESIGNER_PRINCIPAL);
         let lifecycle = designer_lifecycle(&document_scope, &document, &principal)?;
+        let row_serial = document
+            .entities
+            .keys()
+            .filter_map(|id| {
+                id.as_str()
+                    .strip_prefix("tracker_row_")
+                    .and_then(|suffix| suffix.split('_').next()?.parse::<usize>().ok())
+            })
+            .max()
+            .unwrap_or(0);
         let session = ResidentWorkspaceSession::new(document_scope.clone(), document);
         let runtime = Self {
             title,
@@ -449,6 +508,10 @@ impl DesignerRuntime {
             principal,
             clock: DesignerClock::default(),
             proposal_serial: 0,
+            row_serial,
+            row_namespace: occurrence_id.to_owned(),
+            undo: Vec::new(),
+            redo: Vec::new(),
         };
         runtime.ensure_supported_project()?;
         Ok(runtime)
@@ -461,6 +524,53 @@ impl DesignerRuntime {
     /// Returns a typed adapter or workspace failure.
     pub fn handle(&mut self, request: DesignerRequest) -> Result<DesignerResponse, DesignerError> {
         match request {
+            DesignerRequest::NewTracker { occurrence_id } => {
+                let candidate = Self::tracker(&occurrence_id)?;
+                let opened = OpenedProjection {
+                    bootstrap: candidate.bootstrap_projection(),
+                    table: candidate.query_table("tracker")?,
+                };
+                ensure_projection_size(&opened)?;
+                *self = candidate;
+                Ok(DesignerResponse::Opened(Box::new(opened)))
+            }
+            DesignerRequest::EditCells {
+                expected_revision,
+                edits,
+            } => Ok(DesignerResponse::Published(
+                self.edit_cells(&expected_revision, &edits)?,
+            )),
+            DesignerRequest::PasteCells {
+                expected_revision,
+                collection,
+                start_entity,
+                start_field,
+                rows,
+            } => Ok(DesignerResponse::Published(self.paste_cells(
+                &expected_revision,
+                &collection,
+                start_entity.as_deref(),
+                &start_field,
+                &rows,
+            )?)),
+            DesignerRequest::AppendRow {
+                expected_revision,
+                collection,
+            } => Ok(DesignerResponse::Published(
+                self.append_row(&expected_revision, &collection)?,
+            )),
+            DesignerRequest::RemoveRows {
+                expected_revision,
+                entities,
+            } => Ok(DesignerResponse::Published(
+                self.remove_rows(&expected_revision, &entities)?,
+            )),
+            DesignerRequest::Undo { expected_revision } => Ok(DesignerResponse::Published(
+                self.history_edit(&expected_revision, false)?,
+            )),
+            DesignerRequest::Redo { expected_revision } => Ok(DesignerResponse::Published(
+                self.history_edit(&expected_revision, true)?,
+            )),
             DesignerRequest::Bootstrap { .. } => {
                 Ok(DesignerResponse::Bootstrap(self.bootstrap_projection()))
             }
@@ -615,6 +725,8 @@ impl DesignerRuntime {
                     id: column.id.to_string(),
                     key: column.key.clone(),
                     field_type: field_type_name(&column.field_type).to_owned(),
+                    dropdown_options: (column.field_type == FieldType::Boolean)
+                        .then(|| vec!["true".to_owned(), "false".to_owned()]),
                 })
                 .collect(),
             rows,
@@ -694,40 +806,47 @@ impl DesignerRuntime {
         target: &FieldTarget,
         input: &ScalarEditInput,
     ) -> Result<PublicationProjection, DesignerError> {
-        let current_revision = self.current_revision();
-        if current_revision != expected_revision {
-            return Err(DesignerError::StaleQuery {
-                requested: expected_revision.to_owned(),
-                current: current_revision.to_owned(),
-            });
-        }
-        let field = target.as_field_ref();
-        let current = self.session.query_fields(std::slice::from_ref(&field))?;
-        let value = match (current.value()[0].stored_value.as_ref(), input) {
-            (Some(Value::Number(_)), ScalarEditInput::Number { input }) => {
-                let parsed = input
-                    .parse::<f64>()
-                    .ok()
-                    .and_then(|value| Number::new(value).ok())
-                    .ok_or_else(|| DesignerError::InvalidNumberInput {
-                        input: input.to_owned(),
-                    })?;
-                Value::Number(parsed)
+        self.edit_cells(
+            expected_revision,
+            &[CellEdit {
+                target: target.clone(),
+                input: input.clone(),
+            }],
+        )
+    }
+
+    fn publish_commands(
+        &mut self,
+        expected_revision: &str,
+        commands: Vec<SemanticCommand>,
+    ) -> Result<PublicationProjection, DesignerError> {
+        self.check_revision(expected_revision)?;
+        let mut candidate = self.session.export_snapshot().document().clone();
+        for command in &commands {
+            match command {
+                SemanticCommand::SetFieldValue { field, value } => {
+                    if let Some(entity) = candidate.entities.get_mut(&field.entity) {
+                        entity.fields.insert(field.field.clone(), value.clone());
+                    }
+                }
+                SemanticCommand::AppendEntity { entity } => {
+                    candidate.entities.insert(entity.id.clone(), entity.clone());
+                }
+                SemanticCommand::RemoveEntity { entity } => {
+                    candidate.entities.remove(entity);
+                }
+                SemanticCommand::FormulaUpdate(_) => {
+                    return Err(tracker_error("unsupported history command"));
+                }
             }
-            (Some(Value::Text(_)), ScalarEditInput::Text { value }) => Value::Text(value.clone()),
-            (Some(Value::Boolean(_)), ScalarEditInput::Boolean { value }) => Value::Boolean(*value),
-            (Some(Value::Date(_)), ScalarEditInput::Date { value }) => Value::Date(
-                Date::parse(value).map_err(|_| DesignerError::InvalidDateInput {
-                    input: value.clone(),
-                })?,
-            ),
-            _ => return Err(DesignerError::UnsupportedScalarEdit { field }),
-        };
-        self.ensure_scalar_edit_projection(&field, &value)?;
+        }
+        if validate(&candidate).is_ok() {
+            Self::from_document(candidate, PREFLIGHT_OCCURRENCE)?;
+        }
         let snapshot = self.session.export_snapshot();
         self.proposal_serial = self.proposal_serial.saturating_add(1);
         let proposal_id = ProposalId::from(format!("designer-edit-{}", self.proposal_serial));
-        let body = SemanticPatchBody::command(SemanticCommand::set_field_value(field, value));
+        let body = SemanticPatchBody::atomic_batch(commands)?;
         self.lifecycle.propose(
             snapshot.document_scope(),
             snapshot.document(),
@@ -768,6 +887,7 @@ impl DesignerRuntime {
                 .clone();
             (receipt, invalidation)
         };
+        self.refresh_structure();
         Ok(PublicationProjection {
             base_revision: receipt.base_revision.as_str().to_owned(),
             resulting_revision: receipt.resulting_revision.as_str().to_owned(),
@@ -785,23 +905,325 @@ impl DesignerRuntime {
         })
     }
 
-    fn ensure_scalar_edit_projection(
-        &self,
-        field: &FieldRef,
-        value: &Value,
-    ) -> Result<(), DesignerError> {
-        let mut candidate = self.session.export_snapshot().document().clone();
-        let entity = candidate.entities.get_mut(&field.entity).ok_or_else(|| {
-            DesignerError::UnsupportedScalarEdit {
-                field: field.clone(),
-            }
-        })?;
-        entity.fields.insert(field.field.clone(), value.clone());
-        if validate(&candidate).is_err() {
-            // Let the lifecycle preserve its authoritative validation diagnostics.
-            return Ok(());
+    fn refresh_structure(&mut self) {
+        self.row_serial = self.row_serial.max(
+            self.session
+                .export_snapshot()
+                .document()
+                .entities
+                .keys()
+                .filter_map(|id| {
+                    id.as_str()
+                        .strip_prefix("tracker_row_")
+                        .and_then(|suffix| suffix.split('_').next()?.parse::<usize>().ok())
+                })
+                .max()
+                .unwrap_or(0),
+        );
+        self.collection_specs = collection_specs(self.session.export_snapshot().document());
+        self.collections = self
+            .collection_specs
+            .values()
+            .map(|spec| spec.summary.clone())
+            .collect();
+    }
+
+    /// Create a bounded operational tracker using existing scalar schema authority.
+    ///
+    /// # Errors
+    /// Returns an admission error without replacing an existing occurrence.
+    pub fn tracker(occurrence_id: &str) -> Result<Self, DesignerError> {
+        let mut document = Document::empty(occurrence_id, "Driver Tracker");
+        let schema = Schema {
+            id: SchemaId::from("tracker"),
+            key: SchemaKey::from("tracker"),
+            fields: [
+                ("task", FieldType::Text),
+                ("estimate", FieldType::Number),
+                ("done", FieldType::Boolean),
+            ]
+            .into_iter()
+            .map(|(key, field_type)| {
+                let id = FieldId::from(key);
+                (
+                    id.clone(),
+                    FieldDefinition {
+                        id,
+                        key: FieldKey::from(key),
+                        field_type,
+                        required: true,
+                    },
+                )
+            })
+            .collect(),
+        };
+        document.schemas.insert(schema.id.clone(), schema);
+        Self::from_document(document, occurrence_id)
+    }
+
+    fn check_revision(&self, expected: &str) -> Result<(), DesignerError> {
+        if expected != self.current_revision() {
+            return Err(DesignerError::StaleQuery {
+                requested: expected.to_owned(),
+                current: self.current_revision().to_owned(),
+            });
         }
-        Self::from_document(candidate, PREFLIGHT_OCCURRENCE).map(|_| ())
+        Ok(())
+    }
+
+    fn record_edit(
+        &mut self,
+        expected: &str,
+        forward: Vec<SemanticCommand>,
+        inverse: Vec<SemanticCommand>,
+    ) -> Result<PublicationProjection, DesignerError> {
+        if forward.is_empty() {
+            return Err(tracker_error("the selected values are unchanged"));
+        }
+        let publication = self.publish_commands(expected, forward.clone())?;
+        if self.undo.len() == 64 {
+            self.undo.remove(0);
+        }
+        self.undo.push(HistoryEntry { forward, inverse });
+        self.redo.clear();
+        Ok(publication)
+    }
+
+    fn edit_cells(
+        &mut self,
+        expected: &str,
+        edits: &[CellEdit],
+    ) -> Result<PublicationProjection, DesignerError> {
+        self.check_revision(expected)?;
+        if edits.is_empty() || edits.len() > MAX_FIELD_QUERY_TARGETS {
+            return Err(tracker_error("the edit range is empty or too large"));
+        }
+        let snapshot = self.session.export_snapshot();
+        let mut seen = BTreeSet::new();
+        let mut forward = Vec::new();
+        let mut inverse = Vec::new();
+        for edit in edits {
+            let field = edit.target.as_field_ref();
+            if !seen.insert(field.clone()) {
+                return Err(tracker_error("duplicate cell targets are unsupported"));
+            }
+            let old = snapshot
+                .document()
+                .entities
+                .get(&field.entity)
+                .and_then(|entity| entity.fields.get(&field.field))
+                .ok_or_else(|| DesignerError::UnsupportedScalarEdit {
+                    field: field.clone(),
+                })?;
+            let value = parse_scalar(old, &edit.input, &field)?;
+            if &value != old {
+                forward.push(SemanticCommand::set_field_value(field.clone(), value));
+                inverse.push(SemanticCommand::set_field_value(field, old.clone()));
+            }
+        }
+        self.record_edit(expected, forward, inverse)
+    }
+
+    fn history_edit(
+        &mut self,
+        expected: &str,
+        redo: bool,
+    ) -> Result<PublicationProjection, DesignerError> {
+        self.check_revision(expected)?;
+        let entry = if redo {
+            self.redo.last()
+        } else {
+            self.undo.last()
+        }
+        .cloned()
+        .ok_or_else(|| tracker_error("no operation is available in this history direction"))?;
+        let result = self.publish_commands(
+            expected,
+            if redo {
+                entry.forward.clone()
+            } else {
+                entry.inverse.clone()
+            },
+        )?;
+        if redo {
+            self.redo.pop();
+            self.undo.push(entry);
+        } else {
+            self.undo.pop();
+            self.redo.push(entry);
+        }
+        Ok(result)
+    }
+
+    fn tracker_spec(&self, collection: &str) -> Result<&CollectionSpec, DesignerError> {
+        let spec = self
+            .collection_specs
+            .get(collection)
+            .ok_or_else(|| tracker_error("collection is unavailable"))?;
+        if spec.summary.id != "tracker"
+            || spec.columns.len() != 3
+            || !spec.columns.iter().all(|column| {
+                matches!(
+                    (column.id.as_str(), &column.field_type),
+                    ("task", FieldType::Text)
+                        | ("estimate", FieldType::Number)
+                        | ("done", FieldType::Boolean)
+                )
+            })
+        {
+            return Err(tracker_error(
+                "row maintenance is available for the bounded tracker schema",
+            ));
+        }
+        Ok(spec)
+    }
+
+    fn append_row(
+        &mut self,
+        expected: &str,
+        collection: &str,
+    ) -> Result<PublicationProjection, DesignerError> {
+        self.paste_cells(
+            expected,
+            collection,
+            None,
+            "task",
+            &[vec![String::new(), "0".to_owned(), "false".to_owned()]],
+        )
+    }
+
+    fn remove_rows(
+        &mut self,
+        expected: &str,
+        entities: &[String],
+    ) -> Result<PublicationProjection, DesignerError> {
+        self.check_revision(expected)?;
+        self.tracker_spec("tracker")?;
+        if entities.is_empty() || entities.len() > MAX_TABLE_ROWS {
+            return Err(tracker_error("the row selection is empty or too large"));
+        }
+        let snapshot = self.session.export_snapshot();
+        let mut seen = BTreeSet::new();
+        let mut forward = Vec::new();
+        let mut inverse = Vec::new();
+        for id in entities {
+            if !seen.insert(id) {
+                return Err(tracker_error("duplicate row targets are unsupported"));
+            }
+            let entity = snapshot
+                .document()
+                .entities
+                .get(&EntityId::from(id.clone()))
+                .filter(|entity| entity.schema.as_str() == "tracker")
+                .ok_or_else(|| tracker_error("row is unavailable"))?;
+            forward.push(SemanticCommand::RemoveEntity {
+                entity: entity.id.clone(),
+            });
+            inverse.push(SemanticCommand::AppendEntity {
+                entity: entity.clone(),
+            });
+        }
+        self.record_edit(expected, forward, inverse)
+    }
+
+    fn paste_cells(
+        &mut self,
+        expected: &str,
+        collection: &str,
+        start_entity: Option<&str>,
+        start_field: &str,
+        rows: &[Vec<String>],
+    ) -> Result<PublicationProjection, DesignerError> {
+        self.check_revision(expected)?;
+        let spec = self.tracker_spec(collection)?;
+        let fields = ["task", "estimate", "done"];
+        let column = fields
+            .iter()
+            .position(|field| *field == start_field)
+            .ok_or_else(|| tracker_error("starting field is unavailable"))?;
+        let start = start_entity.map_or(Ok(spec.entities.len()), |id| {
+            spec.entities
+                .iter()
+                .position(|entity| entity.as_str() == id)
+                .ok_or_else(|| tracker_error("starting row is unavailable"))
+        })?;
+        if rows.is_empty()
+            || start.saturating_add(rows.len()) > MAX_TABLE_ROWS
+            || rows[0].is_empty()
+            || rows
+                .iter()
+                .any(|row| row.len() != rows[0].len() || row.len() + column > fields.len())
+        {
+            return Err(tracker_error(
+                "paste must be a nonempty rectangular range within 128 rows and three typed columns",
+            ));
+        }
+        if self.row_serial > usize::MAX - MAX_TOTAL_ENTITIES - MAX_TABLE_ROWS {
+            return Err(tracker_error("row identity allocation is exhausted"));
+        }
+        let snapshot = self.session.export_snapshot();
+        let document = snapshot.document();
+        let mut forward = Vec::new();
+        let mut inverse = Vec::new();
+        let mut allocated = BTreeSet::new();
+        for (offset, row) in rows.iter().enumerate() {
+            let existing = spec
+                .entities
+                .get(start + offset)
+                .and_then(|id| document.entities.get(id));
+            let mut entity = existing.cloned().unwrap_or_else(|| {
+                tracker_row(
+                    document,
+                    self.row_serial,
+                    &self.row_namespace,
+                    &mut allocated,
+                )
+            });
+            for (offset, text) in row.iter().enumerate() {
+                let field = FieldRef::new(entity.id.clone(), fields[column + offset]);
+                let old = entity
+                    .fields
+                    .get(&field.field)
+                    .ok_or_else(|| tracker_error("tracker row has a missing required value"))?;
+                let input = match old {
+                    Value::Text(_) => ScalarEditInput::Text {
+                        value: text.clone(),
+                    },
+                    Value::Number(_) => ScalarEditInput::Number {
+                        input: text.clone(),
+                    },
+                    Value::Boolean(_) => ScalarEditInput::Boolean {
+                        value: match text.as_str() {
+                            "true" => true,
+                            "false" => false,
+                            _ => {
+                                return Err(tracker_error(
+                                    "Boolean paste accepts exactly true or false",
+                                ));
+                            }
+                        },
+                    },
+                    _ => return Err(tracker_error("paste value type is unsupported")),
+                };
+                let value = parse_scalar(old, &input, &field)?;
+                if existing.is_some() && &value != old {
+                    forward.push(SemanticCommand::set_field_value(
+                        field.clone(),
+                        value.clone(),
+                    ));
+                    inverse.push(SemanticCommand::set_field_value(field.clone(), old.clone()));
+                }
+                entity.fields.insert(field.field, value);
+            }
+            if existing.is_none() {
+                inverse.push(SemanticCommand::RemoveEntity {
+                    entity: entity.id.clone(),
+                });
+                forward.push(SemanticCommand::AppendEntity { entity });
+            }
+        }
+        inverse.reverse();
+        self.record_edit(expected, forward, inverse)
     }
 
     fn current_revision(&self) -> &str {
@@ -1028,6 +1450,27 @@ pub fn process_wire_request(runtime: &mut Option<DesignerRuntime>, input: &[u8])
     }
     let reply = match serde_json::from_slice::<DesignerRequest>(input) {
         Ok(request) => {
+            if let DesignerRequest::NewTracker { occurrence_id } = &request {
+                let result = DesignerRuntime::tracker(occurrence_id).and_then(|candidate| {
+                    let opened = OpenedProjection {
+                        bootstrap: candidate.bootstrap_projection(),
+                        table: candidate.query_table("tracker")?,
+                    };
+                    ensure_projection_size(&opened)?;
+                    *runtime = Some(candidate);
+                    Ok(DesignerResponse::Opened(Box::new(opened)))
+                });
+                return encode_reply(&match result {
+                    Ok(response) => DesignerWireReply::Ok { response },
+                    Err(error) => DesignerWireReply::Error {
+                        error: error.failure_projection(
+                            runtime
+                                .as_ref()
+                                .map_or("unavailable", DesignerRuntime::current_revision),
+                        ),
+                    },
+                });
+            }
             if runtime.is_none() {
                 if let DesignerRequest::Bootstrap { occurrence_id } = &request {
                     match DesignerRuntime::moonfall(occurrence_id) {
@@ -1136,15 +1579,24 @@ fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
                 schema.key.to_string(),
                 CollectionSpec {
                     summary,
-                    columns: schema
-                        .fields
-                        .values()
-                        .map(|field| ColumnSpec {
-                            id: field.id.clone(),
-                            key: field.key.to_string(),
-                            field_type: field.field_type.clone(),
-                        })
-                        .collect(),
+                    columns: {
+                        let mut fields = schema.fields.values().collect::<Vec<_>>();
+                        if schema.key.as_str() == "tracker" {
+                            fields.sort_by_key(|field| match field.id.as_str() {
+                                "task" => 0,
+                                "estimate" => 1,
+                                "done" => 2,
+                                _ => 3,
+                            });
+                        }
+                        fields.into_iter()
+                    }
+                    .map(|field| ColumnSpec {
+                        id: field.id.clone(),
+                        key: field.key.to_string(),
+                        field_type: field.field_type.clone(),
+                    })
+                    .collect(),
                     entities,
                 },
             )
@@ -1515,21 +1967,31 @@ fn designer_lifecycle(
         GrantId::from("designer-number-edit"),
         authority,
         principal.clone(),
-        vec![
-            GrantRequirement::query(OperationFamily::SetFieldValue, scope.clone()),
-            GrantRequirement::mutation(
-                AuthorizationAction::Propose,
-                OperationFamily::SetFieldValue,
-                MutationClass::Value,
-                scope.clone(),
-            )?,
-            GrantRequirement::mutation(
-                AuthorizationAction::Execute,
-                OperationFamily::SetFieldValue,
-                MutationClass::Value,
-                scope,
-            )?,
-        ],
+        [
+            (OperationFamily::SetFieldValue, MutationClass::Value),
+            (OperationFamily::AppendEntity, MutationClass::Structure),
+            (OperationFamily::RemoveEntity, MutationClass::Structure),
+            (OperationFamily::RemoveEntity, MutationClass::Destructive),
+        ]
+        .into_iter()
+        .flat_map(|(family, class)| {
+            [
+                Ok(GrantRequirement::query(family, scope.clone())),
+                GrantRequirement::mutation(
+                    AuthorizationAction::Propose,
+                    family,
+                    class,
+                    scope.clone(),
+                ),
+                GrantRequirement::mutation(
+                    AuthorizationAction::Execute,
+                    family,
+                    class,
+                    scope.clone(),
+                ),
+            ]
+        })
+        .collect::<Result<Vec<_>, _>>()?,
         None,
     ))?;
     Ok(lifecycle)
@@ -1741,6 +2203,73 @@ impl IdGenerator for MoonfallIds {
     }
 }
 
+fn tracker_row(
+    document: &Document,
+    row_serial: usize,
+    namespace: &str,
+    allocated: &mut BTreeSet<EntityId>,
+) -> Entity {
+    let mut serial = row_serial.saturating_add(1);
+    loop {
+        let id = EntityId::from(format!("tracker_row_{serial:04}_{namespace}"));
+        let key = EntityKey::from(format!("row_{serial:04}"));
+        if !document.entities.contains_key(&id)
+            && !allocated.contains(&id)
+            && !document.entities.values().any(|entity| entity.key == key)
+        {
+            allocated.insert(id.clone());
+            break Entity {
+                id,
+                key,
+                schema: SchemaId::from("tracker"),
+                fields: [
+                    (FieldId::from("task"), Value::Text(String::new())),
+                    (
+                        FieldId::from("estimate"),
+                        Value::Number(Number::new(0.0).expect("zero is finite")),
+                    ),
+                    (FieldId::from("done"), Value::Boolean(false)),
+                ]
+                .into_iter()
+                .collect(),
+            };
+        }
+        serial += 1;
+    }
+}
+
+fn tracker_error(message: &str) -> DesignerError {
+    DesignerError::InvalidTrackerOperation {
+        message: message.to_owned(),
+    }
+}
+
+fn parse_scalar(
+    old: &Value,
+    input: &ScalarEditInput,
+    field: &FieldRef,
+) -> Result<Value, DesignerError> {
+    match (old, input) {
+        (Value::Number(_), ScalarEditInput::Number { input }) => input
+            .parse::<f64>()
+            .ok()
+            .and_then(|value| Number::new(value).ok())
+            .map(Value::Number)
+            .ok_or_else(|| DesignerError::InvalidNumberInput {
+                input: input.clone(),
+            }),
+        (Value::Text(_), ScalarEditInput::Text { value }) => Ok(Value::Text(value.clone())),
+        (Value::Boolean(_), ScalarEditInput::Boolean { value }) => Ok(Value::Boolean(*value)),
+        (Value::Date(_), ScalarEditInput::Date { value }) => Date::parse(value)
+            .map(Value::Date)
+            .map_err(|_| DesignerError::InvalidDateInput {
+                input: value.clone(),
+            }),
+        _ => Err(DesignerError::UnsupportedScalarEdit {
+            field: field.clone(),
+        }),
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::MAX_WIDTH_FINITE_JSON_NUMBER;

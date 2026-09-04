@@ -30,8 +30,8 @@ shapes remain Provisional or Deferred as marked below.
 Implementation state: partially implemented through `workspace-engine` as the
 shared first-party application authority. Its provisional `patch_lifecycle`
 module now implements Issue #29's immutable SemanticPatch envelope, the current
-stable-ID field-value and FormulaUpdate Command families, ordered non-empty
-AtomicBatch evaluation,
+stable-ID field-value, FormulaUpdate, and bounded AppendEntity/RemoveEntity
+Command families, ordered non-empty AtomicBatch evaluation,
 scoped preview, exact finite Human Approval, atomic publication/consumption,
 verification against the immutable installed snapshot captured by the guarded
 publication result, and receipts. Current Rust functions and result structures
@@ -303,6 +303,43 @@ An intent equivalent to changing a typed field value by `EntityId + FieldId` can
 be a semantic command. An arbitrary mutation of an internal Rust field or JSON
 path is not the stable product contract merely because an adapter can express
 one mechanically.
+
+### Provisional entity command implementation
+
+Issue #257 adds two bounded entity commands to the existing `patch_lifecycle`
+implementation for the first-party Driver Tracker journey:
+
+- `AppendEntity` supplies an `EntityId`, human key, existing `SchemaId`, and
+  typed values keyed by stable `FieldId`. The authority rejects an empty or
+  colliding current entity identity, invalid or duplicate human key, missing
+  schema, and inadmissible formula structure. Final validation/calculation
+  checks the complete candidate, including required fields, value types, and
+  bound references.
+- `RemoveEntity` targets one existing `EntityId`. It does not cascade or silently
+  retarget references. A final candidate with dangling stored or formula
+  references is rejected; an ordered atomic batch may repair or remove the
+  referencing fields/entities together with the target before the final gate.
+
+Both commands use the existing exact-base proposal, authorization, validation,
+diff/impact, and guarded atomic publication path. A failed command or final
+batch publishes no prefix. Entity identity remains authoritative; row indexes
+and human keys are adapter projections, not mutation targets.
+
+These provisional operation families are independently capability-addressable.
+Append requires `Structure` authority at the destination schema scope; remove
+requires `Structure` and `Destructive` authority at the removed entity scope.
+An appended or removed entity containing Formula values additionally requires
+`Formula` authority for that family and scope. Propose and Execute actions
+remain separate, and existing exact Human Approval laws apply unchanged.
+Structural preview disclosure currently requires document-wide Query authority
+for each requested entity operation family, covering complete membership and
+values, including removed and batch-transient entities. Mutation authority
+alone never grants this disclosure.
+
+The names, Rust payloads, and conservative disclosure profile remain
+Provisional. This implementation adds no generic CRUD wire contract, schema
+editor, cascading delete policy, persisted undo/history model, or spreadsheet
+compatibility contract.
 
 ## M04 formula reasoning and scenario Queries
 

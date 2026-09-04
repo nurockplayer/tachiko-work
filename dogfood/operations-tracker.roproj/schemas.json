@@ -1,0 +1,32 @@
+[
+  {
+    "id": "tracker",
+    "key": "tracker",
+    "fields": [
+      {
+        "id": "done",
+        "key": "done",
+        "field_type": {
+          "type": "boolean"
+        },
+        "required": true
+      },
+      {
+        "id": "estimate",
+        "key": "estimate",
+        "field_type": {
+          "type": "number"
+        },
+        "required": true
+      },
+      {
+        "id": "task",
+        "key": "task",
+        "field_type": {
+          "type": "text"
+        },
+        "required": true
+      }
+    ]
+  }
+]

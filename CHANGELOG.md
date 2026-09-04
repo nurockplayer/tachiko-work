@@ -55,6 +55,18 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- The first-party browser Designer now offers a bounded Driver Tracker journey:
+  create a fresh project, atomically paste a typed TSV range, edit cells, append
+  and remove rows, and Save As / close / reopen through the existing project
+  lifecycle. It reuses the Boolean dropdown, keeps formatting in a view
+  sidecar, sorts view rows deterministically, and supports bounded in-session
+  semantic undo/redo through the same revision-safe publication path. The
+  slice does not add Excel parity or a general spreadsheet model.
+- Provisional `AppendEntity` and `RemoveEntity` Semantic API command families
+  now share exact-base proposals, independently scoped capabilities,
+  document-wide structural disclosure, final validation, and atomic
+  publication with existing field and formula commands. Dangling references
+  reject removal unless the same atomic batch repairs them.
 - A provisional subject-first Semantic API field capability discovery Query
   now projects the existing Number, Text, Boolean, Date, Reference, and Formula
   operation rules through workspace-engine and the AI boundary. Discovery and
