@@ -76,7 +76,7 @@ the user interface. AI is a semantic client, not an alternate source of truth.
 - **See the durable example:** [`examples/game-balance/`](examples/game-balance/README.md)
 - **Inspect the self-dogfood project:** [`dogfood/product-gaps.roproj/`](dogfood/product-gaps.roproj/)
 - **See where the product is going:** [Product Roadmap](docs/product/product-roadmap.md)
-- **Understand the system:** [Architecture overview](#architecture-overview)
+- **Understand the system:** [`ARCHITECTURE.md`](ARCHITECTURE.md)
 - **Understand contribution status:** [`CONTRIBUTING.md`](CONTRIBUTING.md)
 - **Understand decision authority:** [`docs/README.md`](docs/README.md)
 
@@ -456,13 +456,15 @@ producing new semantic inputs and rerunning the command.
 
 ## Architecture overview
 
-![Product-surface architecture overview: independent product frontends connect through the Semantic API to one shared semantic core.](docs/architecture/tachiko-work-product-surfaces-overview.webp)
+Read [`ARCHITECTURE.md`](ARCHITECTURE.md) for the top-level system mental
+model, authority boundary, maturity cues, and change-routing guide. It is an
+explanatory/index document, not a replacement for the detailed architecture
+and authority records.
 
-Tachiko Work does not require one universal frontend. Different product surfaces may use different frontend architectures, visual languages, and interaction models while sharing semantic authority through the Semantic API and the same Rust-owned semantic/application runtime where their underlying meaning is shared. A shared frontend toolkit is optional, not a platform requirement.
-
-The illustrated Project, CRM, Inventory, and Finance surfaces are examples of the long-term open-ecosystem direction, not claims that those applications are implemented today. Internal crate boundaries, runtime seams, and semantic-model details may evolve and are documented separately.
-
-For the detailed architecture and authority notes, see the [architecture docs index](docs/architecture/README.md). The replaceable-stack framing is preserved as discussion history in [Office as a Replaceable Stack](docs/discussions/2026-09-03-office-as-replaceable-stack.md).
+For subsystem architecture, product-surface examples, and maturity notes, see
+the [architecture docs index](docs/architecture/README.md). The replaceable-
+stack framing is preserved as discussion history in [Office as a Replaceable
+Stack](docs/discussions/2026-09-03-office-as-replaceable-stack.md).
 
 For a fast contributor check after an edit, run:
 
@@ -504,7 +506,8 @@ publication boundary.
 - Git is a storage protocol, not a user interface
 - AI should manipulate semantic models, not imitate users
 
-Architecture records and specifications live under [`docs/`](docs/). Accepted
-ADRs take precedence over older exploratory roadmaps. Start with the
+Subsystem architecture records and specifications live under [`docs/`](docs/);
+the root [`ARCHITECTURE.md`](ARCHITECTURE.md) is the fast explanatory entry
+point. Accepted ADRs take precedence over older exploratory roadmaps. Start with the
 [`docs` knowledge-base entry point](docs/README.md) for the documented reading
 order and authority model.
