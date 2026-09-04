@@ -48,6 +48,16 @@ Only high-confidence, expensive-to-reverse invariants should become stable core 
 
 Editors, adapters, importers, exporters, domain integrations, AI providers, and workflow extensions should be able to evolve without requiring the core project to own every use case.
 
+### 2.9 Practical spreadsheet interoperability is first-class
+
+Decision issue: [#275](https://github.com/nurockplayer/tachiko-work/issues/275)
+
+Tachiko Work must provide practical interoperability with established spreadsheet workflows, especially Microsoft Excel. Architectural independence from Excel, OOXML, or legacy spreadsheet behavior must not be used to justify poor real-world interoperability.
+
+When compatibility conflicts with modern internal semantics, Tachiko Work should preserve the modern semantic model while providing explicit boundaries that can import, export, translate, emulate, preserve, or explain legacy behavior as appropriate.
+
+Historical Tachiko Work implementation choices do not gain permanent compatibility protection merely because they already exist. When an early design materially obstructs an Accepted interoperability requirement, prefer an explicit migration or supersession path over institutionalizing the mistake, while protecting user data and durable external contracts through the normal compatibility process.
+
 ## 3. What Tachiko Work Is Not
 
 Tachiko Work is not constitutionally committed to:
