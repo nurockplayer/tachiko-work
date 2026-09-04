@@ -60,7 +60,8 @@ spreadsheet-shaped at its semantic core. The
 is an explanatory founder framing, not a new authority. Likewise, the
 [product-surface overview](docs/architecture/README.md) illustrates independent
 frontends sharing semantic authority; its Project, CRM, Inventory, and Finance
-surfaces are not claims that those products are implemented.
+surfaces are not claims that those products are implemented. A shared frontend
+toolkit remains optional, not a platform requirement.
 
 ## Core invariants
 
@@ -99,6 +100,11 @@ underlying contracts:
   system, or cloud service. The amended [ADR-0027](docs/decisions/ADR-0027-open-format-and-interoperability-policy.md)
   makes established spreadsheet workflows, especially Excel, a first-class
   interoperability target without making Excel/OOXML semantic authority.
+  Historical Tachiko implementation choices do not receive permanent
+  compatibility protection merely because they already exist; when they
+  obstruct an Accepted interoperability requirement, prefer an explicit
+  migration or supersession path while protecting user data and durable
+  external contracts.
 
 ## Major subsystem map
 
@@ -107,7 +113,7 @@ underlying contracts:
 | Semantic model and core | Typed meaning, stable identity, references, and progressive strengthening belong to the semantic foundation. | [Semantic core rationale](docs/architecture/semantic-core-rationale.md), [document model](docs/architecture/document-model.md), [semantic data model](docs/specs/semantic-data-model.md), [ADR-0021](docs/decisions/ADR-0021-progressive-semantic-strengthening.md) |
 | Semantic API and resident runtime | `workspace-engine` and the lower Rust engines provide the shared application authority. The transport-neutral API and resident topology are Accepted; current Rust source, session, and transport shapes remain replaceable where stated. | [Rust crate architecture](docs/architecture/rust-crate-architecture.md), [Semantic API specification](docs/specs/semantic-api.md), [ADR-0020](docs/decisions/ADR-0020-first-class-headless-semantic-api.md), [ADR-0022](docs/decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md) |
 | Formulas and validation | Formula meaning, finite deterministic calculation, staged validation, diagnostics, and operation gates are semantic/runtime responsibilities rather than frontend conventions. | [Formula engine specification](docs/specs/formula-engine-spec.md), [validation engine](docs/specs/validation-engine.md), [diagnostics contract](docs/specs/diagnostics-contract.md), [ADR-0018](docs/decisions/ADR-0018-bound-formulas-and-deterministic-binary64.md), [ADR-0019](docs/decisions/ADR-0019-staged-semantic-validation-and-diagnostics.md) |
-| Persistence and formats | `.roproj/v1` is the canonical editable representation; portable-package/v1 is the derived single-file `.ro` profile. Direct `.ro` remains a supported compatibility representation. Storage codecs and host publication do not redefine semantic meaning. | [.ro and .roproj architecture](docs/architecture/ro-and-roproj-format.md), [`.roproj/v1` specification](docs/specs/roproj-format.md), [portable package specification](docs/specs/portable-package-v1.md), [ADR-0003](docs/decisions/ADR-0003-ro-and-roproj-representation.md), [ADR-0023](docs/decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md), [ADR-0025](docs/decisions/ADR-0025-portable-package-v1.md) |
+| Persistence and formats | `.roproj/v1` is the canonical editable representation. The implemented `direct-ro/v2` path is the current direct JSON writer, while portable-package/v1 is a derived single-file `.ro` artifact; legacy direct `.ro` v1 input is an explicit migration path. Storage codecs and host publication do not redefine semantic meaning. | [.ro and .roproj architecture](docs/architecture/ro-and-roproj-format.md), [`.roproj/v1` specification](docs/specs/roproj-format.md), [portable package specification](docs/specs/portable-package-v1.md), [ADR-0003](docs/decisions/ADR-0003-ro-and-roproj-representation.md), [ADR-0023](docs/decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md), [ADR-0025](docs/decisions/ADR-0025-portable-package-v1.md) |
 | Git-native workflow | Git is an optional storage and collaboration protocol for reviewable semantic work, not the semantic model or the end-user UI. Semantic delta and conflict evidence remain distinct from raw text merging. | [Git-native workflow](docs/architecture/git-native-workflow.md), [semantic delta](docs/specs/semantic-diff-spec.md), [conflict resolution](docs/specs/conflict-resolution.md), [ADR-0030](docs/decisions/ADR-0030-canonical-semantic-delta.md), [ADR-0031](docs/decisions/ADR-0031-semantic-merge-conflict-protocol.md) |
 | Designer, frontend, and host | Web, desktop, and future mobile surfaces are projections and host compositions over the Semantic API. The current Designer slice is implementation evidence, not a second semantic authority or a general frontend contract. | [Frontend/backend boundary](docs/architecture/frontend-backend-boundary.md), [WASM strategy](docs/architecture/wasm-strategy.md), [architecture index](docs/architecture/README.md), [ADR-0022](docs/decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md) |
 | AI | AI is a delegated semantic client. It queries and proposes typed operations through the same semantic boundary; approval, authorization, validation, and external effects remain separate gates. | [AI-native architecture](docs/architecture/ai-native-architecture.md), [AI agent API](docs/specs/ai-agent-api.md), [semantic authorization](docs/specs/semantic-authorization.md), [ADR-0007](docs/decisions/ADR-0007-ai-semantic-interaction-model.md), [ADR-0024](docs/decisions/ADR-0024-revision-pinned-semantic-patch.md), [ADR-0026](docs/decisions/ADR-0026-scoped-semantic-authorization-and-approval.md) |
@@ -127,7 +133,9 @@ to classify a boundary before relying on it.
 | Principle | A durable product constraint; it guides lower-level decisions without necessarily selecting an implementation. |
 | Accepted | An adopted decision or policy; it remains authoritative until explicitly amended or superseded. |
 | Provisional | A useful, reversible current choice; do not infer a permanent public contract from it. |
-| Hypothesis / Open Question / Deferred | A direction needing evidence, an unresolved decision, or work intentionally left for later; none may silently become an invariant through implementation convenience. |
+| Hypothesis | A promising direction that still needs research, evidence, or validation; it may guide investigation but must not silently become an implementation invariant. |
+| Open Question | A known unresolved decision that requires focused decision work; implementation convenience must not answer it when the choice would create a durable contract. |
+| Deferred | Work or mechanics intentionally left for later; its existence does not authorize implementation or promote it to current architecture. |
 | Superseded | Historical context retained for traceability; follow the linked replacement or current authority. |
 
 The detailed [architecture index](docs/architecture/README.md) also separates
