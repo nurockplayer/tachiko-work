@@ -93,6 +93,14 @@ a supported native target (the commit does not need to be pushed):
 bash scripts/release-check.sh
 ```
 
+For ephemeral Codex validation, use the repository-local
+[`Codex Worktree Housekeeping`](docs/engineering/codex-worktree-housekeeping.md)
+policy. `scripts/codex-cargo.sh` keeps Cargo artifacts inside the current
+worktree and defaults only that process to `CARGO_INCREMENTAL=0`; the optional
+compiler cache is never required for correctness. The worktree GC command is
+dry-run by default and may be applied only after its live-state proof reports a
+proven terminal worktree.
+
 The clean commit is required because Cargo source packaging rejects dirty
 package inputs. The full gate selects stable for bare and nested Rust commands,
 regardless of an inherited `RUSTUP_TOOLCHAIN`, and separately checks exact Rust
