@@ -6,6 +6,16 @@ Before treating an architecture detail as permanent, read [`../governance/knowle
 
 ## Architecture diagrams
 
+### Product-surface overview
+
+![Product-surface architecture overview: independent product frontends connect through the Semantic API to one shared semantic core.](tachiko-work-product-surfaces-overview.webp)
+
+This overview illustrates the product-surface framing: different products may use different frontend architectures, visual languages, and interaction models while sharing semantic authority through the Semantic API and the Rust-owned semantic/application runtime where their underlying meaning is shared. A shared frontend component system is optional, not a platform requirement.
+
+The Project, CRM, Inventory, and Finance surfaces are illustrative product directions, not claims that those applications are implemented today. The diagram is explanatory product architecture, consistent with the project's multiple-views, small-stable-core, and open-ecosystem principles; it does not create a new normative frontend contract.
+
+### Detailed implementation-direction diagram
+
 ![Detailed architecture diagram: React frontend, Tauri desktop shell, Rust semantic backend, formats, and integrations.](tachiko-work-architecture-detailed.png)
 
 The diagrams show product architecture direction. Internal crate boundaries, runtime seams, and semantic-model details may evolve where the repository classifies them as Provisional or Open Questions.
