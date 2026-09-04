@@ -1079,6 +1079,17 @@ transition/event, and follows ADR-0026's existing no-publication Approval laws.
 Private attempt, cache, metric, or bookkeeping tokens may still change, but
 they are not semantic revision occurrences.
 
+Issue #281 implements final-candidate equality in the provisional resident
+publication guard after live authorization and exact occurrence/revision
+checks. It compares the complete typed Document, not diff or calculated output.
+The lifecycle's provisional `PatchLifecycleError::NoChange` mapping produces
+no publication receipt, Applied/Verified state, invalidation, or Approval
+consumption. The immutable proposal remains reviewable and retryable, with all
+current checks repeated; without Query disclosure the result is a safe denial.
+The AI adapter maps this to `semantic.no_change`, and the Designer runtime to
+`no_change`, without requiring nonexistent publication invalidation. Existing
+member-level identical-value and no-op-rename preconditions are unchanged.
+
 An actual non-no-op installation creates exactly one semantic revision
 occurrence. Failure during later verification, receipt persistence, response,
 or reporting does not erase it and MUST NOT be represented as pre-publication

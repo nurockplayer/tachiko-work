@@ -15,6 +15,7 @@ use tachiko_workspace_engine::{
         SemanticPublicationAuthority, SemanticPublicationError, SemanticRevision, SemanticScope,
         TrustedInstant,
     },
+    resident_session::{ResidentWorkspaceSession, TrustedPublicationTimeSource},
 };
 
 const NOW: TrustedInstant = TrustedInstant::new(10);
@@ -250,6 +251,7 @@ enum PublishMode {
     ReplaceOccurrence,
     TamperAfterSuccess,
     AdvanceAfterSuccess,
+    NoChangeWithoutAuthorization,
 }
 
 struct TestPublication {
@@ -315,17 +317,27 @@ impl SemanticPublicationAuthority for TestPublication {
         if &self.document_scope != expected_document_scope {
             return Err(SemanticPublicationError::DocumentScopeMismatch);
         }
+        if self.mode == PublishMode::NoChangeWithoutAuthorization {
+            return Err(SemanticPublicationError::NoChange);
+        }
         let authorization = authorize(self.publication_time)
             .ok_or(SemanticPublicationError::AuthorizationDenied)?;
         match self.mode {
             PublishMode::RaceStale => Err(SemanticPublicationError::Stale),
             PublishMode::Conflict => Err(SemanticPublicationError::Conflict),
+            PublishMode::NoChangeWithoutAuthorization => unreachable!(),
             PublishMode::Normal
             | PublishMode::ReplaceOccurrence
             | PublishMode::TamperAfterSuccess
             | PublishMode::AdvanceAfterSuccess => {
                 if &self.revision != expected_revision {
                     return Err(SemanticPublicationError::Stale);
+                }
+                if candidate.id != self.document.id {
+                    return Err(SemanticPublicationError::Conflict);
+                }
+                if candidate == self.document {
+                    return Err(SemanticPublicationError::NoChange);
                 }
                 self.document = candidate;
                 if self.mode == PublishMode::TamperAfterSuccess {
@@ -943,47 +955,49 @@ fn middle_command_failure_never_publishes_a_successful_prefix() {
 
 #[test]
 fn stale_base_after_preview_denies_without_consuming_approval() {
-    let document = game_balance_document("game", "Game");
-    let original = document.clone();
-    let mut lifecycle = lifecycle();
-    provision_standard_authority(&mut lifecycle);
-    let proposal = propose(
-        &mut lifecycle,
-        &document,
-        "proposal-stale",
-        SemanticPatchBody::command(field_command("iron_sword", "damage", number(45.0))),
-        "agent",
-    );
-    let approval = preview_and_approve(
-        &mut lifecycle,
-        &document,
-        &proposal,
-        "approval-stale",
-        "agent",
-    );
-    let mut publication = TestPublication::new(document, "r2", "r3");
-
-    let error = lifecycle
-        .execute(
+    for net_zero in [false, true] {
+        let document = game_balance_document("game", "Game");
+        let original = document.clone();
+        let mut lifecycle = lifecycle();
+        provision_standard_authority(&mut lifecycle);
+        let proposal = propose(
+            &mut lifecycle,
+            &document,
+            "proposal-stale",
+            regression_damage_body(net_zero),
+            "agent",
+        );
+        let approval = preview_and_approve(
+            &mut lifecycle,
+            &document,
             &proposal,
-            Some(&approval),
-            &principal("agent"),
-            &mut publication,
-            TrustedInstant::new(11),
-        )
-        .unwrap_err();
+            "approval-stale",
+            "agent",
+        );
+        let mut publication = TestPublication::new(document, "r2", "r3");
 
-    assert!(matches!(error, PatchLifecycleError::Stale));
-    assert_eq!(publication.document, original);
-    assert_eq!(publication.publish_calls, 0);
-    assert_eq!(
-        lifecycle.approval_status(&approval).unwrap(),
-        ApprovalStatus::Active
-    );
-    assert_eq!(
-        lifecycle.proposal_history(&proposal).unwrap().last(),
-        Some(&PatchLifecycleState::Stale)
-    );
+        let error = lifecycle
+            .execute(
+                &proposal,
+                Some(&approval),
+                &principal("agent"),
+                &mut publication,
+                TrustedInstant::new(11),
+            )
+            .unwrap_err();
+
+        assert!(matches!(error, PatchLifecycleError::Stale));
+        assert_eq!(publication.document, original);
+        assert_eq!(publication.publish_calls, 0);
+        assert_eq!(
+            lifecycle.approval_status(&approval).unwrap(),
+            ApprovalStatus::Active
+        );
+        assert_eq!(
+            lifecycle.proposal_history(&proposal).unwrap().last(),
+            Some(&PatchLifecycleState::Stale)
+        );
+    }
 }
 
 #[test]
@@ -1075,91 +1089,95 @@ fn preview_authorizes_disclosure_before_revealing_stale_state() {
 
 #[test]
 fn publication_compare_and_swap_closes_the_post_validation_race() {
-    let document = game_balance_document("game", "Game");
-    let original = document.clone();
-    let mut lifecycle = lifecycle();
-    provision_standard_authority(&mut lifecycle);
-    let proposal = propose(
-        &mut lifecycle,
-        &document,
-        "proposal-race",
-        SemanticPatchBody::command(field_command("iron_sword", "damage", number(45.0))),
-        "agent",
-    );
-    let approval = preview_and_approve(
-        &mut lifecycle,
-        &document,
-        &proposal,
-        "approval-race",
-        "agent",
-    );
-    let mut publication =
-        TestPublication::new(document, "r1", "r2").with_mode(PublishMode::RaceStale);
-
-    let error = lifecycle
-        .execute(
+    for net_zero in [false, true] {
+        let document = game_balance_document("game", "Game");
+        let original = document.clone();
+        let mut lifecycle = lifecycle();
+        provision_standard_authority(&mut lifecycle);
+        let proposal = propose(
+            &mut lifecycle,
+            &document,
+            "proposal-race",
+            regression_damage_body(net_zero),
+            "agent",
+        );
+        let approval = preview_and_approve(
+            &mut lifecycle,
+            &document,
             &proposal,
-            Some(&approval),
-            &principal("agent"),
-            &mut publication,
-            TrustedInstant::new(11),
-        )
-        .unwrap_err();
+            "approval-race",
+            "agent",
+        );
+        let mut publication =
+            TestPublication::new(document, "r1", "r2").with_mode(PublishMode::RaceStale);
 
-    assert!(matches!(error, PatchLifecycleError::Stale));
-    assert_eq!(publication.document, original);
-    assert_eq!(publication.publish_calls, 1);
-    assert_eq!(
-        lifecycle.approval_status(&approval).unwrap(),
-        ApprovalStatus::Active
-    );
+        let error = lifecycle
+            .execute(
+                &proposal,
+                Some(&approval),
+                &principal("agent"),
+                &mut publication,
+                TrustedInstant::new(11),
+            )
+            .unwrap_err();
+
+        assert!(matches!(error, PatchLifecycleError::Stale));
+        assert_eq!(publication.document, original);
+        assert_eq!(publication.publish_calls, 1);
+        assert_eq!(
+            lifecycle.approval_status(&approval).unwrap(),
+            ApprovalStatus::Active
+        );
+    }
 }
 
 #[test]
 fn document_occurrence_replacement_does_not_inherit_authority() {
-    let document = game_balance_document("game", "Game");
-    let original = document.clone();
-    let mut lifecycle = lifecycle();
-    provision_standard_authority(&mut lifecycle);
-    let proposal = propose(
-        &mut lifecycle,
-        &document,
-        "proposal-replaced-occurrence",
-        SemanticPatchBody::command(field_command("iron_sword", "damage", number(45.0))),
-        "agent",
-    );
-    let approval = preview_and_approve(
-        &mut lifecycle,
-        &document,
-        &proposal,
-        "approval-replaced-occurrence",
-        "agent",
-    );
-    let mut publication =
-        TestPublication::new(document, "r1", "r2").with_mode(PublishMode::ReplaceOccurrence);
-
-    let error = lifecycle
-        .execute(
+    for net_zero in [false, true] {
+        let document = game_balance_document("game", "Game");
+        let original = document.clone();
+        let mut lifecycle = lifecycle();
+        provision_standard_authority(&mut lifecycle);
+        let proposal = propose(
+            &mut lifecycle,
+            &document,
+            "proposal-replaced-occurrence",
+            regression_damage_body(net_zero),
+            "agent",
+        );
+        let approval = preview_and_approve(
+            &mut lifecycle,
+            &document,
             &proposal,
-            Some(&approval),
-            &principal("agent"),
-            &mut publication,
-            TrustedInstant::new(11),
-        )
-        .unwrap_err();
+            "approval-replaced-occurrence",
+            "agent",
+        );
+        let mut publication =
+            TestPublication::new(document, "r1", "r2").with_mode(PublishMode::ReplaceOccurrence);
 
-    assert!(matches!(error, PatchLifecycleError::AuthorizationDenied));
-    assert_eq!(
-        publication.document_scope,
-        DocumentScopeId::from("replacement-occurrence")
-    );
-    assert_eq!(publication.document, original);
-    assert_eq!(publication.publish_calls, 1);
-    assert_eq!(
-        lifecycle.approval_status(&approval).unwrap(),
-        ApprovalStatus::Active
-    );
-    assert!(lifecycle.execution_receipts().is_empty());
+        let error = lifecycle
+            .execute(
+                &proposal,
+                Some(&approval),
+                &principal("agent"),
+                &mut publication,
+                TrustedInstant::new(11),
+            )
+            .unwrap_err();
+
+        assert!(matches!(error, PatchLifecycleError::AuthorizationDenied));
+        assert_eq!(
+            publication.document_scope,
+            DocumentScopeId::from("replacement-occurrence")
+        );
+        assert_eq!(publication.document, original);
+        assert_eq!(publication.publish_calls, 1);
+        assert_eq!(
+            lifecycle.approval_status(&approval).unwrap(),
+            ApprovalStatus::Active
+        );
+        assert!(lifecycle.execution_receipts().is_empty());
+    }
 }
 
 #[test]
@@ -1960,20 +1978,87 @@ fn value_authority_does_not_authorize_formula_mutation() {
 
 #[test]
 fn expired_and_revoked_approvals_never_publish() {
-    for (proposal_name, approval_name, revoke, expected) in [
-        (
-            "proposal-expired",
-            "approval-expired",
-            false,
-            ApprovalStatus::Expired,
-        ),
-        (
-            "proposal-revoked",
-            "approval-revoked",
-            true,
-            ApprovalStatus::Revoked,
-        ),
-    ] {
+    for net_zero in [false, true] {
+        for (proposal_name, approval_name, revoke, expected) in [
+            (
+                "proposal-expired",
+                "approval-expired",
+                false,
+                ApprovalStatus::Expired,
+            ),
+            (
+                "proposal-revoked",
+                "approval-revoked",
+                true,
+                ApprovalStatus::Revoked,
+            ),
+        ] {
+            let document = game_balance_document("game", "Game");
+            let original = document.clone();
+            let mut lifecycle = lifecycle();
+            provision_standard_authority(&mut lifecycle);
+            let proposal = propose(
+                &mut lifecycle,
+                &document,
+                proposal_name,
+                regression_damage_body(net_zero),
+                "agent",
+            );
+            lifecycle
+                .preview(
+                    &document_scope_id(),
+                    &document,
+                    &revision("r1"),
+                    &proposal,
+                    &principal("reviewer"),
+                    NOW,
+                )
+                .unwrap();
+            let approval_id = ApprovalId::from(approval_name);
+            lifecycle
+                .approve(
+                    &document_scope_id(),
+                    &document,
+                    &revision("r1"),
+                    ApprovalRequest::new(
+                        approval_id.clone(),
+                        proposal.clone(),
+                        principal("reviewer"),
+                        principal("agent"),
+                        TrustedInstant::new(12),
+                    ),
+                    NOW,
+                )
+                .unwrap();
+            if revoke {
+                lifecycle.revoke_approval(&approval_id).unwrap();
+            }
+            let mut publication = TestPublication::new(document, "r1", "r2");
+
+            let error = lifecycle
+                .execute(
+                    &proposal,
+                    Some(&approval_id),
+                    &principal("agent"),
+                    &mut publication,
+                    TrustedInstant::new(13),
+                )
+                .unwrap_err();
+
+            assert!(matches!(
+                error,
+                PatchLifecycleError::ApprovalExpired | PatchLifecycleError::ApprovalRevoked
+            ));
+            assert_eq!(lifecycle.approval_status(&approval_id).unwrap(), expected);
+            assert_eq!(publication.document, original);
+            assert_eq!(publication.publish_calls, 0);
+        }
+    }
+}
+
+#[test]
+fn approval_expiring_inside_the_publication_guard_never_publishes() {
+    for net_zero in [false, true] {
         let document = game_balance_document("game", "Game");
         let original = document.clone();
         let mut lifecycle = lifecycle();
@@ -1981,8 +2066,8 @@ fn expired_and_revoked_approvals_never_publish() {
         let proposal = propose(
             &mut lifecycle,
             &document,
-            proposal_name,
-            SemanticPatchBody::command(field_command("iron_sword", "damage", number(45.0))),
+            "proposal-boundary-approval-expiry",
+            regression_damage_body(net_zero),
             "agent",
         );
         lifecycle
@@ -1995,14 +2080,14 @@ fn expired_and_revoked_approvals_never_publish() {
                 NOW,
             )
             .unwrap();
-        let approval_id = ApprovalId::from(approval_name);
+        let approval = ApprovalId::from("approval-boundary-expiry");
         lifecycle
             .approve(
                 &document_scope_id(),
                 &document,
                 &revision("r1"),
                 ApprovalRequest::new(
-                    approval_id.clone(),
+                    approval.clone(),
                     proposal.clone(),
                     principal("reviewer"),
                     principal("agent"),
@@ -2011,160 +2096,99 @@ fn expired_and_revoked_approvals_never_publish() {
                 NOW,
             )
             .unwrap();
-        if revoke {
-            lifecycle.revoke_approval(&approval_id).unwrap();
-        }
-        let mut publication = TestPublication::new(document, "r1", "r2");
+        let mut publication = TestPublication::new(document, "r1", "r2")
+            .with_publication_time(TrustedInstant::new(12));
 
         let error = lifecycle
             .execute(
                 &proposal,
-                Some(&approval_id),
+                Some(&approval),
                 &principal("agent"),
                 &mut publication,
-                TrustedInstant::new(13),
+                TrustedInstant::new(11),
+            )
+            .unwrap_err();
+
+        assert!(matches!(error, PatchLifecycleError::ApprovalExpired));
+        assert_eq!(publication.document, original);
+        assert_eq!(publication.publish_calls, 1);
+        assert_eq!(
+            lifecycle.approval_status(&approval).unwrap(),
+            ApprovalStatus::Expired
+        );
+        assert!(lifecycle.execution_receipts().is_empty());
+    }
+}
+
+#[test]
+fn execute_grant_expiring_inside_the_publication_guard_never_publishes() {
+    for net_zero in [false, true] {
+        let document = game_balance_document("game", "Game");
+        let original = document.clone();
+        let mut lifecycle = lifecycle();
+        lifecycle
+            .provision_grant(Grant::new(
+                GrantId::from("agent-expiring-authority"),
+                principal("authority"),
+                principal("agent"),
+                vec![
+                    query_requirement(),
+                    mutation_requirement(AuthorizationAction::Propose, MutationClass::Value),
+                    mutation_requirement(AuthorizationAction::Execute, MutationClass::Value),
+                ],
+                Some(TrustedInstant::new(12)),
+            ))
+            .unwrap();
+        grant(
+            &mut lifecycle,
+            "reviewer-boundary-authority",
+            "reviewer",
+            vec![
+                query_requirement(),
+                mutation_requirement(AuthorizationAction::Approve, MutationClass::Value),
+            ],
+        );
+        let proposal = propose(
+            &mut lifecycle,
+            &document,
+            "proposal-boundary-grant-expiry",
+            regression_damage_body(net_zero),
+            "agent",
+        );
+        let approval = preview_and_approve(
+            &mut lifecycle,
+            &document,
+            &proposal,
+            "approval-boundary-grant-expiry",
+            "agent",
+        );
+        let mut publication = TestPublication::new(document, "r1", "r2")
+            .with_publication_time(TrustedInstant::new(12));
+
+        let error = lifecycle
+            .execute(
+                &proposal,
+                Some(&approval),
+                &principal("agent"),
+                &mut publication,
+                TrustedInstant::new(11),
             )
             .unwrap_err();
 
         assert!(matches!(
             error,
-            PatchLifecycleError::ApprovalExpired | PatchLifecycleError::ApprovalRevoked
+            PatchLifecycleError::InsufficientCapability {
+                action: AuthorizationAction::Execute
+            }
         ));
-        assert_eq!(lifecycle.approval_status(&approval_id).unwrap(), expected);
         assert_eq!(publication.document, original);
-        assert_eq!(publication.publish_calls, 0);
+        assert_eq!(publication.publish_calls, 1);
+        assert_eq!(
+            lifecycle.approval_status(&approval).unwrap(),
+            ApprovalStatus::Active
+        );
+        assert!(lifecycle.execution_receipts().is_empty());
     }
-}
-
-#[test]
-fn approval_expiring_inside_the_publication_guard_never_publishes() {
-    let document = game_balance_document("game", "Game");
-    let original = document.clone();
-    let mut lifecycle = lifecycle();
-    provision_standard_authority(&mut lifecycle);
-    let proposal = propose(
-        &mut lifecycle,
-        &document,
-        "proposal-boundary-approval-expiry",
-        SemanticPatchBody::command(field_command("iron_sword", "damage", number(45.0))),
-        "agent",
-    );
-    lifecycle
-        .preview(
-            &document_scope_id(),
-            &document,
-            &revision("r1"),
-            &proposal,
-            &principal("reviewer"),
-            NOW,
-        )
-        .unwrap();
-    let approval = ApprovalId::from("approval-boundary-expiry");
-    lifecycle
-        .approve(
-            &document_scope_id(),
-            &document,
-            &revision("r1"),
-            ApprovalRequest::new(
-                approval.clone(),
-                proposal.clone(),
-                principal("reviewer"),
-                principal("agent"),
-                TrustedInstant::new(12),
-            ),
-            NOW,
-        )
-        .unwrap();
-    let mut publication =
-        TestPublication::new(document, "r1", "r2").with_publication_time(TrustedInstant::new(12));
-
-    let error = lifecycle
-        .execute(
-            &proposal,
-            Some(&approval),
-            &principal("agent"),
-            &mut publication,
-            TrustedInstant::new(11),
-        )
-        .unwrap_err();
-
-    assert!(matches!(error, PatchLifecycleError::ApprovalExpired));
-    assert_eq!(publication.document, original);
-    assert_eq!(publication.publish_calls, 1);
-    assert_eq!(
-        lifecycle.approval_status(&approval).unwrap(),
-        ApprovalStatus::Expired
-    );
-    assert!(lifecycle.execution_receipts().is_empty());
-}
-
-#[test]
-fn execute_grant_expiring_inside_the_publication_guard_never_publishes() {
-    let document = game_balance_document("game", "Game");
-    let original = document.clone();
-    let mut lifecycle = lifecycle();
-    lifecycle
-        .provision_grant(Grant::new(
-            GrantId::from("agent-expiring-authority"),
-            principal("authority"),
-            principal("agent"),
-            vec![
-                query_requirement(),
-                mutation_requirement(AuthorizationAction::Propose, MutationClass::Value),
-                mutation_requirement(AuthorizationAction::Execute, MutationClass::Value),
-            ],
-            Some(TrustedInstant::new(12)),
-        ))
-        .unwrap();
-    grant(
-        &mut lifecycle,
-        "reviewer-boundary-authority",
-        "reviewer",
-        vec![
-            query_requirement(),
-            mutation_requirement(AuthorizationAction::Approve, MutationClass::Value),
-        ],
-    );
-    let proposal = propose(
-        &mut lifecycle,
-        &document,
-        "proposal-boundary-grant-expiry",
-        SemanticPatchBody::command(field_command("iron_sword", "damage", number(45.0))),
-        "agent",
-    );
-    let approval = preview_and_approve(
-        &mut lifecycle,
-        &document,
-        &proposal,
-        "approval-boundary-grant-expiry",
-        "agent",
-    );
-    let mut publication =
-        TestPublication::new(document, "r1", "r2").with_publication_time(TrustedInstant::new(12));
-
-    let error = lifecycle
-        .execute(
-            &proposal,
-            Some(&approval),
-            &principal("agent"),
-            &mut publication,
-            TrustedInstant::new(11),
-        )
-        .unwrap_err();
-
-    assert!(matches!(
-        error,
-        PatchLifecycleError::InsufficientCapability {
-            action: AuthorizationAction::Execute
-        }
-    ));
-    assert_eq!(publication.document, original);
-    assert_eq!(publication.publish_calls, 1);
-    assert_eq!(
-        lifecycle.approval_status(&approval).unwrap(),
-        ApprovalStatus::Active
-    );
-    assert!(lifecycle.execution_receipts().is_empty());
 }
 
 #[test]
@@ -2297,55 +2321,7 @@ fn verified_proposal_history_remains_terminal_across_later_entry_points() {
 
 #[test]
 fn loss_of_live_execute_grant_denies_and_leaves_approval_active() {
-    let document = game_balance_document("game", "Game");
-    let original = document.clone();
-    let mut lifecycle = lifecycle();
-    provision_standard_authority(&mut lifecycle);
-    let proposal = propose(
-        &mut lifecycle,
-        &document,
-        "proposal-grant-loss",
-        SemanticPatchBody::command(field_command("iron_sword", "damage", number(45.0))),
-        "agent",
-    );
-    let approval = preview_and_approve(
-        &mut lifecycle,
-        &document,
-        &proposal,
-        "approval-grant-loss",
-        "agent",
-    );
-    lifecycle
-        .revoke_grant(&GrantId::from("agent-authority"))
-        .unwrap();
-    let mut publication = TestPublication::new(document, "r1", "r2");
-
-    let error = lifecycle
-        .execute(
-            &proposal,
-            Some(&approval),
-            &principal("agent"),
-            &mut publication,
-            TrustedInstant::new(11),
-        )
-        .unwrap_err();
-
-    assert!(matches!(
-        error,
-        PatchLifecycleError::InsufficientCapability {
-            action: AuthorizationAction::Execute
-        }
-    ));
-    assert_eq!(
-        lifecycle.approval_status(&approval).unwrap(),
-        ApprovalStatus::Active
-    );
-    assert_eq!(publication.document, original);
-}
-
-#[test]
-fn disabled_executor_or_approver_blocks_publication() {
-    for (disabled, suffix) in [("agent", "executor"), ("reviewer", "approver")] {
+    for net_zero in [false, true] {
         let document = game_balance_document("game", "Game");
         let original = document.clone();
         let mut lifecycle = lifecycle();
@@ -2353,18 +2329,20 @@ fn disabled_executor_or_approver_blocks_publication() {
         let proposal = propose(
             &mut lifecycle,
             &document,
-            &format!("proposal-disabled-{suffix}"),
-            SemanticPatchBody::command(field_command("iron_sword", "damage", number(45.0))),
+            "proposal-grant-loss",
+            regression_damage_body(net_zero),
             "agent",
         );
         let approval = preview_and_approve(
             &mut lifecycle,
             &document,
             &proposal,
-            &format!("approval-disabled-{suffix}"),
+            "approval-grant-loss",
             "agent",
         );
-        lifecycle.disable_principal(&principal(disabled)).unwrap();
+        lifecycle
+            .revoke_grant(&GrantId::from("agent-authority"))
+            .unwrap();
         let mut publication = TestPublication::new(document, "r1", "r2");
 
         let error = lifecycle
@@ -2377,17 +2355,67 @@ fn disabled_executor_or_approver_blocks_publication() {
             )
             .unwrap_err();
 
-        if disabled == "agent" {
-            assert!(matches!(error, PatchLifecycleError::AuthorizationDenied));
-        } else {
-            assert!(matches!(error, PatchLifecycleError::PrincipalDisabled));
-        }
-        assert_eq!(publication.document, original);
-        assert_eq!(publication.publish_calls, 0);
+        assert!(matches!(
+            error,
+            PatchLifecycleError::InsufficientCapability {
+                action: AuthorizationAction::Execute
+            }
+        ));
         assert_eq!(
             lifecycle.approval_status(&approval).unwrap(),
             ApprovalStatus::Active
         );
+        assert_eq!(publication.document, original);
+    }
+}
+
+#[test]
+fn disabled_executor_or_approver_blocks_publication() {
+    for net_zero in [false, true] {
+        for (disabled, suffix) in [("agent", "executor"), ("reviewer", "approver")] {
+            let document = game_balance_document("game", "Game");
+            let original = document.clone();
+            let mut lifecycle = lifecycle();
+            provision_standard_authority(&mut lifecycle);
+            let proposal = propose(
+                &mut lifecycle,
+                &document,
+                &format!("proposal-disabled-{suffix}"),
+                regression_damage_body(net_zero),
+                "agent",
+            );
+            let approval = preview_and_approve(
+                &mut lifecycle,
+                &document,
+                &proposal,
+                &format!("approval-disabled-{suffix}"),
+                "agent",
+            );
+            lifecycle.disable_principal(&principal(disabled)).unwrap();
+            let mut publication = TestPublication::new(document, "r1", "r2");
+
+            let error = lifecycle
+                .execute(
+                    &proposal,
+                    Some(&approval),
+                    &principal("agent"),
+                    &mut publication,
+                    TrustedInstant::new(11),
+                )
+                .unwrap_err();
+
+            if disabled == "agent" {
+                assert!(matches!(error, PatchLifecycleError::AuthorizationDenied));
+            } else {
+                assert!(matches!(error, PatchLifecycleError::PrincipalDisabled));
+            }
+            assert_eq!(publication.document, original);
+            assert_eq!(publication.publish_calls, 0);
+            assert_eq!(
+                lifecycle.approval_status(&approval).unwrap(),
+                ApprovalStatus::Active
+            );
+        }
     }
 }
 
@@ -2790,74 +2818,76 @@ fn publisher_conflict_does_not_consume_approval_or_install_candidate() {
 
 #[test]
 fn query_expiry_at_failed_publication_hides_the_semantic_conflict() {
-    let document = game_balance_document("game", "Game");
-    let original = document.clone();
-    let mut lifecycle = lifecycle();
-    lifecycle
-        .provision_grant(Grant::new(
-            GrantId::from("agent-expiring-query"),
-            principal("authority"),
-            principal("agent"),
-            vec![query_requirement()],
-            Some(TrustedInstant::new(12)),
-        ))
-        .unwrap();
-    grant(
-        &mut lifecycle,
-        "agent-mutation-authority",
-        "agent",
-        vec![
-            mutation_requirement(AuthorizationAction::Propose, MutationClass::Value),
-            mutation_requirement(AuthorizationAction::Execute, MutationClass::Value),
-        ],
-    );
-    grant(
-        &mut lifecycle,
-        "reviewer-authority",
-        "reviewer",
-        vec![
-            query_requirement(),
-            mutation_requirement(AuthorizationAction::Approve, MutationClass::Value),
-        ],
-    );
-    let proposal = propose(
-        &mut lifecycle,
-        &document,
-        "proposal-conflict-after-query-expiry",
-        SemanticPatchBody::command(field_command("iron_sword", "damage", number(45.0))),
-        "agent",
-    );
-    let approval = preview_and_approve(
-        &mut lifecycle,
-        &document,
-        &proposal,
-        "approval-conflict-after-query-expiry",
-        "agent",
-    );
-    let mut publication = TestPublication::new(document, "r1", "r2")
-        .with_mode(PublishMode::Conflict)
-        .with_publication_time(TrustedInstant::new(12));
-
-    let error = lifecycle
-        .execute(
+    for net_zero in [false, true] {
+        let document = game_balance_document("game", "Game");
+        let original = document.clone();
+        let mut lifecycle = lifecycle();
+        lifecycle
+            .provision_grant(Grant::new(
+                GrantId::from("agent-expiring-query"),
+                principal("authority"),
+                principal("agent"),
+                vec![query_requirement()],
+                Some(TrustedInstant::new(12)),
+            ))
+            .unwrap();
+        grant(
+            &mut lifecycle,
+            "agent-mutation-authority",
+            "agent",
+            vec![
+                mutation_requirement(AuthorizationAction::Propose, MutationClass::Value),
+                mutation_requirement(AuthorizationAction::Execute, MutationClass::Value),
+            ],
+        );
+        grant(
+            &mut lifecycle,
+            "reviewer-authority",
+            "reviewer",
+            vec![
+                query_requirement(),
+                mutation_requirement(AuthorizationAction::Approve, MutationClass::Value),
+            ],
+        );
+        let proposal = propose(
+            &mut lifecycle,
+            &document,
+            "proposal-conflict-after-query-expiry",
+            regression_damage_body(net_zero),
+            "agent",
+        );
+        let approval = preview_and_approve(
+            &mut lifecycle,
+            &document,
             &proposal,
-            Some(&approval),
-            &principal("agent"),
-            &mut publication,
-            TrustedInstant::new(11),
-        )
-        .unwrap_err();
+            "approval-conflict-after-query-expiry",
+            "agent",
+        );
+        let mut publication = TestPublication::new(document, "r1", "r2")
+            .with_mode(PublishMode::Conflict)
+            .with_publication_time(TrustedInstant::new(12));
 
-    assert!(matches!(error, PatchLifecycleError::AuthorizationDenied));
-    assert_eq!(publication.document, original);
-    assert_eq!(
-        lifecycle.approval_status(&approval).unwrap(),
-        ApprovalStatus::Active
-    );
-    assert_eq!(
-        lifecycle.proposal_history(&proposal).unwrap().last(),
-        Some(&PatchLifecycleState::RetryableConflict)
-    );
+        let error = lifecycle
+            .execute(
+                &proposal,
+                Some(&approval),
+                &principal("agent"),
+                &mut publication,
+                TrustedInstant::new(11),
+            )
+            .unwrap_err();
+
+        assert!(matches!(error, PatchLifecycleError::AuthorizationDenied));
+        assert_eq!(publication.document, original);
+        assert_eq!(
+            lifecycle.approval_status(&approval).unwrap(),
+            ApprovalStatus::Active
+        );
+        assert_eq!(
+            lifecycle.proposal_history(&proposal).unwrap().last(),
+            Some(&PatchLifecycleState::RetryableConflict)
+        );
+    }
 }
 
 #[test]
@@ -3007,4 +3037,341 @@ fn write_only_executor_cannot_observe_verification_failure() {
         lifecycle.proposal_history(&proposal).unwrap().last(),
         Some(&PatchLifecycleState::Conflict)
     );
+}
+
+fn regression_damage_body(net_zero: bool) -> SemanticPatchBody {
+    let mut commands = vec![field_command("iron_sword", "damage", number(45.0))];
+    if net_zero {
+        commands.push(field_command("iron_sword", "damage", number(36.0)));
+    }
+    SemanticPatchBody::atomic_batch(commands).unwrap()
+}
+
+struct NoChangeTestClock;
+impl TrustedPublicationTimeSource for NoChangeTestClock {
+    fn now(&mut self) -> TrustedInstant {
+        TrustedInstant::new(11)
+    }
+}
+
+#[test]
+fn resident_net_zero_is_retryable_for_human_and_delegated_without_success_artifacts() {
+    for actor in ["human-editor", "agent"] {
+        for net_zero in [true, false] {
+            let document = game_balance_document("game", "Game");
+            let mut session = ResidentWorkspaceSession::new(document_scope_id(), document);
+            let before = session.export_snapshot();
+            let mut lifecycle = lifecycle();
+            provision_standard_authority(&mut lifecycle);
+            let proposal = ProposalId::from("resident-net-zero");
+            lifecycle
+                .propose(
+                    before.document_scope(),
+                    before.document(),
+                    before.revision(),
+                    ProposalRequest::new(
+                        proposal.clone(),
+                        before.revision().clone(),
+                        regression_damage_body(net_zero),
+                        principal(actor),
+                    ),
+                    NOW,
+                )
+                .unwrap();
+            lifecycle
+                .preview(
+                    before.document_scope(),
+                    before.document(),
+                    before.revision(),
+                    &proposal,
+                    &principal("reviewer"),
+                    NOW,
+                )
+                .unwrap();
+            let approval = if actor == "agent" {
+                let approval = ApprovalId::from("resident-approval");
+                lifecycle
+                    .approve(
+                        before.document_scope(),
+                        before.document(),
+                        before.revision(),
+                        ApprovalRequest::new(
+                            approval.clone(),
+                            proposal.clone(),
+                            principal("reviewer"),
+                            principal(actor),
+                            EXPIRY,
+                        ),
+                        NOW,
+                    )
+                    .unwrap();
+                Some(approval)
+            } else {
+                None
+            };
+            let history = lifecycle.proposal_history(&proposal).unwrap().to_vec();
+            let mut clock = NoChangeTestClock;
+            for _ in 0..if net_zero { 2 } else { 1 } {
+                let mut publication = session.publication_authority(&mut clock);
+                let result = lifecycle.execute(
+                    &proposal,
+                    approval.as_ref(),
+                    &principal(actor),
+                    &mut publication,
+                    NOW,
+                );
+                if net_zero {
+                    assert!(matches!(result, Err(PatchLifecycleError::NoChange)));
+                    assert!(
+                        publication
+                            .projection_invalidation_for(
+                                before.document_scope(),
+                                before.revision(),
+                                before.revision()
+                            )
+                            .is_none()
+                    );
+                    assert!(lifecycle.execution_receipts().is_empty());
+                    assert_eq!(lifecycle.proposal_history(&proposal).unwrap(), history);
+                    if let Some(approval) = &approval {
+                        assert_eq!(
+                            lifecycle.approval_status(approval).unwrap(),
+                            ApprovalStatus::Active
+                        );
+                    }
+                } else {
+                    let receipt = result.unwrap();
+                    assert!(receipt.verified);
+                    assert_ne!(&receipt.resulting_revision, before.revision());
+                    assert_eq!(lifecycle.execution_receipts().len(), 1);
+                }
+            }
+            if net_zero {
+                assert_eq!(session.export_snapshot(), before);
+            } else {
+                assert_ne!(session.export_snapshot(), before);
+            }
+        }
+    }
+}
+
+#[test]
+fn exact_formula_and_reference_restoration_are_no_change_but_equal_output_definition_is_a_change() {
+    for case in ["formula", "reference", "equal-output"] {
+        let document = game_balance_document("game", "Game");
+        let commands = match case {
+            "formula" => vec![
+                field_command(
+                    "iron_sword",
+                    "dps",
+                    Value::Formula(Expression::Number(Number::new(1.0).unwrap())),
+                ),
+                field_command(
+                    "iron_sword",
+                    "dps",
+                    document.entities["iron_sword"].fields["dps"].clone(),
+                ),
+            ],
+            "reference" => vec![
+                field_command("alric", "weapon", Value::Reference("tempered_blade".into())),
+                field_command(
+                    "alric",
+                    "weapon",
+                    document.entities["alric"].fields["weapon"].clone(),
+                ),
+            ],
+            _ => {
+                let Value::Formula(original) =
+                    document.entities["iron_sword"].fields["dps"].clone()
+                else {
+                    panic!("fixture formula")
+                };
+                vec![field_command(
+                    "iron_sword",
+                    "dps",
+                    Value::Formula(Expression::Add {
+                        left: Box::new(original),
+                        right: Box::new(Expression::Number(Number::new(0.0).unwrap())),
+                    }),
+                )]
+            }
+        };
+        let mut lifecycle = lifecycle();
+        provision_standard_authority(&mut lifecycle);
+        let proposal = propose(
+            &mut lifecycle,
+            &document,
+            case,
+            SemanticPatchBody::atomic_batch(commands).unwrap(),
+            "human-editor",
+        );
+        lifecycle
+            .preview(
+                &document_scope_id(),
+                &document,
+                &revision("r1"),
+                &proposal,
+                &principal("human-editor"),
+                NOW,
+            )
+            .unwrap();
+        let mut publication = TestPublication::new(document.clone(), "r1", "r2");
+        let result = lifecycle.execute(
+            &proposal,
+            None,
+            &principal("human-editor"),
+            &mut publication,
+            NOW,
+        );
+        if case == "equal-output" {
+            assert!(result.unwrap().verified);
+            assert_ne!(publication.document, document);
+            assert_eq!(publication.revision, revision("r2"));
+        } else {
+            assert!(matches!(result, Err(PatchLifecycleError::NoChange)));
+            assert_eq!(publication.document, document);
+            assert_eq!(publication.revision, revision("r1"));
+            assert!(lifecycle.execution_receipts().is_empty());
+        }
+    }
+}
+
+#[test]
+fn no_change_disclosure_requires_full_query_authority_at_guard_time_and_is_retryable() {
+    for case in [
+        "write-only",
+        "intermediate-reference",
+        "query-expired",
+        "unguarded",
+    ] {
+        let document = game_balance_document("game", "Game");
+        let mut lifecycle = no_change_disclosure_lifecycle(case);
+        let body = if case == "intermediate-reference" {
+            SemanticPatchBody::atomic_batch(vec![
+                field_command("alric", "weapon", Value::Reference("tempered_blade".into())),
+                field_command(
+                    "alric",
+                    "weapon",
+                    document.entities["alric"].fields["weapon"].clone(),
+                ),
+            ])
+            .unwrap()
+        } else {
+            regression_damage_body(true)
+        };
+        let proposal = propose(&mut lifecycle, &document, "hidden-net-zero", body, "agent");
+        let approval = preview_and_approve(
+            &mut lifecycle,
+            &document,
+            &proposal,
+            "hidden-approval",
+            "agent",
+        );
+        let history = lifecycle.proposal_history(&proposal).unwrap().to_vec();
+        let mut publication = TestPublication::new(document.clone(), "r1", "r2")
+            .with_publication_time(TrustedInstant::new(12));
+        if case == "unguarded" {
+            publication.mode = PublishMode::NoChangeWithoutAuthorization;
+        }
+        for _ in 0..2 {
+            assert!(matches!(
+                lifecycle.execute(
+                    &proposal,
+                    Some(&approval),
+                    &principal("agent"),
+                    &mut publication,
+                    NOW
+                ),
+                Err(PatchLifecycleError::AuthorizationDenied)
+            ));
+            assert_eq!(publication.document, document);
+            assert_eq!(publication.revision, revision("r1"));
+            assert_eq!(
+                lifecycle.approval_status(&approval).unwrap(),
+                ApprovalStatus::Active
+            );
+            assert_eq!(lifecycle.proposal_history(&proposal).unwrap(), history);
+            assert!(lifecycle.execution_receipts().is_empty());
+        }
+        if case != "unguarded" {
+            grant(
+                &mut lifecycle,
+                "restored-query",
+                "agent",
+                vec![query_requirement()],
+            );
+            assert!(matches!(
+                lifecycle.execute(
+                    &proposal,
+                    Some(&approval),
+                    &principal("agent"),
+                    &mut publication,
+                    NOW
+                ),
+                Err(PatchLifecycleError::NoChange)
+            ));
+            assert_eq!(
+                lifecycle.approval_status(&approval).unwrap(),
+                ApprovalStatus::Active
+            );
+            assert!(lifecycle.execution_receipts().is_empty());
+        }
+    }
+}
+
+fn no_change_disclosure_lifecycle(case: &str) -> PatchLifecycle {
+    let mut lifecycle = lifecycle();
+    grant(
+        &mut lifecycle,
+        "agent-write",
+        "agent",
+        vec![
+            mutation_requirement(AuthorizationAction::Propose, MutationClass::Value),
+            mutation_requirement(AuthorizationAction::Execute, MutationClass::Value),
+        ],
+    );
+    grant(
+        &mut lifecycle,
+        "reviewer-review",
+        "reviewer",
+        vec![
+            query_requirement(),
+            mutation_requirement(AuthorizationAction::Approve, MutationClass::Value),
+        ],
+    );
+    if case == "query-expired" {
+        lifecycle
+            .provision_grant(Grant::new(
+                GrantId::from("expiring-query"),
+                principal("authority"),
+                principal("agent"),
+                vec![query_requirement()],
+                Some(TrustedInstant::new(12)),
+            ))
+            .unwrap();
+    } else if case == "intermediate-reference" {
+        grant(
+            &mut lifecycle,
+            "partial-query",
+            "agent",
+            vec![
+                GrantRequirement::query(
+                    OperationFamily::SetFieldValue,
+                    field_scope("alric", "characters", "weapon"),
+                ),
+                GrantRequirement::query(
+                    OperationFamily::SetFieldValue,
+                    entity_scope("iron_sword", "weapons"),
+                ),
+            ],
+        );
+    } else if case == "unguarded" {
+        grant(
+            &mut lifecycle,
+            "full-query",
+            "agent",
+            vec![query_requirement()],
+        );
+    }
+    lifecycle
 }

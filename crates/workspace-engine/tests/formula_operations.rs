@@ -1009,11 +1009,14 @@ impl SemanticPublicationAuthority for TestPublication {
         if expected_document_scope != &document_scope_id() {
             return Err(SemanticPublicationError::DocumentScopeMismatch);
         }
+        let authorization = authorize(TrustedInstant::new(11))
+            .ok_or(SemanticPublicationError::AuthorizationDenied)?;
         if expected_revision != &self.revision {
             return Err(SemanticPublicationError::Stale);
         }
-        let authorization = authorize(TrustedInstant::new(11))
-            .ok_or(SemanticPublicationError::AuthorizationDenied)?;
+        if candidate == self.document {
+            return Err(SemanticPublicationError::NoChange);
+        }
         self.document = candidate;
         self.revision = revision("r2");
         Ok((

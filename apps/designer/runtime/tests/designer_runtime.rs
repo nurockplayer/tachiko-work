@@ -1587,3 +1587,14 @@ fn close_destroys_the_occurrence_and_saved_output_reopens_without_git() {
         original_scope
     );
 }
+
+#[test]
+fn no_change_lifecycle_result_projects_without_publication_evidence() {
+    let error = tachiko_designer_runtime::DesignerError::Lifecycle(
+        tachiko_workspace_engine::patch_lifecycle::PatchLifecycleError::NoChange,
+    );
+    let failure = error.failure_projection("resident/0");
+    assert_eq!(failure.code, "no_change");
+    assert_eq!(failure.current_revision, "resident/0");
+    assert!(failure.diagnostics.is_empty());
+}

@@ -11,7 +11,7 @@ use tachiko_workspace_engine::{
     FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
     capability_discovery::FieldCapabilityQueryOutcome,
     patch_lifecycle::{
-        ApprovalId, ApprovalRequest, AuthorizationAction, AuthorizationDomainId,
+        ApprovalId, ApprovalRequest, ApprovalStatus, AuthorizationAction, AuthorizationDomainId,
         AuthorizationPolicyVersion, DocumentScopeId, Grant, GrantId, GrantRequirement,
         MutationClass, OperationFamily, PatchLifecycle, PolicyMeaningId, PrincipalId,
         PrincipalKind, ProposalId, ProposalRequest, ScopedSemanticSubject, SemanticApiContract,
@@ -224,11 +224,14 @@ impl SemanticPublicationAuthority for TestPublication {
         if &self.document_scope != expected_document_scope {
             return Err(SemanticPublicationError::DocumentScopeMismatch);
         }
+        let authorization = authorize(TrustedInstant::new(11))
+            .ok_or(SemanticPublicationError::AuthorizationDenied)?;
         if &self.revision != expected_revision {
             return Err(SemanticPublicationError::Stale);
         }
-        let authorization = authorize(TrustedInstant::new(11))
-            .ok_or(SemanticPublicationError::AuthorizationDenied)?;
+        if candidate == self.document {
+            return Err(SemanticPublicationError::NoChange);
+        }
         self.document = candidate;
         self.revision = self.next_revision.clone();
         Ok((
@@ -605,14 +608,9 @@ fn missing_trusted_identity_or_time_fails_before_lifecycle_admission() {
     }
 }
 
-#[test]
-fn approved_delegated_execution_uses_the_trusted_lifecycle() {
-    let document = security_document("ordinary data");
-    let mut session = ResidentWorkspaceSession::new(document_scope_id(), document);
-    let initial = session.export_snapshot();
-    let mut lifecycle = lifecycle();
+fn provision_delegated_execution_grants(lifecycle: &mut PatchLifecycle) {
     grant(
-        &mut lifecycle,
+        lifecycle,
         "agent-authority",
         "agent",
         vec![
@@ -622,7 +620,7 @@ fn approved_delegated_execution_uses_the_trusted_lifecycle() {
         ],
     );
     grant(
-        &mut lifecycle,
+        lifecycle,
         "reviewer-authority",
         "reviewer",
         vec![
@@ -630,6 +628,15 @@ fn approved_delegated_execution_uses_the_trusted_lifecycle() {
             mutation_requirement(AuthorizationAction::Approve, MutationClass::Value),
         ],
     );
+}
+
+#[test]
+fn approved_delegated_execution_uses_the_trusted_lifecycle() {
+    let document = security_document("ordinary data");
+    let mut session = ResidentWorkspaceSession::new(document_scope_id(), document);
+    let initial = session.export_snapshot();
+    let mut lifecycle = lifecycle();
+    provision_delegated_execution_grants(&mut lifecycle);
     let evidence = UntrustedData::new(
         UntrustedDataSource::ModelOutput,
         "Increase Goblin damage after Human review.",
@@ -697,4 +704,103 @@ fn approved_delegated_execution_uses_the_trusted_lifecycle() {
         installed.document().entities["goblin"].fields["damage"],
         number(20.0)
     );
+}
+
+#[test]
+fn approved_delegated_net_zero_execution_preserves_approval_and_has_no_receipt() {
+    let document = security_document("ordinary data");
+    let mut session = ResidentWorkspaceSession::new(document_scope_id(), document);
+    let initial = session.export_snapshot();
+    let mut lifecycle = lifecycle();
+    provision_delegated_execution_grants(&mut lifecycle);
+    let evidence = UntrustedData::new(
+        UntrustedDataSource::ModelOutput,
+        "Temporarily change Goblin damage and restore its original value.",
+    );
+    let submitted = submit_semantic_proposal(
+        &mut lifecycle,
+        &TestContext::agent(),
+        initial.document_scope(),
+        initial.document(),
+        initial.revision(),
+        AiProposalRequest::new(
+            ProposalId::from("proposal-approved"),
+            initial.revision().clone(),
+            SemanticPatchBody::atomic_batch(vec![
+                SemanticCommand::set_field_value(FieldRef::new("goblin", "damage"), number(20.0)),
+                SemanticCommand::set_field_value(FieldRef::new("goblin", "damage"), number(12.0)),
+            ])
+            .unwrap(),
+            vec![evidence.clone()],
+        ),
+    )
+    .expect("the typed proposal should cross the trusted Propose boundary");
+    assert_eq!(submitted.evidence(), &[evidence]);
+
+    lifecycle
+        .preview(
+            initial.document_scope(),
+            initial.document(),
+            initial.revision(),
+            submitted.patch().id(),
+            &principal("reviewer"),
+            NOW,
+        )
+        .unwrap();
+    let approval_id = ApprovalId::from("approval-1");
+    lifecycle
+        .approve(
+            initial.document_scope(),
+            initial.document(),
+            initial.revision(),
+            ApprovalRequest::new(
+                approval_id.clone(),
+                submitted.patch().id().clone(),
+                principal("reviewer"),
+                principal("agent"),
+                EXPIRY,
+            ),
+            NOW,
+        )
+        .unwrap();
+
+    let mut time = FixedTrustedTime;
+    let states_before = lifecycle
+        .proposal_history(submitted.patch().id())
+        .unwrap()
+        .to_vec();
+    for _ in 0..2 {
+        let mut publication = session.publication_authority(&mut time);
+        let error = execute_semantic_proposal(
+            &mut lifecycle,
+            &TestContext::agent(),
+            &AiExecutionRequest::new(submitted.patch().id().clone(), Some(approval_id.clone())),
+            &mut publication,
+        )
+        .expect_err("an unchanged candidate must produce no execution receipt");
+        assert_eq!(error.code(), boundary_codes::NO_CHANGE);
+        assert_eq!(error.code().as_str(), "semantic.no_change");
+        assert!(error.validation_report().is_none());
+        assert!(
+            publication
+                .projection_invalidation_for(
+                    initial.document_scope(),
+                    initial.revision(),
+                    initial.revision(),
+                )
+                .is_none()
+        );
+        assert!(lifecycle.execution_receipts().is_empty());
+        assert_eq!(
+            lifecycle.approval_status(&approval_id).unwrap(),
+            ApprovalStatus::Active
+        );
+        assert_eq!(
+            lifecycle.proposal_history(submitted.patch().id()).unwrap(),
+            states_before
+        );
+    }
+    let installed = session.export_snapshot();
+    assert_eq!(installed.revision(), initial.revision());
+    assert_eq!(installed.document(), initial.document());
 }

@@ -873,3 +873,56 @@ fn rejected_command_leaves_state_and_revision_unchanged() {
     assert!(matches!(error, PatchLifecycleError::CommandRejected { .. }));
     assert_eq!(session.export_snapshot(), before);
 }
+
+#[test]
+fn equal_candidate_still_requires_occurrence_authorization_and_current_revision() {
+    for case in ["occurrence", "authorization", "revision", "equal"] {
+        let mut session = ResidentWorkspaceSession::new(
+            document_scope_id(),
+            game_balance_document("game", "Game"),
+        );
+        let before = session.export_snapshot();
+        let mut time = FixedTrustedTime { calls: 0 };
+        let scope = if case == "occurrence" {
+            DocumentScopeId::from("other")
+        } else {
+            before.document_scope().clone()
+        };
+        let revision = if case == "revision" {
+            SemanticRevision::from("stale")
+        } else {
+            before.revision().clone()
+        };
+        let result = session.publication_authority(&mut time).publish_if_current(
+            &scope,
+            &revision,
+            before.document().clone(),
+            |_| (case != "authorization").then_some(()),
+        );
+        let expected = match case {
+            "occurrence" => SemanticPublicationError::DocumentScopeMismatch,
+            "authorization" => SemanticPublicationError::AuthorizationDenied,
+            "revision" => SemanticPublicationError::Stale,
+            _ => SemanticPublicationError::NoChange,
+        };
+        assert_eq!(result.unwrap_err(), expected);
+        assert_eq!(time.calls, usize::from(case != "occurrence"));
+        assert_eq!(session.export_snapshot(), before);
+    }
+}
+
+#[test]
+fn inverse_commands_in_separate_executions_are_two_real_publications() {
+    let mut session =
+        ResidentWorkspaceSession::new(document_scope_id(), game_balance_document("game", "Game"));
+    let before = session.export_snapshot();
+    let (first, _, _) = execute_damage(&mut session, "forward", 45.0);
+    let (second, _, _) = execute_damage(&mut session, "inverse", 36.0);
+    assert!(first.verified && second.verified);
+    assert_eq!(first.resulting_revision, second.base_revision);
+    assert_ne!(first.base_revision, first.resulting_revision);
+    assert_ne!(second.base_revision, second.resulting_revision);
+    let after = session.export_snapshot();
+    assert_eq!(after.document(), before.document());
+    assert_ne!(after.revision(), before.revision());
+}

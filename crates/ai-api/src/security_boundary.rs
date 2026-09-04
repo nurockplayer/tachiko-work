@@ -51,6 +51,7 @@ pub mod boundary_codes {
         AiBoundaryCode("security.authorization_denied");
     pub const APPROVAL_DENIED: AiBoundaryCode = AiBoundaryCode("security.approval_denied");
     pub const PROPOSAL_REJECTED: AiBoundaryCode = AiBoundaryCode("semantic.proposal_rejected");
+    pub const NO_CHANGE: AiBoundaryCode = AiBoundaryCode("semantic.no_change");
     pub const STALE: AiBoundaryCode = AiBoundaryCode("semantic.stale");
     pub const SEMANTIC_GATE_REJECTED: AiBoundaryCode = AiBoundaryCode("semantic.gate_rejected");
     pub const PUBLICATION_CONFLICT: AiBoundaryCode =
@@ -174,6 +175,8 @@ pub enum AiBoundaryError {
     ApprovalDenied,
     #[error("the typed semantic proposal was rejected")]
     ProposalRejected,
+    #[error("the semantic candidate is unchanged; nothing was published")]
+    NoChange,
     #[error("the semantic proposal base is stale")]
     Stale,
     #[error("the authoritative semantic gate rejected the candidate")]
@@ -194,6 +197,7 @@ impl AiBoundaryError {
             Self::AuthorizationDenied => boundary_codes::AUTHORIZATION_DENIED,
             Self::ApprovalDenied => boundary_codes::APPROVAL_DENIED,
             Self::ProposalRejected => boundary_codes::PROPOSAL_REJECTED,
+            Self::NoChange => boundary_codes::NO_CHANGE,
             Self::Stale => boundary_codes::STALE,
             Self::SemanticGateRejected { .. } => boundary_codes::SEMANTIC_GATE_REJECTED,
             Self::PublicationConflict => boundary_codes::PUBLICATION_CONFLICT,
@@ -446,6 +450,7 @@ fn map_lifecycle_error(error: PatchLifecycleError) -> AiBoundaryError {
         PatchLifecycleError::ValidationFailed { report } => {
             AiBoundaryError::SemanticGateRejected { report }
         }
+        PatchLifecycleError::NoChange => AiBoundaryError::NoChange,
         PatchLifecycleError::Stale => AiBoundaryError::Stale,
         PatchLifecycleError::ApproverMustBeHuman
         | PatchLifecycleError::ReviewRequired
