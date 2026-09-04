@@ -36,6 +36,8 @@ The project should avoid inventing semantic structure where it adds no practical
 
 ## 4. Legacy Compatibility at the Boundary
 
+Decision issue: [#275](https://github.com/nurockplayer/tachiko-work/issues/275)
+
 Legacy formats such as DOCX and XLSX are compatibility boundaries, not architectural authorities.
 
 Historical bugs should not automatically become permanent core semantics.
@@ -47,6 +49,10 @@ For example:
 - The modern internal model should not inherit a legacy bug merely because an importer encounters it.
 
 Compatibility tooling should create escape paths from historical constraints, not reproduce them indefinitely inside the core.
+
+A boundary is not permission for weak interoperability. Tachiko Work should make real movement into, out of, and alongside established spreadsheet workflows practical, especially for Microsoft Excel, while keeping legacy representation and behavior outside the semantic authority of the core.
+
+Existing Tachiko Work behavior is also not automatically authoritative. If an early implementation choice materially blocks an Accepted interoperability requirement, prefer an explicit migration or supersession path over preserving the historical accident indefinitely. Protect user data and durable external contracts through the normal compatibility and migration process rather than by freezing every past implementation choice.
 
 ## 5. Progressive Migration Instead of Flag-Day Replacement
 
