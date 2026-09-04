@@ -4,10 +4,12 @@ use tachiko_workspace_engine::{
     Date, Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldDefinition, FieldId,
     FieldKey, FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
     analysis_operations::{
-        AnalysisCollectionKind, AnalysisDefinition, AnalysisFailure, AnalysisGroupKey,
-        AnalysisOperationError, AnalysisOutcome, AnalysisPredicate, AnalysisPredicateOperator,
-        AnalysisProjection, AnalysisResultRequest, AnalysisResultValue, AnalysisValueKind,
-        MAX_ANALYSIS_COLLECTION_RESULTS, NumericAggregateOutcome, PredicateOperand,
+        AnalysisBucket, AnalysisCollectionKind, AnalysisDefinition, AnalysisDerivation,
+        AnalysisFailure, AnalysisGroupKey, AnalysisLineage, AnalysisOperationError,
+        AnalysisOutcome, AnalysisPredicate, AnalysisPredicateOperator, AnalysisProjection,
+        AnalysisResultRequest, AnalysisResultValue, AnalysisSourceContext, AnalysisValueKind,
+        MAX_ANALYSIS_COLLECTION_RESULTS, NormalizedAnalysisDefinition, NumericAggregateOutcome,
+        PredicateOperand,
     },
     formula_operations::ValidatorConfiguration,
     patch_lifecycle::{
@@ -1357,11 +1359,51 @@ fn repeated_equal_query_is_exactly_reproducible_with_structured_lineage() {
     let second = run(&lifecycle, &document, &definition).unwrap();
     assert_eq!(first, second);
     assert_eq!(
-        first.lineage.normalized_definition.narrowing,
-        Some(BTreeSet::from([
-            EntityId::from("alpha"),
-            EntityId::from("gamma")
-        ]))
+        first.lineage,
+        AnalysisLineage {
+            sources: vec![AnalysisSourceContext {
+                document: DocumentId::from("game"),
+                source_revision: revision("r1"),
+                validator_configuration: ValidatorConfiguration::WorkspaceFull,
+            }],
+            normalized_definition: NormalizedAnalysisDefinition {
+                schema: SchemaId::from("weapons"),
+                narrowing: Some(BTreeSet::from([
+                    EntityId::from("alpha"),
+                    EntityId::from("gamma"),
+                ])),
+                predicates: vec![AnalysisPredicate::new(
+                    FieldId::from("damage"),
+                    AnalysisPredicateOperator::GreaterThanOrEqual,
+                    PredicateOperand::Number(number(40.0)),
+                )],
+                group_by: None,
+                results: vec![
+                    AnalysisResultRequest::Count,
+                    AnalysisResultRequest::Observations(FieldId::from("dps")),
+                ],
+            },
+            formula_calculation_used: true,
+            derivations: vec![
+                AnalysisDerivation::Predicate(FieldId::from("damage")),
+                AnalysisDerivation::Count,
+                AnalysisDerivation::Observations(FieldId::from("dps")),
+            ],
+        }
     );
-    assert!(!first.lineage.derivations.is_empty());
+    assert_eq!(
+        first.outcome,
+        AnalysisOutcome::Complete(AnalysisProjection::Ungrouped(AnalysisBucket {
+            values: vec![
+                AnalysisResultValue::Count(2),
+                AnalysisResultValue::Observations {
+                    field: FieldId::from("dps"),
+                    values: vec![
+                        (EntityId::from("alpha"), number(50.0)),
+                        (EntityId::from("gamma"), number(40.0)),
+                    ],
+                },
+            ],
+        }))
+    );
 }
