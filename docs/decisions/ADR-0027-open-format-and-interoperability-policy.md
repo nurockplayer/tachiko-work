@@ -6,6 +6,8 @@ Accepted
 
 Decision issue: [#14](https://github.com/nurockplayer/tachiko-work/issues/14)
 
+Amendment decision: [#275](https://github.com/nurockplayer/tachiko-work/issues/275)
+
 Related authority: ADR-0003, ADR-0017, ADR-0023, ADR-0025, the Product Constitution, and the Design Principles
 
 ## Context
@@ -20,6 +22,8 @@ Those requirements do not imply that an existing office or interchange format sh
 Since Issue #14 was opened, later Accepted decisions and production evidence have resolved the representation questions that originally motivated much of the discussion. ADR-0003 establishes `.roproj` as the canonical editable/Git-native materialization and `.ro` as a derived portable artifact. ADR-0017 establishes representation-local versioning, explicit migrations, and fail-closed decoding. ADR-0023 fixes `.roproj/v1`, and ADR-0025 fixes portable-package v1 as a deterministic package over exact canonical `.roproj/v1` bytes. Production work has implemented those boundaries and optional Git/CI composition.
 
 The remaining need is therefore a policy for deciding when Tachiko Work should adopt, extend, wrap, or replace external standards without either reinventing mature infrastructure or allowing compatibility formats to distort the semantic model.
+
+Issue #275 clarifies a complementary product constraint: keeping Excel and OOXML outside the semantic core does not make practical spreadsheet interoperability optional. Established Excel workflows are a first-class product interoperability target even though their historical representation and behavior remain boundary concerns.
 
 ## Decision
 
@@ -47,6 +51,10 @@ External formats are interoperability boundaries unless an independent Accepted 
 ODF/ODS/ODT, OOXML/XLSX/DOCX, CSV, Markdown/CommonMark, notebook formats, Quarto, JSON-LD/RO-Crate concepts, and similar ecosystems MUST NOT become semantic authority merely because Tachiko Work imports from or exports to them.
 
 Legacy Office behavior remains a compatibility and migration concern. Importers may detect, preserve, emulate, convert, or explain legacy behavior where required, but the semantic core MUST NOT inherit historical document/cell behavior by default.
+
+The compatibility boundary MUST NOT be interpreted as permission for weak practical interoperability. Tachiko Work MUST treat established spreadsheet workflows, especially Microsoft Excel, as a first-class product interoperability target. Import, export, migration, translation, emulation, preservation, or explanation SHOULD be provided at explicit boundaries as required by Accepted product scope and validated workflows.
+
+Historical Tachiko Work implementation behavior is not external or architectural authority merely because it already exists. If an early Tachiko Work design materially obstructs an Accepted interoperability requirement, the project SHOULD prefer an explicit migration or supersession path over permanently institutionalizing that design, while preserving user data and durable external contracts through the normal compatibility and migration process.
 
 ### 3. ODF and common formats
 
@@ -119,6 +127,8 @@ Positive:
 
 - Tachiko-native work has an anti-lock-in guarantee that does not depend on fitting into a weaker historical format.
 - External standards can be adopted aggressively where they reduce cost and ecosystem friction without redefining the semantic core.
+- Practical Excel/spreadsheet interoperability is protected as a product requirement without making Excel or OOXML semantic authority.
+- Historical Tachiko Work implementation accidents cannot silently outrank an Accepted interoperability requirement merely because they already exist.
 - New Tachiko-specific semantics require concrete architectural justification rather than product branding.
 - Compatibility claims become evidence-based and explicit about loss instead of implying perfect round trips.
 - Game Dev Alpha remains focused on the already-proven open source/artifact and Git interoperability path while later migration work can be driven by real user estates.
@@ -141,6 +151,9 @@ Revisit this policy if evidence shows that:
 ## Related
 
 - [Issue #14](https://github.com/nurockplayer/tachiko-work/issues/14)
+- [Issue #275](https://github.com/nurockplayer/tachiko-work/issues/275)
+- [Issue #18](https://github.com/nurockplayer/tachiko-work/issues/18)
+- [Issue #256](https://github.com/nurockplayer/tachiko-work/issues/256)
 - ADR-0003
 - ADR-0017
 - ADR-0023
