@@ -635,13 +635,19 @@ pub trait SemanticPublicationAuthority {
     /// [`SemanticPublicationError::DocumentScopeMismatch`] without invoking
     /// authorization for the old occurrence. Otherwise the callback must run
     /// exactly once with a fresh trusted instant inside that guard, immediately
-    /// before returning a semantic Stale/Conflict outcome or installing the
+    /// before returning a semantic Stale/Conflict/NoChange outcome or installing the
     /// candidate. Install only while `expected_revision` remains current and
     /// the callback accepts, then capture and return the exact installed
     /// document occurrence, immutable document snapshot, distinct resulting
     /// revision, and the callback's authorization evidence before releasing
     /// the guard. A later publication may advance [`Self::current_snapshot`]
     /// without changing this successful result.
+    ///
+    /// After authorization and exact-base checks, compare the complete typed
+    /// candidate with the protected current Document using stored semantic
+    /// equality. Equality returns [`SemanticPublicationError::NoChange`]
+    /// without installation, revision advancement, or publication invalidation.
+    /// A diff, calculated output, or projection is not equality authority.
     ///
     /// # Errors
     ///
@@ -665,6 +671,8 @@ pub trait SemanticPublicationAuthority {
 /// Proved no-publication result from the host publication boundary.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum SemanticPublicationError {
+    #[error("the final semantic candidate is unchanged; nothing was published")]
+    NoChange,
     #[error("protected document occurrence changed")]
     DocumentScopeMismatch,
     #[error("semantic base is stale")]
@@ -679,6 +687,11 @@ pub enum SemanticPublicationError {
 /// provisional; the Accepted semantic meanings are preserved.
 #[derive(Debug, Error)]
 pub enum PatchLifecycleError {
+    /// Authorized final-state equality, not a publication receipt. This
+    /// provisional Result mapping leaves the exact proposal retryable; each
+    /// attempt must repeat all current checks, including disclosure.
+    #[error("the final semantic candidate is unchanged; nothing was published")]
+    NoChange,
     #[error("the AtomicBatch must contain at least one command")]
     EmptyAtomicBatch,
     #[error("Query requirements cannot carry a mutation class")]
@@ -1775,6 +1788,16 @@ impl PatchLifecycle {
             self.append_state(proposal_id, PatchLifecycleState::Expired);
         }
         let (state, disclosed_error) = match publication_error {
+            SemanticPublicationError::NoChange => {
+                // The guard proved current base and live authority. Approval
+                // was restored above; no Applied/Verified state or publication
+                // receipt exists. Equality itself requires Query disclosure.
+                return if boundary_disclosure == Some(true) {
+                    PatchLifecycleError::NoChange
+                } else {
+                    PatchLifecycleError::AuthorizationDenied
+                };
+            }
             SemanticPublicationError::DocumentScopeMismatch => {
                 return PatchLifecycleError::AuthorizationDenied;
             }

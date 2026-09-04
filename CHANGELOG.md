@@ -4,6 +4,14 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- Net-zero AtomicBatch execution now reports typed NoChange after guarded
+  authorization and exact-base checks, without installing state, advancing a
+  semantic revision, emitting publication invalidation, consuming Approval, or
+  recording a publication receipt. AI and Designer mappings preserve this
+  nonpublication outcome.
+
 ### Changed
 
 - Semantic merge now admits only fully validated, completely calculated states
