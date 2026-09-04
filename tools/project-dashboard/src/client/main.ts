@@ -175,13 +175,19 @@ function pullRequestGroups(pull: PullRequestFact): HTMLElement[] {
     factGroup("Pull request identity", pull.identityAvailability, [
       fact("STATE", pull.state),
       fact("DRAFT", pull.draft),
+    ]),
+    factGroup("Pull request head", pull.headAvailability, [
       fact("HEAD", pull.headSha),
-      fact("BASE", `${pull.baseRef} · ${pull.baseSha}`),
+    ]),
+    factGroup("Pull request base", pull.baseAvailability, [
+      fact("BASE", pull.baseRef === null || pull.baseSha === null ? null : `${pull.baseRef} · ${pull.baseSha}`),
     ]),
     factGroup("GitHub native fields · displayed verbatim", pull.nativeAvailability, [
       fact("MERGEABLE", pull.mergeable),
       fact("MERGE STATE", pull.mergeStateStatus),
       fact("REVIEW DECISION", pull.reviewDecision),
+    ]),
+    factGroup("Linked Issue linkage", pull.linkageAvailability, [
       fact(
         "LINKED ISSUES",
         pull.linkedIssueNumbers.length === 0
@@ -202,13 +208,13 @@ function laneCard(lane: DeliveryLane): HTMLElement {
   if (lane.issue !== null) {
     header.append(externalLink(
       lane.issue.url,
-      `#${String(lane.issue.number)} · ${lane.issue.title}`,
+      `#${String(lane.issue.number)} · ${display(lane.issue.title)}`,
       "lane-title",
     ));
   } else if (lane.pullRequest !== null) {
     header.append(externalLink(
       lane.pullRequest.url,
-      `PR #${String(lane.pullRequest.number)} · ${lane.pullRequest.title}`,
+      `PR #${String(lane.pullRequest.number)} · ${display(lane.pullRequest.title)}`,
       "lane-title",
     ));
   }

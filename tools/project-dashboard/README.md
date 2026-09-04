@@ -12,6 +12,12 @@ the Dashboard does not interpret review prose or compute `can_merge`, a final
 merge verdict, or policy semantics. Missing or incomplete evidence is shown as
 partial or Unknown rather than inferred as healthy.
 
+Current-looking values are emitted only from their directly observed finite
+fact family: Issue/PR core scalars, PR head/base, head-sensitive native fields,
+each rendered connection, and strict structured evidence have separate
+currentness/completeness boundaries. Failed or missing anchors clear only their
+affected family to Unknown; prior values are never carried forward as current.
+
 Run the focused validation from the repository root:
 
 ```sh

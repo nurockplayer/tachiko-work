@@ -39,6 +39,8 @@ export function healthyProjection(): DashboardProjection {
     linkedIssueNumbers: [229],
     linkageAvailability: "complete" as const,
     identityAvailability: "complete" as const,
+    headAvailability: "complete" as const,
+    baseAvailability: "complete" as const,
     nativeAvailability: "complete" as const,
     checks: {
       availability: "complete" as const,
@@ -148,6 +150,8 @@ export function partialProjection(): DashboardProjection {
         ...lane.pullRequest,
         mergeable: null,
         identityAvailability: "partial",
+        headAvailability: "partial",
+        baseAvailability: "partial",
         nativeAvailability: "partial",
         availability: "partial",
         handoff: { status: "unknown", value: null, reason: "Observation incomplete", source: null },

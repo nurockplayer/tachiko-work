@@ -61,8 +61,8 @@ All notable changes to Tachiko Work are documented in this file.
 
 - Added a repository-local, read-only Live Project Dashboard with five
   observational surfaces for direct GitHub/Steward facts, explicit
-  partial/Unknown states, and server-side credentials; it does not infer a
-  final merge verdict or reconstruct merge policy.
+  family-local partial/Unknown states, and server-side credentials; it does
+  not infer a final merge verdict or reconstruct merge policy.
 
 - A provisional subject-first Semantic API field capability discovery Query
   now projects the existing Number, Text, Boolean, Date, Reference, and Formula

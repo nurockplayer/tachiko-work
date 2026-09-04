@@ -497,6 +497,92 @@ describe("Dashboard GitHub observation", () => {
     });
   });
 
+  it("clears only Issue core scalars when their observation path fails", () => {
+    const response = graph();
+    response.errors = [{
+      message: "Issue core unavailable",
+      path: ["repository", "issues", "nodes", 0, "title"],
+    }];
+
+    const projection = projectGraphResponse(response);
+    expect(projection.deliveries[0]?.issue).toMatchObject({
+      number: 229,
+      title: null,
+      state: null,
+      identityAvailability: "partial",
+      labels: ["agent:codex", "state:ready"],
+      labelsAvailability: "complete",
+    });
+  });
+
+  it("clears only PR core scalars when their observation path fails", () => {
+    const response = graph();
+    response.errors = [{
+      message: "PR core unavailable",
+      path: ["repository", "pullRequests", "nodes", 0, "title"],
+    }];
+
+    const projection = projectGraphResponse(response);
+    expect(projection.deliveries[0]?.pullRequest).toMatchObject({
+      number: 230,
+      title: null,
+      state: null,
+      draft: null,
+      identityAvailability: "partial",
+      headSha: HEAD_SHA,
+      headAvailability: "complete",
+      baseSha: MAIN_SHA,
+      baseAvailability: "complete",
+    });
+  });
+
+  it("invalidates head-dependent families without erasing independent PR core", () => {
+    const response = graph();
+    response.errors = [{
+      message: "PR head unavailable",
+      path: ["repository", "pullRequests", "nodes", 0, "headRefOid"],
+    }];
+
+    const projection = projectGraphResponse(response);
+    expect(projection.deliveries[0]?.pullRequest).toMatchObject({
+      title: "Dashboard PR",
+      state: "OPEN",
+      identityAvailability: "complete",
+      headSha: null,
+      headAvailability: "partial",
+      baseSha: MAIN_SHA,
+      baseAvailability: "complete",
+      mergeable: null,
+      mergeStateStatus: null,
+      reviewDecision: null,
+      checks: { availability: "partial", items: [] },
+      reviews: { availability: "partial", items: [] },
+      handoff: { status: "unknown", reason: "PR head identity Unknown" },
+      stewardWatch: { status: "unknown", reason: "PR head identity Unknown" },
+    });
+  });
+
+  it("keeps independent native facts current when live-main identity is missing", () => {
+    const response = graph();
+    const repository = response.data?.repository;
+    if (repository !== null && repository !== undefined) repository.defaultBranchRef = null;
+
+    const projection = projectGraphResponse(response);
+    expect(projection.fetchHealth).toBe("partial");
+    expect(projection.executive.mainSha).toMatchObject({ value: null, availability: "partial" });
+    expect(projection.executive.productHorizon).toMatchObject({
+      value: "06 · Team Workspace Beta",
+      availability: "complete",
+    });
+    expect(projection.deliveries[0]?.pullRequest).toMatchObject({
+      title: "Dashboard PR",
+      headSha: HEAD_SHA,
+      mergeable: "MERGEABLE",
+      handoff: { status: "unknown", reason: "Live main identity Unknown" },
+      stewardWatch: { status: "unknown", reason: "Live main identity Unknown" },
+    });
+  });
+
   it("keeps no-human-action Unknown when an unclassified PR can hide a watch", () => {
     const response = graph();
     const pulls = response.data?.repository?.pullRequests;

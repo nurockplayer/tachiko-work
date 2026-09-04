@@ -149,6 +149,47 @@ test("keeps pull identity complete when only checks are partial", async ({ page 
   ).toBeVisible();
 });
 
+test("keeps PR core visible while a missing head clears only head-dependent current facts", async ({ page }) => {
+  await page.route("**/api/project", async (route) => {
+    const response = await route.fetch();
+    const projection = (await response.json()) as DashboardProjection;
+    await route.fulfill({
+      response,
+      json: {
+        ...projection,
+        deliveries: projection.deliveries.map((lane, index) =>
+          index !== 0 || lane.pullRequest === null
+            ? lane
+            : {
+                ...lane,
+                pullRequest: {
+                  ...lane.pullRequest,
+                  headSha: null,
+                  headAvailability: "partial",
+                  mergeable: null,
+                  mergeStateStatus: null,
+                  reviewDecision: null,
+                  nativeAvailability: "partial",
+                  checks: { availability: "partial", items: [] },
+                  reviews: { availability: "partial", items: [] },
+                  handoff: { status: "unknown", value: null, reason: "PR head identity Unknown", source: null },
+                  stewardWatch: { status: "unknown", value: null, reason: "PR head identity Unknown", source: null },
+                },
+              }),
+      },
+    });
+  });
+  await page.goto("/");
+
+  const card = page.locator(".lane-card").first();
+  await expect(card.locator(".fact-group").filter({ hasText: "Pull request identity" }).getByText("OPEN", { exact: true }))
+    .toBeVisible();
+  await expect(card.locator(".fact-group").filter({ hasText: "Pull request head" }).getByText("Unknown", { exact: true }))
+    .toBeVisible();
+  await expect(card.locator(".fact-group").filter({ hasText: "GitHub native fields" }).getByText("Unknown", { exact: true }))
+    .toHaveCount(3);
+});
+
 test("renders fully observed absent Issue metadata as none observed", async ({ page }) => {
   await page.route("**/api/project", async (route) => {
     const response = await route.fetch();

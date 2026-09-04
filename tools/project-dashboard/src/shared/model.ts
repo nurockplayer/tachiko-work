@@ -15,9 +15,9 @@ export interface ObservedValue<T> {
 
 export interface IssueFact {
   number: number;
-  title: string;
+  title: string | null;
   url: string;
-  state: string;
+  state: string | null;
   labels: string[];
   labelsAvailability: Availability;
   milestone: string | null;
@@ -53,19 +53,21 @@ export interface StructuredFact {
 
 export interface PullRequestFact {
   number: number;
-  title: string;
+  title: string | null;
   url: string;
-  state: string;
+  state: string | null;
   draft: boolean | null;
-  headSha: string;
-  baseSha: string;
-  baseRef: string;
+  headSha: string | null;
+  baseSha: string | null;
+  baseRef: string | null;
   mergeable: string | null;
   mergeStateStatus: string | null;
   reviewDecision: string | null;
   linkedIssueNumbers: number[];
   linkageAvailability: Availability;
   identityAvailability: Availability;
+  headAvailability: Availability;
+  baseAvailability: Availability;
   nativeAvailability: Availability;
   checks: { availability: Availability; items: CheckFact[] };
   reviews: { availability: Availability; items: ReviewFact[] };

@@ -273,12 +273,13 @@ function structuredFact<T>(
   commentsPartial: boolean,
   marker: string,
   context: EvidenceParseContext | null,
+  unavailableReason: string,
   parser: (input: StructuredCommentSource, context: EvidenceParseContext) => ParseResult<T>,
   value: (input: T) => string,
   label: string,
 ): StructuredFact {
   if (context === null) {
-    return { status: "unknown", value: null, reason: "Issue linkage Unknown", source: null };
+    return { status: "unknown", value: null, reason: unavailableReason, source: null };
   }
   const candidates = candidateComments(comments, marker);
   const trusted = candidates.filter(trustedProducer);
@@ -334,9 +335,9 @@ function issueFact(issue: GraphIssue, observation: IssuePartial): IssueFact {
     dependenciesAvailability !== "complete";
   return {
     number: issue.number,
-    title: issue.title,
+    title: observation.core ? null : issue.title,
     url: issue.url,
-    state: issue.state,
+    state: observation.core ? null : issue.state,
     labels: labelsAvailability === "complete" ? completeNodes(issue.labels).map((label) => label.name) : [],
     labelsAvailability,
     milestone: observation.milestone ? null : issue.milestone?.title ?? null,
@@ -350,9 +351,11 @@ function issueFact(issue: GraphIssue, observation: IssuePartial): IssueFact {
 
 function pullRequestFact(
   pull: GraphPullRequest,
-  mainSha: string,
+  mainSha: string | null,
   observation: {
-    identity: boolean;
+    core: boolean;
+    head: boolean;
+    base: boolean;
     native: boolean;
     linkage: boolean;
     comments: boolean;
@@ -366,22 +369,36 @@ function pullRequestFact(
     : completeNodes(pull.closingIssuesReferences).map((issue) => issue.number);
   const comments = present(pull.comments);
   const commentsPartial = observation.comments || pagePartial(pull.comments);
-  const context = !linkagePartial && linkedIssueNumbers.length === 1
+  const headSha = observation.head ? null : pull.headRefOid;
+  const baseSha = observation.base ? null : pull.baseRefOid;
+  const baseRef = observation.base ? null : pull.baseRefName;
+  const context = !linkagePartial && linkedIssueNumbers.length === 1 && headSha !== null && mainSha !== null
     ? {
         repository: REPOSITORY,
         issueNumber: linkedIssueNumbers[0] ?? 0,
         pullRequestNumber: pull.number,
         owner: OWNER_TOKEN,
-        headSha: pull.headRefOid,
+        headSha,
         mainSha,
       }
     : null;
+  const contextUnavailableReason = linkagePartial
+    ? "Issue linkage Unknown"
+    : headSha === null
+      ? "PR head identity Unknown"
+      : mainSha === null
+        ? "Live main identity Unknown"
+        : "Structured evidence context Unknown";
   const checkPage = pull.statusCheckRollup?.contexts ?? null;
-  const checksPartial = observation.checks || pagePartial(checkPage);
-  const reviewsPartial = observation.reviews || pagePartial(pull.reviews);
-  const identityAvailability = sectionAvailability(observation.identity);
-  const nativeAvailability = sectionAvailability(observation.native || linkagePartial);
-  const partial = observation.identity ||
+  const checksPartial = observation.checks || observation.head || pagePartial(checkPage);
+  const reviewsPartial = observation.reviews || observation.head || pagePartial(pull.reviews);
+  const identityAvailability = sectionAvailability(observation.core);
+  const headAvailability = sectionAvailability(observation.head);
+  const baseAvailability = sectionAvailability(observation.base);
+  const nativeAvailability = sectionAvailability(observation.native || observation.head);
+  const partial = observation.core ||
+    observation.head ||
+    observation.base ||
     observation.native ||
     linkagePartial ||
     commentsPartial ||
@@ -389,19 +406,21 @@ function pullRequestFact(
     checksPartial;
   return {
     number: pull.number,
-    title: pull.title,
+    title: observation.core ? null : pull.title,
     url: pull.url,
-    state: pull.state,
-    draft: pull.isDraft,
-    headSha: pull.headRefOid,
-    baseSha: pull.baseRefOid,
-    baseRef: pull.baseRefName,
-    mergeable: pull.mergeable,
-    mergeStateStatus: pull.mergeStateStatus,
-    reviewDecision: pull.reviewDecision,
+    state: observation.core ? null : pull.state,
+    draft: observation.core ? null : pull.isDraft,
+    headSha,
+    baseSha,
+    baseRef,
+    mergeable: observation.native || observation.head ? null : pull.mergeable,
+    mergeStateStatus: observation.native || observation.head ? null : pull.mergeStateStatus,
+    reviewDecision: observation.native || observation.head ? null : pull.reviewDecision,
     linkedIssueNumbers,
     linkageAvailability: sectionAvailability(linkagePartial),
     identityAvailability,
+    headAvailability,
+    baseAvailability,
     nativeAvailability,
     checks: {
       availability: sectionAvailability(checksPartial),
@@ -436,6 +455,7 @@ function pullRequestFact(
       commentsPartial,
       "<!-- agent-handoff:v1 -->",
       context,
+      contextUnavailableReason,
       parseAgentHandoff,
       (handoff) => `${handoff.state} · ${handoff.owner}`,
       "Agent handoff",
@@ -445,6 +465,7 @@ function pullRequestFact(
       commentsPartial,
       "<!-- project-steward-watch:v1 -->",
       context,
+      contextUnavailableReason,
       parseStewardWatch,
       (watch) => `${watch.verdict} · human action ${watch.humanAction}`,
       "Steward watch",
@@ -504,13 +525,15 @@ export function projectGraphResponse(
 ): DashboardProjection {
   const repository = response.data?.repository;
   const main = repository?.defaultBranchRef?.target;
-  if (repository === null || repository === undefined || main === null || main === undefined) {
+  if (repository === null || repository === undefined) {
     return unavailableProjection(observedAt);
   }
 
   const errors = response.errors ?? [];
   const hasResponseErrors = errors.length > 0;
   const repositorySource = source("GitHub repository", repository.url);
+  const mainUnavailable = main === null || main === undefined || pathAffected(errors, ["repository", "defaultBranchRef"]);
+  const mainSha = mainUnavailable ? null : main.oid;
   const issuePath = ["repository", "issues"] as const;
   const pullPath = ["repository", "pullRequests"] as const;
   const issuePagePartial = pagePartial(repository.issues) || connectionAffected(errors, issuePath);
@@ -528,10 +551,12 @@ export function projectGraphResponse(
       })]);
   const pullRequests = pullNodes.flatMap((pull, index) => pull === null
     ? []
-    : [pullRequestFact(pull, main.oid, {
-        identity: [
-          "number", "title", "url", "state", "isDraft", "headRefOid", "baseRefOid", "baseRefName",
-        ].some((field) => pathAffected(errors, [...pullPath, "nodes", index, field])),
+    : [pullRequestFact(pull, mainSha, {
+        core: ["number", "title", "url", "state", "isDraft"].some((field) =>
+          pathAffected(errors, [...pullPath, "nodes", index, field])),
+        head: pathAffected(errors, [...pullPath, "nodes", index, "headRefOid"]),
+        base: ["baseRefOid", "baseRefName"].some((field) =>
+          pathAffected(errors, [...pullPath, "nodes", index, field])),
         native: ["mergeable", "mergeStateStatus", "reviewDecision"].some((field) =>
           pathAffected(errors, [...pullPath, "nodes", index, field])),
         linkage: pathAffected(errors, [...pullPath, "nodes", index, "closingIssuesReferences"]),
@@ -592,7 +617,7 @@ export function projectGraphResponse(
 
   const roadmapSource = source(
     "Product Roadmap",
-    `https://github.com/${REPOSITORY}/blob/${main.oid}/${ROADMAP_PATH}`,
+    `https://github.com/${REPOSITORY}/blob/${mainSha ?? "main"}/${ROADMAP_PATH}`,
     "repository",
   );
   const roadmapAffected = pathAffected(errors, ["repository", "roadmap"]);
@@ -636,8 +661,8 @@ export function projectGraphResponse(
   for (const issue of activeIssues) {
     nodes.set(issue.number, {
       issueNumber: issue.number,
-      label: `#${String(issue.number)} · ${issue.state}`,
-      state: issue.state,
+      label: `#${String(issue.number)} · ${issue.state ?? "Unknown"}`,
+      state: issue.state ?? "Unknown",
       url: issue.url,
     });
     for (const blocker of issue.blockedBy) {
@@ -677,6 +702,7 @@ export function projectGraphResponse(
   }];
   if (
     hasResponseErrors ||
+    mainUnavailable ||
     horizon === null ||
     issuesAvailability !== "complete" ||
     pullsAvailability !== "complete"
@@ -721,14 +747,14 @@ export function projectGraphResponse(
   return {
     repository: REPOSITORY,
     observedAt,
-    fetchHealth: hasResponseErrors || horizon === null || issuesAvailability !== "complete" || pullsAvailability !== "complete" || recentAvailability !== "complete"
+    fetchHealth: hasResponseErrors || mainUnavailable || horizon === null || issuesAvailability !== "complete" || pullsAvailability !== "complete" || recentAvailability !== "complete"
       ? "partial"
       : "healthy",
     executive: {
       mainSha: {
-        value: pathAffected(errors, ["repository", "defaultBranchRef"]) ? null : main.oid,
-        availability: sectionAvailability(pathAffected(errors, ["repository", "defaultBranchRef"])),
-        source: source("Live main", main.url),
+        value: mainSha,
+        availability: sectionAvailability(mainUnavailable),
+        source: source("Live main", main?.url ?? repository.url),
       },
       productHorizon: {
         value: roadmapAffected ? null : horizon,
