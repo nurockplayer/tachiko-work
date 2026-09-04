@@ -32,19 +32,29 @@ Legacy behavior should be detected, preserved, emulated, converted, or explained
 
 Tachiko Work should provide bridges from existing Office and spreadsheet workflows. Adoption should not require a flag-day rewrite of an organization's working documents.
 
-### 2.5 Versionability is a first-class property
+### 2.5 Practical spreadsheet interoperability is first-class
+
+Decision issue: [#275](https://github.com/nurockplayer/tachiko-work/issues/275)
+
+Tachiko Work must provide practical interoperability with established spreadsheet workflows, especially Microsoft Excel. Architectural independence from Excel, OOXML, or legacy spreadsheet behavior must not be used to justify poor real-world interoperability.
+
+When compatibility conflicts with modern internal semantics, Tachiko Work should preserve the modern semantic model while providing explicit boundaries that can import, export, translate, emulate, preserve, or explain legacy behavior as appropriate.
+
+Historical Tachiko Work implementation choices do not gain permanent compatibility protection merely because they already exist. When an early design materially obstructs an Accepted interoperability requirement, prefer an explicit migration or supersession path over institutionalizing the mistake, while protecting user data and durable external contracts through the normal compatibility process.
+
+### 2.6 Versionability is a first-class property
 
 Meaningful changes should be inspectable, reviewable, reproducible, and automatable. Git is an important protocol and proving ground for this property, even when end users never interact with Git directly.
 
-### 2.6 AI operates on capabilities and meaning
+### 2.7 AI operates on capabilities and meaning
 
 AI should manipulate explicit semantic objects and operations rather than depend on UI simulation as the primary architecture.
 
-### 2.7 The stable core stays small
+### 2.8 The stable core stays small
 
 Only high-confidence, expensive-to-reverse invariants should become stable core contracts. Other capabilities should preserve replaceable seams and extension points.
 
-### 2.8 The ecosystem may be larger than the application
+### 2.9 The ecosystem may be larger than the application
 
 Editors, adapters, importers, exporters, domain integrations, AI providers, and workflow extensions should be able to evolve without requiring the core project to own every use case.
 
