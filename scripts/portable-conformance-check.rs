@@ -49,7 +49,7 @@ use tachiko_workspace_engine::{
     runtime_export, set_scalar, validate, validation_report,
 };
 
-const CASE_COUNT: u32 = 56;
+const CASE_COUNT: u32 = 57;
 const VALUE: u32 = 0;
 const DIVISION_BY_ZERO: u32 = 1;
 const NON_FINITE: u32 = 2;
@@ -67,6 +67,7 @@ const ANALYSIS_FAILURE: u32 = 13;
 const ANALYSIS_PAIRED_AUTHORIZATION: u32 = 14;
 const RESIDENT_SESSION: u32 = 15;
 const DATE: u32 = 16;
+const NO_CHANGE: u32 = 17;
 const UNEXPECTED: u32 = 255;
 
 const VALIDATION_ACCUMULATION_COUNT: usize = 16;
@@ -2445,11 +2446,14 @@ impl SemanticPublicationAuthority for PortablePublication {
         if expected_document_scope != &self.scope {
             return Err(SemanticPublicationError::DocumentScopeMismatch);
         }
+        let authorization = authorize(TrustedInstant::new(3))
+            .ok_or(SemanticPublicationError::AuthorizationDenied)?;
         if expected_revision != &self.revision {
             return Err(SemanticPublicationError::Stale);
         }
-        let authorization = authorize(TrustedInstant::new(3))
-            .ok_or(SemanticPublicationError::AuthorizationDenied)?;
+        if candidate == self.document {
+            return Err(SemanticPublicationError::NoChange);
+        }
         self.document = candidate;
         self.revision = SemanticRevision::from("portable-r2");
         Ok((
@@ -2675,6 +2679,89 @@ fn resident_session_record() -> Record {
     }
 }
 
+fn no_change_record() -> Record {
+    let document = formula_document(number(42.0), input_reference());
+    let Ok((mut lifecycle, scope, principal)) = formula_operation_lifecycle(
+        &document,
+        OperationFamily::SetFieldValue,
+        MutationClass::Value,
+        &[AuthorizationAction::Propose, AuthorizationAction::Execute],
+    ) else {
+        return Record::failure(UNEXPECTED, 56_u64 << 32);
+    };
+    let mut session = ResidentWorkspaceSession::new(scope, document);
+    let initial = session.export_snapshot();
+    let input = FieldRef::new("entity-stable", "input-stable");
+    let body = SemanticPatchBody::atomic_batch(vec![
+        SemanticCommand::set_field_value(input.clone(), Value::Number(number(43.0))),
+        SemanticCommand::set_field_value(input, Value::Number(number(42.0))),
+    ])
+    .expect("non-empty fixed corpus batch");
+    let proposal = ProposalId::from("resident-net-zero");
+    if lifecycle
+        .propose(
+            initial.document_scope(),
+            initial.document(),
+            initial.revision(),
+            ProposalRequest::new(
+                proposal.clone(),
+                initial.revision().clone(),
+                body,
+                principal.clone(),
+            ),
+            TrustedInstant::new(1),
+        )
+        .is_err()
+        || lifecycle
+            .preview(
+                initial.document_scope(),
+                initial.document(),
+                initial.revision(),
+                &proposal,
+                &principal,
+                TrustedInstant::new(2),
+            )
+            .is_err()
+    {
+        return Record::failure(UNEXPECTED, (56_u64 << 32) | 1);
+    }
+    let history = lifecycle.proposal_history(&proposal).unwrap().to_vec();
+    let mut time = PortableTrustedTime { calls: 0 };
+    for _ in 0..2 {
+        let mut publication = session.publication_authority(&mut time);
+        let outcome = lifecycle.execute(
+            &proposal,
+            None,
+            &principal,
+            &mut publication,
+            TrustedInstant::new(3),
+        );
+        if !matches!(outcome, Err(PatchLifecycleError::NoChange))
+            || publication
+                .projection_invalidation_for(
+                    initial.document_scope(),
+                    initial.revision(),
+                    initial.revision(),
+                )
+                .is_some()
+        {
+            return Record::failure(UNEXPECTED, (56_u64 << 32) | 2);
+        }
+    }
+    if session.export_snapshot() != initial
+        || !lifecycle.execution_receipts().is_empty()
+        || lifecycle.proposal_history(&proposal).unwrap() != history
+        || time.calls != 2
+    {
+        return Record::failure(UNEXPECTED, (56_u64 << 32) | 3);
+    }
+    Record {
+        class: NO_CHANGE,
+        bits: number(42.0).to_bits(),
+        auxiliary: time.calls,
+    }
+}
+
 fn case_record(index: u32) -> Record {
     match index {
         0 => Record::value(number(-0.0), 0),
@@ -2820,6 +2907,7 @@ fn case_record(index: u32) -> Record {
         53 => analysis_paired_authorization_record(),
         54 => resident_session_record(),
         55 => date_record(),
+        56 => no_change_record(),
         _ => Record::failure(UNEXPECTED, 0),
     }
 }

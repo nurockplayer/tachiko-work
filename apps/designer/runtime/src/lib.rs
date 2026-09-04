@@ -375,6 +375,7 @@ impl DesignerError {
                     .map(diagnostic_projection)
                     .collect(),
             ),
+            Self::Lifecycle(PatchLifecycleError::NoChange) => ("no_change", Vec::new()),
             Self::Lifecycle(PatchLifecycleError::CommandRejected { .. }) => {
                 ("edit_rejected", Vec::new())
             }

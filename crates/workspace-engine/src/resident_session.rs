@@ -609,6 +609,9 @@ where
         if candidate.id != self.session.document.id {
             return Err(SemanticPublicationError::Conflict);
         }
+        if candidate == self.session.document {
+            return Err(SemanticPublicationError::NoChange);
+        }
         let next_generation = self
             .session
             .generation
@@ -915,6 +918,36 @@ mod tests {
         fn now(&mut self) -> TrustedInstant {
             TrustedInstant::new(1)
         }
+    }
+
+    #[test]
+    fn no_change_clears_prior_invalidation_without_advancing_or_updating_derived_state() {
+        let mut session = ResidentWorkspaceSession::new(
+            DocumentScopeId::from("occurrence"),
+            Document::empty("document", "Before"),
+        );
+        let before = session.export_snapshot();
+        let mut candidate = before.document().clone();
+        candidate.title = "After".to_owned();
+        let mut time = FixedTime;
+        let mut publication = session.publication_authority(&mut time);
+        let (scope, installed, revision, ()) = publication
+            .publish_if_current(
+                before.document_scope(),
+                before.revision(),
+                candidate,
+                |_| Some(()),
+            )
+            .unwrap();
+        assert!(publication.projection_invalidation.is_some());
+        let measurements = publication.session.measurements;
+        let result =
+            publication.publish_if_current(&scope, &revision, installed.clone(), |_| Some(()));
+        assert_eq!(result, Err(SemanticPublicationError::NoChange));
+        assert!(publication.projection_invalidation.is_none());
+        assert_eq!(publication.session.document, installed);
+        assert_eq!(publication.session.revision, revision);
+        assert_eq!(publication.session.measurements, measurements);
     }
 
     #[test]
