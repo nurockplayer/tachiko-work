@@ -76,7 +76,7 @@ the user interface. AI is a semantic client, not an alternate source of truth.
 - **See the durable example:** [`examples/game-balance/`](examples/game-balance/README.md)
 - **Inspect the self-dogfood project:** [`dogfood/product-gaps.roproj/`](dogfood/product-gaps.roproj/)
 - **See where the product is going:** [Product Roadmap](docs/product/product-roadmap.md)
-- **Understand the system:** [Architecture overview](#architecture-overview)
+- **Understand the system:** [`ARCHITECTURE.md`](ARCHITECTURE.md)
 - **Understand contribution status:** [`CONTRIBUTING.md`](CONTRIBUTING.md)
 - **Understand decision authority:** [`docs/README.md`](docs/README.md)
 
