@@ -22,7 +22,8 @@ formats, and promotion DTOs remain Provisional or Deferred as owned elsewhere.
 Implementation state: the provider-free `tachiko-ai-api` crate implements a
 v0.1 AI-facing read/explain/suggest adapter over `tachiko-workspace-engine`,
 including structured read-only Semantic Analyst queries. Its provisional
-`security_boundary` also accepts only typed proposal/execution intent, obtains
+`security_boundary` also accepts typed Semantic Query plus typed
+proposal/execution intent, obtains
 effective Principal and trusted time from host context rather than the request,
 requires the lifecycle registry to prove that occurrence is active and
 Delegated, delegates semantic enforcement to the #29 workspace lifecycle, and
@@ -36,7 +37,8 @@ workspace/CLI slice of the M04 formula-reasoning, scenario, and formula-update
 Semantic API operations. Issue #150 implements the equivalent first
 provider-neutral bounded Analysis Query workspace/CLI slice. AI-facing mappings
 of those operations, public DTOs, and wire/transport behavior remain
-unimplemented.
+unimplemented except for the bounded field capability discovery adapter added
+under Issue #268.
 
 ## Principle
 
@@ -108,12 +110,26 @@ suggest_field_change(document, field_ref, value)
 
 No current AI API writes the document directly.
 
-The provider-facing security seam adds two non-wire adapter operations:
+The provider-facing security seam adds three non-wire adapter operations:
 
 ```text
 submit_semantic_proposal(trusted_host_context, typed_intent, inert_evidence)
 execute_semantic_proposal(trusted_host_context, exact_proposal, optional_approval)
 ```
+
+The same seam also exposes the bounded, read-only field capability Query:
+
+```text
+query_field_capabilities(trusted_host_context, exact_source_snapshot, FieldRef)
+```
+
+The request contributes only a stable target. Trusted host composition supplies
+one paired document-snapshot/source-revision context, along with identity and
+time; the workspace lifecycle authorizes the independent
+discovery Query before returning the shared projection. The adapter does not
+infer or rewrite the opaque revision encoding. The result does not grant any
+listed family, does not reveal UI/presentation decisions, does not enumerate
+Reference targets, and does not advertise conversions.
 
 These operations do not add another mutation vocabulary. They reuse the #29
 `SemanticPatch` Propose/Execute lifecycle, and the execution path can publish
@@ -217,7 +233,7 @@ A semantic edit capability must not imply filesystem, network, process, Git push
 Storage and host adapters may materialize or externally publish an authorized
 semantic result under their own authority; they do not redefine semantic
 meaning or grant semantic permission. The current `ai-api` operation classifier
-admits only typed semantic proposal/execution and returns stable denials for raw
+admits only typed semantic Query/proposal/execution and returns stable denials for raw
 semantic-state mutation, storage-representation mutation, durable persistence,
 filesystem, network, process, Git, plugin, deployment, and credential requests.
 It does not implement a generic external-effect capability.
@@ -313,6 +329,29 @@ Approval rules. The adapter cannot introduce an AI-only scenario evaluator,
 `FormulaPatch`, approval token, operation family, or mutation path. Successful
 reasoning, scenario evaluation, or validation grants no proposal or execution
 authority.
+
+## Field capability discovery
+
+AI and GUI clients may use the bounded `DescribeFieldCapabilities` Query from
+the shared Semantic API to avoid duplicating field type matching, current
+Formula edit restrictions, FormulaUpdate target checks, or Number scenario
+applicability. The AI adapter delegates to the same workspace projection; it
+does not maintain a second catalogue or infer capabilities from prompts,
+schema text, or UI controls.
+
+The projection is a semantic layer only: declared type/current value kind,
+recognized family/input, applicability, and stable reason. Its
+authorization/disclosure boundary is separate from that projection, and client
+presentation is a third layer. A discovery Query grant does not imply the
+listed family's Query, Propose, Execute, or Approval authority; those operations
+re-evaluate live authority and semantic rules. v1 covers Number, Text, Boolean,
+Date, Reference, and Formula values already in the core model, with no conversions or
+Reference valid-target enumeration (#254). For a resolvable target, the trusted
+discovery boundary requires `FieldCapabilityDiscovery` Query coverage for both
+the concrete `EntityField` and corresponding schema-owned `SchemaField` before
+returning this projection. Existing containment law allows a covering `Schema`
+or `Document` grant; an `EntityField`-only grant receives the same
+disclosure-safe denial as any incomplete discovery footprint.
 
 ## Formula suggestions
 

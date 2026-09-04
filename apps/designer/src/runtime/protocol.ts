@@ -25,6 +25,7 @@ export type StoredValueProjection =
   | { kind: "number"; value: number }
   | { kind: "text"; value: string }
   | { kind: "boolean"; value: boolean }
+  | { kind: "date"; value: string }
   | { kind: "reference"; entity: string };
 
 export type CalculationProjection =
@@ -45,7 +46,7 @@ export type FieldProjection = {
   formula: { source: string } | null;
   calculated: CalculationProjection | null;
   diagnostics: DiagnosticProjection[];
-  editable_scalar: "number" | "text" | "boolean" | null;
+  editable_scalar: "number" | "text" | "boolean" | "date" | null;
 };
 
 export type TableProjection = {
@@ -100,7 +101,8 @@ export type DesignerRequest =
       input:
         | { kind: "number"; input: string }
         | { kind: "text"; value: string }
-        | { kind: "boolean"; value: boolean };
+        | { kind: "boolean"; value: boolean }
+        | { kind: "date"; value: string };
     };
 
 export type DesignerResponse =

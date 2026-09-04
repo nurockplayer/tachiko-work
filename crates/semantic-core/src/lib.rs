@@ -11,9 +11,9 @@ pub use diagnostic::{
     DiagnosticSeverity, SemanticSubject, StableDiagnosticObservation,
 };
 pub use model::{
-    Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldAddress, FieldDefinition,
-    FieldId, FieldKey, FieldRef, FieldType, InvalidNumber, MAX_EXPRESSION_DEPTH,
-    MAX_EXPRESSION_NODES, Number, Schema, SchemaId, SchemaKey, Value,
+    Date, Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldAddress,
+    FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, InvalidDate, InvalidNumber,
+    MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, Schema, SchemaId, SchemaKey, Value,
 };
 #[cfg(feature = "issue-175-research")]
 pub use validation::validate_document_cancellable;

@@ -3,7 +3,7 @@ mod common;
 use common::game_balance_document;
 use tachiko_workspace_engine::{
     CalculationFailure, DiagnosticCode, DocumentId, EntityId, EntityKey, Expression, FieldAddress,
-    FieldRef, Number, Value, diagnostic_codes,
+    FieldRef, Number, SemanticSubject, Value, diagnostic_codes,
     formula_operations::FormulaCalculationOutcome,
     patch_lifecycle::{
         AuthorizationAction, AuthorizationDomainId, AuthorizationPolicyVersion, DocumentScopeId,
@@ -291,6 +291,13 @@ fn field_query_preserves_formula_failure_and_stable_subject_diagnostics() {
     assert_eq!(
         projection.diagnostics[0].code,
         diagnostic_codes::FORMULA_DIVISION_BY_ZERO
+    );
+    assert_eq!(
+        projection.diagnostics[0].subjects,
+        [SemanticSubject::EntityField(FieldRef::new(
+            "iron_sword",
+            "dps"
+        ))]
     );
 }
 

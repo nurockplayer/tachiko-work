@@ -30,6 +30,10 @@ echo "==> selected release toolchain: ${selected_description}"
 echo "==> formatting"
 cargo fmt --all --check
 
+echo "==> Codex repository tooling"
+bash scripts/codex-worktree-gc-check.sh
+bash scripts/codex-cargo-check.sh
+
 echo "==> ADR-0016 workspace dependency graph"
 node scripts/workspace-dependency-check.mjs
 

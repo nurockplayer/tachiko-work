@@ -65,6 +65,10 @@ The Issue #33 amendment accepts only the logical bounded semantic analysis Query
 contract below. Issue #150 supplies its first provider-neutral, Provisional
 workspace/CLI implementation and native/WASM evidence without changing the
 Accepted meaning or stabilizing the concrete Rust, CLI, result, or wire shapes.
+Issue #255's final decision accepts a bounded subject-first field capability
+discovery Query. Issue #268 supplies its first provider-neutral, Provisional
+workspace/AI implementation and parity evidence without adding a parallel type
+system, conversion catalogue, or generic operation language.
 
 Decision issues: [#10](https://github.com/nurockplayer/tachiko-work/issues/10),
 [#27](https://github.com/nurockplayer/tachiko-work/issues/27),
@@ -207,6 +211,79 @@ is Provisional and is promoted operation-by-operation.
 
 A generic `get(path)` / JSON-pointer query surface is not part of the Accepted
 contract.
+
+## Bounded field capability discovery Query (#268)
+
+Issue #255 accepts one small, transport-neutral discovery projection so a GUI,
+AI adapter, or other first-party client can ask what the shared semantic
+authority already knows how to do for one stable `FieldRef` in one exact
+semantic context:
+
+```text
+DescribeFieldCapabilities(exact semantic context/revision,
+                          stable FieldRef,
+                          caller/query authority)
+```
+
+The trusted host supplies the immutable document snapshot and its opaque
+revision as one exact source-context binding. Discovery does not infer a
+revision from document content, consult resident history, or validate a
+host-owned revision encoding; the host must not pair a revision from one
+snapshot with another document. This preserves the existing Semantic API
+context boundary. The current in-process Rust adapter represents that binding
+with the existing host-owned `ResidentSnapshot`; this is implementation
+evidence, not a public wire/SDK DTO, and revision spelling and transport
+mechanics remain Provisional.
+
+The provisional projection contains the stable field, its declared `FieldType`,
+the current finite `SemanticValueKind` where disclosure permits, and a bounded
+list of recognized family/input entries. Each entry identifies a current
+`Query` or `Edit` family, its typed input requirement, and either
+`Applicable` or a machine-readable inapplicability reason. The projection is a
+capability/applicability fact, not an authorization result, permission token,
+editor hint, label, formatter, or presentation model.
+
+The v1 implementation recognizes only existing rules:
+
+- `SetFieldValue` exposes the finite `Number`, `Text`, `Boolean`, `Date`, and
+  `Reference` typed inputs. Its applicability and `FormulaEdit`/
+  `TypeMismatch` reasons come from the same current-formula and
+  `value_matches_type` rule used by field candidate construction.
+- `FormulaUpdate` requires a typed Formula input and uses the same numeric
+  target rule used before formula binding. A FormulaUpdate is therefore
+  advertised only for a declared `Number` field.
+- `FormulaReasoning` is applicable only to a current Formula value, and
+  `NumberOverrideScenario` is applicable only to a current Number value; both
+  retain their existing query-family semantics.
+- A Reference capability describes only the declared typed Reference update,
+  including its target schema contract. It does not enumerate valid targets;
+  reference target discovery remains Issue #254.
+
+No conversion entry is emitted in v1: parsing, conversion, formatting, and
+semantic strengthening remain separate mechanisms, and no conversion is
+advertised without a separately Accepted conversion family. `AnalysisQuery`
+and presentation/editor choices are not field-local capability facts and remain
+on their existing boundaries.
+
+The discovery Query has its own provisional `FieldCapabilityDiscovery` family
+and independent Query disclosure scope. For a resolvable field, its trusted
+disclosure footprint retains both the concrete `EntityField` instance and the
+corresponding `SchemaField` definition under that same family; an
+`EntityField`-only grant therefore cannot disclose schema-owned `declared_type`
+or a Reference target-schema contract. Existing containment law still lets a
+`Schema` or `Document` grant cover both requirements. The lifecycle derives and
+authorizes these requirements before semantic classification or external
+exposure. If a narrower field scope cannot be derived safely, it retains the
+existing conservative document requirement and returns only the disclosure-safe
+unresolved outcome after that broader authorization succeeds. The returned
+projection does not grant Query, Propose, Execute, or Approval authority for
+any listed family. Actual Propose/Execute/candidate/formula paths re-evaluate
+their live grants and authoritative rules.
+
+The workspace projection is the shared source for the current AI adapter. GUI
+and other clients must consume the same structured facts rather than copy
+type-matching or applicability rules. Exact Rust names, result encoding, and
+wire/SDK placement remain Provisional.
 
 ## Command contract
 
@@ -1482,9 +1559,12 @@ cannot become an inference oracle. The portable production-semantic corpus
 executes fixed successful, structured-failure, authorization, and
 paired-context Analysis records natively and under `wasm32-unknown-unknown`.
 
-The current finite limits, equality/Number-ordering predicate catalogue,
-stable-ID output order, Rust types, CLI grammar, and JSON projection are
-Provisional implementation evidence. No Deferred analysis behavior is added.
+The current finite limits, equality predicate, and deterministic ordering
+predicate catalogue for `Number` and date-only `Date`, stable-ID output order,
+Rust types, CLI grammar, and JSON projection are Provisional implementation
+evidence. Date ordering is limited to deterministic sort, filter, and
+comparison; it does not authorize Date arithmetic, `DateTime`, `Duration`, or
+broader temporal semantics. No Deferred analysis behavior is added.
 
 ## M04 formula/scenario conformance evidence
 
@@ -1567,6 +1647,10 @@ implements current field-value/batch lifecycle fixtures. Issue #144 adds
 formula reasoning, scenario, and formula-update conformance; complete catalogue
 and transport conformance remains later work. Issues #93–#94 add production
 resident session/revision/selective-projection conformance on native and WASM.
+Issue #268 adds Number, Text, Boolean, Reference, Formula-on-Number, shared
+mutation/formula-rule parity, authorization ordering, and machine-readable
+inapplicability evidence for the bounded field projection. Issue #267 adds
+Date to the same finite SetFieldValue projection with mutation-rule parity.
 
 ## Stability classification
 
@@ -1593,6 +1677,9 @@ resident session/revision/selective-projection conformance on native and WASM.
 | Proposal-ID, revision-token, and transport encoding | Public encoding Provisional or Deferred to transport work |
 | Hash/digest/signature/MAC/canonical proposal bytes | Deferred under ADR-0026 |
 | Preview is proposal projection, not independent canonical state | Accepted |
+| Bounded subject-first field capability discovery meaning | Accepted direction under #255; projection details Provisional |
+| `FieldCapabilityDiscovery` family and concrete capability DTO | Provisional under #268 |
+| v1 capability discovery advertises no conversions or Reference targets | Accepted bounded behavior under #255/#268 |
 | Finalization is operation-gate meaning, not mandatory stateful two-phase protocol | Accepted |
 | Single-command semantic atomicity | Accepted |
 | Ordered Atomic Command Batch all-or-nothing semantic publication | Accepted |

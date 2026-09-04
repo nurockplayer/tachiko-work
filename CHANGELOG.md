@@ -32,6 +32,12 @@ All notable changes to Tachiko Work are documented in this file.
   shortest-roundtrip numeric spelling, stable-ID collection order, and bounded
   number/formula resources. Runtime export correspondingly advances to
   `runtime-export/v2`.
+- The closed semantic scalar model now includes date-only Gregorian `Date`
+  values with canonical `YYYY-MM-DD` admission, deterministic civil-date
+  ordering, direct-ro/v2 persistence, Semantic API/resident/Designer
+  projections, and Native/WASM parity. Frozen legacy direct-ro/v1 and
+  `.roproj/v1` remain unchanged; Date-bearing `.roproj/v1` export rejects
+  explicitly until a future representation version is accepted.
 - Hardened legacy direct `.ro` v1 persistence with storage-owned historical
   DTOs, strict UTF-8/JSON/version handling, recursive closed-world decoding,
   and specification-ordered canonical output while preserving admitted v1
@@ -46,6 +52,10 @@ All notable changes to Tachiko Work are documented in this file.
   presentation-only paths/messages. Workspace validation is shared across
   queries, mutations, and merge finalization while authoring projection remains
   an explicit operation gate.
+- Field capability discovery now requires disclosure coverage for both the
+  concrete `EntityField` and corresponding schema-owned `SchemaField`, so a
+  fine-grained field grant cannot disclose declared type or Reference target
+  schema metadata.
 
 ### Added
 
@@ -54,6 +64,12 @@ All notable changes to Tachiko Work are documented in this file.
   partial/Unknown states, and server-side credentials; it does not infer a
   final merge verdict or reconstruct merge policy.
 
+- A provisional subject-first Semantic API field capability discovery Query
+  now projects the existing Number, Text, Boolean, Date, Reference, and Formula
+  operation rules through workspace-engine and the AI boundary. Discovery and
+  mutation share type/formula applicability authority, disclosure remains an
+  independent Query capability, Reference targets are not enumerated, and no
+  conversions are advertised.
 - A deterministic repository command now exports a self-contained, explicitly
   unstable Designer frontend client kit containing a bounded TypeScript/ESM
   wrapper, Worker support, and the Rust-authoritative WASM runtime without npm

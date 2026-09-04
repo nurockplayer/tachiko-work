@@ -29,7 +29,7 @@ use tachiko_semantic_core::{
     AddressIndex, AddressIndexError, is_valid_identifier, validate_document_core,
 };
 pub use tachiko_semantic_core::{
-    Diagnostic, DiagnosticCode, DiagnosticFact, DiagnosticLocation, DiagnosticProvider,
+    Date, Diagnostic, DiagnosticCode, DiagnosticFact, DiagnosticLocation, DiagnosticProvider,
     DiagnosticSeverity, Document, DocumentId, Entity, EntityId, EntityKey, Expression,
     FieldAddress, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, Number, Schema,
     SchemaId, SchemaKey, SemanticSubject, StableDiagnosticObservation, Value,
@@ -37,6 +37,7 @@ pub use tachiko_semantic_core::{
 use thiserror::Error;
 
 pub mod analysis_operations;
+pub mod capability_discovery;
 pub mod formula_operations;
 pub mod patch_lifecycle;
 pub mod resident_session;
@@ -188,6 +189,20 @@ pub enum FieldKind {
     Input,
     Reference { target_schema: SchemaKey },
     Formula,
+}
+
+/// Existing finite semantic value categories used by structured operation
+/// projections. This is a value-kind observation, not a universal type ID or
+/// registry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SemanticValueKind {
+    Number,
+    Formula,
+    Text,
+    Boolean,
+    Date,
+    Reference,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -352,6 +367,7 @@ pub enum RuntimeValue {
     Number(Number),
     Text(String),
     Boolean(bool),
+    Date(Date),
     Reference { reference: String },
 }
 
@@ -627,7 +643,11 @@ pub fn analyze_field(
                 }
             })?)
         }
-        Value::Number(_) | Value::Text(_) | Value::Boolean(_) | Value::Reference(_) => None,
+        Value::Number(_)
+        | Value::Text(_)
+        | Value::Boolean(_)
+        | Value::Date(_)
+        | Value::Reference(_) => None,
     };
     let direct_dependencies = calculation
         .dependencies_of(field)
@@ -1002,7 +1022,9 @@ fn field_kind(
                 target_schema: target.key.clone(),
             })
         }
-        Value::Number(_) | Value::Text(_) | Value::Boolean(_) => Ok(FieldKind::Input),
+        Value::Number(_) | Value::Text(_) | Value::Boolean(_) | Value::Date(_) => {
+            Ok(FieldKind::Input)
+        }
     }
 }
 
@@ -1130,32 +1152,7 @@ pub(crate) fn bind_formula_update_unbound(
     field: &FieldRef,
     unbound: &tachiko_formula_engine::UnboundExpression,
 ) -> Result<Expression, WorkspaceError> {
-    let entity =
-        document
-            .entities
-            .get(&field.entity)
-            .ok_or_else(|| WorkspaceError::MissingEntityId {
-                entity: field.entity.clone(),
-            })?;
-    let schema =
-        document
-            .schemas
-            .get(&entity.schema)
-            .ok_or_else(|| WorkspaceError::MissingSchema {
-                schema: entity.schema.clone(),
-            })?;
-    let definition =
-        schema
-            .fields
-            .get(&field.field)
-            .ok_or_else(|| WorkspaceError::MissingField {
-                field: field.clone(),
-            })?;
-    if definition.field_type != FieldType::Number {
-        return Err(WorkspaceError::NonNumericFormulaField {
-            field: field.clone(),
-        });
-    }
+    formula_update_target_rule(document, field)?;
 
     let expression =
         bind_expression(document, unbound).map_err(|source| WorkspaceError::FormulaBinding {
@@ -1442,7 +1439,7 @@ fn value_references_entity(value: &Value, target: &EntityId) -> bool {
     match value {
         Value::Reference(reference) => reference == target,
         Value::Formula(expression) => expression_references_entity(expression, target),
-        Value::Number(_) | Value::Text(_) | Value::Boolean(_) => false,
+        Value::Number(_) | Value::Text(_) | Value::Boolean(_) | Value::Date(_) => false,
     }
 }
 
@@ -1480,28 +1477,18 @@ pub(crate) fn field_value_candidate(
         .ok_or_else(|| WorkspaceError::MissingField {
             field: field.clone(),
         })?;
-    if matches!(existing, Value::Formula(_)) && !matches!(value, Value::Formula(_)) {
-        return Err(WorkspaceError::FormulaEdit {
-            field: field.clone(),
-        });
-    }
     if !matches!(existing, Value::Formula(_)) && existing == value {
         return Err(WorkspaceError::NoChange {
             field: field.clone(),
         });
     }
-    let definition = document
-        .schemas
-        .get(&entity.schema)
-        .and_then(|schema| schema.fields.get(&field.field))
-        .ok_or_else(|| WorkspaceError::MissingField {
-            field: field.clone(),
-        })?;
-    if !value_matches_type(value, &definition.field_type) {
-        return Err(WorkspaceError::TypeMismatch {
-            field: field.clone(),
-        });
-    }
+    let definition = field_definition(document, field)?;
+    field_value_input_rule(
+        field,
+        existing,
+        semantic_value_kind(value),
+        &definition.field_type,
+    )?;
     preflight_formula_structures(document)?;
     if let Value::Formula(expression) = value {
         validate_expression_structure(expression).map_err(|source| {
@@ -1545,14 +1532,92 @@ pub(crate) fn field_value_candidate(
     Ok(candidate)
 }
 
-fn value_matches_type(value: &Value, field_type: &FieldType) -> bool {
+/// Classify one existing semantic value without exposing its payload.
+pub(crate) fn semantic_value_kind(value: &Value) -> SemanticValueKind {
+    match value {
+        Value::Number(_) => SemanticValueKind::Number,
+        Value::Formula(_) => SemanticValueKind::Formula,
+        Value::Text(_) => SemanticValueKind::Text,
+        Value::Boolean(_) => SemanticValueKind::Boolean,
+        Value::Date(_) => SemanticValueKind::Date,
+        Value::Reference(_) => SemanticValueKind::Reference,
+    }
+}
+
+/// Authoritative finite value-kind/type matching used by field mutations and
+/// capability discovery.
+pub(crate) fn value_matches_type(value_kind: SemanticValueKind, field_type: &FieldType) -> bool {
     matches!(
-        (value, field_type),
-        (Value::Number(_) | Value::Formula(_), FieldType::Number)
-            | (Value::Text(_), FieldType::Text)
-            | (Value::Boolean(_), FieldType::Boolean)
-            | (Value::Reference(_), FieldType::Reference { .. })
+        (value_kind, field_type),
+        (
+            SemanticValueKind::Number | SemanticValueKind::Formula,
+            FieldType::Number
+        ) | (SemanticValueKind::Text, FieldType::Text)
+            | (SemanticValueKind::Boolean, FieldType::Boolean)
+            | (SemanticValueKind::Date, FieldType::Date)
+            | (SemanticValueKind::Reference, FieldType::Reference { .. })
     )
+}
+
+/// Apply the shared current-formula and typed-value rules before a field value
+/// candidate is constructed. Capability discovery calls this exact rule with
+/// an input kind, while mutation calls it with the candidate's classified kind.
+pub(crate) fn field_value_input_rule(
+    field: &FieldRef,
+    existing: &Value,
+    input_kind: SemanticValueKind,
+    field_type: &FieldType,
+) -> Result<(), WorkspaceError> {
+    if matches!(existing, Value::Formula(_)) && input_kind != SemanticValueKind::Formula {
+        return Err(WorkspaceError::FormulaEdit {
+            field: field.clone(),
+        });
+    }
+    if !value_matches_type(input_kind, field_type) {
+        return Err(WorkspaceError::TypeMismatch {
+            field: field.clone(),
+        });
+    }
+    Ok(())
+}
+
+pub(crate) fn field_definition<'document>(
+    document: &'document Document,
+    field: &FieldRef,
+) -> Result<&'document FieldDefinition, WorkspaceError> {
+    let entity =
+        document
+            .entities
+            .get(&field.entity)
+            .ok_or_else(|| WorkspaceError::MissingEntityId {
+                entity: field.entity.clone(),
+            })?;
+    let schema =
+        document
+            .schemas
+            .get(&entity.schema)
+            .ok_or_else(|| WorkspaceError::MissingSchema {
+                schema: entity.schema.clone(),
+            })?;
+    schema
+        .fields
+        .get(&field.field)
+        .ok_or_else(|| WorkspaceError::MissingField {
+            field: field.clone(),
+        })
+}
+
+/// Authoritative target rule for every typed `FormulaUpdate` admission.
+pub(crate) fn formula_update_target_rule(
+    document: &Document,
+    field: &FieldRef,
+) -> Result<(), WorkspaceError> {
+    if field_definition(document, field)?.field_type != FieldType::Number {
+        return Err(WorkspaceError::NonNumericFormulaField {
+            field: field.clone(),
+        });
+    }
+    Ok(())
 }
 
 fn finalize_edit(document: &Document, edited: Document) -> Result<EditPreview, WorkspaceError> {
@@ -2097,7 +2162,11 @@ fn drop_expression_iteratively(expression: Expression) {
 fn drop_value_iteratively(value: Value) {
     match value {
         Value::Formula(expression) => drop_expression_iteratively(expression),
-        Value::Number(_) | Value::Text(_) | Value::Boolean(_) | Value::Reference(_) => {}
+        Value::Number(_)
+        | Value::Text(_)
+        | Value::Boolean(_)
+        | Value::Date(_)
+        | Value::Reference(_) => {}
     }
 }
 
@@ -2144,6 +2213,9 @@ fn parse_scalar(
             .parse::<bool>()
             .map(Value::Boolean)
             .map_err(|_| invalid("boolean (true or false)")),
+        FieldType::Date => Date::parse(input)
+            .map(Value::Date)
+            .map_err(|_| invalid("date (YYYY-MM-DD)")),
         FieldType::Reference { .. } => {
             let target = AddressIndex::build(document)?
                 .entity_id(&EntityKey::from(input))
@@ -2164,6 +2236,7 @@ fn runtime_value(
         Value::Number(number) => Ok(RuntimeValue::Number(*number)),
         Value::Text(text) => Ok(RuntimeValue::Text(text.clone())),
         Value::Boolean(boolean) => Ok(RuntimeValue::Boolean(*boolean)),
+        Value::Date(date) => Ok(RuntimeValue::Date(*date)),
         Value::Reference(entity) => {
             let target =
                 document
@@ -2564,6 +2637,7 @@ fn format_value(document: &Document, value: &Value) -> String {
         Value::Number(number) => format_number(*number),
         Value::Text(text) => text.clone(),
         Value::Boolean(boolean) => boolean.to_string(),
+        Value::Date(date) => date.to_string(),
         Value::Reference(entity) => document.entities.get(entity).map_or_else(
             || format!("→ <missing:{entity}>"),
             |entity| format!("→ {}", entity.key),

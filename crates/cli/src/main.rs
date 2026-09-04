@@ -54,7 +54,7 @@ enum Commands {
         input: PathBuf,
         /// Human field address in entity.field form
         field: String,
-        /// New number, text, boolean, or referenced entity key
+        /// New number, text, boolean, Date (canonical YYYY-MM-DD), or referenced entity key
         value: String,
         /// New .ro document to create; existing files are never overwritten
         #[arg(long)]

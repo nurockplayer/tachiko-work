@@ -35,6 +35,11 @@ jobs:
       - name: Validate documentation consistency
         run: bash scripts/docs-consistency-check.sh
 
+      - name: Validate Codex repository tooling
+        run: |
+          bash scripts/codex-worktree-gc-check.sh
+          bash scripts/codex-cargo-check.sh
+
       - name: Verify ADR-0016 workspace dependencies
         run: node scripts/workspace-dependency-check.mjs
 

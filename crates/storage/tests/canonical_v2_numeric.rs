@@ -1,4 +1,4 @@
-use tachiko_semantic_core::Value;
+use tachiko_semantic_core::{Date, Value};
 use tachiko_storage::{FormatError, from_str, to_canonical_string};
 
 const NUMERIC_GOLDEN: &str = include_str!("fixtures/direct-ro-v2-numeric-golden.ro");
@@ -151,6 +151,11 @@ fn v2_number_source(number: &str) -> String {
         .replace("NUMBER", number)
 }
 
+fn v2_date_source(date: &str) -> String {
+    r#"{"format_version":2,"id":"doc","title":"Date conformance","schemas":{"schema":{"id":"schema","key":"schema","fields":{"date":{"id":"date","key":"date","field_type":{"type":"date"},"required":true}}}},"entities":{"entity":{"id":"entity","key":"entity","schema":"schema","fields":{"date":{"kind":"date","value":"DATE"}}}}}"#
+        .replace("DATE", date)
+}
+
 fn assert_vector(input: &str, expected_bits: u64, canonical: &str) {
     let document = from_str(&v2_number_source(input)).unwrap();
     let Value::Number(number) = document.entities["entity"].fields["number"] else {
@@ -221,6 +226,32 @@ fn direct_ro_v2_rejects_positive_and_negative_overflow_to_infinity() {
         assert!(
             matches!(error, FormatError::InvalidRepresentation { .. }),
             "{input}: {error:?}"
+        );
+    }
+}
+
+#[test]
+fn direct_ro_v2_date_round_trips_canonically_and_rejects_fake_dates() {
+    let document = from_str(&v2_date_source("2024-02-29")).unwrap();
+    assert_eq!(
+        document.entities["entity"].fields["date"],
+        Value::Date("2024-02-29".parse::<Date>().unwrap())
+    );
+
+    let encoded = to_canonical_string(&document).unwrap();
+    assert!(encoded.contains(r#""type": "date""#));
+    assert!(encoded.contains(r#""kind": "date""#));
+    assert!(encoded.contains(r#""value": "2024-02-29""#));
+    assert_eq!(
+        to_canonical_string(&from_str(&encoded).unwrap()).unwrap(),
+        encoded
+    );
+
+    for invalid in ["1900-02-29", "2024-04-31", "2024-02-29T00:00:00Z"] {
+        let error = from_str(&v2_date_source(invalid)).unwrap_err();
+        assert!(
+            matches!(error, FormatError::InvalidRepresentation { .. }),
+            "{invalid}: {error:?}"
         );
     }
 }
