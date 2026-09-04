@@ -145,6 +145,10 @@ export class TrackerGrid {
                     default: return;
                 }
                 event.preventDefault();
+                if (this.pending) {
+                    this.#options.failed(new Error("Apply or cancel the cell draft before navigating to another cell."));
+                    return;
+                }
                 this.#focus = [Math.max(0, Math.min(r, this.#rows().length - 1)), Math.max(0, Math.min(c, 2))];
                 if (!event.shiftKey || event.key === "Tab")
                     this.#anchor = [...this.#focus];

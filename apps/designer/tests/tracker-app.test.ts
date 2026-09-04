@@ -8,10 +8,17 @@ afterEach(() => { mounted?.destroy(); document.body.replaceChildren(); vi.restor
 function fixture(): TableProjection {
     return { revision: "resident/0", collection: { id: "tracker", key: "tracker", entity_count: 1 }, columns: [{ id: "task", key: "task", field_type: "Text" }, { id: "estimate", key: "estimate", field_type: "Number" }, { id: "done", key: "done", field_type: "Boolean", dropdown_options: ["true", "false"] }], rows: [{ id: "item", key: "item", fields: [{ target: { entity: "item", field: "task" }, address: "item.task", stored: { kind: "text", value: "Accepted work" }, formula: null, calculated: null, diagnostics: [], editable_scalar: "text" }] }] };
 }
-async function setup(original = "Accepted work") {
+async function setup(original = "Accepted work", secondRow = false) {
     let table = fixture();
     const field = table.rows[0]?.fields[0];
     if (field) field.stored = {kind: "text", value: original};
+    if (secondRow && table.rows[0]) {
+        const row = structuredClone(table.rows[0]);
+        row.id = "other"; row.key = "other";
+        row.fields = row.fields.map(field => ({...field, target: {...field.target, entity: "other"}}));
+        table.rows.push(row);
+        table.collection.entity_count = 2;
+    }
     const queryTable = vi.fn(async () => structuredClone(table));
     const trackerCommand = vi.fn(async () => {
         const base = table.revision;
@@ -94,4 +101,19 @@ it("tracker Text editor preserves multiline values and rejects silent CRLF norma
     await vi.waitFor(() => { expect(root.textContent).toContain("original bytes remain unchanged"); });
     expect(trackerCommand).toHaveBeenCalledTimes(1);
     expect(root.querySelector<HTMLTextAreaElement>('[aria-label="Cell value"]')?.value).toBe("Modified\nSecond");
+});
+
+
+it("keyboard navigation cannot retarget a pending draft to another row", async () => {
+    const {root, trackerCommand} = await setup("Accepted work", true);
+    const editor = root.querySelector<HTMLTextAreaElement>('[aria-label="Cell value"]');
+    if (!editor) throw new Error("No editor");
+    editor.value = "Draft for first row";
+    editor.dispatchEvent(new Event("input", {bubbles: true}));
+    const firstCell = root.querySelector<HTMLElement>('[data-row="0"][data-col="0"]');
+    firstCell?.focus();
+    firstCell?.dispatchEvent(new KeyboardEvent("keydown", {key: "ArrowDown", bubbles: true, cancelable: true}));
+    root.querySelector<HTMLFormElement>("[data-tracker-edit]")?.dispatchEvent(new Event("submit", {bubbles: true, cancelable: true}));
+    await vi.waitFor(() => { expect(trackerCommand).toHaveBeenCalledOnce(); });
+    expect(trackerCommand.mock.calls[0]).toEqual([expect.objectContaining({start_entity: "item", rows: [["Draft for first row"]]})]);
 });
