@@ -18,9 +18,9 @@ The first product wedge is **game-balance data for technical designers and
 developers**. The complete workflow remains CLI-first, and the repository now
 also contains the first browser Designer vertical slice: a bounded typed table
 over the resident Rust runtime. The active roadmap horizon is
-[`06 · Team Workspace Beta`](docs/product/product-roadmap.md), focused on making
-semantic work reviewable and collaborative through machine deltas, deterministic
-merge/conflicts, history policy, permissions, and team review workflows.
+[`07 · Migration & Enterprise Beta`](docs/product/product-roadmap.md), focused
+on gradual adoption through evidence-backed Office/ODF/CSV interoperability,
+explicit migration, private extensions, and validated enterprise workflows.
 
 > **Public pre-alpha:** the repository is intentionally public for inspection and
 > early feedback. There is no tagged binary release yet, the graphical Designer
