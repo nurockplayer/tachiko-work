@@ -416,6 +416,16 @@ if ! physical_repo_root="$(cd "${repo_root}" && pwd -P)" || \
   echo "obstacle-course: could not resolve repository and TMPDIR paths" >&2
   exit 1
 fi
+physical_cargo_home="${CARGO_HOME:-}"
+if [[ -z "${physical_cargo_home}" && -n "${HOME:-}" ]]; then
+  physical_cargo_home="${HOME}/.cargo"
+fi
+if [[ -n "${physical_cargo_home}" && -d "${physical_cargo_home}" ]]; then
+  if ! physical_cargo_home="$(cd "${physical_cargo_home}" && pwd -P)"; then
+    echo "obstacle-course: could not resolve Cargo home path" >&2
+    exit 1
+  fi
+fi
 case "${physical_temp_root}/" in
   "${physical_repo_root}/"*)
     echo "obstacle-course: TMPDIR must resolve outside repository: '${course_temp_root}'" >&2
@@ -459,6 +469,7 @@ if [[ "${isolated_course}" -eq 0 ]]; then
   set +e
   TACHIKO_OBSTACLE_INTERNAL=1 \
     TMPDIR="${physical_temp_root}" \
+    CARGO_HOME="${physical_cargo_home}" \
     bash "${materialized_source_root}/scripts/obstacle-course.sh" \
       --internal-run-course "${requested_head}"
   course_status=$?

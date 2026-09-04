@@ -131,6 +131,7 @@ native_target="x86_64-pc-windows-msvc"
 normal_tmp="${test_dir}/normal-tmp"
 relative_tmp_root="${test_dir}/relative-tmp-root"
 relative_course_tmpdir="../relative-tmp-root/nested"
+relative_course_cargo_home="../normal-cargo-home"
 ancestor_tmp_root="${test_dir}/ancestor-tmp-root"
 ancestor_tmpdir="${ancestor_tmp_root}/nested"
 normal_cargo_home="${test_dir}/normal-cargo-home"
@@ -621,14 +622,19 @@ run_normal_course() {
   local stdout_file="$6"
   local stderr_file="$7"
   local course_tmpdir="${8:-${normal_tmp}}"
-  local course_tmp_root
+  local course_cargo_home="${9:-${normal_cargo_home}}"
+  local course_tmp_root course_cargo_root
   if ! course_tmp_root="$(cd "${course_tmpdir}" && pwd -P)"; then
     echo "obstacle-course test: could not resolve course TMPDIR '${course_tmpdir}'" >&2
     exit 1
   fi
+  if ! course_cargo_root="$(cd "${course_cargo_home}" && pwd -P)"; then
+    echo "obstacle-course test: could not resolve course CARGO_HOME '${course_cargo_home}'" >&2
+    exit 1
+  fi
   PATH="${normal_bin_dir}:${PATH}" \
     TMPDIR="${course_tmpdir}" \
-    CARGO_HOME="${normal_cargo_home}" \
+    CARGO_HOME="${course_cargo_home}" \
     CARGO_TARGET_DIR="${test_dir}/conflicting-env-target" \
     CARGO_BUILD_TARGET=conflicting-env-target \
     CARGO_BUILD_RUSTC="${normal_bin_dir}/cargo-rustc" \
@@ -683,7 +689,7 @@ run_normal_course() {
     FAKE_CARGO_RUSTC="${normal_bin_dir}/cargo-rustc" \
     FAKE_REPO_ROOT="${normal_repo}" \
     FAKE_COURSE_TMP_ROOT="${course_tmp_root}" \
-    FAKE_USER_CARGO_HOME="${normal_cargo_home}" \
+    FAKE_USER_CARGO_HOME="${course_cargo_root}" \
     FAKE_MATERIALIZATION_TEMPLATE="${normal_materialization_template}" \
     FAKE_IGNORED_CARGO_INPUT_RELATIVE="${ignored_cargo_input_relative}" \
     FAKE_PERSISTENT_TARGET_DIR="${persistent_target_dir}" \
@@ -832,6 +838,30 @@ if grep -Fq "obstacle-course: TMPDIR is not a directory" \
 fi
 if ! grep -F "cargo command=build" "${normal_log}" >/dev/null; then
   echo "obstacle-course test: relative TMPDIR did not reach the isolated Cargo stage" >&2
+  sed 's/^/  /' "${normal_log}" >&2
+  exit 1
+fi
+
+: >"${normal_log}"
+if (
+  cd "${normal_repo}"
+  run_normal_course 0 0 0 0 0 \
+    "${test_dir}/relative-cargo-home.out" \
+    "${test_dir}/relative-cargo-home.err" \
+    "${normal_tmp}" \
+    "${relative_course_cargo_home}"
+); then
+  echo "obstacle-course test: relative CARGO_HOME fake stage unexpectedly passed" >&2
+  exit 1
+fi
+if grep -Fq "fake cargo: offline dependency/source caches were not preserved" \
+  "${test_dir}/relative-cargo-home.err"; then
+  echo "obstacle-course test: valid relative CARGO_HOME was not preserved across isolated re-exec" >&2
+  sed 's/^/  /' "${test_dir}/relative-cargo-home.err" >&2
+  exit 1
+fi
+if ! grep -F "cargo-home root=" "${normal_log}" >/dev/null; then
+  echo "obstacle-course test: relative CARGO_HOME did not reach the isolated Cargo stage" >&2
   sed 's/^/  /' "${normal_log}" >&2
   exit 1
 fi
