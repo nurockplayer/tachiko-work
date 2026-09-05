@@ -112,6 +112,17 @@ describe("Designer Worker request lifecycle", () => {
     }
   });
 
+  it("ignores a late reply after Worker error rejects a request without reading its payload", async () => {
+    const worker = transport();
+    const result = worker.client.queryTable("worker-error");
+    const id = worker.request(0).id;
+    worker.fail("worker crashed");
+    await expect(result).rejects.toThrow("worker crashed");
+    expect(() => {
+      worker.reply(poisonReply(id));
+    }).not.toThrow();
+  });
+
   it("terminates the Worker and rejects all pending requests when the client closes", async () => {
     const worker = transport();
     const results = Promise.allSettled([
