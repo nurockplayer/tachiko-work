@@ -153,6 +153,27 @@ recruitment and commercial release remain separate gates. The existing
 [R1 rehearsal](https://github.com/nurockplayer/tachiko-work/issues/256#issuecomment-5548237554)
 retains its original pinned build and consent conditions.
 
+The [acceptance matrix](../../docs/product/driver-common-profile-acceptance.md)
+records all 15 bundles, six golden journeys and remaining promotion gates.
+For a maintainer-only local candidate, use an existing output parent and a new
+output directory:
+
+```sh
+bash scripts/package-designer-rc.sh /absolute/existing-parent/new-designer-rc HEAD
+bash scripts/verify-designer-rc.sh /absolute/existing-parent/new-designer-rc HEAD
+```
+
+Run these commands from the repository root with the declared Rust, Node,
+pnpm and Chromium prerequisites. Packaging builds an isolated Git archive of
+the specified commit with frozen dependencies and a fresh Cargo home. The
+output includes the static `site/`, source/tool versions, licenses, build log,
+file manifest and archive checksum. Verification uses tests from the same Git
+commit against the packaged site and preserves browser results. Existing
+output/evidence directories are refused; use a new candidate for another run.
+Hashes check local integrity, not publisher authenticity, and no byte-identical
+rebuild guarantee is made. These scripts neither publish a channel nor collect
+target-user evidence.
+
 ## Driver reports (#260)
 
 In a Budget or numeric imported table, choose **Create chart from selected
