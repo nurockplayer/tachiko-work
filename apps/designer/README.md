@@ -142,6 +142,38 @@ This closes only the bounded tracker journey, not Excel parity or the public
 launch gate. No CSV/XLSX compatibility, multi-sheet, formula expansion, custom
 validation engine, cloud sync, or durable history is added.
 
+## Public-product promotion (#261)
+
+The bounded Tracker, Budget, spreadsheet and report slices are engineering
+deliveries. Their completion does not establish the full Driver Common Profile,
+ordinary public distribution or representative-user acceptance.
+[#261's preparation authority](https://github.com/nurockplayer/tachiko-work/issues/261#issuecomment-5547884895)
+permits local RC packaging and automated evidence; public deployment/promotion,
+recruitment and commercial release remain separate gates. The existing
+[R1 rehearsal](https://github.com/nurockplayer/tachiko-work/issues/256#issuecomment-5548237554)
+retains its original pinned build and consent conditions.
+
+The [acceptance matrix](../../docs/product/driver-common-profile-acceptance.md)
+records all 15 bundles, six golden journeys and remaining promotion gates.
+For a maintainer-only local candidate, use an existing output parent and a new
+output directory:
+
+```sh
+bash scripts/package-designer-rc.sh /absolute/existing-parent/new-designer-rc HEAD
+bash scripts/verify-designer-rc.sh /absolute/existing-parent/new-designer-rc HEAD
+```
+
+Run these commands from the repository root with the declared Rust, Node,
+pnpm and Chromium prerequisites. Packaging builds an isolated Git archive of
+the specified commit with frozen dependencies and a fresh Cargo home. The
+output includes the static `site/`, source/tool versions, licenses, build log,
+file manifest and archive checksum. Verification uses tests from the same Git
+commit against the packaged site and preserves browser results. Existing
+output/evidence directories are refused; use a new candidate for another run.
+Hashes check local integrity, not publisher authenticity, and no byte-identical
+rebuild guarantee is made. These scripts neither publish a channel nor collect
+target-user evidence.
+
 ## Driver reports (#260)
 
 In a Budget or numeric imported table, choose **Create chart from selected

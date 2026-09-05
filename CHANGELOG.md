@@ -6,6 +6,10 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- Maintainers can package an exact-commit local Designer release candidate and
+  verify its static artifact with isolated browser journeys. The accompanying
+  Driver acceptance matrix keeps remaining product and public-promotion gates
+  explicit; this preparation does not publish or promote a release.
 - The Designer creates bounded column and line reports from selected stable
   source rows and numeric fields, updates from current semantic results, and
   saves editable chart settings with browser projects. Current charts can be
