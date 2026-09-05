@@ -3,7 +3,6 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 smoke="${repo_root}/scripts/experimental-designer-client-smoke.sh"
-expected_files=$'README.md\ndesigner_runtime.wasm\nexperimental-client.d.ts\nexperimental-client.js\nexperimental-client.worker.d.ts\nexperimental-client.worker.js\nhost/project-transfer.d.ts\nhost/project-transfer.js\npackage.json\nruntime/client.d.ts\nruntime/client.js\nruntime/interop-protocol.d.ts\nruntime/interop-protocol.js\nruntime/protocol.d.ts\nruntime/protocol.js\nruntime/wasm-bridge.d.ts\nruntime/wasm-bridge.js\nruntime/worker-client.d.ts\nruntime/worker-client.js\nruntime/worker-runtime.d.ts\nruntime/worker-runtime.js'
 
 make_fixture() {
   local root="$1"
@@ -22,11 +21,30 @@ EOF
 #!/usr/bin/env bash
 exit 0
 EOF
-  cat >"${root}/bin/find" <<EOF
+  cat >"${root}/bin/find" <<'EOF'
 #!/usr/bin/env bash
-cat <<'FILES'
-${expected_files}
-FILES
+printf '%s\n' \
+  'README.md' \
+  'designer_runtime.wasm' \
+  'experimental-client.d.ts' \
+  'experimental-client.js' \
+  'experimental-client.worker.d.ts' \
+  'experimental-client.worker.js' \
+  'host/project-transfer.d.ts' \
+  'host/project-transfer.js' \
+  'package.json' \
+  'runtime/client.d.ts' \
+  'runtime/client.js' \
+  'runtime/interop-protocol.d.ts' \
+  'runtime/interop-protocol.js' \
+  'runtime/protocol.d.ts' \
+  'runtime/protocol.js' \
+  'runtime/wasm-bridge.d.ts' \
+  'runtime/wasm-bridge.js' \
+  'runtime/worker-client.d.ts' \
+  'runtime/worker-client.js' \
+  'runtime/worker-runtime.d.ts' \
+  'runtime/worker-runtime.js'
 EOF
   cat >"${root}/bin/pnpm" <<'EOF'
 #!/usr/bin/env bash
@@ -40,7 +58,6 @@ run_case() {
   local expected="$2"
   local root
   root="$(mktemp -d "${TMPDIR:-/tmp}/tachiko-source-boundary-test.XXXXXX")"
-  trap 'rm -rf -- "${root}"' RETURN
   make_fixture "${root}"
 
   cat >"${root}/bin/rg" <<EOF
@@ -56,6 +73,7 @@ EOF
   PATH="${root}/bin" /bin/bash "${root}/scripts/experimental-designer-client-smoke.sh" >/dev/null 2>&1
   local status=$?
   set -e
+  rm -rf -- "${root}"
 
   case "${expected}" in
     success)
