@@ -201,6 +201,9 @@ findings, and unknown constructs block acceptance.
 Source formula caches are evidence only: supported formulas are rebound and
 calculated by Rust even when caches are absent or stale errors. This does not
 admit unsupported formulas or bypass validation of their XML structure.
+Currency display is bounded to the declared JPY/USD patterns, including Excel
+locale tokens. Other currency/locale patterns use ordinary Number display;
+the complete source number format is retained unless explicitly changed.
 
 The existing table and Rust formula tools edit the imported collections.
 Sorting/filtering change only the view and target stable identities. Cleanup

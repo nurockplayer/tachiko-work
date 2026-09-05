@@ -29,16 +29,18 @@ function button(root: HTMLElement, label: string): HTMLButtonElement {
 const cleanups: Array<() => void> = [];
 afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.replaceChildren(); });
 
-async function fixture() {
+async function fixture(numberFormat?: string) {
+  const project = structuredClone(imported);
+  if (numberFormat !== undefined) project.metadata.sheets[0]!.rows[0]!.styles[0]!.number_format = numberFormat;
   const root = document.createElement("div"); document.body.append(root);
   const inspection = deferred<SourceWorkbook>();
   const receipt: SpreadsheetExport = { revision: "resident/0", bytes: new Uint8Array([80, 75, 1, 2]).buffer, ledger: [{ category: "converted", code: "captured-ledger", location: "Amounts", message: "Captured export evidence", blocking: false }] };
   const client = {
-    bootstrap: vi.fn(async () => structuredClone(imported.opened.bootstrap)),
-    inspectProject: vi.fn(async () => structuredClone(imported.opened)),
-    inspectImportedProject: vi.fn(async () => structuredClone(imported.opened)),
-    openProject: vi.fn(async () => structuredClone(imported.opened)),
-    queryTable: vi.fn(async () => structuredClone(imported.opened.table)),
+    bootstrap: vi.fn(async () => structuredClone(project.opened.bootstrap)),
+    inspectProject: vi.fn(async () => structuredClone(project.opened)),
+    inspectImportedProject: vi.fn(async () => structuredClone(project.opened)),
+    openProject: vi.fn(async () => structuredClone(project.opened)),
+    queryTable: vi.fn(async () => structuredClone(project.opened.table)),
     queryFields: vi.fn(async () => ({ revision: "resident/0", fields: [] })),
     exportProject: vi.fn(async () => ({ revision: "resident/0", bytes: new ArrayBuffer(8) })),
     closeProject: vi.fn(async () => {}), close: vi.fn(),
@@ -47,10 +49,11 @@ async function fixture() {
     editBoolean: vi.fn(async () => { throw new Error("Unused edit"); }),
     editDate: vi.fn(async () => { throw new Error("Unused edit"); }),
     inspectSpreadsheet: vi.fn(() => inspection.promise),
-    exportSpreadsheet: vi.fn(async () => receipt),
+    exportSpreadsheet: vi.fn<NonNullable<DesignerClient["exportSpreadsheet"]>>().mockResolvedValue(receipt),
+    importSpreadsheet: vi.fn<NonNullable<DesignerClient["importSpreadsheet"]>>().mockImplementation(async (_bytes, _format, _options, _selection, validate) => { validate?.(project); return structuredClone(project); }),
   } satisfies DesignerClient;
   const source = { name: "saved.csv", format: "csv" as const, bytes: new TextEncoder().encode("Amount\n12\n").buffer };
-  const presentation = JSON.stringify({ ...emptyTrackerView(), budgetViews: defaultBudgetViews(["sheet-id"]), interop: createInteropState(imported, source) });
+  const presentation = JSON.stringify({ ...emptyTrackerView(), budgetViews: defaultBudgetViews(["sheet-id"]), interop: createInteropState(project, source) });
   const host = {
     list: vi.fn(async () => [{ name: "saved.roproj", byte_length: 8, saved_at: "2026-09-05T00:00:00Z" }]),
     read: vi.fn(async () => new ArrayBuffer(8)),
@@ -65,13 +68,13 @@ async function fixture() {
   await app.ready;
   root.querySelector<HTMLButtonElement>("[data-open-project]")!.click();
   await vi.waitFor(() => { expect(button(root, "Export XLSX").disabled).toBe(false); });
-  const inspect = async () => {
+  const inspect = async (name = "other.csv") => {
     const file = root.querySelector<HTMLInputElement>('[aria-label="Spreadsheet file"]')!;
-    Object.defineProperty(file, "files", { value: [new File(["Other\n"], "other.csv")], configurable: true });
+    Object.defineProperty(file, "files", { value: [new File(["Other\n"], name)], configurable: true });
     file.dispatchEvent(new Event("change"));
     await vi.waitFor(() => { expect(client.inspectSpreadsheet).toHaveBeenCalledTimes(1); });
   };
-  return { root, app, client, host, receipt, inspection, inspect, download };
+  return { root, app, client, host, receipt, inspection, inspect, download, project };
 }
 
 describe("spreadsheet export review ownership", () => {
@@ -132,5 +135,37 @@ describe("spreadsheet export review ownership", () => {
     expect(replacement.disabled).toBe(false);
     expect(download).not.toHaveBeenCalled();
     expect(client.close).toHaveBeenCalled();
+  });
+});
+
+describe("localized imported currency presentation", () => {
+  it("imports localized JPY as JPY and preserves its original pattern until an explicit different format is selected", async () => {
+    const pattern = "[$¥-411]#,##0";
+    const { root, client, inspection, inspect, project } = await fixture(pattern);
+    await inspect("localized-jpy.xlsx");
+    inspection.resolve({ sheets: [{ name: "Amounts", has_header: true, columns: [{ name: "Amount", width: null }], rows: [[{ value: { kind: "number", value: 12 }, formula: null, style: structuredClone(project.metadata.sheets[0]!.rows[0]!.styles[0]!) }]] }], ledger: [] });
+    await vi.waitFor(() => { expect(button(root, "Accept types and import").disabled).toBe(false); });
+    button(root, "Accept types and import").click();
+    await vi.waitFor(() => { expect(root.textContent).toContain("Spreadsheet imported"); });
+    expect(client.importSpreadsheet).toHaveBeenCalledTimes(1);
+    expect(root.querySelector("[data-format-cycle]")?.textContent).toBe("JPY");
+    expect(root.querySelector("[data-formatted-number]")?.textContent).toBe(new Intl.NumberFormat("ja-JP", { style: "currency", currency: "JPY", maximumFractionDigits: 0 }).format(12));
+    const exportAndCancel = async (expectedFormat: string) => {
+      const prior = client.exportSpreadsheet.mock.calls.length;
+      button(root, "Export XLSX").click();
+      await vi.waitFor(() => { expect(root.querySelector('[aria-label="Export compatibility review"]')).not.toBeNull(); });
+      expect(client.exportSpreadsheet.mock.calls[prior]?.[1].sheets[0]?.rows[0]?.styles[0]?.number_format).toBe(expectedFormat);
+      button(root, "Cancel export").click();
+    };
+    await exportAndCancel(pattern);
+    // JPY -> Percentage -> USD -> Number -> JPY. Only explicit changes
+    // replace the source format; returning to JPY restores its exact pattern.
+    for (const [label, exportedPattern] of [["Percentage", "0.00%"], ["USD", "$0.00"], ["Number", "0.00"], ["JPY", pattern]]) {
+      root.querySelector<HTMLButtonElement>("[data-format-cycle]")!.click();
+      expect(root.querySelector("[data-format-cycle]")?.textContent).toBe(label);
+      await exportAndCancel(exportedPattern!);
+    }
+    expect(project.metadata.sheets[0]?.rows[0]?.styles[0]?.number_format).toBe(pattern);
+    expect(root.querySelector<HTMLInputElement>('input[type="number"]')?.value).toBe("12");
   });
 });

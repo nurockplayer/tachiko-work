@@ -1,4 +1,5 @@
 import { createInteropState } from "./interop-state.ts";
+import { importedNumberFormat } from "./interop-number-format.ts";
 import { emptyGenericTableView, mountInteropTableView, projectInteropTable } from "./interop-table-view.ts";
 import { SpreadsheetImportPanel, mountCleanupPanel, mountFidelityLedger, downloadSpreadsheet } from "./interop-panel.ts";
 import type { CleanupPreview, SpreadsheetFormat, SpreadsheetExport, FidelityFinding } from "./runtime/interop-protocol.ts";
@@ -217,10 +218,8 @@ export function mountDesigner(
         const column = sheet.columns[index]; if (!column) return;
         const key = cellKey(row.entity_id, column.field_id);
         tracker.view.cells[key] = {bold: style.bold, fill: style.fill !== null, wrap: style.wrap, border: style.border, ...(style.alignment && ["left", "center", "right"].includes(style.alignment) ? {align: style.alignment as "left" | "center" | "right"} : {})};
-        const format = style.number_format;
-        if (format?.includes("%")) tracker.view.formats[key] = "percentage";
-        else if (format?.includes("$")) tracker.view.formats[key] = "currency-usd";
-        else if (format?.includes("¥")) tracker.view.formats[key] = "currency-jpy";
+        const format = importedNumberFormat(style.number_format);
+        if (format !== "number") tracker.view.formats[key] = format;
       });
       durability.install(imported.opened.bootstrap.revision, false);
       await refreshBudgetTables(imported.opened.bootstrap.revision);
@@ -286,7 +285,7 @@ export function mountDesigner(
             const col = sheet.columns[index]; if (!col) return; const key = cellKey(row.entity_id, col.field_id);
             const viewStyle = tracker.view.cells[key]; if (viewStyle) { style.fill = viewStyle.fill ? (style.fill ?? "FFF1BA") : null; style.bold = viewStyle.bold ?? false; style.wrap = viewStyle.wrap ?? false; style.border = viewStyle.border ?? false; style.alignment = viewStyle.align ?? null; }
             const original = style.number_format;
-            const importedFormat = original?.includes("%") ? "percentage" : original?.includes("$") ? "currency-usd" : original?.includes("¥") ? "currency-jpy" : "number";
+            const importedFormat = importedNumberFormat(original);
             const format = tracker.view.formats[key];
             // Preserve source precision/pattern unless the user selected a different format.
             if (format && format !== importedFormat) style.number_format = {number: "0.00", percentage: "0.00%", "currency-usd": '$0.00', "currency-jpy": '¥0'}[format];
