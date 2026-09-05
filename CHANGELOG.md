@@ -6,6 +6,11 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- The browser Designer can export the exact native Driver Tracker profile as
+  values-only CSV or typed XLSX for 0–128 current rows. This outbound-only path
+  preserves stable row mapping and supported cell styles without fabricating
+  spreadsheet-import metadata; incoming/shared spreadsheet admission remains
+  capped at 64 rows.
 - Maintainers can package an exact-commit local Designer release candidate and
   verify its static artifact with isolated browser journeys. The accompanying
   Driver acceptance matrix keeps remaining product and public-promotion gates

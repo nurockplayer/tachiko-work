@@ -328,7 +328,7 @@ export function mountDesigner(
     const current = store.snapshot().currentness === "current";
     const interop = tracker.view.interop;
     if (!interop) {
-      if (!table.tracker_profile) return;
+      if (!table.tracker_profile || bootstrap?.collections.length !== 1) return;
       const exportPanel = document.createElement("section"); exportPanel.setAttribute("aria-label", "Export native Tracker");
       const exportRows = orderedRows(table, tracker.view);
       const order = tracker.view.order.length ? "the saved manual row order" : "deterministic canonical row order";
@@ -342,7 +342,7 @@ export function mountDesigner(
         })),
       });
       for (const format of ["csv", "xlsx"] as SpreadsheetFormat[]) {
-        const button = document.createElement("button"); button.textContent = `Export Tracker ${format.toUpperCase()}`; button.disabled = busy || !current || hasEditDrafts();
+        const button = document.createElement("button"); button.textContent = `Export Tracker ${format.toUpperCase()}`; button.disabled = busy || !current || hasEditDrafts() || !client.exportNativeTrackerSpreadsheet;
         button.addEventListener("click", () => { void (async () => {
           if (!client.exportNativeTrackerSpreadsheet || busy || !store) return;
           busy = true; render();

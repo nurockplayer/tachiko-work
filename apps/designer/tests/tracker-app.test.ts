@@ -9,7 +9,7 @@ afterEach(() => { mounted?.destroy(); document.body.replaceChildren(); vi.restor
 function fixture(): TableProjection {
     return { tracker_profile: true, revision: "resident/0", collection: { id: "tracker", key: "tracker", entity_count: 1 }, columns: [{ id: "task", key: "task", field_type: "Text" }, { id: "estimate", key: "estimate", field_type: "Number" }, { id: "done", key: "done", field_type: "Boolean", dropdown_options: ["true", "false"] }], rows: [{ id: "item", key: "item", fields: [{ target: { entity: "item", field: "task" }, address: "item.task", stored: { kind: "text", value: "Accepted work" }, formula: null, calculated: null, diagnostics: [], editable_scalar: "text" }] }] };
 }
-async function setup(original = "Accepted work", secondRow = false, stock = true, mixed = false) {
+async function setup(original = "Accepted work", secondRow = false, stock = true, mixed = false, nativeExport = true) {
     let table = fixture();
     if (!stock) { delete table.tracker_profile; table.collection.id = "ordinary"; }
     const field = table.rows[0]?.fields[0];
@@ -40,7 +40,7 @@ async function setup(original = "Accepted work", secondRow = false, stock = true
     const client: DesignerClient = {
         bootstrap: async () => ({ title: "Driver Tracker", revision: table.revision, default_collection: "tracker", collections: mixed ? [table.collection, ordinary.collection] : [table.collection] }),
         queryTable, trackerCommand,
-        openProject: vi.fn(), exportProject, exportNativeTrackerSpreadsheet, closeProject: vi.fn(), queryFields: vi.fn(), editNumber: vi.fn(), editText: vi.fn(), editBoolean: vi.fn(), editDate: vi.fn(), close: vi.fn(),
+        openProject: vi.fn(), exportProject, ...(nativeExport ? {exportNativeTrackerSpreadsheet} : {}), closeProject: vi.fn(), queryFields: vi.fn(), editNumber: vi.fn(), editText: vi.fn(), editBoolean: vi.fn(), editDate: vi.fn(), close: vi.fn(),
     };
     const host: DesignerProjectHost = { list: async () => [], read: vi.fn(), publish };
     const root = document.createElement("div");
@@ -66,6 +66,16 @@ it("exports the complete native Tracker by stable row identity before fidelity a
     expect(root.textContent).toContain("Exports all 2 accepted Tracker rows");
     [...root.querySelectorAll<HTMLButtonElement>("button")].find(control => control.textContent === "Cancel export")?.click();
     await vi.waitFor(() => { expect(root.querySelector('[aria-label="Export compatibility review"]')).toBeNull(); });
+});
+it("does not offer the single-schema native export from a multi-collection project", async () => {
+    const {root} = await setup("Accepted work", false, true, true);
+    expect(root.querySelector('[aria-label="Export native Tracker"]')).toBeNull();
+});
+it("disables native export when the client does not provide that capability", async () => {
+    const {root} = await setup("Accepted work", false, true, false, false);
+    const buttons = [...root.querySelectorAll<HTMLButtonElement>("button")].filter(control => control.textContent.startsWith("Export Tracker"));
+    expect(buttons).toHaveLength(2);
+    expect(buttons.every(button => button.disabled)).toBe(true);
 });
 it("accepted publication stays saveable when its projection refresh fails and can retry", async () => {
     const { root, exportProject, publish, queryTable, trackerCommand } = await setup();
