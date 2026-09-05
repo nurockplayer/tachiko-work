@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-test.describe.configure({ mode: "serial" });
+test.describe.configure({ mode: "default" });
 const cell = (page: Page, address: string) => page.locator(`[data-field="${address}"]`);
 const tools = (page: Page) => page.getByRole("region", { name: "Budget formulas", exact: true });
 const item = (row: string, field: string) => `Budget Items / ${row} / ${field}`;
