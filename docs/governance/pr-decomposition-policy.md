@@ -98,11 +98,22 @@ Instead:
    durable state;
 3. ask the Project Steward to reconcile the scope boundary while the active
    delivery loop remains live; and
-4. resume the bounded delivery loop after the Steward either confirms that the
-   remaining work is inseparable and still bounded, or keeps the active PR on
-   its coherent slice and creates follow-up/child Issue(s) for adjacent work.
+4. resume the bounded delivery loop only after the Steward records one of these
+   outcomes:
+   - the remaining work is inseparable and still bounded, so it remains in the
+     active Issue/PR; or
+   - the adjacent concern is outside the active Issue's current acceptance
+     criteria, so it moves to follow-up/child Issue(s); or
+   - the adjacent concern is currently required by the active Issue, and the
+     Steward explicitly re-scopes that Issue and its acceptance criteria before
+     moving the concern to follow-up/child Issue(s).
 
-Only if that reconciliation exposes an existing canonical stop condition -- for
+A follow-up Issue never, by itself, removes an existing acceptance requirement
+from the active Issue. Re-scoping must be explicit and must not be used to evade
+a valid correctness, security, data-integrity, Accepted-authority, or other
+blocking requirement.
+
+Only if reconciliation exposes an existing canonical stop condition -- for
 example an unresolved durable architecture/product decision, Accepted-authority
 conflict, or external permission requirement -- does the normal stop/escalation
 contract apply. Creating a follow-up Issue for separable work is not itself a
