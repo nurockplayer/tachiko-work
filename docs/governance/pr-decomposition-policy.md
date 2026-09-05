@@ -87,14 +87,26 @@ A Ready Issue may reveal more work than expected. When implementation starts to
 cross into an adjacent independently reviewable concern, the delivery agent must
 not silently absorb that scope merely to finish the original product goal.
 
+Scope reconciliation here is a **non-terminal step inside the active delivery
+loop**. It does not by itself satisfy a canonical stop condition, end the agent
+run, or transfer ownership of the active Issue/PR.
+
 Instead:
 
-1. stop speculative expansion;
+1. stop speculative expansion into the adjacent concern;
 2. preserve the current coherent work and evidence in repository-approved
    durable state;
-3. return the scope boundary to the Project Steward; and
-4. let the Steward either confirm that the remaining work is inseparable and
-   still bounded, or create follow-up/child Issue(s) for the adjacent concern.
+3. ask the Project Steward to reconcile the scope boundary while the active
+   delivery loop remains live; and
+4. resume the bounded delivery loop after the Steward either confirms that the
+   remaining work is inseparable and still bounded, or keeps the active PR on
+   its coherent slice and creates follow-up/child Issue(s) for adjacent work.
+
+Only if that reconciliation exposes an existing canonical stop condition -- for
+example an unresolved durable architecture/product decision, Accepted-authority
+conflict, or external permission requirement -- does the normal stop/escalation
+contract apply. Creating a follow-up Issue for separable work is not itself a
+reason to abandon or prematurely stop an otherwise valid active PR.
 
 Do not split an already-active PR into arbitrary fragments solely to satisfy a
 number. The purpose of this policy is to prevent oversized review units through
