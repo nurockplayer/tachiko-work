@@ -1,3 +1,6 @@
+import { reconcileTextEdit, normalizeLineEndings } from "./text-edit.ts";
+import { TrackerGrid } from "./tracker-grid.ts";
+import { parseTrackerView, emptyTrackerView } from "./tracker-model.ts";
 import { createProjectionStore, type ProjectionStore } from "./projection-store.ts";
 import { createDurabilityState } from "./durability-state.ts";
 import type {
@@ -36,6 +39,30 @@ export function mountDesigner(
   client: DesignerClient,
   host: DesignerProjectHost,
 ): MountedDesigner {
+  let activeProject: {name: string; bytes: ArrayBuffer; presentation?: string | undefined} | null = null;
+  let savedView = JSON.stringify(emptyTrackerView());
+  const tracker = new TrackerGrid({
+    command: async (request) => {
+      if (!client.trackerCommand || !store || busy) throw new Error("Tracker is unavailable.");
+      busy = true; notice = null; render();
+      let published = false;
+      try {
+        const publication = await client.trackerCommand(request);
+        published = true;
+        store.beginPublication(publication);
+        durability.observe(publication.resulting_revision);
+        const table = await client.queryTable(selectedCollection);
+        if (table.revision !== publication.resulting_revision) throw new Error("Tracker refresh is not current.");
+        store = createProjectionStore(table);
+        if (bootstrap) bootstrap = {...bootstrap, revision: table.revision, collections: bootstrap.collections.map(c => c.key === table.collection.key ? table.collection : c)};
+      } catch (error) { showFailure(error, published); if (!published) throw error; }
+      finally { busy = false; syncBeforeUnloadGuard(); render(); }
+    },
+    changed: () => { if (store?.snapshot().currentness === "current") notice = null; reflectUnsavedState(); },
+    failed: error => { showProjectFailure("Tracker operation not completed", error); render(); },
+    render: () => { render(); },
+  });
+  const viewDirty = (): boolean => JSON.stringify(tracker.view) !== savedView;
   let bootstrap: BootstrapProjection | null = null;
   let store: ProjectionStore | null = null;
   let selectedCollection = "";
@@ -48,6 +75,7 @@ export function mountDesigner(
   const pendingBooleanBuffers = new Map<string, boolean>();
   const pendingDateBuffers = new Map<string, string>();
   const hasPendingScalarDrafts = (): boolean =>
+    tracker.pending || viewDirty() ||
     pendingTextBuffers.size > 0 ||
     pendingBooleanBuffers.size > 0 ||
     pendingDateBuffers.size > 0;
@@ -109,6 +137,12 @@ export function mountDesigner(
       savedProjects,
       selectedSavedProject,
     );
+    if (snapshot.table.tracker_profile === true) {
+      const workbench = root.querySelector(".table-workbench");
+      if (workbench) workbench.innerHTML = `${noticeMarkup(notice)}${snapshot.currentness === "refresh_failed" ? '<button data-tracker-refresh>Retry refresh</button>' : ""}${tracker.markup(snapshot.table, busy || snapshot.currentness !== "current")}`;
+      tracker.bind(root, busy || snapshot.currentness !== "current");
+      root.querySelector("[data-tracker-refresh]")?.addEventListener("click", () => { void selectCollection(selectedCollection); });
+    }
     hydrateDraftControls();
     bindInteractions();
   };
@@ -145,6 +179,9 @@ export function mountDesigner(
     try {
       const publication = await publish(store.snapshot().table.revision);
       published = true;
+      // Rust clears its session history for this accepted generic publication.
+      // Invalidate the matching UI history before any fallible refresh work.
+      tracker.invalidateHistory();
       onPublished?.();
       const requested = store.beginPublication(publication);
       durability.observe(publication.resulting_revision);
@@ -232,6 +269,7 @@ export function mountDesigner(
       throw new Error("Initial projection does not match the bootstrap revision.");
     }
     const nextStore = createProjectionStore(table);
+    tracker.reset(); savedView = JSON.stringify(tracker.view); activeProject = null;
     pendingTextBuffers.clear();
     pendingBooleanBuffers.clear();
     pendingDateBuffers.clear();
@@ -245,6 +283,7 @@ export function mountDesigner(
 
   const installOpenedOccurrence = (opened: OpenedProjection): void => {
     const nextStore = createProjectionStore(opened.table);
+    tracker.reset(); savedView = JSON.stringify(tracker.view); activeProject = null;
     pendingTextBuffers.clear();
     pendingBooleanBuffers.clear();
     pendingDateBuffers.clear();
@@ -294,8 +333,12 @@ export function mountDesigner(
     notice = null;
     render();
     try {
-      const bytes = await host.read(selectedSavedProject);
-      await installProjectBytes(bytes);
+      const snapshot = host.readSnapshot ? await host.readSnapshot(selectedSavedProject) : {bytes: await host.read(selectedSavedProject), presentation: undefined};
+      const view = parseTrackerView(snapshot.presentation);
+      const durableBytes = snapshot.bytes.slice(0);
+      await installProjectBytes(snapshot.bytes);
+      tracker.reset(view); savedView = JSON.stringify(view);
+      activeProject = {name: selectedSavedProject, bytes: durableBytes, presentation: snapshot.presentation};
       notice = {
         tone: "success",
         title: "Project opened",
@@ -346,6 +389,7 @@ export function mountDesigner(
 
   const saveAs = async (): Promise<void> => {
     if (store === null || busy) return;
+    if (tracker.pending) { showProjectFailure("Project not saved", new Error("Apply or cancel the cell draft before saving.")); render(); return; }
     const requestedName = window.prompt(
       "Save As a new browser project (existing destinations are never overwritten):",
       `${bootstrap?.title.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-").replaceAll(/^-|-$/g, "") || "project"}.roproj`,
@@ -357,7 +401,10 @@ export function mountDesigner(
     try {
       const expectedRevision = store.snapshot().table.revision;
       const project = await client.exportProject(expectedRevision);
-      await host.publish(requestedName, project.bytes);
+      const presentation = JSON.stringify(tracker.view);
+      await host.publish(requestedName, project.bytes, presentation);
+      activeProject = {name: requestedName.trim(), bytes: project.bytes.slice(0), presentation};
+      savedView = presentation;
       durability.published(project.revision);
       syncBeforeUnloadGuard();
       let refreshWarning = "";
@@ -384,6 +431,31 @@ export function mountDesigner(
     }
   };
 
+  const newTracker = async (): Promise<void> => {
+    if (busy || !client.newTracker || !confirmDiscardDirtyOccurrence("New Tracker")) return;
+    busy = true; notice = null; render();
+    try { installOpenedOccurrence(await client.newTracker()); durability.install(store?.snapshot().table.revision ?? "", false); }
+    catch (error) { showProjectFailure("Tracker not created", error); }
+    finally { busy = false; syncBeforeUnloadGuard(); render(); }
+  };
+
+  const save = async (): Promise<void> => {
+    if (activeProject === null) { await saveAs(); return; }
+    if (!store || busy) return;
+    if (tracker.pending) { showProjectFailure("Project not saved", new Error("Apply or cancel the cell draft before saving.")); render(); return; }
+    busy = true; notice = null; render();
+    try {
+      if (!host.update) throw new Error("This browser host does not support Save; use Save As.");
+      const project = await client.exportProject(store.snapshot().table.revision);
+      const presentation = JSON.stringify(tracker.view);
+      await host.update(activeProject.name, project.bytes, activeProject.bytes, presentation, activeProject.presentation);
+      activeProject = {...activeProject, bytes: project.bytes.slice(0), presentation};
+      savedView = presentation; durability.published(project.revision);
+      notice = {tone: "success", title: "Save complete", message: `${activeProject.name} saved in this browser.`, diagnostics: []};
+    } catch (error) { showProjectFailure("Project not saved", error); }
+    finally { busy = false; syncBeforeUnloadGuard(); render(); }
+  };
+
   const closeOccurrence = async (): Promise<void> => {
     if (busy) return;
     if (!confirmDiscardDirtyOccurrence("Close")) return;
@@ -395,6 +467,7 @@ export function mountDesigner(
       pendingTextBuffers.clear();
       pendingBooleanBuffers.clear();
       pendingDateBuffers.clear();
+      tracker.reset(); savedView = JSON.stringify(tracker.view); activeProject = null;
       bootstrap = null;
       store = null;
       selectedCollection = "";
@@ -416,6 +489,8 @@ export function mountDesigner(
   };
 
   const bindInteractions = (): void => {
+    root.querySelector("[data-new-tracker]")?.addEventListener("click", () => { void newTracker(); });
+    root.querySelector("[data-save-project]")?.addEventListener("click", () => { void save(); });
     root.querySelectorAll<HTMLFormElement>("[data-edit-form]").forEach((form) => {
       const draftControl = form.querySelector<HTMLTextAreaElement>("textarea");
       const draftBoolean = form.querySelector<HTMLInputElement>('input[type="checkbox"]');
@@ -664,8 +739,9 @@ function designerMarkup(
   savedProjects: SavedProjectSummary[],
   selectedSavedProject: string,
 ): string {
+  const isTracker = table.tracker_profile === true;
   const statusLabel = {
-    current: "Semantic current",
+    current: isTracker ? "Up to date" : "Semantic current",
     refreshing: "Refreshing affected fields",
     refresh_failed: "Refresh incomplete",
   }[currentness];
@@ -677,17 +753,17 @@ function designerMarkup(
           <div><strong>Tachiko</strong><span>Designer</span></div>
         </div>
         <div class="workspace-title">
-          <p class="eyebrow">Semantic project workspace</p>
+          <p class="eyebrow">${isTracker ? "Project workspace" : "Semantic project workspace"}</p>
           <h1>${escapeHtml(bootstrap.title)}</h1>
         </div>
         <div class="revision-chip" data-currentness="${currentness}">
           <span>${statusLabel}</span>
-          <code data-testid="revision">${escapeHtml(table.revision)}</code>
+          <code ${isTracker ? 'class="tracker-revision"' : ""} data-testid="revision">${escapeHtml(table.revision)}</code>
         </div>
         <div class="workspace-actions">
           <div class="durability-chip" data-testid="durability" data-dirty="${String(dirty)}">
             <span>${dirty ? "Unsaved changes" : "Saved"}</span>
-            <code>${durableRevision === null ? "No durable revision" : escapeHtml(durableRevision)}</code>
+            <code>${isTracker ? "Stored in this browser after Save" : durableRevision === null ? "No durable revision" : escapeHtml(durableRevision)}</code>
           </div>
           <label class="saved-project-picker">
             <span>Browser projects</span>
@@ -705,6 +781,8 @@ function designerMarkup(
             <button type="button" data-open-project ${
               busy || selectedSavedProject === "" ? "disabled" : ""
             }>Open</button>
+            <button type="button" data-new-tracker ${busy ? "disabled" : ""}>New Tracker</button>
+            <button type="button" data-save-project ${busy ? "disabled" : ""}>Save</button>
             <button type="button" data-save-as ${busy ? "disabled" : ""}>Save As</button>
             <button type="button" data-close-project ${busy ? "disabled" : ""}>Close</button>
           </div>
@@ -798,6 +876,7 @@ function closedMarkup(
           busy ? "disabled" : ""
         } />
       </label>
+      <button type="button" data-new-tracker ${busy ? "disabled" : ""}>New Tracker</button>
       <button type="button" data-open-project ${
         busy || selectedSavedProject === "" ? "disabled" : ""
       }>Open project</button>
@@ -1039,20 +1118,4 @@ function decodeOpaqueAttribute(value: string | undefined): string | undefined {
   } catch {
     return undefined;
   }
-}
-
-function reconcileTextEdit(
-  original: string,
-  normalizedOriginal: string,
-  edited: string,
-): string {
-  if (!original.includes("\r")) return edited;
-  if (normalizeLineEndings(original) === normalizedOriginal && edited === normalizedOriginal) {
-    return original;
-  }
-  throw new Error("Text containing CR or CRLF line endings cannot be edited yet; its original bytes remain unchanged.");
-}
-
-function normalizeLineEndings(value: string): string {
-  return value.replace(/\r\n|\r/g, "\n");
 }

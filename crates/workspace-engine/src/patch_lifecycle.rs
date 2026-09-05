@@ -21,7 +21,7 @@ use serde::Serialize;
 use thiserror::Error;
 
 use super::{
-    Document, DocumentId, EntityId, Expression, FieldId, FieldRef, Number, SchemaId,
+    Document, DocumentId, Entity, EntityId, Expression, FieldId, FieldRef, Number, SchemaId,
     SemanticChange, ValidationReport, Value, WorkspaceError, field_value_candidate, finalize_edit,
 };
 
@@ -97,6 +97,8 @@ pub enum AuthorizationAction {
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OperationFamily {
+    AppendEntity,
+    RemoveEntity,
     SetFieldValue,
     FormulaReasoning,
     NumberOverrideScenario,
@@ -285,7 +287,18 @@ impl AuthorizationFootprint {
 /// Typed stable-ID semantic command used identically by Propose and Execute.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SemanticCommand {
-    SetFieldValue { field: FieldRef, value: Value },
+    /// Append one typed entity with a fresh stable identity to an existing schema.
+    AppendEntity {
+        entity: Entity,
+    },
+    /// Remove one stable identity; the final batch must repair inbound references.
+    RemoveEntity {
+        entity: EntityId,
+    },
+    SetFieldValue {
+        field: FieldRef,
+        value: Value,
+    },
     FormulaUpdate(FormulaUpdateCommand),
 }
 
@@ -1943,6 +1956,8 @@ impl PatchLifecycle {
             .iter()
             .map(|command| DisclosureRequirement {
                 family: match command {
+                    SemanticCommand::AppendEntity { .. } => OperationFamily::AppendEntity,
+                    SemanticCommand::RemoveEntity { .. } => OperationFamily::RemoveEntity,
                     SemanticCommand::SetFieldValue { .. } => OperationFamily::SetFieldValue,
                     SemanticCommand::FormulaUpdate(_) => OperationFamily::FormulaUpdate,
                 },
@@ -1969,6 +1984,63 @@ impl PatchLifecycle {
         Ok(principal.kind)
     }
 
+    fn plan_append_entity(
+        &self,
+        base: &Document,
+        candidate: &mut Document,
+        entity: &Entity,
+        writes: &mut BTreeSet<AssociatedWriteRequirement>,
+    ) -> Result<(), WorkspaceError> {
+        super::validate_new_entity_key(candidate, &entity.key)?;
+        if entity.id.as_str().is_empty() {
+            return Err(WorkspaceError::EmptyGeneratedId {
+                kind: super::SemanticIdKind::Entity,
+            });
+        }
+        // Freshness is relative to both the exact base and the working
+        // candidate. Removing a base identity earlier in this batch must not
+        // turn append authority into value/schema replacement authority.
+        if base.entities.contains_key(&entity.id) || candidate.entities.contains_key(&entity.id) {
+            return Err(WorkspaceError::GeneratedIdCollision {
+                kind: super::SemanticIdKind::Entity,
+                id: entity.id.to_string(),
+            });
+        }
+        if !candidate.schemas.contains_key(&entity.schema) {
+            return Err(WorkspaceError::MissingSchema {
+                schema: entity.schema.clone(),
+            });
+        }
+        // Bound formula structure is an admission invariant even when a
+        // later batch step removes the newly appended entity.
+        let mut appended = candidate.clone();
+        appended.entities.insert(entity.id.clone(), entity.clone());
+        super::preflight_formula_structures(&appended)?;
+        let scope = ScopedSemanticSubject::new(
+            self.document_scope.clone(),
+            self.document.clone(),
+            SemanticScope::Schema(entity.schema.clone()),
+        );
+        writes.insert(AssociatedWriteRequirement {
+            family: OperationFamily::AppendEntity,
+            mutation_class: MutationClass::Structure,
+            scope: scope.clone(),
+        });
+        if entity
+            .fields
+            .values()
+            .any(|value| matches!(value, Value::Formula(_)))
+        {
+            writes.insert(AssociatedWriteRequirement {
+                family: OperationFamily::AppendEntity,
+                mutation_class: MutationClass::Formula,
+                scope,
+            });
+        }
+        *candidate = appended;
+        Ok(())
+    }
+
     fn plan_commands(
         &self,
         document: &Document,
@@ -1978,6 +2050,43 @@ impl PatchLifecycle {
         let mut writes = BTreeSet::new();
         for command in body.commands() {
             match command {
+                SemanticCommand::AppendEntity { entity } => {
+                    self.plan_append_entity(document, &mut candidate, entity, &mut writes)?;
+                }
+                SemanticCommand::RemoveEntity { entity } => {
+                    let record = candidate.entities.get(entity).ok_or_else(|| {
+                        WorkspaceError::MissingEntityId {
+                            entity: entity.clone(),
+                        }
+                    })?;
+                    let scope = ScopedSemanticSubject::new(
+                        self.document_scope.clone(),
+                        self.document.clone(),
+                        SemanticScope::Entity {
+                            entity: entity.clone(),
+                            schema: record.schema.clone(),
+                        },
+                    );
+                    for mutation_class in [MutationClass::Structure, MutationClass::Destructive] {
+                        writes.insert(AssociatedWriteRequirement {
+                            family: OperationFamily::RemoveEntity,
+                            mutation_class,
+                            scope: scope.clone(),
+                        });
+                    }
+                    if record
+                        .fields
+                        .values()
+                        .any(|value| matches!(value, Value::Formula(_)))
+                    {
+                        writes.insert(AssociatedWriteRequirement {
+                            family: OperationFamily::RemoveEntity,
+                            mutation_class: MutationClass::Formula,
+                            scope,
+                        });
+                    }
+                    candidate.entities.remove(entity);
+                }
                 SemanticCommand::SetFieldValue { field, value } => {
                     let entity = candidate.entities.get(&field.entity).ok_or_else(|| {
                         WorkspaceError::MissingEntityId {
@@ -2141,6 +2250,25 @@ impl PatchLifecycle {
         disclosures: &mut BTreeSet<DisclosureRequirement>,
     ) -> Result<(), PatchLifecycleError> {
         match command {
+            SemanticCommand::AppendEntity { .. } | SemanticCommand::RemoveEntity { .. } => {
+                // Structural previews reveal complete entity membership and values,
+                // including removed and batch-transient entities. Require the full
+                // document disclosure boundary for these provisional families.
+                let family = if matches!(command, SemanticCommand::AppendEntity { .. }) {
+                    OperationFamily::AppendEntity
+                } else {
+                    OperationFamily::RemoveEntity
+                };
+                disclosures.insert(DisclosureRequirement {
+                    family,
+                    scope: ScopedSemanticSubject::new(
+                        self.document_scope.clone(),
+                        self.document.clone(),
+                        SemanticScope::Document,
+                    ),
+                });
+                Ok(())
+            }
             SemanticCommand::SetFieldValue { field, value } => {
                 self.insert_field_disclosure(before, after, field, disclosures)?;
                 self.insert_value_disclosures(before, after, value, disclosures)
@@ -2176,6 +2304,7 @@ impl PatchLifecycle {
         disclosures: &mut BTreeSet<DisclosureRequirement>,
     ) -> Result<(), PatchLifecycleError> {
         match change {
+            SemanticChange::EntityAdded { .. } | SemanticChange::EntityRemoved { .. } => Ok(()),
             SemanticChange::FieldChanged {
                 field,
                 before: old_value,
@@ -2444,6 +2573,12 @@ fn command_families_for_field(
     body.commands()
         .iter()
         .filter_map(|command| match command {
+            SemanticCommand::AppendEntity { entity } if entity.id == field.entity => {
+                Some(OperationFamily::AppendEntity)
+            }
+            SemanticCommand::RemoveEntity { entity } if entity == &field.entity => {
+                Some(OperationFamily::RemoveEntity)
+            }
             SemanticCommand::FormulaUpdate(command) if command.target() == field => {
                 Some(OperationFamily::FormulaUpdate)
             }

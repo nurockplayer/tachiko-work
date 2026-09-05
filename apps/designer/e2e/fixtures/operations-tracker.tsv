@@ -1,0 +1,40 @@
+Review incoming support queue	1	false
+Triage failed import reports	2	false
+Reproduce clipboard parsing issue	3	false
+Document backup recovery steps	4	false
+Check release artifact checksums	2	false
+Verify staging health endpoint	1	false
+Review dependency update requests	3	false
+Audit expired access invitations	2	false
+Rotate staging service credential	4	false
+Prepare weekly operations agenda	1	false
+Reconcile open incident actions	3	false
+Test restored project snapshot	4	false
+Update onboarding checklist	2	false
+Review storage capacity trends	3	false
+Investigate delayed background jobs	5	false
+Validate notification routing	2	false
+Clean retired preview deployments	3	false
+Review pending accessibility fixes	4	false
+Check browser compatibility reports	2	false
+Document release rollback command	3	false
+Confirm current support ownership	1	false
+Review long running query logs	5	false
+Test account recovery journey	3	false
+Compare exported project metadata	2	false
+Review operational dashboard labels	1	false
+Verify deployment approval records	2	false
+Prepare release communication draft	3	false
+Reconcile failed scheduled tasks	4	false
+Update service escalation contacts	1	false
+Check archive retention settings	2	false
+Review error budget consumption	3	false
+Exercise read only project access	2	false
+Document known browser limitations	4	false
+Review incident timeline evidence	5	false
+Verify restored attachment links	3	false
+Check semantic migration dry run	4	false
+Review upcoming maintenance window	1	false
+Validate production smoke checklist	3	false
+Reconcile release validation results	2	false
+Prepare next operations handoff	1	false

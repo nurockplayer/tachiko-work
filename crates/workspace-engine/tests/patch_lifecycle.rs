@@ -3039,6 +3039,294 @@ fn write_only_executor_cannot_observe_verification_failure() {
     );
 }
 
+fn provision_entity_authority(lifecycle: &mut PatchLifecycle) {
+    let mut requirements = vec![query_requirement()];
+    for family in [OperationFamily::AppendEntity, OperationFamily::RemoveEntity] {
+        requirements.push(GrantRequirement::query(family, document_scope()));
+        for action in [AuthorizationAction::Propose, AuthorizationAction::Execute] {
+            for class in [
+                MutationClass::Structure,
+                MutationClass::Destructive,
+                MutationClass::Formula,
+            ] {
+                requirements.push(
+                    GrantRequirement::mutation(action, family, class, document_scope()).unwrap(),
+                );
+            }
+        }
+    }
+    grant(lifecycle, "entity-authority", "human-editor", requirements);
+}
+
+fn appended_character(document: &Document) -> tachiko_workspace_engine::Entity {
+    let mut entity = document.entities["alric"].clone();
+    entity.id = "new-character".into();
+    entity.key = "new_character".into();
+    entity
+}
+
+#[test]
+fn entity_commands_publish_through_the_same_exact_base_lifecycle() {
+    let document = game_balance_document("game", "Game");
+    let mut lifecycle = lifecycle();
+    provision_entity_authority(&mut lifecycle);
+    let entity = appended_character(&document);
+    let proposal = propose(
+        &mut lifecycle,
+        &document,
+        "append",
+        SemanticPatchBody::command(SemanticCommand::AppendEntity {
+            entity: entity.clone(),
+        }),
+        "human-editor",
+    );
+    assert!(!document.entities.contains_key(&entity.id));
+    let mut publication = TestPublication::new(document.clone(), "r1", "r2");
+    lifecycle
+        .execute(
+            &proposal,
+            None,
+            &principal("human-editor"),
+            &mut publication,
+            NOW,
+        )
+        .unwrap();
+    assert_eq!(publication.document.entities[&entity.id], entity);
+    assert_eq!(publication.publish_calls, 1);
+
+    let mut lifecycle = self::lifecycle();
+    provision_entity_authority(&mut lifecycle);
+    let proposal = propose(
+        &mut lifecycle,
+        &publication.document,
+        "remove",
+        SemanticPatchBody::command(SemanticCommand::RemoveEntity {
+            entity: entity.id.clone(),
+        }),
+        "human-editor",
+    );
+    let mut removal = TestPublication::new(publication.document, "r1", "r2");
+    lifecycle
+        .execute(
+            &proposal,
+            None,
+            &principal("human-editor"),
+            &mut removal,
+            NOW,
+        )
+        .unwrap();
+    assert_eq!(removal.document, document);
+}
+
+#[test]
+fn entity_append_rejects_collisions_and_missing_required_fields_without_publication() {
+    let document = game_balance_document("game", "Game");
+    let mut lifecycle = lifecycle();
+    provision_entity_authority(&mut lifecycle);
+    let mut entity = appended_character(&document);
+    entity.id = "alric".into();
+    let result = lifecycle.propose(
+        &document_scope_id(),
+        &document,
+        &revision("r1"),
+        ProposalRequest::new(
+            proposal_id("collision"),
+            revision("r1"),
+            SemanticPatchBody::command(SemanticCommand::AppendEntity { entity }),
+            principal("human-editor"),
+        ),
+        NOW,
+    );
+    assert!(matches!(
+        result,
+        Err(PatchLifecycleError::CommandRejected { .. })
+    ));
+    let mut entity = appended_character(&document);
+    entity.fields.clear();
+    let result = lifecycle.propose(
+        &document_scope_id(),
+        &document,
+        &revision("r1"),
+        ProposalRequest::new(
+            proposal_id("invalid"),
+            revision("r1"),
+            SemanticPatchBody::command(SemanticCommand::AppendEntity { entity }),
+            principal("human-editor"),
+        ),
+        NOW,
+    );
+    assert!(matches!(
+        result,
+        Err(PatchLifecycleError::ValidationFailed { .. })
+    ));
+    assert_eq!(document.entities.len(), 4);
+}
+
+#[test]
+fn entity_remove_rejects_inbound_references_but_atomic_repair_can_publish() {
+    let document = game_balance_document("game", "Game");
+    let mut lifecycle = lifecycle();
+    provision_entity_authority(&mut lifecycle);
+    let result = lifecycle.propose(
+        &document_scope_id(),
+        &document,
+        &revision("r1"),
+        ProposalRequest::new(
+            proposal_id("referenced"),
+            revision("r1"),
+            SemanticPatchBody::command(SemanticCommand::RemoveEntity {
+                entity: "iron_sword".into(),
+            }),
+            principal("human-editor"),
+        ),
+        NOW,
+    );
+    assert!(matches!(
+        result,
+        Err(PatchLifecycleError::ValidationFailed { .. })
+    ));
+    // Removing the referencing entities and their target is one final-valid transition.
+    let body = SemanticPatchBody::atomic_batch(vec![
+        SemanticCommand::RemoveEntity {
+            entity: "iron_sword".into(),
+        },
+        SemanticCommand::RemoveEntity {
+            entity: "alric".into(),
+        },
+        SemanticCommand::RemoveEntity {
+            entity: "tempered_blade".into(),
+        },
+        SemanticCommand::RemoveEntity {
+            entity: "shop".into(),
+        },
+    ])
+    .unwrap();
+    let proposal = propose(&mut lifecycle, &document, "repaired", body, "human-editor");
+    let mut publication = TestPublication::new(document, "r1", "r2");
+    lifecycle
+        .execute(
+            &proposal,
+            None,
+            &principal("human-editor"),
+            &mut publication,
+            NOW,
+        )
+        .unwrap();
+    assert!(publication.document.entities.is_empty());
+    assert_eq!(publication.publish_calls, 1);
+}
+
+#[test]
+fn entity_commands_require_their_own_capability_and_reject_stale_execution() {
+    let document = game_balance_document("game", "Game");
+    let mut lifecycle = lifecycle();
+    provision_standard_authority(&mut lifecycle);
+    let body = SemanticPatchBody::command(SemanticCommand::AppendEntity {
+        entity: appended_character(&document),
+    });
+    let result = lifecycle.propose(
+        &document_scope_id(),
+        &document,
+        &revision("r1"),
+        ProposalRequest::new(
+            proposal_id("denied"),
+            revision("r1"),
+            body.clone(),
+            principal("human-editor"),
+        ),
+        NOW,
+    );
+    assert!(matches!(
+        result,
+        Err(PatchLifecycleError::InsufficientCapability {
+            action: AuthorizationAction::Propose
+        })
+    ));
+    provision_entity_authority(&mut lifecycle);
+    let proposal = propose(
+        &mut lifecycle,
+        &document,
+        "stale-append",
+        body,
+        "human-editor",
+    );
+    let mut publication = TestPublication::new(document.clone(), "r2", "r3");
+    assert!(matches!(
+        lifecycle.execute(
+            &proposal,
+            None,
+            &principal("human-editor"),
+            &mut publication,
+            NOW
+        ),
+        Err(PatchLifecycleError::Stale)
+    ));
+    assert_eq!(publication.document, document);
+    assert_eq!(publication.publish_calls, 0);
+}
+
+#[test]
+fn entity_structure_authority_does_not_grant_formula_or_destructive_mutation() {
+    let document = game_balance_document("game", "Game");
+    let mut lifecycle = lifecycle();
+    let requirements = [OperationFamily::AppendEntity, OperationFamily::RemoveEntity]
+        .into_iter()
+        .flat_map(|family| {
+            [
+                GrantRequirement::query(family, document_scope()),
+                GrantRequirement::mutation(
+                    AuthorizationAction::Propose,
+                    family,
+                    MutationClass::Structure,
+                    document_scope(),
+                )
+                .unwrap(),
+            ]
+        })
+        .collect();
+    grant(
+        &mut lifecycle,
+        "structure-only",
+        "human-editor",
+        requirements,
+    );
+    let mut formula_entity = document.entities["iron_sword"].clone();
+    formula_entity.id = "new-weapon".into();
+    formula_entity.key = "new_weapon".into();
+    for (id, command) in [
+        (
+            "formula-append",
+            SemanticCommand::AppendEntity {
+                entity: formula_entity,
+            },
+        ),
+        (
+            "destructive-remove",
+            SemanticCommand::RemoveEntity {
+                entity: "alric".into(),
+            },
+        ),
+    ] {
+        let result = lifecycle.propose(
+            &document_scope_id(),
+            &document,
+            &revision("r1"),
+            ProposalRequest::new(
+                proposal_id(id),
+                revision("r1"),
+                SemanticPatchBody::command(command),
+                principal("human-editor"),
+            ),
+            NOW,
+        );
+        assert!(matches!(
+            result,
+            Err(PatchLifecycleError::InsufficientCapability {
+                action: AuthorizationAction::Propose
+            })
+        ));
+    }
+}
 fn regression_damage_body(net_zero: bool) -> SemanticPatchBody {
     let mut commands = vec![field_command("iron_sword", "damage", number(45.0))];
     if net_zero {
@@ -3374,4 +3662,159 @@ fn no_change_disclosure_lifecycle(case: &str) -> PatchLifecycle {
         );
     }
     lifecycle
+}
+
+#[test]
+fn entity_append_remove_batch_respects_resident_final_candidate_no_change() {
+    let document = game_balance_document("game", "Game");
+    let entity = appended_character(&document);
+    let mut session = ResidentWorkspaceSession::new(document_scope_id(), document);
+    let before = session.export_snapshot();
+    let mut lifecycle = lifecycle();
+    provision_entity_authority(&mut lifecycle);
+    let proposal = proposal_id("entity-net-zero");
+    lifecycle
+        .propose(
+            before.document_scope(),
+            before.document(),
+            before.revision(),
+            ProposalRequest::new(
+                proposal.clone(),
+                before.revision().clone(),
+                SemanticPatchBody::atomic_batch(vec![
+                    SemanticCommand::AppendEntity {
+                        entity: entity.clone(),
+                    },
+                    SemanticCommand::RemoveEntity { entity: entity.id },
+                ])
+                .unwrap(),
+                principal("human-editor"),
+            ),
+            NOW,
+        )
+        .unwrap();
+    let mut clock = NoChangeTestClock;
+    let mut publication = session.publication_authority(&mut clock);
+    assert!(matches!(
+        lifecycle.execute(
+            &proposal,
+            None,
+            &principal("human-editor"),
+            &mut publication,
+            NOW
+        ),
+        Err(PatchLifecycleError::NoChange)
+    ));
+    let after = session.export_snapshot();
+    assert_eq!(after.document(), before.document());
+    assert_eq!(after.revision(), before.revision());
+    assert!(lifecycle.execution_receipts().is_empty());
+}
+
+#[test]
+fn remove_then_append_cannot_replace_a_base_identity_under_structure_authority() {
+    let document = game_balance_document("game", "Game");
+    let mut replacement = document.entities["alric"].clone();
+    replacement.fields.insert("level".into(), number(99.0));
+    let mut lifecycle = lifecycle();
+    // This grant has Structure/Destructive/Formula, but no Value mutation authority.
+    provision_entity_authority(&mut lifecycle);
+    let proposal = proposal_id("replace-base-identity");
+    let mut publication = TestPublication::new(document.clone(), "r1", "r2");
+    let result = lifecycle.propose(
+        &document_scope_id(),
+        &document,
+        &revision("r1"),
+        ProposalRequest::new(
+            proposal.clone(),
+            revision("r1"),
+            SemanticPatchBody::atomic_batch(vec![
+                SemanticCommand::RemoveEntity {
+                    entity: replacement.id.clone(),
+                },
+                SemanticCommand::AppendEntity {
+                    entity: replacement,
+                },
+            ])
+            .unwrap(),
+            principal("human-editor"),
+        ),
+        NOW,
+    );
+    assert!(matches!(
+        result,
+        Err(PatchLifecycleError::CommandRejected { source })
+            if matches!(*source, tachiko_workspace_engine::WorkspaceError::GeneratedIdCollision { ref id, .. } if id == "alric")
+    ));
+    assert!(
+        lifecycle
+            .execute(
+                &proposal,
+                None,
+                &principal("human-editor"),
+                &mut publication,
+                NOW
+            )
+            .is_err()
+    );
+    assert_eq!(publication.publish_calls, 0);
+    assert_eq!(publication.document, document);
+    assert_eq!(publication.revision, revision("r1"));
+    assert!(lifecycle.execution_receipts().is_empty());
+}
+
+#[test]
+fn append_can_restore_an_identity_removed_by_a_separate_publication() {
+    let document = game_balance_document("game", "Game");
+    let removed = document.entities["alric"].clone();
+    let mut lifecycle = lifecycle();
+    provision_entity_authority(&mut lifecycle);
+    let remove = propose(
+        &mut lifecycle,
+        &document,
+        "remove-before-restore",
+        SemanticPatchBody::command(SemanticCommand::RemoveEntity {
+            entity: removed.id.clone(),
+        }),
+        "human-editor",
+    );
+    let mut publication = TestPublication::new(document.clone(), "r1", "r2");
+    lifecycle
+        .execute(
+            &remove,
+            None,
+            &principal("human-editor"),
+            &mut publication,
+            NOW,
+        )
+        .unwrap();
+    assert!(!publication.document.entities.contains_key(&removed.id));
+    let restore = proposal_id("restore-after-publication");
+    lifecycle
+        .propose(
+            &document_scope_id(),
+            &publication.document,
+            &revision("r2"),
+            ProposalRequest::new(
+                restore.clone(),
+                revision("r2"),
+                SemanticPatchBody::command(SemanticCommand::AppendEntity { entity: removed }),
+                principal("human-editor"),
+            ),
+            NOW,
+        )
+        .unwrap();
+    publication.next_revision = revision("r3");
+    lifecycle
+        .execute(
+            &restore,
+            None,
+            &principal("human-editor"),
+            &mut publication,
+            NOW,
+        )
+        .unwrap();
+    assert_eq!(publication.document, document);
+    assert_eq!(publication.revision, revision("r3"));
+    assert_eq!(publication.publish_calls, 2);
 }

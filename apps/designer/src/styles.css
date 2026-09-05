@@ -651,3 +651,27 @@ td {
     }
   }
 }
+
+.tracker-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; margin-bottom: 12px; }
+.tracker-toolbar button, .tracker-editor button { padding: 7px 12px; }
+.tracker-toolbar label { display: grid; gap: 4px; font-size: 12px; }
+.tracker-editor { display: flex; gap: 8px; align-items: end; margin-block: 12px; }
+.tracker-editor label { display: grid; gap: 4px; flex: 1; }
+.tracker-editor input, .tracker-editor select, .tracker-editor textarea { width: 100%; padding: 8px; }
+.tracker-help { font-size: 12px; color: #56616c; line-height: 1.6; }
+.tracker-scroll { max-height: 60vh; overflow: auto; border: 1px solid #b9c3ca; }
+.tracker table { border-collapse: separate; border-spacing: 0; width: 100%; }
+.tracker td { padding: 8px 12px; max-width: 320px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; border-bottom: 1px solid #e1e6ea; }
+.tracker th { position: sticky; top: 0; background: #f5f7f8; z-index: 1; padding: 10px; }
+.tracker [aria-selected=true] { outline: 2px solid #356b9b; outline-offset: -2px; }
+.tracker td:focus { outline: 3px solid #173e65; outline-offset: -3px; }
+.tracker .cell-bold { font-weight: 700; }
+.tracker .cell-fill { background: #fff1ba; }
+.tracker .cell-wrap { white-space: pre-wrap; overflow-wrap: anywhere; }
+.tracker .cell-border { border: 1px solid #596a78; }
+.tracker .tracker-header-emphasis th { background: #233e54; color: white; }
+.tracker button { border: 1px solid #b9c3ca; border-radius: 6px; background: #fff; color: #233e54; font: inherit; font-size: 13px; cursor: pointer; }
+.tracker button:hover:not(:disabled) { background: #edf3f8; }
+.tracker button:disabled { color: #8c959c; cursor: default; }
+.tracker input, .tracker select, .tracker textarea { border: 1px solid #b9c3ca; border-radius: 5px; padding: 7px; font: inherit; font-size: 13px; }
+.tracker-revision { display: none; }

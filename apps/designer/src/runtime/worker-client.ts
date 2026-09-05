@@ -3,6 +3,7 @@ import {
   type DesignerClient,
 } from "./client.ts";
 import type {
+  TrackerCommand,
   BootstrapProjection,
   DesignerRequest,
   DesignerResponse,
@@ -45,6 +46,14 @@ export class WorkerDesignerClient implements DesignerClient {
       for (const pending of this.#pending.values()) pending.reject(error);
       this.#pending.clear();
     });
+  }
+
+  async newTracker(): Promise<OpenedProjection> {
+    return expectResponse("opened", await this.#command({type: "new_tracker", occurrence_id: freshOccurrenceId()}));
+  }
+
+  async trackerCommand(request: TrackerCommand): Promise<PublicationProjection> {
+    return expectResponse("published", await this.#command(request));
   }
 
   async bootstrap(): Promise<BootstrapProjection> {
