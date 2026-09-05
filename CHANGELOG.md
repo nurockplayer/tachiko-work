@@ -4,6 +4,15 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+### Added
+
+- The Designer imports bounded CSV/XLSX workbooks through explicit inspection,
+  typing and fidelity review; supports previewed cleanup, existing typed edits
+  and numeric formulas; and downloads current CSV/XLSX output. Browser project
+  saves retain source bytes, mappings, layouts and compatibility findings
+  atomically. Unsupported features remain blocked or explicitly disclosed;
+  this does not establish full Excel compatibility or a portable project format.
+
 ### Fixed
 
 - Net-zero AtomicBatch execution now reports typed NoChange after guarded

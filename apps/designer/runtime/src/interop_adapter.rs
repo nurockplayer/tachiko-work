@@ -705,7 +705,11 @@ fn builtin_format(id: u32) -> Option<String> {
         9 => Some("0%".into()),
         10 => Some("0.00%".into()),
         14..=17 => Some("yyyy-mm-dd".into()),
-        18..=22 => Some("yyyy-mm-dd hh:mm:ss".into()),
+        18 => Some("h:mm AM/PM".into()),
+        19 => Some("h:mm:ss AM/PM".into()),
+        20 => Some("h:mm".into()),
+        21 => Some("h:mm:ss".into()),
+        22 => Some("yyyy-mm-dd hh:mm:ss".into()),
         49 => Some("@".into()),
         _ => Some(format!("unsupported_builtin_{id}")),
     }
@@ -944,7 +948,7 @@ fn cell_value(
                 Ok(SourceValue::Date {
                     value: date_from_serial(value, date1904)?,
                 })
-            } else if format.contains('h') || format.contains('s') {
+            } else if format.contains('h') || format.contains('m') || format.contains('s') {
                 fail("Time-only display has no canonical Date mapping")
             } else {
                 Ok(SourceValue::Number { value })
@@ -963,6 +967,77 @@ fn c_unknown(node: &Xml) -> bool {
     !matches!(node.name.as_str(), "c" | "v" | "f" | "is" | "t" | "r")
         || node.children.iter().any(c_unknown)
 }
+fn inventory_worksheet_children(xml: &Xml, sheet: &str, ledger: &mut Vec<FidelityFinding>) {
+    for child in &xml.children {
+        let (code, blocking) = if child.ns == MAIN {
+            match child.name.as_str() {
+                // Cell coordinates derive dimension; columns and data are mapped below.
+                "dimension" | "cols" | "sheetData" => continue,
+                "dataValidations" => ("validation_rules", false),
+                "autoFilter" => ("filter_rules", false),
+                "tableParts" => ("table_rules", false),
+                "mergeCells" => ("merged_cells", false),
+                "conditionalFormatting" => ("conditional_formats", false),
+                "drawing" => ("drawing", false),
+                "extLst" => ("worksheet_extensions", false),
+                "sheetProtection" | "protectedRanges" => ("worksheet_protection", false),
+                "hyperlinks" => ("worksheet_hyperlinks", false),
+                "sheetPr" | "sheetViews" | "sheetFormatPr" | "printOptions" | "pageMargins"
+                | "pageSetup" | "headerFooter" | "rowBreaks" | "colBreaks" | "customSheetViews"
+                | "sortState" | "sheetCalcPr" | "ignoredErrors" | "phoneticPr" => {
+                    ("worksheet_layout_rules", false)
+                }
+                _ => ("unknown_worksheet_child", true),
+            }
+        } else {
+            ("unknown_worksheet_child", true)
+        };
+        ledger.push(finding(
+            FidelityCategory::UnsupportedSafeDisabled,
+            code,
+            &format!("{sheet}:{{{}}}{}", child.ns, child.name),
+            "Source worksheet construct is not represented or emitted; original source retains it",
+            blocking,
+        ));
+    }
+}
+
+fn inventory_grid_attributes(node: &Xml, sheet: &str, ledger: &mut Vec<FidelityFinding>) {
+    let (mapped, layout): (&[&str], &[&str]) = if node.name == "row" {
+        (
+            &["r", "hidden", "s", "customFormat"],
+            &[
+                "spans",
+                "ht",
+                "customHeight",
+                "outlineLevel",
+                "collapsed",
+                "thickTop",
+                "thickBot",
+                "ph",
+            ],
+        )
+    } else {
+        (
+            &["min", "max", "width", "customWidth", "hidden", "style"],
+            &["bestFit", "outlineLevel", "collapsed", "phonetic"],
+        )
+    };
+    for key in node
+        .attrs
+        .keys()
+        .filter(|key| !mapped.contains(&key.as_str()))
+    {
+        ledger.push(finding(
+            FidelityCategory::UnsupportedSafeDisabled,
+            "unmapped_grid_attribute",
+            &format!("{sheet}:{}@{key}", node.name),
+            "Source row/column attribute is not represented or emitted; original source retains it",
+            !layout.contains(&key.as_str()),
+        ));
+    }
+}
+
 fn visibility_finding(code: &str, location: &str) -> FidelityFinding {
     finding(
         FidelityCategory::UnsupportedSafeDisabled,
@@ -1075,6 +1150,11 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
                 .ok_or_else(|| InteropError("Missing sheet target".into()))?,
         )?;
         let xml = xml_part(&parts, &path, "worksheet", MAIN)?;
+        for singleton in ["sheetData", "dimension", "sheetFormatPr"] {
+            if xml.kids(singleton).count() > 1 {
+                return fail("Duplicate singleton worksheet construct");
+            }
+        }
         if let Some(format) = xml.child("sheetFormatPr") {
             inventory_hidden(
                 format.attr("zeroHeight"),
@@ -1083,25 +1163,7 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
                 &mut ledger,
             )?;
         }
-        for (tag, code) in [
-            ("dataValidations", "validation_rules"),
-            ("autoFilter", "filter_rules"),
-            ("tableParts", "table_rules"),
-            ("mergeCells", "merged_cells"),
-            ("conditionalFormatting", "conditional_formats"),
-            ("drawing", "drawing"),
-            ("extLst", "worksheet_extensions"),
-        ] {
-            if xml.child(tag).is_some() {
-                ledger.push(finding(
-                    FidelityCategory::UnsupportedSafeDisabled,
-                    code,
-                    &name,
-                    "Source rules/layout are not represented by this adapter",
-                    false,
-                ));
-            }
-        }
+        inventory_worksheet_children(&xml, &name, &mut ledger);
         let mut rows: Vec<Vec<SourceCell>> = Vec::new();
         let mut seen = BTreeSet::new();
         let mut width = 0;
@@ -1116,6 +1178,10 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
             return fail("Unknown sheetData construct");
         }
         for row in data.kids("row") {
+            inventory_grid_attributes(row, &name, &mut ledger);
+            if row.attr("s").is_some_and(|style| style != "0") {
+                ledger.push(finding(FidelityCategory::UnsupportedSafeDisabled, "inherited_row_style", &name, "Inherited row style is not applied by this profile; explicit cell styles are required", true));
+            }
             inventory_hidden(
                 row.attr("hidden"),
                 "hidden_row",
@@ -1267,8 +1333,19 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
                 width: None,
             });
         }
-        if let Some(cols) = xml.child("cols") {
+        for cols in xml.kids("cols") {
+            if cols
+                .children
+                .iter()
+                .any(|node| node.name != "col" || node.ns != MAIN)
+            {
+                return fail("Unknown worksheet column construct");
+            }
             for c in cols.kids("col") {
+                inventory_grid_attributes(c, &name, &mut ledger);
+                if c.attr("style").is_some_and(|style| style != "0") {
+                    ledger.push(finding(FidelityCategory::UnsupportedSafeDisabled, "inherited_column_style", &name, "Inherited column style is not applied by this profile; explicit cell styles are required", true));
+                }
                 inventory_hidden(
                     c.attr("hidden"),
                     "hidden_column",

@@ -42,6 +42,9 @@ export class SpreadsheetImportPanel {
   #selection: ImportSelection = {column_types: [], extra_columns: []};
   #options: ImportOptions = {delimiter: ",", header: true};
   #pending = false;
+  #generation = 0;
+  #inspectedGeneration = -1;
+  #accepting = false;
   #message = "";
   constructor(private readonly client: DesignerClient, private readonly accept: (source: ImportSource, options: ImportOptions, selection: ImportSelection) => Promise<ImportedProjection>, private readonly changed: () => void) {}
   mount(root: HTMLElement, disabled: boolean): void {
@@ -51,37 +54,61 @@ export class SpreadsheetImportPanel {
     const file = element("input"); file.type = "file"; file.accept = ".csv,.xlsx"; label(controls, "Spreadsheet file", file);
     const delimiter = select(controls, "CSV delimiter", [[",", "Comma"], [";", "Semicolon"], ["\t", "Tab"]], this.#options.delimiter);
     const header = element("input"); header.type = "checkbox"; header.checked = this.#options.header; label(controls, "CSV first row is header", header);
-    const inspect = async (): Promise<void> => {
-      this.#book = null; this.#selection = {column_types: [], extra_columns: []};
-      if (!this.#source || !this.client.inspectSpreadsheet) {
+    const inspect = async (generation: number): Promise<void> => {
+      const source = this.#source;
+      const options = {...this.#options};
+      this.#book = null; this.#selection = {column_types: [], extra_columns: []}; this.#inspectedGeneration = -1;
+      if (!source || !this.client.inspectSpreadsheet) {
         this.#pending = false;
-        this.#message = this.#source ? "Spreadsheet inspection is unavailable. Choose a source after the runtime is available." : "Choose a spreadsheet source to inspect.";
+        this.#message = source ? "Spreadsheet inspection is unavailable. Choose a source after the runtime is available." : "Choose a spreadsheet source to inspect.";
         this.changed(); return;
       }
       this.#pending = true; this.#message = "Inspecting source…"; this.changed();
       try {
-        const book = await this.client.inspectSpreadsheet(this.#source.bytes, this.#source.format, this.#options);
+        const book = await this.client.inspectSpreadsheet(source.bytes, source.format, options);
+        if (generation !== this.#generation) return;
         this.#book = book;
         this.#selection = {column_types: book.sheets.map(sheet => sheet.columns.map((_, col) => {
           const types = new Set(sheet.rows.map(row => row[col]?.formula ? "number" : row[col]?.value.kind).filter(kind => kind !== undefined && kind !== "empty"));
-          return types.size === 1 && this.#source?.format === "xlsx" ? [...types][0] as ImportFieldType : "text";
+          return types.size === 1 && source.format === "xlsx" ? [...types][0] as ImportFieldType : "text";
         })), extra_columns: book.sheets.map(() => [])};
+        this.#inspectedGeneration = generation;
         this.#message = "Inspect the data, compatibility findings and types before accepting.";
-      } catch (error) { this.#message = error instanceof Error ? error.message : String(error); }
-      finally { this.#pending = false; this.changed(); }
+      } catch (error) {
+        if (generation === this.#generation) this.#message = error instanceof Error ? error.message : String(error);
+      } finally {
+        if (generation === this.#generation) { this.#pending = false; this.changed(); }
+      }
     };
     file.addEventListener("change", () => {
-      const candidate = file.files?.[0]; if (!candidate) return;
-      // A new selection invalidates every prior inspection before any fallible
-      // validation/read. Failure must never make the old source acceptable.
-      this.#source = null; this.#book = null; this.#selection = {column_types: [], extra_columns: []}; this.#pending = false;
+      if (this.#accepting) return;
+      const generation = ++this.#generation;
+      const candidate = file.files?.[0];
+      // Selection/clear invalidates prior reads and inspections before any
+      // fallible work. Obsolete success, failure and finally cannot publish.
+      this.#source = null; this.#book = null; this.#selection = {column_types: [], extra_columns: []}; this.#pending = false; this.#inspectedGeneration = -1;
+      if (!candidate) { this.#message = "Choose a spreadsheet source to inspect."; this.changed(); return; }
       if (!/\.(csv|xlsx)$/i.test(candidate.name) || candidate.size > 2097152 || candidate.size === 0) { this.#message = "Choose a CSV or XLSX file of 1..2097152 bytes."; this.changed(); return; }
       this.#pending = true; this.#message = "Reading source…"; this.changed();
-      void candidate.arrayBuffer().then(bytes => { this.#source = {name: candidate.name, bytes, format: /\.xlsx$/i.test(candidate.name) ? "xlsx" : "csv"}; return inspect(); }).catch((error: unknown) => { this.#pending = false; this.#message = error instanceof Error ? error.message : String(error); this.changed(); });
+      void (async () => {
+        try {
+          const bytes = await candidate.arrayBuffer();
+          if (generation !== this.#generation) return;
+          this.#source = {name: candidate.name, bytes, format: /\.xlsx$/i.test(candidate.name) ? "xlsx" : "csv"};
+          await inspect(generation);
+        } catch (error) {
+          if (generation === this.#generation) { this.#pending = false; this.#message = error instanceof Error ? error.message : String(error); this.changed(); }
+        }
+      })();
     });
-    const reconfigure = (): void => { this.#options = {delimiter: delimiter.value, header: header.checked}; void inspect(); };
+    const reconfigure = (): void => {
+      if (this.#accepting) return;
+      this.#options = {delimiter: delimiter.value, header: header.checked};
+      void inspect(++this.#generation);
+    };
     delimiter.addEventListener("change", reconfigure); header.addEventListener("change", reconfigure);
     if (this.#book) {
+      const generation = this.#inspectedGeneration;
       for (const [sheetIndex, sheet] of this.#book.sheets.entries()) {
         const group = element("section"); group.append(element("h3", `${sheet.name} · ${String(sheet.rows.length)} rows`));
         for (const [columnIndex, column] of sheet.columns.entries()) {
@@ -102,10 +129,14 @@ export class SpreadsheetImportPanel {
       }
       mountFidelityLedger(controls, this.#book.ledger);
       const accept = button(controls, "Accept types and import", () => { void (async () => {
-        if (!this.#source || !this.#book || this.#pending) return; this.#pending = true; this.changed();
-        try { await this.accept(this.#source, this.#options, this.#selection); this.#source = null; this.#book = null; this.#message = "Import accepted."; }
+        if (!this.#source || !this.#book || this.#pending || generation !== this.#generation || this.#inspectedGeneration !== generation || this.#book.ledger.some(item => item.blocking)) return;
+        const source = {...this.#source, bytes: this.#source.bytes.slice(0)};
+        const options = {...this.#options};
+        const selection = structuredClone(this.#selection);
+        this.#pending = true; this.#accepting = true; this.changed();
+        try { await this.accept(source, options, selection); ++this.#generation; this.#source = null; this.#book = null; this.#selection = {column_types: [], extra_columns: []}; this.#inspectedGeneration = -1; this.#message = "Import accepted."; }
         catch (error) { this.#message = error instanceof Error ? error.message : String(error); }
-        finally { this.#pending = false; this.changed(); }
+        finally { this.#pending = false; this.#accepting = false; this.changed(); }
       })(); }); accept.disabled = this.#book.ledger.some(item => item.blocking);
     }
     controls.append(element("p", this.#message)); panel.append(controls); root.append(panel);

@@ -126,9 +126,9 @@ function importPanelFixture(inspectionAvailable = true) {
   const render = (): void => { root.replaceChildren(); panel.mount(root, false); };
   const panel = new SpreadsheetImportPanel(client, accept, render);
   render();
-  const choose = (file: File): void => {
+  const choose = (file: File | null): void => {
     const input = control(root, "Spreadsheet file");
-    Object.defineProperty(input, "files", { value: [file], configurable: true });
+    Object.defineProperty(input, "files", { value: file ? [file] : [], configurable: true });
     input.dispatchEvent(new Event("change"));
   };
   const acceptedSourceVisible = (): boolean => [...root.querySelectorAll("button")].some(button => button.textContent === "Accept types and import");
@@ -198,5 +198,150 @@ describe("spreadsheet source replacement failures", () => {
     expect(acceptedSourceVisible()).toBe(false);
     expect(root.querySelector("fieldset")?.disabled).toBe(false);
     expect(accept).not.toHaveBeenCalled();
+  });
+});
+
+function pendingResult<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+}
+const namedBook = (name: string): SourceWorkbook => ({ ...sourceBook, sheets: [{ ...sourceBook.sheets[0]!, name }] });
+const settle = async (): Promise<void> => { await new Promise<void>(resolve => { setTimeout(resolve, 0); }); };
+
+describe("spreadsheet inspection generation", () => {
+  it.each(["success", "failure"])("ignores an obsolete file read %s after a newer source is inspected", async outcome => {
+    const { root, choose, inspectSpreadsheet, accept, acceptedSourceVisible } = importPanelFixture();
+    const old = new File(["Value\nold\n"], "old.csv");
+    const read = pendingResult<ArrayBuffer>(); vi.spyOn(old, "arrayBuffer").mockReturnValue(read.promise);
+    choose(old);
+    inspectSpreadsheet.mockResolvedValue(namedBook("Newest source"));
+    choose(new File(["Value\nnew\n"], "new.csv"));
+    await vi.waitFor(() => { expect(acceptedSourceVisible()).toBe(true); });
+    const current = root.innerHTML;
+    if (outcome === "success") read.resolve(new TextEncoder().encode("Value\nold\n").buffer);
+    else read.reject(new Error("Obsolete read failure"));
+    await settle();
+    expect(root.innerHTML).toBe(current);
+    expect(inspectSpreadsheet).toHaveBeenCalledTimes(1);
+    click(root, "Accept types and import");
+    expect(accept.mock.calls[0]?.[0].name).toBe("new.csv");
+    expect(accept.mock.calls[0]?.[0].bytes).toEqual(new TextEncoder().encode("Value\nnew\n").buffer);
+    await settle();
+  });
+
+  it.each(["success", "failure"])("ignores obsolete inspection %s without clearing the newer pending inspection", async outcome => {
+    const { root, choose, inspectSpreadsheet, acceptedSourceVisible, accept } = importPanelFixture();
+    const old = pendingResult<SourceWorkbook>(), latest = pendingResult<SourceWorkbook>();
+    inspectSpreadsheet.mockReturnValueOnce(old.promise).mockReturnValueOnce(latest.promise);
+    choose(new File(["Value\nold\n"], "old.csv"));
+    await vi.waitFor(() => { expect(inspectSpreadsheet).toHaveBeenCalledTimes(1); });
+    choose(new File(["Value\nnew\n"], "new.csv"));
+    await vi.waitFor(() => { expect(inspectSpreadsheet).toHaveBeenCalledTimes(2); });
+    if (outcome === "success") old.resolve(namedBook("Obsolete source"));
+    else old.reject(new Error("Obsolete inspection failure"));
+    await settle();
+    expect(root.querySelector("fieldset")?.disabled).toBe(true);
+    expect(acceptedSourceVisible()).toBe(false);
+    expect(root.textContent).not.toContain("Obsolete");
+    latest.resolve(namedBook("Latest source"));
+    await vi.waitFor(() => { expect(root.textContent).toContain("Latest source"); });
+    expect(root.querySelector("fieldset")?.disabled).toBe(false);
+    click(root, "Accept types and import");
+    expect(accept.mock.calls[0]?.[0].name).toBe("new.csv");
+    await settle();
+  });
+
+  it.each(["success", "failure"])("keeps the newest source/options pair when older option inspection returns %s", async outcome => {
+    const { root, choose, inspectSpreadsheet, accept, acceptedSourceVisible } = importPanelFixture();
+    choose(new File(["Value\nsource\n"], "source.csv"));
+    await vi.waitFor(() => { expect(acceptedSourceVisible()).toBe(true); });
+    const old = pendingResult<SourceWorkbook>();
+    inspectSpreadsheet.mockReturnValueOnce(old.promise).mockResolvedValueOnce(namedBook("Tab interpretation"));
+    const comma = control(root, "CSV delimiter"); comma.value = ";"; comma.dispatchEvent(new Event("change"));
+    const tab = control(root, "CSV delimiter"); tab.value = "\t"; tab.dispatchEvent(new Event("change"));
+    await vi.waitFor(() => { expect(root.textContent).toContain("Tab interpretation"); });
+    const current = root.innerHTML;
+    if (outcome === "success") old.resolve(namedBook("Semicolon interpretation"));
+    else old.reject(new Error("Obsolete option failure"));
+    await settle();
+    expect(root.innerHTML).toBe(current);
+    expect(inspectSpreadsheet.mock.calls[1]?.[2]).toEqual({ delimiter: ";", header: true });
+    expect(inspectSpreadsheet.mock.calls[2]?.[2]).toEqual({ delimiter: "\t", header: true });
+    click(root, "Accept types and import");
+    expect(accept.mock.calls[0]?.[1]).toEqual({ delimiter: "\t", header: true });
+    await settle();
+  });
+
+  it.each(["clear", "invalid"])("invalidates in-flight inspection when the next selection is %s", async action => {
+    const { root, choose, inspectSpreadsheet, acceptedSourceVisible, accept } = importPanelFixture();
+    const old = pendingResult<SourceWorkbook>(); inspectSpreadsheet.mockReturnValueOnce(old.promise);
+    choose(new File(["Value\nold\n"], "old.csv"));
+    await vi.waitFor(() => { expect(inspectSpreadsheet).toHaveBeenCalledTimes(1); });
+    choose(action === "clear" ? null : new File(["invalid"], "invalid.txt"));
+    old.resolve(namedBook("Obsolete source"));
+    await settle();
+    expect(acceptedSourceVisible()).toBe(false);
+    expect(root.textContent).not.toContain("Obsolete source");
+    expect(root.querySelector("fieldset")?.disabled).toBe(false);
+    expect(accept).not.toHaveBeenCalled();
+  });
+
+  it("refuses a detached old accept button after a newer inspection succeeds", async () => {
+    const { root, choose, inspectSpreadsheet, acceptedSourceVisible, accept } = importPanelFixture();
+    choose(new File(["Value\nold\n"], "old.csv"));
+    await vi.waitFor(() => { expect(acceptedSourceVisible()).toBe(true); });
+    const oldAccept = [...root.querySelectorAll("button")].find(button => button.textContent === "Accept types and import")!;
+    inspectSpreadsheet.mockResolvedValueOnce(namedBook("Latest source"));
+    choose(new File(["Value\nnew\n"], "new.csv"));
+    await vi.waitFor(() => { expect(root.textContent).toContain("Latest source"); });
+    oldAccept.click();
+    expect(accept).not.toHaveBeenCalled();
+    click(root, "Accept types and import");
+    expect(accept).toHaveBeenCalledTimes(1);
+    expect(accept.mock.calls[0]?.[0].name).toBe("new.csv");
+    await settle();
+  });
+});
+
+describe("late inspection and acceptance capture", () => {
+  it.each(["success", "failure"])("ignores source A inspection %s after source B has already completed", async outcome => {
+    const { root, choose, inspectSpreadsheet, accept } = importPanelFixture();
+    const old = pendingResult<SourceWorkbook>();
+    inspectSpreadsheet.mockReturnValueOnce(old.promise).mockResolvedValueOnce(namedBook("Source B"));
+    choose(new File(["Value\nA\n"], "A.csv"));
+    await vi.waitFor(() => { expect(inspectSpreadsheet).toHaveBeenCalledTimes(1); });
+    choose(new File(["Value\nB\n"], "B.csv"));
+    await vi.waitFor(() => { expect(root.textContent).toContain("Source B"); });
+    const current = root.innerHTML;
+    if (outcome === "success") old.resolve(namedBook("Source A"));
+    else old.reject(new Error("Late A failure"));
+    await settle();
+    expect(root.innerHTML).toBe(current);
+    click(root, "Accept types and import");
+    expect(accept.mock.calls[0]?.[0]).toMatchObject({ name: "B.csv", bytes: new TextEncoder().encode("Value\nB\n").buffer });
+    await settle();
+  });
+
+  it("holds the explicitly accepted source/options/selection fixed until acceptance settles", async () => {
+    const { root, choose, accept, acceptedSourceVisible, inspectSpreadsheet } = importPanelFixture();
+    choose(new File(["Value\nA\n"], "A.csv"));
+    await vi.waitFor(() => { expect(acceptedSourceVisible()).toBe(true); });
+    const acceptance = pendingResult<never>(); accept.mockReturnValueOnce(acceptance.promise);
+    click(root, "Accept types and import");
+    choose(new File(["Value\nB\n"], "B.csv"));
+    const delimiter = control(root, "CSV delimiter"); delimiter.value = ";"; delimiter.dispatchEvent(new Event("change"));
+    await settle();
+    expect(inspectSpreadsheet).toHaveBeenCalledTimes(1);
+    expect(accept).toHaveBeenCalledTimes(1);
+    expect(accept.mock.calls[0]?.[0].name).toBe("A.csv");
+    expect(accept.mock.calls[0]?.[1]).toEqual({ delimiter: ",", header: true });
+    expect(accept.mock.calls[0]?.[2]).toEqual({ column_types: [["text"]], extra_columns: [[]] });
+    expect(root.querySelector("fieldset")?.disabled).toBe(true);
+    acceptance.reject(new Error("Import was rejected"));
+    await vi.waitFor(() => { expect(root.textContent).toContain("Import was rejected"); });
+    expect(root.querySelector("fieldset")?.disabled).toBe(false);
+    expect(acceptedSourceVisible()).toBe(true);
   });
 });

@@ -6,6 +6,168 @@ fn simple() -> SourceWorkbook {
 }
 
 #[test]
+fn multiple_column_groups_are_all_inspected_and_singleton_duplicates_rejected() {
+    let bytes = export_xlsx(&simple()).unwrap();
+    for (attribute, code) in [
+        ("hidden=\"1\"", "hidden_column"),
+        ("style=\"1\"", "inherited_column_style"),
+    ] {
+        let changed = mutate(&bytes, "xl/worksheets/sheet1.xml", |s| {
+            s.replace(
+                "</cols>",
+                &format!("</cols><cols><col min=\"1\" max=\"2\" {attribute}/></cols>"),
+            )
+        });
+        let book = import_xlsx(&changed).unwrap();
+        assert!(book.ledger.iter().any(|f| f.code == code && f.blocking));
+        assert!(export_xlsx(&book).is_err());
+    }
+    let width = mutate(&bytes, "xl/worksheets/sheet1.xml", |s| {
+        s.replace(
+            "</cols>",
+            "</cols><cols><col min=\"2\" max=\"2\" width=\"24\"/></cols>",
+        )
+    });
+    let book = import_xlsx(&width).unwrap();
+    assert_eq!(book.sheets[0].columns[1].width, Some(24.0));
+    assert!(!book.ledger.iter().any(|f| f.blocking));
+    for extra in [
+        "<sheetData/>",
+        "<dimension ref=\"A1\"/><dimension ref=\"B2\"/>",
+        "<sheetFormatPr/><sheetFormatPr zeroHeight=\"1\"/>",
+    ] {
+        let changed = mutate(&bytes, "xl/worksheets/sheet1.xml", |s| {
+            s.replace("</worksheet>", &format!("{extra}</worksheet>"))
+        });
+        assert!(
+            import_xlsx(&changed)
+                .unwrap_err()
+                .0
+                .contains("Duplicate singleton")
+        );
+    }
+    let unknown = mutate(&bytes, "xl/worksheets/sheet1.xml", |s| {
+        s.replace("</cols>", "</cols><cols><unknown/></cols>")
+    });
+    assert!(import_xlsx(&unknown).is_err());
+}
+
+#[test]
+fn integral_time_only_formats_never_become_dates_or_numbers() {
+    let mut book = simple();
+    book.sheets[0].rows[0][1].value = SourceValue::Number { value: 0.0 };
+    for format in ["h:mm", "h:mm:ss", "[m]", "[mm]"] {
+        book.sheets[0].rows[0][1].style.number_format = Some(format.into());
+        let bytes = export_xlsx(&book).unwrap();
+        let imported = import_xlsx(&bytes).unwrap();
+        assert!(
+            imported
+                .ledger
+                .iter()
+                .any(|f| f.blocking && f.code == "scalar_mapping_rejected")
+        );
+        assert_eq!(imported.sheets[0].rows[0][1].value, SourceValue::Empty);
+    }
+    book.sheets[0].rows[0][1].style.number_format = None;
+    let bytes = export_xlsx(&book).unwrap();
+    for id in 18..=22 {
+        let changed = mutate(&bytes, "xl/styles.xml", |s| {
+            s.replace("<xf numFmtId=\"164\"", &format!("<xf numFmtId=\"{id}\""))
+        });
+        let imported = import_xlsx(&changed).unwrap();
+        if id == 22 {
+            assert_eq!(
+                imported.sheets[0].rows[0][1].value,
+                SourceValue::Date {
+                    value: "1899-12-31".into()
+                }
+            );
+        } else {
+            assert!(
+                imported
+                    .ledger
+                    .iter()
+                    .any(|f| f.blocking && f.code == "scalar_mapping_rejected")
+            );
+            assert_eq!(imported.sheets[0].rows[0][1].value, SourceValue::Empty);
+        }
+    }
+}
+
+#[test]
+fn every_unmapped_worksheet_child_has_a_loss_or_blocking_inventory() {
+    let bytes = export_xlsx(&simple()).unwrap();
+    for (child, code, blocking) in [
+        (
+            "<sheetProtection sheet=\"1\"/>",
+            "worksheet_protection",
+            false,
+        ),
+        (
+            "<hyperlinks><hyperlink ref=\"A2\" location=\"B2\"/></hyperlinks>",
+            "worksheet_hyperlinks",
+            false,
+        ),
+        (
+            "<pageSetup orientation=\"landscape\"/>",
+            "worksheet_layout_rules",
+            false,
+        ),
+        ("<unknownSemanticFeature/>", "unknown_worksheet_child", true),
+        (
+            "<sheetData xmlns=\"urn:foreign\"/>",
+            "unknown_worksheet_child",
+            true,
+        ),
+    ] {
+        let changed = mutate(&bytes, "xl/worksheets/sheet1.xml", |s| {
+            s.replace("</worksheet>", &format!("{child}</worksheet>"))
+        });
+        let imported = import_xlsx(&changed).unwrap();
+        assert!(
+            imported
+                .ledger
+                .iter()
+                .any(|f| f.code == code && f.blocking == blocking)
+        );
+        if blocking {
+            assert!(export_xlsx(&imported).is_err());
+        }
+    }
+    for (before, after, code) in [
+        (
+            "<row r=\"2\">",
+            "<row r=\"2\" s=\"1\" customFormat=\"1\">",
+            "inherited_row_style",
+        ),
+        (
+            "<cols>",
+            "<cols><col min=\"1\" max=\"2\" style=\"1\"/>",
+            "inherited_column_style",
+        ),
+    ] {
+        let changed = mutate(&bytes, "xl/worksheets/sheet1.xml", |s| {
+            s.replace(before, after)
+        });
+        let imported = import_xlsx(&changed).unwrap();
+        assert!(imported.ledger.iter().any(|f| f.code == code && f.blocking));
+        assert!(export_xlsx(&imported).is_err());
+    }
+    for (attribute, blocking) in [("ht=\"40\"", false), ("unknownMode=\"1\"", true)] {
+        let changed = mutate(&bytes, "xl/worksheets/sheet1.xml", |s| {
+            s.replace("<row r=\"2\">", &format!("<row r=\"2\" {attribute}>"))
+        });
+        let imported = import_xlsx(&changed).unwrap();
+        assert!(
+            imported
+                .ledger
+                .iter()
+                .any(|f| f.code == "unmapped_grid_attribute" && f.blocking == blocking)
+        );
+    }
+}
+
+#[test]
 fn cdata_obeys_xml_characters_and_root_boundaries() {
     let bytes = export_xlsx(&simple()).unwrap();
     for text in ["\u{0}", "\u{1}", "\u{fffe}", "\u{ffff}"] {
