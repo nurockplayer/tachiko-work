@@ -175,7 +175,7 @@ fn native_tracker_exports_all_128_rows_without_import_provenance_or_mutation() {
             _ => panic!("estimate should remain a Number"),
         })
         .collect::<Vec<_>>();
-    assert_eq!(estimates.iter().sum::<f64>(), 8256.0);
+    assert!((estimates.iter().sum::<f64>() - 8256.0).abs() < f64::EPSILON);
     assert!(sheet.rows.iter().enumerate().all(|(index, row)| matches!(row[2].value, SourceValue::Boolean { value } if value == ((128 - index) % 2 == 0))));
     assert!(
         export_csv(sheet).is_err(),
@@ -265,8 +265,12 @@ fn native_tracker_preserves_scalar_meaning_and_refuses_formula_like_csv_text() {
     assert!(
         matches!(sheet.rows[0][0].value, SourceValue::Text { ref value } if value == "=literal")
     );
-    assert!(matches!(sheet.rows[0][1].value, SourceValue::Number { value } if value == -1.5));
-    assert!(matches!(sheet.rows[1][1].value, SourceValue::Number { value } if value == 0.0));
+    assert!(
+        matches!(sheet.rows[0][1].value, SourceValue::Number { value } if (value + 1.5).abs() < f64::EPSILON)
+    );
+    assert!(
+        matches!(sheet.rows[1][1].value, SourceValue::Number { value } if value.abs() < f64::EPSILON)
+    );
     assert!(matches!(
         sheet.rows[0][2].value,
         SourceValue::Boolean { value: false }

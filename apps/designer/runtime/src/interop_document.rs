@@ -1267,6 +1267,10 @@ impl DesignerRuntime {
     /// The private presentation establishes only stable row order and supported
     /// cell styles. Rust derives the fixed three-field schema and every scalar
     /// from the authoritative snapshot, then uses the existing bounded writer.
+    ///
+    /// # Errors
+    /// Returns stale, non-Tracker, incomplete/foreign presentation, scalar, or
+    /// bounded-output failures without mutating the resident occurrence.
     pub fn export_native_tracker_workbook(
         &self,
         expected_revision: &str,

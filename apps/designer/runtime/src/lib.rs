@@ -2638,7 +2638,7 @@ fn ensure_static_profile(
         resulting_revision: "resident/18446744073709551615".to_owned(),
         entities,
         fields: fields.clone(),
-        affected_calculations: (!native_tracker).then_some(fields).unwrap_or_default(),
+        affected_calculations: if native_tracker { Vec::new() } else { fields },
     };
     ensure_projection_size_with_limit(
         &publication,
