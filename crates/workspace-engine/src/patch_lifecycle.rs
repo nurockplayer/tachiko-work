@@ -2093,11 +2093,7 @@ impl PatchLifecycle {
                             entity: field.entity.clone(),
                         }
                     })?;
-                    let existing = entity.fields.get(&field.field).ok_or_else(|| {
-                        WorkspaceError::MissingField {
-                            field: field.clone(),
-                        }
-                    })?;
+                    let existing = entity.fields.get(&field.field);
                     let mutation_classes = classify_field_transition(existing, value);
                     let scope = self.field_scope(&candidate, field)?;
                     for mutation_class in mutation_classes {
@@ -2305,6 +2301,24 @@ impl PatchLifecycle {
     ) -> Result<(), PatchLifecycleError> {
         match change {
             SemanticChange::EntityAdded { .. } | SemanticChange::EntityRemoved { .. } => Ok(()),
+            SemanticChange::FieldAdded { field, value } => {
+                // A value-slot initialization is not a schema/identity mutation.
+                // Admit only the existing optional declaration and its exact
+                // SetFieldValue command; arbitrary added fields remain closed.
+                let definition = crate::field_definition(before, field)
+                    .map_err(|_| PatchLifecycleError::ScopeDerivationFailed)?;
+                let existing = before.entities[&field.entity].fields.get(&field.field);
+                let families = command_families_for_field(body, field);
+                if existing.is_some()
+                    || definition.required
+                    || matches!(value, Value::Formula(_))
+                    || families != BTreeSet::from([OperationFamily::SetFieldValue])
+                {
+                    return Err(PatchLifecycleError::ScopeDerivationFailed);
+                }
+                self.insert_field_disclosure(before, after, field, disclosures)?;
+                self.insert_value_disclosures(before, after, value, disclosures)
+            }
             SemanticChange::FieldChanged {
                 field,
                 before: old_value,
@@ -2590,10 +2604,13 @@ fn command_families_for_field(
         .collect()
 }
 
-fn classify_field_transition(existing: &Value, replacement: &Value) -> BTreeSet<MutationClass> {
+fn classify_field_transition(
+    existing: Option<&Value>,
+    replacement: &Value,
+) -> BTreeSet<MutationClass> {
     if matches!(replacement, Value::Formula(_)) {
         BTreeSet::from([MutationClass::Formula])
-    } else if matches!(existing, Value::Formula(_)) {
+    } else if matches!(existing, Some(Value::Formula(_))) {
         BTreeSet::from([
             MutationClass::Value,
             MutationClass::Formula,

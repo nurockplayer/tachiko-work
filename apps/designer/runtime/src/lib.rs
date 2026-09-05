@@ -30,6 +30,15 @@ use tachiko_workspace_engine::{
 };
 use thiserror::Error;
 
+pub mod interop_adapter;
+mod interop_document;
+use interop_document::PendingCleanup;
+pub use interop_document::{
+    CleanupChange, CleanupOperation, CleanupPreview, ImportColumnSpec, ImportFieldType,
+    ImportSelection, ImportedProjection, InteropMetadata, SpreadsheetExportProjection,
+    import_workbook, inspect_imported_project, validate_import_metadata,
+};
+
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 
@@ -105,6 +114,14 @@ pub enum DesignerRequest {
         target: FieldTarget,
         input: ScalarEditInput,
     },
+    PreviewCleanup {
+        expected_revision: String,
+        operation: CleanupOperation,
+    },
+    CommitCleanup {
+        expected_revision: String,
+        preview_id: String,
+    },
     CopyFormula {
         expected_revision: String,
         source: FieldTarget,
@@ -129,6 +146,10 @@ pub enum DesignerResponse {
     Table(TableProjection),
     Fields(FieldBatchProjection),
     Published(PublicationProjection),
+    CleanupPreview(CleanupPreview),
+    ImportPreview(Box<interop_adapter::SourceWorkbook>),
+    Imported(Box<ImportedProjection>),
+    SpreadsheetExported(SpreadsheetExportProjection),
     ProjectExported(ProjectExportProjection),
 }
 
@@ -447,6 +468,7 @@ pub struct DesignerRuntime {
     row_namespace: String,
     undo: Vec<HistoryEntry>,
     redo: Vec<HistoryEntry>,
+    pending_cleanup: Option<PendingCleanup>,
 }
 
 #[derive(Clone)]
@@ -540,6 +562,7 @@ impl DesignerRuntime {
             row_namespace: occurrence_id.to_owned(),
             undo: Vec::new(),
             redo: Vec::new(),
+            pending_cleanup: None,
         };
         runtime.ensure_supported_project()?;
         Ok(runtime)
@@ -631,6 +654,18 @@ impl DesignerRuntime {
                 &target,
                 &input,
             )?)),
+            DesignerRequest::PreviewCleanup {
+                expected_revision,
+                operation,
+            } => Ok(DesignerResponse::CleanupPreview(
+                self.preview_cleanup(&expected_revision, &operation)?,
+            )),
+            DesignerRequest::CommitCleanup {
+                expected_revision,
+                preview_id,
+            } => Ok(DesignerResponse::Published(
+                self.commit_cleanup(&expected_revision, &preview_id)?,
+            )),
             DesignerRequest::CopyFormula {
                 expected_revision,
                 source,
@@ -2588,6 +2623,7 @@ fn designer_lifecycle(
             (OperationFamily::AppendEntity, MutationClass::Structure),
             (OperationFamily::RemoveEntity, MutationClass::Structure),
             (OperationFamily::RemoveEntity, MutationClass::Destructive),
+            (OperationFamily::RemoveEntity, MutationClass::Formula),
         ]
         .into_iter()
         .flat_map(|(family, class)| {

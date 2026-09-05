@@ -1884,3 +1884,28 @@ to semantic core by virtue of using the API.
 - [Validation engine](validation-engine.md)
 - Issues #10, #17, #27, #28, #29, #32, #33, #48, #49, #50, #93, #94,
   #95, #104
+## Bounded optional-slot initialization
+
+The import/cleanup journey requires distinguishing a missing optional value from
+Number(0), false and empty Text. Initializing a schema-declared optional field
+on an existing entity is the existing SetFieldValue family with Value mutation
+class: entity/schema/field identities and definitions do not change. This is
+not arbitrary upsert, schema strengthening or a new conversion family.
+
+Admission resolves the existing entity and schema definition first. Only an
+absent optional field accepts a matching non-formula typed value. Unknown
+entities/fields, missing required fields, mismatched types, invalid references,
+formula initialization and protected formula replacement remain rejected.
+Candidate validation, exact revision, field/reference disclosure footprints,
+scoped grants and atomic publication still apply. None→Number(0) is a change.
+
+The provisional capability DTO represents this state with null
+current_value_kind; present values retain their prior serialized shape.
+Applicable typed SetFieldValue entries come from the same candidate rule;
+formula reasoning, scenarios and FormulaUpdate require a current value.
+This null is query evidence of absence, not a canonical Null value.
+
+Cleanup previews are request-local and revision-pinned. Commit consumes the
+exact preview. Successful cleanup uses generic publication and clears session
+undo; it never invents a zero-valued inverse for an absent field. This limitation
+must remain visible in the UI and release matrix.

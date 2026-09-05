@@ -343,6 +343,171 @@ fn value_for_kind(kind: SemanticValueKind) -> Value {
     }
 }
 
+fn assert_missing_formula_rejected(document: &Document, target: FieldRef) {
+    let mut lifecycle = lifecycle();
+    grant_formula_propose(&mut lifecycle);
+    assert!(
+        lifecycle
+            .propose_formula_update(
+                &DocumentScopeId::from("game-occurrence"),
+                document,
+                &SemanticRevision::from("r1"),
+                FormulaUpdateRequest::new(
+                    ProposalId::from("missing-formula"),
+                    SemanticRevision::from("r1"),
+                    target.clone(),
+                    "1",
+                    PrincipalId::from("agent")
+                ),
+                NOW
+            )
+            .is_err()
+    );
+    assert!(
+        validate_field_value_suggestion(
+            document,
+            target,
+            Value::Formula(Expression::Number(Number::new(1.0).unwrap()))
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn absent_optional_discovery_matches_all_typed_initializers_and_preserves_absence() {
+    for (field_type, kind) in [
+        (FieldType::Number, SemanticValueKind::Number),
+        (FieldType::Text, SemanticValueKind::Text),
+        (FieldType::Boolean, SemanticValueKind::Boolean),
+        (FieldType::Date, SemanticValueKind::Date),
+        (
+            FieldType::Reference {
+                schema: "target".into(),
+            },
+            SemanticValueKind::Reference,
+        ),
+    ] {
+        let mut document = document();
+        let mut definition = field("optional", field_type.clone());
+        definition.required = false;
+        document
+            .schemas
+            .get_mut("source")
+            .unwrap()
+            .fields
+            .insert("optional".into(), definition);
+        let target = field_ref("optional");
+        let capabilities = capabilities_for(&document, &target);
+        assert_eq!(capabilities.current_value_kind, None);
+        for input_kind in [
+            SemanticValueKind::Number,
+            SemanticValueKind::Text,
+            SemanticValueKind::Boolean,
+            SemanticValueKind::Date,
+            SemanticValueKind::Reference,
+        ] {
+            let value = if input_kind == SemanticValueKind::Number {
+                number(0.0)
+            } else {
+                value_for_kind(input_kind)
+            };
+            if input_kind == kind {
+                assert_applicable(&capabilities, FieldCapabilityInput::TypedValue { kind });
+            } else {
+                assert_type_mismatch(&capabilities, input_kind, field_type.clone());
+            }
+            assert_eq!(
+                validate_field_value_suggestion(&document, target.clone(), value.clone()).is_ok(),
+                input_kind == kind
+            );
+            let mut lifecycle = lifecycle();
+            grant_value_propose(&mut lifecycle);
+            let result = lifecycle.propose(
+                &DocumentScopeId::from("game-occurrence"),
+                &document,
+                &SemanticRevision::from("r1"),
+                ProposalRequest::new(
+                    ProposalId::from("optional-init"),
+                    SemanticRevision::from("r1"),
+                    SemanticPatchBody::command(SemanticCommand::set_field_value(
+                        target.clone(),
+                        value,
+                    )),
+                    PrincipalId::from("agent"),
+                ),
+                NOW,
+            );
+            assert_eq!(result.is_ok(), input_kind == kind, "{result:?}");
+        }
+        for (family, input) in [
+            (
+                OperationFamily::FormulaUpdate,
+                FieldCapabilityInput::Formula,
+            ),
+            (
+                OperationFamily::FormulaReasoning,
+                FieldCapabilityInput::None,
+            ),
+            (
+                OperationFamily::NumberOverrideScenario,
+                FieldCapabilityInput::Number,
+            ),
+        ] {
+            assert_eq!(
+                capability(&capabilities, family, input).applicability,
+                FieldCapabilityApplicability::Inapplicable {
+                    reason: FieldCapabilityInapplicability::MissingValue
+                }
+            );
+        }
+        assert_missing_formula_rejected(&document, target);
+        assert!(!document.entities["row"].fields.contains_key("optional"));
+    }
+    let capabilities = capabilities_for(&document(), &field_ref("amount"));
+    assert_eq!(
+        capabilities.current_value_kind,
+        Some(SemanticValueKind::Number)
+    );
+}
+
+#[test]
+fn missing_required_slot_stays_unresolved_and_cannot_be_initialized() {
+    let mut document = document();
+    document
+        .entities
+        .get_mut("row")
+        .unwrap()
+        .fields
+        .remove("label");
+    let mut lifecycle = lifecycle();
+    grant_discovery(&mut lifecycle);
+    let snapshot =
+        ResidentWorkspaceSession::new(DocumentScopeId::from("game-occurrence"), document.clone())
+            .export_snapshot();
+    let result = lifecycle
+        .query_field_capabilities(
+            &snapshot,
+            &field_ref("label"),
+            &PrincipalId::from("agent"),
+            NOW,
+        )
+        .unwrap();
+    assert_eq!(
+        result.outcome,
+        FieldCapabilityQueryOutcome::UnresolvedTarget {
+            field: field_ref("label")
+        }
+    );
+    assert!(
+        validate_field_value_suggestion(
+            &document,
+            field_ref("label"),
+            Value::Text("repair".to_owned())
+        )
+        .is_err()
+    );
+}
+
 #[test]
 fn discovery_projects_number_text_boolean_date_and_reference_rules() {
     let document = document();
@@ -384,7 +549,7 @@ fn discovery_projects_number_text_boolean_date_and_reference_rules() {
         let capabilities = capabilities_for(&document, &field);
         assert_eq!(capabilities.field, field);
         assert_eq!(capabilities.declared_type, expected_type.clone());
-        assert_eq!(capabilities.current_value_kind, expected_kind);
+        assert_eq!(capabilities.current_value_kind, Some(expected_kind));
         assert_applicable(
             &capabilities,
             FieldCapabilityInput::TypedValue {
@@ -473,7 +638,10 @@ fn discovery_and_date_propose_share_typed_input_rule() {
     let document = document();
     let date_field = field_ref("published");
     let capabilities = capabilities_for(&document, &date_field);
-    assert_eq!(capabilities.current_value_kind, SemanticValueKind::Date);
+    assert_eq!(
+        capabilities.current_value_kind,
+        Some(SemanticValueKind::Date)
+    );
     assert_applicable(
         &capabilities,
         FieldCapabilityInput::TypedValue {
@@ -511,7 +679,10 @@ fn discovery_and_mutation_share_formula_edit_and_formula_target_rules() {
     let document = document();
     let formula_field = field_ref("computed");
     let capabilities = capabilities_for(&document, &formula_field);
-    assert_eq!(capabilities.current_value_kind, SemanticValueKind::Formula);
+    assert_eq!(
+        capabilities.current_value_kind,
+        Some(SemanticValueKind::Formula)
+    );
     for input_kind in [
         SemanticValueKind::Number,
         SemanticValueKind::Text,

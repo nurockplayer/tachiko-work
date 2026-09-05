@@ -1,0 +1,224 @@
+{
+  "schema": "tachiko-259-synthetic-inventory/v1",
+  "source_sha256": "81cce4bdfecc8e9832a48cfff4b6e83818c1f169d84d339d9793954655800d63",
+  "reference_tool_opened": false,
+  "fixtures": [
+    {
+      "file": "01-shared-selfclosing.xlsx",
+      "sha256": "3a366e6bc97a67368ccf58ad0fb9e6c4355c32a6da97da6fd6e744c8ca2efc11",
+      "compressed_bytes": 7574,
+      "expanded_bytes": 25479,
+      "entry_count": 11,
+      "expected_inventory": [
+        {
+          "construct": "shared_formula_master",
+          "location": "Budget!G2",
+          "source": "B2+B3",
+          "shared_index": 0
+        },
+        {
+          "construct": "shared_formula_follower",
+          "location": "Budget!G3",
+          "cached_value": "777",
+          "action": "resolve shared formula or safe-disable; never admit cache as scalar"
+        }
+      ],
+      "construction_verified": true,
+      "reference_tool_opened": false,
+      "limitations": [
+        "Synthetic mutation of reference fixture; parts may not constitute a complete standards-valid workbook.",
+        "Never execute source content or use a reference spreadsheet tool to open these adversarial fixtures."
+      ]
+    },
+    {
+      "file": "02-external-dde.xlsx",
+      "sha256": "fe2e6ef0db538fb24f1fd7ddc83083b9b48ca8146c5d58a14ca69ca866165a23",
+      "compressed_bytes": 8206,
+      "expanded_bytes": 25980,
+      "entry_count": 13,
+      "expected_inventory": [
+        {
+          "construct": "external_workbook_reference",
+          "location": "Budget!G2",
+          "action": "safe-disable; no fetch"
+        },
+        {
+          "construct": "dde_formula",
+          "location": "Budget!G3",
+          "action": "safe-disable; no execution"
+        },
+        {
+          "construct": "external_relationship",
+          "location": "xl/externalLinks/_rels/externalLink1.xml.rels",
+          "action": "inventory only"
+        }
+      ],
+      "construction_verified": true,
+      "reference_tool_opened": false,
+      "limitations": [
+        "Synthetic mutation of reference fixture; parts may not constitute a complete standards-valid workbook.",
+        "Never execute source content or use a reference spreadsheet tool to open these adversarial fixtures."
+      ]
+    },
+    {
+      "file": "03-disabled-parts.xlsx",
+      "sha256": "5fb470a886edda3d2ac79f269d57435ad7f7dca39359ea664517a7194bf0d61d",
+      "compressed_bytes": 8737,
+      "expanded_bytes": 25450,
+      "entry_count": 17,
+      "expected_inventory": [
+        {
+          "construct": "macro",
+          "location": "xl/vbaProject.bin",
+          "action": "inventory; never execute; not preserved by bounded export"
+        },
+        {
+          "construct": "activex",
+          "location": "xl/activeX/activeX1.xml",
+          "action": "inventory; never execute; not preserved by bounded export"
+        },
+        {
+          "construct": "ole",
+          "location": "xl/embeddings/oleObject1.bin",
+          "action": "inventory; never execute; not preserved by bounded export"
+        },
+        {
+          "construct": "pivot",
+          "location": "xl/pivotTables/pivotTable1.xml",
+          "action": "inventory; never execute; not preserved by bounded export"
+        },
+        {
+          "construct": "chart",
+          "location": "xl/charts/chart1.xml",
+          "action": "inventory; never execute; not preserved by bounded export"
+        }
+      ],
+      "construction_verified": true,
+      "reference_tool_opened": false,
+      "limitations": [
+        "Synthetic mutation of reference fixture; parts may not constitute a complete standards-valid workbook.",
+        "Never execute source content or use a reference spreadsheet tool to open these adversarial fixtures."
+      ]
+    },
+    {
+      "file": "04-table-validation-names.xlsx",
+      "sha256": "8d5ecce8a1ee3421a9d0bce34b42fad6b2142d2f994a1799ff7dcd3f66f145a1",
+      "compressed_bytes": 7813,
+      "expanded_bytes": 25561,
+      "entry_count": 12,
+      "expected_inventory": [
+        {
+          "construct": "table",
+          "location": "xl/tables/table1.xml"
+        },
+        {
+          "construct": "data_validation",
+          "location": "Budget!B2:B3"
+        },
+        {
+          "construct": "auto_filter",
+          "location": "Budget!A1:L3"
+        },
+        {
+          "construct": "defined_name",
+          "location": "SyntheticBudgetAmount"
+        }
+      ],
+      "construction_verified": true,
+      "reference_tool_opened": false,
+      "limitations": [
+        "Synthetic mutation of reference fixture; parts may not constitute a complete standards-valid workbook.",
+        "Never execute source content or use a reference spreadsheet tool to open these adversarial fixtures."
+      ]
+    },
+    {
+      "file": "05-date-boundaries.xlsx",
+      "sha256": "204a335bb3f839f3dc6b7181da53828666b215a29f5fa725fdee23559dfba07b",
+      "compressed_bytes": 7553,
+      "expanded_bytes": 25460,
+      "entry_count": 11,
+      "expected_inventory": [
+        {
+          "construct": "excel_1900_serial_60",
+          "location": "Budget!D2",
+          "action": "reject Date conversion; fictitious 1900-02-29 must not become canonical Date"
+        },
+        {
+          "construct": "date_time_fraction",
+          "location": "Budget!D3",
+          "value": "46270.5",
+          "action": "never truncate noon into Date; explicit unsupported evidence"
+        }
+      ],
+      "construction_verified": true,
+      "reference_tool_opened": false,
+      "limitations": [
+        "Synthetic mutation of reference fixture; parts may not constitute a complete standards-valid workbook.",
+        "Never execute source content or use a reference spreadsheet tool to open these adversarial fixtures."
+      ]
+    },
+    {
+      "file": "06-oversize-address.xlsx",
+      "sha256": "a95c59f3cc9cc7fab41769d79b2cd4e44150bf02706e40b1560aa2d30e371df9",
+      "compressed_bytes": 7554,
+      "expanded_bytes": 25480,
+      "entry_count": 11,
+      "expected_inventory": [
+        {
+          "construct": "out_of_profile_cell_reference",
+          "location": "Budget!ZZZZZZZZZZZZ999999999",
+          "action": "reject before coordinate-driven allocation; no giant row fill"
+        }
+      ],
+      "construction_verified": true,
+      "reference_tool_opened": false,
+      "limitations": [
+        "Synthetic mutation of reference fixture; parts may not constitute a complete standards-valid workbook.",
+        "Never execute source content or use a reference spreadsheet tool to open these adversarial fixtures."
+      ]
+    },
+    {
+      "file": "07-duplicate-zip-entry.xlsx",
+      "sha256": "59bfeda3ea89a4827ada71530c313a5dd31e179954df04047c021e398b566474",
+      "compressed_bytes": 8369,
+      "expanded_bytes": 26490,
+      "entry_count": 12,
+      "expected_inventory": [
+        {
+          "construct": "duplicate_zip_entry",
+          "location": "xl/workbook.xml",
+          "count": 2,
+          "action": "reject ambiguous archive before semantic admission"
+        }
+      ],
+      "construction_verified": true,
+      "reference_tool_opened": false,
+      "limitations": [
+        "Synthetic mutation of reference fixture; parts may not constitute a complete standards-valid workbook.",
+        "Never execute source content or use a reference spreadsheet tool to open these adversarial fixtures."
+      ]
+    },
+    {
+      "file": "08-expanded-limit.xlsx",
+      "sha256": "744f6a6d3066194ebd91cf8620dcb5affdd2a68a5d5c7274d718984feaa527a0",
+      "compressed_bytes": 8314,
+      "expanded_bytes": 549384,
+      "entry_count": 12,
+      "expected_inventory": [
+        {
+          "construct": "expanded_size_limit_probe",
+          "location": "xl/synthetic-expanded.xml",
+          "expanded_bytes": 524311,
+          "test_limit_bytes": 262144,
+          "action": "with explicit 256 KiB expanded limit, reject before full XML materialization; bounded half-MiB concept fixture"
+        }
+      ],
+      "construction_verified": true,
+      "reference_tool_opened": false,
+      "limitations": [
+        "Synthetic mutation of reference fixture; parts may not constitute a complete standards-valid workbook.",
+        "Never execute source content or use a reference spreadsheet tool to open these adversarial fixtures."
+      ]
+    }
+  ]
+}

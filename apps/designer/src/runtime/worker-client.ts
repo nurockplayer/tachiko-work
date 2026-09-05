@@ -1,3 +1,4 @@
+import type { CleanupOperation, CleanupPreview, ImportedProjection, ImportOptions, ImportSelection, InteropMetadata, SourceWorkbook, SpreadsheetExport, SpreadsheetFormat, SpreadsheetOperation } from "./interop-protocol.ts";
 import {
   DesignerRuntimeError,
   type DesignerClient,
@@ -51,6 +52,49 @@ export class WorkerDesignerClient implements DesignerClient {
 
   async newTracker(): Promise<OpenedProjection> {
     return expectResponse("opened", await this.#command({type: "new_tracker", occurrence_id: freshOccurrenceId()}));
+  }
+
+  async #spreadsheet(operation: SpreadsheetOperation, bytes = new ArrayBuffer(0)): Promise<Exclude<WorkerReply, {status: "error"}>> {
+    const copy = bytes.slice(0);
+    return this.#send({id: this.#claimId(), kind: "spreadsheet", operation, bytes: copy}, [copy]);
+  }
+
+  async inspectSpreadsheet(bytes: ArrayBuffer, format: SpreadsheetFormat, csvOptions: ImportOptions): Promise<SourceWorkbook> {
+    const reply = await this.#spreadsheet({type: "inspect", format, csv_options: csvOptions}, bytes);
+    if (reply.status !== "ok") throw new Error("Expected spreadsheet inspection.");
+    return expectResponse("import_preview", reply.response);
+  }
+
+  async importSpreadsheet(bytes: ArrayBuffer, format: SpreadsheetFormat, csvOptions: ImportOptions, selection: ImportSelection, validate?: (candidate: ImportedProjection) => void): Promise<ImportedProjection> {
+    const occurrence_id = freshOccurrenceId();
+    const operation = {type: "import" as const, format, csv_options: csvOptions, selection, occurrence_id, install: false};
+    const preview = await this.#spreadsheet(operation, bytes);
+    if (preview.status !== "ok") throw new Error("Expected spreadsheet import preview.");
+    const candidate = expectResponse("imported", preview.response);
+    validate?.(candidate);
+    const reply = await this.#spreadsheet({...operation, install: true}, bytes);
+    if (reply.status !== "ok") throw new Error("Expected spreadsheet import.");
+    return expectResponse("imported", reply.response);
+  }
+
+  async inspectImportedProject(bytes: ArrayBuffer, metadata: InteropMetadata): Promise<OpenedProjection> {
+    const reply = await this.#spreadsheet({type: "inspect_project", metadata}, bytes);
+    if (reply.status !== "ok") throw new Error("Expected imported project inspection.");
+    return expectResponse("opened", reply.response);
+  }
+
+  async exportSpreadsheet(expectedRevision: string, metadata: InteropMetadata, format: SpreadsheetFormat, collection: string): Promise<SpreadsheetExport> {
+    const reply = await this.#spreadsheet({type: "export", expected_revision: expectedRevision, metadata, format, collection});
+    if (reply.status !== "spreadsheet_exported") throw new Error("Expected spreadsheet export.");
+    return reply.export;
+  }
+
+  async previewCleanup(expectedRevision: string, operation: CleanupOperation): Promise<CleanupPreview> {
+    return expectResponse("cleanup_preview", await this.#command({type: "preview_cleanup", expected_revision: expectedRevision, operation}));
+  }
+
+  async commitCleanup(expectedRevision: string, previewId: string): Promise<PublicationProjection> {
+    return expectResponse("published", await this.#command({type: "commit_cleanup", expected_revision: expectedRevision, preview_id: previewId}));
   }
 
   async newBudget(): Promise<OpenedProjection> {
@@ -263,6 +307,9 @@ export function freshOccurrenceId(): string {
   )}-${hex.slice(20)}`;
 }
 
+function expectResponse(type: "import_preview", response: DesignerResponse): SourceWorkbook;
+function expectResponse(type: "imported", response: DesignerResponse): ImportedProjection;
+function expectResponse(type: "cleanup_preview", response: DesignerResponse): CleanupPreview;
 function expectResponse(
   type: "bootstrap",
   response: DesignerResponse,

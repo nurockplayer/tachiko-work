@@ -1,3 +1,5 @@
+import type { CleanupOperation, CleanupPreview, FidelityFinding, ImportedProjection, SourceWorkbook, SpreadsheetExport, SpreadsheetOperation } from "./interop-protocol.ts";
+
 export type FieldTarget = {
   entity: string;
   field: string;
@@ -102,6 +104,8 @@ export type FormulaCopy = {
 };
 
 export type DesignerRequest =
+  | {type: "preview_cleanup"; expected_revision: string; operation: CleanupOperation}
+  | {type: "commit_cleanup"; expected_revision: string; preview_id: string}
   | TrackerCommand
   | (FormulaCopy & { type: "copy_formula"; expected_revision: string })
   | { type: "new_tracker"; occurrence_id: string }
@@ -131,6 +135,10 @@ export type DesignerRequest =
     };
 
 export type DesignerResponse =
+  | {type: "cleanup_preview"; payload: CleanupPreview}
+  | {type: "import_preview"; payload: SourceWorkbook}
+  | {type: "imported"; payload: ImportedProjection}
+  | {type: "spreadsheet_exported"; payload: {revision: string; byte_length: number; ledger: FidelityFinding[]}}
   | { type: "bootstrap"; payload: BootstrapProjection }
   | { type: "opened"; payload: OpenedProjection }
   | { type: "table"; payload: TableProjection }
@@ -143,6 +151,7 @@ export type DesignerWireReply =
   | { status: "error"; error: FailureProjection };
 
 export type WorkerRequest =
+  | {id: number; kind: "spreadsheet"; operation: SpreadsheetOperation; bytes: ArrayBuffer}
   | { id: number; kind: "command"; request: DesignerRequest }
   | {
       id: number;
@@ -155,6 +164,7 @@ export type WorkerRequest =
   | { id: number; kind: "close_project" };
 
 export type WorkerReply =
+  | {id: number; status: "spreadsheet_exported"; export: SpreadsheetExport}
   | { id: number; status: "ok"; response: DesignerResponse }
   | { id: number; status: "project_exported"; export: ProjectExport }
   | { id: number; status: "closed" }

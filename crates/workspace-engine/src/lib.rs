@@ -1471,13 +1471,8 @@ pub(crate) fn field_value_candidate(
             .ok_or_else(|| WorkspaceError::MissingEntityId {
                 entity: field.entity.clone(),
             })?;
-    let existing = entity
-        .fields
-        .get(&field.field)
-        .ok_or_else(|| WorkspaceError::MissingField {
-            field: field.clone(),
-        })?;
-    if !matches!(existing, Value::Formula(_)) && existing == value {
+    let existing = entity.fields.get(&field.field);
+    if !matches!(existing, Some(Value::Formula(_))) && existing == Some(value) {
         return Err(WorkspaceError::NoChange {
             field: field.clone(),
         });
@@ -1488,6 +1483,7 @@ pub(crate) fn field_value_candidate(
         existing,
         semantic_value_kind(value),
         &definition.field_type,
+        definition.required,
     )?;
     preflight_formula_structures(document)?;
     if let Value::Formula(expression) = value {
@@ -1498,7 +1494,7 @@ pub(crate) fn field_value_candidate(
             }
         })?;
     }
-    if existing == value {
+    if existing == Some(value) {
         return Err(WorkspaceError::NoChange {
             field: field.clone(),
         });
@@ -1564,11 +1560,17 @@ pub(crate) fn value_matches_type(value_kind: SemanticValueKind, field_type: &Fie
 /// an input kind, while mutation calls it with the candidate's classified kind.
 pub(crate) fn field_value_input_rule(
     field: &FieldRef,
-    existing: &Value,
+    existing: Option<&Value>,
     input_kind: SemanticValueKind,
     field_type: &FieldType,
+    required: bool,
 ) -> Result<(), WorkspaceError> {
-    if matches!(existing, Value::Formula(_)) && input_kind != SemanticValueKind::Formula {
+    if existing.is_none() && (required || input_kind == SemanticValueKind::Formula) {
+        return Err(WorkspaceError::MissingField {
+            field: field.clone(),
+        });
+    }
+    if matches!(existing, Some(Value::Formula(_))) && input_kind != SemanticValueKind::Formula {
         return Err(WorkspaceError::FormulaEdit {
             field: field.clone(),
         });
@@ -1612,7 +1614,16 @@ pub(crate) fn formula_update_target_rule(
     document: &Document,
     field: &FieldRef,
 ) -> Result<(), WorkspaceError> {
-    if field_definition(document, field)?.field_type != FieldType::Number {
+    let definition = field_definition(document, field)?;
+    if !document.entities[&field.entity]
+        .fields
+        .contains_key(&field.field)
+    {
+        return Err(WorkspaceError::MissingField {
+            field: field.clone(),
+        });
+    }
+    if definition.field_type != FieldType::Number {
         return Err(WorkspaceError::NonNumericFormulaField {
             field: field.clone(),
         });

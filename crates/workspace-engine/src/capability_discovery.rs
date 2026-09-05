@@ -58,6 +58,7 @@ pub enum FieldCapabilityApplicability {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FieldCapabilityInapplicability {
+    MissingValue,
     FormulaEdit,
     TypeMismatch {
         expected: FieldType,
@@ -84,7 +85,7 @@ pub struct FieldCapability {
 pub struct FieldCapabilities {
     pub field: FieldRef,
     pub declared_type: FieldType,
-    pub current_value_kind: SemanticValueKind,
+    pub current_value_kind: Option<SemanticValueKind>,
     pub capabilities: Vec<FieldCapability>,
 }
 
@@ -142,15 +143,15 @@ pub(crate) fn describe_field_capabilities(
             .ok_or_else(|| WorkspaceError::MissingEntityId {
                 entity: field.entity.clone(),
             })?;
-    let existing = entity
-        .fields
-        .get(&field.field)
-        .ok_or_else(|| WorkspaceError::MissingField {
-            field: field.clone(),
-        })?;
+    let existing = entity.fields.get(&field.field);
     let definition = field_definition(document, field)?;
+    if existing.is_none() && definition.required {
+        return Err(WorkspaceError::MissingField {
+            field: field.clone(),
+        });
+    }
     let declared_type = definition.field_type.clone();
-    let current_value_kind = semantic_value_kind(existing);
+    let current_value_kind = existing.map(semantic_value_kind);
 
     let mut capabilities = Vec::with_capacity(8);
     for input_kind in [
@@ -164,7 +165,13 @@ pub(crate) fn describe_field_capabilities(
             family: OperationFamily::SetFieldValue,
             kind: FieldCapabilityKind::Edit,
             input: FieldCapabilityInput::TypedValue { kind: input_kind },
-            applicability: field_value_applicability(field, existing, input_kind, &declared_type)?,
+            applicability: field_value_applicability(
+                field,
+                existing,
+                input_kind,
+                &declared_type,
+                definition.required,
+            )?,
         });
     }
 
@@ -178,11 +185,15 @@ pub(crate) fn describe_field_capabilities(
         family: OperationFamily::FormulaReasoning,
         kind: FieldCapabilityKind::Query,
         input: FieldCapabilityInput::None,
-        applicability: if formula_reasoning_target_is_applicable(existing) {
+        applicability: if existing.is_some_and(formula_reasoning_target_is_applicable) {
             FieldCapabilityApplicability::Applicable
         } else {
             FieldCapabilityApplicability::Inapplicable {
-                reason: FieldCapabilityInapplicability::NotFormula,
+                reason: if existing.is_some() {
+                    FieldCapabilityInapplicability::NotFormula
+                } else {
+                    FieldCapabilityInapplicability::MissingValue
+                },
             }
         },
     });
@@ -190,13 +201,14 @@ pub(crate) fn describe_field_capabilities(
         family: OperationFamily::NumberOverrideScenario,
         kind: FieldCapabilityKind::Query,
         input: FieldCapabilityInput::Number,
-        applicability: if number_override_target_is_applicable(existing) {
+        applicability: if existing.is_some_and(number_override_target_is_applicable) {
             FieldCapabilityApplicability::Applicable
         } else {
             FieldCapabilityApplicability::Inapplicable {
-                reason: FieldCapabilityInapplicability::UnsupportedValueKind {
-                    actual: current_value_kind,
-                },
+                reason: current_value_kind
+                    .map_or(FieldCapabilityInapplicability::MissingValue, |actual| {
+                        FieldCapabilityInapplicability::UnsupportedValueKind { actual }
+                    }),
             }
         },
     });
@@ -211,11 +223,12 @@ pub(crate) fn describe_field_capabilities(
 
 fn field_value_applicability(
     field: &FieldRef,
-    existing: &Value,
+    existing: Option<&Value>,
     input_kind: SemanticValueKind,
     field_type: &FieldType,
+    required: bool,
 ) -> Result<FieldCapabilityApplicability, WorkspaceError> {
-    match field_value_input_rule(field, existing, input_kind, field_type) {
+    match field_value_input_rule(field, existing, input_kind, field_type, required) {
         Ok(()) => Ok(FieldCapabilityApplicability::Applicable),
         Err(WorkspaceError::FormulaEdit { .. }) => Ok(FieldCapabilityApplicability::Inapplicable {
             reason: FieldCapabilityInapplicability::FormulaEdit,
@@ -238,6 +251,11 @@ fn formula_update_applicability(
 ) -> Result<FieldCapabilityApplicability, WorkspaceError> {
     match formula_update_target_rule(document, field) {
         Ok(()) => Ok(FieldCapabilityApplicability::Applicable),
+        Err(WorkspaceError::MissingField { .. }) => {
+            Ok(FieldCapabilityApplicability::Inapplicable {
+                reason: FieldCapabilityInapplicability::MissingValue,
+            })
+        }
         Err(WorkspaceError::NonNumericFormulaField { .. }) => {
             Ok(FieldCapabilityApplicability::Inapplicable {
                 reason: FieldCapabilityInapplicability::NonNumericFormulaField,

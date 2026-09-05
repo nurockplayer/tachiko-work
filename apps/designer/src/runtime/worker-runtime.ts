@@ -12,6 +12,12 @@ export function startDesignerWorker(wasmUrl: string): void {
       try {
         const runtime = await bridge;
         switch (event.data.kind) {
+          case "spreadsheet": {
+            const reply = runtime.spreadsheet(event.data.operation, new Uint8Array(event.data.bytes));
+            if (reply.status === "spreadsheet_exported") scope.postMessage({id: event.data.id, ...reply}, [reply.export.bytes]);
+            else scope.postMessage({id: event.data.id, ...reply});
+            break;
+          }
           case "command": {
             const reply = runtime.request(event.data.request);
             scope.postMessage({ id: event.data.id, ...reply });
