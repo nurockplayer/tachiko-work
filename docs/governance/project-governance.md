@@ -61,26 +61,27 @@ Origin: [Issue #141](https://github.com/nurockplayer/tachiko-work/issues/141)
 
 ### Responsibilities
 
-- The **Project Steward** owns roadmap state, Issue readiness, durable
-  architecture and product decisions, GitHub governance, escalation, and
-  cross-PR drift review.
-- The **delivery agent** owns repository mutation after one concrete Issue is
-  genuinely Ready: focused implementation, tests, necessary documentation,
-  pull-request creation, review fixes, exact-head validation, merge, and
-  post-merge recalibration.
+- The **Project Steward** owns roadmap state, Issue readiness, specifications,
+  executable acceptance tests, durable architecture and product decisions,
+  GitHub governance, escalation, and cross-PR drift review.
+- The **delivery agent** owns production implementation after one concrete Issue
+  is genuinely Ready: focused implementation, unit tests and supplementary
+  coverage, necessary documentation, pull-request creation, review fixes,
+  exact-head validation, merge, and post-merge recalibration.
 - GitHub Issues, pull requests, reviews, and Projects remain the shared
   coordination and audit surface.
 
 ### Ready gate
 
-A delivery agent may start repository mutation only when all of these
+A delivery agent may start production implementation only when all of these
 conditions hold:
 
 1. current live repository authority and the Product Roadmap have been checked;
 2. durable architecture or product decisions required for production are
    Accepted; any Steward-supplied Provisional choice is limited to a non-durable
    implementation detail permitted by current Accepted authority;
-3. scope and acceptance criteria are sufficient for focused delivery;
+3. scope, acceptance criteria, and the acceptance-test handoff below are
+   sufficient for focused delivery;
 4. no conflicting open implementation PR owns the same work; and
 5. the Project Steward has applied the repository
    [`PR Decomposition Policy`](pr-decomposition-policy.md), including recording
@@ -98,19 +99,100 @@ Decision-Ready, it authorizes only a focused authority or specification PR.
 Production implementation must wait for that authority to be Accepted and for a
 separate implementation Issue to become Ready.
 
+### Acceptance-first preparation and handoff
+
+Origin: [Issue #307](https://github.com/nurockplayer/tachiko-work/issues/307).
+The Steward authors the specification and bounded executable acceptance tests;
+the delivery agent implements the product and writes its own unit tests. An
+instruction to the implementer to invent all acceptance assertions is not an
+acceptance-test handoff. Acceptance tests constrain observable outcomes and
+important invariants, not private functions, module layout, or an implementation
+strategy. They may exercise an integration/API boundary or an ordinary product
+journey; not every acceptance test needs to be a browser test.
+
+Before production readiness, the owning Issue links a compact package:
+
+- exact baseline commit, seed commit, and test/fixture paths;
+- acceptance-criterion to test/case mapping, with expected outcomes derived from
+  the contract or independent evidence rather than the candidate implementation;
+- reproducible commands, actual baseline results and relevant failure evidence;
+- remaining manual/external checks, their owner and expected evidence, plus any
+  bounded applicability exception explicitly decided by the Steward.
+
+For a regression or new behavior, demonstrate the intended behavioral failure
+where feasible and check that the fixture reaches the relevant boundary.
+Compilation, setup, missing-tool, or invalid-fixture failures do not prove the
+behavioral defect. Keep an unexecuted seed explicitly unverified. The Steward
+may authorize a tests-only baseline/harness preflight before production Ready;
+its results return to the Steward for the readiness decision and do not authorize
+production edits. A missing production seam or unavailable environment needs an
+explicit bounded evidence plan, not an invented red result or silent waiver.
+
+Behavior-preserving refactors may map existing contract tests; documentation-only
+work uses appropriate document checks and review. Do not manufacture failing
+product tests for these cases. A justified exception changes the preparation
+method, not the required product behavior or final merge/release gates. Real-user
+or external-tool evidence remains unverified until actually obtained.
+
+The Steward may prepare a tests-only branch before Ready. After Ready, retain
+that seed on the one delivery branch and open or continue the same draft PR;
+the delivery agent adds implementation and unit-test commits there. Preserve
+seed provenance and any accepted amendments across ordinary non-force updates.
+Never merge a knowingly failing seed to `main`, report expected failure as PASS,
+or use skip/expected-failure annotations or runner changes to manufacture green
+acceptance. A draft or prepared seed does not itself grant production authority.
+
+### Challenges and acceptance changes
+
+The delivery agent may add unit tests and missing coverage and repair disclosed
+mechanical test wiring when the intended scenario, oracle and coverage remain
+unchanged. It must not unilaterally change required outcomes, remove cases,
+loosen tolerances, alter fixtures or mock boundaries to avoid the requirement,
+or suppress execution. Judge the semantic effect, not merely whether a change
+is in a file labelled as a test. Newly discovered required behavior also needs
+Steward reconciliation rather than silently expanding the contract.
+
+When a specification/test contradicts authority, asserts the wrong outcome, or
+leaves a material behavioral choice unresolved, pause affected mutation and
+preserve current work. Record in the existing handoff narrative (the owning
+Issue before a PR exists):
+
+- disputed requirement/assertion and relevant authority links;
+- exact head/base/seed identities, reproduction or other concrete evidence,
+  expected versus actual outcome, and impact;
+- proposed correction and the bounded decision needed to resume.
+
+The Steward records a decision in the owning Issue: correct the test, correct
+the specification through its proper authority path, or retain both and correct
+the implementation. Link that decision from the handoff, identify the revised
+acceptance commit when applicable, and explicitly authorize the bounded next
+step. Tests do not outrank Accepted authority, even when the Steward wrote them.
+A durable authority change follows the normal Decision workflow, not a convenient
+test edit. Ordinary implementation failures and difficulty alone are not reasons
+to escalate or renegotiate acceptance.
+
+This is reconciliation inside the existing delivery loop, not a new state
+machine, an automatic ownership transfer, or permission to start another Issue.
+Unaffected authorized evidence collection may continue; affected mutation waits
+for the decision. Existing HOLD and canonical stop conditions still apply.
+Record each material stage in GitHub before proceeding, then immediately re-read
+the live Issue/PR and current Steward guidance. Use the existing handoff/watch
+headers unchanged; acceptance details and challenges belong in their narrative,
+not new machine fields. No automatic wake-up or scheduler is implied by this
+synchronization rule.
+
 ### One-Issue delivery loop
 
 Each Ready Issue uses one independently reviewable PR:
 
 ```text
-live main + Ready Issue
-  -> focused branch
-  -> implement / test
+live main + Ready Issue + acceptance seed
+  -> continue seed branch / same draft PR
+  -> confirm baseline / implement / unit test
   -> local review + repository gates
-  -> one PR
-  -> hosted review / CI
-  -> fix actionable findings
-  -> exact-head validation
+  -> hosted review / CI on that PR
+  -> fix actionable findings / reconcile material challenges
+  -> exact-head validation + acceptance-change audit
   -> merge
   -> live-state recalibration
 ```
@@ -176,6 +258,22 @@ risk, or durable-contract problem.
 Do not change Accepted authority merely to satisfy reviewer preference.
 Escalate genuine authority contradictions to the Project Steward. Never force
 push. Merge only the exact reviewed and validated head under repository policy.
+
+Before final acceptance, compare the seed tests with the delivered tests and
+account for every material acceptance change through its Steward decision;
+report mechanical repairs separately. Run acceptance, delivery-agent unit tests,
+and applicable repository gates at the final head. Passing the seed alone is not
+complete acceptance: reconcile uncovered requirements and obtain the remaining
+promised evidence. Independent review covers both the implementation and the
+adequacy of the tests; authorship of either is not independent review of it.
+Unresolved material challenges and unapproved weakened acceptance block merge.
+
+The acceptance-first policy applies to new production dispatch and newly
+activated children after its merge. Preserve existing active ownership and
+reconcile those lanes at their next material checkpoint without restarting them
+or retroactively claiming their tests were Steward-authored. Keep handoff prompts
+as task/authority pointers plus genuinely new constraints and the endpoint, not
+copies of the Issue or this policy.
 
 ### Review-fix convergence circuit breaker
 

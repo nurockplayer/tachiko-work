@@ -44,6 +44,18 @@ assignees: ""
 
 <!-- Tests, fixtures, CI, benchmarks, compatibility evidence. -->
 
+## Acceptance-test handoff
+
+<!-- Complete before production Ready; follow docs/governance/project-governance.md#acceptance-first-preparation-and-handoff. Link evidence instead of copying the policy. -->
+
+- Steward / acceptance author: <!-- owner -->
+- Baseline / seed: <!-- full commits, test/fixture paths, existing branch/PR -->
+- Criterion-to-case mapping: <!-- concrete test cases and independent expected outcomes -->
+- Commands / baseline evidence: <!-- actual results; distinguish behavioral failure from unexecuted/setup failure -->
+- Remaining checks / applicability: <!-- manual/external evidence and owner, or explicit bounded Steward exception with rationale -->
+
+<!-- The delivery agent writes implementation and unit tests. Evidence-based challenges use the existing handoff narrative; material acceptance changes need a linked Steward decision. -->
+
 ## Compatibility / migration
 
 <!-- If applicable. -->
