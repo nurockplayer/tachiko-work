@@ -142,6 +142,17 @@ This closes only the bounded tracker journey, not Excel parity or the public
 launch gate. No CSV/XLSX compatibility, multi-sheet, formula expansion, custom
 validation engine, cloud sync, or durable history is added.
 
+## Public-product promotion (#261)
+
+The bounded Tracker, Budget, spreadsheet and report slices are engineering
+deliveries. Their completion does not establish the full Driver Common Profile,
+ordinary public distribution or representative-user acceptance.
+[#261's preparation authority](https://github.com/nurockplayer/tachiko-work/issues/261#issuecomment-5547884895)
+permits local RC packaging and automated evidence; public deployment/promotion,
+recruitment and commercial release remain separate gates. The existing
+[R1 rehearsal](https://github.com/nurockplayer/tachiko-work/issues/256#issuecomment-5548237554)
+retains its original pinned build and consent conditions.
+
 ## Driver reports (#260)
 
 In a Budget or numeric imported table, choose **Create chart from selected
