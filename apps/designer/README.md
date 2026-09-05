@@ -210,6 +210,8 @@ Mixed Number/Date/time semantics across numeric format sections are blocked;
 the adapter does not choose conditional sections to infer a canonical type.
 The bounded format lexer distinguishes calendar months from contextual minutes,
 retains recognized literal/currency presentation, and rejects unknown tokens.
+Implied formats use the finite 28-entry OpenXML All Languages table; scientific,
+fraction and calendar patterns are retained, while numeric Time values still block.
 CSV and XLSX inspection share the output-representation check. Completed typed
 imports, including extra-column labels, must also pass that check before a
 candidate is exposed or installed. XML-illegal Text therefore blocks import;

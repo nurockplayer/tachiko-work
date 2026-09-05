@@ -1561,3 +1561,104 @@ fn standalone_month_tokens_keep_calendar_serials_as_dates() {
         );
     }
 }
+
+#[test]
+fn all_language_builtin_formats_match_explicit_patterns_and_scalar_boundaries() {
+    // Complete finite "All Languages" table in Microsoft's NumberingFormat
+    // reference. Locale-dependent IDs are covered separately and remain blocked
+    // unless the source declares an explicit pattern.
+    let formats = [
+        (0, "General"),
+        (1, "0"),
+        (2, "0.00"),
+        (3, "#,##0"),
+        (4, "#,##0.00"),
+        (9, "0%"),
+        (10, "0.00%"),
+        (11, "0.00E+00"),
+        (12, "# ?/?"),
+        (13, "# ??/??"),
+        (14, "mm-dd-yy"),
+        (15, "d-mmm-yy"),
+        (16, "d-mmm"),
+        (17, "mmm-yy"),
+        (18, "h:mm AM/PM"),
+        (19, "h:mm:ss AM/PM"),
+        (20, "h:mm"),
+        (21, "h:mm:ss"),
+        (22, "m/d/yy h:mm"),
+        (37, "#,##0 ;(#,##0)"),
+        (38, "#,##0 ;[Red](#,##0)"),
+        (39, "#,##0.00;(#,##0.00)"),
+        (40, "#,##0.00;[Red](#,##0.00)"),
+        (45, "mm:ss"),
+        (46, "[h]:mm:ss"),
+        (47, "mmss.0"),
+        (48, "##0.0E+0"),
+        (49, "@"),
+    ];
+    assert_eq!(formats.len(), 28);
+    for (id, pattern) in formats {
+        let date = matches!(id, 14..=17 | 22);
+        let time = matches!(id, 18..=21 | 45..=47);
+        // Integral and fractional values exercise numeric formatting without
+        // turning the finite built-in table into a new Time representation.
+        for (value, invalid_date) in [(46270.0, false), (46270.5, true), (60.0, true)] {
+            let mut source = simple();
+            source.sheets[0].rows[0][1].value = SourceValue::Number { value };
+            let bytes = export_xlsx(&source).unwrap();
+            let builtin = mutate(&bytes, "xl/styles.xml", |xml| {
+                xml.replace("<xf numFmtId=\"164\"", &format!("<xf numFmtId=\"{id}\""))
+            });
+            source.sheets[0].rows[0][1].style.number_format = Some(pattern.into());
+            let explicit = source_with_format(&source);
+            let builtin = import_xlsx(&builtin).unwrap();
+            let explicit = import_xlsx(&explicit).unwrap();
+            let blocked = time || (date && invalid_date);
+            for book in [&builtin, &explicit] {
+                assert_eq!(
+                    book.ledger.iter().any(|f| f.blocking),
+                    blocked,
+                    "ID {id}, {pattern}, {value}: {:?}",
+                    book.ledger
+                );
+                if blocked {
+                    assert!(
+                        book.ledger
+                            .iter()
+                            .any(|f| f.blocking && f.code == "scalar_mapping_rejected")
+                    );
+                    assert!(export_xlsx(book).is_err());
+                } else {
+                    let expected = if date {
+                        SourceValue::Date {
+                            value: "2026-09-05".into(),
+                        }
+                    } else {
+                        SourceValue::Number { value }
+                    };
+                    assert_eq!(book.sheets[0].rows[0][1].value, expected, "ID {id}");
+                    let reopened = import_xlsx(&export_xlsx(book).unwrap()).unwrap();
+                    assert!(!reopened.ledger.iter().any(|f| f.blocking));
+                    assert_eq!(reopened.sheets[0].rows[0][1].value, expected);
+                    assert_eq!(
+                        reopened.sheets[0].rows[0][1].style.number_format.as_deref(),
+                        Some(pattern)
+                    );
+                }
+            }
+            assert_eq!(
+                builtin.sheets[0].rows[0][1].value,
+                explicit.sheets[0].rows[0][1].value
+            );
+            assert_eq!(
+                builtin.sheets[0].rows[0][1].style.number_format.as_deref(),
+                if id == 0 { None } else { Some(pattern) }
+            );
+            assert_eq!(
+                explicit.sheets[0].rows[0][1].style.number_format.as_deref(),
+                Some(pattern)
+            );
+        }
+    }
+}
