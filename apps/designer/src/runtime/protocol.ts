@@ -93,8 +93,17 @@ export type TrackerCommand =
   | { type: "remove_rows"; expected_revision: string; entities: string[] }
   | { type: "undo" | "redo"; expected_revision: string };
 
+export type FormulaCopy = {
+  source: FieldTarget;
+  destinations: FieldTarget[];
+  fixed_references: FieldTarget[];
+  relative_rows: boolean;
+  relative_columns: boolean;
+};
+
 export type DesignerRequest =
   | TrackerCommand
+  | (FormulaCopy & { type: "copy_formula"; expected_revision: string })
   | { type: "new_tracker"; occurrence_id: string }
   | { type: "new_budget"; occurrence_id: string }
   | { type: "bootstrap"; occurrence_id: string }

@@ -105,6 +105,14 @@ pub enum DesignerRequest {
         target: FieldTarget,
         input: ScalarEditInput,
     },
+    CopyFormula {
+        expected_revision: String,
+        source: FieldTarget,
+        destinations: Vec<FieldTarget>,
+        fixed_references: Vec<FieldTarget>,
+        relative_rows: bool,
+        relative_columns: bool,
+    },
     FormulaUpdate {
         expected_revision: String,
         target: FieldTarget,
@@ -542,6 +550,7 @@ impl DesignerRuntime {
     /// # Errors
     ///
     /// Returns a typed adapter or workspace failure.
+    #[allow(clippy::too_many_lines)] // Exhaustive private request dispatch.
     pub fn handle(&mut self, request: DesignerRequest) -> Result<DesignerResponse, DesignerError> {
         match request {
             DesignerRequest::NewTracker { occurrence_id } => {
@@ -621,6 +630,21 @@ impl DesignerRuntime {
                 &expected_revision,
                 &target,
                 &input,
+            )?)),
+            DesignerRequest::CopyFormula {
+                expected_revision,
+                source,
+                destinations,
+                fixed_references,
+                relative_rows,
+                relative_columns,
+            } => Ok(DesignerResponse::Published(self.copy_formula(
+                &expected_revision,
+                &source,
+                &destinations,
+                &fixed_references,
+                relative_rows,
+                relative_columns,
             )?)),
             DesignerRequest::FormulaUpdate {
                 expected_revision,
@@ -936,6 +960,106 @@ impl DesignerRuntime {
         })
     }
 
+    /// Resolve private copy gestures once against the exact canonical snapshot.
+    /// View order and display names never participate in formula meaning.
+    fn copy_formula(
+        &mut self,
+        expected: &str,
+        source: &FieldTarget,
+        destinations: &[FieldTarget],
+        fixed_references: &[FieldTarget],
+        relative_rows: bool,
+        relative_columns: bool,
+    ) -> Result<PublicationProjection, DesignerError> {
+        self.check_revision(expected)?;
+        if destinations.is_empty()
+            || destinations.len() > MAX_FIELD_QUERY_TARGETS
+            || fixed_references.len() > MAX_FIELD_QUERY_TARGETS
+        {
+            return Err(tracker_error("formula copy range is empty or too large"));
+        }
+        let snapshot = self.session.export_snapshot();
+        let document = snapshot.document();
+        let source = source.as_field_ref();
+        let entity = document
+            .entities
+            .get(&source.entity)
+            .ok_or_else(|| tracker_error("formula source entity is unavailable"))?;
+        let Some(Value::Formula(expression)) = entity.fields.get(&source.field) else {
+            return Err(tracker_error("formula copy requires a formula source"));
+        };
+        let spec = self
+            .collection_specs
+            .values()
+            .find(|spec| spec.entities.contains(&source.entity))
+            .ok_or_else(|| tracker_error("formula source collection is unavailable"))?;
+        let (source_row, source_column) = copy_position(spec, &source)?;
+        let fixed = fixed_references
+            .iter()
+            .map(FieldTarget::as_field_ref)
+            .collect::<BTreeSet<_>>();
+        let mut references = BTreeSet::new();
+        let mut reference_probe = expression.clone();
+        map_copy_references(&mut reference_probe, &mut |reference| {
+            references.insert(reference.clone());
+            Ok(())
+        })?;
+        if fixed.len() != fixed_references.len() || !fixed.is_subset(&references) {
+            return Err(tracker_error(
+                "fixed references must be unique source dependencies",
+            ));
+        }
+        let mut seen = BTreeSet::new();
+        let mut forward = Vec::new();
+        for destination in destinations {
+            let target = destination.as_field_ref();
+            if !seen.insert(target.clone()) {
+                return Err(tracker_error(
+                    "duplicate formula copy targets are unsupported",
+                ));
+            }
+            let (row, column) = copy_position(spec, &target)?;
+            require_copy_number(document, &target)?;
+            let old = &document.entities[&target.entity].fields[&target.field];
+            let mut copied = expression.clone();
+            map_copy_references(&mut copied, &mut |reference| {
+                if fixed.contains(reference) || !spec.entities.contains(&reference.entity) {
+                    return require_copy_number(document, reference);
+                }
+                let (reference_row, reference_column) = copy_position(spec, reference)?;
+                let shifted_row = copy_index(reference_row, source_row, row, relative_rows)?;
+                let shifted_column =
+                    copy_index(reference_column, source_column, column, relative_columns)?;
+                *reference = FieldRef::new(
+                    spec.entities.get(shifted_row).cloned().ok_or_else(|| {
+                        tracker_error("relative reference row is outside the collection")
+                    })?,
+                    spec.columns
+                        .get(shifted_column)
+                        .map(|column| column.id.clone())
+                        .ok_or_else(|| {
+                            tracker_error("relative reference column is outside the collection")
+                        })?,
+                );
+                require_copy_number(document, reference)
+            })?;
+            let value = Value::Formula(copied);
+            if &value != old {
+                forward.push(SemanticCommand::set_field_value(target.clone(), value));
+            }
+        }
+        if forward.is_empty() {
+            return Err(PatchLifecycleError::NoChange.into());
+        }
+        let publication = self.publish_commands(expected, forward)?;
+        // Match source-based formula authoring: generic formula mutations are
+        // outside scalar history, whose Core contract cannot restore a literal
+        // over a formula. Rejected copies retain both history directions.
+        self.undo.clear();
+        self.redo.clear();
+        Ok(publication)
+    }
+
     fn publish_commands(
         &mut self,
         expected_revision: &str,
@@ -1009,6 +1133,7 @@ impl DesignerRuntime {
             (receipt, invalidation)
         };
         self.refresh_structure();
+        self.formula_sources = formula_sources(self.session.export_snapshot().document())?;
         Ok(PublicationProjection {
             base_revision: receipt.base_revision.as_str().to_owned(),
             resulting_revision: receipt.resulting_revision.as_str().to_owned(),
@@ -1090,6 +1215,7 @@ impl DesignerRuntime {
     /// # Errors
     ///
     /// Returns an admission error without replacing an existing occurrence.
+    #[allow(clippy::too_many_lines)] // Keep the bounded fixture readable as one document.
     pub fn budget(occurrence_id: &str) -> Result<Self, DesignerError> {
         let mut document = Document::empty(occurrence_id, "Monthly Budget");
         let budget_items = SchemaId::from("budget_items");
@@ -1526,7 +1652,7 @@ fn budget_schema<const COUNT: usize>(
     fields: [(&str, FieldType); COUNT],
 ) -> Schema {
     Schema {
-        id: id.clone(),
+        id,
         key: SchemaKey::from(key),
         fields: fields
             .into_iter()
@@ -1916,6 +2042,76 @@ fn is_tracker_spec(spec: &CollectionSpec) -> bool {
                         | ("done", FieldType::Boolean)
                 )
         })
+}
+
+fn copy_position(spec: &CollectionSpec, field: &FieldRef) -> Result<(usize, usize), DesignerError> {
+    let row = spec
+        .entities
+        .iter()
+        .position(|entity| entity == &field.entity);
+    let column = spec
+        .columns
+        .iter()
+        .position(|column| column.id == field.field);
+    row.zip(column)
+        .ok_or_else(|| tracker_error("formula copy target must belong to the source collection"))
+}
+
+fn copy_index(
+    index: usize,
+    source: usize,
+    destination: usize,
+    relative: bool,
+) -> Result<usize, DesignerError> {
+    if !relative {
+        return Ok(index);
+    }
+    index
+        .checked_add(destination)
+        .and_then(|index| index.checked_sub(source))
+        .ok_or_else(|| tracker_error("relative reference is outside the collection"))
+}
+
+fn require_copy_number(document: &Document, field: &FieldRef) -> Result<(), DesignerError> {
+    let entity = document
+        .entities
+        .get(&field.entity)
+        .ok_or_else(|| tracker_error("formula reference entity is unavailable"))?;
+    let numeric = document
+        .schemas
+        .get(&entity.schema)
+        .and_then(|schema| schema.fields.get(&field.field))
+        .is_some_and(|definition| definition.field_type == FieldType::Number);
+    if !numeric
+        || !matches!(
+            entity.fields.get(&field.field),
+            Some(Value::Number(_) | Value::Formula(_))
+        )
+    {
+        return Err(tracker_error(
+            "formula copy requires present numeric targets and references",
+        ));
+    }
+    Ok(())
+}
+
+fn map_copy_references(
+    expression: &mut Expression,
+    visit: &mut impl FnMut(&mut FieldRef) -> Result<(), DesignerError>,
+) -> Result<(), DesignerError> {
+    match expression {
+        Expression::Number(_) => Ok(()),
+        Expression::Reference(reference) => visit(reference),
+        Expression::Add { left, right }
+        | Expression::Subtract { left, right }
+        | Expression::Multiply { left, right }
+        | Expression::Divide { left, right }
+        | Expression::Minimum { left, right }
+        | Expression::Maximum { left, right } => {
+            map_copy_references(left, visit)?;
+            map_copy_references(right, visit)
+        }
+    }
 }
 
 fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
@@ -2341,6 +2537,7 @@ fn designer_lifecycle(
         principal.clone(),
         [
             (OperationFamily::SetFieldValue, MutationClass::Value),
+            (OperationFamily::SetFieldValue, MutationClass::Formula),
             (OperationFamily::FormulaUpdate, MutationClass::Formula),
             (OperationFamily::AppendEntity, MutationClass::Structure),
             (OperationFamily::RemoveEntity, MutationClass::Structure),

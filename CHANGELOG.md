@@ -64,8 +64,9 @@ All notable changes to Tachiko Work are documented in this file.
 ### Added
 
 - The first-party browser Designer now offers a bounded monthly Budget journey:
-  two navigable collection projections, Gregorian Date entry, Rust-authoritative
-  arithmetic formula updates that bind human addresses to stable identities,
+  named views over two collections, Gregorian Date entry, graphical reference
+  selection, Rust-authoritative arithmetic authoring and atomic relative/fixed
+  formula copy that bind references to stable identities,
   and Date-bearing Browser Save/close/reopen through a private `direct-ro/v2`
   host record. Currency and percentage are persisted presentation choices over
   Number, not Money or nominal Percentage semantics. This remains a bounded

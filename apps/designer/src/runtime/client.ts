@@ -1,4 +1,5 @@
 import type {
+  FormulaCopy,
   TrackerCommand,
   BootstrapProjection,
   FieldBatchProjection,
@@ -11,6 +12,7 @@ import type {
 } from "./protocol.ts";
 
 export interface DesignerClient {
+  copyFormula?(expectedRevision: string, request: FormulaCopy): Promise<PublicationProjection>;
   newTracker?(): Promise<OpenedProjection>;
   newBudget?(): Promise<OpenedProjection>;
   trackerCommand?(request: TrackerCommand): Promise<PublicationProjection>;

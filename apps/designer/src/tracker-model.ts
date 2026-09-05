@@ -1,4 +1,5 @@
 import type { FieldProjection, TableProjection } from "./runtime/protocol.ts";
+import { parseBudgetViews, type BudgetViews } from "./budget-views.ts";
 export type CellStyle = {
     bold?: boolean;
     fill?: boolean;
@@ -8,6 +9,7 @@ export type CellStyle = {
 };
 export type NumberFormat = "number" | "percentage" | "currency-jpy" | "currency-usd";
 export type TrackerView = {
+    budgetViews?: BudgetViews;
     version: 1;
     cells: Record<string, CellStyle>;
     order: string[];
@@ -36,7 +38,12 @@ export function parseTrackerView(input?: string): TrackerView {
     const formats = view.formats ?? {};
     if (!Object.values(formats).every(format => typeof format === "string" && ["number", "percentage", "currency-jpy", "currency-usd"].includes(format)))
         throw new Error("Unsupported number presentation format.");
-    return { ...(view as Omit<TrackerView, "formats">), formats: formats as Record<string, NumberFormat> };
+    let budgetViews: BudgetViews | undefined;
+    if (view.budgetViews !== undefined) {
+        const candidate = view.budgetViews as BudgetViews;
+        budgetViews = parseBudgetViews(candidate, Array.isArray(candidate.views) ? candidate.views.map(v => v.collection) : []);
+    }
+    return { ...(view as Omit<TrackerView, "formats">), formats: formats as Record<string, NumberFormat>, ...(budgetViews === undefined ? {} : { budgetViews }) };
 }
 export function displayField(field?: FieldProjection): string {
     if (field?.diagnostics.length)

@@ -3,6 +3,7 @@ import {
   type DesignerClient,
 } from "./client.ts";
 import type {
+  FormulaCopy,
   TrackerCommand,
   BootstrapProjection,
   DesignerRequest,
@@ -188,6 +189,10 @@ export class WorkerDesignerClient implements DesignerClient {
         input: { kind: "date", value },
       }),
     );
+  }
+
+  async copyFormula(expectedRevision: string, request: FormulaCopy): Promise<PublicationProjection> {
+    return expectResponse("published", await this.#command({ ...request, type: "copy_formula", expected_revision: expectedRevision }));
   }
 
   async updateFormula(

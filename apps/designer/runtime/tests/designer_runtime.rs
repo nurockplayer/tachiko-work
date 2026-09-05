@@ -1023,6 +1023,7 @@ fn date_projection_and_edit_use_the_rust_semantic_authority() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // One end-to-end publication/rejection/reopen lifecycle.
 fn budget_open_and_formula_updates_use_the_authoritative_cross_collection_lifecycle() {
     let mut runtime = moonfall();
     let DesignerResponse::Opened(opened) = runtime
