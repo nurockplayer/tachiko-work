@@ -1,5 +1,8 @@
 import { createInteropState } from "./interop-state.ts";
 import { importedNumberFormat } from "./interop-number-format.ts";
+import { parseReportCharts, type ReportChart } from "./report-model.ts";
+import { mountReportPanel, type ReportPanelState } from "./report-panel.ts";
+import { downloadCurrentReport } from "./report-export.ts";
 import { emptyGenericTableView, mountInteropTableView, projectInteropTable } from "./interop-table-view.ts";
 import { SpreadsheetImportPanel, mountCleanupPanel, mountFidelityLedger, downloadSpreadsheet } from "./interop-panel.ts";
 import type { CleanupPreview, SpreadsheetFormat, SpreadsheetExport, FidelityFinding } from "./runtime/interop-protocol.ts";
@@ -86,7 +89,10 @@ export function mountDesigner(
   const pendingNumberBuffers = new Map<string, string>();
   let budgetToolsDraft: BudgetToolsDraft = {};
   let budgetTables: TableProjection[] = [];
-  const hasEditDrafts = (): boolean => tracker.pending || pendingTextBuffers.size > 0 || pendingBooleanBuffers.size > 0 || pendingDateBuffers.size > 0 || pendingFormulaBuffers.size > 0 || pendingNumberBuffers.size > 0 || hasBudgetToolsDraft(budgetToolsDraft);
+  const reportState: ReportPanelState = { draft: null };
+  let reportOccurrence = Symbol("report occurrence");
+  const hasDataEditDrafts = (): boolean => tracker.pending || pendingTextBuffers.size > 0 || pendingBooleanBuffers.size > 0 || pendingDateBuffers.size > 0 || pendingFormulaBuffers.size > 0 || pendingNumberBuffers.size > 0 || hasBudgetToolsDraft(budgetToolsDraft);
+  const hasEditDrafts = (): boolean => hasDataEditDrafts() || reportState.draft !== null;
   const hasPendingScalarDrafts = (): boolean =>
     hasEditDrafts() || viewDirty() ||
     pendingTextBuffers.size > 0 ||
@@ -124,6 +130,10 @@ export function mountDesigner(
       const label = durabilityChip.querySelector("span");
       if (label !== null) label.textContent = dirty ? "Unsaved changes" : "Saved";
     }
+    // Scalar controls keep focus while only the report's stale preview is replaced.
+    const reports = root.querySelector<HTMLElement>("[data-report-host]");
+    const reportCurrent = store?.snapshot().currentness === "current" && !hasDataEditDrafts() && !busy;
+    if (reports && reports.dataset.current !== String(reportCurrent)) renderReports();
   };
 
   const render = (): void => {
@@ -165,6 +175,7 @@ export function mountDesigner(
         cancel.dataset.cancelPendingEdits = ""; cancel.disabled = busy;
         cancel.addEventListener("click", () => {
           pendingTextBuffers.clear(); pendingBooleanBuffers.clear(); pendingDateBuffers.clear(); pendingNumberBuffers.clear(); pendingFormulaBuffers.clear(); budgetToolsDraft = {};
+          reportState.draft = null;
           reflectUnsavedState(); render();
         });
         root.querySelector(".workspace-actions")?.append(cancel);
@@ -195,8 +206,62 @@ export function mountDesigner(
       });
     }
     renderInterop();
+    renderReports();
     hydrateDraftControls();
     bindInteractions();
+  };
+
+  const renderReports = (): void => {
+    if (!store || !bootstrap) return;
+    const snapshot = store.snapshot();
+    const panel = document.createElement("section");
+    root.querySelector("[data-report-host]")?.remove();
+    panel.dataset.reportHost = "";
+    panel.dataset.current = String(snapshot.currentness === "current" && !hasDataEditDrafts() && !busy);
+    root.querySelector(".table-workbench")?.append(panel);
+    const collectionIds = bootstrap.collections.map(collection => collection.id);
+    mountReportPanel(panel, {
+      table: labelImportedTable(snapshot.table),
+      charts: tracker.view.charts ?? [],
+      formats: tracker.view.formats,
+      collectionIds,
+      current: snapshot.currentness === "current" && !hasDataEditDrafts() && !busy,
+      busy,
+      state: reportState,
+      onChartsChange: charts => {
+        if (busy || store?.snapshot().currentness !== "current" || hasDataEditDrafts()) return;
+        tracker.view.charts = parseReportCharts(charts, collectionIds);
+        reportState.draft = null;
+        notice = null;
+        reflectUnsavedState();
+        render();
+      },
+      onDraftChange: reflectUnsavedState,
+      rerender: render,
+      onExport: exportReport,
+    });
+  };
+
+  const exportReport = async (chart: ReportChart): Promise<void> => {
+    const alive = (): boolean => !destroyed && !occurrenceClosed;
+    if (busy || !alive()) return;
+    busy = true; notice = null; render();
+    try {
+      await downloadCurrentReport(chart.id, () => {
+        const snapshot = store?.snapshot();
+        return {
+          occurrence: reportOccurrence,
+          alive: alive(),
+          current: snapshot?.currentness === "current",
+          hasDrafts: hasEditDrafts(),
+          table: snapshot ? labelImportedTable(snapshot.table) : null,
+          charts: tracker.view.charts ?? [],
+          formats: tracker.view.formats,
+        };
+      });
+    } catch (error) {
+      if (alive()) showProjectFailure("Chart not exported", error);
+    } finally { busy = false; render(); }
   };
 
   const importPanel = new SpreadsheetImportPanel(client, async (source, options, selection) => {
@@ -291,7 +356,7 @@ export function mountDesigner(
             if (format && format !== importedFormat) style.number_format = {number: "0.00", percentage: "0.00%", "currency-usd": '$0.00', "currency-jpy": '¥0'}[format];
           });
           const exported = await client.exportSpreadsheet(store.snapshot().table.revision, metadata, format, table.collection.id);
-          if (!destroyed) pendingExport = {exported, format, ledger: [...interop.ledger, ...exported.ledger]};
+          if (!destroyed) pendingExport = {exported, format, ledger: [...interop.ledger, ...exported.ledger, ...(tracker.view.charts?.length ? [{category: "lossy_on_export" as const, code: "report_charts_not_preserved", location: "report", message: "Spreadsheet export does not preserve these report charts. Export each current chart as a static PNG and keep the saved browser project for editable chart configuration.", blocking: false}] : [])]};
         } catch (error) { showProjectFailure("Spreadsheet not exported", error); }
         finally { busy = pendingExport !== null; render(); }
       })(); }); exportPanel.append(button);
@@ -427,6 +492,11 @@ export function mountDesigner(
 
   const selectCollection = async (collection: string): Promise<void> => {
     if (bootstrap === null || store === null || busy) return;
+    if (reportState.draft !== null) {
+      showProjectFailure("Source not changed", new Error("Apply or cancel the chart draft before switching sources."));
+      render();
+      return;
+    }
     busy = true;
     notice = null;
     render();
@@ -528,6 +598,7 @@ export function mountDesigner(
       throw new Error("Initial projection does not match the bootstrap revision.");
     }
     const nextStore = createProjectionStore(table);
+    reportOccurrence = Symbol("report occurrence"); reportState.draft = null;
     tracker.reset(); savedView = JSON.stringify(tracker.view); activeProject = null;
     pendingTextBuffers.clear();
     pendingBooleanBuffers.clear();
@@ -544,6 +615,7 @@ export function mountDesigner(
 
   const installOpenedOccurrence = (opened: OpenedProjection): void => {
     const nextStore = createProjectionStore(opened.table);
+    reportOccurrence = Symbol("report occurrence"); reportState.draft = null;
     tracker.reset(); savedView = JSON.stringify(tracker.view); activeProject = null;
     pendingTextBuffers.clear();
     pendingBooleanBuffers.clear();
@@ -666,7 +738,7 @@ export function mountDesigner(
 
   const saveAs = async (): Promise<void> => {
     if (store === null || busy) return;
-    if (hasEditDrafts()) { showProjectFailure("Project not saved", new Error("Apply or cancel the cell draft and pending formula edits before saving.")); render(); return; }
+    if (hasEditDrafts()) { showProjectFailure("Project not saved", new Error("Apply or cancel pending cell, formula and chart edits before saving.")); render(); return; }
     const requestedName = window.prompt(
       "Save As a new browser project (existing destinations are never overwritten):",
       `${bootstrap?.title.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-").replaceAll(/^-|-$/g, "") || "project"}.roproj`,
@@ -734,7 +806,7 @@ export function mountDesigner(
   const save = async (): Promise<void> => {
     if (activeProject === null) { await saveAs(); return; }
     if (!store || busy) return;
-    if (hasEditDrafts()) { showProjectFailure("Project not saved", new Error("Apply or cancel the cell draft and pending formula edits before saving.")); render(); return; }
+    if (hasEditDrafts()) { showProjectFailure("Project not saved", new Error("Apply or cancel pending cell, formula and chart edits before saving.")); render(); return; }
     busy = true; notice = null; render();
     try {
       if (!host.update) throw new Error("This browser host does not support Save; use Save As.");
@@ -756,6 +828,7 @@ export function mountDesigner(
     render();
     try {
       await client.closeProject();
+      reportOccurrence = Symbol("report occurrence"); reportState.draft = null;
       pendingTextBuffers.clear();
       pendingBooleanBuffers.clear();
       pendingDateBuffers.clear();
@@ -1049,6 +1122,7 @@ export function mountDesigner(
   return {
     ready,
     destroy: () => {
+      reportOccurrence = Symbol("report occurrence"); reportState.draft = null;
       destroyed = true; pendingExport = null; busy = false;
       syncBeforeUnloadGuard();
       root.replaceChildren();

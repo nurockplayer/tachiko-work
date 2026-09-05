@@ -142,6 +142,36 @@ This closes only the bounded tracker journey, not Excel parity or the public
 launch gate. No CSV/XLSX compatibility, multi-sheet, formula expansion, custom
 validation engine, cloud sync, or durable history is added.
 
+## Driver reports (#260)
+
+In a Budget or numeric imported table, choose **Create chart from selected
+source**. Select up to 16 rows, a category field (or row labels), and up to
+three Number series. Column and line charts support a title, axis labels,
+series labels and a legend. Apply the chart before saving. Up to eight charts
+are retained per browser project; the exact private limits are in
+[`report-profile.json`](report-profile.json).
+
+Chart bindings use collection, row and field identities. Saved selection order
+is independent of display sorting/filtering, and new rows are not automatically
+included. Editing source values recalculates charts from current runtime
+results. Pending edits or failed/missing numeric results make a chart
+unavailable rather than showing stale values or substituting zero. Labels are
+bounded to 80 Unicode code points. Number, JPY, USD and percentage presentation
+is inherited when consistent; mixed formats use plain Number with a disclosure,
+without unit conversion.
+
+Browser Save/Save As retains chart configuration atomically with project bytes.
+Open validates configuration against admitted project collection IDs before
+installing the occurrence; older projects without charts remain compatible.
+Missing row/field bindings remain editable configuration and display as
+unavailable. This app-private sidecar is not a new Core or portable file format.
+
+**Download PNG** encodes the current chart and rechecks occurrence, revision,
+configuration, formatting and pending edits before downloading. The PNG is a
+static image, not a live link, editable chart or project backup. CSV/XLSX export
+does not preserve these charts and requires the existing compatibility review
+acknowledgement. Keep the saved browser project to edit chart configuration.
+
 ## Driver Budget (#258)
 
 Choose **New Budget** to open a small monthly plan with **Budget Items** and

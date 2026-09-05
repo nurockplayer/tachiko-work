@@ -6,6 +6,11 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- The Designer creates bounded column and line reports from selected stable
+  source rows and numeric fields, updates from current semantic results, and
+  saves editable chart settings with browser projects. Current charts can be
+  shared as static PNGs; spreadsheet exports explicitly disclose chart loss.
+  This adds no portable chart format or general spreadsheet chart compatibility.
 - The Designer imports bounded CSV/XLSX workbooks through explicit inspection,
   typing and fidelity review; supports previewed cleanup, existing typed edits
   and numeric formulas; and downloads current CSV/XLSX output. Browser project
