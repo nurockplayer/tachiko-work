@@ -5,12 +5,12 @@ import { mountReportPanel, type ReportPanelState } from "./report-panel.ts";
 import { downloadCurrentReport } from "./report-export.ts";
 import { emptyGenericTableView, mountInteropTableView, projectInteropTable } from "./interop-table-view.ts";
 import { SpreadsheetImportPanel, mountCleanupPanel, mountFidelityLedger, downloadSpreadsheet } from "./interop-panel.ts";
-import type { CleanupPreview, SpreadsheetFormat, SpreadsheetExport, FidelityFinding } from "./runtime/interop-protocol.ts";
+import type { CleanupPreview, NativeTrackerExportPresentation, SourceStyle, SpreadsheetFormat, SpreadsheetExport, FidelityFinding } from "./runtime/interop-protocol.ts";
 import { reconcileTextEdit, normalizeLineEndings } from "./text-edit.ts";
 import { TrackerGrid } from "./tracker-grid.ts";
 import { defaultBudgetViews, addBudgetView, duplicateBudgetView, renameBudgetView, reorderBudgetViews, deleteBudgetView } from "./budget-views.ts";
 import { mountBudgetTools, hasBudgetToolsDraft, type BudgetToolsDraft } from "./budget-tools.ts";
-import { parseTrackerView, emptyTrackerView, cellKey, type NumberFormat, type TrackerView } from "./tracker-model.ts";
+import { parseTrackerView, emptyTrackerView, cellKey, orderedRows, type NumberFormat, type TrackerView } from "./tracker-model.ts";
 import { createProjectionStore, type ProjectionStore } from "./projection-store.ts";
 import { createDurabilityState } from "./durability-state.ts";
 import type {
@@ -79,7 +79,7 @@ export function mountDesigner(
   let notice: Notice | null = null;
   let startupFailure: string | null = null;
   let busy = false;
-  let pendingExport: {exported: SpreadsheetExport; format: SpreadsheetFormat; ledger: FidelityFinding[]} | null = null;
+  let pendingExport: {occurrence: symbol; exported: SpreadsheetExport; format: SpreadsheetFormat; ledger: FidelityFinding[]} | null = null;
   let destroyed = false;
   let occurrenceClosed = false;
   const pendingTextBuffers = new Map<string, string>();
@@ -324,10 +324,39 @@ export function mountDesigner(
     const host = root.querySelector<HTMLElement>(".table-workbench");
     if (!host || !store) return;
     importPanel.mount(host, busy);
-    const interop = tracker.view.interop;
-    if (!interop) return;
     const table = labelImportedTable(store.snapshot().table);
     const current = store.snapshot().currentness === "current";
+    const interop = tracker.view.interop;
+    if (!interop) {
+      if (!table.tracker_profile) return;
+      const exportPanel = document.createElement("section"); exportPanel.setAttribute("aria-label", "Export native Tracker");
+      const exportRows = orderedRows(table, tracker.view);
+      const order = tracker.view.order.length ? "the saved manual row order" : "deterministic canonical row order";
+      exportPanel.append(Object.assign(document.createElement("h3"), {textContent: "Export native Tracker"}));
+      exportPanel.append(Object.assign(document.createElement("p"), {textContent: `Exports all ${String(exportRows.length)} accepted Tracker rows in ${order}. Active Find / filter never removes rows from this export. CSV is values-only; typed XLSX is required for formula-leading Text.`}));
+      const presentation = (): NativeTrackerExportPresentation => ({
+        version: 1,
+        rows: exportRows.map(row => ({
+          entity_id: row.id,
+          styles: table.columns.map(column => nativeTrackerStyle(row.id, column.id)),
+        })),
+      });
+      for (const format of ["csv", "xlsx"] as SpreadsheetFormat[]) {
+        const button = document.createElement("button"); button.textContent = `Export Tracker ${format.toUpperCase()}`; button.disabled = busy || !current || hasEditDrafts();
+        button.addEventListener("click", () => { void (async () => {
+          if (!client.exportNativeTrackerSpreadsheet || busy || !store) return;
+          busy = true; render();
+          try {
+            const exported = await client.exportNativeTrackerSpreadsheet(store.snapshot().table.revision, presentation(), format);
+            if (!destroyed) pendingExport = {occurrence: reportOccurrence, exported, format, ledger: exportLedger([], exported)};
+          } catch (error) { showProjectFailure("Native Tracker not exported", error); }
+          finally { busy = pendingExport !== null; render(); }
+        })(); }); exportPanel.append(button);
+      }
+      host.append(exportPanel);
+      renderExportReview();
+      return;
+    }
     const controls = document.createElement("div"); host.prepend(controls);
     mountInteropTableView(controls, table, interop.tableViews[table.collection.id] ?? emptyGenericTableView(), busy || !current || hasEditDrafts(), next => {
       const focused = document.activeElement instanceof HTMLInputElement ? document.activeElement : null;
@@ -358,12 +387,37 @@ export function mountDesigner(
             if (format && format !== importedFormat) style.number_format = {number: "0.00", percentage: "0.00%", "currency-usd": '$0.00', "currency-jpy": '¥0'}[format];
           });
           const exported = await client.exportSpreadsheet(store.snapshot().table.revision, metadata, format, table.collection.id);
-          if (!destroyed) pendingExport = {exported, format, ledger: [...interop.ledger, ...exported.ledger, ...(tracker.view.charts?.length ? [{category: "lossy_on_export" as const, code: "report_charts_not_preserved", location: "report", message: "Spreadsheet export does not preserve these report charts. Export each current chart as a static PNG and keep the saved browser project for editable chart configuration.", blocking: false}] : [])]};
+          if (!destroyed) pendingExport = {occurrence: reportOccurrence, exported, format, ledger: exportLedger(interop.ledger, exported)};
         } catch (error) { showProjectFailure("Spreadsheet not exported", error); }
         finally { busy = pendingExport !== null; render(); }
       })(); }); exportPanel.append(button);
     }
     host.append(exportPanel);
+    renderExportReview();
+  };
+
+  const nativeTrackerStyle = (entity: string, field: string): SourceStyle => {
+    const style = tracker.view.cells[cellKey(entity, field)] ?? {};
+    const format = tracker.view.formats[cellKey(entity, field)];
+    return {
+      number_format: format === undefined ? null : {number: "0.00", percentage: "0.00%", "currency-usd": "$0.00", "currency-jpy": "¥0"}[format],
+      bold: style.bold ?? false,
+      fill: style.fill ? "FFF1BA" : null,
+      wrap: style.wrap ?? false,
+      border: style.border ?? false,
+      alignment: style.align ?? null,
+    };
+  };
+
+  const exportLedger = (base: FidelityFinding[], exported: SpreadsheetExport): FidelityFinding[] => [
+    ...base,
+    ...exported.ledger,
+    ...(tracker.view.charts?.length ? [{category: "lossy_on_export" as const, code: "report_charts_not_preserved", location: "report", message: "Spreadsheet export does not preserve these report charts. Export each current chart as a static PNG and keep the saved browser project for editable chart configuration.", blocking: false}] : []),
+  ];
+
+  const renderExportReview = (): void => {
+    const host = root.querySelector<HTMLElement>(".table-workbench");
+    if (!host) return;
     if (pendingExport) {
       const captured = pendingExport;
       const review = document.createElement("section"); review.setAttribute("aria-label", "Export compatibility review");
@@ -373,7 +427,7 @@ export function mountDesigner(
       const accept = document.createElement("button"); accept.textContent = `Acknowledge losses and download ${captured.format.toUpperCase()}`;
       accept.addEventListener("click", () => {
         try {
-          if (store?.snapshot().currentness !== "current" || store.snapshot().table.revision !== captured.exported.revision || hasEditDrafts()) throw new Error("The captured spreadsheet is no longer current. Export again after applying or cancelling pending edits.");
+          if (reportOccurrence !== captured.occurrence || store?.snapshot().currentness !== "current" || store.snapshot().table.revision !== captured.exported.revision || hasEditDrafts()) throw new Error("The captured spreadsheet is no longer current. Export again after applying or cancelling pending edits.");
           downloadSpreadsheet(captured.exported, captured.format);
         } catch (error) { showProjectFailure("Spreadsheet not exported", error); }
         finally { finish(); }
@@ -600,7 +654,7 @@ export function mountDesigner(
       throw new Error("Initial projection does not match the bootstrap revision.");
     }
     const nextStore = createProjectionStore(table);
-    reportOccurrence = Symbol("report occurrence"); reportState.draft = null;
+    reportOccurrence = Symbol("report occurrence"); reportState.draft = null; pendingExport = null;
     tracker.reset(); savedView = JSON.stringify(tracker.view); activeProject = null;
     pendingTextBuffers.clear();
     pendingBooleanBuffers.clear();
@@ -617,7 +671,7 @@ export function mountDesigner(
 
   const installOpenedOccurrence = (opened: OpenedProjection): void => {
     const nextStore = createProjectionStore(opened.table);
-    reportOccurrence = Symbol("report occurrence"); reportState.draft = null;
+    reportOccurrence = Symbol("report occurrence"); reportState.draft = null; pendingExport = null;
     tracker.reset(); savedView = JSON.stringify(tracker.view); activeProject = null;
     pendingTextBuffers.clear();
     pendingBooleanBuffers.clear();

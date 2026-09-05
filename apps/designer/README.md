@@ -107,11 +107,12 @@ runtime from the [clipboard fixture](e2e/fixtures/operations-tracker.tsv).
   locale-specific thousands separators; Boolean paste accepts exactly `true`
   or `false`. Unsupported or malformed input rejects the entire operation.
   Copy exports the selected displayed values as TSV, never internal IDs.
-- Paste extends rows atomically, up to 128 rows, 3 columns, 48,000 clipboard
-  characters and the runtime's existing 64 KiB projection admission budget.
-  Oversized cell contents can reach that budget before 128 rows. Rejection
-  leaves accepted work intact. Multi-row paste/range editing requires original
-  order and no filter; **Original order** clears manual row moves.
+- Paste extends rows atomically, up to 128 rows, 3 columns and 48,000
+  clipboard characters. The exact stock Tracker uses a bounded private
+  projection delivery profile for its 128 fixed scalar rows; generic
+  tables/field batches retain the 64 KiB profile. Rejection leaves accepted
+  work intact. Multi-row paste/range editing requires original order and no
+  filter; **Original order** clears manual row moves.
 - Append/remove operate on stable entity IDs. Move rows changes only the view.
   This fixed stock schema needs no column-schema editing. Sort is stable and
   uses numeric/Boolean ordering or case-sensitive UTF-16 code-unit string comparison;
@@ -137,10 +138,20 @@ runtime from the [clipboard fixture](e2e/fixtures/operations-tracker.tsv).
   and formatting. Read-only collection switches and rejected/no-change edits do
   not clear history. Reopening starts a fresh undo stack. A failed refresh
   leaves the accepted revision saveable and provides **Retry refresh**.
+- Native Tracker has a bounded outbound CSV/XLSX escape path without imported
+  workbook metadata. It exports every accepted row (0–128) by stable identity,
+  in saved manual order when present or canonical order otherwise; filter never
+  omits rows. XLSX preserves the declared Text/finite Number/Boolean scalar
+  types and supported basic styles. CSV is values-only and refuses
+  formula-leading literal Text; typed XLSX is the safe escape for that Text.
+  The outbound 128-row profile does not change the incoming 64-row spreadsheet
+  profile or claim reimportability. Review acknowledgement is bound to the
+  current occurrence and revision; cancellation, refusal, and stale output do
+  not mutate the project, its durability state, or Undo/Redo.
 
 This closes only the bounded tracker journey, not Excel parity or the public
-launch gate. No CSV/XLSX compatibility, multi-sheet, formula expansion, custom
-validation engine, cloud sync, or durable history is added.
+launch gate. No general CSV/XLSX profile expansion, multi-sheet, formula
+expansion, custom validation engine, cloud sync, or durable history is added.
 
 ## Public-product promotion (#261)
 

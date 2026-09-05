@@ -13,13 +13,16 @@ export type SourceCell = { value: SourceValue; formula: string | null; style: So
 export type SourceWorkbook = { sheets: Array<{name: string; has_header: boolean; columns: Array<{name: string; width: number | null}>; rows: SourceCell[][]}>; ledger: FidelityFinding[] };
 export type ImportSelection = { column_types: ImportFieldType[][]; extra_columns: Array<Array<{name: string; field_type: ImportFieldType}>> };
 export type InteropMetadata = { version: number; sheets: Array<{schema_id: string; name: string; has_header: boolean; columns: Array<{field_id: string; name: string; width: number | null}>; rows: Array<{entity_id: string; styles: SourceStyle[]}>}> };
+/** Private outbound-only binding for the stock 128-row Driver Tracker. */
+export type NativeTrackerExportPresentation = { version: number; rows: Array<{entity_id: string; styles: SourceStyle[]}> };
 export type ImportedProjection = { opened: OpenedProjection; metadata: InteropMetadata; ledger: FidelityFinding[] };
 export type SpreadsheetExport = { revision: string; bytes: ArrayBuffer; ledger: FidelityFinding[] };
 export type SpreadsheetOperation =
   | {type: "inspect"; format: SpreadsheetFormat; csv_options: ImportOptions}
   | {type: "import"; format: SpreadsheetFormat; csv_options: ImportOptions; selection: ImportSelection; occurrence_id: string; install: boolean}
   | {type: "inspect_project"; metadata: InteropMetadata}
-  | {type: "export"; expected_revision: string; metadata: InteropMetadata; format: SpreadsheetFormat; collection: string};
+  | {type: "export"; expected_revision: string; metadata: InteropMetadata; format: SpreadsheetFormat; collection: string}
+  | {type: "export_native_tracker"; expected_revision: string; presentation: NativeTrackerExportPresentation; format: SpreadsheetFormat};
 export type ScalarInput = {kind: "number"; input: string} | {kind: "text" | "date"; value: string} | {kind: "boolean"; value: boolean};
 export type CleanupOperation =
   | {kind: "trim"; fields: FieldTarget[]}

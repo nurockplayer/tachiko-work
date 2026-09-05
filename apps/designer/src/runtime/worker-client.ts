@@ -1,4 +1,4 @@
-import type { CleanupOperation, CleanupPreview, ImportedProjection, ImportOptions, ImportSelection, InteropMetadata, SourceWorkbook, SpreadsheetExport, SpreadsheetFormat, SpreadsheetOperation } from "./interop-protocol.ts";
+import type { CleanupOperation, CleanupPreview, ImportedProjection, ImportOptions, ImportSelection, InteropMetadata, NativeTrackerExportPresentation, SourceWorkbook, SpreadsheetExport, SpreadsheetFormat, SpreadsheetOperation } from "./interop-protocol.ts";
 import {
   DesignerRuntimeError,
   type DesignerClient,
@@ -86,6 +86,12 @@ export class WorkerDesignerClient implements DesignerClient {
   async exportSpreadsheet(expectedRevision: string, metadata: InteropMetadata, format: SpreadsheetFormat, collection: string): Promise<SpreadsheetExport> {
     const reply = await this.#spreadsheet({type: "export", expected_revision: expectedRevision, metadata, format, collection});
     if (reply.status !== "spreadsheet_exported") throw new Error("Expected spreadsheet export.");
+    return reply.export;
+  }
+
+  async exportNativeTrackerSpreadsheet(expectedRevision: string, presentation: NativeTrackerExportPresentation, format: SpreadsheetFormat): Promise<SpreadsheetExport> {
+    const reply = await this.#spreadsheet({type: "export_native_tracker", expected_revision: expectedRevision, presentation, format});
+    if (reply.status !== "spreadsheet_exported") throw new Error("Expected native Tracker spreadsheet export.");
     return reply.export;
   }
 

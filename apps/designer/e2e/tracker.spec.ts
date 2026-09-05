@@ -187,6 +187,67 @@ test("empty tracker accepts quoted multiline clipboard text and keeps multiline 
   await expect(page.getByLabel("Cell value", {exact: true})).toHaveValue("\nEdited\nSecond");
 });
 
+test("native Tracker exports every accepted row after save, reopen, filter, and manual move", async ({ page }, testInfo) => {
+  test.setTimeout(60_000);
+  await createTracker(page);
+  const fixture = Array.from({length: 128}, (_, index) => {
+    const value = index + 1;
+    return `item-${String(value).padStart(3, "0")}\t${String(value)}\t${String(value % 2 === 0)}`;
+  }).join("\n");
+  await cell(page, 0, 0).click();
+  await paste(page, fixture);
+  await expect(rows(page)).toHaveCount(128);
+  await expect(cell(page, 0, 0)).toHaveText("item-001");
+  await expect(cell(page, 127, 0)).toHaveText("item-128");
+
+  page.once("dialog", dialog => dialog.accept("native-128.roproj"));
+  await page.getByRole("button", {name: "Save As", exact: true}).click();
+  await expect(page.locator(".notice.success")).toContainText("Save As complete");
+  await page.getByRole("button", {name: "Close", exact: true}).click();
+  await page.getByLabel("Saved project", {exact: true}).selectOption("native-128.roproj");
+  await page.getByRole("button", {name: "Open project", exact: true}).click();
+  await expect(rows(page)).toHaveCount(128);
+
+  await page.getByLabel("Find / filter").fill("item-001");
+  await page.getByLabel("Find / filter").press("Tab");
+  await expect(rows(page)).toHaveCount(1);
+  await page.getByLabel("Find / filter").fill("");
+  await page.getByLabel("Find / filter").press("Tab");
+  await expect(rows(page)).toHaveCount(128);
+  await cell(page, 0, 0).click();
+  await page.getByRole("button", {name: "Move rows down", exact: true}).click();
+  await expect(cell(page, 0, 0)).toHaveText("item-002");
+  await expect(cell(page, 1, 0)).toHaveText("item-001");
+
+  await page.getByRole("button", {name: "Export Tracker CSV", exact: true}).click();
+  const review = page.getByRole("region", {name: "Export compatibility review", exact: true});
+  await expect(review).toContainText("native_tracker_outbound_profile");
+  await expect(review).toContainText("native_tracker_session_presentation");
+  await expect(review).toContainText("Undo/Redo history");
+  const downloading = page.waitForEvent("download");
+  await page.getByRole("button", {name: "Acknowledge losses and download CSV", exact: true}).click();
+  const download = await downloading;
+  const outputPath = testInfo.outputPath("native-tracker-128.csv");
+  await download.saveAs(outputPath);
+  const csv = await readFile(outputPath, "utf8");
+  const lines = csv.trimEnd().split("\r\n");
+  expect(lines).toHaveLength(129);
+  expect(lines[0]).toBe("task,estimate,done");
+  expect(lines[1]).toBe("item-002,2,true");
+  expect(lines[2]).toBe("item-001,1,false");
+  expect(lines[128]).toBe("item-128,128,true");
+  const total = lines.slice(1).reduce((sum, line) => sum + Number(line.split(",")[1]), 0);
+  expect(total).toBe(8256);
+
+  await page.getByRole("button", {name: "Export Tracker XLSX", exact: true}).click();
+  const xlsxDownloading = page.waitForEvent("download");
+  await page.getByRole("button", {name: "Acknowledge losses and download XLSX", exact: true}).click();
+  const xlsx = await xlsxDownloading;
+  const xlsxPath = testInfo.outputPath("native-tracker-128.xlsx");
+  await xlsx.saveAs(xlsxPath);
+  expect((await readFile(xlsxPath)).subarray(0, 4)).toEqual(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+});
+
 test("selection follows its entity through sorted edits and semantic undo/redo", async ({ page }) => {
   await createTracker(page);
   await cell(page, 0, 0).click();

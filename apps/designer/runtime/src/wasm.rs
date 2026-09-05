@@ -6,15 +6,17 @@ use serde::Deserialize;
 
 use crate::interop_adapter::{
     FidelityCategory, FidelityFinding, ImportOptions, InteropError, MAX_SOURCE_BYTES,
-    SourceWorkbook, export_csv, export_xlsx, import_csv, import_xlsx,
+    OutputProfile, SourceWorkbook, export_csv, export_csv_for_profile, export_xlsx,
+    export_xlsx_for_profile, import_csv, import_xlsx,
 };
 use crate::{
     DesignerError, DesignerResponse, DesignerRuntime, DesignerWireReply,
     MAX_PROJECT_TRANSFER_BYTES, MAX_WIRE_REQUEST_BYTES, ProjectExportProjection, encode_reply,
-    inspect_project, open_project, process_wire_request, request_too_large_reply,
+    ensure_wire_reply_size, inspect_project, open_project, process_wire_request,
+    request_too_large_reply,
 };
 use crate::{
-    ImportSelection, InteropMetadata, SpreadsheetExportProjection, ensure_projection_size,
+    ImportSelection, InteropMetadata, NativeTrackerExportPresentation, SpreadsheetExportProjection,
     import_workbook, inspect_imported_project,
 };
 
@@ -47,6 +49,11 @@ enum SpreadsheetOperation {
         metadata: InteropMetadata,
         format: SpreadsheetFormat,
         collection: String,
+    },
+    ExportNativeTracker {
+        expected_revision: String,
+        presentation: NativeTrackerExportPresentation,
+        format: SpreadsheetFormat,
     },
 }
 
@@ -180,7 +187,7 @@ pub extern "C" fn tachiko_designer_spreadsheet_run() {
                 let reply = DesignerWireReply::Ok {
                     response: result.response,
                 };
-                if let Err(error) = ensure_projection_size(&reply) {
+                if let Err(error) = ensure_wire_reply_size(&reply) {
                     DesignerWireReply::Error {
                         error: error.failure_projection(current_revision(runtime.as_ref())),
                     }
@@ -270,7 +277,76 @@ fn spreadsheet_operation(
             })?;
             export_spreadsheet(runtime, &expected_revision, &metadata, format, &collection)
         }
+        SpreadsheetOperation::ExportNativeTracker {
+            expected_revision,
+            presentation,
+            format,
+        } => export_native_tracker_spreadsheet(
+            runtime.ok_or_else(|| DesignerError::InvalidProjectTransfer {
+                message: "No Designer project is open for native Tracker spreadsheet export."
+                    .to_owned(),
+            })?,
+            &expected_revision,
+            &presentation,
+            format,
+        ),
     }
+}
+
+fn export_native_tracker_spreadsheet(
+    runtime: &DesignerRuntime,
+    revision: &str,
+    presentation: &NativeTrackerExportPresentation,
+    format: SpreadsheetFormat,
+) -> Result<SpreadsheetResult, DesignerError> {
+    let mut workbook = runtime.export_native_tracker_workbook(revision, presentation)?;
+    workbook.ledger.push(FidelityFinding {
+        category: FidelityCategory::NativeEquivalent,
+        code: "native_tracker_outbound_profile".to_owned(),
+        location: "Tracker".to_owned(),
+        message: "Native Tracker export maps every accepted task, estimate, and done row by stable identity. It supports 0..=128 outbound rows; the separate incoming spreadsheet profile remains limited to 64 rows.".to_owned(),
+        blocking: false,
+    });
+    workbook.ledger.push(FidelityFinding {
+        category: FidelityCategory::LossyOnExport,
+        code: "native_tracker_session_presentation".to_owned(),
+        location: "Tracker".to_owned(),
+        message: "Browser-only column widths, row height, header emphasis, and session Undo/Redo history have no declared spreadsheet mapping and are not exported. Supported per-cell bold, fill, wrap, border, alignment, and number formatting are preserved when valid.".to_owned(),
+        blocking: false,
+    });
+    let bytes = match format {
+        SpreadsheetFormat::Csv => {
+            let sheet =
+                workbook
+                    .sheets
+                    .first()
+                    .ok_or_else(|| DesignerError::InvalidProjectTransfer {
+                        message: "Native Tracker export has no worksheet.".to_owned(),
+                    })?;
+            let bytes = export_csv_for_profile(sheet, OutputProfile::NativeTracker)
+                .map_err(interop_error)?;
+            workbook.ledger.push(FidelityFinding {
+                category: FidelityCategory::LossyOnExport,
+                code: "csv_values_only".to_owned(),
+                location: sheet.name.clone(),
+                message: "CSV exports Tracker scalar values only. Formatting is not preserved, and formula-leading Text is refused rather than changed; use typed XLSX for that Text.".to_owned(),
+                blocking: false,
+            });
+            bytes
+        }
+        SpreadsheetFormat::Xlsx => export_xlsx_for_profile(&workbook, OutputProfile::NativeTracker)
+            .map_err(interop_error)?,
+    };
+    crate::enforce_project_transfer_limit(bytes.len())?;
+    Ok(SpreadsheetResult {
+        response: DesignerResponse::SpreadsheetExported(SpreadsheetExportProjection {
+            revision: revision.to_owned(),
+            byte_length: bytes.len(),
+            ledger: workbook.ledger,
+        }),
+        candidate: None,
+        export: Some(bytes),
+    })
 }
 
 fn export_spreadsheet(

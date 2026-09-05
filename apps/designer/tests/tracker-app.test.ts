@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { mountDesigner, type MountedDesigner } from "../src/designer-app.ts";
 import type { DesignerClient } from "../src/runtime/client.ts";
 import type { DesignerProjectHost } from "../src/host/browser-project-host.ts";
+import type { NativeTrackerExportPresentation, SpreadsheetFormat } from "../src/runtime/interop-protocol.ts";
 import type { TableProjection } from "../src/runtime/protocol.ts";
 let mounted: MountedDesigner | undefined;
 afterEach(() => { mounted?.destroy(); document.body.replaceChildren(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
@@ -29,20 +30,43 @@ async function setup(original = "Accepted work", secondRow = false, stock = true
         return { base_revision: base, resulting_revision: table.revision, entities: ["item"], fields: [], affected_calculations: [] };
     });
     const exportProject = vi.fn(async (revision: string) => ({ revision, bytes: new ArrayBuffer(1) }));
+    let nativePresentation: NativeTrackerExportPresentation | undefined;
+    let nativeFormat: SpreadsheetFormat | undefined;
+    const exportNativeTrackerSpreadsheet = vi.fn(async (revision: string, presentation: NativeTrackerExportPresentation, format: SpreadsheetFormat) => {
+        nativePresentation = structuredClone(presentation); nativeFormat = format;
+        return { revision, bytes: new ArrayBuffer(4), ledger: [] };
+    });
     const publish = vi.fn(async () => { });
     const client: DesignerClient = {
         bootstrap: async () => ({ title: "Driver Tracker", revision: table.revision, default_collection: "tracker", collections: mixed ? [table.collection, ordinary.collection] : [table.collection] }),
         queryTable, trackerCommand,
-        openProject: vi.fn(), exportProject, closeProject: vi.fn(), queryFields: vi.fn(), editNumber: vi.fn(), editText: vi.fn(), editBoolean: vi.fn(), editDate: vi.fn(), close: vi.fn(),
+        openProject: vi.fn(), exportProject, exportNativeTrackerSpreadsheet, closeProject: vi.fn(), queryFields: vi.fn(), editNumber: vi.fn(), editText: vi.fn(), editBoolean: vi.fn(), editDate: vi.fn(), close: vi.fn(),
     };
     const host: DesignerProjectHost = { list: async () => [], read: vi.fn(), publish };
     const root = document.createElement("div");
     document.body.append(root);
     mounted = mountDesigner(root, client, host);
     await mounted.ready;
-    return { root, exportProject, publish, queryTable, trackerCommand, client };
+    return { root, exportProject, exportNativeTrackerSpreadsheet, nativePresentation: () => nativePresentation, nativeFormat: () => nativeFormat, publish, queryTable, trackerCommand, client };
 }
 const click = (root: HTMLElement, selector: string): void => { const button = root.querySelector<HTMLButtonElement>(selector); expect(button).not.toBeNull(); button?.click(); };
+it("exports the complete native Tracker by stable row identity before fidelity acknowledgement", async () => {
+    const {root, exportNativeTrackerSpreadsheet, nativePresentation, nativeFormat} = await setup("First", true);
+    const button = [...root.querySelectorAll<HTMLButtonElement>("button")].find(control => control.textContent === "Export Tracker XLSX");
+    if (!button) throw new Error("No native Tracker XLSX export control");
+    button.click();
+    await vi.waitFor(() => { expect(exportNativeTrackerSpreadsheet).toHaveBeenCalledOnce(); });
+    expect(nativeFormat()).toBe("xlsx");
+    const captured = nativePresentation();
+    if (!captured) throw new Error("Native Tracker export did not capture its presentation");
+    expect(captured.version).toBe(1);
+    expect(captured.rows.map(row => row.entity_id)).toEqual(["item", "other"]);
+    expect(captured.rows.every(row => row.styles.length === 3)).toBe(true);
+    expect(root.querySelector('[aria-label="Export compatibility review"]')).not.toBeNull();
+    expect(root.textContent).toContain("Exports all 2 accepted Tracker rows");
+    [...root.querySelectorAll<HTMLButtonElement>("button")].find(control => control.textContent === "Cancel export")?.click();
+    await vi.waitFor(() => { expect(root.querySelector('[aria-label="Export compatibility review"]')).toBeNull(); });
+});
 it("accepted publication stays saveable when its projection refresh fails and can retry", async () => {
     const { root, exportProject, publish, queryTable, trackerCommand } = await setup();
     queryTable.mockRejectedValueOnce(new Error("temporary read failure"));
