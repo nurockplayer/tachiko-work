@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { mountReportPanel, type ReportPanelState } from "../src/report-panel.ts";
 import type { ReportChart } from "../src/report-model.ts";
-import type { NumberFormat } from "../src/tracker-model.ts";
+import { cellKey, type NumberFormat } from "../src/tracker-model.ts";
 import type { FieldProjection, TableProjection } from "../src/runtime/protocol.ts";
 
 const renderReportChart = vi.hoisted(() => vi.fn());
@@ -18,6 +18,8 @@ const amountId = "00000000-0000-4000-8000-000000000021";
 const secondAmountId = "00000000-0000-4000-8000-000000000023";
 const categoryId = "00000000-0000-4000-8000-000000000022";
 const chartId = "00000000-0000-4000-8000-000000000031";
+const secondChartId = "00000000-0000-4000-8000-000000000032";
+const thirdChartId = "00000000-0000-4000-8000-000000000033";
 
 function field(entity: string, fieldId: string, stored: FieldProjection["stored"]): FieldProjection {
   return { target: { entity, field: fieldId }, address: `${entity}.${fieldId}`, stored, formula: null, calculated: null, diagnostics: [], editable_scalar: stored?.kind === "number" ? "number" : stored?.kind === "text" ? "text" : null };
@@ -163,5 +165,61 @@ describe("report chart panel", () => {
     button(host, "Add numeric series").click();
     expect(host.querySelectorAll(".report-add-series")).toHaveLength(1);
     expect(host.textContent).toContain("Cost");
+  });
+
+  it("renders missing saved rows as removable human placeholders and frees the row budget", () => {
+    const missing = Array.from({ length: 16 }, (_, index) => `missing-row-${String(index + 1)}`);
+    const state: ReportPanelState = { draft: { creating: false, chart: { ...chart(), entityIds: [...missing] } } };
+    const { host, onChartsChange } = mount({ state });
+    expect([...host.querySelectorAll("label")].filter(label => label.textContent.startsWith("Unavailable selected row")).length).toBe(16);
+    expect(host.textContent).toContain("Unavailable selected row 1");
+    expect(host.textContent).toContain("Selected 16 of 16 rows");
+    const firstMissing = [...host.querySelectorAll("label")].find(label => label.textContent === "Unavailable selected row 1");
+    if (!firstMissing) throw new Error("Missing unavailable row control");
+    const firstMissingInput = firstMissing.querySelector("input") as HTMLInputElement;
+    firstMissingInput.checked = false;
+    firstMissingInput.dispatchEvent(new Event("change"));
+    expect(state.draft?.chart.entityIds).toHaveLength(15);
+    expect(state.draft?.chart.entityIds).toEqual(missing.slice(1));
+    expect(host.textContent).toContain("Selected 15 of 16 rows");
+    const available = [...host.querySelectorAll("label")].find(label => label.textContent.includes("東京 (Row 1)"));
+    if (!available) throw new Error("Missing available row control");
+    const availableInput = available.querySelector("input") as HTMLInputElement;
+    expect(availableInput.disabled).toBe(false);
+    availableInput.checked = true;
+    availableInput.dispatchEvent(new Event("change"));
+    expect(state.draft?.chart.entityIds).toHaveLength(16);
+    expect(state.draft?.chart.entityIds).toContain(firstRow);
+    for (const label of host.querySelectorAll("label")) {
+      if (!label.textContent.startsWith("Unavailable selected row")) continue;
+      const input = label.querySelector("input")!;
+      if (input.checked) { input.checked = false; input.dispatchEvent(new Event("change")); }
+    }
+    button(host, "Apply chart").click();
+    expect(onChartsChange).toHaveBeenCalledWith([expect.objectContaining({ entityIds: [firstRow] })]);
+  });
+
+  it("replaces an edited chart in place and exposes mixed-format notes in the data card", () => {
+    renderReportChart.mockImplementation(() => document.createElement("canvas"));
+    const first = chart();
+    const second = { ...chart(), id: secondChartId, title: "Second" };
+    const third = { ...chart(), id: thirdChartId, title: "Third" };
+    const state: ReportPanelState = { draft: { creating: false, chart: { ...second } } };
+    const onChartsChange = vi.fn();
+    const { host } = mount({
+      charts: [first, second, third], state,
+      formats: { [cellKey(firstRow, amountId)]: "currency-jpy", [cellKey(secondRow, amountId)]: "currency-usd" },
+      onChartsChange,
+    });
+    expect(host.textContent).toContain("Mixed number formats are displayed as Number without conversion.");
+    const title = control(host, "Chart title");
+    title.value = "Edited second";
+    title.dispatchEvent(new Event("input"));
+    button(host, "Apply chart").click();
+    expect(onChartsChange).toHaveBeenCalledWith([
+      expect.objectContaining({ id: chartId, title: "Sales" }),
+      expect.objectContaining({ id: secondChartId, title: "Edited second" }),
+      expect.objectContaining({ id: thirdChartId, title: "Third" }),
+    ]);
   });
 });

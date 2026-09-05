@@ -155,6 +155,12 @@ function renderReadyCard(parent: HTMLElement, chart: ReportChart, projection: Re
   }
   data.append(body);
   card.append(data);
+  if (projection.note !== null) {
+    const note = element("p", projection.note);
+    note.className = "report-chart-note";
+    note.setAttribute("role", "note");
+    card.append(note);
+  }
   const exportButton = element("button", "Download PNG");
   exportButton.type = "button";
   exportButton.disabled = options.busy || !options.current || options.state.draft !== null;
@@ -273,25 +279,37 @@ function renderEditor(parent: HTMLElement, options: ReportPanelOptions): void {
   const rows = element("fieldset");
   rows.className = "report-row-editor";
   rows.append(element("legend", "Rows (up to 16; saved order is preserved)"));
+  const selectedCount = element("p", `Selected ${String(chart.entityIds.length)} of 16 rows`);
+  selectedCount.className = "report-selected-count";
+  rows.append(selectedCount);
+  const rowChoices: Array<{ id: string; label: string }> = [];
+  for (const [index, id] of chart.entityIds.entries()) {
+    const row = options.table.rows.find(candidate => candidate.id === id) ?? null;
+    rowChoices.push({ id, label: row === null ? `Unavailable selected row ${String(index + 1)}` : rowLabel(options.table, row, options.table.rows.indexOf(row)) });
+  }
   for (const [index, row] of options.table.rows.entries()) {
+    if (!chart.entityIds.includes(row.id)) rowChoices.push({ id: row.id, label: rowLabel(options.table, row, index) });
+  }
+  for (const choice of rowChoices) {
     const check = element("input");
     check.type = "checkbox";
-    check.checked = chart.entityIds.includes(row.id);
+    check.checked = chart.entityIds.includes(choice.id);
     check.disabled = !check.checked && chart.entityIds.length >= 16;
     check.addEventListener("change", () => {
       if (check.checked) {
-        if (!chart.entityIds.includes(row.id) && chart.entityIds.length < 16) chart.entityIds.push(row.id);
+        if (!chart.entityIds.includes(choice.id) && chart.entityIds.length < 16) chart.entityIds.push(choice.id);
         else if (chart.entityIds.length >= 16) check.checked = false;
       } else {
-        const position = chart.entityIds.indexOf(row.id);
+        const position = chart.entityIds.indexOf(choice.id);
         if (position >= 0) chart.entityIds.splice(position, 1);
       }
       options.onDraftChange();
+      selectedCount.textContent = `Selected ${String(chart.entityIds.length)} of 16 rows`;
       for (const input of rows.querySelectorAll<HTMLInputElement>("input[type=checkbox]")) {
         input.disabled = !input.checked && chart.entityIds.length >= 16;
       }
     });
-    const wrapper = element("label", rowLabel(options.table, row, index));
+    const wrapper = element("label", choice.label);
     wrapper.className = "report-row-choice";
     wrapper.prepend(check);
     rows.append(wrapper);
@@ -306,7 +324,11 @@ function renderEditor(parent: HTMLElement, options: ReportPanelOptions): void {
     if (options.busy || !options.current) return;
     try {
       if (chart.collectionId !== options.table.collection.id) throw new Error("The chart source changed. Cancel this draft and select its source again.");
-      const candidate = [...options.charts.filter(item => item.id !== chart.id), cloneChart(chart)];
+      const replacement = cloneChart(chart);
+      const existingIndex = options.charts.findIndex(item => item.id === chart.id);
+      const candidate = existingIndex < 0
+        ? [...options.charts, replacement]
+        : options.charts.map((item, index) => index === existingIndex ? replacement : item);
       const parsed = parseReportCharts(candidate, [...options.collectionIds]);
       options.onChartsChange(parsed);
     } catch (error) {
