@@ -1,0 +1,20 @@
+{
+  "profile": "designer-report/v1",
+  "authority": "Issue #260 and activation comment 5548373683",
+  "status": "app-private presentation; no portable project or Core contract",
+  "chartKinds": ["column", "line"],
+  "bounds": {
+    "chartsPerProject": 8,
+    "selectedRowsPerChart": 16,
+    "numericSeriesPerChart": 3,
+    "labelCodePoints": 80,
+    "bindingIdCodeUnits": 256
+  },
+  "binding": "Explicit collection, entity and field IDs from authoritative table queries; saved selection order is stable and independent of view sorting/filtering.",
+  "sourceChanges": "Existing selected subjects update from the current query. New rows are not automatically selected. Missing, failed, nonnumeric or unavailable source values disable current chart output; they never become zero or cached fallback values.",
+  "presentation": "Title, categorical axis label, numeric axis label, series labels and legend visibility. Number/JPY/USD/percentage display inherits source presentation; mixed formats use plain Number without conversion.",
+  "persistence": "Matching semantic bytes and private chart configuration share the existing atomic browser host record. Unknown configuration or collection identity rejects Open before resident replacement. Removed row/field bindings retain configuration with an explicit unavailable result.",
+  "sharing": "Explicit current-chart static PNG download. Recheck revision, currentness, occurrence, configuration, formatting and pending data edits after asynchronous encoding. PNG is not editable, live-linked, a project backup or XLSX chart preservation.",
+  "xlsx": "Editable charts are not preserved; disclose chart loss before spreadsheet download.",
+  "nonGoals": ["scatter or pie in this initial profile", "time-scaled axes", "general drawing/layout engine", "frontend formula evaluation", "Core Chart/View objects", "PDF/PowerPoint compatibility", "public deployment"]
+}
