@@ -37,7 +37,7 @@ export class TrackerGrid {
     readonly #options: Options;
     constructor(options: Options) { this.#options = options; }
     get pending(): boolean { return this.#draft !== null; }
-    reset(view = emptyTrackerView()): void { this.view = view; this.#undo = []; this.#redo = []; this.#anchor = [0, 0]; this.#focus = [0, 0]; this.#anchorEntity = undefined; this.#focusEntity = undefined; this.#table = null; this.#filter = ""; this.#sort = ""; this.#draft = null; }
+    reset(view = emptyTrackerView()): void { this.view = view; this.#undo = []; this.#redo = []; this.#anchor = [0, 0]; this.#focus = [0, 0]; this.#anchorEntity = undefined; this.#focusEntity = undefined; this.#table = null; this.#filter = ""; this.#sort = ""; this.#descending = false; this.#draft = null; }
     #rows(): TableProjection["rows"] {
         if (this.#table === null)
             return [];
