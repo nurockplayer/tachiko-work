@@ -210,6 +210,8 @@ XLSX emits all mapped sheets, supported basic styles and widths. No-header CSV
 projects receive an explicit output header conversion, with A1 formulas shifted
 consistently; the original source/header setting is unchanged. CSV exports only
 the selected sheet's values and loses formulas, formatting and other sheets.
+CSV refuses formula-leading literal Text or headers that another spreadsheet
+reader could activate; typed XLSX keeps those strings literal.
 Both download paths require review and acknowledgement of the structured loss
 ledger. Unsupported original parts stay only in the retained source and are
 never executed or silently advertised as editable/exported equivalents.

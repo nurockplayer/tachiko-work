@@ -20,7 +20,7 @@ test("ordinary reference workbook imports with typed values and live numeric for
   const amount = page.getByLabel("Amount for Sheet 1 Row 1", {exact: true});
   await amount.fill("130");
   await amount.locator("xpath=ancestor::form").getByRole("button", {name: "Apply", exact: true}).click();
-  await expect(page.locator(".table-scroll output").first()).toHaveText("170");
+  await expect(page.locator(".table-scroll output:not([data-formatted-number])").first()).toHaveText("170");
   await expect(page.getByLabel("Date for Sheet 1 Row 1", {exact: true})).toHaveValue("2026-09-05");
   page.once("dialog", dialog => dialog.accept("ordinary-import.roproj"));
   await page.getByRole("button", {name: "Save As", exact: true}).click();
@@ -29,7 +29,7 @@ test("ordinary reference workbook imports with typed values and live numeric for
   await page.getByRole("button", {name: "Open project", exact: true}).click();
   await expect(page.locator(".notice.success")).toContainText("Project opened");
   await expect(amount).toHaveValue("130");
-  await expect(page.locator(".table-scroll output").first()).toHaveText("170");
+  await expect(page.locator(".table-scroll output:not([data-formatted-number])").first()).toHaveText("170");
   await page.getByRole("button", {name: "Export XLSX", exact: true}).click();
   await expect(page.getByRole("button", {name: "Acknowledge losses and download XLSX", exact: true})).toBeVisible();
   const downloading = page.waitForEvent("download");

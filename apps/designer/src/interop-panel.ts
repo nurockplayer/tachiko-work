@@ -68,7 +68,8 @@ export class SpreadsheetImportPanel {
     file.addEventListener("change", () => {
       const candidate = file.files?.[0]; if (!candidate) return;
       if (!/\.(csv|xlsx)$/i.test(candidate.name) || candidate.size > 2097152 || candidate.size === 0) { this.#message = "Choose a CSV or XLSX file of 1..2097152 bytes."; this.changed(); return; }
-      void candidate.arrayBuffer().then(bytes => { this.#source = {name: candidate.name, bytes, format: /\.xlsx$/i.test(candidate.name) ? "xlsx" : "csv"}; return inspect(); });
+      this.#pending = true; this.#message = "Reading source…"; this.changed();
+      void candidate.arrayBuffer().then(bytes => { this.#source = {name: candidate.name, bytes, format: /\.xlsx$/i.test(candidate.name) ? "xlsx" : "csv"}; return inspect(); }).catch((error: unknown) => { this.#pending = false; this.#message = error instanceof Error ? error.message : String(error); this.changed(); });
     });
     const reconfigure = (): void => { this.#options = {delimiter: delimiter.value, header: header.checked}; void inspect(); };
     delimiter.addEventListener("change", reconfigure); header.addEventListener("change", reconfigure);

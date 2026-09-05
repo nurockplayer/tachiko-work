@@ -284,7 +284,11 @@ export function mountDesigner(
           for (const sheet of metadata.sheets) for (const row of sheet.rows) row.styles.forEach((style, index) => {
             const col = sheet.columns[index]; if (!col) return; const key = cellKey(row.entity_id, col.field_id);
             const viewStyle = tracker.view.cells[key]; if (viewStyle) { style.fill = viewStyle.fill ? (style.fill ?? "FFF1BA") : null; style.bold = viewStyle.bold ?? false; style.wrap = viewStyle.wrap ?? false; style.border = viewStyle.border ?? false; style.alignment = viewStyle.align ?? null; }
-            const format = tracker.view.formats[key]; if (format) style.number_format = {number: "0.00", percentage: "0.00%", "currency-usd": '$0.00', "currency-jpy": '¥0'}[format];
+            const original = style.number_format;
+            const importedFormat = original?.includes("%") ? "percentage" : original?.includes("$") ? "currency-usd" : original?.includes("¥") ? "currency-jpy" : "number";
+            const format = tracker.view.formats[key];
+            // Preserve source precision/pattern unless the user selected a different format.
+            if (format && format !== importedFormat) style.number_format = {number: "0.00", percentage: "0.00%", "currency-usd": '$0.00', "currency-jpy": '¥0'}[format];
           });
           const exported = await client.exportSpreadsheet(store.snapshot().table.revision, metadata, format, table.collection.id);
           const panel = root.querySelector<HTMLElement>(".table-workbench");
