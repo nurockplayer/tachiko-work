@@ -67,8 +67,8 @@ build_log="${output_dir}/build.log"
   echo "commit: ${resolved_commit}"
   echo "source: git archive ${resolved_commit}"
   echo "cwd: ${designer_root}"
-  echo "command: pnpm install --frozen-lockfile"
-  (cd "${designer_root}" && "${clean_env[@]}" pnpm install --frozen-lockfile) || exit 1
+  echo "command: pnpm install --frozen-lockfile --engine-strict"
+  (cd "${designer_root}" && "${clean_env[@]}" pnpm install --frozen-lockfile --engine-strict) || exit 1
   echo "command: pnpm build"
   (cd "${designer_root}" && "${clean_env[@]}" pnpm build)
 } >"${build_log}" 2>&1 || fail "designer build failed; inspect ${build_log}"

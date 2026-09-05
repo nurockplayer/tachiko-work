@@ -209,8 +209,8 @@ clean_env+=(
 {
   echo "source: git archive ${resolved_expected}"
   echo "cwd: ${test_designer}"
-  echo "command: pnpm install --frozen-lockfile"
-  (cd "${test_designer}" && "${clean_env[@]}" pnpm install --frozen-lockfile)
+  echo "command: pnpm install --frozen-lockfile --engine-strict"
+  (cd "${test_designer}" && "${clean_env[@]}" pnpm install --frozen-lockfile --engine-strict)
 } >"${verification_dir}/install.log" 2>&1 || fail "frozen dependency install failed; inspect ${verification_dir}/install.log"
 
 playwright_module="${test_designer}/node_modules/@playwright/test/index.mjs"
