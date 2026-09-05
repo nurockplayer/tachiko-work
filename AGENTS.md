@@ -19,6 +19,10 @@ For issue-driven repository work, follow the canonical
 [`Repository delivery workflow`](docs/governance/project-governance.md#repository-delivery-workflow).
 It defines the Ready gate, provider-neutral Steward/delivery-agent split,
 single-PR handoff, review discipline, and post-merge stop conditions.
+Before an implementation Issue becomes Ready, apply the repository
+[`PR Decomposition Policy`](docs/governance/pr-decomposition-policy.md); do not
+let the one-Issue/one-PR rule turn a separable product goal into an oversized
+review unit.
 
 ## Delivery continuity
 
