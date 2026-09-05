@@ -6,6 +6,113 @@ fn simple() -> SourceWorkbook {
 }
 
 #[test]
+fn decoded_attributes_reject_illegal_characters_including_namespaces() {
+    let bytes = export_xlsx(&simple()).unwrap();
+    for reference in ["&#0;", "&#1;", "&#xFFFE;", "&#65535;"] {
+        for attribute in ["name", "xmlns:unused"] {
+            let invalid = mutate(&bytes, "xl/workbook.xml", |s| {
+                s.replace("<sheet ", &format!("<sheet {attribute}=\"{reference}\" "))
+            });
+            let error = import_xlsx(&invalid).unwrap_err();
+            if reference == "&#xFFFE;" {
+                assert!(error.0.contains("Invalid escaped XML attribute character"));
+            }
+        }
+    }
+    let valid = mutate(&bytes, "xl/workbook.xml", |s| {
+        s.replace("name=\"Imported table\"", "name=\"A&amp;B &#x1F600;\"")
+    });
+    let book = import_xlsx(&valid).unwrap();
+    assert_eq!(book.sheets[0].name, "A&B 😀");
+    assert_eq!(
+        import_xlsx(&export_xlsx(&book).unwrap()).unwrap().sheets[0].name,
+        "A&B 😀"
+    );
+}
+
+#[test]
+fn only_exact_referenced_worksheet_parts_are_structural() {
+    fn add(bytes: &[u8], path: &str, content: &[u8]) -> Vec<u8> {
+        let mut cursor = Cursor::new(bytes.to_vec());
+        let mut writer = ZipWriter::new_append(&mut cursor).unwrap();
+        writer
+            .start_file(path, SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(content).unwrap();
+        writer.finish().unwrap();
+        cursor.into_inner()
+    }
+    let bytes = export_xlsx(&simple()).unwrap();
+    for (path, content) in [
+        ("xl/worksheets/custom.bin", b"opaque".as_slice()),
+        ("xl/worksheets/unreferenced.xml", b"<worksheet/>".as_slice()),
+        ("xl/worksheets/Sheet1.xml", b"<worksheet/>".as_slice()),
+        ("XL/workbook.xml", b"<workbook/>".as_slice()),
+        (
+            "xl/worksheets/_rels/unknown.xml.rels",
+            b"<Relationships/>".as_slice(),
+        ),
+    ] {
+        let book = import_xlsx(&add(&bytes, path, content)).unwrap();
+        assert!(
+            book.ledger
+                .iter()
+                .any(|f| f.code == "unknown_package_part" && f.location == path && f.blocking)
+        );
+        assert!(export_xlsx(&book).is_err());
+    }
+    let relationships = b"<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"link\" Type=\"hyperlink\" Target=\"https://example.invalid/\" TargetMode=\"External\"/></Relationships>";
+    let path = "xl/worksheets/_rels/sheet1.xml.rels";
+    let book = import_xlsx(&add(&bytes, path, relationships)).unwrap();
+    assert!(
+        book.ledger
+            .iter()
+            .any(|f| f.code == "worksheet_relationships_not_exported" && !f.blocking)
+    );
+    assert!(
+        book.ledger
+            .iter()
+            .any(|f| f.code == "external_relationship")
+    );
+    assert!(import_xlsx(&add(&bytes, path, b"<Relationships/>")).is_err());
+    let rooted = mutate(&bytes, "xl/_rels/workbook.xml.rels", |s| {
+        s.replace("worksheets/sheet1.xml", "/sheet.xml")
+    });
+    let mut archive = ZipArchive::new(Cursor::new(rooted)).unwrap();
+    let mut output = Cursor::new(Vec::new());
+    {
+        let mut writer = ZipWriter::new(&mut output);
+        for index in 0..archive.len() {
+            let mut entry = archive.by_index(index).unwrap();
+            let name = if entry.name() == "xl/worksheets/sheet1.xml" {
+                "sheet.xml"
+            } else {
+                entry.name()
+            }
+            .to_owned();
+            writer
+                .start_file(name, SimpleFileOptions::default())
+                .unwrap();
+            std::io::copy(&mut entry, &mut writer).unwrap();
+        }
+        writer.finish().unwrap();
+    }
+    let book = import_xlsx(&add(
+        &output.into_inner(),
+        "_rels/sheet.xml.rels",
+        relationships,
+    ))
+    .unwrap();
+    assert!(!book.ledger.iter().any(|f| f.blocking));
+    assert!(
+        book.ledger
+            .iter()
+            .any(|f| f.code == "worksheet_relationships_not_exported"
+                && f.location == "_rels/sheet.xml.rels")
+    );
+}
+
+#[test]
 fn shared_and_inline_strings_obey_the_same_rich_text_shapes() {
     let shared = include_bytes!("../../tests/fixtures/interop/reference-two-sheet.xlsx");
     let inline = export_xlsx(&simple()).unwrap();

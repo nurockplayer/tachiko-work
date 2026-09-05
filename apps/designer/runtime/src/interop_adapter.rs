@@ -346,6 +346,9 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
                         .unescape_value()
                         .map_err(|e| InteropError(e.to_string()))?
                         .into_owned();
+                    if !xml_text_valid(&value) {
+                        return fail("Invalid escaped XML attribute character");
+                    }
                     if key.len() > 256 || value.len() > 65_536 {
                         return fail("XML attribute exceeds profile");
                     }
@@ -604,8 +607,13 @@ fn rel_target(base: &str, target: &str) -> Result<String> {
 #[allow(clippy::case_sensitive_file_extension_comparisons)] // Compared path is already ASCII-lowercase.
 fn root_inventory(
     parts: &BTreeMap<String, Vec<u8>>,
+    worksheets: &BTreeSet<String>,
     ledger: &mut Vec<FidelityFinding>,
 ) -> Result<()> {
+    let worksheet_relationships = worksheets
+        .iter()
+        .map(|path| worksheet_relationship_path(path))
+        .collect::<BTreeSet<_>>();
     for (path, bytes) in parts {
         let lower = path.to_ascii_lowercase();
         let mut inventoried = false;
@@ -643,14 +651,18 @@ fn root_inventory(
             }
         }
         let structural = matches!(
-            lower.as_str(),
-            "[content_types].xml"
+            path.as_str(),
+            "[Content_Types].xml"
                 | "_rels/.rels"
                 | "xl/workbook.xml"
                 | "xl/_rels/workbook.xml.rels"
                 | "xl/styles.xml"
-                | "xl/sharedstrings.xml"
-        ) || lower.starts_with("xl/worksheets/");
+                | "xl/sharedStrings.xml"
+        ) || worksheets.contains(path);
+        if worksheet_relationships.contains(path) {
+            ledger.push(worksheet_relationship_finding(path, bytes)?);
+            inventoried = true;
+        }
         let presentation = lower.starts_with("docprops/")
             || lower.starts_with("xl/theme/")
             || lower == "xl/calcchain.xml"
@@ -694,6 +706,31 @@ fn root_inventory(
         }
     }
     Ok(())
+}
+fn worksheet_relationship_path(path: &str) -> String {
+    path.rsplit_once('/').map_or_else(
+        || format!("_rels/{path}.rels"),
+        |(parent, name)| format!("{parent}/_rels/{name}.rels"),
+    )
+}
+fn worksheet_relationship_finding(path: &str, bytes: &[u8]) -> Result<FidelityFinding> {
+    let xml = parse_xml(bytes)?;
+    if xml.name != "Relationships"
+        || xml.ns != REL
+        || xml
+            .children
+            .iter()
+            .any(|node| node.name != "Relationship" || node.ns != REL || !node.children.is_empty())
+    {
+        return fail("Invalid worksheet relationships part");
+    }
+    Ok(finding(
+        FidelityCategory::LossyOnExport,
+        "worksheet_relationships_not_exported",
+        path,
+        "Worksheet relationships remain source-only and are not emitted",
+        false,
+    ))
 }
 fn builtin_format(id: u32) -> Option<String> {
     match id {
@@ -1164,7 +1201,6 @@ fn inventory_hidden(
 pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
     let parts = archive(bytes)?;
     let mut ledger = Vec::new();
-    root_inventory(&parts, &mut ledger)?;
     let workbook = xml_part(&parts, "xl/workbook.xml", "workbook", MAIN)?;
     inventory_workbook_children(&workbook, &mut ledger)?;
     let relationships = xml_part(&parts, "xl/_rels/workbook.xml.rels", "Relationships", REL)?;
@@ -1208,6 +1244,7 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
         return fail("Workbook must have 1..=4 sheets");
     }
     let mut sheets = Vec::new();
+    let mut worksheet_paths = BTreeSet::new();
     let mut formula_count = 0;
     let mut names = BTreeSet::new();
     for sheet in sheet_nodes {
@@ -1245,6 +1282,9 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
                 .ok_or_else(|| InteropError("Missing sheet target".into()))?,
         )?;
         let xml = xml_part(&parts, &path, "worksheet", MAIN)?;
+        if !worksheet_paths.insert(path.clone()) {
+            return fail("Duplicate worksheet part mapping");
+        }
         for singleton in ["sheetData", "dimension", "sheetFormatPr"] {
             if xml.kids(singleton).count() > 1 {
                 return fail("Duplicate singleton worksheet construct");
@@ -1492,6 +1532,7 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
             rows,
         });
     }
+    root_inventory(&parts, &worksheet_paths, &mut ledger)?;
     ledger.push(finding(FidelityCategory::NativeEquivalent,"bounded_workbook","source","All bounded worksheets and scalar cells were inspected; formula sources require authoritative Rust binding",false));
     Ok(SourceWorkbook { sheets, ledger })
 }
