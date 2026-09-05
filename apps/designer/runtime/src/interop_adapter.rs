@@ -867,27 +867,41 @@ fn coordinate(address: &str) -> Result<(usize, usize)> {
     }
     Ok((row - 1, col - 1))
 }
-fn format_tokens(style: &CellStyle) -> String {
-    let mut output = String::new();
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum NumberFormatKind {
+    Number,
+    Date,
+    Time,
+}
+
+fn checked_number_format(style: &CellStyle) -> Result<NumberFormatKind> {
+    let pattern = style.number_format.as_deref().unwrap_or("");
+    if pattern.starts_with("unsupported_builtin_") {
+        return fail("Unsupported built-in number format");
+    }
+    let mut sections = vec![String::new()];
     let mut quoted = false;
     let mut skip = false;
     let mut bracket = false;
     let mut bracket_text = String::new();
-    for c in style.number_format.as_deref().unwrap_or("").chars() {
+    for c in pattern.chars() {
         if skip {
             skip = false;
             continue;
         }
-        if c == '\\' {
+        if c == '\\' || (!quoted && !bracket && matches!(c, '_' | '*')) {
             skip = true;
             continue;
         }
-        if c == '"' {
+        if c == '"' && !bracket {
             quoted = !quoted;
             continue;
         }
         if !quoted {
             if c == '[' {
+                if bracket {
+                    return fail("Nested number-format bracket");
+                }
                 bracket = true;
                 bracket_text.clear();
                 continue;
@@ -895,7 +909,9 @@ fn format_tokens(style: &CellStyle) -> String {
             if c == ']' && bracket {
                 bracket = false;
                 if matches!(bracket_text.as_str(), "h" | "hh" | "m" | "mm" | "s" | "ss") {
-                    output.push_str(&bracket_text);
+                    // Preserve elapsed-time identity; date tokens must not
+                    // turn a duration into a calendar date.
+                    sections.last_mut().expect("one section").push('\0');
                 }
                 continue;
             }
@@ -903,10 +919,45 @@ fn format_tokens(style: &CellStyle) -> String {
                 bracket_text.push(c.to_ascii_lowercase());
                 continue;
             }
-            output.push(c.to_ascii_lowercase());
+            if c == ']' {
+                return fail("Unmatched number-format bracket");
+            }
+            if c == ';' {
+                if sections.len() == 4 {
+                    return fail("Number format exceeds four sections");
+                }
+                sections.push(String::new());
+            } else {
+                sections
+                    .last_mut()
+                    .expect("one section")
+                    .push(c.to_ascii_lowercase());
+            }
         }
     }
-    output
+    if quoted || bracket || skip {
+        return fail("Incomplete number-format literal");
+    }
+    let classify = |tokens: &str| {
+        if tokens.contains('\0') {
+            NumberFormatKind::Time
+        } else if tokens.contains(['y', 'd']) {
+            NumberFormatKind::Date
+        } else if tokens.contains(['h', 'm', 's']) {
+            NumberFormatKind::Time
+        } else {
+            NumberFormatKind::Number
+        }
+    };
+    let first = classify(&sections[0]);
+    if sections
+        .iter()
+        .take(3)
+        .any(|tokens| classify(tokens) != first)
+    {
+        return fail("Mixed numeric number-format section types are unsupported");
+    }
+    Ok(first)
 }
 #[allow(clippy::float_cmp, clippy::cast_possible_truncation)] // Serial is first proven finite, integral, and within the i64 range; serial 60 is exact.
 fn date_from_serial(value: f64, date1904: bool) -> Result<String> {
@@ -948,6 +999,10 @@ fn cell_value(
     if c_unknown(cell) {
         return fail("Unknown semantic cell XML construct");
     }
+    let format = checked_number_format(style)?;
+    if cell.child("f").is_some() && format != NumberFormatKind::Number {
+        return fail("Formula requires a uniform numeric number format");
+    }
     let raw = cell.child("v").map_or("", |v| v.text.as_str());
     match cell.attr("t").unwrap_or("n") {
         "s" => shared
@@ -981,18 +1036,12 @@ fn cell_value(
             if !value.is_finite() {
                 return fail("Nonfinite XLSX Number");
             }
-            let format = format_tokens(style);
-            if format.contains("unsupported_builtin_") {
-                return fail("Unsupported built-in number format");
-            }
-            if format.contains('y') || format.contains('d') {
-                Ok(SourceValue::Date {
+            match format {
+                NumberFormatKind::Date => Ok(SourceValue::Date {
                     value: date_from_serial(value, date1904)?,
-                })
-            } else if format.contains('h') || format.contains('m') || format.contains('s') {
-                fail("Time-only display has no canonical Date mapping")
-            } else {
-                Ok(SourceValue::Number { value })
+                }),
+                NumberFormatKind::Time => fail("Time-only display has no canonical Date mapping"),
+                NumberFormatKind::Number => Ok(SourceValue::Number { value }),
             }
         }
         _ => fail("Unsupported XLSX cell type"),
@@ -1042,14 +1091,12 @@ fn c_unknown(node: &Xml) -> bool {
 }
 
 fn ignorable_formula_cache(cell: &Xml, style: &CellStyle) -> bool {
-    let format = format_tokens(style);
     !c_unknown(cell)
         && matches!(
             cell.attr("t").unwrap_or("n"),
             "n" | "e" | "str" | "b" | "s" | "inlineStr" | "d"
         )
-        && !format.contains("unsupported_builtin_")
-        && !format.contains(['y', 'd', 'h', 'm', 's'])
+        && matches!(checked_number_format(style), Ok(NumberFormatKind::Number))
 }
 fn inventory_worksheet_children(xml: &Xml, sheet: &str, ledger: &mut Vec<FidelityFinding>) {
     for child in &xml.children {
@@ -1256,7 +1303,7 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
             .attr("name")
             .ok_or_else(|| InteropError("Missing worksheet name".into()))?
             .to_owned();
-        if name.is_empty() || !names.insert(name.clone()) {
+        if !valid_worksheet_name(&name) || !names.insert(name.to_lowercase()) {
             return fail("Invalid or duplicate worksheet name");
         }
         match sheet.attr("state") {
@@ -1671,7 +1718,13 @@ fn column_name(index: usize) -> String {
     }
     s
 }
-fn validate_output(workbook: &SourceWorkbook) -> Result<()> {
+fn valid_worksheet_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.chars().count() <= 31
+        && !name.contains(['[', ']', ':', '*', '?', '/', '\\'])
+        && xml_text_valid(name)
+}
+pub(crate) fn validate_output(workbook: &SourceWorkbook) -> Result<()> {
     if workbook.sheets.is_empty() || workbook.sheets.len() > MAX_SHEETS {
         return fail("Export requires 1..=4 sheets");
     }
@@ -1695,11 +1748,7 @@ fn validate_output(workbook: &SourceWorkbook) -> Result<()> {
         {
             return fail("XLSX export headers must be nonempty and unique");
         }
-        if s.name.is_empty()
-            || s.name.chars().count() > 31
-            || s.name.contains(['[', ']', ':', '*', '?', '/', '\\'])
-            || !names.insert(s.name.to_lowercase())
-        {
+        if !valid_worksheet_name(&s.name) || !names.insert(s.name.to_lowercase()) {
             return fail("Invalid or duplicate XLSX sheet name");
         }
         if s.columns.is_empty() || s.columns.len() > MAX_COLUMNS || s.rows.len() > MAX_DATA_ROWS {
@@ -1710,6 +1759,7 @@ fn validate_output(workbook: &SourceWorkbook) -> Result<()> {
                 return fail("Export rows must be rectangular");
             }
             for c in row {
+                checked_number_format(&c.style)?;
                 if !xml_text_valid(&value_text(&c.value))
                     || c.formula.as_ref().is_some_and(|s| !xml_text_valid(s))
                     || c.style

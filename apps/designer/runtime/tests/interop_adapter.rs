@@ -5,6 +5,184 @@ fn simple() -> SourceWorkbook {
     import_csv(b"Name,Amount\nAda,12\n", &ImportOptions::default()).unwrap()
 }
 
+fn source_with_format(book: &SourceWorkbook) -> Vec<u8> {
+    let mut legal = book.clone();
+    let pattern = legal.sheets[0].rows[0][1]
+        .style
+        .number_format
+        .replace("0.00".into())
+        .unwrap();
+    let bytes = export_xlsx(&legal).unwrap();
+    let escaped = pattern
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;");
+    mutate(&bytes, "xl/styles.xml", |s| {
+        s.replace("formatCode=\"0.00\"", &format!("formatCode=\"{escaped}\""))
+    })
+}
+
+#[test]
+fn numeric_format_sections_are_checked_without_guessing_the_active_section() {
+    let mut book = simple();
+    for pattern in [
+        "0;[Red]-0;yyyy-mm-dd",
+        "[>0]0;[<=0]yyyy-mm-dd",
+        "0;h:mm",
+        "yyyy-mm-dd;0",
+        "0;0;0;0;0",
+        "0\"unfinished",
+        "0[Red",
+        "0]",
+        "0\\",
+    ] {
+        book.sheets[0].rows[0][1].style.number_format = Some(pattern.into());
+        for value in [1.0, -1.0, 0.0] {
+            book.sheets[0].rows[0][1].value = SourceValue::Number { value };
+            assert!(export_xlsx(&book).is_err());
+            let imported = import_xlsx(&source_with_format(&book)).unwrap();
+            assert!(
+                imported
+                    .ledger
+                    .iter()
+                    .any(|f| f.blocking && f.code == "scalar_mapping_rejected"),
+                "{pattern} / {value}"
+            );
+        }
+    }
+    for pattern in [
+        "0;[Red]-0;0;yyyy-mm-dd",
+        "0\";yyyy-mm-dd\"",
+        "0\\;0",
+        "0_;0",
+        "0*;0",
+        "0_d",
+        "0*m",
+    ] {
+        book.sheets[0].rows[0][1].style.number_format = Some(pattern.into());
+        book.sheets[0].rows[0][1].value = SourceValue::Number { value: -1234.5 };
+        let imported = import_xlsx(&export_xlsx(&book).unwrap()).unwrap();
+        assert!(!imported.ledger.iter().any(|f| f.blocking), "{pattern}");
+        assert_eq!(
+            imported.sheets[0].rows[0][1].value,
+            SourceValue::Number { value: -1234.5 }
+        );
+    }
+}
+
+#[test]
+fn mixed_formats_cannot_bypass_used_cell_or_formula_cache_admission() {
+    let mut book = simple();
+    book.sheets[0].rows[0][1].style.number_format = Some("0;[Red]-0;yyyy-mm-dd".into());
+    book.sheets[0].rows[0][1].formula = Some("1+2".into());
+    book.sheets[0].rows[0][1].value = SourceValue::Number { value: 3.0 };
+    assert!(export_xlsx(&book).is_err());
+    let bytes = source_with_format(&book);
+    for cache in ["<v>3</v>", "<v>invalid</v>", ""] {
+        let changed = mutate(&bytes, "xl/worksheets/sheet1.xml", |s| {
+            s.replace("<v>3</v>", cache)
+        });
+        assert!(
+            import_xlsx(&changed)
+                .unwrap()
+                .ledger
+                .iter()
+                .any(|f| f.blocking)
+        );
+    }
+    for (kind, cache) in [("str", "cached text"), ("b", "1"), ("e", "#VALUE!")] {
+        let changed = mutate(&bytes, "xl/worksheets/sheet1.xml", |s| {
+            s.replace("t=\"n\"><f>", &format!("t=\"{kind}\"><f>"))
+                .replace("<v>3</v>", &format!("<v>{cache}</v>"))
+        });
+        assert!(
+            import_xlsx(&changed)
+                .unwrap()
+                .ledger
+                .iter()
+                .any(|f| f.blocking)
+        );
+    }
+    book.sheets[0].rows[0][1].formula = None;
+    for value in [
+        SourceValue::Empty,
+        SourceValue::Text {
+            value: "literal".into(),
+        },
+        SourceValue::Date {
+            value: "2026-09-05".into(),
+        },
+    ] {
+        book.sheets[0].rows[0][1].value = value;
+        assert!(
+            import_xlsx(&source_with_format(&book))
+                .unwrap()
+                .ledger
+                .iter()
+                .any(|f| f.blocking)
+        );
+        assert!(export_xlsx(&book).is_err());
+    }
+    book.sheets[0].rows[0][1].style.number_format = Some("yyyy-mm-dd [h]".into());
+    book.sheets[0].rows[0][1].value = SourceValue::Number { value: 46270.0 };
+    assert!(
+        import_xlsx(&source_with_format(&book))
+            .unwrap()
+            .ledger
+            .iter()
+            .any(|f| f.blocking)
+    );
+}
+
+#[test]
+fn worksheet_names_share_import_export_boundaries() {
+    let mut book = simple();
+    let bytes = export_xlsx(&book).unwrap();
+    let invalid = [
+        String::new(),
+        "名".repeat(32),
+        "Bad[".into(),
+        "Bad]".into(),
+        "Bad:".into(),
+        "Bad*".into(),
+        "Bad?".into(),
+        "Bad/".into(),
+        "Bad\\".into(),
+        "Bad\u{fffe}".into(),
+    ];
+    for name in invalid {
+        book.sheets[0].name = name.clone();
+        assert!(export_xlsx(&book).is_err());
+        let changed = mutate(&bytes, "xl/workbook.xml", |s| {
+            s.replace("name=\"Imported table\"", &format!("name=\"{name}\""))
+        });
+        assert!(import_xlsx(&changed).is_err());
+    }
+    for name in ["名".repeat(31), "😀".repeat(31), "A".into()] {
+        book.sheets[0].name = name.clone();
+        let imported = import_xlsx(&export_xlsx(&book).unwrap()).unwrap();
+        assert_eq!(imported.sheets[0].name, name);
+        assert_eq!(
+            import_xlsx(&export_xlsx(&imported).unwrap())
+                .unwrap()
+                .sheets[0]
+                .name,
+            name
+        );
+    }
+    book.sheets[0].name = "Ä".into();
+    let mut second = book.sheets[0].clone();
+    second.name = "Other".into();
+    book.sheets.push(second);
+    let bytes = export_xlsx(&book).unwrap();
+    let duplicate = mutate(&bytes, "xl/workbook.xml", |s| {
+        s.replace("name=\"Other\"", "name=\"ä\"")
+    });
+    assert!(import_xlsx(&duplicate).is_err());
+    book.sheets[1].name = "ä".into();
+    assert!(export_xlsx(&book).is_err());
+}
+
 #[test]
 fn accounting_number_formats_preserve_defined_patterns_without_inventing_currency() {
     let mut book = simple();

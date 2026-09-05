@@ -204,6 +204,10 @@ admit unsupported formulas or bypass validation of their XML structure.
 Currency display is bounded to the declared JPY/USD patterns, including Excel
 locale tokens. Other currency/locale patterns use ordinary Number display;
 the complete source number format is retained unless explicitly changed.
+Mixed Number/Date/time semantics across numeric format sections are blocked;
+the adapter does not choose conditional sections to infer a canonical type.
+Worksheet names must satisfy the same bounded XLSX name rules at inspection
+and export, including case-insensitive uniqueness.
 
 The existing table and Rust formula tools edit the imported collections.
 Sorting/filtering change only the view and target stable identities. Cleanup

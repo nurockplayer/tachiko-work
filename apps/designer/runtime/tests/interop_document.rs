@@ -458,6 +458,32 @@ fn imported_forward_and_cross_sheet_formulas_rebind_and_export_from_live_ids_aft
     assert!(reimported.export_project("resident/0").is_ok());
 }
 #[test]
+fn saved_metadata_preflight_uses_the_same_output_format_and_name_validation() {
+    let (source, selection) = workbook_fixture();
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let bytes = runtime.export_project("resident/0").unwrap().bytes;
+    assert!(inspect_imported_project(&bytes, &imported.metadata).is_ok());
+    for pattern in [
+        "0;[Red]-0;yyyy-mm-dd",
+        "0\"unfinished",
+        "unsupported_builtin_5",
+    ] {
+        let mut metadata = imported.metadata.clone();
+        metadata.sheets[0].rows[0].styles[0].number_format = Some(pattern.into());
+        assert!(runtime.export_workbook("resident/0", &metadata).is_err());
+        assert!(inspect_imported_project(&bytes, &metadata).is_err());
+    }
+    for name in ["Bad:name".to_owned(), "名".repeat(32), "data".into()] {
+        let mut metadata = imported.metadata.clone();
+        metadata.sheets[1].name = name;
+        assert!(runtime.export_workbook("resident/0", &metadata).is_err());
+        assert!(inspect_imported_project(&bytes, &metadata).is_err());
+    }
+    assert_eq!(runtime.export_project("resident/0").unwrap().bytes, bytes);
+    assert!(inspect_imported_project(&bytes, &imported.metadata).is_ok());
+}
+
+#[test]
 fn imported_formula_cycles_invalid_selection_and_foreign_metadata_fail_closed() {
     let (mut source, selection) = workbook_fixture();
     source.sheets[0].rows[2][2].formula = Some("C2".into());

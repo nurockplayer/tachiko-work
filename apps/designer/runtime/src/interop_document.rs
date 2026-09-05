@@ -1310,10 +1310,13 @@ impl DesignerRuntime {
                 rows,
             });
         }
-        Ok(SourceWorkbook { sheets, ledger: vec![FidelityFinding {
+        let workbook = SourceWorkbook { sheets, ledger: vec![FidelityFinding {
             category: FidelityCategory::Converted, code: "bound_formula_absolute_a1".into(), location: "workbook".into(),
             message: "Export is rebuilt from current stable identities and authoritative values. Formula references use current absolute worksheet coordinates; deleted rows are omitted.".into(), blocking: false,
-        }] })
+        }] };
+        super::interop_adapter::validate_output(&workbook)
+            .map_err(|error| tracker_error(&error.0))?;
+        Ok(workbook)
     }
 }
 
