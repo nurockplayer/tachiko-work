@@ -73,6 +73,20 @@ class AppClient implements DesignerClient {
   close(): void {}
 }
 
+class TrackerAppClient extends AppClient {
+  override readonly queryTable = vi.fn(async (collection: string): Promise<TableProjection> => collection === beta ? trackerTable(beta, "row-b", "Beta row", 8) : trackerTable(alpha, "row-a", "Alpha row", 12));
+  override readonly inspectProject = vi.fn(async (): Promise<OpenedProjection> => trackerOpened());
+  override readonly openProject = vi.fn(async (): Promise<OpenedProjection> => trackerOpened());
+}
+
+function trackerTable(collection: string, rowId: string, label: string, value: number): TableProjection {
+  return { ...table(collection, rowId, label, value), tracker_profile: true };
+}
+
+function trackerOpened(): OpenedProjection {
+  return { bootstrap: structuredClone(bootstrap), table: trackerTable(alpha, "row-a", "Alpha row", 12) };
+}
+
 function publication(revision: string): PublicationProjection {
   return { base_revision: revision, resulting_revision: revision, entities: [], fields: [], affected_calculations: [] };
 }
@@ -171,6 +185,73 @@ describe("mounted Designer report integration", () => {
     expect(root.querySelector("h3")?.textContent).toContain("Create report chart");
     expect(root.querySelector<HTMLButtonElement>('.report-editor button[type="submit"]')?.textContent).toBe("Apply chart");
     expect([...root.querySelectorAll("button")].some(button => button.textContent === "Cancel")).toBe(true);
+    app.destroy();
+  });
+
+  it("clears Tracker undo/redo after accepted chart create, edit, and delete", async () => {
+    const root = rootElement();
+    const app = mountDesigner(root, new TrackerAppClient(), new EmptyHost());
+    await app.ready;
+
+    const format = (): HTMLButtonElement => {
+      const button = root.querySelector<HTMLButtonElement>('[data-tracker="bold"]');
+      if (button === null) throw new Error("format control is required");
+      return button;
+    };
+    const undo = (): HTMLButtonElement => {
+      const button = root.querySelector<HTMLButtonElement>('[data-tracker="undo"]');
+      if (button === null) throw new Error("undo control is required");
+      return button;
+    };
+    const redo = (): HTMLButtonElement => {
+      const button = root.querySelector<HTMLButtonElement>('[data-tracker="redo"]');
+      if (button === null) throw new Error("redo control is required");
+      return button;
+    };
+    format().click();
+    expect(undo().disabled).toBe(false);
+    undo().click();
+    expect(redo().disabled).toBe(false);
+    redo().click();
+    expect(undo().disabled).toBe(false);
+
+    const create = root.querySelector<HTMLButtonElement>(".report-panel-actions button");
+    if (create === null) throw new Error("create chart control is required");
+    create.click();
+    const apply = root.querySelector<HTMLButtonElement>('.report-editor button[type="submit"]');
+    if (apply === null) throw new Error("apply chart control is required");
+    apply.click();
+    await vi.waitFor(() => { expect(root.querySelector(".report-card-title")?.textContent).toBe("Report"); });
+    expect(undo().disabled).toBe(true);
+    expect(redo().disabled).toBe(true);
+    expect(root.querySelector('[role="status"]')?.textContent).toContain("undo/redo cleared");
+
+    // Rebuild a real view-history stack before each subsequent external chart mutation.
+    format().click();
+    expect(undo().disabled).toBe(false);
+    const edit = [...root.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Edit chart");
+    if (edit === undefined) throw new Error("edit chart control is required");
+    edit.click();
+    const title = root.querySelector<HTMLInputElement>('[aria-label="Chart title"]');
+    if (title === null) throw new Error("chart title control is required");
+    title.value = "Edited chart";
+    title.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    const editApply = root.querySelector<HTMLButtonElement>('.report-editor button[type="submit"]');
+    if (editApply === null) throw new Error("edit apply control is required");
+    editApply.click();
+    await vi.waitFor(() => { expect(root.querySelector(".report-card-title")?.textContent).toBe("Edited chart"); });
+    expect(undo().disabled).toBe(true);
+    expect(redo().disabled).toBe(true);
+
+    format().click();
+    expect(undo().disabled).toBe(false);
+    const remove = [...root.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Delete chart");
+    if (remove === undefined) throw new Error("delete chart control is required");
+    remove.click();
+    expect(root.querySelector(".report-card-title")).toBeNull();
+    expect(undo().disabled).toBe(true);
+    expect(redo().disabled).toBe(true);
+    expect(root.querySelector('[role="status"]')?.textContent).toContain("Accepted data and formatting are preserved");
     app.destroy();
   });
 

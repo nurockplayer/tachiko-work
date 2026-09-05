@@ -147,7 +147,9 @@ validation engine, cloud sync, or durable history is added.
 In a Budget or numeric imported table, choose **Create chart from selected
 source**. Select up to 16 rows, a category field (or row labels), and up to
 three Number series. Column and line charts support a title, axis labels,
-series labels and a legend. Apply the chart before saving. Up to eight charts
+series labels and a legend. Apply the chart before saving. Creating, editing or
+deleting a chart clears prior Tracker undo/redo history so older formatting
+snapshots cannot overwrite the new chart configuration. Up to eight charts
 are retained per browser project; the exact private limits are in
 [`report-profile.json`](report-profile.json).
 

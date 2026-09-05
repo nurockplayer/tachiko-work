@@ -10,6 +10,7 @@ All notable changes to Tachiko Work are documented in this file.
   source rows and numeric fields, updates from current semantic results, and
   saves editable chart settings with browser projects. Current charts can be
   shared as static PNGs; spreadsheet exports explicitly disclose chart loss.
+  Chart changes clear prior Tracker undo/redo history to preserve their settings.
   This adds no portable chart format or general spreadsheet chart compatibility.
 - The Designer imports bounded CSV/XLSX workbooks through explicit inspection,
   typing and fidelity review; supports previewed cleanup, existing typed edits

@@ -231,6 +231,8 @@ export function mountDesigner(
       onChartsChange: charts => {
         if (busy || store?.snapshot().currentness !== "current" || hasDataEditDrafts()) return;
         tracker.view.charts = parseReportCharts(charts, collectionIds);
+        // Older Tracker formatting entries snapshot the entire private view.
+        tracker.invalidateHistory();
         reportState.draft = null;
         notice = null;
         reflectUnsavedState();
