@@ -43,6 +43,7 @@ cat >"${test_dir}/src/main.rs" <<'EOF'
 fn main() {}
 EOF
 
+wrapper_contract_marker="${test_dir}/wrapper-contract.invoked"
 wrapper_contract_probe="${test_dir}/sccache-wrapper-contract"
 cat >"${wrapper_contract_probe}" <<'EOF'
 #!/usr/bin/env bash
@@ -50,6 +51,7 @@ set -euo pipefail
 # This stand-in checks environment propagation and compiler dispatch only.
 # It neither starts real sccache nor simulates a server-I/O failure.
 [[ "${SCCACHE_IGNORE_SERVER_IO_ERROR:-}" == "1" ]]
+printf 'wrapper=%s\n' "${RUSTC_WRAPPER:-}" >>"${CODEX_TEST_WRAPPER_MARKER}"
 exec "$@"
 EOF
 chmod +x "${wrapper_contract_probe}"
@@ -60,11 +62,13 @@ env -u CARGO_INCREMENTAL -u SCCACHE_IGNORE_SERVER_IO_ERROR \
   CARGO_TARGET_DIR="${test_dir}/wrapper-contract-target" \
   TACHIKO_CODEX_SCCACHE=1 \
   TACHIKO_CODEX_SCCACHE_BIN="${wrapper_contract_probe}" \
+  CODEX_TEST_WRAPPER_MARKER="${wrapper_contract_marker}" \
   bash "${cargo_script}" build --manifest-path "${test_dir}/Cargo.toml" \
   >"${wrapper_contract_output}" 2>"${wrapper_contract_error}"
 assert_contains "${wrapper_contract_error}" "incremental=0"
 assert_contains "${wrapper_contract_error}" "sccache=enabled"
 assert_compilation_artifact "${test_dir}/wrapper-contract-target"
+assert_contains "${wrapper_contract_marker}" "wrapper=${repo_root}/scripts/codex-rustc-wrapper.sh"
 
 direct_output="${test_dir}/direct.out"
 direct_error="${test_dir}/direct.err"
