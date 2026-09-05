@@ -10,6 +10,7 @@ use tachiko_workspace_engine::{
 
 const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000300";
 
+/// Build the smallest numeric document that can switch between scalar and formula meaning.
 fn fixture() -> DesignerRuntime {
     let mut document = Document::empty("formula_history", "Formula history");
     let schema = SchemaId::from("items");
@@ -45,6 +46,7 @@ fn fixture() -> DesignerRuntime {
     DesignerRuntime::from_document(document, OCCURRENCE).unwrap()
 }
 
+/// Query the only field at an exact expected resident revision.
 fn field(runtime: &mut DesignerRuntime, revision: u32) -> FieldProjection {
     let DesignerResponse::Fields(mut projection) = runtime
         .handle(DesignerRequest::QueryFields {
@@ -58,6 +60,7 @@ fn field(runtime: &mut DesignerRuntime, revision: u32) -> FieldProjection {
     projection.fields.remove(0)
 }
 
+/// Publish one supported FormulaUpdate through the ordinary Designer request path.
 fn formula(runtime: &mut DesignerRuntime, revision: u32, source: &str) {
     runtime
         .handle(DesignerRequest::FormulaUpdate {
@@ -68,13 +71,20 @@ fn formula(runtime: &mut DesignerRuntime, revision: u32, source: &str) {
         .unwrap();
 }
 
+/// A scalar-to-formula action must round-trip through Undo and Redo without losing meaning.
 #[test]
 fn scalar_to_formula_undo_restores_exact_scalar_and_redo_restores_formula() {
     let mut runtime = fixture();
     formula(&mut runtime, 0, "3");
 
     let after_formula = field(&mut runtime, 1);
-    assert_eq!(after_formula.formula.as_ref().map(|value| value.source.as_str()), Some("3"));
+    assert_eq!(
+        after_formula
+            .formula
+            .as_ref()
+            .map(|value| value.source.as_str()),
+        Some("3")
+    );
     assert_eq!(after_formula.stored, None);
 
     runtime
@@ -107,6 +117,7 @@ fn scalar_to_formula_undo_restores_exact_scalar_and_redo_restores_formula() {
     );
 }
 
+/// Consecutive formula edits remain separate history actions above the original scalar.
 #[test]
 fn formula_to_formula_undo_restores_previous_formula_then_prior_scalar() {
     let mut runtime = fixture();
@@ -150,6 +161,7 @@ fn formula_to_formula_undo_restores_previous_formula_then_prior_scalar() {
     );
 }
 
+/// A rejected formula body changes neither canonical bytes nor the prior reversible action.
 #[test]
 fn rejected_formula_update_preserves_the_existing_formula_undo_entry() {
     let mut runtime = fixture();
@@ -171,6 +183,41 @@ fn rejected_formula_update_preserves_the_existing_formula_undo_entry() {
             expected_revision: "resident/1".to_owned(),
         })
         .expect("a rejected formula attempt must not destroy prior reversible history");
+    let restored = field(&mut runtime, 2);
+    assert!(restored.formula.is_none());
+}
+
+/// Stale and semantic-NoChange formula attempts must leave the accepted action undoable.
+#[test]
+fn stale_and_no_change_formula_attempts_preserve_the_existing_undo_entry() {
+    let mut runtime = fixture();
+    formula(&mut runtime, 0, "3");
+    let before = runtime.export_project("resident/1").unwrap().bytes;
+
+    let stale = runtime
+        .handle(DesignerRequest::FormulaUpdate {
+            expected_revision: "resident/0".to_owned(),
+            target: "r1.n".into(),
+            source: "4".to_owned(),
+        })
+        .expect_err("stale formula update must not publish");
+    assert_eq!(stale.failure_projection("resident/1").code, "stale_revision");
+
+    let no_change = runtime
+        .handle(DesignerRequest::FormulaUpdate {
+            expected_revision: "resident/1".to_owned(),
+            target: "r1.n".into(),
+            source: "3".to_owned(),
+        })
+        .expect_err("identical bound formula meaning must be NoChange");
+    assert_eq!(no_change.failure_projection("resident/1").code, "no_change");
+    assert_eq!(runtime.export_project("resident/1").unwrap().bytes, before);
+
+    runtime
+        .handle(DesignerRequest::Undo {
+            expected_revision: "resident/1".to_owned(),
+        })
+        .expect("stale and NoChange attempts must preserve prior formula history");
     let restored = field(&mut runtime, 2);
     assert!(restored.formula.is_none());
 }
