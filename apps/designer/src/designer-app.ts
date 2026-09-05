@@ -179,6 +179,9 @@ export function mountDesigner(
     try {
       const publication = await publish(store.snapshot().table.revision);
       published = true;
+      // Rust clears its session history for this accepted generic publication.
+      // Invalidate the matching UI history before any fallible refresh work.
+      tracker.invalidateHistory();
       onPublished?.();
       const requested = store.beginPublication(publication);
       durability.observe(publication.resulting_revision);

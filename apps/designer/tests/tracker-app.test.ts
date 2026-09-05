@@ -8,7 +8,7 @@ afterEach(() => { mounted?.destroy(); document.body.replaceChildren(); vi.restor
 function fixture(): TableProjection {
     return { tracker_profile: true, revision: "resident/0", collection: { id: "tracker", key: "tracker", entity_count: 1 }, columns: [{ id: "task", key: "task", field_type: "Text" }, { id: "estimate", key: "estimate", field_type: "Number" }, { id: "done", key: "done", field_type: "Boolean", dropdown_options: ["true", "false"] }], rows: [{ id: "item", key: "item", fields: [{ target: { entity: "item", field: "task" }, address: "item.task", stored: { kind: "text", value: "Accepted work" }, formula: null, calculated: null, diagnostics: [], editable_scalar: "text" }] }] };
 }
-async function setup(original = "Accepted work", secondRow = false, stock = true) {
+async function setup(original = "Accepted work", secondRow = false, stock = true, mixed = false) {
     let table = fixture();
     if (!stock) { delete table.tracker_profile; table.collection.id = "ordinary"; }
     const field = table.rows[0]?.fields[0];
@@ -20,7 +20,9 @@ async function setup(original = "Accepted work", secondRow = false, stock = true
         table.rows.push(row);
         table.collection.entity_count = 2;
     }
-    const queryTable = vi.fn(async () => structuredClone(table));
+    const ordinary = fixture();
+    delete ordinary.tracker_profile; ordinary.collection = {id: "ordinary", key: "ordinary", entity_count: 1};
+    const queryTable = vi.fn(async (collection: string) => structuredClone(collection === "ordinary" ? {...ordinary, revision: table.revision} : table));
     const trackerCommand = vi.fn(async () => {
         const base = table.revision;
         table = { ...table, revision: "resident/1" };
@@ -29,7 +31,7 @@ async function setup(original = "Accepted work", secondRow = false, stock = true
     const exportProject = vi.fn(async (revision: string) => ({ revision, bytes: new ArrayBuffer(1) }));
     const publish = vi.fn(async () => { });
     const client: DesignerClient = {
-        bootstrap: async () => ({ title: "Driver Tracker", revision: table.revision, default_collection: "tracker", collections: [table.collection] }),
+        bootstrap: async () => ({ title: "Driver Tracker", revision: table.revision, default_collection: "tracker", collections: mixed ? [table.collection, ordinary.collection] : [table.collection] }),
         queryTable, trackerCommand,
         openProject: vi.fn(), exportProject, closeProject: vi.fn(), queryFields: vi.fn(), editNumber: vi.fn(), editText: vi.fn(), editBoolean: vi.fn(), editDate: vi.fn(), close: vi.fn(),
     };
@@ -38,7 +40,7 @@ async function setup(original = "Accepted work", secondRow = false, stock = true
     document.body.append(root);
     mounted = mountDesigner(root, client, host);
     await mounted.ready;
-    return { root, exportProject, publish, queryTable, trackerCommand };
+    return { root, exportProject, publish, queryTable, trackerCommand, client };
 }
 const click = (root: HTMLElement, selector: string): void => { const button = root.querySelector<HTMLButtonElement>(selector); expect(button).not.toBeNull(); button?.click(); };
 it("accepted publication stays saveable when its projection refresh fails and can retry", async () => {
@@ -142,4 +144,28 @@ it("row moves and their undo keep selection attached to the same entity", async 
     root.querySelector<HTMLFormElement>("[data-tracker-edit]")?.dispatchEvent(new Event("submit", {bubbles: true, cancelable: true}));
     await vi.waitFor(() => { expect(trackerCommand).toHaveBeenCalledOnce(); });
     expect(trackerCommand.mock.calls[0]).toEqual([expect.objectContaining({start_entity: "item", rows: [["Moved first row"]]})]);
+});
+
+const switchCollection = async (root: HTMLElement, collection: string): Promise<void> => {
+    const select = root.querySelector<HTMLSelectElement>("[data-collection-select]");
+    if (!select) throw new Error("No collection selector");
+    select.value = collection; select.dispatchEvent(new Event("change", {bubbles: true}));
+    await vi.waitFor(() => { expect(root.querySelector<HTMLSelectElement>("[data-collection-select]")?.disabled).toBe(false); });
+};
+it("generic publication clears both Tracker histories before refresh and preserves formatting", async () => {
+    const {root, client, queryTable} = await setup("Accepted work", false, true, true);
+    click(root, '[data-tracker="append"]');
+    await vi.waitFor(() => { expect(root.querySelector<HTMLButtonElement>('[data-tracker="undo"]')?.disabled).toBe(false); });
+    click(root, '[data-tracker="bold"]');
+    await switchCollection(root, "ordinary");
+    client.editText = vi.fn().mockResolvedValue({base_revision: "resident/1", resulting_revision: "resident/2", entities: [], fields: [], affected_calculations: []});
+    client.queryFields = vi.fn().mockRejectedValue(new Error("refresh failed"));
+    root.querySelector<HTMLFormElement>('[data-edit-kind="text"]')?.dispatchEvent(new Event("submit", {bubbles: true, cancelable: true}));
+    await vi.waitFor(() => { expect(root.textContent).toContain("Edit published; refresh incomplete"); });
+    queryTable.mockResolvedValueOnce({...fixture(), revision: "resident/2"});
+    await switchCollection(root, "tracker");
+    expect(root.querySelector<HTMLButtonElement>('[data-tracker="undo"]')?.disabled).toBe(true);
+    expect(root.querySelector<HTMLButtonElement>('[data-tracker="redo"]')?.disabled).toBe(true);
+    expect(root.textContent).toContain("Tracker undo/redo cleared after an edit outside Tracker");
+    expect(root.querySelector("[role=gridcell]")?.className).toContain("cell-bold");
 });

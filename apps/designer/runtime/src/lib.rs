@@ -814,13 +814,18 @@ impl DesignerRuntime {
         target: &FieldTarget,
         input: &ScalarEditInput,
     ) -> Result<PublicationProjection, DesignerError> {
-        self.edit_cells(
+        let publication = self.edit_cells(
             expected_revision,
             &[CellEdit {
                 target: target.clone(),
                 input: input.clone(),
             }],
-        )
+        )?;
+        // Generic publications are not represented in the Tracker action history.
+        // Invalidate both semantic directions only after accepted publication.
+        self.undo.clear();
+        self.redo.clear();
+        Ok(publication)
     }
 
     fn publish_commands(

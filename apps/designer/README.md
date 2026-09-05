@@ -124,7 +124,10 @@ runtime from the [clipboard fixture](e2e/fixtures/operations-tracker.tsv).
   Browser storage is origin-local and clearing site data removes it.
 - Undo/redo covers supported semantic edits and formatting in the current open
   session (last 64 combined actions). Semantic undo/redo uses Rust-authoritative
-  inverse atomic batches. Reopening starts a fresh undo stack. A failed refresh
+  inverse atomic batches. A successful edit in the generic workbench clears both
+  Tracker undo/redo histories with an explanation, preserving all accepted data
+  and formatting. Read-only collection switches and rejected/no-change edits do
+  not clear history. Reopening starts a fresh undo stack. A failed refresh
   leaves the accepted revision saveable and provides **Retry refresh**.
 
 This closes only the bounded tracker journey, not Excel parity or the public

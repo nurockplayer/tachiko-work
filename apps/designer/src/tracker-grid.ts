@@ -28,6 +28,7 @@ export class TrackerGrid {
     ] = [0, 0];
     #anchorEntity: string | undefined;
     #focusEntity: string | undefined;
+    #historyInvalidated = false;
     #filter = "";
     #sort = "";
     #descending = false;
@@ -37,7 +38,14 @@ export class TrackerGrid {
     readonly #options: Options;
     constructor(options: Options) { this.#options = options; }
     get pending(): boolean { return this.#draft !== null; }
-    reset(view = emptyTrackerView()): void { this.view = view; this.#undo = []; this.#redo = []; this.#anchor = [0, 0]; this.#focus = [0, 0]; this.#anchorEntity = undefined; this.#focusEntity = undefined; this.#table = null; this.#filter = ""; this.#sort = ""; this.#descending = false; this.#draft = null; }
+    reset(view = emptyTrackerView()): void { this.#historyInvalidated = false; this.view = view; this.#undo = []; this.#redo = []; this.#anchor = [0, 0]; this.#focus = [0, 0]; this.#anchorEntity = undefined; this.#focusEntity = undefined; this.#table = null; this.#filter = ""; this.#sort = ""; this.#descending = false; this.#draft = null; }
+    // A publication outside the history represented here invalidates both
+    // action stacks; accepted values and presentation remain untouched.
+    invalidateHistory(): void {
+        this.#undo = [];
+        this.#redo = [];
+        this.#historyInvalidated = true;
+    }
     #rows(): TableProjection["rows"] {
         if (this.#table === null)
             return [];
@@ -64,6 +72,7 @@ export class TrackerGrid {
         const field = activeRow?.fields.find(f => f.target.field === activeCol?.id);
         const value = this.#draft ?? displayField(field);
         return `<section class="tracker" aria-label="Driver tracker">
+      ${this.#historyInvalidated ? '<p role="status">Tracker undo/redo cleared after an edit outside Tracker. Accepted data and formatting are preserved.</p>' : ""}
       <div class="tracker-toolbar">
         <button data-tracker="undo" ${busy || this.#undo.length === 0 ? "disabled" : ""}>Undo</button><button data-tracker="redo" ${busy || this.#redo.length === 0 ? "disabled" : ""}>Redo</button>
         <button data-tracker="append" ${disabled}>Append row</button><button data-tracker="delete" ${busy || !rows.length ? "disabled" : ""}>Remove selected rows</button>
