@@ -311,7 +311,8 @@ implementation for the first-party Driver Tracker journey:
 
 - `AppendEntity` supplies an `EntityId`, human key, existing `SchemaId`, and
   typed values keyed by stable `FieldId`. The authority rejects an empty or
-  colliding current entity identity, invalid or duplicate human key, missing
+  entity identity present in the exact base or working candidate, invalid or
+  duplicate human key, missing
   schema, and inadmissible formula structure. Final validation/calculation
   checks the complete candidate, including required fields, value types, and
   bound references.

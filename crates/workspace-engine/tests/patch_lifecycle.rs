@@ -3710,3 +3710,111 @@ fn entity_append_remove_batch_respects_resident_final_candidate_no_change() {
     assert_eq!(after.revision(), before.revision());
     assert!(lifecycle.execution_receipts().is_empty());
 }
+
+#[test]
+fn remove_then_append_cannot_replace_a_base_identity_under_structure_authority() {
+    let document = game_balance_document("game", "Game");
+    let mut replacement = document.entities["alric"].clone();
+    replacement.fields.insert("level".into(), number(99.0));
+    let mut lifecycle = lifecycle();
+    // This grant has Structure/Destructive/Formula, but no Value mutation authority.
+    provision_entity_authority(&mut lifecycle);
+    let proposal = proposal_id("replace-base-identity");
+    let mut publication = TestPublication::new(document.clone(), "r1", "r2");
+    let result = lifecycle.propose(
+        &document_scope_id(),
+        &document,
+        &revision("r1"),
+        ProposalRequest::new(
+            proposal.clone(),
+            revision("r1"),
+            SemanticPatchBody::atomic_batch(vec![
+                SemanticCommand::RemoveEntity {
+                    entity: replacement.id.clone(),
+                },
+                SemanticCommand::AppendEntity {
+                    entity: replacement,
+                },
+            ])
+            .unwrap(),
+            principal("human-editor"),
+        ),
+        NOW,
+    );
+    assert!(matches!(
+        result,
+        Err(PatchLifecycleError::CommandRejected { source })
+            if matches!(*source, tachiko_workspace_engine::WorkspaceError::GeneratedIdCollision { ref id, .. } if id == "alric")
+    ));
+    assert!(
+        lifecycle
+            .execute(
+                &proposal,
+                None,
+                &principal("human-editor"),
+                &mut publication,
+                NOW
+            )
+            .is_err()
+    );
+    assert_eq!(publication.publish_calls, 0);
+    assert_eq!(publication.document, document);
+    assert_eq!(publication.revision, revision("r1"));
+    assert!(lifecycle.execution_receipts().is_empty());
+}
+
+#[test]
+fn append_can_restore_an_identity_removed_by_a_separate_publication() {
+    let document = game_balance_document("game", "Game");
+    let removed = document.entities["alric"].clone();
+    let mut lifecycle = lifecycle();
+    provision_entity_authority(&mut lifecycle);
+    let remove = propose(
+        &mut lifecycle,
+        &document,
+        "remove-before-restore",
+        SemanticPatchBody::command(SemanticCommand::RemoveEntity {
+            entity: removed.id.clone(),
+        }),
+        "human-editor",
+    );
+    let mut publication = TestPublication::new(document.clone(), "r1", "r2");
+    lifecycle
+        .execute(
+            &remove,
+            None,
+            &principal("human-editor"),
+            &mut publication,
+            NOW,
+        )
+        .unwrap();
+    assert!(!publication.document.entities.contains_key(&removed.id));
+    let restore = proposal_id("restore-after-publication");
+    lifecycle
+        .propose(
+            &document_scope_id(),
+            &publication.document,
+            &revision("r2"),
+            ProposalRequest::new(
+                restore.clone(),
+                revision("r2"),
+                SemanticPatchBody::command(SemanticCommand::AppendEntity { entity: removed }),
+                principal("human-editor"),
+            ),
+            NOW,
+        )
+        .unwrap();
+    publication.next_revision = revision("r3");
+    lifecycle
+        .execute(
+            &restore,
+            None,
+            &principal("human-editor"),
+            &mut publication,
+            NOW,
+        )
+        .unwrap();
+    assert_eq!(publication.document, document);
+    assert_eq!(publication.revision, revision("r3"));
+    assert_eq!(publication.publish_calls, 2);
+}

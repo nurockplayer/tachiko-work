@@ -223,7 +223,18 @@ export class TrackerGrid {
             return original?.kind === "text" ? reconcileTextEdit(original.value, normalizeLineEndings(original.value), value) : value;
         })) });
     }
-    #changeView(change: () => void): void { const before = structuredClone(this.view); change(); this.#undo.push({ kind: "view", before, after: structuredClone(this.view) }); this.#redo = []; if (this.#undo.length > 64)
+    #preserveSelection(change: () => void): void {
+        const rows = this.#rows();
+        const anchorId = rows[this.#anchor[0]]?.id;
+        const focusId = rows[this.#focus[0]]?.id;
+        change();
+        const nextRows = this.#rows();
+        const anchorIndex = nextRows.findIndex(row => row.id === anchorId);
+        const focusIndex = nextRows.findIndex(row => row.id === focusId);
+        if (anchorIndex >= 0) this.#anchor[0] = anchorIndex;
+        if (focusIndex >= 0) this.#focus[0] = focusIndex;
+    }
+    #changeView(change: () => void): void { const before = structuredClone(this.view); this.#preserveSelection(change); this.#undo.push({ kind: "view", before, after: structuredClone(this.view) }); this.#redo = []; if (this.#undo.length > 64)
         this.#undo.shift(); this.#options.changed(); this.#options.render(); }
     async #action(action: string): Promise<void> {
         const table = this.#table;
@@ -244,8 +255,10 @@ export class TrackerGrid {
                 return;
             if (entry.kind === "semantic")
                 await this.#options.command({ type: action, expected_revision: table.revision });
-            else
-                this.view = structuredClone(action === "undo" ? entry.before : entry.after);
+            else {
+                const restored = structuredClone(action === "undo" ? entry.before : entry.after);
+                this.#preserveSelection(() => { this.view = restored; });
+            }
             source.pop();
             target.push(entry);
             this.#options.changed();

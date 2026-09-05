@@ -137,7 +137,7 @@ export function mountDesigner(
       savedProjects,
       selectedSavedProject,
     );
-    if (snapshot.table.collection.key === "tracker") {
+    if (snapshot.table.tracker_profile === true) {
       const workbench = root.querySelector(".table-workbench");
       if (workbench) workbench.innerHTML = `${noticeMarkup(notice)}${snapshot.currentness === "refresh_failed" ? '<button data-tracker-refresh>Retry refresh</button>' : ""}${tracker.markup(snapshot.table, busy || snapshot.currentness !== "current")}`;
       tracker.bind(root, busy || snapshot.currentness !== "current");
@@ -736,7 +736,7 @@ function designerMarkup(
   savedProjects: SavedProjectSummary[],
   selectedSavedProject: string,
 ): string {
-  const isTracker = table.collection.key === "tracker";
+  const isTracker = table.tracker_profile === true;
   const statusLabel = {
     current: isTracker ? "Up to date" : "Semantic current",
     refreshing: "Refreshing affected fields",

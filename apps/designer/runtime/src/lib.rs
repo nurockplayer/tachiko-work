@@ -135,6 +135,8 @@ pub struct CollectionSummary {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct TableProjection {
     pub revision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tracker_profile: Option<bool>,
     pub collection: CollectionSummary,
     pub columns: Vec<ColumnProjection>,
     pub rows: Vec<RowProjection>,
@@ -717,6 +719,7 @@ impl DesignerRuntime {
             })
             .collect();
         let projection = TableProjection {
+            tracker_profile: is_tracker_spec(spec).then_some(true),
             revision: field_query.revision().as_str().to_owned(),
             collection: spec.summary.clone(),
             columns: spec
@@ -1061,17 +1064,7 @@ impl DesignerRuntime {
             .collection_specs
             .get(collection)
             .ok_or_else(|| tracker_error("collection is unavailable"))?;
-        if spec.summary.id != "tracker"
-            || spec.columns.len() != 3
-            || !spec.columns.iter().all(|column| {
-                matches!(
-                    (column.id.as_str(), &column.field_type),
-                    ("task", FieldType::Text)
-                        | ("estimate", FieldType::Number)
-                        | ("done", FieldType::Boolean)
-                )
-            })
-        {
+        if !is_tracker_spec(spec) {
             return Err(tracker_error(
                 "row maintenance is available for the bounded tracker schema",
             ));
@@ -1557,6 +1550,21 @@ fn is_canonical_uuid_v4(value: &str) -> bool {
         && matches!(bytes[19], b'8' | b'9' | b'a' | b'b')
         && bytes.iter().enumerate().all(|(index, byte)| {
             matches!(index, 8 | 13 | 18 | 23) || matches!(byte, b'0'..=b'9' | b'a'..=b'f')
+        })
+}
+
+fn is_tracker_spec(spec: &CollectionSpec) -> bool {
+    spec.summary.id == "tracker"
+        && spec.summary.key == "tracker"
+        && spec.columns.len() == 3
+        && spec.columns.iter().all(|column| {
+            column.key == column.id.as_str()
+                && matches!(
+                    (column.id.as_str(), &column.field_type),
+                    ("task", FieldType::Text)
+                        | ("estimate", FieldType::Number)
+                        | ("done", FieldType::Boolean)
+                )
         })
 }
 

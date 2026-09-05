@@ -1986,6 +1986,7 @@ impl PatchLifecycle {
 
     fn plan_append_entity(
         &self,
+        base: &Document,
         candidate: &mut Document,
         entity: &Entity,
         writes: &mut BTreeSet<AssociatedWriteRequirement>,
@@ -1996,7 +1997,10 @@ impl PatchLifecycle {
                 kind: super::SemanticIdKind::Entity,
             });
         }
-        if candidate.entities.contains_key(&entity.id) {
+        // Freshness is relative to both the exact base and the working
+        // candidate. Removing a base identity earlier in this batch must not
+        // turn append authority into value/schema replacement authority.
+        if base.entities.contains_key(&entity.id) || candidate.entities.contains_key(&entity.id) {
             return Err(WorkspaceError::GeneratedIdCollision {
                 kind: super::SemanticIdKind::Entity,
                 id: entity.id.to_string(),
@@ -2047,7 +2051,7 @@ impl PatchLifecycle {
         for command in body.commands() {
             match command {
                 SemanticCommand::AppendEntity { entity } => {
-                    self.plan_append_entity(&mut candidate, entity, &mut writes)?;
+                    self.plan_append_entity(document, &mut candidate, entity, &mut writes)?;
                 }
                 SemanticCommand::RemoveEntity { entity } => {
                     let record = candidate.entities.get(entity).ok_or_else(|| {

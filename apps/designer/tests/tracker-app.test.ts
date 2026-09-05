@@ -6,10 +6,11 @@ import type { TableProjection } from "../src/runtime/protocol.ts";
 let mounted: MountedDesigner | undefined;
 afterEach(() => { mounted?.destroy(); document.body.replaceChildren(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 function fixture(): TableProjection {
-    return { revision: "resident/0", collection: { id: "tracker", key: "tracker", entity_count: 1 }, columns: [{ id: "task", key: "task", field_type: "Text" }, { id: "estimate", key: "estimate", field_type: "Number" }, { id: "done", key: "done", field_type: "Boolean", dropdown_options: ["true", "false"] }], rows: [{ id: "item", key: "item", fields: [{ target: { entity: "item", field: "task" }, address: "item.task", stored: { kind: "text", value: "Accepted work" }, formula: null, calculated: null, diagnostics: [], editable_scalar: "text" }] }] };
+    return { tracker_profile: true, revision: "resident/0", collection: { id: "tracker", key: "tracker", entity_count: 1 }, columns: [{ id: "task", key: "task", field_type: "Text" }, { id: "estimate", key: "estimate", field_type: "Number" }, { id: "done", key: "done", field_type: "Boolean", dropdown_options: ["true", "false"] }], rows: [{ id: "item", key: "item", fields: [{ target: { entity: "item", field: "task" }, address: "item.task", stored: { kind: "text", value: "Accepted work" }, formula: null, calculated: null, diagnostics: [], editable_scalar: "text" }] }] };
 }
-async function setup(original = "Accepted work", secondRow = false) {
+async function setup(original = "Accepted work", secondRow = false, stock = true) {
     let table = fixture();
+    if (!stock) { delete table.tracker_profile; table.collection.id = "ordinary"; }
     const field = table.rows[0]?.fields[0];
     if (field) field.stored = {kind: "text", value: original};
     if (secondRow && table.rows[0]) {
@@ -116,4 +117,29 @@ it("keyboard navigation cannot retarget a pending draft to another row", async (
     root.querySelector<HTMLFormElement>("[data-tracker-edit]")?.dispatchEvent(new Event("submit", {bubbles: true, cancelable: true}));
     await vi.waitFor(() => { expect(trackerCommand).toHaveBeenCalledOnce(); });
     expect(trackerCommand.mock.calls[0]).toEqual([expect.objectContaining({start_entity: "item", rows: [["Draft for first row"]]})]);
+});
+
+
+it("an ordinary collection named tracker keeps its generic scalar editor", async () => {
+    const {root, trackerCommand} = await setup("Ordinary text", false, false);
+    expect(root.querySelector('[aria-label="Driver tracker"]')).toBeNull();
+    expect(root.querySelector('[data-edit-form][data-edit-kind="text"] textarea')).not.toBeNull();
+    expect(trackerCommand).not.toHaveBeenCalled();
+});
+
+it("row moves and their undo keep selection attached to the same entity", async () => {
+    const {root, trackerCommand} = await setup("First", true);
+    click(root, '[data-tracker="down"]');
+    expect(root.querySelector('[data-row="1"][data-col="0"]')?.getAttribute("aria-selected")).toBe("true");
+    click(root, '[data-tracker="undo"]');
+    expect(root.querySelector('[data-row="0"][data-col="0"]')?.getAttribute("aria-selected")).toBe("true");
+    click(root, '[data-tracker="redo"]');
+    expect(root.querySelector('[data-row="1"][data-col="0"]')?.getAttribute("aria-selected")).toBe("true");
+    const editor = root.querySelector<HTMLTextAreaElement>('[aria-label="Cell value"]');
+    if (!editor) throw new Error("No editor");
+    editor.value = "Moved first row";
+    editor.dispatchEvent(new Event("input", {bubbles: true}));
+    root.querySelector<HTMLFormElement>("[data-tracker-edit]")?.dispatchEvent(new Event("submit", {bubbles: true, cancelable: true}));
+    await vi.waitFor(() => { expect(trackerCommand).toHaveBeenCalledOnce(); });
+    expect(trackerCommand.mock.calls[0]).toEqual([expect.objectContaining({start_entity: "item", rows: [["Moved first row"]]})]);
 });
