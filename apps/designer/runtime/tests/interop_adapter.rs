@@ -4,6 +4,108 @@ use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 fn simple() -> SourceWorkbook {
     import_csv(b"Name,Amount\nAda,12\n", &ImportOptions::default()).unwrap()
 }
+
+#[test]
+fn cdata_obeys_xml_characters_and_root_boundaries() {
+    let bytes = export_xlsx(&simple()).unwrap();
+    for text in ["\u{0}", "\u{1}", "\u{fffe}", "\u{ffff}"] {
+        let invalid = mutate(&bytes, "xl/worksheets/sheet1.xml", |s| {
+            s.replace(
+                "<t xml:space=\"preserve\">Ada</t>",
+                &format!("<t><![CDATA[{text}]]></t>"),
+            )
+        });
+        assert_ne!(invalid, bytes);
+        assert!(import_xlsx(&invalid).is_err());
+    }
+    for text in ["", " ", "outside"] {
+        for before in [true, false] {
+            let invalid = mutate(&bytes, "xl/workbook.xml", |s| {
+                if before {
+                    format!("<![CDATA[{text}]]>{s}")
+                } else {
+                    format!("{s}<![CDATA[{text}]]>")
+                }
+            });
+            assert!(
+                import_xlsx(&invalid)
+                    .unwrap_err()
+                    .0
+                    .contains("CDATA outside XML root")
+            );
+        }
+    }
+    let valid = mutate(&bytes, "xl/worksheets/sheet1.xml", |s| {
+        s.replace(
+            "<t xml:space=\"preserve\">Ada</t>",
+            "<t><![CDATA[Ada & <literal>]]></t>",
+        )
+    });
+    assert_eq!(
+        import_xlsx(&valid).unwrap().sheets[0].rows[0][0].value,
+        SourceValue::Text {
+            value: "Ada & <literal>".into()
+        }
+    );
+}
+
+#[test]
+fn hidden_source_content_is_blocked_with_explicit_visibility_inventory() {
+    let bytes = export_xlsx(&simple()).unwrap();
+    for state in ["hidden", "veryHidden"] {
+        let hidden = mutate(&bytes, "xl/workbook.xml", |s| {
+            s.replace("<sheet ", &format!("<sheet state=\"{state}\" "))
+        });
+        let original = hidden.clone();
+        let book = import_xlsx(&hidden).unwrap();
+        assert!(book.ledger.iter().any(|f| f.code == "hidden_sheet"
+            && f.blocking
+            && f.category == FidelityCategory::UnsupportedSafeDisabled));
+        assert!(export_xlsx(&book).is_err());
+        assert_eq!(hidden, original);
+    }
+    for (xml, code) in [
+        ("<sheetData><row r=\"1\" hidden=\"true\">", "hidden_row"),
+        (
+            "<cols><col min=\"1\" max=\"2\" hidden=\"1\"/></cols><sheetData><row r=\"1\">",
+            "hidden_column",
+        ),
+        (
+            "<sheetFormatPr zeroHeight=\"true\"/><sheetData><row r=\"1\">",
+            "hidden_default_rows",
+        ),
+    ] {
+        let hidden = mutate(&bytes, "xl/worksheets/sheet1.xml", |s| {
+            s.replace("<cols></cols>", "")
+                .replace("<sheetData><row r=\"1\">", xml)
+        });
+        assert_ne!(hidden, bytes);
+        let book = import_xlsx(&hidden).unwrap();
+        assert!(book.ledger.iter().any(|f| f.code == code && f.blocking));
+        assert!(export_xlsx(&book).is_err());
+    }
+    let unknown = mutate(&bytes, "xl/workbook.xml", |s| {
+        s.replace("<sheet ", "<sheet state=\"unknown\" ")
+    });
+    assert!(import_xlsx(&unknown).is_err());
+    let unknown = mutate(&bytes, "xl/worksheets/sheet1.xml", |s| {
+        s.replace("<row ", "<row hidden=\"unknown\" ")
+    });
+    assert!(import_xlsx(&unknown).is_err());
+    let visible = mutate(&bytes, "xl/workbook.xml", |s| {
+        s.replace("<sheet ", "<sheet state=\"visible\" ")
+    });
+    let visible = mutate(&visible, "xl/worksheets/sheet1.xml", |s| {
+        s.replace("<row ", "<row hidden=\"false\" ")
+    });
+    assert!(
+        !import_xlsx(&visible)
+            .unwrap()
+            .ledger
+            .iter()
+            .any(|f| f.blocking)
+    );
+}
 fn mutate(bytes: &[u8], name: &str, f: impl FnOnce(String) -> String) -> Vec<u8> {
     let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
     let mut entries = Vec::new();

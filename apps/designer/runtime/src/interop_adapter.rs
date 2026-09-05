@@ -428,8 +428,13 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
             Event::CData(e) => {
                 let value = std::str::from_utf8(e.as_ref())
                     .map_err(|_| InteropError("Invalid CDATA".into()))?;
+                if !xml_text_valid(value) {
+                    return fail("Invalid CDATA XML character");
+                }
                 if let Some((node, _)) = stack.last_mut() {
                     node.text.push_str(value);
+                } else {
+                    return fail("CDATA outside XML root");
                 }
             }
             Event::DocType(_) => return fail("DTD is forbidden"),
@@ -958,6 +963,32 @@ fn c_unknown(node: &Xml) -> bool {
     !matches!(node.name.as_str(), "c" | "v" | "f" | "is" | "t" | "r")
         || node.children.iter().any(c_unknown)
 }
+fn visibility_finding(code: &str, location: &str) -> FidelityFinding {
+    finding(
+        FidelityCategory::UnsupportedSafeDisabled,
+        code,
+        location,
+        "Hidden source content cannot be admitted or exported because this profile does not preserve visibility; original source bytes remain unchanged",
+        true,
+    )
+}
+
+fn inventory_hidden(
+    value: Option<&str>,
+    code: &str,
+    location: &str,
+    ledger: &mut Vec<FidelityFinding>,
+) -> Result<()> {
+    match value {
+        None | Some("0" | "false") => Ok(()),
+        Some("1" | "true") => {
+            ledger.push(visibility_finding(code, location));
+            Ok(())
+        }
+        Some(_) => fail("Invalid hidden visibility boolean"),
+    }
+}
+
 /// Inspect all bounded worksheets and produce the sole fidelity admission ledger.
 /// # Errors
 /// Rejects malformed archives/XML, unresolved relationships and resource limits.
@@ -1017,6 +1048,11 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
         if name.is_empty() || !names.insert(name.clone()) {
             return fail("Invalid or duplicate worksheet name");
         }
+        match sheet.attr("state") {
+            None | Some("visible") => {}
+            Some("hidden" | "veryHidden") => ledger.push(visibility_finding("hidden_sheet", &name)),
+            Some(_) => return fail("Unknown worksheet visibility state"),
+        }
         let relationship = rels
             .get(
                 sheet
@@ -1039,6 +1075,14 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
                 .ok_or_else(|| InteropError("Missing sheet target".into()))?,
         )?;
         let xml = xml_part(&parts, &path, "worksheet", MAIN)?;
+        if let Some(format) = xml.child("sheetFormatPr") {
+            inventory_hidden(
+                format.attr("zeroHeight"),
+                "hidden_default_rows",
+                &name,
+                &mut ledger,
+            )?;
+        }
         for (tag, code) in [
             ("dataValidations", "validation_rules"),
             ("autoFilter", "filter_rules"),
@@ -1072,6 +1116,12 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
             return fail("Unknown sheetData construct");
         }
         for row in data.kids("row") {
+            inventory_hidden(
+                row.attr("hidden"),
+                "hidden_row",
+                &format!("{name}:row {}", row.attr("r").unwrap_or("?")),
+                &mut ledger,
+            )?;
             if row.children.iter().any(|n| n.name != "c" || n.ns != MAIN) {
                 return fail("Unknown worksheet row construct");
             }
@@ -1219,6 +1269,16 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
         }
         if let Some(cols) = xml.child("cols") {
             for c in cols.kids("col") {
+                inventory_hidden(
+                    c.attr("hidden"),
+                    "hidden_column",
+                    &format!(
+                        "{name}:columns {}..{}",
+                        c.attr("min").unwrap_or("1"),
+                        c.attr("max").unwrap_or("1")
+                    ),
+                    &mut ledger,
+                )?;
                 let min = c
                     .attr("min")
                     .unwrap_or("1")

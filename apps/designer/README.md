@@ -190,6 +190,10 @@ user selects a valid conversion. Missing cells remain absent optional values.
 Extra typed output columns can be declared during inspection for subsequent
 split or conversion without destroying the source cells.
 
+Hidden worksheets, rows, columns or default rows are blocked explicitly because
+the profile cannot preserve their visibility; they never become visible
+silently through export. Invalid XML, including out-of-root CDATA, is rejected.
+
 The existing table and Rust formula tools edit the imported collections.
 Sorting/filtering change only the view and target stable identities. Cleanup
 supports trim, literal replacement, split into two selected existing Text

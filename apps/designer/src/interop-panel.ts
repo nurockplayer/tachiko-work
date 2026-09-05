@@ -52,8 +52,13 @@ export class SpreadsheetImportPanel {
     const delimiter = select(controls, "CSV delimiter", [[",", "Comma"], [";", "Semicolon"], ["\t", "Tab"]], this.#options.delimiter);
     const header = element("input"); header.type = "checkbox"; header.checked = this.#options.header; label(controls, "CSV first row is header", header);
     const inspect = async (): Promise<void> => {
-      if (!this.#source || !this.client.inspectSpreadsheet) return;
-      this.#pending = true; this.#book = null; this.#message = "Inspecting source…"; this.changed();
+      this.#book = null; this.#selection = {column_types: [], extra_columns: []};
+      if (!this.#source || !this.client.inspectSpreadsheet) {
+        this.#pending = false;
+        this.#message = this.#source ? "Spreadsheet inspection is unavailable. Choose a source after the runtime is available." : "Choose a spreadsheet source to inspect.";
+        this.changed(); return;
+      }
+      this.#pending = true; this.#message = "Inspecting source…"; this.changed();
       try {
         const book = await this.client.inspectSpreadsheet(this.#source.bytes, this.#source.format, this.#options);
         this.#book = book;
@@ -67,6 +72,9 @@ export class SpreadsheetImportPanel {
     };
     file.addEventListener("change", () => {
       const candidate = file.files?.[0]; if (!candidate) return;
+      // A new selection invalidates every prior inspection before any fallible
+      // validation/read. Failure must never make the old source acceptable.
+      this.#source = null; this.#book = null; this.#selection = {column_types: [], extra_columns: []}; this.#pending = false;
       if (!/\.(csv|xlsx)$/i.test(candidate.name) || candidate.size > 2097152 || candidate.size === 0) { this.#message = "Choose a CSV or XLSX file of 1..2097152 bytes."; this.changed(); return; }
       this.#pending = true; this.#message = "Reading source…"; this.changed();
       void candidate.arrayBuffer().then(bytes => { this.#source = {name: candidate.name, bytes, format: /\.xlsx$/i.test(candidate.name) ? "xlsx" : "csv"}; return inspect(); }).catch((error: unknown) => { this.#pending = false; this.#message = error instanceof Error ? error.message : String(error); this.changed(); });
@@ -94,7 +102,7 @@ export class SpreadsheetImportPanel {
       }
       mountFidelityLedger(controls, this.#book.ledger);
       const accept = button(controls, "Accept types and import", () => { void (async () => {
-        if (!this.#source) return; this.#pending = true; this.changed();
+        if (!this.#source || !this.#book || this.#pending) return; this.#pending = true; this.changed();
         try { await this.accept(this.#source, this.#options, this.#selection); this.#source = null; this.#book = null; this.#message = "Import accepted."; }
         catch (error) { this.#message = error instanceof Error ? error.message : String(error); }
         finally { this.#pending = false; this.changed(); }

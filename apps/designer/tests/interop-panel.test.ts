@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { mountCleanupPanel } from "../src/interop-panel.ts";
-import type { CleanupOperation, CleanupPreview } from "../src/runtime/interop-protocol.ts";
+import { mountCleanupPanel, SpreadsheetImportPanel } from "../src/interop-panel.ts";
+import type { CleanupOperation, CleanupPreview, SourceWorkbook } from "../src/runtime/interop-protocol.ts";
+import type { DesignerClient } from "../src/runtime/client.ts";
 import type { FieldProjection, StoredValueProjection, TableProjection } from "../src/runtime/protocol.ts";
 
 const target = (entity: string) => ({ entity, field: "stable-column" });
@@ -108,5 +109,94 @@ describe("imported cleanup panel admission", () => {
     await vi.waitFor(() => { expect(root.textContent).toContain("Cleanup preview"); });
     expect(preview).toHaveBeenCalledExactlyOnceWith({ kind: "fill", fields: [target("missing")], input: { kind: "boolean", value } });
     expect(table).toEqual(before);
+  });
+});
+
+const sourceBook: SourceWorkbook = { sheets: [{ name: "Old inspected source", has_header: true, columns: [{ name: "Value", width: null }], rows: [] }], ledger: [] };
+function importPanelFixture(inspectionAvailable = true) {
+  const root = document.createElement("div");
+  const unused = async (): Promise<never> => { throw new Error("Resident must not be touched during source inspection"); };
+  const inspectSpreadsheet = vi.fn<NonNullable<DesignerClient["inspectSpreadsheet"]>>().mockResolvedValue(sourceBook);
+  const client: DesignerClient = {
+    bootstrap: unused, openProject: unused, exportProject: unused, closeProject: unused,
+    queryTable: unused, queryFields: unused, editNumber: unused, editText: unused, editBoolean: unused, editDate: unused, close: vi.fn(),
+    ...(inspectionAvailable ? { inspectSpreadsheet } : {}),
+  };
+  const accept = vi.fn<ConstructorParameters<typeof SpreadsheetImportPanel>[1]>().mockRejectedValue(new Error("Unexpected resident replacement"));
+  const render = (): void => { root.replaceChildren(); panel.mount(root, false); };
+  const panel = new SpreadsheetImportPanel(client, accept, render);
+  render();
+  const choose = (file: File): void => {
+    const input = control(root, "Spreadsheet file");
+    Object.defineProperty(input, "files", { value: [file], configurable: true });
+    input.dispatchEvent(new Event("change"));
+  };
+  const acceptedSourceVisible = (): boolean => [...root.querySelectorAll("button")].some(button => button.textContent === "Accept types and import");
+  return { root, client, accept, inspectSpreadsheet, choose, acceptedSourceVisible };
+}
+
+describe("spreadsheet source replacement failures", () => {
+  it("discards the previous inspected source before a replacement read and never restores it on failure", async () => {
+    const { root, choose, inspectSpreadsheet, accept, acceptedSourceVisible } = importPanelFixture();
+    choose(new File(["Value\nold\n"], "old.csv"));
+    await vi.waitFor(() => { expect(acceptedSourceVisible()).toBe(true); });
+    click(root, "Add output column to Old inspected source");
+    let rejectRead!: (error: Error) => void;
+    const replacement = new File(["Value\nnew\n"], "new.csv");
+    vi.spyOn(replacement, "arrayBuffer").mockReturnValue(new Promise<ArrayBuffer>((_resolve, reject) => { rejectRead = reject; }));
+    choose(replacement);
+    expect(acceptedSourceVisible()).toBe(false);
+    expect(root.textContent).not.toContain("Old inspected source");
+    expect(root.querySelector("fieldset")?.disabled).toBe(true);
+    rejectRead(new Error("Replacement file cannot be read"));
+    await vi.waitFor(() => { expect(root.textContent).toContain("Replacement file cannot be read"); });
+    expect(root.querySelector("fieldset")?.disabled).toBe(false);
+    expect(acceptedSourceVisible()).toBe(false);
+    expect(inspectSpreadsheet).toHaveBeenCalledTimes(1);
+    expect(accept).not.toHaveBeenCalled();
+    // A later successful replacement can recover, with no old output columns.
+    choose(new File(["Value\nretry\n"], "retry.csv"));
+    await vi.waitFor(() => { expect(acceptedSourceVisible()).toBe(true); });
+    expect(root.querySelector('[aria-label="Old inspected source output 1 name"]')).toBeNull();
+    expect(inspectSpreadsheet.mock.calls[1]?.[0]).toEqual(new TextEncoder().encode("Value\nretry\n").buffer);
+  });
+
+  it.each([new File(["not a workbook"], "invalid.txt"), new File([], "empty.csv")])("cannot accept an old source after invalid replacement $name", async replacement => {
+    const { root, choose, inspectSpreadsheet, accept, acceptedSourceVisible } = importPanelFixture();
+    choose(new File(["Value\nold\n"], "old.csv"));
+    await vi.waitFor(() => { expect(acceptedSourceVisible()).toBe(true); });
+    choose(replacement);
+    expect(root.textContent).toContain("Choose a CSV or XLSX file");
+    expect(acceptedSourceVisible()).toBe(false);
+    expect(root.textContent).not.toContain("Old inspected source");
+    expect(root.querySelector("fieldset")?.disabled).toBe(false);
+    expect(inspectSpreadsheet).toHaveBeenCalledTimes(1);
+    expect(accept).not.toHaveBeenCalled();
+  });
+
+  it("reports unavailable inspection after reading without leaving the panel locked", async () => {
+    const { root, choose, client, inspectSpreadsheet, accept, acceptedSourceVisible } = importPanelFixture(false);
+    choose(new File(["Value\nnew\n"], "new.csv"));
+    await vi.waitFor(() => { expect(root.textContent).toContain("Spreadsheet inspection is unavailable"); });
+    expect(root.querySelector("fieldset")?.disabled).toBe(false);
+    expect(acceptedSourceVisible()).toBe(false);
+    expect(accept).not.toHaveBeenCalled();
+    // The unavailable capability does not strand the chooser; retry works.
+    client.inspectSpreadsheet = inspectSpreadsheet;
+    choose(new File(["Value\nretry\n"], "retry.csv"));
+    await vi.waitFor(() => { expect(acceptedSourceVisible()).toBe(true); });
+    expect(root.querySelector("fieldset")?.disabled).toBe(false);
+  });
+
+  it("retains no previously accepted selection when replacement inspection rejects", async () => {
+    const { root, choose, inspectSpreadsheet, accept, acceptedSourceVisible } = importPanelFixture();
+    choose(new File(["Value\nold\n"], "old.csv"));
+    await vi.waitFor(() => { expect(acceptedSourceVisible()).toBe(true); });
+    inspectSpreadsheet.mockRejectedValueOnce(new Error("Replacement workbook is invalid"));
+    choose(new File(["Value\nnew\n"], "new.csv"));
+    await vi.waitFor(() => { expect(root.textContent).toContain("Replacement workbook is invalid"); });
+    expect(acceptedSourceVisible()).toBe(false);
+    expect(root.querySelector("fieldset")?.disabled).toBe(false);
+    expect(accept).not.toHaveBeenCalled();
   });
 });
