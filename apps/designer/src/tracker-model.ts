@@ -1,6 +1,7 @@
 import { parseInteropState, type InteropState } from "./interop-state.ts";
 import type { FieldProjection, TableProjection } from "./runtime/protocol.ts";
 import { parseBudgetViews, type BudgetViews } from "./budget-views.ts";
+import { parseReportCharts, type ReportChart } from "./report-model.ts";
 export type CellStyle = {
     bold?: boolean;
     fill?: boolean;
@@ -12,6 +13,7 @@ export type NumberFormat = "number" | "percentage" | "currency-jpy" | "currency-
 export type TrackerView = {
     budgetViews?: BudgetViews;
     interop?: InteropState;
+    charts?: ReportChart[];
     version: 1;
     cells: Record<string, CellStyle>;
     order: string[];
@@ -22,7 +24,7 @@ export type TrackerView = {
 };
 export const emptyTrackerView = (): TrackerView => ({ version: 1, cells: {}, order: [], widths: {}, rowHeight: 36, header: true, formats: {} });
 export const cellKey = (entity: string, field: string): string => JSON.stringify([entity, field]);
-/** Budget bindings require IDs from the admitted project snapshot, never the sidecar itself. */
+/** View bindings require IDs from the admitted project snapshot, never the sidecar itself. */
 export function parseTrackerView(input?: string, collectionIds?: string[]): TrackerView {
     if (input === undefined)
         return emptyTrackerView();
@@ -50,7 +52,10 @@ export function parseTrackerView(input?: string, collectionIds?: string[]): Trac
     if (view.interop !== undefined && collectionIds === undefined)
         throw new Error("Saved spreadsheet layout requires authoritative project collection IDs.");
     const interop = view.interop === undefined ? undefined : parseInteropState(view.interop, collectionIds);
-    return { ...(interop === undefined ? {} : {interop}), ...(view as Omit<TrackerView, "formats">), ...(interop === undefined ? {} : {interop}), formats: formats as Record<string, NumberFormat>, ...(budgetViews === undefined ? {} : { budgetViews }) };
+    if (view.charts !== undefined && collectionIds === undefined)
+        throw new Error("Saved charts require authoritative project collection IDs.");
+    const charts = view.charts === undefined ? undefined : parseReportCharts(view.charts, collectionIds ?? []);
+    return { ...(interop === undefined ? {} : {interop}), ...(view as Omit<TrackerView, "formats">), ...(interop === undefined ? {} : {interop}), formats: formats as Record<string, NumberFormat>, ...(budgetViews === undefined ? {} : { budgetViews }), ...(charts === undefined ? {} : { charts }) };
 }
 export function displayField(field?: FieldProjection): string {
     if (field?.diagnostics.length)

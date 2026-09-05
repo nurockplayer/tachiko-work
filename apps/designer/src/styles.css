@@ -675,3 +675,19 @@ td {
 .tracker button:disabled { color: #8c959c; cursor: default; }
 .tracker input, .tracker select, .tracker textarea { border: 1px solid #b9c3ca; border-radius: 5px; padding: 7px; font: inherit; font-size: 13px; }
 .tracker-revision { display: none; }
+
+.report-panel { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--line); }
+.report-panel p { max-width: 78ch; line-height: 1.55; }
+.report-panel button { margin: 4px 8px 4px 0; padding: 8px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); color: var(--ink); cursor: pointer; }
+.report-panel button:disabled { opacity: .55; cursor: default; }
+.report-editor, .report-card { margin-top: 16px; padding: 18px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); min-width: 0; }
+.report-editor label { display: block; margin-block: 10px; line-height: 1.5; }
+.report-editor input:not([type=checkbox]), .report-editor select { display: block; width: min(100%, 540px); padding: 8px; margin-top: 4px; }
+.report-editor fieldset { min-width: 0; margin-block: 14px; border: 1px solid var(--line); }
+.report-editor fieldset label { overflow-wrap: anywhere; }
+.report-editor input[type=checkbox] { margin-right: 8px; }
+.report-preview { width: 100%; overflow-x: auto; }
+.report-preview canvas { display: block; width: 100%; height: auto; min-width: 640px; background: white; }
+.report-card table { width: 100%; min-width: 0; border-collapse: collapse; margin-top: 12px; table-layout: fixed; }
+.report-card th, .report-card td { padding: 8px; text-align: left; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; white-space: pre-wrap; }
+.report-card [role=alert], .report-editor [role=alert] { color: #9c2736; }

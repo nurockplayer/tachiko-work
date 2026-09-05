@@ -73,7 +73,7 @@ it("a pending tracker draft cannot be silently saved or retargeted by filtering"
     click(root, "[data-save-project]");
     expect(publish).not.toHaveBeenCalled();
     expect(prompt).not.toHaveBeenCalled();
-    expect(root.textContent).toContain("Apply or cancel the cell draft");
+    expect(root.textContent).toContain("Apply or cancel pending cell, formula and chart edits");
     const filter = root.querySelector<HTMLInputElement>("[data-tracker-filter]");
     if (!filter)
         throw new Error("No filter");
