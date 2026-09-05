@@ -47,6 +47,24 @@ function table(collection: string): TableProjection {
   };
 }
 
+function poisonReply(id: number): WorkerReply {
+  const unread = (): never => {
+    throw new Error("Late reply payload was consumed after settlement.");
+  };
+  return {
+    id,
+    get status() {
+      return unread();
+    },
+    get response() {
+      return unread();
+    },
+    get error() {
+      return unread();
+    },
+  };
+}
+
 describe("Designer Worker request lifecycle", () => {
   it("correlates simultaneous table replies by ID rather than arrival order", async () => {
     const worker = transport();
@@ -140,5 +158,44 @@ describe("Designer Worker request lifecycle", () => {
     );
     worker.reply({ id: worker.request(0).id, status: "ok", response: { type: "fields", payload: { revision: "resident/0", fields: [] } } });
     await result;
+  });
+
+  it("ignores a duplicate reply after completion without reading its payload", async () => {
+    const worker = transport();
+    const result = worker.client.queryTable("completed");
+    const id = worker.request(0).id;
+    worker.reply({ id, status: "ok", response: { type: "table", payload: table("completed") } });
+    await expect(result).resolves.toEqual(table("completed"));
+    expect(() => {
+      worker.reply(poisonReply(id));
+    }).not.toThrow();
+  });
+
+  it("ignores a late reply after an error rejection without reading its payload", async () => {
+    const worker = transport();
+    const result = worker.client.queryTable("error");
+    const id = worker.request(0).id;
+    const failure: FailureProjection = {
+      code: "test.failure",
+      message: "The request failed for this lifecycle test.",
+      current_revision: "resident/0",
+      diagnostics: [],
+    };
+    worker.reply({ id, status: "error", error: failure });
+    await expect(result).rejects.toMatchObject({ message: failure.message, failure });
+    expect(() => {
+      worker.reply(poisonReply(id));
+    }).not.toThrow();
+  });
+
+  it("ignores a late reply after close rejects a request without reading its payload", async () => {
+    const worker = transport();
+    const result = worker.client.queryTable("closed");
+    const id = worker.request(0).id;
+    worker.client.close();
+    await expect(result).rejects.toThrow("The Designer runtime was closed.");
+    expect(() => {
+      worker.reply(poisonReply(id));
+    }).not.toThrow();
   });
 });

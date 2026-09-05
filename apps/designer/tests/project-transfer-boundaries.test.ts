@@ -15,6 +15,14 @@ function entries() {
   return Array.from({ length: 18 }, (_, index) => entry(`project.roproj/f${String(index).padStart(2, "0")}`));
 }
 
+function canonicalEntries() {
+  return [
+    "manifest.json",
+    "schemas.json",
+    ..."0123456789abcdef".split("").map(digit => `entities/${digit}.jsonl`),
+  ].map(path => entry(`project.roproj/${path}`));
+}
+
 function fileList(selected: ReturnType<typeof entry>[]): FileList {
   return {
     length: selected.length,
@@ -123,5 +131,57 @@ describe("Designer directory transfer boundaries", () => {
     const expected = Uint8Array.from(hex.match(/../g) ?? [], pair => Number.parseInt(pair, 16));
     expect(new Uint8Array(await projectTransferFromFiles(fileList(selected)))).toEqual(expected);
     expect(new Uint8Array(await projectTransferFromFiles(fileList(selected)))).toEqual(expected);
+  });
+
+  it("packs canonical nested .roproj paths and payload bytes deterministically", async () => {
+    const selected = canonicalEntries();
+    selected[2] = entry("project.roproj/entities/0.jsonl", new Uint8Array([1, 2, 3]));
+    selected[17] = entry("project.roproj/entities/f.jsonl", new Uint8Array([0xfa, 0xfb]));
+    const expectedHex = [
+      "54574450524f4a3112000000",
+      "0d00000000006d616e69666573742e6a736f6e",
+      "0c0000000000736368656d61732e6a736f6e",
+      "100003000000656e7469746965732f302e6a736f6e6c010203",
+      "100000000000656e7469746965732f312e6a736f6e6c",
+      "100000000000656e7469746965732f322e6a736f6e6c",
+      "100000000000656e7469746965732f332e6a736f6e6c",
+      "100000000000656e7469746965732f342e6a736f6e6c",
+      "100000000000656e7469746965732f352e6a736f6e6c",
+      "100000000000656e7469746965732f362e6a736f6e6c",
+      "100000000000656e7469746965732f372e6a736f6e6c",
+      "100000000000656e7469746965732f382e6a736f6e6c",
+      "100000000000656e7469746965732f392e6a736f6e6c",
+      "100000000000656e7469746965732f612e6a736f6e6c",
+      "100000000000656e7469746965732f622e6a736f6e6c",
+      "100000000000656e7469746965732f632e6a736f6e6c",
+      "100000000000656e7469746965732f642e6a736f6e6c",
+      "100000000000656e7469746965732f652e6a736f6e6c",
+      "100002000000656e7469746965732f662e6a736f6e6cfafb",
+    ].join("");
+    const output = new Uint8Array(await projectTransferFromFiles(fileList(selected)));
+    const actualHex = Array.from(output, byte => byte.toString(16).padStart(2, "0")).join("");
+    expect(actualHex).toBe(expectedHex);
+
+    const view = new DataView(output.buffer);
+    const decoder = new TextDecoder();
+    let offset = 12;
+    const frames = selected.map(() => {
+      const pathLength = view.getUint16(offset, true);
+      offset += 2;
+      const payloadLength = view.getUint32(offset, true);
+      offset += 4;
+      const pathBytes = output.slice(offset, offset + pathLength);
+      offset += pathLength;
+      const payload = output.slice(offset, offset + payloadLength);
+      offset += payloadLength;
+      return { pathBytes, payload };
+    });
+    expect(decoder.decode(frames[2]?.pathBytes)).toBe("entities/0.jsonl");
+    expect(frames[2]?.pathBytes).toEqual(new TextEncoder().encode("entities/0.jsonl"));
+    expect(frames[2]?.payload).toEqual(new Uint8Array([1, 2, 3]));
+    expect(decoder.decode(frames[17]?.pathBytes)).toBe("entities/f.jsonl");
+    expect(frames[17]?.pathBytes).toEqual(new TextEncoder().encode("entities/f.jsonl"));
+    expect(frames[17]?.payload).toEqual(new Uint8Array([0xfa, 0xfb]));
+    expect(offset).toBe(output.byteLength);
   });
 });
