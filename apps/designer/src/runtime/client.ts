@@ -1,3 +1,4 @@
+import type { CleanupOperation, CleanupPreview, ImportedProjection, ImportOptions, ImportSelection, InteropMetadata, SourceWorkbook, SpreadsheetExport, SpreadsheetFormat } from "./interop-protocol.ts";
 import type {
   FormulaCopy,
   TrackerCommand,
@@ -12,6 +13,12 @@ import type {
 } from "./protocol.ts";
 
 export interface DesignerClient {
+  inspectSpreadsheet?(bytes: ArrayBuffer, format: SpreadsheetFormat, csvOptions: ImportOptions): Promise<SourceWorkbook>;
+  importSpreadsheet?(bytes: ArrayBuffer, format: SpreadsheetFormat, csvOptions: ImportOptions, selection: ImportSelection, validate?: (candidate: ImportedProjection) => void): Promise<ImportedProjection>;
+  inspectImportedProject?(bytes: ArrayBuffer, metadata: InteropMetadata): Promise<OpenedProjection>;
+  exportSpreadsheet?(expectedRevision: string, metadata: InteropMetadata, format: SpreadsheetFormat, collection: string): Promise<SpreadsheetExport>;
+  previewCleanup?(expectedRevision: string, operation: CleanupOperation): Promise<CleanupPreview>;
+  commitCleanup?(expectedRevision: string, previewId: string): Promise<PublicationProjection>;
   copyFormula?(expectedRevision: string, request: FormulaCopy): Promise<PublicationProjection>;
   newTracker?(): Promise<OpenedProjection>;
   newBudget?(): Promise<OpenedProjection>;

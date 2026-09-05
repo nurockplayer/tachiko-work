@@ -1884,3 +1884,45 @@ to semantic core by virtue of using the API.
 - [Validation engine](validation-engine.md)
 - Issues #10, #17, #27, #28, #29, #32, #33, #48, #49, #50, #93, #94,
   #95, #104
+## Bounded optional-slot initialization
+
+**Decision state: Provisional implementation profile (#259).** The existing
+Accepted Value/Structure/Schema authorization laws still govern this behavior;
+this section does not promote the #29 field-value lifecycle, its exact command
+catalogue, or the following transition details into an Accepted public API.
+
+| Surface | Stability and verification boundary |
+| --- | --- |
+| Absent optional slot to a matching stored scalar, including absence to Number(0) | Provisional bounded `SetFieldValue` admission. Verify declared optional identity, full candidate validity, Value grant and disclosure parity; no arbitrary upsert. |
+| `current_value_kind` absence in capability projection | Provisional DTO encoding; no canonical Null type. Consumers must tolerate a future adapter/version migration. |
+| Cleanup preview/commit and session history clearing | App-private provisional workflow; revision-pinned candidate proof, exact-preview commit, atomic publication and explicit UI history disclosure. |
+
+A future change must reconcile these transition/DTO/session choices against
+Accepted authority, update direct consumers and compatibility tests together,
+and preserve stored typed meaning or reject incompatible input explicitly.
+These tests establish this bounded implementation, not a frozen public wire,
+operation catalogue, portable package migration, or accepted undo contract.
+
+The import/cleanup journey requires distinguishing a missing optional value from
+Number(0), false and empty Text. Initializing a schema-declared optional field
+on an existing entity is the existing SetFieldValue family with Value mutation
+class: entity/schema/field identities and definitions do not change. This is
+not arbitrary upsert, schema strengthening or a new conversion family.
+
+Admission resolves the existing entity and schema definition first. Only an
+absent optional field accepts a matching non-formula typed value. Unknown
+entities/fields, missing required fields, mismatched types, invalid references,
+formula initialization and protected formula replacement remain rejected.
+Candidate validation, exact revision, field/reference disclosure footprints,
+scoped grants and atomic publication still apply. None→Number(0) is a change.
+
+The provisional capability DTO represents this state with null
+current_value_kind; present values retain their prior serialized shape.
+Applicable typed SetFieldValue entries come from the same candidate rule;
+formula reasoning, scenarios and FormulaUpdate require a current value.
+This null is query evidence of absence, not a canonical Null value.
+
+Cleanup previews are request-local and revision-pinned. Commit consumes the
+exact preview. Successful cleanup uses generic publication and clears session
+undo; it never invents a zero-valued inverse for an absent field. This limitation
+must remain visible in the UI and release matrix.

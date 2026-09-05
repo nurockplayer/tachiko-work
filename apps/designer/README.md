@@ -179,3 +179,77 @@ the underlying collection. View names and order cannot retarget bound formulas.
   atomically with the matching semantic snapshot in the browser-only sidecar.
   Same-project Save uses the existing compare-and-replace host boundary;
   failed writes preserve accepted local work and leave it unsaved.
+
+## Imported spreadsheets and cleanup
+
+The private `designer-spreadsheet/v1` [profile](interop-profile.json) is the
+bounded CSV/XLSX path. Choose **Import CSV / XLSX**, inspect the source cells and
+compatibility ledger, explicitly select column types, and accept the import.
+CSV begins as Text; leading zeros and ambiguous dates remain Text unless the
+user selects a valid conversion. Missing cells remain absent optional values.
+Extra typed output columns can be declared during inspection for subsequent
+split or conversion without destroying the source cells.
+
+Hidden worksheets, rows, columns or default rows are blocked explicitly because
+the profile cannot preserve their visibility; they never become visible
+silently through export. Invalid XML, including out-of-root CDATA, is rejected.
+Time-only and elapsed-time formats cannot become canonical Date or Number
+values. Inherited row/column styles are blocked when this profile cannot apply
+them. Workbook/worksheet children and row/column attributes are inventoried
+against the bounded mapping: known source-only presentation has explicit export-loss
+findings, and unknown constructs block acceptance.
+Source formula caches are evidence only: supported formulas are rebound and
+calculated by Rust even when caches are absent or stale errors. This does not
+admit unsupported formulas or bypass validation of their XML structure.
+Currency display is bounded to the declared JPY/USD patterns, including Excel
+locale tokens. Other currency/locale patterns use ordinary Number display;
+the complete source number format is retained unless explicitly changed.
+Numeric sections with different currency/percentage markers, or value-dependent
+conditions, also use ordinary Number display without choosing an active section.
+Mixed Number/Date/time semantics across numeric format sections are blocked;
+the adapter does not choose conditional sections to infer a canonical type.
+The bounded format lexer distinguishes calendar months from contextual minutes,
+retains recognized literal/currency presentation, and rejects unknown tokens.
+Implied formats use the finite 28-entry OpenXML All Languages table; scientific,
+fraction and calendar patterns are retained, while numeric Time values still block.
+CSV and XLSX inspection share the output-representation check. Completed typed
+imports, including extra-column labels, must also pass that check before a
+candidate is exposed or installed. XML-illegal Text therefore blocks import;
+legal Unicode, tabs and line breaks remain data. Numeric values cannot retain
+date/time formats that would change their type on XLSX reimport.
+Checkbox property-bag loss is disclosed only for the complete recognized
+checkbox chain; unknown nodes, attributes or namespaces block acceptance.
+Worksheet names must satisfy the same bounded XLSX name rules at inspection
+and export, including case-insensitive uniqueness.
+
+The existing table and Rust formula tools edit the imported collections.
+Sorting/filtering change only the view and target stable identities. Cleanup
+supports trim, literal replacement, split into two selected existing Text
+columns, conversion into an existing typed output, missing-value fill and
+stable first-row deduplication by a selected key. Each operation previews an
+atomic, revision-pinned change. Successful cleanup clears session Undo/Redo;
+the UI discloses this before commit. Formula authoring/copy retains the same
+history and scalar-replacement limitations as Budget.
+
+Save/Save As stores canonical project bytes, source mappings, original source
+bytes, compatibility ledger and table views in the existing atomic private
+Browser host record. Opening validates the sidecar against the admitted
+candidate before replacing the resident. This browser-local record is not a
+portable backup or a public storage format.
+
+Export rebuilds values and numeric formulas from the current Rust snapshot.
+XLSX emits all mapped sheets, supported basic styles and widths. No-header CSV
+projects receive an explicit output header conversion, with A1 formulas shifted
+consistently; the original source/header setting is unchanged. CSV exports only
+the selected sheet's values and loses formulas, formatting and other sheets.
+CSV refuses formula-leading literal Text or headers that another spreadsheet
+reader could activate; typed XLSX keeps those strings literal.
+Both download paths require review and acknowledgement of the structured loss
+ledger. Unsupported original parts stay only in the retained source and are
+never executed or silently advertised as editable/exported equivalents.
+
+Fixtures under `tests/fixtures/interop` include synthetic ordinary data actually
+opened/saved by LibreOffice and synthetic hostile inventories. These establish
+a bounded test profile, not compatibility with every Excel feature or a
+Microsoft Excel certification. The source provenance note distinguishes real
+reference-tool evidence from constructed hostile inputs.

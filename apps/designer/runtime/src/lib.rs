@@ -30,6 +30,16 @@ use tachiko_workspace_engine::{
 };
 use thiserror::Error;
 
+pub mod interop_adapter;
+mod interop_document;
+mod interop_number_format;
+use interop_document::PendingCleanup;
+pub use interop_document::{
+    CleanupChange, CleanupOperation, CleanupPreview, ImportColumnSpec, ImportFieldType,
+    ImportSelection, ImportedProjection, InteropMetadata, SpreadsheetExportProjection,
+    import_workbook, inspect_imported_project, validate_import_metadata,
+};
+
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 
@@ -105,6 +115,14 @@ pub enum DesignerRequest {
         target: FieldTarget,
         input: ScalarEditInput,
     },
+    PreviewCleanup {
+        expected_revision: String,
+        operation: CleanupOperation,
+    },
+    CommitCleanup {
+        expected_revision: String,
+        preview_id: String,
+    },
     CopyFormula {
         expected_revision: String,
         source: FieldTarget,
@@ -129,6 +147,10 @@ pub enum DesignerResponse {
     Table(TableProjection),
     Fields(FieldBatchProjection),
     Published(PublicationProjection),
+    CleanupPreview(CleanupPreview),
+    ImportPreview(Box<interop_adapter::SourceWorkbook>),
+    Imported(Box<ImportedProjection>),
+    SpreadsheetExported(SpreadsheetExportProjection),
     ProjectExported(ProjectExportProjection),
 }
 
@@ -447,6 +469,7 @@ pub struct DesignerRuntime {
     row_namespace: String,
     undo: Vec<HistoryEntry>,
     redo: Vec<HistoryEntry>,
+    pending_cleanup: Option<PendingCleanup>,
 }
 
 #[derive(Clone)]
@@ -540,6 +563,7 @@ impl DesignerRuntime {
             row_namespace: occurrence_id.to_owned(),
             undo: Vec::new(),
             redo: Vec::new(),
+            pending_cleanup: None,
         };
         runtime.ensure_supported_project()?;
         Ok(runtime)
@@ -631,6 +655,18 @@ impl DesignerRuntime {
                 &target,
                 &input,
             )?)),
+            DesignerRequest::PreviewCleanup {
+                expected_revision,
+                operation,
+            } => Ok(DesignerResponse::CleanupPreview(
+                self.preview_cleanup(&expected_revision, &operation)?,
+            )),
+            DesignerRequest::CommitCleanup {
+                expected_revision,
+                preview_id,
+            } => Ok(DesignerResponse::Published(
+                self.commit_cleanup(&expected_revision, &preview_id)?,
+            )),
             DesignerRequest::CopyFormula {
                 expected_revision,
                 source,
@@ -888,6 +924,20 @@ impl DesignerRuntime {
         Ok(publication)
     }
 
+    // The trusted host supplies a fresh UUID per occurrence. Callers compare
+    // the complete opaque token; its spelling is not a semantic or security API.
+    fn next_proposal_id(&mut self) -> Result<ProposalId, DesignerError> {
+        let serial = self
+            .proposal_serial
+            .checked_add(1)
+            .ok_or_else(|| tracker_error("proposal identity counter exhausted"))?;
+        self.proposal_serial = serial;
+        Ok(ProposalId::from(format!(
+            "designer-proposal/{}/{serial}",
+            self.row_namespace
+        )))
+    }
+
     fn update_formula(
         &mut self,
         expected_revision: &str,
@@ -903,8 +953,7 @@ impl DesignerRuntime {
             snapshot.document(),
             &self.principal,
         )?;
-        self.proposal_serial = self.proposal_serial.saturating_add(1);
-        let proposal_id = ProposalId::from(format!("designer-formula-{}", self.proposal_serial));
+        let proposal_id = self.next_proposal_id()?;
         lifecycle.propose_formula_update(
             snapshot.document_scope(),
             snapshot.document(),
@@ -1117,8 +1166,7 @@ impl DesignerRuntime {
             Self::from_document(candidate, PREFLIGHT_OCCURRENCE)?;
         }
         let snapshot = self.session.export_snapshot();
-        self.proposal_serial = self.proposal_serial.saturating_add(1);
-        let proposal_id = ProposalId::from(format!("designer-edit-{}", self.proposal_serial));
+        let proposal_id = self.next_proposal_id()?;
         let body = SemanticPatchBody::atomic_batch(commands)?;
         self.lifecycle.propose(
             snapshot.document_scope(),
@@ -2588,6 +2636,7 @@ fn designer_lifecycle(
             (OperationFamily::AppendEntity, MutationClass::Structure),
             (OperationFamily::RemoveEntity, MutationClass::Structure),
             (OperationFamily::RemoveEntity, MutationClass::Destructive),
+            (OperationFamily::RemoveEntity, MutationClass::Formula),
         ]
         .into_iter()
         .flat_map(|(family, class)| {
@@ -2930,7 +2979,10 @@ mod tests {
             assert!(
                 runtime
                     .lifecycle
-                    .proposal_history(&ProposalId::from(format!("designer-formula-{serial}")))
+                    .proposal_history(&ProposalId::from(format!(
+                        "designer-proposal/{}/{serial}",
+                        runtime.row_namespace
+                    )))
                     .is_err()
             );
             assert_eq!(runtime.export_project("resident/0").unwrap().bytes, before);
@@ -2942,7 +2994,10 @@ mod tests {
         assert!(
             runtime
                 .lifecycle
-                .proposal_history(&ProposalId::from("designer-formula-33"))
+                .proposal_history(&ProposalId::from(format!(
+                    "designer-proposal/{}/33",
+                    runtime.row_namespace
+                )))
                 .is_err()
         );
         assert_eq!(
@@ -2955,6 +3010,48 @@ mod tests {
                 .and_then(super::CalculationProjection::number),
             Some(1201.0)
         );
+    }
+
+    #[test]
+    fn exhausted_proposal_identity_counter_never_reuses_or_publishes() {
+        let mut runtime = DesignerRuntime::budget("00000000-0000-4000-8000-000000000000").unwrap();
+        let operation = super::CleanupOperation::Convert {
+            source: "utilities.planned".into(),
+            destination: "utilities.actual".into(),
+        };
+        let pending = runtime.preview_cleanup("resident/0", &operation).unwrap();
+        let before = runtime.export_project("resident/0").unwrap().bytes;
+        runtime.proposal_serial = u64::MAX - 1;
+        let last = runtime.next_proposal_id().unwrap();
+        assert_ne!(last.as_str(), pending.preview_id);
+        for _ in 0..2 {
+            assert!(runtime.next_proposal_id().is_err());
+            assert!(runtime.preview_cleanup("resident/0", &operation).is_err());
+            assert!(
+                runtime
+                    .update_formula("resident/0", &"rent.planned".into(), "1300")
+                    .is_err()
+            );
+            assert!(
+                runtime
+                    .publish_commands(
+                        "resident/0",
+                        vec![super::SemanticCommand::SetFieldValue {
+                            field: super::FieldRef::new("utilities", "actual"),
+                            value: super::Value::Number(super::Number::new(170.0).unwrap()),
+                        }]
+                    )
+                    .is_err()
+            );
+            assert_eq!(runtime.proposal_serial, u64::MAX);
+            assert_eq!(
+                runtime.pending_cleanup.as_ref().unwrap().preview_id,
+                pending.preview_id
+            );
+            assert_eq!(runtime.export_project("resident/0").unwrap().bytes, before);
+            assert!(runtime.undo.is_empty());
+            assert!(runtime.redo.is_empty());
+        }
     }
 
     #[test]

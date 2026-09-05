@@ -1,3 +1,4 @@
+import { parseInteropState, type InteropState } from "./interop-state.ts";
 import type { FieldProjection, TableProjection } from "./runtime/protocol.ts";
 import { parseBudgetViews, type BudgetViews } from "./budget-views.ts";
 export type CellStyle = {
@@ -10,6 +11,7 @@ export type CellStyle = {
 export type NumberFormat = "number" | "percentage" | "currency-jpy" | "currency-usd";
 export type TrackerView = {
     budgetViews?: BudgetViews;
+    interop?: InteropState;
     version: 1;
     cells: Record<string, CellStyle>;
     order: string[];
@@ -45,7 +47,10 @@ export function parseTrackerView(input?: string, collectionIds?: string[]): Trac
             throw new Error("Saved Budget layout requires authoritative project collection IDs.");
         budgetViews = parseBudgetViews(view.budgetViews, collectionIds);
     }
-    return { ...(view as Omit<TrackerView, "formats">), formats: formats as Record<string, NumberFormat>, ...(budgetViews === undefined ? {} : { budgetViews }) };
+    if (view.interop !== undefined && collectionIds === undefined)
+        throw new Error("Saved spreadsheet layout requires authoritative project collection IDs.");
+    const interop = view.interop === undefined ? undefined : parseInteropState(view.interop, collectionIds);
+    return { ...(interop === undefined ? {} : {interop}), ...(view as Omit<TrackerView, "formats">), ...(interop === undefined ? {} : {interop}), formats: formats as Record<string, NumberFormat>, ...(budgetViews === undefined ? {} : { budgetViews }) };
 }
 export function displayField(field?: FieldProjection): string {
     if (field?.diagnostics.length)

@@ -21,6 +21,259 @@ use tachiko_workspace_engine::{
 const NOW: TrustedInstant = TrustedInstant::new(10);
 const EXPIRY: TrustedInstant = TrustedInstant::new(20);
 
+fn optional_slot_document(field_type: tachiko_workspace_engine::FieldType) -> Document {
+    let mut document = game_balance_document("game", "Game");
+    document.schemas.get_mut("weapons").unwrap().fields.insert(
+        "optional".into(),
+        tachiko_workspace_engine::FieldDefinition {
+            id: "optional".into(),
+            key: "optional".into(),
+            field_type,
+            required: false,
+        },
+    );
+    document
+}
+
+fn optional_value_authority(scope: ScopedSemanticSubject) -> PatchLifecycle {
+    let mut lifecycle = lifecycle();
+    grant(
+        &mut lifecycle,
+        "optional-values",
+        "human-editor",
+        vec![
+            query_requirement(),
+            GrantRequirement::mutation(
+                AuthorizationAction::Propose,
+                OperationFamily::SetFieldValue,
+                MutationClass::Value,
+                scope.clone(),
+            )
+            .unwrap(),
+            GrantRequirement::mutation(
+                AuthorizationAction::Execute,
+                OperationFamily::SetFieldValue,
+                MutationClass::Value,
+                scope,
+            )
+            .unwrap(),
+        ],
+    );
+    lifecycle
+}
+
+#[test]
+fn declared_optional_slots_initialize_with_only_value_authority_without_placeholder() {
+    use tachiko_workspace_engine::FieldType;
+    for (field_type, value) in [
+        (FieldType::Number, number(0.0)),
+        (FieldType::Text, Value::Text(String::new())),
+        (FieldType::Boolean, Value::Boolean(false)),
+        (FieldType::Date, Value::Date("2026-09-01".parse().unwrap())),
+        (
+            FieldType::Reference {
+                schema: "weapons".into(),
+            },
+            Value::Reference("iron_sword".into()),
+        ),
+    ] {
+        let document = optional_slot_document(field_type);
+        let original = document.clone();
+        let mut lifecycle =
+            optional_value_authority(field_scope("iron_sword", "weapons", "optional"));
+        let proposal = propose(
+            &mut lifecycle,
+            &document,
+            "initialize",
+            SemanticPatchBody::command(field_command("iron_sword", "optional", value.clone())),
+            "human-editor",
+        );
+        let preview = lifecycle
+            .preview(
+                &document_scope_id(),
+                &document,
+                &revision("r1"),
+                &proposal,
+                &principal("human-editor"),
+                NOW,
+            )
+            .unwrap();
+        assert_eq!(
+            preview.risk.mutation_classes,
+            BTreeSet::from([MutationClass::Value])
+        );
+        assert!(preview.semantic_changes.iter().any(|change| matches!(change, SemanticChange::FieldAdded { field, value: added } if field == &FieldRef::new("iron_sword", "optional") && added == &value)));
+        let mut publication = TestPublication::new(document, "r1", "r2");
+        lifecycle
+            .execute(
+                &proposal,
+                None,
+                &principal("human-editor"),
+                &mut publication,
+                NOW,
+            )
+            .unwrap();
+        assert_eq!(publication.publish_calls, 1);
+        assert_eq!(
+            publication.document.entities["iron_sword"].fields["optional"],
+            value
+        );
+        assert_eq!(publication.document.schemas, original.schemas);
+        assert!(
+            !original.entities["iron_sword"]
+                .fields
+                .contains_key("optional")
+        );
+        assert_eq!(publication.document.entities.len(), original.entities.len());
+    }
+}
+
+#[test]
+fn optional_initialization_rejects_wrong_type_unknown_required_and_formula_values() {
+    use tachiko_workspace_engine::FieldType;
+    let optional = optional_slot_document(FieldType::Number);
+    let mut required = optional.clone();
+    required
+        .schemas
+        .get_mut("weapons")
+        .unwrap()
+        .fields
+        .get_mut("optional")
+        .unwrap()
+        .required = true;
+    for (document, field, value) in [
+        (optional.clone(), "optional", Value::Text("0".to_owned())),
+        (optional.clone(), "unknown", number(0.0)),
+        (required, "optional", number(0.0)),
+        (
+            optional.clone(),
+            "optional",
+            Value::Formula(Expression::Number(Number::new(1.0).unwrap())),
+        ),
+        (optional, "dps", number(0.0)),
+        (
+            optional_slot_document(FieldType::Reference {
+                schema: "weapons".into(),
+            }),
+            "optional",
+            Value::Reference("missing-entity".into()),
+        ),
+        (
+            optional_slot_document(FieldType::Reference {
+                schema: "weapons".into(),
+            }),
+            "optional",
+            Value::Reference("alric".into()),
+        ),
+    ] {
+        let original = document.clone();
+        let mut lifecycle = optional_value_authority(document_scope());
+        let id = proposal_id("reject-initialization");
+        assert!(
+            lifecycle
+                .propose(
+                    &document_scope_id(),
+                    &document,
+                    &revision("r1"),
+                    ProposalRequest::new(
+                        id.clone(),
+                        revision("r1"),
+                        SemanticPatchBody::command(field_command("iron_sword", field, value)),
+                        principal("human-editor")
+                    ),
+                    NOW
+                )
+                .is_err()
+        );
+        let mut publication = TestPublication::new(document.clone(), "r1", "r2");
+        assert!(
+            lifecycle
+                .execute(&id, None, &principal("human-editor"), &mut publication, NOW)
+                .is_err()
+        );
+        assert_eq!(publication.publish_calls, 0);
+        assert_eq!(publication.document, original);
+        assert_eq!(document, original);
+    }
+}
+
+#[test]
+fn optional_value_initialization_obeys_field_and_occurrence_scopes() {
+    let document = optional_slot_document(tachiko_workspace_engine::FieldType::Number);
+    for scope in [
+        field_scope("tempered_blade", "weapons", "optional"),
+        ScopedSemanticSubject::new(
+            DocumentScopeId::from("another-occurrence"),
+            DocumentId::from("game"),
+            SemanticScope::Document,
+        ),
+    ] {
+        let mut lifecycle = optional_value_authority(scope);
+        assert!(
+            lifecycle
+                .propose(
+                    &document_scope_id(),
+                    &document,
+                    &revision("r1"),
+                    ProposalRequest::new(
+                        proposal_id("scope-denied"),
+                        revision("r1"),
+                        SemanticPatchBody::command(field_command(
+                            "iron_sword",
+                            "optional",
+                            number(0.0)
+                        )),
+                        principal("human-editor")
+                    ),
+                    NOW
+                )
+                .is_err()
+        );
+        assert!(lifecycle.execution_receipts().is_empty());
+        assert!(
+            !document.entities["iron_sword"]
+                .fields
+                .contains_key("optional")
+        );
+    }
+}
+
+#[test]
+fn invalid_later_batch_command_cannot_publish_an_initialized_optional_prefix() {
+    let document = optional_slot_document(tachiko_workspace_engine::FieldType::Number);
+    let original = document.clone();
+    let mut lifecycle = optional_value_authority(document_scope());
+    let id = proposal_id("atomic-optional");
+    assert!(
+        lifecycle
+            .propose(
+                &document_scope_id(),
+                &document,
+                &revision("r1"),
+                ProposalRequest::new(
+                    id.clone(),
+                    revision("r1"),
+                    SemanticPatchBody::atomic_batch(vec![
+                        field_command("iron_sword", "optional", number(0.0)),
+                        field_command("iron_sword", "attack_interval", number(0.0)),
+                    ])
+                    .unwrap(),
+                    principal("human-editor")
+                ),
+                NOW
+            )
+            .is_err()
+    );
+    let mut publication = TestPublication::new(document, "r1", "r2");
+    assert!(
+        lifecycle
+            .execute(&id, None, &principal("human-editor"), &mut publication, NOW)
+            .is_err()
+    );
+    assert_eq!(publication.publish_calls, 0);
+    assert_eq!(publication.document, original);
+}
+
 fn number(value: f64) -> Value {
     Value::Number(Number::new(value).unwrap())
 }

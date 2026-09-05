@@ -1,0 +1,1341 @@
+{
+  "schema": "tachiko-259-fixture-evidence/v1",
+  "reference_tool": "LibreOfficeDev 26.8.0.0.alpha0 2c87e51eeaa2b413ff4ae097b2705eea1995d8e5",
+  "reference_open_save": true,
+  "second_profile_reopen": true,
+  "recalculation_proven_by_replacing_all_12_formula_caches_with_minus_999": true,
+  "expected_cells": {
+    "Budget": {
+      "A1": {
+        "raw": "0",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Item",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "B1": {
+        "raw": "1",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Amount",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "C1": {
+        "raw": "2",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Active",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "D1": {
+        "raw": "3",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Date",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "E1": {
+        "raw": "4",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Percent",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "F1": {
+        "raw": "5",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Currency",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "G1": {
+        "raw": "6",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Add",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "H1": {
+        "raw": "7",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Subtract",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "I1": {
+        "raw": "8",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Multiply",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "J1": {
+        "raw": "9",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Divide",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "K1": {
+        "raw": "10",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Minimum",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "L1": {
+        "raw": "11",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Maximum",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "A2": {
+        "raw": "12",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "00123",
+        "formula": null,
+        "result": null,
+        "number_format": "@",
+        "known_limitations": []
+      },
+      "B2": {
+        "raw": "120",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 120.0,
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "C2": {
+        "raw": "1",
+        "ooxml_type": "b",
+        "type": "Boolean",
+        "value": true,
+        "formula": "TRUE()",
+        "result": true,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "D2": {
+        "raw": "46270",
+        "ooxml_type": "n",
+        "type": "Date",
+        "value": "2026-09-05",
+        "formula": null,
+        "result": null,
+        "number_format": "yyyy\\-mm\\-dd",
+        "known_limitations": []
+      },
+      "E2": {
+        "raw": "0.15",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 0.15,
+        "formula": null,
+        "result": null,
+        "number_format": "0.00%",
+        "known_limitations": []
+      },
+      "F2": {
+        "raw": "120",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 120.0,
+        "formula": null,
+        "result": null,
+        "number_format": "\\$#,##0.00",
+        "known_limitations": []
+      },
+      "G2": {
+        "raw": "160",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 160.0,
+        "formula": "B2+B3",
+        "result": 160.0,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "H2": {
+        "raw": "80",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 80.0,
+        "formula": "B2-B3",
+        "result": 80.0,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "I2": {
+        "raw": "240",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 240.0,
+        "formula": "B2*Rates!$B$2",
+        "result": 240.0,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "J2": {
+        "raw": "60",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 60.0,
+        "formula": "B2/Rates!$B$2",
+        "result": 60.0,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "K2": {
+        "raw": "40",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 40.0,
+        "formula": "MIN(B2,B3)",
+        "result": 40.0,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "L2": {
+        "raw": "200",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 200.0,
+        "formula": "MAX(B2,Rates!B3)",
+        "result": 200.0,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "A3": {
+        "raw": "13",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Transport",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "B3": {
+        "raw": "40",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 40.0,
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "C3": {
+        "raw": "0",
+        "ooxml_type": "b",
+        "type": "Boolean",
+        "value": false,
+        "formula": "FALSE()",
+        "result": false,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "D3": {
+        "raw": "46270",
+        "ooxml_type": "n",
+        "type": "Date",
+        "value": "2026-09-05",
+        "formula": null,
+        "result": null,
+        "number_format": "yyyy\\-mm\\-dd",
+        "known_limitations": []
+      },
+      "E3": {
+        "raw": "0.25",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 0.25,
+        "formula": null,
+        "result": null,
+        "number_format": "0.00%",
+        "known_limitations": []
+      },
+      "F3": {
+        "raw": "40",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 40.0,
+        "formula": null,
+        "result": null,
+        "number_format": "\\$#,##0.00",
+        "known_limitations": []
+      },
+      "G3": {
+        "raw": "42",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 42.0,
+        "formula": "B3+Rates!$B$2",
+        "result": 42.0,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "H3": {
+        "raw": "38",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 38.0,
+        "formula": "B3-Rates!$B$2",
+        "result": 38.0,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "I3": {
+        "raw": "80",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 80.0,
+        "formula": "B3*Rates!$B$2",
+        "result": 80.0,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "J3": {
+        "raw": "20",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 20.0,
+        "formula": "B3/Rates!$B$2",
+        "result": 20.0,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "K3": {
+        "raw": "40",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 40.0,
+        "formula": "MIN(B3,Rates!B3)",
+        "result": 40.0,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "L3": {
+        "raw": "200",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 200.0,
+        "formula": "MAX(B3,Rates!B3)",
+        "result": 200.0,
+        "number_format": "General",
+        "known_limitations": []
+      }
+    },
+    "Rates": {
+      "A1": {
+        "raw": "14",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Name",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "B1": {
+        "raw": "15",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Factor",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "C1": {
+        "raw": "2",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Active",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "D1": {
+        "raw": "3",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Date",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "E1": {
+        "raw": "4",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Percent",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "F1": {
+        "raw": "5",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Currency",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "A2": {
+        "raw": "16",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Base",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "B2": {
+        "raw": "2",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 2.0,
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "C2": {
+        "raw": "1",
+        "ooxml_type": "b",
+        "type": "Boolean",
+        "value": true,
+        "formula": "TRUE()",
+        "result": true,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "D2": {
+        "raw": "46270",
+        "ooxml_type": "n",
+        "type": "Date",
+        "value": "2026-09-05",
+        "formula": null,
+        "result": null,
+        "number_format": "yyyy\\-mm\\-dd",
+        "known_limitations": []
+      },
+      "E2": {
+        "raw": "0.05",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 0.05,
+        "formula": null,
+        "result": null,
+        "number_format": "0.00%",
+        "known_limitations": []
+      },
+      "F2": {
+        "raw": "10",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 10.0,
+        "formula": null,
+        "result": null,
+        "number_format": "\\$#,##0.00",
+        "known_limitations": []
+      },
+      "A3": {
+        "raw": "17",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Cap",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "B3": {
+        "raw": "200",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 200.0,
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "C3": {
+        "raw": "0",
+        "ooxml_type": "b",
+        "type": "Boolean",
+        "value": false,
+        "formula": "FALSE()",
+        "result": false,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "D3": {
+        "raw": "46270",
+        "ooxml_type": "n",
+        "type": "Date",
+        "value": "2026-09-05",
+        "formula": null,
+        "result": null,
+        "number_format": "yyyy\\-mm\\-dd",
+        "known_limitations": []
+      },
+      "E3": {
+        "raw": "0.1",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 0.1,
+        "formula": null,
+        "result": null,
+        "number_format": "0.00%",
+        "known_limitations": []
+      },
+      "F3": {
+        "raw": "20",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 20.0,
+        "formula": null,
+        "result": null,
+        "number_format": "\\$#,##0.00",
+        "known_limitations": []
+      }
+    }
+  },
+  "reopened_cells": {
+    "Budget": {
+      "A1": {
+        "raw": "0",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Item",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "B1": {
+        "raw": "1",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Amount",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "C1": {
+        "raw": "2",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Active",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "D1": {
+        "raw": "3",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Date",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "E1": {
+        "raw": "4",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Percent",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "F1": {
+        "raw": "5",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Currency",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "G1": {
+        "raw": "6",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Add",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "H1": {
+        "raw": "7",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Subtract",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "I1": {
+        "raw": "8",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Multiply",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "J1": {
+        "raw": "9",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Divide",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "K1": {
+        "raw": "10",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Minimum",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "L1": {
+        "raw": "11",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Maximum",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "A2": {
+        "raw": "12",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "00123",
+        "formula": null,
+        "result": null,
+        "number_format": "@",
+        "known_limitations": []
+      },
+      "B2": {
+        "raw": "120",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 120.0,
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "C2": {
+        "raw": "1",
+        "ooxml_type": "b",
+        "type": "Boolean",
+        "value": true,
+        "formula": "TRUE()",
+        "result": true,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "D2": {
+        "raw": "46270",
+        "ooxml_type": "n",
+        "type": "Date",
+        "value": "2026-09-05",
+        "formula": null,
+        "result": null,
+        "number_format": "yyyy\\-mm\\-dd",
+        "known_limitations": []
+      },
+      "E2": {
+        "raw": "0.15",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 0.15,
+        "formula": null,
+        "result": null,
+        "number_format": "0.00%",
+        "known_limitations": []
+      },
+      "F2": {
+        "raw": "120",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 120.0,
+        "formula": null,
+        "result": null,
+        "number_format": "\\$#,##0.00",
+        "known_limitations": []
+      },
+      "G2": {
+        "raw": "160",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 160.0,
+        "formula": "B2+B3",
+        "result": 160.0,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "H2": {
+        "raw": "80",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 80.0,
+        "formula": "B2-B3",
+        "result": 80.0,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "I2": {
+        "raw": "240",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 240.0,
+        "formula": "B2*Rates!$B$2",
+        "result": 240.0,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "J2": {
+        "raw": "60",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 60.0,
+        "formula": "B2/Rates!$B$2",
+        "result": 60.0,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "K2": {
+        "raw": "40",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 40.0,
+        "formula": "MIN(B2,B3)",
+        "result": 40.0,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "L2": {
+        "raw": "200",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 200.0,
+        "formula": "MAX(B2,Rates!B3)",
+        "result": 200.0,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "A3": {
+        "raw": "13",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Transport",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "B3": {
+        "raw": "40",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 40.0,
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "C3": {
+        "raw": "0",
+        "ooxml_type": "b",
+        "type": "Boolean",
+        "value": false,
+        "formula": "FALSE()",
+        "result": false,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "D3": {
+        "raw": "46270",
+        "ooxml_type": "n",
+        "type": "Date",
+        "value": "2026-09-05",
+        "formula": null,
+        "result": null,
+        "number_format": "yyyy\\-mm\\-dd",
+        "known_limitations": []
+      },
+      "E3": {
+        "raw": "0.25",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 0.25,
+        "formula": null,
+        "result": null,
+        "number_format": "0.00%",
+        "known_limitations": []
+      },
+      "F3": {
+        "raw": "40",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 40.0,
+        "formula": null,
+        "result": null,
+        "number_format": "\\$#,##0.00",
+        "known_limitations": []
+      },
+      "G3": {
+        "raw": "42",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 42.0,
+        "formula": "B3+Rates!$B$2",
+        "result": 42.0,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "H3": {
+        "raw": "38",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 38.0,
+        "formula": "B3-Rates!$B$2",
+        "result": 38.0,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "I3": {
+        "raw": "80",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 80.0,
+        "formula": "B3*Rates!$B$2",
+        "result": 80.0,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "J3": {
+        "raw": "20",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 20.0,
+        "formula": "B3/Rates!$B$2",
+        "result": 20.0,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "K3": {
+        "raw": "40",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 40.0,
+        "formula": "MIN(B3,Rates!B3)",
+        "result": 40.0,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "L3": {
+        "raw": "200",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 200.0,
+        "formula": "MAX(B3,Rates!B3)",
+        "result": 200.0,
+        "number_format": "General",
+        "known_limitations": []
+      }
+    },
+    "Rates": {
+      "A1": {
+        "raw": "14",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Name",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "B1": {
+        "raw": "15",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Factor",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "C1": {
+        "raw": "2",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Active",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "D1": {
+        "raw": "3",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Date",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "E1": {
+        "raw": "4",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Percent",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "F1": {
+        "raw": "5",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Currency",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "A2": {
+        "raw": "16",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Base",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "B2": {
+        "raw": "2",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 2.0,
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "C2": {
+        "raw": "1",
+        "ooxml_type": "b",
+        "type": "Boolean",
+        "value": true,
+        "formula": "TRUE()",
+        "result": true,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "D2": {
+        "raw": "46270",
+        "ooxml_type": "n",
+        "type": "Date",
+        "value": "2026-09-05",
+        "formula": null,
+        "result": null,
+        "number_format": "yyyy\\-mm\\-dd",
+        "known_limitations": []
+      },
+      "E2": {
+        "raw": "0.05",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 0.05,
+        "formula": null,
+        "result": null,
+        "number_format": "0.00%",
+        "known_limitations": []
+      },
+      "F2": {
+        "raw": "10",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 10.0,
+        "formula": null,
+        "result": null,
+        "number_format": "\\$#,##0.00",
+        "known_limitations": []
+      },
+      "A3": {
+        "raw": "17",
+        "ooxml_type": "s",
+        "type": "Text",
+        "value": "Cap",
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "B3": {
+        "raw": "200",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 200.0,
+        "formula": null,
+        "result": null,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "C3": {
+        "raw": "0",
+        "ooxml_type": "b",
+        "type": "Boolean",
+        "value": false,
+        "formula": "FALSE()",
+        "result": false,
+        "number_format": "General",
+        "known_limitations": []
+      },
+      "D3": {
+        "raw": "46270",
+        "ooxml_type": "n",
+        "type": "Date",
+        "value": "2026-09-05",
+        "formula": null,
+        "result": null,
+        "number_format": "yyyy\\-mm\\-dd",
+        "known_limitations": []
+      },
+      "E3": {
+        "raw": "0.1",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 0.1,
+        "formula": null,
+        "result": null,
+        "number_format": "0.00%",
+        "known_limitations": []
+      },
+      "F3": {
+        "raw": "20",
+        "ooxml_type": "n",
+        "type": "Number",
+        "value": 20.0,
+        "formula": null,
+        "result": null,
+        "number_format": "\\$#,##0.00",
+        "known_limitations": []
+      }
+    }
+  },
+  "csv_cells": {
+    "A1": {
+      "raw": "ID",
+      "type": "Text",
+      "formula": null,
+      "result": null,
+      "known_limitations": []
+    },
+    "B1": {
+      "raw": "Name",
+      "type": "Text",
+      "formula": null,
+      "result": null,
+      "known_limitations": []
+    },
+    "C1": {
+      "raw": "Combined",
+      "type": "Text",
+      "formula": null,
+      "result": null,
+      "known_limitations": []
+    },
+    "D1": {
+      "raw": "Amount",
+      "type": "Text",
+      "formula": null,
+      "result": null,
+      "known_limitations": []
+    },
+    "E1": {
+      "raw": "Date",
+      "type": "Text",
+      "formula": null,
+      "result": null,
+      "known_limitations": []
+    },
+    "F1": {
+      "raw": "Notes",
+      "type": "Text",
+      "formula": null,
+      "result": null,
+      "known_limitations": []
+    },
+    "A2": {
+      "raw": "00123",
+      "type": "Text",
+      "formula": null,
+      "result": null,
+      "known_limitations": [
+        "leading_zero_text"
+      ]
+    },
+    "B2": {
+      "raw": " Ada ",
+      "type": "Text",
+      "formula": null,
+      "result": null,
+      "known_limitations": []
+    },
+    "C2": {
+      "raw": "Ada|Lovelace",
+      "type": "Text",
+      "formula": null,
+      "result": null,
+      "known_limitations": []
+    },
+    "D2": {
+      "raw": "12.50",
+      "type": "Text",
+      "formula": null,
+      "result": null,
+      "known_limitations": []
+    },
+    "E2": {
+      "raw": "09/05/2026",
+      "type": "Text",
+      "formula": null,
+      "result": null,
+      "known_limitations": [
+        "ambiguous_date_do_not_infer"
+      ]
+    },
+    "F2": {
+      "raw": "quoted, comma",
+      "type": "Text",
+      "formula": null,
+      "result": null,
+      "known_limitations": []
+    },
+    "A3": {
+      "raw": "00456",
+      "type": "Text",
+      "formula": null,
+      "result": null,
+      "known_limitations": [
+        "leading_zero_text"
+      ]
+    },
+    "B3": {
+      "raw": "Grace",
+      "type": "Text",
+      "formula": null,
+      "result": null,
+      "known_limitations": []
+    },
+    "C3": {
+      "raw": "Grace|Hopper",
+      "type": "Text",
+      "formula": null,
+      "result": null,
+      "known_limitations": []
+    },
+    "D3": {
+      "raw": "7",
+      "type": "Text",
+      "formula": null,
+      "result": null,
+      "known_limitations": []
+    },
+    "E3": {
+      "raw": "2026-09-05",
+      "type": "Text",
+      "formula": null,
+      "result": null,
+      "known_limitations": []
+    },
+    "F3": {
+      "raw": "first line\nsecond line",
+      "type": "Text",
+      "formula": null,
+      "result": null,
+      "known_limitations": []
+    },
+    "A4": {
+      "raw": "00123",
+      "type": "Text",
+      "formula": null,
+      "result": null,
+      "known_limitations": [
+        "leading_zero_text"
+      ]
+    },
+    "B4": {
+      "raw": " Ada ",
+      "type": "Text",
+      "formula": null,
+      "result": null,
+      "known_limitations": []
+    },
+    "C4": {
+      "raw": "Ada|Lovelace",
+      "type": "Text",
+      "formula": null,
+      "result": null,
+      "known_limitations": []
+    },
+    "D4": {
+      "raw": "12.50",
+      "type": "Text",
+      "formula": null,
+      "result": null,
+      "known_limitations": []
+    },
+    "E4": {
+      "raw": "09/05/2026",
+      "type": "Text",
+      "formula": null,
+      "result": null,
+      "known_limitations": [
+        "ambiguous_date_do_not_infer"
+      ]
+    },
+    "F4": {
+      "raw": "quoted, comma",
+      "type": "Text",
+      "formula": null,
+      "result": null,
+      "known_limitations": []
+    },
+    "A5": {
+      "raw": "00789",
+      "type": "Text",
+      "formula": null,
+      "result": null,
+      "known_limitations": [
+        "leading_zero_text"
+      ]
+    },
+    "B5": {
+      "raw": "林",
+      "type": "Text",
+      "formula": null,
+      "result": null,
+      "known_limitations": []
+    },
+    "C5": {
+      "raw": "林|小明",
+      "type": "Text",
+      "formula": null,
+      "result": null,
+      "known_limitations": []
+    },
+    "D5": {
+      "raw": "",
+      "type": "Text",
+      "formula": null,
+      "result": null,
+      "known_limitations": [
+        "missing_value_requires_explicit_policy"
+      ]
+    },
+    "E5": {
+      "raw": "2026-09-05",
+      "type": "Text",
+      "formula": null,
+      "result": null,
+      "known_limitations": []
+    },
+    "F5": {
+      "raw": "  trim me  ",
+      "type": "Text",
+      "formula": null,
+      "result": null,
+      "known_limitations": []
+    }
+  },
+  "fixture_sha256": {
+    "ordinary-two-sheet.xlsx": "6d1fc6d1f61c5ad64ba4c80271827ca891e11c3cf7d60f5109ca649010ca6660",
+    "reference/ordinary-two-sheet.xlsx": "81cce4bdfecc8e9832a48cfff4b6e83818c1f169d84d339d9793954655800d63",
+    "reopen/ordinary-two-sheet.xlsx": "b8e432c924c7326e01c851fa6c8a70a7ee5f26597cb4f3f37bdcac5cccb15663",
+    "messy-utf8.csv": "0c8c35f46fc136fd798f211cf9407e9c9dcdbc3e997bbe2a5a4b92ac2d003054",
+    "cache-challenge.xlsx": "33a8d6632c9c7946e215848ee621e68cdd627bd9003884a6de0b7786e775c7c1",
+    "reopen/cache-challenge.xlsx": "07c7e2c58be51f50221d1b1522a9690090b840f6ad5ce0a85ae1578792277f21"
+  },
+  "limitations": [
+    "Synthetic fixture estate; no claim of broad OOXML compatibility.",
+    "No macros, external links, charts, validation rules or pivot tables in this ordinary estate.",
+    "Date XLSX values use adapter-only 1900-system integer serial 46270.",
+    "Currency and percent remain Number plus number format.",
+    "Reference tool is a LibreOffice development build, not Microsoft Excel.",
+    "CSV ambiguous dates must remain advisory; duplicate rows 2 and 4 intentionally retained."
+  ]
+}

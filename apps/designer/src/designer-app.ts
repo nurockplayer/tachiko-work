@@ -1,3 +1,8 @@
+import { createInteropState } from "./interop-state.ts";
+import { importedNumberFormat } from "./interop-number-format.ts";
+import { emptyGenericTableView, mountInteropTableView, projectInteropTable } from "./interop-table-view.ts";
+import { SpreadsheetImportPanel, mountCleanupPanel, mountFidelityLedger, downloadSpreadsheet } from "./interop-panel.ts";
+import type { CleanupPreview, SpreadsheetFormat, SpreadsheetExport, FidelityFinding } from "./runtime/interop-protocol.ts";
 import { reconcileTextEdit, normalizeLineEndings } from "./text-edit.ts";
 import { TrackerGrid } from "./tracker-grid.ts";
 import { defaultBudgetViews, addBudgetView, duplicateBudgetView, renameBudgetView, reorderBudgetViews, deleteBudgetView } from "./budget-views.ts";
@@ -71,6 +76,7 @@ export function mountDesigner(
   let notice: Notice | null = null;
   let startupFailure: string | null = null;
   let busy = false;
+  let pendingExport: {exported: SpreadsheetExport; format: SpreadsheetFormat; ledger: FidelityFinding[]} | null = null;
   let destroyed = false;
   let occurrenceClosed = false;
   const pendingTextBuffers = new Map<string, string>();
@@ -133,9 +139,10 @@ export function mountDesigner(
       return;
     }
     const snapshot = store.snapshot();
+    const displayTable = importedDisplayTable(snapshot.table);
     root.innerHTML = designerMarkup(
       bootstrap,
-      snapshot.table,
+      displayTable,
       snapshot.currentness,
       selectedCollection,
       notice,
@@ -167,7 +174,7 @@ export function mountDesigner(
       const panel = document.createElement("div");
       root.querySelector(".table-workbench")?.append(panel);
       mountBudgetTools(panel, {
-        tables: budgetTables,
+        tables: budgetTables.map(labelImportedTable),
         currentCollection: snapshot.table.collection.id,
         disabled: busy || snapshot.currentness !== "current" || budgetTables.some(t => t.revision !== snapshot.table.revision),
         draft: budgetToolsDraft,
@@ -187,8 +194,126 @@ export function mountDesigner(
         },
       });
     }
+    renderInterop();
     hydrateDraftControls();
     bindInteractions();
+  };
+
+  const importPanel = new SpreadsheetImportPanel(client, async (source, options, selection) => {
+    if (busy || !client.importSpreadsheet || !confirmDiscardDirtyOccurrence("Import")) throw new Error("Import cancelled; current project retained.");
+    busy = true; notice = null; render();
+    try {
+      const imported = await client.importSpreadsheet(source.bytes, source.format, options, selection, candidate => {
+        createInteropState(candidate, source);
+        const views = defaultBudgetViews(candidate.opened.bootstrap.collections.map(c => c.id));
+        for (const view of views.views) view.name = candidate.metadata.sheets.find(sheet => sheet.schema_id === view.collection)?.name.slice(0, 80) ?? "Imported sheet";
+        parseTrackerView(JSON.stringify({...emptyTrackerView(), budgetViews: views}), candidate.opened.bootstrap.collections.map(c => c.id));
+      });
+      const interop = createInteropState(imported, source);
+      installOpenedOccurrence(imported.opened);
+      tracker.view.interop = interop;
+      tracker.view.budgetViews = defaultBudgetViews(imported.opened.bootstrap.collections.map(c => c.id));
+      for (const view of tracker.view.budgetViews.views) view.name = interop.metadata.sheets.find(sheet => sheet.schema_id === view.collection)?.name.slice(0, 80) ?? "Imported sheet";
+      for (const sheet of interop.metadata.sheets) for (const row of sheet.rows) row.styles.forEach((style, index) => {
+        const column = sheet.columns[index]; if (!column) return;
+        const key = cellKey(row.entity_id, column.field_id);
+        tracker.view.cells[key] = {bold: style.bold, fill: style.fill !== null, wrap: style.wrap, border: style.border, ...(style.alignment && ["left", "center", "right"].includes(style.alignment) ? {align: style.alignment as "left" | "center" | "right"} : {})};
+        const format = importedNumberFormat(style.number_format);
+        if (format !== "number") tracker.view.formats[key] = format;
+      });
+      durability.install(imported.opened.bootstrap.revision, false);
+      await refreshBudgetTables(imported.opened.bootstrap.revision);
+      notice = {tone: "success", title: "Spreadsheet imported", message: "Inspect, sort, filter and edit the imported tables. Save commits the data, original source and compatibility ledger in this browser.", diagnostics: []};
+      return imported;
+    } finally { busy = false; syncBeforeUnloadGuard(); render(); }
+  }, () => { render(); });
+
+  const labelImportedTable = (table: TableProjection): TableProjection => {
+    const sheet = tracker.view.interop?.metadata.sheets.find(item => item.schema_id === table.collection.id);
+    if (!sheet) return table;
+    return {...table, columns: table.columns.map(column => ({...column, key: sheet.columns.find(item => item.field_id === column.id)?.name ?? column.key}))};
+  };
+  const importedDisplayTable = (table: TableProjection): TableProjection => {
+    const interop = tracker.view.interop;
+    if (!interop) return table;
+    return projectInteropTable(labelImportedTable(table), interop.tableViews[table.collection.id] ?? emptyGenericTableView());
+  };
+  const commitCleanup = async (preview: CleanupPreview): Promise<void> => {
+    if (busy || !store || !client.commitCleanup || hasEditDrafts()) throw new Error("Apply or cancel pending edits before cleanup.");
+    busy = true; render(); let published = false;
+    try {
+      const publication = await client.commitCleanup(preview.revision, preview.preview_id);
+      published = true; tracker.invalidateHistory(); store.beginPublication(publication); durability.observe(publication.resulting_revision);
+      await refreshBudgetTables(publication.resulting_revision);
+      const table = budgetTables.find(item => item.collection.key === selectedCollection);
+      if (!table) throw new Error("Current imported table is unavailable.");
+      store = createProjectionStore(table);
+      if (bootstrap) bootstrap = {...bootstrap, revision: publication.resulting_revision, collections: budgetTables.map(item => item.collection)};
+      notice = {tone: "success", title: "Cleanup committed", message: "The exact preview was published atomically. Session Undo/Redo was cleared; the original source is retained.", diagnostics: []};
+    } catch (error) { showFailure(error, published); throw error; }
+    finally { busy = false; syncBeforeUnloadGuard(); render(); }
+  };
+  const renderInterop = (): void => {
+    const host = root.querySelector<HTMLElement>(".table-workbench");
+    if (!host || !store) return;
+    importPanel.mount(host, busy);
+    const interop = tracker.view.interop;
+    if (!interop) return;
+    const table = labelImportedTable(store.snapshot().table);
+    const current = store.snapshot().currentness === "current";
+    const controls = document.createElement("div"); host.prepend(controls);
+    mountInteropTableView(controls, table, interop.tableViews[table.collection.id] ?? emptyGenericTableView(), busy || !current || hasEditDrafts(), next => {
+      const focused = document.activeElement instanceof HTMLInputElement ? document.activeElement : null;
+      const name = focused?.getAttribute("aria-label"); const start = focused?.selectionStart; const end = focused?.selectionEnd;
+      interop.tableViews[table.collection.id] = next; reflectUnsavedState(); render();
+      if (name) { const input = [...root.querySelectorAll<HTMLInputElement>("input")].find(item => item.getAttribute("aria-label") === name); input?.focus(); if (start != null && end != null) input?.setSelectionRange(start, end); }
+    });
+    mountCleanupPanel(host, table, busy || !current || hasEditDrafts(), async operation => {
+      if (!client.previewCleanup || !store || busy || hasEditDrafts()) throw new Error("Cleanup is unavailable while edits are pending.");
+      return client.previewCleanup(store.snapshot().table.revision, operation);
+    }, commitCleanup);
+    mountFidelityLedger(host, interop.ledger);
+    const exportPanel = document.createElement("section"); exportPanel.setAttribute("aria-label", "Export spreadsheet");
+    for (const format of ["csv", "xlsx"] as SpreadsheetFormat[]) {
+      const button = document.createElement("button"); button.textContent = `Export ${format.toUpperCase()}`; button.disabled = busy || !current || hasEditDrafts();
+      button.addEventListener("click", () => { void (async () => {
+        if (!client.exportSpreadsheet || busy || !store) return;
+        busy = true; render();
+        try {
+          const metadata = structuredClone(interop.metadata);
+          for (const sheet of metadata.sheets) for (const row of sheet.rows) row.styles.forEach((style, index) => {
+            const col = sheet.columns[index]; if (!col) return; const key = cellKey(row.entity_id, col.field_id);
+            const viewStyle = tracker.view.cells[key]; if (viewStyle) { style.fill = viewStyle.fill ? (style.fill ?? "FFF1BA") : null; style.bold = viewStyle.bold ?? false; style.wrap = viewStyle.wrap ?? false; style.border = viewStyle.border ?? false; style.alignment = viewStyle.align ?? null; }
+            const original = style.number_format;
+            const importedFormat = importedNumberFormat(original);
+            const format = tracker.view.formats[key];
+            // Preserve source precision/pattern unless the user selected a different format.
+            if (format && format !== importedFormat) style.number_format = {number: "0.00", percentage: "0.00%", "currency-usd": '$0.00', "currency-jpy": '¥0'}[format];
+          });
+          const exported = await client.exportSpreadsheet(store.snapshot().table.revision, metadata, format, table.collection.id);
+          if (!destroyed) pendingExport = {exported, format, ledger: [...interop.ledger, ...exported.ledger]};
+        } catch (error) { showProjectFailure("Spreadsheet not exported", error); }
+        finally { busy = pendingExport !== null; render(); }
+      })(); }); exportPanel.append(button);
+    }
+    host.append(exportPanel);
+    if (pendingExport) {
+      const captured = pendingExport;
+      const review = document.createElement("section"); review.setAttribute("aria-label", "Export compatibility review");
+      mountFidelityLedger(review, captured.ledger);
+      const message = document.createElement("p"); message.textContent = `Review export conversions and losses for revision ${captured.exported.revision}. Original unsupported parts remain in the saved source; exported files contain only the declared spreadsheet profile.`; review.append(message);
+      const finish = (): void => { pendingExport = null; busy = false; render(); };
+      const accept = document.createElement("button"); accept.textContent = `Acknowledge losses and download ${captured.format.toUpperCase()}`;
+      accept.addEventListener("click", () => {
+        try {
+          if (store?.snapshot().currentness !== "current" || store.snapshot().table.revision !== captured.exported.revision || hasEditDrafts()) throw new Error("The captured spreadsheet is no longer current. Export again after applying or cancelling pending edits.");
+          downloadSpreadsheet(captured.exported, captured.format);
+        } catch (error) { showProjectFailure("Spreadsheet not exported", error); }
+        finally { finish(); }
+      });
+      const cancel = document.createElement("button"); cancel.textContent = "Cancel export"; cancel.addEventListener("click", finish);
+      review.append(accept, cancel); host.append(review);
+    }
   };
 
   const showFailure = (error: unknown, published: boolean): void => {
@@ -477,6 +602,10 @@ export function mountDesigner(
       // for Budget sidecars while retaining legacy Tracker compatibility.
       const candidate = await client.inspectProject?.(snapshot.bytes.slice(0));
       const view = parseTrackerView(snapshot.presentation, candidate?.bootstrap.collections.map(collection => collection.id));
+      if (view.interop) {
+        if (!client.inspectImportedProject) throw new Error("Imported project validation is unavailable.");
+        await client.inspectImportedProject(snapshot.bytes.slice(0), view.interop.metadata);
+      }
       const durableBytes = snapshot.bytes.slice(0);
       await installProjectBytes(snapshot.bytes);
       tracker.reset(view); savedView = JSON.stringify(view);
@@ -920,7 +1049,7 @@ export function mountDesigner(
   return {
     ready,
     destroy: () => {
-      destroyed = true;
+      destroyed = true; pendingExport = null; busy = false;
       syncBeforeUnloadGuard();
       root.replaceChildren();
       void client.close();

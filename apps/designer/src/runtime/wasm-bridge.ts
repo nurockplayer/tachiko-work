@@ -1,3 +1,4 @@
+import type { SpreadsheetExport, SpreadsheetOperation } from "./interop-protocol.ts";
 import type {
   DesignerRequest,
   ProjectExport,
@@ -13,6 +14,7 @@ type DesignerWasmExports = {
   tachiko_designer_project_reserve(length: number): number;
   tachiko_designer_project_open(): void;
   tachiko_designer_project_inspect(): void;
+  tachiko_designer_spreadsheet_run(): void;
   tachiko_designer_project_export(): void;
   tachiko_designer_project_release(): void;
   tachiko_designer_project_close(): void;
@@ -24,6 +26,7 @@ const MAX_WIRE_REQUEST_BYTES = 65_536;
 const MAX_PROJECT_TRANSFER_BYTES = 64 * 1024 * 1024;
 
 export type DesignerWasmBridge = {
+  spreadsheet(operation: SpreadsheetOperation, bytes: Uint8Array): DesignerWireReply | {status: "spreadsheet_exported"; export: SpreadsheetExport};
   request(request: DesignerRequest): DesignerWireReply;
   inspectProject(bytes: Uint8Array): DesignerWireReply;
   openProject(bytes: Uint8Array, occurrenceId: string): DesignerWireReply;
@@ -74,6 +77,23 @@ export async function createDesignerWasmBridge(
   });
 
   return {
+    spreadsheet: (operation, bytes) => {
+      if (bytes.byteLength > MAX_PROJECT_TRANSFER_BYTES || !writeRequest(encoder.encode(JSON.stringify(operation)))) {
+        return tooLargeReply("The spreadsheet request exceeds the private bridge limits.");
+      }
+      const pointer = exports.tachiko_designer_project_reserve(bytes.byteLength);
+      new Uint8Array(exports.memory.buffer, pointer, bytes.byteLength).set(bytes);
+      exports.tachiko_designer_spreadsheet_run();
+      const reply = readReply();
+      if (reply.status !== "ok" || reply.response.type !== "spreadsheet_exported") return reply;
+      const receipt = reply.response.payload;
+      try {
+        if (!Number.isSafeInteger(receipt.byte_length) || receipt.byte_length < 0 || receipt.byte_length > MAX_PROJECT_TRANSFER_BYTES) throw new Error("Invalid spreadsheet export length.");
+        if (exports.tachiko_designer_project_len() !== receipt.byte_length) throw new Error("Designer spreadsheet export length did not match its receipt.");
+        const output = new Uint8Array(exports.memory.buffer, exports.tachiko_designer_project_ptr(), receipt.byte_length).slice().buffer;
+        return {status: "spreadsheet_exported", export: {revision: receipt.revision, bytes: output, ledger: receipt.ledger}};
+      } finally { exports.tachiko_designer_project_release(); }
+    },
     request: (request) => {
       const input = encoder.encode(JSON.stringify(request));
       if (input.length > MAX_WIRE_REQUEST_BYTES) {

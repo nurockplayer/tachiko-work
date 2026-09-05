@@ -59,7 +59,7 @@ for (const corruption of ["unknown collection", "null view", "null budgetViews"]
     await expect(page.getByRole("heading", { name: "Driver Tracker", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Append row", exact: true }).click();
     const taskCell = page.locator('[role="gridcell"][data-row="0"][data-col="0"]');
-    await expect(taskCell).toBeVisible();
+    await expect(taskCell).toHaveText("");
     const originalTask = await taskCell.textContent();
     await taskCell.click();
     await page.getByLabel("Cell value", { exact: true }).fill("Keep my accepted Tracker work");

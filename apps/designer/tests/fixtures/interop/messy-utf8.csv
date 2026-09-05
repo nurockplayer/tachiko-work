@@ -1,0 +1,6 @@
+ID,Name,Combined,Amount,Date,Notes
+00123," Ada ",Ada|Lovelace,12.50,09/05/2026,"quoted, comma"
+00456,Grace,Grace|Hopper,7,2026-09-05,"first line
+second line"
+00123," Ada ",Ada|Lovelace,12.50,09/05/2026,"quoted, comma"
+00789,林,林|小明,,2026-09-05,"  trim me  "

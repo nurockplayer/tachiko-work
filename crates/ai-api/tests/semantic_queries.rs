@@ -243,6 +243,34 @@ fn suggest_field_change_is_inert_and_requires_approval() {
 }
 
 #[test]
+fn optional_value_initialization_suggestions_remain_inert_and_require_approval() {
+    let mut document = balance_document(100.0);
+    let mut definition = number_field("optional");
+    definition.required = false;
+    document
+        .schemas
+        .get_mut("weapon")
+        .unwrap()
+        .fields
+        .insert("optional".into(), definition);
+    let original = document.clone();
+    let target = FieldRef::new("sword", "optional");
+    let suggestion = suggest_field_change(&document, target.clone(), number(0.0)).unwrap();
+    assert!(suggestion.requires_approval);
+    assert_eq!(suggestion.value, number(0.0));
+    assert_eq!(document, original);
+    assert!(!document.entities["sword"].fields.contains_key("optional"));
+    assert!(matches!(
+        suggest_field_change(&document, target.clone(), Value::Text("0".to_owned())),
+        Err(SuggestionError::TypeMismatch { .. })
+    ));
+    assert!(matches!(
+        suggest_field_change(&document, target, Value::Formula(numeric(0.0))),
+        Err(SuggestionError::MissingField { .. })
+    ));
+}
+
+#[test]
 fn typed_formula_suggestions_are_inert_validated_and_require_approval() {
     let document = balance_document(100.0);
     let original = document.clone();
