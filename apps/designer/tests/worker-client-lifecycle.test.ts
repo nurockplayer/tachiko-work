@@ -126,8 +126,8 @@ describe("Designer Worker request lifecycle", () => {
     worker.reply({ id: worker.request(0).id, status: "error", error: failure });
     worker.reply({ id: worker.request(1).id, status: "ok", response: { type: "table", payload: table("current") } });
     const [first, second] = await results;
-    expect(first?.status).toBe("rejected");
-    if (first?.status !== "rejected") throw new Error("Runtime failure resolved a request");
+    expect(first.status).toBe("rejected");
+    if (first.status !== "rejected") throw new Error("Runtime failure resolved a request");
     expect(first.reason).toBeInstanceOf(DesignerRuntimeError);
     expect(first.reason).toMatchObject({ message: failure.message, failure });
     expect(second).toEqual({ status: "fulfilled", value: table("current") });
