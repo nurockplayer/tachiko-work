@@ -11,6 +11,23 @@ import {
 } from "../src/tracker-model.ts";
 import type { FieldProjection, StoredValueProjection, TableProjection } from "../src/runtime/protocol.ts";
 
+it("requires authoritative collection IDs for spreadsheet state even without Budget views", () => {
+  const view = emptyTrackerView();
+  view.interop = {
+    version: 1,
+    metadata: { version: 1, sheets: [{
+      schema_id: "sheet", name: "Imported", has_header: true,
+      columns: [{ field_id: "amount", name: "Amount", width: null }], rows: [],
+    }] },
+    ledger: [], source: { name: "data.csv", format: "csv", base64: "YQ==" }, tableViews: {},
+  };
+  const input = JSON.stringify(view);
+  expect(view.budgetViews).toBeUndefined();
+  expect(() => parseTrackerView(input)).toThrow("requires authoritative project collection IDs");
+  expect(() => parseTrackerView(input, ["foreign"])).toThrow();
+  expect(parseTrackerView(input, ["sheet"])).toEqual(view);
+});
+
 function field(id: string, stored: StoredValueProjection | null, error = false): FieldProjection {
   return {
     target: { entity: id, field: "value" },

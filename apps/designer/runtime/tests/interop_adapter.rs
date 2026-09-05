@@ -405,3 +405,58 @@ fn csv_does_not_activate_literal_text_as_external_formulas() {
             .contains("Ada,-1")
     );
 }
+
+#[test]
+fn hostile_fixture_manifest_matches_archive_entry_sizes() {
+    let root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/interop/hostile");
+    let manifest: serde_json::Value = serde_json::from_str(include_str!(
+        "../../tests/fixtures/interop/hostile/inventory.json"
+    ))
+    .unwrap();
+    assert_eq!(manifest["source_file"], "../reference-two-sheet.xlsx");
+    let fixtures = manifest["fixtures"].as_array().unwrap();
+    assert_eq!(fixtures.len(), 8);
+    let mut paths = vec![root.join(manifest["source_file"].as_str().unwrap())];
+    paths.extend(
+        fixtures
+            .iter()
+            .map(|f| root.join(f["file"].as_str().unwrap())),
+    );
+    for (index, fixture) in fixtures.iter().enumerate() {
+        let bytes = std::fs::read(&paths[index + 1]).unwrap();
+        assert_eq!(
+            bytes.len() as u64,
+            fixture["compressed_bytes"].as_u64().unwrap()
+        );
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        // zip collapses duplicate names. Fixture 07 contains two identical workbook.xml entries
+        // (1417 bytes each); account for its hidden duplicate without changing archive admission.
+        let duplicate = fixture["file"] == "07-duplicate-zip-entry.xlsx";
+        let duplicate_count = u64::from(duplicate);
+        assert_eq!(
+            archive.len() as u64 + duplicate_count,
+            fixture["entry_count"].as_u64().unwrap()
+        );
+        let expanded: u64 = (0..archive.len())
+            .map(|entry| archive.by_index(entry).unwrap().size())
+            .sum();
+        if duplicate {
+            assert_eq!(archive.by_name("xl/workbook.xml").unwrap().size(), 1417);
+        }
+        assert_eq!(
+            expanded + duplicate_count * 1417,
+            fixture["expanded_bytes"].as_u64().unwrap()
+        );
+        if fixture["file"] == "08-expanded-limit.xlsx" {
+            assert!(expanded < MAX_EXPANDED_BYTES as u64);
+            let part = archive.by_name("xl/synthetic-expanded.xml").unwrap();
+            assert_eq!(part.size(), 524_311);
+            assert_eq!(part.compressed_size(), 549);
+            assert_eq!(
+                fixture["expected_inventory"][0]["shipped_expanded_limit_bytes"],
+                MAX_EXPANDED_BYTES,
+            );
+        }
+    }
+}

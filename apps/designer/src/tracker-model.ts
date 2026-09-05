@@ -47,6 +47,8 @@ export function parseTrackerView(input?: string, collectionIds?: string[]): Trac
             throw new Error("Saved Budget layout requires authoritative project collection IDs.");
         budgetViews = parseBudgetViews(view.budgetViews, collectionIds);
     }
+    if (view.interop !== undefined && collectionIds === undefined)
+        throw new Error("Saved spreadsheet layout requires authoritative project collection IDs.");
     const interop = view.interop === undefined ? undefined : parseInteropState(view.interop, collectionIds);
     return { ...(interop === undefined ? {} : {interop}), ...(view as Omit<TrackerView, "formats">), ...(interop === undefined ? {} : {interop}), formats: formats as Record<string, NumberFormat>, ...(budgetViews === undefined ? {} : { budgetViews }) };
 }

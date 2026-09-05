@@ -1,5 +1,6 @@
 {
   "schema": "tachiko-259-synthetic-inventory/v1",
+  "source_file": "../reference-two-sheet.xlsx",
   "source_sha256": "81cce4bdfecc8e9832a48cfff4b6e83818c1f169d84d339d9793954655800d63",
   "reference_tool_opened": false,
   "fixtures": [
@@ -206,18 +207,19 @@
       "entry_count": 12,
       "expected_inventory": [
         {
-          "construct": "expanded_size_limit_probe",
+          "construct": "unknown_package_part",
           "location": "xl/synthetic-expanded.xml",
           "expanded_bytes": 524311,
-          "test_limit_bytes": 262144,
-          "action": "with explicit 256 KiB expanded limit, reject before full XML materialization; bounded half-MiB concept fixture"
+          "action": "Below the shipped 8 MiB expanded limit; inventory unknown_package_part as blocking. This fixture does not test shipped expanded-limit rejection.",
+          "shipped_expanded_limit_bytes": 8388608
         }
       ],
       "construction_verified": true,
       "reference_tool_opened": false,
       "limitations": [
         "Synthetic mutation of reference fixture; parts may not constitute a complete standards-valid workbook.",
-        "Never execute source content or use a reference spreadsheet tool to open these adversarial fixtures."
+        "Never execute source content or use a reference spreadsheet tool to open these adversarial fixtures.",
+        "Originally constructed for a synthetic 256 KiB limit experiment; that limit is not the shipped profile. The runtime test expanded_limit_is_checked_before_xml_materialization generates an input above the actual shipped limit."
       ]
     }
   ]

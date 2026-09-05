@@ -89,6 +89,7 @@ export async function createDesignerWasmBridge(
       const receipt = reply.response.payload;
       try {
         if (!Number.isSafeInteger(receipt.byte_length) || receipt.byte_length < 0 || receipt.byte_length > MAX_PROJECT_TRANSFER_BYTES) throw new Error("Invalid spreadsheet export length.");
+        if (exports.tachiko_designer_project_len() !== receipt.byte_length) throw new Error("Designer spreadsheet export length did not match its receipt.");
         const output = new Uint8Array(exports.memory.buffer, exports.tachiko_designer_project_ptr(), receipt.byte_length).slice().buffer;
         return {status: "spreadsheet_exported", export: {revision: receipt.revision, bytes: output, ledger: receipt.ledger}};
       } finally { exports.tachiko_designer_project_release(); }

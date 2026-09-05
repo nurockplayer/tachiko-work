@@ -1886,6 +1886,23 @@ to semantic core by virtue of using the API.
   #95, #104
 ## Bounded optional-slot initialization
 
+**Decision state: Provisional implementation profile (#259).** The existing
+Accepted Value/Structure/Schema authorization laws still govern this behavior;
+this section does not promote the #29 field-value lifecycle, its exact command
+catalogue, or the following transition details into an Accepted public API.
+
+| Surface | Stability and verification boundary |
+| --- | --- |
+| Absent optional slot to a matching stored scalar, including absence to Number(0) | Provisional bounded `SetFieldValue` admission. Verify declared optional identity, full candidate validity, Value grant and disclosure parity; no arbitrary upsert. |
+| `current_value_kind` absence in capability projection | Provisional DTO encoding; no canonical Null type. Consumers must tolerate a future adapter/version migration. |
+| Cleanup preview/commit and session history clearing | App-private provisional workflow; revision-pinned candidate proof, exact-preview commit, atomic publication and explicit UI history disclosure. |
+
+A future change must reconcile these transition/DTO/session choices against
+Accepted authority, update direct consumers and compatibility tests together,
+and preserve stored typed meaning or reject incompatible input explicitly.
+These tests establish this bounded implementation, not a frozen public wire,
+operation catalogue, portable package migration, or accepted undo contract.
+
 The import/cleanup journey requires distinguishing a missing optional value from
 Number(0), false and empty Text. Initializing a schema-declared optional field
 on an existing entity is the existing SetFieldValue family with Value mutation

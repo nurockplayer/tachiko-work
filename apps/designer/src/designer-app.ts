@@ -1,7 +1,7 @@
 import { createInteropState } from "./interop-state.ts";
 import { emptyGenericTableView, mountInteropTableView, projectInteropTable } from "./interop-table-view.ts";
 import { SpreadsheetImportPanel, mountCleanupPanel, mountFidelityLedger, downloadSpreadsheet } from "./interop-panel.ts";
-import type { CleanupPreview, SpreadsheetFormat } from "./runtime/interop-protocol.ts";
+import type { CleanupPreview, SpreadsheetFormat, SpreadsheetExport, FidelityFinding } from "./runtime/interop-protocol.ts";
 import { reconcileTextEdit, normalizeLineEndings } from "./text-edit.ts";
 import { TrackerGrid } from "./tracker-grid.ts";
 import { defaultBudgetViews, addBudgetView, duplicateBudgetView, renameBudgetView, reorderBudgetViews, deleteBudgetView } from "./budget-views.ts";
@@ -75,6 +75,7 @@ export function mountDesigner(
   let notice: Notice | null = null;
   let startupFailure: string | null = null;
   let busy = false;
+  let pendingExport: {exported: SpreadsheetExport; format: SpreadsheetFormat; ledger: FidelityFinding[]} | null = null;
   let destroyed = false;
   let occurrenceClosed = false;
   const pendingTextBuffers = new Map<string, string>();
@@ -291,19 +292,29 @@ export function mountDesigner(
             if (format && format !== importedFormat) style.number_format = {number: "0.00", percentage: "0.00%", "currency-usd": '$0.00', "currency-jpy": '¥0'}[format];
           });
           const exported = await client.exportSpreadsheet(store.snapshot().table.revision, metadata, format, table.collection.id);
-          const panel = root.querySelector<HTMLElement>(".table-workbench");
-          if (!panel) throw new Error("Export presentation is unavailable.");
-          const review = document.createElement("section"); review.setAttribute("aria-label", "Export compatibility review");
-          mountFidelityLedger(review, [...interop.ledger, ...exported.ledger]);
-          const message = document.createElement("p"); message.textContent = "Review export conversions and losses. Original unsupported parts remain in the saved source; exported files contain only the declared spreadsheet profile."; review.append(message);
-          const accept = document.createElement("button"); accept.textContent = `Acknowledge losses and download ${format.toUpperCase()}`;
-          const cancel = document.createElement("button"); cancel.textContent = "Cancel export";
-          await new Promise<void>(resolve => { accept.addEventListener("click", () => { downloadSpreadsheet(exported, format); resolve(); }, {once: true}); cancel.addEventListener("click", () => { resolve(); }, {once: true}); review.append(accept, cancel); panel.append(review); });
+          if (!destroyed) pendingExport = {exported, format, ledger: [...interop.ledger, ...exported.ledger]};
         } catch (error) { showProjectFailure("Spreadsheet not exported", error); }
-        finally { busy = false; render(); }
+        finally { busy = pendingExport !== null; render(); }
       })(); }); exportPanel.append(button);
     }
     host.append(exportPanel);
+    if (pendingExport) {
+      const captured = pendingExport;
+      const review = document.createElement("section"); review.setAttribute("aria-label", "Export compatibility review");
+      mountFidelityLedger(review, captured.ledger);
+      const message = document.createElement("p"); message.textContent = `Review export conversions and losses for revision ${captured.exported.revision}. Original unsupported parts remain in the saved source; exported files contain only the declared spreadsheet profile.`; review.append(message);
+      const finish = (): void => { pendingExport = null; busy = false; render(); };
+      const accept = document.createElement("button"); accept.textContent = `Acknowledge losses and download ${captured.format.toUpperCase()}`;
+      accept.addEventListener("click", () => {
+        try {
+          if (store?.snapshot().currentness !== "current" || store.snapshot().table.revision !== captured.exported.revision || hasEditDrafts()) throw new Error("The captured spreadsheet is no longer current. Export again after applying or cancelling pending edits.");
+          downloadSpreadsheet(captured.exported, captured.format);
+        } catch (error) { showProjectFailure("Spreadsheet not exported", error); }
+        finally { finish(); }
+      });
+      const cancel = document.createElement("button"); cancel.textContent = "Cancel export"; cancel.addEventListener("click", finish);
+      review.append(accept, cancel); host.append(review);
+    }
   };
 
   const showFailure = (error: unknown, published: boolean): void => {
@@ -1039,7 +1050,7 @@ export function mountDesigner(
   return {
     ready,
     destroy: () => {
-      destroyed = true;
+      destroyed = true; pendingExport = null; busy = false;
       syncBeforeUnloadGuard();
       root.replaceChildren();
       void client.close();
