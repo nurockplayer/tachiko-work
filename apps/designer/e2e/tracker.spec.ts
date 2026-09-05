@@ -186,3 +186,25 @@ test("empty tracker accepts quoted multiline clipboard text and keeps multiline 
   await page.getByRole("button", {name: "Open project", exact: true}).click();
   await expect(page.getByLabel("Cell value", {exact: true})).toHaveValue("\nEdited\nSecond");
 });
+
+test("selection follows its entity through sorted edits and semantic undo/redo", async ({ page }) => {
+  await createTracker(page);
+  await cell(page, 0, 0).click();
+  await paste(page, "alpha\t1\tfalse\nbeta\t2\tfalse");
+  await expect(rows(page)).toHaveCount(2);
+  await page.getByLabel("Sort column").selectOption("task");
+  await cell(page, 0, 0).click();
+  await page.getByLabel("Cell value", { exact: true }).fill("zeta");
+  await page.getByRole("button", { name: "Apply to selection", exact: true }).click();
+  await expect(cell(page, 1, 0)).toHaveText("zeta");
+  await expect(cell(page, 1, 0)).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(cell(page, 0, 0)).toHaveText("alpha");
+  await expect(cell(page, 0, 0)).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("button", { name: "Redo", exact: true }).click();
+  await expect(cell(page, 1, 0)).toHaveText("zeta");
+  await expect(cell(page, 1, 0)).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("button", { name: "Remove selected rows", exact: true }).click();
+  await expect(rows(page)).toHaveCount(1);
+  await expect(cell(page, 0, 0)).toHaveText("beta");
+});

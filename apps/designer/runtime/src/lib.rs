@@ -436,6 +436,7 @@ struct HistoryEntry {
 
 #[derive(Clone)]
 struct CollectionSpec {
+    direct_tracker_rows: bool,
     summary: CollectionSummary,
     columns: Vec<ColumnSpec>,
     entities: Vec<tachiko_workspace_engine::EntityId>,
@@ -446,6 +447,7 @@ struct ColumnSpec {
     id: FieldId,
     key: String,
     field_type: FieldType,
+    required: bool,
 }
 
 impl DesignerRuntime {
@@ -468,6 +470,8 @@ impl DesignerRuntime {
 
     /// Construct a fresh bounded Designer occurrence from an already-admitted
     /// semantic document. Storage admission remains outside this constructor.
+    /// The trusted host must supply a fresh UUID for every new occurrence,
+    /// including reopening the same project after close or process restart.
     ///
     /// # Errors
     ///
@@ -982,7 +986,7 @@ impl DesignerRuntime {
         inverse: Vec<SemanticCommand>,
     ) -> Result<PublicationProjection, DesignerError> {
         if forward.is_empty() {
-            return Err(tracker_error("the selected values are unchanged"));
+            return Err(PatchLifecycleError::NoChange.into());
         }
         let publication = self.publish_commands(expected, forward.clone())?;
         if self.undo.len() == 64 {
@@ -1232,6 +1236,11 @@ impl DesignerRuntime {
 }
 
 /// Fully admit a canonical project candidate before replacing the occurrence.
+///
+/// `occurrence_id` is a trusted host identity, not an identifier read from the
+/// project. The host must generate a fresh UUID on every open, even when the
+/// same project is reopened. Reusing an occurrence UUID violates this private
+/// authority contract; disposed occurrence identities are not persisted here.
 ///
 /// # Errors
 ///
@@ -1554,11 +1563,13 @@ fn is_canonical_uuid_v4(value: &str) -> bool {
 }
 
 fn is_tracker_spec(spec: &CollectionSpec) -> bool {
-    spec.summary.id == "tracker"
+    spec.direct_tracker_rows
+        && spec.summary.id == "tracker"
         && spec.summary.key == "tracker"
         && spec.columns.len() == 3
         && spec.columns.iter().all(|column| {
-            column.key == column.id.as_str()
+            column.required
+                && column.key == column.id.as_str()
                 && matches!(
                     (column.id.as_str(), &column.field_type),
                     ("task", FieldType::Text)
@@ -1587,6 +1598,18 @@ fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
             (
                 schema.key.to_string(),
                 CollectionSpec {
+                    direct_tracker_rows: entities.iter().all(|id| {
+                        let fields = &document.entities[id].fields;
+                        fields.len() == 3
+                            && fields.iter().all(|(field, value)| {
+                                matches!(
+                                    (field.as_str(), value),
+                                    ("task", Value::Text(_))
+                                        | ("estimate", Value::Number(_))
+                                        | ("done", Value::Boolean(_))
+                                )
+                            })
+                    }),
                     summary,
                     columns: {
                         let mut fields = schema.fields.values().collect::<Vec<_>>();
@@ -1604,6 +1627,7 @@ fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
                         id: field.id.clone(),
                         key: field.key.to_string(),
                         field_type: field.field_type.clone(),
+                        required: field.required,
                     })
                     .collect(),
                     entities,

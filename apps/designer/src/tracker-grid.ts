@@ -26,6 +26,8 @@ export class TrackerGrid {
         number,
         number
     ] = [0, 0];
+    #anchorEntity: string | undefined;
+    #focusEntity: string | undefined;
     #filter = "";
     #sort = "";
     #descending = false;
@@ -35,7 +37,7 @@ export class TrackerGrid {
     readonly #options: Options;
     constructor(options: Options) { this.#options = options; }
     get pending(): boolean { return this.#draft !== null; }
-    reset(view = emptyTrackerView()): void { this.view = view; this.#undo = []; this.#redo = []; this.#anchor = [0, 0]; this.#focus = [0, 0]; this.#filter = ""; this.#sort = ""; this.#draft = null; }
+    reset(view = emptyTrackerView()): void { this.view = view; this.#undo = []; this.#redo = []; this.#anchor = [0, 0]; this.#focus = [0, 0]; this.#anchorEntity = undefined; this.#focusEntity = undefined; this.#table = null; this.#filter = ""; this.#sort = ""; this.#draft = null; }
     #rows(): TableProjection["rows"] {
         if (this.#table === null)
             return [];
@@ -55,8 +57,7 @@ export class TrackerGrid {
     markup(table: TableProjection, busy: boolean): string {
         this.#table = table;
         const rows = this.#rows();
-        this.#focus[0] = Math.min(this.#focus[0], Math.max(rows.length - 1, 0));
-        this.#anchor[0] = Math.min(this.#anchor[0], Math.max(rows.length - 1, 0));
+        this.#reconcileSelection(rows);
         const [top = 0, bottom = 0, left = 0, right = 0] = this.#bounds();
         const disabled = busy ? "disabled" : "";
         const activeRow = rows[this.#focus[0]], activeCol = table.columns[this.#focus[1]];
@@ -94,7 +95,7 @@ export class TrackerGrid {
                 this.#options.failed(new Error("Apply or cancel the cell draft before selecting another cell."));
                 return;
             } this.#focus = [Number(cell.dataset.row), Number(cell.dataset.col)]; if (!event.shiftKey)
-                this.#anchor = [...this.#focus]; this.#options.render(); focusCell(); });
+                this.#anchor = [...this.#focus]; this.#rememberSelection(); this.#options.render(); focusCell(); });
             cell.addEventListener("keydown", event => {
                 if (event.key === "Enter") {
                     root.querySelector<HTMLInputElement>("[aria-label='Cell value']")?.focus();
@@ -152,6 +153,7 @@ export class TrackerGrid {
                 this.#focus = [Math.max(0, Math.min(r, this.#rows().length - 1)), Math.max(0, Math.min(c, 2))];
                 if (!event.shiftKey || event.key === "Tab")
                     this.#anchor = [...this.#focus];
+                this.#rememberSelection();
                 this.#options.render();
                 focusCell();
             });
@@ -186,11 +188,11 @@ export class TrackerGrid {
         root.querySelector<HTMLInputElement>("[data-tracker-filter]")?.addEventListener("change", event => { if (this.pending) {
             this.#options.failed(new Error("Apply or cancel the cell draft before filtering."));
             return;
-        } this.#filter = (event.target as HTMLInputElement).value; this.#anchor = [0, 0]; this.#focus = [0, 0]; this.#options.render(); });
+        } this.#filter = (event.target as HTMLInputElement).value; this.#options.render(); });
         root.querySelector<HTMLSelectElement>("[data-tracker-sort]")?.addEventListener("change", event => { if (this.pending) {
             this.#options.failed(new Error("Apply or cancel the cell draft before sorting."));
             return;
-        } this.#sort = (event.target as HTMLSelectElement).value; this.#anchor = [0, 0]; this.#focus = [0, 0]; this.#options.render(); });
+        } this.#sort = (event.target as HTMLSelectElement).value; this.#options.render(); });
         root.querySelectorAll<HTMLButtonElement>("[data-tracker]").forEach(button => { button.addEventListener("click", () => { void this.#action(button.dataset.tracker ?? "").catch((error: unknown) => { this.#options.failed(error); }); }); });
     }
     async #execute(request: TrackerCommand): Promise<void> { await this.#options.command(request); this.#undo.push({ kind: "semantic" }); this.#redo = []; if (this.#undo.length > 64)
@@ -223,16 +225,25 @@ export class TrackerGrid {
             return original?.kind === "text" ? reconcileTextEdit(original.value, normalizeLineEndings(original.value), value) : value;
         })) });
     }
-    #preserveSelection(change: () => void): void {
+    // Entity IDs persist across table replacements and view reordering. Row
+    // indices are only the current keyboard/range projection of these anchors.
+    #rememberSelection(): void {
         const rows = this.#rows();
-        const anchorId = rows[this.#anchor[0]]?.id;
-        const focusId = rows[this.#focus[0]]?.id;
+        this.#anchorEntity = rows[this.#anchor[0]]?.id;
+        this.#focusEntity = rows[this.#focus[0]]?.id;
+    }
+    #reconcileSelection(rows: TableProjection["rows"]): void {
+        const anchorIndex = rows.findIndex(row => row.id === this.#anchorEntity);
+        const focusIndex = rows.findIndex(row => row.id === this.#focusEntity);
+        const last = Math.max(rows.length - 1, 0);
+        this.#anchor[0] = anchorIndex >= 0 ? anchorIndex : Math.min(this.#anchor[0], last);
+        this.#focus[0] = focusIndex >= 0 ? focusIndex : Math.min(this.#focus[0], last);
+        this.#anchorEntity = rows[this.#anchor[0]]?.id;
+        this.#focusEntity = rows[this.#focus[0]]?.id;
+    }
+    #preserveSelection(change: () => void): void {
         change();
-        const nextRows = this.#rows();
-        const anchorIndex = nextRows.findIndex(row => row.id === anchorId);
-        const focusIndex = nextRows.findIndex(row => row.id === focusId);
-        if (anchorIndex >= 0) this.#anchor[0] = anchorIndex;
-        if (focusIndex >= 0) this.#focus[0] = focusIndex;
+        this.#reconcileSelection(this.#rows());
     }
     #changeView(change: () => void): void { const before = structuredClone(this.view); this.#preserveSelection(change); this.#undo.push({ kind: "view", before, after: structuredClone(this.view) }); this.#redo = []; if (this.#undo.length > 64)
         this.#undo.shift(); this.#options.changed(); this.#options.render(); }
@@ -278,6 +289,7 @@ export class TrackerGrid {
         if (action === "all") {
             this.#anchor = [0, 0];
             this.#focus = [Math.max(0, this.#rows().length - 1), 2];
+            this.#rememberSelection();
             this.#options.render();
             return;
         }
