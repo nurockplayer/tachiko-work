@@ -6,6 +6,237 @@ fn simple() -> SourceWorkbook {
 }
 
 #[test]
+fn shared_and_inline_strings_obey_the_same_rich_text_shapes() {
+    let shared = include_bytes!("../../tests/fixtures/interop/reference-two-sheet.xlsx");
+    let inline = export_xlsx(&simple()).unwrap();
+    let rich = "<r><rPr><b/></rPr><t>La</t></r><r><t>bel</t></r><rPh sb=\"0\" eb=\"1\"><t>ignored</t></rPh>";
+    let shared_rich = mutate(shared, "xl/sharedStrings.xml", |s| {
+        s.replacen("<t xml:space=\"preserve\">Item</t>", rich, 1)
+    });
+    let inline_rich = mutate(&inline, "xl/worksheets/sheet1.xml", |s| {
+        s.replacen("<t xml:space=\"preserve\">Name</t>", rich, 1)
+    });
+    for bytes in [&shared_rich, &inline_rich] {
+        let book = import_xlsx(bytes).unwrap();
+        assert_eq!(book.sheets[0].columns[0].name, "Label");
+        assert!(!book.ledger.iter().any(|f| f.blocking));
+    }
+    for malformed in [
+        "<t><r><t>nested</t></r></t>",
+        "<unknown/>",
+        "<r><t>one</t><t>two</t></r>",
+    ] {
+        let shared_bad = mutate(shared, "xl/sharedStrings.xml", |s| {
+            s.replacen("<t xml:space=\"preserve\">Item</t>", malformed, 1)
+        });
+        assert!(import_xlsx(&shared_bad).is_err());
+        let inline_bad = mutate(&inline, "xl/worksheets/sheet1.xml", |s| {
+            s.replacen("<t xml:space=\"preserve\">Name</t>", malformed, 1)
+        });
+        assert!(
+            import_xlsx(&inline_bad)
+                .unwrap()
+                .ledger
+                .iter()
+                .any(|f| f.blocking)
+        );
+    }
+    let unknown = mutate(shared, "xl/sharedStrings.xml", |s| {
+        s.replace("</sst>", "<unknown/></sst>")
+    });
+    assert!(import_xlsx(&unknown).is_err());
+}
+
+#[test]
+fn formula_cache_cannot_bypass_cell_parent_child_shapes() {
+    let mut book = simple();
+    book.sheets[0].rows[0][1].value = SourceValue::Number { value: 3.0 };
+    book.sheets[0].rows[0][1].formula = Some("1+2".into());
+    let bytes = export_xlsx(&book).unwrap();
+    for invalid in [
+        "<f>1+2</f><v><f>9+9</f></v>",
+        "<f>1+2<c><v>3</v></c></f><v>#VALUE!</v>",
+        "<f>1+2</f><t>wrong parent</t>",
+        "<f>1+2</f><is><v>wrong parent</v></is>",
+        "<f>1+2</f><is><r><t>one</t><t>two</t></r></is>",
+        "<f>1+2</f><is><t><r/></t></is>",
+    ] {
+        let changed = mutate(&bytes, "xl/worksheets/sheet1.xml", |s| {
+            s.replace("t=\"n\"><f>", "t=\"e\"><f>")
+                .replace("<f>1+2</f><v>3</v>", invalid)
+        });
+        let imported = import_xlsx(&changed).unwrap();
+        assert!(
+            imported
+                .ledger
+                .iter()
+                .any(|f| f.blocking && f.code == "scalar_mapping_rejected")
+        );
+    }
+    let rich = mutate(&bytes, "xl/worksheets/sheet1.xml", |s| {
+        s.replace("<t xml:space=\"preserve\">Ada</t>", "<r><rPr><b/></rPr><t>A</t></r><r><t>da</t></r><rPh sb=\"0\" eb=\"1\"><t>ignored</t></rPh><phoneticPr fontId=\"0\"/>")
+    });
+    let imported = import_xlsx(&rich).unwrap();
+    assert_eq!(
+        imported.sheets[0].rows[0][0].value,
+        SourceValue::Text {
+            value: "Ada".into()
+        }
+    );
+    assert!(!imported.ledger.iter().any(|f| f.blocking));
+}
+
+#[test]
+fn unusable_formula_caches_are_evidence_only_but_invalid_structure_stays_blocked() {
+    let mut book = simple();
+    book.sheets[0].rows[0][1].value = SourceValue::Number { value: 3.0 };
+    book.sheets[0].rows[0][1].formula = Some("1+2".into());
+    let bytes = export_xlsx(&book).unwrap();
+    for cache in ["<v>not-a-number</v>", "", "<v>#VALUE!</v>"] {
+        let changed = mutate(&bytes, "xl/worksheets/sheet1.xml", |s| {
+            s.replace("<v>3</v>", cache)
+        });
+        let imported = import_xlsx(&changed).unwrap();
+        assert!(!imported.ledger.iter().any(|f| f.blocking));
+        assert_eq!(
+            imported.sheets[0].rows[0][1].formula.as_deref(),
+            Some("1+2")
+        );
+        assert_eq!(imported.sheets[0].rows[0][1].value, SourceValue::Empty);
+    }
+    let error = mutate(&bytes, "xl/worksheets/sheet1.xml", |s| {
+        s.replace("t=\"n\"><f>", "t=\"e\"><f>")
+            .replace("<v>3</v>", "<v>#VALUE!</v>")
+    });
+    assert!(
+        !import_xlsx(&error)
+            .unwrap()
+            .ledger
+            .iter()
+            .any(|f| f.blocking)
+    );
+    for replacement in [
+        "<f>SUM(1,2)</f>",
+        "<f t=\"shared\"/>",
+        "<f>1+2</f><unknown/>",
+        "<f>1+2</f><f>4+5</f>",
+        "<f>1+2</f><v>123</v>",
+    ] {
+        let changed = mutate(&error, "xl/worksheets/sheet1.xml", |s| {
+            s.replace("<f>1+2</f>", replacement)
+        });
+        assert!(
+            import_xlsx(&changed)
+                .unwrap()
+                .ledger
+                .iter()
+                .any(|f| f.blocking)
+        );
+    }
+    let scalar = mutate(&error, "xl/worksheets/sheet1.xml", |s| {
+        s.replace("<f>1+2</f>", "")
+    });
+    assert!(
+        import_xlsx(&scalar)
+            .unwrap()
+            .ledger
+            .iter()
+            .any(|f| f.blocking && f.code == "scalar_mapping_rejected")
+    );
+    let unknown_type = mutate(&error, "xl/worksheets/sheet1.xml", |s| {
+        s.replace("t=\"e\"", "t=\"unknown\"")
+    });
+    assert!(
+        import_xlsx(&unknown_type)
+            .unwrap()
+            .ledger
+            .iter()
+            .any(|f| f.blocking)
+    );
+    for format in ["yyyy-mm-dd", "h:mm", "[m]"] {
+        book.sheets[0].rows[0][1].style.number_format = Some(format.into());
+        let styled = export_xlsx(&book).unwrap();
+        let invalid_cache = mutate(&styled, "xl/worksheets/sheet1.xml", |s| {
+            s.replace("<v>3</v>", "<v>invalid</v>")
+        });
+        assert!(
+            import_xlsx(&invalid_cache)
+                .unwrap()
+                .ledger
+                .iter()
+                .any(|f| f.blocking)
+        );
+    }
+}
+
+#[test]
+fn workbook_omissions_and_column_width_tails_are_explicit() {
+    let bytes = export_xlsx(&simple()).unwrap();
+    for (child, code, blocking) in [
+        (
+            "<workbookProtection lockStructure=\"1\"/>",
+            "workbook_protection",
+            false,
+        ),
+        ("<bookViews/>", "workbook_layout_rules", false),
+        ("<futureFeature/>", "unknown_workbook_child", true),
+        (
+            "<sheets xmlns=\"urn:foreign\"/>",
+            "unknown_workbook_child",
+            true,
+        ),
+    ] {
+        let changed = mutate(&bytes, "xl/workbook.xml", |s| {
+            s.replace("</workbook>", &format!("{child}</workbook>"))
+        });
+        assert!(
+            import_xlsx(&changed)
+                .unwrap()
+                .ledger
+                .iter()
+                .any(|f| f.code == code && f.blocking == blocking)
+        );
+    }
+    for (min, max) in [(1, 16), (3, 16)] {
+        let changed = mutate(&bytes, "xl/worksheets/sheet1.xml", |s| {
+            s.replace(
+                "<cols>",
+                &format!("<cols><col min=\"{min}\" max=\"{max}\" width=\"24\"/>"),
+            )
+        });
+        let imported = import_xlsx(&changed).unwrap();
+        assert!(
+            imported
+                .ledger
+                .iter()
+                .any(|f| f.code == "column_width_outside_grid"
+                    && f.category == FidelityCategory::LossyOnExport
+                    && !f.blocking)
+        );
+        assert_eq!(
+            imported.sheets[0].columns[0].width,
+            if min == 1 { Some(24.0) } else { None }
+        );
+    }
+    let oversized = mutate(&bytes, "xl/worksheets/sheet1.xml", |s| {
+        s.replace("<cols>", "<cols><col min=\"1\" max=\"17\" width=\"24\"/>")
+    });
+    assert!(import_xlsx(&oversized).is_err());
+    let duplicate = mutate(&bytes, "xl/workbook.xml", |s| {
+        s.replace("</workbook>", "<sheets/></workbook>")
+    });
+    assert!(import_xlsx(&duplicate).is_err());
+    let unknown = mutate(&bytes, "xl/workbook.xml", |s| {
+        s.replace("</sheets>", "<unknown/></sheets>")
+    });
+    assert!(import_xlsx(&unknown).is_err());
+    let invalid_epoch = mutate(&bytes, "xl/workbook.xml", |s| {
+        s.replace("date1904=\"0\"", "date1904=\"maybe\"")
+    });
+    assert!(import_xlsx(&invalid_epoch).is_err());
+}
+
+#[test]
 fn multiple_column_groups_are_all_inspected_and_singleton_duplicates_rejected() {
     let bytes = export_xlsx(&simple()).unwrap();
     for (attribute, code) in [

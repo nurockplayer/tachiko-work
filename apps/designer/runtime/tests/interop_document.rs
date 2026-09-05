@@ -586,3 +586,117 @@ fn formula_coordinate_translation_handles_unicode_quotes_scientific_literals_and
         Some("'O''Brien'!$C$2")
     );
 }
+
+fn rewrite_formula_caches(bytes: &[u8], cache: Option<&str>, replacement: Option<&str>) -> Vec<u8> {
+    use std::io::{Cursor, Read, Write};
+    use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
+    let mut input = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut output = ZipWriter::new(Cursor::new(Vec::new()));
+    let mut changed = 0;
+    for index in 0..input.len() {
+        let mut entry = input.by_index(index).unwrap();
+        let name = entry.name().to_owned();
+        let mut xml = String::new();
+        entry.read_to_string(&mut xml).unwrap();
+        if name.starts_with("xl/worksheets/") {
+            let mut rewritten = String::new();
+            let mut rest = xml.as_str();
+            while let Some(start) = rest.find("<c ") {
+                rewritten.push_str(&rest[..start]);
+                let end = start + rest[start..].find("</c>").unwrap() + 4;
+                let cell = &rest[start..end];
+                if cell.contains("<f>") {
+                    changed += 1;
+                    let value_start = cell.find("<v>").unwrap();
+                    let value_end = cell.find("</v>").unwrap() + 4;
+                    let mut cell = format!("{}{}", &cell[..value_start], &cell[value_end..]);
+                    if let Some(value) = cache {
+                        cell = cell.replace("t=\"n\"", "t=\"e\"");
+                        cell = cell.replace("</f>", &format!("</f><v>{value}</v>"));
+                    }
+                    if let Some(formula) = replacement {
+                        cell = cell.replace("<f>C4*2</f>", &format!("<f>{formula}</f>"));
+                    }
+                    rewritten.push_str(&cell);
+                } else {
+                    rewritten.push_str(cell);
+                }
+                rest = &rest[end..];
+            }
+            rewritten.push_str(rest);
+            xml = rewritten;
+        }
+        output
+            .start_file(name, SimpleFileOptions::default())
+            .unwrap();
+        output.write_all(xml.as_bytes()).unwrap();
+    }
+    assert_eq!(changed, 3, "all forward/cross-sheet formula caches changed");
+    output.finish().unwrap().into_inner()
+}
+
+#[test]
+fn missing_or_error_formula_caches_recalculate_in_rust_and_survive_canonical_reopen() {
+    use tachiko_designer_runtime::interop_adapter::{export_xlsx, import_xlsx};
+    let (source, selection) = workbook_fixture();
+    let original = export_xlsx(&source).unwrap();
+    for cache in [None, Some("#VALUE!")] {
+        let bytes = rewrite_formula_caches(&original, cache, None);
+        let inspected = import_xlsx(&bytes).unwrap();
+        assert!(!inspected.ledger.iter().any(|finding| finding.blocking));
+        if cache.is_some() {
+            assert!(
+                inspected
+                    .ledger
+                    .iter()
+                    .any(|f| f.code == "formula_cache_ignored")
+            );
+        }
+        let (runtime, imported) = import_workbook(&inspected, &selection, OCCURRENCE).unwrap();
+        let exported = runtime
+            .export_workbook("resident/0", &imported.metadata)
+            .unwrap();
+        assert_eq!(
+            exported.sheets[0].rows[0][2].value,
+            SourceValue::Number { value: 10.0 }
+        );
+        assert_eq!(
+            exported.sheets[0].rows[2][2].value,
+            SourceValue::Number { value: 5.0 }
+        );
+        assert_eq!(
+            exported.sheets[1].rows[0][0].value,
+            SourceValue::Number { value: 15.0 }
+        );
+        assert!(exported.sheets[0].rows[0][2].formula.is_some());
+        let saved = runtime.export_project("resident/0").unwrap().bytes;
+        let mut reopened = None;
+        tachiko_designer_runtime::open_project(&mut reopened, &saved, OCCURRENCE).unwrap();
+        let reopened = reopened.unwrap();
+        assert_eq!(reopened.export_project("resident/0").unwrap().bytes, saved);
+        assert_eq!(
+            reopened
+                .export_workbook("resident/0", &imported.metadata)
+                .unwrap(),
+            exported
+        );
+    }
+}
+
+#[test]
+fn ignoring_formula_caches_does_not_admit_invalid_or_unsupported_calculations() {
+    use tachiko_designer_runtime::interop_adapter::{export_xlsx, import_xlsx};
+    let (source, selection) = workbook_fixture();
+    let original = export_xlsx(&source).unwrap();
+    for formula in ["C2", "1/0", "UNKNOWN(A2)", "1+"] {
+        for cache in [None, Some("#VALUE!")] {
+            let bytes = rewrite_formula_caches(&original, cache, Some(formula));
+            if let Ok(inspected) = import_xlsx(&bytes) {
+                assert!(
+                    import_workbook(&inspected, &selection, OCCURRENCE).is_err(),
+                    "{formula} must not publish"
+                );
+            }
+        }
+    }
+}

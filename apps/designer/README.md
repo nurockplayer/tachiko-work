@@ -195,9 +195,12 @@ the profile cannot preserve their visibility; they never become visible
 silently through export. Invalid XML, including out-of-root CDATA, is rejected.
 Time-only and elapsed-time formats cannot become canonical Date or Number
 values. Inherited row/column styles are blocked when this profile cannot apply
-them. Worksheet children and row/column attributes are inventoried against the
-bounded mapping: known source-only presentation has explicit export-loss
+them. Workbook/worksheet children and row/column attributes are inventoried
+against the bounded mapping: known source-only presentation has explicit export-loss
 findings, and unknown constructs block acceptance.
+Source formula caches are evidence only: supported formulas are rebound and
+calculated by Rust even when caches are absent or stale errors. This does not
+admit unsupported formulas or bypass validation of their XML structure.
 
 The existing table and Rust formula tools edit the imported collections.
 Sorting/filtering change only the view and target stable identities. Cleanup

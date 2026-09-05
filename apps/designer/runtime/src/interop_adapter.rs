@@ -964,8 +964,51 @@ fn c_unknown(node: &Xml) -> bool {
     if matches!(node.name.as_str(), "rPr" | "rPh" | "phoneticPr") {
         return false;
     }
-    !matches!(node.name.as_str(), "c" | "v" | "f" | "is" | "t" | "r")
-        || node.children.iter().any(c_unknown)
+    let allowed: &[&str] = match node.name.as_str() {
+        "v" | "f" | "t" => return !node.children.is_empty(),
+        "c" => {
+            if ["f", "v", "is"]
+                .iter()
+                .any(|name| node.kids(name).count() > 1)
+                || (node.child("v").is_some() && node.child("is").is_some())
+            {
+                return true;
+            }
+            &["f", "v", "is"]
+        }
+        "is" | "si" => {
+            if node.kids("t").count() > 1
+                || node.kids("phoneticPr").count() > 1
+                || (node.child("t").is_some() && node.child("r").is_some())
+            {
+                return true;
+            }
+            &["t", "r", "rPh", "phoneticPr"]
+        }
+        "r" => {
+            if node.kids("t").count() != 1 || node.kids("rPr").count() > 1 {
+                return true;
+            }
+            &["rPr", "t"]
+        }
+        _ => return true,
+    };
+    !node.text.trim().is_empty()
+        || node
+            .children
+            .iter()
+            .any(|child| !allowed.contains(&child.name.as_str()) || c_unknown(child))
+}
+
+fn ignorable_formula_cache(cell: &Xml, style: &CellStyle) -> bool {
+    let format = format_tokens(style);
+    !c_unknown(cell)
+        && matches!(
+            cell.attr("t").unwrap_or("n"),
+            "n" | "e" | "str" | "b" | "s" | "inlineStr" | "d"
+        )
+        && !format.contains("unsupported_builtin_")
+        && !format.contains(['y', 'd', 'h', 'm', 's'])
 }
 fn inventory_worksheet_children(xml: &Xml, sheet: &str, ledger: &mut Vec<FidelityFinding>) {
     for child in &xml.children {
@@ -1000,6 +1043,56 @@ fn inventory_worksheet_children(xml: &Xml, sheet: &str, ledger: &mut Vec<Fidelit
             blocking,
         ));
     }
+}
+
+fn inventory_workbook_children(xml: &Xml, ledger: &mut Vec<FidelityFinding>) -> Result<()> {
+    for singleton in ["sheets", "workbookPr", "calcPr"] {
+        if xml.kids(singleton).count() > 1 {
+            return fail("Duplicate singleton workbook construct");
+        }
+    }
+    for child in &xml.children {
+        let (code, blocking) = if child.ns == MAIN {
+            match child.name.as_str() {
+                "sheets" => {
+                    if child
+                        .children
+                        .iter()
+                        .any(|node| node.ns != MAIN || node.name != "sheet")
+                    {
+                        return fail("Unknown workbook sheet construct");
+                    }
+                    continue;
+                }
+                "workbookPr"
+                    if child.children.is_empty()
+                        && child.attrs.keys().all(|key| key == "date1904") =>
+                {
+                    continue;
+                }
+                "workbookPr" => ("workbook_properties", false),
+                "definedNames" => ("defined_names", false),
+                "workbookProtection" => ("workbook_protection", false),
+                "fileVersion"
+                | "fileSharing"
+                | "bookViews"
+                | "calcPr"
+                | "customWorkbookViews"
+                | "extLst" => ("workbook_layout_rules", false),
+                _ => ("unknown_workbook_child", true),
+            }
+        } else {
+            ("unknown_workbook_child", true)
+        };
+        ledger.push(finding(
+            FidelityCategory::UnsupportedSafeDisabled,
+            code,
+            &format!("xl/workbook.xml:{{{}}}{}", child.ns, child.name),
+            "Source workbook construct is not represented or emitted; original source retains it",
+            blocking,
+        ));
+    }
+    Ok(())
 }
 
 fn inventory_grid_attributes(node: &Xml, sheet: &str, ledger: &mut Vec<FidelityFinding>) {
@@ -1073,6 +1166,7 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
     let mut ledger = Vec::new();
     root_inventory(&parts, &mut ledger)?;
     let workbook = xml_part(&parts, "xl/workbook.xml", "workbook", MAIN)?;
+    inventory_workbook_children(&workbook, &mut ledger)?;
     let relationships = xml_part(&parts, "xl/_rels/workbook.xml.rels", "Relationships", REL)?;
     let mut rels = BTreeMap::new();
     for relationship in relationships.kids("Relationship") {
@@ -1083,24 +1177,25 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
             return fail("Duplicate workbook relationship identity");
         }
     }
-    let date1904 = workbook
+    let date1904 = match workbook
         .child("workbookPr")
-        .is_some_and(|n| matches!(n.attr("date1904"), Some("1" | "true")));
-    if workbook.child("definedNames").is_some() {
-        ledger.push(finding(
-            FidelityCategory::UnsupportedSafeDisabled,
-            "defined_names",
-            "xl/workbook.xml",
-            "Defined names remain source-only",
-            false,
-        ));
-    }
+        .and_then(|node| node.attr("date1904"))
+    {
+        None | Some("0" | "false") => false,
+        Some("1" | "true") => true,
+        Some(_) => return fail("Invalid workbook date1904 boolean"),
+    };
     let styles = parse_styles(&parts, &mut ledger)?;
     let shared = if parts.contains_key("xl/sharedStrings.xml") {
-        xml_part(&parts, "xl/sharedStrings.xml", "sst", MAIN)?
-            .kids("si")
-            .map(Xml::content)
-            .collect::<Vec<_>>()
+        let strings = xml_part(&parts, "xl/sharedStrings.xml", "sst", MAIN)?;
+        if strings
+            .children
+            .iter()
+            .any(|node| node.name != "si" || c_unknown(node))
+        {
+            return fail("Unknown shared string XML construct");
+        }
+        strings.kids("si").map(Xml::content).collect::<Vec<_>>()
     } else {
         Vec::new()
     };
@@ -1224,6 +1319,10 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
                 let formula = c.child("f");
                 let mut value = match cell_value(c, &shared, &style, date1904) {
                     Ok(value) => value,
+                    Err(error) if formula.is_some() && ignorable_formula_cache(c, &style) => {
+                        ledger.push(finding(FidelityCategory::Converted, "formula_cache_ignored", &location, &format!("Cached formula result is unusable and ignored: {}. Rust must bind and recalculate the source formula", error.0), false));
+                        SourceValue::Empty
+                    }
                     Err(error) => {
                         ledger.push(finding(
                             FidelityCategory::UnsupportedSafeDisabled,
@@ -1373,9 +1472,13 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
                     .map_err(|_| InteropError("Invalid column width".into()))?;
                 if min == 0
                     || max < min
+                    || max > MAX_COLUMNS
                     || w.is_some_and(|w| !w.is_finite() || w <= 0.0 || w > 255.0)
                 {
                     return fail("Invalid column width");
+                }
+                if max > columns.len() && w.is_some() {
+                    ledger.push(finding(FidelityCategory::LossyOnExport, "column_width_outside_grid", &format!("{name}:columns {min}..{max}"), "Column width outside the represented cell grid remains source-only and is omitted on export", false));
                 }
                 for c in columns.iter_mut().take(max).skip(min - 1) {
                     c.width = w;
