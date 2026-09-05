@@ -230,6 +230,51 @@ fn deduplication_uses_stable_row_order_and_rejects_dangling_formula_atomically()
     );
 }
 #[test]
+fn cleanup_preview_identity_cannot_commit_another_occurrences_commands() {
+    let mut first = fixture(false);
+    let bytes = first.export_project("resident/0").unwrap().bytes;
+    let mut second = None;
+    tachiko_designer_runtime::open_project(
+        &mut second,
+        &bytes,
+        "00000000-0000-4000-8000-000000000001",
+    )
+    .unwrap();
+    let mut second = second.unwrap();
+    let old = preview(
+        &mut first,
+        0,
+        CleanupOperation::Trim {
+            fields: vec!["r1.name".into()],
+        },
+    );
+    let fresh = preview(
+        &mut second,
+        0,
+        CleanupOperation::Trim {
+            fields: vec!["r2.name".into()],
+        },
+    );
+    assert_ne!(old.preview_id, fresh.preview_id);
+    assert_eq!(old.revision, fresh.revision);
+    assert!(
+        second
+            .handle(DesignerRequest::CommitCleanup {
+                expected_revision: old.revision,
+                preview_id: old.preview_id,
+            })
+            .is_err()
+    );
+    assert_eq!(second.export_project("resident/0").unwrap().bytes, bytes);
+    assert_eq!(text(&mut second, 0, "r1.name"), "  Ada Lovelace  ");
+    assert_eq!(text(&mut second, 0, "r2.name"), "  Ada Lovelace  ");
+    commit(&mut second, fresh);
+    assert_eq!(text(&mut second, 1, "r1.name"), "  Ada Lovelace  ");
+    assert_eq!(text(&mut second, 1, "r2.name"), "Ada Lovelace");
+    assert_eq!(first.export_project("resident/0").unwrap().bytes, bytes);
+}
+
+#[test]
 fn invalid_cleanup_stale_or_replaced_previews_never_publish_partial_changes() {
     let mut runtime = fixture(false);
     let before = runtime.export_project("resident/0").unwrap().bytes;

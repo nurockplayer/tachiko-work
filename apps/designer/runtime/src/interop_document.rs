@@ -77,7 +77,7 @@ use super::{
 };
 use std::collections::BTreeSet;
 use tachiko_workspace_engine::patch_lifecycle::{
-    ProposalId, ProposalRequest, SemanticPatchBody, SemanticRevision,
+    ProposalRequest, SemanticPatchBody, SemanticRevision,
 };
 use tachiko_workspace_engine::{
     Date, Document, EntityId, FieldId, FieldRef, FieldType, Number, Value,
@@ -117,9 +117,8 @@ impl DesignerRuntime {
             snapshot.document(),
             &self.principal,
         )?;
-        self.proposal_serial = self.proposal_serial.saturating_add(1);
-        let preview_id = format!("designer-cleanup-{}", self.proposal_serial);
-        let proposal_id = ProposalId::from(preview_id.clone());
+        let proposal_id = self.next_proposal_id()?;
+        let preview_id = proposal_id.as_str().to_owned();
         lifecycle.propose(
             snapshot.document_scope(),
             snapshot.document(),

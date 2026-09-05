@@ -923,6 +923,20 @@ impl DesignerRuntime {
         Ok(publication)
     }
 
+    // The trusted host supplies a fresh UUID per occurrence. Callers compare
+    // the complete opaque token; its spelling is not a semantic or security API.
+    fn next_proposal_id(&mut self) -> Result<ProposalId, DesignerError> {
+        let serial = self
+            .proposal_serial
+            .checked_add(1)
+            .ok_or_else(|| tracker_error("proposal identity counter exhausted"))?;
+        self.proposal_serial = serial;
+        Ok(ProposalId::from(format!(
+            "designer-proposal/{}/{serial}",
+            self.row_namespace
+        )))
+    }
+
     fn update_formula(
         &mut self,
         expected_revision: &str,
@@ -938,8 +952,7 @@ impl DesignerRuntime {
             snapshot.document(),
             &self.principal,
         )?;
-        self.proposal_serial = self.proposal_serial.saturating_add(1);
-        let proposal_id = ProposalId::from(format!("designer-formula-{}", self.proposal_serial));
+        let proposal_id = self.next_proposal_id()?;
         lifecycle.propose_formula_update(
             snapshot.document_scope(),
             snapshot.document(),
@@ -1152,8 +1165,7 @@ impl DesignerRuntime {
             Self::from_document(candidate, PREFLIGHT_OCCURRENCE)?;
         }
         let snapshot = self.session.export_snapshot();
-        self.proposal_serial = self.proposal_serial.saturating_add(1);
-        let proposal_id = ProposalId::from(format!("designer-edit-{}", self.proposal_serial));
+        let proposal_id = self.next_proposal_id()?;
         let body = SemanticPatchBody::atomic_batch(commands)?;
         self.lifecycle.propose(
             snapshot.document_scope(),
@@ -2966,7 +2978,10 @@ mod tests {
             assert!(
                 runtime
                     .lifecycle
-                    .proposal_history(&ProposalId::from(format!("designer-formula-{serial}")))
+                    .proposal_history(&ProposalId::from(format!(
+                        "designer-proposal/{}/{serial}",
+                        runtime.row_namespace
+                    )))
                     .is_err()
             );
             assert_eq!(runtime.export_project("resident/0").unwrap().bytes, before);
@@ -2978,7 +2993,10 @@ mod tests {
         assert!(
             runtime
                 .lifecycle
-                .proposal_history(&ProposalId::from("designer-formula-33"))
+                .proposal_history(&ProposalId::from(format!(
+                    "designer-proposal/{}/33",
+                    runtime.row_namespace
+                )))
                 .is_err()
         );
         assert_eq!(
@@ -2991,6 +3009,48 @@ mod tests {
                 .and_then(super::CalculationProjection::number),
             Some(1201.0)
         );
+    }
+
+    #[test]
+    fn exhausted_proposal_identity_counter_never_reuses_or_publishes() {
+        let mut runtime = DesignerRuntime::budget("00000000-0000-4000-8000-000000000000").unwrap();
+        let operation = super::CleanupOperation::Convert {
+            source: "utilities.planned".into(),
+            destination: "utilities.actual".into(),
+        };
+        let pending = runtime.preview_cleanup("resident/0", &operation).unwrap();
+        let before = runtime.export_project("resident/0").unwrap().bytes;
+        runtime.proposal_serial = u64::MAX - 1;
+        let last = runtime.next_proposal_id().unwrap();
+        assert_ne!(last.as_str(), pending.preview_id);
+        for _ in 0..2 {
+            assert!(runtime.next_proposal_id().is_err());
+            assert!(runtime.preview_cleanup("resident/0", &operation).is_err());
+            assert!(
+                runtime
+                    .update_formula("resident/0", &"rent.planned".into(), "1300")
+                    .is_err()
+            );
+            assert!(
+                runtime
+                    .publish_commands(
+                        "resident/0",
+                        vec![super::SemanticCommand::SetFieldValue {
+                            field: super::FieldRef::new("utilities", "actual"),
+                            value: super::Value::Number(super::Number::new(170.0).unwrap()),
+                        }]
+                    )
+                    .is_err()
+            );
+            assert_eq!(runtime.proposal_serial, u64::MAX);
+            assert_eq!(
+                runtime.pending_cleanup.as_ref().unwrap().preview_id,
+                pending.preview_id
+            );
+            assert_eq!(runtime.export_project("resident/0").unwrap().bytes, before);
+            assert!(runtime.undo.is_empty());
+            assert!(runtime.redo.is_empty());
+        }
     }
 
     #[test]

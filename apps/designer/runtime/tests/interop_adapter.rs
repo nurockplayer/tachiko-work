@@ -5,6 +5,119 @@ fn simple() -> SourceWorkbook {
     import_csv(b"Name,Amount\nAda,12\n", &ImportOptions::default()).unwrap()
 }
 
+#[test]
+fn admitted_workbooks_pass_the_shared_output_style_predicate() {
+    let mut book = simple();
+    for color in ["a1B2c3", "FFA1B2C3"] {
+        book.sheets[0].rows[0][1].style.fill = Some(color.into());
+        let bytes = export_xlsx(&book).unwrap();
+        let bytes = if color.len() == 6 {
+            mutate(&bytes, "xl/styles.xml", |s| {
+                s.replace(&format!("FF{color}"), color)
+            })
+        } else {
+            bytes
+        };
+        let imported = import_xlsx(&bytes).unwrap();
+        assert!(!imported.ledger.iter().any(|f| f.blocking));
+        assert_eq!(
+            imported.sheets[0].rows[0][1].style.fill.as_deref(),
+            Some(color)
+        );
+        let reopened = import_xlsx(&export_xlsx(&imported).unwrap()).unwrap();
+        let argb = if color.len() == 6 {
+            format!("FF{color}")
+        } else {
+            color.into()
+        };
+        assert_eq!(
+            reopened.sheets[0].rows[0][1].style.fill.as_deref(),
+            Some(argb.as_str())
+        );
+        assert_eq!(
+            reopened.sheets[0].rows[0][1].value,
+            imported.sheets[0].rows[0][1].value
+        );
+    }
+    let bytes = export_xlsx(&book).unwrap();
+    for bad in ["FFFFGGGG", "1234567"] {
+        let invalid = mutate(&bytes, "xl/styles.xml", |s| s.replace("FFA1B2C3", bad));
+        let inspected = import_xlsx(&invalid).unwrap();
+        assert!(inspected.ledger.iter().any(|f| f.blocking
+            && f.code == "output_profile_rejected"
+            && f.message.contains("RGB")));
+        assert!(export_xlsx(&inspected).is_err());
+        // Discarded header presentation remains a disclosed source-only loss.
+        let header_only = mutate(&invalid, "xl/worksheets/sheet1.xml", |s| {
+            s.replace("r=\"B2\" s=\"1\"", "r=\"B2\" s=\"0\"")
+                .replace("r=\"B1\" s=\"0\"", "r=\"B1\" s=\"1\"")
+        });
+        let inspected = import_xlsx(&header_only).unwrap();
+        assert!(!inspected.ledger.iter().any(|f| f.blocking));
+        assert!(
+            inspected
+                .ledger
+                .iter()
+                .any(|f| f.code == "header_style_not_preserved")
+        );
+        assert!(export_xlsx(&inspected).is_ok());
+        let already_blocked = mutate(&invalid, "xl/workbook.xml", |s| {
+            s.replace("<sheet ", "<sheet state=\"hidden\" ")
+        });
+        let inspected = import_xlsx(&already_blocked).unwrap();
+        assert!(
+            inspected
+                .ledger
+                .iter()
+                .any(|f| f.code == "hidden_sheet" && f.blocking)
+        );
+        assert!(
+            !inspected
+                .ledger
+                .iter()
+                .any(|f| f.code == "output_profile_rejected")
+        );
+    }
+    // A separate output-style rule uses the same predicate at both boundaries.
+    book.sheets[0].rows[0][1].style.number_format = Some("0;yyyy-mm-dd".into());
+    assert!(export_xlsx(&book).is_err());
+    assert!(
+        import_xlsx(&source_with_format(&book))
+            .unwrap()
+            .ledger
+            .iter()
+            .any(|f| f.blocking)
+    );
+}
+
+#[test]
+fn formula_export_requires_numeric_presentation_for_every_cache_kind() {
+    let mut book = simple();
+    book.sheets[0].rows[0][1].formula = Some("1+2".into());
+    for format in ["yyyy-mm-dd", "yyyy-mm-dd hh:mm:ss", "h:mm", "[m]"] {
+        book.sheets[0].rows[0][1].style.number_format = Some(format.into());
+        for cache in [
+            SourceValue::Empty,
+            SourceValue::Number { value: 3.0 },
+            SourceValue::Text {
+                value: "cached".into(),
+            },
+            SourceValue::Boolean { value: true },
+        ] {
+            book.sheets[0].rows[0][1].value = cache;
+            assert!(
+                export_xlsx(&book)
+                    .unwrap_err()
+                    .0
+                    .contains("uniform numeric number format")
+            );
+        }
+    }
+    book.sheets[0].rows[0][1].style.number_format = Some("0.00".into());
+    book.sheets[0].rows[0][1].value = SourceValue::Number { value: 3.0 };
+    assert!(export_xlsx(&book).is_ok());
+}
+
 fn source_with_format(book: &SourceWorkbook) -> Vec<u8> {
     let mut legal = book.clone();
     let pattern = legal.sheets[0].rows[0][1]
@@ -495,7 +608,8 @@ fn unusable_formula_caches_are_evidence_only_but_invalid_structure_stays_blocked
     );
     for format in ["yyyy-mm-dd", "h:mm", "[m]"] {
         book.sheets[0].rows[0][1].style.number_format = Some(format.into());
-        let styled = export_xlsx(&book).unwrap();
+        assert!(export_xlsx(&book).is_err());
+        let styled = source_with_format(&book);
         let invalid_cache = mutate(&styled, "xl/worksheets/sheet1.xml", |s| {
             s.replace("<v>3</v>", "<v>invalid</v>")
         });

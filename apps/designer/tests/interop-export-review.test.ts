@@ -29,8 +29,9 @@ function button(root: HTMLElement, label: string): HTMLButtonElement {
 const cleanups: Array<() => void> = [];
 afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.replaceChildren(); });
 
-async function fixture(numberFormat?: string) {
+async function fixture(numberFormat?: string, numberValue = 12) {
   const project = structuredClone(imported);
+  project.opened.table.rows[0]!.fields[0]!.stored = { kind: "number", value: numberValue };
   if (numberFormat !== undefined) project.metadata.sheets[0]!.rows[0]!.styles[0]!.number_format = numberFormat;
   const root = document.createElement("div"); document.body.append(root);
   const inspection = deferred<SourceWorkbook>();
@@ -167,5 +168,19 @@ describe("localized imported currency presentation", () => {
     }
     expect(project.metadata.sheets[0]?.rows[0]?.styles[0]?.number_format).toBe(pattern);
     expect(root.querySelector<HTMLInputElement>('input[type="number"]')?.value).toBe("12");
+  });
+});
+
+
+describe("mixed-section imported presentation", () => {
+  it("shows positive one as Number and retains the entire original pattern on export", async () => {
+    const pattern = "0;0%";
+    const { root, client } = await fixture(pattern, 1);
+    expect(root.querySelector("[data-format-cycle]")?.textContent).toBe("Number");
+    expect(root.querySelector("[data-formatted-number]")?.textContent).toBe("1");
+    button(root, "Export XLSX").click();
+    await vi.waitFor(() => { expect(root.querySelector('[aria-label="Export compatibility review"]')).not.toBeNull(); });
+    expect(client.exportSpreadsheet.mock.calls[0]?.[1].sheets[0]?.rows[0]?.styles[0]?.number_format).toBe(pattern);
+    button(root, "Cancel export").click();
   });
 });

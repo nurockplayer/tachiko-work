@@ -1585,7 +1585,22 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
     }
     root_inventory(&parts, &worksheet_paths, &mut ledger)?;
     ledger.push(finding(FidelityCategory::NativeEquivalent,"bounded_workbook","source","All bounded worksheets and scalar cells were inspected; formula sources require authoritative Rust binding",false));
-    Ok(SourceWorkbook { sheets, ledger })
+    let mut workbook = SourceWorkbook { sheets, ledger };
+    if !workbook.ledger.iter().any(|finding| finding.blocking) {
+        if let Err(error) = validate_output(&workbook) {
+            workbook.ledger.push(finding(
+                FidelityCategory::UnsupportedSafeDisabled,
+                "output_profile_rejected",
+                "workbook",
+                &format!(
+                    "Source cannot be represented by the shared output profile: {}",
+                    error.0
+                ),
+                true,
+            ));
+        }
+    }
+    Ok(workbook)
 }
 /// Emit the selected sheet values. Caller discloses formula/format/sheet losses.
 /// # Errors
@@ -1759,7 +1774,10 @@ pub(crate) fn validate_output(workbook: &SourceWorkbook) -> Result<()> {
                 return fail("Export rows must be rectangular");
             }
             for c in row {
-                checked_number_format(&c.style)?;
+                let format = checked_number_format(&c.style)?;
+                if c.formula.is_some() && format != NumberFormatKind::Number {
+                    return fail("Formula requires a uniform numeric number format");
+                }
                 if !xml_text_valid(&value_text(&c.value))
                     || c.formula.as_ref().is_some_and(|s| !xml_text_valid(s))
                     || c.style
