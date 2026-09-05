@@ -915,6 +915,7 @@ describe("Designer application seam", () => {
     );
     if (interval === null) throw new Error("attack interval input is required");
     interval.value = "0";
+    interval.dispatchEvent(new InputEvent("input", { bubbles: true }));
     const intervalForm = interval.form;
     if (intervalForm === null) throw new Error("attack interval form is required");
     intervalForm.requestSubmit();
@@ -930,6 +931,25 @@ describe("Designer application seam", () => {
     expect(root.querySelector('[data-field="iron_sword.dps"]')?.textContent).toContain(
       "40",
     );
+    expect(root.querySelector<HTMLInputElement>('input[aria-label="Attack Interval for Iron Sword"]')?.value).toBe("0");
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain("Unsaved changes");
+  });
+
+  it("blocks Save As for a formula draft even without Budget views", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app")!;
+    const memoryHost = new MemoryHost();
+    const publish = vi.spyOn(memoryHost, "publish");
+    const app = mountDesigner(root, new FakeClient(), memoryHost);
+    await app.ready;
+    const formula = root.querySelector<HTMLInputElement>("[data-initial-formula]")!;
+    formula.value = "1 + 2";
+    formula.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    root.querySelector<HTMLButtonElement>("[data-save-as]")?.click();
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain("Apply or cancel");
+    expect(publish).not.toHaveBeenCalled();
+    expect(root.querySelector<HTMLInputElement>("[data-initial-formula]")?.value).toBe("1 + 2");
+    app.destroy();
   });
 
   it("renders initialization failures instead of leaving the loading state visible", async () => {

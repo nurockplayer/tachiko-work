@@ -40,7 +40,8 @@ test("Moonfall Number edit selectively refreshes DPS and rejects an invalid cand
   await expect(page.getByRole("alert")).toContainText("Edit not published");
   await expect(page.getByRole("alert")).toContainText("formula.division_by_zero");
   await expect(page.getByTestId("revision")).toContainText("resident/1");
-  await expect(page.getByLabel("Attack Interval for Iron Sword")).toHaveValue("0.9");
+  // The rejected candidate remains an editable draft; calculations stay canonical.
+  await expect(page.getByLabel("Attack Interval for Iron Sword")).toHaveValue("0");
   await expect(page.getByLabel("Damage for Iron Sword")).toHaveValue("45");
   await expect(page.locator('[data-field="iron_sword.dps"] output')).toHaveText("50");
 });
@@ -94,8 +95,11 @@ test("canonical Product Gap project edits typed values, refreshes priority, and 
   await expect(page.getByRole("alert")).toContainText("Edit not published");
   await expect(page.getByRole("alert")).toContainText("not a finite Number");
   await expect(page.getByTestId("revision")).toContainText("resident/3");
-  await expect(impact).toHaveValue("3");
+  await expect(impact).toHaveValue("");
+  await expect(impact).toHaveAttribute("data-initial-number", "3");
   await expect(designerRow.locator(".formula-cell output")).toHaveText("8");
+  // Restore the accepted value to explicitly abandon the rejected draft.
+  await impact.fill("3");
 
   page.once("dialog", async (dialog) => dialog.accept("product-gaps-edited.roproj"));
   await page.getByRole("button", { name: "Save As" }).click();

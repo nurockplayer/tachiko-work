@@ -81,6 +81,7 @@ export function mountDesigner(
   let budgetToolsDraft: BudgetToolsDraft = {};
   let budgetTables: TableProjection[] = [];
   const hasEditDrafts = (): boolean => tracker.pending || pendingTextBuffers.size > 0 || pendingBooleanBuffers.size > 0 || pendingDateBuffers.size > 0 || pendingFormulaBuffers.size > 0 || pendingNumberBuffers.size > 0 || hasBudgetToolsDraft(budgetToolsDraft);
+  const hasSaveBlockingDrafts = (): boolean => tracker.pending || pendingFormulaBuffers.size > 0 || hasBudgetToolsDraft(budgetToolsDraft) || (tracker.view.budgetViews !== undefined && hasEditDrafts());
   const hasPendingScalarDrafts = (): boolean =>
     hasEditDrafts() || viewDirty() ||
     pendingTextBuffers.size > 0 ||
@@ -251,7 +252,6 @@ export function mountDesigner(
 
   const commitNumber = async (target: FieldTarget, input: string): Promise<void> => {
     await commitScalar(target, (expectedRevision) => client.editNumber(expectedRevision, target, input), () => pendingNumberBuffers.delete(textBufferKey(target)));
-    pendingNumberBuffers.delete(textBufferKey(target));
     syncBeforeUnloadGuard(); render();
   };
 
@@ -471,7 +471,11 @@ export function mountDesigner(
     render();
     try {
       const snapshot = host.readSnapshot ? await host.readSnapshot(selectedSavedProject) : {bytes: await host.read(selectedSavedProject), presentation: undefined};
-      const view = parseTrackerView(snapshot.presentation);
+      // Inspect the same immutable host snapshot before replacing the resident.
+      // Budget bindings require authoritative IDs; older clients fail closed
+      // for Budget sidecars while retaining legacy Tracker compatibility.
+      const candidate = await client.inspectProject?.(snapshot.bytes.slice(0));
+      const view = parseTrackerView(snapshot.presentation, candidate?.bootstrap.collections.map(collection => collection.id));
       const durableBytes = snapshot.bytes.slice(0);
       await installProjectBytes(snapshot.bytes);
       tracker.reset(view); savedView = JSON.stringify(view);
@@ -532,7 +536,7 @@ export function mountDesigner(
 
   const saveAs = async (): Promise<void> => {
     if (store === null || busy) return;
-    if (tracker.pending || (tracker.view.budgetViews && hasEditDrafts())) { showProjectFailure("Project not saved", new Error("Apply or cancel the cell draft and pending formula edits before saving.")); render(); return; }
+    if (hasSaveBlockingDrafts()) { showProjectFailure("Project not saved", new Error("Apply or cancel the cell draft and pending formula edits before saving.")); render(); return; }
     const requestedName = window.prompt(
       "Save As a new browser project (existing destinations are never overwritten):",
       `${bootstrap?.title.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-").replaceAll(/^-|-$/g, "") || "project"}.roproj`,
@@ -600,7 +604,7 @@ export function mountDesigner(
   const save = async (): Promise<void> => {
     if (activeProject === null) { await saveAs(); return; }
     if (!store || busy) return;
-    if (tracker.pending || (tracker.view.budgetViews && hasEditDrafts())) { showProjectFailure("Project not saved", new Error("Apply or cancel the cell draft and pending formula edits before saving.")); render(); return; }
+    if (hasSaveBlockingDrafts()) { showProjectFailure("Project not saved", new Error("Apply or cancel the cell draft and pending formula edits before saving.")); render(); return; }
     busy = true; notice = null; render();
     try {
       if (!host.update) throw new Error("This browser host does not support Save; use Save As.");

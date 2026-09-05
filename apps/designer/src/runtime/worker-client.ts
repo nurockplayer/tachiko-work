@@ -71,6 +71,19 @@ export class WorkerDesignerClient implements DesignerClient {
     );
   }
 
+  async inspectProject(bytes: ArrayBuffer): Promise<OpenedProjection> {
+    // Inspection preserves the caller's bytes for the subsequent accepted open.
+    const candidateBytes = bytes.slice(0);
+    const reply = await this.#send(
+      { id: this.#claimId(), kind: "inspect_project", bytes: candidateBytes },
+      [candidateBytes],
+    );
+    if (reply.status !== "ok") {
+      throw new Error(`Expected project inspection response, received '${reply.status}'.`);
+    }
+    return expectResponse("opened", reply.response);
+  }
+
   async openProject(bytes: ArrayBuffer): Promise<OpenedProjection> {
     const reply = await this.#send(
       {

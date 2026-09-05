@@ -17,6 +17,11 @@ export function startDesignerWorker(wasmUrl: string): void {
             scope.postMessage({ id: event.data.id, ...reply });
             break;
           }
+          case "inspect_project": {
+            const reply = runtime.inspectProject(new Uint8Array(event.data.bytes));
+            scope.postMessage({ id: event.data.id, ...reply });
+            break;
+          }
           case "open_project": {
             const reply = runtime.openProject(
               new Uint8Array(event.data.bytes),

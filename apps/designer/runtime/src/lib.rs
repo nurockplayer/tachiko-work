@@ -895,9 +895,17 @@ impl DesignerRuntime {
         source: &str,
     ) -> Result<PublicationProjection, DesignerError> {
         let snapshot = self.session.export_snapshot();
+        // This app-private human request owns its complete lifecycle. Keep
+        // admitted-but-unpublishable candidates and finished proposal evidence
+        // request-local rather than retaining them in the resident session.
+        let mut lifecycle = designer_lifecycle(
+            snapshot.document_scope(),
+            snapshot.document(),
+            &self.principal,
+        )?;
         self.proposal_serial = self.proposal_serial.saturating_add(1);
         let proposal_id = ProposalId::from(format!("designer-formula-{}", self.proposal_serial));
-        self.lifecycle.propose_formula_update(
+        lifecycle.propose_formula_update(
             snapshot.document_scope(),
             snapshot.document(),
             snapshot.revision(),
@@ -910,7 +918,7 @@ impl DesignerRuntime {
             ),
             self.clock.tick(),
         )?;
-        let preview = self.lifecycle.preview(
+        let preview = lifecycle.preview(
             snapshot.document_scope(),
             snapshot.document(),
             snapshot.revision(),
@@ -941,7 +949,7 @@ impl DesignerRuntime {
         let execute_now = self.clock.tick();
         let (receipt, invalidation) = {
             let mut publication = self.session.publication_authority(&mut self.clock);
-            let receipt = self.lifecycle.execute(
+            let receipt = lifecycle.execute(
                 &proposal_id,
                 None,
                 &self.principal,
@@ -1636,14 +1644,32 @@ pub fn open_project(
     input: &[u8],
     occurrence_id: &str,
 ) -> Result<OpenedProjection, DesignerError> {
+    let (candidate, opened) = admit_project(input, occurrence_id)?;
+    *runtime = Some(candidate);
+    Ok(opened)
+}
+
+/// Inspect a fully admitted project without replacing any resident occurrence.
+///
+/// # Errors
+/// Returns the same storage, profile, and projection failures as project open.
+/// The temporary admission occurrence is discarded together with its history.
+pub fn inspect_project(input: &[u8]) -> Result<OpenedProjection, DesignerError> {
+    let (_, opened) = admit_project(input, PREFLIGHT_OCCURRENCE)?;
+    Ok(opened)
+}
+
+fn admit_project(
+    input: &[u8],
+    occurrence_id: &str,
+) -> Result<(DesignerRuntime, OpenedProjection), DesignerError> {
     let document = decode_project_bundle(input)?;
     let candidate = DesignerRuntime::from_document(document, occurrence_id)?;
     let bootstrap = candidate.bootstrap_projection();
     let table = candidate.query_table(&bootstrap.default_collection)?;
     let opened = OpenedProjection { bootstrap, table };
     ensure_projection_size(&opened)?;
-    *runtime = Some(candidate);
-    Ok(opened)
+    Ok((candidate, opened))
 }
 
 /// Destroy the current semantic occurrence without touching durable host data.
@@ -2862,7 +2888,74 @@ fn parse_scalar(
 }
 #[cfg(test)]
 mod tests {
-    use super::MAX_WIDTH_FINITE_JSON_NUMBER;
+    use super::{DesignerError, DesignerRuntime, MAX_WIDTH_FINITE_JSON_NUMBER, ProposalId};
+
+    #[test]
+    fn formula_requests_do_not_retain_admitted_rejections_or_completed_proposals() {
+        let base = DesignerRuntime::budget("00000000-0000-4000-8000-000000000000").unwrap();
+        let mut document = base.session.export_snapshot().document().clone();
+        document
+            .schemas
+            .retain(|id, _| id.as_str() == "budget_items");
+        document
+            .schemas
+            .values_mut()
+            .for_each(|schema| schema.fields.retain(|id, _| id.as_str() == "planned"));
+        let template = document.entities[&super::EntityId::from("rent")].clone();
+        document.entities.clear();
+        for index in 0..33 {
+            let mut entity = template.clone();
+            entity.id = super::EntityId::from(format!("r{index:02}"));
+            entity.key = super::EntityKey::from(entity.id.to_string());
+            let number = super::Number::new(1.0).unwrap();
+            let value = if index < 32 {
+                super::Value::Formula(super::Expression::Number(number))
+            } else {
+                super::Value::Number(number)
+            };
+            entity.fields = [(super::FieldId::from("planned"), value)]
+                .into_iter()
+                .collect();
+            document.entities.insert(entity.id.clone(), entity);
+        }
+        let mut runtime =
+            DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000000")
+                .unwrap();
+        let before = runtime.export_project("resident/0").unwrap().bytes;
+        for serial in 1..=32 {
+            let error = runtime
+                .update_formula("resident/0", &"r32.planned".into(), "3")
+                .unwrap_err();
+            assert!(matches!(error, DesignerError::UnsupportedProject { .. }));
+            assert!(
+                runtime
+                    .lifecycle
+                    .proposal_history(&ProposalId::from(format!("designer-formula-{serial}")))
+                    .is_err()
+            );
+            assert_eq!(runtime.export_project("resident/0").unwrap().bytes, before);
+        }
+        let result = runtime
+            .update_formula("resident/0", &"r00.planned".into(), "1201")
+            .unwrap();
+        assert_eq!(result.resulting_revision, "resident/1");
+        assert!(
+            runtime
+                .lifecycle
+                .proposal_history(&ProposalId::from("designer-formula-33"))
+                .is_err()
+        );
+        assert_eq!(
+            runtime
+                .query_fields("resident/1", &["r00.planned".into()])
+                .unwrap()
+                .fields[0]
+                .calculated
+                .as_ref()
+                .and_then(super::CalculationProjection::number),
+            Some(1201.0)
+        );
+    }
 
     #[test]
     fn worst_case_refresh_number_uses_the_maximum_finite_json_width() {

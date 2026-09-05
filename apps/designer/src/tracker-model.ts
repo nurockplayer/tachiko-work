@@ -20,7 +20,8 @@ export type TrackerView = {
 };
 export const emptyTrackerView = (): TrackerView => ({ version: 1, cells: {}, order: [], widths: {}, rowHeight: 36, header: true, formats: {} });
 export const cellKey = (entity: string, field: string): string => JSON.stringify([entity, field]);
-export function parseTrackerView(input?: string): TrackerView {
+/** Budget bindings require IDs from the admitted project snapshot, never the sidecar itself. */
+export function parseTrackerView(input?: string, collectionIds?: string[]): TrackerView {
     if (input === undefined)
         return emptyTrackerView();
     const parsed: unknown = JSON.parse(input);
@@ -40,8 +41,9 @@ export function parseTrackerView(input?: string): TrackerView {
         throw new Error("Unsupported number presentation format.");
     let budgetViews: BudgetViews | undefined;
     if (view.budgetViews !== undefined) {
-        const candidate = view.budgetViews as BudgetViews;
-        budgetViews = parseBudgetViews(candidate, Array.isArray(candidate.views) ? candidate.views.map(v => v.collection) : []);
+        if (collectionIds === undefined)
+            throw new Error("Saved Budget layout requires authoritative project collection IDs.");
+        budgetViews = parseBudgetViews(view.budgetViews, collectionIds);
     }
     return { ...(view as Omit<TrackerView, "formats">), formats: formats as Record<string, NumberFormat>, ...(budgetViews === undefined ? {} : { budgetViews }) };
 }

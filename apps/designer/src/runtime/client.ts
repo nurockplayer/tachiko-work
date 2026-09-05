@@ -17,6 +17,7 @@ export interface DesignerClient {
   newBudget?(): Promise<OpenedProjection>;
   trackerCommand?(request: TrackerCommand): Promise<PublicationProjection>;
   bootstrap(): Promise<BootstrapProjection>;
+  inspectProject?(bytes: ArrayBuffer): Promise<OpenedProjection>;
   openProject(bytes: ArrayBuffer): Promise<OpenedProjection>;
   exportProject(expectedRevision: string): Promise<ProjectExport>;
   closeProject(): Promise<void>;

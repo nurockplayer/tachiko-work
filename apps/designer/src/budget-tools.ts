@@ -1,4 +1,4 @@
-import { fieldTargetKey, type FieldProjection, type FieldTarget, type TableProjection } from "./runtime/protocol.ts";
+import { fieldTargetKey, type FieldProjection, type FieldTarget, type FormulaCopy, type TableProjection } from "./runtime/protocol.ts";
 
 export type BudgetToolsDraft = {
   target?: FieldTarget;
@@ -9,13 +9,6 @@ export type BudgetToolsDraft = {
   relativeRows?: boolean;
   relativeColumns?: boolean;
 };
-export type BudgetFormulaCopy = {
-  source: FieldTarget;
-  destinations: FieldTarget[];
-  fixed_references: FieldTarget[];
-  relative_rows: boolean;
-  relative_columns: boolean;
-};
 export type BudgetToolsOptions = {
   tables: TableProjection[];
   currentCollection: string;
@@ -23,7 +16,7 @@ export type BudgetToolsOptions = {
   draft: BudgetToolsDraft;
   changed: () => void;
   updateFormula: (target: FieldTarget, source: string) => Promise<void>;
-  copyFormula: (request: BudgetFormulaCopy) => Promise<void>;
+  copyFormula: (request: FormulaCopy) => Promise<void>;
 };
 export function hasBudgetToolsDraft(draft: BudgetToolsDraft): boolean {
   return Object.keys(draft).length > 0;
