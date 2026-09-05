@@ -63,6 +63,13 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- The first-party browser Designer now offers a bounded monthly Budget journey:
+  two navigable collection projections, Gregorian Date entry, Rust-authoritative
+  arithmetic formula updates that bind human addresses to stable identities,
+  and Date-bearing Browser Save/close/reopen through a private `direct-ro/v2`
+  host record. Currency and percentage are persisted presentation choices over
+  Number, not Money or nominal Percentage semantics. This remains a bounded
+  Driver slice rather than Excel formula or Sheet/Cell-model parity.
 - The first-party browser Designer now offers a bounded Driver Tracker journey:
   create a fresh project, atomically paste a typed TSV range, edit cells, append
   and remove rows, and Save As / close / reopen through the existing project

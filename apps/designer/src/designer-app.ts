@@ -1,6 +1,6 @@
 import { reconcileTextEdit, normalizeLineEndings } from "./text-edit.ts";
 import { TrackerGrid } from "./tracker-grid.ts";
-import { parseTrackerView, emptyTrackerView } from "./tracker-model.ts";
+import { parseTrackerView, emptyTrackerView, cellKey, type NumberFormat, type TrackerView } from "./tracker-model.ts";
 import { createProjectionStore, type ProjectionStore } from "./projection-store.ts";
 import { createDurabilityState } from "./durability-state.ts";
 import type {
@@ -74,11 +74,13 @@ export function mountDesigner(
   const pendingTextBuffers = new Map<string, string>();
   const pendingBooleanBuffers = new Map<string, boolean>();
   const pendingDateBuffers = new Map<string, string>();
+  const pendingFormulaBuffers = new Map<string, string>();
   const hasPendingScalarDrafts = (): boolean =>
     tracker.pending || viewDirty() ||
     pendingTextBuffers.size > 0 ||
     pendingBooleanBuffers.size > 0 ||
-    pendingDateBuffers.size > 0;
+    pendingDateBuffers.size > 0 ||
+    pendingFormulaBuffers.size > 0;
   let savedProjects: SavedProjectSummary[] = [];
   let selectedSavedProject = "";
   const durability = createDurabilityState();
@@ -136,6 +138,7 @@ export function mountDesigner(
       durability.snapshot().durable_revision,
       savedProjects,
       selectedSavedProject,
+      tracker.view,
     );
     if (snapshot.table.tracker_profile === true) {
       const workbench = root.querySelector(".table-workbench");
@@ -239,6 +242,20 @@ export function mountDesigner(
       },
     );
 
+  const commitFormula = (target: FieldTarget, source: string): Promise<void> => {
+    if (!client.updateFormula) return Promise.reject(new Error("Formula authoring is unavailable."));
+    return commitScalar(
+      target,
+      (expectedRevision) =>
+        client.updateFormula?.(expectedRevision, target, source) ??
+        Promise.reject(new Error("Formula authoring is unavailable.")),
+      () => {
+        pendingFormulaBuffers.delete(textBufferKey(target));
+        syncBeforeUnloadGuard();
+      },
+    );
+  };
+
   const selectCollection = async (collection: string): Promise<void> => {
     if (bootstrap === null || store === null || busy) return;
     busy = true;
@@ -273,6 +290,7 @@ export function mountDesigner(
     pendingTextBuffers.clear();
     pendingBooleanBuffers.clear();
     pendingDateBuffers.clear();
+    pendingFormulaBuffers.clear();
     bootstrap = candidate;
     store = nextStore;
     selectedCollection = candidate.default_collection;
@@ -287,6 +305,7 @@ export function mountDesigner(
     pendingTextBuffers.clear();
     pendingBooleanBuffers.clear();
     pendingDateBuffers.clear();
+    pendingFormulaBuffers.clear();
     bootstrap = opened.bootstrap;
     store = nextStore;
     selectedCollection = opened.bootstrap.default_collection;
@@ -439,6 +458,14 @@ export function mountDesigner(
     finally { busy = false; syncBeforeUnloadGuard(); render(); }
   };
 
+  const newBudget = async (): Promise<void> => {
+    if (busy || !client.newBudget || !confirmDiscardDirtyOccurrence("New Budget")) return;
+    busy = true; notice = null; render();
+    try { installOpenedOccurrence(await client.newBudget()); durability.install(store?.snapshot().table.revision ?? "", false); }
+    catch (error) { showProjectFailure("Budget not created", error); }
+    finally { busy = false; syncBeforeUnloadGuard(); render(); }
+  };
+
   const save = async (): Promise<void> => {
     if (activeProject === null) { await saveAs(); return; }
     if (!store || busy) return;
@@ -467,6 +494,7 @@ export function mountDesigner(
       pendingTextBuffers.clear();
       pendingBooleanBuffers.clear();
       pendingDateBuffers.clear();
+      pendingFormulaBuffers.clear();
       tracker.reset(); savedView = JSON.stringify(tracker.view); activeProject = null;
       bootstrap = null;
       store = null;
@@ -490,6 +518,7 @@ export function mountDesigner(
 
   const bindInteractions = (): void => {
     root.querySelector("[data-new-tracker]")?.addEventListener("click", () => { void newTracker(); });
+    root.querySelector("[data-new-budget]")?.addEventListener("click", () => { void newBudget(); });
     root.querySelector("[data-save-project]")?.addEventListener("click", () => { void save(); });
     root.querySelectorAll<HTMLFormElement>("[data-edit-form]").forEach((form) => {
       const draftControl = form.querySelector<HTMLTextAreaElement>("textarea");
@@ -601,6 +630,42 @@ export function mountDesigner(
         }
       });
     });
+    root.querySelectorAll<HTMLFormElement>("[data-formula-form]").forEach((form) => {
+      const input = form.querySelector<HTMLInputElement>("input");
+      const entity = decodeOpaqueAttribute(form.dataset.entity);
+      const field = decodeOpaqueAttribute(form.dataset.field);
+      if (input !== null && entity !== undefined && field !== undefined) {
+        input.addEventListener("input", () => {
+          const key = textBufferKey({ entity, field });
+          if (input.value === input.dataset.initialFormula) {
+            pendingFormulaBuffers.delete(key);
+          } else {
+            pendingFormulaBuffers.set(key, input.value);
+          }
+          reflectUnsavedState();
+        });
+      }
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const source = input?.value;
+        if (entity !== undefined && field !== undefined && source !== undefined) {
+          void commitFormula({ entity, field }, source);
+        }
+      });
+    });
+    root.querySelectorAll<HTMLButtonElement>("[data-format-cycle]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const entity = decodeOpaqueAttribute(button.dataset.entity);
+        const field = decodeOpaqueAttribute(button.dataset.field);
+        if (entity === undefined || field === undefined) return;
+        const key = cellKey(entity, field);
+        const order: NumberFormat[] = ["number", "currency-jpy", "percentage", "currency-usd"];
+        const current = tracker.view.formats[key] ?? "number";
+        tracker.view.formats[key] = order[(order.indexOf(current) + 1) % order.length] ?? "number";
+        reflectUnsavedState();
+        render();
+      });
+    });
     root
       .querySelector<HTMLSelectElement>("[data-collection-select]")
       ?.addEventListener("change", (event) => {
@@ -669,6 +734,13 @@ export function mountDesigner(
         }
       },
     );
+    root.querySelectorAll<HTMLInputElement>("input[data-initial-formula]").forEach((input) => {
+      const entity = decodeOpaqueAttribute(input.form?.dataset.entity);
+      const field = decodeOpaqueAttribute(input.form?.dataset.field);
+      if (entity !== undefined && field !== undefined) {
+        input.value = pendingFormulaBuffers.get(textBufferKey({ entity, field })) ?? input.dataset.initialFormula ?? "";
+      }
+    });
   };
 
   render();
@@ -738,6 +810,7 @@ function designerMarkup(
   durableRevision: string | null,
   savedProjects: SavedProjectSummary[],
   selectedSavedProject: string,
+  view: TrackerView,
 ): string {
   const isTracker = table.tracker_profile === true;
   const statusLabel = {
@@ -782,6 +855,7 @@ function designerMarkup(
               busy || selectedSavedProject === "" ? "disabled" : ""
             }>Open</button>
             <button type="button" data-new-tracker ${busy ? "disabled" : ""}>New Tracker</button>
+            <button type="button" data-new-budget ${busy ? "disabled" : ""}>New Budget</button>
             <button type="button" data-save-project ${busy ? "disabled" : ""}>Save</button>
             <button type="button" data-save-as ${busy ? "disabled" : ""}>Save As</button>
             <button type="button" data-close-project ${busy ? "disabled" : ""}>Close</button>
@@ -839,7 +913,7 @@ function designerMarkup(
               </thead>
               <tbody>
                 ${table.rows
-                  .map((row) => rowMarkup(row, table, busy || currentness !== "current"))
+                  .map((row) => rowMarkup(row, table, busy || currentness !== "current", view))
                   .join("")}
               </tbody>
             </table>
@@ -877,6 +951,7 @@ function closedMarkup(
         } />
       </label>
       <button type="button" data-new-tracker ${busy ? "disabled" : ""}>New Tracker</button>
+      <button type="button" data-new-budget ${busy ? "disabled" : ""}>New Budget</button>
       <button type="button" data-open-project ${
         busy || selectedSavedProject === "" ? "disabled" : ""
       }>Open project</button>
@@ -902,6 +977,7 @@ function rowMarkup(
   row: TableProjection["rows"][number],
   table: TableProjection,
   busy: boolean,
+  view: TrackerView,
 ): string {
   const fields = new Map(row.fields.map((field) => [field.target.field, field]));
   return `
@@ -912,7 +988,7 @@ function rowMarkup(
       </th>
       ${table.columns
         .map((column) =>
-          fieldMarkup(fields.get(column.id), row.key, column.key, busy),
+          fieldMarkup(fields.get(column.id), row.key, column.key, busy, view),
         )
         .join("")}
     </tr>
@@ -924,6 +1000,7 @@ function fieldMarkup(
   entityKey: string,
   fieldKey: string,
   busy: boolean,
+  view: TrackerView,
 ): string {
   if (field === undefined) return '<td class="empty-cell">—</td>';
   const key = `${field.target.entity}.${field.target.field}`;
@@ -931,6 +1008,7 @@ function fieldMarkup(
     .map((diagnostic) => `<small class="field-error">${escapeHtml(diagnostic.message)}</small>`)
     .join("");
   if (field.editable_scalar === "number" && field.stored?.kind === "number") {
+    const format = view.formats[cellKey(field.target.entity, field.target.field)] ?? "number";
     return `
       <td data-field="${escapeHtml(key)}" class="stored-cell">
         <form data-edit-form data-entity="${encodeOpaqueAttribute(
@@ -947,7 +1025,8 @@ function fieldMarkup(
           />
           <button type="submit" ${busy ? "disabled" : ""}>Apply</button>
         </form>
-        <small class="value-kind">Stored · Number</small>
+        <button type="button" data-format-cycle data-entity="${encodeOpaqueAttribute(field.target.entity)}" data-field="${encodeOpaqueAttribute(field.target.field)}" ${busy ? "disabled" : ""}>${escapeHtml(formatLabel(format))}</button>
+        <small class="value-kind">Stored · Number · ${escapeHtml(formatLabel(format))}</small>
         ${diagnostics}
       </td>
     `;
@@ -1017,13 +1096,16 @@ function fieldMarkup(
     `;
   }
   if (field.formula !== null) {
+    const format = view.formats[cellKey(field.target.entity, field.target.field)] ?? "number";
     return `
       <td data-field="${escapeHtml(key)}" class="formula-cell">
-        <output>${escapeHtml(calculationValue(field))}</output>
+        <output>${escapeHtml(calculationValue(field, format))}</output>
         <span class="formula-badge">ƒ Calculated</span>
-        <code title="${escapeHtml(field.formula.source)}">${escapeHtml(
-          field.formula.source,
-        )}</code>
+        <form data-formula-form data-entity="${encodeOpaqueAttribute(field.target.entity)}" data-field="${encodeOpaqueAttribute(field.target.field)}">
+          <input data-initial-formula="${escapeHtml(field.formula.source)}" value="${escapeHtml(field.formula.source)}" aria-label="Formula for ${escapeHtml(humanize(fieldKey))} for ${escapeHtml(humanize(entityKey))}" ${busy ? "disabled" : ""} />
+          <button type="submit" ${busy ? "disabled" : ""}>Apply formula</button>
+        </form>
+        <button type="button" data-format-cycle data-entity="${encodeOpaqueAttribute(field.target.entity)}" data-field="${encodeOpaqueAttribute(field.target.field)}" ${busy ? "disabled" : ""}>${escapeHtml(formatLabel(format))}</button>
         ${diagnostics}
       </td>
     `;
@@ -1054,8 +1136,8 @@ function noticeMarkup(notice: Notice | null): string {
   `;
 }
 
-function calculationValue(field: FieldProjection): string {
-  if (field.calculated?.status === "value") return formatNumber(field.calculated.value);
+function calculationValue(field: FieldProjection, format: NumberFormat): string {
+  if (field.calculated?.status === "value") return formatNumber(field.calculated.value, format);
   if (field.calculated?.status === "failure") return field.calculated.message;
   return "Unavailable";
 }
@@ -1084,8 +1166,17 @@ function humanize(value: string): string {
     .join(" ");
 }
 
-function formatNumber(value: number): string {
-  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 }).format(value);
+function formatNumber(value: number, format: NumberFormat = "number"): string {
+  switch (format) {
+    case "percentage": return new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 2 }).format(value);
+    case "currency-jpy": return new Intl.NumberFormat("ja-JP", { style: "currency", currency: "JPY", maximumFractionDigits: 0 }).format(value);
+    case "currency-usd": return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(value);
+    case "number": return new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 }).format(value);
+  }
+}
+
+function formatLabel(format: NumberFormat): string {
+  return { number: "Number", percentage: "Percentage", "currency-jpy": "JPY", "currency-usd": "USD" }[format];
 }
 
 function formatBytes(value: number): string {

@@ -96,6 +96,7 @@ export type TrackerCommand =
 export type DesignerRequest =
   | TrackerCommand
   | { type: "new_tracker"; occurrence_id: string }
+  | { type: "new_budget"; occurrence_id: string }
   | { type: "bootstrap"; occurrence_id: string }
   | { type: "query_table"; collection: string }
   | {
@@ -112,6 +113,12 @@ export type DesignerRequest =
         | { kind: "text"; value: string }
         | { kind: "boolean"; value: boolean }
         | { kind: "date"; value: string };
+    }
+  | {
+      type: "formula_update";
+      expected_revision: string;
+      target: FieldTarget;
+      source: string;
     };
 
 export type DesignerResponse =

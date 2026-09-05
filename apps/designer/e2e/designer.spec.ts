@@ -211,6 +211,41 @@ test("canonical Save As survives close and reload while existing destinations re
   await rm(externalRoot, { recursive: true, force: true });
 });
 
+test("monthly Budget uses the Rust formula lifecycle and preserves Date-bearing v2 meaning", async ({ page }) => {
+  await page.goto("/");
+
+  page.once("dialog", async (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "New Budget", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Monthly Budget" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Budget Items", exact: true })).toBeVisible();
+  await expect(page.getByLabel("Due Date for Utilities")).toHaveValue("2026-09-15");
+
+  const actual = page.getByLabel("Actual for Utilities");
+  await actual.fill("200");
+  await actual.locator("xpath=ancestor::form").getByRole("button", { name: "Apply" }).click();
+  await expect(page.locator('[data-field="utilities.variance"] output')).toHaveText("20");
+
+  await page.getByLabel("Collection", { exact: true }).selectOption("budget_summary");
+  await expect(page.getByRole("heading", { name: "Budget Summary", exact: true })).toBeVisible();
+  await expect(page.locator('[data-field="monthly_summary.actual_total"] output')).toHaveText("1,400");
+
+  const remaining = page.getByLabel("Formula for Remaining for Monthly Summary");
+  await remaining.fill("([monthly_summary.planned_total] - [utilities.actual])");
+  await remaining.locator("xpath=ancestor::form").getByRole("button", { name: "Apply formula" }).click();
+  await expect(page.locator('[data-field="monthly_summary.remaining"] output')).toHaveText("1,180");
+  await expect(page.locator(".notice.success")).toContainText("Publication complete");
+
+  page.once("dialog", async (dialog) => dialog.accept("september-budget.roproj"));
+  await page.getByRole("button", { name: "Save As", exact: true }).click();
+  await expect(page.locator(".notice.success")).toContainText("Save As complete");
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await page.getByLabel("Saved project").selectOption("september-budget.roproj");
+  await page.getByRole("button", { name: "Open project", exact: true }).click();
+  await page.getByLabel("Collection", { exact: true }).selectOption("budget_summary");
+  await expect(page.locator('[data-field="monthly_summary.remaining"] output')).toHaveText("1,180");
+  await expect(page.getByLabel("Month for Monthly Summary")).toHaveValue("2026-09-01");
+});
+
 async function materializeBrowserProject(
   page: Page,
   name: string,

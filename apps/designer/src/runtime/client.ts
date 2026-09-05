@@ -12,6 +12,7 @@ import type {
 
 export interface DesignerClient {
   newTracker?(): Promise<OpenedProjection>;
+  newBudget?(): Promise<OpenedProjection>;
   trackerCommand?(request: TrackerCommand): Promise<PublicationProjection>;
   bootstrap(): Promise<BootstrapProjection>;
   openProject(bytes: ArrayBuffer): Promise<OpenedProjection>;
@@ -41,6 +42,11 @@ export interface DesignerClient {
     expectedRevision: string,
     target: FieldTarget,
     value: string,
+  ): Promise<PublicationProjection>;
+  updateFormula?(
+    expectedRevision: string,
+    target: FieldTarget,
+    source: string,
   ): Promise<PublicationProjection>;
   close(): void | Promise<void>;
 }

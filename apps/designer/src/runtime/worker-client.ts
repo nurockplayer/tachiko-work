@@ -52,6 +52,10 @@ export class WorkerDesignerClient implements DesignerClient {
     return expectResponse("opened", await this.#command({type: "new_tracker", occurrence_id: freshOccurrenceId()}));
   }
 
+  async newBudget(): Promise<OpenedProjection> {
+    return expectResponse("opened", await this.#command({type: "new_budget", occurrence_id: freshOccurrenceId()}));
+  }
+
   async trackerCommand(request: TrackerCommand): Promise<PublicationProjection> {
     return expectResponse("published", await this.#command(request));
   }
@@ -183,6 +187,17 @@ export class WorkerDesignerClient implements DesignerClient {
         target,
         input: { kind: "date", value },
       }),
+    );
+  }
+
+  async updateFormula(
+    expectedRevision: string,
+    target: FieldTarget,
+    source: string,
+  ): Promise<PublicationProjection> {
+    return expectResponse(
+      "published",
+      await this.#command({ type: "formula_update", expected_revision: expectedRevision, target, source }),
     );
   }
 

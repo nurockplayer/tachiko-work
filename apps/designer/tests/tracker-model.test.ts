@@ -130,7 +130,11 @@ describe("Driver Tracker view sidecar admission", () => {
     view.widths.field = 320;
     view.rowHeight = 80;
     view.header = false;
+    view.formats[cellKey("entity.with.dot", "field")] = "currency-jpy";
     expect(parseTrackerView(JSON.stringify(view))).toEqual(view);
+    const legacy = { ...view } as Record<string, unknown>;
+    delete legacy.formats;
+    expect(parseTrackerView(JSON.stringify(legacy)).formats).toEqual({});
     expect(parseTrackerView()).toEqual(emptyTrackerView());
     expect(cellKey("entity.with", "dot.field")).not.toBe(key);
     expect(emptyTrackerView().cells).toEqual({});
@@ -142,6 +146,7 @@ describe("Driver Tracker view sidecar admission", () => {
     ["cells", { cell: [] }], ["cells", { cell: { bold: "true" } }],
     ["cells", { cell: { font: "custom" } }], ["cells", { cell: { align: ["left"] } }],
     ["cells", { cell: { align: "justify" } }],
+    ["formats", { cell: "excel-custom" }],
   ])("rejects malformed %s: %j", (key, value) => {
     expect(() => parseTrackerView(JSON.stringify({ ...emptyTrackerView(), [key]: value }))).toThrow();
   });

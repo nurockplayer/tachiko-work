@@ -29,7 +29,10 @@ or page lifetimes. Rejected admission or initial projection fails before
 replacement and leaves the current occurrence unchanged.
 
 Save As captures one exact `ResidentWorkspaceSession::export_snapshot()`
-revision and encodes it through the existing canonical `.roproj/v1` codec.
+revision and encodes existing non-Date projects through the canonical
+`.roproj/v1` codec. Date-bearing Budget projects use the existing
+`direct-ro/v2` codec inside an explicit private Browser host record; this is
+not `.roproj/v2`, a portable package, or a new public project format.
 IndexedDB commits the opaque complete tree as one create-only record, so an
 existing project name is never overwritten and the UI marks only the confirmed
 revision durable. Dirty occurrences guard in-app replacement/close and browser
@@ -56,8 +59,8 @@ pnpm --dir apps/designer test:browser
 `build` compiles the private Rust adapter for `wasm32-unknown-unknown` before
 Vite assembles the application. `dev` performs the same runtime build before
 starting Vite, so a clean checkout never serves without its Worker artifact.
-General schema authoring, formula authoring, autosave/recovery history, and
-public transport/storage/SDK stabilization remain outside this slice.
+General schema authoring, autosave/recovery history, and public
+transport/storage/SDK stabilization remain outside this slice.
 
 ## Experimental external client kit
 
@@ -133,3 +136,23 @@ runtime from the [clipboard fixture](e2e/fixtures/operations-tracker.tsv).
 This closes only the bounded tracker journey, not Excel parity or the public
 launch gate. No CSV/XLSX compatibility, multi-sheet, formula expansion, custom
 validation engine, cloud sync, or durable history is added.
+
+## Driver Budget (#258)
+
+Choose **New Budget** to open a small monthly plan with **Budget Items** and
+**Budget Summary** collections. Collection names and their presentation order
+are views only; formulas authored as `[entity.field]` addresses are parsed,
+bound to stable semantic IDs, type-checked, calculated, and published by the
+Rust lifecycle. A rename or a presentation reorder therefore cannot silently
+retarget a bound formula.
+
+- Formula authoring accepts only the existing bounded arithmetic and
+  `min`/`max` vocabulary. Invalid, unbound, non-numeric, stale, or
+  calculation-failing input is rejected before publication.
+- Date uses canonical Gregorian `YYYY-MM-DD`. Number formatting can cycle
+  between ordinary Number, JPY, Percentage, and USD presentation. Formatting
+  is private Browser presentation metadata and never changes Number arithmetic,
+  introduces Money, or promises cross-currency safety.
+- A Date-bearing Budget Save uses the private `direct-ro/v2` host record and
+  reopens through the Rust storage authority. Existing `.roproj/v1` Browser
+  projects retain their original codec and behavior.
