@@ -6,6 +6,61 @@ fn simple() -> SourceWorkbook {
 }
 
 #[test]
+fn accounting_number_formats_preserve_defined_patterns_without_inventing_currency() {
+    let mut book = simple();
+    book.sheets[0].rows[0][1].value = SourceValue::Number { value: -1234.5 };
+    let bytes = export_xlsx(&book).unwrap();
+    // Microsoft OpenXML NumberingFormat's All Languages implied formats.
+    for (id, pattern) in [
+        (37, "#,##0 ;(#,##0)"),
+        (38, "#,##0 ;[Red](#,##0)"),
+        (39, "#,##0.00;(#,##0.00)"),
+        (40, "#,##0.00;[Red](#,##0.00)"),
+    ] {
+        let input = mutate(&bytes, "xl/styles.xml", |s| {
+            s.replace("<xf numFmtId=\"164\"", &format!("<xf numFmtId=\"{id}\""))
+        });
+        let imported = import_xlsx(&input).unwrap();
+        assert!(!imported.ledger.iter().any(|f| f.blocking));
+        let cell = &imported.sheets[0].rows[0][1];
+        assert_eq!(cell.value, SourceValue::Number { value: -1234.5 });
+        assert_eq!(cell.style.number_format.as_deref(), Some(pattern));
+        let reopened = import_xlsx(&export_xlsx(&imported).unwrap()).unwrap();
+        assert_eq!(reopened.sheets[0].rows[0][1], *cell);
+    }
+    // These IDs have no locale-independent implied pattern: only explicit
+    // formatCode establishes presentation. No USD inference is permitted.
+    for id in [5, 6, 7, 8, 41, 42, 43, 44] {
+        let undefined = mutate(&bytes, "xl/styles.xml", |s| {
+            s.replace("<xf numFmtId=\"164\"", &format!("<xf numFmtId=\"{id}\""))
+        });
+        let rejected = import_xlsx(&undefined).unwrap();
+        assert!(
+            rejected
+                .ledger
+                .iter()
+                .any(|f| f.blocking && f.code == "scalar_mapping_rejected")
+        );
+        assert!(export_xlsx(&rejected).is_err());
+        let pattern = "[$¥-411]#,##0.000;[Red](#,##0.000)";
+        let defined = mutate(&bytes, "xl/styles.xml", |s| {
+            s.replace("numFmtId=\"164\"", &format!("numFmtId=\"{id}\""))
+                .replace(
+                    "formatCode=\"General\"",
+                    &format!("formatCode=\"{pattern}\""),
+                )
+        });
+        let imported = import_xlsx(&defined).unwrap();
+        assert!(!imported.ledger.iter().any(|f| f.blocking));
+        let cell = &imported.sheets[0].rows[0][1];
+        assert_eq!(cell.value, SourceValue::Number { value: -1234.5 });
+        assert_eq!(cell.style.number_format.as_deref(), Some(pattern));
+        let reopened = import_xlsx(&export_xlsx(&imported).unwrap()).unwrap();
+        assert_eq!(reopened.sheets[0].rows[0][1], *cell);
+    }
+}
+
+#[test]
 fn decoded_attributes_reject_illegal_characters_including_namespaces() {
     let bytes = export_xlsx(&simple()).unwrap();
     for reference in ["&#0;", "&#1;", "&#xFFFE;", "&#65535;"] {

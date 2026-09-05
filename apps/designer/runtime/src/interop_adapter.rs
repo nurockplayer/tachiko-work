@@ -747,6 +747,10 @@ fn builtin_format(id: u32) -> Option<String> {
         20 => Some("h:mm".into()),
         21 => Some("h:mm:ss".into()),
         22 => Some("yyyy-mm-dd hh:mm:ss".into()),
+        37 => Some("#,##0 ;(#,##0)".into()),
+        38 => Some("#,##0 ;[Red](#,##0)".into()),
+        39 => Some("#,##0.00;(#,##0.00)".into()),
+        40 => Some("#,##0.00;[Red](#,##0.00)".into()),
         49 => Some("@".into()),
         _ => Some(format!("unsupported_builtin_{id}")),
     }
