@@ -58,7 +58,7 @@ chmod +x "${wrapper_contract_probe}"
 
 wrapper_contract_output="${test_dir}/wrapper-contract.out"
 wrapper_contract_error="${test_dir}/wrapper-contract.err"
-env -u CARGO_INCREMENTAL -u SCCACHE_IGNORE_SERVER_IO_ERROR \
+env -u RUSTC_WRAPPER -u CARGO_INCREMENTAL -u SCCACHE_IGNORE_SERVER_IO_ERROR \
   CARGO_TARGET_DIR="${test_dir}/wrapper-contract-target" \
   TACHIKO_CODEX_SCCACHE=1 \
   TACHIKO_CODEX_SCCACHE_BIN="${wrapper_contract_probe}" \
