@@ -15,6 +15,8 @@ export type BudgetToolsOptions = {
   disabled: boolean;
   draft: BudgetToolsDraft;
   changed: () => void;
+  /** Re-render current controls after clearing a completed or cancelled draft. */
+  completed: () => void;
   updateFormula: (target: FieldTarget, source: string) => Promise<void>;
   copyFormula: (request: FormulaCopy) => Promise<void>;
 };
@@ -68,7 +70,7 @@ export function mountBudgetTools(root: HTMLElement, options: BudgetToolsOptions)
   };
   const run = async (operation: () => Promise<void>, clear: () => void): Promise<void> => {
     controls.disabled = true; status.textContent = "Applying formula change…";
-    try { await operation(); clear(); status.textContent = "Formula change applied."; options.changed(); }
+    try { await operation(); clear(); status.textContent = "Formula change applied."; options.changed(); options.completed(); }
     catch (error) { status.textContent = error instanceof Error ? error.message : String(error); }
     finally { controls.disabled = options.disabled; }
   };
@@ -96,7 +98,7 @@ export function mountBudgetTools(root: HTMLElement, options: BudgetToolsOptions)
     void run(() => options.updateFormula(choice.field.target, source.value), () => { delete draft.target; delete draft.source; });
   });
   button("Cancel formula draft", () => {
-    delete draft.target; delete draft.source; source.value = resolve(target)?.field.formula?.source ?? ""; options.changed();
+    delete draft.target; delete draft.source; options.changed(); options.completed();
   });
   const copyNote = document.createElement("p");
   copyNote.textContent = "Copy uses the current canonical table row and column order, not view order. Cross-collection references always stay fixed."; controls.append(copyNote);
@@ -128,6 +130,6 @@ export function mountBudgetTools(root: HTMLElement, options: BudgetToolsOptions)
     if (!targets.length) { status.textContent = "Choose at least one copy destination."; return; }
     void run(() => options.copyFormula({ source: choice.field.target, destinations: targets, fixed_references: selectedTargets(fixed), relative_rows: rows.checked, relative_columns: columns.checked }), clearCopy);
   });
-  button("Cancel copy draft", () => { clearCopy(); options.changed(); });
+  button("Cancel copy draft", () => { clearCopy(); options.changed(); options.completed(); });
   root.append(panel);
 }

@@ -102,9 +102,11 @@ test("name picker authors a Number cell and copies references relatively across 
   await newBudget(page);
   await formula(page, item("Rent", "Planned"), [{ reference: item("Utilities", "Planned") }, " + 10"]);
   await expect(cell(page, "rent.planned").locator("output")).toHaveText("190");
+  await expect(tools(page).getByLabel("Formula source", { exact: true })).toHaveValue("");
   await copy(page, item("Rent", "Planned"), [item("Rent", "Variance")], [], false, true);
   // Planned -> Variance shifts the referenced Utilities Planned -> Utilities Variance.
   await expect(cell(page, "rent.variance").locator("output")).toHaveText("-10");
+  await expect(tools(page).getByLabel("Copy destinations", { exact: true }).locator("option:checked")).toHaveCount(0);
   await applyScalar(page, "Actual for Utilities", "200");
   await expect(cell(page, "rent.variance").locator("output")).toHaveText("30");
   await namedAction(page, "Save As", "budget-across.roproj");

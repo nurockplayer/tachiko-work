@@ -41,6 +41,11 @@ Browser projects survive Worker teardown and page reload, but
 remain browser-origin data and can be removed by clearing site data. The Tracker workflow below adds explicit same-project Save and bounded session
 undo; autosave, cloud persistence, and distribution remain separate work.
 
+Save and Save As require all pending cell and formula drafts to be applied or
+cancelled. Rejected numeric edits retain the draft for correction while the
+published value and calculations stay unchanged. Cancel pending edits restores
+the published values; it does not undo accepted edits.
+
 ## Development
 
 Use pnpm exclusively:

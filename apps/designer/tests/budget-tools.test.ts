@@ -15,7 +15,7 @@ function table(id: string): TableProjection {
 function setup(draft: BudgetToolsDraft = {}) {
   const root = document.createElement("div");
   const updateFormula = vi.fn(async () => {}); const copyFormula = vi.fn(async () => {});
-  const options = { tables: [table("budget"), table("rates")], currentCollection: "budget", disabled: false, draft, changed: vi.fn(), updateFormula, copyFormula };
+  const options = { tables: [table("budget"), table("rates")], currentCollection: "budget", disabled: false, draft, changed: vi.fn(), completed: vi.fn(() => { root.replaceChildren(); mountBudgetTools(root, options); }), updateFormula, copyFormula };
   mountBudgetTools(root, options);
   const select = (label: string): HTMLSelectElement => root.querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`)!;
   const click = (text: string): void => { Array.from(root.querySelectorAll("button")).find(button => button.textContent === text)!.click(); };
@@ -62,4 +62,43 @@ it("does not retarget a draft when its target is unavailable in the current tabl
   expect(select("Formula target").value).toBe("");
   click("Apply formula");
   expect(updateFormula).not.toHaveBeenCalled();
+});
+it("renders cleared copy controls after the operation itself replaces the panel", async () => {
+  const { root, options, select, click, copyFormula } = setup();
+  select("Copy destinations").options[1]!.selected = true;
+  select("Fixed references").options[2]!.selected = true;
+  root.querySelector<HTMLInputElement>('[aria-label="Relative rows"]')!.checked = false;
+  select("Copy destinations").dispatchEvent(new Event("change"));
+  copyFormula.mockImplementationOnce(async () => {
+    root.replaceChildren(); mountBudgetTools(root, options);
+    expect(select("Copy destinations").selectedOptions).toHaveLength(1);
+  });
+  click("Copy formula");
+  await vi.waitFor(() => { expect(options.completed).toHaveBeenCalledOnce(); });
+  expect(hasBudgetToolsDraft(options.draft)).toBe(false);
+  expect(select("Copy destinations").selectedOptions).toHaveLength(0);
+  expect(select("Fixed references").selectedOptions).toHaveLength(0);
+  expect(root.querySelector<HTMLInputElement>('[aria-label="Relative rows"]')!.checked).toBe(true);
+});
+it("renders canonical formula source after an intermediate remount and clears cancellation consistently", async () => {
+  const { root, options, select, click, updateFormula } = setup();
+  const source = root.querySelector("textarea")!;
+  source.value = "1+  2"; source.dispatchEvent(new Event("input"));
+  expect(options.completed).not.toHaveBeenCalled();
+  updateFormula.mockImplementationOnce(async () => {
+    root.replaceChildren(); mountBudgetTools(root, options);
+    expect(root.querySelector("textarea")!.value).toBe("1+  2");
+  });
+  click("Apply formula");
+  await vi.waitFor(() => { expect(options.completed).toHaveBeenCalledOnce(); });
+  expect(root.querySelector("textarea")!.value).toBe("1 + 2");
+  expect(hasBudgetToolsDraft(options.draft)).toBe(false);
+  select("Formula target").selectedIndex = 1; select("Formula target").dispatchEvent(new Event("change"));
+  click("Cancel formula draft");
+  expect(hasBudgetToolsDraft(options.draft)).toBe(false);
+  expect(root.querySelector("textarea")!.value).toBe("1 + 2");
+  select("Copy destinations").options[1]!.selected = true; select("Copy destinations").dispatchEvent(new Event("change"));
+  click("Cancel copy draft");
+  expect(select("Copy destinations").selectedOptions).toHaveLength(0);
+  expect(hasBudgetToolsDraft(options.draft)).toBe(false);
 });

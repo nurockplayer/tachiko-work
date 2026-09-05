@@ -81,7 +81,6 @@ export function mountDesigner(
   let budgetToolsDraft: BudgetToolsDraft = {};
   let budgetTables: TableProjection[] = [];
   const hasEditDrafts = (): boolean => tracker.pending || pendingTextBuffers.size > 0 || pendingBooleanBuffers.size > 0 || pendingDateBuffers.size > 0 || pendingFormulaBuffers.size > 0 || pendingNumberBuffers.size > 0 || hasBudgetToolsDraft(budgetToolsDraft);
-  const hasSaveBlockingDrafts = (): boolean => tracker.pending || pendingFormulaBuffers.size > 0 || hasBudgetToolsDraft(budgetToolsDraft) || (tracker.view.budgetViews !== undefined && hasEditDrafts());
   const hasPendingScalarDrafts = (): boolean =>
     hasEditDrafts() || viewDirty() ||
     pendingTextBuffers.size > 0 ||
@@ -153,17 +152,18 @@ export function mountDesigner(
       tracker.bind(root, busy || snapshot.currentness !== "current");
       root.querySelector("[data-tracker-refresh]")?.addEventListener("click", () => { void selectCollection(selectedCollection); });
     }
-    if (tracker.view.budgetViews) {
-      renderBudgetViews();
-      if (hasEditDrafts()) {
+    if (hasEditDrafts() && !tracker.pending) {
         const cancel = document.createElement("button");
-        cancel.textContent = "Cancel pending Budget edits"; cancel.disabled = busy;
+        cancel.textContent = tracker.view.budgetViews ? "Cancel pending Budget edits" : "Cancel pending edits";
+        cancel.dataset.cancelPendingEdits = ""; cancel.disabled = busy;
         cancel.addEventListener("click", () => {
           pendingTextBuffers.clear(); pendingBooleanBuffers.clear(); pendingDateBuffers.clear(); pendingNumberBuffers.clear(); pendingFormulaBuffers.clear(); budgetToolsDraft = {};
           reflectUnsavedState(); render();
         });
         root.querySelector(".workspace-actions")?.append(cancel);
-      }
+    }
+    if (tracker.view.budgetViews) {
+      renderBudgetViews();
       const panel = document.createElement("div");
       root.querySelector(".table-workbench")?.append(panel);
       mountBudgetTools(panel, {
@@ -172,6 +172,7 @@ export function mountDesigner(
         disabled: busy || snapshot.currentness !== "current" || budgetTables.some(t => t.revision !== snapshot.table.revision),
         draft: budgetToolsDraft,
         changed: reflectUnsavedState,
+        completed: render,
         updateFormula: async (target, source) => {
           const before = store?.snapshot().table.revision;
           await commitFormula(target, source);
@@ -536,7 +537,7 @@ export function mountDesigner(
 
   const saveAs = async (): Promise<void> => {
     if (store === null || busy) return;
-    if (hasSaveBlockingDrafts()) { showProjectFailure("Project not saved", new Error("Apply or cancel the cell draft and pending formula edits before saving.")); render(); return; }
+    if (hasEditDrafts()) { showProjectFailure("Project not saved", new Error("Apply or cancel the cell draft and pending formula edits before saving.")); render(); return; }
     const requestedName = window.prompt(
       "Save As a new browser project (existing destinations are never overwritten):",
       `${bootstrap?.title.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-").replaceAll(/^-|-$/g, "") || "project"}.roproj`,
@@ -604,7 +605,7 @@ export function mountDesigner(
   const save = async (): Promise<void> => {
     if (activeProject === null) { await saveAs(); return; }
     if (!store || busy) return;
-    if (hasSaveBlockingDrafts()) { showProjectFailure("Project not saved", new Error("Apply or cancel the cell draft and pending formula edits before saving.")); render(); return; }
+    if (hasEditDrafts()) { showProjectFailure("Project not saved", new Error("Apply or cancel the cell draft and pending formula edits before saving.")); render(); return; }
     busy = true; notice = null; render();
     try {
       if (!host.update) throw new Error("This browser host does not support Save; use Save As.");
