@@ -43,28 +43,32 @@ cat >"${test_dir}/src/main.rs" <<'EOF'
 fn main() {}
 EOF
 
-server_fallback_contract="${test_dir}/sccache-server-fallback-contract"
-cat >"${server_fallback_contract}" <<'EOF'
+wrapper_contract_marker="${test_dir}/wrapper-contract.invoked"
+wrapper_contract_probe="${test_dir}/sccache-wrapper-contract"
+cat >"${wrapper_contract_probe}" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-# Portable contract probe: sccache's server-I/O fallback must receive this
-# setting and then use the compiler directly.
+# This stand-in checks environment propagation and compiler dispatch only.
+# It neither starts real sccache nor simulates a server-I/O failure.
 [[ "${SCCACHE_IGNORE_SERVER_IO_ERROR:-}" == "1" ]]
+printf 'wrapper=%s\n' "${RUSTC_WRAPPER:-}" >>"${CODEX_TEST_WRAPPER_MARKER}"
 exec "$@"
 EOF
-chmod +x "${server_fallback_contract}"
+chmod +x "${wrapper_contract_probe}"
 
-server_fallback_output="${test_dir}/server-fallback.out"
-server_fallback_error="${test_dir}/server-fallback.err"
-env -u CARGO_INCREMENTAL -u SCCACHE_IGNORE_SERVER_IO_ERROR \
-  CARGO_TARGET_DIR="${test_dir}/server-fallback-target" \
+wrapper_contract_output="${test_dir}/wrapper-contract.out"
+wrapper_contract_error="${test_dir}/wrapper-contract.err"
+env -u RUSTC_WRAPPER -u CARGO_INCREMENTAL -u SCCACHE_IGNORE_SERVER_IO_ERROR \
+  CARGO_TARGET_DIR="${test_dir}/wrapper-contract-target" \
   TACHIKO_CODEX_SCCACHE=1 \
-  TACHIKO_CODEX_SCCACHE_BIN="${server_fallback_contract}" \
+  TACHIKO_CODEX_SCCACHE_BIN="${wrapper_contract_probe}" \
+  CODEX_TEST_WRAPPER_MARKER="${wrapper_contract_marker}" \
   bash "${cargo_script}" build --manifest-path "${test_dir}/Cargo.toml" \
-  >"${server_fallback_output}" 2>"${server_fallback_error}"
-assert_contains "${server_fallback_error}" "incremental=0"
-assert_contains "${server_fallback_error}" "sccache=enabled"
-assert_compilation_artifact "${test_dir}/server-fallback-target"
+  >"${wrapper_contract_output}" 2>"${wrapper_contract_error}"
+assert_contains "${wrapper_contract_error}" "incremental=0"
+assert_contains "${wrapper_contract_error}" "sccache=enabled"
+assert_compilation_artifact "${test_dir}/wrapper-contract-target"
+assert_contains "${wrapper_contract_marker}" "wrapper=${repo_root}/scripts/codex-rustc-wrapper.sh"
 
 direct_output="${test_dir}/direct.out"
 direct_error="${test_dir}/direct.err"
@@ -172,4 +176,4 @@ env -u CARGO_INCREMENTAL CARGO_TARGET_DIR="${test_dir}/delimiter-target" \
 assert_contains "${delimiter_error}" "sccache=disabled"
 [[ -x "${test_dir}/delimiter-target/debug/codex-cargo-fixture" ]]
 
-echo "codex Cargo check passed: private target guard, incremental default, server-I/O fallback, and single compiler failure"
+echo "codex Cargo check passed: private target guard, incremental default, wrapper environment/dispatch contract, and single compiler failure"
