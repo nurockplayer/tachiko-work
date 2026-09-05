@@ -910,7 +910,7 @@ impl DesignerRuntime {
             ),
             self.clock.tick(),
         )?;
-        self.lifecycle.preview(
+        let preview = self.lifecycle.preview(
             snapshot.document_scope(),
             snapshot.document(),
             snapshot.revision(),
@@ -918,6 +918,26 @@ impl DesignerRuntime {
             &self.principal,
             self.clock.tick(),
         )?;
+        // Use the admitted bound command from this exact authorized preview.
+        // The full open-time profile must pass before publication, including
+        // formula count, aggregate strings and every bounded projection.
+        let SemanticPatchBody::Command(SemanticCommand::FormulaUpdate(command)) =
+            preview.proposal.exact_change().body()
+        else {
+            return Err(tracker_error(
+                "formula proposal did not contain one admitted formula command",
+            ));
+        };
+        let mut candidate = snapshot.document().clone();
+        let entity = candidate
+            .entities
+            .get_mut(&command.target().entity)
+            .ok_or_else(|| tracker_error("admitted formula target is unavailable"))?;
+        entity.fields.insert(
+            command.target().field.clone(),
+            Value::Formula(command.expression().clone()),
+        );
+        Self::from_document(candidate, PREFLIGHT_OCCURRENCE)?;
         let execute_now = self.clock.tick();
         let (receipt, invalidation) = {
             let mut publication = self.session.publication_authority(&mut self.clock);

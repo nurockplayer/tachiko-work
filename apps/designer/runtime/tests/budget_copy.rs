@@ -275,3 +275,145 @@ fn accepted_copy_clears_scalar_history_but_rejected_copy_preserves_redo() {
             .is_err()
     );
 }
+
+fn formula_capacity_fixture() -> DesignerRuntime {
+    let mut document = Document::empty("formula_capacity", "Formula capacity");
+    let schema = SchemaId::from("items");
+    let field_id = FieldId::from("n");
+    document.schemas.insert(
+        schema.clone(),
+        Schema {
+            id: schema.clone(),
+            key: SchemaKey::from("items"),
+            fields: BTreeMap::from([(
+                field_id.clone(),
+                FieldDefinition {
+                    id: field_id.clone(),
+                    key: FieldKey::from("n"),
+                    field_type: FieldType::Number,
+                    required: true,
+                },
+            )]),
+        },
+    );
+    for index in 0..33 {
+        let id = EntityId::from(format!("r{index:02}"));
+        let value = if index < 32 {
+            Value::Formula(tachiko_workspace_engine::Expression::Number(
+                Number::new(1.0).unwrap(),
+            ))
+        } else {
+            Value::Number(Number::new(2.0).unwrap())
+        };
+        document.entities.insert(
+            id.clone(),
+            Entity {
+                id: id.clone(),
+                key: EntityKey::from(if index == 32 {
+                    "long_but_valid_input_reference_key".to_owned()
+                } else {
+                    id.to_string()
+                }),
+                schema: schema.clone(),
+                fields: BTreeMap::from([(field_id.clone(), value)]),
+            },
+        );
+    }
+    DesignerRuntime::from_document(document, OCCURRENCE).unwrap()
+}
+
+fn assert_formula_rejection_preserves_reopen(
+    runtime: &mut DesignerRuntime,
+    revision: u32,
+    target: &str,
+    source: &str,
+) {
+    let revision_text = format!("resident/{revision}");
+    let before = runtime.export_project(&revision_text).unwrap().bytes;
+    let error = runtime
+        .handle(DesignerRequest::FormulaUpdate {
+            expected_revision: revision_text.clone(),
+            target: target.into(),
+            source: source.into(),
+        })
+        .expect_err("unopenable formula candidate must be rejected before publication");
+    assert_eq!(
+        error.failure_projection(&revision_text).code,
+        "unsupported_project"
+    );
+    assert_eq!(
+        runtime.export_project(&revision_text).unwrap().bytes,
+        before
+    );
+    let mut reopened = None;
+    tachiko_designer_runtime::open_project(
+        &mut reopened,
+        &before,
+        "00000000-0000-4000-8000-000000000001",
+    )
+    .unwrap();
+    assert_eq!(
+        reopened
+            .unwrap()
+            .export_project("resident/0")
+            .unwrap()
+            .bytes,
+        before
+    );
+}
+
+#[test]
+fn formula_authoring_rejects_33rd_formula_before_publication_and_keeps_32_reopenable() {
+    let mut runtime = formula_capacity_fixture();
+    assert_formula_rejection_preserves_reopen(&mut runtime, 0, "r32.n", "3");
+}
+
+#[test]
+fn formula_authoring_preflights_complete_projection_budget_for_long_sources() {
+    let mut runtime = formula_capacity_fixture();
+    let mut terms = vec!["[long_but_valid_input_reference_key.n]".to_owned(); 80];
+    while terms.len() > 1 {
+        terms = terms
+            .chunks(2)
+            .map(|pair| {
+                if pair.len() == 2 {
+                    format!("({} + {})", pair[0], pair[1])
+                } else {
+                    pair[0].clone()
+                }
+            })
+            .collect();
+    }
+    let source = terms.remove(0);
+    let mut rejected = false;
+    for index in 0..32 {
+        let target = format!("r{index:02}.n");
+        let before = runtime
+            .export_project(&format!("resident/{index}"))
+            .unwrap()
+            .bytes;
+        if runtime
+            .handle(DesignerRequest::FormulaUpdate {
+                expected_revision: format!("resident/{index}"),
+                target: target.as_str().into(),
+                source: source.clone(),
+            })
+            .is_err()
+        {
+            assert_eq!(
+                runtime
+                    .export_project(&format!("resident/{index}"))
+                    .unwrap()
+                    .bytes,
+                before
+            );
+            assert_formula_rejection_preserves_reopen(&mut runtime, index, &target, &source);
+            rejected = true;
+            break;
+        }
+    }
+    assert!(
+        rejected,
+        "32 long formulas must exceed the bounded aggregate projection"
+    );
+}

@@ -167,7 +167,7 @@ export function mountDesigner(
       root.querySelector(".table-workbench")?.append(panel);
       mountBudgetTools(panel, {
         tables: budgetTables,
-        currentCollection: selectedCollection,
+        currentCollection: snapshot.table.collection.id,
         disabled: busy || snapshot.currentness !== "current" || budgetTables.some(t => t.revision !== snapshot.table.revision),
         draft: budgetToolsDraft,
         changed: reflectUnsavedState,
