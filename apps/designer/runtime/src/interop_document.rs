@@ -702,6 +702,10 @@ pub fn import_workbook(
         occurrence_id,
     )?;
     validate_import_metadata(runtime.session.export_snapshot().document(), &metadata)?;
+    // Admission covers the final typed candidate, including user-added columns
+    // and bound formulas. Reuse the same representation proof as saved-project
+    // inspection and export before exposing or installing this occurrence.
+    runtime.export_workbook(runtime.current_revision(), &metadata)?;
     let bootstrap = runtime.bootstrap_projection();
     let table = runtime.query_table(&bootstrap.default_collection)?;
     ledger.push(FidelityFinding {

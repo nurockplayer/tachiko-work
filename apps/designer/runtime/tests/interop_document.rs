@@ -451,6 +451,84 @@ fn workbook_fixture() -> (SourceWorkbook, ImportSelection) {
     };
     (workbook, selection)
 }
+
+#[test]
+fn direct_import_rejects_unrepresentable_source_and_selected_column_text() {
+    for invalid in ["bad\0text", "bad\u{b}text", "bad\u{fffe}text"] {
+        for location in ["value", "header", "extra_column", "sheet"] {
+            let (mut source, mut selection) = workbook_fixture();
+            match location {
+                "value" => {
+                    source.sheets[0].rows[0][4].value = SourceValue::Text {
+                        value: invalid.into(),
+                    };
+                }
+                "header" => source.sheets[0].columns[4].name = invalid.into(),
+                "extra_column" => {
+                    selection.extra_columns[0].push(tachiko_designer_runtime::ImportColumnSpec {
+                        name: invalid.into(),
+                        field_type: ImportFieldType::Text,
+                    });
+                }
+                "sheet" => source.sheets[1].name = invalid.into(),
+                _ => unreachable!(),
+            }
+            assert!(
+                import_workbook(&source, &selection, OCCURRENCE).is_err(),
+                "unrepresentable {location}: {invalid:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn candidate_admission_preserves_legal_xml_whitespace_and_unicode() {
+    let (mut source, mut selection) = workbook_fixture();
+    let text = "legal\tTAB\nLF\rCR 🦀";
+    source.sheets[0].rows[0][4].value = SourceValue::Text { value: text.into() };
+    source.sheets[0].columns[4].name = text.into();
+    selection.extra_columns[0].push(tachiko_designer_runtime::ImportColumnSpec {
+        name: format!("Extra {text}"),
+        field_type: ImportFieldType::Text,
+    });
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let exported = runtime
+        .export_workbook(&imported.opened.bootstrap.revision, &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        exported.sheets[0].rows[0][4].value,
+        source.sheets[0].rows[0][4].value
+    );
+    assert_eq!(exported.sheets[0].columns[4].name, text);
+    assert_eq!(exported.sheets[0].columns[5].name, format!("Extra {text}"));
+    assert_eq!(exported.sheets[0].rows[0][5].value, SourceValue::Empty);
+    tachiko_designer_runtime::interop_adapter::export_xlsx(&exported).unwrap();
+}
+
+#[test]
+fn direct_source_admission_keeps_shape_and_blocking_guards_before_candidate_build() {
+    use tachiko_designer_runtime::interop_adapter::{FidelityCategory, FidelityFinding};
+    let (mut source, selection) = workbook_fixture();
+    source.sheets[0].rows[0].push(source_cell(SourceValue::Empty, None));
+    assert!(import_workbook(&source, &selection, OCCURRENCE).is_err());
+    let (mut source, selection) = workbook_fixture();
+    source.ledger.push(FidelityFinding {
+        category: FidelityCategory::UnsupportedSafeDisabled,
+        code: "unknown_source_semantics".into(),
+        location: "workbook".into(),
+        message: "Unknown source semantics are blocking.".into(),
+        blocking: true,
+    });
+    assert!(import_workbook(&source, &selection, OCCURRENCE).is_err());
+    let (mut source, selection) = workbook_fixture();
+    source.sheets[0].rows[0].truncate(4);
+    // A short source row represents a missing optional trailing field.
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let exported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    assert_eq!(exported.sheets[0].rows[0][4].value, SourceValue::Empty);
+}
 #[test]
 fn imported_forward_and_cross_sheet_formulas_rebind_and_export_from_live_ids_after_dedupe() {
     let (source, selection) = workbook_fixture();

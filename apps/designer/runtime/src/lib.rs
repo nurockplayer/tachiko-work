@@ -32,6 +32,7 @@ use thiserror::Error;
 
 pub mod interop_adapter;
 mod interop_document;
+mod interop_number_format;
 use interop_document::PendingCleanup;
 pub use interop_document::{
     CleanupChange, CleanupOperation, CleanupPreview, ImportColumnSpec, ImportFieldType,

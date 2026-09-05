@@ -227,7 +227,7 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
                 .collect()
         })
         .collect();
-    Ok(SourceWorkbook {
+    Ok(finish_source_admission(SourceWorkbook {
         sheets: vec![SourceSheet {
             name: "Imported table".into(),
             has_header: options.header,
@@ -250,7 +250,7 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
                 false,
             ),
         ],
-    })
+    }))
 }
 
 // Namespace-aware bounded XML tree. No DTD or entity expansion is accepted.
@@ -259,6 +259,7 @@ struct Xml {
     name: String,
     ns: String,
     attrs: BTreeMap<String, String>,
+    namespace_declarations: Vec<String>,
     children: Vec<Xml>,
     text: String,
 }
@@ -332,6 +333,7 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
                     .entry("xml".into())
                     .or_insert_with(|| "http://www.w3.org/XML/1998/namespace".into());
                 let mut attrs = BTreeMap::new();
+                let mut namespace_declarations = Vec::new();
                 let mut attribute_count = 0;
                 for a in e.attributes() {
                     attribute_count += 1;
@@ -356,11 +358,13 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
                         if value.len() > 512 {
                             return fail("XML namespace URI exceeds profile");
                         }
+                        namespace_declarations.push(value.clone());
                         bindings.insert(String::new(), value);
                     } else if let Some(prefix) = key.strip_prefix("xmlns:") {
                         if value.len() > 512 {
                             return fail("XML namespace URI exceeds profile");
                         }
+                        namespace_declarations.push(value.clone());
                         bindings.insert(prefix.into(), value);
                     } else {
                         attrs.insert(key, value);
@@ -402,6 +406,7 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
                     name: name.into(),
                     ns,
                     attrs,
+                    namespace_declarations,
                     children: Vec::new(),
                     text: String::new(),
                 };
@@ -604,6 +609,68 @@ fn rel_target(base: &str, target: &str) -> Result<String> {
     }
     Ok(result.join("/"))
 }
+const FEATURE_BAG_NS: &str =
+    "http://schemas.microsoft.com/office/spreadsheetml/2022/featurepropertybag";
+
+/// Recognize only the complete source-only checkbox mapper represented by the
+/// ordinary workbook fixture. Bag indices are positional references, so the
+/// accepted order and links are explicit rather than inferred from type names.
+fn checkbox_property_bags(root: &Xml) -> bool {
+    fn shape(node: &Xml, name: &str, attrs: &[(&str, &str)], text: &str, count: usize) -> bool {
+        node.name == name
+            && node.ns == FEATURE_BAG_NS
+            && node
+                .namespace_declarations
+                .iter()
+                .all(|ns| ns == FEATURE_BAG_NS)
+            && node.attrs.len() == attrs.len()
+            && attrs
+                .iter()
+                .all(|(key, value)| node.attr(key) == Some(*value))
+            && node.text.trim_matches([' ', '\t', '\n', '\r']) == text
+            && node.children.len() == count
+    }
+    if !shape(root, "FeaturePropertyBags", &[], "", 4) {
+        return false;
+    }
+    let bags = &root.children;
+    shape(&bags[0], "bag", &[("type", "Checkbox")], "", 0)
+        && shape(&bags[1], "bag", &[("type", "XFControls")], "", 1)
+        && shape(
+            &bags[1].children[0],
+            "bagId",
+            &[("k", "CellControl")],
+            "0",
+            0,
+        )
+        && shape(&bags[2], "bag", &[("type", "XFComplement")], "", 1)
+        && shape(
+            &bags[2].children[0],
+            "bagId",
+            &[("k", "XFControls")],
+            "1",
+            0,
+        )
+        && shape(
+            &bags[3],
+            "bag",
+            &[
+                ("type", "XFComplements"),
+                ("extRef", "XFComplementsMapperExtRef"),
+            ],
+            "",
+            1,
+        )
+        && shape(
+            &bags[3].children[0],
+            "a",
+            &[("k", "MappedFeaturePropertyBags")],
+            "",
+            1,
+        )
+        && shape(&bags[3].children[0].children[0], "bagId", &[], "2", 0)
+}
+
 #[allow(clippy::case_sensitive_file_extension_comparisons)] // Compared path is already ASCII-lowercase.
 fn root_inventory(
     parts: &BTreeMap<String, Vec<u8>>,
@@ -619,17 +686,7 @@ fn root_inventory(
         let mut inventoried = false;
         if lower == "xl/featurepropertybag/featurepropertybag.xml" {
             let xml = parse_xml(bytes)?;
-            let mut bags = Vec::new();
-            xml.all("bag", &mut bags);
-            if xml.name == "FeaturePropertyBags"
-                && xml.ns
-                    == "http://schemas.microsoft.com/office/spreadsheetml/2022/featurepropertybag"
-                && bags.iter().all(|b| {
-                    b.attr("type").is_some_and(|t| {
-                        ["Checkbox", "XFControls", "XFComplement", "XFComplements"].contains(&t)
-                    })
-                })
-            {
+            if checkbox_property_bags(&xml) {
                 inventoried = true;
                 ledger.push(finding(FidelityCategory::LossyOnExport,"checkbox_presentation",path,"Checkbox control presentation is source-only; Boolean cell values are preserved",false));
             }
@@ -867,97 +924,10 @@ fn coordinate(address: &str) -> Result<(usize, usize)> {
     }
     Ok((row - 1, col - 1))
 }
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum NumberFormatKind {
-    Number,
-    Date,
-    Time,
-}
+use crate::interop_number_format::NumberFormatKind;
 
 fn checked_number_format(style: &CellStyle) -> Result<NumberFormatKind> {
-    let pattern = style.number_format.as_deref().unwrap_or("");
-    if pattern.starts_with("unsupported_builtin_") {
-        return fail("Unsupported built-in number format");
-    }
-    let mut sections = vec![String::new()];
-    let mut quoted = false;
-    let mut skip = false;
-    let mut bracket = false;
-    let mut bracket_text = String::new();
-    for c in pattern.chars() {
-        if skip {
-            skip = false;
-            continue;
-        }
-        if c == '\\' || (!quoted && !bracket && matches!(c, '_' | '*')) {
-            skip = true;
-            continue;
-        }
-        if c == '"' && !bracket {
-            quoted = !quoted;
-            continue;
-        }
-        if !quoted {
-            if c == '[' {
-                if bracket {
-                    return fail("Nested number-format bracket");
-                }
-                bracket = true;
-                bracket_text.clear();
-                continue;
-            }
-            if c == ']' && bracket {
-                bracket = false;
-                if matches!(bracket_text.as_str(), "h" | "hh" | "m" | "mm" | "s" | "ss") {
-                    // Preserve elapsed-time identity; date tokens must not
-                    // turn a duration into a calendar date.
-                    sections.last_mut().expect("one section").push('\0');
-                }
-                continue;
-            }
-            if bracket {
-                bracket_text.push(c.to_ascii_lowercase());
-                continue;
-            }
-            if c == ']' {
-                return fail("Unmatched number-format bracket");
-            }
-            if c == ';' {
-                if sections.len() == 4 {
-                    return fail("Number format exceeds four sections");
-                }
-                sections.push(String::new());
-            } else {
-                sections
-                    .last_mut()
-                    .expect("one section")
-                    .push(c.to_ascii_lowercase());
-            }
-        }
-    }
-    if quoted || bracket || skip {
-        return fail("Incomplete number-format literal");
-    }
-    let classify = |tokens: &str| {
-        if tokens.contains('\0') {
-            NumberFormatKind::Time
-        } else if tokens.contains(['y', 'd']) {
-            NumberFormatKind::Date
-        } else if tokens.contains(['h', 'm', 's']) {
-            NumberFormatKind::Time
-        } else {
-            NumberFormatKind::Number
-        }
-    };
-    let first = classify(&sections[0]);
-    if sections
-        .iter()
-        .take(3)
-        .any(|tokens| classify(tokens) != first)
-    {
-        return fail("Mixed numeric number-format section types are unsupported");
-    }
-    Ok(first)
+    crate::interop_number_format::classify(style.number_format.as_deref()).map_err(InteropError)
 }
 #[allow(clippy::float_cmp, clippy::cast_possible_truncation)] // Serial is first proven finite, integral, and within the i64 range; serial 60 is exact.
 fn date_from_serial(value: f64, date1904: bool) -> Result<String> {
@@ -1585,7 +1555,12 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
     }
     root_inventory(&parts, &worksheet_paths, &mut ledger)?;
     ledger.push(finding(FidelityCategory::NativeEquivalent,"bounded_workbook","source","All bounded worksheets and scalar cells were inspected; formula sources require authoritative Rust binding",false));
-    let mut workbook = SourceWorkbook { sheets, ledger };
+    Ok(finish_source_admission(SourceWorkbook { sheets, ledger }))
+}
+
+/// Every parsed source uses the same representation predicate as output. Existing
+/// blockers retain their original inventory and are never replaced by a generic error.
+fn finish_source_admission(mut workbook: SourceWorkbook) -> SourceWorkbook {
     if !workbook.ledger.iter().any(|finding| finding.blocking) {
         if let Err(error) = validate_output(&workbook) {
             workbook.ledger.push(finding(
@@ -1600,7 +1575,7 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
             ));
         }
     }
-    Ok(workbook)
+    workbook
 }
 /// Emit the selected sheet values. Caller discloses formula/format/sheet losses.
 /// # Errors
@@ -1777,6 +1752,11 @@ pub(crate) fn validate_output(workbook: &SourceWorkbook) -> Result<()> {
                 let format = checked_number_format(&c.style)?;
                 if c.formula.is_some() && format != NumberFormatKind::Number {
                     return fail("Formula requires a uniform numeric number format");
+                }
+                if matches!(c.value, SourceValue::Number { .. })
+                    && format != NumberFormatKind::Number
+                {
+                    return fail("Number requires a uniform numeric number format");
                 }
                 if !xml_text_valid(&value_text(&c.value))
                     || c.formula.as_ref().is_some_and(|s| !xml_text_valid(s))

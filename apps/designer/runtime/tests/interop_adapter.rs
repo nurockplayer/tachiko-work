@@ -743,7 +743,7 @@ fn integral_time_only_formats_never_become_dates_or_numbers() {
     book.sheets[0].rows[0][1].value = SourceValue::Number { value: 0.0 };
     for format in ["h:mm", "h:mm:ss", "[m]", "[mm]"] {
         book.sheets[0].rows[0][1].style.number_format = Some(format.into());
-        let bytes = export_xlsx(&book).unwrap();
+        let bytes = source_with_format(&book);
         let imported = import_xlsx(&bytes).unwrap();
         assert!(
             imported
@@ -1048,7 +1048,7 @@ fn serial_dates_reject_fictitious_day_and_time_without_truncation() {
     book.sheets[0].rows[0][1].style.number_format = Some("yyyy-mm-dd".into());
     for serial in [60.0, 46270.5] {
         book.sheets[0].rows[0][1].value = SourceValue::Number { value: serial };
-        let imported = import_xlsx(&export_xlsx(&book).unwrap()).unwrap();
+        let imported = import_xlsx(&source_with_format(&book)).unwrap();
         assert!(
             imported
                 .ledger
@@ -1057,7 +1057,7 @@ fn serial_dates_reject_fictitious_day_and_time_without_truncation() {
         );
     }
     book.sheets[0].rows[0][1].value = SourceValue::Number { value: 46270.0 };
-    let bytes = export_xlsx(&book).unwrap();
+    let bytes = source_with_format(&book);
     assert_eq!(
         import_xlsx(&bytes).unwrap().sheets[0].rows[0][1].value,
         SourceValue::Date {
@@ -1407,5 +1407,157 @@ fn hostile_fixture_manifest_matches_archive_entry_sizes() {
                 MAX_EXPANDED_BYTES,
             );
         }
+    }
+}
+
+#[test]
+fn csv_admission_checks_all_retained_text_against_the_shared_output_profile() {
+    for illegal in ['\0', '\u{b}', '\u{fffe}', '\u{ffff}'] {
+        for source in [
+            format!("Na{illegal}me\nAda\n"),
+            format!("Name\nA{illegal}da\n"),
+        ] {
+            let book = import_csv(source.as_bytes(), &ImportOptions::default()).unwrap();
+            assert!(
+                book.ledger
+                    .iter()
+                    .any(|f| f.blocking && f.code == "output_profile_rejected")
+            );
+            assert!(export_xlsx(&book).is_err());
+        }
+    }
+    let input = "\"姓名\t😀\n列\r名\"\n\"文字\t😀\n列\r值\"\n";
+    let book = import_csv(input.as_bytes(), &ImportOptions::default()).unwrap();
+    assert!(!book.ledger.iter().any(|f| f.blocking));
+    let reopened = import_xlsx(&export_xlsx(&book).unwrap()).unwrap();
+    assert_eq!(reopened.sheets[0].columns, book.sheets[0].columns);
+    assert_eq!(
+        reopened.sheets[0].rows[0][0].value,
+        book.sheets[0].rows[0][0].value
+    );
+}
+
+#[test]
+fn checkbox_property_bag_inventory_covers_the_entire_construct() {
+    let bytes = include_bytes!("../../tests/fixtures/interop/ordinary-two-sheet.xlsx");
+    let path = "xl/featurePropertyBag/featurePropertyBag.xml";
+    let original = import_xlsx(bytes).unwrap();
+    assert!(!original.ledger.iter().any(|f| f.blocking));
+    assert!(
+        original
+            .ledger
+            .iter()
+            .any(|f| f.code == "checkbox_presentation")
+    );
+    let mutations = [
+        (
+            "</xfpb:FeaturePropertyBags>",
+            "<xfpb:unknown/></xfpb:FeaturePropertyBags>",
+        ),
+        (
+            "type=\"Checkbox\" />",
+            "type=\"Checkbox\"><xfpb:unknown/></xfpb:bag>",
+        ),
+        ("type=\"Checkbox\"", "type=\"Checkbox\" unknown=\"1\""),
+        (
+            "<xfpb:FeaturePropertyBags ",
+            "<xfpb:FeaturePropertyBags unknown=\"1\" ",
+        ),
+        (
+            "type=\"Checkbox\" />",
+            "type=\"Checkbox\">hidden semantics</xfpb:bag>",
+        ),
+        (
+            "</xfpb:FeaturePropertyBags>",
+            "hidden semantics</xfpb:FeaturePropertyBags>",
+        ),
+        (
+            "<xfpb:bag type=\"Checkbox\"",
+            "<xfpb:bag xmlns:xfpb=\"urn:unknown\" type=\"Checkbox\"",
+        ),
+        (
+            "<xfpb:FeaturePropertyBags ",
+            "<xfpb:FeaturePropertyBags xmlns:unknown=\"urn:unknown\" ",
+        ),
+        (">0</xfpb:bagId>", ">3</xfpb:bagId>"),
+        (">1</xfpb:bagId>", ">0</xfpb:bagId>"),
+        (">2</xfpb:bagId>", ">99</xfpb:bagId>"),
+        ("k=\"CellControl\"", "k=\"DifferentControl\""),
+        ("extRef=\"XFComplementsMapperExtRef\"", "extRef=\"unknown\""),
+        (
+            "<xfpb:bagId>2</xfpb:bagId>",
+            "<xfpb:bagId>2<xfpb:unknown/></xfpb:bagId>",
+        ),
+        ("<xfpb:bag type=\"Checkbox\" />", ""),
+    ];
+    for (from, to) in mutations {
+        let changed = mutate(bytes, path, |xml| {
+            assert!(xml.contains(from), "fixture lacks {from}");
+            xml.replace(from, to)
+        });
+        let book = import_xlsx(&changed).unwrap();
+        assert!(
+            book.ledger.iter().any(|f| f.blocking && f.location == path),
+            "{from}: {:?}",
+            book.ledger
+        );
+        assert!(
+            !book
+                .ledger
+                .iter()
+                .any(|f| f.code == "checkbox_presentation"),
+            "{from}"
+        );
+        assert!(export_xlsx(&book).is_err());
+    }
+}
+
+#[test]
+fn numeric_scalar_export_cannot_change_type_through_its_format() {
+    let mut book = simple();
+    book.sheets[0].rows[0][1].value = SourceValue::Number { value: 46000.0 };
+    for format in ["yyyy-mm-dd", "h:mm", "[m]"] {
+        book.sheets[0].rows[0][1].style.number_format = Some(format.into());
+        assert!(
+            export_xlsx(&book)
+                .unwrap_err()
+                .0
+                .contains("Number requires")
+        );
+    }
+    for format in ["0.00", "0%", "[$$-409]#,##0.00"] {
+        book.sheets[0].rows[0][1].style.number_format = Some(format.into());
+        let reopened = import_xlsx(&export_xlsx(&book).unwrap()).unwrap();
+        assert!(!reopened.ledger.iter().any(|f| f.blocking));
+        assert_eq!(
+            reopened.sheets[0].rows[0][1].value,
+            book.sheets[0].rows[0][1].value
+        );
+    }
+}
+
+#[test]
+fn standalone_month_tokens_keep_calendar_serials_as_dates() {
+    let mut book = simple();
+    book.sheets[0].rows[0][1].value = SourceValue::Number { value: 46270.0 };
+    for pattern in ["m", "mm", "mmm", "mmmm", "mmmmm", "[$-409]mmmm"] {
+        book.sheets[0].rows[0][1].style.number_format = Some(pattern.into());
+        let imported = import_xlsx(&source_with_format(&book)).unwrap();
+        assert!(
+            !imported.ledger.iter().any(|f| f.blocking),
+            "{pattern}: {:?}",
+            imported.ledger
+        );
+        assert_eq!(
+            imported.sheets[0].rows[0][1].value,
+            SourceValue::Date {
+                value: "2026-09-05".into()
+            }
+        );
+        let reopened = import_xlsx(&export_xlsx(&imported).unwrap()).unwrap();
+        assert_eq!(
+            reopened.sheets[0].rows[0][1].value,
+            imported.sheets[0].rows[0][1].value
+        );
     }
 }

@@ -208,6 +208,15 @@ Numeric sections with different currency/percentage markers, or value-dependent
 conditions, also use ordinary Number display without choosing an active section.
 Mixed Number/Date/time semantics across numeric format sections are blocked;
 the adapter does not choose conditional sections to infer a canonical type.
+The bounded format lexer distinguishes calendar months from contextual minutes,
+retains recognized literal/currency presentation, and rejects unknown tokens.
+CSV and XLSX inspection share the output-representation check. Completed typed
+imports, including extra-column labels, must also pass that check before a
+candidate is exposed or installed. XML-illegal Text therefore blocks import;
+legal Unicode, tabs and line breaks remain data. Numeric values cannot retain
+date/time formats that would change their type on XLSX reimport.
+Checkbox property-bag loss is disclosed only for the complete recognized
+checkbox chain; unknown nodes, attributes or namespaces block acceptance.
 Worksheet names must satisfy the same bounded XLSX name rules at inspection
 and export, including case-insensitive uniqueness.
 

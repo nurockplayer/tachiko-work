@@ -123,6 +123,70 @@ test("spreadsheet ABI consumes both arena rejection flags even when the request 
   expect(decoder.decode(bridge.bytes())).toBe("10,20\r\n20,4\r\n");
 });
 
+test("spreadsheet ABI rejects unrepresentable source and final selected columns without changing resident bytes or history", async () => {
+  const bridge = await runtime();
+  bridge.request({ type: "new_tracker", occurrence_id: importOptions.occurrence_id });
+  bridge.abi.tachiko_designer_request_run();
+  const opened = payload(bridge.reply(), "opened");
+  const firstColumn = opened.table.columns[0];
+  if (!firstColumn) throw new Error("Missing Tracker input column");
+  bridge.request({ type: "paste_cells", expected_revision: opened.bootstrap.revision,
+    collection: opened.bootstrap.default_collection, start_entity: null,
+    start_field: firstColumn.id, rows: [["Preserve this history"]] });
+  bridge.abi.tachiko_designer_request_run();
+  const edited = payload(bridge.reply(), "published");
+  const queryTable = () => {
+    bridge.request({ type: "query_table", collection: opened.bootstrap.default_collection });
+    bridge.abi.tachiko_designer_request_run();
+    return payload(bridge.reply(), "table");
+  };
+  const editedTable = queryTable();
+  const assertResident = (): void => { expect(queryTable()).toEqual(editedTable); };
+  const snapshot = (): Uint8Array => {
+    bridge.requestBytes(encoder.encode(edited.resulting_revision));
+    bridge.abi.tachiko_designer_project_export();
+    payload(bridge.reply(), "project_exported");
+    return bridge.bytes();
+  };
+  const before = snapshot();
+  for (const invalid of ["bad\u0000text", "bad\u000btext", "bad\ufffetext"]) {
+    for (const csv of [`Label,Amount\n${invalid},2\n`, `${invalid},Amount\ntext,2\n`]) {
+      const inspected = payload(bridge.run({
+        type: "inspect", format: "csv", csv_options: { delimiter: ",", header: true },
+      }, encoder.encode(csv)), "import_preview");
+      expect(inspected.ledger.some(finding => finding.blocking)).toBe(true);
+      expect(snapshot()).toEqual(before);
+      assertResident();
+    }
+    for (const install of [false, true]) {
+      const selected = {
+        ...importOptions, install,
+        selection: {
+          ...importOptions.selection,
+          extra_columns: [[{ name: invalid, field_type: "text" }]],
+        },
+      } satisfies SpreadsheetOperation;
+      expect(bridge.run(selected, source).status).toBe("error");
+      expect(snapshot()).toEqual(before);
+      assertResident();
+      const textOptions = {
+        ...importOptions, install,
+        selection: { column_types: [["text", "number"]], extra_columns: [[]] },
+      } satisfies SpreadsheetOperation;
+      expect(bridge.run(textOptions, encoder.encode(`${invalid},2\n`)).status).toBe("error");
+      expect(snapshot()).toEqual(before);
+      assertResident();
+    }
+  }
+  // Failed preview/install attempts must also preserve the existing undo edge.
+  bridge.request({ type: "undo", expected_revision: edited.resulting_revision });
+  bridge.abi.tachiko_designer_request_run();
+  const undone = payload(bridge.reply(), "published");
+  const restored = queryTable();
+  expect(restored.revision).toBe(undone.resulting_revision);
+  expect(restored.rows).toEqual(opened.table.rows);
+});
+
 test("spreadsheet ABI inserts explicit XLSX headers with shifted formulas while CSV and source metadata remain unchanged", async () => {
   const bridge = await editedRuntime();
   const originalMetadata = structuredClone(bridge.imported.metadata);
