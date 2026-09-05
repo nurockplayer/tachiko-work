@@ -541,7 +541,7 @@ fn deduplicate(
 
 use super::interop_adapter::{
     CellStyle, FidelityCategory, FidelityFinding, MAX_COLUMNS, MAX_DATA_ROWS, MAX_SHEETS,
-    SourceCell, SourceColumn, SourceSheet, SourceValue, SourceWorkbook,
+    OutputProfile, SourceCell, SourceColumn, SourceSheet, SourceValue, SourceWorkbook,
 };
 use super::{IdGenerator, OpenedProjection, SemanticIdKind};
 use std::collections::BTreeMap;
@@ -611,6 +611,24 @@ pub struct InteropColumnMetadata {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct InteropRowMetadata {
+    pub entity_id: String,
+    pub styles: Vec<CellStyle>,
+}
+
+/// Private, outbound-only presentation binding for the stock Driver Tracker.
+///
+/// This deliberately is not import metadata: Tracker accepts up to 128 rows,
+/// while the incoming spreadsheet profile remains capped at 64 rows per sheet.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTrackerExportPresentation {
+    pub version: u32,
+    pub rows: Vec<NativeTrackerExportRow>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTrackerExportRow {
     pub entity_id: String,
     pub styles: Vec<CellStyle>,
 }
@@ -1241,6 +1259,41 @@ impl DesignerRuntime {
         self.check_revision(expected_revision)?;
         let snapshot = self.session.export_snapshot();
         validate_import_metadata(snapshot.document(), metadata)?;
+        self.export_workbook_from_metadata(expected_revision, metadata, OutputProfile::Shared)
+    }
+
+    /// Export the one stock Tracker profile without fabricating import provenance.
+    ///
+    /// The private presentation establishes only stable row order and supported
+    /// cell styles. Rust derives the fixed three-field schema and every scalar
+    /// from the authoritative snapshot, then uses the existing bounded writer.
+    ///
+    /// # Errors
+    /// Returns stale, non-Tracker, incomplete/foreign presentation, scalar, or
+    /// bounded-output failures without mutating the resident occurrence.
+    pub fn export_native_tracker_workbook(
+        &self,
+        expected_revision: &str,
+        presentation: &NativeTrackerExportPresentation,
+    ) -> Result<SourceWorkbook, DesignerError> {
+        self.check_revision(expected_revision)?;
+        let snapshot = self.session.export_snapshot();
+        let metadata = native_tracker_metadata(snapshot.document(), presentation)?;
+        self.export_workbook_from_metadata(
+            expected_revision,
+            &metadata,
+            OutputProfile::NativeTracker,
+        )
+    }
+
+    fn export_workbook_from_metadata(
+        &self,
+        expected_revision: &str,
+        metadata: &InteropMetadata,
+        profile: OutputProfile,
+    ) -> Result<SourceWorkbook, DesignerError> {
+        self.check_revision(expected_revision)?;
+        let snapshot = self.session.export_snapshot();
         let document = snapshot.document();
         let mut addresses = BTreeMap::new();
         for sheet in &metadata.sheets {
@@ -1317,10 +1370,105 @@ impl DesignerRuntime {
             category: FidelityCategory::Converted, code: "bound_formula_absolute_a1".into(), location: "workbook".into(),
             message: "Export is rebuilt from current stable identities and authoritative values. Formula references use current absolute worksheet coordinates; deleted rows are omitted.".into(), blocking: false,
         }] };
-        super::interop_adapter::validate_output(&workbook)
+        super::interop_adapter::validate_output_for_profile(&workbook, profile)
             .map_err(|error| tracker_error(&error.0))?;
         Ok(workbook)
     }
+}
+
+fn native_tracker_metadata(
+    document: &Document,
+    presentation: &NativeTrackerExportPresentation,
+) -> Result<InteropMetadata, DesignerError> {
+    if presentation.version != 1 || presentation.rows.len() > MAX_TABLE_ROWS {
+        return Err(tracker_error(
+            "native Tracker export presentation is outside the 128-row profile",
+        ));
+    }
+    let schema = document
+        .schemas
+        .get(&SchemaId::from("tracker"))
+        .filter(|schema| document.schemas.len() == 1 && schema.key.to_string() == "tracker")
+        .ok_or_else(|| tracker_error("native Tracker export requires the stock Tracker schema"))?;
+    let fields = [
+        ("task", FieldType::Text),
+        ("estimate", FieldType::Number),
+        ("done", FieldType::Boolean),
+    ];
+    if schema.fields.len() != fields.len()
+        || fields.iter().any(|(id, field_type)| {
+            schema
+                .fields
+                .get(&FieldId::from(*id))
+                .is_none_or(|field| field.key.to_string() != *id || field.field_type != *field_type)
+        })
+        || document.entities.len() > MAX_TABLE_ROWS
+    {
+        return Err(tracker_error(
+            "native Tracker export requires the stock task, estimate, done fields",
+        ));
+    }
+    let mut seen = BTreeSet::new();
+    for row in &presentation.rows {
+        check_label(&row.entity_id)?;
+        if !seen.insert(row.entity_id.as_str())
+            || row.styles.len() != fields.len()
+            || document
+                .entities
+                .get(&EntityId::from(row.entity_id.clone()))
+                .is_none_or(|entity| entity.schema != schema.id)
+        {
+            return Err(tracker_error(
+                "native Tracker export presentation has an invalid row mapping",
+            ));
+        }
+        for style in &row.styles {
+            for text in [&style.number_format, &style.fill, &style.alignment]
+                .into_iter()
+                .flatten()
+            {
+                if text.len() > MAX_PROFILE_STRING_BYTES || text.contains('\0') {
+                    return Err(tracker_error(
+                        "native Tracker export style is outside the bounded profile",
+                    ));
+                }
+            }
+        }
+    }
+    if presentation.rows.len() != document.entities.len()
+        || document
+            .entities
+            .keys()
+            .any(|id| !seen.contains(id.as_str()))
+    {
+        return Err(tracker_error(
+            "native Tracker export must map every accepted row exactly once",
+        ));
+    }
+    Ok(InteropMetadata {
+        version: 1,
+        sheets: vec![InteropSheetMetadata {
+            schema_id: "tracker".to_owned(),
+            name: "Tracker".to_owned(),
+            has_header: true,
+            columns: fields
+                .iter()
+                .map(|(id, _)| InteropColumnMetadata {
+                    field_id: (*id).to_owned(),
+                    name: (*id).to_owned(),
+                    width: None,
+                })
+                .collect(),
+            rows: presentation
+                .rows
+                .iter()
+                .map(|row| InteropRowMetadata {
+                    entity_id: row.entity_id.clone(),
+                    styles: row.styles.clone(),
+                })
+                .collect(),
+        }],
+    })
 }
 
 /// Inspect canonical bytes plus their private source mappings without replacing

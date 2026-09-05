@@ -11,7 +11,25 @@ pub const MAX_ZIP_ENTRIES: usize = 256;
 pub const MAX_SHEETS: usize = 4;
 pub const MAX_COLUMNS: usize = 16;
 pub const MAX_DATA_ROWS: usize = 64;
+pub const MAX_NATIVE_TRACKER_DATA_ROWS: usize = 128;
 pub const MAX_FORMULAS: usize = 32;
+
+/// Output capacity is explicit so native Tracker can remain a bounded outbound
+/// exception without changing the shared import/export profile.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum OutputProfile {
+    Shared,
+    NativeTracker,
+}
+
+impl OutputProfile {
+    const fn max_data_rows(self) -> usize {
+        match self {
+            Self::Shared => MAX_DATA_ROWS,
+            Self::NativeTracker => MAX_NATIVE_TRACKER_DATA_ROWS,
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SourceWorkbook {
@@ -1591,9 +1609,19 @@ fn finish_source_admission(mut workbook: SourceWorkbook) -> SourceWorkbook {
 /// # Errors
 /// Rejects an oversized or invalid scalar output profile.
 pub fn export_csv(sheet: &SourceSheet) -> Result<Vec<u8>> {
+    export_csv_for_profile(sheet, OutputProfile::Shared)
+}
+
+/// Emit the selected sheet values using one explicit bounded output profile.
+/// # Errors
+/// Rejects an oversized or invalid scalar output profile.
+pub(crate) fn export_csv_for_profile(
+    sheet: &SourceSheet,
+    profile: OutputProfile,
+) -> Result<Vec<u8>> {
     if sheet.columns.is_empty()
         || sheet.columns.len() > MAX_COLUMNS
-        || sheet.rows.len() > MAX_DATA_ROWS
+        || sheet.rows.len() > profile.max_data_rows()
         || sheet.rows.iter().any(|r| r.len() != sheet.columns.len())
     {
         return fail("CSV output exceeds rectangular profile");
@@ -1725,6 +1753,13 @@ fn valid_worksheet_name(name: &str) -> bool {
         && xml_text_valid(name)
 }
 pub(crate) fn validate_output(workbook: &SourceWorkbook) -> Result<()> {
+    validate_output_for_profile(workbook, OutputProfile::Shared)
+}
+
+pub(crate) fn validate_output_for_profile(
+    workbook: &SourceWorkbook,
+    profile: OutputProfile,
+) -> Result<()> {
     if workbook.sheets.is_empty() || workbook.sheets.len() > MAX_SHEETS {
         return fail("Export requires 1..=4 sheets");
     }
@@ -1751,7 +1786,10 @@ pub(crate) fn validate_output(workbook: &SourceWorkbook) -> Result<()> {
         if !valid_worksheet_name(&s.name) || !names.insert(s.name.to_lowercase()) {
             return fail("Invalid or duplicate XLSX sheet name");
         }
-        if s.columns.is_empty() || s.columns.len() > MAX_COLUMNS || s.rows.len() > MAX_DATA_ROWS {
+        if s.columns.is_empty()
+            || s.columns.len() > MAX_COLUMNS
+            || s.rows.len() > profile.max_data_rows()
+        {
             return fail("Export exceeds sheet bounds");
         }
         for row in &s.rows {
@@ -1831,7 +1869,18 @@ fn output_style(cell: &SourceCell) -> CellStyle {
 /// Rejects blocking findings, invalid output values/styles and bounded size limits.
 #[allow(clippy::too_many_lines, clippy::format_push_string)] // Bounded deterministic XML assembly; temporary strings stay within the tiny workbook profile.
 pub fn export_xlsx(workbook: &SourceWorkbook) -> Result<Vec<u8>> {
-    validate_output(workbook)?;
+    export_xlsx_for_profile(workbook, OutputProfile::Shared)
+}
+
+/// Emit typed worksheets using the selected bounded output profile.
+/// # Errors
+/// Rejects blocking findings, invalid output values/styles and bounded size limits.
+#[allow(clippy::too_many_lines, clippy::format_push_string)] // Bounded deterministic XML assembly; temporary strings stay within the tiny workbook profile.
+pub(crate) fn export_xlsx_for_profile(
+    workbook: &SourceWorkbook,
+    profile: OutputProfile,
+) -> Result<Vec<u8>> {
+    validate_output_for_profile(workbook, profile)?;
     let mut style_keys = vec![
         serde_json::to_string(&CellStyle::default()).map_err(|e| InteropError(e.to_string()))?,
     ];

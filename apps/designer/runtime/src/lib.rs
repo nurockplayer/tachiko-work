@@ -36,8 +36,9 @@ mod interop_number_format;
 use interop_document::PendingCleanup;
 pub use interop_document::{
     CleanupChange, CleanupOperation, CleanupPreview, ImportColumnSpec, ImportFieldType,
-    ImportSelection, ImportedProjection, InteropMetadata, SpreadsheetExportProjection,
-    import_workbook, inspect_imported_project, validate_import_metadata,
+    ImportSelection, ImportedProjection, InteropMetadata, NativeTrackerExportPresentation,
+    NativeTrackerExportRow, SpreadsheetExportProjection, import_workbook, inspect_imported_project,
+    validate_import_metadata,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -52,6 +53,11 @@ const MAX_FORMULAS: usize = 32;
 const MAX_FORMULA_PROFILE_NODES: usize = 256;
 const MAX_PROFILE_STRING_BYTES: usize = 4_096;
 const MAX_PROJECTION_BYTES: usize = 65_536;
+// The stock Tracker's 128 fixed scalar rows carry repeated field projections
+// and may contain one bounded collection of Text. This is a private delivery
+// profile, derived from the existing two 64 KiB input/profile budgets; generic
+// tables, field batches, and source admission remain at 64 KiB.
+const MAX_NATIVE_TRACKER_PROJECTION_BYTES: usize = 4 * MAX_PROJECTION_BYTES;
 const MAX_WIDTH_FINITE_JSON_NUMBER: f64 = -f64::MIN_POSITIVE;
 pub(crate) const MAX_WIRE_REQUEST_BYTES: usize = 65_536;
 pub(crate) const MAX_PROJECT_TRANSFER_BYTES: usize = 64 * 1024 * 1024;
@@ -583,7 +589,7 @@ impl DesignerRuntime {
                     bootstrap: candidate.bootstrap_projection(),
                     table: candidate.query_table("tracker")?,
                 };
-                ensure_projection_size(&opened)?;
+                ensure_opened_projection_size(&opened)?;
                 *self = candidate;
                 Ok(DesignerResponse::Opened(Box::new(opened)))
             }
@@ -593,7 +599,7 @@ impl DesignerRuntime {
                     bootstrap: candidate.bootstrap_projection(),
                     table: candidate.query_table(&candidate.default_collection)?,
                 };
-                ensure_projection_size(&opened)?;
+                ensure_opened_projection_size(&opened)?;
                 *self = candidate;
                 Ok(DesignerResponse::Opened(Box::new(opened)))
             }
@@ -711,6 +717,13 @@ impl DesignerRuntime {
                     message: error.to_string(),
                 }
             })?;
+            // Stock Tracker operations refresh the exact bounded table after a
+            // publication. Its fixed scalar columns have no formulas, so the
+            // generic all-editable-fields refresh is neither reachable nor a
+            // valid capacity model for this profile.
+            if table.tracker_profile == Some(true) {
+                continue;
+            }
             post_edit_fields.extend(
                 table
                     .rows
@@ -835,7 +848,7 @@ impl DesignerRuntime {
                 .collect(),
             rows,
         };
-        ensure_projection_size(&projection)?;
+        ensure_table_projection_size(&projection)?;
         Ok(projection)
     }
 
@@ -1716,7 +1729,7 @@ fn admit_project(
     let bootstrap = candidate.bootstrap_projection();
     let table = candidate.query_table(&bootstrap.default_collection)?;
     let opened = OpenedProjection { bootstrap, table };
-    ensure_projection_size(&opened)?;
+    ensure_opened_projection_size(&opened)?;
     Ok((candidate, opened))
 }
 
@@ -1726,18 +1739,58 @@ pub fn close_project(runtime: &mut Option<DesignerRuntime>) {
 }
 
 fn ensure_projection_size(projection: &impl Serialize) -> Result<(), DesignerError> {
+    ensure_projection_size_with_limit(projection, MAX_PROJECTION_BYTES)
+}
+
+fn ensure_projection_size_with_limit(
+    projection: &impl Serialize,
+    maximum: usize,
+) -> Result<(), DesignerError> {
     let actual = serde_json::to_vec(projection)
         .map_err(|error| DesignerError::UnsupportedProject {
             message: format!("a Designer projection could not be encoded: {error}"),
         })?
         .len();
-    if actual > MAX_PROJECTION_BYTES {
-        return Err(DesignerError::ProjectionTooLarge {
-            actual,
-            maximum: MAX_PROJECTION_BYTES,
-        });
+    if actual > maximum {
+        return Err(DesignerError::ProjectionTooLarge { actual, maximum });
     }
     Ok(())
+}
+
+fn ensure_table_projection_size(table: &TableProjection) -> Result<(), DesignerError> {
+    ensure_projection_size_with_limit(
+        table,
+        if table.tracker_profile == Some(true) {
+            MAX_NATIVE_TRACKER_PROJECTION_BYTES
+        } else {
+            MAX_PROJECTION_BYTES
+        },
+    )
+}
+
+fn ensure_opened_projection_size(opened: &OpenedProjection) -> Result<(), DesignerError> {
+    ensure_projection_size_with_limit(
+        opened,
+        if opened.table.tracker_profile == Some(true) {
+            MAX_NATIVE_TRACKER_PROJECTION_BYTES
+        } else {
+            MAX_PROJECTION_BYTES
+        },
+    )
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn ensure_wire_reply_size(reply: &DesignerWireReply) -> Result<(), DesignerError> {
+    let maximum = match reply {
+        DesignerWireReply::Ok {
+            response: DesignerResponse::Opened(opened),
+        } if opened.table.tracker_profile == Some(true) => MAX_NATIVE_TRACKER_PROJECTION_BYTES,
+        DesignerWireReply::Ok {
+            response: DesignerResponse::Table(table),
+        } if table.tracker_profile == Some(true) => MAX_NATIVE_TRACKER_PROJECTION_BYTES,
+        _ => MAX_PROJECTION_BYTES,
+    };
+    ensure_projection_size_with_limit(reply, maximum)
 }
 
 fn budget_schema<const COUNT: usize>(
@@ -2018,7 +2071,7 @@ pub fn process_wire_request(runtime: &mut Option<DesignerRuntime>, input: &[u8])
                         bootstrap: candidate.bootstrap_projection(),
                         table: candidate.query_table(&candidate.default_collection)?,
                     };
-                    ensure_projection_size(&opened)?;
+                    ensure_opened_projection_size(&opened)?;
                     *runtime = Some(candidate);
                     Ok(DesignerResponse::Opened(Box::new(opened)))
                 });
@@ -2570,14 +2623,32 @@ fn ensure_static_profile(
             })
         })
         .collect::<Vec<_>>();
+    // The stock Tracker is a fixed, direct three-scalar-field surface: it has
+    // no formulas, so a Tracker publication can invalidate its changed stored
+    // fields but cannot also invalidate a second, derived-calculation copy of
+    // every field. Keep the generic profile conservative; otherwise a valid
+    // 128-row Tracker is incorrectly rejected before any export can occur.
+    let native_tracker = collection_specs.len() == 1
+        && collection_specs
+            .values()
+            .next()
+            .is_some_and(is_tracker_spec);
     let publication = PublicationProjection {
         base_revision: "resident/18446744073709551615".to_owned(),
         resulting_revision: "resident/18446744073709551615".to_owned(),
         entities,
         fields: fields.clone(),
-        affected_calculations: fields,
+        affected_calculations: if native_tracker { Vec::new() } else { fields },
     };
-    ensure_projection_size(&publication).map_err(|error| DesignerError::UnsupportedProject {
+    ensure_projection_size_with_limit(
+        &publication,
+        if native_tracker {
+            MAX_NATIVE_TRACKER_PROJECTION_BYTES
+        } else {
+            MAX_PROJECTION_BYTES
+        },
+    )
+    .map_err(|error| DesignerError::UnsupportedProject {
         message: format!("the worst-case publication projection is not bounded: {error}"),
     })
 }
