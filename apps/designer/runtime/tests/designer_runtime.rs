@@ -997,12 +997,152 @@ fn date_projection_and_edit_use_the_rust_semantic_authority() {
         "invalid_date"
     );
 
-    let export_error = runtime
+    let saved = runtime
         .export_project("resident/1")
-        .expect_err("frozen .roproj/v1 must not be widened for Date");
+        .expect("Date-bearing projects should use the private direct-ro/v2 record");
+    assert!(saved.bytes.starts_with(b"TWDPROJ2"));
+    let mut reopened = Some(runtime);
+    close_project(&mut reopened);
+    open_project(&mut reopened, &saved.bytes, OCCURRENCE_TWO)
+        .expect("saved direct-ro/v2 Date project should reopen");
+    let DesignerResponse::Fields(reopened_fields) = reopened
+        .as_mut()
+        .expect("reopened runtime")
+        .handle(DesignerRequest::QueryFields {
+            expected_revision: "resident/0".to_owned(),
+            fields: vec!["launch.published".into()],
+        })
+        .expect("reopened Date should be queryable")
+    else {
+        panic!("expected fields response");
+    };
+    assert!(matches!(
+        reopened_fields.fields[0].stored,
+        Some(StoredValueProjection::Date { value }) if value == Date::parse("2025-01-01").unwrap()
+    ));
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // One end-to-end publication/rejection/reopen lifecycle.
+fn budget_open_and_formula_updates_use_the_authoritative_cross_collection_lifecycle() {
+    let mut runtime = moonfall();
+    let DesignerResponse::Opened(opened) = runtime
+        .handle(DesignerRequest::NewBudget {
+            occurrence_id: OCCURRENCE_ONE.to_owned(),
+        })
+        .expect("new budget should replace the active occurrence")
+    else {
+        panic!("expected opened response");
+    };
+    assert_eq!(opened.bootstrap.title, "Monthly Budget");
+    assert_eq!(opened.bootstrap.collections.len(), 2);
+    assert_eq!(opened.table.collection.key, "budget_items");
+
+    let DesignerResponse::Fields(before) = runtime
+        .handle(DesignerRequest::QueryFields {
+            expected_revision: "resident/0".to_owned(),
+            fields: vec!["monthly_summary.remaining".into()],
+        })
+        .expect("cross-collection budget formula should calculate")
+    else {
+        panic!("expected fields response");
+    };
     assert_eq!(
-        export_error.failure_projection("resident/1").code,
-        "invalid_project"
+        before.fields[0]
+            .calculated
+            .as_ref()
+            .and_then(CalculationProjection::number),
+        Some(20.0)
+    );
+
+    let DesignerResponse::Published(publication) = runtime
+        .handle(DesignerRequest::FormulaUpdate {
+            expected_revision: "resident/0".to_owned(),
+            target: "monthly_summary.remaining".into(),
+            source: "[rent.actual] - [utilities.actual]".to_owned(),
+        })
+        .expect("bound cross-collection formula should publish through the lifecycle")
+    else {
+        panic!("expected publication response");
+    };
+    assert_eq!(publication.resulting_revision, "resident/1");
+
+    let DesignerResponse::Fields(after) = runtime
+        .handle(DesignerRequest::QueryFields {
+            expected_revision: "resident/1".to_owned(),
+            fields: vec!["monthly_summary.remaining".into()],
+        })
+        .expect("published formula should refresh from the resident authority")
+    else {
+        panic!("expected fields response");
+    };
+    assert_eq!(
+        after.fields[0]
+            .calculated
+            .as_ref()
+            .and_then(CalculationProjection::number),
+        Some(1040.0)
+    );
+    assert_eq!(
+        after.fields[0]
+            .formula
+            .as_ref()
+            .map(|formula| formula.source.as_str()),
+        Some("([rent.actual] - [utilities.actual])")
+    );
+
+    let rejected = runtime
+        .handle(DesignerRequest::FormulaUpdate {
+            expected_revision: "resident/1".to_owned(),
+            target: "monthly_summary.remaining".into(),
+            source: "[rent.missing] + 1".to_owned(),
+        })
+        .expect_err("unbound formulas must not publish");
+    assert_eq!(
+        rejected.failure_projection("resident/1").code,
+        "edit_rejected"
+    );
+    let DesignerResponse::Fields(unchanged) = runtime
+        .handle(DesignerRequest::QueryFields {
+            expected_revision: "resident/1".to_owned(),
+            fields: vec!["monthly_summary.remaining".into()],
+        })
+        .expect("rejected formula must retain accepted resident state")
+    else {
+        panic!("expected fields response");
+    };
+    assert_eq!(
+        unchanged.fields[0]
+            .calculated
+            .as_ref()
+            .and_then(CalculationProjection::number),
+        Some(1040.0)
+    );
+
+    let saved = runtime
+        .export_project("resident/1")
+        .expect("Date-bearing budget should save as a private direct-ro/v2 record");
+    assert!(saved.bytes.starts_with(b"TWDPROJ2"));
+    let mut reopened = None;
+    open_project(&mut reopened, &saved.bytes, OCCURRENCE_TWO)
+        .expect("saved budget should reopen with bound formula meaning");
+    let DesignerResponse::Fields(reopened_fields) = reopened
+        .as_mut()
+        .expect("reopened budget")
+        .handle(DesignerRequest::QueryFields {
+            expected_revision: "resident/0".to_owned(),
+            fields: vec!["monthly_summary.remaining".into()],
+        })
+        .expect("reopened formula should calculate")
+    else {
+        panic!("expected fields response");
+    };
+    assert_eq!(
+        reopened_fields.fields[0]
+            .calculated
+            .as_ref()
+            .and_then(CalculationProjection::number),
+        Some(1040.0)
     );
 }
 

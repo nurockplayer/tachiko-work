@@ -633,6 +633,13 @@ describe("Designer application seam", () => {
     });
     expect(client.dateEditRequests).toHaveLength(0);
 
+    root.querySelector<HTMLButtonElement>("[data-save-as]")?.click();
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain("Apply or cancel");
+    expect(memoryHost.projects.has("dated.roproj")).toBe(false);
+    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(root.querySelector<HTMLInputElement>('input[type="date"][aria-label="Published for Launch"]')?.value).toBe("2025-01-01");
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain("Unsaved changes");
+
     const applied = root.querySelector<HTMLInputElement>(
       'input[type="date"][aria-label="Published for Launch"]',
     );
@@ -915,6 +922,7 @@ describe("Designer application seam", () => {
     );
     if (interval === null) throw new Error("attack interval input is required");
     interval.value = "0";
+    interval.dispatchEvent(new InputEvent("input", { bubbles: true }));
     const intervalForm = interval.form;
     if (intervalForm === null) throw new Error("attack interval form is required");
     intervalForm.requestSubmit();
@@ -930,6 +938,25 @@ describe("Designer application seam", () => {
     expect(root.querySelector('[data-field="iron_sword.dps"]')?.textContent).toContain(
       "40",
     );
+    expect(root.querySelector<HTMLInputElement>('input[aria-label="Attack Interval for Iron Sword"]')?.value).toBe("0");
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain("Unsaved changes");
+  });
+
+  it("blocks Save As for a formula draft even without Budget views", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app")!;
+    const memoryHost = new MemoryHost();
+    const publish = vi.spyOn(memoryHost, "publish");
+    const app = mountDesigner(root, new FakeClient(), memoryHost);
+    await app.ready;
+    const formula = root.querySelector<HTMLInputElement>("[data-initial-formula]")!;
+    formula.value = "1 + 2";
+    formula.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    root.querySelector<HTMLButtonElement>("[data-save-as]")?.click();
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain("Apply or cancel");
+    expect(publish).not.toHaveBeenCalled();
+    expect(root.querySelector<HTMLInputElement>("[data-initial-formula]")?.value).toBe("1 + 2");
+    app.destroy();
   });
 
   it("renders initialization failures instead of leaving the loading state visible", async () => {
@@ -1144,7 +1171,7 @@ describe("Designer application seam", () => {
     const prompt = vi
       .fn<Window["prompt"]>()
       .mockReturnValueOnce("baseline.roproj")
-      .mockReturnValueOnce("draft-excluded.roproj");
+      .mockReturnValueOnce("draft-canceled.roproj");
     const confirm = vi.fn<Window["confirm"]>().mockReturnValue(false);
     const addEventListener = vi.spyOn(window, "addEventListener");
     vi.stubGlobal("prompt", prompt);
@@ -1177,9 +1204,9 @@ describe("Designer application seam", () => {
     expect(openProject).not.toHaveBeenCalled();
 
     root.querySelector<HTMLButtonElement>("[data-save-as]")?.click();
-    await vi.waitFor(() => {
-      expect(memoryHost.projects.has("draft-excluded.roproj")).toBe(true);
-    });
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain("Apply or cancel");
+    expect(memoryHost.projects.size).toBe(1);
+    expect(prompt).toHaveBeenCalledTimes(1);
     expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain(
       "Unsaved changes",
     );
@@ -1188,8 +1215,83 @@ describe("Designer application seam", () => {
         ?.value,
     ).toBe("Unpublished draft");
 
+    root.querySelector<HTMLButtonElement>("[data-cancel-pending-edits]")?.click();
+    expect(root.querySelector<HTMLTextAreaElement>('textarea[aria-label="Name for Iron Sword"]')?.value).toBe("Leading\nMiddle\nTail");
+    root.querySelector<HTMLButtonElement>("[data-save-as]")?.click();
+    await vi.waitFor(() => { expect(memoryHost.projects.has("draft-canceled.roproj")).toBe(true); });
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain("Saved");
+
     app.destroy();
     addEventListener.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    { kind: "Text", selector: 'textarea[aria-label="Name for Iron Sword"]', draft: "Pending name" },
+    { kind: "Boolean", selector: 'input[aria-label="Enabled for Iron Sword"]', draft: "false" },
+    { kind: "Number", selector: 'input[aria-label="Damage for Iron Sword"]', draft: "123" },
+    { kind: "Date", selector: 'input[aria-label="Published for Launch"]', draft: "2025-01-01" },
+  ])("blocks Save and Save As for a pending $kind, then allows restore and cancel", async ({ kind, selector, draft }) => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app")!;
+    const memoryHost = new MemoryHost();
+    const update = vi.fn(async (): Promise<void> => {});
+    const saveHost = Object.assign(memoryHost, { update });
+    const publish = vi.spyOn(saveHost, "publish");
+    const client = kind === "Date" ? new DateClient() : new FakeClient();
+    const exported = vi.spyOn(client, "exportProject");
+    const prompt = vi.fn<Window["prompt"]>().mockReturnValueOnce("baseline.roproj").mockReturnValueOnce("after-cancel.roproj");
+    vi.stubGlobal("prompt", prompt);
+    const app = mountDesigner(root, client, saveHost);
+    await app.ready;
+    root.querySelector<HTMLButtonElement>("[data-save-as]")?.click();
+    await vi.waitFor(() => { expect(memoryHost.projects.has("baseline.roproj")).toBe(true); });
+    const control = root.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector)!;
+    const original = kind === "Boolean" ? String((control as HTMLInputElement).checked) : control.value;
+    const setDraft = (value: string): void => {
+      const current = root.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector)!;
+      if (kind === "Boolean") {
+        (current as HTMLInputElement).checked = value === "true";
+        current.dispatchEvent(new Event("change", { bubbles: true }));
+      } else {
+        current.value = value;
+        current.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      }
+    };
+    const projectedInput = (): string => {
+      const current = root.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector)!;
+      return kind === "Boolean" ? String((current as HTMLInputElement).checked) : current.value;
+    };
+    publish.mockClear(); exported.mockClear();
+    setDraft(draft);
+    for (const action of ["[data-save-project]", "[data-save-as]"]) {
+      root.querySelector<HTMLButtonElement>(action)?.click();
+      expect(root.querySelector('[role="alert"]')?.textContent).toContain("Apply or cancel");
+      expect(update).not.toHaveBeenCalled();
+      expect(publish).not.toHaveBeenCalled();
+      expect(exported).not.toHaveBeenCalled();
+      expect(prompt).toHaveBeenCalledTimes(1);
+      expect(projectedInput()).toBe(draft);
+      expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain("Unsaved changes");
+      expect(memoryHost.projects.size).toBe(1);
+    }
+
+    setDraft(original);
+    root.querySelector<HTMLButtonElement>("[data-save-project]")?.click();
+    await vi.waitFor(() => { expect(update).toHaveBeenCalledTimes(1); });
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain("Saved");
+    setDraft(draft);
+    // Force the rejection rerender so the generic cancellation control is materialized.
+    root.querySelector<HTMLButtonElement>("[data-save-as]")?.click();
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain("Apply or cancel");
+    const cancel = root.querySelector<HTMLButtonElement>("[data-cancel-pending-edits]");
+    expect(cancel).not.toBeNull();
+    cancel?.click();
+    expect(projectedInput()).toBe(original);
+    root.querySelector<HTMLButtonElement>("[data-save-as]")?.click();
+    await vi.waitFor(() => { expect(memoryHost.projects.has("after-cancel.roproj")).toBe(true); });
+    expect(root.querySelector('[data-testid="durability"]')?.textContent).toContain("Saved");
+    app.destroy();
     vi.unstubAllGlobals();
   });
 

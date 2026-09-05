@@ -93,9 +93,19 @@ export type TrackerCommand =
   | { type: "remove_rows"; expected_revision: string; entities: string[] }
   | { type: "undo" | "redo"; expected_revision: string };
 
+export type FormulaCopy = {
+  source: FieldTarget;
+  destinations: FieldTarget[];
+  fixed_references: FieldTarget[];
+  relative_rows: boolean;
+  relative_columns: boolean;
+};
+
 export type DesignerRequest =
   | TrackerCommand
+  | (FormulaCopy & { type: "copy_formula"; expected_revision: string })
   | { type: "new_tracker"; occurrence_id: string }
+  | { type: "new_budget"; occurrence_id: string }
   | { type: "bootstrap"; occurrence_id: string }
   | { type: "query_table"; collection: string }
   | {
@@ -112,6 +122,12 @@ export type DesignerRequest =
         | { kind: "text"; value: string }
         | { kind: "boolean"; value: boolean }
         | { kind: "date"; value: string };
+    }
+  | {
+      type: "formula_update";
+      expected_revision: string;
+      target: FieldTarget;
+      source: string;
     };
 
 export type DesignerResponse =
@@ -134,6 +150,7 @@ export type WorkerRequest =
       occurrence_id: string;
       bytes: ArrayBuffer;
     }
+  | { id: number; kind: "inspect_project"; bytes: ArrayBuffer }
   | { id: number; kind: "export_project"; expected_revision: string }
   | { id: number; kind: "close_project" };
 

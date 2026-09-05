@@ -11,13 +11,13 @@ use std::{
 use serde::{Deserialize, Serialize};
 use tachiko_storage::{
     CanonicalRoProjectAdmissionError, CanonicalRoProjectV1, FormatError, ROPROJ_V1_PATHS,
-    encode_roproj_v1,
+    encode_roproj_v1, from_bytes, to_canonical_string,
 };
 use tachiko_workspace_engine::{
     CalculationFailure, Date, Document, Entity, EntityId, EntityKey, Expression, FieldDefinition,
     FieldId, FieldKey, FieldRef, FieldType, IdGenerator, Number, Schema, SchemaId, SchemaKey,
     SemanticIdKind, StarterTemplate, Value, WorkspaceError, analyze_field, create_document,
-    formula_operations::FormulaCalculationOutcome,
+    formula_operations::{FormulaCalculationOutcome, FormulaUpdateRequest},
     patch_lifecycle::{
         AuthorizationAction, AuthorizationDomainId, AuthorizationPolicyVersion, DocumentScopeId,
         Grant, GrantId, GrantRequirement, MutationClass, OperationFamily, PatchLifecycle,
@@ -47,7 +47,12 @@ pub(crate) const MAX_WIRE_REQUEST_BYTES: usize = 65_536;
 pub(crate) const MAX_PROJECT_TRANSFER_BYTES: usize = 64 * 1024 * 1024;
 const DESIGNER_PRINCIPAL: &str = "designer-human";
 const PREFLIGHT_OCCURRENCE: &str = "00000000-0000-4000-8000-000000000000";
-const PROJECT_BUNDLE_MAGIC: &[u8; 8] = b"TWDPROJ1";
+/// Private record discriminator for frozen canonical `.roproj/v1` bundles.
+const PROJECT_BUNDLE_V1_MAGIC: &[u8; 8] = b"TWDPROJ1";
+/// Private record discriminator for direct-ro/v2 project records.
+///
+/// This is an app-host envelope, not a `.roproj/v2` or public storage format.
+const PROJECT_RECORD_V2_MAGIC: &[u8; 8] = b"TWDPROJ2";
 const MOONFALL_BOOLEAN_FIXTURE_COLLECTION: &str = "weapons";
 
 /// App-private requests accepted by the Designer runtime adapter.
@@ -58,6 +63,9 @@ pub enum DesignerRequest {
         occurrence_id: String,
     },
     NewTracker {
+        occurrence_id: String,
+    },
+    NewBudget {
         occurrence_id: String,
     },
     EditCells {
@@ -96,6 +104,19 @@ pub enum DesignerRequest {
         expected_revision: String,
         target: FieldTarget,
         input: ScalarEditInput,
+    },
+    CopyFormula {
+        expected_revision: String,
+        source: FieldTarget,
+        destinations: Vec<FieldTarget>,
+        fixed_references: Vec<FieldTarget>,
+        relative_rows: bool,
+        relative_columns: bool,
+    },
+    FormulaUpdate {
+        expected_revision: String,
+        target: FieldTarget,
+        source: String,
     },
 }
 
@@ -529,6 +550,7 @@ impl DesignerRuntime {
     /// # Errors
     ///
     /// Returns a typed adapter or workspace failure.
+    #[allow(clippy::too_many_lines)] // Exhaustive private request dispatch.
     pub fn handle(&mut self, request: DesignerRequest) -> Result<DesignerResponse, DesignerError> {
         match request {
             DesignerRequest::NewTracker { occurrence_id } => {
@@ -536,6 +558,16 @@ impl DesignerRuntime {
                 let opened = OpenedProjection {
                     bootstrap: candidate.bootstrap_projection(),
                     table: candidate.query_table("tracker")?,
+                };
+                ensure_projection_size(&opened)?;
+                *self = candidate;
+                Ok(DesignerResponse::Opened(Box::new(opened)))
+            }
+            DesignerRequest::NewBudget { occurrence_id } => {
+                let candidate = Self::budget(&occurrence_id)?;
+                let opened = OpenedProjection {
+                    bootstrap: candidate.bootstrap_projection(),
+                    table: candidate.query_table(&candidate.default_collection)?,
                 };
                 ensure_projection_size(&opened)?;
                 *self = candidate;
@@ -598,6 +630,30 @@ impl DesignerRuntime {
                 &expected_revision,
                 &target,
                 &input,
+            )?)),
+            DesignerRequest::CopyFormula {
+                expected_revision,
+                source,
+                destinations,
+                fixed_references,
+                relative_rows,
+                relative_columns,
+            } => Ok(DesignerResponse::Published(self.copy_formula(
+                &expected_revision,
+                &source,
+                &destinations,
+                &fixed_references,
+                relative_rows,
+                relative_columns,
+            )?)),
+            DesignerRequest::FormulaUpdate {
+                expected_revision,
+                target,
+                source,
+            } => Ok(DesignerResponse::Published(self.update_formula(
+                &expected_revision,
+                &target,
+                &source,
             )?)),
         }
     }
@@ -668,8 +724,12 @@ impl DesignerRuntime {
             });
         }
         let snapshot = self.session.export_snapshot();
-        let tree = encode_roproj_v1(snapshot.document())?;
-        let bytes = encode_project_bundle(&tree)?;
+        let bytes = if document_contains_date(snapshot.document()) {
+            encode_project_record_v2(snapshot.document())?
+        } else {
+            let tree = encode_roproj_v1(snapshot.document())?;
+            encode_project_bundle_v1(&tree)?
+        };
         Ok(ProjectExport {
             revision: snapshot.revision().as_str().to_owned(),
             bytes,
@@ -828,6 +888,206 @@ impl DesignerRuntime {
         Ok(publication)
     }
 
+    fn update_formula(
+        &mut self,
+        expected_revision: &str,
+        target: &FieldTarget,
+        source: &str,
+    ) -> Result<PublicationProjection, DesignerError> {
+        let snapshot = self.session.export_snapshot();
+        // This app-private human request owns its complete lifecycle. Keep
+        // admitted-but-unpublishable candidates and finished proposal evidence
+        // request-local rather than retaining them in the resident session.
+        let mut lifecycle = designer_lifecycle(
+            snapshot.document_scope(),
+            snapshot.document(),
+            &self.principal,
+        )?;
+        self.proposal_serial = self.proposal_serial.saturating_add(1);
+        let proposal_id = ProposalId::from(format!("designer-formula-{}", self.proposal_serial));
+        lifecycle.propose_formula_update(
+            snapshot.document_scope(),
+            snapshot.document(),
+            snapshot.revision(),
+            FormulaUpdateRequest::new(
+                proposal_id.clone(),
+                SemanticRevision::from(expected_revision.to_owned()),
+                target.as_field_ref(),
+                source,
+                self.principal.clone(),
+            ),
+            self.clock.tick(),
+        )?;
+        let preview = lifecycle.preview(
+            snapshot.document_scope(),
+            snapshot.document(),
+            snapshot.revision(),
+            &proposal_id,
+            &self.principal,
+            self.clock.tick(),
+        )?;
+        // Use the admitted bound command from this exact authorized preview.
+        // The full open-time profile must pass before publication, including
+        // formula count, aggregate strings and every bounded projection.
+        let SemanticPatchBody::Command(SemanticCommand::FormulaUpdate(command)) =
+            preview.proposal.exact_change().body()
+        else {
+            return Err(tracker_error(
+                "formula proposal did not contain one admitted formula command",
+            ));
+        };
+        let mut candidate = snapshot.document().clone();
+        let entity = candidate
+            .entities
+            .get_mut(&command.target().entity)
+            .ok_or_else(|| tracker_error("admitted formula target is unavailable"))?;
+        entity.fields.insert(
+            command.target().field.clone(),
+            Value::Formula(command.expression().clone()),
+        );
+        Self::from_document(candidate, PREFLIGHT_OCCURRENCE)?;
+        let execute_now = self.clock.tick();
+        let (receipt, invalidation) = {
+            let mut publication = self.session.publication_authority(&mut self.clock);
+            let receipt = lifecycle.execute(
+                &proposal_id,
+                None,
+                &self.principal,
+                &mut publication,
+                execute_now,
+            )?;
+            let invalidation = publication
+                .projection_invalidation_for(
+                    snapshot.document_scope(),
+                    &receipt.base_revision,
+                    &receipt.resulting_revision,
+                )
+                .ok_or(DesignerError::MissingInvalidation)?
+                .clone();
+            (receipt, invalidation)
+        };
+        self.refresh_structure();
+        self.formula_sources = formula_sources(self.session.export_snapshot().document())?;
+        // Formula publication is generic semantic publication, not Tracker history.
+        self.undo.clear();
+        self.redo.clear();
+        Ok(PublicationProjection {
+            base_revision: receipt.base_revision.as_str().to_owned(),
+            resulting_revision: receipt.resulting_revision.as_str().to_owned(),
+            entities: invalidation
+                .entities
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            fields: invalidation.fields.iter().map(field_target).collect(),
+            affected_calculations: invalidation
+                .affected_calculations
+                .iter()
+                .map(field_target)
+                .collect(),
+        })
+    }
+
+    /// Resolve private copy gestures once against the exact canonical snapshot.
+    /// View order and display names never participate in formula meaning.
+    fn copy_formula(
+        &mut self,
+        expected: &str,
+        source: &FieldTarget,
+        destinations: &[FieldTarget],
+        fixed_references: &[FieldTarget],
+        relative_rows: bool,
+        relative_columns: bool,
+    ) -> Result<PublicationProjection, DesignerError> {
+        self.check_revision(expected)?;
+        if destinations.is_empty()
+            || destinations.len() > MAX_FIELD_QUERY_TARGETS
+            || fixed_references.len() > MAX_FIELD_QUERY_TARGETS
+        {
+            return Err(tracker_error("formula copy range is empty or too large"));
+        }
+        let snapshot = self.session.export_snapshot();
+        let document = snapshot.document();
+        let source = source.as_field_ref();
+        let entity = document
+            .entities
+            .get(&source.entity)
+            .ok_or_else(|| tracker_error("formula source entity is unavailable"))?;
+        let Some(Value::Formula(expression)) = entity.fields.get(&source.field) else {
+            return Err(tracker_error("formula copy requires a formula source"));
+        };
+        let spec = self
+            .collection_specs
+            .values()
+            .find(|spec| spec.entities.contains(&source.entity))
+            .ok_or_else(|| tracker_error("formula source collection is unavailable"))?;
+        let (source_row, source_column) = copy_position(spec, &source)?;
+        let fixed = fixed_references
+            .iter()
+            .map(FieldTarget::as_field_ref)
+            .collect::<BTreeSet<_>>();
+        let mut references = BTreeSet::new();
+        let mut reference_probe = expression.clone();
+        map_copy_references(&mut reference_probe, &mut |reference| {
+            references.insert(reference.clone());
+            Ok(())
+        })?;
+        if fixed.len() != fixed_references.len() || !fixed.is_subset(&references) {
+            return Err(tracker_error(
+                "fixed references must be unique source dependencies",
+            ));
+        }
+        let mut seen = BTreeSet::new();
+        let mut forward = Vec::new();
+        for destination in destinations {
+            let target = destination.as_field_ref();
+            if !seen.insert(target.clone()) {
+                return Err(tracker_error(
+                    "duplicate formula copy targets are unsupported",
+                ));
+            }
+            let (row, column) = copy_position(spec, &target)?;
+            require_copy_number(document, &target)?;
+            let old = &document.entities[&target.entity].fields[&target.field];
+            let mut copied = expression.clone();
+            map_copy_references(&mut copied, &mut |reference| {
+                if fixed.contains(reference) || !spec.entities.contains(&reference.entity) {
+                    return require_copy_number(document, reference);
+                }
+                let (reference_row, reference_column) = copy_position(spec, reference)?;
+                let shifted_row = copy_index(reference_row, source_row, row, relative_rows)?;
+                let shifted_column =
+                    copy_index(reference_column, source_column, column, relative_columns)?;
+                *reference = FieldRef::new(
+                    spec.entities.get(shifted_row).cloned().ok_or_else(|| {
+                        tracker_error("relative reference row is outside the collection")
+                    })?,
+                    spec.columns
+                        .get(shifted_column)
+                        .map(|column| column.id.clone())
+                        .ok_or_else(|| {
+                            tracker_error("relative reference column is outside the collection")
+                        })?,
+                );
+                require_copy_number(document, reference)
+            })?;
+            let value = Value::Formula(copied);
+            if &value != old {
+                forward.push(SemanticCommand::set_field_value(target.clone(), value));
+            }
+        }
+        if forward.is_empty() {
+            return Err(PatchLifecycleError::NoChange.into());
+        }
+        let publication = self.publish_commands(expected, forward)?;
+        // Match source-based formula authoring: generic formula mutations are
+        // outside scalar history, whose Core contract cannot restore a literal
+        // over a formula. Rejected copies retain both history directions.
+        self.undo.clear();
+        self.redo.clear();
+        Ok(publication)
+    }
+
     fn publish_commands(
         &mut self,
         expected_revision: &str,
@@ -901,6 +1161,7 @@ impl DesignerRuntime {
             (receipt, invalidation)
         };
         self.refresh_structure();
+        self.formula_sources = formula_sources(self.session.export_snapshot().document())?;
         Ok(PublicationProjection {
             base_revision: receipt.base_revision.as_str().to_owned(),
             resulting_revision: receipt.resulting_revision.as_str().to_owned(),
@@ -971,6 +1232,133 @@ impl DesignerRuntime {
             .collect(),
         };
         document.schemas.insert(schema.id.clone(), schema);
+        Self::from_document(document, occurrence_id)
+    }
+
+    /// Create a small two-collection monthly budget for the bounded Driver slice.
+    ///
+    /// Collections remain projections of the semantic document: formula references
+    /// bind to entity and field identities rather than a collection name or order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an admission error without replacing an existing occurrence.
+    #[allow(clippy::too_many_lines)] // Keep the bounded fixture readable as one document.
+    pub fn budget(occurrence_id: &str) -> Result<Self, DesignerError> {
+        let mut document = Document::empty(occurrence_id, "Monthly Budget");
+        let budget_items = SchemaId::from("budget_items");
+        let budget_summary = SchemaId::from("budget_summary");
+        let item_schema = budget_schema(
+            budget_items.clone(),
+            "budget_items",
+            [
+                ("name", FieldType::Text),
+                ("due_date", FieldType::Date),
+                ("planned", FieldType::Number),
+                ("actual", FieldType::Number),
+                ("variance", FieldType::Number),
+            ],
+        );
+        let summary_schema = budget_schema(
+            budget_summary.clone(),
+            "budget_summary",
+            [
+                ("label", FieldType::Text),
+                ("month", FieldType::Date),
+                ("planned_total", FieldType::Number),
+                ("actual_total", FieldType::Number),
+                ("remaining", FieldType::Number),
+            ],
+        );
+        document.schemas.insert(budget_items.clone(), item_schema);
+        document
+            .schemas
+            .insert(budget_summary.clone(), summary_schema);
+        document.entities.extend([
+            budget_item(
+                "rent",
+                "Rent",
+                "2026-09-01",
+                1200.0,
+                1200.0,
+                Expression::Subtract {
+                    left: Box::new(Expression::Reference(FieldRef::new("rent", "actual"))),
+                    right: Box::new(Expression::Reference(FieldRef::new("rent", "planned"))),
+                },
+                budget_items.clone(),
+            )?,
+            budget_item(
+                "utilities",
+                "Utilities",
+                "2026-09-15",
+                180.0,
+                160.0,
+                Expression::Subtract {
+                    left: Box::new(Expression::Reference(FieldRef::new("utilities", "actual"))),
+                    right: Box::new(Expression::Reference(FieldRef::new("utilities", "planned"))),
+                },
+                budget_items,
+            )?,
+            (
+                EntityId::from("monthly_summary"),
+                Entity {
+                    id: EntityId::from("monthly_summary"),
+                    key: EntityKey::from("monthly_summary"),
+                    schema: budget_summary,
+                    fields: BTreeMap::from([
+                        (
+                            FieldId::from("label"),
+                            Value::Text("September 2026".to_owned()),
+                        ),
+                        (
+                            FieldId::from("month"),
+                            Value::Date(Date::parse("2026-09-01").map_err(|_| {
+                                DesignerError::InvalidDateInput {
+                                    input: "2026-09-01".to_owned(),
+                                }
+                            })?),
+                        ),
+                        (
+                            FieldId::from("planned_total"),
+                            Value::Formula(Expression::Add {
+                                left: Box::new(Expression::Reference(FieldRef::new(
+                                    "rent", "planned",
+                                ))),
+                                right: Box::new(Expression::Reference(FieldRef::new(
+                                    "utilities",
+                                    "planned",
+                                ))),
+                            }),
+                        ),
+                        (
+                            FieldId::from("actual_total"),
+                            Value::Formula(Expression::Add {
+                                left: Box::new(Expression::Reference(FieldRef::new(
+                                    "rent", "actual",
+                                ))),
+                                right: Box::new(Expression::Reference(FieldRef::new(
+                                    "utilities",
+                                    "actual",
+                                ))),
+                            }),
+                        ),
+                        (
+                            FieldId::from("remaining"),
+                            Value::Formula(Expression::Subtract {
+                                left: Box::new(Expression::Reference(FieldRef::new(
+                                    "monthly_summary",
+                                    "planned_total",
+                                ))),
+                                right: Box::new(Expression::Reference(FieldRef::new(
+                                    "monthly_summary",
+                                    "actual_total",
+                                ))),
+                            }),
+                        ),
+                    ]),
+                },
+            ),
+        ]);
         Self::from_document(document, occurrence_id)
     }
 
@@ -1256,14 +1644,32 @@ pub fn open_project(
     input: &[u8],
     occurrence_id: &str,
 ) -> Result<OpenedProjection, DesignerError> {
+    let (candidate, opened) = admit_project(input, occurrence_id)?;
+    *runtime = Some(candidate);
+    Ok(opened)
+}
+
+/// Inspect a fully admitted project without replacing any resident occurrence.
+///
+/// # Errors
+/// Returns the same storage, profile, and projection failures as project open.
+/// The temporary admission occurrence is discarded together with its history.
+pub fn inspect_project(input: &[u8]) -> Result<OpenedProjection, DesignerError> {
+    let (_, opened) = admit_project(input, PREFLIGHT_OCCURRENCE)?;
+    Ok(opened)
+}
+
+fn admit_project(
+    input: &[u8],
+    occurrence_id: &str,
+) -> Result<(DesignerRuntime, OpenedProjection), DesignerError> {
     let document = decode_project_bundle(input)?;
     let candidate = DesignerRuntime::from_document(document, occurrence_id)?;
     let bootstrap = candidate.bootstrap_projection();
     let table = candidate.query_table(&bootstrap.default_collection)?;
     let opened = OpenedProjection { bootstrap, table };
     ensure_projection_size(&opened)?;
-    *runtime = Some(candidate);
-    Ok(opened)
+    Ok((candidate, opened))
 }
 
 /// Destroy the current semantic occurrence without touching durable host data.
@@ -1286,9 +1692,71 @@ fn ensure_projection_size(projection: &impl Serialize) -> Result<(), DesignerErr
     Ok(())
 }
 
-fn encode_project_bundle(tree: &CanonicalRoProjectV1) -> Result<Vec<u8>, DesignerError> {
+fn budget_schema<const COUNT: usize>(
+    id: SchemaId,
+    key: &str,
+    fields: [(&str, FieldType); COUNT],
+) -> Schema {
+    Schema {
+        id,
+        key: SchemaKey::from(key),
+        fields: fields
+            .into_iter()
+            .map(|(key, field_type)| {
+                let id = FieldId::from(key);
+                (
+                    id.clone(),
+                    FieldDefinition {
+                        id,
+                        key: FieldKey::from(key),
+                        field_type,
+                        required: true,
+                    },
+                )
+            })
+            .collect(),
+    }
+}
+
+fn budget_item(
+    id: &str,
+    name: &str,
+    due_date: &str,
+    planned: f64,
+    actual: f64,
+    variance: Expression,
+    schema: SchemaId,
+) -> Result<(EntityId, Entity), DesignerError> {
+    let entity_id = EntityId::from(id);
+    let date = Date::parse(due_date).map_err(|_| DesignerError::InvalidDateInput {
+        input: due_date.to_owned(),
+    })?;
+    let planned = Number::new(planned).map_err(|_| DesignerError::InvalidNumberInput {
+        input: planned.to_string(),
+    })?;
+    let actual = Number::new(actual).map_err(|_| DesignerError::InvalidNumberInput {
+        input: actual.to_string(),
+    })?;
+    Ok((
+        entity_id.clone(),
+        Entity {
+            id: entity_id,
+            key: EntityKey::from(id),
+            schema,
+            fields: BTreeMap::from([
+                (FieldId::from("name"), Value::Text(name.to_owned())),
+                (FieldId::from("due_date"), Value::Date(date)),
+                (FieldId::from("planned"), Value::Number(planned)),
+                (FieldId::from("actual"), Value::Number(actual)),
+                (FieldId::from("variance"), Value::Formula(variance)),
+            ]),
+        },
+    ))
+}
+
+fn encode_project_bundle_v1(tree: &CanonicalRoProjectV1) -> Result<Vec<u8>, DesignerError> {
     let total = tree.files().iter().try_fold(
-        PROJECT_BUNDLE_MAGIC.len() + size_of::<u32>(),
+        PROJECT_BUNDLE_V1_MAGIC.len() + size_of::<u32>(),
         |total, file| {
             let path_length = u16::try_from(file.path().len()).map_err(|_| {
                 DesignerError::InvalidProjectTransfer {
@@ -1312,7 +1780,7 @@ fn encode_project_bundle(tree: &CanonicalRoProjectV1) -> Result<Vec<u8>, Designe
     )?;
     enforce_project_transfer_limit(total)?;
     let mut output = Vec::with_capacity(total);
-    output.extend_from_slice(PROJECT_BUNDLE_MAGIC);
+    output.extend_from_slice(PROJECT_BUNDLE_V1_MAGIC);
     output.extend_from_slice(
         &u32::try_from(tree.files().len())
             .expect("canonical project file count fits u32")
@@ -1335,12 +1803,33 @@ fn encode_project_bundle(tree: &CanonicalRoProjectV1) -> Result<Vec<u8>, Designe
     Ok(output)
 }
 
+fn encode_project_record_v2(document: &Document) -> Result<Vec<u8>, DesignerError> {
+    let canonical = to_canonical_string(document)?;
+    let total = PROJECT_RECORD_V2_MAGIC
+        .len()
+        .saturating_add(canonical.len());
+    enforce_project_transfer_limit(total)?;
+    let mut output = Vec::with_capacity(total);
+    output.extend_from_slice(PROJECT_RECORD_V2_MAGIC);
+    output.extend_from_slice(canonical.as_bytes());
+    Ok(output)
+}
+
 fn decode_project_bundle(input: &[u8]) -> Result<Document, DesignerError> {
     enforce_project_transfer_limit(input.len())?;
+    if input.starts_with(PROJECT_RECORD_V2_MAGIC) {
+        let payload = &input[PROJECT_RECORD_V2_MAGIC.len()..];
+        if payload.is_empty() {
+            return Err(DesignerError::InvalidProjectTransfer {
+                message: "TWDPROJ2 transfer is missing direct-ro/v2 bytes".to_owned(),
+            });
+        }
+        return from_bytes(payload).map_err(DesignerError::from);
+    }
     let mut cursor = ProjectBundleCursor::new(input);
-    if cursor.take(PROJECT_BUNDLE_MAGIC.len())? != PROJECT_BUNDLE_MAGIC {
+    if cursor.take(PROJECT_BUNDLE_V1_MAGIC.len())? != PROJECT_BUNDLE_V1_MAGIC {
         return Err(DesignerError::InvalidProjectTransfer {
-            message: "missing TWDPROJ1 transfer discriminator".to_owned(),
+            message: "missing private TWD project record discriminator".to_owned(),
         });
     }
     let file_count = cursor.read_u32()? as usize;
@@ -1390,6 +1879,14 @@ fn decode_project_bundle(input: &[u8]) -> Result<Document, DesignerError> {
         Err(CanonicalRoProjectAdmissionError::Format(error)) => Err(error.into()),
         Err(CanonicalRoProjectAdmissionError::Profile(error)) => Err(error),
     }
+}
+
+fn document_contains_date(document: &Document) -> bool {
+    document
+        .schemas
+        .values()
+        .flat_map(|schema| schema.fields.values())
+        .any(|field| field.field_type == FieldType::Date)
 }
 
 fn enforce_project_transfer_limit(actual: usize) -> Result<(), DesignerError> {
@@ -1458,11 +1955,20 @@ pub fn process_wire_request(runtime: &mut Option<DesignerRuntime>, input: &[u8])
     }
     let reply = match serde_json::from_slice::<DesignerRequest>(input) {
         Ok(request) => {
-            if let DesignerRequest::NewTracker { occurrence_id } = &request {
-                let result = DesignerRuntime::tracker(occurrence_id).and_then(|candidate| {
+            if let Some(occurrence_id) = match &request {
+                DesignerRequest::NewTracker { occurrence_id }
+                | DesignerRequest::NewBudget { occurrence_id } => Some(occurrence_id),
+                _ => None,
+            } {
+                let result = (match &request {
+                    DesignerRequest::NewTracker { .. } => DesignerRuntime::tracker(occurrence_id),
+                    DesignerRequest::NewBudget { .. } => DesignerRuntime::budget(occurrence_id),
+                    _ => unreachable!("only new project requests enter this branch"),
+                })
+                .and_then(|candidate| {
                     let opened = OpenedProjection {
                         bootstrap: candidate.bootstrap_projection(),
-                        table: candidate.query_table("tracker")?,
+                        table: candidate.query_table(&candidate.default_collection)?,
                     };
                     ensure_projection_size(&opened)?;
                     *runtime = Some(candidate);
@@ -1582,6 +2088,76 @@ fn is_tracker_spec(spec: &CollectionSpec) -> bool {
                         | ("done", FieldType::Boolean)
                 )
         })
+}
+
+fn copy_position(spec: &CollectionSpec, field: &FieldRef) -> Result<(usize, usize), DesignerError> {
+    let row = spec
+        .entities
+        .iter()
+        .position(|entity| entity == &field.entity);
+    let column = spec
+        .columns
+        .iter()
+        .position(|column| column.id == field.field);
+    row.zip(column)
+        .ok_or_else(|| tracker_error("formula copy target must belong to the source collection"))
+}
+
+fn copy_index(
+    index: usize,
+    source: usize,
+    destination: usize,
+    relative: bool,
+) -> Result<usize, DesignerError> {
+    if !relative {
+        return Ok(index);
+    }
+    index
+        .checked_add(destination)
+        .and_then(|index| index.checked_sub(source))
+        .ok_or_else(|| tracker_error("relative reference is outside the collection"))
+}
+
+fn require_copy_number(document: &Document, field: &FieldRef) -> Result<(), DesignerError> {
+    let entity = document
+        .entities
+        .get(&field.entity)
+        .ok_or_else(|| tracker_error("formula reference entity is unavailable"))?;
+    let numeric = document
+        .schemas
+        .get(&entity.schema)
+        .and_then(|schema| schema.fields.get(&field.field))
+        .is_some_and(|definition| definition.field_type == FieldType::Number);
+    if !numeric
+        || !matches!(
+            entity.fields.get(&field.field),
+            Some(Value::Number(_) | Value::Formula(_))
+        )
+    {
+        return Err(tracker_error(
+            "formula copy requires present numeric targets and references",
+        ));
+    }
+    Ok(())
+}
+
+fn map_copy_references(
+    expression: &mut Expression,
+    visit: &mut impl FnMut(&mut FieldRef) -> Result<(), DesignerError>,
+) -> Result<(), DesignerError> {
+    match expression {
+        Expression::Number(_) => Ok(()),
+        Expression::Reference(reference) => visit(reference),
+        Expression::Add { left, right }
+        | Expression::Subtract { left, right }
+        | Expression::Multiply { left, right }
+        | Expression::Divide { left, right }
+        | Expression::Minimum { left, right }
+        | Expression::Maximum { left, right } => {
+            map_copy_references(left, visit)?;
+            map_copy_references(right, visit)
+        }
+    }
 }
 
 fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
@@ -2007,6 +2583,8 @@ fn designer_lifecycle(
         principal.clone(),
         [
             (OperationFamily::SetFieldValue, MutationClass::Value),
+            (OperationFamily::SetFieldValue, MutationClass::Formula),
+            (OperationFamily::FormulaUpdate, MutationClass::Formula),
             (OperationFamily::AppendEntity, MutationClass::Structure),
             (OperationFamily::RemoveEntity, MutationClass::Structure),
             (OperationFamily::RemoveEntity, MutationClass::Destructive),
@@ -2310,7 +2888,74 @@ fn parse_scalar(
 }
 #[cfg(test)]
 mod tests {
-    use super::MAX_WIDTH_FINITE_JSON_NUMBER;
+    use super::{DesignerError, DesignerRuntime, MAX_WIDTH_FINITE_JSON_NUMBER, ProposalId};
+
+    #[test]
+    fn formula_requests_do_not_retain_admitted_rejections_or_completed_proposals() {
+        let base = DesignerRuntime::budget("00000000-0000-4000-8000-000000000000").unwrap();
+        let mut document = base.session.export_snapshot().document().clone();
+        document
+            .schemas
+            .retain(|id, _| id.as_str() == "budget_items");
+        document
+            .schemas
+            .values_mut()
+            .for_each(|schema| schema.fields.retain(|id, _| id.as_str() == "planned"));
+        let template = document.entities[&super::EntityId::from("rent")].clone();
+        document.entities.clear();
+        for index in 0..33 {
+            let mut entity = template.clone();
+            entity.id = super::EntityId::from(format!("r{index:02}"));
+            entity.key = super::EntityKey::from(entity.id.to_string());
+            let number = super::Number::new(1.0).unwrap();
+            let value = if index < 32 {
+                super::Value::Formula(super::Expression::Number(number))
+            } else {
+                super::Value::Number(number)
+            };
+            entity.fields = [(super::FieldId::from("planned"), value)]
+                .into_iter()
+                .collect();
+            document.entities.insert(entity.id.clone(), entity);
+        }
+        let mut runtime =
+            DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000000")
+                .unwrap();
+        let before = runtime.export_project("resident/0").unwrap().bytes;
+        for serial in 1..=32 {
+            let error = runtime
+                .update_formula("resident/0", &"r32.planned".into(), "3")
+                .unwrap_err();
+            assert!(matches!(error, DesignerError::UnsupportedProject { .. }));
+            assert!(
+                runtime
+                    .lifecycle
+                    .proposal_history(&ProposalId::from(format!("designer-formula-{serial}")))
+                    .is_err()
+            );
+            assert_eq!(runtime.export_project("resident/0").unwrap().bytes, before);
+        }
+        let result = runtime
+            .update_formula("resident/0", &"r00.planned".into(), "1201")
+            .unwrap();
+        assert_eq!(result.resulting_revision, "resident/1");
+        assert!(
+            runtime
+                .lifecycle
+                .proposal_history(&ProposalId::from("designer-formula-33"))
+                .is_err()
+        );
+        assert_eq!(
+            runtime
+                .query_fields("resident/1", &["r00.planned".into()])
+                .unwrap()
+                .fields[0]
+                .calculated
+                .as_ref()
+                .and_then(super::CalculationProjection::number),
+            Some(1201.0)
+        );
+    }
 
     #[test]
     fn worst_case_refresh_number_uses_the_maximum_finite_json_width() {

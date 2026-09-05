@@ -5,7 +5,7 @@ use std::cell::{Cell, RefCell};
 use crate::{
     DesignerError, DesignerResponse, DesignerRuntime, DesignerWireReply,
     MAX_PROJECT_TRANSFER_BYTES, MAX_WIRE_REQUEST_BYTES, ProjectExportProjection, encode_reply,
-    open_project, process_wire_request, request_too_large_reply,
+    inspect_project, open_project, process_wire_request, request_too_large_reply,
 };
 
 thread_local! {
@@ -80,6 +80,16 @@ pub extern "C" fn tachiko_designer_project_reserve(length: u32) -> u32 {
 /// Fully admit and install one project candidate from the project arena.
 #[unsafe(no_mangle)]
 pub extern "C" fn tachiko_designer_project_open() {
+    process_project_candidate(true);
+}
+
+/// Inspect a fully admitted candidate without replacing resident state.
+#[unsafe(no_mangle)]
+pub extern "C" fn tachiko_designer_project_inspect() {
+    process_project_candidate(false);
+}
+
+fn process_project_candidate(install: bool) {
     let project = PROJECT.with(|project| std::mem::take(&mut *project.borrow_mut()));
     RUNTIME.with(|runtime| {
         let mut runtime = runtime.borrow_mut();
@@ -90,6 +100,15 @@ pub extern "C" fn tachiko_designer_project_open() {
                     maximum: MAX_PROJECT_TRANSFER_BYTES,
                 }
                 .failure_projection(current_revision(runtime.as_ref())),
+            }
+        } else if !install {
+            match inspect_project(&project) {
+                Ok(opened) => DesignerWireReply::Ok {
+                    response: DesignerResponse::Opened(Box::new(opened)),
+                },
+                Err(error) => DesignerWireReply::Error {
+                    error: error.failure_projection(current_revision(runtime.as_ref())),
+                },
             }
         } else if REQUEST_TOO_LARGE.replace(false) {
             DesignerWireReply::Error {

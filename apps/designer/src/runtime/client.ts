@@ -1,4 +1,5 @@
 import type {
+  FormulaCopy,
   TrackerCommand,
   BootstrapProjection,
   FieldBatchProjection,
@@ -11,9 +12,12 @@ import type {
 } from "./protocol.ts";
 
 export interface DesignerClient {
+  copyFormula?(expectedRevision: string, request: FormulaCopy): Promise<PublicationProjection>;
   newTracker?(): Promise<OpenedProjection>;
+  newBudget?(): Promise<OpenedProjection>;
   trackerCommand?(request: TrackerCommand): Promise<PublicationProjection>;
   bootstrap(): Promise<BootstrapProjection>;
+  inspectProject?(bytes: ArrayBuffer): Promise<OpenedProjection>;
   openProject(bytes: ArrayBuffer): Promise<OpenedProjection>;
   exportProject(expectedRevision: string): Promise<ProjectExport>;
   closeProject(): Promise<void>;
@@ -41,6 +45,11 @@ export interface DesignerClient {
     expectedRevision: string,
     target: FieldTarget,
     value: string,
+  ): Promise<PublicationProjection>;
+  updateFormula?(
+    expectedRevision: string,
+    target: FieldTarget,
+    source: string,
   ): Promise<PublicationProjection>;
   close(): void | Promise<void>;
 }

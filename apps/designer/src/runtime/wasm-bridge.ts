@@ -12,6 +12,7 @@ type DesignerWasmExports = {
   tachiko_designer_response_len(): number;
   tachiko_designer_project_reserve(length: number): number;
   tachiko_designer_project_open(): void;
+  tachiko_designer_project_inspect(): void;
   tachiko_designer_project_export(): void;
   tachiko_designer_project_release(): void;
   tachiko_designer_project_close(): void;
@@ -24,6 +25,7 @@ const MAX_PROJECT_TRANSFER_BYTES = 64 * 1024 * 1024;
 
 export type DesignerWasmBridge = {
   request(request: DesignerRequest): DesignerWireReply;
+  inspectProject(bytes: Uint8Array): DesignerWireReply;
   openProject(bytes: Uint8Array, occurrenceId: string): DesignerWireReply;
   exportProject(expectedRevision: string):
     | { status: "ok"; export: ProjectExport }
@@ -79,6 +81,15 @@ export async function createDesignerWasmBridge(
       }
       writeRequest(input);
       exports.tachiko_designer_request_run();
+      return readReply();
+    },
+    inspectProject: (bytes) => {
+      if (bytes.byteLength > MAX_PROJECT_TRANSFER_BYTES) {
+        return tooLargeReply("The project exceeds the private 64 MiB host transfer boundary.");
+      }
+      const pointer = exports.tachiko_designer_project_reserve(bytes.byteLength);
+      new Uint8Array(exports.memory.buffer, pointer, bytes.byteLength).set(bytes);
+      exports.tachiko_designer_project_inspect();
       return readReply();
     },
     openProject: (bytes, occurrenceId) => {

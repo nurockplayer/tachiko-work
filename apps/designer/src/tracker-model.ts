@@ -1,4 +1,5 @@
 import type { FieldProjection, TableProjection } from "./runtime/protocol.ts";
+import { parseBudgetViews, type BudgetViews } from "./budget-views.ts";
 export type CellStyle = {
     bold?: boolean;
     fill?: boolean;
@@ -6,24 +7,28 @@ export type CellStyle = {
     border?: boolean;
     align?: "left" | "center" | "right";
 };
+export type NumberFormat = "number" | "percentage" | "currency-jpy" | "currency-usd";
 export type TrackerView = {
+    budgetViews?: BudgetViews;
     version: 1;
     cells: Record<string, CellStyle>;
     order: string[];
     widths: Record<string, number>;
     rowHeight: number;
     header: boolean;
+    formats: Record<string, NumberFormat>;
 };
-export const emptyTrackerView = (): TrackerView => ({ version: 1, cells: {}, order: [], widths: {}, rowHeight: 36, header: true });
+export const emptyTrackerView = (): TrackerView => ({ version: 1, cells: {}, order: [], widths: {}, rowHeight: 36, header: true, formats: {} });
 export const cellKey = (entity: string, field: string): string => JSON.stringify([entity, field]);
-export function parseTrackerView(input?: string): TrackerView {
+/** Budget bindings require IDs from the admitted project snapshot, never the sidecar itself. */
+export function parseTrackerView(input?: string, collectionIds?: string[]): TrackerView {
     if (input === undefined)
         return emptyTrackerView();
     const parsed: unknown = JSON.parse(input);
     if (typeof parsed !== "object" || parsed === null)
         throw new Error("Saved tracker layout is invalid.");
     const view = parsed as Record<string, unknown>;
-    if (view.version !== 1 || !Array.isArray(view.order) || !view.order.every(x => typeof x === "string") || typeof view.cells !== "object" || view.cells === null || Array.isArray(view.cells) || typeof view.widths !== "object" || view.widths === null || Array.isArray(view.widths) || (typeof view.rowHeight !== "number" || ![36, 56, 80].includes(view.rowHeight)) || typeof view.header !== "boolean")
+    if (view.version !== 1 || !Array.isArray(view.order) || !view.order.every(x => typeof x === "string") || typeof view.cells !== "object" || view.cells === null || Array.isArray(view.cells) || typeof view.widths !== "object" || view.widths === null || Array.isArray(view.widths) || (typeof view.rowHeight !== "number" || ![36, 56, 80].includes(view.rowHeight)) || typeof view.header !== "boolean" || (view.formats !== undefined && (typeof view.formats !== "object" || view.formats === null || Array.isArray(view.formats))))
         throw new Error("Unsupported tracker layout. Original saved project is unchanged.");
     for (const style of Object.values(view.cells as Record<string, unknown>)) {
         if (typeof style !== "object" || style === null || Array.isArray(style) || Object.entries(style).some(([key, value]) => key === "align" ? (typeof value !== "string" || !["left", "center", "right"].includes(value)) : !["bold", "fill", "wrap", "border"].includes(key) || typeof value !== "boolean"))
@@ -31,7 +36,16 @@ export function parseTrackerView(input?: string): TrackerView {
     }
     if (Object.values(view.widths as Record<string, number>).some(width => ![120, 200, 320].includes(width)))
         throw new Error("Unsupported column width.");
-    return view as TrackerView;
+    const formats = view.formats ?? {};
+    if (!Object.values(formats).every(format => typeof format === "string" && ["number", "percentage", "currency-jpy", "currency-usd"].includes(format)))
+        throw new Error("Unsupported number presentation format.");
+    let budgetViews: BudgetViews | undefined;
+    if (view.budgetViews !== undefined) {
+        if (collectionIds === undefined)
+            throw new Error("Saved Budget layout requires authoritative project collection IDs.");
+        budgetViews = parseBudgetViews(view.budgetViews, collectionIds);
+    }
+    return { ...(view as Omit<TrackerView, "formats">), formats: formats as Record<string, NumberFormat>, ...(budgetViews === undefined ? {} : { budgetViews }) };
 }
 export function displayField(field?: FieldProjection): string {
     if (field?.diagnostics.length)

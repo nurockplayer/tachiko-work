@@ -122,6 +122,35 @@ describe("Driver Tracker deterministic view ordering", () => {
 });
 
 describe("Driver Tracker view sidecar admission", () => {
+  const budgetId = "00000000-0000-4000-8000-000000000001";
+  const budget = () => ({ version: 1, active: budgetId, views: [{ id: budgetId, name: "Budget", collection: "schema-items" }] });
+
+  it("validates Budget collection bindings against the opened snapshot rather than the sidecar", () => {
+    const view = { ...emptyTrackerView(), budgetViews: budget() };
+    const bytes = JSON.stringify(view);
+    expect(parseTrackerView(bytes, ["schema-items", "schema-summary"]).budgetViews).toEqual(view.budgetViews);
+    expect(() => parseTrackerView(bytes, ["schema-summary"])).toThrow("unavailable collection ID");
+    expect(() => parseTrackerView(bytes, [])).toThrow("unavailable collection ID");
+    expect(() => parseTrackerView(bytes)).toThrow("collection IDs");
+    expect(JSON.stringify(view)).toBe(bytes);
+  });
+
+  it.each([null, { ...budget(), views: [null] }, { ...budget(), views: ["schema-items"] }, { ...budget(), views: [{ collection: "schema-items" }] }])("rejects malformed Budget metadata explicitly without a raw TypeError: %j", budgetViews => {
+    const bytes = JSON.stringify({ ...emptyTrackerView(), budgetViews });
+    let failure: unknown;
+    try { parseTrackerView(bytes, ["schema-items"]); } catch (error) { failure = error; }
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toBeInstanceOf(TypeError);
+    expect((failure as Error).message).toContain("Invalid Budget views");
+  });
+
+  it("keeps legacy Tracker sidecars independent of Budget collection admission", () => {
+    const bytes = JSON.stringify(emptyTrackerView());
+    expect(parseTrackerView(bytes)).toEqual(emptyTrackerView());
+    expect(parseTrackerView(bytes, [])).toEqual(emptyTrackerView());
+    expect(parseTrackerView(undefined, ["schema-items"])).toEqual(emptyTrackerView());
+  });
+
   it("round-trips supported formatting and opaque tuple keys with independent defaults", () => {
     const view = emptyTrackerView();
     const key = cellKey("entity.with.dot", "field");
@@ -130,7 +159,11 @@ describe("Driver Tracker view sidecar admission", () => {
     view.widths.field = 320;
     view.rowHeight = 80;
     view.header = false;
+    view.formats[cellKey("entity.with.dot", "field")] = "currency-jpy";
     expect(parseTrackerView(JSON.stringify(view))).toEqual(view);
+    const legacy = { ...view } as Record<string, unknown>;
+    delete legacy.formats;
+    expect(parseTrackerView(JSON.stringify(legacy)).formats).toEqual({});
     expect(parseTrackerView()).toEqual(emptyTrackerView());
     expect(cellKey("entity.with", "dot.field")).not.toBe(key);
     expect(emptyTrackerView().cells).toEqual({});
@@ -142,6 +175,7 @@ describe("Driver Tracker view sidecar admission", () => {
     ["cells", { cell: [] }], ["cells", { cell: { bold: "true" } }],
     ["cells", { cell: { font: "custom" } }], ["cells", { cell: { align: ["left"] } }],
     ["cells", { cell: { align: "justify" } }],
+    ["formats", { cell: "excel-custom" }],
   ])("rejects malformed %s: %j", (key, value) => {
     expect(() => parseTrackerView(JSON.stringify({ ...emptyTrackerView(), [key]: value }))).toThrow();
   });

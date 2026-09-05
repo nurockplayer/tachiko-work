@@ -29,7 +29,10 @@ or page lifetimes. Rejected admission or initial projection fails before
 replacement and leaves the current occurrence unchanged.
 
 Save As captures one exact `ResidentWorkspaceSession::export_snapshot()`
-revision and encodes it through the existing canonical `.roproj/v1` codec.
+revision and encodes existing non-Date projects through the canonical
+`.roproj/v1` codec. Date-bearing Budget projects use the existing
+`direct-ro/v2` codec inside an explicit private Browser host record; this is
+not `.roproj/v2`, a portable package, or a new public project format.
 IndexedDB commits the opaque complete tree as one create-only record, so an
 existing project name is never overwritten and the UI marks only the confirmed
 revision durable. Dirty occurrences guard in-app replacement/close and browser
@@ -37,6 +40,11 @@ unload; the unload guard is removed after Save As or occurrence teardown.
 Browser projects survive Worker teardown and page reload, but
 remain browser-origin data and can be removed by clearing site data. The Tracker workflow below adds explicit same-project Save and bounded session
 undo; autosave, cloud persistence, and distribution remain separate work.
+
+Save and Save As require all pending cell and formula drafts to be applied or
+cancelled. Rejected numeric edits retain the draft for correction while the
+published value and calculations stay unchanged. Cancel pending edits restores
+the published values; it does not undo accepted edits.
 
 ## Development
 
@@ -56,8 +64,8 @@ pnpm --dir apps/designer test:browser
 `build` compiles the private Rust adapter for `wasm32-unknown-unknown` before
 Vite assembles the application. `dev` performs the same runtime build before
 starting Vite, so a clean checkout never serves without its Worker artifact.
-General schema authoring, formula authoring, autosave/recovery history, and
-public transport/storage/SDK stabilization remain outside this slice.
+General schema authoring, autosave/recovery history, and public
+transport/storage/SDK stabilization remain outside this slice.
 
 ## Experimental external client kit
 
@@ -133,3 +141,41 @@ runtime from the [clipboard fixture](e2e/fixtures/operations-tracker.tsv).
 This closes only the bounded tracker journey, not Excel parity or the public
 launch gate. No CSV/XLSX compatibility, multi-sheet, formula expansion, custom
 validation engine, cloud sync, or durable history is added.
+
+## Driver Budget (#258)
+
+Choose **New Budget** to open a small monthly plan with **Budget Items** and
+**Budget Summary** collections. The formula panel lets you select a numeric
+target and insert references by collection, row and field labels. The generated
+`[entity.field]` addresses are parsed,
+bound to stable semantic IDs, type-checked, calculated, and published by the
+Rust lifecycle. Up to 32 named views can be added, duplicated, renamed,
+reordered and deleted over these collections. Views share their source data;
+duplicating a view does not copy its data and deleting a view does not remove
+the underlying collection. View names and order cannot retarget bound formulas.
+
+- Formula authoring accepts only the existing bounded arithmetic and
+  `min`/`max` vocabulary. Invalid, unbound, non-numeric, stale, or
+  calculation-failing input is rejected before publication.
+- Copy a formula to selected numeric destinations in the same collection in
+  one atomic operation. Relative rows/columns use the displayed canonical
+  table order; selected fixed dependencies and cross-collection references
+  retain their stable targets. Out-of-range, wrong-type, duplicate or cyclic
+  candidates reject the entire copy. Formula authoring/copy clears session
+  undo history; conversion from a formula back to a scalar is not supported.
+- Date uses canonical Gregorian `YYYY-MM-DD`. Number formatting can cycle
+  between ordinary Number, JPY, Percentage, and USD presentation. Formatting
+  is private Browser presentation metadata and never changes Number arithmetic,
+  introduces Money, or promises cross-currency safety.
+- Number entry uses a decimal dot without grouping or currency symbols; a
+  percentage display does not reinterpret input (0.2 displays as 20%, while
+  20 displays as 2,000%). Number/percentage/USD display uses en-US and JPY uses
+  ja-JP. Date input is date-only ISO, with the browser's native date control.
+  Pending Budget input must be applied or cancelled before saving.
+- A Date-bearing Budget Save uses the private `direct-ro/v2` host record and
+  reopens through the Rust storage authority. Existing `.roproj/v1` Browser
+  projects retain their original codec and behavior.
+- Named views, their active selection, and number formatting are persisted
+  atomically with the matching semantic snapshot in the browser-only sidecar.
+  Same-project Save uses the existing compare-and-replace host boundary;
+  failed writes preserve accepted local work and leave it unsaved.
