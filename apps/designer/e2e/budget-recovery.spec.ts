@@ -1,6 +1,6 @@
 import { expect, test, type Dialog, type Page } from "@playwright/test";
 
-test.describe.configure({ mode: "serial" });
+test.describe.configure({ mode: "default" });
 type Corruption = "unknown collection" | "null view" | "null budgetViews";
 
 async function createBudget(page: Page): Promise<void> {
