@@ -16,8 +16,6 @@ expected_argument="${2:-HEAD}"
 for tool in git node pnpm tar; do
   command -v "${tool}" >/dev/null 2>&1 || fail "required tool not found: ${tool}"
 done
-pnpm_version="$("${TACHIKO_RC_SOURCE_ENV[@]}" pnpm --version)"
-[[ "${pnpm_version}" == "11.25.0" ]] || fail "pnpm 11.25.0 is required (found ${pnpm_version})"
 
 if [[ "${output_argument}" = /* ]]; then
   output_parent_argument="$(dirname "${output_argument}")"
@@ -181,6 +179,12 @@ tachiko_rc_materialize_source "${repo_root}" "${resolved_expected}" "${test_root
 tachiko_rc_check_ancestor_cargo_config "${test_root}" || fail "source scratch parent is not safe for Cargo"
 test_designer="${test_root}/apps/designer"
 [[ -f "${test_designer}/package.json" && -f "${test_designer}/pnpm-lock.yaml" ]] || fail "expected commit has no complete designer source"
+
+# Corepack selects the package-manager pin from process cwd before pnpm parses
+# its own arguments. Resolve every pnpm invocation inside the archived app.
+pnpm_version="$(cd "${test_designer}" && "${TACHIKO_RC_SOURCE_ENV[@]}" pnpm --version)"
+[[ "${pnpm_version}" == "11.25.0" ]] || fail "pnpm 11.25.0 is required (found ${pnpm_version})"
+
 # ABI journeys read this generated module directly. Exercise the packaged bytes,
 # rather than rebuilding a second module or borrowing the current checkout.
 mkdir -p "${test_designer}/public"
@@ -204,8 +208,9 @@ clean_env+=(
 )
 {
   echo "source: git archive ${resolved_expected}"
-  echo "command: pnpm --dir ${test_designer} install --frozen-lockfile"
-  "${clean_env[@]}" pnpm --dir "${test_designer}" install --frozen-lockfile
+  echo "cwd: ${test_designer}"
+  echo "command: pnpm install --frozen-lockfile"
+  (cd "${test_designer}" && "${clean_env[@]}" pnpm install --frozen-lockfile)
 } >"${verification_dir}/install.log" 2>&1 || fail "frozen dependency install failed; inspect ${verification_dir}/install.log"
 
 playwright_module="${test_designer}/node_modules/@playwright/test/index.mjs"
@@ -245,7 +250,7 @@ NODE
 
 inventory_status=0
 set +e
-"${clean_env[@]}" pnpm --dir "${test_designer}" exec playwright test --config="${config_path}" --list --reporter=json >"${verification_dir}/expected-tests.json" 2>"${verification_dir}/expected-tests.log"
+(cd "${test_designer}" && "${clean_env[@]}" pnpm exec playwright test --config="${config_path}" --list --reporter=json) >"${verification_dir}/expected-tests.json" 2>"${verification_dir}/expected-tests.log"
 inventory_status=$?
 set -e
 [[ "${inventory_status}" -eq 0 ]] || fail "archived Playwright test inventory failed; inspect ${verification_dir}/expected-tests.log"
@@ -266,7 +271,7 @@ NODE
 
 browser_status=0
 set +e
-"${clean_env[@]}" pnpm --dir "${test_designer}" exec playwright test --config="${config_path}" >"${verification_dir}/report.line.log" 2>&1
+(cd "${test_designer}" && "${clean_env[@]}" pnpm exec playwright test --config="${config_path}") >"${verification_dir}/report.line.log" 2>&1
 browser_status=$?
 set -e
 

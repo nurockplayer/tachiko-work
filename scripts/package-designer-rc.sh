@@ -16,8 +16,6 @@ commit_argument="${2:-HEAD}"
 for tool in git node pnpm tar rustup rustc; do
   command -v "${tool}" >/dev/null 2>&1 || fail "required tool not found: ${tool}"
 done
-pnpm_version="$("${TACHIKO_RC_SOURCE_ENV[@]}" pnpm --version)"
-[[ "${pnpm_version}" == "11.25.0" ]] || fail "pnpm 11.25.0 is required (found ${pnpm_version})"
 
 if [[ "${output_argument}" = /* ]]; then
   output_parent_argument="$(dirname "${output_argument}")"
@@ -43,6 +41,11 @@ designer_root="${archived_root}/apps/designer"
 [[ -f "${designer_root}/package.json" ]] || fail "archived commit has no apps/designer/package.json"
 [[ -f "${designer_root}/pnpm-lock.yaml" ]] || fail "archived commit has no apps/designer/pnpm-lock.yaml"
 
+# Corepack selects the package-manager pin from process cwd before pnpm parses
+# its own arguments. Resolve every pnpm invocation inside the archived app.
+pnpm_version="$(cd "${designer_root}" && "${TACHIKO_RC_SOURCE_ENV[@]}" pnpm --version)"
+[[ "${pnpm_version}" == "11.25.0" ]] || fail "pnpm 11.25.0 is required (found ${pnpm_version})"
+
 cargo_home="${scratch}/cargo-home"
 config_home="${scratch}/config-home"
 mkdir "${cargo_home}" "${config_home}"
@@ -63,10 +66,11 @@ build_log="${output_dir}/build.log"
   echo "designer RC build"
   echo "commit: ${resolved_commit}"
   echo "source: git archive ${resolved_commit}"
-  echo "command: pnpm --dir ${designer_root} install --frozen-lockfile"
-  "${clean_env[@]}" pnpm --dir "${designer_root}" install --frozen-lockfile || exit 1
-  echo "command: pnpm --dir ${designer_root} build"
-  "${clean_env[@]}" pnpm --dir "${designer_root}" build
+  echo "cwd: ${designer_root}"
+  echo "command: pnpm install --frozen-lockfile"
+  (cd "${designer_root}" && "${clean_env[@]}" pnpm install --frozen-lockfile) || exit 1
+  echo "command: pnpm build"
+  (cd "${designer_root}" && "${clean_env[@]}" pnpm build)
 } >"${build_log}" 2>&1 || fail "designer build failed; inspect ${build_log}"
 
 site_source="${designer_root}/dist"
