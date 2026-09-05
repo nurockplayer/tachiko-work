@@ -80,8 +80,16 @@ conditions hold:
 2. durable architecture or product decisions required for production are
    Accepted; any Steward-supplied Provisional choice is limited to a non-durable
    implementation detail permitted by current Accepted authority;
-3. scope and acceptance criteria are sufficient for focused delivery; and
-4. no conflicting open implementation PR owns the same work.
+3. scope and acceptance criteria are sufficient for focused delivery;
+4. no conflicting open implementation PR owns the same work; and
+5. the Project Steward has applied the repository
+   [`PR Decomposition Policy`](pr-decomposition-policy.md), including recording
+   any strong-signal exception justification in the implementation Issue before
+   it is marked Ready.
+
+The decomposition check preserves the one-Ready-Issue -> one-PR delivery rule by
+splitting a larger product goal into coherent child implementation Issues before
+delivery starts rather than by bundling separable concerns into one review unit.
 
 A Decision or Research Issue with unresolved durable choices is not Ready for
 production implementation. **Decision-Ready** is an Issue workflow state, not
