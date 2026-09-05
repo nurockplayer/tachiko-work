@@ -68,9 +68,12 @@ correctness or reviewability rather than improve it.
 
 ## Exceptions
 
-Keeping a change above a strong size signal in one Issue/PR is acceptable only
-when the work is still one coherent review unit and the Issue or PR records the
-reason. Typical bounded exceptions include:
+Keeping a proposed change above a strong size signal in one Issue/PR is
+acceptable only when the work is still one coherent review unit and the
+implementation Issue records the justification **before it is marked Ready**.
+PR-side justification alone cannot satisfy this pre-Ready exception because the
+canonical delivery workflow opens the implementation PR only after Ready.
+Typical bounded exceptions include:
 
 - generated or machine-maintained artifacts;
 - fixture or golden-data expansion tied to one contract;
@@ -78,6 +81,10 @@ reason. Typical bounded exceptions include:
 - repository-wide renames or equivalent repetitive edits; and
 - inseparable atomic changes where intermediate merges would knowingly break a
   supported contract or required gate.
+
+For review-surface growth first discovered after Ready, record the new evidence
+and Steward disposition in the active Issue/PR handoff context before continuing
+under the unexpected-growth procedure below.
 
 "The agent can implement it in one run" is not a justification.
 
