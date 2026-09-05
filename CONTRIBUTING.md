@@ -156,6 +156,13 @@ commands and results used for verification. Include migration or compatibility
 notes when applicable. Avoid unrelated cleanup, generated noise, and narrative
 that duplicates an issue, ADR, or discoverable repository state.
 
+Before an implementation Issue becomes Ready, apply the
+[`PR Decomposition Policy`](docs/governance/pr-decomposition-policy.md). Large
+product goals should become coherent vertical child Issues rather than one
+oversized review unit. The policy's file/LOC thresholds are reviewability
+signals, not hard correctness limits; document justified exceptions instead of
+splitting mechanical or genuinely atomic work only to satisfy a number.
+
 Agent-owned issue delivery follows the canonical
 [`Repository delivery workflow`](docs/governance/project-governance.md#repository-delivery-workflow),
 including its Ready gate, exactly-one PR handoff comment, PATCH-in-place rule,
