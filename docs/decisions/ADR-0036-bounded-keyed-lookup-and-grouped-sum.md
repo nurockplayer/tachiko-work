@@ -146,7 +146,10 @@ the appropriate `SchemaField` for required type facts. It includes the entire
 Products membership/key universe, not only currently matched rows. If complete
 disclosure coverage for any revealed fact cannot be derived and authorized, the
 Query is denied without a partial aggregate, matched identity, or diagnostic
-leak. The client never supplies its own footprint.
+leak. When a formula-backed operand requires the whole document `Calculation`
+outcome, its footprint also includes every formula root whose outcome determines
+whether that complete `CalculationState` exists, not only the operand's direct
+formula closure. The client never supplies its own footprint.
 
 ### 5. Currentness, persistence, and interoperability stay truthful
 

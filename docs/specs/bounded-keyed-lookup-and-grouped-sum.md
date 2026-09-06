@@ -94,9 +94,12 @@ caller—the complete disclosure footprint: `Document(document)` for the
 definition; `Schema(orders)`/`Schema(products)` for candidate membership;
 `EntityField` for local operands, the full Products membership/key universe, and
 matched category/price; `SchemaField` for type facts; and `EntityField` for
-every effective-Number formula dependency. It denies the whole Query when that
-coverage cannot be authorized; it never leaks a matched ID, ambiguity candidate,
-diagnostic, partial group, cache, or currentness fact through a visible subset.
+every effective-Number formula dependency. If a formula-backed operand requires
+the whole document `Calculation` outcome, it additionally covers every formula
+root whose outcome determines whether that complete `CalculationState` exists.
+It denies the whole Query when that coverage cannot be authorized; it never
+leaks a matched ID, ambiguity candidate, diagnostic, partial group, cache, or
+currentness fact through a visible subset.
 
 ## Independently specified pressure fixture
 
@@ -134,6 +137,7 @@ and `services = 10`, with no other group.
 | Formula-backed operand | Make price or quantity a calculation-failed formula | Unavailable using the ADR-0018 root failure; no second evaluator or stale effective Number. |
 | Formula-backed effective Number | Replace `product-A.price` with a successful ADR-0018 formula whose effective Number is `3` | Fresh Complete: `hardware = 6`, `services = 10`; evaluation uses formula result, not a prior stored/cache price. |
 | Whole Calculation dependency | With a required formula-backed price/quantity, change an otherwise unrelated formula root from valid to failed | Unavailable because the authoritative document Calculation has no partial `CalculationState`; a prior Complete result is non-current. |
+| Whole Calculation disclosure | With a required formula-backed price/quantity, deny disclosure of one unrelated formula root needed to determine complete Calculation existence | Deny the whole Query without revealing Complete/Unavailable, root identity, diagnostic, cache, or currentness evidence. |
 | Empty Orders | Remove every Orders entity while definitions/fields remain valid | Complete empty group map; no synthetic category/group. |
 | Save/reopen live | Save definition, change `product-A.price` from `2` to `3`, reopen against that snapshot | Fresh Complete: `hardware = 6`, `services = 10`; stored `4` is not truth. |
 | Stale cache | Retain base output, then change a dependency root | Retained output is non-current; require fresh Complete/Unavailable evaluation. |
