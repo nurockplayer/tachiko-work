@@ -83,7 +83,7 @@ async function setup(tracker = true): Promise<{ root: HTMLElement; client: Clien
 }
 function control(root: HTMLElement, name: RegExp): HTMLButtonElement {
   const button = [...root.querySelectorAll<HTMLButtonElement>("button")].find(item =>
-    name.test(item.getAttribute("aria-label") ?? item.textContent ?? ""));
+    name.test(item.getAttribute("aria-label") ?? item.textContent));
   if (!button) throw new Error(`missing control ${String(name)}`);
   return button;
 }
@@ -119,7 +119,7 @@ async function createChart(root: HTMLElement, title = "Report"): Promise<void> {
   fill(root, "Chart title", title);
   select(root, "Category field", "name");
   control(root, /^Apply chart$/).click();
-  await vi.waitFor(() => expect(root.querySelector(".report-card-title")?.textContent).toBe(title));
+  await vi.waitFor(() => { expect(root.querySelector(".report-card-title")?.textContent).toBe(title); });
   expect(root.querySelector(".report-data-table")?.textContent).toContain("Alpha");
   expect(root.querySelector(".report-data-table")?.textContent).toContain("12");
 }
@@ -137,14 +137,14 @@ it("interleaves chart creation with earlier formatting and restores both in orde
   expect(control(root, /^Undo\b/i).disabled).toBe(false);
   expect(root.textContent).not.toContain("undo/redo cleared");
   control(root, /^Undo\b/i).click();
-  await vi.waitFor(() => expect(root.querySelector(".report-card-title")).toBeNull());
+  await vi.waitFor(() => { expect(root.querySelector(".report-card-title")).toBeNull(); });
   expect(root.querySelector("[role=gridcell]")?.className).toContain("cell-bold");
   control(root, /^Undo\b/i).click();
   expect(root.querySelector("[role=gridcell]")?.className).not.toContain("cell-bold");
   control(root, /^Redo\b/i).click();
   expect(root.querySelector("[role=gridcell]")?.className).toContain("cell-bold");
   control(root, /^Redo\b/i).click();
-  await vi.waitFor(() => expect(root.querySelector(".report-card-title")?.textContent).toBe("Report"));
+  await vi.waitFor(() => { expect(root.querySelector(".report-card-title")?.textContent).toBe("Report"); });
   expect(snapshot(root)).toEqual(created);
   assertSourceUnchanged(root, client);
 });
@@ -161,19 +161,19 @@ it.each([true, false])("restores exact chart edit/delete configuration on Tracke
   select(root, "Chart type", "line");
   input(root, "Show legend").click();
   control(root, /^Apply chart$/).click();
-  await vi.waitFor(() => expect(root.querySelector(".report-card-title")?.textContent).toBe("Edited chart"));
+  await vi.waitFor(() => { expect(root.querySelector(".report-card-title")?.textContent).toBe("Edited chart"); });
   const edited = snapshot(root);
   expect(edited).toEqual({ ...created, title: "Edited chart", xLabel: "Items", yLabel: "Amount", series: [{ fieldId: "value", label: "Measured" }], kind: "line", legend: false });
   control(root, /^Undo\b/i).click();
-  await vi.waitFor(() => expect(snapshot(root)).toEqual(created));
+  await vi.waitFor(() => { expect(snapshot(root)).toEqual(created); });
   control(root, /^Redo\b/i).click();
-  await vi.waitFor(() => expect(snapshot(root)).toEqual(edited));
+  await vi.waitFor(() => { expect(snapshot(root)).toEqual(edited); });
   control(root, /^Delete chart$/).click();
   expect(root.querySelector(".report-card-title")).toBeNull();
   control(root, /^Undo\b/i).click();
-  await vi.waitFor(() => expect(snapshot(root)).toEqual(edited));
+  await vi.waitFor(() => { expect(snapshot(root)).toEqual(edited); });
   control(root, /^Redo\b/i).click();
-  await vi.waitFor(() => expect(root.querySelector(".report-card-title")).toBeNull());
+  await vi.waitFor(() => { expect(root.querySelector(".report-card-title")).toBeNull(); });
   assertSourceUnchanged(root, client);
   if (!tracker) expect(root.querySelector('[data-tracker="bold"]')).toBeNull();
 });
@@ -201,7 +201,7 @@ it.each(["cancel", "reject", "unchanged"] as const)("%s chart draft preserves bo
   } else {
     control(root, /^Apply chart$/).click();
   }
-  await vi.waitFor(() => expect(root.querySelector(".report-editor")).toBeNull());
+  await vi.waitFor(() => { expect(root.querySelector(".report-editor")).toBeNull(); });
   expect(snapshot(root)).toEqual(created);
   expect(control(root, /^Undo\b/i).disabled).toBe(false);
   expect(control(root, /^Redo\b/i).disabled).toBe(false);
@@ -227,14 +227,14 @@ it("new chart work after Undo discards only the abandoned Redo branch", async ()
   expect(control(root, /^Redo\b/i).disabled).toBe(true);
   expect(control(root, /^Undo\b/i).disabled).toBe(false);
   control(root, /^Undo\b/i).click();
-  await vi.waitFor(() => expect(root.querySelector(".report-card-title")).toBeNull());
+  await vi.waitFor(() => { expect(root.querySelector(".report-card-title")).toBeNull(); });
   expect(root.querySelector("[role=gridcell]")?.className).toBe(boldOnlyClass);
   expect(root.querySelector("[role=gridcell]")?.getAttribute("style")).toBe(boldOnlyStyle);
   control(root, /^Undo\b/i).click();
   expect(root.querySelector("[role=gridcell]")?.className).not.toContain("cell-bold");
   control(root, /^Redo\b/i).click();
   control(root, /^Redo\b/i).click();
-  await vi.waitFor(() => expect(root.querySelector(".report-card-title")?.textContent).toBe("Report"));
+  await vi.waitFor(() => { expect(root.querySelector(".report-card-title")?.textContent).toBe("Report"); });
   expect(root.querySelector("[role=gridcell]")?.getAttribute("style")).toBe(boldOnlyStyle);
   expect(control(root, /^Redo\b/i).disabled).toBe(true);
   assertSourceUnchanged(root, client);
@@ -245,6 +245,6 @@ it("discloses the next chart action accessibly in each direction", async () => {
   await createChart(root);
   expect(description(root, /^Undo\b/i)).toMatch(/chart/i);
   control(root, /^Undo\b/i).click();
-  await vi.waitFor(() => expect(root.querySelector(".report-card-title")).toBeNull());
+  await vi.waitFor(() => { expect(root.querySelector(".report-card-title")).toBeNull(); });
   expect(description(root, /^Redo\b/i)).toMatch(/chart/i);
 });
