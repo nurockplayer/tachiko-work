@@ -57,7 +57,7 @@ fn field(runtime: &mut DesignerRuntime, revision: u32) -> FieldProjection {
     projection.fields.remove(0)
 }
 
-/// Publish one supported FormulaUpdate through the ordinary Designer request path.
+/// Publish one supported `FormulaUpdate` through the ordinary Designer request path.
 fn formula(runtime: &mut DesignerRuntime, revision: u32, source: &str) {
     runtime
         .handle(DesignerRequest::FormulaUpdate {

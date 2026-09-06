@@ -1308,10 +1308,7 @@ impl DesignerRuntime {
                 SemanticCommand::RemoveEntity { entity } => {
                     candidate.entities.remove(entity);
                 }
-                SemanticCommand::FormulaUpdate(_) => {
-                    return Err(tracker_error("unsupported history command"));
-                }
-                SemanticCommand::FormulaInverseRestore(_) => {
+                SemanticCommand::FormulaUpdate(_) | SemanticCommand::FormulaInverseRestore(_) => {
                     return Err(tracker_error("unsupported history command"));
                 }
             }
