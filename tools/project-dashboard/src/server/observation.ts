@@ -119,7 +119,220 @@ export interface DashboardProjection {
   };
 }
 
-/** Steward acceptance seam. Delivery implementation must satisfy the acceptance suite. */
-export function projectObservation(_input: ProjectObservationInput): DashboardProjection {
-  throw new Error("Not implemented: #229 positive-only acceptance seed");
+function incompleteFact<T>(availability: Availability): CurrentFact<T> {
+  return {
+    availability: availability === "complete" ? "unavailable" : availability,
+    value: null,
+  };
+}
+
+function currentFact<T>(observation: Observed<T>): CurrentFact<T> {
+  if (observation.availability === "complete" && observation.value !== null) {
+    return { availability: "complete", value: observation.value };
+  }
+
+  return incompleteFact(observation.availability);
+}
+
+function completeValue<T>(observation: Observed<T>): T | null {
+  return observation.availability === "complete" ? observation.value : null;
+}
+
+function criticalPath(
+  issues: readonly IssueObservation[] | null,
+  issueAvailability: Availability,
+): CriticalPathProjection {
+  if (issues === null) {
+    return {
+      availability:
+        issueAvailability === "complete" ? "unavailable" : issueAvailability,
+      issueNumbers: [],
+    };
+  }
+
+  let incompleteAvailability: Exclude<Availability, "complete"> | null = null;
+  for (const issue of issues) {
+    if (issue.dependencies.availability !== "complete" || issue.dependencies.value === null) {
+      if (
+        issue.dependencies.availability === "unavailable" ||
+        issue.dependencies.value === null
+      ) {
+        incompleteAvailability = "unavailable";
+      } else if (incompleteAvailability === null) {
+        incompleteAvailability = "partial";
+      }
+    }
+  }
+
+  if (incompleteAvailability !== null) {
+    return { availability: incompleteAvailability, issueNumbers: [] };
+  }
+
+  return {
+    availability: "complete",
+    issueNumbers: issues.map((issue) => issue.number),
+  };
+}
+
+/**
+ * Projects only facts observed in the latest snapshot. `previous` is deliberately
+ * ignored so a prior success cannot re-enter the current surface after failure.
+ */
+export function projectObservation({ latest }: ProjectObservationInput): DashboardProjection {
+  const issues = completeValue(latest.issues);
+  const pullRequests = completeValue(latest.pullRequests);
+  const issueByNumber = new Map(issues?.map((issue) => [issue.number, issue]));
+  const linkedIssueNumbers = new Set<number>();
+
+  const issueFacts = (issueNumber: number | null) => {
+    const issue = issueNumber === null ? undefined : issueByNumber.get(issueNumber);
+    if (issue !== undefined && issues !== null) {
+      return {
+        issueTitle: { availability: "complete", value: issue.title } as CurrentFact<string>,
+        issueState: { availability: "complete", value: issue.state } as CurrentFact<
+          "OPEN" | "CLOSED"
+        >,
+        dependencies: currentFact(issue.dependencies),
+      };
+    }
+
+    const availability =
+      issues === null && latest.issues.availability !== "complete"
+        ? latest.issues.availability
+        : "unavailable";
+    return {
+      issueTitle: incompleteFact<string>(availability),
+      issueState: incompleteFact<"OPEN" | "CLOSED">(availability),
+      dependencies: incompleteFact<readonly number[]>(availability),
+    };
+  };
+
+  const pullFacts = (pullRequest: PullObservation | null) => {
+    if (pullRequest !== null) {
+      return {
+        pullRequestTitle: {
+          availability: "complete",
+          value: pullRequest.title,
+        } as CurrentFact<string>,
+        pullRequestState: {
+          availability: "complete",
+          value: pullRequest.state,
+        } as CurrentFact<"OPEN" | "CLOSED" | "MERGED">,
+        pullRequestDraft: {
+          availability: "complete",
+          value: pullRequest.draft,
+        } as CurrentFact<boolean>,
+        pullRequestHead: currentFact(pullRequest.head),
+        pullRequestBase: currentFact(pullRequest.base),
+        linkedIssues: currentFact(pullRequest.linkedIssues),
+      };
+    }
+
+    const availability =
+      pullRequests === null && latest.pullRequests.availability !== "complete"
+        ? latest.pullRequests.availability
+        : "unavailable";
+    return {
+      pullRequestTitle: incompleteFact<string>(availability),
+      pullRequestState: incompleteFact<"OPEN" | "CLOSED" | "MERGED">(availability),
+      pullRequestDraft: incompleteFact<boolean>(availability),
+      pullRequestHead: incompleteFact<string>(availability),
+      pullRequestBase: incompleteFact<string>(availability),
+      linkedIssues: incompleteFact<readonly number[]>(availability),
+    };
+  };
+
+  const deliveries: DeliveryProjection[] = [];
+  if (pullRequests !== null) {
+    for (const pullRequest of pullRequests) {
+      const linkage = currentFact(pullRequest.linkedIssues);
+      const issueNumbers =
+        linkage.availability === "complete" ? linkage.value : [];
+
+      if (issueNumbers.length === 0) {
+        deliveries.push({
+          issueNumber: null,
+          ...issueFacts(null),
+          pullRequestNumber: pullRequest.number,
+          ...pullFacts(pullRequest),
+        });
+        continue;
+      }
+
+      for (const issueNumber of issueNumbers) {
+        linkedIssueNumbers.add(issueNumber);
+        deliveries.push({
+          issueNumber,
+          ...issueFacts(issueNumber),
+          pullRequestNumber: pullRequest.number,
+          ...pullFacts(pullRequest),
+        });
+      }
+    }
+  }
+
+  if (issues !== null) {
+    for (const issue of issues) {
+      if (!linkedIssueNumbers.has(issue.number)) {
+        deliveries.push({
+          issueNumber: issue.number,
+          ...issueFacts(issue.number),
+          pullRequestNumber: null,
+          ...pullFacts(null),
+        });
+      }
+    }
+  }
+
+  const main = currentFact(latest.main);
+  const observedPullRequests =
+    latest.pullRequests.availability === "unavailable"
+      ? []
+      : latest.pullRequests.value ?? [];
+  const watchedCandidates =
+    latest.stewardWatches.availability === "unavailable"
+      ? []
+      : latest.stewardWatches.value ?? [];
+  const attention: PositiveAttention[] = [];
+  const attentionKeys = new Set<string>();
+
+  for (const watch of watchedCandidates) {
+    const pullRequest = observedPullRequests.find(
+      (candidate) => candidate.number === watch.prNumber,
+    );
+    const isCurrent =
+      watch.availability === "complete" &&
+      main.availability === "complete" &&
+      main.value === watch.main &&
+      pullRequest?.head.availability === "complete" &&
+      pullRequest.head.value !== null &&
+      pullRequest.head.value === watch.head;
+
+    if (!isCurrent) {
+      continue;
+    }
+
+    const addAttention = (kind: PositiveAttention["kind"]) => {
+      const key = `${kind}:${watch.prNumber}:${watch.sourceUrl}`;
+      if (!attentionKeys.has(key)) {
+        attentionKeys.add(key);
+        attention.push({ kind, prNumber: watch.prNumber, sourceUrl: watch.sourceUrl });
+      }
+    };
+
+    if (watch.verdict === "HOLD") {
+      addAttention("steward-hold");
+    }
+    if (watch.humanAction === "required") {
+      addAttention("human-action-required");
+    }
+  }
+
+  return {
+    executive: { mainSha: main },
+    deliveries,
+    criticalPath: criticalPath(issues, latest.issues.availability),
+    recentActivity: currentFact(latest.recentActivity),
+    attention: { items: attention },
+  };
 }
