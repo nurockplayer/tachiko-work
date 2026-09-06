@@ -398,12 +398,13 @@ fn export_native_budget_spreadsheet(
     });
     let bytes = match format {
         SpreadsheetFormat::Csv => {
-            let sheet = workbook
-                .sheets
-                .first()
-                .ok_or_else(|| DesignerError::InvalidProjectTransfer {
-                    message: "Native Budget export active view is unavailable.".to_owned(),
-                })?;
+            let sheet =
+                workbook
+                    .sheets
+                    .first()
+                    .ok_or_else(|| DesignerError::InvalidProjectTransfer {
+                        message: "Native Budget export active view is unavailable.".to_owned(),
+                    })?;
             let bytes = export_csv(sheet).map_err(interop_error)?;
             workbook.ledger.push(FidelityFinding {
                 category: FidelityCategory::LossyOnExport,

@@ -655,9 +655,7 @@ fn workbook_omissions_and_column_width_tails_are_explicit() {
         let changed = mutate(&bytes, "xl/worksheets/sheet1.xml", |s| {
             s.replace(
                 "<sheetData>",
-                &format!(
-                    "<cols><col min=\"{min}\" max=\"{max}\" width=\"24\"/></cols><sheetData>"
-                ),
+                &format!("<cols><col min=\"{min}\" max=\"{max}\" width=\"24\"/></cols><sheetData>"),
             )
         });
         let imported = import_xlsx(&changed).unwrap();

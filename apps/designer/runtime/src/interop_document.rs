@@ -73,8 +73,8 @@ impl DesignerRuntime {
 use super::{
     CollectionSpec, MAX_FIELD_QUERY_TARGETS, MAX_PROFILE_STRING_BYTES, MAX_PROJECTION_BYTES,
     MAX_TABLE_FIELDS, MAX_TABLE_ROWS, PREFLIGHT_OCCURRENCE, PublicationProjection,
-    designer_lifecycle,
-    ensure_projection_size, field_target, stored_value_projection, tracker_error,
+    designer_lifecycle, ensure_projection_size, field_target, stored_value_projection,
+    tracker_error,
 };
 use std::collections::BTreeSet;
 use tachiko_workspace_engine::patch_lifecycle::{
@@ -1379,7 +1379,8 @@ impl DesignerRuntime {
             ));
         }
         let row_styles = native_budget_active_csv_styles(collection, spec)?;
-        let rows = native_budget_active_csv_rows(self, expected_revision, document, spec, &row_styles)?;
+        let rows =
+            native_budget_active_csv_rows(self, expected_revision, document, spec, &row_styles)?;
 
         let workbook = SourceWorkbook {
             sheets: vec![SourceSheet {
@@ -1626,7 +1627,8 @@ fn native_budget_active_csv_rows(
             let field = FieldRef::new(entity.id.clone(), column.id.clone());
             let stored = entity.fields.get(&column.id);
             let value = if matches!(stored, Some(Value::Formula(_))) {
-                let projection = runtime.query_fields(expected_revision, &[field_target(&field)])?;
+                let projection =
+                    runtime.query_fields(expected_revision, &[field_target(&field)])?;
                 let calculated = projection.fields.first().and_then(|field| {
                     field
                         .calculated

@@ -124,9 +124,11 @@ fn native_budget_csv_ignores_inactive_excel_invalid_view_name_but_xlsx_refuses()
     let csv = export_csv(&workbook.sheets[0]).expect("active Budget CSV should be writable");
     let csv = String::from_utf8(csv).unwrap();
     assert!(csv.contains("1360"), "{csv}");
-    assert!(runtime
-        .export_native_budget_workbook("resident/0", &mapped)
-        .is_err());
+    assert!(
+        runtime
+            .export_native_budget_workbook("resident/0", &mapped)
+            .is_err()
+    );
 }
 
 #[test]
@@ -155,9 +157,11 @@ fn native_budget_csv_ignores_inactive_mapping_but_xlsx_refuses() {
     let csv = export_csv(&workbook.sheets[0]).expect("active Budget CSV should be writable");
     let csv = String::from_utf8(csv).unwrap();
     assert!(csv.contains("1360"), "{csv}");
-    assert!(runtime
-        .export_native_budget_workbook("resident/0", &mapped)
-        .is_err());
+    assert!(
+        runtime
+            .export_native_budget_workbook("resident/0", &mapped)
+            .is_err()
+    );
 }
 
 #[test]
@@ -172,21 +176,27 @@ fn native_budget_csv_preserves_active_admission_and_stale_revision_refusals() {
         }],
     );
 
-    assert!(runtime
-        .export_native_budget_csv_workbook("resident/1", &mapped)
-        .is_err());
+    assert!(
+        runtime
+            .export_native_budget_csv_workbook("resident/1", &mapped)
+            .is_err()
+    );
 
     let mut missing_active = mapped.clone();
     missing_active.active_view = "missing".into();
-    assert!(runtime
-        .export_native_budget_csv_workbook("resident/0", &missing_active)
-        .is_err());
+    assert!(
+        runtime
+            .export_native_budget_csv_workbook("resident/0", &missing_active)
+            .is_err()
+    );
 
     let mut missing_mapping = mapped;
     missing_mapping.collections[1].collection_id = "budget_items".into();
-    assert!(runtime
-        .export_native_budget_csv_workbook("resident/0", &missing_mapping)
-        .is_err());
+    assert!(
+        runtime
+            .export_native_budget_csv_workbook("resident/0", &missing_mapping)
+            .is_err()
+    );
 }
 
 #[test]
