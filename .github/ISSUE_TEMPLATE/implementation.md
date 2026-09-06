@@ -40,6 +40,17 @@ assignees: ""
 
 <!-- Observable completion conditions. -->
 
+## Delivery risk / execution plan
+
+<!-- Follow docs/governance/delivery-throughput-policy.md. Classify by the highest applicable risk. -->
+
+- Risk class: <!-- Fast | Standard | Guarded -->
+- Guarded trigger: <!-- none, or the exact durability/security/governance trigger -->
+- Primary write surface: <!-- files/modules/subsystem expected to be owned by this lane -->
+- Parallelism: <!-- safe alongside named Ready lanes, or serialize because of shared ownership/contract -->
+- Review route: <!-- independent orchestrator/team review, or fresh deep review -->
+- Validation route: <!-- targeted iteration checks + exact-head PR checks + broader gate when applicable -->
+
 ## Validation / evidence
 
 <!-- Tests, fixtures, CI, benchmarks, compatibility evidence. -->
