@@ -11,6 +11,15 @@
 - Authority impact: <!-- None | Discussion / Research | ADR / Policy | Specification | Architecture | Governance -->
 - Supersedes: <!-- previous artifact/behavior, or None -->
 
+## Delivery risk / execution route
+
+<!-- Follow docs/governance/delivery-throughput-policy.md and the owning Issue. -->
+
+- Risk class: <!-- Fast | Standard | Guarded -->
+- Review route: <!-- independent orchestrator/team review, or fresh deep review -->
+- Parallel ownership: <!-- primary write surface and any neighboring active lanes -->
+- Validation route: <!-- targeted iteration checks, exact-head PR checks, broader milestone/release gate when applicable -->
+
 ## Validation / evidence
 
 <!-- Tests, fixtures, CI, manual evidence, benchmarks, compatibility checks. -->
@@ -22,7 +31,7 @@
 - Acceptance baseline / seed / final head: <!-- full commits and linked criterion-to-test mapping -->
 - Acceptance changes: <!-- none, disclosed mechanical repairs, or material changes with Steward decision and revised commit -->
 - Delivery-agent unit tests: <!-- cases, commands and actual results -->
-- Final validation / independent review: <!-- exact-head evidence; keep missing or unexecuted checks explicit -->
+- Final validation / independent review: <!-- exact-head evidence and risk-appropriate review; keep missing or unexecuted checks explicit -->
 - Remaining challenges: <!-- none, or evidence and decision needed -->
 
 ## Documentation impact
@@ -35,4 +44,5 @@
 - [ ] Any new expensive-to-reverse contract is backed by explicit decision work.
 - [ ] Superseded or stale authority is linked rather than silently overwritten.
 - [ ] Acceptance changes are accounted for; no unapproved weakened or suppressed requirement remains.
-- [ ] Applicable acceptance/unit/repository gates and independent review cover the final head; a red seed or unchecked box is not merge readiness.
+- [ ] Risk classification and review route match the owning Issue; Guarded work received fresh independent deep review.
+- [ ] Applicable acceptance/unit/repository gates and independent review cover the exact final head; a red seed or unchecked box is not merge readiness.
