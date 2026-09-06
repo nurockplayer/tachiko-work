@@ -1587,6 +1587,8 @@ fn native_budget_metadata(
     });
     for (collection_id, name, _) in ordered_collections {
         if !super::interop_adapter::valid_worksheet_name(&name)
+            || name.starts_with('\'')
+            || name.ends_with('\'')
             || !names.insert(name.to_lowercase())
         {
             return Err(tracker_error(

@@ -87,8 +87,8 @@ fn native_budget_xlsx_omits_empty_cols_and_preserves_formulas_and_typed_dates() 
     let items = worksheet_xml(&bytes, "xl/worksheets/sheet1.xml");
     let summary = worksheet_xml(&bytes, "xl/worksheets/sheet2.xml");
 
-    assert!(!items.contains("<cols>"));
-    assert!(!summary.contains("<cols>"));
+    assert!(!items.contains("<cols"));
+    assert!(!summary.contains("<cols"));
     assert!(items.contains(
         "<c r=\"E2\" s=\"0\" t=\"n\"><f>(&apos;Budget Items&apos;!$A$2-&apos;Budget Items&apos;!$D$2)</f><v>0</v></c>"
     ));
@@ -215,6 +215,34 @@ fn native_budget_includes_formula_source_collections_without_requiring_alias_vie
         1,
         "the summary formula source collection still maps exactly once"
     );
+}
+
+#[test]
+fn native_budget_rejects_excel_invalid_edge_apostrophes_in_view_names() {
+    let mut runtime = DesignerRuntime::budget(OCCURRENCE).unwrap();
+    for name in ["'Budget Items", "Budget Items'"] {
+        let mapped = presentation(
+            &mut runtime,
+            vec![
+                NativeBudgetExportView {
+                    id: "items".into(),
+                    name: name.into(),
+                    collection_id: "budget_items".into(),
+                },
+                NativeBudgetExportView {
+                    id: "summary".into(),
+                    name: "Budget Summary".into(),
+                    collection_id: "budget_summary".into(),
+                },
+            ],
+        );
+        assert!(
+            runtime
+                .export_native_budget_workbook("resident/0", &mapped)
+                .is_err(),
+            "edge apostrophe should not produce an Excel-invalid worksheet: {name:?}"
+        );
+    }
 }
 
 #[test]
