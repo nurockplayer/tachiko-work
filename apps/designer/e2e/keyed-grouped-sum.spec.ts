@@ -28,6 +28,26 @@ async function openCanary(page: Page): Promise<void> {
   await expect(page.getByTestId("revision")).toContainText("resident/0");
 }
 
+async function configureGroupedSummary(panel: Locator): Promise<void> {
+  await panel.getByLabel("Orders table", { exact: true }).selectOption({ label: "Orders" });
+  await panel
+    .getByLabel("Order lookup key", { exact: true })
+    .selectOption({ label: "Product Code" });
+  await panel
+    .getByLabel("Order quantity", { exact: true })
+    .selectOption({ label: "Quantity" });
+  await panel.getByLabel("Products table", { exact: true }).selectOption({ label: "Products" });
+  await panel
+    .getByLabel("Product lookup key", { exact: true })
+    .selectOption({ label: "Product Code" });
+  await panel
+    .getByLabel("Product category", { exact: true })
+    .selectOption({ label: "Category" });
+  await panel
+    .getByLabel("Product price", { exact: true })
+    .selectOption({ label: "Price" });
+}
+
 async function applyField(page: Page, label: string, value: string): Promise<void> {
   const control = page.getByLabel(label, { exact: true });
   await control.fill(value);
@@ -43,14 +63,20 @@ async function expectGroups(
   hardware: string,
   services: string,
 ): Promise<void> {
-  await expect(result).toContainText(new RegExp(`hardware\\s+${hardware}`));
-  await expect(result).toContainText(new RegExp(`services\\s+${services}`));
+  await expect(result).toContainText(
+    new RegExp(`hardware\\s+${hardware}(?=\\s|$)`),
+  );
+  await expect(result).toContainText(
+    new RegExp(`services\\s+${services}(?=\\s|$)`),
+  );
 }
 
-async function saveAs(page: Page, name: string): Promise<void> {
+async function saveAs(page: Page, name: string, storage?: string): Promise<void> {
   page.once("dialog", dialog => dialog.accept(name));
   await page.getByRole("button", { name: "Save As", exact: true }).click();
-  await expect(page.locator(".notice.success")).toContainText("Save As complete");
+  const notice = page.locator(".notice.success");
+  await expect(notice).toContainText("Save As complete");
+  if (storage !== undefined) await expect(notice).toContainText(storage);
 }
 
 async function reopen(page: Page, name: string): Promise<void> {
@@ -84,31 +110,26 @@ test("Driver explicitly upgrades, authors, saves, and invalidates a live keyed g
 
   const panel = groupedSummary(page);
   await expect(panel).toBeVisible();
+  await configureGroupedSummary(panel);
 
-  await panel.getByLabel("Orders table", { exact: true }).selectOption({ label: "Orders" });
+  page.once("dialog", async dialog => {
+    expect(dialog.message()).toMatch(/format 2/i);
+    expect(dialog.message()).toMatch(/upgrade|migrate/i);
+    await dialog.dismiss();
+  });
   await panel
-    .getByLabel("Order lookup key", { exact: true })
-    .selectOption({ label: "Product Code" });
-  await panel
-    .getByLabel("Order quantity", { exact: true })
-    .selectOption({ label: "Quantity" });
-  await panel.getByLabel("Products table", { exact: true }).selectOption({ label: "Products" });
-  await panel
-    .getByLabel("Product lookup key", { exact: true })
-    .selectOption({ label: "Product Code" });
-  await panel
-    .getByLabel("Product category", { exact: true })
-    .selectOption({ label: "Category" });
-  await panel
-    .getByLabel("Product price", { exact: true })
-    .selectOption({ label: "Price" });
+    .getByRole("button", { name: "Create grouped summary", exact: true })
+    .click();
+  await expect(page.getByTestId("revision")).toContainText("resident/0");
+  await saveAs(page, "keyed-grouped-sum-declined.roproj", "Storage: .roproj/v1");
 
+  await configureGroupedSummary(groupedSummary(page));
   page.once("dialog", async dialog => {
     expect(dialog.message()).toMatch(/format 2/i);
     expect(dialog.message()).toMatch(/upgrade|migrate/i);
     await dialog.accept();
   });
-  await panel
+  await groupedSummary(page)
     .getByRole("button", { name: "Create grouped summary", exact: true })
     .click();
   await expect(page.locator(".notice.success")).toContainText("Publication complete");
@@ -128,11 +149,11 @@ test("Driver explicitly upgrades, authors, saves, and invalidates a live keyed g
   await page.getByLabel("Collection", { exact: true }).selectOption("products");
   await applyField(page, "Product Code for Product B", "P-100");
   await expect(result).toContainText("lookup.ambiguous_key");
-  await expect(result).not.toContainText(/hardware\s+6/);
-  await expect(result).not.toContainText(/services\s+10/);
+  await expect(result).not.toContainText(/hardware\s+6(?=\s|$)/);
+  await expect(result).not.toContainText(/services\s+10(?=\s|$)/);
 
   await applyField(page, "Product Code for Product B", "P-300");
   await expect(result).toContainText("lookup.missing_key");
-  await expect(result).not.toContainText(/hardware\s+6/);
-  await expect(result).not.toContainText(/services\s+10/);
+  await expect(result).not.toContainText(/hardware\s+6(?=\s|$)/);
+  await expect(result).not.toContainText(/services\s+10(?=\s|$)/);
 });
