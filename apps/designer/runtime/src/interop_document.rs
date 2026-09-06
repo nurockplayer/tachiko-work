@@ -2,8 +2,8 @@
 //! Designer spreadsheet profile. Semantic publication remains in the runtime.
 
 use super::{
-    DesignerError, DesignerRuntime, FieldProjection, FieldTarget, ScalarEditInput,
-    StoredValueProjection,
+    DesignerError, DesignerRuntime, FieldProjection, FieldTarget, HistoryAction, HistoryEntry,
+    ScalarEditInput, StoredValueProjection,
 };
 use serde::{Deserialize, Serialize};
 use tachiko_workspace_engine::patch_lifecycle::SemanticCommand;
@@ -57,6 +57,7 @@ pub(super) struct PendingCleanup {
     pub(super) preview_id: String,
     pub(super) revision: String,
     pub(super) commands: Vec<SemanticCommand>,
+    pub(super) inverse: Vec<SemanticCommand>,
 }
 
 impl DesignerRuntime {
@@ -95,6 +96,7 @@ impl DesignerRuntime {
         if commands.is_empty() {
             return Err(super::PatchLifecycleError::NoChange.into());
         }
+        let inverse = cleanup_inverse(snapshot.document(), &commands)?;
         let mut candidate = snapshot.document().clone();
         for command in &commands {
             match command {
@@ -155,6 +157,7 @@ impl DesignerRuntime {
             preview_id,
             revision: expected_revision.to_owned(),
             commands,
+            inverse,
         });
         Ok(preview)
     }
@@ -173,12 +176,54 @@ impl DesignerRuntime {
             })
             .ok_or_else(|| tracker_error("cleanup preview is absent or no longer current"))?;
         let commands = pending.commands.clone();
-        let publication = self.publish_commands(expected_revision, commands)?;
+        let inverse = pending.inverse.clone();
+        let publication = self.publish_commands(expected_revision, commands.clone())?;
         self.pending_cleanup = None;
-        self.undo.clear();
-        self.redo.clear();
+        self.record_history_entry(HistoryEntry {
+            forward: HistoryAction::Commands(commands),
+            inverse: HistoryAction::Commands(inverse),
+        });
         Ok(publication)
     }
+}
+
+fn cleanup_inverse(
+    document: &Document,
+    commands: &[SemanticCommand],
+) -> Result<Vec<SemanticCommand>, DesignerError> {
+    let mut inverse = Vec::with_capacity(commands.len());
+    for command in commands {
+        match command {
+            SemanticCommand::SetFieldValue { field, .. } => {
+                if let Some(value) = document
+                    .entities
+                    .get(&field.entity)
+                    .and_then(|entity| entity.fields.get(&field.field))
+                {
+                    inverse.push(SemanticCommand::set_field_value(
+                        field.clone(),
+                        value.clone(),
+                    ));
+                } else {
+                    inverse.push(SemanticCommand::UnsetField {
+                        field: field.clone(),
+                    });
+                }
+            }
+            SemanticCommand::RemoveEntity { entity } => {
+                let record = document
+                    .entities
+                    .get(entity)
+                    .ok_or_else(|| tracker_error("cleanup entity is unavailable"))?;
+                inverse.push(SemanticCommand::AppendEntity {
+                    entity: record.clone(),
+                });
+            }
+            _ => return Err(tracker_error("unsupported cleanup command")),
+        }
+    }
+    inverse.reverse();
+    Ok(inverse)
 }
 
 fn cleanup_changes(

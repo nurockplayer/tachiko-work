@@ -655,6 +655,10 @@ td {
 .tracker-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; margin-bottom: 12px; }
 .tracker-toolbar button, .tracker-editor button { padding: 7px 12px; }
 .tracker-toolbar label { display: grid; gap: 4px; font-size: 12px; }
+.session-history-slot { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-block: 16px; }
+.session-history { display: grid; gap: 4px; }
+.session-history p { margin: 0; color: var(--muted); font-size: 12px; }
+.session-history .tracker-toolbar { margin: 0; }
 .tracker-editor { display: flex; gap: 8px; align-items: end; margin-block: 12px; }
 .tracker-editor label { display: grid; gap: 4px; flex: 1; }
 .tracker-editor input, .tracker-editor select, .tracker-editor textarea { width: 100%; padding: 8px; }

@@ -206,9 +206,11 @@ max(0, -0) == 0
 This rule is semantic and must not delegate the equal-zero case to Rust,
 WebAssembly, JavaScript, or CPU-specific `min`/`max` behavior.
 
-There is no aggregation operator in the accepted language. Future reductions
-must specify a stable input order and may not reassociate floating-point
-operations silently.
+There is no aggregation operator in the accepted formula language. Future
+formula reductions must specify a stable input order and may not reassociate
+floating-point operations silently. ADR-0036 separately admits one saved live
+`KeyedGroupedSumDefinition` family; its fixed grouped `SUM` is not an
+`Expression` node, formula-language aggregate, or general reduction catalogue.
 
 ### 6. Persisted Number spelling reuses the RFC 8785 numeric primitive only
 
@@ -427,7 +429,9 @@ evaluation under ADR-0016.
 - exact integer, decimal, fixed-point, rational, money, unit, date/time, and
   quantity types;
 - general comparisons, conditionals, lookups, collections, aggregations,
-  user-defined functions, and spreadsheet compatibility;
+  user-defined functions, and spreadsheet compatibility; ADR-0036's one fixed
+  saved live definition is the explicit non-formula exception, not a general
+  formula-language expansion;
 - configurable rounding modes or precision contexts;
 - public extension ABI, sandbox, registry, or impure/external computation;
 - parallel scheduling;

@@ -118,6 +118,19 @@ fn text(runtime: &mut DesignerRuntime, revision: u32, target: &str) -> String {
     };
     value.clone()
 }
+
+fn row_ids(runtime: &mut DesignerRuntime, revision: u32) -> Vec<String> {
+    let DesignerResponse::Table(table) = runtime
+        .handle(DesignerRequest::QueryTable {
+            collection: "items".into(),
+        })
+        .unwrap()
+    else {
+        panic!("expected table")
+    };
+    assert_eq!(table.revision, format!("resident/{revision}"));
+    table.rows.into_iter().map(|row| row.id).collect()
+}
 #[test]
 fn cleanup_preview_is_read_only_and_trim_replace_split_publish_exact_changes() {
     let mut runtime = fixture(false);
@@ -342,6 +355,7 @@ fn invalid_cleanup_stale_or_replaced_previews_never_publish_partial_changes() {
 #[test]
 fn optional_missing_fill_and_conversion_use_declared_slots_without_false_placeholders() {
     let mut runtime = fixture(false);
+    let initial = runtime.export_project("resident/0").unwrap().bytes;
     let fill = preview(
         &mut runtime,
         0,
@@ -357,6 +371,7 @@ fn optional_missing_fill_and_conversion_use_declared_slots_without_false_placeho
     commit(&mut runtime, fill);
     assert_eq!(text(&mut runtime, 1, "r1.missing"), "Unknown");
     assert_eq!(text(&mut runtime, 1, "r1.name"), "  Ada Lovelace  ");
+    let after_fill = runtime.export_project("resident/1").unwrap().bytes;
     let conversion = preview(
         &mut runtime,
         1,
@@ -368,6 +383,128 @@ fn optional_missing_fill_and_conversion_use_declared_slots_without_false_placeho
     assert!(conversion.changes[0].before.is_none());
     commit(&mut runtime, conversion);
     assert_eq!(text(&mut runtime, 2, "r1.number_text"), "12.5");
+    runtime
+        .handle(DesignerRequest::Undo {
+            expected_revision: "resident/2".into(),
+        })
+        .unwrap();
+    assert_eq!(
+        runtime.export_project("resident/3").unwrap().bytes,
+        after_fill
+    );
+    runtime
+        .handle(DesignerRequest::Undo {
+            expected_revision: "resident/3".into(),
+        })
+        .unwrap();
+    assert_eq!(runtime.export_project("resident/4").unwrap().bytes, initial);
+    runtime
+        .handle(DesignerRequest::Redo {
+            expected_revision: "resident/4".into(),
+        })
+        .unwrap();
+    assert_eq!(
+        runtime.export_project("resident/5").unwrap().bytes,
+        after_fill
+    );
+    assert_eq!(text(&mut runtime, 5, "r1.missing"), "Unknown");
+    runtime
+        .handle(DesignerRequest::Redo {
+            expected_revision: "resident/5".into(),
+        })
+        .unwrap();
+    assert_eq!(text(&mut runtime, 6, "r1.number_text"), "12.5");
+}
+
+#[test]
+fn optional_fill_history_restores_absence_without_a_placeholder() {
+    let mut runtime = fixture(false);
+    let initial = runtime.export_project("resident/0").unwrap().bytes;
+    let fill = preview(
+        &mut runtime,
+        0,
+        CleanupOperation::Fill {
+            fields: vec!["r1.missing".into()],
+            input: tachiko_designer_runtime::ScalarEditInput::Text {
+                value: "filled".into(),
+            },
+        },
+    );
+    commit(&mut runtime, fill);
+    let filled = runtime.export_project("resident/1").unwrap().bytes;
+    assert_ne!(filled, initial);
+
+    let DesignerResponse::Fields(fields) = runtime
+        .handle(DesignerRequest::QueryFields {
+            expected_revision: "resident/1".into(),
+            fields: vec!["r1.missing".into()],
+        })
+        .unwrap()
+    else {
+        panic!("expected fields")
+    };
+    assert!(fields.fields[0].stored.is_some());
+
+    runtime
+        .handle(DesignerRequest::Undo {
+            expected_revision: "resident/1".into(),
+        })
+        .unwrap();
+    assert_eq!(runtime.export_project("resident/2").unwrap().bytes, initial);
+
+    runtime
+        .handle(DesignerRequest::Redo {
+            expected_revision: "resident/2".into(),
+        })
+        .unwrap();
+    assert_eq!(runtime.export_project("resident/3").unwrap().bytes, filled);
+    let DesignerResponse::Fields(fields) = runtime
+        .handle(DesignerRequest::QueryFields {
+            expected_revision: "resident/3".into(),
+            fields: vec!["r1.missing".into()],
+        })
+        .unwrap()
+    else {
+        panic!("expected fields")
+    };
+    assert!(fields.fields[0].stored.is_some());
+}
+
+#[test]
+fn deduplicate_history_restores_removed_entity_identity_on_undo_and_redo() {
+    let mut runtime = fixture(false);
+    let initial = runtime.export_project("resident/0").unwrap().bytes;
+    let deduplicate = preview(
+        &mut runtime,
+        0,
+        CleanupOperation::Deduplicate {
+            entities: vec!["r2".into(), "r1".into(), "r3".into()],
+            key_fields: vec!["name".into()],
+        },
+    );
+    assert_eq!(deduplicate.removed_entities, vec!["r2"]);
+    commit(&mut runtime, deduplicate);
+    let deduplicated = runtime.export_project("resident/1").unwrap().bytes;
+    assert_eq!(row_ids(&mut runtime, 1), vec!["r1", "r3"]);
+
+    runtime
+        .handle(DesignerRequest::Undo {
+            expected_revision: "resident/1".into(),
+        })
+        .unwrap();
+    assert_eq!(runtime.export_project("resident/2").unwrap().bytes, initial);
+    assert_eq!(row_ids(&mut runtime, 2), vec!["r1", "r2", "r3"]);
+
+    runtime
+        .handle(DesignerRequest::Redo {
+            expected_revision: "resident/2".into(),
+        })
+        .unwrap();
+    assert_eq!(
+        runtime.export_project("resident/3").unwrap().bytes,
+        deduplicated
+    );
+    assert_eq!(row_ids(&mut runtime, 3), vec!["r1", "r3"]);
 }
 
 use tachiko_designer_runtime::interop_adapter::{

@@ -23,6 +23,9 @@ Before an implementation Issue becomes Ready, apply the repository
 [`PR Decomposition Policy`](docs/governance/pr-decomposition-policy.md); do not
 let the one-Issue/one-PR rule turn a separable product goal into an oversized
 review unit.
+Apply the [`Delivery Throughput Policy`](docs/governance/delivery-throughput-policy.md)
+to classify delivery risk, choose the review/validation route, coordinate safe
+parallel Ready lanes, and keep GitHub checkpoints at material stage boundaries.
 
 ## Delivery continuity
 

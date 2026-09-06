@@ -831,6 +831,10 @@ M04 analysis is an ephemeral Query result. It creates no persisted `AnalysisId`,
 saved semantic analysis block, analytics datastore, report authority, or
 parallel revision/history axis. Report, chart, presentation, or AI explanation
 layers may consume the structured result without becoming semantic authority.
+ADR-0036's saved live `KeyedGroupedSumDefinition` is a separately accepted
+semantic family, not an Analysis Query result or persisted Analysis Query; it
+does not add `Sum`, joins, persistence, or a general aggregate capability to
+this Analysis Query contract.
 
 ## Query, Propose, and Execute
 
@@ -1747,6 +1751,7 @@ Date to the same finite SetFieldValue projection with mutation-rule parity.
 | Analysis exact-context reproducibility and structured lineage | Accepted under ADR-0020 / #33 |
 | Analysis grouped/count/min/max complete-or-denied disclosure | Accepted under ADR-0020 / #33 and ADR-0026 |
 | Analysis result persistence / `AnalysisId` / analytics datastore | Deferred |
+| Saved live `KeyedGroupedSumDefinition` | Accepted under ADR-0036; distinct from Analysis Query and not yet implemented |
 | Sum/Mean, ranking/top-k, statistics, general predicate ASTs, joins, UDFs | Deferred |
 | Exact operation names, family identifiers, request limits, predicate catalogue, normalization encoding, and result DTOs | Provisional |
 | Production formula-reasoning/scenario/formula-update implementation | Provisional provider-neutral workspace/CLI slice implemented by #144; public wire/SDK remains undefined |
@@ -1895,7 +1900,7 @@ catalogue, or the following transition details into an Accepted public API.
 | --- | --- |
 | Absent optional slot to a matching stored scalar, including absence to Number(0) | Provisional bounded `SetFieldValue` admission. Verify declared optional identity, full candidate validity, Value grant and disclosure parity; no arbitrary upsert. |
 | `current_value_kind` absence in capability projection | Provisional DTO encoding; no canonical Null type. Consumers must tolerate a future adapter/version migration. |
-| Cleanup preview/commit and session history clearing | App-private provisional workflow; revision-pinned candidate proof, exact-preview commit, atomic publication and explicit UI history disclosure. |
+| Cleanup preview/commit and bounded session history | App-private provisional workflow; revision-pinned candidate proof, exact-preview commit, atomic publication and one bounded chronological session-history action per accepted cleanup. Accepted cleanup clears only redo; there is no durable or public history contract. |
 
 A future change must reconcile these transition/DTO/session choices against
 Accepted authority, update direct consumers and compatibility tests together,
@@ -1923,6 +1928,12 @@ formula reasoning, scenarios and FormulaUpdate require a current value.
 This null is query evidence of absence, not a canonical Null value.
 
 Cleanup previews are request-local and revision-pinned. Commit consumes the
-exact preview. Successful cleanup uses generic publication and clears session
-undo; it never invents a zero-valued inverse for an absent field. This limitation
-must remain visible in the UI and release matrix.
+exact preview. Successful cleanup uses generic publication and records one
+bounded chronological session-history action; a new accepted action clears
+only redo. It never invents a zero-valued inverse for an absent field. This
+app-private history is non-durable and has no public history contract.
+Chart/presentation changes remain outside Rust semantic history. Chart
+invalidation clears the app-private UI coordinator action stack, whose entries
+combine semantic-action markers with presentation snapshots; it does not clear
+Rust semantic history. These boundaries must remain visible in the UI and
+release matrix.

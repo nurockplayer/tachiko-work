@@ -13,6 +13,12 @@ type History = {
     kind: "view";
     before: TrackerView;
     after: TrackerView;
+    label: "view change";
+} | {
+    kind: "presentation";
+    before: TrackerView["charts"];
+    after: TrackerView["charts"];
+    label: "chart creation" | "chart edit" | "chart deletion" | "chart change";
 };
 const html = (value: string): string => value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 export class TrackerGrid {
@@ -28,7 +34,6 @@ export class TrackerGrid {
     ] = [0, 0];
     #anchorEntity: string | undefined;
     #focusEntity: string | undefined;
-    #historyInvalidated = false;
     #filter = "";
     #sort = "";
     #descending = false;
@@ -38,13 +43,56 @@ export class TrackerGrid {
     readonly #options: Options;
     constructor(options: Options) { this.#options = options; }
     get pending(): boolean { return this.#draft !== null; }
-    reset(view = emptyTrackerView()): void { this.#historyInvalidated = false; this.view = view; this.#undo = []; this.#redo = []; this.#anchor = [0, 0]; this.#focus = [0, 0]; this.#anchorEntity = undefined; this.#focusEntity = undefined; this.#table = null; this.#filter = ""; this.#sort = ""; this.#descending = false; this.#draft = null; }
-    // A publication outside the history represented here invalidates both
-    // action stacks; accepted values and presentation remain untouched.
-    invalidateHistory(): void {
-        this.#undo = [];
+    setTable(table: TableProjection): void { this.#table = table; }
+    reset(view = emptyTrackerView()): void { this.view = view; this.#undo = []; this.#redo = []; this.#anchor = [0, 0]; this.#focus = [0, 0]; this.#anchorEntity = undefined; this.#focusEntity = undefined; this.#table = null; this.#filter = ""; this.#sort = ""; this.#descending = false; this.#draft = null; }
+    /** Record one accepted private chart configuration change in session history. */
+    recordPresentation(before: TrackerView["charts"], after: TrackerView["charts"]): void {
+        if (JSON.stringify(before) === JSON.stringify(after)) return;
+        const beforeCount = before?.length ?? 0;
+        const afterCount = after?.length ?? 0;
+        const beforeIds = new Set((before ?? []).map(chart => chart.id));
+        const afterIds = new Set((after ?? []).map(chart => chart.id));
+        const created = [...afterIds].some(id => !beforeIds.has(id));
+        const deleted = [...beforeIds].some(id => !afterIds.has(id));
+        const label = created && !deleted
+            ? "chart creation"
+            : deleted && !created
+                ? "chart deletion"
+                : beforeCount === afterCount
+                    ? "chart edit"
+                    : "chart change";
+        this.#pushHistory({ kind: "presentation", before: structuredClone(before), after: structuredClone(after), label });
+    }
+    // Record one accepted Rust-authoritative semantic publication that was
+    // initiated outside the Tracker command surface. The Rust session owns
+    // the inverse; this entry keeps the UI action stack chronologically aligned.
+    recordSemantic(): void {
+        this.#pushHistory({ kind: "semantic" });
+    }
+    #pushHistory(entry: History): void {
+        this.#undo.push(entry);
         this.#redo = [];
-        this.#historyInvalidated = true;
+        if (this.#undo.length > 64)
+            this.#undo.shift();
+    }
+    #historyLabel(direction: "undo" | "redo", entry?: History): string {
+        const verb = direction === "undo" ? "Undo" : "Redo";
+        return `${verb} ${entry?.kind === "semantic" ? "semantic data action" : entry?.label ?? "session action"}`;
+    }
+    historyMarkup(busy: boolean, available = true): string {
+        const disabled = busy || !available;
+        const state = !available
+            ? '<p role="status">Session Undo/Redo is unavailable in this runtime.</p>'
+            : this.#undo.length === 0 && this.#redo.length === 0
+                ? '<p role="status">No session actions are available yet.</p>'
+                : '<p role="status">Session history is available.</p>';
+        const undo = this.#undo.at(-1), redo = this.#redo.at(-1);
+        return `<section class="session-history" aria-label="Session history">${state}<span id="session-history-undo-description" hidden>${html(this.#historyLabel("undo", undo))}</span><span id="session-history-redo-description" hidden>${html(this.#historyLabel("redo", redo))}</span><div class="tracker-toolbar"><button data-tracker-history="undo" aria-describedby="session-history-undo-description" ${disabled || undo === undefined ? "disabled" : ""}>Undo</button><button data-tracker-history="redo" aria-describedby="session-history-redo-description" ${disabled || redo === undefined ? "disabled" : ""}>Redo</button></div></section>`;
+    }
+    bindHistory(root: HTMLElement, busy: boolean): void {
+        if (busy)
+            return;
+        root.querySelectorAll<HTMLButtonElement>("[data-tracker-history]").forEach(button => { button.addEventListener("click", () => { void this.#action(button.dataset.trackerHistory ?? "").catch((error: unknown) => { this.#options.failed(error); }); }); });
     }
     #rows(): TableProjection["rows"] {
         if (this.#table === null)
@@ -72,9 +120,10 @@ export class TrackerGrid {
         const field = activeRow?.fields.find(f => f.target.field === activeCol?.id);
         const value = this.#draft ?? displayField(field);
         return `<section class="tracker" aria-label="Driver tracker">
-      ${this.#historyInvalidated ? '<p role="status">Tracker undo/redo cleared after an edit outside Tracker. Accepted data and formatting are preserved.</p>' : ""}
+      ${this.#undo.length > 0 || this.#redo.length > 0 ? '<p role="status">Session history is available.</p>' : ""}
+      <span id="session-history-undo-description" hidden>${html(this.#historyLabel("undo", this.#undo.at(-1)))}</span><span id="session-history-redo-description" hidden>${html(this.#historyLabel("redo", this.#redo.at(-1)))}</span>
       <div class="tracker-toolbar">
-        <button data-tracker="undo" ${busy || this.#undo.length === 0 ? "disabled" : ""}>Undo</button><button data-tracker="redo" ${busy || this.#redo.length === 0 ? "disabled" : ""}>Redo</button>
+        <button data-tracker="undo" aria-describedby="session-history-undo-description" ${busy || this.#undo.length === 0 ? "disabled" : ""}>Undo</button><button data-tracker="redo" aria-describedby="session-history-redo-description" ${busy || this.#redo.length === 0 ? "disabled" : ""}>Redo</button>
         <button data-tracker="append" ${disabled}>Append row</button><button data-tracker="delete" ${busy || !rows.length ? "disabled" : ""}>Remove selected rows</button>
         <button data-tracker="up" ${disabled}>Move rows up</button><button data-tracker="down" ${disabled}>Move rows down</button>
         <label>Find / filter <input data-tracker-filter aria-label="Find / filter" value="${html(this.#filter)}" ${disabled}></label>
@@ -204,8 +253,7 @@ export class TrackerGrid {
         } this.#sort = (event.target as HTMLSelectElement).value; this.#options.render(); });
         root.querySelectorAll<HTMLButtonElement>("[data-tracker]").forEach(button => { button.addEventListener("click", () => { void this.#action(button.dataset.tracker ?? "").catch((error: unknown) => { this.#options.failed(error); }); }); });
     }
-    async #execute(request: TrackerCommand): Promise<void> { await this.#options.command(request); this.#undo.push({ kind: "semantic" }); this.#redo = []; if (this.#undo.length > 64)
-        this.#undo.shift(); this.#draft = null; this.#options.changed(); this.#options.render(); }
+    async #execute(request: TrackerCommand): Promise<void> { await this.#options.command(request); this.#pushHistory({ kind: "semantic" }); this.#draft = null; this.#options.changed(); this.#options.render(); }
     async #paste(rows: string[][]): Promise<void> {
         const table = this.#table;
         if (!table)
@@ -254,8 +302,7 @@ export class TrackerGrid {
         change();
         this.#reconcileSelection(this.#rows());
     }
-    #changeView(change: () => void): void { const before = structuredClone(this.view); this.#preserveSelection(change); this.#undo.push({ kind: "view", before, after: structuredClone(this.view) }); this.#redo = []; if (this.#undo.length > 64)
-        this.#undo.shift(); this.#options.changed(); this.#options.render(); }
+    #changeView(change: () => void): void { const before = structuredClone(this.view); this.#preserveSelection(change); this.#pushHistory({ kind: "view", before, after: structuredClone(this.view), label: "view change" }); this.#options.changed(); this.#options.render(); }
     async #action(action: string): Promise<void> {
         const table = this.#table;
         if (!table)
@@ -275,9 +322,16 @@ export class TrackerGrid {
                 return;
             if (entry.kind === "semantic")
                 await this.#options.command({ type: action, expected_revision: table.revision });
-            else {
+            else if (entry.kind === "view") {
                 const restored = structuredClone(action === "undo" ? entry.before : entry.after);
                 this.#preserveSelection(() => { this.view = restored; });
+            }
+            else {
+                const restored = structuredClone(action === "undo" ? entry.before : entry.after);
+                this.#preserveSelection(() => {
+                    if (restored === undefined) delete this.view.charts;
+                    else this.view.charts = restored;
+                });
             }
             source.pop();
             target.push(entry);

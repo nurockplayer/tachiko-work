@@ -13,6 +13,7 @@ import type {
   OpenedProjection,
   PublicationProjection,
   ProjectExport,
+  TrackerCommand,
   TableProjection,
 } from "../src/runtime/protocol.ts";
 import type { DesignerProjectHost } from "../src/host/browser-project-host.ts";
@@ -411,6 +412,39 @@ class RefreshRecoveryClient extends RefreshFailingClient {
       projected.rows[0]!.fields[2]!.calculated = { status: "value", value: 50 };
     }
     return projected;
+  }
+}
+
+class GenericHistoryClient extends FakeClient {
+  readonly historyRequests: TrackerCommand[] = [];
+  #historyRevision = 0;
+
+  override async editNumber(
+    expectedRevision: string,
+    target: FieldTarget,
+    input: string,
+  ): Promise<PublicationProjection> {
+    const publication = await super.editNumber(expectedRevision, target, input);
+    this.#historyRevision = 1;
+    return publication;
+  }
+
+  async trackerCommand(request: TrackerCommand): Promise<PublicationProjection> {
+    this.historyRequests.push(structuredClone(request));
+    const base = `resident/${String(this.#historyRevision)}`;
+    this.#historyRevision += 1;
+    const resulting = `resident/${String(this.#historyRevision)}`;
+    return {
+      base_revision: base,
+      resulting_revision: resulting,
+      entities: [],
+      fields: [{ entity: "iron_sword", field: "damage" }],
+      affected_calculations: [{ entity: "iron_sword", field: "dps" }],
+    };
+  }
+
+  override async queryTable(): Promise<TableProjection> {
+    return {...structuredClone(table), revision: `resident/${String(this.#historyRevision)}`};
   }
 }
 
@@ -1058,12 +1092,9 @@ describe("Designer application seam", () => {
       expect(root.querySelector('[data-currentness="refresh_failed"]')).not.toBeNull();
     });
 
-    const collection = root.querySelector<HTMLSelectElement>(
-      "[data-collection-select]",
-    );
-    if (collection === null) throw new Error("collection selector is required");
-    collection.value = "weapons";
-    collection.dispatchEvent(new Event("change"));
+    const retry = root.querySelector<HTMLButtonElement>("[data-session-refresh]");
+    if (retry === null) throw new Error("session refresh retry is required");
+    retry.click();
 
     await vi.waitFor(() => {
       expect(root.querySelector('[data-currentness="current"]')).not.toBeNull();
@@ -1076,6 +1107,38 @@ describe("Designer application seam", () => {
     expect(root.querySelector('[data-field="iron_sword.dps"]')?.textContent).toContain(
       "50",
     );
+  });
+
+  it("exposes non-Tracker session history without mounting Tracker controls", async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    const root = document.querySelector<HTMLElement>("#app");
+    if (root === null) throw new Error("test root is required");
+    const client = new GenericHistoryClient();
+    const app = mountDesigner(root, client, host);
+    await app.ready;
+
+    expect(root.querySelector('[aria-label="Driver tracker"]')).toBeNull();
+    const history = root.querySelector<HTMLElement>('[aria-label="Session history"]');
+    expect(history).not.toBeNull();
+    expect(history?.querySelector('[data-tracker="append"]')).toBeNull();
+    expect(history?.querySelector<HTMLButtonElement>('[data-tracker-history="undo"]')?.disabled).toBe(true);
+
+    const damage = root.querySelector<HTMLInputElement>('input[aria-label="Damage for Iron Sword"]');
+    if (damage === null || damage.form === null) throw new Error("damage edit form is required");
+    damage.value = "45";
+    damage.form.requestSubmit();
+    await vi.waitFor(() => {
+      expect(root.querySelector<HTMLButtonElement>('[data-tracker-history="undo"]')?.disabled).toBe(false);
+    });
+
+    root.querySelector<HTMLButtonElement>('[data-tracker-history="undo"]')?.click();
+    await vi.waitFor(() => {
+      expect(client.historyRequests).toEqual([{type: "undo", expected_revision: "resident/1"}]);
+    });
+    await vi.waitFor(() => {
+      expect(root.querySelector<HTMLButtonElement>('[data-tracker-history="redo"]')?.disabled).toBe(false);
+    });
+    app.destroy();
   });
 
   it("marks only confirmed host revisions durable and reopens after occurrence teardown", async () => {

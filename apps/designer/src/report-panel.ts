@@ -3,8 +3,12 @@ import { formatReportNumber, renderReportChart } from "./report-renderer.ts";
 import type { NumberFormat } from "./tracker-model.ts";
 import type { TableProjection } from "./runtime/protocol.ts";
 
+type ChartPresentationProvenance =
+  | { kind: "create"; charts: ReportChart[] }
+  | { kind: "edit"; chart: ReportChart };
+
 export type ReportPanelState = {
-  draft: { chart: ReportChart; creating: boolean } | null;
+  draft: { chart: ReportChart; creating: boolean; revision: string; presentation: ChartPresentationProvenance } | null;
 };
 
 export type ReportPanelOptions = {
@@ -98,6 +102,10 @@ function cloneChart(chart: ReportChart): ReportChart {
     entityIds: [...chart.entityIds],
     series: chart.series.map(item => ({ ...item })),
   };
+}
+
+function cloneCharts(charts: readonly ReportChart[]): ReportChart[] {
+  return charts.map(cloneChart);
 }
 
 function reasonText(value: unknown): string {
@@ -323,6 +331,14 @@ function renderEditor(parent: HTMLElement, options: ReportPanelOptions): void {
   const applyCandidate = (): void => {
     if (options.busy || !options.current) return;
     try {
+      if (draft.revision !== options.table.revision) throw new Error("This chart draft is stale because the source revision changed. Cancel it and reopen the chart from current data.");
+      const presentationChanged = draft.presentation.kind === "create"
+        ? JSON.stringify(draft.presentation.charts) !== JSON.stringify(options.charts)
+        : (() => {
+          const original = options.charts.find(item => item.id === chart.id);
+          return original === undefined || JSON.stringify(draft.presentation.chart) !== JSON.stringify(original);
+        })();
+      if (presentationChanged) throw new Error("This chart draft is stale because chart presentation changed. Cancel it and reopen the chart from current data.");
       if (chart.collectionId !== options.table.collection.id) throw new Error("The chart source changed. Cancel this draft and select its source again.");
       const replacement = cloneChart(chart);
       const existingIndex = options.charts.findIndex(item => item.id === chart.id);
@@ -364,7 +380,7 @@ export function mountReportPanel(host: HTMLElement, options: ReportPanelOptions)
     create.disabled = options.busy || !options.current || options.charts.length >= 8 || numeric.length === 0 || options.table.rows.length === 0 || options.collectionIds.length === 0 || !options.collectionIds.includes(options.table.collection.id);
     create.addEventListener("click", () => {
       if (create.disabled) return;
-      options.state.draft = { chart: draftDefaults(options.table, options.table.collection.id), creating: true };
+      options.state.draft = { chart: draftDefaults(options.table, options.table.collection.id), creating: true, revision: options.table.revision, presentation: { kind: "create", charts: cloneCharts(options.charts) } };
       options.onDraftChange();
       options.rerender();
     });
@@ -397,7 +413,7 @@ export function mountReportPanel(host: HTMLElement, options: ReportPanelOptions)
     const edit = element("button", "Edit chart");
     edit.type = "button";
     edit.disabled = options.busy || !options.current || options.state.draft !== null;
-    edit.addEventListener("click", () => { options.state.draft = { chart: cloneChart(chart), creating: false }; options.onDraftChange(); options.rerender(); });
+    edit.addEventListener("click", () => { options.state.draft = { chart: cloneChart(chart), creating: false, revision: options.table.revision, presentation: { kind: "edit", chart: cloneChart(chart) } }; options.onDraftChange(); options.rerender(); });
     const remove = element("button", "Delete chart");
     remove.type = "button";
     remove.disabled = options.busy || !options.current || options.state.draft !== null;
