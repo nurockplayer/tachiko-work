@@ -91,6 +91,12 @@ export type PositiveAttention =
       sourceUrl: string;
     };
 
+/**
+ * Current-work graph node ordering only. When complete, `issueNumbers` preserves
+ * the latest complete Issue-observation order. Dependency edges live in each
+ * delivery lane's `dependencies` fact; v0 does not compute or claim a longest,
+ * prioritized, or merge-authoritative path.
+ */
 export type CriticalPathProjection =
   | {
       availability: "complete";
