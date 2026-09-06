@@ -37,10 +37,7 @@ fn fixture() -> DesignerRuntime {
             id: EntityId::from("r1"),
             key: EntityKey::from("r1"),
             schema,
-            fields: BTreeMap::from([(
-                field,
-                Value::Number(Number::new(2.0).unwrap()),
-            )]),
+            fields: BTreeMap::from([(field, Value::Number(Number::new(2.0).unwrap()))]),
         },
     );
     DesignerRuntime::from_document(document, OCCURRENCE).unwrap()
@@ -128,10 +125,7 @@ fn scalar_to_formula_undo_restores_exact_scalar_and_redo_restores_formula() {
         .expect("redo must restore the exact accepted formula action");
     let redone = field(&mut runtime, 3);
     assert_eq!(
-        redone
-            .formula
-            .as_ref()
-            .map(|value| value.source.as_str()),
+        redone.formula.as_ref().map(|value| value.source.as_str()),
         Some("3")
     );
     assert!(redone.stored.is_none());
@@ -257,7 +251,10 @@ fn stale_and_no_change_formula_attempts_preserve_existing_history_directions() {
             source: "5".to_owned(),
         })
         .expect_err("stale formula update must not publish");
-    assert_eq!(stale.failure_projection("resident/3").code, "stale_revision");
+    assert_eq!(
+        stale.failure_projection("resident/3").code,
+        "stale_revision"
+    );
 
     let no_change = runtime
         .handle(DesignerRequest::FormulaUpdate {

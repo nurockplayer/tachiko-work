@@ -1147,9 +1147,7 @@ impl DesignerRuntime {
             .entities
             .get_mut(&field.entity)
             .ok_or_else(|| tracker_error("formula inverse target is unavailable"))?;
-        entity
-            .fields
-            .insert(field.field, Value::Number(value));
+        entity.fields.insert(field.field, Value::Number(value));
         Self::from_document(candidate, PREFLIGHT_OCCURRENCE)?;
         let execute_now = self.clock.tick();
         let (receipt, invalidation) = {
@@ -1649,11 +1647,7 @@ impl DesignerRuntime {
         }
         .cloned()
         .ok_or_else(|| tracker_error("no operation is available in this history direction"))?;
-        let action = if redo {
-            &entry.forward
-        } else {
-            &entry.inverse
-        };
+        let action = if redo { &entry.forward } else { &entry.inverse };
         let result = match action {
             HistoryAction::Commands(commands) => self.publish_commands(expected, commands.clone()),
             HistoryAction::FormulaUpdate { target, source } => {
@@ -2860,7 +2854,10 @@ fn designer_lifecycle(
             (OperationFamily::SetFieldValue, MutationClass::Value),
             (OperationFamily::SetFieldValue, MutationClass::Formula),
             (OperationFamily::FormulaInverseRestore, MutationClass::Value),
-            (OperationFamily::FormulaInverseRestore, MutationClass::Formula),
+            (
+                OperationFamily::FormulaInverseRestore,
+                MutationClass::Formula,
+            ),
             (
                 OperationFamily::FormulaInverseRestore,
                 MutationClass::Destructive,
