@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use tachiko_designer_runtime::{
-    DesignerRequest, DesignerResponse, DesignerRuntime, FieldProjection,
+    DesignerRequest, DesignerResponse, DesignerRuntime, FieldProjection, open_project,
 };
 use tachiko_workspace_engine::{
     Document, Entity, EntityId, EntityKey, FieldDefinition, FieldId, FieldKey, FieldType, Number,
@@ -102,19 +102,39 @@ fn scalar_to_formula_undo_restores_exact_scalar_and_redo_restores_formula() {
         }),
         Some(2.0)
     );
+    let restored_bytes = runtime.export_project("resident/2").unwrap().bytes;
+    let mut reopened = None;
+    open_project(
+        &mut reopened,
+        &restored_bytes,
+        "00000000-0000-4000-8000-000000000301",
+    )
+    .expect("the restored scalar must remain a valid saved project");
+    let mut reopened = reopened.expect("project must be open");
+    let reopened = field(&mut reopened, 0);
+    assert!(reopened.formula.is_none());
+    assert_eq!(
+        reopened.stored.and_then(|value| match value {
+            tachiko_designer_runtime::StoredValueProjection::Number { value } => Some(value),
+            _ => None,
+        }),
+        Some(2.0)
+    );
 
     runtime
         .handle(DesignerRequest::Redo {
             expected_revision: "resident/2".to_owned(),
         })
         .expect("redo must restore the exact accepted formula action");
+    let redone = field(&mut runtime, 3);
     assert_eq!(
-        field(&mut runtime, 3)
+        redone
             .formula
             .as_ref()
             .map(|value| value.source.as_str()),
         Some("3")
     );
+    assert!(redone.stored.is_none());
 }
 
 /// Consecutive formula edits remain separate history actions above the original scalar.
@@ -146,11 +166,30 @@ fn formula_to_formula_undo_restores_previous_formula_then_prior_scalar() {
     );
 
     runtime
-        .handle(DesignerRequest::Undo {
+        .handle(DesignerRequest::Redo {
             expected_revision: "resident/3".to_owned(),
         })
+        .expect("the latest formula replacement must redo exactly");
+    assert_eq!(
+        field(&mut runtime, 4)
+            .formula
+            .as_ref()
+            .map(|value| value.source.as_str()),
+        Some("4")
+    );
+
+    runtime
+        .handle(DesignerRequest::Undo {
+            expected_revision: "resident/4".to_owned(),
+        })
+        .expect("redo must not consume the earlier formula history");
+
+    runtime
+        .handle(DesignerRequest::Undo {
+            expected_revision: "resident/5".to_owned(),
+        })
         .expect("the earlier scalar-to-formula action must remain below it");
-    let restored = field(&mut runtime, 4);
+    let restored = field(&mut runtime, 6);
     assert!(restored.formula.is_none());
     assert_eq!(
         restored.stored.and_then(|value| match value {
@@ -163,61 +202,83 @@ fn formula_to_formula_undo_restores_previous_formula_then_prior_scalar() {
 
 /// A rejected formula body changes neither canonical bytes nor the prior reversible action.
 #[test]
-fn rejected_formula_update_preserves_the_existing_formula_undo_entry() {
+fn rejected_formula_update_preserves_the_existing_formula_history_directions() {
     let mut runtime = fixture();
     formula(&mut runtime, 0, "3");
+    formula(&mut runtime, 1, "4");
+    runtime
+        .handle(DesignerRequest::Undo {
+            expected_revision: "resident/2".to_owned(),
+        })
+        .expect("the second formula must create a pending redo");
 
-    let before = runtime.export_project("resident/1").unwrap().bytes;
+    let before = runtime.export_project("resident/3").unwrap().bytes;
     let error = runtime
         .handle(DesignerRequest::FormulaUpdate {
-            expected_revision: "resident/1".to_owned(),
+            expected_revision: "resident/3".to_owned(),
             target: "r1.n".into(),
             source: "[missing.n] + 1".to_owned(),
         })
         .expect_err("unbound formula must not publish");
-    assert_ne!(error.failure_projection("resident/1").code, "no_change");
-    assert_eq!(runtime.export_project("resident/1").unwrap().bytes, before);
+    assert_ne!(error.failure_projection("resident/3").code, "no_change");
+    assert_eq!(runtime.export_project("resident/3").unwrap().bytes, before);
 
     runtime
-        .handle(DesignerRequest::Undo {
-            expected_revision: "resident/1".to_owned(),
+        .handle(DesignerRequest::Redo {
+            expected_revision: "resident/3".to_owned(),
         })
-        .expect("a rejected formula attempt must not destroy prior reversible history");
-    let restored = field(&mut runtime, 2);
-    assert!(restored.formula.is_none());
+        .expect("a rejected formula attempt must retain the pending redo");
+    assert_eq!(
+        field(&mut runtime, 4)
+            .formula
+            .as_ref()
+            .map(|value| value.source.as_str()),
+        Some("4")
+    );
 }
 
-/// Stale and semantic-NoChange formula attempts must leave the accepted action undoable.
+/// Stale and semantic-NoChange formula attempts must leave a pending Redo usable.
 #[test]
-fn stale_and_no_change_formula_attempts_preserve_the_existing_undo_entry() {
+fn stale_and_no_change_formula_attempts_preserve_existing_history_directions() {
     let mut runtime = fixture();
     formula(&mut runtime, 0, "3");
-    let before = runtime.export_project("resident/1").unwrap().bytes;
+    formula(&mut runtime, 1, "4");
+    runtime
+        .handle(DesignerRequest::Undo {
+            expected_revision: "resident/2".to_owned(),
+        })
+        .expect("the second formula must create a pending redo");
+    let before = runtime.export_project("resident/3").unwrap().bytes;
 
     let stale = runtime
         .handle(DesignerRequest::FormulaUpdate {
-            expected_revision: "resident/0".to_owned(),
+            expected_revision: "resident/2".to_owned(),
             target: "r1.n".into(),
-            source: "4".to_owned(),
+            source: "5".to_owned(),
         })
         .expect_err("stale formula update must not publish");
-    assert_eq!(stale.failure_projection("resident/1").code, "stale_revision");
+    assert_eq!(stale.failure_projection("resident/3").code, "stale_revision");
 
     let no_change = runtime
         .handle(DesignerRequest::FormulaUpdate {
-            expected_revision: "resident/1".to_owned(),
+            expected_revision: "resident/3".to_owned(),
             target: "r1.n".into(),
             source: "3".to_owned(),
         })
         .expect_err("identical bound formula meaning must be NoChange");
-    assert_eq!(no_change.failure_projection("resident/1").code, "no_change");
-    assert_eq!(runtime.export_project("resident/1").unwrap().bytes, before);
+    assert_eq!(no_change.failure_projection("resident/3").code, "no_change");
+    assert_eq!(runtime.export_project("resident/3").unwrap().bytes, before);
 
     runtime
-        .handle(DesignerRequest::Undo {
-            expected_revision: "resident/1".to_owned(),
+        .handle(DesignerRequest::Redo {
+            expected_revision: "resident/3".to_owned(),
         })
-        .expect("stale and NoChange attempts must preserve prior formula history");
-    let restored = field(&mut runtime, 2);
-    assert!(restored.formula.is_none());
+        .expect("stale and NoChange attempts must preserve the pending redo");
+    assert_eq!(
+        field(&mut runtime, 4)
+            .formula
+            .as_ref()
+            .map(|value| value.source.as_str()),
+        Some("4")
+    );
 }

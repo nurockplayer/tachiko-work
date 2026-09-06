@@ -10,15 +10,15 @@ use thiserror::Error;
 
 pub use crate::SemanticValueKind;
 use crate::patch_lifecycle::{
-    DisclosureRequirement, DocumentScopeId, FormulaUpdateCommand, OperationFamily, PatchLifecycle,
-    PatchLifecycleError, PrincipalId, ProposalId, ProposalRequest, ScopedSemanticSubject,
-    SemanticCommand, SemanticPatch, SemanticPatchBody, SemanticRevision, SemanticScope,
-    TrustedInstant,
+    DisclosureRequirement, DocumentScopeId, FormulaInverseRestoreCommand, FormulaUpdateCommand,
+    OperationFamily, PatchLifecycle, PatchLifecycleError, PrincipalId, ProposalId, ProposalRequest,
+    ScopedSemanticSubject, SemanticCommand, SemanticPatch, SemanticPatchBody, SemanticRevision,
+    SemanticScope, TrustedInstant,
 };
 use crate::{
     CalculationFailure, CalculationOutcome, Document, DocumentId, Expression, FieldRef, Number,
     SemanticChange, ValidationReport, Value, WorkspaceError, bind_formula_update_unbound,
-    calculate_complete, validation_report,
+    calculate_complete, formula_inverse_restore_candidate, validation_report,
 };
 
 /// Current finite scenario envelope profile. The exact threshold is
@@ -282,6 +282,35 @@ impl FormulaUpdateRequest {
             base_revision,
             target,
             source: source.into(),
+            originator,
+        }
+    }
+}
+
+/// One private, exact-base restoration of the scalar displaced by FormulaUpdate.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FormulaInverseRestoreRequest {
+    proposal_id: ProposalId,
+    base_revision: SemanticRevision,
+    target: FieldRef,
+    value: Number,
+    originator: PrincipalId,
+}
+
+impl FormulaInverseRestoreRequest {
+    #[must_use]
+    pub fn new(
+        proposal_id: ProposalId,
+        base_revision: SemanticRevision,
+        target: FieldRef,
+        value: Number,
+        originator: PrincipalId,
+    ) -> Self {
+        Self {
+            proposal_id,
+            base_revision,
+            target,
+            value,
             originator,
         }
     }
@@ -587,7 +616,7 @@ impl PatchLifecycle {
         }
         self.require_query_for_admission(&request.originator, &disclosure, now)?;
 
-        self.propose(
+        match self.propose(
             document_scope,
             document,
             current_revision,
@@ -595,6 +624,74 @@ impl PatchLifecycle {
                 request.proposal_id,
                 request.base_revision,
                 SemanticPatchBody::command(SemanticCommand::FormulaUpdate(command)),
+                request.originator,
+            ),
+            now,
+        ) {
+            Err(PatchLifecycleError::CommandRejected { source })
+                if matches!(source.as_ref(), WorkspaceError::NoChange { .. }) =>
+            {
+                Err(PatchLifecycleError::NoChange)
+            }
+            result => result,
+        }
+    }
+
+    /// Admit one exact scalar inverse for a prior FormulaUpdate without
+    /// widening generic scalar editing over formula cells.
+    ///
+    /// # Errors
+    ///
+    /// Returns the ordinary lifecycle error family without publication.
+    pub fn propose_formula_inverse_restore(
+        &mut self,
+        document_scope: &DocumentScopeId,
+        document: &Document,
+        current_revision: &SemanticRevision,
+        request: FormulaInverseRestoreRequest,
+        now: TrustedInstant,
+    ) -> Result<SemanticPatch, PatchLifecycleError> {
+        self.require_document(document_scope, document)?;
+        self.require_active_principal(&request.originator)?;
+        let disclosure = BTreeSet::from([self
+            .field_requirement(
+                document,
+                OperationFamily::FormulaInverseRestore,
+                &request.target,
+            )
+            .unwrap_or_else(|_| {
+                document_requirement(
+                    document_scope,
+                    document,
+                    OperationFamily::FormulaInverseRestore,
+                )
+            })]);
+        if request.base_revision != *current_revision {
+            return if self
+                .authorize_query(&request.originator, &disclosure, now)
+                .is_ok()
+            {
+                Err(PatchLifecycleError::Stale)
+            } else {
+                Err(PatchLifecycleError::AuthorizationDenied)
+            };
+        }
+        self.require_query_for_admission(&request.originator, &disclosure, now)?;
+        formula_inverse_restore_candidate(document, &request.target, &request.value).map_err(
+            |source| PatchLifecycleError::CommandRejected {
+                source: Box::new(source),
+            },
+        )?;
+        self.propose(
+            document_scope,
+            document,
+            current_revision,
+            ProposalRequest::new(
+                request.proposal_id,
+                request.base_revision,
+                SemanticPatchBody::command(SemanticCommand::FormulaInverseRestore(
+                    FormulaInverseRestoreCommand::new(request.target, request.value),
+                )),
                 request.originator,
             ),
             now,

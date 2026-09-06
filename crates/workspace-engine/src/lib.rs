@@ -1631,6 +1631,42 @@ pub(crate) fn formula_update_target_rule(
     Ok(())
 }
 
+/// Build the narrow inverse candidate for one prior formula-authoring action.
+///
+/// Generic scalar editing remains prohibited over formulas. This path accepts
+/// only a validated Number over a current formula so one bounded session Undo
+/// can restore the direct scalar that FormulaUpdate replaced.
+pub(crate) fn formula_inverse_restore_candidate(
+    document: &Document,
+    field: &FieldRef,
+    value: &Number,
+) -> Result<Document, WorkspaceError> {
+    formula_update_target_rule(document, field)?;
+    let entity =
+        document
+            .entities
+            .get(&field.entity)
+            .ok_or_else(|| WorkspaceError::MissingEntityId {
+                entity: field.entity.clone(),
+            })?;
+    if !matches!(entity.fields.get(&field.field), Some(Value::Formula(_))) {
+        return Err(WorkspaceError::NotFormula {
+            field: field.clone(),
+        });
+    }
+    preflight_formula_structures(document)?;
+    let mut candidate = document.clone();
+    let entity = candidate.entities.get_mut(&field.entity).ok_or_else(|| {
+        WorkspaceError::MissingEntityId {
+            entity: field.entity.clone(),
+        }
+    })?;
+    entity
+        .fields
+        .insert(field.field.clone(), Value::Number(value.clone()));
+    Ok(candidate)
+}
+
 fn finalize_edit(document: &Document, edited: Document) -> Result<EditPreview, WorkspaceError> {
     require_validated_calculation_for(&edited, ValidationRole::Candidate)?;
     preflight_formula_projections(&edited)?;

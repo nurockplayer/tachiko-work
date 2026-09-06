@@ -103,6 +103,7 @@ pub enum OperationFamily {
     FormulaReasoning,
     NumberOverrideScenario,
     FormulaUpdate,
+    FormulaInverseRestore,
     AnalysisQuery,
     FieldCapabilityDiscovery,
 }
@@ -300,6 +301,7 @@ pub enum SemanticCommand {
         value: Value,
     },
     FormulaUpdate(FormulaUpdateCommand),
+    FormulaInverseRestore(FormulaInverseRestoreCommand),
 }
 
 impl SemanticCommand {
@@ -343,6 +345,33 @@ impl FormulaUpdateCommand {
     #[must_use]
     pub fn references(&self) -> &BTreeSet<FieldRef> {
         &self.references
+    }
+}
+
+/// One app-private restoration of a scalar that a prior `FormulaUpdate` replaced.
+///
+/// This command is deliberately separate from generic `SetFieldValue`: it can
+/// restore only a Number over a currently stored formula through the ordinary
+/// lifecycle, and does not make formula cells generally scalar-editable.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FormulaInverseRestoreCommand {
+    target: FieldRef,
+    value: Number,
+}
+
+impl FormulaInverseRestoreCommand {
+    pub(crate) fn new(target: FieldRef, value: Number) -> Self {
+        Self { target, value }
+    }
+
+    #[must_use]
+    pub fn target(&self) -> &FieldRef {
+        &self.target
+    }
+
+    #[must_use]
+    pub fn value(&self) -> &Number {
+        &self.value
     }
 }
 
@@ -1960,6 +1989,9 @@ impl PatchLifecycle {
                     SemanticCommand::RemoveEntity { .. } => OperationFamily::RemoveEntity,
                     SemanticCommand::SetFieldValue { .. } => OperationFamily::SetFieldValue,
                     SemanticCommand::FormulaUpdate(_) => OperationFamily::FormulaUpdate,
+                    SemanticCommand::FormulaInverseRestore(_) => {
+                        OperationFamily::FormulaInverseRestore
+                    }
                 },
                 scope: ScopedSemanticSubject::new(
                     self.document_scope.clone(),
@@ -2117,6 +2149,26 @@ impl PatchLifecycle {
                         &candidate,
                         field,
                         &Value::Formula(command.expression().clone()),
+                    )?;
+                }
+                SemanticCommand::FormulaInverseRestore(command) => {
+                    let field = command.target();
+                    let scope = self.field_scope(&candidate, field)?;
+                    for mutation_class in [
+                        MutationClass::Value,
+                        MutationClass::Formula,
+                        MutationClass::Destructive,
+                    ] {
+                        writes.insert(AssociatedWriteRequirement {
+                            family: OperationFamily::FormulaInverseRestore,
+                            mutation_class,
+                            scope: scope.clone(),
+                        });
+                    }
+                    candidate = super::formula_inverse_restore_candidate(
+                        &candidate,
+                        field,
+                        command.value(),
                     )?;
                 }
             }
@@ -2287,6 +2339,22 @@ impl PatchLifecycle {
                     )?;
                 }
                 Ok(())
+            }
+            SemanticCommand::FormulaInverseRestore(command) => {
+                self.insert_field_disclosure_for(
+                    OperationFamily::FormulaInverseRestore,
+                    before,
+                    after,
+                    command.target(),
+                    disclosures,
+                )?;
+                self.insert_value_disclosures_for(
+                    OperationFamily::FormulaInverseRestore,
+                    before,
+                    after,
+                    &Value::Number(command.value().clone()),
+                    disclosures,
+                )
             }
         }
     }
@@ -2595,6 +2663,9 @@ fn command_families_for_field(
             }
             SemanticCommand::FormulaUpdate(command) if command.target() == field => {
                 Some(OperationFamily::FormulaUpdate)
+            }
+            SemanticCommand::FormulaInverseRestore(command) if command.target() == field => {
+                Some(OperationFamily::FormulaInverseRestore)
             }
             SemanticCommand::SetFieldValue { field: target, .. } if target == field => {
                 Some(OperationFamily::SetFieldValue)
