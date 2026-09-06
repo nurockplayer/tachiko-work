@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use tachiko_designer_runtime::{
-    CellEdit, CleanupOperation, DesignerRequest, DesignerResponse, DesignerRuntime, FieldProjection,
-    ScalarEditInput, StoredValueProjection,
+    CellEdit, CleanupOperation, DesignerRequest, DesignerResponse, DesignerRuntime,
+    FieldProjection, ScalarEditInput, StoredValueProjection,
 };
 use tachiko_workspace_engine::{
     Document, Entity, EntityId, EntityKey, FieldDefinition, FieldId, FieldKey, FieldType, Number,
@@ -87,14 +87,16 @@ fn field(runtime: &mut DesignerRuntime, revision: u32, target: &str) -> FieldPro
 }
 
 fn text(runtime: &mut DesignerRuntime, revision: u32, target: &str) -> String {
-    let Some(StoredValueProjection::Text { value }) = field(runtime, revision, target).stored else {
+    let Some(StoredValueProjection::Text { value }) = field(runtime, revision, target).stored
+    else {
         panic!("expected Text")
     };
     value
 }
 
 fn number(runtime: &mut DesignerRuntime, revision: u32, target: &str) -> f64 {
-    let Some(StoredValueProjection::Number { value }) = field(runtime, revision, target).stored else {
+    let Some(StoredValueProjection::Number { value }) = field(runtime, revision, target).stored
+    else {
         panic!("expected Number")
     };
     value
