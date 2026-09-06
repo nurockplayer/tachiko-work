@@ -14,6 +14,7 @@ const groupedResult = (page: Page) =>
 
 async function openCanary(page: Page): Promise<void> {
   await page.goto("/");
+  page.once("dialog", async dialog => dialog.accept());
   await page.locator("[data-import-project]").setInputFiles(CANARY_PROJECT);
   const notice = page.locator(".notice").first();
   await expect(notice).toBeVisible();
