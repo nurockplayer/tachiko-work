@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -157,9 +157,8 @@ function configTemplate() {
 export default { docsDir: 'docs', assetsDir: 'assets' } satisfies OpenDocConfig;
 `;
 }
-function run(options) {
-    if (existsSync(options.out))
-        throw new ProbeError('OUTPUT_EXISTS', 'output workspace already exists');
+export function run(options) {
+    let ownsOutput = false;
     const sourceBytes = readFileSync(options.source);
     const digest = createHash('sha256').update(sourceBytes).digest('hex');
     const scratchRoot = path.join(here, '.scratch');
@@ -170,13 +169,25 @@ function run(options) {
         writeFileSync(snapshot, sourceBytes, { mode: 0o400 });
         chmodSync(snapshot, 0o400);
         const projection = collectProjection(options.tachiko, snapshot, digest);
+        mkdirSync(path.dirname(options.out), { recursive: true });
+        try {
+            mkdirSync(options.out);
+            ownsOutput = true;
+        }
+        catch (error) {
+            if (error && typeof error === 'object' && 'code' in error && error.code === 'EEXIST') {
+                throw new ProbeError('OUTPUT_EXISTS', 'output workspace already exists');
+            }
+            throw error;
+        }
         mkdirSync(path.join(options.out, 'docs', 'moonfall'), { recursive: true });
         writeFileSync(path.join(options.out, 'projection.json'), `${JSON.stringify(projection, null, 2)}\n`);
         writeFileSync(path.join(options.out, 'open-doc.config.ts'), configTemplate());
         writeFileSync(path.join(options.out, 'docs', 'moonfall', 'index.tsx'), renderTemplate(options.theme));
     }
     catch (error) {
-        rmSync(options.out, { recursive: true, force: true });
+        if (ownsOutput)
+            rmSync(options.out, { recursive: true, force: true });
         throw error;
     }
     finally {

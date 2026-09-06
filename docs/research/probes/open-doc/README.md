@@ -1,9 +1,9 @@
 # open-doc report projection: acceptance seed
 
 Owner: [Issue #336](https://github.com/nurockplayer/tachiko-work/issues/336).
-This directory is research-only. `report.mjs` is deliberately unimplemented;
-this branch must not merge while acceptance is RED. Live repository authority
-and the Issue's readiness decision control implementation permission.
+This directory contains a delivered, read-only research prototype. It remains
+research-only: green checks are evidence, not merge authority. Live repository
+authority and the Issue's readiness decision control merge and follow-up work.
 
 ## Stage-0 decision
 
@@ -120,7 +120,7 @@ TACHIKO_BIN="$PWD/target/debug/tachiko" \
   node --test --test-name-pattern='^fixture:' \
   docs/research/probes/open-doc/acceptance.test.mjs
 
-# Full projection acceptance; baseline must fail at PROBE_NOT_IMPLEMENTED.
+# Full projection acceptance through the dependency-free native bridge.
 cargo test -p tachiko-cli --test open_doc_acceptance --locked -- --nocapture
 
 # Real renderer acceptance after delivery installs pinned local dependencies.

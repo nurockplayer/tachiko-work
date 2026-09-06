@@ -35,7 +35,11 @@ async function publishAndInspect(t, source, output, theme = 'plain') {
     assert.ok(readFileSync(html).length > 0);
     browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({ javaScriptEnabled: false });
-    await context.route(/^https?:\/\//, (route) => route.abort());
+    const remoteRequests = [];
+    await context.route(/^https?:\/\//, (route) => {
+      remoteRequests.push(route.request().url());
+      return route.abort();
+    });
     const page = await context.newPage();
     await page.goto(pathToFileURL(html).href);
     const stamp = page.locator('[data-tachiko-source-sha256]');
@@ -54,7 +58,8 @@ async function publishAndInspect(t, source, output, theme = 'plain') {
       }
     }
     // Inert JSON/source text must never create script elements in the artifact.
-    assert.equal(await page.locator('script').filter({ hasText: 'globalThis.__injected' }).count(), 0);
+    assert.equal(await page.locator('script').count(), 0);
+    assert.deepEqual(remoteRequests, [], 'The standalone artifact must not attempt remote assets');
     return data;
   } finally {
     await browser?.close();
