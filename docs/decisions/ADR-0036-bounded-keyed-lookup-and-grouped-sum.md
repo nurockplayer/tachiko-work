@@ -75,6 +75,11 @@ and quantity are dependencies. Products membership and every Products key are
 dependencies because a row/key addition, deletion, or edit can change
 cardinality. Successful matches additionally depend on price/category,
 effective-Number formula dependencies, and all bound schema/field type facts.
+When a required operand is formula-backed, the whole authoritative document
+`Calculation` outcome—including every formula root capable of changing whether a
+complete `CalculationState` exists—is also a dependency. This follows
+ADR-0018's no-partial-`CalculationState` law; an unrelated formula root changing
+the complete outcome may not leave a retained definition result current.
 View sorting, row display order, storage placement, and locale are not semantic
 dependencies.
 
@@ -102,6 +107,14 @@ current. Diagnostics retain the direct row/input/lookup/numeric root plus the
 definition-level failed dependency without inventing a misleading cascade per
 group. This operation-wide outcome is required because an ambiguous or missing
 product can make the affected category unknowable.
+
+Ambiguity candidate sets, diagnostics, and a Complete group map are bounded
+complete Query projections. After the trusted authority has enough Query
+coverage to classify the complete outcome, an applicable finite result profile
+may yield a structured `result-too-large` outcome. It makes the definition
+Unavailable and MUST NOT truncate, sample, implicitly paginate, or disclose a
+partial candidate set, diagnostic set, or group map as complete. Exact limits
+and result DTO spelling remain Provisional.
 
 ### 4. Semantic API and authorization remain independently checked
 

@@ -42,8 +42,18 @@ current group map. A Complete result exposes the definition and exact evaluated
 snapshot/revision. Dependencies include Orders membership plus every local
 lookup-key/quantity value, Products membership plus the full Products key
 universe, successful-match price/category, schema/field type facts, and any
-effective-Number formula dependencies. Retained output becomes non-current after
-a dependency root or definition change.
+effective-Number formula dependencies. If a required operand is formula-backed,
+dependencies also include the whole authoritative document `Calculation`
+outcome and every formula root that can determine whether a complete
+`CalculationState` exists. Retained output becomes non-current after a
+dependency root or definition change.
+
+Ambiguity candidate sets, diagnostics, and a Complete group map are bounded
+complete Query projections. Once trusted Query coverage permits classifying the
+complete outcome, an applicable finite result profile may return structured
+`result-too-large`; that makes the definition Unavailable and MUST NOT truncate,
+sample, implicitly paginate, or expose a partial candidate/diagnostic/group
+collection as complete. Exact limits and DTO spelling remain Provisional.
 
 Only the definition is durable semantic meaning. A future persisted shape must
 be versioned/migrated under ADR-0017 and fail closed when unsupported; frozen
@@ -121,9 +131,11 @@ and `services = 10`, with no other group.
 | Signed zero | A category has only `price = 0`, `quantity = -1` | Complete value is semantic positive zero. |
 | Formula-backed operand | Make price or quantity a calculation-failed formula | Unavailable using the ADR-0018 root failure; no second evaluator or stale effective Number. |
 | Formula-backed effective Number | Replace `product-A.price` with a successful ADR-0018 formula whose effective Number is `3` | Fresh Complete: `hardware = 6`, `services = 10`; evaluation uses formula result, not a prior stored/cache price. |
+| Whole Calculation dependency | With a required formula-backed price/quantity, change an otherwise unrelated formula root from valid to failed | Unavailable because the authoritative document Calculation has no partial `CalculationState`; a prior Complete result is non-current. |
 | Empty Orders | Remove every Orders entity while definitions/fields remain valid | Complete empty group map; no synthetic category/group. |
 | Save/reopen live | Save definition, change `product-A.price` from `2` to `3`, reopen against that snapshot | Fresh Complete: `hardware = 6`, `services = 10`; stored `4` is not truth. |
 | Stale cache | Retain base output, then change a dependency root | Retained output is non-current; require fresh Complete/Unavailable evaluation. |
+| Result profile | Use a duplicate population, diagnostics, or category groups whose complete projection exceeds the applicable finite result profile | Structured `result-too-large` Unavailable outcome; no partial IDs, diagnostics, groups, truncation, sample, or implicit pagination. |
 | Delta v1 boundary | Create, update, or delete the definition, then request `tachiko.semantic-delta/v1` | Unsupported; it emits neither a partial delta that omits the definition nor a fabricated v1 fact. |
 | Export disclosure | Export base values only and to a hypothetical live-preserving target | Values are evaluated/lossy and source-revision-bound; live claim is rejected unless every admitted semantic is encoded. |
 
