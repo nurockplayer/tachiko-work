@@ -53,12 +53,14 @@ evaluated/lossy and source-revision-bound; live preservation requires encoding
 the whole admitted semantic contract.
 
 `tachiko.semantic-delta/v1` cannot represent this definition. A snapshot pair
-whose definition set differs is unsupported by that v1 contract: a requested
-v1 diff fails and never omits the definition change or returns a partial delta.
-That does not block current-snapshot publication, because delta and retained
-semantic transitions are optional derived evidence rather than mutation
-authority. A future versioned delta/direct-target/order/conflict contract is
-separately Ready work before any diff or retained-transition support exists.
+that creates, deletes, or changes the durable meaning of any
+`KeyedGroupedSumDefinition`—including an in-place update with unchanged stable
+identity—is unsupported by that v1 contract: a requested v1 diff fails and
+never omits the definition change or returns a partial delta. That does not
+block current-snapshot publication, because delta and retained semantic
+transitions are optional derived evidence rather than mutation authority. A
+future versioned delta/direct-target/order/conflict contract is separately Ready
+work before any diff or retained-transition support exists.
 
 ## Semantic API, capability, and disclosure boundary
 
@@ -115,7 +117,7 @@ and `services = 10`, with no other group.
 | Missing/wrong input | Make required quantity absent/Text; separately use zero quantity with missing product | Unavailable with root evidence. `0 * missing` is not zero; invalid rows are not skipped. |
 | Non-finite amount | Set matched price to finite binary64 maximum and quantity to `2` | Unavailable with ADR-0018 non-finite multiplication failure. |
 | Non-finite reduction | Two valid amounts in one group each equal finite binary64 maximum | Unavailable with ordered-addition non-finite failure. |
-| Cancellation-sensitive reduction | In one category set `order-A = 1e16`, `order-B = -1e16`, `order-C = 1`; present `order-A`, `order-C`, `order-B` | `ContributionNumberOrder` is `-1e16`, `1`, `1e16`, so the required left fold is semantic positive zero (binary64 `0x0000000000000000`), independent of presentation and EntityId representation. |
+| Cancellation-sensitive reduction | In one category set `order-A = 1e16`, `order-B = -1e16`, `order-C = 1`; present `order-A`, `order-C`, `order-B` | `ContributionNumberOrder` is `-1e16`, `1`, `1e16`, so the specified left fold produces semantic positive zero (binary64 `0x0000000000000000`), independent of presentation and EntityId representation. |
 | Signed zero | A category has only `price = 0`, `quantity = -1` | Complete value is semantic positive zero. |
 | Formula-backed operand | Make price or quantity a calculation-failed formula | Unavailable using the ADR-0018 root failure; no second evaluator or stale effective Number. |
 | Formula-backed effective Number | Replace `product-A.price` with a successful ADR-0018 formula whose effective Number is `3` | Fresh Complete: `hardware = 6`, `services = 10`; evaluation uses formula result, not a prior stored/cache price. |

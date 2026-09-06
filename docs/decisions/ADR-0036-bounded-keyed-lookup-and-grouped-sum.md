@@ -138,14 +138,16 @@ leak. The client never supplies its own footprint.
 ### 5. Currentness, persistence, and interoperability stay truthful
 
 `tachiko.semantic-delta/v1` has no target or change kind for this definition.
-Therefore a before/after pair whose definition set differs is not admitted to
-that v1 delta contract: a requested v1 diff fails as unsupported and MUST NOT
-omit the definition change or emit a partial v1 delta. This does not block
-current-snapshot publication because ADR-0030 delta and ADR-0032 retained
-transitions are derived/optional evidence, not mutation authority. A future
-versioned delta extension, including its direct-change target, ordering, and
-conflict treatment, requires separately Ready authority before it can provide
-diff or retained-transition evidence for this family.
+Therefore a before/after pair that creates, deletes, or changes the durable
+meaning of any `KeyedGroupedSumDefinition`—including an in-place update with the
+same stable identity—is not admitted to that v1 delta contract: a requested v1
+diff fails as unsupported and MUST NOT omit the definition change or emit a
+partial v1 delta. This does not block current-snapshot publication because
+ADR-0030 delta and ADR-0032 retained transitions are derived/optional evidence,
+not mutation authority. A future versioned delta extension, including its
+direct-change target, ordering, and conflict treatment, requires separately
+Ready authority before it can provide diff or retained-transition evidence for
+this family.
 
 An evaluated result is derived revision-scoped evidence: definition identity,
 exact accepted input snapshot/revision, dependency outcome, and either complete
