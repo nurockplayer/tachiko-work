@@ -379,8 +379,12 @@ contain one recursive `Expression`:
 ```
 
 An operator with the wrong `args` JSON type or members is invalid. Unary,
-variadic, empty-array, null, or reordered binary argument shapes do not exist
-in v2. Unknown members or operators are rejected at any recursive depth.
+variadic, empty-array, null, or binary `args` values other than the required
+object with `left` and `right` do not exist in v2. The layout canonicalizer may
+admit a non-canonical object-member order, including within this object, and
+normalizes it to canonical order; that admission does not create another binary
+argument shape. Unknown members or operators are rejected at any recursive
+depth.
 
 These spellings deliberately match the current logical vocabulary of
 `direct-ro/v2`, but they are redeclared here in full and do not import or alias
