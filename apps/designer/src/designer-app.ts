@@ -64,6 +64,10 @@ export function mountDesigner(
         const table = await client.queryTable(selectedCollection);
         if (table.revision !== publication.resulting_revision) throw new Error("Tracker refresh is not current.");
         store = createProjectionStore(table);
+        if (tracker.view.budgetViews) {
+          await refreshBudgetTables(publication.resulting_revision);
+          if (bootstrap) bootstrap = {...bootstrap, revision: table.revision, collections: budgetTables.map(item => item.collection)};
+        }
         if (bootstrap) bootstrap = {...bootstrap, revision: table.revision, collections: bootstrap.collections.map(c => c.key === table.collection.key ? table.collection : c)};
       } catch (error) { showFailure(error, published); if (!published) throw error; }
       finally { busy = false; syncBeforeUnloadGuard(); render(); }
@@ -150,6 +154,8 @@ export function mountDesigner(
     }
     const snapshot = store.snapshot();
     const displayTable = importedDisplayTable(snapshot.table);
+    tracker.setTable(snapshot.table);
+    const isTracker = snapshot.table.tracker_profile === true;
     root.innerHTML = designerMarkup(
       bootstrap,
       displayTable,
@@ -163,12 +169,17 @@ export function mountDesigner(
       selectedSavedProject,
       tracker.view,
       pendingExport !== null,
+      isTracker ? "" : tracker.historyMarkup(busy || snapshot.currentness !== "current", client.trackerCommand !== undefined),
+      !isTracker && snapshot.currentness === "refresh_failed" ? '<button data-session-refresh>Retry refresh</button>' : "",
     );
-    if (snapshot.table.tracker_profile === true) {
+    if (isTracker) {
       const workbench = root.querySelector(".table-workbench");
       if (workbench) workbench.innerHTML = `${noticeMarkup(notice)}${snapshot.currentness === "refresh_failed" ? '<button data-tracker-refresh>Retry refresh</button>' : ""}${tracker.markup(snapshot.table, busy || snapshot.currentness !== "current")}`;
       tracker.bind(root, busy || snapshot.currentness !== "current");
       root.querySelector("[data-tracker-refresh]")?.addEventListener("click", () => { void selectCollection(selectedCollection); });
+    } else {
+      tracker.bindHistory(root, busy || snapshot.currentness !== "current");
+      root.querySelector("[data-session-refresh]")?.addEventListener("click", () => { void selectCollection(selectedCollection); });
     }
     if (hasEditDrafts() && !tracker.pending) {
         const cancel = document.createElement("button");
@@ -311,13 +322,13 @@ export function mountDesigner(
     busy = true; render(); let published = false;
     try {
       const publication = await client.commitCleanup(preview.revision, preview.preview_id);
-      published = true; tracker.invalidateHistory(); store.beginPublication(publication); durability.observe(publication.resulting_revision);
+      published = true; tracker.recordSemantic(); store.beginPublication(publication); durability.observe(publication.resulting_revision);
       await refreshBudgetTables(publication.resulting_revision);
       const table = budgetTables.find(item => item.collection.key === selectedCollection);
       if (!table) throw new Error("Current imported table is unavailable.");
       store = createProjectionStore(table);
       if (bootstrap) bootstrap = {...bootstrap, revision: publication.resulting_revision, collections: budgetTables.map(item => item.collection)};
-      notice = {tone: "success", title: "Cleanup committed", message: "The exact preview was published atomically. Session Undo/Redo was cleared; the original source is retained.", diagnostics: []};
+      notice = {tone: "success", title: "Cleanup committed", message: "The exact preview was published atomically. Session Undo/Redo remains available; the original source is retained.", diagnostics: []};
     } catch (error) { showFailure(error, published); throw error; }
     finally { busy = false; syncBeforeUnloadGuard(); render(); }
   };
@@ -569,9 +580,9 @@ export function mountDesigner(
     try {
       const publication = await publish(store.snapshot().table.revision);
       published = true;
-      // Rust clears its session history for this accepted generic publication.
-      // Invalidate the matching UI history before any fallible refresh work.
-      tracker.invalidateHistory();
+      // Rust records this accepted generic publication in the session history.
+      // Mirror one semantic entry before any fallible refresh work.
+      tracker.recordSemantic();
       onPublished?.();
       const requested = store.beginPublication(publication);
       durability.observe(publication.resulting_revision);
@@ -1323,6 +1334,8 @@ function designerMarkup(
   selectedSavedProject: string,
   view: TrackerView,
   exportReviewPending: boolean,
+  historyControls: string,
+  refreshControl: string,
 ): string {
   const isTracker = table.tracker_profile === true;
   const statusLabel = {
@@ -1408,6 +1421,8 @@ function designerMarkup(
           </ol>
 
           ${noticeMarkup(notice)}
+
+          <div class="session-history-slot">${historyControls}${refreshControl}</div>
 
           <div class="table-scroll">
             <table>

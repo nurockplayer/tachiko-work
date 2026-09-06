@@ -139,32 +139,34 @@ fn assert_canonical(runtime: &mut DesignerRuntime, expected: &Document) {
     );
 }
 
-fn assert_history_unavailable(runtime: &mut DesignerRuntime, expected: &Document) {
-    let expected_revision = revision(runtime, "tracker");
-    assert!(
-        runtime
-            .handle(DesignerRequest::Undo {
-                expected_revision: expected_revision.clone()
-            })
-            .is_err(),
-        "generic publication must invalidate tracker undo"
-    );
-    assert!(
-        runtime
-            .handle(DesignerRequest::Redo { expected_revision })
-            .is_err(),
-        "generic publication must invalidate tracker redo"
-    );
-    assert_canonical(runtime, expected);
-}
-
 #[test]
-fn generic_publication_invalidates_tracker_undo_without_reverting_either_collection() {
-    let mut expected = mixed_document();
-    let mut runtime = DesignerRuntime::from_document(expected.clone(), OCCURRENCE).unwrap();
+fn generic_publication_interleaves_with_tracker_undo_and_redo() {
+    let original = mixed_document();
+    let mut expected = original.clone();
+    let mut runtime = DesignerRuntime::from_document(original.clone(), OCCURRENCE).unwrap();
     edit_tracker(&mut runtime, &mut expected, "accepted tracker task");
+    let tracker_state = expected.clone();
     edit_generic(&mut runtime, &mut expected);
-    assert_history_unavailable(&mut runtime, &expected);
+    let expected_revision = revision(&mut runtime, "tracker");
+    runtime
+        .handle(DesignerRequest::Undo { expected_revision })
+        .expect("generic publication must remain the next reversible action");
+    assert_canonical(&mut runtime, &tracker_state);
+    let expected_revision = revision(&mut runtime, "tracker");
+    runtime
+        .handle(DesignerRequest::Undo { expected_revision })
+        .expect("the earlier tracker action must remain below the generic edit");
+    assert_canonical(&mut runtime, &original);
+    let expected_revision = revision(&mut runtime, "tracker");
+    runtime
+        .handle(DesignerRequest::Redo { expected_revision })
+        .expect("the tracker action must redo in chronological order");
+    assert_canonical(&mut runtime, &tracker_state);
+    let expected_revision = revision(&mut runtime, "tracker");
+    runtime
+        .handle(DesignerRequest::Redo { expected_revision })
+        .expect("the generic action must redo after the tracker action");
+    assert_canonical(&mut runtime, &expected);
     let expected_revision = revision(&mut runtime, "tracker");
     let export = runtime.export_project(&expected_revision).unwrap();
     let mut slot = None;
@@ -174,7 +176,14 @@ fn generic_publication_invalidates_tracker_undo_without_reverting_either_collect
         "00000000-0000-4000-8000-000000000002",
     )
     .unwrap();
-    assert_canonical(slot.as_mut().unwrap(), &expected);
+    assert_eq!(
+        slot.as_mut()
+            .unwrap()
+            .export_project("resident/0")
+            .unwrap()
+            .bytes,
+        export.bytes
+    );
 }
 
 #[test]
@@ -187,10 +196,25 @@ fn intervening_generic_publication_invalidates_redo_and_starts_a_new_tracker_bra
     runtime
         .handle(DesignerRequest::Undo { expected_revision })
         .unwrap();
-    expected = original;
+    expected = original.clone();
     assert_canonical(&mut runtime, &expected);
     edit_generic(&mut runtime, &mut expected);
-    assert_history_unavailable(&mut runtime, &expected);
+    let expected_revision = revision(&mut runtime, "tracker");
+    runtime
+        .handle(DesignerRequest::Undo { expected_revision })
+        .expect("the accepted generic action must remain undoable");
+    assert_canonical(&mut runtime, &original);
+    let expected_revision = revision(&mut runtime, "tracker");
+    runtime
+        .handle(DesignerRequest::Redo { expected_revision })
+        .expect("the accepted generic action must remain redoable");
+    assert_canonical(&mut runtime, &expected);
+    let expected_revision = revision(&mut runtime, "tracker");
+    assert!(
+        runtime
+            .handle(DesignerRequest::Redo { expected_revision })
+            .is_err()
+    );
     let branch_base = expected.clone();
     edit_tracker(&mut runtime, &mut expected, "new tracker branch");
     let expected_revision = revision(&mut runtime, "notes");

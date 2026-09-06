@@ -38,6 +38,7 @@ export class TrackerGrid {
     readonly #options: Options;
     constructor(options: Options) { this.#options = options; }
     get pending(): boolean { return this.#draft !== null; }
+    setTable(table: TableProjection): void { this.#table = table; }
     reset(view = emptyTrackerView()): void { this.#historyInvalidated = false; this.view = view; this.#undo = []; this.#redo = []; this.#anchor = [0, 0]; this.#focus = [0, 0]; this.#anchorEntity = undefined; this.#focusEntity = undefined; this.#table = null; this.#filter = ""; this.#sort = ""; this.#descending = false; this.#draft = null; }
     // A publication outside the history represented here invalidates both
     // action stacks; accepted values and presentation remain untouched.
@@ -45,6 +46,29 @@ export class TrackerGrid {
         this.#undo = [];
         this.#redo = [];
         this.#historyInvalidated = true;
+    }
+    // Record one accepted Rust-authoritative semantic publication that was
+    // initiated outside the Tracker command surface. The Rust session owns
+    // the inverse; this entry keeps the UI action stack chronologically aligned.
+    recordSemantic(): void {
+        this.#undo.push({ kind: "semantic" });
+        this.#redo = [];
+        if (this.#undo.length > 64)
+            this.#undo.shift();
+    }
+    historyMarkup(busy: boolean, available = true): string {
+        const disabled = busy || !available;
+        const state = !available
+            ? '<p role="status">Session Undo/Redo is unavailable in this runtime.</p>'
+            : this.#undo.length === 0 && this.#redo.length === 0
+                ? '<p role="status">No session actions are available yet.</p>'
+                : "";
+        return `<section class="session-history" aria-label="Session history">${state}<div class="tracker-toolbar"><button data-tracker-history="undo" ${disabled || this.#undo.length === 0 ? "disabled" : ""}>Undo</button><button data-tracker-history="redo" ${disabled || this.#redo.length === 0 ? "disabled" : ""}>Redo</button></div></section>`;
+    }
+    bindHistory(root: HTMLElement, busy: boolean): void {
+        if (busy)
+            return;
+        root.querySelectorAll<HTMLButtonElement>("[data-tracker-history]").forEach(button => { button.addEventListener("click", () => { void this.#action(button.dataset.trackerHistory ?? "").catch((error: unknown) => { this.#options.failed(error); }); }); });
     }
     #rows(): TableProjection["rows"] {
         if (this.#table === null)

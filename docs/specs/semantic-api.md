@@ -1895,7 +1895,7 @@ catalogue, or the following transition details into an Accepted public API.
 | --- | --- |
 | Absent optional slot to a matching stored scalar, including absence to Number(0) | Provisional bounded `SetFieldValue` admission. Verify declared optional identity, full candidate validity, Value grant and disclosure parity; no arbitrary upsert. |
 | `current_value_kind` absence in capability projection | Provisional DTO encoding; no canonical Null type. Consumers must tolerate a future adapter/version migration. |
-| Cleanup preview/commit and session history clearing | App-private provisional workflow; revision-pinned candidate proof, exact-preview commit, atomic publication and explicit UI history disclosure. |
+| Cleanup preview/commit and bounded session history | App-private provisional workflow; revision-pinned candidate proof, exact-preview commit, atomic publication and one bounded chronological session-history action per accepted cleanup. Accepted cleanup clears only redo; there is no durable or public history contract. |
 
 A future change must reconcile these transition/DTO/session choices against
 Accepted authority, update direct consumers and compatibility tests together,
@@ -1923,6 +1923,12 @@ formula reasoning, scenarios and FormulaUpdate require a current value.
 This null is query evidence of absence, not a canonical Null value.
 
 Cleanup previews are request-local and revision-pinned. Commit consumes the
-exact preview. Successful cleanup uses generic publication and clears session
-undo; it never invents a zero-valued inverse for an absent field. This limitation
-must remain visible in the UI and release matrix.
+exact preview. Successful cleanup uses generic publication and records one
+bounded chronological session-history action; a new accepted action clears
+only redo. It never invents a zero-valued inverse for an absent field. This
+app-private history is non-durable and has no public history contract.
+Chart/presentation changes remain outside Rust semantic history. Chart
+invalidation clears the app-private UI coordinator action stack, whose entries
+combine semantic-action markers with presentation snapshots; it does not clear
+Rust semantic history. These boundaries must remain visible in the UI and
+release matrix.

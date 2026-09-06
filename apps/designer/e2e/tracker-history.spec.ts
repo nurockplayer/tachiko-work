@@ -50,19 +50,30 @@ async function genericEdit(page: Page, value: string, accepted: boolean): Promis
   else await expect(page.getByRole("alert")).toBeVisible();
 }
 
-test("accepted generic edit clears mixed tracker histories while preserving both collections and formatting", async ({ page }) => {
+test("accepted generic edit remains in mixed tracker history while preserving both collections and formatting", async ({ page }) => {
   await openMixed(page);
   await trackerEdit(page, "Accepted tracker task");
   await page.getByRole("button", { name: "Bold", exact: true }).click();
   await genericEdit(page, "20", true);
   await page.getByLabel("Collection", { exact: true }).selectOption("tracker");
-  await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
   await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeDisabled();
-  await expect(page.getByText(feedback, { exact: true })).toBeVisible();
+  await expect(page.getByText(feedback, { exact: true })).toBeHidden();
   await expect(firstCell(page)).toHaveText("Accepted tracker task");
   await expect(firstCell(page)).toHaveClass(/cell-bold/);
 
-  // New tracker history must start after the accepted generic edit.
+  // Undo first reaches the latest accepted generic publication.
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(firstCell(page)).toHaveText("Accepted tracker task");
+  await page.getByLabel("Collection", { exact: true }).selectOption("ordinary");
+  await expect(page.getByLabel("Budget for Operations")).toHaveValue("10");
+  await page.getByLabel("Collection", { exact: true }).selectOption("tracker");
+  await page.getByRole("button", { name: "Redo", exact: true }).click();
+  await expect(firstCell(page)).toHaveText("Accepted tracker task");
+  await page.getByLabel("Collection", { exact: true }).selectOption("ordinary");
+  await expect(page.getByLabel("Budget for Operations")).toHaveValue("20");
+  await page.getByLabel("Collection", { exact: true }).selectOption("tracker");
+
   await trackerEdit(page, "Later tracker task");
   await page.getByRole("button", { name: "Undo", exact: true }).click();
   await expect(firstCell(page)).toHaveText("Accepted tracker task");
@@ -81,7 +92,7 @@ test("accepted generic edit clears mixed tracker histories while preserving both
   await expect(page.getByLabel("Budget for Operations")).toHaveValue("20");
 });
 
-test("accepted generic edit clears a tracker redo branch", async ({ page }) => {
+test("accepted generic edit clears only a tracker redo branch", async ({ page }) => {
   await openMixed(page);
   await trackerEdit(page, "First tracker change");
   await trackerEdit(page, "Second tracker change");
@@ -90,10 +101,14 @@ test("accepted generic edit clears a tracker redo branch", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
   await genericEdit(page, "25", true);
   await page.getByLabel("Collection", { exact: true }).selectOption("tracker");
-  await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
   await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeDisabled();
   await expect(firstCell(page)).toHaveText("First tracker change");
-  await expect(page.getByText(feedback, { exact: true })).toBeVisible();
+  await expect(page.getByText(feedback, { exact: true })).toBeHidden();
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(firstCell(page)).toHaveText("First tracker change");
+  await page.getByLabel("Collection", { exact: true }).selectOption("ordinary");
+  await expect(page.getByLabel("Budget for Operations")).toHaveValue("10");
 });
 
 test("read-only switches and rejected generic edits preserve tracker undo and redo", async ({ page }) => {

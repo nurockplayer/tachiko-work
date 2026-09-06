@@ -40,7 +40,7 @@ export function mountBudgetTools(root: HTMLElement, options: BudgetToolsOptions)
   panel.setAttribute("aria-label", "Budget formulas");
   const heading = document.createElement("h2"); heading.textContent = "Budget formulas"; panel.append(heading);
   const note = document.createElement("p");
-  note.textContent = "Supported: + - * / and min(a, b), max(a, b). Insert references by name. Rust validates and calculates formulas. Applying or copying a formula clears session undo history. Converting a formula back to a scalar value is not currently supported.";
+  note.textContent = "Supported: + - * / and min(a, b), max(a, b). Insert references by name. Rust validates and calculates formulas. Applying or copying a formula adds one session history action. Converting a formula back to a scalar value is not currently supported.";
   panel.append(note);
   const controls = document.createElement("fieldset"); controls.disabled = options.disabled; panel.append(controls);
   const status = document.createElement("p"); status.setAttribute("role", "status"); panel.append(status);

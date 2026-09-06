@@ -1528,6 +1528,47 @@ pub(crate) fn field_value_candidate(
     Ok(candidate)
 }
 
+/// Build the narrow inverse candidate for removing one optional stored value.
+///
+/// This is an app-private history operation. It preserves the distinction
+/// between an optional field that was absent and one that contained a scalar,
+/// while keeping required fields and formula structure under the shared
+/// validation boundary.
+pub(crate) fn unset_field_candidate(
+    document: &Document,
+    field: &FieldRef,
+) -> Result<Document, WorkspaceError> {
+    let entity =
+        document
+            .entities
+            .get(&field.entity)
+            .ok_or_else(|| WorkspaceError::MissingEntityId {
+                entity: field.entity.clone(),
+            })?;
+    let definition = field_definition(document, field)?;
+    if !entity.fields.contains_key(&field.field) {
+        return Err(WorkspaceError::NoChange {
+            field: field.clone(),
+        });
+    }
+    if definition.required {
+        return Err(WorkspaceError::MissingField {
+            field: field.clone(),
+        });
+    }
+    preflight_formula_structures(document)?;
+    let mut candidate = document.clone();
+    candidate
+        .entities
+        .get_mut(&field.entity)
+        .ok_or_else(|| WorkspaceError::MissingEntityId {
+            entity: field.entity.clone(),
+        })?
+        .fields
+        .remove(&field.field);
+    Ok(candidate)
+}
+
 /// Classify one existing semantic value without exposing its payload.
 pub(crate) fn semantic_value_kind(value: &Value) -> SemanticValueKind {
     match value {

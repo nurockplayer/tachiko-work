@@ -73,6 +73,12 @@ test("messy CSV completes explicit typing, atomic cleanup, stock editing, durabl
   await expect(cell(page, 0, 6)).toHaveClass("empty-cell");
 
   await cleanup(page, "trim", "Name", ['"value":" Ada "', '"value":"Ada"']);
+  const history = page.getByRole("region", { name: "Session history", exact: true });
+  await expect(history.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
+  await history.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(cell(page, 0, 1).locator("textarea")).toHaveValue(" Ada ");
+  await history.getByRole("button", { name: "Redo", exact: true }).click();
+  await expect(cell(page, 0, 1).locator("textarea")).toHaveValue("Ada");
   await cleanup(page, "replace", "Notes", ['"value":"quoted, comma"', '"value":"quoted; comma"'], async () => {
     await page.getByLabel("Cleanup find / separator / fill value", { exact: true }).fill(",");
     await page.getByLabel("Cleanup replacement", { exact: true }).fill(";");
@@ -105,7 +111,7 @@ test("messy CSV completes explicit typing, atomic cleanup, stock editing, durabl
   await amount.locator('input[type="number"]').fill("8");
   await amount.getByRole("button", { name: "Apply", exact: true }).click();
   await expect(amount.locator('input[type="number"]')).toHaveValue("8");
-  await expect(page.getByTestId("revision")).toHaveText("resident/7");
+  await expect(page.getByTestId("revision")).toHaveText("resident/9");
 
   const savedName = "cleanup-journey.roproj";
   page.once("dialog", dialog => dialog.accept(savedName));
