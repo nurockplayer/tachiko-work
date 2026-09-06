@@ -1,5 +1,5 @@
 use std::io::{Cursor, Read};
-use tachiko_designer_runtime::interop_adapter::{CellStyle, SourceValue, export_xlsx};
+use tachiko_designer_runtime::interop_adapter::{CellStyle, SourceValue, export_csv, export_xlsx};
 use tachiko_designer_runtime::{
     DesignerRequest, DesignerResponse, DesignerRuntime, NativeBudgetExportCollection,
     NativeBudgetExportPresentation, NativeBudgetExportRow, NativeBudgetExportView,
@@ -97,6 +97,96 @@ fn native_budget_xlsx_omits_empty_cols_and_preserves_formulas_and_typed_dates() 
     assert!(summary.contains(
         "<c r=\"D2\" s=\"0\" t=\"n\"><f>(&apos;Budget Items&apos;!$D$2+&apos;Budget Items&apos;!$D$3)</f><v>1380</v></c>"
     ));
+}
+
+#[test]
+fn native_budget_csv_ignores_inactive_excel_invalid_view_name_but_xlsx_refuses() {
+    let mut runtime = DesignerRuntime::budget(OCCURRENCE).unwrap();
+    let mapped = presentation(
+        &mut runtime,
+        vec![
+            NativeBudgetExportView {
+                id: "summary".into(),
+                name: "Budget Summary".into(),
+                collection_id: "budget_summary".into(),
+            },
+            NativeBudgetExportView {
+                id: "items".into(),
+                name: "x".repeat(32),
+                collection_id: "budget_items".into(),
+            },
+        ],
+    );
+
+    let workbook = runtime
+        .export_native_budget_csv_workbook("resident/0", &mapped)
+        .expect("active Budget CSV must not admit inactive worksheet names");
+    let csv = export_csv(&workbook.sheets[0]).expect("active Budget CSV should be writable");
+    let csv = String::from_utf8(csv).unwrap();
+    assert!(csv.contains("1360"), "{csv}");
+    assert!(runtime
+        .export_native_budget_workbook("resident/0", &mapped)
+        .is_err());
+}
+
+#[test]
+fn native_budget_csv_ignores_inactive_mapping_but_xlsx_refuses() {
+    let mut runtime = DesignerRuntime::budget(OCCURRENCE).unwrap();
+    let mut mapped = presentation(
+        &mut runtime,
+        vec![
+            NativeBudgetExportView {
+                id: "summary".into(),
+                name: "Budget Summary".into(),
+                collection_id: "budget_summary".into(),
+            },
+            NativeBudgetExportView {
+                id: "items".into(),
+                name: "Budget Items".into(),
+                collection_id: "budget_items".into(),
+            },
+        ],
+    );
+    mapped.collections[0].rows[0].entity_id = "foreign".into();
+
+    let workbook = runtime
+        .export_native_budget_csv_workbook("resident/0", &mapped)
+        .expect("active Budget CSV must not validate inactive mappings");
+    let csv = export_csv(&workbook.sheets[0]).expect("active Budget CSV should be writable");
+    let csv = String::from_utf8(csv).unwrap();
+    assert!(csv.contains("1360"), "{csv}");
+    assert!(runtime
+        .export_native_budget_workbook("resident/0", &mapped)
+        .is_err());
+}
+
+#[test]
+fn native_budget_csv_preserves_active_admission_and_stale_revision_refusals() {
+    let mut runtime = DesignerRuntime::budget(OCCURRENCE).unwrap();
+    let mapped = presentation(
+        &mut runtime,
+        vec![NativeBudgetExportView {
+            id: "summary".into(),
+            name: "Budget Summary".into(),
+            collection_id: "budget_summary".into(),
+        }],
+    );
+
+    assert!(runtime
+        .export_native_budget_csv_workbook("resident/1", &mapped)
+        .is_err());
+
+    let mut missing_active = mapped.clone();
+    missing_active.active_view = "missing".into();
+    assert!(runtime
+        .export_native_budget_csv_workbook("resident/0", &missing_active)
+        .is_err());
+
+    let mut missing_mapping = mapped;
+    missing_mapping.collections[1].collection_id = "budget_items".into();
+    assert!(runtime
+        .export_native_budget_csv_workbook("resident/0", &missing_mapping)
+        .is_err());
 }
 
 #[test]

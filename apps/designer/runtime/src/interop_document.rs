@@ -71,8 +71,9 @@ impl DesignerRuntime {
 }
 
 use super::{
-    MAX_FIELD_QUERY_TARGETS, MAX_PROFILE_STRING_BYTES, MAX_PROJECTION_BYTES, MAX_TABLE_FIELDS,
-    MAX_TABLE_ROWS, PREFLIGHT_OCCURRENCE, PublicationProjection, designer_lifecycle,
+    CollectionSpec, MAX_FIELD_QUERY_TARGETS, MAX_PROFILE_STRING_BYTES, MAX_PROJECTION_BYTES,
+    MAX_TABLE_FIELDS, MAX_TABLE_ROWS, PREFLIGHT_OCCURRENCE, PublicationProjection,
+    designer_lifecycle,
     ensure_projection_size, field_target, stored_value_projection, tracker_error,
 };
 use std::collections::BTreeSet;
@@ -1344,6 +1345,72 @@ impl DesignerRuntime {
         self.export_workbook_from_metadata(expected_revision, &metadata, OutputProfile::Shared)
     }
 
+    /// Export only the active native Budget view as calculated scalar values.
+    ///
+    /// CSV has no worksheet or formula-reference surface, so its bounded
+    /// projection admits only the active collection mapping. Inactive views
+    /// and collection mappings remain outside this path; the full XLSX method
+    /// above continues to perform complete-source admission.
+    ///
+    /// # Errors
+    /// Returns stale, unavailable, incomplete/foreign active mappings, scalar,
+    /// style, calculation, or bounded-output failures without mutating the
+    /// resident occurrence.
+    pub fn export_native_budget_csv_workbook(
+        &self,
+        expected_revision: &str,
+        presentation: &NativeBudgetExportPresentation,
+    ) -> Result<SourceWorkbook, DesignerError> {
+        self.check_revision(expected_revision)?;
+        let (active, collection, spec) = native_budget_active_csv_mapping(self, presentation)?;
+        let snapshot = self.session.export_snapshot();
+        let document = snapshot.document();
+        let schema = document
+            .schemas
+            .get(&SchemaId::from(active.collection_id.clone()))
+            .ok_or_else(|| tracker_error("native Budget active schema is unavailable"))?;
+        if schema.id.as_str() != active.collection_id
+            || spec.columns.is_empty()
+            || spec.columns.len() > MAX_COLUMNS
+            || schema.fields.len() != spec.columns.len()
+        {
+            return Err(tracker_error(
+                "native Budget active schema identity changed during export",
+            ));
+        }
+        let row_styles = native_budget_active_csv_styles(collection, spec)?;
+        let rows = native_budget_active_csv_rows(self, expected_revision, document, spec, &row_styles)?;
+
+        let workbook = SourceWorkbook {
+            sheets: vec![SourceSheet {
+                // CSV has no worksheet-name surface. Keep a bounded safe
+                // internal name so shared cell/style validation does not
+                // accidentally apply XLSX worksheet-name rules to CSV.
+                name: "Budget".to_owned(),
+                has_header: true,
+                columns: spec
+                    .columns
+                    .iter()
+                    .map(|column| SourceColumn {
+                        name: column.key.clone(),
+                        width: None,
+                    })
+                    .collect(),
+                rows,
+            }],
+            ledger: vec![FidelityFinding {
+                category: FidelityCategory::Converted,
+                code: "native_budget_active_csv_values".into(),
+                location: active.name.clone(),
+                message: "CSV is rebuilt from the active Budget collection, entity, and field identities with authoritative calculated scalar values; inactive collections and worksheet names are not admitted.".into(),
+                blocking: false,
+            }],
+        };
+        super::interop_adapter::validate_output_for_profile(&workbook, OutputProfile::Shared)
+            .map_err(|error| tracker_error(&error.0))?;
+        Ok(workbook)
+    }
+
     fn export_workbook_from_metadata(
         &self,
         expected_revision: &str,
@@ -1432,6 +1499,158 @@ impl DesignerRuntime {
             .map_err(|error| tracker_error(&error.0))?;
         Ok(workbook)
     }
+}
+
+fn native_budget_active_csv_mapping<'a>(
+    runtime: &'a DesignerRuntime,
+    presentation: &'a NativeBudgetExportPresentation,
+) -> Result<
+    (
+        &'a NativeBudgetExportView,
+        &'a NativeBudgetExportCollection,
+        &'a CollectionSpec,
+    ),
+    DesignerError,
+> {
+    if presentation.version != 1
+        || presentation.views.is_empty()
+        || presentation.views.len() > super::MAX_COLLECTIONS
+    {
+        return Err(tracker_error(
+            "native Budget CSV presentation is outside the bounded profile",
+        ));
+    }
+    let mut active_views = presentation
+        .views
+        .iter()
+        .filter(|view| view.id == presentation.active_view);
+    let active = active_views
+        .next()
+        .ok_or_else(|| tracker_error("active Budget view is unavailable"))?;
+    if active_views.next().is_some() {
+        return Err(tracker_error("native Budget active view ID is ambiguous"));
+    }
+    check_label(&active.id)?;
+    check_label(&active.name)?;
+    check_label(&active.collection_id)?;
+
+    let mut active_collections = presentation
+        .collections
+        .iter()
+        .filter(|collection| collection.collection_id == active.collection_id);
+    let collection = active_collections
+        .next()
+        .ok_or_else(|| tracker_error("active Budget collection mapping is unavailable"))?;
+    if active_collections.next().is_some() {
+        return Err(tracker_error(
+            "native Budget active collection mapping is ambiguous",
+        ));
+    }
+    check_label(&collection.collection_id)?;
+    let spec = runtime
+        .collection_specs
+        .values()
+        .find(|spec| spec.summary.id == active.collection_id)
+        .ok_or_else(|| tracker_error("native Budget active collection is unavailable"))?;
+    Ok((active, collection, spec))
+}
+
+fn native_budget_active_csv_styles(
+    collection: &NativeBudgetExportCollection,
+    spec: &CollectionSpec,
+) -> Result<BTreeMap<String, Vec<CellStyle>>, DesignerError> {
+    if collection.rows.len() != spec.entities.len() || collection.rows.len() > MAX_DATA_ROWS {
+        return Err(tracker_error(
+            "native Budget active collection mapping must cover every bounded source row exactly once",
+        ));
+    }
+    let mut row_styles = BTreeMap::new();
+    for row in &collection.rows {
+        check_label(&row.entity_id)?;
+        if row.styles.len() != spec.columns.len()
+            || !spec
+                .entities
+                .iter()
+                .any(|entity| entity.as_str() == row.entity_id)
+            || row_styles
+                .insert(row.entity_id.clone(), row.styles.clone())
+                .is_some()
+        {
+            return Err(tracker_error(
+                "native Budget active row mapping is foreign, duplicated, or has invalid styles",
+            ));
+        }
+        for style in &row.styles {
+            for text in [&style.number_format, &style.fill, &style.alignment]
+                .into_iter()
+                .flatten()
+            {
+                if text.len() > MAX_PROFILE_STRING_BYTES || text.contains('\0') {
+                    return Err(tracker_error(
+                        "native Budget active style is outside the bounded text profile",
+                    ));
+                }
+            }
+        }
+    }
+    if spec
+        .entities
+        .iter()
+        .any(|entity| !row_styles.contains_key(entity.as_str()))
+    {
+        return Err(tracker_error(
+            "native Budget active row mapping omits a canonical source row",
+        ));
+    }
+    Ok(row_styles)
+}
+
+fn native_budget_active_csv_rows(
+    runtime: &DesignerRuntime,
+    expected_revision: &str,
+    document: &Document,
+    spec: &CollectionSpec,
+    row_styles: &BTreeMap<String, Vec<CellStyle>>,
+) -> Result<Vec<Vec<SourceCell>>, DesignerError> {
+    let mut rows = Vec::with_capacity(spec.entities.len());
+    for entity_id in &spec.entities {
+        let entity = document
+            .entities
+            .get(entity_id)
+            .ok_or_else(|| tracker_error("native Budget active source row is unavailable"))?;
+        let styles = row_styles
+            .get(entity_id.as_str())
+            .ok_or_else(|| tracker_error("native Budget active row styles are unavailable"))?;
+        let mut cells = Vec::with_capacity(spec.columns.len());
+        for (column, style) in spec.columns.iter().zip(styles) {
+            let field = FieldRef::new(entity.id.clone(), column.id.clone());
+            let stored = entity.fields.get(&column.id);
+            let value = if matches!(stored, Some(Value::Formula(_))) {
+                let projection = runtime.query_fields(expected_revision, &[field_target(&field)])?;
+                let calculated = projection.fields.first().and_then(|field| {
+                    field
+                        .calculated
+                        .as_ref()
+                        .and_then(super::CalculationProjection::number)
+                });
+                let value = calculated.ok_or_else(|| {
+                    tracker_error(
+                        "native Budget active CSV requires a complete authoritative Number result",
+                    )
+                })?;
+                SourceValue::Number { value }
+            } else {
+                export_scalar(stored)?
+            };
+            cells.push(SourceCell {
+                value,
+                formula: None,
+                style: style.clone(),
+            });
+        }
+        rows.push(cells);
+    }
+    Ok(rows)
 }
 
 /// Build the private native Budget identity mapping and deterministic sheet

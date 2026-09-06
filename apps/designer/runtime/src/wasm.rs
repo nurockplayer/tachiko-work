@@ -374,14 +374,21 @@ fn export_native_budget_spreadsheet(
     presentation: &NativeBudgetExportPresentation,
     format: SpreadsheetFormat,
 ) -> Result<SpreadsheetResult, DesignerError> {
-    let mut workbook = runtime.export_native_budget_workbook(revision, presentation)?;
-    workbook.ledger.push(FidelityFinding {
-        category: FidelityCategory::NativeEquivalent,
-        code: "native_budget_outbound_profile".to_owned(),
-        location: "Budget".to_owned(),
-        message: "Native Budget export maps every admitted source collection, row, and formula dependency by stable identity. View aliases remain presentation-only and do not duplicate canonical worksheet data.".to_owned(),
-        blocking: false,
-    });
+    let mut workbook = match format {
+        SpreadsheetFormat::Csv => {
+            runtime.export_native_budget_csv_workbook(revision, presentation)?
+        }
+        SpreadsheetFormat::Xlsx => runtime.export_native_budget_workbook(revision, presentation)?,
+    };
+    if matches!(format, SpreadsheetFormat::Xlsx) {
+        workbook.ledger.push(FidelityFinding {
+            category: FidelityCategory::NativeEquivalent,
+            code: "native_budget_outbound_profile".to_owned(),
+            location: "Budget".to_owned(),
+            message: "Native Budget export maps every admitted source collection, row, and formula dependency by stable identity. View aliases remain presentation-only and do not duplicate canonical worksheet data.".to_owned(),
+            blocking: false,
+        });
+    }
     workbook.ledger.push(FidelityFinding {
         category: FidelityCategory::LossyOnExport,
         code: "native_budget_session_presentation".to_owned(),
@@ -391,27 +398,11 @@ fn export_native_budget_spreadsheet(
     });
     let bytes = match format {
         SpreadsheetFormat::Csv => {
-            let active = presentation
-                .views
-                .iter()
-                .find(|view| view.id == presentation.active_view)
-                .ok_or_else(|| DesignerError::InvalidProjectTransfer {
-                    message: "Native Budget export active view is unavailable.".to_owned(),
-                })?;
-            let sheet_name = presentation
-                .views
-                .iter()
-                .find(|view| view.collection_id == active.collection_id)
-                .map(|view| view.name.as_str())
-                .ok_or_else(|| DesignerError::InvalidProjectTransfer {
-                    message: "Native Budget export active worksheet is unavailable.".to_owned(),
-                })?;
             let sheet = workbook
                 .sheets
-                .iter()
-                .find(|sheet| sheet.name == sheet_name)
+                .first()
                 .ok_or_else(|| DesignerError::InvalidProjectTransfer {
-                    message: "Native Budget export active worksheet is unavailable.".to_owned(),
+                    message: "Native Budget export active view is unavailable.".to_owned(),
                 })?;
             let bytes = export_csv(sheet).map_err(interop_error)?;
             workbook.ledger.push(FidelityFinding {
