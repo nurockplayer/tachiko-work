@@ -2,7 +2,7 @@
 
 Decision state: Mixed — Accepted invariants under ADR-0017 and Accepted
 `.roproj/v1` namespace, DTO, dispatch, and canonicalization rules under
-ADR-0023; the distinct portable-package v1 namespace and dispatch boundary are
+ADR-0023; the `.roproj/v2` definition-persistence target under ADR-0037; the distinct portable-package v1 namespace and dispatch boundary are
 Accepted under ADR-0025; direct-JSON Milestone 02 representation mechanics are
 Provisional where marked.
 
@@ -10,11 +10,13 @@ Implementation state: Implemented for frozen `legacy-direct-ro/v1`, explicit
 deterministic v1→v2 migration, canonical identity-aware `direct-ro/v2`, and the
 normal direct-JSON Stage-0 admission profile. The Accepted `.roproj/v1`
 contract is implemented by production `tachiko-storage` plus explicit CLI host
-operations. The separately Accepted portable-package v1 codec, content-framed
+operations. `.roproj/v2` is Accepted authority only and remains unimplemented.
+The separately Accepted portable-package v1 codec, content-framed
 reader, bounded host workflow, and CLI pack/unpack/compare operations are
 implemented by #3.
 
-Authority: ADR-0017; ADR-0023 for `.roproj/v1`; ADR-0025 for
+Authority: ADR-0017; ADR-0023 for `.roproj/v1`; ADR-0037 for `.roproj/v2`;
+ADR-0025 for
 `tachiko.portable-package/v1`
 
 Implementation parent: #74
@@ -27,11 +29,14 @@ Conformance and identity integration: #40, #70
 
 Define how Tachiko Work selects persisted representation versions, separates versioned storage DTOs from semantic-core, handles unsupported or malformed versions, and performs explicit migration without silently changing durable state.
 
-This specification records the Accepted `.roproj/v1` representation namespace,
+This specification records the Accepted `.roproj/v1` and `.roproj/v2` representation namespaces,
 manifest-first dispatch, canonical-tree, and bounded-canonicalizer contract in
 [ADR-0023](../decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md),
 [roproj-layout-v1.md](roproj-layout-v1.md), and
-[roproj-format.md](roproj-format.md). It does not
+[roproj-format.md](roproj-format.md), plus the v2 target in
+[ADR-0037](../decisions/ADR-0037-roproj-v2-keyed-grouped-sum-persistence.md),
+[roproj-layout-v2.md](roproj-layout-v2.md), and
+[roproj-format-v2.md](roproj-format-v2.md). It does not
 define the production `.roproj` reader/writer codec, `.roproj` resource/error
 profile or precedence, normal-open versus explicit-canonicalize/import policy,
 Git integration (#44), semantic delta (#45), three-way merge (#46), numeric
@@ -51,17 +56,21 @@ The following are distinct namespaces:
 
 - legacy/current direct `.ro` JSON representation;
 - `.roproj/v1` editable directory materialization;
+- `.roproj/v2` editable directory materialization;
 - `tachiko.portable-package/v1` portable container profile.
 
 The same integer in distinct representation namespaces does not imply the
-same wire schema. In particular, `.roproj/v1` is Accepted as a namespace
-distinct from `legacy-direct-ro/v1`, `direct-ro/v2`, and
+same wire schema. In particular, `.roproj/v1` and `.roproj/v2` are distinct
+versioned contracts in one editable-directory namespace and are distinct from
+`legacy-direct-ro/v1`, `direct-ro/v2`, and
 `tachiko.portable-package/v1`.
 
 The shipped v0.1 direct `.ro` JSON is frozen as the
 `legacy-direct-ro/v1` compatibility profile. Its implemented incompatible
 successor is `direct-ro/v2` within the same direct-JSON namespace. This does not
-assign `.roproj` version `2`; `.roproj/v1` does not alias either direct-JSON DTO.
+assign `.roproj` version `2`; ADR-0037 separately accepts `.roproj/v2` for
+the one keyed grouped-sum definition DTO, and neither version aliases a
+direct-JSON DTO.
 
 ## Version envelope
 
@@ -243,9 +252,56 @@ The same closed-world rule applies to the v1 DTO meaning: a semantic `Date`
 cannot be encoded by `.roproj/v1`. The current encoder rejects a Date-bearing
 document as an invalid representation instead of silently widening the frozen
 v1 tree. Date persistence is available through the current direct-ro/v2
-representation; a future `.roproj` representation version must be accepted
-explicitly before project-directory or portable-package persistence can carry
-Date values.
+representation; a later `.roproj` representation version that explicitly
+admits Date must be accepted before project-directory or portable-package
+persistence can carry Date values.
+
+## `.roproj/v2` keyed grouped-sum pipeline
+
+ADR-0037 accepts `.roproj/v2` as the next representation in the same
+directory-local namespace, solely to materialize ADR-0036's
+`KeyedGroupedSumDefinition`. Its closed canonical tree has the v1 manifest,
+schemas, and sixteen entity paths plus required root `definitions.json`; it has
+nineteen files. V2's manifest selects lexical `format_version: 2` before any
+schema, entity, or definition DTO is decoded. V1's tree and DTOs remain frozen.
+
+V2 owns complete version-specific manifest, schema, entity, value, expression,
+and definition DTOs. The legacy v1-compatible shapes are redeclared by the v2
+specification; no semantic-core, direct-JSON, or v1 implementation DTO becomes
+the v2 wire schema. V2 does not add Date or another existing direct-JSON value
+kind: Date-bearing v2 writes still fail closed until separately accepted.
+
+`definitions.json` is a closed, stable-ID-ordered array of exactly one record
+family. Every record binds only the seven stable Orders/Products schema/field
+targets required by ADR-0036. It contains no key/label/path, cache/result,
+revision/currentness, diagnostic, or export data. Unknown members, duplicate
+definition IDs, unresolved or wrong-schema targets, and invalid Text/Number
+roles fail closed before semantic publication.
+
+The only new migration edge is explicit deterministic `.roproj/v1 ->
+.roproj/v2`. It accepts an exact canonical v1 source, changes the manifest
+version from 1 to 2, preserves the v1 schemas/entities bytes and decoded
+meaning, and adds canonical `definitions.json` bytes `[]\n`. A noncanonical v1
+source must use the separately explicit v1 canonicalizer first; migration does
+not combine two write policies. The v2 candidate is written only to a distinct
+absent destination after complete source decode, conversion, applicable
+validation, v2 canonical encoding, and candidate preparation. Failure leaves
+the source intact and exposes no partial destination.
+
+Ordinary v1 open/read/save never upgrades. Creating a definition for a v1
+project requires explicit migration; a v1 writer rejects a definition-bearing
+state rather than dropping or down-converting it. A v1-only reader rejects v2
+at manifest dispatch before body interpretation. A current reader that supports
+both selects the exact version decoder; future/malformed/unknown versions fail
+closed without body decode, rewrite, or migration.
+
+Saving/reopening v2 preserves only the definition and recomputes ADR-0036
+meaning from the current accepted source state. A canonical cache/result is
+forbidden. `tachiko.portable-package/v1` remains exactly its `.roproj/v1`
+eighteen-path payload; it returns the distinct logical unsupported-payload-
+representation/version outcome for v2 pack input, and must not omit
+`definitions.json`, down-convert, or claim preservation. Package v2 remains
+separately Deferred.
 
 ## Direct-JSON error precedence and machine meaning
 

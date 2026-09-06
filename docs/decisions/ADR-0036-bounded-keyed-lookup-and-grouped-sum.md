@@ -14,7 +14,8 @@ Related authority: [ADR-0015](ADR-0015-stable-semantic-identity.md),
 [ADR-0019](ADR-0019-staged-semantic-validation-and-diagnostics.md),
 [ADR-0020](ADR-0020-first-class-headless-semantic-api.md),
 [ADR-0027](ADR-0027-open-format-and-interoperability-policy.md), and
-[ADR-0029](ADR-0029-current-state-authority-and-optional-history.md)
+[ADR-0029](ADR-0029-current-state-authority-and-optional-history.md), and
+[ADR-0037](ADR-0037-roproj-v2-keyed-grouped-sum-persistence.md)
 
 ## Context
 
@@ -183,9 +184,10 @@ profile change and MUST NOT be shown, diffed, exported, or saved as current live
 output.
 
 Saving/reopening preserves a definition, not evaluated group values as semantic
-truth. A reopened definition evaluates the current accepted snapshot. A future
-representation that persists it requires an explicit versioned DTO/migration
-under ADR-0017; frozen `.roproj/v1` and other formats cannot be widened silently.
+truth. A reopened definition evaluates the current accepted snapshot.
+ADR-0037 selects the sole current editable persistence target:
+`.roproj/v2`'s explicit version-owned DTO/migration. Frozen `.roproj/v1`,
+direct representations, and portable-package v1 cannot be widened silently.
 Unsupported required definition semantics fail closed.
 
 An adapter may preserve a live definition only if it encodes the exact admitted
@@ -196,7 +198,7 @@ formula preservation.
 
 ### 6. Realization remains separately Ready work
 
-This ADR creates no formula extension, query engine, storage format, API/DTO,
+This ADR creates no formula extension, query engine, production storage format implementation, API/DTO,
 frontend evaluator, export mapping, or production implementation. After this
 authority lands, the Steward must re-run #293's pre-Ready decomposition and
 separately assess the live definition/lookup, grouped reduction/diagnostics,

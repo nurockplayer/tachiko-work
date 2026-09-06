@@ -11,13 +11,15 @@ The format documents have different roles. Do not treat similarly named files as
 | Document | Read it for | Current role |
 | --- | --- | --- |
 | [`ro-format-and-roproj-spec.md`](ro-format-and-roproj-spec.md) | Accepted `.roproj` source / `.ro` portable-artifact relationship and current implementation split | Accepted direction under ADR-0003 |
-| [`storage-versioning-and-migration.md`](storage-versioning-and-migration.md) | Version namespaces, versioned DTO ownership, supported/unsupported behavior, migration architecture | Mixed: Accepted ADR-0017 invariants and `.roproj/v1` rules under ADR-0023 plus Provisional direct-JSON M02 mechanics |
+| [`storage-versioning-and-migration.md`](storage-versioning-and-migration.md) | Version namespaces, versioned DTO ownership, supported/unsupported behavior, migration architecture | Mixed: Accepted ADR-0017 invariants, `.roproj/v1` under ADR-0023, and unimplemented `.roproj/v2` definition persistence under ADR-0037, plus Provisional direct-JSON M02 mechanics |
 | [`canonical-json-profile.md`](canonical-json-profile.md) | Deterministic JSON/Unicode/order/whitespace contract and explicit numeric boundary | Mixed: Accepted ADR-0017/ADR-0018 invariants and `.roproj/v1` profile under ADR-0023 plus version-specific direct-JSON resource mechanics |
 | [`ro-format-v1.md`](ro-format-v1.md) | Exact deterministic direct `.ro` JSON behavior shipped by the v0.1 CLI | Immutable legacy compatibility / migration source |
 | [`ro-format-v2.md`](ro-format-v2.md) | Current identity-aware direct `.ro` JSON DTO, canonical writer, Number/resource profile, and bound references | Mixed: Accepted ADR-0015/ADR-0017/ADR-0018 invariants plus Provisional M02 wire/resource mechanics |
 | [`ro-format.md`](ro-format.md) | Compatibility/navigation entry point for older links | Non-normative navigation stub; follow the format documents above |
 | [`roproj-format.md`](roproj-format.md) | Complete version-owned `.roproj/v1` DTO and wire contract | Accepted under ADR-0023; production pure codec implemented by #123 |
 | [`roproj-layout-v1.md`](roproj-layout-v1.md) | Exact `.roproj/v1` canonical tree, sharding, path, and canonicalization contract | Accepted under ADR-0023; native materialize/validate/explicit canonicalize workflow implemented by #123 |
+| [`roproj-format-v2.md`](roproj-format-v2.md) | Complete version-owned `.roproj/v2` DTO and keyed grouped-sum definition wire contract | Accepted under ADR-0037; implementation remains separately Ready work |
+| [`roproj-layout-v2.md`](roproj-layout-v2.md) | Exact `.roproj/v2` nineteen-file canonical tree and canonicalization contract | Accepted under ADR-0037; implementation remains separately Ready work |
 | [`portable-package-v1.md`](portable-package-v1.md) | Exact portable-package v1 ZIP32 bytes, payload integrity root, pack/unpack laws, conflict behavior, and conformance outcomes | Accepted under ADR-0025; production codec/native host/CLI workflow implemented by #3 |
 | [`runtime-export-v1.md`](runtime-export-v1.md) | Historical evaluated runtime JSON export contract | Frozen historical contract |
 | [`runtime-export-v2.md`](runtime-export-v2.md) | Current stable-identity/normalized-Number evaluated runtime JSON export | Provisional implemented contract |
@@ -35,7 +37,7 @@ The semantic model owns meaning. Physical formats are representations. ADR-0017 
 | [`validation-engine.md`](validation-engine.md) | ADR-0019 staged validation, candidate/finalization semantics, full-validation oracle, and operation gating |
 | [`diagnostics-contract.md`](diagnostics-contract.md) | Semantic-ID-centered machine-readable diagnostic meaning and stability boundaries |
 | [`formula-engine-spec.md`](formula-engine-spec.md) | Accepted bounded authoring and ADR-0018 stable-ID projection/rename, binary64, dependency, and recomputation contract; #32's Semantic API scenarios compose this same oracle without creating a second evaluator |
-| [`bounded-keyed-lookup-and-grouped-sum.md`](bounded-keyed-lookup-and-grouped-sum.md) | ADR-0036's one saved live exact-Text keyed lookup and finite grouped-`SUM` target, including independently specified Driver pressure outcomes; implementation/storage/API shapes remain Deferred to separately Ready work |
+| [`bounded-keyed-lookup-and-grouped-sum.md`](bounded-keyed-lookup-and-grouped-sum.md) | ADR-0036's one saved live exact-Text keyed lookup and finite grouped-`SUM` target, including ADR-0037's `.roproj/v2` persistence target and independently specified Driver pressure outcomes; implementation/API shapes remain Deferred to separately Ready work |
 | [`semantic-diff-spec.md`](semantic-diff-spec.md) | ADR-0030 canonical Semantic Delta v1 logical contract, closed direct-change vocabulary, stable targets, deterministic ordering, and separation from derived impact; current Rust/wire shapes remain unstandardized |
 
 ADR-0020 makes the Headless Semantic API the mandatory first-party semantic
