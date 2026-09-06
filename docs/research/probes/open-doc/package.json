@@ -8,6 +8,7 @@
     "node": ">=24"
   },
   "scripts": {
+    "build": "tsc --project tsconfig.build.json",
     "report": "node report.mjs",
     "typecheck": "tsc --noEmit",
     "test:unit": "tsx --test report.test.ts",

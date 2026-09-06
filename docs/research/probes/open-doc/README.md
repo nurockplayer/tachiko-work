@@ -155,6 +155,13 @@ and install the matching browser with
 The probe's local `pnpm-workspace.yaml` permits only `esbuild`'s required build
 script; it does not grant a general dependency-build exception.
 
+`report.ts` is the source adapter. Its checked-in `generated/report.js` build
+is deliberately dependency-free at runtime so the existing Cargo bridge can
+run native projection acceptance before installing the research-local renderer.
+After changing the adapter, run `pnpm --dir docs/research/probes/open-doc build`
+and commit the regenerated runtime alongside the source; `tsx` is never needed
+by the bridge itself.
+
 The implementation uses the published `@open-document/core/ops` API. It must
 export `DocEntry[]` (including a single `flow(...)` entry), rather than the
 `flow(...)` object directly; the latter causes `entries.filter is not a

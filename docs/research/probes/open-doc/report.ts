@@ -166,8 +166,8 @@ function run(options: Options): void {
     throw error;
   } finally { rmSync(staging, { recursive: true, force: true }); }
 }
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  try { run(parseArgs(process.argv.slice(2))); }
+export function main(argv: string[]): void {
+  try { run(parseArgs(argv)); }
   catch (error) {
     const probeError = error instanceof ProbeError ? error : new ProbeError('SOURCE_REJECTED', String(error));
     process.stderr.write(`${JSON.stringify({ code: probeError.code })}\n`);
