@@ -51,27 +51,33 @@ This is an operator/provider gate, not an action performed by the workflow.
    synchronization or use GitLab Issues/MRs as a coordination surface.
 3. Add this repository variable, with no credentials embedded in its value:
 
-   `GITHUB_DR_GITLAB_TARGET` — full HTTPS Git URL, for example
+   `DR_GITLAB_TARGET` — full HTTPS Git URL, for example
    `https://gitlab.com/<namespace>/<project>.git`.
 
 4. Add this optional repository variable when the GitLab credential uses a
    non-default username:
 
-   `GITHUB_DR_GITLAB_USERNAME` — normally `oauth2` for a GitLab Project Access
+   `DR_GITLAB_USERNAME` — normally `oauth2` for a GitLab Project Access
    Token. The workflow defaults to `oauth2` when it is empty.
 
 5. Add this repository Actions secret:
 
-   `GITHUB_DR_GITLAB_TOKEN` — a GitLab Project Access Token for this one
+   `DR_GITLAB_TOKEN` — a GitLab Project Access Token for this one
    project, with the minimum role that can push and the `write_repository`
    scope only. Do not grant `api`, `read_api`, group administration, or
    organization-wide scopes. Do not put the token in the target URL.
 
+The workflow maps these legal GitHub Actions names to the driver's internal
+`GITHUB_DR_GITLAB_TARGET`, `GITHUB_DR_GITLAB_USERNAME`, and
+`GITHUB_DR_GITLAB_TOKEN` environment variables. GitHub repository variable
+and secret names beginning with `GITHUB_` are reserved and must not be used
+for this setup.
+
 The workflow uses the ephemeral built-in `GITHUB_TOKEN` only through `GH_TOKEN`
 for read-only GitHub API calls. Its declared permissions are `contents: read`,
-`issues: read`, `pull-requests: read`, and `metadata: read`; no GitHub write
-permission is requested. A transient `GIT_ASKPASS` file supplies the GitLab
-token to Git transport and is created under the runner's temporary directory.
+`issues: read`, and `pull-requests: read`; no GitHub write permission is
+requested. A transient `GIT_ASKPASS` file supplies the GitLab token to Git
+transport and is created under the runner's temporary directory.
 It is never committed, printed, or serialized into snapshot payloads.
 
 ## Manual activation and evidence
@@ -109,8 +115,8 @@ For an operational restore drill, use a credential manager or a transient
 askpass environment; never place a token in a clone URL or shell trace:
 
 ```sh
-git clone --branch main "$GITHUB_DR_GITLAB_TARGET" restored-source
-git clone --branch dr-metadata "$GITHUB_DR_GITLAB_TARGET" restored-metadata
+git clone --branch main "$DR_GITLAB_TARGET" restored-source
+git clone --branch dr-metadata "$DR_GITLAB_TARGET" restored-metadata
 bash scripts/github-dr-backup.sh verify \
   --snapshot restored-metadata/snapshots/latest
 ```
@@ -125,7 +131,7 @@ and must not turn GitLab into a second collaboration authority.
 
 1. Create a replacement GitLab Project Access Token with the same project,
    role, and `write_repository`-only scope.
-2. Update `GITHUB_DR_GITLAB_TOKEN` in repository Actions secrets. Run a manual
+2. Update `DR_GITLAB_TOKEN` in repository Actions secrets. Run a manual
    `full` workflow and verify the mirrored HEAD, metadata commit, manifest
    checksum, and counts.
 3. Revoke the old token after the replacement evidence is recorded. If a

@@ -21,7 +21,6 @@ permissions:
   contents: read
   issues: read
   pull-requests: read
-  metadata: read
 
 concurrency:
   group: github-dr-backup
@@ -37,9 +36,9 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       # This URL is a non-secret repository variable and must contain no
       # username, password, token, or other embedded credential.
-      GITHUB_DR_GITLAB_TARGET: ${{ vars.GITHUB_DR_GITLAB_TARGET }}
-      GITHUB_DR_GITLAB_USERNAME: ${{ vars.GITHUB_DR_GITLAB_USERNAME }}
-      GITHUB_DR_GITLAB_TOKEN: ${{ secrets.GITHUB_DR_GITLAB_TOKEN }}
+      GITHUB_DR_GITLAB_TARGET: ${{ vars.DR_GITLAB_TARGET }}
+      GITHUB_DR_GITLAB_USERNAME: ${{ vars.DR_GITLAB_USERNAME }}
+      GITHUB_DR_GITLAB_TOKEN: ${{ secrets.DR_GITLAB_TOKEN }}
       GITHUB_DR_RETENTION_COUNT: '7'
 
     steps:
@@ -55,19 +54,19 @@ jobs:
         run: |
           set -euo pipefail
           [[ -n "${GITHUB_DR_GITLAB_TARGET}" ]] || {
-            echo 'Missing repository variable GITHUB_DR_GITLAB_TARGET.' >&2
+            echo 'Missing repository variable DR_GITLAB_TARGET.' >&2
             exit 1
           }
           case "${GITHUB_DR_GITLAB_TARGET}" in
             https://gitlab.com/*.git) ;;
             *)
-              echo 'GITHUB_DR_GITLAB_TARGET must be a credential-free https://gitlab.com/*.git URL.' >&2
+              echo 'DR_GITLAB_TARGET must be a credential-free https://gitlab.com/*.git URL.' >&2
               exit 1
               ;;
           esac
           case "${GITHUB_DR_GITLAB_TARGET}" in
             *@*|*'?'*|*'#'*)
-              echo 'GITHUB_DR_GITLAB_TARGET must not contain embedded credentials or URL query data.' >&2
+              echo 'DR_GITLAB_TARGET must not contain embedded credentials or URL query data.' >&2
               exit 1
               ;;
           esac
@@ -91,11 +90,13 @@ jobs:
       - name: Select scheduled or manual operation
         id: operation
         shell: bash
+        env:
+          DR_OPERATION: ${{ inputs.operation }}
         run: |
           set -euo pipefail
           operation='source-only'
           if [[ "${GITHUB_EVENT_NAME}" == 'workflow_dispatch' ]]; then
-            operation='${{ inputs.operation }}'
+            operation="${DR_OPERATION}"
           elif [[ "${GITHUB_EVENT_NAME}" == 'schedule' && '${{ github.event.schedule }}' == '43 2 * * *' ]]; then
             operation='full'
           fi
