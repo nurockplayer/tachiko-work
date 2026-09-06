@@ -102,6 +102,13 @@ fn number(runtime: &mut DesignerRuntime, revision: u32, target: &str) -> f64 {
     value
 }
 
+fn assert_number(runtime: &mut DesignerRuntime, revision: u32, target: &str, expected: f64) {
+    assert_eq!(
+        number(runtime, revision, target).to_bits(),
+        expected.to_bits()
+    );
+}
+
 #[test]
 fn generic_scalar_edit_interleaves_with_existing_semantic_history() {
     let mut runtime = fixture();
@@ -129,7 +136,7 @@ fn generic_scalar_edit_interleaves_with_existing_semantic_history() {
             expected_revision: "resident/2".into(),
         })
         .expect("generic scalar publication must be the next reversible semantic action");
-    assert_eq!(number(&mut runtime, 3, "r1.a"), 1.0);
+    assert_number(&mut runtime, 3, "r1.a", 1.0);
     assert_eq!(text(&mut runtime, 3, "r1.name"), "first action");
 
     runtime
@@ -150,7 +157,7 @@ fn generic_scalar_edit_interleaves_with_existing_semantic_history() {
         })
         .unwrap();
     assert_eq!(text(&mut runtime, 6, "r1.name"), "first action");
-    assert_eq!(number(&mut runtime, 6, "r1.a"), 5.0);
+    assert_number(&mut runtime, 6, "r1.a", 5.0);
 }
 
 #[test]
@@ -179,8 +186,8 @@ fn formula_copy_is_one_reversible_action_and_preserves_source_formula_history() 
             expected_revision: "resident/2".into(),
         })
         .expect("formula copy must be one reversible semantic action");
-    assert_eq!(number(&mut runtime, 3, "r2.c"), 99.0);
-    assert_eq!(number(&mut runtime, 3, "r3.c"), 99.0);
+    assert_number(&mut runtime, 3, "r2.c", 99.0);
+    assert_number(&mut runtime, 3, "r3.c", 99.0);
     assert!(field(&mut runtime, 3, "r1.c").formula.is_some());
 
     runtime
@@ -188,7 +195,7 @@ fn formula_copy_is_one_reversible_action_and_preserves_source_formula_history() 
             expected_revision: "resident/3".into(),
         })
         .expect("the source formula action must remain independently undoable");
-    assert_eq!(number(&mut runtime, 4, "r1.c"), 99.0);
+    assert_number(&mut runtime, 4, "r1.c", 99.0);
 }
 
 #[test]
