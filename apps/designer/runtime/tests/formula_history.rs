@@ -100,6 +100,25 @@ fn field(runtime: &mut DesignerRuntime, revision: u32) -> FieldProjection {
     projection.fields.remove(0)
 }
 
+/// Query one calculated Number at an exact expected resident revision.
+fn calculated_number(runtime: &mut DesignerRuntime, revision: u32, target: &str) -> Option<f64> {
+    let DesignerResponse::Fields(mut projection) = runtime
+        .handle(DesignerRequest::QueryFields {
+            expected_revision: format!("resident/{revision}"),
+            fields: vec![FieldTarget::from(target)],
+        })
+        .unwrap()
+    else {
+        panic!("expected fields response")
+    };
+    projection
+        .fields
+        .remove(0)
+        .calculated
+        .as_ref()
+        .and_then(tachiko_designer_runtime::CalculationProjection::number)
+}
+
 /// Publish one supported `FormulaUpdate` through the ordinary Designer request path.
 fn formula(runtime: &mut DesignerRuntime, revision: u32, source: &str) {
     runtime
@@ -154,6 +173,10 @@ fn formula_inverse_refreshes_dependent_calculations_and_invalidation() {
             .affected_calculations
             .contains(&FieldTarget::from("r1.dependent"))
     );
+    assert_eq!(
+        calculated_number(&mut runtime, 1, "r1.dependent"),
+        Some(7.0)
+    );
 
     let DesignerResponse::Published(restored) = runtime
         .handle(DesignerRequest::Undo {
@@ -168,21 +191,8 @@ fn formula_inverse_refreshes_dependent_calculations_and_invalidation() {
             .affected_calculations
             .contains(&FieldTarget::from("r1.dependent"))
     );
-    let DesignerResponse::Fields(mut fields) = runtime
-        .handle(DesignerRequest::QueryFields {
-            expected_revision: "resident/2".to_owned(),
-            fields: vec!["r1.dependent".into()],
-        })
-        .expect("the restored dependency must remain queryable")
-    else {
-        panic!("expected dependent field projection")
-    };
     assert_eq!(
-        fields
-            .fields
-            .remove(0)
-            .calculated
-            .and_then(|value| value.number()),
+        calculated_number(&mut runtime, 2, "r1.dependent"),
         Some(3.0)
     );
 }
