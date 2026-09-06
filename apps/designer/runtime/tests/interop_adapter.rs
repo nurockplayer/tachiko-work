@@ -654,8 +654,8 @@ fn workbook_omissions_and_column_width_tails_are_explicit() {
     for (min, max) in [(1, 16), (3, 16)] {
         let changed = mutate(&bytes, "xl/worksheets/sheet1.xml", |s| {
             s.replace(
-                "<cols>",
-                &format!("<cols><col min=\"{min}\" max=\"{max}\" width=\"24\"/>"),
+                "<sheetData>",
+                &format!("<cols><col min=\"{min}\" max=\"{max}\" width=\"24\"/></cols><sheetData>"),
             )
         });
         let imported = import_xlsx(&changed).unwrap();
@@ -673,7 +673,10 @@ fn workbook_omissions_and_column_width_tails_are_explicit() {
         );
     }
     let oversized = mutate(&bytes, "xl/worksheets/sheet1.xml", |s| {
-        s.replace("<cols>", "<cols><col min=\"1\" max=\"17\" width=\"24\"/>")
+        s.replace(
+            "<sheetData>",
+            "<cols><col min=\"1\" max=\"17\" width=\"24\"/></cols><sheetData>",
+        )
     });
     assert!(import_xlsx(&oversized).is_err());
     let duplicate = mutate(&bytes, "xl/workbook.xml", |s| {
@@ -699,8 +702,10 @@ fn multiple_column_groups_are_all_inspected_and_singleton_duplicates_rejected() 
     ] {
         let changed = mutate(&bytes, "xl/worksheets/sheet1.xml", |s| {
             s.replace(
-                "</cols>",
-                &format!("</cols><cols><col min=\"1\" max=\"2\" {attribute}/></cols>"),
+                "<sheetData>",
+                &format!(
+                    "<cols><col min=\"1\" max=\"1\" width=\"24\"/></cols><cols><col min=\"1\" max=\"2\" {attribute}/></cols><sheetData>"
+                ),
             )
         });
         let book = import_xlsx(&changed).unwrap();
@@ -709,8 +714,8 @@ fn multiple_column_groups_are_all_inspected_and_singleton_duplicates_rejected() 
     }
     let width = mutate(&bytes, "xl/worksheets/sheet1.xml", |s| {
         s.replace(
-            "</cols>",
-            "</cols><cols><col min=\"2\" max=\"2\" width=\"24\"/></cols>",
+            "<sheetData>",
+            "<cols><col min=\"1\" max=\"1\" width=\"24\"/></cols><cols><col min=\"2\" max=\"2\" width=\"24\"/></cols><sheetData>",
         )
     });
     let book = import_xlsx(&width).unwrap();
@@ -732,7 +737,10 @@ fn multiple_column_groups_are_all_inspected_and_singleton_duplicates_rejected() 
         );
     }
     let unknown = mutate(&bytes, "xl/worksheets/sheet1.xml", |s| {
-        s.replace("</cols>", "</cols><cols><unknown/></cols>")
+        s.replace(
+            "<sheetData>",
+            "<cols><col min=\"1\" max=\"1\" width=\"24\"/></cols><cols><unknown/></cols><sheetData>",
+        )
     });
     assert!(import_xlsx(&unknown).is_err());
 }
@@ -819,18 +827,12 @@ fn every_unmapped_worksheet_child_has_a_loss_or_blocking_inventory() {
             assert!(export_xlsx(&imported).is_err());
         }
     }
-    for (before, after, code) in [
-        (
+    {
+        let (before, after, code) = (
             "<row r=\"2\">",
             "<row r=\"2\" s=\"1\" customFormat=\"1\">",
             "inherited_row_style",
-        ),
-        (
-            "<cols>",
-            "<cols><col min=\"1\" max=\"2\" style=\"1\"/>",
-            "inherited_column_style",
-        ),
-    ] {
+        );
         let changed = mutate(&bytes, "xl/worksheets/sheet1.xml", |s| {
             s.replace(before, after)
         });
@@ -838,6 +840,20 @@ fn every_unmapped_worksheet_child_has_a_loss_or_blocking_inventory() {
         assert!(imported.ledger.iter().any(|f| f.code == code && f.blocking));
         assert!(export_xlsx(&imported).is_err());
     }
+    let changed = mutate(&bytes, "xl/worksheets/sheet1.xml", |s| {
+        s.replace(
+            "<sheetData>",
+            "<cols><col min=\"1\" max=\"2\" style=\"1\"/></cols><sheetData>",
+        )
+    });
+    let imported = import_xlsx(&changed).unwrap();
+    assert!(
+        imported
+            .ledger
+            .iter()
+            .any(|f| f.code == "inherited_column_style" && f.blocking)
+    );
+    assert!(export_xlsx(&imported).is_err());
     for (attribute, blocking) in [("ht=\"40\"", false), ("unknownMode=\"1\"", true)] {
         let changed = mutate(&bytes, "xl/worksheets/sheet1.xml", |s| {
             s.replace("<row r=\"2\">", &format!("<row r=\"2\" {attribute}>"))

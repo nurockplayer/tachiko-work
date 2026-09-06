@@ -1746,7 +1746,7 @@ fn column_name(index: usize) -> String {
     }
     s
 }
-fn valid_worksheet_name(name: &str) -> bool {
+pub(crate) fn valid_worksheet_name(name: &str) -> bool {
     !name.is_empty()
         && name.chars().count() <= 31
         && !name.contains(['[', ']', ':', '*', '?', '/', '\\'])
@@ -1940,20 +1940,27 @@ pub(crate) fn export_xlsx_for_profile(
         ));
         sheet_rels.push_str(&format!("<Relationship Id=\"rId{n}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet{n}.xml\"/>"));
         types.push_str(&format!("<Override PartName=\"/xl/worksheets/sheet{n}.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>"));
-        let mut xml = format!("<worksheet xmlns=\"{MAIN}\"><cols>");
-        for (col, c) in s.columns.iter().enumerate() {
-            if let Some(width) = c.width {
-                if !width.is_finite() || width <= 0.0 || width > 255.0 {
-                    return fail("Invalid export column width");
+        let mut xml = format!("<worksheet xmlns=\"{MAIN}\">");
+        // CT_Cols contains one or more CT_Col entries. An empty <cols>
+        // container is rejected by Excel's package reader, even though the
+        // surrounding ZIP and XML remain structurally readable.
+        if s.columns.iter().any(|column| column.width.is_some()) {
+            xml.push_str("<cols>");
+            for (col, c) in s.columns.iter().enumerate() {
+                if let Some(width) = c.width {
+                    if !width.is_finite() || width <= 0.0 || width > 255.0 {
+                        return fail("Invalid export column width");
+                    }
+                    xml.push_str(&format!(
+                        "<col min=\"{}\" max=\"{}\" width=\"{width}\" customWidth=\"1\"/>",
+                        col + 1,
+                        col + 1
+                    ));
                 }
-                xml.push_str(&format!(
-                    "<col min=\"{}\" max=\"{}\" width=\"{width}\" customWidth=\"1\"/>",
-                    col + 1,
-                    col + 1
-                ));
             }
+            xml.push_str("</cols>");
         }
-        xml.push_str("</cols><sheetData>");
+        xml.push_str("<sheetData>");
         let header = s
             .columns
             .iter()

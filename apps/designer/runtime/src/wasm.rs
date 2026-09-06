@@ -16,8 +16,9 @@ use crate::{
     request_too_large_reply,
 };
 use crate::{
-    ImportSelection, InteropMetadata, NativeTrackerExportPresentation, SpreadsheetExportProjection,
-    import_workbook, inspect_imported_project,
+    ImportSelection, InteropMetadata, NativeBudgetExportPresentation,
+    NativeTrackerExportPresentation, SpreadsheetExportProjection, import_workbook,
+    inspect_imported_project,
 };
 
 #[derive(Clone, Copy, Deserialize)]
@@ -53,6 +54,11 @@ enum SpreadsheetOperation {
     ExportNativeTracker {
         expected_revision: String,
         presentation: NativeTrackerExportPresentation,
+        format: SpreadsheetFormat,
+    },
+    ExportNativeBudget {
+        expected_revision: String,
+        presentation: NativeBudgetExportPresentation,
         format: SpreadsheetFormat,
     },
 }
@@ -290,6 +296,19 @@ fn spreadsheet_operation(
             &presentation,
             format,
         ),
+        SpreadsheetOperation::ExportNativeBudget {
+            expected_revision,
+            presentation,
+            format,
+        } => export_native_budget_spreadsheet(
+            runtime.ok_or_else(|| DesignerError::InvalidProjectTransfer {
+                message: "No Designer project is open for native Budget spreadsheet export."
+                    .to_owned(),
+            })?,
+            &expected_revision,
+            &presentation,
+            format,
+        ),
     }
 }
 
@@ -336,6 +355,67 @@ fn export_native_tracker_spreadsheet(
         }
         SpreadsheetFormat::Xlsx => export_xlsx_for_profile(&workbook, OutputProfile::NativeTracker)
             .map_err(interop_error)?,
+    };
+    crate::enforce_project_transfer_limit(bytes.len())?;
+    Ok(SpreadsheetResult {
+        response: DesignerResponse::SpreadsheetExported(SpreadsheetExportProjection {
+            revision: revision.to_owned(),
+            byte_length: bytes.len(),
+            ledger: workbook.ledger,
+        }),
+        candidate: None,
+        export: Some(bytes),
+    })
+}
+
+fn export_native_budget_spreadsheet(
+    runtime: &DesignerRuntime,
+    revision: &str,
+    presentation: &NativeBudgetExportPresentation,
+    format: SpreadsheetFormat,
+) -> Result<SpreadsheetResult, DesignerError> {
+    let mut workbook = match format {
+        SpreadsheetFormat::Csv => {
+            runtime.export_native_budget_csv_workbook(revision, presentation)?
+        }
+        SpreadsheetFormat::Xlsx => runtime.export_native_budget_workbook(revision, presentation)?,
+    };
+    if matches!(format, SpreadsheetFormat::Xlsx) {
+        workbook.ledger.push(FidelityFinding {
+            category: FidelityCategory::NativeEquivalent,
+            code: "native_budget_outbound_profile".to_owned(),
+            location: "Budget".to_owned(),
+            message: "Native Budget export maps every admitted source collection, row, and formula dependency by stable identity. View aliases remain presentation-only and do not duplicate canonical worksheet data.".to_owned(),
+            blocking: false,
+        });
+    }
+    workbook.ledger.push(FidelityFinding {
+        category: FidelityCategory::LossyOnExport,
+        code: "native_budget_session_presentation".to_owned(),
+        location: "Budget".to_owned(),
+        message: "Browser-only view state, session Undo/Redo history, and chart composition have no declared spreadsheet mapping and are not exported. Supported per-cell styles are preserved when valid.".to_owned(),
+        blocking: false,
+    });
+    let bytes = match format {
+        SpreadsheetFormat::Csv => {
+            let sheet =
+                workbook
+                    .sheets
+                    .first()
+                    .ok_or_else(|| DesignerError::InvalidProjectTransfer {
+                        message: "Native Budget export active view is unavailable.".to_owned(),
+                    })?;
+            let bytes = export_csv(sheet).map_err(interop_error)?;
+            workbook.ledger.push(FidelityFinding {
+                category: FidelityCategory::LossyOnExport,
+                code: "csv_values_only".to_owned(),
+                location: sheet.name.clone(),
+                message: "CSV exports the active Budget view's calculated scalar values only. Formula definitions, other source collections, presentation formatting, aliases, and charts are not preserved; retain the source project.".to_owned(),
+                blocking: false,
+            });
+            bytes
+        }
+        SpreadsheetFormat::Xlsx => export_xlsx(&workbook).map_err(interop_error)?,
     };
     crate::enforce_project_transfer_limit(bytes.len())?;
     Ok(SpreadsheetResult {

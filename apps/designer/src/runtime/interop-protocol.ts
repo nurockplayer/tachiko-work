@@ -15,6 +15,13 @@ export type ImportSelection = { column_types: ImportFieldType[][]; extra_columns
 export type InteropMetadata = { version: number; sheets: Array<{schema_id: string; name: string; has_header: boolean; columns: Array<{field_id: string; name: string; width: number | null}>; rows: Array<{entity_id: string; styles: SourceStyle[]}>}> };
 /** Private outbound-only binding for the stock 128-row Driver Tracker. */
 export type NativeTrackerExportPresentation = { version: number; rows: Array<{entity_id: string; styles: SourceStyle[]}> };
+/** Private outbound-only binding for the native Budget collections and views. */
+export type NativeBudgetExportPresentation = {
+  version: number;
+  active_view: string;
+  views: Array<{id: string; name: string; collection_id: string}>;
+  collections: Array<{collection_id: string; rows: Array<{entity_id: string; styles: SourceStyle[]}>}>;
+};
 export type ImportedProjection = { opened: OpenedProjection; metadata: InteropMetadata; ledger: FidelityFinding[] };
 export type SpreadsheetExport = { revision: string; bytes: ArrayBuffer; ledger: FidelityFinding[] };
 export type SpreadsheetOperation =
@@ -22,7 +29,8 @@ export type SpreadsheetOperation =
   | {type: "import"; format: SpreadsheetFormat; csv_options: ImportOptions; selection: ImportSelection; occurrence_id: string; install: boolean}
   | {type: "inspect_project"; metadata: InteropMetadata}
   | {type: "export"; expected_revision: string; metadata: InteropMetadata; format: SpreadsheetFormat; collection: string}
-  | {type: "export_native_tracker"; expected_revision: string; presentation: NativeTrackerExportPresentation; format: SpreadsheetFormat};
+  | {type: "export_native_tracker"; expected_revision: string; presentation: NativeTrackerExportPresentation; format: SpreadsheetFormat}
+  | {type: "export_native_budget"; expected_revision: string; presentation: NativeBudgetExportPresentation; format: SpreadsheetFormat};
 export type ScalarInput = {kind: "number"; input: string} | {kind: "text" | "date"; value: string} | {kind: "boolean"; value: boolean};
 export type CleanupOperation =
   | {kind: "trim"; fields: FieldTarget[]}

@@ -11,6 +11,12 @@ All notable changes to Tachiko Work are documented in this file.
   preserves stable row mapping and supported cell styles without fabricating
   spreadsheet-import metadata; incoming/shared spreadsheet admission remains
   capped at 64 rows.
+- The browser Designer can export the current native Budget view as values-only
+  CSV or its admitted canonical source collections as typed XLSX. XLSX retains
+  stable mappings, bound formulas, typed Date values, and supported cell styles;
+  CSV explicitly discloses formula, additional-collection, and presentation
+  loss. This is outbound-only and does not add spreadsheet reimport, a general
+  formula evaluator, or Excel/Sheet-model compatibility.
 - Maintainers can package an exact-commit local Designer release candidate and
   verify its static artifact with isolated browser journeys. The accompanying
   Driver acceptance matrix keeps remaining product and public-promotion gates

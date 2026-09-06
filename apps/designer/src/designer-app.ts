@@ -5,7 +5,7 @@ import { mountReportPanel, type ReportPanelState } from "./report-panel.ts";
 import { downloadCurrentReport } from "./report-export.ts";
 import { emptyGenericTableView, mountInteropTableView, projectInteropTable } from "./interop-table-view.ts";
 import { SpreadsheetImportPanel, mountCleanupPanel, mountFidelityLedger, downloadSpreadsheet } from "./interop-panel.ts";
-import type { CleanupPreview, NativeTrackerExportPresentation, SourceStyle, SpreadsheetFormat, SpreadsheetExport, FidelityFinding } from "./runtime/interop-protocol.ts";
+import type { CleanupPreview, NativeBudgetExportPresentation, NativeTrackerExportPresentation, SourceStyle, SpreadsheetFormat, SpreadsheetExport, FidelityFinding } from "./runtime/interop-protocol.ts";
 import { reconcileTextEdit, normalizeLineEndings } from "./text-edit.ts";
 import { TrackerGrid } from "./tracker-grid.ts";
 import { defaultBudgetViews, addBudgetView, duplicateBudgetView, renameBudgetView, reorderBudgetViews, deleteBudgetView } from "./budget-views.ts";
@@ -162,6 +162,7 @@ export function mountDesigner(
       savedProjects,
       selectedSavedProject,
       tracker.view,
+      pendingExport !== null,
     );
     if (snapshot.table.tracker_profile === true) {
       const workbench = root.querySelector(".table-workbench");
@@ -327,6 +328,64 @@ export function mountDesigner(
     const table = labelImportedTable(store.snapshot().table);
     const current = store.snapshot().currentness === "current";
     const interop = tracker.view.interop;
+    if (!interop && tracker.view.budgetViews && budgetTables.length > 0) {
+      const views = tracker.view.budgetViews;
+      const allCurrent =
+        bootstrap !== null &&
+        budgetTables.length === bootstrap.collections.length &&
+        budgetTables.every(candidate => candidate.revision === table.revision);
+      const exportPanel = document.createElement("section");
+      exportPanel.setAttribute("aria-label", "Export native Budget");
+      exportPanel.append(Object.assign(document.createElement("h3"), {textContent: "Export native Budget"}));
+      exportPanel.append(Object.assign(document.createElement("p"), {textContent: "Exports the current Budget from stable collection, entity and field identities. CSV contains selected-view calculated values; XLSX includes each source collection once and keeps formulas bound to those identities."}));
+      for (const format of ["csv", "xlsx"] as SpreadsheetFormat[]) {
+        const button = document.createElement("button");
+        button.textContent = `Export Budget ${format.toUpperCase()}`;
+        button.dataset.budgetExport = format;
+        button.disabled = busy || !current || !allCurrent || hasEditDrafts() || !client.exportNativeBudgetSpreadsheet;
+        button.addEventListener("click", () => { void (async () => {
+          if (!client.exportNativeBudgetSpreadsheet || busy || !store || !tracker.view.budgetViews) return;
+          const snapshot = store.snapshot();
+          if (snapshot.currentness !== "current") return;
+          const presentation = nativeBudgetPresentation(views, budgetTables);
+          busy = true;
+          notice = null;
+          render();
+          try {
+            const exported = await client.exportNativeBudgetSpreadsheet(snapshot.table.revision, presentation, format);
+            if (!destroyed) {
+              const active = presentation.views.find(view => view.id === presentation.active_view);
+              const location = active?.name ?? active?.collection_id ?? "Budget";
+              const ledger: FidelityFinding[] = format === "csv"
+                ? [{
+                    category: "lossy_on_export",
+                    code: "budget_csv_calculated_values",
+                    location,
+                    message: "CSV exports the selected Budget view's current calculated values. Formula definitions, other collections and presentation formatting are not preserved; retain the native project.",
+                    blocking: false,
+                  }]
+                : [{
+                    category: "lossy_on_export",
+                    code: "budget_xlsx_charts_not_preserved",
+                    location: "workbook",
+                    message: "XLSX export does not preserve editable Budget charts or browser-only view presentation; retain the native project and use the separate static PNG report path when needed.",
+                    blocking: false,
+                  }];
+              pendingExport = {occurrence: reportOccurrence, exported, format, ledger: exportLedger(ledger, exported)};
+            }
+          } catch (error) {
+            showProjectFailure("Budget spreadsheet not exported", error);
+          } finally {
+            busy = pendingExport !== null;
+            render();
+          }
+        })(); });
+        exportPanel.append(button);
+      }
+      host.append(exportPanel);
+      renderExportReview();
+      return;
+    }
     if (!interop) {
       if (!table.tracker_profile || bootstrap?.collections.length !== 1) return;
       const exportPanel = document.createElement("section"); exportPanel.setAttribute("aria-label", "Export native Tracker");
@@ -409,6 +468,42 @@ export function mountDesigner(
     };
   };
 
+  const nativeBudgetStyle = (entity: string, column: {id: string; field_type: string}): SourceStyle => {
+    const style = tracker.view.cells[cellKey(entity, column.id)] ?? {};
+    const format = tracker.view.formats[cellKey(entity, column.id)];
+    return {
+      number_format: column.field_type.toLowerCase() === "number" && format !== undefined
+        ? {number: "0.00", percentage: "0.00%", "currency-usd": "$0.00", "currency-jpy": "¥0"}[format]
+        : null,
+      bold: style.bold ?? false,
+      fill: style.fill ? "FFF1BA" : null,
+      wrap: style.wrap ?? false,
+      border: style.border ?? false,
+      alignment: style.align ?? null,
+    };
+  };
+
+  const nativeBudgetPresentation = (
+    views: NonNullable<TrackerView["budgetViews"]>,
+    tables: TableProjection[],
+  ): NativeBudgetExportPresentation => {
+    if (!views.views.some(view => view.id === views.active)) {
+      throw new Error("Active Budget view is unavailable.");
+    }
+    return {
+      version: 1,
+      active_view: views.active,
+      views: views.views.map(view => ({id: view.id, name: view.name, collection_id: view.collection})),
+      collections: tables.map(table => ({
+        collection_id: table.collection.id,
+        rows: table.rows.map(row => ({
+          entity_id: row.id,
+          styles: table.columns.map(column => nativeBudgetStyle(row.id, column)),
+        })),
+      })),
+    };
+  };
+
   const exportLedger = (base: FidelityFinding[], exported: SpreadsheetExport): FidelityFinding[] => [
     ...base,
     ...exported.ledger,
@@ -461,7 +556,12 @@ export function mountDesigner(
     publish: (expectedRevision: string) => Promise<PublicationProjection>,
     onPublished?: () => void,
   ): Promise<void> => {
-    if (store === null || busy || store.snapshot().currentness !== "current") return;
+    const capturedExport = pendingExport;
+    if (store === null || (busy && capturedExport === null) || store.snapshot().currentness !== "current") return;
+    // A review keeps save/replacement actions guarded, but a user may still
+    // publish a scalar edit. Remove the captured output before the edit runs;
+    // any attempted edit must require a fresh export, including refusals.
+    if (capturedExport !== null) pendingExport = null;
     busy = true;
     notice = null;
     render();
@@ -492,7 +592,7 @@ export function mountDesigner(
     } catch (error) {
       showFailure(error, published);
     } finally {
-      busy = false;
+      busy = pendingExport !== null;
       render();
     }
   };
@@ -1062,6 +1162,7 @@ export function mountDesigner(
         const entity = decodeOpaqueAttribute(button.dataset.entity);
         const field = decodeOpaqueAttribute(button.dataset.field);
         if (entity === undefined || field === undefined) return;
+        if (pendingExport !== null) { pendingExport = null; busy = false; }
         const key = cellKey(entity, field);
         const order: NumberFormat[] = ["number", "currency-jpy", "percentage", "currency-usd"];
         const current = tracker.view.formats[key] ?? "number";
@@ -1221,6 +1322,7 @@ function designerMarkup(
   savedProjects: SavedProjectSummary[],
   selectedSavedProject: string,
   view: TrackerView,
+  exportReviewPending: boolean,
 ): string {
   const isTracker = table.tracker_profile === true;
   const statusLabel = {
@@ -1323,7 +1425,7 @@ function designerMarkup(
               </thead>
               <tbody>
                 ${table.rows
-                  .map((row) => rowMarkup(row, table, busy || currentness !== "current", view))
+                  .map((row) => rowMarkup(row, table, (busy && !exportReviewPending) || currentness !== "current", view))
                   .join("")}
               </tbody>
             </table>
