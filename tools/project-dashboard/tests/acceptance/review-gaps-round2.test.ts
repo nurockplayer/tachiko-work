@@ -167,7 +167,7 @@ describe("#229 second-round acceptance review gaps", () => {
     expect(projection.attention.items).toEqual([]);
   });
 
-  it("keeps critical path partial and empty when Issue discovery is partial", () => {
+  it("fails closed Issue facts and critical path when Issue discovery is partial", () => {
     const projection = projectObservation({
       latest: {
         ...SNAPSHOT,
@@ -175,6 +175,18 @@ describe("#229 second-round acceptance review gaps", () => {
       },
     });
 
+    const linkedLane = projection.deliveries.find(
+      (lane) => lane.pullRequestNumber === 321,
+    );
+    expect(linkedLane).toMatchObject({
+      issueNumber: 229,
+      issueTitle: { availability: "partial", value: null },
+      issueState: { availability: "partial", value: null },
+      dependencies: { availability: "partial", value: null },
+      pullRequestNumber: 321,
+      pullRequestTitle: { availability: "complete", value: "PR 321" },
+      linkedIssues: { availability: "complete", value: [229] },
+    });
     expect(projection.criticalPath).toEqual({
       availability: "partial",
       issueNumbers: [],
