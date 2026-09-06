@@ -2,10 +2,10 @@
 
 Owner: [Issue #337](https://github.com/nurockplayer/tachiko-work/issues/337),
 first bounded child of [#335](https://github.com/nurockplayer/tachiko-work/issues/335).
-**Tests-only preflight; not production Ready.** Live Issue and repository
-Accepted authority outrank this experimental harness. No adapter is supplied
-or authorized by this seed. Keep this branch for the eventual single delivery
-PR after the Steward records Ready; do not merge a failing tests-only seed.
+**Execution authorization follows the live Issue.** Repository Accepted
+authority and the live Steward readiness decision outrank this harness.
+`export.mjs` is a deliberate unimplemented seed, not an exporter. Continue
+this branch for one delivery PR when Ready; never merge the failing seed alone.
 
 ## Selected seam and scope
 
@@ -16,8 +16,8 @@ or canonical storage in the TypeScript adapter. The current Designer client
 kit exposes formula text rather than a complete bound AST; expanding the kit
 is not a prerequisite of this first experiment. `tachiko formula inspect`
 already returns the bound `expression`, calculation and `source_revision`.
-Preflight must also demonstrate how existing semantic inspection supplies
-scalar values and schema/field identity without a second semantic reader.
+The native CI preflight also demonstrates how existing semantic inspection
+supplies scalar values and schema/field identity without a second semantic reader.
 
 Read all facts from the same captured source. Do not issue independent reads
 against a changing live directory. A CLI source token is not a resident-session
@@ -82,8 +82,28 @@ node experiments/open-sheet-export/public-seam-probe.mjs \
 `preflight` has three tests: Rust fixture/query admission, real Rust edit/rename,
 and public upstream writer invocation. The probe does not call open-sheet's
 evaluator. A missing executable/package/seam is an environment failure, not a
-behavioral RED. Preserve results in the owning Issue and return to the Steward;
-passing preflight does not self-authorize implementation.
+behavioral RED. While the Issue is not Ready, return the results to the Steward.
+After a live Ready decision, public-package preflight is the first implementation
+checkpoint: failure blocks further adapter work until reconciled. It never
+authorizes a production dependency, wider scope or upstream changes.
+
+## Native CI bridge and behavioral RED
+
+`crates/cli/tests/open_sheet_acceptance.rs` uses Cargo's real built `tachiko`
+executable to run `native_ci.py` under the existing push CI. No workflow file
+is changed. This stdlib-only bridge uses the runner's Python 3 directly; it
+installs no Python dependency and does not require uv on the hosted image.
+
+```sh
+cargo test -p tachiko-cli --test open_sheet_acceptance --locked
+```
+
+The native subset adds schema/scalar query evidence and tests the exporter
+process. It intentionally does not select the public-package probe or Office
+case; these remain separate mandatory delivery gates, not skipped passes.
+The default process is the checked-in `export.mjs`, which currently reports
+`PROBE_NOT_IMPLEMENTED`. After Ready, implement that entry point (and local
+modules) rather than mocking the test reader or changing expected outcomes.
 
 ## Disposable exporter boundary, after Ready only
 
@@ -91,7 +111,7 @@ Set `OPEN_SHEET_POC_COMMAND` to a JSON argv array for the future experiment's
 entry point. The tests append `--request <request.json>`. For example:
 
 ```sh
-export OPEN_SHEET_POC_COMMAND='["node","/absolute/path/to/experiment/run.mjs"]'
+export OPEN_SHEET_POC_COMMAND='["node","/absolute/path/to/experiments/open-sheet-export/export.mjs"]'
 uv run --no-project --no-managed-python python \
   experiments/open-sheet-export/acceptance.py --mode acceptance
 ```
@@ -163,15 +183,31 @@ broader compatibility remain under their existing owners.
 
 ## Actual seed evidence, 2026-09-07 JST
 
-- `self-check`: **8 tests PASS**, checking the oracle only.
-- Python `py_compile` and Node `--check`: **PASS**.
-- `preflight`: **0 tests ran; setup failed because TACHIKO_BIN is unavailable**.
-- Rust/Cargo/pnpm and real upstream package execution: **not run**.
-- Adapter behavioral acceptance and real Office recalculation: **not run**.
-- Independent review and full repository gates: **not run**.
+Local checks: 8 oracle self-checks PASS; Python syntax and Node syntax PASS.
+The first local runtime attempt ran zero tests because TACHIKO_BIN was absent;
+that initial environment failure was not used as behavioral RED.
 
-The execution container cannot resolve github.com; GitHub connector access was
-used for source inspection and seed publication. No dependency, formula-engine,
-SDK, production UI, storage or CI changes are included. The current seed is
-reviewable and executable, but unqualified runtime evidence must be collected
-before the Steward can mark the implementation Issue Ready.
+The later [hosted native run](https://github.com/nurockplayer/tachiko-work/actions/runs/34063666072/job/101568604416)
+executed at exact code seed `5566d30bf12fc5c1620298551d8267e069ecdf8d`:
+
+- 3 native query/admission/edit/rename preflights PASS; two are also repeated
+  successfully by the export class (5 passing test executions in total).
+- All 13 exporter test methods reached the unimplemented process and FAIL as
+  expected. Including operator/layout subcases, unittest reports 18 methods
+  run and 19 failure records. There are no setup errors in this hosted run.
+- Rust compilation, formatting, docs consistency, repository tooling,
+  dependency-layer check and Clippy PASS before the intended test failure.
+  The existing 62 CLI tests also PASS. Cargo's overall test step FAILS;
+  downstream steps blocked behind it are not claimed green.
+
+This is native boundary and missing-exporter RED evidence, not proof that
+open-sheet runs or XLSX calculations match an office engine. Public-package
+execution, real Office recalculation, production adapter/unit tests and fresh
+independent implementation review remain mandatory and unverified. The current
+README update changes no executable test or fixture from the tested code seed.
+
+The initial local container lacks Rust/Cargo/pnpm and cannot resolve github.com;
+GitHub connector source/branch access and existing hosted CI supplied the native
+execution evidence. No production dependency, semantic engine, SDK, UI, storage
+or CI workflow changes are included. The live Issue records the Steward's
+readiness decision and the bounded remaining dependency/Office evidence plan.
