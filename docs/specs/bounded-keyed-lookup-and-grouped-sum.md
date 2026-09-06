@@ -50,10 +50,12 @@ dependency root or definition change.
 
 Ambiguity candidate sets, diagnostics, and a Complete group map are bounded
 complete Query projections. Once trusted Query coverage permits classifying the
-complete outcome, an applicable finite result profile may return structured
-`result-too-large`; that makes the definition Unavailable and MUST NOT truncate,
-sample, implicitly paginate, or expose a partial candidate/diagnostic/group
-collection as complete. Exact limits and DTO spelling remain Provisional.
+complete outcome, an applicable trusted deterministic finite result profile may
+return structured `result-too-large`; that makes the definition Unavailable and
+MUST NOT truncate, sample, implicitly paginate, or expose a partial candidate/
+diagnostic/group collection as complete. Its profile identity is evaluated
+lineage/currentness evidence: changing it makes retained Complete or Unavailable
+output non-current. Exact limits and DTO spelling remain Provisional.
 
 Only the definition is durable semantic meaning. A future persisted shape must
 be versioned/migrated under ADR-0017 and fail closed when unsupported; frozen
@@ -136,6 +138,7 @@ and `services = 10`, with no other group.
 | Save/reopen live | Save definition, change `product-A.price` from `2` to `3`, reopen against that snapshot | Fresh Complete: `hardware = 6`, `services = 10`; stored `4` is not truth. |
 | Stale cache | Retain base output, then change a dependency root | Retained output is non-current; require fresh Complete/Unavailable evaluation. |
 | Result profile | Use a duplicate population, diagnostics, or category groups whose complete projection exceeds the applicable finite result profile | Structured `result-too-large` Unavailable outcome; no partial IDs, diagnostics, groups, truncation, sample, or implicit pagination. |
+| Result-profile change | Retain a Complete or `result-too-large` outcome, then change only the trusted deterministic finite result profile | Retained output becomes non-current; re-evaluation uses the active profile and cannot bypass its bound. |
 | Delta v1 boundary | Create, update, or delete the definition, then request `tachiko.semantic-delta/v1` | Unsupported; it emits neither a partial delta that omits the definition nor a fabricated v1 fact. |
 | Export disclosure | Export base values only and to a hypothetical live-preserving target | Values are evaluated/lossy and source-revision-bound; live claim is rejected unless every admitted semantic is encoded. |
 

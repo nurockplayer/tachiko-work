@@ -163,10 +163,12 @@ Ready authority before it can provide diff or retained-transition evidence for
 this family.
 
 An evaluated result is derived revision-scoped evidence: definition identity,
-exact accepted input snapshot/revision, dependency outcome, and either complete
-group values or unavailable diagnostics. Caches are replaceable derived state.
-They become non-current after a definition/dependency change and MUST NOT be
-shown, diffed, exported, or saved as current live output.
+exact accepted input snapshot/revision, dependency outcome, the trusted
+deterministic finite-result-profile identity when it can change the outcome, and
+either complete group values or unavailable diagnostics. Caches are replaceable
+derived state. They become non-current after a definition/dependency/result-
+profile change and MUST NOT be shown, diffed, exported, or saved as current live
+output.
 
 Saving/reopening preserves a definition, not evaluated group values as semantic
 truth. A reopened definition evaluates the current accepted snapshot. A future
