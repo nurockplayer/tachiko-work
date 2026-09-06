@@ -2,6 +2,8 @@
 
 Status: Accepted governance policy when merged
 
+Decision issue: [#307](https://github.com/nurockplayer/tachiko-work/issues/307)
+
 ## Purpose
 
 This policy increases delivery throughput without weakening proof where failure is expensive. It supplements the canonical [Repository delivery workflow](project-governance.md#repository-delivery-workflow) and keeps the existing one-Ready-Issue -> one-PR decomposition rule.
@@ -76,9 +78,9 @@ For a normal implementation lane, checkpoint when applicable at:
 
 1. **START / ownership established** — exact Issue, branch/PR, base/head, scope boundary, risk class, and next stage;
 2. **IMPLEMENTATION COMPLETE** — bounded implementation is complete enough for the planned validation surface;
-3. **VALIDATION COMPLETE** — acceptance/unit/relevant repository evidence for the current head is recorded;
+3. **VALIDATION COMPLETE** — applicable acceptance/unit/document/repository evidence for the current head is recorded;
 4. **REVIEW FINDINGS RESOLVED** — substantive review findings or Steward challenges are dispositioned on an exact head;
-5. **READY TO MERGE / STOP** — final exact-head state, remaining external gates, or canonical escalation reason is recorded.
+5. **READY TO MERGE / STOP** — terminal exact-head gate results establish merge readiness, or a canonical escalation/stop reason is recorded. Pending CI, hosted review, or other non-terminal asynchronous validation is recorded while the lane remains active and continues waiting.
 
 A stage that does not exist for the task does not need an artificial checkpoint. Multiple local edit-test-fix loops inside one material stage do not require a GitHub write and authority re-read after each iteration.
 
@@ -92,11 +94,11 @@ Validation should shorten the inner implementation loop while preserving exact-h
 
 ### Iteration
 
-Run the smallest targeted unit, acceptance, integration, lint, or build checks that can disprove the current change quickly. Do not repeatedly run an expensive whole-workspace suite after every local edit unless the risk surface requires it.
+Run the smallest targeted unit, acceptance, integration, lint, build, or document checks that can disprove the current change quickly. Do not repeatedly run an expensive whole-workspace suite after every local edit unless the risk surface requires it.
 
 ### PR final head
 
-Before merge, run the Steward-authored acceptance surface, delivery-agent unit tests, and all repository-required or risk-applicable checks against the exact final head. Fast/Standard classification never waives a required hosted check.
+Before merge, run the applicable Steward-authored acceptance surface, applicable delivery-agent unit tests, and all repository-required or risk-applicable checks against the exact final head. When executable product acceptance or unit tests do not apply, the owning Issue must contain the explicit bounded applicability exception decided by the Steward and identify the applicable document/refactor checks and review evidence instead. Fast/Standard classification never waives a required hosted check.
 
 ### Guarded, milestone, and release gates
 
