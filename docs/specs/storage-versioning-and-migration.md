@@ -1,8 +1,8 @@
 # Storage Versioning and Migration Contract
 
 Decision state: Mixed — Accepted invariants under ADR-0017 and Accepted
-`.roproj/v1` namespace, DTO, dispatch, and canonicalization rules under
-ADR-0023; the `.roproj/v2` definition-persistence target under ADR-0037; the distinct portable-package v1 namespace and dispatch boundary are
+`.roproj` namespace format-1 DTO, dispatch, and canonicalization rules under
+ADR-0023; the format-2 definition-persistence target under ADR-0037; the distinct portable-package v1 namespace and dispatch boundary are
 Accepted under ADR-0025; direct-JSON Milestone 02 representation mechanics are
 Provisional where marked.
 
@@ -16,7 +16,8 @@ The separately Accepted portable-package v1 codec, content-framed
 reader, bounded host workflow, and CLI pack/unpack/compare operations are
 implemented by #3.
 
-Authority: ADR-0017; ADR-0023 for `.roproj/v1`; ADR-0037 for `.roproj/v2`;
+Authority: ADR-0017; ADR-0023 for `.roproj` format version 1; ADR-0037 for
+format version 2;
 ADR-0025 for
 `tachiko.portable-package/v1`
 
@@ -30,8 +31,9 @@ Conformance and identity integration: #40, #70
 
 Define how Tachiko Work selects persisted representation versions, separates versioned storage DTOs from semantic-core, handles unsupported or malformed versions, and performs explicit migration without silently changing durable state.
 
-This specification records the Accepted `.roproj/v1` and `.roproj/v2` representation namespaces,
-manifest-first dispatch, canonical-tree, and bounded-canonicalizer contract in
+This specification records the Accepted `.roproj` editable-directory
+representation namespace and its format versions 1 and 2, manifest-first
+dispatch, canonical-tree, and bounded-canonicalizer contract in
 [ADR-0023](../decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md),
 [roproj-layout-v1.md](roproj-layout-v1.md), and
 [roproj-format.md](roproj-format.md), plus the v2 target in

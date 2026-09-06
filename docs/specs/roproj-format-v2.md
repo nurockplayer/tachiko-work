@@ -6,7 +6,7 @@ Implementation state: Not implemented. This versioned DTO contract grants no
 production storage, runtime, CLI, Designer, API, or package implementation
 authority.
 
-Representation namespace: `.roproj/v2`
+Editable-directory namespace: `.roproj`; format version: `2`
 
 Authority: [ADR-0037](../decisions/ADR-0037-roproj-v2-keyed-grouped-sum-persistence.md),
 constrained by ADR-0015, ADR-0017, ADR-0018, ADR-0019, ADR-0023, and ADR-0036
@@ -24,9 +24,10 @@ The words **MUST**, **MUST NOT**, **SHOULD**, and **MAY** are normative.
 
 ## Representation ownership
 
-`.roproj/v2` is its own representation namespace. Its `format_version` value
-`2` does not select `legacy-direct-ro/v1`, `direct-ro/v2`, a semantic-model
-version, or the distinct Accepted `tachiko.portable-package/v1` profile.
+`.roproj/v2` is format version `2` in the existing `.roproj`
+editable-directory representation namespace. Its `format_version` value does
+not select `legacy-direct-ro/v1`, `direct-ro/v2`, a semantic-model version, or
+the distinct Accepted `tachiko.portable-package/v1` profile.
 
 These DTOs are owned by `.roproj/v2`. They are independent of:
 
