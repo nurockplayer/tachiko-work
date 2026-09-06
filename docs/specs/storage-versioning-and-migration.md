@@ -7,7 +7,8 @@ Accepted under ADR-0025; direct-JSON Milestone 02 representation mechanics are
 Provisional where marked.
 
 Implementation state: Implemented for frozen `legacy-direct-ro/v1`, explicit
-deterministic v1→v2 migration, canonical identity-aware `direct-ro/v2`, and the
+deterministic `legacy-direct-ro/v1` → `direct-ro/v2` migration, canonical
+identity-aware `direct-ro/v2`, and the
 normal direct-JSON Stage-0 admission profile. The Accepted `.roproj/v1`
 contract is implemented by production `tachiko-storage` plus explicit CLI host
 operations. `.roproj/v2` is Accepted authority only and remains unimplemented.

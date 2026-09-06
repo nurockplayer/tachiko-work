@@ -147,8 +147,9 @@ Future production implementation and conformance work must independently show:
 - explicit v1→v2 migration is deterministic, produces the exact empty
   `definitions.json`, and leaves its source intact;
 - one admitted definition has deterministic v2 bytes despite construction/map
-  order, and create/update/delete retain its stable definition identity across
-  save/reopen;
+  order; create and update preserve its stable definition identity across
+  save/reopen, while delete removes the record addressed by that identity and
+  does not recreate it;
 - mutable schema/field labels and view/storage presentation changes leave the
   definition's stable bindings and canonical definition bytes unchanged;
 - evaluated cache/result/revision bytes are absent from canonical output and

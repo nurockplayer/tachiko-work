@@ -13,7 +13,7 @@ Related authority: [ADR-0015](ADR-0015-stable-semantic-identity.md),
 [ADR-0018](ADR-0018-bound-formulas-and-deterministic-binary64.md),
 [ADR-0019](ADR-0019-staged-semantic-validation-and-diagnostics.md),
 [ADR-0020](ADR-0020-first-class-headless-semantic-api.md),
-[ADR-0027](ADR-0027-open-format-and-interoperability-policy.md), and
+[ADR-0027](ADR-0027-open-format-and-interoperability-policy.md),
 [ADR-0029](ADR-0029-current-state-authority-and-optional-history.md), and
 [ADR-0037](ADR-0037-roproj-v2-keyed-grouped-sum-persistence.md)
 
