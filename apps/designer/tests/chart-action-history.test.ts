@@ -283,6 +283,24 @@ it("rejects a stale chart draft without changing the existing action branches", 
   expect(client.trackerCommand).toHaveBeenCalledOnce();
 });
 
+it("rejects a chart draft after presentation undo without consuming redo", async () => {
+  const { root, client } = await setup();
+  await createChart(root);
+  control(root, /^Edit chart$/).click();
+  fill(root, "Chart title", "Presentation-stale edit");
+
+  control(root, /^Undo\b/i).click();
+  expect(control(root, /^Redo\b/i).disabled).toBe(false);
+  control(root, /^Apply chart$/).click();
+  expect(root.querySelector(".report-editor")?.textContent).toContain("presentation changed");
+  expect(control(root, /^Redo\b/i).disabled).toBe(false);
+  expect(client.trackerCommand).not.toHaveBeenCalled();
+
+  control(root, /^Redo\b/i).click();
+  control(root, /^Cancel$/).click();
+  await vi.waitFor(() => { expect(root.querySelector(".report-card-title")?.textContent).toBe("Report"); });
+});
+
 it("bounds combined semantic, view, and chart history at 64 actions", async () => {
   const host = document.createElement("div");
   const source = table(true);
@@ -328,4 +346,8 @@ it("bounds combined semantic, view, and chart history at 64 actions", async () =
   await vi.waitFor(() => { expect(command).toHaveBeenCalledOnce(); });
   expect(command).toHaveBeenCalledWith({ type: "undo", expected_revision: "resident/0" });
   expect(grid.view.charts).toEqual([chart]);
+  expect(host.querySelector<HTMLButtonElement>('[data-tracker="undo"]')?.disabled).toBe(true);
+  const afterBoundedUndo = structuredClone(grid.view.charts);
+  host.querySelector<HTMLButtonElement>('[data-tracker="undo"]')?.click();
+  expect(grid.view.charts).toEqual(afterBoundedUndo);
 });
