@@ -367,6 +367,11 @@ class RuntimePreflight(unittest.TestCase):
         node = shutil.which("node")
         if node is None:
             raise RuntimeError("ENVIRONMENT UNVERIFIED: Node is missing")
+        consumer = os.environ.get("OPEN_SHEET_CONSUMER_DIR")
+        if not consumer or not Path(consumer).is_dir():
+            raise RuntimeError(
+                "ENVIRONMENT UNVERIFIED: set OPEN_SHEET_CONSUMER_DIR to the pinned scratch consumer"
+            )
         output = self.directory / "upstream-probe.xlsx"
         report = json.loads(run([node, str(ROOT / "public-seam-probe.mjs"),
                                  "--output", str(output)]).stdout)
