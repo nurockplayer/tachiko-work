@@ -35,8 +35,10 @@ def write_json(path: Path, value: object) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def run(command: list[str], *, success: bool = True) -> subprocess.CompletedProcess:
-    result = subprocess.run(command, text=True, capture_output=True, timeout=180, check=False)
+def run(command: list[str], *, success: bool = True,
+        environment: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+    result = subprocess.run(command, text=True, capture_output=True, timeout=180, check=False,
+                            env=environment)
     if success and result.returncode != 0:
         raise AssertionError(f"Command failed: {command!r}\n{result.stderr}")
     return result
@@ -520,6 +522,31 @@ class ExportAcceptance(RuntimePreflight):
     def test_export_destination_inside_source_is_rejected(self):
         evidence = self.export(output=self.project / "forbidden.xlsx", success=False)
         self.assertEqual(evidence["code"], "invalid_output")
+
+    def test_failed_native_snapshot_validation_cleans_the_captured_copy(self):
+        before = set(Path(tempfile.gettempdir()).glob("tachiko-open-sheet-snapshot-*"))
+        source_before = tree_digest(self.project)
+        with tempfile.TemporaryDirectory(dir=self.directory) as request_dir:
+            directory = Path(request_dir)
+            output = directory / "export.xlsx"
+            request = {
+                "source": str(self.project),
+                "expected_source_revision": self.revision(self.project),
+                "projection": FIXTURE["layouts"]["base"],
+                "output": str(output),
+            }
+            path = directory / "request.json"
+            write_json(path, request)
+            process = run(
+                [*self.driver, "--request", str(path)],
+                success=False,
+                environment=os.environ | {"TACHIKO_BIN": str(directory / "missing-tachiko")},
+            )
+            self.assertEqual(json.loads(process.stdout)["code"], "unsupported_value")
+            self.assertFalse(output.exists())
+        self.assertEqual(tree_digest(self.project), source_before)
+        after = set(Path(tempfile.gettempdir()).glob("tachiko-open-sheet-snapshot-*"))
+        self.assertFalse(after - before, "failed capture left a source snapshot behind")
 
     def test_boolean_values_do_not_turn_into_numbers(self):
         with tempfile.TemporaryDirectory(dir=self.directory) as work:

@@ -58,9 +58,14 @@ async function captureSnapshot(source) {
   }
   const directory = await mkdtemp(resolve(tmpdir(), 'tachiko-open-sheet-snapshot-'));
   const snapshot = resolve(directory, basename(canonicalSource));
-  await cp(canonicalSource, snapshot, { recursive: true, force: false, errorOnExist: true });
-  await cli('roproj', 'validate', snapshot);
-  return { directory, snapshot, canonicalSource };
+  try {
+    await cp(canonicalSource, snapshot, { recursive: true, force: false, errorOnExist: true });
+    await cli('roproj', 'validate', snapshot);
+    return { directory, snapshot, canonicalSource };
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 function projectionLocations(projection) {

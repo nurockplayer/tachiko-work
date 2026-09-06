@@ -181,6 +181,7 @@ engine requires a recorded bounded harness reconciliation, not a fake binary.
 | Real changed source, same bound targets | `test_changed_input_and_rename_reexport_from_current_rust_source` |
 | Stale/missing/ambiguous/unsupported input rejection | Four corresponding `test_*rejected*` / unsupported-value cases |
 | No overwrite or source-directory pollution | Destination-preservation and inside-source rejection cases |
+| Failed snapshot acquisition leaves no copied source | `test_failed_native_snapshot_validation_cleans_the_captured_copy` |
 | Formula shape, not just equal current values | `test_all_current_formula_operators_preserve_expression_shape`; `verify_book` |
 | Text/Boolean fidelity, growth, repeatable observable export | Literal-text, Boolean, grown-source and repeated-snapshot cases |
 | Actual Office arithmetic without trusting export caches | `OfficeAcceptance.test_uncached_exports_recalculate_in_real_office_engine` |
@@ -215,9 +216,9 @@ checks pass on the implementation candidate:
 - `acceptance.py --mode preflight`: 3 checks against the independent scratch
   public-package consumer.
 - `pnpm --dir experiments/open-sheet-export test`: 2 adapter unit tests.
-- `acceptance.py --mode acceptance`: 16 runtime/export checks, including
+- `acceptance.py --mode acceptance`: 17 runtime/export checks, including
   formula shape, styles, source preservation, changed-source export and every
-  required rejection path.
+  required rejection path, including failed snapshot cleanup.
 - `cargo test -p tachiko-cli --test open_sheet_acceptance --locked`: the
   existing Cargo CI bridge passes.
 - `cargo fmt --all -- --check`, `node scripts/workspace-dependency-check.mjs`,
