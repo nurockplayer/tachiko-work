@@ -52,6 +52,14 @@ exported/diffed as current output. Values-only export must be labelled
 evaluated/lossy and source-revision-bound; live preservation requires encoding
 the whole admitted semantic contract.
 
+`tachiko.semantic-delta/v1` cannot represent this definition. A snapshot pair
+whose definition set differs is unsupported by that v1 contract: a requested
+v1 diff fails and never omits the definition change or returns a partial delta.
+That does not block current-snapshot publication, because delta and retained
+semantic transitions are optional derived evidence rather than mutation
+authority. A future versioned delta/direct-target/order/conflict contract is
+separately Ready work before any diff or retained-transition support exists.
+
 ## Semantic API, capability, and disclosure boundary
 
 Evaluation is a distinct Semantic API Query operation family. Definition
@@ -114,6 +122,7 @@ and `services = 10`, with no other group.
 | Empty Orders | Remove every Orders entity while definitions/fields remain valid | Complete empty group map; no synthetic category/group. |
 | Save/reopen live | Save definition, change `product-A.price` from `2` to `3`, reopen against that snapshot | Fresh Complete: `hardware = 6`, `services = 10`; stored `4` is not truth. |
 | Stale cache | Retain base output, then change a dependency root | Retained output is non-current; require fresh Complete/Unavailable evaluation. |
+| Delta v1 boundary | Create, update, or delete the definition, then request `tachiko.semantic-delta/v1` | Unsupported; it emits neither a partial delta that omits the definition nor a fabricated v1 fact. |
 | Export disclosure | Export base values only and to a hypothetical live-preserving target | Values are evaluated/lossy and source-revision-bound; live claim is rejected unless every admitted semantic is encoded. |
 
 ## Deferred extensions and decomposition
