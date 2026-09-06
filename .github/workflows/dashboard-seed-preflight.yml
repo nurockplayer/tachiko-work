@@ -1,0 +1,44 @@
+name: Dashboard operational seed preflight
+on:
+  push:
+    branches: ["chatgpt/issue-229-positive-only-acceptance"]
+    paths: ["tools/project-dashboard/**", ".github/workflows/dashboard-seed-preflight.yml"]
+permissions:
+  contents: read
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          version: 11.25.0
+          run_install: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+      - name: Materialize package-local seed dependency state (not a shipping gate)
+        id: prepare
+        run: |
+          node --version
+          pnpm --version
+          pnpm --dir tools/project-dashboard install --no-frozen-lockfile
+          node --input-type=module -e "import{readFileSync}from'node:fs';import{gzipSync}from'node:zlib';console.log('SEED_LOCK_GZIP_BASE64='+gzipSync(readFileSync('tools/project-dashboard/pnpm-lock.yaml')).toString('base64'))"
+          git hash-object tools/project-dashboard/pnpm-lock.yaml
+          pnpm --dir tools/project-dashboard install --frozen-lockfile
+          pnpm --dir tools/project-dashboard exec playwright install --with-deps chromium
+      - name: Typecheck all seeded tests
+        id: typecheck
+        run: pnpm --dir tools/project-dashboard typecheck
+      - name: Preserve existing acceptance
+        run: pnpm --dir tools/project-dashboard test:acceptance
+      - name: Existing unit and fixture self-checks
+        run: pnpm --dir tools/project-dashboard exec vitest run tests/unit tests/harness
+      - name: Operational HTTP and ingestion acceptance (deliberate stub RED)
+        if: ${{ !cancelled() && steps.typecheck.outcome == 'success' }}
+        run: pnpm --dir tools/project-dashboard test:operational
+      - name: Real-browser acceptance (deliberate stub RED)
+        if: ${{ !cancelled() && steps.typecheck.outcome == 'success' }}
+        run: pnpm --dir tools/project-dashboard test:browser

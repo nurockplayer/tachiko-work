@@ -10,9 +10,13 @@
   "scripts": {
     "test": "vitest run",
     "test:acceptance": "vitest run tests/acceptance",
+    "test:operational": "vitest run tests/operational",
+    "test:browser": "playwright test",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@types/node": "26.4.0",
     "typescript": "6.0.3",
     "vitest": "4.1.11"
   }
