@@ -70,7 +70,7 @@ mkdir -p "${source_work}/.github/workflows"
 "${real_git}" -C "${source_work}" config user.name "DR Contract Fixture"
 "${real_git}" -C "${source_work}" config user.email "dr-contract-fixture@example.invalid"
 printf 'main-v1\n' >"${source_work}/tracked.txt"
-printf 'name: WORKFLOW_DEFINITION_SENTINEL\non: workflow_dispatch\njobs: {}\n' \
+printf 'name: WORKFLOW_DEFINITION_SENTINEL\n"on": workflow_dispatch\njobs: {}\n' \
   >"${source_work}/.github/workflows/dr-fixture.yml"
 "${real_git}" -C "${source_work}" add tracked.txt .github/workflows/dr-fixture.yml
 "${real_git}" -C "${source_work}" commit --quiet -m "fixture main v1"
