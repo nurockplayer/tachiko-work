@@ -7,9 +7,10 @@ use tachiko_workspace_engine::{
     DiagnosticCode, Document, DocumentId, Expression, FieldId, FieldRef, Number, SemanticSubject,
     ValidationRole, Value, WorkspaceError, compare_documents,
     formula_operations::{
-        FormulaCalculationOutcome, FormulaOperationError, FormulaReasoningOutcome,
-        FormulaUpdateRequest, NumberOverride, ScenarioEnvelopeError, ScenarioOutcome,
-        ScenarioOverrideFailure, ScenarioRequest, ScenarioTargetOutcome, ValidatorConfiguration,
+        FormulaCalculationOutcome, FormulaInverseRestoreRequest, FormulaOperationError,
+        FormulaReasoningOutcome, FormulaUpdateRequest, NumberOverride, ScenarioEnvelopeError,
+        ScenarioOutcome, ScenarioOverrideFailure, ScenarioRequest, ScenarioTargetOutcome,
+        ValidatorConfiguration,
     },
     patch_lifecycle::{
         ApprovalId, ApprovalRequest, ApprovalStatus, AuthorizationAction, AuthorizationDomainId,
@@ -103,6 +104,13 @@ fn mutation_requirement(
     scope: ScopedSemanticSubject,
 ) -> GrantRequirement {
     GrantRequirement::mutation(action, family, mutation_class, scope).unwrap()
+}
+
+fn assert_missing_proposal(lifecycle: &PatchLifecycle, proposal_id: &ProposalId) {
+    assert!(matches!(
+        lifecycle.proposal_history(proposal_id),
+        Err(PatchLifecycleError::ProposalNotFound)
+    ));
 }
 
 #[test]
@@ -938,6 +946,111 @@ fn formula_update_admission_and_gate_failures_preserve_proposal_boundary() {
     assert!(lifecycle.proposal_history(&cycle_id).is_ok());
     assert!(lifecycle.execution_receipts().is_empty());
     assert_eq!(document, game_balance_document("game", "Game"));
+}
+
+#[test]
+fn formula_inverse_restore_keeps_stale_denied_and_nonformula_attempts_nonpublishing() {
+    let document = game_balance_document("game", "Game");
+    let original = document.clone();
+    let mut lifecycle = lifecycle();
+    grant(
+        &mut lifecycle,
+        "inverse-query",
+        "agent",
+        vec![query_requirement(
+            OperationFamily::FormulaInverseRestore,
+            document_scope(),
+        )],
+    );
+
+    let stale_id = ProposalId::from("inverse-stale");
+    let stale = lifecycle
+        .propose_formula_inverse_restore(
+            &document_scope_id(),
+            &document,
+            &revision("r1"),
+            FormulaInverseRestoreRequest::new(
+                stale_id.clone(),
+                revision("r0"),
+                FieldRef::new("iron_sword", "dps"),
+                Number::new(40.0).unwrap(),
+                principal("agent"),
+            ),
+            NOW,
+        )
+        .unwrap_err();
+    assert!(matches!(stale, PatchLifecycleError::Stale));
+    assert_missing_proposal(&lifecycle, &stale_id);
+
+    let denied_id = ProposalId::from("inverse-denied");
+    let denied = lifecycle
+        .propose_formula_inverse_restore(
+            &document_scope_id(),
+            &document,
+            &revision("r1"),
+            FormulaInverseRestoreRequest::new(
+                denied_id.clone(),
+                revision("r1"),
+                FieldRef::new("iron_sword", "dps"),
+                Number::new(40.0).unwrap(),
+                principal("agent"),
+            ),
+            NOW,
+        )
+        .unwrap_err();
+    assert!(
+        matches!(
+            denied,
+            PatchLifecycleError::InsufficientCapability {
+                action: AuthorizationAction::Propose
+            }
+        ),
+        "expected mutation authorization denial, got {denied:?}"
+    );
+    assert_missing_proposal(&lifecycle, &denied_id);
+
+    for (id, mutation_class) in [
+        ("inverse-value", MutationClass::Value),
+        ("inverse-formula", MutationClass::Formula),
+        ("inverse-destructive", MutationClass::Destructive),
+    ] {
+        grant(
+            &mut lifecycle,
+            id,
+            "agent",
+            vec![mutation_requirement(
+                AuthorizationAction::Propose,
+                OperationFamily::FormulaInverseRestore,
+                mutation_class,
+                document_scope(),
+            )],
+        );
+    }
+
+    let nonformula_id = ProposalId::from("inverse-nonformula");
+    let nonformula = lifecycle
+        .propose_formula_inverse_restore(
+            &document_scope_id(),
+            &document,
+            &revision("r1"),
+            FormulaInverseRestoreRequest::new(
+                nonformula_id.clone(),
+                revision("r1"),
+                FieldRef::new("iron_sword", "damage"),
+                Number::new(40.0).unwrap(),
+                principal("agent"),
+            ),
+            NOW,
+        )
+        .unwrap_err();
+    assert!(matches!(
+        nonformula,
+        PatchLifecycleError::CommandRejected { source }
+            if matches!(*source, WorkspaceError::NotFormula { .. })
+    ));
+    assert_missing_proposal(&lifecycle, &nonformula_id);
+    assert!(lifecycle.execution_receipts().is_empty());
+    assert_eq!(document, original);
 }
 
 #[test]

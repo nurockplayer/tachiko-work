@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
 
 use tachiko_designer_runtime::{
-    DesignerRequest, DesignerResponse, DesignerRuntime, FieldProjection, open_project,
+    DesignerRequest, DesignerResponse, DesignerRuntime, FieldProjection, FieldTarget, open_project,
 };
 use tachiko_workspace_engine::{
-    Document, Entity, EntityId, EntityKey, FieldDefinition, FieldId, FieldKey, FieldType, Number,
-    Schema, SchemaId, SchemaKey, Value,
+    Document, Entity, EntityId, EntityKey, Expression, FieldDefinition, FieldId, FieldKey,
+    FieldRef, FieldType, Number, Schema, SchemaId, SchemaKey, Value,
 };
 
 const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000300";
@@ -15,20 +15,52 @@ fn fixture() -> DesignerRuntime {
     let mut document = Document::empty("formula_history", "Formula history");
     let schema = SchemaId::from("items");
     let field = FieldId::from("n");
+    let source = FieldId::from("source");
+    let dependent = FieldId::from("dependent");
+    let label = FieldId::from("label");
     document.schemas.insert(
         schema.clone(),
         Schema {
             id: schema.clone(),
             key: SchemaKey::from("items"),
-            fields: BTreeMap::from([(
-                field.clone(),
-                FieldDefinition {
-                    id: field.clone(),
-                    key: FieldKey::from("n"),
-                    field_type: FieldType::Number,
-                    required: true,
-                },
-            )]),
+            fields: BTreeMap::from([
+                (
+                    field.clone(),
+                    FieldDefinition {
+                        id: field.clone(),
+                        key: FieldKey::from("n"),
+                        field_type: FieldType::Number,
+                        required: true,
+                    },
+                ),
+                (
+                    source.clone(),
+                    FieldDefinition {
+                        id: source.clone(),
+                        key: FieldKey::from("source"),
+                        field_type: FieldType::Number,
+                        required: true,
+                    },
+                ),
+                (
+                    dependent.clone(),
+                    FieldDefinition {
+                        id: dependent.clone(),
+                        key: FieldKey::from("dependent"),
+                        field_type: FieldType::Number,
+                        required: true,
+                    },
+                ),
+                (
+                    label.clone(),
+                    FieldDefinition {
+                        id: label.clone(),
+                        key: FieldKey::from("label"),
+                        field_type: FieldType::Text,
+                        required: true,
+                    },
+                ),
+            ]),
         },
     );
     document.entities.insert(
@@ -37,7 +69,18 @@ fn fixture() -> DesignerRuntime {
             id: EntityId::from("r1"),
             key: EntityKey::from("r1"),
             schema,
-            fields: BTreeMap::from([(field, Value::Number(Number::new(2.0).unwrap()))]),
+            fields: BTreeMap::from([
+                (field, Value::Number(Number::new(2.0).unwrap())),
+                (source, Value::Number(Number::new(5.0).unwrap())),
+                (
+                    dependent,
+                    Value::Formula(Expression::Add {
+                        left: Box::new(Expression::Reference(FieldRef::new("r1", "n"))),
+                        right: Box::new(Expression::Number(Number::new(1.0).unwrap())),
+                    }),
+                ),
+                (label, Value::Text("one".to_owned())),
+            ]),
         },
     );
     DesignerRuntime::from_document(document, OCCURRENCE).unwrap()
@@ -66,6 +109,82 @@ fn formula(runtime: &mut DesignerRuntime, revision: u32, source: &str) {
             source: source.to_owned(),
         })
         .unwrap();
+}
+
+/// Rejected nonnumeric targets must be classified by `FormulaUpdate` lifecycle admission.
+#[test]
+fn rejected_nonnumeric_formula_target_does_not_preempt_lifecycle_admission_or_history() {
+    let mut runtime = fixture();
+    let before = runtime.export_project("resident/0").unwrap().bytes;
+    let error = runtime
+        .handle(DesignerRequest::FormulaUpdate {
+            expected_revision: "resident/0".to_owned(),
+            target: "r1.label".into(),
+            source: "1".to_owned(),
+        })
+        .expect_err("a Text target must be rejected by FormulaUpdate admission");
+    assert_eq!(error.failure_projection("resident/0").code, "edit_rejected");
+    assert_eq!(runtime.export_project("resident/0").unwrap().bytes, before);
+
+    formula(&mut runtime, 0, "3");
+    runtime
+        .handle(DesignerRequest::Undo {
+            expected_revision: "resident/1".to_owned(),
+        })
+        .expect("the rejected request must not create or corrupt formula history");
+    assert!(field(&mut runtime, 2).formula.is_none());
+}
+
+/// Removing a formula dependency must refresh dependent calculations through normal publication.
+#[test]
+fn formula_inverse_refreshes_dependent_calculations_and_invalidation() {
+    let mut runtime = fixture();
+    let DesignerResponse::Published(applied) = runtime
+        .handle(DesignerRequest::FormulaUpdate {
+            expected_revision: "resident/0".to_owned(),
+            target: "r1.n".into(),
+            source: "[r1.source] + 1".to_owned(),
+        })
+        .expect("the numeric formula must publish")
+    else {
+        panic!("expected formula publication")
+    };
+    assert!(
+        applied
+            .affected_calculations
+            .contains(&FieldTarget::from("r1.dependent"))
+    );
+
+    let DesignerResponse::Published(restored) = runtime
+        .handle(DesignerRequest::Undo {
+            expected_revision: "resident/1".to_owned(),
+        })
+        .expect("the scalar inverse must publish")
+    else {
+        panic!("expected inverse publication")
+    };
+    assert!(
+        restored
+            .affected_calculations
+            .contains(&FieldTarget::from("r1.dependent"))
+    );
+    let DesignerResponse::Fields(mut fields) = runtime
+        .handle(DesignerRequest::QueryFields {
+            expected_revision: "resident/2".to_owned(),
+            fields: vec!["r1.dependent".into()],
+        })
+        .expect("the restored dependency must remain queryable")
+    else {
+        panic!("expected dependent field projection")
+    };
+    assert_eq!(
+        fields
+            .fields
+            .remove(0)
+            .calculated
+            .and_then(|value| value.number()),
+        Some(3.0)
+    );
 }
 
 /// A scalar-to-formula action must round-trip through Undo and Redo without losing meaning.
@@ -229,9 +348,28 @@ fn rejected_formula_update_preserves_the_existing_formula_history_directions() {
             .map(|value| value.source.as_str()),
         Some("4")
     );
+    runtime
+        .handle(DesignerRequest::Undo {
+            expected_revision: "resident/4".to_owned(),
+        })
+        .expect("the rejected request must preserve the newer inverse direction");
+    runtime
+        .handle(DesignerRequest::Undo {
+            expected_revision: "resident/5".to_owned(),
+        })
+        .expect("the rejected request must preserve the earlier undo direction");
+    let restored = field(&mut runtime, 6);
+    assert!(restored.formula.is_none());
+    assert_eq!(
+        restored.stored.and_then(|value| match value {
+            tachiko_designer_runtime::StoredValueProjection::Number { value } => Some(value),
+            _ => None,
+        }),
+        Some(2.0)
+    );
 }
 
-/// Stale and semantic-NoChange formula attempts must leave a pending Redo usable.
+/// Stale and semantic-NoChange formula attempts must leave both history directions usable.
 #[test]
 fn stale_and_no_change_formula_attempts_preserve_existing_history_directions() {
     let mut runtime = fixture();
@@ -277,5 +415,24 @@ fn stale_and_no_change_formula_attempts_preserve_existing_history_directions() {
             .as_ref()
             .map(|value| value.source.as_str()),
         Some("4")
+    );
+    runtime
+        .handle(DesignerRequest::Undo {
+            expected_revision: "resident/4".to_owned(),
+        })
+        .expect("stale and NoChange attempts must preserve the newer inverse direction");
+    runtime
+        .handle(DesignerRequest::Undo {
+            expected_revision: "resident/5".to_owned(),
+        })
+        .expect("stale and NoChange attempts must preserve the earlier undo direction");
+    let restored = field(&mut runtime, 6);
+    assert!(restored.formula.is_none());
+    assert_eq!(
+        restored.stored.and_then(|value| match value {
+            tachiko_designer_runtime::StoredValueProjection::Number { value } => Some(value),
+            _ => None,
+        }),
+        Some(2.0)
     );
 }

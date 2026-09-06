@@ -966,8 +966,11 @@ impl DesignerRuntime {
         target: &FieldTarget,
         source: &str,
     ) -> Result<PublicationProjection, DesignerError> {
-        let inverse = self.formula_inverse_action(target)?;
-        let publication = self.publish_formula_update(expected_revision, target, source)?;
+        let mut inverse = None;
+        let publication =
+            self.publish_formula_update(expected_revision, target, source, Some(&mut inverse))?;
+        let inverse =
+            inverse.ok_or_else(|| tracker_error("accepted formula inverse is unavailable"))?;
         let forward = self
             .formula_sources
             .get(&target.as_field_ref())
@@ -1016,6 +1019,7 @@ impl DesignerRuntime {
         expected_revision: &str,
         target: &FieldTarget,
         source: &str,
+        inverse: Option<&mut Option<HistoryAction>>,
     ) -> Result<PublicationProjection, DesignerError> {
         let snapshot = self.session.export_snapshot();
         // This app-private human request owns its complete lifecycle. Keep
@@ -1058,6 +1062,9 @@ impl DesignerRuntime {
                 "formula proposal did not contain one admitted formula command",
             ));
         };
+        if let Some(inverse) = inverse {
+            *inverse = Some(self.formula_inverse_action(target)?);
+        }
         let mut candidate = snapshot.document().clone();
         let entity = candidate
             .entities
@@ -1648,7 +1655,7 @@ impl DesignerRuntime {
         let result = match action {
             HistoryAction::Commands(commands) => self.publish_commands(expected, commands.clone()),
             HistoryAction::FormulaUpdate { target, source } => {
-                self.publish_formula_update(expected, target, source)
+                self.publish_formula_update(expected, target, source, None)
             }
             HistoryAction::FormulaInverseRestore { target, value } => {
                 self.restore_formula_inverse(expected, target, *value)
