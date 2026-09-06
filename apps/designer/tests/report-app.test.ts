@@ -188,7 +188,7 @@ describe("mounted Designer report integration", () => {
     app.destroy();
   });
 
-  it("clears Tracker undo/redo after accepted chart create, edit, and delete", async () => {
+  it("retains Tracker undo after accepted chart create, edit, and delete", async () => {
     const root = rootElement();
     const app = mountDesigner(root, new TrackerAppClient(), new EmptyHost());
     await app.ready;
@@ -222,11 +222,11 @@ describe("mounted Designer report integration", () => {
     if (apply === null) throw new Error("apply chart control is required");
     apply.click();
     await vi.waitFor(() => { expect(root.querySelector(".report-card-title")?.textContent).toBe("Report"); });
-    expect(undo().disabled).toBe(true);
+    expect(undo().disabled).toBe(false);
     expect(redo().disabled).toBe(true);
-    expect(root.querySelector('[role="status"]')?.textContent).toContain("undo/redo cleared");
+    expect(root.querySelector('[role="status"]')?.textContent).not.toContain("undo/redo cleared");
 
-    // Rebuild a real view-history stack before each subsequent external chart mutation.
+    // Each chart change must preserve earlier real view-history actions.
     format().click();
     expect(undo().disabled).toBe(false);
     const edit = [...root.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Edit chart");
@@ -240,7 +240,7 @@ describe("mounted Designer report integration", () => {
     if (editApply === null) throw new Error("edit apply control is required");
     editApply.click();
     await vi.waitFor(() => { expect(root.querySelector(".report-card-title")?.textContent).toBe("Edited chart"); });
-    expect(undo().disabled).toBe(true);
+    expect(undo().disabled).toBe(false);
     expect(redo().disabled).toBe(true);
 
     format().click();
@@ -249,9 +249,9 @@ describe("mounted Designer report integration", () => {
     if (remove === undefined) throw new Error("delete chart control is required");
     remove.click();
     expect(root.querySelector(".report-card-title")).toBeNull();
-    expect(undo().disabled).toBe(true);
+    expect(undo().disabled).toBe(false);
     expect(redo().disabled).toBe(true);
-    expect(root.querySelector('[role="status"]')?.textContent).toContain("Accepted data and formatting are preserved");
+    expect(root.querySelector('[role="status"]')?.textContent).not.toContain("undo/redo cleared");
     app.destroy();
   });
 
