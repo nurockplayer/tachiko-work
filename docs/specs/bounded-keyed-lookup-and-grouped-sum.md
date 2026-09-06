@@ -57,9 +57,9 @@ diagnostic/group collection as complete. Its profile identity is evaluated
 lineage/currentness evidence: changing it makes retained Complete or Unavailable
 output non-current. Exact limits and DTO spelling remain Provisional.
 
-Only the definition is durable semantic meaning. A future persisted shape must
-be versioned/migrated under ADR-0017 and fail closed when unsupported; frozen
-`.roproj/v1` cannot be widened. Evaluated caches are never saved/displayed/
+Only the definition is durable semantic meaning. ADR-0037 selects
+`.roproj/v2`'s versioned/migrated editable DTO shape; frozen `.roproj/v1`
+cannot be widened and unsupported versions fail closed. Evaluated caches are never saved/displayed/
 exported/diffed as current output. Values-only export must be labelled
 evaluated/lossy and source-revision-bound; live preservation requires encoding
 the whole admitted semantic contract.
@@ -160,7 +160,7 @@ and `services = 10`, with no other group.
 Non-Text/composite keys, cardinality variants, first/last/approximate/wildcard
 lookup, predicates/joins, arbitrary amount expressions, more aggregates, partial
 results, empty groups, persisted Analysis Query, public API/DTO/wire shape,
-storage version, frontend evaluation, and external formula syntax remain Deferred.
+storage implementation, frontend evaluation, and external formula syntax remain Deferred.
 
 After this authority lands, the Steward must decide whether (1) live saved
 definition/exact lookup, (2) grouped reduction/diagnostics, and (3) representation

@@ -7,7 +7,9 @@ materialize/validate/explicit-canonicalize workflow are implemented by #123.
 Issue #3 implements the packaged-`.ro` pure codec, content-framed reader,
 bounded native host workflows, atomic no-replace publication, tracked-source
 comparison, CLI pack/unpack/compare commands, and native/WASM exact-byte
-evidence. Direct JSON remains the current writer.
+evidence for the v1-only payload. ADR-0037's distinct v2-source refusal is
+Accepted authority but is not implemented by this documentation-only decision.
+Direct JSON remains the current writer.
 
 Package profile: `tachiko.portable-package/v1`
 
@@ -33,9 +35,11 @@ package/tracked-source comparison, and stable failure meanings.
 
 The words **MUST**, **MUST NOT**, **SHOULD**, and **MAY** are normative.
 
-The storage crate and CLI implement this contract. The exact container and
-hash logic in the disposable evidence probe remains independent evidence of
-the byte profile, not a product API.
+The storage crate and CLI implement the existing v1 payload behavior. The
+ADR-0037 v2-source classification remains separately unimplemented; this
+authority change does not grant production code work. The exact container and
+hash logic in the disposable evidence probe remains independent evidence of the
+byte profile, not a product API.
 
 ## Representation role and version ownership
 
@@ -605,6 +609,7 @@ text may map them differently but MUST preserve the distinctions.
 | `portable_package.noncanonical_payload` | Payload paths or bytes are not exact canonical `.roproj/v1` representation |
 | `portable_package.invalid_semantic_payload` | Exact decoded payload fails applicable Accepted semantic conversion/validation |
 | `portable_package.source_not_canonical` | Pack source is not an exact supported canonical `.roproj/v1` tree |
+| `portable_package.unsupported_payload_representation` | Pack source selects a recognized but unsupported `.roproj` payload representation/version, including `.roproj/v2` |
 | `portable_package.capacity_exceeded` | Canonical package cannot fit ordinary package-v1 ZIP32 fields/length |
 | `portable_package.resource_limit` | A declared finite host/implementation safety limit below package capacity rejects the input |
 | `portable_package.destination_exists` | Pack or unpack destination is not absent, including a publication race |
@@ -622,6 +627,14 @@ diagnostic envelope, but they may not be collapsed in a way that loses the
 distinction between unsupported version, corruption, noncanonical input,
 semantic invalidity, conflict, capacity, resource admission, destination
 existence, and publication failure.
+
+Before classifying a pack source as `source_not_canonical`, package v1 probes
+its `.roproj` manifest envelope. A recognized `.roproj` version other than its
+sole supported v1 payload returns
+`portable_package.unsupported_payload_representation`; it must not be collapsed
+into noncanonical input, silently canonicalized, down-converted, or packed with
+an omitted payload path. Exact Rust type and public diagnostic spelling remain
+replaceable, but this version distinction is required by ADR-0037.
 
 Every rejection before successful publication is atomic: an absent
 destination remains absent. If the destination existed, it and its contents

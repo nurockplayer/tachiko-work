@@ -191,10 +191,11 @@ amends ADR-0015 through ADR-0022, including stable identity, crate boundaries,
 versioned DTOs and migrations, bound-formula and Number semantics, staged
 validation, Semantic API behavior, and the resident runtime/host boundary.
 
-In particular, `.roproj/v1` is a representation namespace distinct from
-legacy direct `.ro` profiles and any future packaged `.ro` profile. The
-semantic `Document` remains the authority; `.ro` remains derived from
-`.roproj` under ADR-0003.
+In particular, `.roproj/v1` is format version `1` in the `.roproj`
+editable-directory representation namespace, which is distinct from legacy
+direct `.ro` profiles and any future packaged `.ro` profile. The semantic
+`Document` remains the authority; `.ro` remains derived from `.roproj` under
+ADR-0003.
 
 ## Deferred decisions
 

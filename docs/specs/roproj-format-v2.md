@@ -1,24 +1,22 @@
-# Tachiko Work `.roproj/v1` wire DTO specification
+# Tachiko Work `.roproj/v2` wire DTO specification
 
-Decision state: Accepted
+Decision state: Accepted target under [ADR-0037](../decisions/ADR-0037-roproj-v2-keyed-grouped-sum-persistence.md)
 
-Implementation state: Implemented by the production storage-owned
-`tachiko-storage` codec and explicit `tachiko roproj materialize`, `validate`,
-and `canonicalize` operations. Fixed native/`wasm32-unknown-unknown`
-conformance executes production encode, decode, and exact-tree re-encoding.
+Implementation state: Not implemented. This versioned DTO contract grants no
+production storage, runtime, CLI, Designer, API, or package implementation
+authority.
 
-Editable-directory namespace: `.roproj`; format version: `1`
+Editable-directory namespace: `.roproj`; format version: `2`
 
-Authority:
-[ADR-0023](../decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md),
-constrained by ADR-0015, ADR-0017, ADR-0018, and ADR-0019
+Authority: [ADR-0037](../decisions/ADR-0037-roproj-v2-keyed-grouped-sum-persistence.md),
+constrained by ADR-0015, ADR-0017, ADR-0018, ADR-0019, ADR-0023, and ADR-0036
 
-Physical tree authority: [`.roproj/v1` layout](roproj-layout-v1.md)
+Physical tree authority: [`.roproj/v2` layout](roproj-layout-v2.md)
 
 ## Purpose
 
 This specification owns the complete logical wire DTOs and canonical JSON
-spelling for `.roproj/v1`. The layout specification owns the fixed directory
+spelling for `.roproj/v2`. The layout specification owns the fixed directory
 tree, filenames, entity-shard placement, and allowed physical input forms.
 Neither paths nor record positions are semantic identity.
 
@@ -26,12 +24,12 @@ The words **MUST**, **MUST NOT**, **SHOULD**, and **MAY** are normative.
 
 ## Representation ownership
 
-`.roproj/v1` is format version `1` in the `.roproj` editable-directory
-representation namespace. Its `format_version` value does not select
-`legacy-direct-ro/v1`, `direct-ro/v2`, a semantic-model version, or the
-distinct Accepted `tachiko.portable-package/v1` profile.
+`.roproj/v2` is format version `2` in the existing `.roproj`
+editable-directory representation namespace. Its `format_version` value does
+not select `legacy-direct-ro/v1`, `direct-ro/v2`, a semantic-model version, or
+the distinct Accepted `tachiko.portable-package/v1` profile.
 
-These DTOs are owned by `.roproj/v1`. They are independent of:
+These DTOs are owned by `.roproj/v2`. They are independent of:
 
 - semantic-core Rust structs and enum layouts;
 - Rust field declaration order, `serde` derives, attributes, defaults, and
@@ -41,7 +39,7 @@ These DTOs are owned by `.roproj/v1`. They are independent of:
 - the JavaScript probe DTOs in the Issue #41 research record.
 
 A change to one of those implementations or representations MUST NOT change
-`.roproj/v1` bytes. An incompatible change to the DTOs below requires another
+`.roproj/v2` bytes. An incompatible change to the DTOs below requires another
 `.roproj` representation version and an explicit migration.
 
 ## Closed-world and presence rules
@@ -59,6 +57,7 @@ Empty arrays and objects are emitted and accepted where the semantic state
 permits them. In particular:
 
 - a document with no schemas uses `[]` in `schemas.json`;
+- a document with no definitions uses `[]` in `definitions.json`;
 - a schema with no fields uses `"fields": []`;
 - an entity's `fields` member always exists and may be `{}`; and
 - a field declared with `required: false` and having no entity value is absent
@@ -66,7 +65,7 @@ permits them. In particular:
 
 ## Common JSON rules
 
-All JSON values in `.roproj/v1` adopt the Tachiko
+All JSON values in `.roproj/v2` adopt the Tachiko
 [canonical JSON profile](canonical-json-profile.md), with the version-owned
 rules in this specification taking precedence where this specification is more
 specific.
@@ -77,11 +76,33 @@ deterministic string escaping. Lone surrogates and other invalid Unicode input
 are rejected. Duplicate object member names are rejected at every depth after
 JSON escape decoding, so `"a"` and `"\u0061"` are duplicates.
 
-`manifest.json` and `schemas.json` use two ASCII spaces per indentation level,
+`manifest.json`, `schemas.json`, and `definitions.json` use two ASCII spaces per indentation level,
 LF line endings, no trailing spaces or tabs, and exactly one final LF. Each
 entity record is one compact JSON object with no structural whitespace,
 followed by one LF. A nonempty entity shard therefore ends in exactly one LF;
 an empty shard is exactly zero bytes. Blank JSONL records are invalid.
+
+For the three pretty JSON files, `render(value, depth)` is the complete v2
+renderer; it uses the canonical primitive token, string escaping, and declared
+member order, with one indentation level equal to two ASCII spaces:
+
+- a primitive token and an empty object or array render on the current line as
+  that token, `{}`, or `[]`;
+- a nonempty array renders `[` followed by LF, then each element on its own
+  line as `depth + 1` indentation levels followed by
+  `render(element, depth + 1)`, a comma after every element except the last,
+  and LF; it then renders `depth` indentation levels followed by `]`;
+- a nonempty object follows the same line and comma rules with `{` and `}`;
+  each member line is `depth + 1` indentation levels, the canonical JSON
+  string token for the member name, the two bytes `: `, and
+  `render(member_value, depth + 1)`; and
+- no other structural whitespace or blank line is emitted.
+
+Each pretty file body is `render(root, 0)` followed by exactly one LF. Thus a
+nested nonempty container's opening delimiter remains on its member or element
+line, while its children and closing delimiter use the recursive indentation
+above. This v2 rule is not a serializer pretty-printer default or an adoption
+of the v1 tree; it merely uses the same fully specified rendering algorithm.
 
 Canonical fixed-member order is declared for every object below. Arrays and
 maps described as ID-ordered compare the decoded opaque ID strings after UTF-8
@@ -96,11 +117,11 @@ NaN and infinities are not JSON Numbers or semantic Numbers. For an admitted
 JSON number token, decoding treats the token as an exact decimal, rounds to
 binary64 with round-to-nearest, ties-to-even, rejects a result that is
 infinite, accepts finite subnormals and underflow to zero, and normalizes zero.
-This reuse of the number primitive does not make `.roproj/v1` JCS.
+This reuse of the number primitive does not make `.roproj/v2` JCS.
 
 ## Stable ID tokens
 
-`DocumentId`, `SchemaId`, `FieldId`, and `EntityId` are encoded as JSON
+`DocumentId`, `SchemaId`, `FieldId`, `EntityId`, and `KeyedGroupedSumDefinitionId` are encoded as JSON
 strings. Every stable ID token MUST be nonempty. Otherwise, its decoded Unicode
 scalar sequence is opaque to storage:
 
@@ -110,18 +131,18 @@ scalar sequence is opaque to storage:
 - an ID remains independent of mutable keys, content, array position, shard,
   filename, and directory path.
 
-ID types are not interchangeable merely because all four use strings. Every
+ID types are not interchangeable merely because all five use strings. Every
 location below declares the ID kind it contains.
 
 ## `manifest.json`
 
-The manifest is the only `.roproj/v1` version envelope. Its complete canonical
+The manifest is the only `.roproj/v2` version envelope. Its complete canonical
 shape and fixed member order are `format`, `format_version`, then `document`:
 
 ```json
 {
   "format": "tachiko.roproj",
-  "format_version": 1,
+  "format_version": 2,
   "document": {
     "id": "opaque-document-id",
     "title": "Balance"
@@ -132,16 +153,17 @@ shape and fixed member order are `format`, `format_version`, then `document`:
 The `document` object's fixed member order is `id`, then `title`.
 
 - `format` MUST be the exact JSON string `"tachiko.roproj"`.
-- `format_version` MUST be the lexical JSON integer token `1`. Alternate
-  numeric spellings such as `1.0` and `1e0` are malformed versions, not v1.
+- `format_version` MUST be the lexical JSON integer token `2`. Alternate
+  numeric spellings such as `2.0` and `2e0` are malformed versions, not v2.
 - `document.id` is a `DocumentId`.
 - `document.title` is the document title string.
 
 No schema/entity counts, shard inventory, digest, timestamp, tool version,
-path, or generated `.ro` metadata member exists in the v1 manifest.
+path, or generated `.ro` metadata member exists in the v2 manifest.
 
-Version selection occurs from this exact envelope before `schemas.json` or any
-entity record receives DTO or semantic interpretation. A missing, malformed,
+Version selection occurs from this exact envelope before `schemas.json`, any
+entity record, or `definitions.json` receives DTO or semantic
+interpretation. A missing, malformed,
 or unsupported envelope fails closed. An unsupported version's remaining tree
 MUST NOT be semantically decoded, canonicalized, migrated, or rewritten.
 
@@ -252,7 +274,7 @@ fields are optional or the schema has no fields.
 
 Entity IDs MUST be unique across every entity record in every shard. Entity
 record ordering and shard placement are specified by the
-[physical layout](roproj-layout-v1.md); neither is identity.
+[physical layout](roproj-layout-v2.md); neither is identity.
 
 ## `Value`
 
@@ -292,7 +314,7 @@ The expanded formula block illustrates the logical shape. Within an entity
 JSONL record every nested object is compact.
 
 Reference values store stable identity, not an entity key. Formula values are
-inline in the owning entity field. `.roproj/v1` defines no formula source-text
+inline in the owning entity field. `.roproj/v2` defines no formula source-text
 member and no separate `FormulaId`, formula record, or formula file.
 
 ## Bound `Expression`
@@ -357,16 +379,64 @@ contain one recursive `Expression`:
 ```
 
 An operator with the wrong `args` JSON type or members is invalid. Unary,
-variadic, empty-array, null, or reordered binary argument shapes do not exist
-in v1. Unknown members or operators are rejected at any recursive depth.
+variadic, empty-array, null, or binary `args` values other than the required
+object with `left` and `right` do not exist in v2. The layout canonicalizer may
+admit a non-canonical object-member order, including within this object, and
+normalizes it to canonical order; that admission does not create another binary
+argument shape. Unknown members or operators are rejected at any recursive
+depth.
 
 These spellings deliberately match the current logical vocabulary of
 `direct-ro/v2`, but they are redeclared here in full and do not import or alias
 that representation's DTO contract.
 
+## `definitions.json`
+
+The root value is an array of `KeyedGroupedSumDefinition` records. It is never
+a keyed object. Records sort in strictly increasing decoded
+`KeyedGroupedSumDefinitionId` order by unsigned UTF-8 bytes. Equal IDs are a
+duplicate-identity failure; decreasing IDs are a canonical-ordering failure.
+The empty array is the complete canonical representation of no definitions.
+
+Each entry has exactly the fixed member order `id`, `orders`, then `products`:
+
+```json
+{
+  "id": "opaque-definition-id",
+  "orders": {
+    "schema": "opaque-orders-schema-id",
+    "lookup_key_field": "opaque-orders-key-field-id",
+    "quantity_field": "opaque-orders-quantity-field-id"
+  },
+  "products": {
+    "schema": "opaque-products-schema-id",
+    "key_field": "opaque-products-key-field-id",
+    "category_field": "opaque-products-category-field-id",
+    "price_field": "opaque-products-price-field-id"
+  }
+}
+```
+
+- `id` is a nonempty `KeyedGroupedSumDefinitionId`.
+- `orders` has fixed member order `schema`, `lookup_key_field`,
+  `quantity_field`. `schema` is a `SchemaId`; both remaining values are
+  `FieldId`s in that schema.
+- `products` has fixed member order `schema`, `key_field`, `category_field`,
+  `price_field`. `schema` is a `SchemaId`; all remaining values are `FieldId`s
+  in that schema.
+
+V2 has this sole definition record type; no kind discriminator, extension
+area, other definition family, or operation parameter exists. The IDs bind
+exactly the ADR-0036 Orders and Products roles. Conversion proves that the
+Orders lookup key and Products key/category are Text fields, and that the
+Orders quantity and Products price are Number fields. This DTO never stores
+keys, labels, paths, source syntax, evaluated groups, candidate sets,
+diagnostics, cache values, source revision/currentness, result-profile identity,
+or export output. Such input is unknown closed-world data and is rejected.
+
 ## Decode, conversion, and validation contract
 
-A `.roproj/v1` DTO is not itself a semantic `Document`. After the version has
+A `.roproj/v2` DTO is not itself a semantic `Document`. After the version has
 been selected and all physical files have been admitted under the layout
 contract, a conforming implementation performs the following logical stages:
 
@@ -374,7 +444,8 @@ contract, a conforming implementation performs the following logical stages:
    rejection, exact tag/payload checking, required-member checking, and stable
    ID token checking.
 2. Prove cross-record ID uniqueness and classify canonical ID ordering, entity
-   record ordering, and placement under the physical-layout contract.
+   record ordering, definition ordering, and placement under the physical-layout
+   contract.
 3. Resolve every stored stable-ID relationship and convert the complete
    version-owned DTO graph explicitly into one semantic candidate. No Rust
    struct deserialization shortcut, default insertion, key-based rebinding, or
@@ -384,7 +455,7 @@ contract, a conforming implementation performs the following logical stages:
 
 At minimum, conversion and validation reject:
 
-- an empty stable ID token, a duplicate schema/field/entity ID, or use of an ID
+- an empty stable ID token, a duplicate schema/field/entity/definition ID, or use of an ID
   string in the wrong typed location;
 - an out-of-order schema array, field array, entity sequence, or entity
   `fields` object when validating an already-canonical tree;
@@ -400,6 +471,9 @@ At minimum, conversion and validation reject:
   not belong to the referenced entity's schema, or whose target is not numeric;
 - a bound formula that violates Accepted structural, dependency, cycle, or
   evaluation rules; and
+- a definition with an absent target, field belonging to the wrong schema,
+  non-Text/non-Number required role, or another failure of ADR-0036's admitted
+  stable bindings; and
 - any other intrinsic or schema-instance failure defined by the Accepted
   semantic contracts.
 
@@ -422,12 +496,12 @@ placement family, then sort and place records after strict DTO decoding,
 uniqueness proof, semantic conversion, and validation. Such accepted input is
 not a canonical tree before fresh emission. This exception does not permit the
 canonicalizer to repair duplicates, unknown members/tags, bad references,
-wrong types, or invalid semantic content.
+wrong types, invalid definition bindings, or invalid semantic content.
 
 The failure descriptions in this section specify required rejection classes,
 not public diagnostic-code spellings or a total precedence among independent
 failures. `.roproj` resource admission and its error precedence remain outside
-v1's Accepted contract.
+v2's Accepted contract.
 
 ## Normative golden bytes
 
@@ -443,7 +517,7 @@ final LF.
 ```json
 {
   "format": "tachiko.roproj",
-  "format_version": 1,
+  "format_version": 2,
   "document": {
     "id": "doc-empty",
     "title": "Empty"
@@ -459,6 +533,46 @@ final LF.
 
 Every entity shard defined by the physical layout is a zero-byte file. A
 zero-byte shard has no BOM, JSON value, blank line, or LF.
+
+`definitions.json` is exactly three bytes, `0x5b 0x5d 0x0a`:
+
+```json
+[]
+```
+
+### Nonempty keyed grouped-sum definition
+
+This canonical `definitions.json` vector has one record and one final LF. It
+is semantically valid with an Orders schema `orders-schema` declaring
+`orders-key` as Text and `orders-quantity` as Number, and a Products schema
+`products-schema` declaring `products-key` and `products-category` as Text and
+`products-price` as Number. Those referenced schema/field records remain
+ordinary v2-owned `schemas.json` DTOs and are not a second definition shape.
+
+```json
+[
+  {
+    "id": "definition-orders-by-category",
+    "orders": {
+      "schema": "orders-schema",
+      "lookup_key_field": "orders-key",
+      "quantity_field": "orders-quantity"
+    },
+    "products": {
+      "schema": "products-schema",
+      "key_field": "products-key",
+      "category_field": "products-category",
+      "price_field": "products-price"
+    }
+  }
+]
+```
+
+The member and nested-member order above is mandatory. A collection with two
+or more records sorts by definition ID, not construction order, map insertion,
+schema key, label, path, or evaluated result. The vector contains no kind,
+cache, result, revision, or currentness member; adding one is a closed-world
+failure, not a new interpretation.
 
 ### Nonempty schemas
 
@@ -561,9 +675,9 @@ This specification does not define or accept:
 - assets, shared views, semantic tests, caches, or other future categories.
 
 In particular, the direct-JSON 8 MiB complete-input limit and 256-byte number
-token limit do not apply to `.roproj/v1`. The probe's canonical-tree digest is
+token limit do not apply to `.roproj/v2`. The probe's canonical-tree digest is
 evidence only: it is not a manifest member, integrity claim, revision ID,
-semantic identity, or normative `.roproj/v1` value.
+semantic identity, or normative `.roproj/v2` value.
 
 ## Related
 
@@ -572,8 +686,9 @@ semantic identity, or normative `.roproj/v1` value.
 - [ADR-0018: Bound formulas and deterministic binary64](../decisions/ADR-0018-bound-formulas-and-deterministic-binary64.md)
 - [ADR-0019: Staged semantic validation](../decisions/ADR-0019-staged-semantic-validation-and-diagnostics.md)
 - [ADR-0023: `.roproj/v1` canonical tree and sharding](../decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md)
+- [ADR-0037: `.roproj/v2` keyed grouped-sum persistence](../decisions/ADR-0037-roproj-v2-keyed-grouped-sum-persistence.md)
 - [ADR-0025: Portable package v1](../decisions/ADR-0025-portable-package-v1.md)
-- [`.roproj/v1` physical layout](roproj-layout-v1.md)
+- [`.roproj/v2` physical layout](roproj-layout-v2.md)
 - [Portable package v1](portable-package-v1.md)
 - [Tachiko canonical JSON profile](canonical-json-profile.md)
 - [`direct-ro/v2` specification](ro-format-v2.md)
