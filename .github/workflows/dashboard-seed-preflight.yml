@@ -25,10 +25,16 @@ jobs:
           node --version
           pnpm --version
           pnpm --dir tools/project-dashboard install --no-frozen-lockfile
-          node --input-type=module -e "import{readFileSync}from'node:fs';import{gzipSync}from'node:zlib';console.log('SEED_LOCK_GZIP_BASE64='+gzipSync(readFileSync('tools/project-dashboard/pnpm-lock.yaml')).toString('base64'))"
           git hash-object tools/project-dashboard/pnpm-lock.yaml
           pnpm --dir tools/project-dashboard install --frozen-lockfile
           pnpm --dir tools/project-dashboard exec playwright install --with-deps chromium
+      - name: Export the generated lock without transcription
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: dashboard-seed-lock
+          path: tools/project-dashboard/pnpm-lock.yaml
+          retention-days: 1
+          if-no-files-found: error
       - name: Typecheck all seeded tests
         id: typecheck
         run: pnpm --dir tools/project-dashboard typecheck
