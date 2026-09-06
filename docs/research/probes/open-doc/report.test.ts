@@ -4,6 +4,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { parseArgs, renderTemplate, run } from './report.js';
 
 const ids = {
@@ -100,7 +101,7 @@ test('unit: native failure clears only its owned output workspace and staging in
   const output = path.join(root, 'output');
   writeFileSync(source, 'failure-snapshot-bytes');
   const { binary } = nativeFixture(root, true);
-  const scratch = path.join(path.dirname(new URL(import.meta.url).pathname), '.scratch');
+  const scratch = path.join(path.dirname(fileURLToPath(import.meta.url)), '.scratch');
   const before = existsSync(scratch) ? readdirSync(scratch).filter((entry) => entry.startsWith('snapshot-')).sort() : [];
   assert.throws(() => run({ source, out: output, tachiko: binary, theme: 'plain' }), { code: 'SOURCE_REJECTED' });
   assert.equal(existsSync(output), false);
