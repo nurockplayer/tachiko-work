@@ -53,6 +53,7 @@ Tachiko Work aims to create a new foundation for digital work:
 - Version control instead of opaque binary changes.
 - Computation as a native capability instead of spreadsheet-specific hacks.
 - AI agents operating on meaning instead of simulating user actions.
+- Runtime projections that let external applications consume validated semantic snapshots and Hot Reload compatible content without making the authoring UI or a remote service part of execution.
 - Migration paths that let existing Office users move gradually rather than forcing a flag day.
 - A small, stable semantic core surrounded by replaceable and extensible capabilities.
 
@@ -65,6 +66,8 @@ A simple clone would inherit many of the same limitations and would still allow 
 Instead, Tachiko Work aims to create a platform where documents, spreadsheets, Markdown, structured data, computational documents, diagrams, AI workflows, and domain-specific tools can share semantic foundations where doing so creates real value.
 
 Familiar Office-like surfaces may exist. They are views and workflows, not the constitutional center of the system.
+
+Game development provides a concrete example of this broader model. Tachiko Work should be able to publish validated, versioned semantic content for lightweight consumption by a running game or other application, and compatible content changes should be able to Hot Reload during development when the consumer already implements the required capability. The authoring application does not become the game engine; runtime projections remain a boundary around the semantic model. See [Game Runtime Projections and Hot Reload](game-runtime-projections.md).
 
 ## User Ownership
 
