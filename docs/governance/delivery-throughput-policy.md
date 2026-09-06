@@ -47,7 +47,7 @@ When classification is genuinely uncertain, use Guarded until the uncertainty is
 Every final PR head still receives independent review appropriate to its risk. Independence is about authorship and evidence, not a particular provider name.
 
 - **Fast:** the orchestrator or another reviewer who did not author the relevant change may perform final independent review after targeted validation. A separate high-cost deep-review agent is not mandatory.
-- **Standard:** independent final-head review is required. The orchestrator may satisfy it when it remained outside implementation authorship and can inspect the complete diff and evidence. Escalate to a deep reviewer when uncertainty or substantive findings justify it.
+- **Standard:** independent final-head review is required. The orchestrator may satisfy it when it remained outside both implementation and acceptance/evidence authorship and can inspect the complete diff and evidence. Escalate to a deep reviewer when uncertainty or substantive findings justify it.
 - **Guarded:** require a fresh independent deep review of the exact final material head. Review must cover implementation, acceptance adequacy, relevant unit tests, and durable-contract risk.
 
 A valid P0/P1/P2-equivalent finding, authority contradiction, unexplained data-integrity risk, or repeated non-convergence escalates the lane regardless of its initial class. Reclassification never makes a known blocker mergeable.
@@ -82,7 +82,7 @@ For a normal implementation lane, checkpoint when applicable at:
 4. **REVIEW FINDINGS RESOLVED** — substantive review findings or Steward challenges are dispositioned on an exact head;
 5. **READY TO MERGE / STOP** — terminal exact-head gate results establish merge readiness, or a canonical escalation/stop reason is recorded. Pending CI, hosted review, or other non-terminal asynchronous validation is recorded while the lane remains active and continues waiting.
 
-A stage that does not exist for the task does not need an artificial checkpoint. Multiple local edit-test-fix loops inside one material stage do not require a GitHub write and authority re-read after each iteration.
+A stage that does not exist for the task does not need an artificial checkpoint. Multiple local edit-test-fix loops inside one material stage do not require a GitHub write and authority re-read after each iteration. At each required material checkpoint, PATCH the canonical handoff/watch comments in place with the then-current exact head and checked live `main`; a local commit inside an unchanged stage has no standalone GitHub-write requirement.
 
 Re-read live Issue/PR authority and current Steward guidance at material boundaries, after an external authority change, before resuming mutation from HOLD, and before declaring merge readiness. Quiet local iteration inside an unchanged authorized stage does not require busy-wait synchronization.
 
@@ -98,7 +98,7 @@ Run the smallest targeted unit, acceptance, integration, lint, build, or documen
 
 ### PR final head
 
-Before merge, run the applicable Steward-authored acceptance surface, applicable delivery-agent unit tests, and all repository-required or risk-applicable checks against the exact final head. When executable product acceptance or unit tests do not apply, the owning Issue must contain the explicit bounded applicability exception decided by the Steward and identify the applicable document/refactor checks and review evidence instead. Fast/Standard classification never waives a required hosted check.
+Before merge, run the applicable Steward-authored acceptance surface, applicable delivery-agent unit tests, and all repository-required or risk-applicable checks against the exact final head. For each non-applicable acceptance or unit-test class, the owning Issue must contain a separate explicit bounded applicability exception decided by the Steward and identify the document/refactor checks and review evidence that replace that class; an exception never waives the other applicable class. Fast/Standard classification never waives a required hosted check.
 
 ### Guarded, milestone, and release gates
 

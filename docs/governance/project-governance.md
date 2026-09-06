@@ -119,11 +119,13 @@ a compact package from the owning Issue:
 - reproducible commands, actual baseline results and relevant failure evidence;
 - remaining manual/external checks, their owner and expected evidence.
 
-When executable product acceptance or delivery-agent unit tests do not apply,
-the owning Issue instead records an explicit bounded applicability exception
-decided by the Steward, its rationale, and the applicable document/refactor
-checks and review evidence that replace those test classes. A handoff may point
-to that Issue decision but cannot create the exception.
+For each test class that does not apply, the owning Issue instead records a
+separate explicit bounded applicability exception decided by the Steward, its
+rationale, and the applicable document/refactor checks and review evidence that
+replace that class. An acceptance exception does not waive applicable
+delivery-agent unit tests, and a unit-test exception does not waive applicable
+acceptance. A handoff may point to an Issue decision but cannot create an
+exception.
 
 For a regression or new behavior, demonstrate the intended behavioral failure
 where feasible and check that the fixture reaches the relevant boundary.
@@ -357,9 +359,13 @@ HUMAN_ACTION: none
 ```
 
 Create this comment when Project Steward monitoring begins. Thereafter, PATCH
-that same comment in place whenever any field changes, including the exact
-observed PR head or checked live `main`; do not add replacement Steward-watch
-comments. The four lines shown are the complete machine header and must
+that same comment in place whenever its verdict or human-action field changes,
+and at each material checkpoint (including before a new review-fix batch and
+before declaring merge-ready), with the then-current exact observed PR head and
+checked live `main`; do not add replacement Steward-watch comments. A local
+HEAD update within an unchanged stage does not itself require a GitHub write,
+but the watch cannot be relied on as current until the next required update.
+The four lines shown are the complete machine header and must
 immediately follow the marker. Each field appears exactly once; `VERDICT` is
 `GREEN`, `AMBER`, or `HOLD`, `HEAD` and `MAIN` are full lowercase 40-hex
 identities, and `HUMAN_ACTION` is `none` or `required`. Duplicate, unknown,
