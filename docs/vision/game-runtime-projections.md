@@ -6,8 +6,9 @@ Decision issue: [#332](https://github.com/nurockplayer/tachiko-work/issues/332)
 
 Existing authority:
 
-- Semantic API contract: [ADR-0020 — First-class Headless Semantic API](../decisions/ADR-0020-first-class-headless-semantic-api.md)
-- Resident semantic runtime and host topology: [ADR-0022 — Resident Semantic Runtime and Host Boundary](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md)
+- Canonical durable representation and storage versioning: [ADR-0017 — Versioned Storage and Canonical Representation](../decisions/ADR-0017-versioned-storage-and-canonical-representation.md)
+- Semantic API contract and compatibility/versioning: [ADR-0020 — First-class Headless Semantic API](../decisions/ADR-0020-first-class-headless-semantic-api.md)
+- Resident authoritative interactive state and host topology: [ADR-0022 — Resident Semantic Runtime and Host Boundary](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md)
 - Game-engine extension boundary: [ADR-0028 — Game Engine Host Extension Boundary](../decisions/ADR-0028-game-engine-host-extension-boundary.md)
 
 ## Why this belongs in Tachiko Work
@@ -45,9 +46,9 @@ The intended split is:
 
 ### Tachiko Work and Semantic API
 
-The semantic core owns meaning: stable identity, typing, formulas, validation, dependency/impact analysis, versioning, and authoritative semantic state.
+The semantic core owns semantic meaning such as stable identity, typing, formula meaning, validation semantics, and dependency/impact semantics. This vision does not transfer every form of versioning, persistence, or state ownership into the semantic core.
 
-ADR-0020's platform-owned Semantic API remains the governed semantic contract through which external runtimes consume or mutate semantic functionality. ADR-0022 governs the resident semantic runtime and host topology that implements that contract for interactive clients. Runtime publication must preserve those authorities rather than introduce an engine-specific or snapshot-specific source of truth.
+The existing Accepted authorities remain separate: ADR-0017 governs canonical durable representation and its storage/versioning laws; ADR-0020 governs the Semantic API contract and Semantic API compatibility/versioning; ADR-0022 places authoritative interactive in-memory semantic state in the resident semantic/application runtime and leaves concrete runtime/session revision mechanisms separately governed or Deferred. Runtime publication must preserve those distinctions rather than introduce an engine-specific or snapshot-specific source of truth.
 
 ### Tachiko Runtime and adapters
 
@@ -111,7 +112,7 @@ Local runtime materialization is an execution optimization and release boundary,
 
 Game-engine integration is a first-class product direction but remains an **adapter/runtime projection**, not a reason to move rendering, physics, scene ownership, or engine-specific behavior into Tachiko's semantic kernel.
 
-The existing Accepted authorities remain distinct: ADR-0020 defines the shared Semantic API contract, ADR-0022 governs the resident semantic runtime/host topology, and ADR-0028 governs how game engines attach at the replaceable client/plugin boundary. Hot Reload should evolve through those boundaries, not as a parallel semantic surface.
+The existing Accepted authorities remain distinct: ADR-0017 governs canonical durable representation, ADR-0020 defines the shared Semantic API contract, ADR-0022 governs the resident semantic runtime/host topology, and ADR-0028 governs how game engines attach at the replaceable client/plugin boundary. Hot Reload should evolve through those boundaries, not as a parallel semantic surface.
 
 The stable core should continue to own meaning. Engine integrations should generalize only after real consumers create evidence for a shared contract.
 
