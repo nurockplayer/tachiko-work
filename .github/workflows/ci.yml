@@ -19,6 +19,19 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 11.25.0
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: experiments/open-sheet-export/pnpm-lock.yaml
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
@@ -42,6 +55,9 @@ jobs:
 
       - name: Verify ADR-0016 workspace dependencies
         run: node scripts/workspace-dependency-check.mjs
+
+      - name: Install open-sheet experimental dependencies
+        run: pnpm --dir experiments/open-sheet-export install --frozen-lockfile
 
       - name: Lint all targets
         run: cargo clippy --workspace --all-targets --locked -- -D warnings

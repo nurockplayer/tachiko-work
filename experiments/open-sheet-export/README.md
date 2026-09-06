@@ -1,11 +1,12 @@
-# open-sheet export acceptance seed
+# open-sheet export acceptance experiment
 
 Owner: [Issue #337](https://github.com/nurockplayer/tachiko-work/issues/337),
 first bounded child of [#335](https://github.com/nurockplayer/tachiko-work/issues/335).
 **Execution authorization follows the live Issue.** Repository Accepted
 authority and the live Steward readiness decision outrank this harness.
-`export.mjs` is a deliberate unimplemented seed, not an exporter. Continue
-this branch for one delivery PR when Ready; never merge the failing seed alone.
+`export.mjs` is the disposable prototype entry point. Continue this branch for
+one delivery PR only; never treat this experiment as a production dependency
+or a replacement for Tachiko's native semantic engine.
 
 ## Selected seam and scope
 
@@ -37,6 +38,11 @@ slice. The existing shipped Designer exporters are not replaced here.
 - open-sheet source: `6ab72ddb50bb87dad11cc321d87b5e9bcc3c5689`.
 - That source's expected core manifest version is `0.2.0`. This is not a claim
   that the corresponding npm tarball contains the same source.
+- `open-sheet-provenance.json` records the exact upstream checkout, source
+  lockfile and manifest digests, plus the built public-package tarball digest.
+  `package.json` consumes that tarball only through a local file dependency;
+  `pnpm-lock.yaml` makes that isolated install reproducible. No `src/*` import
+  or registry substitution is used.
 - `canary.json` contains direct-ro/v2 source and disposable presentation
   requests. Rust validates and materializes the source as canonical `.roproj`.
   The fixture does not hand-write an alternate canonical project codec.
@@ -90,20 +96,25 @@ authorizes a production dependency, wider scope or upstream changes.
 ## Native CI bridge and behavioral RED
 
 `crates/cli/tests/open_sheet_acceptance.rs` uses Cargo's real built `tachiko`
-executable to run `native_ci.py` under the existing push CI. No workflow file
-is changed. This stdlib-only bridge uses the runner's Python 3 directly; it
-installs no Python dependency and does not require uv on the hosted image.
+executable to run `native_ci.py` under the existing push CI. The existing
+quality workflow installs this experiment's frozen pnpm dependency graph before
+the Cargo bridge runs. This is the minimal CI wiring required to resolve the
+checked-in public-package tarball on a clean hosted runner. The bridge itself
+uses the runner's Python 3 directly; it installs no Python dependency and does
+not require uv on the hosted image.
 
 ```sh
+pnpm --dir experiments/open-sheet-export install --frozen-lockfile
 cargo test -p tachiko-cli --test open_sheet_acceptance --locked
 ```
 
 The native subset adds schema/scalar query evidence and tests the exporter
 process. It intentionally does not select the public-package probe or Office
-case; these remain separate mandatory delivery gates, not skipped passes.
-The default process is the checked-in `export.mjs`, which currently reports
-`PROBE_NOT_IMPLEMENTED`. After Ready, implement that entry point (and local
-modules) rather than mocking the test reader or changing expected outcomes.
+case; these remain separate mandatory delivery gates, not skipped passes. The
+checked-in process captures an immutable source snapshot, queries only that
+snapshot through the Rust CLI, projects the returned typed facts through public
+open-sheet APIs, and writes an uncached XLSX. It does not parse `.roproj`,
+interpret Tachiko expressions, or calculate formulas.
 
 ## Disposable exporter boundary, after Ready only
 
@@ -181,33 +192,41 @@ production semantics. Byte-identical ZIP output is not asserted: observable
 workbook content, formulas and formats are. Core numeric normalization and
 broader compatibility remain under their existing owners.
 
-## Actual seed evidence, 2026-09-07 JST
+## Current implementation evidence, 2026-09-07 JST
 
-Local checks: 8 oracle self-checks PASS; Python syntax and Node syntax PASS.
-The first local runtime attempt ran zero tests because TACHIKO_BIN was absent;
-that initial environment failure was not used as behavioral RED.
+The immutable upstream checkout at
+`6ab72ddb50bb87dad11cc321d87b5e9bcc3c5689` was built with its declared
+`pnpm@10.33.2`, producing public `@open-sheet/core@0.2.0`. The built tarball
+SHA-256 is `db25607ba5a429c50a7520890312618201af33bc0cc4dc0d1ecff084dd475fc6`.
+The complete recorded provenance is in `open-sheet-provenance.json`; the
+adapter imports only `@open-sheet/core` and `@open-sheet/core/node`.
 
-The later [hosted native run](https://github.com/nurockplayer/tachiko-work/actions/runs/34063666072/job/101568604416)
-executed at exact code seed `5566d30bf12fc5c1620298551d8267e069ecdf8d`:
+`sample.xlsx` is a reproducible base-canary export from this adapter, with
+SHA-256 `dd7efe4bdbf83e41ea114be98120cd8915af7a05cea618d1b59fb23e374477af`.
+The independent OOXML observer validates its sheets, live formula shapes,
+formats and absent formula caches. It is an inspectable sample, not Office
+recalculation evidence.
 
-- 3 native query/admission/edit/rename preflights PASS; two are also repeated
-  successfully by the export class (5 passing test executions in total).
-- All 13 exporter test methods reached the unimplemented process and FAIL as
-  expected. Including operator/layout subcases, unittest reports 18 methods
-  run and 19 failure records. There are no setup errors in this hosted run.
-- Rust compilation, formatting, docs consistency, repository tooling,
-  dependency-layer check and Clippy PASS before the intended test failure.
-  The existing 62 CLI tests also PASS. Cargo's overall test step FAILS;
-  downstream steps blocked behind it are not claimed green.
+With `TACHIKO_BIN` set to a fresh `cargo build -p tachiko-cli --locked` output
+and `OPEN_SHEET_CONSUMER_DIR` set to this frozen experiment install, these
+checks pass on the implementation candidate:
 
-This is native boundary and missing-exporter RED evidence, not proof that
-open-sheet runs or XLSX calculations match an office engine. Public-package
-execution, real Office recalculation, production adapter/unit tests and fresh
-independent implementation review remain mandatory and unverified. The current
-README update changes no executable test or fixture from the tested code seed.
+- `acceptance.py --mode self-check`: 8 checks.
+- `acceptance.py --mode preflight`: 3 checks against the independent scratch
+  public-package consumer.
+- `pnpm --dir experiments/open-sheet-export test`: 2 adapter unit tests.
+- `acceptance.py --mode acceptance`: 16 runtime/export checks, including
+  formula shape, styles, source preservation, changed-source export and every
+  required rejection path.
+- `cargo test -p tachiko-cli --test open_sheet_acceptance --locked`: the
+  existing Cargo CI bridge passes.
+- `cargo fmt --all -- --check`, `node scripts/workspace-dependency-check.mjs`,
+  and `bash scripts/docs-consistency-check.sh` pass.
 
-The initial local container lacks Rust/Cargo/pnpm and cannot resolve github.com;
-GitHub connector source/branch access and existing hosted CI supplied the native
-execution evidence. No production dependency, semantic engine, SDK, UI, storage
-or CI workflow changes are included. The live Issue records the Steward's
-readiness decision and the bounded remaining dependency/Office evidence plan.
+These are implementation and contract checks, not Office-calculation proof.
+No `libreoffice` or `soffice` executable is available in the current execution
+environment, so `acceptance.py --mode office` remains unverified. That gate
+requires a real LibreOffice executable and fresh profile evidence; XML/cached
+value inspection, a launch-only check, or a substitute engine would not close
+it. The live Issue requires this limitation to remain explicit at Steward
+handback.
