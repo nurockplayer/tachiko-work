@@ -1,8 +1,10 @@
+use std::io::{Cursor, Read};
 use tachiko_designer_runtime::interop_adapter::{CellStyle, SourceValue, export_xlsx};
 use tachiko_designer_runtime::{
     DesignerRequest, DesignerResponse, DesignerRuntime, NativeBudgetExportCollection,
     NativeBudgetExportPresentation, NativeBudgetExportRow, NativeBudgetExportView,
 };
+use zip::ZipArchive;
 
 const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000297";
 
@@ -47,6 +49,54 @@ fn presentation(
             collection_mapping(runtime, "budget_summary"),
         ],
     }
+}
+
+fn worksheet_xml(bytes: &[u8], path: &str) -> String {
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).expect("XLSX should be a ZIP archive");
+    let mut xml = String::new();
+    archive
+        .by_name(path)
+        .expect("export should include the referenced worksheet")
+        .read_to_string(&mut xml)
+        .expect("worksheet XML should be UTF-8");
+    xml
+}
+
+#[test]
+fn native_budget_xlsx_omits_empty_cols_and_preserves_formulas_and_typed_dates() {
+    let mut runtime = DesignerRuntime::budget(OCCURRENCE).unwrap();
+    let mapped = presentation(
+        &mut runtime,
+        vec![
+            NativeBudgetExportView {
+                id: "items".into(),
+                name: "Budget Items".into(),
+                collection_id: "budget_items".into(),
+            },
+            NativeBudgetExportView {
+                id: "summary".into(),
+                name: "Budget Summary".into(),
+                collection_id: "budget_summary".into(),
+            },
+        ],
+    );
+    let workbook = runtime
+        .export_native_budget_workbook("resident/0", &mapped)
+        .expect("native Budget workbook should be exportable");
+    let bytes = export_xlsx(&workbook).expect("native Budget workbook should be valid XLSX");
+    let items = worksheet_xml(&bytes, "xl/worksheets/sheet1.xml");
+    let summary = worksheet_xml(&bytes, "xl/worksheets/sheet2.xml");
+
+    assert!(!items.contains("<cols>"));
+    assert!(!summary.contains("<cols>"));
+    assert!(items.contains(
+        "<c r=\"E2\" s=\"0\" t=\"n\"><f>(&apos;Budget Items&apos;!$A$2-&apos;Budget Items&apos;!$D$2)</f><v>0</v></c>"
+    ));
+    assert!(items.contains("<c r=\"B2\" s=\"1\" t=\"d\"><v>2026-09-01</v></c>"));
+    assert!(summary.contains("<c r=\"C2\" s=\"1\" t=\"d\"><v>2026-09-01</v></c>"));
+    assert!(summary.contains(
+        "<c r=\"D2\" s=\"0\" t=\"n\"><f>(&apos;Budget Items&apos;!$D$2+&apos;Budget Items&apos;!$D$3)</f><v>1380</v></c>"
+    ));
 }
 
 #[test]
