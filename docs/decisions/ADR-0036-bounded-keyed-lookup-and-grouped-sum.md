@@ -165,6 +165,15 @@ direct-change target, ordering, and conflict treatment, requires separately
 Ready authority before it can provide diff or retained-transition evidence for
 this family.
 
+The current semantic merge/conflict v1 contracts likewise have no definition
+target or facet. A three-way base/left/right comparison that creates, deletes,
+or changes the durable meaning of any `KeyedGroupedSumDefinition`—including an
+in-place update with the same stable identity—is not admitted to those contracts:
+the whole merge/conflict request fails closed as unsupported and MUST NOT omit,
+silently merge, or invent a partial definition conflict. A future versioned
+merge/conflict extension needs separately Ready direct-target, facet, ordering,
+and conflict-treatment authority.
+
 An evaluated result is derived revision-scoped evidence: definition identity,
 exact accepted input snapshot/revision, dependency outcome, the trusted
 deterministic finite-result-profile identity when it can change the outcome, and

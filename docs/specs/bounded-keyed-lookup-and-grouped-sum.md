@@ -74,6 +74,14 @@ transitions are optional derived evidence rather than mutation authority. A
 future versioned delta/direct-target/order/conflict contract is separately Ready
 work before any diff or retained-transition support exists.
 
+Current semantic merge/conflict v1 also cannot represent this definition. If a
+three-way base/left/right comparison creates, deletes, or changes the durable
+meaning of any `KeyedGroupedSumDefinition`—including an in-place update with
+unchanged stable identity—the whole merge/conflict request is unsupported and
+fails closed. It never omits, silently merges, or invents a partial definition
+conflict. A versioned direct-target/facet/order/conflict contract is separately
+Ready work before this family has merge support.
+
 ## Semantic API, capability, and disclosure boundary
 
 Evaluation is a distinct Semantic API Query operation family. Definition
@@ -144,6 +152,7 @@ and `services = 10`, with no other group.
 | Result profile | Use a duplicate population, diagnostics, or category groups whose complete projection exceeds the applicable finite result profile | Structured `result-too-large` Unavailable outcome; no partial IDs, diagnostics, groups, truncation, sample, or implicit pagination. |
 | Result-profile change | Retain a Complete or `result-too-large` outcome, then change only the trusted deterministic finite result profile | Retained output becomes non-current; re-evaluation uses the active profile and cannot bypass its bound. |
 | Delta v1 boundary | Create, update, or delete the definition, then request `tachiko.semantic-delta/v1` | Unsupported; it emits neither a partial delta that omits the definition nor a fabricated v1 fact. |
+| Merge/conflict v1 boundary | Base/left/right differ by definition create, delete, or in-place durable-meaning update, then request current semantic merge/conflict | Unsupported whole request; it does not omit, silently merge, or invent a partial definition conflict. |
 | Export disclosure | Export base values only and to a hypothetical live-preserving target | Values are evaluated/lossy and source-revision-bound; live claim is rejected unless every admitted semantic is encoded. |
 
 ## Deferred extensions and decomposition
