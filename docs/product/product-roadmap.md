@@ -64,6 +64,11 @@ The product-stage milestones do not replace domain sequencing:
   owns Protocol horizons and remains unmilestoned as a cross-stage Epic.
 - [#42 — AI-native architecture roadmap](https://github.com/nurockplayer/tachiko-work/issues/42)
   owns AI sequencing and remains unmilestoned as a cross-stage Epic.
+- [#305 — Ecosystem distribution roadmap](https://github.com/nurockplayer/tachiko-work/issues/305)
+  owns evidence-gated sequencing from Git-native reusable-asset sharing through
+  catalog, registry/package-manager ergonomics, marketplace, and any later
+  App-Store-grade executable ecosystem; it remains unmilestoned as a cross-stage
+  Epic.
 - [`game-dev-mvp-roadmap.md`](game-dev-mvp-roadmap.md) records the narrower
   CLI-first Developer MVP/game-balance slice.
 - [`game-dev-market-entry.md`](game-dev-market-entry.md),
@@ -77,7 +82,7 @@ The product-stage milestones do not replace domain sequencing:
 An open Issue should normally have one product milestone. It may remain
 unmilestoned only when the reason is explicit, for example:
 
-- a cross-stage Epic/index such as #35 or #42;
+- a cross-stage Epic/index such as #35, #42, or #305;
 - deliberately post-roadmap work such as bounded autonomy;
 - a deferred placeholder that has not met its activation condition;
 - Research/Hypothesis work whose exit decision must first determine whether a
