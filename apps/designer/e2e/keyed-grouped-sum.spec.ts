@@ -15,7 +15,12 @@ const groupedResult = (page: Page) =>
 async function openCanary(page: Page): Promise<void> {
   await page.goto("/");
   await page.locator("[data-import-project]").setInputFiles(CANARY_PROJECT);
-  await expect(page.locator(".notice.success")).toContainText("Project opened");
+  const notice = page.locator(".notice").first();
+  await expect(notice).toBeVisible();
+  if (!(await notice.evaluate(element => element.classList.contains("success")))) {
+    throw new Error(`Canary project was not admitted: ${await notice.innerText()}`);
+  }
+  await expect(notice).toContainText("Project opened");
   await expect(
     page.getByRole("heading", { name: "Keyed Grouped Sum Acceptance", exact: true }),
   ).toBeVisible();
