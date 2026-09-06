@@ -143,6 +143,28 @@ Do not claim those packages are installed or verified from source inspection.
 If this upstream version cannot be installed, return concrete resolution
 failure evidence instead of silently substituting another version or a mock.
 
+### Renderer setup evidence
+
+The delivered probe keeps its package and lockfile in this directory. Its
+resolved direct runtime set is `@open-document/core@0.6.0`,
+`react@18.3.1`, `react-dom@18.3.1`, `playwright@1.58.2`,
+`tsx@4.21.0`, and `typescript@5.9.3`; `@types/node@26.4.1` is typecheck-only.
+Install it with `pnpm --dir docs/research/probes/open-doc install --frozen-lockfile`
+and install the matching browser with
+`pnpm --dir docs/research/probes/open-doc exec playwright install chromium`.
+The probe's local `pnpm-workspace.yaml` permits only `esbuild`'s required build
+script; it does not grant a general dependency-build exception.
+
+The implementation uses the published `@open-document/core/ops` API. It must
+export `DocEntry[]` (including a single `flow(...)` entry), rather than the
+`flow(...)` object directly; the latter causes `entries.filter is not a
+function` in open-doc 0.6.0 and never reaches render readiness. This was
+observed and repaired in the downstream template without an upstream change.
+
+The artifact is a bounded research report, not an interoperability or legal
+clearance claim. It has one static HTML file, no remote assets, no PDF/DOCX
+promise, no editing path, and no production dependency promotion.
+
 For rendering tests, generated workspaces live under ignored `.scratch/` so
 normal ancestor dependency resolution can use the probe's local `node_modules`.
 Ensure cleanup in all outcomes. New application logic should follow the repo's
