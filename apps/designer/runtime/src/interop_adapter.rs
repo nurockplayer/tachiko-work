@@ -1746,7 +1746,7 @@ fn column_name(index: usize) -> String {
     }
     s
 }
-fn valid_worksheet_name(name: &str) -> bool {
+pub(crate) fn valid_worksheet_name(name: &str) -> bool {
     !name.is_empty()
         && name.chars().count() <= 31
         && !name.contains(['[', ']', ':', '*', '?', '/', '\\'])

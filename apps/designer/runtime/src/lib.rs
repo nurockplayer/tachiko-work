@@ -36,9 +36,10 @@ mod interop_number_format;
 use interop_document::PendingCleanup;
 pub use interop_document::{
     CleanupChange, CleanupOperation, CleanupPreview, ImportColumnSpec, ImportFieldType,
-    ImportSelection, ImportedProjection, InteropMetadata, NativeTrackerExportPresentation,
-    NativeTrackerExportRow, SpreadsheetExportProjection, import_workbook, inspect_imported_project,
-    validate_import_metadata,
+    ImportSelection, ImportedProjection, InteropMetadata, NativeBudgetExportCollection,
+    NativeBudgetExportPresentation, NativeBudgetExportRow, NativeBudgetExportView,
+    NativeTrackerExportPresentation, NativeTrackerExportRow, SpreadsheetExportProjection,
+    import_workbook, inspect_imported_project, validate_import_metadata,
 };
 
 #[cfg(target_arch = "wasm32")]
