@@ -1505,9 +1505,7 @@ fn native_budget_metadata(
             .ok_or_else(|| {
                 tracker_error("native Budget collection mapping references an unavailable source")
             })?;
-        if collection.rows.len() != spec.entities.len()
-            || collection.rows.len() > MAX_DATA_ROWS
-        {
+        if collection.rows.len() != spec.entities.len() || collection.rows.len() > MAX_DATA_ROWS {
             return Err(tracker_error(
                 "native Budget collection mapping must cover every bounded source row exactly once",
             ));
@@ -1516,8 +1514,13 @@ fn native_budget_metadata(
         for row in &collection.rows {
             check_label(&row.entity_id)?;
             if row.styles.len() != spec.columns.len()
-                || !spec.entities.iter().any(|entity| entity.as_str() == row.entity_id)
-                || rows.insert(row.entity_id.clone(), row.styles.clone()).is_some()
+                || !spec
+                    .entities
+                    .iter()
+                    .any(|entity| entity.as_str() == row.entity_id)
+                || rows
+                    .insert(row.entity_id.clone(), row.styles.clone())
+                    .is_some()
             {
                 return Err(tracker_error(
                     "native Budget row mapping is foreign, duplicated, or has invalid styles",
@@ -1536,7 +1539,11 @@ fn native_budget_metadata(
                 }
             }
         }
-        if spec.entities.iter().any(|entity| !rows.contains_key(entity.as_str())) {
+        if spec
+            .entities
+            .iter()
+            .any(|entity| !rows.contains_key(entity.as_str()))
+        {
             return Err(tracker_error(
                 "native Budget row mapping omits a canonical source row",
             ));
@@ -1594,25 +1601,26 @@ fn native_budget_metadata(
         let styles = row_styles
             .get(&collection_id)
             .ok_or_else(|| tracker_error("native Budget worksheet styles are unavailable"))?;
-        let rows = spec
-            .entities
-            .iter()
-            .map(|entity| -> Result<InteropRowMetadata, DesignerError> {
-                Ok(InteropRowMetadata {
-                    entity_id: entity.to_string(),
-                    styles: styles
-                        .get(entity.as_str())
-                        .cloned()
-                        .ok_or_else(|| tracker_error("native Budget row styles are unavailable"))?,
+        let rows =
+            spec.entities
+                .iter()
+                .map(|entity| -> Result<InteropRowMetadata, DesignerError> {
+                    Ok(InteropRowMetadata {
+                        entity_id: entity.to_string(),
+                        styles: styles.get(entity.as_str()).cloned().ok_or_else(|| {
+                            tracker_error("native Budget row styles are unavailable")
+                        })?,
+                    })
                 })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+                .collect::<Result<Vec<_>, _>>()?;
         let schema = document
             .schemas
             .get(&SchemaId::from(collection_id.clone()))
             .ok_or_else(|| tracker_error("native Budget source schema is unavailable"))?;
         if schema.id.as_str() != collection_id {
-            return Err(tracker_error("native Budget schema identity changed during export"));
+            return Err(tracker_error(
+                "native Budget schema identity changed during export",
+            ));
         }
         sheets.push(InteropSheetMetadata {
             schema_id: collection_id,

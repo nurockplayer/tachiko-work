@@ -76,7 +76,11 @@ fn native_budget_maps_formula_dependencies_once_and_keeps_aliases_presentation_o
         .export_native_budget_workbook("resident/0", &mapped)
         .expect("native Budget should export through the shared writer");
 
-    assert_eq!(workbook.sheets.len(), 2, "aliases must not create worksheets");
+    assert_eq!(
+        workbook.sheets.len(),
+        2,
+        "aliases must not create worksheets"
+    );
     assert_eq!(
         workbook
             .sheets
@@ -182,9 +186,11 @@ fn native_budget_rejects_worksheet_collisions_and_invalid_identity_mappings_atom
             },
         ],
     );
-    assert!(runtime
-        .export_native_budget_workbook("resident/0", &collision)
-        .is_err());
+    assert!(
+        runtime
+            .export_native_budget_workbook("resident/0", &collision)
+            .is_err()
+    );
 
     let mut duplicate_row = presentation(
         &mut runtime,
@@ -203,9 +209,11 @@ fn native_budget_rejects_worksheet_collisions_and_invalid_identity_mappings_atom
     );
     duplicate_row.collections[0].rows[1].entity_id =
         duplicate_row.collections[0].rows[0].entity_id.clone();
-    assert!(runtime
-        .export_native_budget_workbook("resident/0", &duplicate_row)
-        .is_err());
+    assert!(
+        runtime
+            .export_native_budget_workbook("resident/0", &duplicate_row)
+            .is_err()
+    );
     assert_eq!(runtime.export_project("resident/0").unwrap().bytes, before);
 }
 
@@ -221,9 +229,11 @@ fn native_budget_rejects_missing_source_collection_and_invalid_view_identity() {
         }],
     );
     missing_collection.collections.pop();
-    assert!(runtime
-        .export_native_budget_workbook("resident/0", &missing_collection)
-        .is_err());
+    assert!(
+        runtime
+            .export_native_budget_workbook("resident/0", &missing_collection)
+            .is_err()
+    );
 
     let mut invalid_view = presentation(
         &mut runtime,
@@ -241,7 +251,9 @@ fn native_budget_rejects_missing_source_collection_and_invalid_view_identity() {
         ],
     );
     invalid_view.active_view = "items".into();
-    assert!(runtime
-        .export_native_budget_workbook("resident/0", &invalid_view)
-        .is_err());
+    assert!(
+        runtime
+            .export_native_budget_workbook("resident/0", &invalid_view)
+            .is_err()
+    );
 }
