@@ -55,8 +55,7 @@ Version numbers are local to a known representation profile/context.
 The following are distinct namespaces:
 
 - legacy/current direct `.ro` JSON representation;
-- `.roproj/v1` editable directory materialization;
-- `.roproj/v2` editable directory materialization;
+- `.roproj` editable directory materialization (`format_version` 1 and 2);
 - `tachiko.portable-package/v1` portable container profile.
 
 The same integer in distinct representation namespaces does not imply the
