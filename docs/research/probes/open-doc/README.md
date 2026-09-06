@@ -155,6 +155,16 @@ and install the matching browser with
 The probe's local `pnpm-workspace.yaml` permits only `esbuild`'s required build
 script; it does not grant a general dependency-build exception.
 
+### Maintainer dependency consideration
+
+The locked direct package metadata observed for this prototype is:
+`@open-document/core`, `react`, `react-dom`, `tsx`, and `@types/node` under
+MIT; `playwright` and `typescript` under Apache-2.0. This is a direct-package
+receipt for the research-local renderer, not legal approval or a complete
+transitive notice/license audit. Before any dependency promotion or production
+use, maintainers must review the exact lockfile's full transitive graph,
+applicable notices, licenses, and repository policy.
+
 `report.ts` is the source adapter. Its checked-in `generated/report.js` build
 is deliberately dependency-free at runtime so the existing Cargo bridge can
 run native projection acceptance before installing the research-local renderer.
