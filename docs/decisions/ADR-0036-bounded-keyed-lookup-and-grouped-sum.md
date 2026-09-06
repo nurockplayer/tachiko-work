@@ -71,11 +71,12 @@ evaluator.
 Evaluation resolves current key values on every authoritative request. Stable
 IDs bind definition structure and dependency evidence, not the row that happened
 to match at authoring. Orders membership plus every current Order's local key
-and quantity are dependencies. Every Products key is a dependency because a
-row/key addition, deletion, or edit can change cardinality. Successful matches
-additionally depend on price/category, effective-Number formula dependencies,
-and all bound schema/field type facts. View sorting, row display order, storage
-placement, and locale are not semantic dependencies.
+and quantity are dependencies. Products membership and every Products key are
+dependencies because a row/key addition, deletion, or edit can change
+cardinality. Successful matches additionally depend on price/category,
+effective-Number formula dependencies, and all bound schema/field type facts.
+View sorting, row display order, storage placement, and locale are not semantic
+dependencies.
 
 ### 3. Grouped SUM is finite and deterministic
 
@@ -84,17 +85,16 @@ ADR-0018's finite binary64 multiplication, normalization, and failure rules.
 The matched product's exact Text category is its group key; equal strings
 coalesce and no empty/synthetic groups exist.
 
-Within a category, Orders contributors sort by the operation-local logical
-`StableEntityIdOrder`, then reduce left-to-right from semantic positive zero.
-For the current text identity profile, this compares the decoded opaque
-`EntityId` token by unsigned UTF-8-byte lexicographic order; it is not an order
-over serialized records, storage locations, or view layout. Any future identity
-representation must define an observationally equivalent logical comparator
-before it can support this definition. Every addition uses one ADR-0018 binary64
-operation and validates and normalizes its intermediate result before the next
-term. The reduction MUST NOT reassociate, parallel-reduce, fuse operations, or
-inherit view/key/category/storage iteration order. Group presentation order is
-not semantic.
+Within a category, contributors sort by ascending ordinary numeric order of
+their normalized finite binary64 `price * quantity` amounts, then reduce
+left-to-right from semantic positive zero. Equal normalized amounts are the
+same operation term, so their relative entity order cannot affect the reduction.
+This `ContributionNumberOrder` is a logical order over ADR-0018 Numbers, not an
+order over identities, serialized records, storage locations, or view layout.
+Every addition uses one ADR-0018 binary64 operation and validates and
+normalizes its intermediate result before the next term. The reduction MUST NOT
+reassociate, parallel-reduce, fuse operations, or inherit view/key/category/
+storage iteration order. Group presentation order is not semantic.
 
 Any required lookup, input, amount, or reduction failure makes the **whole
 definition result unavailable** and publishes no partial group values as
@@ -113,15 +113,27 @@ operations. Create/update requires `Structure`; removal requires `Structure +
 Destructive`. Each command continues through ADR-0020 exact-base proposal/
 publication and ADR-0026 capability, Approval, and trusted-footprint laws.
 
+ADR-0026 deliberately has no definition-specific scope atom. Therefore the
+trusted command footprint uses `Document(DocumentId)` for the saved definition
+as its direct target, generated/deleted identity, and owning container: create
+and update each require exactly `(KeyedGroupedSumDefinitionCommand, Structure,
+Document(document))`; deletion requires that `Structure` tuple and
+`(KeyedGroupedSumDefinitionCommand, Destructive, Document(document))`. Binding
+or rebinding a schema/field does not write that schema/field, so it adds no
+write tuple. Required disclosure to inspect candidate bindings is independently
+derived and authorized; a Command grant never implies it.
+
 Before an evaluation result, diagnostic, ambiguity candidate, preview, or
 dependency/currentness fact is disclosed, the trusted authority derives its
-complete footprint from the exact definition and snapshot. It includes the
-definition, candidate Orders membership and local operands, the entire Products
-key universe, matched category/price operands, relevant schema/field type facts,
-and every authoritative formula dependency used to form an effective Number.
-If complete disclosure coverage for any revealed fact cannot be derived and
-authorized, the Query is denied without a partial aggregate, matched identity,
-or diagnostic leak. The client never supplies its own footprint.
+complete footprint from the exact definition and snapshot. It uses
+`Document(document)` for the definition; `Schema(orders)` and
+`Schema(products)` for candidate membership; the appropriate `EntityField` for
+each local key/quantity, remote key/category/price, and formula dependency; and
+the appropriate `SchemaField` for required type facts. It includes the entire
+Products membership/key universe, not only currently matched rows. If complete
+disclosure coverage for any revealed fact cannot be derived and authorized, the
+Query is denied without a partial aggregate, matched identity, or diagnostic
+leak. The client never supplies its own footprint.
 
 ### 5. Currentness, persistence, and interoperability stay truthful
 

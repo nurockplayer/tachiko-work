@@ -28,23 +28,22 @@ selection is admitted.
 Matched amount uses ADR-0018 `price * quantity`. Category equality, like lookup
 equality, compares the exact decoded Unicode scalar sequence with no case
 folding, normalization, locale collation, or coercion. Within an exact category,
-contributors use the logical `StableEntityIdOrder` and are left-folded from
-semantic positive zero, validating/normalizing each binary64 intermediate. The
-current text identity profile compares decoded opaque `EntityId` tokens by
-unsigned UTF-8-byte lexicographic order; this is not record/storage/view order,
-and a future identity representation needs an observationally equivalent logical
-comparator before supporting this definition. View, key, category, storage, and
-presentation order cannot change membership or results. There are no
-empty/synthetic groups.
+contributors sort by ascending ordinary numeric order of their normalized finite
+binary64 amounts, then are left-folded from semantic positive zero,
+validating/normalizing each binary64 intermediate. Equal normalized amounts are
+the same operation term, so their relative entity order cannot affect the
+result. `ContributionNumberOrder` is not identity, record, storage, view, or
+presentation order. View, key, category, storage, and presentation order cannot
+change membership or results. There are no empty/synthetic groups.
 
 Any member lookup/input/amount/reduction failure yields one Unavailable
 definition result, direct root diagnostics plus definition-level failure, and no
 current group map. A Complete result exposes the definition and exact evaluated
 snapshot/revision. Dependencies include Orders membership plus every local
-lookup-key/quantity value, the full Products key universe, successful-match
-price/category, schema/field type facts, and any effective-Number formula
-dependencies. Retained output becomes non-current after a dependency root or
-definition change.
+lookup-key/quantity value, Products membership plus the full Products key
+universe, successful-match price/category, schema/field type facts, and any
+effective-Number formula dependencies. Retained output becomes non-current after
+a dependency root or definition change.
 
 Only the definition is durable semantic meaning. A future persisted shape must
 be versioned/migrated under ADR-0017 and fail closed when unsupported; frozen
@@ -60,15 +59,22 @@ create/update is a distinct Command family requiring `Structure`; deletion
 requires `Structure + Destructive`. Exact names/DTOs remain Provisional, but no
 Formula, Analysis Query, scalar Value, schema, or generic Structure capability
 implies either family. Commands retain ADR-0020 exact-base and ADR-0026
-trusted-footprint/Approval requirements.
+trusted-footprint/Approval requirements. Because ADR-0026 has no
+definition-specific atom, create/update each derive exactly
+`(KeyedGroupedSumDefinitionCommand, Structure, Document(document))` for the
+definition direct target/generated identity/owning container; deletion derives
+that tuple plus `(KeyedGroupedSumDefinitionCommand, Destructive,
+Document(document))`. Binding/rebinding does not write a bound schema/field, and
+Query disclosure remains independent of Command authority.
 
 For each Query/preview/diagnostic, the trusted authority derives—not the
-caller—the complete disclosure footprint: definition, candidate Orders and local
-operands, full Products key universe, matched category/price, schema/field type
-facts, and every effective-Number formula dependency. It denies the whole Query
-when that coverage cannot be authorized; it never leaks a matched ID, ambiguity
-candidate, diagnostic, partial group, cache, or currentness fact through a
-visible subset.
+caller—the complete disclosure footprint: `Document(document)` for the
+definition; `Schema(orders)`/`Schema(products)` for candidate membership;
+`EntityField` for local operands, the full Products membership/key universe, and
+matched category/price; `SchemaField` for type facts; and `EntityField` for
+every effective-Number formula dependency. It denies the whole Query when that
+coverage cannot be authorized; it never leaks a matched ID, ambiguity candidate,
+diagnostic, partial group, cache, or currentness fact through a visible subset.
 
 ## Independently specified pressure fixture
 
@@ -80,15 +86,16 @@ visible subset.
 | `order-A` | Orders | `product_code = "P-100"`, `quantity = -1` |
 | `order-B` | Orders | `product_code = "P-200"`, `quantity = 2` |
 
-Presentation order is `order-C`, `order-A`, `order-B`; semantic order is
-`order-A`, `order-B`, `order-C`. The base Complete result is exactly
-`hardware = 4` (`-2 + 6`) and `services = 10`, with no other group.
+Presentation order is `order-C`, `order-A`, `order-B`; it supplies no semantic
+reduction order. The base Complete result is exactly `hardware = 4` (`-2 + 6`)
+and `services = 10`, with no other group.
 
 | Case | Independent change | Required outcome |
 | --- | --- | --- |
 | Unique match | Base fixture | Complete: `hardware = 4`, `services = 10`. |
 | Missing key | Set `order-C.product_code = "P-404"` | Unavailable; `lookup.missing_key` for `order-C`; no current group values. |
 | Duplicate key | Add `product-D(code = "P-100", category = "other", price = 9)` | Unavailable; `lookup.ambiguous_key` for affected orders; no first/last selection. |
+| Products membership dependency | Add unmatched `product-D(code = "P-404", ...)` | Freshly evaluated Complete base result, not a retained current cache, even though group values are unchanged. |
 | Cardinality dependency edit | Add unmatched `product-D(code = "P-404", ...)`, edit only its code to `"P-100"`, then restore `"P-404"` | Base becomes Unavailable with `product-D` in every `P-100` ambiguity set, then returns as a freshly evaluated Complete base result. |
 | Case-different key | Set `order-C.product_code = "p-100"` | Unavailable; `lookup.missing_key`; lowercase differs. |
 | Unicode lookalike | Product uses NFC `"é"`; order uses NFD `"é"` | Unavailable; `lookup.missing_key`; no Unicode normalization/collation. |
@@ -100,7 +107,7 @@ Presentation order is `order-C`, `order-A`, `order-B`; semantic order is
 | Missing/wrong input | Make required quantity absent/Text; separately use zero quantity with missing product | Unavailable with root evidence. `0 * missing` is not zero; invalid rows are not skipped. |
 | Non-finite amount | Set matched price to finite binary64 maximum and quantity to `2` | Unavailable with ADR-0018 non-finite multiplication failure. |
 | Non-finite reduction | Two valid amounts in one group each equal finite binary64 maximum | Unavailable with ordered-addition non-finite failure. |
-| Cancellation-sensitive reduction | In one category set `order-A = 1e16`, `order-B = -1e16`, `order-C = 1`; present `order-A`, `order-C`, `order-B` | EntityId order is A/B/C, so the required left fold is exactly Number `1` (binary64 `0x3ff0000000000000`), not presentation-order `0`. |
+| Cancellation-sensitive reduction | In one category set `order-A = 1e16`, `order-B = -1e16`, `order-C = 1`; present `order-A`, `order-C`, `order-B` | `ContributionNumberOrder` is `-1e16`, `1`, `1e16`, so the required left fold is semantic positive zero (binary64 `0x0000000000000000`), independent of presentation and EntityId representation. |
 | Signed zero | A category has only `price = 0`, `quantity = -1` | Complete value is semantic positive zero. |
 | Formula-backed operand | Make price or quantity a calculation-failed formula | Unavailable using the ADR-0018 root failure; no second evaluator or stale effective Number. |
 | Formula-backed effective Number | Replace `product-A.price` with a successful ADR-0018 formula whose effective Number is `3` | Fresh Complete: `hardware = 6`, `services = 10`; evaluation uses formula result, not a prior stored/cache price. |
