@@ -97,7 +97,27 @@ definition-level failed dependency without inventing a misleading cascade per
 group. This operation-wide outcome is required because an ambiguous or missing
 product can make the affected category unknowable.
 
-### 4. Currentness, persistence, and interoperability stay truthful
+### 4. Semantic API and authorization remain independently checked
+
+Evaluation is one distinct Semantic API **Query** operation family; saved
+definition create/update is one distinct **Command** operation family. Their
+exact identifiers and DTOs remain Provisional, but neither shares capability
+meaning with Formula, Analysis Query, scalar Value, schema, or generic structure
+operations. Create/update requires `Structure`; removal requires `Structure +
+Destructive`. Each command continues through ADR-0020 exact-base proposal/
+publication and ADR-0026 capability, Approval, and trusted-footprint laws.
+
+Before an evaluation result, diagnostic, ambiguity candidate, preview, or
+dependency/currentness fact is disclosed, the trusted authority derives its
+complete footprint from the exact definition and snapshot. It includes the
+definition, candidate Orders membership and local operands, the entire Products
+key universe, matched category/price operands, relevant schema/field type facts,
+and every authoritative formula dependency used to form an effective Number.
+If complete disclosure coverage for any revealed fact cannot be derived and
+authorized, the Query is denied without a partial aggregate, matched identity,
+or diagnostic leak. The client never supplies its own footprint.
+
+### 5. Currentness, persistence, and interoperability stay truthful
 
 An evaluated result is derived revision-scoped evidence: definition identity,
 exact accepted input snapshot/revision, dependency outcome, and either complete
@@ -117,7 +137,7 @@ values-only export is permitted only as explicitly labelled evaluated/lossy
 output tied to its exact source revision; it claims neither re-evaluation nor
 formula preservation.
 
-### 5. Realization remains separately Ready work
+### 6. Realization remains separately Ready work
 
 This ADR creates no formula extension, query engine, storage format, API/DTO,
 frontend evaluator, export mapping, or production implementation. After this

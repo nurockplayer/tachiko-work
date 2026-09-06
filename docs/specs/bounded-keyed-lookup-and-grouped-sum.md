@@ -46,6 +46,23 @@ exported/diffed as current output. Values-only export must be labelled
 evaluated/lossy and source-revision-bound; live preservation requires encoding
 the whole admitted semantic contract.
 
+## Semantic API, capability, and disclosure boundary
+
+Evaluation is a distinct Semantic API Query operation family. Definition
+create/update is a distinct Command family requiring `Structure`; deletion
+requires `Structure + Destructive`. Exact names/DTOs remain Provisional, but no
+Formula, Analysis Query, scalar Value, schema, or generic Structure capability
+implies either family. Commands retain ADR-0020 exact-base and ADR-0026
+trusted-footprint/Approval requirements.
+
+For each Query/preview/diagnostic, the trusted authority derives—not the
+caller—the complete disclosure footprint: definition, candidate Orders and local
+operands, full Products key universe, matched category/price, schema/field type
+facts, and every effective-Number formula dependency. It denies the whole Query
+when that coverage cannot be authorized; it never leaks a matched ID, ambiguity
+candidate, diagnostic, partial group, cache, or currentness fact through a
+visible subset.
+
 ## Independently specified pressure fixture
 
 | Stable entity ID | Table | Key / fields |
@@ -65,6 +82,7 @@ Presentation order is `order-C`, `order-A`, `order-B`; semantic order is
 | Unique match | Base fixture | Complete: `hardware = 4`, `services = 10`. |
 | Missing key | Set `order-C.product_code = "P-404"` | Unavailable; `lookup.missing_key` for `order-C`; no current group values. |
 | Duplicate key | Add `product-D(code = "P-100", category = "other", price = 9)` | Unavailable; `lookup.ambiguous_key` for affected orders; no first/last selection. |
+| Cardinality dependency edit | Add unmatched `product-D(code = "P-404", ...)`, edit only its code to `"P-100"`, then restore `"P-404"` | Base becomes Unavailable with `product-D` in every `P-100` ambiguity set, then returns as a freshly evaluated Complete base result. |
 | Case-different key | Set `order-C.product_code = "p-100"` | Unavailable; `lookup.missing_key`; lowercase differs. |
 | Unicode lookalike | Product uses NFC `"é"`; order uses NFD `"é"` | Unavailable; `lookup.missing_key`; no Unicode normalization/collation. |
 | Key edit/restoration | Change `order-C` to `"P-404"`, then restore `"P-100"` in a later snapshot | First Unavailable; restored snapshot is freshly Complete, never revived cache. |
@@ -75,9 +93,10 @@ Presentation order is `order-C`, `order-A`, `order-B`; semantic order is
 | Missing/wrong input | Make required quantity absent/Text; separately use zero quantity with missing product | Unavailable with root evidence. `0 * missing` is not zero; invalid rows are not skipped. |
 | Non-finite amount | Set matched price to finite binary64 maximum and quantity to `2` | Unavailable with ADR-0018 non-finite multiplication failure. |
 | Non-finite reduction | Two valid amounts in one group each equal finite binary64 maximum | Unavailable with ordered-addition non-finite failure. |
-| Cancellation-sensitive reduction | One category has contributor amounts `1e16`, `1`, `-1e16` under IDs intentionally unlike view order | Complete result uses the specified EntityId left-fold result; no view/hash/parallel reassociation is allowed. |
+| Cancellation-sensitive reduction | In one category set `order-A = 1e16`, `order-B = -1e16`, `order-C = 1`; present `order-A`, `order-C`, `order-B` | EntityId order is A/B/C, so the required left fold is exactly Number `1` (binary64 `0x3ff0000000000000`), not presentation-order `0`. |
 | Signed zero | A category has only `price = 0`, `quantity = -1` | Complete value is semantic positive zero. |
 | Formula-backed operand | Make price or quantity a calculation-failed formula | Unavailable using the ADR-0018 root failure; no second evaluator or stale effective Number. |
+| Formula-backed effective Number | Replace `product-A.price` with a successful ADR-0018 formula whose effective Number is `3` | Fresh Complete: `hardware = 6`, `services = 10`; evaluation uses formula result, not a prior stored/cache price. |
 | Empty Orders | Remove every Orders entity while definitions/fields remain valid | Complete empty group map; no synthetic category/group. |
 | Save/reopen live | Save definition, change `product-A.price` from `2` to `3`, reopen against that snapshot | Fresh Complete: `hardware = 6`, `services = 10`; stored `4` is not truth. |
 | Stale cache | Retain base output, then change a dependency root | Retained output is non-current; require fresh Complete/Unavailable evaluation. |
