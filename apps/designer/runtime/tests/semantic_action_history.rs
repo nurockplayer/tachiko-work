@@ -197,8 +197,14 @@ fn formula_copy_is_one_reversible_action_and_preserves_source_formula_history() 
 
     assert_eq!(formula_source(&mut runtime, 2, "r2.c"), "([r2.a] * 2)");
     assert_eq!(formula_source(&mut runtime, 2, "r3.c"), "([r3.a] * 2)");
-    assert_eq!(calculated_number(&mut runtime, 2, "r2.c").to_bits(), 4.0f64.to_bits());
-    assert_eq!(calculated_number(&mut runtime, 2, "r3.c").to_bits(), 6.0f64.to_bits());
+    assert_eq!(
+        calculated_number(&mut runtime, 2, "r2.c").to_bits(),
+        4.0f64.to_bits()
+    );
+    assert_eq!(
+        calculated_number(&mut runtime, 2, "r3.c").to_bits(),
+        6.0f64.to_bits()
+    );
 
     runtime
         .handle(DesignerRequest::Undo {
@@ -222,7 +228,10 @@ fn formula_copy_is_one_reversible_action_and_preserves_source_formula_history() 
         })
         .expect("the source formula action must redo in chronological order");
     assert_eq!(formula_source(&mut runtime, 5, "r1.c"), "([r1.a] * 2)");
-    assert_eq!(calculated_number(&mut runtime, 5, "r1.c").to_bits(), 2.0f64.to_bits());
+    assert_eq!(
+        calculated_number(&mut runtime, 5, "r1.c").to_bits(),
+        2.0f64.to_bits()
+    );
     runtime
         .handle(DesignerRequest::Redo {
             expected_revision: "resident/5".into(),
@@ -230,8 +239,14 @@ fn formula_copy_is_one_reversible_action_and_preserves_source_formula_history() 
         .expect("the formula copy action must redo after its source formula");
     assert_eq!(formula_source(&mut runtime, 6, "r2.c"), "([r2.a] * 2)");
     assert_eq!(formula_source(&mut runtime, 6, "r3.c"), "([r3.a] * 2)");
-    assert_eq!(calculated_number(&mut runtime, 6, "r2.c").to_bits(), 4.0f64.to_bits());
-    assert_eq!(calculated_number(&mut runtime, 6, "r3.c").to_bits(), 6.0f64.to_bits());
+    assert_eq!(
+        calculated_number(&mut runtime, 6, "r2.c").to_bits(),
+        4.0f64.to_bits()
+    );
+    assert_eq!(
+        calculated_number(&mut runtime, 6, "r3.c").to_bits(),
+        6.0f64.to_bits()
+    );
 }
 
 #[test]

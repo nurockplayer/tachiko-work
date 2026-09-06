@@ -210,9 +210,11 @@ fn intervening_generic_publication_invalidates_redo_and_starts_a_new_tracker_bra
         .expect("the accepted generic action must remain redoable");
     assert_canonical(&mut runtime, &expected);
     let expected_revision = revision(&mut runtime, "tracker");
-    assert!(runtime
-        .handle(DesignerRequest::Redo { expected_revision })
-        .is_err());
+    assert!(
+        runtime
+            .handle(DesignerRequest::Redo { expected_revision })
+            .is_err()
+    );
     let branch_base = expected.clone();
     edit_tracker(&mut runtime, &mut expected, "new tracker branch");
     let expected_revision = revision(&mut runtime, "notes");

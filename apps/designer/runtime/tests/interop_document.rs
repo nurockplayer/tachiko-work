@@ -375,7 +375,10 @@ fn optional_missing_fill_and_conversion_use_declared_slots_without_false_placeho
             expected_revision: "resident/2".into(),
         })
         .unwrap();
-    assert_eq!(runtime.export_project("resident/3").unwrap().bytes, after_fill);
+    assert_eq!(
+        runtime.export_project("resident/3").unwrap().bytes,
+        after_fill
+    );
     runtime
         .handle(DesignerRequest::Undo {
             expected_revision: "resident/3".into(),
@@ -387,7 +390,10 @@ fn optional_missing_fill_and_conversion_use_declared_slots_without_false_placeho
             expected_revision: "resident/4".into(),
         })
         .unwrap();
-    assert_eq!(runtime.export_project("resident/5").unwrap().bytes, after_fill);
+    assert_eq!(
+        runtime.export_project("resident/5").unwrap().bytes,
+        after_fill
+    );
     assert_eq!(text(&mut runtime, 5, "r1.missing"), "Unknown");
     runtime
         .handle(DesignerRequest::Redo {
