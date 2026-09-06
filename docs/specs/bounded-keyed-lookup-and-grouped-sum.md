@@ -25,19 +25,26 @@ formula-backed values reuse ADR-0018 calculation outcomes. No coercion, case fol
 normalization, locale collation, wildcard, approximate match, or silent row
 selection is admitted.
 
-Matched amount uses ADR-0018 `price * quantity`. Within an exact category,
-contributors are opaque Orders `EntityId` sorted by unsigned UTF-8-byte lexical
-order and are left-folded from semantic positive zero, validating/normalizing
-each binary64 intermediate. View, key, category, storage, and presentation order
-cannot change membership or results. There are no empty/synthetic groups.
+Matched amount uses ADR-0018 `price * quantity`. Category equality, like lookup
+equality, compares the exact decoded Unicode scalar sequence with no case
+folding, normalization, locale collation, or coercion. Within an exact category,
+contributors use the logical `StableEntityIdOrder` and are left-folded from
+semantic positive zero, validating/normalizing each binary64 intermediate. The
+current text identity profile compares decoded opaque `EntityId` tokens by
+unsigned UTF-8-byte lexicographic order; this is not record/storage/view order,
+and a future identity representation needs an observationally equivalent logical
+comparator before supporting this definition. View, key, category, storage, and
+presentation order cannot change membership or results. There are no
+empty/synthetic groups.
 
 Any member lookup/input/amount/reduction failure yields one Unavailable
 definition result, direct root diagnostics plus definition-level failure, and no
 current group map. A Complete result exposes the definition and exact evaluated
-snapshot/revision. Dependencies include Orders membership, the full Products key
-universe, successful-match price/category, schema/field type facts, and any
-effective-Number formula dependencies. Retained output becomes non-current after
-a dependency root or definition change.
+snapshot/revision. Dependencies include Orders membership plus every local
+lookup-key/quantity value, the full Products key universe, successful-match
+price/category, schema/field type facts, and any effective-Number formula
+dependencies. Retained output becomes non-current after a dependency root or
+definition change.
 
 Only the definition is durable semantic meaning. A future persisted shape must
 be versioned/migrated under ADR-0017 and fail closed when unsupported; frozen

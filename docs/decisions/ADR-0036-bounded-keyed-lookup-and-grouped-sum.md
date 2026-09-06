@@ -70,11 +70,12 @@ evaluator.
 
 Evaluation resolves current key values on every authoritative request. Stable
 IDs bind definition structure and dependency evidence, not the row that happened
-to match at authoring. Orders membership and every Products key are dependencies
-because a row/key addition, deletion, or edit can change cardinality. Successful
-matches additionally depend on price/category, effective-Number formula
-dependencies, and all bound schema/field type facts. View sorting, row display
-order, storage placement, and locale are not semantic dependencies.
+to match at authoring. Orders membership plus every current Order's local key
+and quantity are dependencies. Every Products key is a dependency because a
+row/key addition, deletion, or edit can change cardinality. Successful matches
+additionally depend on price/category, effective-Number formula dependencies,
+and all bound schema/field type facts. View sorting, row display order, storage
+placement, and locale are not semantic dependencies.
 
 ### 3. Grouped SUM is finite and deterministic
 
@@ -83,12 +84,17 @@ ADR-0018's finite binary64 multiplication, normalization, and failure rules.
 The matched product's exact Text category is its group key; equal strings
 coalesce and no empty/synthetic groups exist.
 
-Within a category, Orders contributors sort by unsigned UTF-8-byte lexical
-order of opaque `EntityId`, then reduce left-to-right from semantic positive
-zero. Every addition uses one ADR-0018 binary64 operation and validates and
-normalizes its intermediate result before the next term. The reduction MUST NOT
-reassociate, parallel-reduce, fuse operations, or inherit view/key/category/
-storage iteration order. Group presentation order is not semantic.
+Within a category, Orders contributors sort by the operation-local logical
+`StableEntityIdOrder`, then reduce left-to-right from semantic positive zero.
+For the current text identity profile, this compares the decoded opaque
+`EntityId` token by unsigned UTF-8-byte lexicographic order; it is not an order
+over serialized records, storage locations, or view layout. Any future identity
+representation must define an observationally equivalent logical comparator
+before it can support this definition. Every addition uses one ADR-0018 binary64
+operation and validates and normalizes its intermediate result before the next
+term. The reduction MUST NOT reassociate, parallel-reduce, fuse operations, or
+inherit view/key/category/storage iteration order. Group presentation order is
+not semantic.
 
 Any required lookup, input, amount, or reduction failure makes the **whole
 definition result unavailable** and publishes no partial group values as
