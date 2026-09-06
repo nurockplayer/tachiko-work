@@ -15,28 +15,6 @@ gh_bin="${GITHUB_DR_GH:-gh}"
 jq_bin="${GITHUB_DR_JQ:-jq}"
 node_bin="${GITHUB_DR_NODE:-node}"
 
-die() {
-  local message="$*"
-  redact_text "${program}: ${message}" >&2
-  exit 1
-}
-
-tool_path() {
-  local requested="$1"
-  local fallback="$2"
-  if [[ -n "${requested}" && "${requested}" == */* ]]; then
-    [[ -x "${requested}" ]] || die "required tool is not executable: ${fallback}"
-    printf '%s\n' "${requested}"
-    return
-  fi
-  command -v "${requested:-${fallback}}" 2>/dev/null ||
-    die "required tool is unavailable: ${fallback}"
-}
-
-git_bin="$(tool_path "${git_bin}" git)"
-jq_bin="$(tool_path "${jq_bin}" jq)"
-node_bin="$(tool_path "${node_bin}" node)"
-
 secret_values=()
 for secret_name in \
   GH_TOKEN \
@@ -67,10 +45,44 @@ redact_file() {
   done <"${file}"
 }
 
+die() {
+  local message="$*"
+  redact_text "${program}: ${message}" >&2
+  exit 1
+}
+
+tool_path() {
+  local requested="$1"
+  local fallback="$2"
+  if [[ -n "${requested}" && "${requested}" == */* ]]; then
+    [[ -x "${requested}" ]] || die "required tool is not executable: ${fallback}"
+    printf '%s\n' "${requested}"
+    return
+  fi
+  command -v "${requested:-${fallback}}" 2>/dev/null ||
+    die "required tool is unavailable: ${fallback}"
+}
+
+git_bin="$(tool_path "${git_bin}" git)"
+jq_bin="$(tool_path "${jq_bin}" jq)"
+node_bin="$(tool_path "${node_bin}" node)"
+
 tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/github-dr-backup.XXXXXX")"
+snapshot_cleanup_path=""
 cleanup_tmp() {
   rm -rf -- "${tmp_root}"
 }
+
+cleanup_snapshot_stage() {
+  [[ -n "${snapshot_cleanup_path:-}" ]] || return 0
+  rm -rf -- "${snapshot_cleanup_path}"
+}
+
+cleanup_snapshot_and_tmp() {
+  cleanup_snapshot_stage
+  cleanup_tmp
+}
+
 trap cleanup_tmp EXIT
 
 last_command_error=""
@@ -91,21 +103,21 @@ capture_command() {
     redact_file "${command_stdout}" >"${destination}"
     rm -f -- "${command_stdout}" "${command_stderr}"
     return 0
+  else
+    command_status="$?"
+    last_command_error="$(mktemp "${tmp_root}/error.XXXXXX")"
+    if [[ -s "${command_stdout}" ]]; then
+      redact_file "${command_stdout}" >"${last_command_error}"
+    fi
+    if [[ -s "${command_stderr}" ]]; then
+      redact_file "${command_stderr}" >>"${last_command_error}"
+    fi
+    if [[ -s "${last_command_error}" ]]; then
+      redact_file "${last_command_error}" >&2
+    fi
+    rm -f -- "${command_stdout}" "${command_stderr}"
+    return "${command_status}"
   fi
-
-  command_status="$?"
-  last_command_error="$(mktemp "${tmp_root}/error.XXXXXX")"
-  if [[ -s "${command_stdout}" ]]; then
-    redact_file "${command_stdout}" >"${last_command_error}"
-  fi
-  if [[ -s "${command_stderr}" ]]; then
-    redact_file "${command_stderr}" >>"${last_command_error}"
-  fi
-  if [[ -s "${last_command_error}" ]]; then
-    redact_file "${last_command_error}" >&2
-  fi
-  rm -f -- "${command_stdout}" "${command_stderr}"
-  return "${command_status}"
 }
 
 validate_json() {
@@ -159,9 +171,10 @@ api_repository() {
     "${endpoint}"; then
     validate_json "${destination}"
     return 0
+  else
+    command_status="$?"
+    return "${command_status}"
   fi
-  command_status="$?"
-  return "${command_status}"
 }
 
 api_collection() {
@@ -175,9 +188,10 @@ api_collection() {
     "${endpoint}"; then
     normalize_collection "${destination}" || die "could not normalize API collection: ${endpoint%%\?*}"
     return 0
+  else
+    command_status="$?"
+    return "${command_status}"
   fi
-  command_status="$?"
-  return "${command_status}"
 }
 
 api_is_access_unavailable() {
@@ -357,11 +371,21 @@ snapshot() {
   [[ "${retention_count}" =~ ^[1-9][0-9]*$ ]] ||
     die "GITHUB_DR_RETENTION_COUNT must be a positive integer"
 
-  local output_absolute snapshot_store stage repository_json default_branch
+  local output_parent output_name output_absolute snapshot_store stage repository_json default_branch
   local snapshot_at snapshot_id dated_snapshot latest_stage old_latest
   local omission_file omission_json api_status pr_number
-  output_absolute="$(cd "$(dirname "${output}")" 2>/dev/null && pwd -P)/$(basename "${output}")" ||
+  output_parent="$(dirname "${output}")"
+  if output_parent="$(cd "${output_parent}" 2>/dev/null && pwd -P)"; then
+    :
+  else
     die "snapshot output parent does not exist"
+  fi
+  output_name="$(basename "${output}")"
+  [[ -n "${output_name}" && "${output_name}" != '.' && "${output_name}" != '..' && "${output_name}" != '/' ]] ||
+    die "snapshot output directory name is invalid"
+  output_absolute="${output_parent}/${output_name}"
+  [[ "${output_absolute}" != '/' && "${output_absolute}" != '//' ]] ||
+    die "snapshot output directory is invalid"
   mkdir -p -- "${output_absolute}/snapshots"
   snapshot_store="${output_absolute}/snapshots"
   stage="$(mktemp -d "${output_absolute}/.snapshot.XXXXXX")"
@@ -369,14 +393,10 @@ snapshot() {
   : >"${omission_file}"
 
   # Keep any stage failure from touching the last known-good latest directory.
-  # The stage itself is removed by the EXIT trap below.  Keep the path outside
-  # the function's local scope because EXIT traps run after it returns.
+  # The stage itself is removed by the combined EXIT trap below. Keep the path
+  # outside the function's local scope because EXIT traps run after it returns.
   snapshot_cleanup_path="${stage}"
-  snapshot_cleanup() {
-    [[ -n "${snapshot_cleanup_path:-}" ]] || return 0
-    rm -rf -- "${snapshot_cleanup_path}"
-  }
-  trap snapshot_cleanup EXIT
+  trap cleanup_snapshot_and_tmp EXIT
 
   repository_json="${stage}/repository.json"
   api_repository "${repository_json}" "repos/${repository}"
@@ -545,13 +565,18 @@ EOF_MANIFEST
 
   local retention_candidate index
   index=0
-  for retention_candidate in "${snapshot_store}"/20*T*Z-*; do
+  while IFS= read -r retention_candidate; do
     [[ -d "${retention_candidate}" ]] || continue
     index=$((index + 1))
     if ((index > retention_count)); then
       rm -rf -- "${retention_candidate}"
     fi
-  done
+  done < <(
+    for retention_candidate in "${snapshot_store}"/20*T*Z-*; do
+      [[ -d "${retention_candidate}" ]] || continue
+      printf '%s\n' "${retention_candidate}"
+    done | sort -r
+  )
 
   printf 'github-dr-backup: snapshot published at %s (source HEAD %s)\n' \
     "${output_absolute}/latest" "${source_head}"
