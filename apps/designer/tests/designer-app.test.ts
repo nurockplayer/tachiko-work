@@ -429,7 +429,7 @@ class GenericHistoryClient extends FakeClient {
     return publication;
   }
 
-  override async trackerCommand(request: TrackerCommand): Promise<PublicationProjection> {
+  async trackerCommand(request: TrackerCommand): Promise<PublicationProjection> {
     this.historyRequests.push(structuredClone(request));
     const base = `resident/${String(this.#historyRevision)}`;
     this.#historyRevision += 1;

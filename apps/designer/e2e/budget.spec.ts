@@ -116,6 +116,32 @@ test("name picker authors a Number cell and copies references relatively across 
   await expect(cell(page, "rent.variance").locator("output")).toHaveText("30");
 });
 
+test("Budget formula apply and copy expose bounded session Undo/Redo controls", async ({ page }) => {
+  await newBudget(page);
+  const history = page.getByRole("region", { name: "Session history", exact: true });
+  await expect(history.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
+
+  const planned = page.getByLabel("Planned for Rent", { exact: true });
+  const plannedBefore = await planned.inputValue();
+  await formula(page, item("Rent", "Planned"), [{ reference: item("Utilities", "Planned") }, " + 10"]);
+  await expect(cell(page, "rent.planned").locator("output")).toHaveText("190");
+  await expect(history.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
+
+  await history.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(page.getByLabel("Planned for Rent", { exact: true })).toHaveValue(plannedBefore);
+  await history.getByRole("button", { name: "Redo", exact: true }).click();
+  await expect(cell(page, "rent.planned").locator("output")).toHaveText("190");
+
+  const varianceBefore = await cell(page, "rent.variance").locator("output").textContent();
+  await copy(page, item("Rent", "Planned"), [item("Rent", "Variance")], [], false, true);
+  const varianceAfter = await cell(page, "rent.variance").locator("output").textContent();
+  expect(varianceAfter).not.toBe(varianceBefore);
+  await history.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(cell(page, "rent.variance").locator("output")).toHaveText(varianceBefore ?? "");
+  await history.getByRole("button", { name: "Redo", exact: true }).click();
+  await expect(cell(page, "rent.variance").locator("output")).toHaveText(varianceAfter ?? "");
+});
+
 test("row fill respects fixed and cross-sheet references and rejects an invalid atomic range", async ({ page }) => {
   await newBudget(page);
   await formula(page, item("Rent", "Variance"), [{ reference: item("Rent", "Actual") }, " - ", { reference: item("Rent", "Planned") }, " + 1"]);
