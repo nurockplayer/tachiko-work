@@ -23,6 +23,7 @@ use thiserror::Error;
 use super::{
     Document, DocumentId, Entity, EntityId, Expression, FieldId, FieldRef, Number, SchemaId,
     SemanticChange, ValidationReport, Value, WorkspaceError, field_value_candidate, finalize_edit,
+    unset_field_candidate,
 };
 
 macro_rules! opaque_text_id {
@@ -300,6 +301,13 @@ pub enum SemanticCommand {
         field: FieldRef,
         value: Value,
     },
+    /// Remove one stored value from an optional declared field.
+    ///
+    /// This app-private inverse keeps missing-field semantics distinct from a
+    /// scalar placeholder while still using the normal lifecycle.
+    UnsetField {
+        field: FieldRef,
+    },
     FormulaUpdate(FormulaUpdateCommand),
     FormulaInverseRestore(FormulaInverseRestoreCommand),
 }
@@ -308,6 +316,11 @@ impl SemanticCommand {
     #[must_use]
     pub fn set_field_value(field: FieldRef, value: Value) -> Self {
         Self::SetFieldValue { field, value }
+    }
+
+    #[must_use]
+    pub fn formula_inverse_restore(field: FieldRef, value: Number) -> Self {
+        Self::FormulaInverseRestore(FormulaInverseRestoreCommand::new(field, value))
     }
 }
 
@@ -1987,7 +2000,9 @@ impl PatchLifecycle {
                 family: match command {
                     SemanticCommand::AppendEntity { .. } => OperationFamily::AppendEntity,
                     SemanticCommand::RemoveEntity { .. } => OperationFamily::RemoveEntity,
-                    SemanticCommand::SetFieldValue { .. } => OperationFamily::SetFieldValue,
+                    SemanticCommand::SetFieldValue { .. } | SemanticCommand::UnsetField { .. } => {
+                        OperationFamily::SetFieldValue
+                    }
                     SemanticCommand::FormulaUpdate(_) => OperationFamily::FormulaUpdate,
                     SemanticCommand::FormulaInverseRestore(_) => {
                         OperationFamily::FormulaInverseRestore
@@ -2073,6 +2088,7 @@ impl PatchLifecycle {
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines)] // Keep the closed command catalogue together.
     fn plan_commands(
         &self,
         document: &Document,
@@ -2136,6 +2152,30 @@ impl PatchLifecycle {
                         });
                     }
                     candidate = field_value_candidate(&candidate, field, value)?;
+                }
+                SemanticCommand::UnsetField { field } => {
+                    let entity = candidate.entities.get(&field.entity).ok_or_else(|| {
+                        WorkspaceError::MissingEntityId {
+                            entity: field.entity.clone(),
+                        }
+                    })?;
+                    let existing = entity.fields.get(&field.field);
+                    let scope = self.field_scope(&candidate, field)?;
+                    for mutation_class in [MutationClass::Value, MutationClass::Destructive] {
+                        writes.insert(AssociatedWriteRequirement {
+                            family: OperationFamily::SetFieldValue,
+                            mutation_class,
+                            scope: scope.clone(),
+                        });
+                    }
+                    if matches!(existing, Some(Value::Formula(_))) {
+                        writes.insert(AssociatedWriteRequirement {
+                            family: OperationFamily::SetFieldValue,
+                            mutation_class: MutationClass::Formula,
+                            scope,
+                        });
+                    }
+                    candidate = unset_field_candidate(&candidate, field)?;
                 }
                 SemanticCommand::FormulaUpdate(command) => {
                     let field = command.target();
@@ -2321,6 +2361,29 @@ impl PatchLifecycle {
                 self.insert_field_disclosure(before, after, field, disclosures)?;
                 self.insert_value_disclosures(before, after, value, disclosures)
             }
+            SemanticCommand::UnsetField { field } => {
+                self.insert_field_disclosure_for(
+                    OperationFamily::SetFieldValue,
+                    before,
+                    after,
+                    field,
+                    disclosures,
+                )?;
+                if let Some(value) = before
+                    .entities
+                    .get(&field.entity)
+                    .and_then(|entity| entity.fields.get(&field.field))
+                {
+                    self.insert_value_disclosures_for(
+                        OperationFamily::SetFieldValue,
+                        before,
+                        after,
+                        value,
+                        disclosures,
+                    )?;
+                }
+                Ok(())
+            }
             SemanticCommand::FormulaUpdate(command) => {
                 self.insert_field_disclosure_for(
                     OperationFamily::FormulaUpdate,
@@ -2386,6 +2449,17 @@ impl PatchLifecycle {
                 }
                 self.insert_field_disclosure(before, after, field, disclosures)?;
                 self.insert_value_disclosures(before, after, value, disclosures)
+            }
+            SemanticChange::FieldRemoved { field, value } => {
+                let mut families = command_families_for_field(body, field);
+                if families.is_empty() {
+                    families.insert(OperationFamily::SetFieldValue);
+                }
+                for family in families {
+                    self.insert_field_disclosure_for(family, before, after, field, disclosures)?;
+                    self.insert_value_disclosures_for(family, before, after, value, disclosures)?;
+                }
+                Ok(())
             }
             SemanticChange::FieldChanged {
                 field,
@@ -2668,6 +2742,9 @@ fn command_families_for_field(
                 Some(OperationFamily::FormulaInverseRestore)
             }
             SemanticCommand::SetFieldValue { field: target, .. } if target == field => {
+                Some(OperationFamily::SetFieldValue)
+            }
+            SemanticCommand::UnsetField { field: target } if target == field => {
                 Some(OperationFamily::SetFieldValue)
             }
             _ => None,

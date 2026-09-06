@@ -186,7 +186,7 @@ const switchCollection = async (root: HTMLElement, collection: string): Promise<
     select.value = collection; select.dispatchEvent(new Event("change", {bubbles: true}));
     await vi.waitFor(() => { expect(root.querySelector<HTMLSelectElement>("[data-collection-select]")?.disabled).toBe(false); });
 };
-it("generic publication clears both Tracker histories before refresh and preserves formatting", async () => {
+it("generic publication remains in the Tracker history before refresh and preserves formatting", async () => {
     const {root, client, queryTable} = await setup("Accepted work", false, true, true);
     click(root, '[data-tracker="append"]');
     await vi.waitFor(() => { expect(root.querySelector<HTMLButtonElement>('[data-tracker="undo"]')?.disabled).toBe(false); });
@@ -198,8 +198,8 @@ it("generic publication clears both Tracker histories before refresh and preserv
     await vi.waitFor(() => { expect(root.textContent).toContain("Edit published; refresh incomplete"); });
     queryTable.mockResolvedValueOnce({...fixture(), revision: "resident/2"});
     await switchCollection(root, "tracker");
-    expect(root.querySelector<HTMLButtonElement>('[data-tracker="undo"]')?.disabled).toBe(true);
+    expect(root.querySelector<HTMLButtonElement>('[data-tracker="undo"]')?.disabled).toBe(false);
     expect(root.querySelector<HTMLButtonElement>('[data-tracker="redo"]')?.disabled).toBe(true);
-    expect(root.textContent).toContain("Tracker undo/redo cleared after an edit outside Tracker");
+    expect(root.textContent).not.toContain("Tracker undo/redo cleared after an edit outside Tracker");
     expect(root.querySelector("[role=gridcell]")?.className).toContain("cell-bold");
 });

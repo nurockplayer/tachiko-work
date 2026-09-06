@@ -146,7 +146,7 @@ export class SpreadsheetImportPanel {
 export function mountCleanupPanel(root: HTMLElement, table: TableProjection, disabled: boolean, preview: (operation: CleanupOperation) => Promise<CleanupPreview>, commit: (value: CleanupPreview) => Promise<void>): void {
   const panel = element("details"); panel.append(element("summary", "Clean imported data"));
   const controls = element("fieldset"); controls.disabled = disabled;
-  controls.append(element("p", "Preview an atomic change before committing. A successful cleanup clears session Undo/Redo. Split and conversion write into existing output columns; source cells stay intact. Row numbers below refer to canonical data order, independent of sorting and filtering."));
+  controls.append(element("p", "Preview an atomic change before committing. A successful cleanup remains one reversible session action. Split and conversion write into existing output columns; source cells stay intact. Row numbers below refer to canonical data order, independent of sorting and filtering."));
   const operation = select(controls, "Cleanup operation", ["trim", "replace", "split", "convert", "fill", "deduplicate"].map(value => [value, value]));
   const columns = table.columns.map(col => [col.id, col.key] as [string, string]);
   const field = select(controls, "Cleanup source column", columns);

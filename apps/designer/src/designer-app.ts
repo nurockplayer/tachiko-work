@@ -311,13 +311,13 @@ export function mountDesigner(
     busy = true; render(); let published = false;
     try {
       const publication = await client.commitCleanup(preview.revision, preview.preview_id);
-      published = true; tracker.invalidateHistory(); store.beginPublication(publication); durability.observe(publication.resulting_revision);
+      published = true; tracker.recordSemantic(); store.beginPublication(publication); durability.observe(publication.resulting_revision);
       await refreshBudgetTables(publication.resulting_revision);
       const table = budgetTables.find(item => item.collection.key === selectedCollection);
       if (!table) throw new Error("Current imported table is unavailable.");
       store = createProjectionStore(table);
       if (bootstrap) bootstrap = {...bootstrap, revision: publication.resulting_revision, collections: budgetTables.map(item => item.collection)};
-      notice = {tone: "success", title: "Cleanup committed", message: "The exact preview was published atomically. Session Undo/Redo was cleared; the original source is retained.", diagnostics: []};
+      notice = {tone: "success", title: "Cleanup committed", message: "The exact preview was published atomically. Session Undo/Redo remains available; the original source is retained.", diagnostics: []};
     } catch (error) { showFailure(error, published); throw error; }
     finally { busy = false; syncBeforeUnloadGuard(); render(); }
   };
@@ -569,9 +569,9 @@ export function mountDesigner(
     try {
       const publication = await publish(store.snapshot().table.revision);
       published = true;
-      // Rust clears its session history for this accepted generic publication.
-      // Invalidate the matching UI history before any fallible refresh work.
-      tracker.invalidateHistory();
+      // Rust records this accepted generic publication in the session history.
+      // Mirror one semantic entry before any fallible refresh work.
+      tracker.recordSemantic();
       onPublished?.();
       const requested = store.beginPublication(publication);
       durability.observe(publication.resulting_revision);

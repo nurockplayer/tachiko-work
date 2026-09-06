@@ -940,10 +940,6 @@ impl DesignerRuntime {
                 input: input.clone(),
             }],
         )?;
-        // Generic publications are not represented in the Tracker action history.
-        // Invalidate both semantic directions only after accepted publication.
-        self.undo.clear();
-        self.redo.clear();
         Ok(publication)
     }
 
@@ -968,15 +964,10 @@ impl DesignerRuntime {
         source: &str,
     ) -> Result<PublicationProjection, DesignerError> {
         let mut inverse = None;
-        let publication =
+        let (publication, forward) =
             self.publish_formula_update(expected_revision, target, source, Some(&mut inverse))?;
         let inverse =
             inverse.ok_or_else(|| tracker_error("accepted formula inverse is unavailable"))?;
-        let forward = self
-            .formula_sources
-            .get(&target.as_field_ref())
-            .cloned()
-            .ok_or_else(|| tracker_error("accepted formula source is unavailable"))?;
         self.record_history_entry(HistoryEntry {
             forward: HistoryAction::FormulaUpdate {
                 target: target.clone(),
@@ -1021,7 +1012,7 @@ impl DesignerRuntime {
         target: &FieldTarget,
         source: &str,
         inverse: Option<&mut Option<HistoryAction>>,
-    ) -> Result<PublicationProjection, DesignerError> {
+    ) -> Result<(PublicationProjection, String), DesignerError> {
         let snapshot = self.session.export_snapshot();
         // This app-private human request owns its complete lifecycle. Keep
         // admitted-but-unpublishable candidates and finished proposal evidence
@@ -1075,6 +1066,10 @@ impl DesignerRuntime {
             command.target().field.clone(),
             Value::Formula(command.expression().clone()),
         );
+        let forward = formula_sources(&candidate)?
+            .get(command.target())
+            .cloned()
+            .ok_or_else(|| tracker_error("accepted formula source is unavailable"))?;
         Self::from_document(candidate, PREFLIGHT_OCCURRENCE)?;
         let execute_now = self.clock.tick();
         let (receipt, invalidation) = {
@@ -1097,22 +1092,27 @@ impl DesignerRuntime {
             (receipt, invalidation)
         };
         self.refresh_structure();
-        self.formula_sources = formula_sources(self.session.export_snapshot().document())?;
-        Ok(PublicationProjection {
-            base_revision: receipt.base_revision.as_str().to_owned(),
-            resulting_revision: receipt.resulting_revision.as_str().to_owned(),
-            entities: invalidation
-                .entities
-                .iter()
-                .map(ToString::to_string)
-                .collect(),
-            fields: invalidation.fields.iter().map(field_target).collect(),
-            affected_calculations: invalidation
-                .affected_calculations
-                .iter()
-                .map(field_target)
-                .collect(),
-        })
+        if let Ok(sources) = formula_sources(self.session.export_snapshot().document()) {
+            self.formula_sources = sources;
+        }
+        Ok((
+            PublicationProjection {
+                base_revision: receipt.base_revision.as_str().to_owned(),
+                resulting_revision: receipt.resulting_revision.as_str().to_owned(),
+                entities: invalidation
+                    .entities
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+                fields: invalidation.fields.iter().map(field_target).collect(),
+                affected_calculations: invalidation
+                    .affected_calculations
+                    .iter()
+                    .map(field_target)
+                    .collect(),
+            },
+            forward,
+        ))
     }
 
     fn restore_formula_inverse(
@@ -1178,7 +1178,9 @@ impl DesignerRuntime {
             (receipt, invalidation)
         };
         self.refresh_structure();
-        self.formula_sources = formula_sources(self.session.export_snapshot().document())?;
+        if let Ok(sources) = formula_sources(self.session.export_snapshot().document()) {
+            self.formula_sources = sources;
+        }
         Ok(PublicationProjection {
             base_revision: receipt.base_revision.as_str().to_owned(),
             resulting_revision: receipt.resulting_revision.as_str().to_owned(),
@@ -1247,6 +1249,7 @@ impl DesignerRuntime {
         }
         let mut seen = BTreeSet::new();
         let mut forward = Vec::new();
+        let mut inverse = Vec::new();
         for destination in destinations {
             let target = destination.as_field_ref();
             if !seen.insert(target.clone()) {
@@ -1282,17 +1285,23 @@ impl DesignerRuntime {
             let value = Value::Formula(copied);
             if &value != old {
                 forward.push(SemanticCommand::set_field_value(target.clone(), value));
+                inverse.push(match old {
+                    Value::Number(value) => {
+                        SemanticCommand::formula_inverse_restore(target, *value)
+                    }
+                    _ => SemanticCommand::set_field_value(target, old.clone()),
+                });
             }
         }
         if forward.is_empty() {
             return Err(PatchLifecycleError::NoChange.into());
         }
-        let publication = self.publish_commands(expected, forward)?;
-        // Match source-based formula authoring: generic formula mutations are
-        // outside scalar history, whose Core contract cannot restore a literal
-        // over a formula. Rejected copies retain both history directions.
-        self.undo.clear();
-        self.redo.clear();
+        inverse.reverse();
+        let publication = self.publish_commands(expected, forward.clone())?;
+        self.record_history_entry(HistoryEntry {
+            forward: HistoryAction::Commands(forward),
+            inverse: HistoryAction::Commands(inverse),
+        });
         Ok(publication)
     }
 
@@ -1316,7 +1325,20 @@ impl DesignerRuntime {
                 SemanticCommand::RemoveEntity { entity } => {
                     candidate.entities.remove(entity);
                 }
-                SemanticCommand::FormulaUpdate(_) | SemanticCommand::FormulaInverseRestore(_) => {
+                SemanticCommand::UnsetField { field } => {
+                    if let Some(entity) = candidate.entities.get_mut(&field.entity) {
+                        entity.fields.remove(&field.field);
+                    }
+                }
+                SemanticCommand::FormulaInverseRestore(command) => {
+                    if let Some(entity) = candidate.entities.get_mut(&command.target().entity) {
+                        entity.fields.insert(
+                            command.target().field.clone(),
+                            Value::Number(command.value()),
+                        );
+                    }
+                }
+                SemanticCommand::FormulaUpdate(_) => {
                     return Err(tracker_error("unsupported history command"));
                 }
             }
@@ -1368,7 +1390,9 @@ impl DesignerRuntime {
             (receipt, invalidation)
         };
         self.refresh_structure();
-        self.formula_sources = formula_sources(self.session.export_snapshot().document())?;
+        if let Ok(sources) = formula_sources(self.session.export_snapshot().document()) {
+            self.formula_sources = sources;
+        }
         Ok(PublicationProjection {
             base_revision: receipt.base_revision.as_str().to_owned(),
             resulting_revision: receipt.resulting_revision.as_str().to_owned(),
@@ -1580,7 +1604,7 @@ impl DesignerRuntime {
     }
 
     fn record_history_entry(&mut self, entry: HistoryEntry) {
-        if self.undo.len() == 64 {
+        if self.undo.len() >= 64 {
             self.undo.remove(0);
         }
         self.undo.push(entry);
@@ -1655,9 +1679,9 @@ impl DesignerRuntime {
         let action = if redo { &entry.forward } else { &entry.inverse };
         let result = match action {
             HistoryAction::Commands(commands) => self.publish_commands(expected, commands.clone()),
-            HistoryAction::FormulaUpdate { target, source } => {
-                self.publish_formula_update(expected, target, source, None)
-            }
+            HistoryAction::FormulaUpdate { target, source } => self
+                .publish_formula_update(expected, target, source, None)
+                .map(|(publication, _)| publication),
             HistoryAction::FormulaInverseRestore { target, value } => {
                 self.restore_formula_inverse(expected, target, *value)
             }
@@ -2858,6 +2882,7 @@ fn designer_lifecycle(
         [
             (OperationFamily::SetFieldValue, MutationClass::Value),
             (OperationFamily::SetFieldValue, MutationClass::Formula),
+            (OperationFamily::SetFieldValue, MutationClass::Destructive),
             (OperationFamily::FormulaInverseRestore, MutationClass::Value),
             (
                 OperationFamily::FormulaInverseRestore,

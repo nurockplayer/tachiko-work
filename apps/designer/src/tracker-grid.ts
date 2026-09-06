@@ -46,6 +46,15 @@ export class TrackerGrid {
         this.#redo = [];
         this.#historyInvalidated = true;
     }
+    // Record one accepted Rust-authoritative semantic publication that was
+    // initiated outside the Tracker command surface. The Rust session owns
+    // the inverse; this entry keeps the UI action stack chronologically aligned.
+    recordSemantic(): void {
+        this.#undo.push({ kind: "semantic" });
+        this.#redo = [];
+        if (this.#undo.length > 64)
+            this.#undo.shift();
+    }
     #rows(): TableProjection["rows"] {
         if (this.#table === null)
             return [];

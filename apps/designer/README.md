@@ -132,12 +132,14 @@ runtime from the [clipboard fixture](e2e/fixtures/operations-tracker.tsv).
   create-only. Save, close and reopen retains document and row identities.
   Browser storage is origin-local and clearing site data removes it.
 - Undo/redo covers supported semantic edits and formatting in the current open
-  session (last 64 combined actions). Semantic undo/redo uses Rust-authoritative
-  inverse atomic batches. A successful edit in the generic workbench clears both
-  Tracker undo/redo histories with an explanation, preserving all accepted data
-  and formatting. Read-only collection switches and rejected/no-change edits do
-  not clear history. Reopening starts a fresh undo stack. A failed refresh
-  leaves the accepted revision saveable and provides **Retry refresh**.
+  session (last 64 combined actions). Accepted Tracker, generic scalar, formula,
+  and cleanup publications each add one chronological Rust-authoritative
+  semantic action; a new accepted action clears only the redo direction. Semantic
+  undo/redo uses inverse atomic batches. Read-only collection switches and
+  rejected/no-change edits do not change history. Chart/presentation changes
+  remain outside this semantic history and invalidate the affected Tracker
+  action stack. Reopening starts a fresh undo stack. A failed refresh leaves the
+  accepted revision saveable and provides **Retry refresh**.
 - Native Tracker has a bounded outbound CSV/XLSX escape path without imported
   workbook metadata. It exports every accepted row (0–128) by stable identity,
   in saved manual order when present or canonical order otherwise; filter never
@@ -236,8 +238,9 @@ the underlying collection. View names and order cannot retarget bound formulas.
   one atomic operation. Relative rows/columns use the displayed canonical
   table order; selected fixed dependencies and cross-collection references
   retain their stable targets. Out-of-range, wrong-type, duplicate or cyclic
-  candidates reject the entire copy. Formula authoring/copy clears session
-  undo history; conversion from a formula back to a scalar is not supported.
+  candidates reject the entire copy. Formula authoring/copy participate in the
+  same bounded session history; direct cleanup conversion from a formula back to
+  a scalar is not supported.
 - Date uses canonical Gregorian `YYYY-MM-DD`. Number formatting can cycle
   between ordinary Number, JPY, Percentage, and USD presentation. Formatting
   is private Browser presentation metadata and never changes Number arithmetic,
@@ -302,9 +305,9 @@ Sorting/filtering change only the view and target stable identities. Cleanup
 supports trim, literal replacement, split into two selected existing Text
 columns, conversion into an existing typed output, missing-value fill and
 stable first-row deduplication by a selected key. Each operation previews an
-atomic, revision-pinned change. Successful cleanup clears session Undo/Redo;
-the UI discloses this before commit. Formula authoring/copy retains the same
-history and scalar-replacement limitations as Budget.
+atomic, revision-pinned change. Successful cleanup remains one reversible
+session action. Formula authoring/copy retain the same history and
+scalar-replacement limitations as Budget.
 
 Save/Save As stores canonical project bytes, source mappings, original source
 bytes, compatibility ledger and table views in the existing atomic private
