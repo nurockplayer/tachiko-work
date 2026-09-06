@@ -1927,6 +1927,8 @@ exact preview. Successful cleanup uses generic publication and records one
 bounded chronological session-history action; a new accepted action clears
 only redo. It never invents a zero-valued inverse for an absent field. This
 app-private history is non-durable and has no public history contract.
-Chart/presentation changes remain outside semantic history and continue to
-clear the UI's pure-presentation action stack. These boundaries must remain
-visible in the UI and release matrix.
+Chart/presentation changes remain outside Rust semantic history. Chart
+invalidation clears the app-private UI coordinator action stack, whose entries
+combine semantic-action markers with presentation snapshots; it does not clear
+Rust semantic history. These boundaries must remain visible in the UI and
+release matrix.

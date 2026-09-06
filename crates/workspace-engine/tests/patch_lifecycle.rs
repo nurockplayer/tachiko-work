@@ -35,6 +35,31 @@ fn optional_slot_document(field_type: tachiko_workspace_engine::FieldType) -> Do
     document
 }
 
+fn optional_formula_document() -> Document {
+    let mut document = optional_slot_document(tachiko_workspace_engine::FieldType::Number);
+    document
+        .entities
+        .get_mut("iron_sword")
+        .unwrap()
+        .fields
+        .insert(
+            "optional".into(),
+            Value::Formula(Expression::Number(Number::new(7.0).unwrap())),
+        );
+    document
+}
+
+fn optional_scalar_document() -> Document {
+    let mut document = optional_slot_document(tachiko_workspace_engine::FieldType::Number);
+    document
+        .entities
+        .get_mut("iron_sword")
+        .unwrap()
+        .fields
+        .insert("optional".into(), number(7.0));
+    document
+}
+
 fn optional_value_authority(scope: ScopedSemanticSubject) -> PatchLifecycle {
     let mut lifecycle = lifecycle();
     grant(
@@ -274,6 +299,155 @@ fn invalid_later_batch_command_cannot_publish_an_initialized_optional_prefix() {
     assert_eq!(publication.document, original);
 }
 
+#[test]
+fn unset_field_requires_value_and_destructive_authority() {
+    let document = optional_scalar_document();
+    let original = document.clone();
+
+    for (proposal_name, execute_class) in [
+        ("unset-without-destructive", MutationClass::Value),
+        ("unset-without-value", MutationClass::Destructive),
+    ] {
+        let mut lifecycle = lifecycle();
+        grant(
+            &mut lifecycle,
+            proposal_name,
+            "human-editor",
+            vec![
+                query_requirement(),
+                mutation_requirement(AuthorizationAction::Propose, MutationClass::Value),
+                mutation_requirement(AuthorizationAction::Propose, MutationClass::Destructive),
+                mutation_requirement(AuthorizationAction::Execute, execute_class),
+            ],
+        );
+        let proposal = propose(
+            &mut lifecycle,
+            &document,
+            proposal_name,
+            SemanticPatchBody::command(unset_command("iron_sword", "optional")),
+            "human-editor",
+        );
+        let mut publication = TestPublication::new(document.clone(), "r1", "r2");
+
+        let error = lifecycle
+            .execute(
+                &proposal,
+                None,
+                &principal("human-editor"),
+                &mut publication,
+                NOW,
+            )
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            PatchLifecycleError::InsufficientCapability {
+                action: AuthorizationAction::Execute
+            }
+        ));
+        assert_eq!(publication.publish_calls, 0);
+        assert_eq!(publication.document, original);
+        assert!(lifecycle.execution_receipts().is_empty());
+    }
+}
+
+#[test]
+fn unset_formula_requires_formula_authority() {
+    let document = optional_formula_document();
+    let original = document.clone();
+    let mut lifecycle = lifecycle();
+    grant(
+        &mut lifecycle,
+        "unset-formula-without-formula",
+        "human-editor",
+        vec![
+            query_requirement(),
+            mutation_requirement(AuthorizationAction::Propose, MutationClass::Value),
+            mutation_requirement(AuthorizationAction::Propose, MutationClass::Destructive),
+            mutation_requirement(AuthorizationAction::Propose, MutationClass::Formula),
+            mutation_requirement(AuthorizationAction::Execute, MutationClass::Value),
+            mutation_requirement(AuthorizationAction::Execute, MutationClass::Destructive),
+        ],
+    );
+    let proposal = propose(
+        &mut lifecycle,
+        &document,
+        "unset-formula-without-formula",
+        SemanticPatchBody::command(unset_command("iron_sword", "optional")),
+        "human-editor",
+    );
+    let mut publication = TestPublication::new(document, "r1", "r2");
+
+    let error = lifecycle
+        .execute(
+            &proposal,
+            None,
+            &principal("human-editor"),
+            &mut publication,
+            NOW,
+        )
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        PatchLifecycleError::InsufficientCapability {
+            action: AuthorizationAction::Execute
+        }
+    ));
+    assert_eq!(publication.publish_calls, 0);
+    assert_eq!(publication.document, original);
+    assert!(lifecycle.execution_receipts().is_empty());
+}
+
+#[test]
+fn unset_field_without_query_disclosure_fails_closed_before_publication() {
+    let document = game_balance_document("game", "Game");
+    let original = document.clone();
+    let mut lifecycle = lifecycle();
+    grant(
+        &mut lifecycle,
+        "unset-required-without-query",
+        "human-editor",
+        vec![
+            mutation_requirement(AuthorizationAction::Propose, MutationClass::Value),
+            mutation_requirement(AuthorizationAction::Propose, MutationClass::Destructive),
+            mutation_requirement(AuthorizationAction::Execute, MutationClass::Value),
+            mutation_requirement(AuthorizationAction::Execute, MutationClass::Destructive),
+        ],
+    );
+    let proposal = proposal_id("unset-required-without-query");
+    let error = lifecycle
+        .propose(
+            &document_scope_id(),
+            &document,
+            &revision("r1"),
+            ProposalRequest::new(
+                proposal.clone(),
+                revision("r1"),
+                SemanticPatchBody::command(unset_command("iron_sword", "damage")),
+                principal("human-editor"),
+            ),
+            NOW,
+        )
+        .unwrap_err();
+
+    assert!(matches!(error, PatchLifecycleError::DisclosureDenied));
+    assert!(lifecycle.execution_receipts().is_empty());
+    let mut publication = TestPublication::new(document, "r1", "r2");
+    assert!(matches!(
+        lifecycle.execute(
+            &proposal,
+            None,
+            &principal("human-editor"),
+            &mut publication,
+            NOW,
+        ),
+        Err(PatchLifecycleError::AuthorizationDenied)
+    ));
+    assert_eq!(publication.publish_calls, 0);
+    assert_eq!(publication.document, original);
+}
+
 fn number(value: f64) -> Value {
     Value::Number(Number::new(value).unwrap())
 }
@@ -433,6 +607,12 @@ fn provision_standard_authority(lifecycle: &mut PatchLifecycle) {
 
 fn field_command(entity: &str, field: &str, value: Value) -> SemanticCommand {
     SemanticCommand::set_field_value(FieldRef::new(entity, field), value)
+}
+
+fn unset_command(entity: &str, field: &str) -> SemanticCommand {
+    SemanticCommand::UnsetField {
+        field: FieldRef::new(entity, field),
+    }
 }
 
 fn propose(
