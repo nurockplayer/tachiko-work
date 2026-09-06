@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   projectObservation,
+  type IssueObservation,
   type ObservationSnapshot,
+  type Observed,
 } from "../../src/server/observation.js";
 
 const MAIN = "1".repeat(40);
@@ -44,6 +46,18 @@ function snapshot(): ObservationSnapshot {
   };
 }
 
+function issue(
+  number: number,
+  dependencies: Observed<readonly number[]>,
+): IssueObservation {
+  return {
+    number,
+    title: `Issue ${number}`,
+    state: "OPEN",
+    dependencies,
+  };
+}
+
 describe("projectObservation unit regressions", () => {
   it("fails closed when a complete observation lacks a required payload", () => {
     const projection = projectObservation({ latest: snapshot() });
@@ -77,5 +91,73 @@ describe("projectObservation unit regressions", () => {
       availability: "unavailable",
       issueNumbers: [],
     });
+  });
+
+  it("preserves partial status for a null dependency observation", () => {
+    const latest = snapshot();
+    latest.issues = {
+      availability: "complete",
+      value: [
+        issue(229, { availability: "partial", value: null }),
+      ],
+    };
+
+    const projection = projectObservation({ latest });
+    expect(
+      projection.deliveries.find((lane) => lane.issueNumber === 229)?.dependencies,
+    ).toEqual({
+      availability: "partial",
+      value: null,
+    });
+    expect(projection.criticalPath).toEqual({
+      availability: "partial",
+      issueNumbers: [],
+    });
+  });
+
+  it("keeps unavailable dominance while preserving partial/null sibling order", () => {
+    const cases = [
+      {
+        dependencies: [
+          { availability: "partial", value: null },
+          { availability: "complete", value: [] },
+        ],
+        availability: "partial",
+      },
+      {
+        dependencies: [
+          { availability: "complete", value: [] },
+          { availability: "partial", value: null },
+        ],
+        availability: "partial",
+      },
+      {
+        dependencies: [
+          { availability: "partial", value: null },
+          { availability: "unavailable", value: null },
+        ],
+        availability: "unavailable",
+      },
+      {
+        dependencies: [
+          { availability: "unavailable", value: null },
+          { availability: "partial", value: null },
+        ],
+        availability: "unavailable",
+      },
+    ] as const;
+
+    for (const { dependencies, availability } of cases) {
+      const latest = snapshot();
+      latest.issues = {
+        availability: "complete",
+        value: dependencies.map((dependency, index) => issue(229 + index, dependency)),
+      };
+
+      expect(projectObservation({ latest }).criticalPath).toEqual({
+        availability,
+        issueNumbers: [],
+      });
+    }
   });
 });

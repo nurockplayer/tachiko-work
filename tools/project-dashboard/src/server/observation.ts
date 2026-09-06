@@ -155,7 +155,8 @@ function criticalPath(
     if (issue.dependencies.availability !== "complete" || issue.dependencies.value === null) {
       if (
         issue.dependencies.availability === "unavailable" ||
-        issue.dependencies.value === null
+        (issue.dependencies.availability === "complete" &&
+          issue.dependencies.value === null)
       ) {
         incompleteAvailability = "unavailable";
       } else if (incompleteAvailability === null) {

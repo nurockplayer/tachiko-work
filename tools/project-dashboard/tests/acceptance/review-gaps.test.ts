@@ -158,6 +158,12 @@ describe("#229 acceptance review gaps", () => {
       issueState: { availability: "complete", value: "OPEN" },
       dependencies: { availability: "complete", value: [] },
       pullRequestNumber: null,
+      pullRequestTitle: { availability: "partial", value: null },
+      pullRequestState: { availability: "partial", value: null },
+      pullRequestDraft: { availability: "partial", value: null },
+      pullRequestHead: { availability: "partial", value: null },
+      pullRequestBase: { availability: "partial", value: null },
+      linkedIssues: { availability: "partial", value: null },
     });
     expect(prLane(projection)).toBeUndefined();
   });
@@ -173,6 +179,12 @@ describe("#229 acceptance review gaps", () => {
       issueState: { availability: "complete", value: "OPEN" },
       dependencies: { availability: "complete", value: [] },
       pullRequestNumber: null,
+      pullRequestTitle: { availability: "unavailable", value: null },
+      pullRequestState: { availability: "unavailable", value: null },
+      pullRequestDraft: { availability: "unavailable", value: null },
+      pullRequestHead: { availability: "unavailable", value: null },
+      pullRequestBase: { availability: "unavailable", value: null },
+      linkedIssues: { availability: "unavailable", value: null },
     });
     expect(prLane(projection)).toBeUndefined();
   });

@@ -186,6 +186,25 @@ describe("#229 final acceptance review gaps", () => {
     });
   });
 
+  it("keeps an unobserved dependency target as an edge rather than a graph node", () => {
+    const projection = projectObservation({
+      latest: snapshot({
+        issues: complete([issue(229, complete([230]))]),
+        pullRequests: complete([pull({ linkedIssues: complete([229]) })]),
+      }),
+    });
+
+    expect(projection.criticalPath).toEqual({
+      availability: "complete",
+      issueNumbers: [229],
+    });
+    expect(issueLane(projection, 229)?.dependencies).toEqual({
+      availability: "complete",
+      value: [230],
+    });
+    expect(issueLane(projection, 230)).toBeUndefined();
+  });
+
   it("clears a retained partial recent-activity payload", () => {
     const projection = projectObservation({
       latest: snapshot({

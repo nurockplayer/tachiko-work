@@ -46,3 +46,6 @@ jobs:
 
       - name: Execute Dashboard acceptance
         run: pnpm --dir tools/project-dashboard test:acceptance
+
+      - name: Execute full Dashboard suite
+        run: pnpm --dir tools/project-dashboard test
