@@ -1635,11 +1635,11 @@ pub(crate) fn formula_update_target_rule(
 ///
 /// Generic scalar editing remains prohibited over formulas. This path accepts
 /// only a validated Number over a current formula so one bounded session Undo
-/// can restore the direct scalar that FormulaUpdate replaced.
+/// can restore the direct scalar that `FormulaUpdate` replaced.
 pub(crate) fn formula_inverse_restore_candidate(
     document: &Document,
     field: &FieldRef,
-    value: &Number,
+    value: Number,
 ) -> Result<Document, WorkspaceError> {
     formula_update_target_rule(document, field)?;
     let entity =
@@ -1663,7 +1663,7 @@ pub(crate) fn formula_inverse_restore_candidate(
     })?;
     entity
         .fields
-        .insert(field.field.clone(), Value::Number(value.clone()));
+        .insert(field.field.clone(), Value::Number(value));
     Ok(candidate)
 }
 

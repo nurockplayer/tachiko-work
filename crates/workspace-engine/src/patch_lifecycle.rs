@@ -370,8 +370,8 @@ impl FormulaInverseRestoreCommand {
     }
 
     #[must_use]
-    pub fn value(&self) -> &Number {
-        &self.value
+    pub fn value(&self) -> Number {
+        self.value
     }
 }
 
@@ -2352,7 +2352,7 @@ impl PatchLifecycle {
                     OperationFamily::FormulaInverseRestore,
                     before,
                     after,
-                    &Value::Number(command.value().clone()),
+                    &Value::Number(command.value()),
                     disclosures,
                 )
             }

@@ -287,7 +287,7 @@ impl FormulaUpdateRequest {
     }
 }
 
-/// One private, exact-base restoration of the scalar displaced by FormulaUpdate.
+/// One private, exact-base restoration of the scalar displaced by `FormulaUpdate`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FormulaInverseRestoreRequest {
     proposal_id: ProposalId,
@@ -637,7 +637,7 @@ impl PatchLifecycle {
         }
     }
 
-    /// Admit one exact scalar inverse for a prior FormulaUpdate without
+    /// Admit one exact scalar inverse for a prior `FormulaUpdate` without
     /// widening generic scalar editing over formula cells.
     ///
     /// # Errors
@@ -677,7 +677,7 @@ impl PatchLifecycle {
             };
         }
         self.require_query_for_admission(&request.originator, &disclosure, now)?;
-        formula_inverse_restore_candidate(document, &request.target, &request.value).map_err(
+        formula_inverse_restore_candidate(document, &request.target, request.value).map_err(
             |source| PatchLifecycleError::CommandRejected {
                 source: Box::new(source),
             },

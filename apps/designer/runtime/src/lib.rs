@@ -995,7 +995,7 @@ impl DesignerRuntime {
         match previous {
             Value::Number(value) => Ok(HistoryAction::FormulaInverseRestore {
                 target: target.clone(),
-                value: value.clone(),
+                value: *value,
             }),
             Value::Formula(_) => Ok(HistoryAction::FormulaUpdate {
                 target: target.clone(),
@@ -1111,7 +1111,7 @@ impl DesignerRuntime {
         &mut self,
         expected_revision: &str,
         target: &FieldTarget,
-        value: &Number,
+        value: Number,
     ) -> Result<PublicationProjection, DesignerError> {
         let snapshot = self.session.export_snapshot();
         let mut lifecycle = designer_lifecycle(
@@ -1128,7 +1128,7 @@ impl DesignerRuntime {
                 proposal_id.clone(),
                 SemanticRevision::from(expected_revision.to_owned()),
                 target.as_field_ref(),
-                value.clone(),
+                value,
                 self.principal.clone(),
             ),
             self.clock.tick(),
@@ -1149,7 +1149,7 @@ impl DesignerRuntime {
             .ok_or_else(|| tracker_error("formula inverse target is unavailable"))?;
         entity
             .fields
-            .insert(field.field, Value::Number(value.clone()));
+            .insert(field.field, Value::Number(value));
         Self::from_document(candidate, PREFLIGHT_OCCURRENCE)?;
         let execute_now = self.clock.tick();
         let (receipt, invalidation) = {
@@ -1660,7 +1660,7 @@ impl DesignerRuntime {
                 self.publish_formula_update(expected, target, source)
             }
             HistoryAction::FormulaInverseRestore { target, value } => {
-                self.restore_formula_inverse(expected, target, value)
+                self.restore_formula_inverse(expected, target, *value)
             }
         }?;
         if redo {
