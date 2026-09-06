@@ -7,7 +7,7 @@ Implementation state: Implemented by the production storage-owned
 and `canonicalize` operations. Fixed native/`wasm32-unknown-unknown`
 conformance executes production encode, decode, and exact-tree re-encoding.
 
-Representation namespace: `.roproj/v1`
+Editable-directory namespace: `.roproj`; format version: `1`
 
 Authority:
 [ADR-0023](../decisions/ADR-0023-roproj-v1-canonical-tree-and-sharding.md),
@@ -26,9 +26,10 @@ The words **MUST**, **MUST NOT**, **SHOULD**, and **MAY** are normative.
 
 ## Representation ownership
 
-`.roproj/v1` is its own representation namespace. Its `format_version` value
-`1` does not select `legacy-direct-ro/v1`, `direct-ro/v2`, a semantic-model
-version, or the distinct Accepted `tachiko.portable-package/v1` profile.
+`.roproj/v1` is format version `1` in the `.roproj` editable-directory
+representation namespace. Its `format_version` value does not select
+`legacy-direct-ro/v1`, `direct-ro/v2`, a semantic-model version, or the
+distinct Accepted `tachiko.portable-package/v1` profile.
 
 These DTOs are owned by `.roproj/v1`. They are independent of:
 

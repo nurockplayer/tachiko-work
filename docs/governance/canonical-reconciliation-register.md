@@ -236,7 +236,7 @@ Issue `#40` is a completed implementation/evidence task that consumed ADR-0015, 
 5. UUIDv7 is the preferred Provisional normal creation generator, not permanent semantic meaning.
 6. ADR-0016 accepts the current Milestone 02 crate layering baseline and forbidden dependency directions while leaving narrower validation/API/runtime seams to later explicit Accepted decisions.
 7. ADR-0017 separates semantic types from storage-owned version DTOs, requires explicit version-gated migration, rejects silent unknown/newer interpretation, and makes canonical bytes version-defined rather than serializer-defined.
-8. Direct `.ro` JSON v1 is an immutable legacy compatibility/migration profile. Identity-aware direct `.ro` v2 is implemented in that namespace; the separately Accepted `.roproj/v1` contract remains an independent representation namespace.
+8. Direct `.ro` JSON v1 is an immutable legacy compatibility/migration profile. Identity-aware direct `.ro` v2 is implemented in that namespace; the separately Accepted `.roproj` editable-directory representation namespace has its own format versions 1 and 2.
 9. Full RFC 8785 JCS is not the editable-source canonical profile; Tachiko reuses appropriate primitives while retaining Git-friendly whitespace/order and #24 numeric authority.
 10. ADR-0018 accepts formula binding, deterministic finite-binary64 meaning, and exact numeric canonical spelling as current authority.
 11. Full RFC 8785/JCS remains rejected for editable-source canonicalization; only its ECMAScript-compatible number primitive is Accepted for a representation that adopts ADR-0018.
