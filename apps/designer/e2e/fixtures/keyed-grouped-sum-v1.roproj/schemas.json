@@ -1,0 +1,54 @@
+[
+  {
+    "id": "10000000-0000-4000-8000-000000000001",
+    "key": "orders",
+    "fields": [
+      {
+        "id": "10000000-0000-4000-8000-000000000101",
+        "key": "product_code",
+        "field_type": {
+          "type": "text"
+        },
+        "required": true
+      },
+      {
+        "id": "10000000-0000-4000-8000-000000000102",
+        "key": "quantity",
+        "field_type": {
+          "type": "number"
+        },
+        "required": true
+      }
+    ]
+  },
+  {
+    "id": "20000000-0000-4000-8000-000000000001",
+    "key": "products",
+    "fields": [
+      {
+        "id": "20000000-0000-4000-8000-000000000201",
+        "key": "product_code",
+        "field_type": {
+          "type": "text"
+        },
+        "required": true
+      },
+      {
+        "id": "20000000-0000-4000-8000-000000000202",
+        "key": "category",
+        "field_type": {
+          "type": "text"
+        },
+        "required": true
+      },
+      {
+        "id": "20000000-0000-4000-8000-000000000203",
+        "key": "price",
+        "field_type": {
+          "type": "number"
+        },
+        "required": true
+      }
+    ]
+  }
+]
