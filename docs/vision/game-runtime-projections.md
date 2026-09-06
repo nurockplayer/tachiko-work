@@ -4,7 +4,11 @@ Status: **Accepted Direction**
 
 Decision issue: [#332](https://github.com/nurockplayer/tachiko-work/issues/332)
 
-Existing boundary: [ADR-0028 — Game Engine Host Extension Boundary](../decisions/ADR-0028-game-engine-host-extension-boundary.md)
+Existing authority:
+
+- Semantic API contract: [ADR-0020 — First-class Headless Semantic API](../decisions/ADR-0020-first-class-headless-semantic-api.md)
+- Resident semantic runtime and host topology: [ADR-0022 — Resident Semantic Runtime and Host Boundary](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md)
+- Game-engine extension boundary: [ADR-0028 — Game Engine Host Extension Boundary](../decisions/ADR-0028-game-engine-host-extension-boundary.md)
 
 ## Why this belongs in Tachiko Work
 
@@ -16,9 +20,9 @@ This extends the existing semantic-first thesis rather than creating a second ga
 
 ## Product direction
 
-Tachiko Work should support publishing validated, versioned semantic state through the platform-owned Semantic API so external runtimes can consume runtime projections through replaceable adapters.
+Tachiko Work should support publishing validated, versioned semantic state through the Semantic API contract defined by ADR-0020 so external runtimes can consume runtime projections through replaceable adapters.
 
-A snapshot, package, cache, or other runtime materialization is downstream of that Semantic API authority. It may make runtime access local and efficient, but it must not become a competing semantic contract or bypass the platform-owned API boundary established by ADR-0028 and its Semantic API authority.
+A snapshot, package, cache, or other runtime materialization is downstream of the ADR-0020 Semantic API authority and the resident-runtime topology accepted by ADR-0022. It may make runtime access local and efficient, but it must not become a competing semantic contract. Game-engine adapters must also preserve the separate client/plugin host-extension boundary established by ADR-0028.
 
 For game development, compatible content changes should be able to **Hot Reload during development without recompiling the game executable** when the consuming runtime already implements the required gameplay capability.
 
@@ -43,11 +47,11 @@ The intended split is:
 
 The semantic core owns meaning: stable identity, typing, formulas, validation, dependency/impact analysis, versioning, and authoritative semantic state.
 
-The platform-owned Semantic API remains the governed boundary through which external runtimes consume or mutate semantic functionality. Runtime publication must preserve that authority rather than introduce an engine-specific or snapshot-specific source of truth.
+ADR-0020's platform-owned Semantic API remains the governed semantic contract through which external runtimes consume or mutate semantic functionality. ADR-0022 governs the resident semantic runtime and host topology that implements that contract for interactive clients. Runtime publication must preserve those authorities rather than introduce an engine-specific or snapshot-specific source of truth.
 
 ### Tachiko Runtime and adapters
 
-Runtime and engine adapters consume and re-expose versioned semantic state through the Semantic API boundary defined by ADR-0028. They may materialize validated state into local/resident projections, provide typed host-language access, observe revision/change notifications delivered through the governed boundary, and integrate updates with the consuming application's lifecycle.
+Runtime and engine adapters consume and re-expose versioned semantic state through the ADR-0020 Semantic API, using the resident runtime/host topology governed by ADR-0022 while remaining at the separate client/plugin extension boundary established by ADR-0028. They may materialize validated state into local/resident projections, provide typed host-language access, observe revision/change notifications delivered through the governed semantic boundary, and integrate updates with the consuming application's lifecycle.
 
 They must not bypass the Semantic API, mutate authoritative semantic state directly, or make an engine-native representation, local snapshot, or transport payload canonical.
 
@@ -85,12 +89,13 @@ Tachiko semantic core / Work
     |
     | validate / publish semantics
     v
-Platform-owned Semantic API
+ADR-0020 Semantic API
     |
-    | derive / materialize runtime state
+    | ADR-0022 resident runtime / derive materialization
     v
 Versioned runtime projection / snapshot
     |
+    | ADR-0028 client/plugin extension boundary
     v
 Lightweight Tachiko Runtime / adapter
     |
@@ -100,13 +105,13 @@ Running game or application
 
 Runtime access should be local/resident after loading. A release should be able to consume a pinned, validated projection/package without requiring the authoring application or a remote Tachiko service to remain available.
 
-Local runtime materialization is an execution optimization and release boundary, not a second semantic authority. This preserves deterministic execution, offline development and release options, reproducibility, and clear failure boundaries while keeping semantic ownership governed by the existing API contract.
+Local runtime materialization is an execution optimization and release boundary, not a second semantic authority. This preserves deterministic execution, offline development and release options, reproducibility, and clear failure boundaries while keeping semantic ownership governed by the existing Semantic API contract.
 
 ## Architectural consequence
 
 Game-engine integration is a first-class product direction but remains an **adapter/runtime projection**, not a reason to move rendering, physics, scene ownership, or engine-specific behavior into Tachiko's semantic kernel.
 
-This vision is subordinate to ADR-0028's Accepted host-extension boundary: engine adapters remain replaceable client/plugin-boundary consumers of the platform-owned Semantic API. Hot Reload should evolve as a consumer of that boundary, not as a parallel semantic surface.
+The existing Accepted authorities remain distinct: ADR-0020 defines the shared Semantic API contract, ADR-0022 governs the resident semantic runtime/host topology, and ADR-0028 governs how game engines attach at the replaceable client/plugin boundary. Hot Reload should evolve through those boundaries, not as a parallel semantic surface.
 
 The stable core should continue to own meaning. Engine integrations should generalize only after real consumers create evidence for a shared contract.
 
