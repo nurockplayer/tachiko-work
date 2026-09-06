@@ -218,8 +218,10 @@ features need approximate comparison, that must be an explicit operator or
 function with its own contract.
 
 The current `min` and `max` are binary operations, not reductions. Future
-aggregation must specify stable input order and may not silently reassociate
-floating-point work.
+formula-language aggregation must specify stable input order and may not
+silently reassociate floating-point work. ADR-0036's fixed
+`KeyedGroupedSumDefinition` is a separate saved live definition family, not a
+formula-language aggregate or an `Expression` extension.
 
 ## Persisted Number spelling
 
@@ -504,9 +506,11 @@ stable IDs, and bound AST on rejection.
 
 ## Deferred language features
 
-- aggregate clauses and general reductions;
+- aggregate clauses and general reductions; ADR-0036's fixed saved live
+  definition remains outside this formula language;
 - conditional expressions and comparisons;
-- lookups and schema-level computed defaults;
+- lookups and schema-level computed defaults; ADR-0036 admits only its explicit
+  exact-Text lookup as a non-formula semantic family;
 - user-defined or extension functions;
 - formula/schema/structure mutation inside scenarios;
 - persisted scenario objects, parameter sweeps, simulation, optimization,

@@ -831,6 +831,10 @@ M04 analysis is an ephemeral Query result. It creates no persisted `AnalysisId`,
 saved semantic analysis block, analytics datastore, report authority, or
 parallel revision/history axis. Report, chart, presentation, or AI explanation
 layers may consume the structured result without becoming semantic authority.
+ADR-0036's saved live `KeyedGroupedSumDefinition` is a separately accepted
+semantic family, not an Analysis Query result or persisted Analysis Query; it
+does not add `Sum`, joins, persistence, or a general aggregate capability to
+this Analysis Query contract.
 
 ## Query, Propose, and Execute
 
@@ -1747,6 +1751,7 @@ Date to the same finite SetFieldValue projection with mutation-rule parity.
 | Analysis exact-context reproducibility and structured lineage | Accepted under ADR-0020 / #33 |
 | Analysis grouped/count/min/max complete-or-denied disclosure | Accepted under ADR-0020 / #33 and ADR-0026 |
 | Analysis result persistence / `AnalysisId` / analytics datastore | Deferred |
+| Saved live `KeyedGroupedSumDefinition` | Accepted under ADR-0036; distinct from Analysis Query and not yet implemented |
 | Sum/Mean, ranking/top-k, statistics, general predicate ASTs, joins, UDFs | Deferred |
 | Exact operation names, family identifiers, request limits, predicate catalogue, normalization encoding, and result DTOs | Provisional |
 | Production formula-reasoning/scenario/formula-update implementation | Provisional provider-neutral workspace/CLI slice implemented by #144; public wire/SDK remains undefined |
