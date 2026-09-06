@@ -80,8 +80,8 @@ conditions hold:
 2. durable architecture or product decisions required for production are
    Accepted; any Steward-supplied Provisional choice is limited to a non-durable
    implementation detail permitted by current Accepted authority;
-3. scope, acceptance criteria, and the acceptance-test handoff below are
-   sufficient for focused delivery;
+3. scope, acceptance criteria, and the applicable acceptance/evidence handoff
+   below are sufficient for focused delivery;
 4. no conflicting open implementation PR owns the same work; and
 5. the Project Steward has applied the repository
    [`PR Decomposition Policy`](pr-decomposition-policy.md), including recording
@@ -110,14 +110,20 @@ important invariants, not private functions, module layout, or an implementation
 strategy. They may exercise an integration/API boundary or an ordinary product
 journey; not every acceptance test needs to be a browser test.
 
-Before production readiness, the owning Issue links a compact package:
+Before production readiness, work requiring executable product acceptance links
+a compact package from the owning Issue:
 
 - exact baseline commit, seed commit, and test/fixture paths;
 - acceptance-criterion to test/case mapping, with expected outcomes derived from
   the contract or independent evidence rather than the candidate implementation;
 - reproducible commands, actual baseline results and relevant failure evidence;
-- remaining manual/external checks, their owner and expected evidence, plus any
-  bounded applicability exception explicitly decided by the Steward.
+- remaining manual/external checks, their owner and expected evidence.
+
+When executable product acceptance or delivery-agent unit tests do not apply,
+the owning Issue instead records an explicit bounded applicability exception
+decided by the Steward, its rationale, and the applicable document/refactor
+checks and review evidence that replace those test classes. A handoff may point
+to that Issue decision but cannot create the exception.
 
 For a regression or new behavior, demonstrate the intended behavioral failure
 where feasible and check that the fixture reaches the relevant boundary.
@@ -134,13 +140,15 @@ product tests for these cases. A justified exception changes the preparation
 method, not the required product behavior or final merge/release gates. Real-user
 or external-tool evidence remains unverified until actually obtained.
 
-The Steward may prepare a tests-only branch before Ready. After Ready, retain
-that seed on the one delivery branch and open or continue the same draft PR;
-the delivery agent adds implementation and unit-test commits there. Preserve
-seed provenance and any accepted amendments across ordinary non-force updates.
-Never merge a knowingly failing seed to `main`, report expected failure as PASS,
-or use skip/expected-failure annotations or runner changes to manufacture green
-acceptance. A draft or prepared seed does not itself grant production authority.
+The Steward may prepare a tests-only branch before Ready. Do not open the
+implementation PR before the Issue is Ready. After Ready, retain that seed on
+the one delivery branch and open the one draft implementation PR; the delivery
+agent then adds production implementation and applicable unit-test commits there.
+Preserve seed provenance and any accepted amendments across ordinary non-force
+updates. Never merge a knowingly failing seed to `main`, report expected failure
+as PASS, or use skip/expected-failure annotations or runner changes to manufacture
+green acceptance. A prepared seed branch does not itself grant production
+authority.
 
 ### Challenges and acceptance changes
 
@@ -186,13 +194,13 @@ synchronization rule.
 Each Ready Issue uses one independently reviewable PR:
 
 ```text
-live main + Ready Issue + acceptance seed
-  -> continue seed branch / same draft PR
-  -> confirm baseline / implement / unit test
+live main + Ready Issue + acceptance seed or applicable evidence baseline
+  -> continue prepared seed branch / open one draft PR after Ready
+  -> confirm baseline / implement / applicable unit test
   -> local review + repository gates
   -> hosted review / CI on that PR
   -> fix actionable findings / reconcile material challenges
-  -> exact-head validation + acceptance-change audit
+  -> exact-head validation + acceptance/applicability audit
   -> merge
   -> live-state recalibration
 ```
@@ -259,14 +267,18 @@ Do not change Accepted authority merely to satisfy reviewer preference.
 Escalate genuine authority contradictions to the Project Steward. Never force
 push. Merge only the exact reviewed and validated head under repository policy.
 
-Before final acceptance, compare the seed tests with the delivered tests and
-account for every material acceptance change through its Steward decision;
-report mechanical repairs separately. Run acceptance, delivery-agent unit tests,
-and applicable repository gates at the final head. Passing the seed alone is not
-complete acceptance: reconcile uncovered requirements and obtain the remaining
-promised evidence. Independent review covers both the implementation and the
-adequacy of the tests; authorship of either is not independent review of it.
-Unresolved material challenges and unapproved weakened acceptance block merge.
+Before final acceptance, when executable acceptance applies, compare the seed
+tests with the delivered tests and account for every material acceptance change
+through its Steward decision; report mechanical repairs separately. Run all
+applicable Steward acceptance, delivery-agent unit tests, document/refactor
+checks, and repository gates at the final head. When a test class does not apply,
+verify the linked bounded applicability exception decided by the Steward in the
+owning Issue and the replacement evidence it requires. Passing an applicable
+seed alone is not complete acceptance: reconcile uncovered requirements and
+obtain the remaining promised evidence. Independent review covers both the
+implementation and the adequacy of the applicable tests/evidence; authorship of
+either is not independent review of it. Unresolved material challenges and
+unapproved weakened acceptance block merge.
 
 The acceptance-first policy applies to new production dispatch and newly
 activated children after its merge. Preserve existing active ownership and
