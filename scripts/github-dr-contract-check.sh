@@ -65,6 +65,7 @@ EOF_NODE
 source_work="${test_dir}/source-work"
 source_bare="${test_dir}/source.git"
 target_bare="${test_dir}/target.git"
+checkout_work="${test_dir}/github-checkout"
 mkdir -p "${source_work}/.github/workflows"
 "${real_git}" -C "${source_work}" init --quiet
 "${real_git}" -C "${source_work}" config user.name "DR Contract Fixture"
@@ -87,6 +88,22 @@ feature_head="$("${real_git}" -C "${source_work}" rev-parse HEAD)"
 "${real_git}" -C "${source_work}" push --quiet origin main feature/contract-fixture --tags
 "${real_git}" --git-dir="${source_bare}" symbolic-ref HEAD refs/heads/main
 
+# Simulate the normal actions/checkout layout: the complete GitHub branch set
+# is fetched into refs/remotes/origin/* while the worktree is detached at the
+# requested default branch commit.
+mkdir -p "${checkout_work}"
+"${real_git}" -C "${checkout_work}" init --quiet
+"${real_git}" -C "${checkout_work}" remote add origin "${source_bare}"
+"${real_git}" -C "${checkout_work}" config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+"${real_git}" -C "${checkout_work}" fetch --quiet origin
+"${real_git}" -C "${checkout_work}" checkout --quiet --detach refs/remotes/origin/main
+"${real_git}" -C "${checkout_work}" update-ref -d refs/heads/main || true
+[[ "$("${real_git}" -C "${checkout_work}" symbolic-ref -q refs/remotes/origin/HEAD)" == "refs/remotes/origin/main" ]] ||
+  fail "checkout fixture did not expose the origin default-branch symref"
+if "${real_git}" -C "${checkout_work}" show-ref --verify --quiet refs/heads/main; then
+  fail "checkout fixture unexpectedly retained a local main branch"
+fi
+
 "${real_git}" init --quiet --bare "${target_bare}"
 metadata_work="${test_dir}/metadata-work"
 mkdir -p "${metadata_work}"
@@ -99,12 +116,14 @@ printf 'metadata-history\n' >"${metadata_work}/README.txt"
 "${real_git}" -C "${metadata_work}" branch -M dr-metadata
 "${real_git}" -C "${metadata_work}" remote add target "${target_bare}"
 "${real_git}" -C "${metadata_work}" push --quiet target dr-metadata
+"${real_git}" --git-dir="${target_bare}" symbolic-ref HEAD refs/heads/main
 
 export GITHUB_DR_GIT="${real_git}"
 export GITHUB_DR_GITLAB_TOKEN="glpat-DO-NOT-LEAK-CONTRACT-309"
+target_url="file://${target_bare}"
 if ! bash "${backup_script}" replicate \
-  --source "${source_bare}" \
-  --target "${target_bare}" \
+  --source "${checkout_work}" \
+  --target "${target_url}" \
   --metadata-branch dr-metadata \
   >"${test_dir}/replicate-v1.log" 2>&1; then
   cat "${test_dir}/replicate-v1.log" >&2
@@ -113,6 +132,28 @@ fi
 
 [[ "$("${real_git}" --git-dir="${target_bare}" symbolic-ref HEAD)" == "refs/heads/main" ]] ||
   fail "backup target did not preserve the source default-branch identity"
+[[ "$("${real_git}" --git-dir="${target_bare}" rev-parse refs/heads/feature/contract-fixture)" == "${feature_head}" ]] ||
+  fail "normal checkout remote-tracking branch was not replicated"
+[[ "$("${real_git}" --git-dir="${target_bare}" rev-parse refs/tags/v0.1.0)" == "${main_head_v1}" ]] ||
+  fail "source tag was not replicated from the normal checkout"
+[[ "$("${real_git}" ls-remote --symref "${target_url}" HEAD | awk '$1 == "ref:" && $3 == "HEAD" {print $2; exit}')" == "refs/heads/main" ]] ||
+  fail "remote target did not advertise the source default branch"
+
+# A remote target with a mismatched provider-managed default must fail closed
+# rather than report a successful replication that ordinary clones would open
+# on the wrong branch.
+"${real_git}" --git-dir="${target_bare}" symbolic-ref HEAD refs/heads/feature/contract-fixture
+mismatch_status=0
+bash "${backup_script}" replicate \
+  --source "${checkout_work}" \
+  --target "${target_url}" \
+  --metadata-branch dr-metadata \
+  >"${test_dir}/replicate-default-mismatch.log" 2>&1 || mismatch_status="$?"
+[[ "${mismatch_status}" -ne 0 ]] ||
+  fail "replication accepted a mismatched remote default branch"
+grep -F -- 'default branch does not match' "${test_dir}/replicate-default-mismatch.log" >/dev/null ||
+  fail "mismatched remote default branch failure was not diagnosed"
+"${real_git}" --git-dir="${target_bare}" symbolic-ref HEAD refs/heads/main
 
 restored_default="${test_dir}/restored-default"
 "${real_git}" clone --quiet "${target_bare}" "${restored_default}"
@@ -228,9 +269,10 @@ printf 'main-v2\n' >>"${source_work}/tracked.txt"
 "${real_git}" -C "${source_work}" commit --quiet -am "fixture main v2"
 main_head_v2="$("${real_git}" -C "${source_work}" rev-parse HEAD)"
 "${real_git}" -C "${source_work}" push --quiet origin main
+"${real_git}" -C "${checkout_work}" fetch --quiet origin
 if ! bash "${backup_script}" replicate \
-  --source "${source_bare}" \
-  --target "${target_bare}" \
+  --source "${checkout_work}" \
+  --target "${target_url}" \
   --metadata-branch dr-metadata \
   >"${test_dir}/replicate-v2.log" 2>&1; then
   cat "${test_dir}/replicate-v2.log" >&2
@@ -240,6 +282,10 @@ fi
   fail "second replication lost default-branch identity"
 [[ "$("${real_git}" --git-dir="${target_bare}" rev-parse refs/heads/main)" == "${main_head_v2}" ]] ||
   fail "second replication did not advance target main"
+[[ "$("${real_git}" --git-dir="${target_bare}" rev-parse refs/heads/feature/contract-fixture)" == "${feature_head}" ]] ||
+  fail "second replication pruned the valid remote-tracking branch"
+[[ "$("${real_git}" ls-remote --symref "${target_url}" HEAD | awk '$1 == "ref:" && $3 == "HEAD" {print $2; exit}')" == "refs/heads/main" ]] ||
+  fail "second replication lost the remote default-branch identity"
 
 export GITHUB_DR_CONTRACT_MAIN_HEAD="${main_head_v2}"
 if ! bash "${backup_script}" snapshot \

@@ -112,7 +112,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          source_head="$(git rev-parse refs/heads/main)"
+          source_head="$(git rev-parse HEAD)"
           printf 'GITHUB_DR_SOURCE_HEAD=%s\n' "${source_head}" >>"${GITHUB_ENV}"
           bash scripts/github-dr-backup.sh replicate \
             --source "${GITHUB_WORKSPACE}" \
@@ -199,9 +199,14 @@ jobs:
         run: |
           set -euo pipefail
           mirrored_head="$(git ls-remote "${GITHUB_DR_GITLAB_TARGET}" refs/heads/main | awk '{print $1}')"
+          target_default_branch="$(git ls-remote --symref "${GITHUB_DR_GITLAB_TARGET}" HEAD | awk '$1 == "ref:" && $3 == "HEAD" {print $2; exit}')"
           metadata_head="$(git ls-remote "${GITHUB_DR_GITLAB_TARGET}" refs/heads/dr-metadata | awk '{print $1}')"
           [[ -n "${mirrored_head}" && "${mirrored_head}" == "${GITHUB_DR_SOURCE_HEAD}" ]] || {
             echo 'The mirrored default-branch HEAD could not be proved equal to the source HEAD.' >&2
+            exit 1
+          }
+          [[ "${target_default_branch}" == 'refs/heads/main' ]] || {
+            echo 'The backup target default branch does not advertise refs/heads/main.' >&2
             exit 1
           }
           [[ -n "${metadata_head}" ]] || {
@@ -209,6 +214,7 @@ jobs:
             exit 1
           }
           counts="$(jq -c '.counts' "${GITHUB_DR_SNAPSHOT_ROOT}/latest/manifest.json")"
-          printf 'DR_EVIDENCE target=%s source_head=%s mirrored_head=%s metadata_head=%s snapshot_at=%s snapshot_checksum=%s counts=%s\n' \
-            "${GITHUB_DR_GITLAB_TARGET}" "${GITHUB_DR_SOURCE_HEAD}" "${mirrored_head}" \
-            "${metadata_head}" "${GITHUB_DR_SNAPSHOT_AT}" "${GITHUB_DR_SNAPSHOT_CHECKSUM}" "${counts}"
+          printf 'DR_EVIDENCE target=%s target_default_branch=%s source_head=%s mirrored_head=%s metadata_head=%s snapshot_at=%s snapshot_checksum=%s counts=%s\n' \
+            "${GITHUB_DR_GITLAB_TARGET}" "${target_default_branch}" "${GITHUB_DR_SOURCE_HEAD}" \
+            "${mirrored_head}" "${metadata_head}" "${GITHUB_DR_SNAPSHOT_AT}" \
+            "${GITHUB_DR_SNAPSHOT_CHECKSUM}" "${counts}"

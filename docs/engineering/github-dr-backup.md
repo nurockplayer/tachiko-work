@@ -46,8 +46,12 @@ This is an operator/provider gate, not an action performed by the workflow.
 1. Create one private, empty GitLab project on GitLab.com. A GitLab Free
    project is sufficient; native pull mirroring is not required. Use the
    project only as a backup repository and keep GitHub as the upstream.
-2. Ensure the project has a `main` branch after the first source-only run (the
-   workflow always addresses `main` explicitly). Do not enable bidirectional
+2. Establish the GitLab project's default branch as `main` before the first
+   live activation (the workflow always addresses `main` explicitly). For an
+   empty project, confirm the provider's first-push behavior selects `main`; for
+   an existing project, set the default in GitLab project settings. The driver
+   verifies the remote `HEAD` advertisement after every replication and fails
+   closed if it is not `refs/heads/main`. Do not enable bidirectional
    synchronization or use GitLab Issues/MRs as a coordination surface.
 3. Add this repository variable, with no credentials embedded in its value:
 
@@ -91,6 +95,7 @@ target project. It must contain all of these fields:
 | Field | Required observation |
 | --- | --- |
 | `target` | Exact GitLab project URL/project identity, without credentials |
+| `target_default_branch` | GitLab `HEAD` advertisement, exactly `refs/heads/main` |
 | `source_head` | GitHub `refs/heads/main` SHA observed by the run |
 | `mirrored_head` | GitLab `refs/heads/main` SHA, equal to `source_head` |
 | `metadata_head` | GitLab `dr-metadata` commit after the snapshot commit |
@@ -115,7 +120,8 @@ For an operational restore drill, use a credential manager or a transient
 askpass environment; never place a token in a clone URL or shell trace:
 
 ```sh
-git clone --branch main "$DR_GITLAB_TARGET" restored-source
+git clone "$DR_GITLAB_TARGET" restored-source
+[[ "$(git -C restored-source branch --show-current)" == "main" ]]
 git clone --branch dr-metadata "$DR_GITLAB_TARGET" restored-metadata
 bash scripts/github-dr-backup.sh verify \
   --snapshot restored-metadata/snapshots/latest

@@ -254,7 +254,22 @@ replicate() {
   [[ "${metadata_branch}" != /* && "${metadata_branch}" != */ && "${metadata_branch}" != *..* ]] ||
     die "metadata branch must be a single valid Git ref path"
 
-  local mirror_parent mirror source_head_ref source_branch
+  local source_head_ref=""
+  if [[ -d "${source}/.git" || -f "${source}/.git" ]]; then
+    # actions/checkout may leave the worktree detached while its complete
+    # GitHub branch set lives under refs/remotes/origin/*.
+    source_head_ref="$(${git_bin} -C "${source}" symbolic-ref --quiet \
+      refs/remotes/origin/HEAD 2>/dev/null || true)"
+    if [[ -z "${source_head_ref}" ]]; then
+      source_head_ref="$(${git_bin} -C "${source}" symbolic-ref --quiet \
+        HEAD 2>/dev/null || true)"
+    fi
+  elif git_local_dir "${source}"; then
+    source_head_ref="$(${git_bin} --git-dir="${source}" symbolic-ref --quiet \
+      HEAD 2>/dev/null || true)"
+  fi
+
+  local mirror_parent mirror source_branch
   mirror_parent="$(mktemp -d "${tmp_root}/mirror.XXXXXX")"
   mirror="${mirror_parent}/source.git"
   if ! capture_command "${tmp_root}/clone-output" \
@@ -262,14 +277,66 @@ replicate() {
     die "could not clone the source repository"
   fi
 
-  source_head_ref="$("${git_bin}" --git-dir="${mirror}" symbolic-ref --quiet HEAD 2>/dev/null)" ||
-    die "source repository does not expose a default branch"
-  [[ "${source_head_ref}" == refs/heads/* ]] ||
-    die "source repository HEAD is not a branch"
+  if [[ -z "${source_head_ref}" ]]; then
+    source_head_ref="$(${git_bin} --git-dir="${mirror}" symbolic-ref --quiet \
+      HEAD 2>/dev/null || true)"
+  fi
+  case "${source_head_ref}" in
+    refs/remotes/origin/*)
+      source_head_ref="refs/heads/${source_head_ref#refs/remotes/origin/}"
+      ;;
+    refs/heads/*)
+      ;;
+    *)
+      die "source repository does not expose a default branch"
+      ;;
+  esac
   source_branch="${source_head_ref#refs/heads/}"
   [[ "${source_branch}" != "${metadata_branch}" ]] ||
     die "source default branch collides with reserved metadata branch"
-  if "${git_bin}" --git-dir="${mirror}" show-ref --verify --quiet "refs/heads/${metadata_branch}"; then
+
+  local source_head_map source_tag_map source_target_refs source_ref branch_name
+  source_head_map="$(mktemp "${tmp_root}/source-heads.XXXXXX")"
+  source_tag_map="$(mktemp "${tmp_root}/source-tags.XXXXXX")"
+  source_target_refs="$(mktemp "${tmp_root}/source-target-refs.XXXXXX")"
+
+  # A normal GitHub Actions checkout keeps the fetched branch refs under
+  # refs/remotes/origin/*. Map those refs explicitly to target branch refs so
+  # local-only heads are not mistaken for the source branch set. Bare source
+  # fixtures and direct Git URLs retain the refs/heads fallback.
+  while IFS= read -r source_ref; do
+    branch_name="${source_ref#refs/remotes/origin/}"
+    [[ "${branch_name}" != "${source_ref}" && "${branch_name}" != HEAD ]] || continue
+    printf '%s\trefs/heads/%s\n' "${source_ref}" "${branch_name}" >>"${source_head_map}"
+  done < <("${git_bin}" --git-dir="${mirror}" for-each-ref \
+    --format='%(refname)' refs/remotes/origin)
+
+  if [[ ! -s "${source_head_map}" ]]; then
+    while IFS= read -r source_ref; do
+      branch_name="${source_ref#refs/heads/}"
+      [[ "${branch_name}" != "${source_ref}" && "${branch_name}" != HEAD ]] || continue
+      printf '%s\trefs/heads/%s\n' "${source_ref}" "${branch_name}" >>"${source_head_map}"
+    done < <("${git_bin}" --git-dir="${mirror}" for-each-ref \
+      --format='%(refname)' refs/heads)
+  fi
+  [[ -s "${source_head_map}" ]] || die "source repository has no branches to replicate"
+
+  while IFS= read -r source_ref; do
+    [[ -n "${source_ref}" ]] || continue
+    printf '%s\n' "${source_ref}" >>"${source_tag_map}"
+  done < <("${git_bin}" --git-dir="${mirror}" for-each-ref \
+    --format='%(refname)' refs/tags)
+
+  while IFS=$'\t' read -r _ target_ref; do
+    [[ -n "${target_ref}" ]] && printf '%s\n' "${target_ref}" >>"${source_target_refs}"
+  done <"${source_head_map}"
+  while IFS= read -r source_ref; do
+    [[ -n "${source_ref}" ]] && printf '%s\n' "${source_ref}" >>"${source_target_refs}"
+  done <"${source_tag_map}"
+
+  grep -Fqx "${source_head_ref}" "${source_target_refs}" ||
+    die "source default branch is not present in the fetched branch refs"
+  if grep -Fqx "refs/heads/${metadata_branch}" "${source_target_refs}"; then
     die "source contains the reserved metadata branch"
   fi
 
@@ -297,18 +364,21 @@ replicate() {
     if [[ "${target_kind}" == head && "${target_ref}" == "refs/heads/${metadata_branch}" ]]; then
       continue
     fi
-    if ! "${git_bin}" --git-dir="${mirror}" show-ref --verify --quiet "${target_ref}"; then
+    if ! grep -Fqx "${target_ref}" "${source_target_refs}"; then
       printf ':%s\n' "${target_ref}" >>"${target_deletes}"
     fi
   done <"${target_refs}"
 
   local -a push_args
-  push_args=(
-    --quiet
-    "${target}"
-    '+refs/heads/*:refs/heads/*'
-    '+refs/tags/*:refs/tags/*'
-  )
+  push_args=(--quiet "${target}")
+  while IFS=$'\t' read -r source_ref target_ref; do
+    [[ -n "${source_ref}" && -n "${target_ref}" ]] || continue
+    push_args+=("+${source_ref}:${target_ref}")
+  done <"${source_head_map}"
+  while IFS= read -r source_ref; do
+    [[ -n "${source_ref}" ]] || continue
+    push_args+=("+${source_ref}:${source_ref}")
+  done <"${source_tag_map}"
   while IFS= read -r target_ref; do
     [[ -n "${target_ref}" ]] && push_args+=("${target_ref}")
   done <"${target_deletes}"
@@ -318,14 +388,26 @@ replicate() {
   fi
 
   # A local bare fixture (and a local operator restore target) can retain the
-  # source default-branch identity.  Hosted GitLab targets expose this through
-  # their project settings; the source branch remains in the replicated refs.
+  # source default-branch identity directly. Hosted GitLab targets advertise
+  # the provider-managed default through the Git protocol; verify it after the
+  # push so an ordinary clone cannot silently select another branch.
   if git_local_dir "${target}"; then
     if ! capture_command "${tmp_root}/head-output" \
       "${git_bin}" --git-dir="${target}" symbolic-ref HEAD "${source_head_ref}"; then
       die "could not set the backup target default branch"
     fi
   fi
+
+  local target_head_info target_head_ref
+  target_head_info="$(mktemp "${tmp_root}/target-head.XXXXXX")"
+  if ! capture_command "${target_head_info}" \
+    "${git_bin}" ls-remote --symref "${target}" HEAD; then
+    die "could not verify the backup target default branch"
+  fi
+  target_head_ref="$(awk '$1 == "ref:" && $3 == "HEAD" { print $2; exit }' \
+    "${target_head_info}")"
+  [[ "${target_head_ref}" == "${source_head_ref}" ]] ||
+    die "backup target default branch does not match source default branch"
 
   printf 'github-dr-backup: replicated source refs (default branch %s)\n' "${source_branch}"
 }
