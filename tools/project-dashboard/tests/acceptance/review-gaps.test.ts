@@ -159,6 +159,7 @@ describe("#229 acceptance review gaps", () => {
       dependencies: { availability: "complete", value: [] },
       pullRequestNumber: null,
     });
+    expect(prLane(projection)).toBeUndefined();
   });
 
   it("preserves independently complete Issue data when PR discovery is unavailable with retained payload", () => {
@@ -173,5 +174,6 @@ describe("#229 acceptance review gaps", () => {
       dependencies: { availability: "complete", value: [] },
       pullRequestNumber: null,
     });
+    expect(prLane(projection)).toBeUndefined();
   });
 });
