@@ -4,17 +4,21 @@ Status: **Accepted Direction**
 
 Decision issue: [#332](https://github.com/nurockplayer/tachiko-work/issues/332)
 
+Existing boundary: [ADR-0028 — Game Engine Host Extension Boundary](../decisions/ADR-0028-game-engine-host-extension-boundary.md)
+
 ## Why this belongs in Tachiko Work
 
 Game development is Tachiko Work's first proving ground because structured game content often lives in spreadsheets while code, review, validation, and release workflows live elsewhere.
 
-The long-term opportunity is larger than replacing Excel as the place where designers type balance values. Tachiko's semantic model can become the authoritative source for structured game content while a lightweight runtime projection makes validated meaning directly consumable by a running game.
+The long-term opportunity is larger than replacing Excel as the place where designers type balance values. Tachiko's semantic model can remain the authoritative source for structured game content while lightweight runtime projections make validated meaning directly consumable by running games.
 
-This extends the existing semantic-first thesis rather than creating a second game engine.
+This extends the existing semantic-first thesis rather than creating a second game engine or a second semantic authority.
 
 ## Product direction
 
-Tachiko Work should support publishing validated, versioned semantic snapshots that external runtimes can load through replaceable adapters.
+Tachiko Work should support publishing validated, versioned semantic state through the platform-owned Semantic API so external runtimes can consume runtime projections through replaceable adapters.
+
+A snapshot, package, cache, or other runtime materialization is downstream of that Semantic API authority. It may make runtime access local and efficient, but it must not become a competing semantic contract or bypass the platform-owned API boundary established by ADR-0028 and its Semantic API authority.
 
 For game development, compatible content changes should be able to **Hot Reload during development without recompiling the game executable** when the consuming runtime already implements the required gameplay capability.
 
@@ -35,15 +39,19 @@ The same direction can later support production content publication where approp
 
 The intended split is:
 
-### Tachiko Work
+### Tachiko Work and Semantic API
 
-Owns semantic authoring, stable identity, typing, formulas, validation, dependency/impact analysis, versioning, review, and publication of runtime-ready content.
+The semantic core owns meaning: stable identity, typing, formulas, validation, dependency/impact analysis, versioning, and authoritative semantic state.
+
+The platform-owned Semantic API remains the governed boundary through which external runtimes consume or mutate semantic functionality. Runtime publication must preserve that authority rather than introduce an engine-specific or snapshot-specific source of truth.
 
 ### Tachiko Runtime and adapters
 
-Own lightweight loading of validated snapshots, resident typed access, revision/change observation, and integration with the consuming application's lifecycle.
+Runtime and engine adapters consume and re-expose versioned semantic state through the Semantic API boundary defined by ADR-0028. They may materialize validated state into local/resident projections, provide typed host-language access, observe revision/change notifications delivered through the governed boundary, and integrate updates with the consuming application's lifecycle.
 
-The exact snapshot format, transport, SDK surface, plugin ABI, invalidation model, compatibility negotiation, and rollback protocol are intentionally not frozen by this vision document.
+They must not bypass the Semantic API, mutate authoritative semantic state directly, or make an engine-native representation, local snapshot, or transport payload canonical.
+
+The exact snapshot/materialization format, transport, SDK surface, plugin ABI, invalidation model, compatibility negotiation, change-notification mechanism, and rollback protocol are intentionally not frozen by this vision document.
 
 ### Game engine or application runtime
 
@@ -73,11 +81,15 @@ A running game must not depend on the Tachiko Work authoring UI or a cloud servi
 The target architecture is conceptually:
 
 ```text
-Tachiko Work
+Tachiko semantic core / Work
     |
-    | validate / publish
+    | validate / publish semantics
     v
-Versioned semantic snapshot
+Platform-owned Semantic API
+    |
+    | derive / materialize runtime state
+    v
+Versioned runtime projection / snapshot
     |
     v
 Lightweight Tachiko Runtime / adapter
@@ -86,18 +98,20 @@ Lightweight Tachiko Runtime / adapter
 Running game or application
 ```
 
-Runtime access should be local/resident after loading. A release should be able to consume a pinned, validated snapshot/package without requiring the authoring application or a remote Tachiko service to remain available.
+Runtime access should be local/resident after loading. A release should be able to consume a pinned, validated projection/package without requiring the authoring application or a remote Tachiko service to remain available.
 
-This preserves deterministic execution, offline development and release options, reproducibility, and clear failure boundaries.
+Local runtime materialization is an execution optimization and release boundary, not a second semantic authority. This preserves deterministic execution, offline development and release options, reproducibility, and clear failure boundaries while keeping semantic ownership governed by the existing API contract.
 
 ## Architectural consequence
 
 Game-engine integration is a first-class product direction but remains an **adapter/runtime projection**, not a reason to move rendering, physics, scene ownership, or engine-specific behavior into Tachiko's semantic kernel.
 
-The stable core should continue to own meaning. Engine integrations should remain replaceable and should generalize only after real consumers create evidence for a shared contract.
+This vision is subordinate to ADR-0028's Accepted host-extension boundary: engine adapters remain replaceable client/plugin-boundary consumers of the platform-owned Semantic API. Hot Reload should evolve as a consumer of that boundary, not as a parallel semantic surface.
+
+The stable core should continue to own meaning. Engine integrations should generalize only after real consumers create evidence for a shared contract.
 
 A useful decision test is:
 
-> If the consuming engine already knows how to execute this kind of gameplay content, can this semantic change be validated, published, and observed without recompiling the engine/application?
+> If the consuming engine already knows how to execute this kind of gameplay content, can this semantic change be validated, published through the governed semantic boundary, and observed without recompiling the engine/application?
 
 When the answer should reasonably be yes, Tachiko Work should make that workflow possible.
