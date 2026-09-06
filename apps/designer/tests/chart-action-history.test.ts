@@ -17,6 +17,7 @@ import { mountDesigner, type MountedDesigner } from "../src/designer-app.ts";
 import type { DesignerProjectHost, SavedProjectSummary } from "../src/host/browser-project-host.ts";
 import type { ReportChart } from "../src/report-model.ts";
 import type { DesignerClient } from "../src/runtime/client.ts";
+import { TrackerGrid } from "../src/tracker-grid.ts";
 import type {
   BootstrapProjection, FieldBatchProjection, OpenedProjection,
   ProjectExport, PublicationProjection, TableProjection,
@@ -27,9 +28,9 @@ const bootstrap: BootstrapProjection = {
   title: "Chart history", revision: "resident/0", default_collection: collection,
   collections: [{ id: collection, key: collection, entity_count: 1 }],
 };
-function table(tracker: boolean): TableProjection {
+function table(tracker: boolean, revision = "resident/0"): TableProjection {
   return {
-    tracker_profile: tracker, revision: "resident/0",
+    tracker_profile: tracker, revision,
     collection: { id: collection, key: collection, entity_count: 1 },
     columns: [
       { id: "name", key: "Name", field_type: "text" },
@@ -57,6 +58,15 @@ class Client implements DesignerClient {
   async editDate(): Promise<PublicationProjection> { throw new Error("unexpected scalar mutation"); }
   close(): void {}
 }
+class RevisionClient extends Client {
+  #revision = "resident/0";
+  override readonly queryTable = vi.fn(async (): Promise<TableProjection> => table(this.tracker, this.#revision));
+  override readonly trackerCommand = vi.fn(async (): Promise<PublicationProjection> => {
+    const base_revision = this.#revision;
+    this.#revision = "resident/1";
+    return { base_revision, resulting_revision: this.#revision, entities: [], fields: [], affected_calculations: [] };
+  });
+}
 class EmptyHost implements DesignerProjectHost {
   async list(): Promise<SavedProjectSummary[]> { return []; }
   async read(): Promise<ArrayBuffer> { throw new Error("no saved project"); }
@@ -73,10 +83,10 @@ afterEach(() => {
   app?.destroy(); app = undefined;
   vi.unstubAllGlobals(); document.body.innerHTML = "";
 });
-async function setup(tracker = true): Promise<{ root: HTMLElement; client: Client }> {
+async function setup(tracker = true, suppliedClient: Client = new Client(tracker)): Promise<{ root: HTMLElement; client: Client }> {
   const root = document.querySelector<HTMLElement>("#app");
   if (!root) throw new Error("test root required");
-  const client = new Client(tracker);
+  const client = suppliedClient;
   app = mountDesigner(root, client, new EmptyHost());
   await app.ready;
   return { root, client };
@@ -247,4 +257,75 @@ it("discloses the next chart action accessibly in each direction", async () => {
   control(root, /^Undo\b/i).click();
   await vi.waitFor(() => { expect(root.querySelector(".report-card-title")).toBeNull(); });
   expect(description(root, /^Redo\b/i)).toMatch(/chart/i);
+});
+
+it("rejects a stale chart draft without changing the existing action branches", async () => {
+  const client = new RevisionClient(true);
+  const { root } = await setup(true, client);
+  await createChart(root);
+  control(root, /^Edit chart$/).click();
+  fill(root, "Chart title", "Stale edit");
+
+  const cell = root.querySelector<HTMLInputElement | HTMLTextAreaElement>('[aria-label="Cell value"]');
+  if (cell === null || cell.form === null) throw new Error("cell editor is required");
+  cell.value = "19";
+  cell.form.requestSubmit();
+  await vi.waitFor(() => { expect(root.querySelector('[data-testid="revision"]')?.textContent).toBe("resident/1"); });
+
+  control(root, /^Bold$/).click();
+  control(root, /^Undo\b/i).click();
+  expect(control(root, /^Redo\b/i).disabled).toBe(false);
+
+  control(root, /^Apply chart$/).click();
+  expect(root.querySelector(".report-editor")).not.toBeNull();
+  expect(root.querySelector(".report-editor")?.textContent).toContain("stale");
+  expect(control(root, /^Redo\b/i).disabled).toBe(false);
+  expect(client.trackerCommand).toHaveBeenCalledOnce();
+});
+
+it("bounds combined semantic, view, and chart history at 64 actions", async () => {
+  const host = document.createElement("div");
+  const source = table(true);
+  const command = vi.fn(async (): Promise<void> => {});
+  const grid = new TrackerGrid({
+    command,
+    changed: () => {},
+    failed: error => { throw error; },
+    render: () => {
+      host.innerHTML = grid.markup(source, false);
+      grid.bind(host, false);
+    },
+  });
+  const chart: ReportChart = {
+    id: "00000000-0000-4000-8000-000000000302",
+    collectionId: collection,
+    entityIds: ["row-a"],
+    categoryFieldId: "name",
+    series: [{ fieldId: "value", label: "Value" }],
+    kind: "column",
+    title: "Bounded chart",
+    xLabel: "",
+    yLabel: "",
+    legend: true,
+  };
+  grid.view.charts = [chart];
+  grid.recordPresentation(undefined, grid.view.charts);
+  grid.recordSemantic();
+  host.innerHTML = grid.markup(source, false);
+  grid.bind(host, false);
+
+  for (let index = 0; index < 63; index += 1) {
+    host.querySelector<HTMLButtonElement>('[data-tracker="bold"]')?.click();
+  }
+  expect(host.querySelector<HTMLElement>("#session-history-undo-description")?.textContent).toContain("view change");
+
+  for (let index = 0; index < 63; index += 1) {
+    host.querySelector<HTMLButtonElement>('[data-tracker="undo"]')?.click();
+  }
+  expect(command).not.toHaveBeenCalled();
+  expect(host.querySelector<HTMLElement>("#session-history-undo-description")?.textContent).toContain("semantic data action");
+  host.querySelector<HTMLButtonElement>('[data-tracker="undo"]')?.click();
+  await vi.waitFor(() => { expect(command).toHaveBeenCalledOnce(); });
+  expect(command).toHaveBeenCalledWith({ type: "undo", expected_revision: "resident/0" });
+  expect(grid.view.charts).toEqual([chart]);
 });

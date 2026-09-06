@@ -137,9 +137,11 @@ runtime from the [clipboard fixture](e2e/fixtures/operations-tracker.tsv).
   semantic action; a new accepted action clears only the redo direction. Semantic
   undo/redo uses inverse atomic batches. Read-only collection switches and
   rejected/no-change edits do not change history. Chart/presentation changes
-  remain outside this semantic history and invalidate the affected Tracker
-  action stack. Reopening starts a fresh undo stack. A failed refresh leaves the
-  accepted revision saveable and provides **Retry refresh**.
+  remain outside Rust semantic history, but each accepted chart create, edit or
+  delete adds one app-private presentation action to the same chronological
+  session history. Cancelled, rejected, unchanged or stale chart drafts do not
+  change either stack. Reopening starts a fresh undo stack. A failed refresh
+  leaves the accepted revision saveable and provides **Retry refresh**.
 - Native Tracker has a bounded outbound CSV/XLSX escape path without imported
   workbook metadata. It exports every accepted row (0–128) by stable identity,
   in saved manual order when present or canonical order otherwise; filter never
@@ -192,9 +194,10 @@ target-user evidence.
 In a Budget or numeric imported table, choose **Create chart from selected
 source**. Select up to 16 rows, a category field (or row labels), and up to
 three Number series. Column and line charts support a title, axis labels,
-series labels and a legend. Apply the chart before saving. Creating, editing or
-deleting a chart clears prior Tracker undo/redo history so older formatting
-snapshots cannot overwrite the new chart configuration. Up to eight charts
+series labels and a legend. Apply the chart before saving. Each accepted chart
+create, edit or delete is one app-private presentation action in the same
+chronological session history as semantic and formatting actions; cancelled,
+rejected, unchanged or stale drafts preserve both history directions. Up to eight charts
 are retained per browser project; the exact private limits are in
 [`report-profile.json`](report-profile.json).
 

@@ -4,7 +4,7 @@ import type { NumberFormat } from "./tracker-model.ts";
 import type { TableProjection } from "./runtime/protocol.ts";
 
 export type ReportPanelState = {
-  draft: { chart: ReportChart; creating: boolean } | null;
+  draft: { chart: ReportChart; creating: boolean; revision: string } | null;
 };
 
 export type ReportPanelOptions = {
@@ -323,6 +323,7 @@ function renderEditor(parent: HTMLElement, options: ReportPanelOptions): void {
   const applyCandidate = (): void => {
     if (options.busy || !options.current) return;
     try {
+      if (draft.revision !== options.table.revision) throw new Error("This chart draft is stale because the source revision changed. Cancel it and reopen the chart from current data.");
       if (chart.collectionId !== options.table.collection.id) throw new Error("The chart source changed. Cancel this draft and select its source again.");
       const replacement = cloneChart(chart);
       const existingIndex = options.charts.findIndex(item => item.id === chart.id);
@@ -364,7 +365,7 @@ export function mountReportPanel(host: HTMLElement, options: ReportPanelOptions)
     create.disabled = options.busy || !options.current || options.charts.length >= 8 || numeric.length === 0 || options.table.rows.length === 0 || options.collectionIds.length === 0 || !options.collectionIds.includes(options.table.collection.id);
     create.addEventListener("click", () => {
       if (create.disabled) return;
-      options.state.draft = { chart: draftDefaults(options.table, options.table.collection.id), creating: true };
+      options.state.draft = { chart: draftDefaults(options.table, options.table.collection.id), creating: true, revision: options.table.revision };
       options.onDraftChange();
       options.rerender();
     });
@@ -397,7 +398,7 @@ export function mountReportPanel(host: HTMLElement, options: ReportPanelOptions)
     const edit = element("button", "Edit chart");
     edit.type = "button";
     edit.disabled = options.busy || !options.current || options.state.draft !== null;
-    edit.addEventListener("click", () => { options.state.draft = { chart: cloneChart(chart), creating: false }; options.onDraftChange(); options.rerender(); });
+    edit.addEventListener("click", () => { options.state.draft = { chart: cloneChart(chart), creating: false, revision: options.table.revision }; options.onDraftChange(); options.rerender(); });
     const remove = element("button", "Delete chart");
     remove.type = "button";
     remove.disabled = options.busy || !options.current || options.state.draft !== null;
