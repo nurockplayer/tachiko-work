@@ -91,7 +91,7 @@ describe("report chart panel", () => {
 
   it("retains a draft when full candidate validation rejects limits or title", () => {
     const tooMany = Array.from({ length: 17 }, (_, index) => `00000000-0000-4000-8000-${String(index + 100).padStart(12, "0")}`);
-    const state: ReportPanelState = { draft: { creating: true, chart: { ...chart(), id: "00000000-0000-4000-8000-000000000041", entityIds: tooMany } } };
+    const state: ReportPanelState = { draft: { creating: true, revision: table().revision, presentation: { kind: "create", charts: [] }, chart: { ...chart(), id: "00000000-0000-4000-8000-000000000041", entityIds: tooMany } } };
     const { host, onChartsChange } = mount({ state });
     button(host, "Apply chart").click();
     expect(onChartsChange).not.toHaveBeenCalled();
@@ -169,8 +169,8 @@ describe("report chart panel", () => {
 
   it("renders missing saved rows as removable human placeholders and frees the row budget", () => {
     const missing = Array.from({ length: 16 }, (_, index) => `missing-row-${String(index + 1)}`);
-    const state: ReportPanelState = { draft: { creating: false, chart: { ...chart(), entityIds: [...missing] } } };
-    const { host, onChartsChange } = mount({ state });
+    const state: ReportPanelState = { draft: { creating: false, revision: table().revision, presentation: { kind: "edit", chart: chart() }, chart: { ...chart(), entityIds: [...missing] } } };
+    const { host, onChartsChange } = mount({ state, charts: [chart()] });
     expect([...host.querySelectorAll("label")].filter(label => label.textContent.startsWith("Unavailable selected row")).length).toBe(16);
     expect(host.textContent).toContain("Unavailable selected row 1");
     expect(host.textContent).toContain("Selected 16 of 16 rows");
@@ -204,7 +204,7 @@ describe("report chart panel", () => {
     const first = chart();
     const second = { ...chart(), id: secondChartId, title: "Second" };
     const third = { ...chart(), id: thirdChartId, title: "Third" };
-    const state: ReportPanelState = { draft: { creating: false, chart: { ...second } } };
+    const state: ReportPanelState = { draft: { creating: false, revision: table().revision, presentation: { kind: "edit", chart: second }, chart: { ...second } } };
     const onChartsChange = vi.fn();
     const { host } = mount({
       charts: [first, second, third], state,

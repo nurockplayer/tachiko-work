@@ -142,7 +142,16 @@ test("imported charts retain selected source order through filtering, disclose X
   await review.getByRole("button", { name: "Cancel export", exact: true }).click();
 });
 
-test("Tracker formatting history cannot undo, redo or resurrect externally changed charts", async ({ page }) => {
+const history = (page: Page, direction: "Undo" | "Redo") => page.getByRole("button", { name: new RegExp(`^${direction}\\b`, "i") });
+async function nextAction(page: Page, direction: "Undo" | "Redo"): Promise<string> {
+  return history(page, direction).evaluate(button => {
+    const related = (button.getAttribute("aria-describedby") ?? "").split(/\s+/)
+      .map(id => document.getElementById(id)?.textContent ?? "").join(" ");
+    return [button.textContent, button.getAttribute("aria-label"), button.getAttribute("aria-description"), related].join(" ");
+  });
+}
+
+test("Tracker chart history interleaves with formatting and semantic edits without resurrecting unrelated chart state", async ({ page }) => {
   await page.goto("/");
   page.once("dialog", dialog => dialog.accept());
   await page.getByRole("button", { name: "New Tracker", exact: true }).click();
@@ -156,42 +165,104 @@ test("Tracker formatting history cannot undo, redo or resurrect externally chang
     await page.getByRole("button", { name: "Apply to selection", exact: true }).click();
     await expect(cell).toHaveText(value);
   }
-  const oldFormattingBranches = async (): Promise<void> => {
-    await task.click();
-    await page.getByRole("button", { name: "Bold", exact: true }).click();
-    await page.getByRole("button", { name: "Fill", exact: true }).click();
-    await page.getByRole("button", { name: "Undo", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
-    await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
-  };
-  const historyCleared = async (): Promise<void> => {
-    await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
-    await expect(page.getByRole("button", { name: "Redo", exact: true })).toBeDisabled();
-    await expect(task).toHaveText("Review report");
-    await expect(estimate).toHaveText("12");
-  };
-  await oldFormattingBranches();
+  const sourceRevision = await page.getByTestId("revision").textContent();
+  await task.click();
+  await page.getByRole("button", { name: "Bold", exact: true }).click();
+  await expect(task).toHaveClass(/cell-bold/);
   await createChart(page, "Tracker estimate", "Column", "Estimate", "Task");
-  await historyCleared();
+  await expect(chart(page, "Tracker estimate").locator("tbody tr")).toHaveText(["Review report12"]);
+  await expect(history(page, "Undo")).toBeEnabled();
+  expect(await nextAction(page, "Undo")).toMatch(/chart/i);
+  await history(page, "Undo").click();
+  await expect(reports(page).locator("article")).toHaveCount(0);
+  await expect(task).toHaveClass(/cell-bold/);
+  expect(await page.getByTestId("revision").textContent()).toBe(sourceRevision);
+  await history(page, "Undo").click();
+  await expect(task).not.toHaveClass(/cell-bold/);
+  await history(page, "Redo").click();
+  await expect(task).toHaveClass(/cell-bold/);
+  await history(page, "Redo").click();
   await expect(chart(page, "Tracker estimate").locator("tbody tr")).toHaveText(["Review report12"]);
 
-  await oldFormattingBranches();
+  await estimate.click();
+  await page.getByLabel("Cell value", { exact: true }).fill("20");
+  await page.getByRole("button", { name: "Apply to selection", exact: true }).click();
+  await expect(estimate).toHaveText("20");
+  await expect(chart(page, "Tracker estimate").locator("tbody tr")).toHaveText(["Review report20"]);
+  const editedRevision = await page.getByTestId("revision").textContent();
   await chart(page, "Tracker estimate").getByRole("button", { name: "Edit chart", exact: true }).click();
   await reports(page).getByLabel("Chart title", { exact: true }).fill("Accepted Tracker estimate");
   await reports(page).getByRole("button", { name: "Apply chart", exact: true }).click();
-  await historyCleared();
-  await expect(chart(page, "Tracker estimate")).toHaveCount(0);
-  await expect(chart(page, "Accepted Tracker estimate").locator("tbody tr")).toHaveText(["Review report12"]);
+  await expect(chart(page, "Accepted Tracker estimate")).toBeVisible();
+  await history(page, "Undo").click();
+  await expect(chart(page, "Tracker estimate").locator("tbody tr")).toHaveText(["Review report20"]);
+  expect(await page.getByTestId("revision").textContent()).toBe(editedRevision);
+  await history(page, "Undo").click();
+  await expect(estimate).toHaveText("12");
+  await expect(chart(page, "Tracker estimate").locator("tbody tr")).toHaveText(["Review report12"]);
+  expect(await page.getByTestId("revision").textContent()).not.toBe(editedRevision);
+  await history(page, "Redo").click();
+  await expect(estimate).toHaveText("20");
+  await history(page, "Redo").click();
+  await expect(chart(page, "Accepted Tracker estimate").locator("tbody tr")).toHaveText(["Review report20"]);
 
-  await oldFormattingBranches();
   await chart(page, "Accepted Tracker estimate").getByRole("button", { name: "Delete chart", exact: true }).click();
-  await historyCleared();
   await expect(reports(page).locator("article")).toHaveCount(0);
-  // A later independent formatting branch must retain the accepted deletion.
+  await history(page, "Undo").click();
+  await expect(chart(page, "Accepted Tracker estimate").locator("tbody tr")).toHaveText(["Review report20"]);
+  await history(page, "Redo").click();
+  await expect(reports(page).locator("article")).toHaveCount(0);
+  // A later formatting action must not resurrect the accepted deletion.
   await task.click();
   await page.getByRole("button", { name: "Bold", exact: true }).click();
-  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await history(page, "Undo").click();
   await expect(reports(page).locator("article")).toHaveCount(0);
-  await page.getByRole("button", { name: "Redo", exact: true }).click();
+  await history(page, "Redo").click();
   await expect(reports(page).locator("article")).toHaveCount(0);
+  await expect(task).toHaveText("Review report");
+  await expect(estimate).toHaveText("20");
+});
+
+test("Budget chart and scalar actions retain both history directions through Save As and Save, then reopen fresh", async ({ page }) => {
+  await newBudget(page);
+  await createChart(page, "Budget history", "Column", "Actual", "Name");
+  await applyScalar(page, "Actual for Utilities", "200");
+  await expect(chart(page, "Budget history").locator("tbody tr")).toHaveText(["Rent1,200", "Utilities200"]);
+  await chart(page, "Budget history").getByRole("button", { name: "Edit chart", exact: true }).click();
+  await reports(page).getByLabel("Chart title", { exact: true }).fill("Updated budget history");
+  await reports(page).getByLabel("Chart type", { exact: true }).selectOption("line");
+  await reports(page).getByRole("button", { name: "Apply chart", exact: true }).click();
+  await expect(chart(page, "Updated budget history")).toBeVisible();
+  const revision = await page.getByTestId("revision").textContent();
+  await history(page, "Undo").click();
+  await expect(chart(page, "Budget history").locator("tbody tr")).toHaveText(["Rent1,200", "Utilities200"]);
+  expect(await page.getByTestId("revision").textContent()).toBe(revision);
+  await history(page, "Undo").click();
+  await expect(chart(page, "Budget history").locator("tbody tr")).toHaveText(["Rent1,200", "Utilities160"]);
+  await history(page, "Redo").click();
+  await expect(chart(page, "Budget history").locator("tbody tr")).toHaveText(["Rent1,200", "Utilities200"]);
+  await expect(history(page, "Undo")).toBeEnabled();
+  await expect(history(page, "Redo")).toBeEnabled();
+  await saveAs(page, "history.roproj");
+  await expect(history(page, "Undo")).toBeEnabled();
+  await expect(history(page, "Redo")).toBeEnabled();
+  expect(await nextAction(page, "Redo")).toMatch(/chart/i);
+  await history(page, "Redo").click();
+  await expect(chart(page, "Updated budget history")).toBeVisible();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.locator(".notice.success")).toContainText("Save complete");
+  await expect(history(page, "Undo")).toBeEnabled();
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await page.getByRole("button", { name: "Open project", exact: true }).click();
+  await expect(page.locator(".notice.success")).toContainText("Project opened");
+  await expect(chart(page, "Updated budget history").locator("tbody tr")).toHaveText(["Rent1,200", "Utilities200"]);
+  await expect(history(page, "Undo")).toBeDisabled();
+  await expect(history(page, "Redo")).toBeDisabled();
+  await chart(page, "Updated budget history").getByRole("button", { name: "Edit chart", exact: true }).click();
+  await expect(reports(page).getByLabel("Chart type", { exact: true })).toHaveValue("line");
+  await expect(reports(page).getByLabel("Series 1 field", { exact: true }).locator("option:checked")).toHaveText("Actual");
+  await expect(reports(page).getByLabel("Category field", { exact: true }).locator("option:checked")).toHaveText("Name");
+  await expect(reports(page).getByLabel("X axis label", { exact: true })).toHaveValue("Budget category");
+  await expect(reports(page).getByLabel("Y axis label", { exact: true })).toHaveValue("Amount");
+  await reports(page).getByRole("button", { name: "Cancel", exact: true }).click();
 });
