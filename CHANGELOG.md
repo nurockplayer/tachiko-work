@@ -36,6 +36,11 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Fixed
 
+- Formula authoring in one open Designer occurrence is now a bounded reversible
+  semantic action: Undo restores the exact prior Number or formula, and Redo
+  re-applies the accepted formula through the normal lifecycle. The narrow
+  formula-to-Number inverse remains private to this history composition; generic
+  scalar editing over formula cells is still rejected.
 - Net-zero AtomicBatch execution now reports typed NoChange after guarded
   authorization and exact-base checks, without installing state, advancing a
   semantic revision, emitting publication invalidation, consuming Approval, or

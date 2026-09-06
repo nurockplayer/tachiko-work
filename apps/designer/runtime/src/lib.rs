@@ -17,7 +17,9 @@ use tachiko_workspace_engine::{
     CalculationFailure, Date, Document, Entity, EntityId, EntityKey, Expression, FieldDefinition,
     FieldId, FieldKey, FieldRef, FieldType, IdGenerator, Number, Schema, SchemaId, SchemaKey,
     SemanticIdKind, StarterTemplate, Value, WorkspaceError, analyze_field, create_document,
-    formula_operations::{FormulaCalculationOutcome, FormulaUpdateRequest},
+    formula_operations::{
+        FormulaCalculationOutcome, FormulaInverseRestoreRequest, FormulaUpdateRequest,
+    },
     patch_lifecycle::{
         AuthorizationAction, AuthorizationDomainId, AuthorizationPolicyVersion, DocumentScopeId,
         Grant, GrantId, GrantRequirement, MutationClass, OperationFamily, PatchLifecycle,
@@ -481,8 +483,15 @@ pub struct DesignerRuntime {
 
 #[derive(Clone)]
 struct HistoryEntry {
-    forward: Vec<SemanticCommand>,
-    inverse: Vec<SemanticCommand>,
+    forward: HistoryAction,
+    inverse: HistoryAction,
+}
+
+#[derive(Clone)]
+enum HistoryAction {
+    Commands(Vec<SemanticCommand>),
+    FormulaUpdate { target: FieldTarget, source: String },
+    FormulaInverseRestore { target: FieldTarget, value: Number },
 }
 
 #[derive(Clone)]
@@ -958,6 +967,61 @@ impl DesignerRuntime {
         target: &FieldTarget,
         source: &str,
     ) -> Result<PublicationProjection, DesignerError> {
+        let mut inverse = None;
+        let publication =
+            self.publish_formula_update(expected_revision, target, source, Some(&mut inverse))?;
+        let inverse =
+            inverse.ok_or_else(|| tracker_error("accepted formula inverse is unavailable"))?;
+        let forward = self
+            .formula_sources
+            .get(&target.as_field_ref())
+            .cloned()
+            .ok_or_else(|| tracker_error("accepted formula source is unavailable"))?;
+        self.record_history_entry(HistoryEntry {
+            forward: HistoryAction::FormulaUpdate {
+                target: target.clone(),
+                source: forward,
+            },
+            inverse,
+        });
+        Ok(publication)
+    }
+
+    fn formula_inverse_action(&self, target: &FieldTarget) -> Result<HistoryAction, DesignerError> {
+        let field = target.as_field_ref();
+        let snapshot = self.session.export_snapshot();
+        let previous = snapshot
+            .document()
+            .entities
+            .get(&field.entity)
+            .and_then(|entity| entity.fields.get(&field.field))
+            .ok_or_else(|| tracker_error("formula target is unavailable"))?;
+        match previous {
+            Value::Number(value) => Ok(HistoryAction::FormulaInverseRestore {
+                target: target.clone(),
+                value: *value,
+            }),
+            Value::Formula(_) => Ok(HistoryAction::FormulaUpdate {
+                target: target.clone(),
+                source: self
+                    .formula_sources
+                    .get(&field)
+                    .cloned()
+                    .ok_or_else(|| tracker_error("previous formula source is unavailable"))?,
+            }),
+            _ => Err(tracker_error(
+                "formula authoring requires an admitted numeric prior value",
+            )),
+        }
+    }
+
+    fn publish_formula_update(
+        &mut self,
+        expected_revision: &str,
+        target: &FieldTarget,
+        source: &str,
+        inverse: Option<&mut Option<HistoryAction>>,
+    ) -> Result<PublicationProjection, DesignerError> {
         let snapshot = self.session.export_snapshot();
         // This app-private human request owns its complete lifecycle. Keep
         // admitted-but-unpublishable candidates and finished proposal evidence
@@ -999,6 +1063,9 @@ impl DesignerRuntime {
                 "formula proposal did not contain one admitted formula command",
             ));
         };
+        if let Some(inverse) = inverse {
+            *inverse = Some(self.formula_inverse_action(target)?);
+        }
         let mut candidate = snapshot.document().clone();
         let entity = candidate
             .entities
@@ -1031,9 +1098,87 @@ impl DesignerRuntime {
         };
         self.refresh_structure();
         self.formula_sources = formula_sources(self.session.export_snapshot().document())?;
-        // Formula publication is generic semantic publication, not Tracker history.
-        self.undo.clear();
-        self.redo.clear();
+        Ok(PublicationProjection {
+            base_revision: receipt.base_revision.as_str().to_owned(),
+            resulting_revision: receipt.resulting_revision.as_str().to_owned(),
+            entities: invalidation
+                .entities
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            fields: invalidation.fields.iter().map(field_target).collect(),
+            affected_calculations: invalidation
+                .affected_calculations
+                .iter()
+                .map(field_target)
+                .collect(),
+        })
+    }
+
+    fn restore_formula_inverse(
+        &mut self,
+        expected_revision: &str,
+        target: &FieldTarget,
+        value: Number,
+    ) -> Result<PublicationProjection, DesignerError> {
+        let snapshot = self.session.export_snapshot();
+        let mut lifecycle = designer_lifecycle(
+            snapshot.document_scope(),
+            snapshot.document(),
+            &self.principal,
+        )?;
+        let proposal_id = self.next_proposal_id()?;
+        lifecycle.propose_formula_inverse_restore(
+            snapshot.document_scope(),
+            snapshot.document(),
+            snapshot.revision(),
+            FormulaInverseRestoreRequest::new(
+                proposal_id.clone(),
+                SemanticRevision::from(expected_revision.to_owned()),
+                target.as_field_ref(),
+                value,
+                self.principal.clone(),
+            ),
+            self.clock.tick(),
+        )?;
+        lifecycle.preview(
+            snapshot.document_scope(),
+            snapshot.document(),
+            snapshot.revision(),
+            &proposal_id,
+            &self.principal,
+            self.clock.tick(),
+        )?;
+        let mut candidate = snapshot.document().clone();
+        let field = target.as_field_ref();
+        let entity = candidate
+            .entities
+            .get_mut(&field.entity)
+            .ok_or_else(|| tracker_error("formula inverse target is unavailable"))?;
+        entity.fields.insert(field.field, Value::Number(value));
+        Self::from_document(candidate, PREFLIGHT_OCCURRENCE)?;
+        let execute_now = self.clock.tick();
+        let (receipt, invalidation) = {
+            let mut publication = self.session.publication_authority(&mut self.clock);
+            let receipt = lifecycle.execute(
+                &proposal_id,
+                None,
+                &self.principal,
+                &mut publication,
+                execute_now,
+            )?;
+            let invalidation = publication
+                .projection_invalidation_for(
+                    snapshot.document_scope(),
+                    &receipt.base_revision,
+                    &receipt.resulting_revision,
+                )
+                .ok_or(DesignerError::MissingInvalidation)?
+                .clone();
+            (receipt, invalidation)
+        };
+        self.refresh_structure();
+        self.formula_sources = formula_sources(self.session.export_snapshot().document())?;
         Ok(PublicationProjection {
             base_revision: receipt.base_revision.as_str().to_owned(),
             resulting_revision: receipt.resulting_revision.as_str().to_owned(),
@@ -1171,7 +1316,7 @@ impl DesignerRuntime {
                 SemanticCommand::RemoveEntity { entity } => {
                     candidate.entities.remove(entity);
                 }
-                SemanticCommand::FormulaUpdate(_) => {
+                SemanticCommand::FormulaUpdate(_) | SemanticCommand::FormulaInverseRestore(_) => {
                     return Err(tracker_error("unsupported history command"));
                 }
             }
@@ -1434,6 +1579,14 @@ impl DesignerRuntime {
         Ok(())
     }
 
+    fn record_history_entry(&mut self, entry: HistoryEntry) {
+        if self.undo.len() == 64 {
+            self.undo.remove(0);
+        }
+        self.undo.push(entry);
+        self.redo.clear();
+    }
+
     fn record_edit(
         &mut self,
         expected: &str,
@@ -1444,11 +1597,10 @@ impl DesignerRuntime {
             return Err(PatchLifecycleError::NoChange.into());
         }
         let publication = self.publish_commands(expected, forward.clone())?;
-        if self.undo.len() == 64 {
-            self.undo.remove(0);
-        }
-        self.undo.push(HistoryEntry { forward, inverse });
-        self.redo.clear();
+        self.record_history_entry(HistoryEntry {
+            forward: HistoryAction::Commands(forward),
+            inverse: HistoryAction::Commands(inverse),
+        });
         Ok(publication)
     }
 
@@ -1500,14 +1652,16 @@ impl DesignerRuntime {
         }
         .cloned()
         .ok_or_else(|| tracker_error("no operation is available in this history direction"))?;
-        let result = self.publish_commands(
-            expected,
-            if redo {
-                entry.forward.clone()
-            } else {
-                entry.inverse.clone()
-            },
-        )?;
+        let action = if redo { &entry.forward } else { &entry.inverse };
+        let result = match action {
+            HistoryAction::Commands(commands) => self.publish_commands(expected, commands.clone()),
+            HistoryAction::FormulaUpdate { target, source } => {
+                self.publish_formula_update(expected, target, source, None)
+            }
+            HistoryAction::FormulaInverseRestore { target, value } => {
+                self.restore_formula_inverse(expected, target, *value)
+            }
+        }?;
         if redo {
             self.redo.pop();
             self.undo.push(entry);
@@ -2704,6 +2858,15 @@ fn designer_lifecycle(
         [
             (OperationFamily::SetFieldValue, MutationClass::Value),
             (OperationFamily::SetFieldValue, MutationClass::Formula),
+            (OperationFamily::FormulaInverseRestore, MutationClass::Value),
+            (
+                OperationFamily::FormulaInverseRestore,
+                MutationClass::Formula,
+            ),
+            (
+                OperationFamily::FormulaInverseRestore,
+                MutationClass::Destructive,
+            ),
             (OperationFamily::FormulaUpdate, MutationClass::Formula),
             (OperationFamily::AppendEntity, MutationClass::Structure),
             (OperationFamily::RemoveEntity, MutationClass::Structure),
