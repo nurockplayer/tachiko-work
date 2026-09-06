@@ -17,7 +17,7 @@
 
 ## Acceptance / unit-test handoff
 
-<!-- Follow docs/governance/project-governance.md#acceptance-first-preparation-and-handoff. For docs-only/refactor work, link the Steward's appropriate-evidence decision rather than inventing red product tests. -->
+<!-- Follow docs/governance/project-governance.md#acceptance-first-preparation-and-handoff. For docs-only/refactor work, link the applicable document checks/review and any bounded applicability exception recorded in the Issue or handoff; do not invent red product tests. -->
 
 - Acceptance baseline / seed / final head: <!-- full commits and linked criterion-to-test mapping -->
 - Acceptance changes: <!-- none, disclosed mechanical repairs, or material changes with Steward decision and revised commit -->
