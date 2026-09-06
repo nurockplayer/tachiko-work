@@ -168,6 +168,27 @@ cat >"${fixture_gh}" <<'EOF_GH'
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${1:-}" == "api" && "${2:-}" == "graphql" ]]; then
+  shift 2
+  cursor=""
+  for argument in "$@"; do
+    case "${argument}" in
+      cursor=*) cursor="${argument#cursor=}" ;;
+    esac
+  done
+  [[ -z "${GITHUB_DR_CONTRACT_GRAPHQL_FAIL:-}" ]] || exit 23
+  if [[ -z "${cursor}" ]]; then
+    cat <<'EOF_GRAPHQL'
+{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PR_REVIEW_THREAD_SENTINEL","isResolved":false,"isOutdated":false,"comments":{"nodes":[{"id":"PR_REVIEW_THREAD_COMMENT_SENTINEL","body":"thread page one"}],"pageInfo":{"hasNextPage":false}}}],"pageInfo":{"hasNextPage":true,"endCursor":"thread-cursor-page-2"}}}}}}
+EOF_GRAPHQL
+  else
+    cat <<'EOF_GRAPHQL'
+{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PR_REVIEW_THREAD_RESOLVED_SENTINEL","isResolved":true,"isOutdated":false,"comments":{"nodes":[{"id":"PR_REVIEW_THREAD_RESOLVED_COMMENT_SENTINEL","body":"thread page two"}],"pageInfo":{"hasNextPage":false}}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
+EOF_GRAPHQL
+  fi
+  exit 0
+fi
+
 [[ "${1:-}" == "api" ]] || exit 64
 shift
 paginate=0
@@ -222,7 +243,10 @@ case "${endpoint}" in
       printf '[{"number":2,"title":"page two"}]\n'
     fi
     ;;
-  "${repo}/pulls"*|"${repo}/labels"*|"${repo}/milestones"*|"${repo}/releases"*|"${repo}/rulesets"*)
+  "${repo}/pulls"*)
+    emit_one_page '[{"number":2,"title":"Pull request with review threads"}]'
+    ;;
+  "${repo}/labels"*|"${repo}/milestones"*|"${repo}/releases"*|"${repo}/rulesets"*)
     emit_one_page '[]'
     ;;
   *)
@@ -239,7 +263,7 @@ export GITHUB_DR_CONTRACT_MAIN_HEAD="${main_head_v1}"
 export GITHUB_DR_CONTRACT_FEATURE_HEAD="${feature_head}"
 export GITHUB_DR_CONTRACT_TAG_HEAD="${main_head_v1}"
 export GITHUB_TOKEN="ghp-DO-NOT-LEAK-CONTRACT-309"
-unset GITHUB_DR_CONTRACT_FAIL_MATCH
+unset GITHUB_DR_CONTRACT_FAIL_MATCH GITHUB_DR_CONTRACT_GRAPHQL_FAIL
 
 if ! bash "${backup_script}" snapshot \
   --repository nurockplayer/tachiko-work \
@@ -251,6 +275,27 @@ if ! bash "${backup_script}" snapshot \
 fi
 [[ "$(manifest_issue_count "${snapshot_root}/latest/manifest.json")" == "2" ]] ||
   fail "separate pagination pages were truncated"
+"${real_node}" - "${snapshot_root}/latest/manifest.json" <<'EOF_MANIFEST_THREADS'
+const fs = require('fs');
+const manifest = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+if (Number(manifest.counts?.pull_request_review_threads) !== 2) {
+  throw new Error('review thread pagination/count was not captured');
+}
+EOF_MANIFEST_THREADS
+"${real_node}" - "${snapshot_root}/latest/pull_requests/2/review_threads.json" <<'EOF_THREADS'
+const fs = require('fs');
+const threads = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const unresolved = threads.find((thread) => thread.id === 'PR_REVIEW_THREAD_SENTINEL');
+const resolved = threads.find((thread) => thread.id === 'PR_REVIEW_THREAD_RESOLVED_SENTINEL');
+if (!unresolved || unresolved.isResolved !== false) throw new Error('missing unresolved review thread state');
+if (!resolved || resolved.isResolved !== true) throw new Error('missing resolved review thread state');
+if (!unresolved.comments.some((comment) => comment.id === 'PR_REVIEW_THREAD_COMMENT_SENTINEL')) {
+  throw new Error('missing unresolved review thread comment');
+}
+if (!resolved.comments.some((comment) => comment.id === 'PR_REVIEW_THREAD_RESOLVED_COMMENT_SENTINEL')) {
+  throw new Error('missing resolved review thread comment');
+}
+EOF_THREADS
 
 first_dated=""
 first_count=0
@@ -318,6 +363,18 @@ done
   fail "latest did not advance to the second successful source state"
 
 prior_latest_digest="$(tree_digest "${snapshot_root}/latest")"
+export GITHUB_DR_CONTRACT_GRAPHQL_FAIL=1
+failed_status=0
+bash "${backup_script}" snapshot \
+  --repository nurockplayer/tachiko-work \
+  --output "${snapshot_root}" \
+  --source-head "${main_head_v2}" \
+  >"${test_dir}/snapshot-graphql-failed.log" 2>&1 || failed_status="$?"
+[[ "${failed_status}" -ne 0 ]] ||
+  fail "GraphQL review thread failure was reported as success"
+[[ "$(tree_digest "${snapshot_root}/latest")" == "${prior_latest_digest}" ]] ||
+  fail "GraphQL review thread failure changed the prior known-good snapshot"
+unset GITHUB_DR_CONTRACT_GRAPHQL_FAIL
 export GITHUB_DR_CONTRACT_FAIL_MATCH="pulls"
 failed_status=0
 bash "${backup_script}" snapshot \

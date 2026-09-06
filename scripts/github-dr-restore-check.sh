@@ -76,6 +76,11 @@ set -euo pipefail
 
 [[ "${1:-}" == "api" ]] || exit 64
 shift
+if [[ "${1:-}" == "graphql" ]]; then
+  printf '%s\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}'
+  exit 0
+fi
+
 endpoint=""
 for argument in "$@"; do
   case "${argument}" in

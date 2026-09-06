@@ -22,7 +22,10 @@ comments, Pull Requests and conversation/review data, labels, milestones,
 releases, and rulesets when the token can read them. Git workflow definitions
 are already part of the replicated Git refs. The manifest records the schema,
 source HEAD, UTC timestamp, object counts, explicit omissions, and SHA-256
-payload checksums.
+payload checksums. Each Pull Request also receives a deterministic
+`review_threads.json` payload from GitHub GraphQL, including resolved/outdated
+state and thread comments. Review-thread pages are traversed with cursors; a
+GraphQL error or incomplete page fails the capture before publication.
 
 The production workflow pins the driver's retention to seven dated snapshots
 (`GITHUB_DR_RETENTION_COUNT=7`). The CLI override is available only for a

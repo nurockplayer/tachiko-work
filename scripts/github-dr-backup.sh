@@ -194,6 +194,122 @@ api_collection() {
   fi
 }
 
+api_review_threads() {
+  local destination="$1"
+  local owner="$2"
+  local name="$3"
+  local number="$4"
+  local graphql_query response thread_page threads cursor has_next next_cursor
+  # shellcheck disable=SC2016 # GraphQL variables must remain literal for gh.
+  graphql_query='query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $cursor) {
+        nodes {
+          id
+          isResolved
+          isOutdated
+          comments(first: 100) {
+            nodes {
+              id
+              body
+              createdAt
+              updatedAt
+              url
+            }
+            pageInfo {
+              hasNextPage
+            }
+          }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  }
+}'
+
+  threads="$(mktemp "${tmp_root}/review-threads.XXXXXX")"
+  printf '[]\n' >"${threads}"
+  cursor=""
+  while :; do
+    response="$(mktemp "${tmp_root}/graphql-response.XXXXXX")"
+    if [[ -n "${cursor}" ]]; then
+      if ! capture_command "${response}" \
+        "${gh_bin}" api graphql \
+        -f "query=${graphql_query}" \
+        -f "owner=${owner}" \
+        -f "name=${name}" \
+        -F "number=${number}" \
+        -f "cursor=${cursor}"; then
+        die "GitHub GraphQL review thread capture failed for pull request ${number}"
+      fi
+    elif ! capture_command "${response}" \
+      "${gh_bin}" api graphql \
+      -f "query=${graphql_query}" \
+      -f "owner=${owner}" \
+      -f "name=${name}" \
+      -F "number=${number}"; then
+      die "GitHub GraphQL review thread capture failed for pull request ${number}"
+    fi
+
+    if ! "${jq_bin}" -e \
+      '((.errors // []) | type == "array" and length == 0) and
+       (.data.repository.pullRequest.reviewThreads.nodes | type == "array") and
+       (.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | type == "boolean") and
+       all(.data.repository.pullRequest.reviewThreads.nodes[];
+         (type == "object") and
+         (.id | type == "string") and
+         (.isResolved | type == "boolean") and
+         (.isOutdated | type == "boolean") and
+         (.comments.nodes | type == "array") and
+         (.comments.pageInfo.hasNextPage | type == "boolean") and
+         (.comments.pageInfo.hasNextPage == false) and
+         all(.comments.nodes[]; (type == "object") and (.id | type == "string")))' \
+      "${response}" >/dev/null 2>"${tmp_root}/graphql-validation-error"; then
+      if [[ -s "${tmp_root}/graphql-validation-error" ]]; then
+        redact_file "${tmp_root}/graphql-validation-error" >&2
+      fi
+      die "GitHub GraphQL review thread capture returned incomplete data for pull request ${number}"
+    fi
+
+    thread_page="$(mktemp "${tmp_root}/review-thread-page.XXXXXX")"
+    if ! "${jq_bin}" -cS \
+      '[.data.repository.pullRequest.reviewThreads.nodes[] |
+        {
+          id,
+          isResolved,
+          isOutdated,
+          comments: [.comments.nodes[]] | sort_by(.id)
+        }
+      ]' "${response}" >"${thread_page}" 2>"${tmp_root}/graphql-transform-error"; then
+      if [[ -s "${tmp_root}/graphql-transform-error" ]]; then
+        redact_file "${tmp_root}/graphql-transform-error" >&2
+      fi
+      die "could not normalize GitHub GraphQL review threads for pull request ${number}"
+    fi
+    "${jq_bin}" -cS -s '.[0] + .[1] | sort_by(.id)' "${threads}" "${thread_page}" \
+      >"${threads}.next"
+    mv -- "${threads}.next" "${threads}"
+
+    has_next="$(${jq_bin} -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' \
+      "${response}")"
+    if [[ "${has_next}" == true ]]; then
+      next_cursor="$(${jq_bin} -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // empty' \
+        "${response}")"
+      [[ -n "${next_cursor}" && "${next_cursor}" != "${cursor}" ]] ||
+        die "GitHub GraphQL review thread pagination returned no advancing cursor for pull request ${number}"
+      cursor="${next_cursor}"
+    else
+      break
+    fi
+  done
+
+  mv -- "${threads}" "${destination}"
+}
+
 api_is_access_unavailable() {
   [[ -n "${last_command_error}" ]] || return 1
   grep -Eiq \
@@ -454,6 +570,7 @@ snapshot() {
     die "GITHUB_DR_RETENTION_COUNT must be a positive integer"
 
   local output_parent output_name output_absolute snapshot_store stage repository_json default_branch
+  local repository_owner repository_name
   local snapshot_at snapshot_id dated_snapshot latest_stage old_latest
   local omission_file omission_json api_status pr_number
   output_parent="$(dirname "${output}")"
@@ -485,6 +602,8 @@ snapshot() {
   default_branch="$(json_string "${repository_json}" '.default_branch // empty')"
   [[ "${default_branch}" != */* && "${default_branch}" != ..* ]] ||
     die "repository default branch is not a valid branch name"
+  repository_owner="${repository%%/*}"
+  repository_name="${repository#*/}"
 
   api_collection "${stage}/branches.json" "repos/${repository}/branches?per_page=100"
   api_collection "${stage}/tags.json" "repos/${repository}/tags?per_page=100"
@@ -520,6 +639,8 @@ snapshot() {
       "repos/${repository}/pulls/${pr_number}/comments?per_page=100"
     api_collection "${stage}/pull_requests/${pr_number}/conversation_comments.json" \
       "repos/${repository}/issues/${pr_number}/comments?per_page=100"
+    api_review_threads "${stage}/pull_requests/${pr_number}/review_threads.json" \
+      "${repository_owner}" "${repository_name}" "${pr_number}"
   done < <("${jq_bin}" -r '.[] | .number // empty' "${stage}/pull_requests.json")
 
   # Git source replication carries workflow definitions.  Actions runtime
@@ -578,6 +699,7 @@ const pullRequestDirectory = path.join(root, 'pull_requests');
 let reviewCount = 0;
 let reviewCommentCount = 0;
 let conversationCommentCount = 0;
+let reviewThreadCount = 0;
 if (fs.existsSync(pullRequestDirectory)) {
   for (const number of fs.readdirSync(pullRequestDirectory)) {
     const directory = path.join(pullRequestDirectory, number);
@@ -585,6 +707,7 @@ if (fs.existsSync(pullRequestDirectory)) {
     reviewCount += collectionCount(`pull_requests/${number}/reviews.json`);
     reviewCommentCount += collectionCount(`pull_requests/${number}/review_comments.json`);
     conversationCommentCount += collectionCount(`pull_requests/${number}/conversation_comments.json`);
+    reviewThreadCount += collectionCount(`pull_requests/${number}/review_threads.json`);
   }
 }
 
@@ -604,6 +727,7 @@ const manifest = {
     pull_request_reviews: reviewCount,
     pull_request_review_comments: reviewCommentCount,
     pull_request_conversation_comments: conversationCommentCount,
+    pull_request_review_threads: reviewThreadCount,
     labels: collectionCount('labels.json'),
     milestones: collectionCount('milestones.json'),
     releases: collectionCount('releases.json'),
@@ -612,7 +736,8 @@ const manifest = {
   },
   omitted_or_unavailable: omitted,
   capture: {
-    api_pagination: 'GitHub REST collections requested with gh api --paginate --slurp',
+    api_pagination: 'GitHub REST collections requested with gh api --paginate --slurp; GitHub GraphQL review threads use explicit cursor pagination',
+    review_threads: 'captured per Pull Request through GitHub GraphQL with resolved/unresolved state',
     workflow_definitions: 'captured by Git source replication; not duplicated in this JSON snapshot',
     target_role: 'GitLab is an independent backup-only target; GitHub remains authoritative',
   },

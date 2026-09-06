@@ -106,6 +106,11 @@ printf '%s\n' "$*" >>"${GITHUB_DR_FIXTURE_LOG}"
 [[ "${1:-}" == "api" ]] || exit 64
 shift
 
+if [[ "${1:-}" == "graphql" ]]; then
+  printf '%s\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"PR_REVIEW_THREAD_SENTINEL","isResolved":false,"isOutdated":false,"comments":{"nodes":[{"id":"PR_REVIEW_THREAD_COMMENT_SENTINEL","body":"thread sentinel"}],"pageInfo":{"hasNextPage":false}}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}'
+  exit 0
+fi
+
 paginate=0
 endpoint=""
 for argument in "$@"; do
@@ -214,6 +219,7 @@ if (!manifest.schema_version) throw new Error('missing schema_version');
 if (!manifest.snapshot_at || !String(manifest.snapshot_at).endsWith('Z')) throw new Error('snapshot_at must be UTC');
 if (!manifest.counts || Number(manifest.counts.issues) < 2) throw new Error('pagination fixture was truncated');
 if (!manifest.counts || Number(manifest.counts.pull_requests) < 1) throw new Error('missing PR count');
+if (!manifest.counts || Number(manifest.counts.pull_request_review_threads) < 1) throw new Error('missing review thread count');
 if (!Array.isArray(manifest.omitted_or_unavailable)) throw new Error('missing omissions disclosure');
 if (!manifest.checksums || Object.keys(manifest.checksums).length === 0) throw new Error('missing checksums');
 
@@ -227,7 +233,13 @@ function walk(dir) {
 }
 walk(root);
 const corpus = files.map((file) => fs.readFileSync(file, 'utf8')).join('\n');
-for (const sentinel of ['ISSUE_COMMENT_SENTINEL', 'PR_REVIEW_SENTINEL', 'PR_REVIEW_COMMENT_SENTINEL']) {
+for (const sentinel of [
+  'ISSUE_COMMENT_SENTINEL',
+  'PR_REVIEW_SENTINEL',
+  'PR_REVIEW_COMMENT_SENTINEL',
+  'PR_REVIEW_THREAD_SENTINEL',
+  'PR_REVIEW_THREAD_COMMENT_SENTINEL',
+]) {
   if (!corpus.includes(sentinel)) throw new Error(`missing ${sentinel}`);
 }
 for (const secret of ['ghp-DO-NOT-LEAK-309', 'glpat-DO-NOT-LEAK-309']) {
@@ -235,8 +247,21 @@ for (const secret of ['ghp-DO-NOT-LEAK-309', 'glpat-DO-NOT-LEAK-309']) {
 }
 EOF_NODE
 
+"${real_node}" - "${snapshot_root}/latest/pull_requests/2/review_threads.json" <<'EOF_THREADS'
+const fs = require('fs');
+const threads = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const thread = threads.find((candidate) => candidate.id === 'PR_REVIEW_THREAD_SENTINEL');
+if (!thread || thread.isResolved !== false) throw new Error('missing unresolved review thread state');
+if (!thread.comments.some((comment) => comment.id === 'PR_REVIEW_THREAD_COMMENT_SENTINEL')) {
+  throw new Error('missing review thread comment');
+}
+EOF_THREADS
+
 if ! grep -F -- "--paginate" "${gh_log}" >/dev/null; then
   fail "snapshot never requested paginated GitHub API traversal"
+fi
+if ! grep -F -- "graphql" "${gh_log}" >/dev/null; then
+  fail "snapshot never requested GitHub GraphQL review thread capture"
 fi
 if grep -F -- "${GITHUB_TOKEN}" "${snapshot_log}" >/dev/null ||
    grep -F -- "${GITHUB_DR_GITLAB_TOKEN}" "${snapshot_log}" >/dev/null; then
