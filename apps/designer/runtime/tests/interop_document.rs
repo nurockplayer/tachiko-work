@@ -342,6 +342,7 @@ fn invalid_cleanup_stale_or_replaced_previews_never_publish_partial_changes() {
 #[test]
 fn optional_missing_fill_and_conversion_use_declared_slots_without_false_placeholders() {
     let mut runtime = fixture(false);
+    let initial = runtime.export_project("resident/0").unwrap().bytes;
     let fill = preview(
         &mut runtime,
         0,
@@ -357,6 +358,7 @@ fn optional_missing_fill_and_conversion_use_declared_slots_without_false_placeho
     commit(&mut runtime, fill);
     assert_eq!(text(&mut runtime, 1, "r1.missing"), "Unknown");
     assert_eq!(text(&mut runtime, 1, "r1.name"), "  Ada Lovelace  ");
+    let after_fill = runtime.export_project("resident/1").unwrap().bytes;
     let conversion = preview(
         &mut runtime,
         1,
@@ -368,6 +370,31 @@ fn optional_missing_fill_and_conversion_use_declared_slots_without_false_placeho
     assert!(conversion.changes[0].before.is_none());
     commit(&mut runtime, conversion);
     assert_eq!(text(&mut runtime, 2, "r1.number_text"), "12.5");
+    runtime
+        .handle(DesignerRequest::Undo {
+            expected_revision: "resident/2".into(),
+        })
+        .unwrap();
+    assert_eq!(runtime.export_project("resident/3").unwrap().bytes, after_fill);
+    runtime
+        .handle(DesignerRequest::Undo {
+            expected_revision: "resident/3".into(),
+        })
+        .unwrap();
+    assert_eq!(runtime.export_project("resident/4").unwrap().bytes, initial);
+    runtime
+        .handle(DesignerRequest::Redo {
+            expected_revision: "resident/4".into(),
+        })
+        .unwrap();
+    assert_eq!(runtime.export_project("resident/5").unwrap().bytes, after_fill);
+    assert_eq!(text(&mut runtime, 5, "r1.missing"), "Unknown");
+    runtime
+        .handle(DesignerRequest::Redo {
+            expected_revision: "resident/5".into(),
+        })
+        .unwrap();
+    assert_eq!(text(&mut runtime, 6, "r1.number_text"), "12.5");
 }
 
 use tachiko_designer_runtime::interop_adapter::{

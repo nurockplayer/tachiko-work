@@ -109,6 +109,20 @@ fn assert_number(runtime: &mut DesignerRuntime, revision: u32, target: &str, exp
     );
 }
 
+fn formula_source(runtime: &mut DesignerRuntime, revision: u32, target: &str) -> String {
+    field(runtime, revision, target)
+        .formula
+        .map(|formula| formula.source)
+        .expect("expected Formula")
+}
+
+fn calculated_number(runtime: &mut DesignerRuntime, revision: u32, target: &str) -> f64 {
+    field(runtime, revision, target)
+        .calculated
+        .and_then(|calculated| calculated.number())
+        .expect("expected calculated Number")
+}
+
 #[test]
 fn generic_scalar_edit_interleaves_with_existing_semantic_history() {
     let mut runtime = fixture();
@@ -181,6 +195,11 @@ fn formula_copy_is_one_reversible_action_and_preserves_source_formula_history() 
         })
         .unwrap();
 
+    assert_eq!(formula_source(&mut runtime, 2, "r2.c"), "([r2.a] * 2)");
+    assert_eq!(formula_source(&mut runtime, 2, "r3.c"), "([r3.a] * 2)");
+    assert_eq!(calculated_number(&mut runtime, 2, "r2.c").to_bits(), 4.0f64.to_bits());
+    assert_eq!(calculated_number(&mut runtime, 2, "r3.c").to_bits(), 6.0f64.to_bits());
+
     runtime
         .handle(DesignerRequest::Undo {
             expected_revision: "resident/2".into(),
@@ -196,6 +215,23 @@ fn formula_copy_is_one_reversible_action_and_preserves_source_formula_history() 
         })
         .expect("the source formula action must remain independently undoable");
     assert_number(&mut runtime, 4, "r1.c", 99.0);
+
+    runtime
+        .handle(DesignerRequest::Redo {
+            expected_revision: "resident/4".into(),
+        })
+        .expect("the source formula action must redo in chronological order");
+    assert_eq!(formula_source(&mut runtime, 5, "r1.c"), "([r1.a] * 2)");
+    assert_eq!(calculated_number(&mut runtime, 5, "r1.c").to_bits(), 2.0f64.to_bits());
+    runtime
+        .handle(DesignerRequest::Redo {
+            expected_revision: "resident/5".into(),
+        })
+        .expect("the formula copy action must redo after its source formula");
+    assert_eq!(formula_source(&mut runtime, 6, "r2.c"), "([r2.a] * 2)");
+    assert_eq!(formula_source(&mut runtime, 6, "r3.c"), "([r3.a] * 2)");
+    assert_eq!(calculated_number(&mut runtime, 6, "r2.c").to_bits(), 4.0f64.to_bits());
+    assert_eq!(calculated_number(&mut runtime, 6, "r3.c").to_bits(), 6.0f64.to_bits());
 }
 
 #[test]
@@ -248,4 +284,19 @@ fn cleanup_commit_is_one_reversible_action_without_discarding_prior_history() {
         })
         .expect("cleanup must not erase the earlier semantic action");
     assert_eq!(text(&mut runtime, 4, "r3.name"), "  row 3  ");
+
+    runtime
+        .handle(DesignerRequest::Redo {
+            expected_revision: "resident/4".into(),
+        })
+        .expect("the prior semantic action must redo before cleanup");
+    assert_eq!(text(&mut runtime, 5, "r3.name"), "prior action");
+    runtime
+        .handle(DesignerRequest::Redo {
+            expected_revision: "resident/5".into(),
+        })
+        .expect("the cleanup action must redo after the prior edit");
+    assert_eq!(text(&mut runtime, 6, "r1.name"), "row 1");
+    assert_eq!(text(&mut runtime, 6, "r2.name"), "row 2");
+    assert_eq!(text(&mut runtime, 6, "r3.name"), "prior action");
 }

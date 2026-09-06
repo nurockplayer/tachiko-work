@@ -136,14 +136,14 @@ fn copy_resolves_relative_axes_fixed_and_cross_collection_references_atomically(
             .and_then(CalculationProjection::number),
         Some(50.0)
     );
-    assert!(
-        runtime
-            .handle(DesignerRequest::Undo {
-                expected_revision: "resident/2".into()
-            })
-            .is_err()
-    );
-    let exported = runtime.export_project("resident/2").unwrap();
+    runtime
+        .handle(DesignerRequest::Undo {
+            expected_revision: "resident/2".into(),
+        })
+        .expect("accepted formula copy must remain undoable");
+    assert!(field(&mut runtime, 3, "r2.c").formula.is_none());
+    assert!(field(&mut runtime, 3, "r3.c").formula.is_none());
+    let exported = runtime.export_project("resident/3").unwrap();
     let mut reopened = None;
     tachiko_designer_runtime::open_project(
         &mut reopened,
@@ -152,12 +152,9 @@ fn copy_resolves_relative_axes_fixed_and_cross_collection_references_atomically(
     )
     .unwrap();
     let mut reopened = reopened.unwrap();
+    assert!(field(&mut reopened, 0, "r2.c").formula.is_none());
     assert_eq!(
-        field(&mut reopened, 0, "r2.c").formula.unwrap().source,
-        "(([r2.a] + [r1.b]) + [total.a])"
-    );
-    assert_eq!(
-        runtime.export_project("resident/2").unwrap().bytes,
+        runtime.export_project("resident/3").unwrap().bytes,
         reopened.export_project("resident/0").unwrap().bytes
     );
 }
@@ -230,7 +227,7 @@ fn budget_copy_rejects_nonnumeric_destination_or_shifted_reference() {
 }
 
 #[test]
-fn accepted_copy_clears_scalar_history_but_rejected_copy_preserves_redo() {
+fn accepted_copy_preserves_scalar_history_but_rejected_copy_preserves_redo() {
     let mut runtime = fixture();
     update(&mut runtime, 0, "r1.c", "[r1.a] * 2");
     runtime
@@ -260,19 +257,18 @@ fn accepted_copy_clears_scalar_history_but_rejected_copy_preserves_redo() {
     runtime
         .handle(copy(4, "r1.c", &["r2.c"], &[], true, false))
         .unwrap();
-    assert!(
-        runtime
-            .handle(DesignerRequest::Undo {
-                expected_revision: "resident/5".into()
-            })
-            .is_err()
-    );
+    runtime
+        .handle(DesignerRequest::Undo {
+            expected_revision: "resident/5".into(),
+        })
+        .expect("accepted formula copy must remain undoable");
+    assert!(field(&mut runtime, 6, "r2.c").formula.is_none());
     assert!(
         runtime
             .handle(DesignerRequest::Redo {
-                expected_revision: "resident/5".into()
+                expected_revision: "resident/6".into()
             })
-            .is_err()
+            .is_ok()
     );
 }
 
