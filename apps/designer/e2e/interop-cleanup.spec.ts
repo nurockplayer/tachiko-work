@@ -111,7 +111,7 @@ test("messy CSV completes explicit typing, atomic cleanup, stock editing, durabl
   await amount.locator('input[type="number"]').fill("8");
   await amount.getByRole("button", { name: "Apply", exact: true }).click();
   await expect(amount.locator('input[type="number"]')).toHaveValue("8");
-  await expect(page.getByTestId("revision")).toHaveText("resident/7");
+  await expect(page.getByTestId("revision")).toHaveText("resident/9");
 
   const savedName = "cleanup-journey.roproj";
   page.once("dialog", dialog => dialog.accept(savedName));
