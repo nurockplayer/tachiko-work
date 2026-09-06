@@ -1,6 +1,15 @@
 export type Availability = "complete" | "partial" | "unavailable";
 
-/** Raw observation. Partial/unavailable inputs may retain payloads; projection must fail closed. */
+/**
+ * Raw observation.
+ * `complete`: the payload is the whole current set.
+ * `partial`: discovery is incomplete; retained members may support only
+ * monotone-positive evidence whose own identity/currentness is independently
+ * established. Set membership, emptiness, and exhaustive conclusions remain
+ * incomplete.
+ * `unavailable`: retained payload is historical/stale input and must not be
+ * consumed as current evidence.
+ */
 export interface Observed<T> {
   availability: Availability;
   value: T | null;
@@ -82,15 +91,22 @@ export type PositiveAttention =
       sourceUrl: string;
     };
 
+export type CriticalPathProjection =
+  | {
+      availability: "complete";
+      issueNumbers: readonly number[];
+    }
+  | {
+      availability: "partial" | "unavailable";
+      issueNumbers: readonly [];
+    };
+
 export interface DashboardProjection {
   executive: {
     mainSha: CurrentFact<string>;
   };
   deliveries: readonly DeliveryProjection[];
-  criticalPath: {
-    availability: Availability;
-    issueNumbers: readonly number[];
-  };
+  criticalPath: CriticalPathProjection;
   recentActivity: CurrentFact<readonly RecentActivityObservation[]>;
   attention: {
     items: readonly PositiveAttention[];
