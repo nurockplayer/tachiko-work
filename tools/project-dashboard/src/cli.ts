@@ -1,4 +1,5 @@
 import { startDashboard, type DashboardOptions } from "./server/application.js";
+import { pathToFileURL } from "node:url";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
@@ -36,19 +37,19 @@ export function dashboardOptionsFromEnvironment(environment: Environment = proce
 export async function runDashboard(environment: Environment = process.env): Promise<void> {
   const dashboard = await startDashboard(dashboardOptionsFromEnvironment(environment));
   process.stdout.write(`Operational Dashboard listening at ${dashboard.origin}\n`);
-  await new Promise<void>(resolve => {
+  await new Promise<void>((resolve, reject) => {
     let closing = false;
     const close = () => {
       if (closing) return;
       closing = true;
-      void dashboard.close().finally(resolve);
+      void dashboard.close().then(resolve, reject);
     };
     process.once("SIGINT", close);
     process.once("SIGTERM", close);
   });
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
   void runDashboard().catch(error => {
     process.stderr.write(`${error instanceof Error ? error.message : "Dashboard startup failed"}\n`);
     process.exitCode = 1;
