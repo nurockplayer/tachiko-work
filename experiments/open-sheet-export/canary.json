@@ -1,0 +1,404 @@
+{
+  "document": {
+    "format_version": 2,
+    "id": "open-sheet-canary",
+    "title": "Quarterly plan — integration canary",
+    "schemas": {
+      "s-assumptions": {
+        "id": "s-assumptions",
+        "key": "assumptions",
+        "fields": {
+          "f-rate": {
+            "id": "f-rate",
+            "key": "rate",
+            "field_type": {
+              "type": "number"
+            },
+            "required": true
+          }
+        }
+      },
+      "s-plan": {
+        "id": "s-plan",
+        "key": "plan",
+        "fields": {
+          "f-label": {
+            "id": "f-label",
+            "key": "label",
+            "field_type": {
+              "type": "text"
+            },
+            "required": true
+          },
+          "f-revenue": {
+            "id": "f-revenue",
+            "key": "revenue",
+            "field_type": {
+              "type": "number"
+            },
+            "required": true
+          },
+          "f-cost": {
+            "id": "f-cost",
+            "key": "cost",
+            "field_type": {
+              "type": "number"
+            },
+            "required": true
+          },
+          "f-gross": {
+            "id": "f-gross",
+            "key": "gross",
+            "field_type": {
+              "type": "number"
+            },
+            "required": true
+          },
+          "f-net": {
+            "id": "f-net",
+            "key": "net",
+            "field_type": {
+              "type": "number"
+            },
+            "required": true
+          }
+        }
+      }
+    },
+    "entities": {
+      "e-tax": {
+        "id": "e-tax",
+        "key": "tax",
+        "schema": "s-assumptions",
+        "fields": {
+          "f-rate": {
+            "kind": "number",
+            "value": 0.25
+          }
+        }
+      },
+      "e-jan": {
+        "id": "e-jan",
+        "key": "jan",
+        "schema": "s-plan",
+        "fields": {
+          "f-label": {
+            "kind": "text",
+            "value": "January"
+          },
+          "f-revenue": {
+            "kind": "number",
+            "value": 1200
+          },
+          "f-cost": {
+            "kind": "number",
+            "value": 400
+          },
+          "f-gross": {
+            "kind": "formula",
+            "value": {
+              "op": "subtract",
+              "args": {
+                "left": {
+                  "op": "reference",
+                  "args": {
+                    "entity": "e-jan",
+                    "field": "f-revenue"
+                  }
+                },
+                "right": {
+                  "op": "reference",
+                  "args": {
+                    "entity": "e-jan",
+                    "field": "f-cost"
+                  }
+                }
+              }
+            }
+          },
+          "f-net": {
+            "kind": "formula",
+            "value": {
+              "op": "multiply",
+              "args": {
+                "left": {
+                  "op": "reference",
+                  "args": {
+                    "entity": "e-jan",
+                    "field": "f-gross"
+                  }
+                },
+                "right": {
+                  "op": "subtract",
+                  "args": {
+                    "left": {
+                      "op": "number",
+                      "args": 1
+                    },
+                    "right": {
+                      "op": "reference",
+                      "args": {
+                        "entity": "e-tax",
+                        "field": "f-rate"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "e-feb": {
+        "id": "e-feb",
+        "key": "feb",
+        "schema": "s-plan",
+        "fields": {
+          "f-label": {
+            "kind": "text",
+            "value": "February"
+          },
+          "f-revenue": {
+            "kind": "number",
+            "value": 1600
+          },
+          "f-cost": {
+            "kind": "number",
+            "value": 800
+          },
+          "f-gross": {
+            "kind": "formula",
+            "value": {
+              "op": "subtract",
+              "args": {
+                "left": {
+                  "op": "reference",
+                  "args": {
+                    "entity": "e-feb",
+                    "field": "f-revenue"
+                  }
+                },
+                "right": {
+                  "op": "reference",
+                  "args": {
+                    "entity": "e-feb",
+                    "field": "f-cost"
+                  }
+                }
+              }
+            }
+          },
+          "f-net": {
+            "kind": "formula",
+            "value": {
+              "op": "multiply",
+              "args": {
+                "left": {
+                  "op": "reference",
+                  "args": {
+                    "entity": "e-feb",
+                    "field": "f-gross"
+                  }
+                },
+                "right": {
+                  "op": "subtract",
+                  "args": {
+                    "left": {
+                      "op": "number",
+                      "args": 1
+                    },
+                    "right": {
+                      "op": "reference",
+                      "args": {
+                        "entity": "e-tax",
+                        "field": "f-rate"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "e-mar": {
+        "id": "e-mar",
+        "key": "mar",
+        "schema": "s-plan",
+        "fields": {
+          "f-label": {
+            "kind": "text",
+            "value": "March"
+          },
+          "f-revenue": {
+            "kind": "number",
+            "value": 2000
+          },
+          "f-cost": {
+            "kind": "number",
+            "value": 1000
+          },
+          "f-gross": {
+            "kind": "formula",
+            "value": {
+              "op": "subtract",
+              "args": {
+                "left": {
+                  "op": "reference",
+                  "args": {
+                    "entity": "e-mar",
+                    "field": "f-revenue"
+                  }
+                },
+                "right": {
+                  "op": "reference",
+                  "args": {
+                    "entity": "e-mar",
+                    "field": "f-cost"
+                  }
+                }
+              }
+            }
+          },
+          "f-net": {
+            "kind": "formula",
+            "value": {
+              "op": "multiply",
+              "args": {
+                "left": {
+                  "op": "reference",
+                  "args": {
+                    "entity": "e-mar",
+                    "field": "f-gross"
+                  }
+                },
+                "right": {
+                  "op": "subtract",
+                  "args": {
+                    "left": {
+                      "op": "number",
+                      "args": 1
+                    },
+                    "right": {
+                      "op": "reference",
+                      "args": {
+                        "entity": "e-tax",
+                        "field": "f-rate"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "layouts": {
+    "base": {
+      "sheets": [
+        {
+          "name": "Assumptions",
+          "schema": "s-assumptions",
+          "rows": [
+            "e-tax"
+          ],
+          "columns": [
+            "f-rate"
+          ],
+          "header_row": 0,
+          "left_column": 0,
+          "number_formats": {
+            "f-rate": "0.00%"
+          }
+        },
+        {
+          "name": "P&L",
+          "schema": "s-plan",
+          "rows": [
+            "e-jan",
+            "e-feb",
+            "e-mar"
+          ],
+          "columns": [
+            "f-label",
+            "f-revenue",
+            "f-cost",
+            "f-gross",
+            "f-net"
+          ],
+          "header_row": 0,
+          "left_column": 0,
+          "number_formats": {
+            "f-revenue": "#,##0.00",
+            "f-cost": "#,##0.00",
+            "f-gross": "#,##0.00",
+            "f-net": "#,##0.00"
+          }
+        }
+      ]
+    },
+    "moved": {
+      "sheets": [
+        {
+          "name": "計畫",
+          "schema": "s-plan",
+          "rows": [
+            "e-mar",
+            "e-feb",
+            "e-jan"
+          ],
+          "columns": [
+            "f-net",
+            "f-cost",
+            "f-label",
+            "f-gross",
+            "f-revenue"
+          ],
+          "header_row": 2,
+          "left_column": 1,
+          "number_formats": {
+            "f-revenue": "#,##0.00",
+            "f-cost": "#,##0.00",
+            "f-gross": "#,##0.00",
+            "f-net": "#,##0.00"
+          }
+        },
+        {
+          "name": "假設 '2026",
+          "schema": "s-assumptions",
+          "rows": [
+            "e-tax"
+          ],
+          "columns": [
+            "f-rate"
+          ],
+          "header_row": 2,
+          "left_column": 1,
+          "number_formats": {
+            "f-rate": "0.00%"
+          }
+        }
+      ]
+    }
+  },
+  "expected": {
+    "base": {
+      "e-jan.f-gross": 800,
+      "e-jan.f-net": 600,
+      "e-feb.f-gross": 800,
+      "e-feb.f-net": 600,
+      "e-mar.f-gross": 1000,
+      "e-mar.f-net": 750
+    },
+    "tax_half": {
+      "e-jan.f-gross": 800,
+      "e-feb.f-gross": 800,
+      "e-mar.f-gross": 1000,
+      "e-jan.f-net": 400,
+      "e-feb.f-net": 400,
+      "e-mar.f-net": 500
+    }
+  }
+}

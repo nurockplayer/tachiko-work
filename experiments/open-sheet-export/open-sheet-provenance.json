@@ -1,0 +1,12 @@
+{
+  "upstream": "https://github.com/lianghsun/open-sheet",
+  "commit": "6ab72ddb50bb87dad11cc321d87b5e9bcc3c5689",
+  "package": "@open-sheet/core",
+  "version": "0.2.0",
+  "package_manager": "pnpm@10.33.2",
+  "node": "24.15.0",
+  "upstream_lock_sha256": "a9eef82cab2759330932dbd7ddc8601865f8a715982bba66450dcb1419eb1bf1",
+  "core_manifest_sha256": "e16ad21e2ea429ff64d121c8076d0150dfbb00a4781cbd318a0f16bb6e135b13",
+  "built_tarball": "vendor/open-sheet-core-0.2.0.tgz",
+  "built_tarball_sha256": "db25607ba5a429c50a7520890312618201af33bc0cc4dc0d1ecff084dd475fc6"
+}
