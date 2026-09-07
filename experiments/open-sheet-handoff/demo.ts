@@ -96,6 +96,10 @@ async function install(opened: { bootstrap: { revision: string; collections: Arr
   work.hidden = false;
   taxInput.disabled = false;
   save.disabled = false;
+  prepare.disabled = true;
+  accept.disabled = true;
+  saved.disabled = true;
+  openSaved.disabled = true;
 }
 
 function renderPlan(table: Table): void {
@@ -130,6 +134,7 @@ cancel.addEventListener("click", () => { proposal.hidden = true; clearError(); }
 accept.addEventListener("click", async () => {
   clearError();
   try {
+    if (currentRevision) throw new Error("Close accepted work before accepting another handoff.");
     if (!candidate) throw new Error("Prepare the frozen handoff first.");
     await install(await client.openProject(candidate.slice(0)));
     proposal.hidden = true;
@@ -184,11 +189,14 @@ close.addEventListener("click", async () => {
   clearError();
   try { await client.closeProject(); } catch (reason) { report(reason); return; }
   currentRevision = null; taxTarget = null; taxValue = ""; earlierRevision = null;
+  candidate = null;
   work.hidden = true; taxInput.disabled = true; save.disabled = true;
+  prepare.disabled = false; accept.disabled = true; saved.disabled = false; openSaved.disabled = false;
 });
 openSaved.addEventListener("click", async () => {
   clearError();
   try {
+    if (currentRevision) throw new Error("Close accepted work before opening saved work.");
     const file = saved.files?.item(0);
     if (!file) throw new Error("Select a saved work file first.");
     await install(await client.openProject(await file.arrayBuffer()));

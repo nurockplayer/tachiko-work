@@ -54,6 +54,8 @@ test("human handoff: consent, real editing, truthful impact, rejection and saved
     await expect(page.getByLabel("Tax rate", { exact: true })).toBeDisabled();
     await button("Prepare handoff").click();
     await button("Accept handoff").click();
+    await expect(button("Accept handoff")).toBeDisabled();
+    await expect(button("Open saved work")).toBeDisabled();
     const rate = page.getByLabel("Tax rate", { exact: true });
     await expect(rate).toHaveValue("0.25");
     const revision = page.getByTestId("current-revision");
@@ -99,6 +101,7 @@ test("human handoff: consent, real editing, truthful impact, rejection and saved
     assert.equal(await impact.innerText(), acceptedCard);
     assert.deepEqual((await save("after-invalid-rejection")).bytes, after.bytes);
     await button("Close work").click();
+    await expect(button("Open saved work")).toBeEnabled();
     await page.getByLabel("Saved work", { exact: true }).setInputFiles(after.path);
     await button("Open saved work").click();
     await expect(rate).toHaveValue("0.5");
