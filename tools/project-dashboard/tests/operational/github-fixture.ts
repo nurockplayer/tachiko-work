@@ -1,0 +1,141 @@
+/** Raw GitHub transport fixture. No production projector/normalizer is imported. */
+export const MAIN = "1".repeat(40);
+export const HEAD = "2".repeat(40);
+export const OTHER = "3".repeat(40);
+export const SECRET = "github_pat_operational_acceptance_canary_DO_NOT_EXPOSE";
+export const STEWARD = "fixture-steward";
+export const DEFAULT_REPO = "acceptance-fixture/dashboard";
+export type Fault = "main" | "issues" | "pulls" | "dependencies" | "linkage" | "comments" | "activity";
+
+export function connection<T>(nodes: T[], next = false) {
+  return { nodes, pageInfo: { hasNextPage: next, endCursor: next ? "more" : null } };
+}
+
+export function watchBody(verdict = "HOLD", action = "required", head = HEAD, main = MAIN) {
+  return `<!-- project-steward-watch:v1 -->\nVERDICT: ${verdict}\nHEAD: ${head}\nMAIN: ${main}\nHUMAN_ACTION: ${action}\n\nNarrative: GREEN, all tests pass, no action needed. Not machine authority.`;
+}
+
+export function fixture(repository = DEFAULT_REPO) {
+  const [owner, name] = repository.split("/");
+  const web = `https://github.com/${repository}`;
+  const api = `https://api.github.com/repos/${repository}`;
+  const issue = (number: number, title: string) => ({
+    number, title, state: "open", html_url: `${web}/issues/${number}`,
+  });
+  const comment = (id: number, body: string, login = STEWARD, prNumber = 322) => ({
+    id, node_id: `IC_${id}`, body, user: { login }, author_association: "OWNER",
+    html_url: `${web}/pull/${prNumber}#issuecomment-${id}`,
+    created_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-06T00:00:00Z",
+  });
+  const dependencyByIssue = new Map<number, ReturnType<typeof issue>[]>([
+    [229, [issue(900, "Unobserved dependency target")]],
+    [231, [issue(901, "Second Issue dependency target")]],
+  ]);
+  const data = {
+    main: MAIN,
+    defaultBranch: "trunk",
+    issues: [issue(229, "Dashboard operational acceptance"), issue(231, "Independent issue")],
+    pulls: [{
+      number: 322, title: "Implement the operational Dashboard", state: "open", draft: true,
+      html_url: `${web}/pull/322`, head: { sha: HEAD }, base: { sha: OTHER },
+    }],
+    // Backward-compatible alias used by older acceptance assertions for Issue 229.
+    dependencies: dependencyByIssue.get(229)!,
+    dependencyByIssue,
+    linked: [{ number: 229, repository: { nameWithOwner: repository } }],
+    comments: [comment(700, watchBody())],
+    activity: [{ number: 320, title: "Previously merged change", state: "closed", merged_at: "2026-09-01T00:00:00Z", html_url: `${web}/pull/320` },
+      { number: 319, title: "Closed but never merged", state: "closed", merged_at: null, html_url: `${web}/pull/319` }],
+  };
+  const extraPulls = new Map<number, Pick<typeof data, "linked" | "comments">>();
+  const addPull = (number: number, linked: number[], head = OTHER) => {
+    data.pulls.push({ number, title: `Independent PR ${number}`, state: "open", draft: false,
+      html_url: `${web}/pull/${number}`, head: { sha: head }, base: { sha: MAIN } });
+    extraPulls.set(number, {
+      linked: linked.map(number => ({ number, repository: { nameWithOwner: repository } })),
+      comments: [comment(800, watchBody("AMBER", "required", head), STEWARD, number)],
+    });
+  };
+  const failures = new Set<Fault>();
+  const commentFailures = new Set<number>();
+  const partial = new Set<Fault>();
+  const requests: Request[] = [];
+  const violations: string[] = [];
+  let errorText = "upstream unavailable";
+  const json = (value: unknown, status = 200, headers: Record<string, string> = {}) =>
+    new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json", ...headers } });
+  const fetcher: typeof globalThis.fetch = async (input, init) => {
+    const request = new Request(input, init);
+    requests.push(request.clone());
+    const url = new URL(request.url);
+    const fail = (reason: string) => { violations.push(reason); return json({ message: reason }, 400); };
+    if (url.origin !== "https://api.github.com") return fail(`unexpected origin: ${url.origin}`);
+    if (request.headers.get("authorization") !== `Bearer ${SECRET}` && request.headers.get("authorization") !== `token ${SECRET}`)
+      return fail("fake credential did not reach the upstream boundary");
+
+    if (url.pathname === "/graphql") {
+      if (request.method !== "POST") return fail("GraphQL requires POST of a query");
+      const body = await request.json() as { query?: string; variables?: Record<string, unknown> };
+      const query = body.query ?? "";
+      // Finite linkage-only query profile. Verify the selection, not an operation name.
+      if (/\bmutation\b/.test(query) || !/\bclosingIssuesReferences\b/.test(query) ||
+          !/\bpageInfo\b/.test(query) || !/\bhasNextPage\b/.test(query) ||
+          !/\bnumber\b/.test(query) || !/\bnameWithOwner\b/.test(query))
+        return fail("linkage query omits required identity/completeness fields or writes");
+      const variables = body.variables ?? {};
+      if (variables.owner !== owner || variables.name !== name || !data.pulls.some(pull => pull.number === variables.number))
+        return fail("linkage query is not scoped to the configured repository and PR");
+      const selected = variables.number === 322 ? data : extraPulls.get(Number(variables.number));
+      if (!selected) return fail("no fixture data for requested PR");
+      if (failures.has("linkage")) return json({ data: { repository: { pullRequest: { closingIssuesReferences: null } } }, errors: [{ message: errorText, path: ["repository", "pullRequest", "closingIssuesReferences"] }] });
+      if (partial.has("linkage") && variables.after) return json({ errors: [{ message: errorText }] }, 503);
+      return json({ data: { repository: { pullRequest: { closingIssuesReferences: connection(selected.linked, partial.has("linkage")) } } } });
+    }
+    if (request.method !== "GET") return fail(`non-read REST request: ${request.method}`);
+    const pathname = url.pathname;
+    const prefix = `/repos/${repository}`;
+    const dependencyMatch = /^\/issues\/(\d+)\/dependencies\/blocked_by$/.exec(pathname.slice(prefix.length));
+    const commentMatch = /^\/issues\/(\d+)\/comments$/.exec(pathname.slice(prefix.length));
+    let family: Fault | undefined;
+    let payload: unknown;
+    if (pathname === prefix) {
+      family = "main"; payload = { full_name: repository, default_branch: data.defaultBranch, html_url: web };
+    } else if (pathname === `${prefix}/git/ref/heads/${data.defaultBranch}`) {
+      family = "main"; payload = { ref: `refs/heads/${data.defaultBranch}`, object: { type: "commit", sha: data.main } };
+    } else if (pathname === `${prefix}/issues`) {
+      if (url.searchParams.get("state") !== "open") return fail("Issue discovery must request the open set");
+      family = "issues";
+      // REST /issues also returns PR nodes. This one must not become an Issue lane.
+      payload = [...data.issues, { ...issue(322, "Not an Issue"), pull_request: { url: `${api}/pulls/322` } }];
+    } else if (pathname === `${prefix}/pulls`) {
+      if (url.searchParams.get("state") === "closed") {
+        if (url.searchParams.get("sort") !== "updated" || url.searchParams.get("direction") !== "desc" || url.searchParams.get("per_page") !== "50")
+          return fail("bounded activity must request updated-descending order and its declared window");
+        family = "activity"; payload = data.activity;
+      }
+      else if (url.searchParams.get("state") === "open") { family = "pulls"; payload = data.pulls; }
+      else return fail("PR discovery must distinguish current open PRs from bounded activity");
+    } else if (pathname.startsWith(`${prefix}/`) && dependencyMatch) {
+      const number = Number(dependencyMatch[1]);
+      if (!data.issues.some(candidate => candidate.number === number)) return fail("dependencies requested for an undiscovered Issue");
+      family = "dependencies"; payload = dependencyByIssue.get(number) ?? [];
+    } else if (pathname.startsWith(`${prefix}/`) && commentMatch) {
+      const number = Number(commentMatch[1]);
+      const selected = number === 322 ? data : extraPulls.get(number);
+      if (!selected) return fail("no comment fixture for requested PR");
+      family = "comments"; payload = selected.comments;
+    } else return fail(`unexpected REST path: ${pathname}`);
+    if (failures.has(family) || (family === "comments" && commentMatch !== null && commentFailures.has(Number(commentMatch[1])))) return json({ message: errorText }, 503);
+    if (partial.has(family) && url.searchParams.get("page") === "2") return json({ message: errorText }, 503);
+    const headers: Record<string, string> = {};
+    if (partial.has(family)) {
+      const next = new URL(url); next.searchParams.set("page", "2");
+      headers.link = `<${next}>; rel="next"`;
+    }
+    return json(payload, 200, headers);
+  };
+  return { repository, web, api, data, failures, commentFailures, partial, requests, violations, comment, addPull,
+    fetch: fetcher, setErrorText: (text: string) => { errorText = text; },
+    options: () => ({ repository, token: SECRET, trustedStewardLogins: [STEWARD], fetch: fetcher, port: 0 }),
+  };
+}

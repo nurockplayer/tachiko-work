@@ -1,0 +1,25 @@
+{
+  "name": "@tachiko-work/project-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "pnpm run build && node dist/cli.js",
+    "test": "vitest run",
+    "test:acceptance": "vitest run tests/acceptance",
+    "test:operational": "vitest run tests/operational",
+    "test:browser": "playwright test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@types/node": "26.4.0",
+    "typescript": "6.0.3",
+    "vitest": "4.1.11"
+  }
+}
