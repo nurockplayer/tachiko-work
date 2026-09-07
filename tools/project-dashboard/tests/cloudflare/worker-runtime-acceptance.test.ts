@@ -76,7 +76,7 @@ describe("#342 Worker request boundary", () => {
     expect(response.status).toBe(200);
     expect(await response.text()).not.toContain(remote.options().token);
     expect(assetRequests).toHaveLength(1);
-    expect(assetRequests[0]?.headers.get("authorization")).not.toContain(remote.options().token);
+    expect(assetRequests[0]?.headers.get("authorization") ?? "").not.toContain(remote.options().token);
   });
 
   it("fails closed when a required server-side binding is absent", async () => {

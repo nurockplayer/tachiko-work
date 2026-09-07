@@ -1,0 +1,21 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "tachiko-work-dashboard",
+  "main": "src/cloudflare/worker.ts",
+  "compatibility_date": "2026-09-07",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [],
+  "assets": {
+    "directory": "./dist/assets",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "vars": {
+    "DASHBOARD_REPOSITORY": "nurockplayer/tachiko-work",
+    "DASHBOARD_TRUSTED_STEWARD_LOGINS": "nurockplayer"
+  },
+  "observability": {
+    "enabled": false
+  }
+}
