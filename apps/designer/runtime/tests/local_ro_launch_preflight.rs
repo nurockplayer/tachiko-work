@@ -10,7 +10,8 @@ const GAME_BALANCE_RO: &[u8] = include_bytes!(concat!(
 const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000344";
 
 fn assert_designer_admits(source: &[u8]) {
-    let document = from_bytes(source).expect("existing storage authority must admit the .ro source");
+    let document =
+        from_bytes(source).expect("existing storage authority must admit the .ro source");
     let mut runtime = DesignerRuntime::from_document(document, OCCURRENCE)
         .expect("existing Designer profile must admit the semantic document");
 
@@ -59,8 +60,10 @@ fn current_direct_ro_is_already_admissible_by_storage_and_designer() {
 #[test]
 fn current_portable_package_v1_is_already_admissible_by_the_same_byte_reader() {
     let document = from_bytes(GAME_BALANCE_RO).expect("direct .ro fixture must decode");
-    let tree = encode_roproj_v1(&document).expect("fixture must materialize as canonical .roproj/v1");
-    let package = encode_portable_package_v1(&tree).expect("fixture must package as portable-package/v1");
+    let tree =
+        encode_roproj_v1(&document).expect("fixture must materialize as canonical .roproj/v1");
+    let package =
+        encode_portable_package_v1(&tree).expect("fixture must package as portable-package/v1");
 
     assert!(package.starts_with(b"PK\x03\x04"));
     assert_designer_admits(&package);
