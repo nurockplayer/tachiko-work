@@ -53,7 +53,7 @@ function shape(book, checked) {
   const registry = map(book?.registry, "unmapped_source");
   const assumptions = registry.get(checked.assumptions.block);
   const plan = registry.get(checked.plan.block);
-  if (!object(assumptions, "unmapped_source") || !object(plan, "unmapped_source")
+  if (registry.size !== 2 || !object(assumptions, "unmapped_source") || !object(plan, "unmapped_source")
       || assumptions.kind !== "keyValue" || plan.kind !== "table" || plan.rowCount !== checked.rows.length) reject("unmapped_source");
   const sheets = Array.isArray(book?.sheets) ? book.sheets : reject("unmapped_source");
   const assumptionSheet = sheets.find(sheet => sheet?.name === assumptions.sheet);
@@ -150,8 +150,11 @@ function claimAllSource(book, shape, checked) {
     claim(shape.planSheet, row, column, source => sourceMetadata(object(source, "unmapped_source")));
   }
   for (const sheet of book.sheets) {
+    for (const name of Object.keys(object(sheet, "unmapped_source"))) {
+      if (!["name", "cells", "columnWidths", "conditionalFormats", "charts", "sparklines", "autoFilters", "printArea", "pageBreaks", "bounds"].includes(name)) reject("unmapped_source");
+    }
     for (const [address, source] of map(sheet.cells, "unmapped_source")) {
-      if ((source?.value !== undefined || source?.expr !== undefined) && !claimed.has(`${sheet.name}\u0000${address}`)) reject("unmapped_source");
+      if (!claimed.has(`${sheet.name}\u0000${address}`)) reject("unmapped_source");
     }
     for (const name of ["conditionalFormats", "charts", "sparklines", "autoFilters", "printArea", "pageBreaks"]) {
       if (Array.isArray(sheet[name]) && sheet[name].length !== 0) reject("unmapped_source");

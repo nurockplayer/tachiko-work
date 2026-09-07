@@ -215,6 +215,19 @@ test("handoff: meaning-affecting metadata is never treated as presentation", asy
   await rejected(book, "unmapped_source");
 });
 
+test("handoff: unknown workbook metadata, cells and registry anchors fail closed", async () => {
+  const cases = [
+    (book) => { book.sheets[0].protect = true; },
+    (book) => { book.sheets[0].cells.set(core.cellKey(20, 20), { validate: { decimal: { min: 1 } } }); },
+    (book) => { book.registry.set("unmapped", { kind: "table" }); },
+  ];
+  for (const change of cases) {
+    const book = compileModel(core);
+    change(book);
+    await rejected(book, "unmapped_source");
+  }
+});
+
 test("handoff: cycles are not blessed by conversion and Rust refuses publication input", async () => {
   const book = compileModel(core, {
     formulas: { gross: (row) => core.add(row.cell("net"), 1) },

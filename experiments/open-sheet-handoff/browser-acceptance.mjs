@@ -47,6 +47,7 @@ test("human handoff: consent, real editing, truthful impact, rejection and saved
     const preview = page.getByRole("region", { name: "Handoff proposal" });
     await expect(preview).toContainText("New identities");
     await expect(preview).toContainText("Explicit schema");
+    await expect(preview).toContainText("Exact formula profile");
     await expect(preview).toContainText("Presentation only");
     await expect(button("Save work")).toBeDisabled();
     await button("Cancel handoff").click();
@@ -55,6 +56,7 @@ test("human handoff: consent, real editing, truthful impact, rejection and saved
     await button("Prepare handoff").click();
     await page.evaluate(() => {
       const button = document.querySelector("#accept");
+      button?.dispatchEvent(new MouseEvent("click"));
       button?.dispatchEvent(new MouseEvent("click"));
       button?.dispatchEvent(new MouseEvent("click"));
     });
@@ -110,6 +112,7 @@ test("human handoff: consent, real editing, truthful impact, rejection and saved
     await page.getByLabel("Saved work", { exact: true }).setInputFiles(after.path);
     await page.evaluate(() => {
       const button = document.querySelector("#open-saved");
+      button?.dispatchEvent(new MouseEvent("click"));
       button?.dispatchEvent(new MouseEvent("click"));
       button?.dispatchEvent(new MouseEvent("click"));
     });

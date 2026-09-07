@@ -71,6 +71,7 @@ function proposalPreview(ledger: Array<{ classification: string; code: string }>
   proposal.textContent = [
     words.has("new_identity") ? "New identities" : "",
     words.has("explicit_schema") ? "Explicit schema" : "",
+    words.has("closed_formula_profile") ? "Exact formula profile" : "",
     words.has("presentation_not_semantics") ? "Presentation only" : "",
   ].filter(Boolean).join(" · ");
 }
@@ -156,12 +157,14 @@ prepare.addEventListener("click", async () => {
 cancel.addEventListener("click", () => { proposal.hidden = true; clearError(); });
 accept.addEventListener("click", async () => {
   clearError();
+  let ownsOpen = false;
   try {
     if (!candidate) throw new Error("Prepare the frozen handoff first.");
     beginOpen();
+    ownsOpen = true;
     await install(await client.openProject(candidate.slice(0)));
     proposal.hidden = true;
-  } catch (reason) { report(reason); } finally { endOpen(); }
+  } catch (reason) { report(reason); } finally { if (ownsOpen) endOpen(); }
 });
 freezeEarlier.addEventListener("click", () => { earlierRevision = currentRevision; clearError(); });
 applyTax.addEventListener("click", async () => {
@@ -218,10 +221,12 @@ close.addEventListener("click", async () => {
 });
 openSaved.addEventListener("click", async () => {
   clearError();
+  let ownsOpen = false;
   try {
     const file = saved.files?.item(0);
     if (!file) throw new Error("Select a saved work file first.");
     beginOpen();
+    ownsOpen = true;
     await install(await client.openProject(await file.arrayBuffer()));
-  } catch (reason) { report(reason); } finally { endOpen(); }
+  } catch (reason) { report(reason); } finally { if (ownsOpen) endOpen(); }
 });
