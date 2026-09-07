@@ -61,7 +61,9 @@ Record the authorized Worker identity and allowed user identity/policy first.
    `workers.dev` hostname in deployment configuration, or attach an authorized
    custom domain. Keep preview URLs disabled unless separately required and
    proven protected. Persist the approved ingress configuration so a later
-   deploy does not silently restore defaults or remove expected routing.
+   deploy does not silently restore defaults or remove expected routing. Apply
+   the approved configuration with `pnpm exec wrangler deploy` before step 5;
+   record that deployment/version ID and confirm the intended hostname is enabled.
 5. For every enabled hostname, test `/`, `/index.html` and `/api/projection`
    without a session: expect Access denial or its login redirect, never usable
    HTML/API data. Then sign in as the approved identity and prove all five

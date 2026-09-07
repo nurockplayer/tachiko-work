@@ -52,6 +52,8 @@ interface GitHubRow {
 const API = "https://api.github.com";
 const SHA = /^[0-9a-f]{40}$/i;
 export const RECENT_ACTIVITY_WINDOW = 50;
+const MAX_PAGES_PER_CONNECTION = 100;
+const MAX_ENTITY_CONCURRENCY = 6;
 const unavailable = <T>(): Observed<T> => ({ availability: "unavailable", value: null });
 const observed = <T>(availability: Availability, value: T | null): Observed<T> =>
   value === null || availability === "unavailable"
@@ -72,6 +74,26 @@ const issueState = (value: unknown): "OPEN" | "CLOSED" | null => {
 const nextPage = (response: Response): string | null =>
   /<([^>]+)>;\s*rel="next"/.exec(response.headers.get("link") ?? "")?.[1] ??
   null;
+
+async function mapBounded<T, R>(
+  values: readonly T[],
+  limit: number,
+  mapper: (value: T) => Promise<R>,
+): Promise<R[]> {
+  const results = Array<R>(values.length);
+  let next = 0;
+  async function worker(): Promise<void> {
+    while (true) {
+      const index = next++;
+      if (index >= values.length) return;
+      results[index] = await mapper(values[index]!);
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(limit, values.length) }, () => worker()),
+  );
+  return results;
+}
 
 /** Validate the repository identifier before it can be used to construct an API URL. */
 export function assertDashboardRepository(repository: string): void {
@@ -153,7 +175,16 @@ class GitHubObserver {
     const rows: T[] = [];
     let current: string | null = url;
     let sawPage = false;
+    const visited = new Set<string>();
+    let fetchedPages = 0;
     while (current !== null) {
+      if (fetchedPages >= MAX_PAGES_PER_CONNECTION || visited.has(current)) {
+        return sawPage
+          ? { availability: "partial", value: rows }
+          : { availability: "unavailable", value: null };
+      }
+      visited.add(current);
+      fetchedPages += 1;
       const response = await this.request(current);
       if (response === null || !response.ok) {
         return sawPage
@@ -213,7 +244,15 @@ class GitHubObserver {
     const values: number[] = [];
     let after: string | null = null;
     let sawPage = false;
+    const visitedCursors = new Set<string>();
+    let fetchedPages = 0;
     while (true) {
+      const cursor = after ?? "<initial>";
+      if (fetchedPages >= MAX_PAGES_PER_CONNECTION || visitedCursors.has(cursor)) {
+        return sawPage ? observed("partial", values) : unavailable();
+      }
+      visitedCursors.add(cursor);
+      fetchedPages += 1;
       const payload = await this.json(`${API}/graphql`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -346,13 +385,15 @@ class GitHubObserver {
         ? unavailable<readonly IssueObservation[]>()
         : observed(
             issuePage.availability,
-            await Promise.all(
-              issueCore.map(async (row) => ({
+            await mapBounded(
+              issueCore,
+              MAX_ENTITY_CONCURRENCY,
+              async (row) => ({
                 number: row.number!,
                 title: row.title!,
                 state: row.state!,
                 dependencies: await this.dependencies(row.number!),
-              })),
+              }),
             ),
           );
     const pullCore = (pullPage.value ?? []).map((row) => ({
@@ -375,8 +416,10 @@ class GitHubObserver {
         ? unavailable<readonly PullObservation[]>()
         : observed(
             pullPage.availability,
-            await Promise.all(
-              pullCore.map(async (row) => ({
+            await mapBounded(
+              pullCore,
+              MAX_ENTITY_CONCURRENCY,
+              async (row) => ({
                 number: row.number!,
                 title: row.title!,
                 state: row.state!,
@@ -384,19 +427,22 @@ class GitHubObserver {
                 head: row.head === null ? unavailable<string>() : observed("complete", row.head),
                 base: row.base === null ? unavailable<string>() : observed("complete", row.base),
                 linkedIssues: await this.linkedIssues(row.number!),
-              })),
+              }),
             ),
           );
-    const commentResults = await Promise.all(
-      (pullRequests.value ?? []).map((pull) => this.comments(pull.number)),
+    const commentResults = await mapBounded(
+      pullRequests.value ?? [],
+      MAX_ENTITY_CONCURRENCY,
+      (pull) => this.comments(pull.number),
     );
-    const commentAvailability: Availability = commentResults.every(
-      (result) => result.availability === "unavailable",
-    )
-      ? "unavailable"
-      : commentResults.some((result) => result.availability !== "complete")
-        ? "partial"
-        : "complete";
+    const commentAvailability: Availability =
+      commentResults.length === 0
+        ? pullRequests.availability
+        : commentResults.every((result) => result.availability === "unavailable")
+          ? "unavailable"
+          : commentResults.some((result) => result.availability !== "complete")
+            ? "partial"
+            : "complete";
     const parsedWatches = commentResults.flatMap((result) =>
       (result.value ?? []).map((watch) => ({
         ...watch,
@@ -499,4 +545,4 @@ export function unknownDashboardEnvelope(repository: string): DashboardEnvelope 
 }
 
 /** Static application shell shared by the Node and Worker deployments. */
-export const dashboardHtml = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Operational Dashboard</title><style>*{box-sizing:border-box}body{margin:0;background:#0b1020;color:#edf2ff;font:16px system-ui,sans-serif;overflow-wrap:anywhere}main{max-width:1100px;margin:auto;padding:20px}section{border:1px solid #35405c;border-radius:10px;margin:14px 0;padding:14px;background:#121a2d}h1,h2{margin:0 0 10px}h2{font-size:1.05rem;color:#b7c9ff}a{color:#9ed5ff}button{font:inherit;padding:8px 14px;border-radius:6px;border:1px solid #9ed5ff;background:#172948;color:#fff;cursor:pointer}.card{border-top:1px solid #35405c;padding:10px 0}.label{color:#aebbd8}.unknown{color:#ffd38a}@media (max-width:390px){main{padding:10px}section{padding:10px}}</style></head><body><main><h1>Operational Dashboard</h1><button id="refresh" type="button">Refresh</button><div id="dashboard"></div></main><script>const root=document.getElementById('dashboard');const esc=v=>String(v??'Unknown').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');const fact=x=>x&&x.availability==='complete'?'<span>'+esc(x.value)+'</span>':'<span class="unknown">Unknown ('+esc(x?.availability)+')</span>';const link=(url,label)=>url?'<a href="'+url+'" rel="noreferrer">'+label+'</a>':label;function render(data){const p=data.projection,src=data.sources;const lanes=p.deliveries.map(l=>'<article class="card" data-testid="delivery-'+(l.issueNumber??'none')+'-'+(l.pullRequestNumber??'none')+'">'+(l.issueNumber===null?'Issue: Unknown':link(src.issues.url+'/'+l.issueNumber,'Issue #'+l.issueNumber))+': '+fact(l.issueTitle)+'<br>'+(l.pullRequestNumber===null?'PR: Unknown':link(src.pullRequests.url.replace('/pulls','/pull')+'/'+l.pullRequestNumber,'PR #'+l.pullRequestNumber))+': '+fact(l.pullRequestTitle)+'<br><span class="label">HEAD</span> '+fact(l.pullRequestHead)+'<br><span class="label">BASE</span> '+fact(l.pullRequestBase)+'</article>').join('')||'<span class="unknown">Unknown</span>';const work=p.criticalPath.availability==='complete'?'Current issues: '+link(src.issues.url,'Issues')+' '+p.criticalPath.issueNumbers.map(n=>link(src.issues.url+'/'+n,String(n))).join(', '):'<span class="unknown">Unknown ('+p.criticalPath.availability+')</span>';const activity=p.recentActivity.availability==='complete'?p.recentActivity.value.map(a=>'<div>'+link(src.recentActivity.url,'#'+a.number)+' '+esc(a.title)+'</div>').join(''):'<span class="unknown">Unknown ('+p.recentActivity.availability+')</span>';const attention=p.attention.items.map(a=>'<div>'+link(a.sourceUrl,a.kind==='steward-hold'?'HOLD':'Human action required')+'</div>').join('')||'<span>Attention is shown only when positively observed.</span>';root.innerHTML='<section><h2>Executive strip</h2><div data-testid="main-sha">'+(p.executive.mainSha.availability==='complete'?link(src.main.url,esc(p.executive.mainSha.value)):fact(p.executive.mainSha))+'</div></section><section><h2>Delivery command center</h2><div data-testid="deliveries">'+lanes+'</div></section><section><h2>Current work</h2><div data-testid="current-work">'+work+'</div></section><section><h2>Recent activity</h2><div data-testid="recent-activity">'+activity+'</div></section><section><h2>Authority & attention</h2><div data-testid="attention">'+attention+'</div></section>'}async function refresh(){try{const r=await fetch('/api/projection',{cache:'no-store'});if(!r.ok)throw new Error('refresh failed');render(await r.json())}catch{render(${JSON.stringify(unknownDashboardEnvelope(""))})}}document.getElementById('refresh').addEventListener('click',refresh);refresh();</script></body></html>`;
+export const dashboardHtml = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Operational Dashboard</title><style>*{box-sizing:border-box}body{margin:0;background:#0b1020;color:#edf2ff;font:16px system-ui,sans-serif;overflow-wrap:anywhere}main{max-width:1100px;margin:auto;padding:20px}section{border:1px solid #35405c;border-radius:10px;margin:14px 0;padding:14px;background:#121a2d}h1,h2{margin:0 0 10px}h2{font-size:1.05rem;color:#b7c9ff}a{color:#9ed5ff}button{font:inherit;padding:8px 14px;border-radius:6px;border:1px solid #9ed5ff;background:#172948;color:#fff;cursor:pointer}.card{border-top:1px solid #35405c;padding:10px 0}.label{color:#aebbd8}.unknown{color:#ffd38a}@media (max-width:390px){main{padding:10px}section{padding:10px}}</style></head><body><main><h1>Operational Dashboard</h1><button id="refresh" type="button">Refresh</button><div id="dashboard"></div></main><script>const root=document.getElementById('dashboard');const esc=v=>String(v??'Unknown').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');const fact=x=>x&&x.availability==='complete'?'<span>'+esc(x.value)+'</span>':'<span class="unknown">Unknown ('+esc(x?.availability)+')</span>';const link=(url,label)=>{try{if(new URL(url).protocol!=='https:')return label;return '<a href="'+esc(url)+'" rel="noreferrer">'+label+'</a>'}catch{return label}};function render(data){const p=data.projection,src=data.sources;const lanes=p.deliveries.map(l=>'<article class="card" data-testid="delivery-'+(l.issueNumber??'none')+'-'+(l.pullRequestNumber??'none')+'">'+(l.issueNumber===null?'Issue: Unknown':link(src.issues.url+'/'+l.issueNumber,'Issue #'+l.issueNumber))+': '+fact(l.issueTitle)+'<br>'+(l.pullRequestNumber===null?'PR: Unknown':link(src.pullRequests.url.replace('/pulls','/pull')+'/'+l.pullRequestNumber,'PR #'+l.pullRequestNumber))+': '+fact(l.pullRequestTitle)+'<br><span class="label">HEAD</span> '+fact(l.pullRequestHead)+'<br><span class="label">BASE</span> '+fact(l.pullRequestBase)+'</article>').join('')||'<span class="unknown">Unknown</span>';const work=p.criticalPath.availability==='complete'?'Current issues: '+link(src.issues.url,'Issues')+' '+p.criticalPath.issueNumbers.map(n=>link(src.issues.url+'/'+n,String(n))).join(', '):'<span class="unknown">Unknown ('+p.criticalPath.availability+')</span>';const activity=p.recentActivity.availability==='complete'?p.recentActivity.value.map(a=>'<div>'+link(src.recentActivity.url,'#'+a.number)+' '+esc(a.title)+'</div>').join(''):'<span class="unknown">Unknown ('+p.recentActivity.availability+')</span>';const attention=p.attention.items.map(a=>'<div>'+link(a.sourceUrl,a.kind==='steward-hold'?'HOLD':'Human action required')+'</div>').join('')||'<span>Attention is shown only when positively observed.</span>';root.innerHTML='<section><h2>Executive strip</h2><div data-testid="main-sha">'+(p.executive.mainSha.availability==='complete'?link(src.main.url,esc(p.executive.mainSha.value)):fact(p.executive.mainSha))+'</div></section><section><h2>Delivery command center</h2><div data-testid="deliveries">'+lanes+'</div></section><section><h2>Current work</h2><div data-testid="current-work">'+work+'</div></section><section><h2>Recent activity</h2><div data-testid="recent-activity">'+activity+'</div></section><section><h2>Authority & attention</h2><div data-testid="attention">'+attention+'</div></section>'}async function refresh(){try{const r=await fetch('/api/projection',{cache:'no-store'});if(!r.ok)throw new Error('refresh failed');render(await r.json())}catch{render(${JSON.stringify(unknownDashboardEnvelope(""))})}}document.getElementById('refresh').addEventListener('click',refresh);refresh();</script></body></html>`;
