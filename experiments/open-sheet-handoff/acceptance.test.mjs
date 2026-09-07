@@ -195,6 +195,12 @@ test("handoff: unsupported expressions never become cached or approximate values
   }
 });
 
+test("handoff: formula-node metadata cannot be silently dropped", async () => {
+  const book = compileModel(core);
+  planCell(book, "net").expr.semanticGuard = { kind: "minimum", value: 1000 };
+  await rejected(book, "unsupported_formula");
+});
+
 test("handoff: unclaimed formula content is not silently dropped", async () => {
   const book = compileModel(core);
   book.sheets[0].cells.set(core.cellKey(20, 20), { expr: core.now() });

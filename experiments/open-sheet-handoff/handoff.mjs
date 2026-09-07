@@ -93,16 +93,20 @@ function nativeFormula(source, rows, checked) {
   const translate = expression => {
     if (!object(expression, "unsupported_formula")) reject("unsupported_formula");
     if (expression.k === "lit") {
+      if (Object.keys(expression).some(name => !["k", "v"].includes(name))) reject("unsupported_formula");
       if (!finite(expression.v)) reject("unsupported_formula");
       return { op: "number", args: expression.v };
     }
     if (expression.k === "ref") {
+      if (Object.keys(expression).some(name => !["k", "target"].includes(name))) reject("unsupported_formula");
       const target = object(expression.target, "unsupported_formula");
       if (target.kind === "name" && target.block === checked.assumptions.block && target.key === checked.assumptions.key) {
+        if (Object.keys(target).some(name => !["kind", "block", "key"].includes(name))) reject("unsupported_formula");
         return { op: "reference", args: { entity: checked.entity.id, field: checked.rate.id } };
       }
       if (target.kind === "cell" && target.block === checked.plan.block && target.part === "data"
           && typeof target.column === "string" && Number.isInteger(target.row)) {
+        if (Object.keys(target).some(name => !["kind", "block", "part", "column", "row"].includes(name))) reject("unsupported_formula");
         const row = rows[target.row];
         const field = checked.fields.find(candidate => candidate.key === target.column);
         if (!row || !field || field.type !== "number") reject("unsupported_formula");
@@ -111,6 +115,7 @@ function nativeFormula(source, rows, checked) {
       reject("unsupported_formula");
     }
     if (expression.k === "op" && ["+", "-", "*", "/"].includes(expression.op)) {
+      if (Object.keys(expression).some(name => !["k", "op", "l", "r"].includes(name))) reject("unsupported_formula");
       const operation = { "+": "add", "-": "subtract", "*": "multiply", "/": "divide" }[expression.op];
       return { op: operation, args: { left: translate(expression.l), right: translate(expression.r) } };
     }
