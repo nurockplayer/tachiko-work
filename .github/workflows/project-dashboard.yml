@@ -54,9 +54,11 @@ jobs:
         run: pnpm --dir tools/project-dashboard test:acceptance
 
       - name: Execute Dashboard unit and fixture checks
+        if: ${{ !cancelled() && steps.typecheck.outcome == 'success' }}
         run: pnpm --dir tools/project-dashboard exec vitest run tests/unit tests/harness
 
       - name: Execute full Dashboard suite
+        if: ${{ !cancelled() && steps.typecheck.outcome == 'success' }}
         run: pnpm --dir tools/project-dashboard test
 
       - name: Execute Dashboard browser acceptance
