@@ -37,6 +37,9 @@ bash scripts/codex-cargo-check.sh
 echo "==> ADR-0016 workspace dependency graph"
 node scripts/workspace-dependency-check.mjs
 
+echo "==> experimental open-sheet dependencies"
+pnpm --dir experiments/open-sheet-export install --frozen-lockfile
+
 echo "==> Clippy (warnings are errors)"
 cargo clippy --workspace --all-targets --locked -- -D warnings
 
