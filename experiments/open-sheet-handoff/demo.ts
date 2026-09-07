@@ -37,6 +37,7 @@ let taxTarget: Target | null = null;
 let taxValue = "";
 let earlierRevision: string | null = null;
 let labels = new Map<string, string>();
+let opening = false;
 
 const key = (target: Target) => `${target.entity}.${target.field}`;
 const netTargets: Target[] = ["e-jan", "e-feb", "e-mar"].map(entity => ({ entity, field: "f-net" }));
@@ -100,6 +101,28 @@ async function install(opened: { bootstrap: { revision: string; collections: Arr
   accept.disabled = true;
   saved.disabled = true;
   openSaved.disabled = true;
+  close.disabled = false;
+}
+
+function beginOpen(): void {
+  if (currentRevision) throw new Error("Close accepted work before opening another work item.");
+  if (opening) throw new Error("An open operation is already in progress.");
+  opening = true;
+  prepare.disabled = true;
+  accept.disabled = true;
+  saved.disabled = true;
+  openSaved.disabled = true;
+  close.disabled = true;
+}
+
+function endOpen(): void {
+  opening = false;
+  if (currentRevision) return;
+  prepare.disabled = false;
+  accept.disabled = false;
+  saved.disabled = false;
+  openSaved.disabled = false;
+  close.disabled = false;
 }
 
 function renderPlan(table: Table): void {
@@ -134,11 +157,11 @@ cancel.addEventListener("click", () => { proposal.hidden = true; clearError(); }
 accept.addEventListener("click", async () => {
   clearError();
   try {
-    if (currentRevision) throw new Error("Close accepted work before accepting another handoff.");
     if (!candidate) throw new Error("Prepare the frozen handoff first.");
+    beginOpen();
     await install(await client.openProject(candidate.slice(0)));
     proposal.hidden = true;
-  } catch (reason) { report(reason); }
+  } catch (reason) { report(reason); } finally { endOpen(); }
 });
 freezeEarlier.addEventListener("click", () => { earlierRevision = currentRevision; clearError(); });
 applyTax.addEventListener("click", async () => {
@@ -196,9 +219,9 @@ close.addEventListener("click", async () => {
 openSaved.addEventListener("click", async () => {
   clearError();
   try {
-    if (currentRevision) throw new Error("Close accepted work before opening saved work.");
     const file = saved.files?.item(0);
     if (!file) throw new Error("Select a saved work file first.");
+    beginOpen();
     await install(await client.openProject(await file.arrayBuffer()));
-  } catch (reason) { report(reason); }
+  } catch (reason) { report(reason); } finally { endOpen(); }
 });

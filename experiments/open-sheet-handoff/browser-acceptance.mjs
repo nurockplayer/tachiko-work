@@ -53,7 +53,12 @@ test("human handoff: consent, real editing, truthful impact, rejection and saved
     await expect(button("Save work")).toBeDisabled();
     await expect(page.getByLabel("Tax rate", { exact: true })).toBeDisabled();
     await button("Prepare handoff").click();
-    await button("Accept handoff").click();
+    await page.evaluate(() => {
+      const button = document.querySelector("#accept");
+      button?.dispatchEvent(new MouseEvent("click"));
+      button?.dispatchEvent(new MouseEvent("click"));
+    });
+    await expect(page.getByTestId("operation-error")).toContainText("open operation is already in progress");
     await expect(button("Accept handoff")).toBeDisabled();
     await expect(button("Open saved work")).toBeDisabled();
     const rate = page.getByLabel("Tax rate", { exact: true });
@@ -103,7 +108,12 @@ test("human handoff: consent, real editing, truthful impact, rejection and saved
     await button("Close work").click();
     await expect(button("Open saved work")).toBeEnabled();
     await page.getByLabel("Saved work", { exact: true }).setInputFiles(after.path);
-    await button("Open saved work").click();
+    await page.evaluate(() => {
+      const button = document.querySelector("#open-saved");
+      button?.dispatchEvent(new MouseEvent("click"));
+      button?.dispatchEvent(new MouseEvent("click"));
+    });
+    await expect(page.getByTestId("operation-error")).toContainText("open operation is already in progress");
     await expect(rate).toHaveValue("0.5");
     assert.deepEqual((await save("reopened")).bytes, after.bytes);
 

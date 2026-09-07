@@ -201,6 +201,20 @@ test("handoff: unclaimed formula content is not silently dropped", async () => {
   await rejected(book, "unmapped_source");
 });
 
+test("handoff: an added mapped-block column cannot be silently dropped", async () => {
+  const book = compileModel(core, {
+    columns: ["label", "revenue", "cost", "gross", "net", "bonus"],
+    formulas: { bonus: (row) => core.add(row.cell("revenue"), 1) },
+  });
+  await rejected(book, "unmapped_source");
+});
+
+test("handoff: meaning-affecting metadata is never treated as presentation", async () => {
+  const book = compileModel(core);
+  Object.assign(taxCell(book), { decimal: { min: 1500 }, error: "Minimum 1500", style: "error" });
+  await rejected(book, "unmapped_source");
+});
+
 test("handoff: cycles are not blessed by conversion and Rust refuses publication input", async () => {
   const book = compileModel(core, {
     formulas: { gross: (row) => core.add(row.cell("net"), 1) },

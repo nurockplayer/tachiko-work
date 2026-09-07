@@ -68,12 +68,14 @@ function shape(book, checked) {
 
 function direct(source, type) {
   if (!object(source, "unsupported_value") || source.expr !== undefined || !("value" in source)) reject("unsupported_value");
+  sourceMetadata(source);
   if ((type === "number" && !finite(source.value)) || (type === "text" && typeof source.value !== "string")) reject("unsupported_value");
   return source.value;
 }
 
 function nativeFormula(source, rows, checked) {
   if (!object(source, "unsupported_formula") || source.expr === undefined || "value" in source) reject("unsupported_formula");
+  sourceMetadata(source);
   const translate = expression => {
     if (!object(expression, "unsupported_formula")) reject("unsupported_formula");
     if (expression.k === "lit") {
@@ -103,16 +105,50 @@ function nativeFormula(source, rows, checked) {
   return { kind: "formula", value: translate(source.expr) };
 }
 
-function claimAllSource(book, shape) {
+function sourceMetadata(source) {
+  for (const name of Object.keys(source)) {
+    if (!["value", "expr", "style", "format"].includes(name)) reject("unmapped_source");
+  }
+  for (const name of ["style", "format"]) {
+    if (source[name] !== undefined && typeof source[name] !== "string") reject("unmapped_source");
+  }
+}
+
+function presentation(source) {
+  if (!object(source, "unmapped_source") || source.expr !== undefined || typeof source.value !== "string") reject("unmapped_source");
+  sourceMetadata(source);
+}
+
+function claimAllSource(book, shape, checked) {
   const claimed = new Set();
-  const claimRectangle = (sheet, rectangle) => {
+  const claim = (sheet, row, column, check) => {
+    check(sourceCell(sheet, row, column));
+    claimed.add(`${sheet.name}\u0000${row},${column}`);
+  };
+  const claimPresentationRectangle = (sheet, rectangle, semantic) => {
     if (!object(rectangle, "unmapped_source")) reject("unmapped_source");
     for (let row = rectangle.r; row < rectangle.r + rectangle.rows; row += 1) {
-      for (let column = rectangle.c; column < rectangle.c + rectangle.cols; column += 1) claimed.add(`${sheet.name}\u0000${row},${column}`);
+      for (let column = rectangle.c; column < rectangle.c + rectangle.cols; column += 1) {
+        if (!semantic.has(`${row},${column}`)) claim(sheet, row, column, presentation);
+      }
     }
   };
-  claimRectangle(shape.assumptionSheet, shape.assumptions.rect);
-  claimRectangle(shape.planSheet, shape.plan.rect);
+  if (shape.assumptions.keys.size !== 1 || shape.plan.columns.size !== checked.fields.length
+      || shape.assumptions.rect.rows !== 1 || shape.assumptions.rect.cols !== 2
+      || shape.plan.rect.rows !== checked.rows.length + 1 || shape.plan.rect.cols !== checked.fields.length) reject("unmapped_source");
+  const assumptionSemantic = new Set([`${shape.rate.r},${shape.rate.c}`]);
+  claimPresentationRectangle(shape.assumptionSheet, shape.assumptions.rect, assumptionSemantic);
+  claim(shape.assumptionSheet, shape.rate.r, shape.rate.c, source => sourceMetadata(object(source, "unmapped_source")));
+  const planSemantic = new Set();
+  for (const field of checked.fields) {
+    const column = shape.columns.get(field.key);
+    for (let index = 0; index < checked.rows.length; index += 1) planSemantic.add(`${shape.plan.firstDataRow + index},${column}`);
+  }
+  claimPresentationRectangle(shape.planSheet, shape.plan.rect, planSemantic);
+  for (const address of planSemantic) {
+    const [row, column] = address.split(",").map(Number);
+    claim(shape.planSheet, row, column, source => sourceMetadata(object(source, "unmapped_source")));
+  }
   for (const sheet of book.sheets) {
     for (const [address, source] of map(sheet.cells, "unmapped_source")) {
       if ((source?.value !== undefined || source?.expr !== undefined) && !claimed.has(`${sheet.name}\u0000${address}`)) reject("unmapped_source");
@@ -126,7 +162,7 @@ function claimAllSource(book, shape) {
 export function proposeHandoff(compiledWorkbook, manifest) {
   const checked = mapping(manifest);
   const source = shape(compiledWorkbook, checked);
-  claimAllSource(compiledWorkbook, source);
+  claimAllSource(compiledWorkbook, source, checked);
   const rate = direct(sourceCell(source.assumptionSheet, source.rate.r, source.rate.c), "number");
   const labelColumn = source.columns.get(checked.plan.row_label_column);
   const rows = [];
