@@ -7,13 +7,7 @@ const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000341";
 
 #[test]
 fn quarterly_plan_supports_authoritative_human_edit_and_impact() {
-    let fixture: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../../experiments/open-sheet-export/canary.json"
-    ))
-    .unwrap();
-    let bytes = serde_json::to_vec(&fixture["document"]).unwrap();
-    let document = tachiko_storage::from_bytes(&bytes).unwrap();
-    let mut runtime = DesignerRuntime::from_document(document, OCCURRENCE).unwrap();
+    let mut runtime = fixture_runtime();
     let DesignerResponse::Bootstrap(bootstrap) = runtime
         .handle(DesignerRequest::Bootstrap {
             occurrence_id: OCCURRENCE.to_owned(),
@@ -108,6 +102,16 @@ fn quarterly_plan_supports_authoritative_human_edit_and_impact() {
             assert!(observed.editable_scalar.is_none());
         }
     }
+}
+
+fn fixture_runtime() -> DesignerRuntime {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../experiments/open-sheet-export/canary.json"
+    ))
+    .unwrap();
+    let bytes = serde_json::to_vec(&fixture["document"]).unwrap();
+    let document = tachiko_storage::from_bytes(&bytes).unwrap();
+    DesignerRuntime::from_document(document, OCCURRENCE).unwrap()
 }
 
 fn query_plan(runtime: &mut DesignerRuntime) -> serde_json::Value {
