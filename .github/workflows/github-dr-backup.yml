@@ -1,0 +1,220 @@
+name: GitHub DR backup
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Capture source refs only or source refs plus a complete metadata snapshot
+        required: true
+        default: full
+        type: choice
+        options:
+          - full
+          - source-only
+  schedule:
+    # The hourly run keeps the Git source replica current.
+    - cron: '17 * * * *'
+    # The daily run adds the complete GitHub collaboration snapshot.
+    - cron: '43 2 * * *'
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+concurrency:
+  group: github-dr-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: Replicate GitHub source and metadata
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # gh consumes the ephemeral workflow token for read-only API capture.
+      GH_TOKEN: ${{ github.token }}
+      # This URL is a non-secret repository variable and must contain no
+      # username, password, token, or other embedded credential.
+      GITHUB_DR_GITLAB_TARGET: ${{ vars.DR_GITLAB_TARGET }}
+      GITHUB_DR_GITLAB_USERNAME: ${{ vars.DR_GITLAB_USERNAME }}
+      GITHUB_DR_GITLAB_TOKEN: ${{ secrets.DR_GITLAB_TOKEN }}
+      GITHUB_DR_RETENTION_COUNT: '7'
+
+    steps:
+      - name: Check out canonical GitHub main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate target configuration and install transient askpass
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "${GITHUB_DR_GITLAB_TARGET}" ]] || {
+            echo 'Missing repository variable DR_GITLAB_TARGET.' >&2
+            exit 1
+          }
+          case "${GITHUB_DR_GITLAB_TARGET}" in
+            https://gitlab.com/*.git) ;;
+            *)
+              echo 'DR_GITLAB_TARGET must be a credential-free https://gitlab.com/*.git URL.' >&2
+              exit 1
+              ;;
+          esac
+          case "${GITHUB_DR_GITLAB_TARGET}" in
+            *@*|*'?'*|*'#'*)
+              echo 'DR_GITLAB_TARGET must not contain embedded credentials or URL query data.' >&2
+              exit 1
+              ;;
+          esac
+
+          askpass="${RUNNER_TEMP}/tachiko-github-dr-askpass"
+          cat >"${askpass}" <<'EOF_ASKPASS'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          case "${1:-}" in
+            *Username*) printf '%s\n' "${GITHUB_DR_GITLAB_USERNAME:-oauth2}" ;;
+            *) printf '%s\n' "${GITHUB_DR_GITLAB_TOKEN}" ;;
+          esac
+          EOF_ASKPASS
+          chmod 700 "${askpass}"
+          {
+            printf 'GIT_ASKPASS=%s\n' "${askpass}"
+            printf 'GIT_TERMINAL_PROMPT=0\n'
+          } >>"${GITHUB_ENV}"
+          echo 'GitLab target configuration validated; credentials remain in the runner environment only.'
+
+      - name: Select scheduled or manual operation
+        id: operation
+        shell: bash
+        env:
+          DR_OPERATION: ${{ inputs.operation }}
+        run: |
+          set -euo pipefail
+          operation='source-only'
+          if [[ "${GITHUB_EVENT_NAME}" == 'workflow_dispatch' ]]; then
+            operation="${DR_OPERATION}"
+          elif [[ "${GITHUB_EVENT_NAME}" == 'schedule' && '${{ github.event.schedule }}' == '43 2 * * *' ]]; then
+            operation='full'
+          fi
+          case "${operation}" in
+            full|source-only) ;;
+            *) echo "Unsupported DR operation: ${operation}" >&2; exit 1 ;;
+          esac
+          printf 'operation=%s\n' "${operation}" >>"${GITHUB_OUTPUT}"
+          printf 'GITHUB_DR_OPERATION=%s\n' "${operation}" >>"${GITHUB_ENV}"
+          echo "Selected DR operation: ${operation}"
+
+      - name: Replicate Git source refs to the independent target
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_head="$(git rev-parse HEAD)"
+          printf 'GITHUB_DR_SOURCE_HEAD=%s\n' "${source_head}" >>"${GITHUB_ENV}"
+          bash scripts/github-dr-backup.sh replicate \
+            --source "${GITHUB_WORKSPACE}" \
+            --target "${GITHUB_DR_GITLAB_TARGET}" \
+            --metadata-branch dr-metadata
+          echo "Replicated source HEAD ${source_head} to the backup target."
+
+      - name: Capture and verify complete metadata snapshot
+        if: steps.operation.outputs.operation == 'full'
+        shell: bash
+        run: |
+          set -euo pipefail
+          snapshot_root="${RUNNER_TEMP}/tachiko-github-dr-snapshot"
+          bash scripts/github-dr-backup.sh snapshot \
+            --repository "${GITHUB_REPOSITORY}" \
+            --output "${snapshot_root}" \
+            --source-head "${GITHUB_DR_SOURCE_HEAD}"
+          bash scripts/github-dr-backup.sh verify --snapshot "${snapshot_root}/latest"
+          manifest="${snapshot_root}/latest/manifest.json"
+          snapshot_at="$(jq -r '.snapshot_at' "${manifest}")"
+          snapshot_checksum="$(sha256sum "${manifest}" | awk '{print $1}')"
+          counts="$(jq -c '.counts' "${manifest}")"
+          {
+            printf 'GITHUB_DR_SNAPSHOT_ROOT=%s\n' "${snapshot_root}"
+            printf 'GITHUB_DR_SNAPSHOT_AT=%s\n' "${snapshot_at}"
+            printf 'GITHUB_DR_SNAPSHOT_CHECKSUM=%s\n' "${snapshot_checksum}"
+          } >>"${GITHUB_ENV}"
+          printf 'Prepared metadata snapshot: timestamp=%s checksum=%s counts=%s\n' \
+            "${snapshot_at}" "${snapshot_checksum}" "${counts}"
+
+      - name: Commit the verified snapshot to independent metadata history
+        if: steps.operation.outputs.operation == 'full'
+        shell: bash
+        run: |
+          set -euo pipefail
+          metadata_work="${RUNNER_TEMP}/tachiko-github-dr-metadata"
+          git clone --quiet --branch main --single-branch \
+            "${GITHUB_DR_GITLAB_TARGET}" "${metadata_work}"
+
+          metadata_ref="$(git ls-remote --heads "${GITHUB_DR_GITLAB_TARGET}" refs/heads/dr-metadata)"
+          if [[ -n "${metadata_ref}" ]]; then
+            git -C "${metadata_work}" fetch --quiet origin \
+              refs/heads/dr-metadata:refs/remotes/origin/dr-metadata
+            git -C "${metadata_work}" checkout --quiet -B dr-metadata refs/remotes/origin/dr-metadata
+          else
+            git -C "${metadata_work}" checkout --quiet --orphan dr-metadata
+            git -C "${metadata_work}" rm -r --quiet --ignore-unmatch .
+          fi
+
+          mkdir -p "${metadata_work}/snapshots"
+          rm -rf -- "${metadata_work}/snapshots/latest"
+          cp -pR "${GITHUB_DR_SNAPSHOT_ROOT}/latest" "${metadata_work}/snapshots/latest"
+
+          dated_snapshot="$(find "${GITHUB_DR_SNAPSHOT_ROOT}/snapshots" \
+            -mindepth 1 -maxdepth 1 -type d -name '20*T*Z-*' -print | sort | tail -n 1)"
+          [[ -n "${dated_snapshot}" ]] || {
+            echo 'The driver did not produce a dated snapshot.' >&2
+            exit 1
+          }
+          dated_name="$(basename "${dated_snapshot}")"
+          rm -rf -- "${metadata_work}/snapshots/${dated_name}"
+          cp -pR "${GITHUB_DR_SNAPSHOT_ROOT}/latest" "${metadata_work}/snapshots/${dated_name}"
+
+          retained=0
+          while IFS= read -r candidate; do
+            retained=$((retained + 1))
+            if ((retained > 7)); then
+              git -C "${metadata_work}" rm -r --quiet -- "${candidate}"
+            fi
+          done < <(cd "${metadata_work}" && find snapshots -mindepth 1 -maxdepth 1 \
+            -type d -name '20*T*Z-*' -print | sort -r)
+
+          git -C "${metadata_work}" config user.name 'Tachiko Work DR backup'
+          git -C "${metadata_work}" config user.email 'tachiko-dr-backup@users.noreply.github.com'
+          git -C "${metadata_work}" add snapshots
+          git -C "${metadata_work}" commit --quiet \
+            -m "chore(dr): capture GitHub snapshot ${GITHUB_DR_SNAPSHOT_AT}"
+          git -C "${metadata_work}" push --quiet origin HEAD:refs/heads/dr-metadata
+          echo 'Committed verified metadata snapshot to dr-metadata.'
+
+      - name: Emit first-live-activation evidence fields
+        if: steps.operation.outputs.operation == 'full'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mirrored_head="$(git ls-remote "${GITHUB_DR_GITLAB_TARGET}" refs/heads/main | awk '{print $1}')"
+          target_default_branch="$(git ls-remote --symref "${GITHUB_DR_GITLAB_TARGET}" HEAD | awk '$1 == "ref:" && $3 == "HEAD" {print $2; exit}')"
+          metadata_head="$(git ls-remote "${GITHUB_DR_GITLAB_TARGET}" refs/heads/dr-metadata | awk '{print $1}')"
+          [[ -n "${mirrored_head}" && "${mirrored_head}" == "${GITHUB_DR_SOURCE_HEAD}" ]] || {
+            echo 'The mirrored default-branch HEAD could not be proved equal to the source HEAD.' >&2
+            exit 1
+          }
+          [[ "${target_default_branch}" == 'refs/heads/main' ]] || {
+            echo 'The backup target default branch does not advertise refs/heads/main.' >&2
+            exit 1
+          }
+          [[ -n "${metadata_head}" ]] || {
+            echo 'The metadata branch HEAD could not be observed after publication.' >&2
+            exit 1
+          }
+          counts="$(jq -c '.counts' "${GITHUB_DR_SNAPSHOT_ROOT}/latest/manifest.json")"
+          printf 'DR_EVIDENCE target=%s target_default_branch=%s source_head=%s mirrored_head=%s metadata_head=%s snapshot_at=%s snapshot_checksum=%s counts=%s\n' \
+            "${GITHUB_DR_GITLAB_TARGET}" "${target_default_branch}" "${GITHUB_DR_SOURCE_HEAD}" \
+            "${mirrored_head}" "${metadata_head}" "${GITHUB_DR_SNAPSHOT_AT}" \
+            "${GITHUB_DR_SNAPSHOT_CHECKSUM}" "${counts}"
