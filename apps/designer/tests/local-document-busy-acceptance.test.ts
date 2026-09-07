@@ -41,10 +41,13 @@ const table = (revision = "resident/0", damage = 36): TableProjection => ({
 
 class BusyClient implements DesignerClient {
   editStarted = false;
-  readonly localOpen = vi.fn(async (_bytes: ArrayBuffer): Promise<OpenedProjection> => ({
-    bootstrap: { ...bootstrap, title: "Other Project" },
-    table: table("resident/0", 12),
-  }));
+  readonly localOpen = vi.fn(async (bytes: ArrayBuffer): Promise<OpenedProjection> => {
+    void bytes.byteLength;
+    return {
+      bootstrap: { ...bootstrap, title: "Other Project" },
+      table: table("resident/0", 12),
+    };
+  });
   #finishEdit: ((publication: PublicationProjection) => void) | null = null;
 
   async bootstrap(): Promise<BootstrapProjection> {
