@@ -86,6 +86,7 @@ function requireConfirmDialog(page: Page, decision: "accept" | "dismiss"): Promi
         else await dialog.dismiss();
         resolve();
       } catch (error) {
+        await dialog.dismiss().catch(() => undefined);
         reject(error instanceof Error ? error : new Error(String(error)));
       }
     });
@@ -94,6 +95,11 @@ function requireConfirmDialog(page: Page, decision: "accept" | "dismiss"): Promi
 
 test("built Designer exposes an installable manifest with one .ro file handler", async ({ page }) => {
   await page.goto("/");
+
+  await expect.poll(async () => page.evaluate(async () =>
+    (await navigator.serviceWorker.getRegistration())?.active?.scriptURL ===
+      new URL("/service-worker.js", window.location.href).href,
+  )).toBe(true);
 
   const manifestHref = await page.locator('link[rel="manifest"]').getAttribute("href");
   expect(manifestHref, "the shipped Designer page must link its web app manifest").toBeTruthy();
@@ -135,7 +141,9 @@ test("installed-PWA launchQueue opens raw .ro bytes through the existing Designe
   await deliverLaunch(page, [{ name: "game-balance.ro", bytes }]);
   await expect(page.getByRole("heading", { name: "Moonfall: starter balance" })).toBeVisible();
   await expect(page.getByTestId("revision")).toContainText("resident/0");
-  await expect(page.locator('[data-field="iron_sword.dps"] output')).toHaveText("40");
+  await expect(
+    page.getByRole("row", { name: /Iron Sword/ }).locator(".formula-cell output"),
+  ).toHaveText("40");
 });
 
 test("warm PWA launches require dirty consent and corrupt input preserves current work", async ({ page }) => {
@@ -172,13 +180,23 @@ test("multi-file PWA launch creates a fresh visible failure and preserves the cu
   await expect.poll(() => hasLaunchConsumer(page)).toBe(true);
   await expect(page.getByRole("alert")).toHaveCount(0);
 
+  await page.getByLabel("Damage for Iron Sword").fill("45");
+  await page
+    .locator('[data-field="iron_sword.damage"]')
+    .getByRole("button", { name: "Apply" })
+    .click();
+  await expect(page.getByLabel("Damage for Iron Sword")).toHaveValue("45");
+  await expect(
+    page.getByRole("row", { name: /Iron Sword/ }).locator(".formula-cell output"),
+  ).toHaveText("50");
+
   await deliverLaunch(page, [
     { name: "one.ro", bytes },
     { name: "two.ro", bytes },
   ]);
   await expect(page.getByRole("alert")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Moonfall Balance" })).toBeVisible();
-  await expect(page.getByLabel("Damage for Iron Sword")).toHaveValue("36");
+  await expect(page.getByLabel("Damage for Iron Sword")).toHaveValue("45");
 });
 
 test("empty and unreadable PWA launch inputs fail visibly without replacing current work", async ({ page }) => {
@@ -186,17 +204,35 @@ test("empty and unreadable PWA launch inputs fail visibly without replacing curr
   await page.goto("/");
   await expect.poll(() => hasLaunchConsumer(page)).toBe(true);
   await expect(page.getByRole("alert")).toHaveCount(0);
+  await page.getByLabel("Damage for Iron Sword").fill("45");
+  await page
+    .locator('[data-field="iron_sword.damage"]')
+    .getByRole("button", { name: "Apply" })
+    .click();
+  await expect(
+    page.getByRole("row", { name: /Iron Sword/ }).locator(".formula-cell output"),
+  ).toHaveText("50");
 
   await deliverLaunch(page, []);
   await expect(page.getByRole("alert")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Moonfall Balance" })).toBeVisible();
+  await expect(page.getByLabel("Damage for Iron Sword")).toHaveValue("45");
 
   await page.reload();
   await expect.poll(() => hasLaunchConsumer(page)).toBe(true);
   await expect(page.getByRole("alert")).toHaveCount(0);
+  await page.getByLabel("Damage for Iron Sword").fill("45");
+  await page
+    .locator('[data-field="iron_sword.damage"]')
+    .getByRole("button", { name: "Apply" })
+    .click();
+  await expect(
+    page.getByRole("row", { name: /Iron Sword/ }).locator(".formula-cell output"),
+  ).toHaveText("50");
   await deliverLaunch(page, [{ name: "unreadable.ro", readError: "permission denied" }]);
   await expect(page.getByRole("alert")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Moonfall Balance" })).toBeVisible();
+  await expect(page.getByLabel("Damage for Iron Sword")).toHaveValue("45");
 });
 
 test("ordinary Web startup remains usable when launchQueue is absent", async ({ page }) => {

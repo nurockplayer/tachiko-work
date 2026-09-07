@@ -1884,7 +1884,29 @@ pub fn open_project(
     input: &[u8],
     occurrence_id: &str,
 ) -> Result<OpenedProjection, DesignerError> {
-    let (candidate, opened) = admit_project(input, occurrence_id)?;
+    let (candidate, opened) = admit_document(decode_project_bundle(input)?, occurrence_id)?;
+    *runtime = Some(candidate);
+    Ok(opened)
+}
+
+/// Admit exactly one raw local `.ro` document without widening the private
+/// saved-project transfer format accepted by [`open_project`].
+///
+/// The caller owns file acquisition only. Storage remains the sole decoder and
+/// the resident occurrence is replaced only after complete admission succeeds.
+///
+/// # Errors
+///
+/// Returns storage, profile, or projection failures while preserving the
+/// current resident occurrence.
+pub fn open_local_document(
+    runtime: &mut Option<DesignerRuntime>,
+    input: &[u8],
+    occurrence_id: &str,
+) -> Result<OpenedProjection, DesignerError> {
+    enforce_project_transfer_limit(input.len())?;
+    let document = from_bytes(input).map_err(DesignerError::from)?;
+    let (candidate, opened) = admit_document(document, occurrence_id)?;
     *runtime = Some(candidate);
     Ok(opened)
 }
@@ -1903,7 +1925,13 @@ fn admit_project(
     input: &[u8],
     occurrence_id: &str,
 ) -> Result<(DesignerRuntime, OpenedProjection), DesignerError> {
-    let document = decode_project_bundle(input)?;
+    admit_document(decode_project_bundle(input)?, occurrence_id)
+}
+
+fn admit_document(
+    document: Document,
+    occurrence_id: &str,
+) -> Result<(DesignerRuntime, OpenedProjection), DesignerError> {
     let candidate = DesignerRuntime::from_document(document, occurrence_id)?;
     let bootstrap = candidate.bootstrap_projection();
     let table = candidate.query_table(&bootstrap.default_collection)?;

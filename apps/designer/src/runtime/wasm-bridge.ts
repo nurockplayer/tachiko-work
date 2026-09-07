@@ -13,6 +13,7 @@ type DesignerWasmExports = {
   tachiko_designer_response_len(): number;
   tachiko_designer_project_reserve(length: number): number;
   tachiko_designer_project_open(): void;
+  tachiko_designer_project_open_local_document(): void;
   tachiko_designer_project_inspect(): void;
   tachiko_designer_spreadsheet_run(): void;
   tachiko_designer_project_export(): void;
@@ -30,6 +31,7 @@ export type DesignerWasmBridge = {
   request(request: DesignerRequest): DesignerWireReply;
   inspectProject(bytes: Uint8Array): DesignerWireReply;
   openProject(bytes: Uint8Array, occurrenceId: string): DesignerWireReply;
+  openLocalDocument(bytes: Uint8Array, occurrenceId: string): DesignerWireReply;
   exportProject(expectedRevision: string):
     | { status: "ok"; export: ProjectExport }
     | Extract<DesignerWireReply, { status: "error" }>;
@@ -125,6 +127,19 @@ export async function createDesignerWasmBridge(
       const pointer = exports.tachiko_designer_project_reserve(bytes.byteLength);
       new Uint8Array(exports.memory.buffer, pointer, bytes.byteLength).set(bytes);
       exports.tachiko_designer_project_open();
+      return readReply();
+    },
+    openLocalDocument: (bytes, occurrenceId) => {
+      if (bytes.byteLength > MAX_PROJECT_TRANSFER_BYTES) {
+        return tooLargeReply("The project exceeds the private 64 MiB host transfer boundary.");
+      }
+      const occurrence = encoder.encode(occurrenceId);
+      if (!writeRequest(occurrence)) {
+        return tooLargeReply("The host occurrence identity exceeds the bridge limit.");
+      }
+      const pointer = exports.tachiko_designer_project_reserve(bytes.byteLength);
+      new Uint8Array(exports.memory.buffer, pointer, bytes.byteLength).set(bytes);
+      exports.tachiko_designer_project_open_local_document();
       return readReply();
     },
     exportProject: (expectedRevision) => {

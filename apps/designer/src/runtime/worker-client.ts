@@ -156,6 +156,22 @@ export class WorkerDesignerClient implements DesignerClient {
     return expectResponse("opened", reply.response);
   }
 
+  async openLocalDocument(bytes: ArrayBuffer): Promise<OpenedProjection> {
+    const reply = await this.#send(
+      {
+        id: this.#claimId(),
+        kind: "open_local_document",
+        occurrence_id: freshOccurrenceId(),
+        bytes,
+      },
+      [bytes],
+    );
+    if (reply.status !== "ok") {
+      throw new Error(`Expected local document open response, received '${reply.status}'.`);
+    }
+    return expectResponse("opened", reply.response);
+  }
+
   async exportProject(expectedRevision: string): Promise<ProjectExport> {
     const reply = await this.#send({
       id: this.#claimId(),

@@ -22,6 +22,10 @@ import {
   DesignerRuntimeError,
   type DesignerClient,
 } from "./runtime/client.ts";
+import {
+  readSingleLocalRoDocument,
+  type LocalDocumentHandle,
+} from "./host/local-document-ingress.ts";
 import type {
   BootstrapProjection,
   DiagnosticProjection,
@@ -41,6 +45,7 @@ type Notice = {
 
 export type MountedDesigner = {
   ready: Promise<void>;
+  openLocalDocumentHandles(handles: readonly LocalDocumentHandle[]): Promise<void>;
   destroy(): void;
 };
 
@@ -86,6 +91,9 @@ export function mountDesigner(
   let pendingExport: {occurrence: symbol; exported: SpreadsheetExport; format: SpreadsheetFormat; ledger: FidelityFinding[]} | null = null;
   let destroyed = false;
   let occurrenceClosed = false;
+  // The bootstrap occurrence exists only to make ordinary Web startup usable.
+  // A cold OS launch may replace it without presenting a discard dialog.
+  let coldBootstrapOccurrence = false;
   const pendingTextBuffers = new Map<string, string>();
   const pendingBooleanBuffers = new Map<string, boolean>();
   const pendingDateBuffers = new Map<string, string>();
@@ -126,6 +134,7 @@ export function mountDesigner(
   };
 
   const reflectUnsavedState = (): void => {
+    coldBootstrapOccurrence = false;
     syncBeforeUnloadGuard();
     const durabilityChip = root.querySelector<HTMLElement>('[data-testid="durability"]');
     if (durabilityChip !== null) {
@@ -793,6 +802,7 @@ export function mountDesigner(
     store = nextStore;
     selectedCollection = opened.bootstrap.default_collection;
     occurrenceClosed = false;
+    coldBootstrapOccurrence = false;
     durability.install(opened.bootstrap.revision, true);
     syncBeforeUnloadGuard();
   };
@@ -872,6 +882,43 @@ export function mountDesigner(
   const installProjectBytes = async (bytes: ArrayBuffer): Promise<void> => {
     const opened = await client.openProject(bytes);
     installOpenedOccurrence(opened);
+  };
+
+  const installLocalDocumentBytes = async (bytes: ArrayBuffer): Promise<void> => {
+    if (!client.openLocalDocument) throw new Error("Local document admission is unavailable.");
+    const opened = await client.openLocalDocument(bytes);
+    installOpenedOccurrence(opened);
+  };
+
+  const openLocalDocument = async (handles: readonly LocalDocumentHandle[]): Promise<void> => {
+    try {
+      const document = await readSingleLocalRoDocument(handles);
+      await ready;
+      if (destroyed || busy) return;
+      if (!coldBootstrapOccurrence && !confirmDiscardDirtyOccurrence(`Open '${document.name}'`)) return;
+      busy = true;
+      notice = null;
+      render();
+      try {
+        await installLocalDocumentBytes(document.bytes);
+        notice = {
+          tone: "success",
+          title: "Local file opened",
+          message: `${document.name} is current in a fresh Rust occurrence.`,
+          diagnostics: [],
+        };
+      } catch (error) {
+        showProjectFailure("Local file not opened", error);
+      } finally {
+        busy = false;
+        render();
+      }
+    } catch (error) {
+      if (!destroyed) {
+        showProjectFailure("Local file not opened", error);
+        render();
+      }
+    }
   };
 
   const importProjectDirectory = async (input: HTMLInputElement): Promise<void> => {
@@ -1269,6 +1316,7 @@ export function mountDesigner(
     try {
       const candidate = await client.bootstrap();
       await installOccurrence(candidate, false);
+      coldBootstrapOccurrence = true;
       try {
         await refreshSavedProjects();
       } catch (error) {
@@ -1289,6 +1337,7 @@ export function mountDesigner(
 
   return {
     ready,
+    openLocalDocumentHandles: openLocalDocument,
     destroy: () => {
       reportOccurrence = Symbol("report occurrence"); reportState.draft = null;
       destroyed = true; pendingExport = null; busy = false;

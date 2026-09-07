@@ -28,6 +28,7 @@ export interface DesignerClient {
   bootstrap(): Promise<BootstrapProjection>;
   inspectProject?(bytes: ArrayBuffer): Promise<OpenedProjection>;
   openProject(bytes: ArrayBuffer): Promise<OpenedProjection>;
+  openLocalDocument?(bytes: ArrayBuffer): Promise<OpenedProjection>;
   exportProject(expectedRevision: string): Promise<ProjectExport>;
   closeProject(): Promise<void>;
   queryTable(collection: string): Promise<TableProjection>;
