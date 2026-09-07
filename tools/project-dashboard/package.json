@@ -14,12 +14,17 @@
     "test:acceptance": "vitest run tests/acceptance",
     "test:operational": "vitest run tests/operational",
     "test:browser": "playwright test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:worker": "pnpm build && node scripts/build-worker-assets.ts",
+    "check:worker": "pnpm build:worker && wrangler deploy --dry-run --outdir dist/worker",
+    "dev:worker": "pnpm build:worker && wrangler dev --local --ip 127.0.0.1",
+    "test:worker": "pnpm check:worker && node scripts/smoke-worker.ts"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",
     "@types/node": "26.4.0",
     "typescript": "6.0.3",
-    "vitest": "4.1.11"
+    "vitest": "4.1.11",
+    "wrangler": "4.129.0"
   }
 }

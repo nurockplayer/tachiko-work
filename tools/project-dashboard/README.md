@@ -16,3 +16,9 @@ pnpm --dir tools/project-dashboard start
 `DASHBOARD_PORT` optionally selects a loopback port (default `4311`). The token
 and trust allowlist are process-only configuration; they are never accepted from
 browser routes or emitted in the projection/UI.
+
+## Private Cloudflare hosting
+
+Repository-local Worker support and the separately authorized activation steps
+are documented in [the Cloudflare runbook](CLOUDFLARE.md). Stage A does not claim
+that a live private deployment is active.
