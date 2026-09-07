@@ -64,6 +64,7 @@ fn quarterly_plan_supports_authoritative_human_edit_and_impact() {
         panic!("expected plan table");
     };
     assert_eq!(table.revision, current);
+    assert_eq!(table.rows.len(), 3);
     let mut reopened = None;
     let opened = open_project(
         &mut reopened,
