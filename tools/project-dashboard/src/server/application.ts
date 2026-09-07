@@ -176,7 +176,9 @@ class GitHubObserver {
     const pullValid = pullCore.every(row => row.number !== null && row.title !== null && row.state !== null && row.draft !== null);
     const pullRequests = pullPage.availability === "unavailable" || !pullValid ? unavailable<readonly PullObservation[]>() : observed(pullPage.availability, await Promise.all(pullCore.map(async row => ({ number: row.number!, title: row.title!, state: row.state!, draft: row.draft!, head: row.head === null ? unavailable<string>() : observed("complete", row.head), base: row.base === null ? unavailable<string>() : observed("complete", row.base), linkedIssues: await this.linkedIssues(row.number!) }))));
     const commentResults = await Promise.all((pullRequests.value ?? []).map(pull => this.comments(pull.number)));
-    const commentAvailability: Availability = commentResults.some(result => result.availability === "unavailable") ? "unavailable" : commentResults.some(result => result.availability === "partial") ? "partial" : "complete";
+    const commentAvailability: Availability = commentResults.every(result => result.availability === "unavailable")
+      ? "unavailable"
+      : commentResults.some(result => result.availability !== "complete") ? "partial" : "complete";
     const parsedWatches = commentResults.flatMap(result => (result.value ?? []).map(watch => ({
       ...watch,
       availability: pullRequests.availability === "complete" ? watch.availability : pullRequests.availability,

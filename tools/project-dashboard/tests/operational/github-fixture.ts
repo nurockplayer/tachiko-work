@@ -57,6 +57,7 @@ export function fixture(repository = DEFAULT_REPO) {
     });
   };
   const failures = new Set<Fault>();
+  const commentFailures = new Set<number>();
   const partial = new Set<Fault>();
   const requests: Request[] = [];
   const violations: string[] = [];
@@ -124,7 +125,7 @@ export function fixture(repository = DEFAULT_REPO) {
       if (!selected) return fail("no comment fixture for requested PR");
       family = "comments"; payload = selected.comments;
     } else return fail(`unexpected REST path: ${pathname}`);
-    if (failures.has(family)) return json({ message: errorText }, 503);
+    if (failures.has(family) || (family === "comments" && commentMatch !== null && commentFailures.has(Number(commentMatch[1])))) return json({ message: errorText }, 503);
     if (partial.has(family) && url.searchParams.get("page") === "2") return json({ message: errorText }, 503);
     const headers: Record<string, string> = {};
     if (partial.has(family)) {
@@ -133,7 +134,7 @@ export function fixture(repository = DEFAULT_REPO) {
     }
     return json(payload, 200, headers);
   };
-  return { repository, web, api, data, failures, partial, requests, violations, comment, addPull,
+  return { repository, web, api, data, failures, commentFailures, partial, requests, violations, comment, addPull,
     fetch: fetcher, setErrorText: (text: string) => { errorText = text; },
     options: () => ({ repository, token: SECRET, trustedStewardLogins: [STEWARD], fetch: fetcher, port: 0 }),
   };

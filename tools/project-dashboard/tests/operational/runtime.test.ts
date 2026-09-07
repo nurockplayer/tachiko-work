@@ -61,6 +61,20 @@ describe("#229 raw GitHub observation", () => {
     expect(remote.violations).toEqual([]);
   });
 
+  it("retains an independently complete current watch when another PR comments family is unavailable", async () => {
+    const remote = fixture(); remote.addPull(444, [231]); remote.commentFailures.add(444);
+
+    const snapshot = await observeGitHub(remote.options());
+    const projection = projectObservation({ latest: snapshot });
+
+    expect(snapshot.stewardWatches).toMatchObject({ availability: "partial", value: [{ prNumber: 322, availability: "complete" }] });
+    expect(projection.attention.items).toEqual([
+      { kind: "steward-hold", prNumber: 322, sourceUrl: `${remote.web}/pull/322#issuecomment-700` },
+      { kind: "human-action-required", prNumber: 322, sourceUrl: `${remote.web}/pull/322#issuecomment-700` },
+    ]);
+    expect(remote.violations).toEqual([]);
+  });
+
   it.each(["VERDICT", "HEAD", "MAIN", "HUMAN_ACTION"])("rejects duplicated or absent %s header fields", async field => {
     for (const duplicate of [true, false]) {
       const remote = fixture();
