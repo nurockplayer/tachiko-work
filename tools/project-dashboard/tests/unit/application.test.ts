@@ -56,6 +56,19 @@ describe("Dashboard GitHub adapter unit boundaries", () => {
     expect(remote.violations).toEqual([]);
   });
 
+  it("contains a structurally malformed dependency row to that family", async () => {
+    const remote = fixture();
+    remote.data.dependencyByIssue.set(229, [null] as unknown as typeof remote.data.dependencies);
+
+    const snapshot = await observeGitHub(remote.options());
+
+    expect(snapshot.issues.value?.find(issue => issue.number === 229)?.dependencies).toEqual({ availability: "unavailable", value: null });
+    expect(snapshot.main.availability).toBe("complete");
+    expect(snapshot.pullRequests.availability).toBe("complete");
+    expect(snapshot.recentActivity.availability).toBe("complete");
+    expect(remote.violations).toEqual([]);
+  });
+
   it("does not follow activity pagination or promote a watch from incomplete comment discovery", async () => {
     const remote = fixture();
     remote.partial.add("activity");

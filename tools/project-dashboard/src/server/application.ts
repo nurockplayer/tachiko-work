@@ -106,6 +106,7 @@ class GitHubObserver {
     if (page.value === null) return unavailable();
     const values: number[] = [];
     for (const row of page.value) {
+      if (!record(row)) return unavailable();
       const dependency = positiveNumber(row.number);
       if (dependency === null) return unavailable();
       values.push(dependency);
