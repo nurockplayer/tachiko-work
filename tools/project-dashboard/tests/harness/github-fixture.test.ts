@@ -15,6 +15,14 @@ describe("Steward raw-source fixture self-check (not production acceptance)", ()
     expect((await noCredential.fetch(`${remote.api}/issues?state=open`)).status).toBe(400);
     expect(noCredential.violations).toHaveLength(1);
   });
+  it("requires the declared activity ordering and supports a second independent PR", async () => {
+    const remote = fixture(); remote.addPull(444, [231]);
+    const headers = { authorization: `Bearer ${SECRET}` };
+    expect((await remote.fetch(`${remote.api}/pulls?state=closed`, { headers })).status).toBe(400);
+    expect((await remote.fetch(`${remote.api}/pulls?state=closed&sort=updated&direction=desc`, { headers })).status).toBe(200);
+    const response = await remote.fetch(`${remote.api}/issues/444/comments`, { headers });
+    expect(await response.json()).toMatchObject([{ html_url: `${remote.web}/pull/444#issuecomment-800` }]);
+  });
   it("refuses mutation queries and can distinguish known-empty linkage from a failed connection", async () => {
     const remote = fixture(); remote.data.linked = [];
     const send = (query: string) => remote.fetch("https://api.github.com/graphql", {

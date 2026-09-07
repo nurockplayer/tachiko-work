@@ -2,7 +2,7 @@ import { request as httpRequest } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 import { observeGitHub, startDashboard, type DashboardEnvelope, type RunningDashboard } from "../../src/server/application.js";
 import { projectObservation } from "../../src/server/observation.js";
-import { fixture, HEAD, MAIN, SECRET, STEWARD, watchBody } from "./github-fixture.js";
+import { fixture, HEAD, MAIN, OTHER, SECRET, STEWARD, watchBody } from "./github-fixture.js";
 
 const running: RunningDashboard[] = [];
 afterEach(async () => { await Promise.all(running.splice(0).map(app => app.close())); });
@@ -28,10 +28,60 @@ describe("#229 raw GitHub observation", () => {
     expect(snapshot.main).toEqual({ availability: "complete", value: MAIN });
     expect(snapshot.issues.value?.map(x => x.number)).toEqual([229, 231]);
     expect(snapshot.issues.value?.[0]?.dependencies).toEqual({ availability: "complete", value: [900] });
-    expect(snapshot.pullRequests.value?.[0]?.linkedIssues).toEqual({ availability: "complete", value: [229] });
+    expect(snapshot.pullRequests).toEqual({ availability: "complete", value: [{
+      number: 322, title: "Implement the operational Dashboard", state: "OPEN", draft: true,
+      head: { availability: "complete", value: HEAD }, base: { availability: "complete", value: OTHER },
+      linkedIssues: { availability: "complete", value: [229] },
+    }] });
     expect(snapshot.recentActivity).toEqual({ availability: "complete", value: [{ number: 320, title: "Previously merged change" }] });
     expect(snapshot.stewardWatches.value).toContainEqual({ prNumber: 322, availability: "complete", verdict: "HOLD", humanAction: "required", head: HEAD, main: MAIN, sourceUrl: `${remote.web}/pull/322#issuecomment-700` });
     expect(remote.requests.length).toBeGreaterThan(0);
+    expect(remote.violations).toEqual([]);
+  });
+
+  it.each([false, true])("observes distinct linkage and attention for each PR (reversed=%s)", async reverse => {
+    const remote = fixture(); remote.addPull(444, [231]);
+    if (reverse) remote.data.pulls.reverse();
+    const snapshot = await observeGitHub(remote.options());
+    expect(snapshot.pullRequests.availability).toBe("complete");
+    expect(snapshot.pullRequests.value?.map(pull => [pull.number, pull.linkedIssues])).toEqual(
+      remote.data.pulls.map(pull => [pull.number, { availability: "complete", value: [pull.number === 322 ? 229 : 231] }]),
+    );
+    const other = snapshot.pullRequests.value?.find(pull => pull.number === 444);
+    expect(other).toMatchObject({ number: 444, title: "Independent PR 444", draft: false,
+      head: { availability: "complete", value: OTHER }, base: { availability: "complete", value: MAIN } });
+    const projected = projectObservation({ latest: snapshot });
+    expect(projected.deliveries.map(lane => `${lane.issueNumber}:${lane.pullRequestNumber}`).sort()).toEqual(["229:322", "231:444"]);
+    expect(projected.attention.items).toHaveLength(3);
+    expect(projected.attention.items).toEqual(expect.arrayContaining([
+      { kind: "steward-hold", prNumber: 322, sourceUrl: `${remote.web}/pull/322#issuecomment-700` },
+      { kind: "human-action-required", prNumber: 322, sourceUrl: `${remote.web}/pull/322#issuecomment-700` },
+      { kind: "human-action-required", prNumber: 444, sourceUrl: `${remote.web}/pull/444#issuecomment-800` },
+    ]));
+    expect(remote.violations).toEqual([]);
+  });
+
+  it.each(["VERDICT", "HEAD", "MAIN", "HUMAN_ACTION"])("rejects duplicated or absent %s header fields", async field => {
+    for (const duplicate of [true, false]) {
+      const remote = fixture();
+      const lines = watchBody().split("\n");
+      const index = lines.findIndex(line => line.startsWith(`${field}:`));
+      if (duplicate) lines.splice(index, 0, lines[index]!); else lines.splice(index, 1);
+      remote.data.comments = [remote.comment(700, lines.join("\n"))];
+      expect(projectObservation({ latest: await observeGitHub(remote.options()) }).attention.items).toEqual([]);
+      expect(remote.violations).toEqual([]);
+    }
+  });
+
+  it.each([
+    ["unknown header", (body: string) => body.replace("VERDICT: HOLD", "VERDICT: HOLD\nEXTRA: trusted")],
+    ["invalid verdict", (body: string) => body.replace("VERDICT: HOLD", "VERDICT: PASS")],
+    ["invalid action", (body: string) => body.replace("HUMAN_ACTION: required", "HUMAN_ACTION: yes")],
+    ["invalid head", (body: string) => body.replace(`HEAD: ${HEAD}`, "HEAD: short")],
+    ["invalid main", (body: string) => body.replace(`MAIN: ${MAIN}`, "MAIN: short")],
+  ] as const)("rejects a trusted %s", async (_name, change) => {
+    const remote = fixture(); remote.data.comments = [remote.comment(700, change(watchBody()))];
+    expect(projectObservation({ latest: await observeGitHub(remote.options()) }).attention.items).toEqual([]);
     expect(remote.violations).toEqual([]);
   });
 

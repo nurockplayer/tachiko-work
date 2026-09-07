@@ -1,6 +1,6 @@
 import { test as base, expect } from "@playwright/test";
 import { startDashboard, type RunningDashboard } from "../src/server/application.js";
-import { fixture, MAIN, HEAD, SECRET, watchBody } from "../tests/operational/github-fixture.js";
+import { fixture, MAIN, HEAD, OTHER, SECRET, watchBody } from "../tests/operational/github-fixture.js";
 
 type Remote = ReturnType<typeof fixture>;
 const test = base.extend<{ remote: Remote; app: RunningDashboard }>({
@@ -58,7 +58,11 @@ test("browser transport failure clears old current content; later success restor
   await expect(page.getByTestId("main-sha")).toContainText(/Unknown/i);
   await expect(page.getByTestId("deliveries")).not.toContainText(remote.data.issues[0]!.title);
   await expect(page.getByTestId("recent-activity")).not.toContainText("Previously merged change");
-  await expect(page.getByTestId("attention")).not.toContainText("HOLD");
+  await expect(page.getByTestId("attention")).not.toContainText(/HOLD|required/i);
+  await expect(page.getByTestId("current-work")).toContainText(/Unknown/i);
+  await expect(page.getByTestId("current-work")).not.toContainText(/229|231/);
+  await expect(page.getByTestId("deliveries")).not.toContainText("Independent issue");
+  await expect(page.getByTestId("deliveries")).not.toContainText(remote.data.pulls[0]!.title);
   remote.data.main = "5".repeat(40);
   remote.data.issues[0]!.title = "New recovery observation";
   remote.data.comments = [remote.comment(710, watchBody("GREEN", "none", HEAD, remote.data.main))];
@@ -87,6 +91,9 @@ test("390px and reduced motion stay readable with long titles and full identitie
   await page.goto(app.origin);
   for (const heading of headings) await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
   await expect(page.getByTestId("main-sha")).toHaveText(MAIN);
+  const lane = page.getByTestId("delivery-229-322");
+  await expect(lane.getByText(HEAD, { exact: true })).toBeVisible();
+  await expect(lane.getByText(OTHER, { exact: true })).toBeVisible();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
   expect(await page.evaluate(() => document.getAnimations().filter(animation => animation.playState === "running").length)).toBe(0);
   await expect(page.getByRole("button", { name: "Refresh", exact: true })).toBeEnabled();
