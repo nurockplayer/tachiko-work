@@ -1,5 +1,6 @@
 use tachiko_designer_runtime::{
-    DesignerRequest, DesignerResponse, DesignerRuntime, FieldTarget, ScalarEditInput, open_project,
+    CalculationProjection, DesignerRequest, DesignerResponse, DesignerRuntime, FieldTarget,
+    ScalarEditInput, open_project,
 };
 
 const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000341";
@@ -97,8 +98,9 @@ fn quarterly_plan_supports_authoritative_human_edit_and_impact() {
                 .iter()
                 .find(|item| item.target.field == field)
                 .unwrap();
+            let calculated = observed.calculated.as_ref();
             assert_eq!(
-                observed.calculated.as_ref().and_then(|item| item.number()),
+                calculated.and_then(CalculationProjection::number),
                 Some(value)
             );
             assert!(observed.diagnostics.is_empty());
