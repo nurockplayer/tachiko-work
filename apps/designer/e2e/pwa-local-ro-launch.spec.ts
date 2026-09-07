@@ -57,19 +57,6 @@ async function installLaunchQueueHarness(page: Page): Promise<void> {
   });
 }
 
-async function launchHarness(page: Page): Promise<LaunchHarness> {
-  return page.evaluate(() => {
-    const harness = Reflect.get(window, "__tachikoLaunchHarness") as LaunchHarness | undefined;
-    if (harness === undefined) throw new Error("launchQueue acceptance harness is missing");
-    return {
-      hasConsumer: () => harness.hasConsumer(),
-      deliver: async () => {
-        throw new Error("The in-page launch harness must be invoked through page.evaluate.");
-      },
-    };
-  });
-}
-
 async function hasLaunchConsumer(page: Page): Promise<boolean> {
   return page.evaluate(() => {
     const harness = Reflect.get(window, "__tachikoLaunchHarness") as LaunchHarness | undefined;
