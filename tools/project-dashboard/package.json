@@ -8,6 +8,8 @@
     "node": ">=24"
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "pnpm run build && node dist/cli.js",
     "test": "vitest run",
     "test:acceptance": "vitest run tests/acceptance",
     "test:operational": "vitest run tests/operational",

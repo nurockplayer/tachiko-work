@@ -108,8 +108,8 @@ export function fixture(repository = DEFAULT_REPO) {
       payload = [...data.issues, { ...issue(322, "Not an Issue"), pull_request: { url: `${api}/pulls/322` } }];
     } else if (pathname === `${prefix}/pulls`) {
       if (url.searchParams.get("state") === "closed") {
-        if (url.searchParams.get("sort") !== "updated" || url.searchParams.get("direction") !== "desc")
-          return fail("bounded activity must request updated-descending order");
+        if (url.searchParams.get("sort") !== "updated" || url.searchParams.get("direction") !== "desc" || url.searchParams.get("per_page") !== "50")
+          return fail("bounded activity must request updated-descending order and its declared window");
         family = "activity"; payload = data.activity;
       }
       else if (url.searchParams.get("state") === "open") { family = "pulls"; payload = data.pulls; }

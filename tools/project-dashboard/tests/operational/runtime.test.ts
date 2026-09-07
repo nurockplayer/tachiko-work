@@ -94,17 +94,15 @@ describe("#229 raw GitHub observation", () => {
     expect(remote.violations).toEqual([]);
   });
 
-  it("does not promote incomplete Issue/PR discovery into current membership; current positive watch survives", async () => {
+  it("does not promote incomplete Issue/PR discovery into current membership or attention", async () => {
     const remote = fixture(); remote.partial.add("issues"); remote.partial.add("pulls");
     const snapshot = await observeGitHub(remote.options());
     expect(snapshot.issues.availability).toBe("partial");
     expect(snapshot.pullRequests.availability).toBe("partial");
     const projection = projectObservation({ latest: snapshot });
     expect(projection.deliveries).toEqual([]);
-    expect(projection.attention.items).toEqual([
-      { kind: "steward-hold", prNumber: 322, sourceUrl: `${remote.web}/pull/322#issuecomment-700` },
-      { kind: "human-action-required", prNumber: 322, sourceUrl: `${remote.web}/pull/322#issuecomment-700` },
-    ]);
+    expect(snapshot.stewardWatches.value?.[0]?.availability).toBe("partial");
+    expect(projection.attention.items).toEqual([]);
     expect(remote.violations).toEqual([]);
   });
 
@@ -217,6 +215,11 @@ describe("#229 actual read-only HTTP/application boundary", () => {
       req.on("error", reject); req.end();
     });
     expect(hostile).toBe(403);
+    const malformed = await new Promise<number>((resolve, reject) => {
+      const req = httpRequest(new URL("/api/projection", server.origin), { headers: { Host: "127.0.0.1:99999" } }, res => { res.resume(); resolve(res.statusCode ?? 0); });
+      req.on("error", reject); req.end();
+    });
+    expect(malformed).toBe(400);
   });
 
   it("does not expose credentials/source files through direct or encoded static paths", async () => {

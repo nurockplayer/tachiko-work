@@ -32,6 +32,7 @@ interface GitHubRow { number?: unknown; title?: unknown; state?: unknown; draft?
 
 const API = "https://api.github.com";
 const SHA = /^[0-9a-f]{40}$/i;
+export const RECENT_ACTIVITY_WINDOW = 50;
 const unavailable = <T>(): Observed<T> => ({ availability: "unavailable", value: null });
 const observed = <T>(availability: Availability, value: T | null): Observed<T> => value === null || availability === "unavailable" ? unavailable<T>() : { availability, value };
 const record = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
@@ -74,7 +75,7 @@ class GitHubObserver {
   }
 
   /** A later-page error makes the whole collection partial, never complete. */
-  private async pages<T>(url: string): Promise<Page<T>> {
+  private async pages<T>(url: string, followNext = true): Promise<Page<T>> {
     const rows: T[] = [];
     let current: string | null = url;
     let sawPage = false;
@@ -86,7 +87,7 @@ class GitHubObserver {
       if (!Array.isArray(value)) return sawPage ? { availability: "partial", value: rows } : { availability: "unavailable", value: null };
       rows.push(...(value as T[]));
       sawPage = true;
-      current = nextPage(response);
+      current = followNext ? nextPage(response) : null;
     }
     return { availability: "complete", value: rows };
   }
@@ -102,7 +103,13 @@ class GitHubObserver {
 
   private async dependencies(issue: number): Promise<Observed<readonly number[]>> {
     const page = await this.pages<GitHubRow>(`${this.repositoryUrl}/issues/${issue}/dependencies/blocked_by`);
-    const values = page.value?.map(row => positiveNumber(row.number)).filter((value): value is number => value !== null) ?? null;
+    if (page.value === null) return unavailable();
+    const values: number[] = [];
+    for (const row of page.value) {
+      const dependency = positiveNumber(row.number);
+      if (dependency === null) return unavailable();
+      values.push(dependency);
+    }
     return observed(page.availability, values);
   }
 
@@ -131,7 +138,7 @@ class GitHubObserver {
     }
   }
 
-  private parseWatch(row: unknown, prNumber: number): StewardWatchObservation | null {
+  private parseWatch(row: unknown, prNumber: number, availability: Availability): StewardWatchObservation | null {
     if (!record(row) || !record(row.user) || !this.options.trustedStewardLogins.includes(text(row.user.login) ?? "")) return null;
     const body = text(row.body); const sourceUrl = text(row.html_url);
     if (body === null || sourceUrl === null || !body.startsWith("<!-- project-steward-watch:v1 -->\n")) return null;
@@ -148,18 +155,18 @@ class GitHubObserver {
     if (["VERDICT", "HEAD", "MAIN", "HUMAN_ACTION"].some(key => !fields.has(key))) return null;
     const verdict = fields.get("VERDICT"); const humanAction = fields.get("HUMAN_ACTION"); const head = fields.get("HEAD"); const main = fields.get("MAIN");
     if ((verdict !== "GREEN" && verdict !== "AMBER" && verdict !== "HOLD") || (humanAction !== "none" && humanAction !== "required") || head === undefined || main === undefined || !SHA.test(head) || !SHA.test(main)) return null;
-    return { prNumber, availability: "complete", verdict, humanAction, head, main, sourceUrl };
+    return { prNumber, availability, verdict, humanAction, head, main, sourceUrl };
   }
 
   private async comments(pr: number): Promise<Page<StewardWatchObservation>> {
     const page = await this.pages<unknown>(`${this.repositoryUrl}/issues/${pr}/comments`);
-    const watches = page.value?.map(row => this.parseWatch(row, pr)).filter((watch): watch is StewardWatchObservation => watch !== null) ?? null;
+    const watches = page.value?.map(row => this.parseWatch(row, pr, page.availability)).filter((watch): watch is StewardWatchObservation => watch !== null) ?? null;
     return page.availability === "unavailable" ? { availability: "unavailable", value: null } : { availability: page.availability, value: watches };
   }
 
   async snapshot(): Promise<ObservationSnapshot> {
     const [main, issuePage, pullPage, activityPage] = await Promise.all([
-      this.main(), this.pages<GitHubRow>(`${this.repositoryUrl}/issues?state=open`), this.pages<GitHubRow>(`${this.repositoryUrl}/pulls?state=open`), this.pages<GitHubRow>(`${this.repositoryUrl}/pulls?state=closed&sort=updated&direction=desc`),
+      this.main(), this.pages<GitHubRow>(`${this.repositoryUrl}/issues?state=open`), this.pages<GitHubRow>(`${this.repositoryUrl}/pulls?state=open`), this.pages<GitHubRow>(`${this.repositoryUrl}/pulls?state=closed&sort=updated&direction=desc&per_page=${RECENT_ACTIVITY_WINDOW}`, false),
     ]);
     const issueCore = (issuePage.value ?? []).filter(row => row.pull_request === undefined).map(row => ({ number: positiveNumber(row.number), title: text(row.title), state: issueState(row.state) }));
     const issueValid = issueCore.every(row => row.number !== null && row.title !== null && row.state !== null);
@@ -169,7 +176,10 @@ class GitHubObserver {
     const pullRequests = pullPage.availability === "unavailable" || !pullValid ? unavailable<readonly PullObservation[]>() : observed(pullPage.availability, await Promise.all(pullCore.map(async row => ({ number: row.number!, title: row.title!, state: row.state!, draft: row.draft!, head: row.head === null ? unavailable<string>() : observed("complete", row.head), base: row.base === null ? unavailable<string>() : observed("complete", row.base), linkedIssues: await this.linkedIssues(row.number!) }))));
     const commentResults = await Promise.all((pullRequests.value ?? []).map(pull => this.comments(pull.number)));
     const commentAvailability: Availability = commentResults.some(result => result.availability === "unavailable") ? "unavailable" : commentResults.some(result => result.availability === "partial") ? "partial" : "complete";
-    const parsedWatches = commentResults.flatMap(result => result.value ?? []);
+    const parsedWatches = commentResults.flatMap(result => (result.value ?? []).map(watch => ({
+      ...watch,
+      availability: pullRequests.availability === "complete" ? watch.availability : pullRequests.availability,
+    })));
     const watchCounts = new Map<number, number>();
     for (const watch of parsedWatches) watchCounts.set(watch.prNumber, (watchCounts.get(watch.prNumber) ?? 0) + 1);
     // A PR has at most one canonical watch; ambiguity cannot become attention.
@@ -207,7 +217,10 @@ const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta n
 export async function startDashboard(options: DashboardOptions): Promise<RunningDashboard> {
   repositoryParts(options.repository);
   const server = createServer(async (request: IncomingMessage, response: ServerResponse) => {
-    const host = request.headers.host ?? ""; const url = new URL(request.url ?? "/", `http://${host}`);
+    const host = request.headers.host ?? "";
+    let url: URL;
+    try { url = new URL(request.url ?? "/", `http://${host}`); }
+    catch { return send(response, 400, "text/plain; charset=utf-8", "Bad request"); }
     const local = /^127\.0\.0\.1(?::\d+)?$/.test(host) || /^\[::1\](?::\d+)?$/.test(host);
     if (!local || request.headers.origin !== undefined || request.headers["sec-fetch-site"] === "cross-site") return send(response, 403, "text/plain; charset=utf-8", "Forbidden");
     if (url.pathname === "/api/projection") {

@@ -19,7 +19,7 @@ describe("Steward raw-source fixture self-check (not production acceptance)", ()
     const remote = fixture(); remote.addPull(444, [231]);
     const headers = { authorization: `Bearer ${SECRET}` };
     expect((await remote.fetch(`${remote.api}/pulls?state=closed`, { headers })).status).toBe(400);
-    expect((await remote.fetch(`${remote.api}/pulls?state=closed&sort=updated&direction=desc`, { headers })).status).toBe(200);
+    expect((await remote.fetch(`${remote.api}/pulls?state=closed&sort=updated&direction=desc&per_page=50`, { headers })).status).toBe(200);
     const response = await remote.fetch(`${remote.api}/issues/444/comments`, { headers });
     expect(await response.json()).toMatchObject([{ html_url: `${remote.web}/pull/444#issuecomment-800` }]);
   });
