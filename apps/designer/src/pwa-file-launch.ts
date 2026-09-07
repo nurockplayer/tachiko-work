@@ -24,6 +24,7 @@ export function registerPwaFileLaunch(
   queue.setConsumer(async (params) => {
     if (delivered.has(params)) return;
     delivered.add(params);
+    if (params.files.length === 0) return;
     await consume(params.files);
   });
   return true;

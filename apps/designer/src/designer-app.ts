@@ -894,7 +894,17 @@ export function mountDesigner(
     try {
       const document = await readSingleLocalRoDocument(handles);
       await ready;
-      if (destroyed || busy) return;
+      if (destroyed) return;
+      if (busy) {
+        showProjectFailure(
+          "Local file not opened",
+          new Error(
+            "Designer is busy with another operation. Try opening the local file again after it completes.",
+          ),
+        );
+        render();
+        return;
+      }
       if (!coldBootstrapOccurrence && !confirmDiscardDirtyOccurrence(`Open '${document.name}'`)) return;
       busy = true;
       notice = null;
