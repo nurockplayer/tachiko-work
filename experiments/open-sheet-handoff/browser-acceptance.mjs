@@ -43,6 +43,7 @@ test("human handoff: consent, real editing, truthful impact, rejection and saved
       return { path, bytes: readFileSync(path) };
     };
     await expect(button("Save work")).toBeDisabled();
+    await expect(page.getByTestId("validation")).toHaveText("Validation pending");
     await button("Prepare handoff").click();
     const preview = page.getByRole("region", { name: "Handoff proposal" });
     await expect(preview).toContainText("New identities");
@@ -72,12 +73,13 @@ test("human handoff: consent, real editing, truthful impact, rejection and saved
     await page.screenshot({ path: resolve(output, "01-accepted.png"), fullPage: true });
     await page.getByLabel("Earlier draft tax rate", { exact: true }).fill("0.75");
     await button("Freeze earlier draft").click();
-    await rate.fill("0.5");
+    await rate.fill("0.5000");
     await button("Apply tax rate").click();
     await expect(revision).not.toHaveText(beforeRevision);
     const currentRevision = (await revision.innerText()).trim();
     await expect(page.getByTestId("changed-field")).toHaveCount(1);
-    await expect(page.getByTestId("changed-field")).toContainText(/Tax rate.*0\.25.*0\.5/u);
+    await expect(page.getByTestId("changed-field")).toHaveText("Tax rate: 0.25 → 0.5");
+    await expect(rate).toHaveValue("0.5");
     for (const [id, [gross, net]] of Object.entries(targetValues)) {
       await expect(page.getByTestId(`gross-${id}`)).toHaveText(String(gross));
       await expect(page.getByTestId(`net-${id}`)).toHaveText(String(net));
@@ -92,7 +94,7 @@ test("human handoff: consent, real editing, truthful impact, rejection and saved
         new RegExp(`^${label} net: ${prior} → ${next}$`, "u"),
       );
     }
-    await expect(page.getByTestId("validation")).toHaveText("No diagnostics");
+    await expect(page.getByTestId("validation")).toHaveText("No diagnostics (authoritative projection)");
     const acceptedCard = await impact.innerText();
     const after = await save("after");
     assert.notDeepEqual(after.bytes, before.bytes);

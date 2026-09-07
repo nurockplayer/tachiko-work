@@ -3,7 +3,7 @@ import {
 } from "/vendor/tachiko/experimental-client.js";
 
 type Target = { entity: string; field: string };
-type Field = { target: Target; stored: { kind: string; value?: string | number } | null; calculated: { status: string; value?: number } | null };
+type Field = { target: Target; stored: { kind: string; value?: string | number } | null; calculated: { status: string; value?: number } | null; diagnostics?: unknown[] };
 type Table = { revision: string; rows: Array<{ id: string; fields: Field[] }> };
 
 const client = createExperimentalDesignerClient();
@@ -25,6 +25,7 @@ const freezeEarlier = byId<HTMLButtonElement>("freeze-earlier");
 const applyEarlier = byId<HTMLButtonElement>("apply-earlier");
 const plan = byId<HTMLElement>("plan");
 const impact = byId<HTMLElement>("impact");
+const validation = byId<HTMLElement>("validation");
 const error = byId<HTMLElement>("operation-error");
 const save = byId<HTMLButtonElement>("save");
 const close = byId<HTMLButtonElement>("close");
@@ -43,6 +44,16 @@ const key = (target: Target) => `${target.entity}.${target.field}`;
 const netTargets: Target[] = ["e-jan", "e-feb", "e-mar"].map(entity => ({ entity, field: "f-net" }));
 const text = (field: Field) => field.stored?.kind === "text" ? String(field.stored.value) : "";
 const number = (field: Field) => field.calculated?.status === "value" ? String(field.calculated.value) : "—";
+const storedNumber = (field: Field) => {
+  if (field.stored?.kind !== "number" || typeof field.stored.value !== "number") throw new Error("Missing authoritative numeric field.");
+  return String(field.stored.value);
+};
+const renderValidation = (fields: Field[]) => {
+  const diagnostics = fields.flatMap(field => field.diagnostics ?? []);
+  validation.textContent = diagnostics.length === 0
+    ? "No diagnostics (authoritative projection)"
+    : `Diagnostics: ${JSON.stringify(diagnostics)}`;
+};
 const clearError = () => { error.textContent = ""; };
 const report = (reason: unknown) => {
   error.textContent = reason instanceof DesignerRuntimeError ? reason.failure.code : String(reason);
@@ -80,6 +91,10 @@ function field(table: Table, target: Target): Field | undefined {
   return table.rows.flatMap(row => row.fields).find(item => key(item.target) === key(target));
 }
 
+function authoritativeField(fields: Field[], target: Target): Field | undefined {
+  return fields.find(item => key(item.target) === key(target));
+}
+
 async function install(opened: { bootstrap: { revision: string; collections: Array<{ key: string }> } }): Promise<void> {
   currentRevision = opened.bootstrap.revision;
   revision.textContent = currentRevision;
@@ -91,9 +106,10 @@ async function install(opened: { bootstrap: { revision: string; collections: Arr
   taxTarget = field(assumptions, { entity: "e-tax", field: "f-rate" })?.target ?? null;
   const tax = taxTarget && field(assumptions, taxTarget);
   if (!taxTarget || !tax || tax.stored?.kind !== "number") throw new Error("Frozen candidate lacks its editable tax field.");
-  taxValue = String(tax.stored.value);
+  taxValue = storedNumber(tax);
   taxInput.value = taxValue;
   labels = new Map(quarterlyPlan.rows.map(row => [row.id, text(field(quarterlyPlan, { entity: row.id, field: "f-label" })!)]));
+  renderValidation([...assumptions.rows.flatMap(row => row.fields), ...quarterlyPlan.rows.flatMap(row => row.fields)]);
   renderPlan(quarterlyPlan);
   work.hidden = false;
   taxInput.disabled = false;
@@ -171,12 +187,15 @@ applyTax.addEventListener("click", async () => {
   clearError();
   try {
     if (!currentRevision || !taxTarget) throw new Error("Accept the handoff first.");
-    const priorTaxInput = taxValue;
     const before = await client.queryFields(currentRevision, [taxTarget, ...netTargets]);
     const published = await client.editNumber(currentRevision, taxTarget, taxInput.value);
     const after = await client.queryFields(published.resulting_revision, [taxTarget, ...published.affected_calculations]);
     currentRevision = published.resulting_revision;
-    taxValue = taxInput.value;
+    const priorTax = authoritativeField(before.fields as Field[], taxTarget);
+    const nextTax = authoritativeField(after.fields as Field[], taxTarget);
+    if (!priorTax || !nextTax) throw new Error("Missing authoritative tax projection.");
+    taxValue = storedNumber(nextTax);
+    taxInput.value = taxValue;
     revision.textContent = currentRevision;
     const prior = new Map((before.fields as Field[]).map(item => [key(item.target), item]));
     impact.replaceChildren(...(after.fields as Field[]).filter(item => item.target.field === "f-net").map(item => {
@@ -187,8 +206,9 @@ applyTax.addEventListener("click", async () => {
     }));
     const changed = document.createElement("p");
     changed.dataset.testid = "changed-field";
-    changed.textContent = `Tax rate: ${priorTaxInput} → ${taxInput.value}`;
+    changed.textContent = `Tax rate: ${storedNumber(priorTax)} → ${taxValue}`;
     impact.prepend(changed);
+    renderValidation(after.fields as Field[]);
     await refreshPlan();
   } catch (reason) { report(reason); }
 });
