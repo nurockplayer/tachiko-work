@@ -28,12 +28,13 @@ describe("#229 operational refresh fail-closed gaps", () => {
     const remote = fixture();
     const initial = await observeGitHub(remote.options());
     expect(initial.stewardWatches.availability).toBe("complete");
-    expect(projectObservation({ latest: initial }).attention.items).toHaveLength(2);
+    const previous = projectObservation({ latest: initial });
+    expect(previous.attention.items).toHaveLength(2);
 
     remote.failures.add("comments");
     const failed = await observeGitHub(remote.options());
     expect(failed.stewardWatches).toEqual({ availability: "unavailable", value: null });
-    const projection = projectObservation({ latest: failed, previous: initial });
+    const projection = projectObservation({ latest: failed, previous });
     expect(projection.attention.items).toEqual([]);
     expect(projection.executive.mainSha.availability).toBe("complete");
     expect(projection.deliveries.find(lane => lane.issueNumber === 229)?.issueTitle.availability).toBe("complete");
