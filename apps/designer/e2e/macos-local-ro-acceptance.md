@@ -14,6 +14,8 @@ The missing production seam is the macOS desktop host:
 4. a cold-start OS event may use one bounded startup latch until the Designer can consume it, but runtime busy opens are not queued and retain #344 visible-rejection semantics;
 5. the shell owns no `.ro`/`.roproj` parser, formula engine, validation policy, semantic state, or second persistence model.
 
+For this bounded Tauri 2 host, the native macOS file-open source is the application `RunEvent::Opened { urls }` path. A cold `Opened` event may be retained only as the one-shot startup latch needed to cross the frontend-ready boundary; after handoff it is consumed and cleared. Warm `Opened` events are delivered directly and do not become a retry queue. This host lifecycle is transport glue only and must not become another document/session authority.
+
 `tests/macos-desktop-shell-acceptance.test.ts` is the Linux-safe production-seam oracle. It is not OS association evidence.
 
 ## Stage-0 commands
