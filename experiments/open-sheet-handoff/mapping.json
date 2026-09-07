@@ -1,0 +1,26 @@
+{
+  "profile": "quarterly-plan-one-time-handoff",
+  "document": { "id": "open-sheet-canary", "title": "Quarterly plan — integration canary" },
+  "assumptions": {
+    "block": "assumptions", "key": "rate",
+    "schema": { "id": "s-assumptions", "key": "assumptions" },
+    "entity": { "id": "e-tax", "key": "tax" },
+    "field": { "id": "f-rate", "key": "rate", "type": "number", "required": true }
+  },
+  "plan": {
+    "block": "plan", "row_label_column": "label",
+    "schema": { "id": "s-plan", "key": "plan" },
+    "rows": [
+      { "label": "January", "id": "e-jan", "key": "jan" },
+      { "label": "February", "id": "e-feb", "key": "feb" },
+      { "label": "March", "id": "e-mar", "key": "mar" }
+    ],
+    "fields": [
+      { "id": "f-label", "key": "label", "type": "text", "required": true },
+      { "id": "f-revenue", "key": "revenue", "type": "number", "required": true },
+      { "id": "f-cost", "key": "cost", "type": "number", "required": true },
+      { "id": "f-gross", "key": "gross", "type": "number", "required": true },
+      { "id": "f-net", "key": "net", "type": "number", "required": true }
+    ]
+  }
+}
