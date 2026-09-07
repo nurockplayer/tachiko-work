@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Quarterly plan handoff</title>
+  </head>
+  <body>
+    <main>
+      <h1>Quarterly plan handoff</h1>
+      <p>This is a bounded one-time handoff. It does not provide sync, merge, or durable audit history.</p>
+      <button type="button" id="prepare">Prepare handoff</button>
+      <section id="proposal" aria-label="Handoff proposal" hidden></section>
+      <button type="button" id="cancel">Cancel handoff</button>
+      <button type="button" id="accept">Accept handoff</button>
+      <p id="operation-error" data-testid="operation-error" aria-live="polite"></p>
+      <section id="work" hidden>
+        <p>Revision: <output data-testid="current-revision" id="revision"></output></p>
+        <label>Tax rate <input aria-label="Tax rate" id="tax-rate" type="text" disabled></label>
+        <button type="button" id="apply-tax">Apply tax rate</button>
+        <label>Earlier draft tax rate <input aria-label="Earlier draft tax rate" id="earlier-tax" type="text" value="0.75"></label>
+        <button type="button" id="freeze-earlier">Freeze earlier draft</button>
+        <button type="button" id="apply-earlier">Apply earlier draft</button>
+        <section aria-label="Current plan"><div id="plan"></div></section>
+        <section aria-label="Last accepted change" id="impact"></section>
+        <p data-testid="validation" id="validation">No diagnostics</p>
+      </section>
+      <button type="button" id="save" disabled>Save work</button>
+      <button type="button" id="close">Close work</button>
+      <label>Saved work <input aria-label="Saved work" id="saved-work" type="file" accept=".twdproj"></label>
+      <button type="button" id="open-saved">Open saved work</button>
+    </main>
+    <script type="module" src="/demo.ts"></script>
+  </body>
+</html>
