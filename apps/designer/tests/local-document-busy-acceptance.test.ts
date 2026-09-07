@@ -139,7 +139,9 @@ describe("local document busy acceptance", () => {
     if (damage === null || damage.form === null) throw new Error("damage form is required");
     damage.value = "45";
     damage.form.requestSubmit();
-    await vi.waitFor(() => expect(client.editStarted).toBe(true));
+    await vi.waitFor(() => {
+      expect(client.editStarted).toBe(true);
+    });
 
     await app.openLocalDocumentHandles([{
       kind: "file",
