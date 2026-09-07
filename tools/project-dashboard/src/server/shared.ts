@@ -128,7 +128,12 @@ class GitHubObserver {
     this.repositoryPath = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`;
     this.repositoryUrl = `${API}${this.repositoryPath}`;
     this.web = `https://github.com/${options.repository}`;
-    this.maxExternalRequests = options.maxExternalRequests ?? MAX_EXTERNAL_REQUESTS_PER_SNAPSHOT;
+    this.maxExternalRequests =
+      typeof options.maxExternalRequests === "number" &&
+      Number.isSafeInteger(options.maxExternalRequests) &&
+      options.maxExternalRequests >= 0
+        ? options.maxExternalRequests
+        : MAX_EXTERNAL_REQUESTS_PER_SNAPSHOT;
   }
 
   /**
