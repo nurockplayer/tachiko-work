@@ -30,7 +30,8 @@ fn quarterly_plan_supports_authoritative_human_edit_and_impact() {
             input: input.to_owned(),
         },
     };
-    let DesignerResponse::Published(publication) = runtime.handle(edit(&old_revision, "0.5")).unwrap()
+    let DesignerResponse::Published(publication) =
+        runtime.handle(edit(&old_revision, "0.5")).unwrap()
     else {
         panic!("expected publication");
     };
