@@ -45,7 +45,7 @@ describe("#342 Worker request boundary", () => {
     const original = globalThis.fetch;
     globalThis.fetch = remote.fetch;
     try {
-      const response = await call(env);
+      const response = await call(env, "/api/projection", { headers: { Authorization: "Bearer browser-session-canary" } });
       const body = await response.text();
       expect(response.status).toBe(200);
       expect(response.headers.get("cache-control")).toContain("no-store");
@@ -77,5 +77,34 @@ describe("#342 Worker request boundary", () => {
     expect(await response.text()).not.toContain(remote.options().token);
     expect(assetRequests).toHaveLength(1);
     expect(assetRequests[0]?.headers.get("authorization")).not.toContain(remote.options().token);
+  });
+
+  it("fails closed when a required server-side binding is absent", async () => {
+    const { env } = harness();
+    const response = await call({ ...env, GITHUB_TOKEN: "" });
+    expect(response.status).toBeGreaterThanOrEqual(400);
+  });
+
+  it("does not retain current MAIN across an upstream failure and recovers from a later observation", async () => {
+    const { remote, env } = harness();
+    const original = globalThis.fetch;
+    globalThis.fetch = remote.fetch;
+    try {
+      remote.failures.add("main");
+      remote.setErrorText(`upstream refused ${remote.options().token}`);
+      const failed = await call(env);
+      const failedText = await failed.text();
+      expect(failed.status).toBe(200);
+      expect(failedText).not.toContain(remote.options().token);
+      expect(JSON.parse(failedText).projection.executive.mainSha).toEqual({ availability: "unavailable", value: null });
+
+      remote.failures.clear();
+      remote.data.main = "4".repeat(40);
+      const recovered = await call(env);
+      expect((await recovered.json()).projection.executive.mainSha).toEqual({ availability: "complete", value: remote.data.main });
+      expect(remote.violations).toEqual([]);
+    } finally {
+      globalThis.fetch = original;
+    }
   });
 });
