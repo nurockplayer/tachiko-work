@@ -1,11 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  observeGitHub,
   startDashboard,
   type DashboardEnvelope,
   type RunningDashboard,
 } from "../../src/server/application.js";
-import { projectObservation } from "../../src/server/observation.js";
 import { fixture, SECRET } from "./github-fixture.js";
 
 const running: RunningDashboard[] = [];
@@ -24,20 +22,17 @@ async function read(server: RunningDashboard): Promise<DashboardEnvelope> {
 }
 
 describe("#229 operational refresh fail-closed gaps", () => {
-  it("comments failure clears previously observed attention while independent facts remain current", async () => {
-    const remote = fixture();
-    const initial = await observeGitHub(remote.options());
-    expect(initial.stewardWatches.availability).toBe("complete");
-    const previous = projectObservation({ latest: initial });
-    expect(previous.attention.items).toHaveLength(2);
+  it("comments failure through the HTTP application clears old attention while independent facts remain current", async () => {
+    const { server, remote } = await app();
+    const initial = await read(server);
+    expect(initial.projection.attention.items).toHaveLength(2);
+    expect(initial.projection.executive.mainSha.availability).toBe("complete");
 
     remote.failures.add("comments");
-    const failed = await observeGitHub(remote.options());
-    expect(failed.stewardWatches).toEqual({ availability: "unavailable", value: null });
-    const projection = projectObservation({ latest: failed, previous });
-    expect(projection.attention.items).toEqual([]);
-    expect(projection.executive.mainSha.availability).toBe("complete");
-    expect(projection.deliveries.find(lane => lane.issueNumber === 229)?.issueTitle.availability).toBe("complete");
+    const failed = await read(server);
+    expect(failed.projection.attention.items).toEqual([]);
+    expect(failed.projection.executive.mainSha.availability).toBe("complete");
+    expect(failed.projection.deliveries.find(lane => lane.issueNumber === 229)?.issueTitle.availability).toBe("complete");
     expect(remote.violations).toEqual([]);
   });
 
@@ -61,12 +56,14 @@ describe("#229 operational refresh fail-closed gaps", () => {
 });
 
 describe("#229 server-only configuration boundary", () => {
-  it("rejects browser query attempts to override repository, credential, or Steward trust", async () => {
+  it.each([
+    ["repository", "evil/repository"],
+    ["token", "attacker"],
+    ["trustedStewardLogins", "untrusted-visitor"],
+  ])("rejects browser query override %s before any upstream request", async (key, value) => {
     const { server, remote } = await app();
     const before = remote.requests.length;
-    const response = await fetch(
-      `${server.origin}/api/projection?repository=evil/repository&token=attacker&trustedStewardLogins=untrusted-visitor`,
-    );
+    const response = await fetch(`${server.origin}/api/projection?${encodeURIComponent(key)}=${encodeURIComponent(value)}`);
     expect(response.status).toBe(400);
     expect(await response.text()).not.toContain(SECRET);
     expect(remote.requests).toHaveLength(before);
