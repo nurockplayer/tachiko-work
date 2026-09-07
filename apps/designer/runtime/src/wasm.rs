@@ -12,8 +12,8 @@ use crate::interop_adapter::{
 use crate::{
     DesignerError, DesignerResponse, DesignerRuntime, DesignerWireReply,
     MAX_PROJECT_TRANSFER_BYTES, MAX_WIRE_REQUEST_BYTES, ProjectExportProjection, encode_reply,
-    ensure_wire_reply_size, inspect_project, open_project, process_wire_request,
-    request_too_large_reply,
+    ensure_wire_reply_size, inspect_project, open_local_document, open_project,
+    process_wire_request, request_too_large_reply,
 };
 use crate::{
     ImportSelection, InteropMetadata, NativeBudgetExportPresentation,
@@ -151,13 +151,19 @@ pub extern "C" fn tachiko_designer_project_reserve(length: u32) -> u32 {
 /// Fully admit and install one project candidate from the project arena.
 #[unsafe(no_mangle)]
 pub extern "C" fn tachiko_designer_project_open() {
-    process_project_candidate(true);
+    process_project_candidate(true, false);
+}
+
+/// Fully admit and install one raw local `.ro` document from the project arena.
+#[unsafe(no_mangle)]
+pub extern "C" fn tachiko_designer_project_open_local_document() {
+    process_project_candidate(true, true);
 }
 
 /// Inspect a fully admitted candidate without replacing resident state.
 #[unsafe(no_mangle)]
 pub extern "C" fn tachiko_designer_project_inspect() {
-    process_project_candidate(false);
+    process_project_candidate(false, false);
 }
 
 /// Run one private JSON spreadsheet operation with source bytes in PROJECT.
@@ -497,7 +503,7 @@ fn export_spreadsheet(
     })
 }
 
-fn process_project_candidate(install: bool) {
+fn process_project_candidate(install: bool, local_document: bool) {
     let project = PROJECT.with(|project| std::mem::take(&mut *project.borrow_mut()));
     RUNTIME.with(|runtime| {
         let mut runtime = runtime.borrow_mut();
@@ -532,7 +538,12 @@ fn process_project_candidate(install: bool) {
                             .failure_projection(current_revision(runtime.as_ref())),
                     };
                 };
-                match open_project(&mut runtime, &project, occurrence_id) {
+                let opened = if local_document {
+                    open_local_document(&mut runtime, &project, occurrence_id)
+                } else {
+                    open_project(&mut runtime, &project, occurrence_id)
+                };
+                match opened {
                     Ok(opened) => DesignerWireReply::Ok {
                         response: DesignerResponse::Opened(Box::new(opened)),
                     },

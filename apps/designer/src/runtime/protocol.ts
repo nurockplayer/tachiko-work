@@ -159,6 +159,12 @@ export type WorkerRequest =
       occurrence_id: string;
       bytes: ArrayBuffer;
     }
+  | {
+      id: number;
+      kind: "open_local_document";
+      occurrence_id: string;
+      bytes: ArrayBuffer;
+    }
   | { id: number; kind: "inspect_project"; bytes: ArrayBuffer }
   | { id: number; kind: "export_project"; expected_revision: string }
   | { id: number; kind: "close_project" };
