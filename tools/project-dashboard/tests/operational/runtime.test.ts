@@ -147,6 +147,15 @@ describe("#229 raw GitHub observation", () => {
     expect(projection.attention.items.every(x => x.sourceUrl.endsWith("700"))).toBe(true);
     expect(remote.violations).toEqual([]);
   });
+
+  it("fails closed when more than one trusted canonical Steward watch exists for the same PR", async () => {
+    const remote = fixture();
+    remote.data.comments.push(remote.comment(701, watchBody("GREEN", "none")));
+    const snapshot = await observeGitHub(remote.options());
+    expect(snapshot.stewardWatches.value?.filter(watch => watch.prNumber === 322)).toEqual([]);
+    expect(projectObservation({ latest: snapshot }).attention.items).toEqual([]);
+    expect(remote.violations).toEqual([]);
+  });
 });
 
 describe("#229 actual read-only HTTP/application boundary", () => {
