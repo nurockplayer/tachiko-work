@@ -890,19 +890,29 @@ export function mountDesigner(
     installOpenedOccurrence(opened);
   };
 
+  const rejectBusyLocalDocument = (): void => {
+    showProjectFailure(
+      "Local file not opened",
+      new Error(
+        "Designer is busy with another operation. Try opening the local file again after it completes.",
+      ),
+    );
+    render();
+  };
+
+  const isBusy = (): boolean => busy;
+
   const openLocalDocument = async (handles: readonly LocalDocumentHandle[]): Promise<void> => {
+    if (isBusy()) {
+      rejectBusyLocalDocument();
+      return;
+    }
     try {
       const document = await readSingleLocalRoDocument(handles);
       await ready;
       if (destroyed) return;
-      if (busy) {
-        showProjectFailure(
-          "Local file not opened",
-          new Error(
-            "Designer is busy with another operation. Try opening the local file again after it completes.",
-          ),
-        );
-        render();
+      if (isBusy()) {
+        rejectBusyLocalDocument();
         return;
       }
       if (!coldBootstrapOccurrence && !confirmDiscardDirtyOccurrence(`Open '${document.name}'`)) return;

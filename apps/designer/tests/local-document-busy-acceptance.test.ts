@@ -146,12 +146,14 @@ describe("local document busy acceptance", () => {
       expect(client.editStarted).toBe(true);
     });
 
+    const getFile = vi.fn(async () => new File(["opaque local bytes"], "other.ro"));
     await app.openLocalDocumentHandles([{
       kind: "file",
       name: "other.ro",
-      getFile: async () => new File(["opaque local bytes"], "other.ro"),
+      getFile,
     }]);
 
+    expect(getFile).not.toHaveBeenCalled();
     expect(client.localOpen).not.toHaveBeenCalled();
     expect(root.querySelector('[role="alert"]')?.textContent).toMatch(
       /busy|in progress|try again/i,
