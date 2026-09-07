@@ -49,7 +49,9 @@ describe("macOS desktop shell distribution acceptance", () => {
     if (config === null) return;
 
     expect(typeof config.identifier).toBe("string");
-    expect(String(config.identifier)).not.toHaveLength(0);
+    if (typeof config.identifier === "string") {
+      expect(config.identifier).not.toHaveLength(0);
+    }
 
     const frontendDist = config.build?.frontendDist;
     expect(typeof frontendDist, "desktop shell must serve the existing Designer build output").toBe(
@@ -66,8 +68,11 @@ describe("macOS desktop shell distribution acceptance", () => {
 
     const association = roAssociations[0];
     expect(association?.ext).toEqual(["ro"]);
-    expect(typeof association?.exportedType?.identifier).toBe("string");
-    expect(String(association?.exportedType?.identifier ?? "").split(".").length).toBeGreaterThanOrEqual(3);
+    const exportedIdentifier = association?.exportedType?.identifier;
+    expect(typeof exportedIdentifier).toBe("string");
+    if (typeof exportedIdentifier === "string") {
+      expect(exportedIdentifier.split(".").length).toBeGreaterThanOrEqual(3);
+    }
     expect(association?.exportedType?.conformsTo).toEqual(expect.arrayContaining(["public.data"]));
   });
 });
