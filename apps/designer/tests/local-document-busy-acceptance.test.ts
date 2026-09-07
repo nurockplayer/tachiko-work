@@ -41,7 +41,7 @@ const table = (revision = "resident/0", damage = 36): TableProjection => ({
 
 class BusyClient implements DesignerClient {
   editStarted = false;
-  readonly localOpen = vi.fn(async (): Promise<OpenedProjection> => ({
+  readonly localOpen = vi.fn(async (_bytes: ArrayBuffer): Promise<OpenedProjection> => ({
     bootstrap: { ...bootstrap, title: "Other Project" },
     table: table("resident/0", 12),
   }));
