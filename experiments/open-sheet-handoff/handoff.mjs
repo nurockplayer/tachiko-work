@@ -61,6 +61,7 @@ function shape(book, checked) {
   if (registry.size !== 2 || !object(assumptions, "unmapped_source") || !object(plan, "unmapped_source")
       || assumptions.kind !== "keyValue" || plan.kind !== "table" || plan.rowCount !== checked.rows.length) reject("unmapped_source");
   const sheets = Array.isArray(sourceBook.sheets) ? sourceBook.sheets : reject("unmapped_source");
+  if (sheets.length !== 2 || new Set(sheets.map(sheet => sheet?.name)).size !== sheets.length) reject("unmapped_source");
   const assumptionSheet = sheets.find(sheet => sheet?.name === assumptions.sheet);
   const planSheet = sheets.find(sheet => sheet?.name === plan.sheet);
   const rate = map(assumptions.keys, "unmapped_source").get(checked.assumptions.key);

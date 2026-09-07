@@ -232,6 +232,14 @@ test("handoff: appendable public-table metadata cannot be silently dropped", asy
   await rejected(compileModel(core, { appendable: true }), "unmapped_source");
 });
 
+test("handoff: duplicate worksheet names cannot collide with closed claims", async () => {
+  const book = compileModel(core);
+  book.sheets.push({ ...book.sheets[0], cells: new Map([
+    [core.cellKey(20, 20), { expr: core.now() }],
+  ]) });
+  await rejected(book, "unmapped_source");
+});
+
 test("handoff: cycles are not blessed by conversion and Rust refuses publication input", async () => {
   const book = compileModel(core, {
     formulas: { gross: (row) => core.add(row.cell("net"), 1) },
