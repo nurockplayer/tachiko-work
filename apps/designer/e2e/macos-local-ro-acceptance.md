@@ -16,6 +16,8 @@ The missing production seam is the macOS desktop host:
 
 For this bounded Tauri 2 host, the native macOS file-open source is the application `RunEvent::Opened { urls }` path. A cold `Opened` event may be retained only as the one-shot startup latch needed to cross the frontend-ready boundary; after handoff it is consumed and cleared. Warm `Opened` events are delivered directly and do not become a retry queue. This host lifecycle is transport glue only and must not become another document/session authority.
 
+If one `Opened` event carries more than one eligible `.ro`, the host must not silently choose the first file or discard the rest. Preserve the complete eligible input set into the existing shared ingress, or reject the multi-file event visibly before Rust admission while preserving the current occurrence; this must remain observationally equivalent to #344 multi-file rejection semantics.
+
 `tests/macos-desktop-shell-acceptance.test.ts` is the Linux-safe production-seam oracle. It is not OS association evidence.
 
 ## Stage-0 commands
@@ -50,7 +52,7 @@ At the final exact head, record all of the following:
 3. register/use the bundle through LaunchServices and prove a cold file-open launches the app with one valid current `.ro`;
 4. with that app already running, open a second valid `.ro` and prove exactly one warm delivery;
 5. show a semantic canary from the opened document through the existing Designer/Rust path (for the checked-in game-balance fixture: source title/current revision and calculated Iron Sword DPS `40` are acceptable canaries);
-6. demonstrate dirty replacement follows the existing explicit decision, and corrupt/unsupported input preserves the valid current occurrence with a visible rejection;
+6. demonstrate dirty replacement follows the existing explicit decision, corrupt/unsupported input preserves the valid current occurrence with a visible rejection, and a single OS event carrying multiple `.ro` files cannot silently open only one;
 7. rerun the Web/PWA Designer gates and required repository exact-head gates.
 
 `open`, `open -b`, or similar LaunchServices commands are useful executable OS-boundary evidence, but they are not to be described as a literal Finder mouse double-click. If final proof uses such commands, report them truthfully and separately record the strongest actual Finder observation available.
