@@ -27,11 +27,13 @@ const DESIGNER_ROOT = resolve(process.cwd());
 const TAURI_CONFIG = resolve(DESIGNER_ROOT, "src-tauri", "tauri.conf.json");
 const DESIGNER_DIST = resolve(DESIGNER_ROOT, "dist");
 
+/** Read only the production desktop bundle configuration under acceptance. */
 function readTauriConfig(): TauriConfig | null {
   if (!existsSync(TAURI_CONFIG)) return null;
   return JSON.parse(readFileSync(TAURI_CONFIG, "utf8")) as TauriConfig;
 }
 
+/** Require and expose the configured bundle file-association list. */
 function associations(config: TauriConfig): FileAssociation[] {
   const value = config.bundle?.fileAssociations;
   expect(Array.isArray(value), "Tauri bundle.fileAssociations must be an array").toBe(true);
