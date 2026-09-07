@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
@@ -24,7 +23,7 @@ type TauriConfig = {
   };
 };
 
-const DESIGNER_ROOT = fileURLToPath(new URL("../", import.meta.url));
+const DESIGNER_ROOT = resolve(process.cwd());
 const TAURI_CONFIG = resolve(DESIGNER_ROOT, "src-tauri", "tauri.conf.json");
 const DESIGNER_DIST = resolve(DESIGNER_ROOT, "dist");
 
