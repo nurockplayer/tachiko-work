@@ -27,14 +27,21 @@ export function fixture(repository = DEFAULT_REPO) {
     html_url: `${web}/pull/${prNumber}#issuecomment-${id}`,
     created_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-06T00:00:00Z",
   });
+  const dependencyByIssue = new Map<number, ReturnType<typeof issue>[]>([
+    [229, [issue(900, "Unobserved dependency target")]],
+    [231, [issue(901, "Second Issue dependency target")]],
+  ]);
   const data = {
     main: MAIN,
+    defaultBranch: "trunk",
     issues: [issue(229, "Dashboard operational acceptance"), issue(231, "Independent issue")],
     pulls: [{
       number: 322, title: "Implement the operational Dashboard", state: "open", draft: true,
       html_url: `${web}/pull/322`, head: { sha: HEAD }, base: { sha: OTHER },
     }],
-    dependencies: [issue(900, "Unobserved dependency target")],
+    // Backward-compatible alias used by older acceptance assertions for Issue 229.
+    dependencies: dependencyByIssue.get(229)!,
+    dependencyByIssue,
     linked: [{ number: 229, repository: { nameWithOwner: repository } }],
     comments: [comment(700, watchBody())],
     activity: [{ number: 320, title: "Previously merged change", state: "closed", merged_at: "2026-09-01T00:00:00Z", html_url: `${web}/pull/320` },
@@ -86,13 +93,14 @@ export function fixture(repository = DEFAULT_REPO) {
     if (request.method !== "GET") return fail(`non-read REST request: ${request.method}`);
     const pathname = url.pathname;
     const prefix = `/repos/${repository}`;
+    const dependencyMatch = /^\/issues\/(\d+)\/dependencies\/blocked_by$/.exec(pathname.slice(prefix.length));
     const commentMatch = /^\/issues\/(\d+)\/comments$/.exec(pathname.slice(prefix.length));
     let family: Fault | undefined;
     let payload: unknown;
     if (pathname === prefix) {
-      family = "main"; payload = { full_name: repository, default_branch: "trunk", html_url: web };
-    } else if (pathname === `${prefix}/git/ref/heads/trunk`) {
-      family = "main"; payload = { ref: "refs/heads/trunk", object: { type: "commit", sha: data.main } };
+      family = "main"; payload = { full_name: repository, default_branch: data.defaultBranch, html_url: web };
+    } else if (pathname === `${prefix}/git/ref/heads/${data.defaultBranch}`) {
+      family = "main"; payload = { ref: `refs/heads/${data.defaultBranch}`, object: { type: "commit", sha: data.main } };
     } else if (pathname === `${prefix}/issues`) {
       if (url.searchParams.get("state") !== "open") return fail("Issue discovery must request the open set");
       family = "issues";
@@ -106,8 +114,10 @@ export function fixture(repository = DEFAULT_REPO) {
       }
       else if (url.searchParams.get("state") === "open") { family = "pulls"; payload = data.pulls; }
       else return fail("PR discovery must distinguish current open PRs from bounded activity");
-    } else if (/\/issues\/(229|231)\/dependencies\/blocked_by$/.test(pathname) && pathname.startsWith(`${prefix}/`)) {
-      family = "dependencies"; payload = pathname.includes("/229/") ? data.dependencies : [];
+    } else if (pathname.startsWith(`${prefix}/`) && dependencyMatch) {
+      const number = Number(dependencyMatch[1]);
+      if (!data.issues.some(candidate => candidate.number === number)) return fail("dependencies requested for an undiscovered Issue");
+      family = "dependencies"; payload = dependencyByIssue.get(number) ?? [];
     } else if (pathname.startsWith(`${prefix}/`) && commentMatch) {
       const number = Number(commentMatch[1]);
       const selected = number === 322 ? data : extraPulls.get(number);
