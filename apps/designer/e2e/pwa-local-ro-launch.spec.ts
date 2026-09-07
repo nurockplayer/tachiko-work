@@ -199,7 +199,7 @@ test("multi-file PWA launch creates a fresh visible failure and preserves the cu
   await expect(page.getByLabel("Damage for Iron Sword")).toHaveValue("45");
 });
 
-test("empty and unreadable PWA launch inputs fail visibly without replacing current work", async ({ page }) => {
+test("empty PWA launch is a no-op; unreadable launch fails visibly without replacing current work", async ({ page }) => {
   await installLaunchQueueHarness(page);
   await page.goto("/");
   await expect.poll(() => hasLaunchConsumer(page)).toBe(true);
@@ -214,7 +214,7 @@ test("empty and unreadable PWA launch inputs fail visibly without replacing curr
   ).toHaveText("50");
 
   await deliverLaunch(page, []);
-  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Moonfall Balance" })).toBeVisible();
   await expect(page.getByLabel("Damage for Iron Sword")).toHaveValue("45");
 
