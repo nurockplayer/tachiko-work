@@ -6,7 +6,7 @@ describe("bounded remote observation", () => {
   it("terminates repeated REST pages and preserves partial availability", async () => {
     const remote = fixture();
     let pages = 0;
-    const snapshot = await observeGitHub({ ...remote.options(), fetch: async (input, init) => {
+    const snapshot = await observeGitHub({ ...remote.options(), maxExternalRequests: 200, fetch: async (input, init) => {
       const request = new Request(input, init);
       if (new URL(request.url).pathname === `/repos/${remote.repository}/issues`) {
         pages++;
@@ -25,7 +25,7 @@ describe("bounded remote observation", () => {
   it("terminates repeated GraphQL cursors without calling linkage complete", async () => {
     const remote = fixture();
     let pages = 0;
-    const snapshot = await observeGitHub({ ...remote.options(), fetch: async (input, init) => {
+    const snapshot = await observeGitHub({ ...remote.options(), maxExternalRequests: 200, fetch: async (input, init) => {
       const request = new Request(input, init);
       if (new URL(request.url).pathname === "/graphql") {
         pages++;
@@ -42,7 +42,7 @@ describe("bounded remote observation", () => {
   it("caps a stream of distinct next pages instead of trusting endless pagination", async () => {
     const remote = fixture();
     let pages = 0;
-    const snapshot = await observeGitHub({ ...remote.options(), fetch: async (input, init) => {
+    const snapshot = await observeGitHub({ ...remote.options(), maxExternalRequests: 200, fetch: async (input, init) => {
       const request = new Request(input, init);
       if (new URL(request.url).pathname === `/repos/${remote.repository}/issues`) {
         pages++;
@@ -52,14 +52,14 @@ describe("bounded remote observation", () => {
       return remote.fetch(input, init);
     } });
     expect(snapshot.issues.availability).toBe("partial");
-    expect(pages).toBeLessThanOrEqual(100);
+    expect(pages).toBe(100);
     expect(remote.violations).toEqual([]);
   });
 
   it("caps a stream of distinct GraphQL cursors as partial", async () => {
     const remote = fixture();
     let pages = 0;
-    const snapshot = await observeGitHub({ ...remote.options(), fetch: async (input, init) => {
+    const snapshot = await observeGitHub({ ...remote.options(), maxExternalRequests: 200, fetch: async (input, init) => {
       const request = new Request(input, init);
       if (new URL(request.url).pathname === "/graphql") {
         pages++;
@@ -71,14 +71,14 @@ describe("bounded remote observation", () => {
       return remote.fetch(input, init);
     } });
     expect(snapshot.pullRequests.value?.[0]?.linkedIssues.availability).toBe("partial");
-    expect(pages).toBeLessThanOrEqual(100);
+    expect(pages).toBe(100);
     expect(remote.violations).toEqual([]);
   });
 
   it("accepts a terminal page at the pagination boundary", async () => {
     const remote = fixture();
     let pages = 0;
-    const snapshot = await observeGitHub({ ...remote.options(), fetch: async (input, init) => {
+    const snapshot = await observeGitHub({ ...remote.options(), maxExternalRequests: 200, fetch: async (input, init) => {
       const request = new Request(input, init);
       if (new URL(request.url).pathname === `/repos/${remote.repository}/issues`) {
         pages++;
@@ -102,6 +102,24 @@ describe("bounded remote observation", () => {
     expect(snapshot.pullRequests.value).toEqual([]);
     expect(snapshot.stewardWatches.availability).toBe("complete");
     expect(snapshot.stewardWatches.value).toEqual([]);
+    expect(remote.violations).toEqual([]);
+  });
+
+  it("stops aggregate refresh fan-out at the external request budget", async () => {
+    const remote = fixture();
+    for (let number = 1000; number < 1025; number++) {
+      remote.data.issues.push({ number, title: `Issue ${number}`, state: "open", html_url: `${remote.web}/issues/${number}` });
+      remote.addPull(number, [number]);
+    }
+    const snapshot = await observeGitHub(remote.options());
+    expect(remote.requests).toHaveLength(50);
+    expect([
+      snapshot.main.availability,
+      snapshot.issues.availability,
+      snapshot.pullRequests.availability,
+      snapshot.stewardWatches.availability,
+      snapshot.recentActivity.availability,
+    ].some((availability) => availability !== "complete")).toBe(true);
     expect(remote.violations).toEqual([]);
   });
 

@@ -17,6 +17,8 @@ export interface DashboardOptions {
   trustedStewardLogins: readonly string[];
   /** Server-only injection of GitHub HTTP transport; never browser configuration. */
   fetch?: typeof globalThis.fetch;
+  /** Test-only widening of the conservative external request budget. */
+  maxExternalRequests?: number;
   /** Bind only to loopback. Zero selects an ephemeral port for acceptance. */
   port?: number;
 }
@@ -52,6 +54,9 @@ interface GitHubRow {
 const API = "https://api.github.com";
 const SHA = /^[0-9a-f]{40}$/i;
 export const RECENT_ACTIVITY_WINDOW = 50;
+// Keep one refresh within the Workers Free external-subrequest budget; paid
+// deployments may raise the platform limit, but this adapter remains fail-closed.
+const MAX_EXTERNAL_REQUESTS_PER_SNAPSHOT = 50;
 const MAX_PAGES_PER_CONNECTION = 100;
 const MAX_ENTITY_CONCURRENCY = 6;
 const unavailable = <T>(): Observed<T> => ({ availability: "unavailable", value: null });
@@ -114,6 +119,8 @@ class GitHubObserver {
   private readonly repositoryUrl: string;
   private readonly repositoryPath: string;
   readonly web: string;
+  private readonly maxExternalRequests: number;
+  private requestsUsed = 0;
 
   constructor(private readonly options: DashboardOptions) {
     const [owner, name] = repositoryParts(options.repository);
@@ -121,6 +128,7 @@ class GitHubObserver {
     this.repositoryPath = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`;
     this.repositoryUrl = `${API}${this.repositoryPath}`;
     this.web = `https://github.com/${options.repository}`;
+    this.maxExternalRequests = options.maxExternalRequests ?? MAX_EXTERNAL_REQUESTS_PER_SNAPSHOT;
   }
 
   /**
@@ -145,6 +153,8 @@ class GitHubObserver {
 
   private async request(url: string, init: RequestInit = {}): Promise<Response | null> {
     if (!this.allowedApiUrl(url)) return null;
+    if (this.requestsUsed >= this.maxExternalRequests) return null;
+    this.requestsUsed += 1;
     try {
       const headers = new Headers(init.headers);
       headers.set("authorization", `Bearer ${this.options.token}`);
