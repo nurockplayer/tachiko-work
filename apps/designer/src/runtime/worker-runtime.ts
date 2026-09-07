@@ -36,6 +36,14 @@ export function startDesignerWorker(wasmUrl: string): void {
             scope.postMessage({ id: event.data.id, ...reply });
             break;
           }
+          case "open_local_document": {
+            const reply = runtime.openLocalDocument(
+              new Uint8Array(event.data.bytes),
+              event.data.occurrence_id,
+            );
+            scope.postMessage({ id: event.data.id, ...reply });
+            break;
+          }
           case "export_project": {
             const reply = runtime.exportProject(event.data.expected_revision);
             if (reply.status === "error") {
