@@ -11,6 +11,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { pathToFileURL } from "node:url";
 import { compileModel } from "./model.mjs";
 import { proposeHandoff } from "./handoff.mjs";
+import { repositoryRoot } from "./prepare-demo-paths.mjs";
 
 function fail(message) {
   throw new Error(`prepare-demo: ${message}`);
@@ -44,7 +45,7 @@ const output = outputArgument();
 if (existsSync(output)) fail(`output already exists: ${output}`);
 const cli = process.env.TACHIKO_BIN;
 if (!cli) fail("TACHIKO_BIN must name the built Tachiko CLI");
-const root = resolve(new URL("../..", import.meta.url).pathname);
+const root = repositoryRoot(import.meta.url);
 const mapping = JSON.parse(
   await import("node:fs/promises").then(({ readFile }) => readFile(new URL("./mapping.json", import.meta.url), "utf8")),
 );

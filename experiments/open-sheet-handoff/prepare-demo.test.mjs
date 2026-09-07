@@ -4,9 +4,18 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { repositoryRoot } from "./prepare-demo-paths.mjs";
 
 const script = fileURLToPath(new URL("./prepare-demo.mjs", import.meta.url));
+
+test("prepare-demo resolves its export script root from encoded checkout paths", () => {
+  const modulePath = join("/tmp", "Tachiko 台灣 demo", "experiments", "open-sheet-handoff", "prepare-demo.mjs");
+  assert.equal(
+    repositoryRoot(pathToFileURL(modulePath).href),
+    join("/tmp", "Tachiko 台灣 demo"),
+  );
+});
 
 test("prepare-demo refuses an existing output without touching it", () => {
   const parent = mkdtempSync(join(tmpdir(), "tachiko-handoff-prepare-"));
