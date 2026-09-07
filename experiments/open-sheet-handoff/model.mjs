@@ -30,6 +30,7 @@ export function compileModel(core, options = {}) {
       origin: options.origin ?? { r: 0, c: 0 },
       children: Table({
         name: "plan", data: rows,
+        ...(options.appendable ? { appendable: true } : {}),
         columns: columns.map((key) => col(key, {
           ...(formula[key] ? { formula: formula[key] } : {}),
           ...(key === "label" ? {} : { format: "#,##0.00" }),

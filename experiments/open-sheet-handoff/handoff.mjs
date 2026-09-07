@@ -19,6 +19,9 @@ const map = (value, code = "invalid_mapping") => {
 const finite = value => typeof value === "number" && Number.isFinite(value);
 const unique = (values, code = "invalid_mapping") => { if (new Set(values).size !== values.length) reject(code); };
 const sourceCell = (sheet, row, column) => map(sheet.cells, "unmapped_source").get(`${row},${column}`);
+const exactProperties = (value, names) => {
+  for (const name of Object.keys(value)) if (!names.includes(name)) reject("unmapped_source");
+};
 
 function mapping(manifest) {
   const input = object(manifest);
@@ -50,18 +53,28 @@ function mapping(manifest) {
 }
 
 function shape(book, checked) {
-  const registry = map(book?.registry, "unmapped_source");
+  const sourceBook = object(book, "unmapped_source");
+  exactProperties(sourceBook, ["sheets", "registry", "definedNames"]);
+  const registry = map(sourceBook.registry, "unmapped_source");
   const assumptions = registry.get(checked.assumptions.block);
   const plan = registry.get(checked.plan.block);
   if (registry.size !== 2 || !object(assumptions, "unmapped_source") || !object(plan, "unmapped_source")
       || assumptions.kind !== "keyValue" || plan.kind !== "table" || plan.rowCount !== checked.rows.length) reject("unmapped_source");
-  const sheets = Array.isArray(book?.sheets) ? book.sheets : reject("unmapped_source");
+  const sheets = Array.isArray(sourceBook.sheets) ? sourceBook.sheets : reject("unmapped_source");
   const assumptionSheet = sheets.find(sheet => sheet?.name === assumptions.sheet);
   const planSheet = sheets.find(sheet => sheet?.name === plan.sheet);
   const rate = map(assumptions.keys, "unmapped_source").get(checked.assumptions.key);
   const columns = map(plan.columns, "unmapped_source");
   if (!assumptionSheet || !planSheet || !object(rate, "unmapped_source")
       || !Number.isInteger(plan.firstDataRow) || !Number.isInteger(columns.get(checked.plan.row_label_column))) reject("unmapped_source");
+  exactProperties(assumptions, ["kind", "name", "sheet", "rect", "keys"]);
+  exactProperties(plan, ["kind", "name", "sheet", "rect", "firstDataRow", "lastDataRow", "rowCount", "columns", "headerRow"]);
+  const definedNames = map(sourceBook.definedNames, "unmapped_source");
+  const namedRate = object(definedNames.get(checked.assumptions.key), "unmapped_source");
+  if (definedNames.size !== 1 || namedRate.sheet !== assumptions.sheet || namedRate.owner !== checked.assumptions.block
+      || namedRate.addr?.r !== rate.r || namedRate.addr?.c !== rate.c) reject("unmapped_source");
+  exactProperties(namedRate, ["sheet", "addr", "owner"]);
+  exactProperties(object(namedRate.addr, "unmapped_source"), ["r", "c"]);
   for (const field of checked.fields) if (!Number.isInteger(columns.get(field.key))) reject("unmapped_source");
   return { assumptions, plan, assumptionSheet, planSheet, rate, columns };
 }

@@ -228,6 +228,10 @@ test("handoff: unknown workbook metadata, cells and registry anchors fail closed
   }
 });
 
+test("handoff: appendable public-table metadata cannot be silently dropped", async () => {
+  await rejected(compileModel(core, { appendable: true }), "unmapped_source");
+});
+
 test("handoff: cycles are not blessed by conversion and Rust refuses publication input", async () => {
   const book = compileModel(core, {
     formulas: { gross: (row) => core.add(row.cell("net"), 1) },
