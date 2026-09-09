@@ -9,6 +9,10 @@ command -v pnpm >/dev/null 2>&1 || {
   echo "designer-check: pnpm 11.25.0 is required" >&2
   exit 1
 }
+command -v rg >/dev/null 2>&1 || {
+  echo "designer-check: ripgrep (rg) is required for exported-client boundary checks" >&2
+  exit 1
+}
 designer_pnpm_version="$(pnpm --dir "${designer_dir}" --version)"
 if [[ "${designer_pnpm_version}" != "11.25.0" ]]; then
   echo "designer-check: pnpm 11.25.0 is required; found ${designer_pnpm_version}" >&2
@@ -27,4 +31,5 @@ pnpm --dir "${designer_dir}" typecheck
 pnpm --dir "${designer_dir}" test
 pnpm --dir "${designer_dir}" build
 pnpm --dir "${designer_dir}" exec playwright test
+bash "${repo_root}/scripts/experimental-designer-client-source-boundary-test.sh"
 bash "${repo_root}/scripts/experimental-designer-client-smoke.sh"

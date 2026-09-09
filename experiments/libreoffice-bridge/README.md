@@ -1,115 +1,259 @@
-# LibreOffice collaboration qualification — Issue #355
+# LibreOffice → Tachiko: saved literal-table analysis
 
-**Research / tests-only.** Live Issue #355 owns scope and readiness. This is not
-an implemented Calc-to-Tachiko bridge or a product-acceptance pass.
+Owner: **Issue #355**. Research seed; the **live Issue alone controls readiness**.
+`bridge.py` deliberately returns `BRIDGE_NOT_IMPLEMENTED`. Never merge that stub
+or the failing acceptance seed as a finished bridge.
 
-## Reproduce Stage A
+Source-inspected baseline: `8bba9b09cea3c011df383216ba3846ccd003dece`.
+Stage-A ancestor: `8a883198bb53fe5559f4b5fa758d56d434f4c082` on
+`chatgpt/issue-355-libreoffice-preflight`. The branch retains that ancestry.
 
-Use an installed LibreOffice and its ABI-compatible Python with `import uno`.
-A generic uv-managed Python does not automatically include pyuno. On the tested
-Linux environment `/usr/bin/python3` provides the distribution's UNO binding:
+## Research decision
 
-```sh
-uv run --offline --no-project --no-managed-python --python /usr/bin/python3 \
-  python experiments/libreoffice-bridge/office_preflight.py \
-  --office /usr/bin/soffice --output /tmp/lo355-new-run
+The smallest useful next seam is a **local, read-only analysis of one explicitly
+selected rectangle in a saved ODS/XLSX file**, not a Calc menu extension, generic
+Office importer, formula translator, or another spreadsheet engine.
+
+```text
+explicit saved-file request + expected file hash + selection + mapping
+  → one bounded byte capture, independently hashed
+  → isolated LibreOffice opens a private copy
+  → typed cell observations (not display-only values)
+  → explicitly mapped, transient direct-ro/v2 candidate
+  → existing Rust validate / analyze document / analyze validation
+  → new analysis report + truthful fidelity ledger
 ```
 
-The output directory must be absent and its parent must exist. On macOS, select
-an actual Python/UNO combination and installed `soffice`; do not assume the Linux
-paths work. Missing bindings or connection failure are environment failures,
-not behavioral RED. This seed makes no macOS GUI/packaging claim.
+No Core or production CLI command is needed for this experiment. Current
+`crates/cli/src/main.rs` exposes all three native commands; `commands.rs` routes
+them through `tachiko_storage` and `tachiko_workspace_engine`. The already
+merged #341 experiment establishes a precedent for an explicit untrusted DTO
+candidate admitted by Rust. Neither Python nor the report becomes semantic
+validation authority. No Python formula evaluator or canonical `.roproj` codec
+is permitted.
 
-Only synthetic documents authored inside the script are opened. The runner uses
-a fresh profile, a unique local named pipe (no TCP listener), explicit
-NEVER_EXECUTE / NO_UPDATE load settings, a 90-second Office-process watchdog,
-and cleanup restricted to its own process group/temp profile. These precautions
-are not an adversarial sandbox qualification. No unknown input path is accepted.
+#337/#341's export, editable handoff and actual-saved-artifact Office evidence
+remain with their existing owners; do not copy their exporters or reopen #335.
+They are not this new ingress's test oracle. A5 (persistent handoff/re-export)
+is **not activated** in this read-only slice. Ordinary repository regression
+requirements still apply to the final delivery head.
 
-The output contains generated ODS/XLSX files, `office.log`, and full observations
-in `evidence.json`. Keep these under scratch storage; the generator and compact
-execution manifest are tracked, not binary samples. Re-running reconstructs the
-corpus. ZIP metadata may differ; compare the bounded observations rather than
-requiring byte-identical packages. File hashes identify artifacts from one run.
+## Fixed experiment profile
 
-## Six executable checks
+The fixture in `canary.py` declares a three-row inventory table with Text `code`,
+Number `quantity`, and Number `unit_price`. It includes `00123`, literal `=1+1`,
+Unicode, zero, a negative number and a fractional number. A negative quantity
+is not automatically invalid: this profile invents no business rule.
 
-| Check | Independent expected observation | Limit |
-| --- | --- | --- |
-| Literal/type round trip | `00123` and `=1+1` remain Text; Unicode and 42.5 survive; true blank, empty formula result and zero remain distinguishable | TRUE/FALSE are formula-result probes, not proof of native Boolean import |
-| Quarterly-plan round trip | ODS → XLSX → ODS preserves six live formula cells; changing tax 0.25 → 0.5 changes net 600/600/750 → 400/400/500; changed XLSX reopens with those results | Hand-derived #337 canary arithmetic, not general formula-tree equivalence or Excel certification |
-| Date/percent/error round trip | Explicit 1899-12-30 origin; serial 46274 displays 2026-09-09; 0.25 displays 25.00%; divide-by-zero remains an error, not blank | No general Date/Currency/error migration authorization |
-| ReadOnly API behavior | A logically read-only document can still be changed through UNO while the source file stays unchanged without saving | Proves why the flag alone is not an integrity boundary |
-| Existing-output protection | A sentinel destination is refused and preserved | Test harness behavior, not a product transaction or race-safety proof |
-| Read observation preservation | Repeated reads preserve observed cells, dirty state and source bytes | Synthetic single-session observation, not concurrent-save safety |
+The same bounded contract admits 1–100 explicitly mapped rows and 1–16 columns
+in one rectangle, including one header row (height 2–101). Positions/dimensions
+are non-Boolean integers, start at zero, and must fit Calc's actual sheet.
+`mapping.key_header` locates the required Text source-key column. Every header
+and data-row source key is non-empty, unique and mapped exactly once. Every
+selected cell is covered; no trailing-row/column truncation or silent omission.
+Mapping columns/rows must also have unique nonempty target IDs and keys. The
+native storage reader remains the final authority over admitted identities.
 
-The first three checks observe the freshly authored workbook and reopen each
-format transition. All previously generated source hashes are checked during
-conversion; changed-input recalculation does not overwrite its source files.
+`BASE_MAPPING` shows the disposable mapping structure. The caller explicitly
+assigns new document/schema/field/entity IDs and required field types. IDs are
+not derived from A1 locations, sheet names or file hashes; they do not recover
+Office history. Reuse of fixed fixture IDs in tests is not reimport/merge or a
+cross-project identity guarantee. There is no existing-project input/write path.
 
-The observations come from real UNO/Calc, not Python's formula evaluation. The
-script does not parse or evaluate formulas, translate Office into `.ro`, or
-modify existing Tachiko acceptance. It deliberately demonstrates that Calc's
-cell type/display/value are different information channels.
+| Observed source | Rule |
+| --- | --- |
+| UNO `TEXT` → mapped Text | Preserve the text exactly; never interpret a leading `=` as a formula |
+| UNO `VALUE` → mapped Number | Preserve the observed finite binary64 value, including zero; do not parse displayed strings or coerce Text/Boolean |
+| Decimal number format `16` or `17` | Accept the stored number; formatting is presentation-only (`NUMBER`, optionally `DEFINED`) |
+| Formula, even with a matching cached value | Reject; no cached-value substitution, parser or evaluator |
+| Date/time/currency/percent/logical/other numeric format | Reject as outside this closed experiment, not a general Tachiko limitation |
+| True blank, wrong mapped scalar type, nonfinite value | Reject rather than invent a default or repair it |
+| Merged cell in the selection | Reject instead of guessing row/column ownership |
+| Unknown/duplicate/missing header or row key | Reject the complete analysis |
 
-## Actual evidence
+“Exact scalars” is relative to the values observed by Calc **after its file
+import**, not a promise about arbitrary original XML number spellings, metadata,
+formula equivalence or lossless whole-workbook migration. Cells outside the
+selected rectangle are explicitly unassessed; the report must not say the whole
+workbook is validated or safe. Hidden/filter styling is not an exclusion rule:
+all physical cells in the explicit selection are considered.
 
-`evidence-summary.json` records the tested script hash and six passing checks on
-LibreOffice **25.2.3.2 520(Build:2)** / Linux x86_64 / distribution Python 3.13.5.
-The upstream API documentation inspected on 2026-09-09 describes 26.8; that does
-not mean this executable test ran on 26.8. Python compilation also passed.
+## Unsaved work and source binding
 
-Native Tachiko, Rust compilation, installed open-sheet execution, macOS GUI,
-Ruff, full repository gates and independent final-head review were **not run in
-this preparation environment**. Rust/cargo/tachiko/pnpm/Ruff were unavailable,
-and a GitHub clone failed due to container DNS. Connected GitHub reads/writes
-worked separately. These are disclosed environment limits, not red product
-behavior. Historical #337/#341 passes are prior evidence, not reruns here.
+The CLI accepts only `source.kind = "saved-file"`. It analyzes the named file's
+persisted bytes, **not the user's current Calc window**. To include unsaved edits,
+the user must explicitly save/export a separate copy first. The command neither
+attaches to an active Office process nor claims it can detect another process's
+unsaved buffer. Requests describing an active document are rejected, never
+silently replaced by the previous disk version.
 
-## Stage B: existing native evidence, not a new implementation lane
+Require a regular, non-symlink `.ods`/`.xlsx` file no larger than 2 MiB and a
+lowercase 64-hex expected SHA-256. Capture source bytes once, compare their hash,
+and load only a private copy of that captured buffer. Do not hash one file and
+then ask UNO to open a moving original. Recheck the original before publication;
+an observed mismatch/disappearance rejects `source_changed`. This is ordinary
+concurrent-change detection, not an adversarial filesystem-lock/ABA guarantee.
 
-From a normal complete checkout, follow CONTRIBUTING.md for pinned tools, then
-reuse existing owners rather than adding another exporter or formula oracle:
+Hash and selection are **source evidence**, never a resident revision, semantic
+ID, approval or proof of trust. `analyze --source-state` receives the file hash as
+an opaque observation label only. No distributed atomicity claim spans Office,
+filesystem and Tachiko. When another process changes a source or wins the output
+race, preserve that external result; never claim to roll it back.
+
+## Two executable boundaries
+
+### Native integration seam
+
+```python
+bridge.analyze_snapshot(observation, mapping, *, tachiko_bin: str) -> dict
+```
+
+This is a disposable internal integration/test boundary, not a supported public
+JSON import API. The end-user command must obtain observations from real UNO;
+it must not offer an option to substitute caller JSON for Office observation.
+The exact observation example is `synthetic_observation()` in `canary.py`.
+`source` contains saved-file kind, hash and selection; `rows` is the complete
+header/data rectangle. Cell `kind` is UNO's EMPTY/TEXT/VALUE/FORMULA; Text has
+`text`, Number has `value` and raw `number_format` flags; `merged` is Boolean.
+
+Successful result:
+
+```text
+{status: "analyzed", source: <same observation source>,
+ candidate: <explicit direct-ro/v2 DTO>,
+ native: {document: <actual native JSON>, validation: <actual native JSON>},
+ ledger: [{classification, code, ...}, ...]}
+```
+
+The transient candidate crosses real `tachiko validate`, `tachiko analyze
+document`, and `tachiko analyze validation` over the same private candidate bytes.
+Return the real JSON, not a Python imitation. Keep stdout JSON clean; native
+errors/timeout/non-JSON output cannot become success. Temporary candidates are
+removed on success/failure. Caller-owned observation/mapping objects are not
+mutated. The only native operations in this slice are read/validation commands.
+
+The accepted ledger includes:
+
+| Classification | Required code |
+| --- | --- |
+| exact | `selected_scalars` |
+| strengthening | `explicit_schema` |
+| strengthening | `new_identity` |
+| presentation | `presentation_not_imported` |
+| unresolved | `outside_selection_unassessed` |
+
+A rejected result is `{status: "rejected", code, ledger}` with a same-code ledger
+entry and **no candidate/native success fields**. Codes: `invalid_snapshot`,
+`invalid_mapping`, `mapping_mismatch`, `unsupported_cell`, `type_mismatch`,
+`native_failure`. Selected unsupported content has an `unsupported` ledger entry
+with its source locator; no partial success. Detailed diagnostic prose is free.
+
+### Actual saved-file command
 
 ```sh
-pnpm --dir experiments/open-sheet-export install --frozen-lockfile
-cargo test -p tachiko-cli --test open_sheet_acceptance --locked
-cargo test -p tachiko-cli --test open_sheet_handoff_acceptance --locked
-cargo test --manifest-path apps/designer/runtime/Cargo.toml \
-  --test open_sheet_handoff_preflight --locked
+uv run --no-project --no-managed-python --python /path/to/pyuno-python \
+  python experiments/libreoffice-bridge/bridge.py --request /absolute/request.json
+```
+
+The request is `{source: {kind, path, expected_sha256, selection}, mapping,
+output}`. `output` is a new absent JSON file; the parent exists. Environment:
+`TACHIKO_BIN` and `REFERENCE_OFFICE_BIN` identify the native CLI and installed
+LibreOffice. The request must not select a remote UNO connection.
+
+Exit 0 and return the full successful JSON on stdout and in the output file.
+Other outcomes exit nonzero with the rejected JSON on stdout and no newly
+published report. Additional host codes: `saved_file_required`, `invalid_input`,
+`source_changed`, `invalid_output`. Reject existing/symlink output, source/output
+aliasing and destination races. Stage output privately and publish no-replace;
+do not expose a partial report or delete another writer's output. Keep all
+existing Office files and Tachiko projects untouched.
+
+Use a fresh profile/private local pipe, disable document macros and external
+link updates, bound process timeouts and clean only owned processes/files.
+`ReadOnly` is supplementary, not a security guarantee. Shared process-lifecycle
+helpers may be extracted from the Stage-A harness without changing its oracle;
+production must not import `canary.py`, `acceptance.py`, `office_acceptance.py`
+or copy expected records. Do not add a production dependency on the tests.
+This experiment only handles trusted synthetic inputs. Its load flags, private
+profile and tests do not certify hostile-document isolation or network safety.
+
+## Acceptance and commands
+
+| Requirement | Executable evidence |
+| --- | --- |
+| Actual Office facts match the native fixture | 3 `OfficePreflight` tests: ODS/XLSX, dirty buffer versus disk, moved selection |
+| Existing Rust admission/read/reopen seam | 3 `NativePreflight` tests, real Cargo-built CLI |
+| A1: typed mapping and actual native authority | `NativeAcceptance` 01–03, 12–14; real forwarding trace + independent native comparison |
+| A2/A3: honest mapping, no loss/coercion/partial result | `NativeAcceptance` 04–11; `OfficeAcceptance` 03–04, 08 |
+| A4: source/output/other-project preservation | `OfficeAcceptance` 05–07, 09–11; native temp cleanup assertions |
+| A6: actual saved file → implemented command → Rust | 11 `OfficeAcceptance` methods, real UNO and real CLI; no macOS GUI claim |
+| A5: editable accepted handoff/re-export | Not activated; remains a separate evidence-triggered slice |
+
+```sh
+# Stage A, unchanged previous qualification
+REFERENCE_OFFICE_BIN=/path/to/soffice
+uv run --offline --no-project --no-managed-python --python /path/to/pyuno-python \
+  python experiments/libreoffice-bridge/office_preflight.py \
+  --office "$REFERENCE_OFFICE_BIN" --output /tmp/lo355-new-stage-a
+
+# New oracle self-check (not engine evidence)
+uv run --no-project --no-managed-python python \
+  experiments/libreoffice-bridge/acceptance.py --mode oracle
+
+# New real Office source qualification; no native dependency
+export REFERENCE_OFFICE_BIN=/path/to/soffice
+uv run --offline --no-project --no-managed-python --python /path/to/pyuno-python \
+  python experiments/libreoffice-bridge/office_acceptance.py \
+  --mode preflight --evidence /tmp/lo355-new-preflight.json
+
+# Real native preflight + missing-bridge behavioral acceptance under existing CI
+cargo test -p tachiko-cli --test libreoffice_bridge_acceptance --locked
+
+# Final actual end-to-end Office gate AFTER implementation
 cargo build -p tachiko-cli --locked
 export TACHIKO_BIN="$(pwd)/target/debug/tachiko"
-export REFERENCE_OFFICE_BIN=/absolute/path/to/installed/soffice
-export OPEN_SHEET_POC_COMMAND='["node","experiments/open-sheet-export/export.mjs"]'
-uv run --no-project --no-managed-python python \
-  experiments/open-sheet-export/acceptance.py --mode office
+export LIBREOFFICE_BRIDGE_HEAD="$(git rev-parse HEAD)"
+uv run --no-project --no-managed-python --python /path/to/pyuno-python \
+  python experiments/libreoffice-bridge/office_acceptance.py \
+  --mode acceptance --evidence /tmp/lo355-new-final.json
 ```
 
-Read the existing export/handoff READMEs for their complete requirements and
-actual-saved-artifact checks. Their native/public-package/Office results are
-separate evidence classes; the five commands above alone do not prove the new
-Calc ingress or GUI. Record exact source/HEAD and binary/package provenance.
+The Cargo bridge deliberately follows the existing repository's stdlib Python
+subprocess test pattern; there is no new Python dependency or CI workflow.
+`cargo test` native mode does **not** run UNO or the saved-file command. The local
+Office preflight does **not** run Rust. Both distinctions must remain visible.
+Missing binaries, setup/compile errors or wrong fixture expectations are not RED.
+A successful native subset alone is not completion of this Issue.
 
-Next inspect the smallest saved-Calc-snapshot → explicit new candidate seam.
-Report which existing Rust admission and read-only semantic query surfaces can
-be exercised without an Office formula parser, automatic schema inference or
-Core changes. Return the exact gap and source/mapping evidence to Steward.
-**Do not create the production adapter or invent replacement acceptance.**
-Steward owns the additional executable A1–A6 acceptance before implementation
-readiness. Native preflight cannot promote its own assumptions into authority.
+Use Ruff for implementation lint/format and the live repository's final-head
+checks. Add delivery-agent unit tests independently of this acceptance. Actual
+Office/native end-to-end evidence and fresh independent Guarded review are
+required before handback; neither can be substituted by the preflight or by
+matching cached values. No failing seed merge, skipped-test green, self-merge,
+upstream contact, extension publication or partnership claim.
 
-A future accepted candidate has newly assigned identities. Ordinary Office
-files do not preserve Tachiko schema, history or authorization merely because
-values look the same. Unsaved Calc edits, stale source hashes and unsupported
-formulas need explicit rejection or a separate user-approved saved copy—not
-silent fallback to cached values or a previous disk version.
+## Evidence at preparation
 
-## Source trail
+Historical Stage-A results remain in `evidence-summary.json`; they are not a
+new native result. In this preparation, Stage A was rerun (6/6 PASS), new real
+Office preflight ran (3/3 PASS), oracle self-checks ran (3/3 PASS), and Python
+syntax compiled. LibreOffice was 25.2.3.2 on Linux with distribution pyuno/Python
+3.13.5. Full saved-file bridge acceptance remains unexecuted while the stub is
+present. The live Issue records hosted native qualification and exact seed SHA.
 
-- Live scope and references: Issue #355.
-- Existing arithmetic/export: `../open-sheet-export/canary.json` and acceptance.
-- Existing human handoff: `../open-sheet-handoff/`; #335 final disposition.
-- UNO API: https://api.libreoffice.org/
-- Load/save/ReadOnly caveat: https://api.libreoffice.org/docs/idl/ref/servicecom_1_1sun_1_1star_1_1document_1_1MediaDescriptor.html
-- Add-on entry point: https://help.libreoffice.org/latest/en-US/text/shared/guide/integratinguno.html
-- Licensing, not clearance: https://www.libreoffice.org/licenses/
+This container lacks Cargo/Rust/pnpm/Ruff, and direct GitHub clone fails on DNS;
+connected GitHub operations work. Existing push CI can execute the new native
+harness without changing workflows. No local lack of tools is reported as a
+behavioral failure. Do not infer independent review or a complete release gate.
+
+## Official source trail
+
+- XCell channels and the Text→getValue() zero trap: https://api.libreoffice.org/docs/idl/ref/interfacecom_1_1sun_1_1star_1_1table_1_1XCell.html
+- NumberFormat constants: https://api.libreoffice.org/docs/idl/ref/NumberFormat_8idl.html
+- Logical ReadOnly / macro / update load options: https://api.libreoffice.org/docs/idl/ref/servicecom_1_1sun_1_1star_1_1document_1_1MediaDescriptor.html
+- Save-copy versus changing document location: https://api.libreoffice.org/docs/idl/ref/interfacecom_1_1sun_1_1star_1_1frame_1_1XStorable.html
+- Loaded-document modified state: https://api.libreoffice.org/docs/idl/ref/interfacecom_1_1sun_1_1star_1_1util_1_1XModifiable.html
+
+Docs inspected on 2026-09-10 describe the 26.8 API reference, not the installed
+25.2 binary qualification. Accepted repository authority remains controlling;
+this closed profile creates no public SDK, source format or permanent limit.
