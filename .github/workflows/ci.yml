@@ -109,6 +109,9 @@ jobs:
       - name: Install Designer dependencies
         run: pnpm --dir apps/designer install --frozen-lockfile
 
+      - name: Install ripgrep for source-boundary checks
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends ripgrep
+
       - name: Install Chromium
         run: pnpm --dir apps/designer exec playwright install --with-deps chromium
 

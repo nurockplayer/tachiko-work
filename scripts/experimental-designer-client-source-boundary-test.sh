@@ -54,18 +54,30 @@ EOF
 }
 
 run_case() {
-  local rg_status="$1"
-  local expected="$2"
+  local private_source_status="$1"
+  local emitted_js_status="$2"
+  local expected="$3"
   local root
   root="$(mktemp -d "${TMPDIR:-/tmp}/tachiko-source-boundary-test.XXXXXX")"
   make_fixture "${root}"
 
   cat >"${root}/bin/rg" <<EOF
 #!/usr/bin/env bash
-if [[ ${rg_status} -eq 0 ]]; then
+status=2
+for argument in "\$@"; do
+  case "\${argument}" in
+    */examples/experimental-designer-client/src)
+      status=${private_source_status}
+      ;;
+    */examples/experimental-designer-client/vendor/tachiko)
+      status=${emitted_js_status}
+      ;;
+  esac
+done
+if [[ \${status} -eq 0 ]]; then
   printf '%s\n' 'fixture:1:forbidden source import'
 fi
-exit ${rg_status}
+exit \${status}
 EOF
   chmod +x "${root}/bin/rg"
 
@@ -79,17 +91,21 @@ EOF
   case "${expected}" in
     success)
       if [[ ${status} -ne 0 ]]; then
-        echo "source-boundary test: rg=${rg_status} should mean clean no-match, got ${status}" >&2
+        echo "source-boundary test: clean scans should succeed, got ${status}" >&2
         return 1
       fi
       ;;
     failure)
       if [[ ${status} -eq 0 ]]; then
-        echo "source-boundary test: rg=${rg_status} must not be treated as clean no-match" >&2
+        echo "source-boundary test: private=${private_source_status} emitted=${emitted_js_status} must not be treated as clean no-match" >&2
         return 1
       fi
-      if [[ ${rg_status} -gt 1 && "${output}" != *"source-boundary scan failed (rg exit ${rg_status})"* ]]; then
-        echo "source-boundary test: rg=${rg_status} must report an actionable scan failure" >&2
+      if [[ ${private_source_status} -gt 1 && "${output}" != *"source-boundary scan failed (rg exit ${private_source_status})"* ]]; then
+        echo "source-boundary test: private-source scan failure must be actionable" >&2
+        return 1
+      fi
+      if [[ ${emitted_js_status} -gt 1 && "${output}" != *"source-boundary scan failed (rg exit ${emitted_js_status})"* ]]; then
+        echo "source-boundary test: emitted-JavaScript scan failure must be actionable" >&2
         return 1
       fi
       ;;
@@ -101,9 +117,11 @@ EOF
 }
 
 # ripgrep: 0 = match, 1 = clean no-match, >1 = scan/tool failure.
-run_case 1 success
-run_case 0 failure
-run_case 2 failure
-run_case 127 failure
+run_case 1 1 success
+run_case 0 1 failure
+run_case 1 0 failure
+run_case 2 1 failure
+run_case 1 2 failure
+run_case 127 1 failure
 
 echo "experimental Designer source-boundary scanner semantics passed"
