@@ -1,0 +1,19 @@
+{
+  "name": "tachiko-work-client-acceptance-seed",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "test": "node --test tests/harness.test.mjs",
+    "fixture": "node scripts/materialize-fixture.mjs",
+    "acceptance:web": "node tests/browser.mjs",
+    "acceptance:agent": "node tests/agent.mjs",
+    "serve:canary": "node scripts/serve-canary.mjs",
+    "acceptance:kit": "node tests/kit.mjs",
+    "acceptance:storage": "node tests/storage.mjs",
+    "acceptance:agent-ui": "node tests/browser.mjs --agent"
+  }
+}

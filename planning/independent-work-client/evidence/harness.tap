@@ -1,0 +1,190 @@
+TAP version 13
+# Subtest: oracle control: linked
+ok 1 - oracle control: linked
+  ---
+  duration_ms: 1.26513
+  type: 'test'
+  ...
+# Subtest: oracle control: rejected
+ok 2 - oracle control: rejected
+  ---
+  duration_ms: 0.335388
+  type: 'test'
+  ...
+# Subtest: oracle control: saveFailed
+ok 3 - oracle control: saveFailed
+  ---
+  duration_ms: 0.128621
+  type: 'test'
+  ...
+# Subtest: oracle control: reopened
+ok 4 - oracle control: reopened
+  ---
+  duration_ms: 0.138093
+  type: 'test'
+  ...
+# Subtest: oracle control: unknown
+ok 5 - oracle control: unknown
+  ---
+  duration_ms: 0.331513
+  type: 'test'
+  ...
+# Subtest: oracle control: proposal
+ok 6 - oracle control: proposal
+  ---
+  duration_ms: 0.121696
+  type: 'test'
+  ...
+# Subtest: negative control: cached calculation
+ok 7 - negative control: cached calculation
+  ---
+  duration_ms: 1.422372
+  type: 'test'
+  ...
+# Subtest: negative control: old revision
+ok 8 - negative control: old revision
+  ---
+  duration_ms: 0.40426
+  type: 'test'
+  ...
+# Subtest: negative control: old occurrence
+ok 9 - negative control: old occurrence
+  ---
+  duration_ms: 0.451776
+  type: 'test'
+  ...
+# Subtest: negative control: retargeted view
+ok 10 - negative control: retargeted view
+  ---
+  duration_ms: 0.628674
+  type: 'test'
+  ...
+# Subtest: negative control: source overwrite
+ok 11 - negative control: source overwrite
+  ---
+  duration_ms: 1.227619
+  type: 'test'
+  ...
+# Subtest: negative control: unpublished result
+ok 12 - negative control: unpublished result
+  ---
+  duration_ms: 0.20696
+  type: 'test'
+  ...
+# Subtest: negative control: lost notes
+ok 13 - negative control: lost notes
+  ---
+  duration_ms: 0.241256
+  type: 'test'
+  ...
+# Subtest: negative control: partial mutation
+ok 14 - negative control: partial mutation
+  ---
+  duration_ms: 0.144378
+  type: 'test'
+  ...
+# Subtest: negative control: revision changed
+ok 15 - negative control: revision changed
+  ---
+  duration_ms: 0.300241
+  type: 'test'
+  ...
+# Subtest: negative control: draft discarded
+ok 16 - negative control: draft discarded
+  ---
+  duration_ms: 0.234627
+  type: 'test'
+  ...
+# Subtest: negative control: false saved
+ok 17 - negative control: false saved
+  ---
+  duration_ms: 0.200006
+  type: 'test'
+  ...
+# Subtest: negative control: dirty erased
+ok 18 - negative control: dirty erased
+  ---
+  duration_ms: 0.126903
+  type: 'test'
+  ...
+# Subtest: negative control: destination replaced
+ok 19 - negative control: destination replaced
+  ---
+  duration_ms: 0.125689
+  type: 'test'
+  ...
+# Subtest: negative control: reused authority
+ok 20 - negative control: reused authority
+  ---
+  duration_ms: 0.11203
+  type: 'test'
+  ...
+# Subtest: negative control: memory-only save
+ok 21 - negative control: memory-only save
+  ---
+  duration_ms: 0.177133
+  type: 'test'
+  ...
+# Subtest: negative control: cached reopen
+ok 22 - negative control: cached reopen
+  ---
+  duration_ms: 0.13736
+  type: 'test'
+  ...
+# Subtest: negative control: blind retry
+ok 23 - negative control: blind retry
+  ---
+  duration_ms: 0.225509
+  type: 'test'
+  ...
+# Subtest: negative control: false failure
+ok 24 - negative control: false failure
+  ---
+  duration_ms: 0.158232
+  type: 'test'
+  ...
+# Subtest: negative control: stale presented current
+ok 25 - negative control: stale presented current
+  ---
+  duration_ms: 0.132493
+  type: 'test'
+  ...
+# Subtest: negative control: preview published
+ok 26 - negative control: preview published
+  ---
+  duration_ms: 0.110994
+  type: 'test'
+  ...
+# Subtest: negative control: unapproved published
+ok 27 - negative control: unapproved published
+  ---
+  duration_ms: 0.106192
+  type: 'test'
+  ...
+# Subtest: negative control: replay published
+ok 28 - negative control: replay published
+  ---
+  duration_ms: 0.135025
+  type: 'test'
+  ...
+# Subtest: negative control: stale published
+ok 29 - negative control: stale published
+  ---
+  duration_ms: 0.115016
+  type: 'test'
+  ...
+# Subtest: negative control: host effect leaked
+ok 30 - negative control: host effect leaked
+  ---
+  duration_ms: 0.109055
+  type: 'test'
+  ...
+1..30
+# tests 30
+# suites 0
+# pass 30
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 103.539073
