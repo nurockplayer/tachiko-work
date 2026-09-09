@@ -69,8 +69,9 @@ exit ${rg_status}
 EOF
   chmod +x "${root}/bin/rg"
 
+  local output
   set +e
-  PATH="${root}/bin" /bin/bash "${root}/scripts/experimental-designer-client-smoke.sh" >/dev/null 2>&1
+  output="$(PATH="${root}/bin" /bin/bash "${root}/scripts/experimental-designer-client-smoke.sh" 2>&1)"
   local status=$?
   set -e
   rm -rf -- "${root}"
@@ -85,6 +86,10 @@ EOF
     failure)
       if [[ ${status} -eq 0 ]]; then
         echo "source-boundary test: rg=${rg_status} must not be treated as clean no-match" >&2
+        return 1
+      fi
+      if [[ ${rg_status} -gt 1 && "${output}" != *"source-boundary scan failed (rg exit ${rg_status})"* ]]; then
+        echo "source-boundary test: rg=${rg_status} must report an actionable scan failure" >&2
         return 1
       fi
       ;;
