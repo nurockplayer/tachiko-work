@@ -3,6 +3,7 @@ export default defineConfig({
   testDir: "./e2e",
   testMatch: [
     "**/operational.spec.ts",
+    "**/cloudflare-links.spec.ts",
     "**/operational-security.spec.ts",
     "**/operational-provenance.spec.ts",
   ],
