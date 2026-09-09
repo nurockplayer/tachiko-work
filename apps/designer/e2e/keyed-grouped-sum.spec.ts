@@ -30,6 +30,9 @@ const groupedSummary = (page: Page) =>
 const groupedResult = (page: Page) =>
   page.getByRole("region", { name: "Grouped summary result", exact: true });
 
+const groupedRows = (result: Locator) =>
+  result.getByRole("list", { name: "Current groups", exact: true }).getByRole("listitem");
+
 type TransferEntry = {
   path: string;
   bytes: Uint8Array;
@@ -123,12 +126,18 @@ async function expectGroups(
   hardware: string,
   services: string,
 ): Promise<void> {
-  await expect(result).toContainText(
-    new RegExp(`hardware\\s+${hardware}(?=\\s|$)`),
-  );
-  await expect(result).toContainText(
-    new RegExp(`services\\s+${services}(?=\\s|$)`),
-  );
+  const rows = groupedRows(result);
+  await expect(rows).toHaveCount(2);
+  await expect(
+    rows.filter({ hasText: new RegExp(`hardware\\s+${hardware}(?=\\s|$)`) }),
+  ).toHaveCount(1);
+  await expect(
+    rows.filter({ hasText: new RegExp(`services\\s+${services}(?=\\s|$)`) }),
+  ).toHaveCount(1);
+}
+
+async function expectNoGroups(result: Locator): Promise<void> {
+  await expect(groupedRows(result)).toHaveCount(0);
 }
 
 async function saveAs(page: Page, name: string, storage?: string): Promise<void> {
@@ -425,11 +434,9 @@ test("Driver explicitly migrates to canonical v2, persists the definition, recom
   await page.getByLabel("Collection", { exact: true }).selectOption("products");
   await applyField(page, "Product Code for Product B", "P-100");
   await expect(result).toContainText("lookup.ambiguous_key");
-  await expect(result).not.toContainText(/hardware\s+8(?=\s|$)/);
-  await expect(result).not.toContainText(/services\s+10(?=\s|$)/);
+  await expectNoGroups(result);
 
   await applyField(page, "Product Code for Product B", "P-300");
   await expect(result).toContainText("lookup.missing_key");
-  await expect(result).not.toContainText(/hardware\s+8(?=\s|$)/);
-  await expect(result).not.toContainText(/services\s+10(?=\s|$)/);
+  await expectNoGroups(result);
 });
