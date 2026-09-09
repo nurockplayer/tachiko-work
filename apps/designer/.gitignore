@@ -2,5 +2,7 @@ node_modules/
 dist/
 public/designer_runtime.wasm
 runtime/target/
+src-tauri/gen/
+src-tauri/target/
 playwright-report/
 test-results/
