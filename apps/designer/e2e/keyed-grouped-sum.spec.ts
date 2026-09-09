@@ -438,5 +438,6 @@ test("Driver explicitly migrates to canonical v2, persists the definition, recom
 
   await applyField(page, "Product Code for Product B", "P-300");
   await expect(result).toContainText("lookup.missing_key");
+  await expect(result).not.toContainText("lookup.ambiguous_key");
   await expectNoGroups(result);
 });
