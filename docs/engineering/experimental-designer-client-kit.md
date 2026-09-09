@@ -115,6 +115,9 @@ For executable evidence, run:
 bash scripts/experimental-designer-client-smoke.sh
 ```
 
+This check requires ripgrep (`rg`), which is also a prerequisite of the full
+Designer gate; install it with the operating system's package manager.
+
 That throwaway consumer exports the kit twice (proving deterministic contents),
 imports no `apps/designer` source, opens Product Gap, queries its typed table,
 publishes a Number edit, observes the priority calculation and diagnostic list,
