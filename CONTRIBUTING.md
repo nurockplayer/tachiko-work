@@ -47,8 +47,10 @@ rustup run 1.85.0 cargo check --manifest-path apps/designer/runtime/Cargo.toml -
 Use the checked-in `Cargo.lock`. The project does not require a global install;
 run the CLI with `cargo run -p tachiko-cli -- <command>` while developing.
 
-The first-party Web Designer additionally requires pnpm 11.25.0 and Chromium
-for its browser journey. Keep its app-local lockfile and use pnpm exclusively:
+The first-party Web Designer additionally requires pnpm 11.25.0, Chromium, and
+ripgrep (`rg`) for its browser journey and exported-client boundary checks.
+Install ripgrep with the operating system's package manager. Keep its app-local
+lockfile and use pnpm exclusively:
 
 ```sh
 pnpm --dir apps/designer install --frozen-lockfile

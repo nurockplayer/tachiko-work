@@ -12,6 +12,24 @@ cleanup() {
 }
 trap cleanup EXIT
 
+require_no_matches() {
+  local boundary="$1"
+  local status
+  shift
+
+  if "$@"; then
+    echo "experimental-designer-client-smoke: ${boundary}" >&2
+    exit 1
+  else
+    status=$?
+  fi
+
+  if [[ ${status} -ne 1 ]]; then
+    echo "experimental-designer-client-smoke: source-boundary scan failed (rg exit ${status})" >&2
+    exit 1
+  fi
+}
+
 bash "${repo_root}/scripts/export-experimental-designer-client.sh" "${vendor_dir}"
 bash "${repo_root}/scripts/export-experimental-designer-client.sh" "${check_dir}/kit"
 diff -qr "${vendor_dir}" "${check_dir}/kit"
@@ -24,14 +42,10 @@ if [[ "${actual_files}" != "${expected_files}" ]]; then
   exit 1
 fi
 
-if rg -n 'apps/designer|src/runtime|src/host' "${consumer_dir}/src"; then
-  echo "experimental-designer-client-smoke: consumer imports private Designer source" >&2
-  exit 1
-fi
-if rg -n '\.ts"' "${vendor_dir}" -g '*.js'; then
-  echo "experimental-designer-client-smoke: emitted JavaScript retains source-only imports" >&2
-  exit 1
-fi
+require_no_matches "consumer imports private Designer source" \
+  rg -n 'apps/designer|src/runtime|src/host' "${consumer_dir}/src"
+require_no_matches "emitted JavaScript retains source-only imports" \
+  rg -n '\.ts"' "${vendor_dir}" -g '*.js'
 pnpm --dir "${repo_root}/apps/designer" exec node \
   --eval 'const manifest = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")); if (manifest.private !== true || manifest.packageManager !== "pnpm@11.25.0") process.exit(1);' \
   "${vendor_dir}/package.json"
