@@ -351,7 +351,7 @@ function rewriteProductPrice(
   const encoder = new TextEncoder();
   let rewritten = false;
   const entries = transfer.entries.map(entry => {
-    if (!entry.path.startsWith("entities/")) return entry;
+    if (!entry.path.startsWith("entities/") || entry.bytes.byteLength === 0) return entry;
     const entity = JSON.parse(decoder.decode(entry.bytes)) as {
       id: string;
       fields: Record<string, { kind: string; value: unknown }>;
