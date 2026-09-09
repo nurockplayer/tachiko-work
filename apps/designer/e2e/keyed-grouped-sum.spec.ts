@@ -145,24 +145,23 @@ async function openSaved(page: Page, name: string): Promise<void> {
   await expect(page.locator(".notice.success")).toContainText("Project opened");
 }
 
-async function reopen(page: Page, name: string): Promise<void> {
-  await page.getByRole("button", { name: "Close", exact: true }).click();
-  await openSaved(page, name);
-}
-
 async function readSavedProjectBytes(page: Page, name: string): Promise<Uint8Array> {
   const values = await page.evaluate(
     async ({ databaseName, databaseVersion, projectStore, projectName }) =>
       new Promise<number[]>((resolve, reject) => {
         const request = indexedDB.open(databaseName, databaseVersion);
-        request.addEventListener("error", () => reject(request.error ?? new Error("database open failed")));
+        request.addEventListener("error", () => {
+          reject(request.error ?? new Error("database open failed"));
+        });
         request.addEventListener("success", () => {
           const database = request.result;
           const transaction = database.transaction(projectStore, "readonly");
           const get = transaction.objectStore(projectStore).get(projectName) as IDBRequest<
             { bytes: ArrayBuffer } | undefined
           >;
-          get.addEventListener("error", () => reject(get.error ?? new Error("project read failed")));
+          get.addEventListener("error", () => {
+            reject(get.error ?? new Error("project read failed"));
+          });
           get.addEventListener("success", () => {
             if (get.result === undefined) {
               reject(new Error(`saved project '${projectName}' not found`));
@@ -191,18 +190,28 @@ async function replaceSavedProjectBytes(
     async ({ databaseName, databaseVersion, projectStore, summaryStore, projectName, values }) =>
       new Promise<void>((resolve, reject) => {
         const request = indexedDB.open(databaseName, databaseVersion);
-        request.addEventListener("error", () => reject(request.error ?? new Error("database open failed")));
+        request.addEventListener("error", () => {
+          reject(request.error ?? new Error("database open failed"));
+        });
         request.addEventListener("success", () => {
           const database = request.result;
           const transaction = database.transaction([projectStore, summaryStore], "readwrite");
-          transaction.addEventListener("complete", () => resolve());
-          transaction.addEventListener("abort", () => reject(transaction.error ?? new Error("project replacement aborted")));
-          transaction.addEventListener("error", () => reject(transaction.error ?? new Error("project replacement failed")));
+          transaction.addEventListener("complete", () => {
+            resolve();
+          });
+          transaction.addEventListener("abort", () => {
+            reject(transaction.error ?? new Error("project replacement aborted"));
+          });
+          transaction.addEventListener("error", () => {
+            reject(transaction.error ?? new Error("project replacement failed"));
+          });
           const store = transaction.objectStore(projectStore);
           const get = store.get(projectName) as IDBRequest<
             { name: string; bytes: ArrayBuffer; saved_at: string; presentation?: string } | undefined
           >;
-          get.addEventListener("error", () => transaction.abort());
+          get.addEventListener("error", () => {
+            transaction.abort();
+          });
           get.addEventListener("success", () => {
             if (get.result === undefined) {
               transaction.abort();
