@@ -25,107 +25,60 @@ jobs:
           from pathlib import Path
 
           research = Path('crates/storage/src/roproj/v1/issue_175_research.rs')
-          text = research.read_text()
-
-          # Patch only direct semantic-core Document literals in this legacy
-          # research module. A tiny lexer finds the matching struct close and
-          # adds the new durable field without touching nested braces/strings.
-          starts = []
-          cursor = 0
-          while True:
-              pos = text.find('Document {', cursor)
-              if pos < 0:
-                  break
-              starts.append(pos)
-              cursor = pos + len('Document {')
-
-          def matching_brace(source: str, open_pos: int) -> int:
-              depth = 0
-              i = open_pos
-              state = 'code'
-              block_depth = 0
-              while i < len(source):
-                  ch = source[i]
-                  nxt = source[i + 1] if i + 1 < len(source) else ''
-                  if state == 'code':
-                      if ch == '/' and nxt == '/':
-                          state = 'line'; i += 2; continue
-                      if ch == '/' and nxt == '*':
-                          state = 'block'; block_depth = 1; i += 2; continue
-                      if ch == '"':
-                          state = 'string'; i += 1; continue
-                      if ch == "'":
-                          # Rust lifetimes are overwhelmingly more common than
-                          # char literals here; only treat a quoted escaped or
-                          # single scalar form as a char.
-                          end = source.find("'", i + 1, min(i + 6, len(source)))
-                          if end > i + 1:
-                              state = 'char'
-                          i += 1; continue
-                      if ch == '{':
-                          depth += 1
-                      elif ch == '}':
-                          depth -= 1
-                          if depth == 0:
-                              return i
-                      i += 1
-                  elif state == 'line':
-                      if ch == '\n': state = 'code'
-                      i += 1
-                  elif state == 'block':
-                      if ch == '/' and nxt == '*': block_depth += 1; i += 2; continue
-                      if ch == '*' and nxt == '/':
-                          block_depth -= 1; i += 2
-                          if block_depth == 0: state = 'code'
-                          continue
-                      i += 1
-                  else:
-                      if ch == '\\': i += 2; continue
-                      if (state == 'string' and ch == '"') or (state == 'char' and ch == "'"):
-                          state = 'code'
-                      i += 1
-              raise RuntimeError('unmatched Document struct brace')
+          lines = research.read_text().splitlines(keepends=True)
+          starts = [
+              index
+              for index, line in enumerate(lines)
+              if line.lstrip().startswith('Document {') or '= Document {' in line
+          ]
+          if len(starts) != 6:
+              raise RuntimeError(f'expected 6 direct Document literals, found {len(starts)}')
 
           patched = 0
-          offset = 0
-          for original in starts:
-              start = original + offset
-              open_pos = text.find('{', start)
-              close = matching_brace(text, open_pos)
-              block = text[start:close]
-              if 'keyed_grouped_sum_definitions' in block:
+          for start in reversed(starts):
+              line = lines[start]
+              indent = line[: len(line) - len(line.lstrip())]
+              end = None
+              for index in range(start + 1, len(lines)):
+                  candidate = lines[index]
+                  candidate_indent = candidate[: len(candidate) - len(candidate.lstrip())]
+                  if candidate_indent == indent and candidate.strip() in ('}', '};'):
+                      end = index
+                      break
+              if end is None:
+                  raise RuntimeError(f'no matching rustfmt close for Document literal at line {start + 1}')
+              body = ''.join(lines[start:end])
+              if 'keyed_grouped_sum_definitions' in body:
                   continue
-              line_start = text.rfind('\n', 0, close) + 1
-              indent = text[line_start:close]
-              if indent.strip():
-                  raise RuntimeError('Document closing brace is not on its own line')
-              insertion = f'{indent}    keyed_grouped_sum_definitions: BTreeMap::new(),\n'
-              text = text[:line_start] + insertion + text[line_start:]
-              offset += len(insertion)
+              lines.insert(
+                  end,
+                  f'{indent}    keyed_grouped_sum_definitions: BTreeMap::new(),\n',
+              )
               patched += 1
           if patched != 6:
-              raise RuntimeError(f'expected 6 legacy Document literals, patched {patched}')
-          research.write_text(text)
+              raise RuntimeError(f'expected 6 legacy Document literals to patch, patched {patched}')
+          research.write_text(''.join(lines))
 
           merge = Path('crates/merge-engine/src/lib.rs')
           text = merge.read_text()
-          old = '''pub enum MergeOutcome {\n    Merged(MergeCandidate),\n    Conflicted(Vec<MergeConflict>),\n}'''
-          new = '''pub enum MergeOutcome {\n    Merged(MergeCandidate),\n    Conflicted(Vec<MergeConflict>),\n    UnsupportedKeyedGroupedSumDefinitionChange,\n}'''
-          if text.count(old) != 1:
-              raise RuntimeError('unexpected MergeOutcome declaration')
-          text = text.replace(old, new, 1)
-
-          old = '''pub fn merge(base: &Document, ours: &Document, theirs: &Document) -> MergeOutcome {\n    let mut conflicts = Vec::new();'''
-          new = '''pub fn merge(base: &Document, ours: &Document, theirs: &Document) -> MergeOutcome {\n    if base.keyed_grouped_sum_definitions != ours.keyed_grouped_sum_definitions\n        || base.keyed_grouped_sum_definitions != theirs.keyed_grouped_sum_definitions\n    {\n        return MergeOutcome::UnsupportedKeyedGroupedSumDefinitionChange;\n    }\n\n    let mut conflicts = Vec::new();'''
-          if text.count(old) != 1:
-              raise RuntimeError('unexpected merge function prologue')
-          text = text.replace(old, new, 1)
-
-          old = '''            title,\n            schemas,\n            entities,\n        },'''
-          new = '''            title,\n            schemas,\n            entities,\n            keyed_grouped_sum_definitions: base.keyed_grouped_sum_definitions.clone(),\n        },'''
-          if text.count(old) != 1:
-              raise RuntimeError('unexpected merge candidate Document literal')
-          text = text.replace(old, new, 1)
+          replacements = [
+              (
+                  '''pub enum MergeOutcome {\n    Merged(MergeCandidate),\n    Conflicted(Vec<MergeConflict>),\n}''',
+                  '''pub enum MergeOutcome {\n    Merged(MergeCandidate),\n    Conflicted(Vec<MergeConflict>),\n    UnsupportedKeyedGroupedSumDefinitionChange,\n}''',
+              ),
+              (
+                  '''pub fn merge(base: &Document, ours: &Document, theirs: &Document) -> MergeOutcome {\n    let mut conflicts = Vec::new();''',
+                  '''pub fn merge(base: &Document, ours: &Document, theirs: &Document) -> MergeOutcome {\n    if base.keyed_grouped_sum_definitions != ours.keyed_grouped_sum_definitions\n        || base.keyed_grouped_sum_definitions != theirs.keyed_grouped_sum_definitions\n    {\n        return MergeOutcome::UnsupportedKeyedGroupedSumDefinitionChange;\n    }\n\n    let mut conflicts = Vec::new();''',
+              ),
+              (
+                  '''            title,\n            schemas,\n            entities,\n        },''',
+                  '''            title,\n            schemas,\n            entities,\n            keyed_grouped_sum_definitions: base.keyed_grouped_sum_definitions.clone(),\n        },''',
+              ),
+          ]
+          for old, new in replacements:
+              if text.count(old) != 1:
+                  raise RuntimeError(f'unexpected merge-engine source for replacement: {old[:40]!r}')
+              text = text.replace(old, new, 1)
           merge.write_text(text)
           PY
 
