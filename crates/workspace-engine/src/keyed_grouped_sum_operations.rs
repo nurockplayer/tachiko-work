@@ -63,12 +63,7 @@ impl KeyedGroupedSumDiagnostic {
         }
     }
 
-    fn lookup(
-        code: &'static str,
-        entity: &EntityId,
-        key: &str,
-        candidates: Vec<EntityId>,
-    ) -> Self {
+    fn lookup(code: &'static str, entity: &EntityId, key: &str, candidates: Vec<EntityId>) -> Self {
         Self {
             code,
             entity: Some(entity.clone()),
@@ -154,7 +149,10 @@ pub fn evaluate_keyed_grouped_sum(
                 continue;
             }
         };
-        let candidates = product_index.get(lookup_key).map(Vec::as_slice).unwrap_or(&[]);
+        let candidates = product_index
+            .get(lookup_key)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
         match candidates {
             [] => diagnostics.push(KeyedGroupedSumDiagnostic::lookup(
                 LOOKUP_MISSING_KEY,
@@ -174,7 +172,10 @@ pub fn evaluate_keyed_grouped_sum(
                 matched.push((order, *product));
             }
             many => {
-                let candidate_ids = many.iter().map(|entity| entity.id.clone()).collect::<Vec<_>>();
+                let candidate_ids = many
+                    .iter()
+                    .map(|entity| entity.id.clone())
+                    .collect::<Vec<_>>();
                 if candidate_ids.len() > MAX_KEYED_GROUPED_SUM_AMBIGUITY_CANDIDATES {
                     diagnostics.push(KeyedGroupedSumDiagnostic::lookup(
                         RESULT_TOO_LARGE,
@@ -281,7 +282,10 @@ pub fn evaluate_keyed_grouped_sum(
     KeyedGroupedSumOutcome::Complete(groups)
 }
 
-fn entities_for_schema<'a>(document: &'a Document, schema: &tachiko_semantic_core::SchemaId) -> Vec<&'a Entity> {
+fn entities_for_schema<'a>(
+    document: &'a Document,
+    schema: &tachiko_semantic_core::SchemaId,
+) -> Vec<&'a Entity> {
     document
         .entities
         .values()
@@ -390,11 +394,12 @@ mod tests {
 
     fn field(id: &str, field_type: FieldType) -> (FieldId, FieldDefinition) {
         let id = FieldId::from(id);
+        let key = FieldKey::from(format!("key_{id}"));
         (
             id.clone(),
             FieldDefinition {
                 id,
-                key: FieldKey::from(format!("key_{id}")),
+                key,
                 field_type,
                 required: true,
             },
@@ -567,7 +572,10 @@ mod tests {
         document
             .entities
             .retain(|_, entity| entity.schema != SchemaId::from(ORDERS));
-        assert_eq!(evaluate(&document), KeyedGroupedSumOutcome::Complete(Vec::new()));
+        assert_eq!(
+            evaluate(&document),
+            KeyedGroupedSumOutcome::Complete(Vec::new())
+        );
     }
 
     #[test]
@@ -582,12 +590,10 @@ mod tests {
             .get_mut(PRICE)
             .unwrap()
             .key = FieldKey::from("renamed_price");
-        document
-            .entities
-            .get_mut("p100")
-            .unwrap()
-            .fields
-            .insert(FieldId::from(PRICE), Value::Number(Number::new(4.0).unwrap()));
+        document.entities.get_mut("p100").unwrap().fields.insert(
+            FieldId::from(PRICE),
+            Value::Number(Number::new(4.0).unwrap()),
+        );
         let KeyedGroupedSumOutcome::Complete(groups) = evaluate(&document) else {
             panic!("stable bindings must remain current");
         };
@@ -597,31 +603,25 @@ mod tests {
     #[test]
     fn required_formula_operand_uses_complete_calculation_and_unrelated_failure_blocks() {
         let mut document = base_document();
-        document
-            .entities
-            .get_mut("p100")
-            .unwrap()
-            .fields
-            .insert(
-                FieldId::from(PRICE),
-                Value::Formula(Expression::Number(Number::new(2.0).unwrap())),
-            );
-        document
-            .entities
-            .get_mut("p200")
-            .unwrap()
-            .fields
-            .insert(
-                FieldId::from(PRICE),
-                Value::Formula(Expression::Divide {
-                    left: Box::new(Expression::Number(Number::new(1.0).unwrap())),
-                    right: Box::new(Expression::Number(Number::new(0.0).unwrap())),
-                }),
-            );
+        document.entities.get_mut("p100").unwrap().fields.insert(
+            FieldId::from(PRICE),
+            Value::Formula(Expression::Number(Number::new(2.0).unwrap())),
+        );
+        document.entities.get_mut("p200").unwrap().fields.insert(
+            FieldId::from(PRICE),
+            Value::Formula(Expression::Divide {
+                left: Box::new(Expression::Number(Number::new(1.0).unwrap())),
+                right: Box::new(Expression::Number(Number::new(0.0).unwrap())),
+            }),
+        );
         let KeyedGroupedSumOutcome::Unavailable(diagnostics) = evaluate(&document) else {
             panic!("failed complete calculation must block formula-backed grouped sum");
         };
-        assert!(diagnostics.iter().any(|diagnostic| diagnostic.code == FORMULA_UNAVAILABLE));
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == FORMULA_UNAVAILABLE)
+        );
     }
 
     #[test]
@@ -629,10 +629,9 @@ mod tests {
         let mut document = base_document();
         for entity in document.entities.values_mut() {
             if entity.schema == SchemaId::from(ORDERS) {
-                entity.fields.insert(
-                    FieldId::from(ORDER_KEY),
-                    Value::Text("P-100".to_owned()),
-                );
+                entity
+                    .fields
+                    .insert(FieldId::from(ORDER_KEY), Value::Text("P-100".to_owned()));
             }
         }
         document.entities.get_mut("o100a").unwrap().fields.insert(
@@ -666,7 +665,15 @@ mod tests {
         let KeyedGroupedSumOutcome::Unavailable(diagnostics) = evaluate(&document) else {
             panic!("missing P-200 must be unavailable");
         };
-        assert!(diagnostics.iter().any(|diagnostic| diagnostic.code == LOOKUP_MISSING_KEY));
-        assert!(!diagnostics.iter().any(|diagnostic| diagnostic.code == LOOKUP_AMBIGUOUS_KEY));
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == LOOKUP_MISSING_KEY)
+        );
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == LOOKUP_AMBIGUOUS_KEY)
+        );
     }
 }

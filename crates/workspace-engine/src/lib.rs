@@ -39,6 +39,7 @@ use thiserror::Error;
 pub mod analysis_operations;
 pub mod capability_discovery;
 pub mod formula_operations;
+pub mod keyed_grouped_sum_operations;
 pub mod patch_lifecycle;
 pub mod resident_session;
 
@@ -470,6 +471,8 @@ pub enum WorkspaceError {
     Calculation(#[from] CalculationError),
     #[error("could not compare edited document: {0}")]
     Diff(#[from] DiffError),
+    #[error("semantic-conflict/v1 does not support keyed grouped-sum definition changes")]
+    UnsupportedKeyedGroupedSumDefinitionMerge,
     #[error(
         "merge inputs belong to different documents: base '{base}', left '{left}', right '{right}'"
     )]
@@ -882,6 +885,9 @@ pub fn merge_documents(
             })))
         }
         MergeOutcome::Conflicted(conflicts) => Ok(WorkspaceMergeOutcome::Conflicted(conflicts)),
+        MergeOutcome::UnsupportedKeyedGroupedSumDefinitionChange => {
+            Err(WorkspaceError::UnsupportedKeyedGroupedSumDefinitionMerge)
+        }
     }
 }
 
@@ -2397,6 +2403,7 @@ fn game_balance_document(
         title,
         schemas,
         entities,
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     })
 }
 
