@@ -99,7 +99,9 @@ pub enum KeyedGroupedSumDefinitionError {
 impl fmt::Display for KeyedGroupedSumDefinitionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::EmptyId => formatter.write_str("keyed grouped-sum definition id must not be empty"),
+            Self::EmptyId => {
+                formatter.write_str("keyed grouped-sum definition id must not be empty")
+            }
             Self::StoreIdMismatch { stored, declared } => write!(
                 formatter,
                 "keyed grouped-sum store id '{stored}' does not match declared id '{declared}'"
@@ -158,18 +160,20 @@ fn validate_definition(
     document: &Document,
     definition: &KeyedGroupedSumDefinition,
 ) -> Result<(), KeyedGroupedSumDefinitionError> {
-    let orders = document.schemas.get(&definition.orders.schema).ok_or_else(|| {
-        KeyedGroupedSumDefinitionError::MissingSchema {
+    let orders = document
+        .schemas
+        .get(&definition.orders.schema)
+        .ok_or_else(|| KeyedGroupedSumDefinitionError::MissingSchema {
             role: "orders",
             schema: definition.orders.schema.clone(),
-        }
-    })?;
-    let products = document.schemas.get(&definition.products.schema).ok_or_else(|| {
-        KeyedGroupedSumDefinitionError::MissingSchema {
+        })?;
+    let products = document
+        .schemas
+        .get(&definition.products.schema)
+        .ok_or_else(|| KeyedGroupedSumDefinitionError::MissingSchema {
             role: "products",
             schema: definition.products.schema.clone(),
-        }
-    })?;
+        })?;
 
     require_type(
         orders,
@@ -210,13 +214,14 @@ fn require_type(
     role: KeyedGroupedSumBindingRole,
     expected: FieldType,
 ) -> Result<(), KeyedGroupedSumDefinitionError> {
-    let definition = schema.fields.get(field).ok_or_else(|| {
-        KeyedGroupedSumDefinitionError::MissingField {
+    let definition = schema
+        .fields
+        .get(field)
+        .ok_or_else(|| KeyedGroupedSumDefinitionError::MissingField {
             role,
             schema: schema.id.clone(),
             field: field.clone(),
-        }
-    })?;
+        })?;
     if definition.field_type != expected {
         return Err(KeyedGroupedSumDefinitionError::WrongFieldType {
             role,
