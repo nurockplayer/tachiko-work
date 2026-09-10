@@ -46,8 +46,8 @@ jobs:
           )
           replace(
               'crates/merge-engine/tests/three_way_merge.rs',
-              '''        )]),\n    }\n}\n\nfn number_field''',
-              '''        )]),\n        keyed_grouped_sum_definitions: BTreeMap::new(),\n    }\n}\n\nfn number_field''',
+              '''        )]),\n    }\n}\n\nfn field''',
+              '''        )]),\n        keyed_grouped_sum_definitions: BTreeMap::new(),\n    }\n}\n\nfn field''',
           )
           replace(
               'crates/workspace-engine/src/keyed_grouped_sum_operations.rs',
