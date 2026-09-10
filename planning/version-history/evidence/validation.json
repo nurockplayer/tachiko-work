@@ -1,0 +1,75 @@
+{
+  "status": "PREPARED_UNQUALIFIED_NOT_READY",
+  "date": "2026-09-10 JST",
+  "owner": "nurockplayer/tachiko-work#364",
+  "upstreamBase": "8bba9b09cea3c011df383216ba3846ccd003dece",
+  "clientFixtureSeed": "f264ead7a8286b0de337792b118055f13aa2c83d",
+  "node": "v22.16.0",
+  "checks": [
+    {
+      "command": "node --test planning/version-history/tests/oracles.test.mjs",
+      "exit": 0,
+      "tests": 28,
+      "passed": 28,
+      "failed": 0,
+      "skipped": 0,
+      "meaning": "Synthetic oracle controls only, not product acceptance"
+    },
+    {
+      "command": "node --check for each of the four tests/*.mjs files",
+      "exit": 0,
+      "files": 4,
+      "meaning": "Syntax only"
+    },
+    {
+      "command": "node planning/version-history/tests/acceptance.mjs",
+      "exit": 78,
+      "status": "BLOCKED",
+      "output": "BLOCKED: set TACHIKO_HISTORY_FIXTURE and TACHIKO_HISTORY_DRIVER; no product RED claimed"
+    },
+    {
+      "command": "node planning/version-history/tests/browser.mjs",
+      "exit": 78,
+      "status": "BLOCKED",
+      "output": "BLOCKED: set TACHIKO_HISTORY_FIXTURE and WORK_CLIENT_URL; no browser RED claimed"
+    }
+  ],
+  "authoredProductCases": {
+    "realDriver": 10,
+    "realBrowser": 2,
+    "executed": 0
+  },
+  "unverified": [
+    "real Rust fixture admission",
+    "C1 artifact and C2 host qualification",
+    "real runtime/host/browser histories",
+    "remaining acceptance coverage listed in README",
+    "independent acceptance review",
+    "storage/profile decision",
+    "full repository gates",
+    "production readiness"
+  ],
+  "environmentLimit": "git ls-remote failed: Could not resolve host: github.com; pnpm not installed; client repository lookup returned 404 through connection",
+  "files": [
+    {
+      "path": "planning/version-history/README.md",
+      "sha256": "c39aa768d61611a9306b11f47571ef286302de3b44c96e3744d13331c692c1bf"
+    },
+    {
+      "path": "planning/version-history/tests/acceptance.mjs",
+      "sha256": "54bc51996816d3d4fb12afb4e0a622a3cb9fa1163dd27e972eb84b2424d8c5d4"
+    },
+    {
+      "path": "planning/version-history/tests/browser.mjs",
+      "sha256": "7b7ad0d82d8167967e25a7aa5bccf37870bcb30aa3451b51a86f0dbe9ee4d8b1"
+    },
+    {
+      "path": "planning/version-history/tests/oracles.mjs",
+      "sha256": "a31b76f54ae928c1b2adbebb1a3ee332dc32b38d0dcf40a9caced51fbea96ff3"
+    },
+    {
+      "path": "planning/version-history/tests/oracles.test.mjs",
+      "sha256": "d22940dab3e40c796a6c8557f44d28630abab1dc285a90a6d73781cc1c2d1951"
+    }
+  ]
+}
