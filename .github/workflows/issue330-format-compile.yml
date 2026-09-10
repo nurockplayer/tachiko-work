@@ -27,12 +27,12 @@ jobs:
           python - <<'PY'
           from pathlib import Path
 
-          def replace(path, old, new):
+          def replace(path, old, new, count=1):
               p = Path(path)
               text = p.read_text()
-              if text.count(old) != 1:
-                  raise RuntimeError(f'{path}: expected exact source once')
-              p.write_text(text.replace(old, new, 1))
+              if text.count(old) != count:
+                  raise RuntimeError(f'{path}: expected exact source {count} time(s)')
+              p.write_text(text.replace(old, new, count))
 
           replace(
               'crates/workspace-engine/src/patch_lifecycle.rs',
@@ -48,6 +48,17 @@ jobs:
               'crates/merge-engine/tests/three_way_merge.rs',
               '''        )]),\n    }\n}\n\nfn field''',
               '''        )]),\n        keyed_grouped_sum_definitions: BTreeMap::new(),\n    }\n}\n\nfn field''',
+          )
+          replace(
+              'crates/storage/tests/roproj_host.rs',
+              '''        ]),\n    }\n}\n\nfn numeric_bridge_document()''',
+              '''        ]),\n        keyed_grouped_sum_definitions: BTreeMap::new(),\n    }\n}\n\nfn numeric_bridge_document()''',
+          )
+          replace(
+              'crates/storage/tests/roproj_host.rs',
+              '''        )]),\n    }\n}''',
+              '''        )]),\n        keyed_grouped_sum_definitions: BTreeMap::new(),\n    }\n}''',
+              count=1,
           )
           replace(
               'crates/workspace-engine/src/keyed_grouped_sum_operations.rs',
