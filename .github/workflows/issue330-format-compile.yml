@@ -45,6 +45,11 @@ jobs:
               '''        )]),\n        keyed_grouped_sum_definitions: BTreeMap::new(),\n    }\n}\n\nfn number_source''',
           )
           replace(
+              'crates/merge-engine/tests/three_way_merge.rs',
+              '''        )]),\n    }\n}\n\nfn number_field''',
+              '''        )]),\n        keyed_grouped_sum_definitions: BTreeMap::new(),\n    }\n}\n\nfn number_field''',
+          )
+          replace(
               'crates/workspace-engine/src/keyed_grouped_sum_operations.rs',
               '''    Document, Entity, EntityId, FieldId, FieldRef, KeyedGroupedSumDefinition,\n    KeyedGroupedSumDefinitionId, Number, Value, validate_keyed_grouped_sum_definitions,''',
               '''    Document, Entity, EntityId, FieldId, FieldRef, KeyedGroupedSumDefinitionId, Number, Value,\n    validate_keyed_grouped_sum_definitions,''',
