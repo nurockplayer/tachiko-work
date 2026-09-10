@@ -1,0 +1,95 @@
+name: Issue 330 integration batch
+
+on:
+  push:
+    branches:
+      - chatgpt/issue-330-test-first
+    paths:
+      - .github/workflows/issue330-batch2.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chatgpt/issue-330-test-first
+          fetch-depth: 0
+      - name: Apply exact integration patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new, count=1):
+              p = Path(path)
+              text = p.read_text()
+              actual = text.count(old)
+              if actual != count:
+                  raise RuntimeError(f'{path}: expected {count} matches, found {actual}: {old[:80]!r}')
+              p.write_text(text.replace(old, new, count))
+
+          replace(
+              'crates/workspace-engine/src/lib.rs',
+              'pub mod formula_operations;\npub mod patch_lifecycle;',
+              'pub mod formula_operations;\npub mod keyed_grouped_sum_operations;\npub mod patch_lifecycle;',
+          )
+          replace(
+              'crates/workspace-engine/src/lib.rs',
+              '''    #[error("could not compare edited document: {0}")]\n    Diff(#[from] DiffError),\n    #[error(\n        "merge inputs belong to different documents: base '{base}', left '{left}', right '{right}'"\n    )]''',
+              '''    #[error("could not compare edited document: {0}")]\n    Diff(#[from] DiffError),\n    #[error("semantic-conflict/v1 does not support keyed grouped-sum definition changes")]\n    UnsupportedKeyedGroupedSumDefinitionMerge,\n    #[error(\n        "merge inputs belong to different documents: base '{base}', left '{left}', right '{right}'"\n    )]''',
+          )
+          replace(
+              'crates/workspace-engine/src/lib.rs',
+              '''        MergeOutcome::Conflicted(conflicts) => Ok(WorkspaceMergeOutcome::Conflicted(conflicts)),\n    }''',
+              '''        MergeOutcome::Conflicted(conflicts) => Ok(WorkspaceMergeOutcome::Conflicted(conflicts)),\n        MergeOutcome::UnsupportedKeyedGroupedSumDefinitionChange => {\n            Err(WorkspaceError::UnsupportedKeyedGroupedSumDefinitionMerge)\n        }\n    }''',
+          )
+          replace(
+              'crates/workspace-engine/src/lib.rs',
+              '''    Ok(Document {\n        id,\n        title,\n        schemas,\n        entities,\n    })''',
+              '''    Ok(Document {\n        id,\n        title,\n        schemas,\n        entities,\n        keyed_grouped_sum_definitions: BTreeMap::new(),\n    })''',
+          )
+
+          replace(
+              'crates/diff-engine/src/lib.rs',
+              '''pub enum DiffError {\n    #[error("could not calculate the original document: {0}")]\n    BeforeCalculation(#[source] CalculationError),''',
+              '''pub enum DiffError {\n    #[error("tachiko.semantic-delta/v1 does not support keyed grouped-sum definition changes")]\n    UnsupportedKeyedGroupedSumDefinitionChange,\n    #[error("could not calculate the original document: {0}")]\n    BeforeCalculation(#[source] CalculationError),''',
+          )
+          replace(
+              'crates/diff-engine/src/lib.rs',
+              '''pub fn diff(before: &Document, after: &Document) -> Result<SemanticDiff, DiffError> {\n    let before_calculation = calculate(before).map_err(DiffError::BeforeCalculation)?;''',
+              '''pub fn diff(before: &Document, after: &Document) -> Result<SemanticDiff, DiffError> {\n    if before.keyed_grouped_sum_definitions != after.keyed_grouped_sum_definitions {\n        return Err(DiffError::UnsupportedKeyedGroupedSumDefinitionChange);\n    }\n    let before_calculation = calculate(before).map_err(DiffError::BeforeCalculation)?;''',
+          )
+          replace(
+              'crates/diff-engine/tests/semantic_diff.rs',
+              '''        )]),\n    }\n}\n\nfn field(id: &str, field_type: FieldType, required: bool) -> FieldDefinition {''',
+              '''        )]),\n        keyed_grouped_sum_definitions: BTreeMap::new(),\n    }\n}\n\nfn field(id: &str, field_type: FieldType, required: bool) -> FieldDefinition {''',
+          )
+
+          replace(
+              'crates/storage/src/lib.rs',
+              '''pub use roproj::{\n    CanonicalRoProjectAdmissionError, CanonicalRoProjectFile, CanonicalRoProjectV1,\n    ROPROJ_V1_FORMAT_VERSION, ROPROJ_V1_PATHS, canonicalize_roproj, decode_roproj_v1,\n    encode_roproj_v1, load_roproj, materialize_roproj, publish_canonicalized_roproj,\n    publish_roproj, read_canonical_roproj,\n};''',
+              '''pub use roproj::{\n    CanonicalRoProjectAdmissionError, CanonicalRoProjectFile, CanonicalRoProjectFileV2,\n    CanonicalRoProjectV1, CanonicalRoProjectV2, ROPROJ_V1_FORMAT_VERSION, ROPROJ_V1_PATHS,\n    ROPROJ_V2_FORMAT_VERSION, ROPROJ_V2_PATHS, canonicalize_roproj, decode_roproj_v1,\n    decode_roproj_v2, encode_roproj_v1, encode_roproj_v2, load_roproj, materialize_roproj,\n    migrate_roproj_v1_to_v2, publish_canonicalized_roproj, publish_roproj,\n    read_canonical_roproj,\n};''',
+          )
+
+          replace(
+              'crates/workspace-engine/src/keyed_grouped_sum_operations.rs',
+              '''    fn field(id: &str, field_type: FieldType) -> (FieldId, FieldDefinition) {\n        let id = FieldId::from(id);\n        (\n            id.clone(),\n            FieldDefinition {\n                id,\n                key: FieldKey::from(format!("key_{id}")),''',
+              '''    fn field(id: &str, field_type: FieldType) -> (FieldId, FieldDefinition) {\n        let id = FieldId::from(id);\n        let key = FieldKey::from(format!("key_{id}"));\n        (\n            id.clone(),\n            FieldDefinition {\n                id,\n                key,''',
+          )
+          PY
+          cargo fmt --all
+          git diff --check
+          cargo check --workspace --all-targets --locked || true
+      - name: Commit integration batch and remove helper
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git rm .github/workflows/issue330-batch2.yml
+          git add crates/workspace-engine/src/lib.rs crates/workspace-engine/src/keyed_grouped_sum_operations.rs crates/diff-engine/src/lib.rs crates/diff-engine/tests/semantic_diff.rs crates/storage/src/lib.rs
+          git commit -m 'feat: integrate keyed grouped-sum runtime boundaries'
+          git push origin HEAD:chatgpt/issue-330-test-first
