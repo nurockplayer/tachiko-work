@@ -478,6 +478,7 @@ fn admit_one_pass_host_controlled(
         title: manifest.document.title,
         schemas,
         entities,
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     };
     check_cancel(cancel)?;
     if let Some(reached) = pause_before_final_validation {
@@ -2168,6 +2169,7 @@ fn mixed_document(entity_count: usize, text_char_count: usize) -> Document {
             },
         )]),
         entities,
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }
 
@@ -2221,6 +2223,7 @@ fn dependency_chain_document(entity_count: usize, cycle: bool) -> Document {
             },
         )]),
         entities,
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }
 
@@ -2535,6 +2538,7 @@ fn single_schema_document(
             },
         )]),
         entities,
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }
 
@@ -2654,6 +2658,7 @@ fn late_invalid_pressure_document(entity_count: usize) -> Document {
         title: "Issue 175 physically late invalid pressure".to_owned(),
         schemas,
         entities,
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }
 
@@ -3408,6 +3413,7 @@ fn issue_175_host_validation_cancels_at_formula_node_checkpoint() {
                 fields: BTreeMap::from([(field_id, Value::Formula(expression))]),
             },
         )]),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     };
     let temp = ResearchTempDirectory::new();
     let root = temp.path().join("formula-validation-cancel.roproj");
