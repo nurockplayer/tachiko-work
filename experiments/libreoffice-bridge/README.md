@@ -1,8 +1,9 @@
 # LibreOffice → Tachiko: saved literal-table analysis
 
-Owner: **Issue #355**. Research seed; the **live Issue alone controls readiness**.
-`bridge.py` deliberately returns `BRIDGE_NOT_IMPLEMENTED`. Never merge that stub
-or the failing acceptance seed as a finished bridge.
+Owner: **Issue #355**. The **live Issue alone controls readiness**. The qualified
+seed deliberately returned `BRIDGE_NOT_IMPLEMENTED`; this branch now implements
+the bounded bridge, but it is not complete or handback-ready until the required
+real Office/native acceptance and fresh exact-head review have passed.
 
 Source-inspected baseline: `8bba9b09cea3c011df383216ba3846ccd003dece`.
 Stage-A ancestor: `8a883198bb53fe5559f4b5fa758d56d434f4c082` on
@@ -225,6 +226,57 @@ Office preflight does **not** run Rust. Both distinctions must remain visible.
 Missing binaries, setup/compile errors or wrong fixture expectations are not RED.
 A successful native subset alone is not completion of this Issue.
 
+## Runnable synthetic command/report example
+
+This is a disposable, local demonstration of the exact closed profile. It uses
+the Steward-owned synthetic fixture helper to create a new ODS file in fresh
+scratch space; the production bridge imports none of these helpers. Set `PYUNO`
+to the ABI-compatible Python supplied with the selected LibreOffice installation
+(not an arbitrary system Python), then run from the repository root:
+
+```sh
+export REFERENCE_OFFICE_BIN=/path/to/soffice
+export PYUNO=/path/to/LibreOffice-compatible-python
+export REPO_ROOT="$(pwd)"
+export TACHIKO_BIN="$REPO_ROOT/target/debug/tachiko"
+export EXAMPLE_DIR="$(mktemp -d)"
+cd "$REPO_ROOT/experiments/libreoffice-bridge"
+
+"$PYUNO" - <<'PY'
+import hashlib, json, os
+from pathlib import Path
+from canary import BASE_MAPPING, create_inventory
+from office_preflight import Office
+
+root = Path(os.environ["EXAMPLE_DIR"])
+source = root / "inventory.ods"
+office = Office(os.environ["REFERENCE_OFFICE_BIN"], root)
+try:
+    selection = create_inventory(office, source)
+finally:
+    office.close()
+request = {
+    "source": {"kind": "saved-file", "path": str(source),
+               "expected_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+               "selection": selection},
+    "mapping": BASE_MAPPING,
+    "output": str(root / "report.json"),
+}
+(root / "request.json").write_text(json.dumps(request) + "\n", encoding="utf-8")
+PY
+
+"$PYUNO" bridge.py --request "$EXAMPLE_DIR/request.json" \
+  > "$EXAMPLE_DIR/stdout.json"
+cmp "$EXAMPLE_DIR/stdout.json" "$EXAMPLE_DIR/report.json"
+shasum -a 256 "$EXAMPLE_DIR"/inventory.ods "$EXAMPLE_DIR"/report.json
+```
+
+On a correctly provisioned host, the command exits zero, the two JSON files are
+byte-identical, and the report has `status: "analyzed"`, actual native document
+and validation JSON, and the five required ledger entries. This is a synthetic
+example only; it neither validates the whole workbook nor establishes Office
+interoperability outside this profile.
+
 Use Ruff for implementation lint/format and the live repository's final-head
 checks. Add delivery-agent unit tests independently of this acceptance. Actual
 Office/native end-to-end evidence and fresh independent Guarded review are
@@ -232,19 +284,29 @@ required before handback; neither can be substituted by the preflight or by
 matching cached values. No failing seed merge, skipped-test green, self-merge,
 upstream contact, extension publication or partnership claim.
 
-## Evidence at preparation
+## Evidence and finite verdict
 
 Historical Stage-A results remain in `evidence-summary.json`; they are not a
-new native result. In this preparation, Stage A was rerun (6/6 PASS), new real
-Office preflight ran (3/3 PASS), oracle self-checks ran (3/3 PASS), and Python
-syntax compiled. LibreOffice was 25.2.3.2 on Linux with distribution pyuno/Python
-3.13.5. Full saved-file bridge acceptance remains unexecuted while the stub is
-present. The live Issue records hosted native qualification and exact seed SHA.
+new native result. The qualified seed recorded Stage A 6/6 PASS, real Office
+preflight 3/3 PASS, oracle self-checks 3/3 PASS, and hosted native qualification.
+At implementation time the delivery agent reproduced the Steward native bridge
+acceptance against a real Cargo-built `tachiko` (17 tests: 3 preflights plus 14
+bridge methods), added delivery-owned unit coverage, and ran Ruff and Python
+compilation. Those native results do not substitute for actual Office evidence.
 
-This container lacks Cargo/Rust/pnpm/Ruff, and direct GitHub clone fails on DNS;
-connected GitHub operations work. Existing push CI can execute the new native
-harness without changing workflows. No local lack of tools is reported as a
-behavioral failure. Do not infer independent review or a complete release gate.
+The current macOS host has LibreOffice 26.8.0.3 installed but no runnable
+ABI-compatible `pyuno` interpreter: its system Python cannot import `uno`.
+Therefore the new real Office preflight and full saved-file command acceptance
+are **not run here** and must remain recorded as incomplete rather than green.
+The live PR/handoff, not this static document, records the exact current SHA,
+hosted CI, review state, and any later Office report hashes.
+
+**Finite verdict:** the closed literal-table seam is useful only when a saved
+file, explicit mapping, and real UNO observation can be verified end to end.
+It adds a small Python/UNO maintenance surface and version-sensitive runtime
+prerequisite; it does not justify a general Office importer, active-document
+integration, persistent handoff, or product adoption. Any broader profile needs
+new evidence and Steward authority.
 
 ## Official source trail
 
