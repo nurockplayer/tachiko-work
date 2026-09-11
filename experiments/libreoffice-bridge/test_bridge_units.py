@@ -286,6 +286,23 @@ class LibreOfficeLifecycle(unittest.TestCase):
             self.office(observe=bridge.Rejection("invalid_snapshot")), document=True
         )
 
+    def test_private_office_environment_drops_pyuno_bootstrap_variables(self):
+        with mock.patch.dict(
+            os.environ,
+            {
+                "PYTHONHOME": "/pyuno/home",
+                "PYTHONPATH": "/pyuno/path",
+                "UNO_PATH": "/pyuno/uno",
+                "URE_BOOTSTRAP": "vnd.sun.star.pathname:/pyuno/fundamentalrc",
+                "TACHIKO_BIN": "/expected/native",
+            },
+            clear=True,
+        ):
+            environment = bridge._private_office_environment()
+        for key in ("PYTHONHOME", "PYTHONPATH", "UNO_PATH", "URE_BOOTSTRAP"):
+            self.assertNotIn(key, environment)
+        self.assertEqual(environment.get("TACHIKO_BIN"), "/expected/native")
+
 
 class SavedFileHostGuards(unittest.TestCase):
     def setUp(self):

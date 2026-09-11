@@ -611,6 +611,20 @@ def analyze_snapshot(observation: dict, mapping: dict, *, tachiko_bin: str) -> d
 # --------------------------------------------------------------------------- #
 # Actual saved-file command: private LibreOffice adapter
 # --------------------------------------------------------------------------- #
+def _private_office_environment() -> dict:
+    """Keep the owned office process bound to its selected app bundle.
+
+    LibreOffice's Python launcher exports these bootstrap variables so pyuno can
+    find its runtime.  A child ``soffice`` must not inherit them: they can make
+    the selected app mix its Resources/Frameworks with the Python launcher's
+    bundle instead of using the app named by ``REFERENCE_OFFICE_BIN``.
+    """
+    environment = dict(os.environ)
+    for key in ("PYTHONHOME", "PYTHONPATH", "UNO_PATH", "URE_BOOTSTRAP"):
+        environment.pop(key, None)
+    return environment
+
+
 class _LibreOffice:
     """Fresh, isolated, owned LibreOffice process; never a remote/shared session."""
 
@@ -666,6 +680,7 @@ class _LibreOffice:
             stdout=self._log,
             stderr=subprocess.STDOUT,
             start_new_session=True,
+            env=_private_office_environment(),
         )
         self.watchdog = threading.Timer(OFFICE_TIMEOUT_SECONDS, self._expire)
         self.watchdog.daemon = True
