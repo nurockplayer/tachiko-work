@@ -191,9 +191,13 @@ class OfficeAcceptance(unittest.TestCase):
 
     def test_08_real_formula_percent_blank_and_merged_cell_reject(self):
         original = self.source
+        original_digest = digest(original)
         for index, kind in enumerate(("formula", "percent", "blank", "merged")):
             with self.subTest(kind=kind):
-                doc = self.office.load(original, readonly=True)
+                # This fixture must persist the unsupported construct into new saved
+                # bytes. A ReadOnly-loaded document may accept in-memory API edits
+                # while storeToURL writes the unchanged representation.
+                doc = self.office.load(original, readonly=False)
                 item = doc.Sheets.getByIndex(0).getCellByPosition(1, 1)
                 if kind == "formula":
                     item.Formula = "=42.5"
@@ -206,6 +210,27 @@ class OfficeAcceptance(unittest.TestCase):
                 self.source = self.directory / f"unsupported-{index}.ods"
                 self.office.save_copy(doc, self.source)
                 self.office.dispose(doc)
+                self.assertEqual(digest(original), original_digest, "fixture construction changed the source")
+
+                # Qualify the saved fixture independently before exercising the
+                # bridge so an Office-version-specific save behavior cannot turn
+                # the intended rejection into a false production failure.
+                qualified = self.office.load(self.source, readonly=True)
+                saved_item = qualified.Sheets.getByIndex(0).getCellByPosition(1, 1)
+                if kind == "formula":
+                    self.assertEqual(saved_item.Type.value, "FORMULA")
+                    self.assertTrue(saved_item.Formula.startswith("="))
+                elif kind == "percent":
+                    self.assertIn("%", saved_item.String)
+                elif kind == "blank":
+                    self.assertEqual(saved_item.Type.value, "EMPTY")
+                else:
+                    saved_range = qualified.Sheets.getByIndex(0).getCellRangeByName("B2:C2")
+                    self.assertTrue(bool(saved_item.IsMerged) or bool(saved_range.IsMerged))
+                self.office.dispose(qualified)
+
+                self.output = self.directory / f"unsupported-{index}-report.json"
+                self.request["output"] = str(self.output)
                 self.request["source"].update(path=str(self.source), expected_sha256=digest(self.source))
                 self.reject("type_mismatch" if kind == "blank" else "unsupported_cell")
 
