@@ -81,7 +81,6 @@ class OfficeAcceptance(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        # Do not call a missing engine an expected bridge failure.
         cls.binary = executable("TACHIKO_BIN")
         native_reports(cls.binary, expected_candidate(), "office-prerequisite")
 
@@ -109,8 +108,7 @@ class OfficeAcceptance(unittest.TestCase):
         before = self.source.read_bytes()
         proxy, log = shim(self.directory, self.binary, mode=mode, mutation=mutation)
         environment = os.environ | {"TACHIKO_BIN": proxy, "REFERENCE_OFFICE_BIN": self.office_bin}
-        result = call([sys.executable, str(ROOT / "bridge.py"), "--request", str(request_file)],
-                      success=False, env=environment)
+        result = call([sys.executable, str(ROOT / "bridge.py"), "--request", str(request_file)], success=False, env=environment)
         self.assertEqual(self.sentinel.read_bytes(), protected)
         if not mutation or mutation[0] != str(self.source):
             self.assertEqual(self.source.read_bytes(), before, "Office source changed")
@@ -142,8 +140,7 @@ class OfficeAcceptance(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, response)
                 self.assertEqual(response.get("status"), "analyzed", response)
                 self.assertEqual(response["candidate"], expected_candidate())
-                self.assertEqual(response["source"], {"kind": "saved-file", "sha256": digest(self.source),
-                                                       "selection": self.selection})
+                self.assertEqual(response["source"], {"kind": "saved-file", "sha256": digest(self.source), "selection": self.selection})
                 self.assertEqual(response["native"], native_reports(self.binary, expected_candidate(), digest(self.source)))
                 self.assertEqual(json.loads(self.output.read_text()), response)
                 self.assertTrue(SUCCESS_LEDGER <= {(e.get("classification"), e.get("code")) for e in response["ledger"]})
@@ -194,9 +191,6 @@ class OfficeAcceptance(unittest.TestCase):
         original_digest = digest(original)
         for index, kind in enumerate(("formula", "percent", "blank", "merged")):
             with self.subTest(kind=kind):
-                # This fixture must persist the unsupported construct into new saved
-                # bytes. A ReadOnly-loaded document may accept in-memory API edits
-                # while storeToURL writes the unchanged representation.
                 doc = self.office.load(original, readonly=False)
                 item = doc.Sheets.getByIndex(0).getCellByPosition(1, 1)
                 if kind == "formula":
@@ -211,10 +205,6 @@ class OfficeAcceptance(unittest.TestCase):
                 self.office.save_copy(doc, self.source)
                 self.office.dispose(doc)
                 self.assertEqual(digest(original), original_digest, "fixture construction changed the source")
-
-                # Qualify the saved fixture independently before exercising the
-                # bridge so an Office-version-specific save behavior cannot turn
-                # the intended rejection into a false production failure.
                 qualified = self.office.load(self.source, readonly=True)
                 saved_item = qualified.Sheets.getByIndex(0).getCellByPosition(1, 1)
                 if kind == "formula":
@@ -228,7 +218,6 @@ class OfficeAcceptance(unittest.TestCase):
                     saved_range = qualified.Sheets.getByIndex(0).getCellRangeByName("B2:C2")
                     self.assertTrue(bool(saved_item.IsMerged) or bool(saved_range.IsMerged))
                 self.office.dispose(qualified)
-
                 self.output = self.directory / f"unsupported-{index}-report.json"
                 self.request["output"] = str(self.output)
                 self.request["source"].update(path=str(self.source), expected_sha256=digest(self.source))
@@ -256,9 +245,7 @@ if __name__ == "__main__":
     if args.evidence.exists() or args.evidence.is_symlink():
         parser.error("evidence path already exists")
     office_bin = executable("REFERENCE_OFFICE_BIN")
-    # Missing pyuno is environment failure, never a skip/RED.
     import uno  # noqa: F401
-
     OfficePreflight.office_bin = office_bin
     OfficeAcceptance.office_bin = office_bin
     classes = [OfficePreflight] if args.mode == "preflight" else [OfficePreflight, OfficeAcceptance]
@@ -266,8 +253,8 @@ if __name__ == "__main__":
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     report = {"mode": args.mode, "tests": result.testsRun, "failures": len(result.failures),
               "errors": len(result.errors), "skips": len(result.skipped), "passed": result.wasSuccessful(),
-              "office": call([office_bin, "--version"]).stdout.strip(),
-              "python": sys.version, "script_sha256": digest(Path(__file__)),
+              "office": call([office_bin, "--version"]).stdout.strip(), "python": sys.version,
+              "script_sha256": digest(Path(__file__)),
               "repository_head": os.environ.get("LIBREOFFICE_BRIDGE_HEAD", "uncommitted preparation"),
               "native": "NOT_RUN" if args.mode == "preflight" else os.environ.get("TACHIKO_BIN"),
               "observations": EVIDENCE}
