@@ -207,7 +207,7 @@ uv run --offline --no-project --no-managed-python --python /path/to/pyuno-python
   python experiments/libreoffice-bridge/office_acceptance.py \
   --mode preflight --evidence /tmp/lo355-new-preflight.json
 
-# Real native preflight + missing-bridge behavioral acceptance under existing CI
+# Real native preflight + implemented native bridge acceptance under existing CI
 cargo test -p tachiko-cli --test libreoffice_bridge_acceptance --locked
 
 # Final actual end-to-end Office gate AFTER implementation

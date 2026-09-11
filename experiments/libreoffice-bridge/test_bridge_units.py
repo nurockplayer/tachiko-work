@@ -206,6 +206,86 @@ class NativeAdapter(unittest.TestCase):
         observed["rows"][1][1] = number(2.5, number_format=128)
         self.assert_rejected(self.analyze(observed), "unsupported_cell")
 
+    def test_formula_headers_and_source_keys_are_unsupported_with_locators(self):
+        observed = observation()
+        observed["rows"][0][1] = {
+            "kind": "FORMULA",
+            "formula": '="qty"',
+            "value": 0,
+            "merged": False,
+        }
+        result = self.analyze(observed)
+        self.assert_rejected(result, "unsupported_cell")
+        self.assertEqual(
+            result["ledger"][0]["source"],
+            {"sheet": "Sheet1", "row": 0, "column": 1},
+        )
+
+        observed = observation()
+        observed["rows"][1][0] = {
+            "kind": "FORMULA",
+            "formula": '="k1"',
+            "value": 0,
+            "merged": False,
+        }
+        result = self.analyze(observed)
+        self.assert_rejected(result, "unsupported_cell")
+        self.assertEqual(
+            result["ledger"][0]["source"],
+            {"sheet": "Sheet1", "row": 1, "column": 0},
+        )
+
+
+class LibreOfficeLifecycle(unittest.TestCase):
+    """Exercise private-adapter failures without importing pyuno or starting Office."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="lo355-lifecycle-")
+        self.addCleanup(self.temp.cleanup)
+        self.scratch = Path(self.temp.name)
+        self.selection = {
+            "sheet": "Sheet1",
+            "row": 0,
+            "column": 0,
+            "height": 2,
+            "width": 1,
+        }
+
+    def office(self, *, start=None, load=None, observe=None):
+        instance = mock.Mock()
+        instance.scratch = self.scratch
+        instance.start.side_effect = start
+        instance.load.side_effect = load
+        instance.observe.side_effect = observe
+        return instance
+
+    def assert_failure_cleanup(self, office, *, document=False):
+        with mock.patch.object(bridge, "_LibreOffice", return_value=office):
+            with self.assertRaises(bridge.Rejection):
+                bridge._observe_saved_copy(
+                    "soffice", b"saved-bytes", ".ods", self.selection, "a" * 64
+                )
+        if document:
+            office.dispose.assert_called_once_with(office.load.return_value)
+        else:
+            office.dispose.assert_not_called()
+        office.close.assert_called_once_with()
+
+    def test_start_failure_closes_owned_office(self):
+        self.assert_failure_cleanup(
+            self.office(start=bridge.Rejection("invalid_input")), document=False
+        )
+
+    def test_load_failure_closes_owned_office(self):
+        self.assert_failure_cleanup(
+            self.office(load=bridge.Rejection("invalid_input")), document=False
+        )
+
+    def test_observe_failure_disposes_document_and_closes_office(self):
+        self.assert_failure_cleanup(
+            self.office(observe=bridge.Rejection("invalid_snapshot")), document=True
+        )
+
 
 class SavedFileHostGuards(unittest.TestCase):
     def setUp(self):
@@ -426,6 +506,14 @@ class RequestPublication(unittest.TestCase):
         self.assertEqual(response.get("status"), "rejected", response)
         self.assertEqual(response.get("code"), "native_failure", response)
         self.assertFalse(self.output.exists())
+
+    def test_publication_failure_removes_private_staging_file(self):
+        payload = b"private-report"
+        with mock.patch.object(os, "link", side_effect=OSError("link failed")):
+            with self.assertRaises(OSError):
+                bridge._publish_no_replace(self.output, payload)
+        self.assertFalse(self.output.exists())
+        self.assertEqual(list(self.directory.glob(".lo355-report-*.tmp")), [])
 
 
 if __name__ == "__main__":

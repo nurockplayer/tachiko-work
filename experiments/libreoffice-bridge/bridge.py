@@ -346,6 +346,14 @@ def _map_geometry(observed, mapping):
                 ),
                 detail="merged header cell",
             )
+        if cell["kind"] == KIND_FORMULA:
+            _reject(
+                "unsupported_cell",
+                locator=_locator(
+                    selection, selection["row"], selection["column"] + index
+                ),
+                detail="formula is not a literal header",
+            )
         if cell["kind"] != KIND_TEXT:
             _reject(
                 "mapping_mismatch", detail="every selected header cell must be Text"
@@ -388,6 +396,12 @@ def _map_geometry(observed, mapping):
         if cell["merged"]:
             _reject(
                 "unsupported_cell", locator=locator, detail="merged source-key cell"
+            )
+        if cell["kind"] == KIND_FORMULA:
+            _reject(
+                "unsupported_cell",
+                locator=locator,
+                detail="formula is not a literal source key",
             )
         if cell["kind"] != KIND_TEXT:
             _reject("mapping_mismatch", detail="every selected source key must be Text")
