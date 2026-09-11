@@ -8,6 +8,7 @@ LibreOffice.  They never assert Steward acceptance behavior.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -15,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from unittest import mock
 
 HERE = Path(__file__).resolve().parent
@@ -411,6 +413,19 @@ class RequestPublication(unittest.TestCase):
                 bridge.run_request(self.request)
         self.assertEqual(caught.exception.code, "invalid_output")
         self.assertEqual(self.output.read_bytes(), b"external-output-winner")
+
+    def test_cli_rejection_after_observation_returns_nonzero(self):
+        with self.environment(), mock.patch.object(
+            bridge, "_observe_saved_copy", side_effect=self.observe_with()
+        ), mock.patch.dict(os.environ, {"BRIDGE_STUB_MODE": "fail"}):
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                exit_code = bridge.main(["--request", str(self.request)])
+        self.assertEqual(exit_code, 1)
+        response = json.loads(stdout.getvalue())
+        self.assertEqual(response.get("status"), "rejected", response)
+        self.assertEqual(response.get("code"), "native_failure", response)
+        self.assertFalse(self.output.exists())
 
 
 if __name__ == "__main__":

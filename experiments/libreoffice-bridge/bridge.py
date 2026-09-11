@@ -966,7 +966,7 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     try:
         response = run_request(args.request)
-        code = 0
+        code = 0 if response.get("status") == "analyzed" else 1
     except Rejection as rejection:
         response = rejection.as_result()
         code = 1
