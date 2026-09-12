@@ -1858,7 +1858,7 @@ impl DesignerRuntime {
             }
             let key = native_table_key(&column.name, "column name")?;
             if !seen_keys.insert(key.clone()) {
-                return Err(table_error("column names must be unique"));
+                return Err(table_error("duplicate column names are not allowed"));
             }
             let field_type = native_table_field_type(&column.field_type)?;
             let id = FieldId::from(ids.generate(SemanticIdKind::Field));
