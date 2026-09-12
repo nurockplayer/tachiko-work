@@ -30,10 +30,11 @@ pub use portable_package::{
 #[cfg(feature = "issue-175-research")]
 pub use roproj::issue_175_admit_a0_a1;
 pub use roproj::{
-    CanonicalRoProjectAdmissionError, CanonicalRoProjectFile, CanonicalRoProjectV1,
-    ROPROJ_V1_FORMAT_VERSION, ROPROJ_V1_PATHS, canonicalize_roproj, decode_roproj_v1,
-    encode_roproj_v1, load_roproj, materialize_roproj, publish_canonicalized_roproj,
-    publish_roproj, read_canonical_roproj,
+    CanonicalRoProjectAdmissionError, CanonicalRoProjectFile, CanonicalRoProjectFileV2,
+    CanonicalRoProjectV1, CanonicalRoProjectV2, ROPROJ_V1_FORMAT_VERSION, ROPROJ_V1_PATHS,
+    ROPROJ_V2_FORMAT_VERSION, ROPROJ_V2_PATHS, canonicalize_roproj, decode_roproj_v1,
+    decode_roproj_v2, encode_roproj_v1, encode_roproj_v2, load_roproj, materialize_roproj,
+    migrate_roproj_v1_to_v2, publish_canonicalized_roproj, publish_roproj, read_canonical_roproj,
 };
 
 pub const LEGACY_FORMAT_VERSION: u32 = 1;

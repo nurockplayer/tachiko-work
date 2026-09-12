@@ -2,6 +2,7 @@
 
 mod address;
 mod diagnostic;
+mod keyed_grouped_sum;
 mod model;
 mod validation;
 
@@ -9,6 +10,11 @@ pub use address::{AddressIndex, AddressIndexError};
 pub use diagnostic::{
     Diagnostic, DiagnosticCode, DiagnosticFact, DiagnosticLocation, DiagnosticProvider,
     DiagnosticSeverity, SemanticSubject, StableDiagnosticObservation,
+};
+pub use keyed_grouped_sum::{
+    KeyedGroupedSumBindingRole, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionError,
+    KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,
+    validate_keyed_grouped_sum_definitions,
 };
 pub use model::{
     Date, Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldAddress,

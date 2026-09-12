@@ -126,6 +126,7 @@ pub(crate) fn admit_one_pass_exact(
         title: manifest.document.title,
         schemas,
         entities,
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     };
     crate::check_document(&document)?;
     validate_semantic_expression_limits(&document)?;

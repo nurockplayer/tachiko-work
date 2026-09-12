@@ -159,5 +159,6 @@ fn chain_document(cycle: bool) -> Document {
             },
         )]),
         entities,
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }

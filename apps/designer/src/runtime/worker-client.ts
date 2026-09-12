@@ -17,6 +17,9 @@ import type {
   OpenedProjection,
   OccurrenceProjection,
   PublicationProjection,
+  KeyedGroupedSumDefinitionInput,
+  KeyedGroupedSumProjection,
+  KeyedGroupedSumPublishedProjection,
   ProjectExport,
   TableProjection,
   WorkerReply,
@@ -279,6 +282,14 @@ export class WorkerDesignerClient implements DesignerClient {
     );
   }
 
+  async createKeyedGroupedSum(expectedRevision: string, definition: KeyedGroupedSumDefinitionInput): Promise<KeyedGroupedSumPublishedProjection> {
+    return expectResponse("keyed_grouped_sum_published", await this.#command({type: "create_keyed_grouped_sum", expected_revision: expectedRevision, definition}));
+  }
+
+  async queryKeyedGroupedSum(definitionId: string): Promise<KeyedGroupedSumProjection> {
+    return expectResponse("keyed_grouped_sum", await this.#command({type: "query_keyed_grouped_sum", definition_id: definitionId}));
+  }
+
   async editNumber(
     expectedRevision: string,
     target: FieldTarget,
@@ -425,6 +436,8 @@ function expectResponse(
   type: "published",
   response: DesignerResponse,
 ): PublicationProjection;
+function expectResponse(type: "keyed_grouped_sum", response: DesignerResponse): KeyedGroupedSumProjection;
+function expectResponse(type: "keyed_grouped_sum_published", response: DesignerResponse): KeyedGroupedSumPublishedProjection;
 function expectResponse(
   type: "occurrence_observed",
   response: DesignerResponse,

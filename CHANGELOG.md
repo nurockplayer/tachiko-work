@@ -14,7 +14,13 @@ All notable changes to Tachiko Work are documented in this file.
   export/verification/open, and the runtime's actual occurrence identity.
   Unsupported v1 data rejects without changing the active occurrence; existing
   private project export retains its Date-capable round trip.
-
+- The Designer can now create one saved live keyed grouped summary over the
+  bounded Orders/Products definition, recompute it from current source values,
+  and save/reopen it through canonical `.roproj/v2`. The explicit v1-to-v2
+  migration path preserves v1 reads without rewriting on open; v2 definitions
+  retain stable bindings only and never persist evaluated groups, diagnostics,
+  or caches. Existing delta, merge, and portable-package v1 boundaries reject
+  this v2-only meaning rather than dropping it.
 - The browser Designer can export the exact native Driver Tracker profile as
   values-only CSV or typed XLSX for 0–128 current rows. This outbound-only path
   preserves stable row mapping and supported cell styles without fabricating

@@ -11,6 +11,9 @@ import type {
   OpenedProjection,
   ProjectExport,
   PublicationProjection,
+  KeyedGroupedSumDefinitionInput,
+  KeyedGroupedSumProjection,
+  KeyedGroupedSumPublishedProjection,
   TableProjection,
   FailureProjection,
 } from "./protocol.ts";
@@ -70,6 +73,8 @@ export interface DesignerClient {
     target: FieldTarget,
     source: string,
   ): Promise<PublicationProjection>;
+  createKeyedGroupedSum?(expectedRevision: string, definition: KeyedGroupedSumDefinitionInput): Promise<KeyedGroupedSumPublishedProjection>;
+  queryKeyedGroupedSum?(definitionId: string): Promise<KeyedGroupedSumProjection>;
   close(): void | Promise<void>;
 }
 

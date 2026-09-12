@@ -33,6 +33,7 @@ import type {
   FieldTarget,
   OpenedProjection,
   PublicationProjection,
+  KeyedGroupedSumProjection,
   TableProjection,
 } from "./runtime/protocol.ts";
 
@@ -100,6 +101,16 @@ export function mountDesigner(
   const pendingFormulaBuffers = new Map<string, string>();
   const pendingNumberBuffers = new Map<string, string>();
   let budgetToolsDraft: BudgetToolsDraft = {};
+  const groupedTables = new Map<string, TableProjection>();
+  let groupedDefinitionId: string | null = null;
+  let groupedResult: KeyedGroupedSumProjection | null = null;
+  let groupedOrders = "";
+  let groupedProducts = "";
+  let groupedOrderLookup = "";
+  let groupedOrderQuantity = "";
+  let groupedProductKey = "";
+  let groupedProductCategory = "";
+  let groupedProductPrice = "";
   let budgetTables: TableProjection[] = [];
   const reportState: ReportPanelState = { draft: null };
   let reportOccurrence = Symbol("report occurrence");
@@ -228,6 +239,19 @@ export function mountDesigner(
     }
     renderInterop();
     renderReports();
+    const groupedHost = document.createElement("div");
+    root.querySelector(".table-workbench")?.append(groupedHost);
+    groupedHost.innerHTML = groupedSummaryMarkup(bootstrap, groupedTables, {
+      orders: groupedOrders,
+      products: groupedProducts,
+      orderLookup: groupedOrderLookup,
+      orderQuantity: groupedOrderQuantity,
+      productKey: groupedProductKey,
+      productCategory: groupedProductCategory,
+      productPrice: groupedProductPrice,
+      result: groupedResult,
+    }, busy || snapshot.currentness !== "current");
+    bindGroupedSummary();
     hydrateDraftControls();
     bindInteractions();
   };
@@ -602,6 +626,9 @@ export function mountDesigner(
         requested,
       );
       store.finishRefresh(refresh);
+      if (groupedDefinitionId !== null && client.queryKeyedGroupedSum) {
+        groupedResult = await client.queryKeyedGroupedSum(groupedDefinitionId);
+      }
       if (tracker.view.budgetViews) await refreshBudgetTables(publication.resulting_revision);
       notice = {
         tone: "success",
@@ -697,6 +724,57 @@ export function mountDesigner(
     }
   };
 
+  const bindGroupedSummary = (): void => {
+    const select = (name: string, set: (value: string) => void): void => {
+      root.querySelector<HTMLSelectElement>(`[data-grouped-${name}]`)?.addEventListener("change", event => {
+        const control = event.currentTarget;
+        if (control instanceof HTMLSelectElement) { set(control.value); render(); }
+      });
+    };
+    select("orders", value => { groupedOrders = value; groupedOrderLookup = ""; groupedOrderQuantity = ""; });
+    select("products", value => { groupedProducts = value; groupedProductKey = ""; groupedProductCategory = ""; groupedProductPrice = ""; });
+    select("order-lookup", value => { groupedOrderLookup = value; });
+    select("order-quantity", value => { groupedOrderQuantity = value; });
+    select("product-key", value => { groupedProductKey = value; });
+    select("product-category", value => { groupedProductCategory = value; });
+    select("product-price", value => { groupedProductPrice = value; });
+    root.querySelector<HTMLButtonElement>("[data-create-grouped-summary]")?.addEventListener("click", () => {
+      void (async () => {
+        if (!store || busy || !client.createKeyedGroupedSum) return;
+        if (!window.confirm("Creating a grouped summary upgrades this project to format 2 (canonical .roproj/v2). Migrate now?")) return;
+        const orders = groupedTables.get(groupedOrders);
+        const products = groupedTables.get(groupedProducts);
+        if (!orders || !products || !groupedOrderLookup || !groupedOrderQuantity || !groupedProductKey || !groupedProductCategory || !groupedProductPrice) {
+          showProjectFailure("Grouped summary not created", new Error("Select both tables and every required field.")); render(); return;
+        }
+        busy = true; notice = null; render();
+        let published = false;
+        try {
+          const publishedResult = await client.createKeyedGroupedSum(store.snapshot().table.revision, {
+            id: "keyed-grouped-summary",
+            orders_schema: orders.collection.id,
+            order_lookup_key_field: groupedOrderLookup,
+            order_quantity_field: groupedOrderQuantity,
+            products_schema: products.collection.id,
+            product_key_field: groupedProductKey,
+            product_category_field: groupedProductCategory,
+            product_price_field: groupedProductPrice,
+          });
+          published = true;
+          tracker.recordSemantic();
+          const requested = store.beginPublication(publishedResult.publication);
+          durability.observe(publishedResult.publication.resulting_revision);
+          store.finishRefresh(await client.queryFields(publishedResult.publication.resulting_revision, requested));
+          groupedDefinitionId = publishedResult.result.definition_id;
+          groupedResult = publishedResult.result;
+          notice = {tone: "success", title: "Publication complete", message: "Grouped summary published in canonical format 2.", diagnostics: []};
+        } catch (error) {
+          showFailure(error, published);
+        } finally { busy = false; syncBeforeUnloadGuard(); render(); }
+      })();
+    });
+  };
+
   const refreshBudgetTables = async (revision: string): Promise<void> => {
     if (!bootstrap) return;
     const tables = await Promise.all(bootstrap.collections.map(c => client.queryTable(c.key)));
@@ -783,6 +861,18 @@ export function mountDesigner(
     pendingNumberBuffers.clear(); budgetToolsDraft = {}; budgetTables = [];
     bootstrap = candidate;
     store = nextStore;
+    groupedTables.clear();
+    groupedTables.set(table.collection.key, table);
+    groupedDefinitionId = candidate.keyed_grouped_sum_definition_ids?.[0] ?? null; groupedResult = null;
+    groupedOrders = ""; groupedProducts = ""; groupedOrderLookup = ""; groupedOrderQuantity = "";
+    groupedProductKey = ""; groupedProductCategory = ""; groupedProductPrice = "";
+    await Promise.all(candidate.collections.map(async collection => {
+      const loaded = await client.queryTable(collection.key);
+      if (loaded.revision === candidate.revision) groupedTables.set(collection.key, loaded);
+    }));
+    if (groupedDefinitionId !== null && client.queryKeyedGroupedSum) {
+      groupedResult = await client.queryKeyedGroupedSum(groupedDefinitionId);
+    }
     selectedCollection = candidate.default_collection;
     occurrenceClosed = false;
     durability.install(candidate.revision, durable);
@@ -790,6 +880,9 @@ export function mountDesigner(
   };
 
   const installOpenedOccurrence = (opened: OpenedProjection): void => {
+    const retainedCollection = opened.bootstrap.collections.some(collection => collection.key === selectedCollection)
+      ? selectedCollection
+      : opened.bootstrap.default_collection;
     const nextStore = createProjectionStore(opened.table);
     reportOccurrence = Symbol("report occurrence"); reportState.draft = null; pendingExport = null;
     tracker.reset(); savedView = JSON.stringify(tracker.view); activeProject = null;
@@ -800,11 +893,31 @@ export function mountDesigner(
     pendingNumberBuffers.clear(); budgetToolsDraft = {}; budgetTables = [];
     bootstrap = opened.bootstrap;
     store = nextStore;
-    selectedCollection = opened.bootstrap.default_collection;
+    groupedTables.clear();
+    groupedTables.set(opened.table.collection.key, opened.table);
+    groupedDefinitionId = opened.bootstrap.keyed_grouped_sum_definition_ids?.[0] ?? null; groupedResult = null;
+    groupedOrders = ""; groupedProducts = ""; groupedOrderLookup = ""; groupedOrderQuantity = "";
+    groupedProductKey = ""; groupedProductCategory = ""; groupedProductPrice = "";
+    void Promise.all(opened.bootstrap.collections.map(async collection => {
+      const loaded = await client.queryTable(collection.key);
+      if (loaded.revision === opened.bootstrap.revision) { groupedTables.set(collection.key, loaded); render(); }
+    }));
+    if (groupedDefinitionId !== null && client.queryKeyedGroupedSum) {
+      void client.queryKeyedGroupedSum(groupedDefinitionId).then(result => { groupedResult = result; render(); });
+    }
+    selectedCollection = retainedCollection;
     occurrenceClosed = false;
     coldBootstrapOccurrence = false;
     durability.install(opened.bootstrap.revision, true);
     syncBeforeUnloadGuard();
+    if (retainedCollection !== opened.bootstrap.default_collection) {
+      void client.queryTable(retainedCollection).then(table => {
+        if (table.revision === opened.bootstrap.revision) {
+          store = createProjectionStore(table);
+          render();
+        }
+      });
+    }
   };
 
   const refreshSavedProjects = async (preferred?: string): Promise<void> => {
@@ -1071,7 +1184,6 @@ export function mountDesigner(
       tracker.reset(); savedView = JSON.stringify(tracker.view); activeProject = null;
       bootstrap = null;
       store = null;
-      selectedCollection = "";
       occurrenceClosed = true;
       durability.close();
       syncBeforeUnloadGuard();
@@ -1569,6 +1681,46 @@ function savedProjectOptions(
     .join("");
 }
 
+type GroupedSummaryState = {
+  orders: string;
+  products: string;
+  orderLookup: string;
+  orderQuantity: string;
+  productKey: string;
+  productCategory: string;
+  productPrice: string;
+  result: KeyedGroupedSumProjection | null;
+};
+
+function groupedSummaryMarkup(
+  bootstrap: BootstrapProjection,
+  tables: Map<string, TableProjection>,
+  state: GroupedSummaryState,
+  disabled: boolean,
+): string {
+  const tableOptions = (selected: string): string => ["<option value=\"\">Choose a table</option>", ...bootstrap.collections.map(collection => `<option value="${escapeHtml(collection.key)}" ${collection.key === selected ? "selected" : ""}>${escapeHtml(humanize(collection.key))}</option>`)].join("");
+  const fieldOptions = (table: string, selected: string): string => ["<option value=\"\">Choose a field</option>", ...(tables.get(table)?.columns ?? []).map(column => `<option value="${escapeHtml(column.id)}" ${column.id === selected ? "selected" : ""}>${escapeHtml(humanize(column.key))}</option>`)].join("");
+  const result = state.result === null ? "" : `
+    <section aria-label="Grouped summary result">
+      <h3>Grouped summary result</h3>
+      <ul aria-label="Current groups">${state.result.groups.map(group => `<li>${escapeHtml(group.category)} ${escapeHtml(String(group.value))}</li>`).join("")}</ul>
+      ${state.result.diagnostics.map(diagnostic => `<p role="status">${escapeHtml(diagnostic.code)}</p>`).join("")}
+    </section>`;
+  return `
+    <section aria-label="Grouped summary" class="grouped-summary">
+      <h3>Grouped summary</h3>
+      <label>Orders table<select aria-label="Orders table" data-grouped-orders ${disabled ? "disabled" : ""}>${tableOptions(state.orders)}</select></label>
+      <label>Order lookup key<select aria-label="Order lookup key" data-grouped-order-lookup ${disabled ? "disabled" : ""}>${fieldOptions(state.orders, state.orderLookup)}</select></label>
+      <label>Order quantity<select aria-label="Order quantity" data-grouped-order-quantity ${disabled ? "disabled" : ""}>${fieldOptions(state.orders, state.orderQuantity)}</select></label>
+      <label>Products table<select aria-label="Products table" data-grouped-products ${disabled ? "disabled" : ""}>${tableOptions(state.products)}</select></label>
+      <label>Product lookup key<select aria-label="Product lookup key" data-grouped-product-key ${disabled ? "disabled" : ""}>${fieldOptions(state.products, state.productKey)}</select></label>
+      <label>Product category<select aria-label="Product category" data-grouped-product-category ${disabled ? "disabled" : ""}>${fieldOptions(state.products, state.productCategory)}</select></label>
+      <label>Product price<select aria-label="Product price" data-grouped-product-price ${disabled ? "disabled" : ""}>${fieldOptions(state.products, state.productPrice)}</select></label>
+      <button type="button" data-create-grouped-summary ${disabled ? "disabled" : ""}>Create grouped summary</button>
+      ${result}
+    </section>`;
+}
+
 function rowMarkup(
   row: TableProjection["rows"][number],
   table: TableProjection,
@@ -1741,9 +1893,21 @@ function calculationValue(field: FieldProjection, format: NumberFormat): string 
 }
 
 function projectRepresentation(bytes: ArrayBuffer): string {
-  return new TextDecoder().decode(bytes.slice(0, 8)) === "TWDPROJ2"
-    ? "Storage: direct-ro/v2 with browser-only view settings; not a portable .roproj package."
-    : "Storage: .roproj/v1 with browser-only view settings.";
+  const view = new DataView(bytes);
+  const magic = new TextDecoder().decode(bytes.slice(0, 8));
+  if (magic === "TWDPROJ2") return "Storage: direct-ro/v2 with browser-only view settings; not a portable .roproj package.";
+  if (magic === "TWDPROJ1" && view.byteLength >= 18) {
+    const pathLength = view.getUint16(12, true);
+    const byteLength = view.getUint32(14, true);
+    const payloadStart = 18 + pathLength;
+    if (payloadStart + byteLength <= view.byteLength) {
+      try {
+        const manifest = JSON.parse(new TextDecoder().decode(bytes.slice(payloadStart, payloadStart + byteLength))) as {format_version?: unknown};
+        if (manifest.format_version === 2) return "Storage: .roproj/v2 with browser-only view settings.";
+      } catch { /* The runtime will reject malformed transfers on admission. */ }
+    }
+  }
+  return "Storage: .roproj/v1 with browser-only view settings.";
 }
 
 function storedValue(field: FieldProjection): string {

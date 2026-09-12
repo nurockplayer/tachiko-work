@@ -79,6 +79,7 @@ fn arena(
             .into_iter()
             .map(|entity| (entity.id.clone(), entity))
             .collect(),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }
 

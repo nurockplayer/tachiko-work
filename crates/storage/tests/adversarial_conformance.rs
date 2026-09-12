@@ -38,6 +38,7 @@ fn number_document(number: Number) -> Document {
                 fields: BTreeMap::from([(field_id, Value::Number(number))]),
             },
         )]),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }
 
