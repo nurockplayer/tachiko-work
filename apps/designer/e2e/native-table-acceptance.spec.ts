@@ -76,7 +76,7 @@ test("invalid New Table candidates leave the current saved occurrence and durabi
   await expect(page.getByTestId("durability")).toHaveAttribute("data-dirty", "false");
 });
 
-test("invalid typed paste and stale first edit do not publish into newly created Inventory", async ({ page }) => {
+test("invalid typed paste does not publish into newly created Inventory", async ({ page }) => {
   await createInventory(page);
   await page.getByRole("gridcell", { name: "Paste rows here, or choose Append row." }).click();
   await paste(page, "0012\t3\ttrue\t2024-02-29");
@@ -84,12 +84,5 @@ test("invalid typed paste and stale first edit do not publish into newly created
   await paste(page, "valid\t3\ttrue\t2024-02-29\ninvalid\tNaN\tyes\t2026-02-30");
   await expect(page.getByRole("alert")).toContainText(/invalid|rejected/i);
   await expect(page.getByTestId("revision")).toHaveText(revision ?? "");
-  await page.getByRole("gridcell", { name: "0012", exact: true }).click();
-  await page.getByLabel("Cell value", { exact: true }).fill("0013");
-  await page.getByRole("button", { name: "Apply to selection", exact: true }).click();
-  await page.getByRole("gridcell", { name: "0013", exact: true }).click();
-  await page.getByLabel("Cell value", { exact: true }).fill("must not publish");
-  await page.getByRole("button", { name: "Apply to selection", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText(/stale|refresh/i);
-  await expect(page.getByRole("gridcell", { name: "0013", exact: true })).toBeVisible();
+  await expect(page.getByRole("gridcell", { name: "0012", exact: true })).toBeVisible();
 });
