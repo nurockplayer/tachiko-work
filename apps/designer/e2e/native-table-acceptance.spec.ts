@@ -90,6 +90,21 @@ test("Driver creates Inventory, pastes typed rows, saves, reopens, and continues
   await expect(page.getByRole("gridcell", { name: "0013", exact: true })).toBeVisible();
 });
 
+test("cancelled New Table preserves a dirty current occurrence", async ({ page }) => {
+  await page.goto("/");
+  page.once("dialog", dialog => dialog.accept());
+  await page.getByRole("button", { name: "New Tracker", exact: true }).click();
+  await expect(page.getByRole("grid", { name: "Tracker cells", exact: true })).toBeVisible();
+  await expect(page.getByTestId("durability")).toHaveAttribute("data-dirty", "true");
+
+  const confirmation = page.waitForEvent("dialog");
+  await page.getByRole("button", { name: "New Table", exact: true }).click();
+  await (await confirmation).dismiss();
+
+  await expect(page.getByRole("grid", { name: "Tracker cells", exact: true })).toBeVisible();
+  await expect(page.getByTestId("durability")).toHaveAttribute("data-dirty", "true");
+});
+
 test("invalid New Table candidates leave the current saved occurrence and durability state unchanged", async ({ page }) => {
   await page.goto("/");
   page.once("dialog", dialog => dialog.accept());
