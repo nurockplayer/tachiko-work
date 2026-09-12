@@ -1,0 +1,55 @@
+{
+  "issue": 355,
+  "observed_on": "2026-09-09 JST",
+  "repository_base": "79f0a9466e88db8d6a3cbc3993b66017c9278c82",
+  "scope": "LibreOffice-only synthetic preflight; not Tachiko bridge acceptance",
+  "office": "LibreOffice 25.2.3.2 520(Build:2)",
+  "platform": "Linux-6.18.35-x86_64-with-glibc2.41",
+  "python": "3.13.5 (main, Jun 25 2025, 18:55:22) [GCC 14.2.0]",
+  "script_sha256": "a41fe17a2cbd4ae8df1251c9c1b5922a3e70a6f84230d81a2698964db557924e",
+  "tests_run": 6,
+  "failures": 0,
+  "errors": 0,
+  "skips": 0,
+  "passed": true,
+  "watchdog_expired": false,
+  "checks": [
+    "literal types: ODS/XLSX/ODS",
+    "live formula roundtrip, changed-input recalculation and reopen",
+    "date, percent, formula error and blank observations",
+    "ReadOnly does not block UNO API mutation",
+    "existing output sentinel preserved",
+    "read observations preserve bytes and dirty state"
+  ],
+  "fixture_artifact_hashes": {
+    "display-0.ods": "12e03697d06651cd7aca44888c828ab7375f506261642c0bb1560cbd8d1c55df",
+    "display-1.xlsx": "813bdce66741ff2a2b7444dca3a8dae62383da8d37decaada4c52946ab598ab7",
+    "display-2.ods": "a363916af2ce4382dd672d280fadc307b8726b78438eee31c6a34b7e11d7c93f",
+    "existing.ods": "a69aaaf285726f8374b5b33de5803c05ee9ebc6edf41481950d00a44a99cde07",
+    "literals-0.ods": "f2225c4cb3595d79a3ae2181752d5c7959cc7740e7472d7c50d57d6a6fc275ec",
+    "literals-1.xlsx": "89c8a5fa840bacc02fe15afbed927314635d35da6a2c57f6dd7d34fa0a3f0d46",
+    "literals-2.ods": "5771e246ecb03e729dbd3e70aadeac02ccd5a4bf0a519456bd8a250b5823f677",
+    "observation.ods": "09b443a230b7de2f0e357fdda3e074c9074308fc0effd0270991dfb24c9735ae",
+    "plan-0.ods": "4581bbe577256c3459164056f5cb6fcaf22dc490e840b75abaf6140b56686ec7",
+    "plan-1.xlsx": "24976a8e8fc9e31a65227ce4f320f8fae20d92e17bd3eb796b4b4460b432a272",
+    "plan-2.ods": "9ae908b25f58b612396ad4de535aa321c89c6fd94e981637f818a81fdd2d6f39",
+    "plan-changed.xlsx": "d92caa6a8a6ce872f2015b647dc020f1d33f0182b06c8f6174266def865fb4a4",
+    "readonly.ods": "732666477673e8a8b292ac1f330c070f07035a7a31b3050c7dd78a1089f89689"
+  },
+  "full_observations_sha256": "a62dded8fa0de0e386abb89133721119534ce17f93f4d7d4ce1681fbf2fe2f07",
+  "not_run": [
+    "native Tachiko",
+    "new Calc ingress",
+    "open-sheet execution",
+    "macOS GUI/packaging",
+    "hostile-input sandbox qualification",
+    "Ruff",
+    "repository release gate",
+    "independent review"
+  ],
+  "environment_limits": [
+    "rustc/cargo/tachiko/pnpm/ruff unavailable",
+    "container GitHub clone failed: DNS"
+  ],
+  "claim_limit": "Synthetic same-LibreOffice evidence, not Excel certification, general round-trip fidelity, partnership, production or legal approval."
+}
