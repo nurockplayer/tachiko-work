@@ -11,7 +11,8 @@ use std::{
 use serde::{Deserialize, Serialize};
 use tachiko_storage::{
     CanonicalRoProjectAdmissionError, CanonicalRoProjectV1, FormatError, ROPROJ_V1_PATHS,
-    encode_roproj_v1, from_bytes, to_canonical_string,
+    decode_portable_package_v1, decode_roproj_v1, encode_portable_package_v1, encode_roproj_v1,
+    from_bytes, to_canonical_string,
 };
 use tachiko_workspace_engine::{
     CalculationFailure, Date, Document, Entity, EntityId, EntityKey, Expression, FieldDefinition,
@@ -27,7 +28,7 @@ use tachiko_workspace_engine::{
         ProposalRequest, ScopedSemanticSubject, SemanticApiContract, SemanticCommand,
         SemanticPatchBody, SemanticRevision, SemanticScope, TrustedInstant,
     },
-    resident_session::{ResidentWorkspaceSession, TrustedPublicationTimeSource},
+    resident_session::{ResidentSnapshot, ResidentWorkspaceSession, TrustedPublicationTimeSource},
     validate,
 };
 use thiserror::Error;
@@ -161,6 +162,10 @@ pub enum DesignerResponse {
     Imported(Box<ImportedProjection>),
     SpreadsheetExported(SpreadsheetExportProjection),
     ProjectExported(ProjectExportProjection),
+    CanonicalTreeExported(ProjectExportProjection),
+    PortableRoExported(ProjectExportProjection),
+    PortableRoVerified(PortableRoVerification),
+    OccurrenceObserved(OccurrenceProjection),
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -365,6 +370,25 @@ pub struct ProjectExport {
 pub struct ProjectExportProjection {
     pub revision: String,
     pub byte_length: usize,
+}
+
+/// An app-private transfer record containing every exact canonical v1 file.
+/// Its bytes are not a portable `.ro` artifact.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CanonicalTreeExport {
+    pub revision: String,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct OccurrenceProjection {
+    pub scope: String,
+    pub revision: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PortableRoVerification {
+    pub accepted: bool,
 }
 
 #[derive(Debug, Error)]
@@ -793,6 +817,57 @@ impl DesignerRuntime {
             revision: snapshot.revision().as_str().to_owned(),
             bytes,
         })
+    }
+
+    /// Export the exact current snapshot as the complete canonical v1 tree.
+    ///
+    /// The returned bytes use the app-private host/WASM transfer record. The
+    /// bridge decodes that record only into opaque path/byte entries; callers
+    /// must not present it as a portable `.ro` artifact.
+    pub fn export_canonical_tree(
+        &self,
+        expected_revision: &str,
+    ) -> Result<CanonicalTreeExport, DesignerError> {
+        let snapshot = self.exact_snapshot(expected_revision)?;
+        let tree = encode_v1_tree(snapshot.document())?;
+        Ok(CanonicalTreeExport {
+            revision: snapshot.revision().as_str().to_owned(),
+            bytes: encode_project_bundle_v1(&tree)?,
+        })
+    }
+
+    /// Export the exact current snapshot as a genuine portable-package/v1
+    /// `.ro` artifact.
+    pub fn export_portable_ro(
+        &self,
+        expected_revision: &str,
+    ) -> Result<ProjectExport, DesignerError> {
+        let snapshot = self.exact_snapshot(expected_revision)?;
+        let tree = encode_v1_tree(snapshot.document())?;
+        Ok(ProjectExport {
+            revision: snapshot.revision().as_str().to_owned(),
+            bytes: encode_portable_package_v1(&tree)?,
+        })
+    }
+
+    /// Project the trusted identity of the live resident occurrence.
+    #[must_use]
+    pub fn observe_occurrence(&self) -> OccurrenceProjection {
+        OccurrenceProjection {
+            scope: self.occurrence_scope().to_owned(),
+            revision: self.current_revision().to_owned(),
+        }
+    }
+
+    fn exact_snapshot(&self, expected_revision: &str) -> Result<ResidentSnapshot, DesignerError> {
+        let current = self.current_revision();
+        if current != expected_revision {
+            return Err(DesignerError::StaleQuery {
+                requested: expected_revision.to_owned(),
+                current: current.to_owned(),
+            });
+        }
+        Ok(self.session.export_snapshot())
     }
 
     fn query_table(&self, collection: &str) -> Result<TableProjection, DesignerError> {
@@ -1911,6 +1986,32 @@ pub fn open_local_document(
     Ok(opened)
 }
 
+/// Verify and admit a portable-package/v1 `.ro` candidate before replacing
+/// the resident occurrence.
+///
+/// This accepts only the genuine storage codec. It does not widen the
+/// app-private project-transfer format used by [`open_project`].
+pub fn open_portable_ro(
+    runtime: &mut Option<DesignerRuntime>,
+    input: &[u8],
+    occurrence_id: &str,
+) -> Result<OpenedProjection, DesignerError> {
+    enforce_project_transfer_limit(input.len())?;
+    let verified = decode_portable_package_v1(input)?;
+    let document = decode_roproj_v1(verified.tree())?;
+    let (candidate, opened) = admit_document(document, occurrence_id)?;
+    *runtime = Some(candidate);
+    Ok(opened)
+}
+
+/// Completely verify one portable-package/v1 `.ro` artifact without changing
+/// the resident occurrence.
+pub fn verify_portable_ro(input: &[u8]) -> Result<(), DesignerError> {
+    enforce_project_transfer_limit(input.len())?;
+    decode_portable_package_v1(input)?;
+    Ok(())
+}
+
 /// Inspect a fully admitted project without replacing any resident occurrence.
 ///
 /// # Errors
@@ -2195,6 +2296,15 @@ fn document_contains_date(document: &Document) -> bool {
         .values()
         .flat_map(|schema| schema.fields.values())
         .any(|field| field.field_type == FieldType::Date)
+}
+
+fn encode_v1_tree(document: &Document) -> Result<CanonicalRoProjectV1, DesignerError> {
+    if document_contains_date(document) {
+        return Err(DesignerError::UnsupportedProject {
+            message: "canonical .roproj/v1 and portable-package/v1 do not support Date fields; use the existing private project export".to_owned(),
+        });
+    }
+    Ok(encode_roproj_v1(document)?)
 }
 
 fn enforce_project_transfer_limit(actual: usize) -> Result<(), DesignerError> {

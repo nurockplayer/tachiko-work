@@ -18,6 +18,8 @@ export { DesignerRuntimeError, projectTransferFromFiles };
 export type { DesignerClient };
 export type {
   BootstrapProjection,
+  CanonicalProjectFile,
+  CanonicalTreeExport,
   CalculationProjection,
   CollectionSummary,
   DiagnosticProjection,
@@ -26,6 +28,7 @@ export type {
   FieldProjection,
   FieldTarget,
   OpenedProjection,
+  OccurrenceProjection,
   ProjectExport,
   PublicationProjection,
   StoredValueProjection,

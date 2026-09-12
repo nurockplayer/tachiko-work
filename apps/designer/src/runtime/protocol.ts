@@ -82,6 +82,19 @@ export type ProjectExport = {
   bytes: ArrayBuffer;
 };
 
+/** Opaque canonical-v1 path/byte entries from the Rust storage codec. */
+export type CanonicalProjectFile = { path: string; bytes: ArrayBuffer };
+
+export type CanonicalTreeExport = {
+  revision: string;
+  files: CanonicalProjectFile[];
+};
+
+export type OccurrenceProjection = {
+  scope: string;
+  revision: string;
+};
+
 export type FailureProjection = {
   code: string;
   message: string;
@@ -144,7 +157,11 @@ export type DesignerResponse =
   | { type: "table"; payload: TableProjection }
   | { type: "fields"; payload: FieldBatchProjection }
   | { type: "published"; payload: PublicationProjection }
-  | { type: "project_exported"; payload: ProjectExportProjection };
+  | { type: "project_exported"; payload: ProjectExportProjection }
+  | { type: "canonical_tree_exported"; payload: ProjectExportProjection }
+  | { type: "portable_ro_exported"; payload: ProjectExportProjection }
+  | { type: "portable_ro_verified"; payload: { accepted: true } }
+  | { type: "occurrence_observed"; payload: OccurrenceProjection };
 
 export type DesignerWireReply =
   | { status: "ok"; response: DesignerResponse }
@@ -167,12 +184,19 @@ export type WorkerRequest =
     }
   | { id: number; kind: "inspect_project"; bytes: ArrayBuffer }
   | { id: number; kind: "export_project"; expected_revision: string }
+  | { id: number; kind: "export_canonical_tree"; expected_revision: string }
+  | { id: number; kind: "export_portable_ro"; expected_revision: string }
+  | { id: number; kind: "verify_portable_ro"; bytes: ArrayBuffer }
+  | { id: number; kind: "open_portable_ro"; occurrence_id: string; bytes: ArrayBuffer }
+  | { id: number; kind: "observe_occurrence" }
   | { id: number; kind: "close_project" };
 
 export type WorkerReply =
   | {id: number; status: "spreadsheet_exported"; export: SpreadsheetExport}
   | { id: number; status: "ok"; response: DesignerResponse }
   | { id: number; status: "project_exported"; export: ProjectExport }
+  | { id: number; status: "canonical_tree_exported"; export: CanonicalTreeExport }
+  | { id: number; status: "portable_ro_exported"; export: ProjectExport }
   | { id: number; status: "closed" }
   | { id: number; status: "error"; error: FailureProjection };
 
