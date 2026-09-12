@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Proposed replacement for scripts/experimental-designer-client-smoke.sh.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -8,9 +7,37 @@ vendor_dir="${consumer_dir}/vendor/tachiko"
 check_dir="$(mktemp -d "${TMPDIR:-/tmp}/tachiko-experimental-client-smoke.XXXXXX")"
 acceptance_runner="${repo_root}/scripts/experimental-designer-client-acceptance.sh"
 
+smoke_completed=0
 rm -rf -- "${consumer_dir}/vendor"
 cleanup() {
-  rm -rf -- "${consumer_dir}/vendor" "${check_dir}"
+  local status="$?"
+  local primary_export="${check_dir}/primary-vendor"
+  trap - EXIT
+
+  if [[ "${status}" -eq 0 && "${smoke_completed}" -eq 1 ]]; then
+    if ! rm -rf -- "${consumer_dir}/vendor" "${check_dir}"; then
+      echo "experimental-designer-client-smoke: could not clean successful smoke outputs" >&2
+      exit 1
+    fi
+    exit 0
+  fi
+
+  if [[ "${status}" -eq 0 ]]; then
+    echo "experimental-designer-client-smoke: smoke exited before completion; retaining diagnostics" >&2
+    status=1
+  fi
+  if [[ -d "${vendor_dir}" && ! -L "${vendor_dir}" ]]; then
+    if mv -- "${vendor_dir}" "${primary_export}"; then
+      echo "experimental-designer-client-smoke: retained primary export: ${primary_export}" >&2
+    else
+      echo "experimental-designer-client-smoke: could not retain primary export; leaving sole evidence at: ${vendor_dir}" >&2
+    fi
+  fi
+  if [[ -d "${check_dir}/kit" && ! -L "${check_dir}/kit" ]]; then
+    echo "experimental-designer-client-smoke: retained comparison export: ${check_dir}/kit" >&2
+  fi
+  echo "experimental-designer-client-smoke: retained diagnostic directory: ${check_dir}" >&2
+  exit "${status}"
 }
 trap cleanup EXIT
 
@@ -113,4 +140,5 @@ pnpm --dir "${repo_root}/apps/designer" exec playwright test \
 # identity captured before export; a manifest cannot vouch for itself.
 bash "${acceptance_runner}" "${vendor_dir}" "${source_commit}"
 
+smoke_completed=1
 echo "experimental Designer client smoke passed"

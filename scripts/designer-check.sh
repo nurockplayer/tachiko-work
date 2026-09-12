@@ -33,4 +33,5 @@ pnpm --dir "${designer_dir}" build
 pnpm --dir "${designer_dir}" exec playwright test
 bash "${repo_root}/scripts/export-experimental-designer-client-immutable-source-test.sh"
 bash "${repo_root}/scripts/experimental-designer-client-source-boundary-test.sh"
+bash "${repo_root}/scripts/experimental-designer-client-smoke-lifecycle-test.sh"
 bash "${repo_root}/scripts/experimental-designer-client-smoke.sh"
