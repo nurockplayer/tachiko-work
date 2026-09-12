@@ -1,13 +1,47 @@
+import { readFile } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
+import type { DesignerWireReply } from "../src/runtime/protocol.ts";
 
 const shortcut = process.platform === "darwin" ? "Meta" : "Control";
 const inventoryRows = "0012\t3\ttrue\t2024-02-29\nノート\t0\tfalse\t2026-09-13\n紙\t-2\ttrue\t2026-01-01";
+const inventoryRequest = {
+  type: "new_table",
+  occurrence_id: "00000000-0000-4000-8000-000000000315",
+  name: "Inventory",
+  columns: [
+    { name: "item", field_type: "text" },
+    { name: "quantity", field_type: "number" },
+    { name: "active", field_type: "boolean" },
+    { name: "received", field_type: "date" },
+  ],
+};
+
+type DesignerAbi = WebAssembly.Exports & {
+  memory: WebAssembly.Memory;
+  tachiko_designer_request_reserve(length: number): number;
+  tachiko_designer_request_run(): void;
+  tachiko_designer_response_ptr(): number;
+  tachiko_designer_response_len(): number;
+};
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 
 test.use({ permissions: ["clipboard-read", "clipboard-write"] });
 
 async function paste(page: Page, text: string): Promise<void> {
   await page.evaluate(value => navigator.clipboard.writeText(value), text);
   await page.keyboard.press(`${shortcut}+V`);
+}
+
+async function wasmRequest(request: unknown): Promise<DesignerWireReply> {
+  const wasm = new Uint8Array(await readFile(new URL("../public/designer_runtime.wasm", import.meta.url)));
+  const { instance } = await WebAssembly.instantiate(wasm, {});
+  const abi = instance.exports as DesignerAbi;
+  const bytes = encoder.encode(JSON.stringify(request));
+  const pointer = abi.tachiko_designer_request_reserve(bytes.length);
+  new Uint8Array(abi.memory.buffer, pointer, bytes.length).set(bytes);
+  abi.tachiko_designer_request_run();
+  return JSON.parse(decoder.decode(new Uint8Array(abi.memory.buffer, abi.tachiko_designer_response_ptr(), abi.tachiko_designer_response_len()))) as DesignerWireReply;
 }
 
 async function createInventory(page: Page): Promise<void> {
@@ -35,6 +69,7 @@ async function createInventory(page: Page): Promise<void> {
 
 test("Driver creates Inventory, pastes typed rows, saves, reopens, and continues the same table", async ({ page }) => {
   await createInventory(page);
+  await expect(page.getByTestId("durability")).toHaveAttribute("data-dirty", "true");
   const headers = page.getByRole("columnheader");
   await expect(headers).toHaveText(["item", "quantity", "active", "received"]);
   await page.getByRole("gridcell", { name: "Paste rows here, or choose Append row." }).click();
@@ -74,6 +109,11 @@ test("invalid New Table candidates leave the current saved occurrence and durabi
   await expect(page.getByRole("alert")).toContainText(/duplicate|invalid/i);
   await expect(page.getByRole("grid", { name: "Tracker cells", exact: true })).toBeVisible();
   await expect(page.getByTestId("durability")).toHaveAttribute("data-dirty", "false");
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await page.getByLabel("Saved project", { exact: true }).selectOption("resident.roproj");
+  await page.getByRole("button", { name: "Open project", exact: true }).click();
+  await expect(page.getByRole("grid", { name: "Tracker cells", exact: true })).toBeVisible();
+  await expect(page.getByTestId("durability")).toHaveAttribute("data-dirty", "false");
 });
 
 test("invalid typed paste does not publish into newly created Inventory", async ({ page }) => {
@@ -85,4 +125,18 @@ test("invalid typed paste does not publish into newly created Inventory", async 
   await expect(page.getByRole("alert")).toContainText(/invalid|rejected/i);
   await expect(page.getByTestId("revision")).toHaveText(revision ?? "");
   await expect(page.getByRole("gridcell", { name: "0012", exact: true })).toBeVisible();
+});
+
+test("built Designer WASM admits the same Inventory candidate as the native seed", async () => {
+  const reply = await wasmRequest(inventoryRequest);
+  expect(reply.status, JSON.stringify(reply)).toBe("ok");
+  if (reply.status !== "ok") throw new Error(JSON.stringify(reply.error));
+  expect(reply.response.type).toBe("opened");
+  if (reply.response.type !== "opened") throw new Error(JSON.stringify(reply.response));
+  expect(reply.response.payload.table.columns.map(column => [column.key, column.field_type])).toEqual([
+    ["item", "text"],
+    ["quantity", "number"],
+    ["active", "boolean"],
+    ["received", "date"],
+  ]);
 });

@@ -1,6 +1,7 @@
 use serde_json::{Value, json};
 use tachiko_designer_runtime::{
-    DesignerResponse, DesignerRuntime, DesignerWireReply, process_wire_request,
+    DesignerResponse, DesignerRuntime, DesignerWireReply, StoredValueProjection, TableProjection,
+    process_wire_request,
 };
 
 const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000315";
@@ -23,7 +24,7 @@ fn new_inventory() -> Value {
     })
 }
 
-fn request(runtime: &mut Option<DesignerRuntime>, request: Value) -> DesignerWireReply {
+fn request(runtime: &mut Option<DesignerRuntime>, request: &Value) -> DesignerWireReply {
     serde_json::from_slice(&process_wire_request(
         runtime,
         request.to_string().as_bytes(),
@@ -59,7 +60,7 @@ fn table(
         response: DesignerResponse::Table(table),
     } = request(
         runtime,
-        json!({"type": "query_table", "collection": collection}),
+        &json!({"type": "query_table", "collection": collection}),
     )
     else {
         panic!("the admitted Inventory table must remain queryable");
@@ -76,10 +77,58 @@ fn project_bytes(runtime: &mut Option<DesignerRuntime>, expected_revision: &str)
         .bytes
 }
 
+fn stored_values(table: &TableProjection) -> Vec<Vec<Option<StoredValueProjection>>> {
+    table
+        .rows
+        .iter()
+        .map(|row| {
+            row.fields
+                .iter()
+                .map(|field| field.stored.clone())
+                .collect()
+        })
+        .collect()
+}
+
+fn expected_inventory_values() -> Vec<Vec<Option<StoredValueProjection>>> {
+    vec![
+        vec![
+            Some(StoredValueProjection::Text {
+                value: "0012".into(),
+            }),
+            Some(StoredValueProjection::Number { value: 3.0 }),
+            Some(StoredValueProjection::Boolean { value: true }),
+            Some(StoredValueProjection::Date {
+                value: "2024-02-29".parse().expect("fixed Gregorian fixture"),
+            }),
+        ],
+        vec![
+            Some(StoredValueProjection::Text {
+                value: "ノート".into(),
+            }),
+            Some(StoredValueProjection::Number { value: 0.0 }),
+            Some(StoredValueProjection::Boolean { value: false }),
+            Some(StoredValueProjection::Date {
+                value: "2026-09-13".parse().expect("fixed Gregorian fixture"),
+            }),
+        ],
+        vec![
+            Some(StoredValueProjection::Text {
+                value: "紙".into()
+            }),
+            Some(StoredValueProjection::Number { value: -2.0 }),
+            Some(StoredValueProjection::Boolean { value: true }),
+            Some(StoredValueProjection::Date {
+                value: "2026-01-01".parse().expect("fixed Gregorian fixture"),
+            }),
+        ],
+    ]
+}
+
 #[test]
 fn inventory_creation_paste_and_reopen_preserve_typed_values_order_and_semantic_ids() {
     let mut runtime = None;
-    let opened = opened(request(&mut runtime, new_inventory()));
+    let opened = opened(request(&mut runtime, &new_inventory()));
     assert_eq!(opened.bootstrap.title, "Inventory");
     assert_eq!(opened.table.columns.len(), 4);
     assert_eq!(
@@ -122,7 +171,7 @@ fn inventory_creation_paste_and_reopen_preserve_typed_values_order_and_semantic_
     ];
     let publication = published(request(
         &mut runtime,
-        json!({
+        &json!({
             "type": "paste_cells",
             "expected_revision": opened.table.revision,
             "collection": opened.table.collection.id,
@@ -134,19 +183,18 @@ fn inventory_creation_paste_and_reopen_preserve_typed_values_order_and_semantic_
     let before_close = table(&mut runtime, &opened.table.collection.id);
     assert_eq!(before_close.revision, publication.resulting_revision);
     assert_eq!(before_close.rows.len(), 3);
-    assert_eq!(
-        before_close.rows[0].fields[0].stored,
-        Some(tachiko_designer_runtime::StoredValueProjection::Text {
-            value: "0012".into()
-        })
-    );
-    assert_eq!(
-        before_close.rows[0].fields[3].stored,
-        Some(tachiko_designer_runtime::StoredValueProjection::Date {
-            value: "2024-02-29".parse().expect("fixed Gregorian fixture")
-        })
-    );
+    assert_eq!(stored_values(&before_close), expected_inventory_values());
     assert!(before_close.rows.iter().all(|row| !row.id.is_empty()));
+    assert_eq!(
+        before_close
+            .rows
+            .iter()
+            .map(|row| &row.id)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        3,
+        "row identity must remain distinct independently of row order",
+    );
 
     let bytes = project_bytes(&mut runtime, &before_close.revision);
     tachiko_designer_runtime::close_project(&mut runtime);
@@ -157,7 +205,7 @@ fn inventory_creation_paste_and_reopen_preserve_typed_values_order_and_semantic_
 
     published(request(
         &mut runtime,
-        json!({
+        &json!({
             "type": "edit_scalar",
             "expected_revision": reopened.table.revision,
             "target": before_close.rows[0].fields[0].target,
@@ -178,6 +226,12 @@ fn invalid_or_over_capacity_creation_does_not_replace_or_dirty_the_current_occur
     let resident = table(&mut runtime, "tracker");
     let before = project_bytes(&mut runtime, &resident.revision);
     let invalid_candidates = [
+        json!({
+            "type": "new_table",
+            "occurrence_id": OCCURRENCE,
+            "name": "",
+            "columns": inventory_columns(),
+        }),
         json!({
             "type": "new_table",
             "occurrence_id": OCCURRENCE,
@@ -204,7 +258,7 @@ fn invalid_or_over_capacity_creation_does_not_replace_or_dirty_the_current_occur
     ];
 
     for candidate in invalid_candidates {
-        let DesignerWireReply::Error { error } = request(&mut runtime, candidate) else {
+        let DesignerWireReply::Error { error } = request(&mut runtime, &candidate) else {
             panic!(
                 "invalid New Table candidate must reject before replacing the resident occurrence"
             );
@@ -221,11 +275,11 @@ fn invalid_or_over_capacity_creation_does_not_replace_or_dirty_the_current_occur
 #[test]
 fn typed_invalid_paste_and_stale_first_edit_preserve_the_new_inventory_occurrence() {
     let mut runtime = None;
-    let opened = opened(request(&mut runtime, new_inventory()));
+    let opened = opened(request(&mut runtime, &new_inventory()));
     let initial = table(&mut runtime, &opened.table.collection.id);
     let first = published(request(
         &mut runtime,
-        json!({
+        &json!({
             "type": "paste_cells",
             "expected_revision": initial.revision,
             "collection": initial.collection.id,
@@ -249,7 +303,7 @@ fn typed_invalid_paste_and_stale_first_edit_preserve_the_new_inventory_occurrenc
     ] {
         let DesignerWireReply::Error { error } = request(
             &mut runtime,
-            json!({
+            &json!({
                 "type": "paste_cells",
                 "expected_revision": admitted.revision,
                 "collection": admitted.collection.id,
@@ -269,7 +323,7 @@ fn typed_invalid_paste_and_stale_first_edit_preserve_the_new_inventory_occurrenc
 
     let second = published(request(
         &mut runtime,
-        json!({
+        &json!({
             "type": "edit_scalar",
             "expected_revision": admitted.revision,
             "target": admitted.rows[0].fields[0].target,
@@ -279,7 +333,7 @@ fn typed_invalid_paste_and_stale_first_edit_preserve_the_new_inventory_occurrenc
     let before_stale = project_bytes(&mut runtime, &second.resulting_revision);
     let DesignerWireReply::Error { error } = request(
         &mut runtime,
-        json!({
+        &json!({
             "type": "edit_scalar",
             "expected_revision": admitted.revision,
             "target": admitted.rows[0].fields[0].target,
