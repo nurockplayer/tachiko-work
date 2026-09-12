@@ -1,8 +1,9 @@
 # Experimental Designer client kit: first contact
 
-Status: bounded Issue #232 experiment. This is not a stable/public SDK, npm
-package, wire protocol, plugin ABI, or compatibility promise. The kit may
-change or disappear after the first external-frontend pilot.
+Status: bounded experimental kit, with producer and canonical I/O qualification
+under Issue #359. This is not a stable/public SDK, npm package, wire protocol,
+plugin ABI, or compatibility promise. The kit may change or disappear after
+the first external-frontend pilot.
 
 The browser frontend receives **projections**: derived semantic facts intended
 for rendering. Every edit carries an **expected revision**, so a stale UI cannot
@@ -12,16 +13,29 @@ formulas, validates candidates, or owns canonical state.
 
 ## Export and vendor the kit
 
-From a clean Tachiko Work checkout with Rust, `wasm32-unknown-unknown`, and pnpm
-11.25.0 installed:
+From a fully clean Tachiko Work checkout with Rust, `wasm32-unknown-unknown`, a
+C compiler, and pnpm 11.25.0 installed:
 
 ```sh
 bash scripts/export-experimental-designer-client.sh \
   /path/to/external-ui/vendor/tachiko
 ```
 
-The destination must be absent or empty. The command compiles and copies one
-self-contained browser kit:
+The destination must be absent. The exporter rejects staged, modified, or
+untracked source files, resolves the full Git commit ID, materializes and
+verifies that committed tree, and builds only from that private snapshot. It
+then publishes a completed kit with a platform no-replace rename; if another
+writer creates the destination first, the export fails without replacing it.
+
+Each source commit uses one exclusive, deterministic temporary build directory
+per user. This keeps Cargo identity stable for local dependencies outside the
+runtime workspace. An occupied directory makes the exporter refuse the build
+and is left intact; it may belong to another export or an interrupted build.
+The exporter cleans only the directory it created, and outputs cannot be placed
+inside that directory. Source-path remapping remains enabled. Repeat equality
+applies to the same runner/toolchain, not different machines or toolchains.
+
+The command compiles and copies one self-contained browser kit:
 
 ```text
 vendor/tachiko/
@@ -32,11 +46,20 @@ vendor/tachiko/
 ├── host/                         # generated private support modules
 ├── runtime/                      # generated private support modules
 ├── package.json                  # ESM/artifact metadata; private, unpublished
-└── README.md                     # instability and authority boundary
+├── README.md                     # instability and authority boundary
+├── notices/                       # copied existing project and third-party notices
+└── artifact-manifest.json         # source identity and SHA-256 asset inventory
 ```
 
 Keep the directory together and import only `experimental-client.js`. Do not
-call the Worker support modules or WASM exports directly.
+call the Worker support modules or WASM exports directly. Verify the manifest
+before consuming the kit: it lists every regular file other than the manifest
+itself, rejects undeclared assets, records the full source commit without
+requiring a remote link, names the currently exposed client methods, and names
+the copied notices. It is an artifact integrity record, not a cross-toolchain
+reproducibility or compatibility claim. The method inventory records
+the experimental artifact surface. Use the explicit canonical/portable methods
+described below; private `exportProject` bytes are not a portable `.ro` file.
 
 ## Open Product Gap and render the first table
 
@@ -92,15 +115,37 @@ const observed = await client.queryFields(publication.resulting_revision, [
 ]);
 
 console.log(observed.fields); // priority calculates to 8; diagnostics come from Rust
-const exported = await client.exportProject(publication.resulting_revision);
+const exported = await client.exportCanonicalTree(publication.resulting_revision);
 ```
 
 The same client exposes revision-pinned `editText` and `editBoolean`. A stale
 call throws `DesignerRuntimeError` with `failure.code === "stale_revision"`;
 query or export the reported current revision instead of rebasing the edit in
-frontend code. Export also requires the exact current revision and returns
-opaque canonical project bytes suitable for host-owned persistence or a later
-`openProject` round trip.
+frontend code. `exportCanonicalTree(revision)` requires the exact current
+revision and returns `{revision, files: [{path, bytes}]}` containing all 18
+canonical v1 files, including empty shards. Rust owns their contents.
+`openCanonicalTree(files)` passes the opaque entries back to Rust admission.
+
+For a genuine portable `.ro` file, use the existing storage codec through:
+
+```ts
+const portable = await client.exportPortableRo(publication.resulting_revision);
+await client.verifyPortableRo(portable.bytes); // verifies without changing active work
+const reopened = await client.openPortableRo(portable.bytes.slice(0));
+const occurrence = await client.observeOccurrence();
+console.log(reopened.bootstrap.revision, occurrence.scope);
+```
+
+Open installs a candidate only after successful admission. Rejected candidates
+preserve the previous occurrence and data. Occurrence scope comes from the
+resident runtime, stays stable for that occurrence, and changes on successful
+open; it is not a document ID. Revision and scope remain opaque tokens.
+
+The canonical-v1 and portable-v1 paths reject unsupported Date data. The
+existing `exportProject`/`openProject` private transfer path retains its Date
+round trip; those private bytes must not be relabeled as `.ro`. Export produces
+a snapshot. Only the separate host persistence operation can confirm a durable
+save.
 
 Always tear down the occurrence and Worker when the UI is finished:
 
@@ -118,11 +163,21 @@ bash scripts/experimental-designer-client-smoke.sh
 This check requires ripgrep (`rg`), which is also a prerequisite of the full
 Designer gate; install it with the operating system's package manager.
 
-That throwaway consumer exports the kit twice (proving deterministic contents),
+That throwaway consumer compares two complete exports under the same toolchain,
 imports no `apps/designer` source, opens Product Gap, queries its typed table,
 publishes a Number edit, observes the priority calculation and diagnostic list,
 proves a stale edit leaves exported canonical bytes unchanged, and reopens an
 exact round trip.
+
+The same smoke also runs the preserved Sheet kit, C1 storage and runtime-canary
+acceptance against its just-built artifact. `tests/consumer-kit/seed/provenance.json`
+records the unchanged seed bytes; the public-kit driver calls the real Worker
+and existing codecs. These checks qualify the producer boundary, not Sheet UI
+journeys or host durability. To check a retained artifact without rebuilding:
+
+```sh
+bash scripts/experimental-designer-client-acceptance.sh /absolute/kit EXACT_SOURCE_SHA
+```
 
 Deeper authority: [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md),
 [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md),

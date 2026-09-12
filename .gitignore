@@ -2,3 +2,4 @@
 /spikes/issue-26-runtime/target/
 /spikes/issue-26-runtime/node_modules/
 .DS_Store
+/experiments/open-sheet-export/node_modules/

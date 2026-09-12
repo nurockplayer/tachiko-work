@@ -1,30 +1,27 @@
 #!/usr/bin/env bash
+# Proposed repository replacement: scripts/experimental-designer-client-source-boundary-test.sh
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-smoke="${repo_root}/scripts/experimental-designer-client-smoke.sh"
+repo_root="$(cd "$(dirname "$BASH_SOURCE")/.." && pwd)"
+smoke="${TACHIKO_SMOKE_UNDER_TEST:-$repo_root/scripts/experimental-designer-client-smoke.sh}"
 
 make_fixture() {
   local root="$1"
-  mkdir -p "${root}/scripts" "${root}/examples/experimental-designer-client/src" "${root}/bin"
-  cp "${smoke}" "${root}/scripts/experimental-designer-client-smoke.sh"
-  cat >"${root}/scripts/export-experimental-designer-client.sh" <<'EOF'
-#!/usr/bin/env bash
-exit 0
-EOF
-  chmod +x "${root}/scripts/export-experimental-designer-client.sh"
-
+  mkdir -p "$root/scripts" "$root/examples/experimental-designer-client/src" "$root/bin"
+  cp "$smoke" "$root/scripts/experimental-designer-client-smoke.sh"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$root/scripts/export-experimental-designer-client.sh"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$root/scripts/experimental-designer-client-acceptance.sh"
+  chmod +x "$root/scripts/export-experimental-designer-client.sh"
+  chmod +x "$root/scripts/experimental-designer-client-acceptance.sh"
   for tool in bash dirname mktemp rm sed sort; do
-    ln -s "$(command -v "${tool}")" "${root}/bin/${tool}"
+    ln -s "$(command -v "$tool")" "$root/bin/$tool"
   done
-  cat >"${root}/bin/diff" <<'EOF'
-#!/usr/bin/env bash
-exit 0
-EOF
-  cat >"${root}/bin/find" <<'EOF'
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$root/bin/diff"
+  cat >"$root/bin/find" <<'EOF_FIND'
 #!/usr/bin/env bash
 printf '%s\n' \
   'README.md' \
+  'artifact-manifest.json' \
   'designer_runtime.wasm' \
   'experimental-client.d.ts' \
   'experimental-client.js' \
@@ -32,6 +29,9 @@ printf '%s\n' \
   'experimental-client.worker.js' \
   'host/project-transfer.d.ts' \
   'host/project-transfer.js' \
+  'notices/LICENSE-APACHE' \
+  'notices/LICENSE-MIT' \
+  'notices/THIRD_PARTY_LICENSES.md' \
   'package.json' \
   'runtime/client.d.ts' \
   'runtime/client.js' \
@@ -45,83 +45,69 @@ printf '%s\n' \
   'runtime/worker-client.js' \
   'runtime/worker-runtime.d.ts' \
   'runtime/worker-runtime.js'
-EOF
-  cat >"${root}/bin/pnpm" <<'EOF'
+EOF_FIND
+  # The fake exporter emits no files. These commands deliberately pass only so
+  # this test remains isolated to rg status semantics; real integrity checks
+  # run in the smoke and immutable-source regressions.
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$root/bin/pnpm"
+  cat >"$root/bin/git" <<'EOF_GIT'
 #!/usr/bin/env bash
-exit 0
-EOF
-  chmod +x "${root}/bin/diff" "${root}/bin/find" "${root}/bin/pnpm"
+if [[ "$*" == *"rev-parse --verify HEAD^{commit}"* ]]; then
+  printf '%s\n' '0123456789abcdef0123456789abcdef01234567'
+  exit 0
+fi
+exit 64
+EOF_GIT
+  chmod +x "$root/bin/diff" "$root/bin/find" "$root/bin/pnpm" "$root/bin/git"
 }
 
 run_case() {
   local private_source_status="$1"
   local emitted_js_status="$2"
   local expected="$3"
-  local root
-  root="$(mktemp -d "${TMPDIR:-/tmp}/tachiko-source-boundary-test.XXXXXX")"
-  make_fixture "${root}"
-
-  cat >"${root}/bin/rg" <<EOF
+  local root output scan_result
+  root="$(mktemp -d /tmp/tachiko-source-boundary-test.XXXXXX)"
+  make_fixture "$root"
+  cat >"$root/bin/rg" <<EOF_RG
 #!/usr/bin/env bash
-status=2
+scan_result=2
 for argument in "\$@"; do
-  case "\${argument}" in
-    */examples/experimental-designer-client/src)
-      status=${private_source_status}
-      ;;
-    */examples/experimental-designer-client/vendor/tachiko)
-      status=${emitted_js_status}
-      ;;
+  case "\$argument" in
+    */examples/experimental-designer-client/src) scan_result=$private_source_status ;;
+    */examples/experimental-designer-client/vendor/tachiko) scan_result=$emitted_js_status ;;
   esac
 done
-if [[ \${status} -eq 0 ]]; then
-  printf '%s\n' 'fixture:1:forbidden source import'
-fi
-exit \${status}
-EOF
-  chmod +x "${root}/bin/rg"
-
-  local output
+if [[ \$scan_result -eq 0 ]]; then printf '%s\n' 'fixture:1:forbidden source import'; fi
+exit \$scan_result
+EOF_RG
+  chmod +x "$root/bin/rg"
   set +e
-  output="$(PATH="${root}/bin" /bin/bash "${root}/scripts/experimental-designer-client-smoke.sh" 2>&1)"
-  local status=$?
+  output="$(PATH="$root/bin" /bin/bash "$root/scripts/experimental-designer-client-smoke.sh" 2>&1)"
+  scan_result=$?
   set -e
-  rm -rf -- "${root}"
-
-  case "${expected}" in
+  rm -rf -- "$root"
+  case "$expected" in
     success)
-      if [[ ${status} -ne 0 ]]; then
-        echo "source-boundary test: clean scans should succeed, got ${status}" >&2
-        return 1
-      fi
+      [[ $scan_result -eq 0 ]] || { echo "source-boundary test: clean scans should succeed, got $scan_result" >&2; return 1; }
       ;;
     failure)
-      if [[ ${status} -eq 0 ]]; then
-        echo "source-boundary test: private=${private_source_status} emitted=${emitted_js_status} must not be treated as clean no-match" >&2
-        return 1
+      [[ $scan_result -ne 0 ]] || { echo "source-boundary test: private=$private_source_status emitted=$emitted_js_status must not be clean" >&2; return 1; }
+      if [[ $private_source_status -gt 1 && "$output" != *"source-boundary scan failed (rg exit $private_source_status)"* ]]; then
+        echo "source-boundary test: private-source scan failure must be actionable" >&2; return 1
       fi
-      if [[ ${private_source_status} -gt 1 && "${output}" != *"source-boundary scan failed (rg exit ${private_source_status})"* ]]; then
-        echo "source-boundary test: private-source scan failure must be actionable" >&2
-        return 1
-      fi
-      if [[ ${emitted_js_status} -gt 1 && "${output}" != *"source-boundary scan failed (rg exit ${emitted_js_status})"* ]]; then
-        echo "source-boundary test: emitted-JavaScript scan failure must be actionable" >&2
-        return 1
+      if [[ $emitted_js_status -gt 1 && "$output" != *"source-boundary scan failed (rg exit $emitted_js_status)"* ]]; then
+        echo "source-boundary test: emitted-JavaScript scan failure must be actionable" >&2; return 1
       fi
       ;;
-    *)
-      echo "source-boundary test: invalid expectation ${expected}" >&2
-      return 1
-      ;;
+    *) echo "source-boundary test: invalid expectation $expected" >&2; return 1 ;;
   esac
 }
 
-# ripgrep: 0 = match, 1 = clean no-match, >1 = scan/tool failure.
+# ripgrep: 0 = forbidden match, 1 = clean no-match, >1 = scan/tool failure.
 run_case 1 1 success
 run_case 0 1 failure
 run_case 1 0 failure
 run_case 2 1 failure
 run_case 1 2 failure
 run_case 127 1 failure
-
 echo "experimental Designer source-boundary scanner semantics passed"

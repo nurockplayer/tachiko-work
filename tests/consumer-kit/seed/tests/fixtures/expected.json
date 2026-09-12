@@ -1,0 +1,15 @@
+{
+  "coreCommit": "8bba9b09cea3c011df383216ba3846ccd003dece",
+  "document": "c84e78bc-5d28-4d7e-9b57-f104fce5a164",
+  "collection": "d8b3db6e-a2ca-48f1-82f5-4e44630418dc",
+  "entity": "1d37df46-01f6-4b05-8fd9-064718dc91ea",
+  "impact": "52a0f7e9-4d6b-4628-ad7d-6b649f8c8a77",
+  "priority": "75f3d634-452c-4838-925b-8c52e54fc972",
+  "notes": "b4284d96-4370-4f42-9c0e-4478f947e159",
+  "initialImpact": 5,
+  "initialPriority": 10,
+  "editedImpact": 3,
+  "editedPriority": 8,
+  "initialNotes": "先完成團隊每天會用到的流程，再增加進階功能。",
+  "editedNotes": "先完成試玩回饋，再決定下一版範圍。"
+}

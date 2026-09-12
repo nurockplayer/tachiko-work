@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use tachiko_designer_runtime::{
     CalculationProjection, DesignerRequest, DesignerResponse, DesignerRuntime, DesignerWireReply,
-    ScalarEditInput, ScalarKind, StoredValueProjection, close_project, open_project,
-    process_wire_request,
+    ScalarEditInput, ScalarKind, StoredValueProjection, close_project, open_portable_ro,
+    open_project, process_wire_request, verify_portable_ro,
 };
 use tachiko_workspace_engine::{
     Date, Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldAddress,
@@ -1697,6 +1697,173 @@ fn exact_revision_export_does_not_capture_or_mark_a_later_edit() {
             .and_then(CalculationProjection::number),
         Some(40.0)
     );
+}
+
+#[test]
+fn canonical_tree_and_portable_ro_are_distinct_exact_revision_exports() {
+    let runtime = moonfall();
+    let tree = runtime
+        .export_canonical_tree("resident/0")
+        .expect("the v1 fixture should materialize as a canonical tree");
+    assert_eq!(tree.revision, "resident/0");
+    assert!(tree.bytes.starts_with(b"TWDPROJ1"));
+    assert_eq!(project_transfer_paths(&tree.bytes).len(), 18);
+    assert_eq!(
+        project_transfer_paths(&tree.bytes),
+        ["manifest.json", "schemas.json"]
+            .into_iter()
+            .map(str::to_owned)
+            .chain((b'0'..=b'9').map(|value| format!("entities/{}.jsonl", char::from(value))))
+            .chain((b'a'..=b'f').map(|value| format!("entities/{}.jsonl", char::from(value))))
+            .collect::<Vec<_>>()
+    );
+
+    let portable = runtime
+        .export_portable_ro("resident/0")
+        .expect("the v1 fixture should export as a portable package");
+    assert_eq!(portable.revision, "resident/0");
+    assert!(portable.bytes.starts_with(b"PK\x03\x04"));
+    verify_portable_ro(&portable.bytes).expect("the exported .ro must verify through storage");
+}
+
+#[test]
+fn portable_ro_candidate_is_verified_before_occurrence_replacement() {
+    let original = moonfall();
+    let scope = original.occurrence_scope().to_owned();
+    let portable = original
+        .export_portable_ro("resident/0")
+        .expect("fixture should export as .ro");
+    let mut runtime = Some(original);
+    let mut corrupt = portable.bytes.clone();
+    *corrupt.last_mut().expect("portable package is nonempty") ^= 1;
+
+    let error = open_portable_ro(&mut runtime, &corrupt, OCCURRENCE_ONE)
+        .expect_err("corrupt portable bytes must be rejected");
+    assert_eq!(
+        error.failure_projection("resident/0").code,
+        "invalid_project"
+    );
+    assert_eq!(runtime.as_ref().unwrap().occurrence_scope(), scope);
+    assert_eq!(
+        runtime.as_ref().unwrap().observe_occurrence().revision,
+        "resident/0"
+    );
+
+    let opened = open_portable_ro(&mut runtime, &portable.bytes, OCCURRENCE_ONE)
+        .expect("verified portable .ro should replace the occurrence");
+    assert_eq!(opened.bootstrap.revision, "resident/0");
+    assert_ne!(runtime.as_ref().unwrap().occurrence_scope(), scope);
+    assert_eq!(
+        runtime.as_ref().unwrap().observe_occurrence().revision,
+        "resident/0"
+    );
+}
+
+#[test]
+fn rejected_canonical_bridge_candidate_preserves_the_active_snapshot() {
+    let original = moonfall();
+    let scope = original.occurrence_scope().to_owned();
+    let mut runtime = Some(original);
+    let before = runtime
+        .as_ref()
+        .unwrap()
+        .export_project("resident/0")
+        .unwrap()
+        .bytes;
+    let mut invalid = runtime
+        .as_ref()
+        .unwrap()
+        .export_canonical_tree("resident/0")
+        .unwrap()
+        .bytes;
+    *invalid.last_mut().expect("canonical transfer is nonempty") ^= 1;
+
+    open_project(&mut runtime, &invalid, OCCURRENCE_ONE)
+        .expect_err("invalid canonical candidate must not replace the active occurrence");
+    assert_eq!(runtime.as_ref().unwrap().occurrence_scope(), scope);
+    assert_eq!(
+        runtime.as_ref().unwrap().observe_occurrence().revision,
+        "resident/0"
+    );
+    assert_eq!(
+        runtime
+            .as_ref()
+            .unwrap()
+            .export_project("resident/0")
+            .unwrap()
+            .bytes,
+        before
+    );
+}
+
+#[test]
+fn canonical_and_portable_exports_reject_stale_revisions_without_mutation() {
+    let mut runtime = moonfall();
+    runtime
+        .handle(DesignerRequest::EditScalar {
+            expected_revision: "resident/0".to_owned(),
+            target: "iron_sword.damage".into(),
+            input: ScalarEditInput::Number {
+                input: "45".to_owned(),
+            },
+        })
+        .expect("fixture edit should advance the resident revision");
+    let before = runtime.export_project("resident/1").unwrap().bytes;
+    for operation in [
+        runtime.export_canonical_tree("resident/0").map(|_| ()),
+        runtime.export_portable_ro("resident/0").map(|_| ()),
+    ] {
+        let error = operation.expect_err("stale bridge export must be rejected");
+        assert_eq!(
+            error.failure_projection("resident/1").code,
+            "stale_revision"
+        );
+    }
+    assert_eq!(runtime.observe_occurrence().revision, "resident/1");
+    assert_eq!(runtime.export_project("resident/1").unwrap().bytes, before);
+}
+
+#[test]
+fn v1_bridge_rejects_date_without_changing_private_project_export() {
+    let runtime = DesignerRuntime::from_document(date_document(), OCCURRENCE_ONE)
+        .expect("Date fixture should remain supported by the Designer runtime");
+    assert!(
+        runtime
+            .export_project("resident/0")
+            .expect("private Date export remains supported")
+            .bytes
+            .starts_with(b"TWDPROJ2")
+    );
+    for operation in [
+        runtime.export_canonical_tree("resident/0").map(|_| ()),
+        runtime.export_portable_ro("resident/0").map(|_| ()),
+    ] {
+        let error = operation.expect_err("v1 bridge must not recast Date as v1");
+        assert_eq!(
+            error.failure_projection("resident/0").code,
+            "unsupported_project"
+        );
+    }
+    assert_eq!(runtime.observe_occurrence().revision, "resident/0");
+}
+
+fn project_transfer_paths(bytes: &[u8]) -> Vec<String> {
+    assert!(bytes.starts_with(b"TWDPROJ1"));
+    let count = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
+    let mut offset = 12;
+    let mut paths = Vec::with_capacity(count);
+    for _ in 0..count {
+        let path_length =
+            u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap()) as usize;
+        offset += 2;
+        let byte_length =
+            u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+        offset += 4;
+        paths.push(String::from_utf8(bytes[offset..offset + path_length].to_vec()).unwrap());
+        offset += path_length + byte_length;
+    }
+    assert_eq!(offset, bytes.len());
+    paths
 }
 
 #[test]

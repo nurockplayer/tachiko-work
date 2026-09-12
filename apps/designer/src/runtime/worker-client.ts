@@ -1,4 +1,5 @@
 import type { CleanupOperation, CleanupPreview, ImportedProjection, ImportOptions, ImportSelection, InteropMetadata, NativeBudgetExportPresentation, NativeTrackerExportPresentation, SourceWorkbook, SpreadsheetExport, SpreadsheetFormat, SpreadsheetOperation } from "./interop-protocol.ts";
+import { projectTransferFromEntries } from "../host/project-transfer.ts";
 import {
   DesignerRuntimeError,
   type DesignerClient,
@@ -7,11 +8,14 @@ import type {
   FormulaCopy,
   TrackerCommand,
   BootstrapProjection,
+  CanonicalTreeExport,
+  CanonicalProjectFile,
   DesignerRequest,
   DesignerResponse,
   FieldBatchProjection,
   FieldTarget,
   OpenedProjection,
+  OccurrenceProjection,
   PublicationProjection,
   KeyedGroupedSumDefinitionInput,
   KeyedGroupedSumProjection,
@@ -159,6 +163,10 @@ export class WorkerDesignerClient implements DesignerClient {
     return expectResponse("opened", reply.response);
   }
 
+  async openCanonicalTree(files: readonly CanonicalProjectFile[]): Promise<OpenedProjection> {
+    return this.openProject(projectTransferFromEntries(files));
+  }
+
   async openLocalDocument(bytes: ArrayBuffer): Promise<OpenedProjection> {
     const reply = await this.#send(
       {
@@ -185,6 +193,65 @@ export class WorkerDesignerClient implements DesignerClient {
       throw new Error(`Expected project export, received '${reply.status}'.`);
     }
     return reply.export;
+  }
+
+  async exportCanonicalTree(expectedRevision: string): Promise<CanonicalTreeExport> {
+    const reply = await this.#send({
+      id: this.#claimId(),
+      kind: "export_canonical_tree",
+      expected_revision: expectedRevision,
+    });
+    if (reply.status !== "canonical_tree_exported") {
+      throw new Error(`Expected canonical tree export, received '${reply.status}'.`);
+    }
+    return reply.export;
+  }
+
+  async exportPortableRo(expectedRevision: string): Promise<ProjectExport> {
+    const reply = await this.#send({
+      id: this.#claimId(),
+      kind: "export_portable_ro",
+      expected_revision: expectedRevision,
+    });
+    if (reply.status !== "portable_ro_exported") {
+      throw new Error(`Expected portable .ro export, received '${reply.status}'.`);
+    }
+    return reply.export;
+  }
+
+  async verifyPortableRo(bytes: ArrayBuffer): Promise<void> {
+    const copy = bytes.slice(0);
+    const reply = await this.#send(
+      { id: this.#claimId(), kind: "verify_portable_ro", bytes: copy },
+      [copy],
+    );
+    if (reply.status !== "ok" || reply.response.type !== "portable_ro_verified" || !reply.response.payload.accepted) {
+      throw new Error(`Expected portable .ro verification, received '${reply.status}'.`);
+    }
+  }
+
+  async openPortableRo(bytes: ArrayBuffer): Promise<OpenedProjection> {
+    const reply = await this.#send(
+      {
+        id: this.#claimId(),
+        kind: "open_portable_ro",
+        occurrence_id: freshOccurrenceId(),
+        bytes,
+      },
+      [bytes],
+    );
+    if (reply.status !== "ok") {
+      throw new Error(`Expected portable .ro open response, received '${reply.status}'.`);
+    }
+    return expectResponse("opened", reply.response);
+  }
+
+  async observeOccurrence(): Promise<OccurrenceProjection> {
+    const reply = await this.#send({ id: this.#claimId(), kind: "observe_occurrence" });
+    if (reply.status !== "ok") {
+      throw new Error(`Expected occurrence observation, received '${reply.status}'.`);
+    }
+    return expectResponse("occurrence_observed", reply.response);
   }
 
   async closeProject(): Promise<void> {
@@ -372,11 +439,15 @@ function expectResponse(
 function expectResponse(type: "keyed_grouped_sum", response: DesignerResponse): KeyedGroupedSumProjection;
 function expectResponse(type: "keyed_grouped_sum_published", response: DesignerResponse): KeyedGroupedSumPublishedProjection;
 function expectResponse(
+  type: "occurrence_observed",
+  response: DesignerResponse,
+): OccurrenceProjection;
+function expectResponse(
   type: DesignerResponse["type"],
   response: DesignerResponse,
-): DesignerResponse["payload"] {
+): unknown {
   if (response.type !== type) {
     throw new Error(`Expected '${type}' response, received '${response.type}'.`);
   }
-  return response.payload;
+  return "payload" in response ? response.payload : undefined;
 }

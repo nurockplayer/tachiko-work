@@ -1,0 +1,42 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Runtime acceptance canary — not product UI</title>
+<label>Canonical fixture <input id="fixture" type="file" webkitdirectory multiple></label>
+<button id="run">Run real runtime canary</button><pre id="result" data-status="idle"></pre>
+<script type="module">
+import {createExperimentalDesignerClient,projectTransferFromFiles} from '/kit/experimental-client.js';
+const result=document.querySelector('#result');
+const E='1d37df46-01f6-4b05-8fd9-064718dc91ea', I='52a0f7e9-4d6b-4628-ad7d-6b649f8c8a77', P='75f3d634-452c-4838-925b-8c52e54fc972', N='b4284d96-4370-4f42-9c0e-4478f947e159';
+const target=field=>({entity:E,field});
+const equal=(a,b)=>a.byteLength===b.byteLength&&new Uint8Array(a).every((v,i)=>v===new Uint8Array(b)[i]);
+const field=(batch,id)=>batch.fields.find(f=>f.target.entity===E&&f.target.field===id);
+document.querySelector('#run').onclick=async()=>{
+ let client=createExperimentalDesignerClient();
+ try {
+  const bytes=await projectTransferFromFiles(document.querySelector('#fixture').files);
+  const opened=await client.openProject(bytes);
+  const base=opened.bootstrap.revision;
+  const initial=await client.queryFields(base,[target(I),target(P),target(N)]);
+  const pub=await client.editNumber(base,target(I),'3');
+  const current=await client.queryFields(pub.resulting_revision,[target(I),target(P)]);
+  const before=await client.exportProject(pub.resulting_revision);
+  let staleCode=null;
+  try {await client.editText(base,target(N),'stale overwrite');} catch(e){staleCode=e.failure?.code??'unclassified';}
+  const after=await client.exportProject(pub.resulting_revision);
+  const transfer=after.bytes.slice(0);
+  await client.closeProject(); await client.close();
+  client=createExperimentalDesignerClient();
+  const reopened=await client.openProject(transfer);
+  const fresh=await client.queryFields(reopened.bootstrap.revision,[target(I),target(P),target(N)]);
+  result.textContent=JSON.stringify({
+   initialImpact:field(initial,I)?.stored?.value,initialPriority:field(initial,P)?.calculated?.value,
+   initialNotes:field(initial,N)?.stored?.value,
+   impact:field(current,I)?.stored?.value,priority:field(current,P)?.calculated?.value,
+   baseChanged:base!==pub.resulting_revision,staleCode,staleUnchanged:equal(before.bytes,after.bytes),
+   reopenedImpact:field(fresh,I)?.stored?.value,reopenedPriority:field(fresh,P)?.calculated?.value,
+   rowCount:opened.table.rows.length,
+   boundary:'real exported kit; fresh runtime round trip; NOT browser durability'
+  });
+  result.dataset.status='complete';
+ } catch(e) {result.textContent=String(e.stack??e);result.dataset.status='failed';}
+ finally {await client.closeProject().catch(()=>{});await client.close();}
+};
+</script></html>

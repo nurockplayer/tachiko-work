@@ -6,6 +6,14 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- The experimental Designer consumer kit is built from one captured Git commit
+  and includes an exact asset digest inventory, capability names, and existing
+  license notices. Packaging rejects a dirty checkout and publishes only to an
+  absent destination using an atomic no-replace rename. The same kit exposes
+  revision-pinned canonical `.roproj/v1` files, genuine portable `.ro` codec
+  export/verification/open, and the runtime's actual occurrence identity.
+  Unsupported v1 data rejects without changing the active occurrence; existing
+  private project export retains its Date-capable round trip.
 - The Designer can now create one saved live keyed grouped summary over the
   bounded Orders/Products definition, recompute it from current source values,
   and save/reopen it through canonical `.roproj/v2`. The explicit v1-to-v2

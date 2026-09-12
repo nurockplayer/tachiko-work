@@ -1,5 +1,7 @@
 import type { SpreadsheetExport, SpreadsheetOperation } from "./interop-protocol.ts";
+import { projectTransferToEntries } from "../host/project-transfer.ts";
 import type {
+  CanonicalTreeExport,
   DesignerRequest,
   ProjectExport,
   DesignerWireReply,
@@ -17,6 +19,11 @@ type DesignerWasmExports = {
   tachiko_designer_project_inspect(): void;
   tachiko_designer_spreadsheet_run(): void;
   tachiko_designer_project_export(): void;
+  tachiko_designer_canonical_tree_export(): void;
+  tachiko_designer_portable_ro_export(): void;
+  tachiko_designer_portable_ro_verify(): void;
+  tachiko_designer_portable_ro_open(): void;
+  tachiko_designer_occurrence_observe(): void;
   tachiko_designer_project_release(): void;
   tachiko_designer_project_close(): void;
   tachiko_designer_project_ptr(): number;
@@ -35,6 +42,15 @@ export type DesignerWasmBridge = {
   exportProject(expectedRevision: string):
     | { status: "ok"; export: ProjectExport }
     | Extract<DesignerWireReply, { status: "error" }>;
+  exportCanonicalTree(expectedRevision: string):
+    | { status: "ok"; export: CanonicalTreeExport }
+    | Extract<DesignerWireReply, { status: "error" }>;
+  exportPortableRo(expectedRevision: string):
+    | { status: "ok"; export: ProjectExport }
+    | Extract<DesignerWireReply, { status: "error" }>;
+  verifyPortableRo(bytes: Uint8Array): DesignerWireReply;
+  openPortableRo(bytes: Uint8Array, occurrenceId: string): DesignerWireReply;
+  observeOccurrence(): DesignerWireReply;
   closeProject(): void;
 };
 
@@ -176,6 +192,79 @@ export async function createDesignerWasmBridge(
       } finally {
         exports.tachiko_designer_project_release();
       }
+    },
+    exportCanonicalTree: (expectedRevision) => {
+      const revision = encoder.encode(expectedRevision);
+      if (!writeRequest(revision)) return tooLargeReply("The expected revision exceeds the bridge limit.");
+      exports.tachiko_designer_canonical_tree_export();
+      try {
+        const reply = readReply();
+        if (reply.status === "error") return reply;
+        if (reply.response.type !== "canonical_tree_exported") {
+          throw new Error(`Expected 'canonical_tree_exported' response, received '${reply.response.type}'.`);
+        }
+        const receipt = reply.response.payload;
+        if (exports.tachiko_designer_project_len() !== receipt.byte_length) {
+          throw new Error("Designer canonical tree export length did not match its receipt.");
+        }
+        const bytes = new Uint8Array(
+          exports.memory.buffer,
+          exports.tachiko_designer_project_ptr(),
+          receipt.byte_length,
+        ).slice().buffer;
+        return { status: "ok", export: { revision: receipt.revision, files: projectTransferToEntries(bytes) } };
+      } finally {
+        exports.tachiko_designer_project_release();
+      }
+    },
+    exportPortableRo: (expectedRevision) => {
+      const revision = encoder.encode(expectedRevision);
+      if (!writeRequest(revision)) return tooLargeReply("The expected revision exceeds the bridge limit.");
+      exports.tachiko_designer_portable_ro_export();
+      try {
+        const reply = readReply();
+        if (reply.status === "error") return reply;
+        if (reply.response.type !== "portable_ro_exported") {
+          throw new Error(`Expected 'portable_ro_exported' response, received '${reply.response.type}'.`);
+        }
+        const receipt = reply.response.payload;
+        if (exports.tachiko_designer_project_len() !== receipt.byte_length) {
+          throw new Error("Designer portable .ro export length did not match its receipt.");
+        }
+        const bytes = new Uint8Array(
+          exports.memory.buffer,
+          exports.tachiko_designer_project_ptr(),
+          receipt.byte_length,
+        ).slice().buffer;
+        return { status: "ok", export: { revision: receipt.revision, bytes } };
+      } finally {
+        exports.tachiko_designer_project_release();
+      }
+    },
+    verifyPortableRo: (bytes) => {
+      if (bytes.byteLength > MAX_PROJECT_TRANSFER_BYTES) {
+        return tooLargeReply("The project exceeds the private 64 MiB host transfer boundary.");
+      }
+      const pointer = exports.tachiko_designer_project_reserve(bytes.byteLength);
+      new Uint8Array(exports.memory.buffer, pointer, bytes.byteLength).set(bytes);
+      exports.tachiko_designer_portable_ro_verify();
+      return readReply();
+    },
+    openPortableRo: (bytes, occurrenceId) => {
+      if (bytes.byteLength > MAX_PROJECT_TRANSFER_BYTES) {
+        return tooLargeReply("The project exceeds the private 64 MiB host transfer boundary.");
+      }
+      if (!writeRequest(encoder.encode(occurrenceId))) {
+        return tooLargeReply("The host occurrence identity exceeds the bridge limit.");
+      }
+      const pointer = exports.tachiko_designer_project_reserve(bytes.byteLength);
+      new Uint8Array(exports.memory.buffer, pointer, bytes.byteLength).set(bytes);
+      exports.tachiko_designer_portable_ro_open();
+      return readReply();
+    },
+    observeOccurrence: () => {
+      exports.tachiko_designer_occurrence_observe();
+      return readReply();
     },
     closeProject: () => {
       exports.tachiko_designer_project_close();

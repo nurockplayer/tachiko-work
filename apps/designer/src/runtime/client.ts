@@ -5,6 +5,9 @@ import type {
   BootstrapProjection,
   FieldBatchProjection,
   FieldTarget,
+  CanonicalTreeExport,
+  CanonicalProjectFile,
+  OccurrenceProjection,
   OpenedProjection,
   ProjectExport,
   PublicationProjection,
@@ -31,8 +34,14 @@ export interface DesignerClient {
   bootstrap(): Promise<BootstrapProjection>;
   inspectProject?(bytes: ArrayBuffer): Promise<OpenedProjection>;
   openProject(bytes: ArrayBuffer): Promise<OpenedProjection>;
+  openCanonicalTree?(files: readonly CanonicalProjectFile[]): Promise<OpenedProjection>;
   openLocalDocument?(bytes: ArrayBuffer): Promise<OpenedProjection>;
   exportProject(expectedRevision: string): Promise<ProjectExport>;
+  exportCanonicalTree?(expectedRevision: string): Promise<CanonicalTreeExport>;
+  exportPortableRo?(expectedRevision: string): Promise<ProjectExport>;
+  verifyPortableRo?(bytes: ArrayBuffer): Promise<void>;
+  openPortableRo?(bytes: ArrayBuffer): Promise<OpenedProjection>;
+  observeOccurrence?(): Promise<OccurrenceProjection>;
   closeProject(): Promise<void>;
   queryTable(collection: string): Promise<TableProjection>;
   queryFields(
