@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use tachiko_storage::{
     CanonicalRoProjectAdmissionError, CanonicalRoProjectV1, CanonicalRoProjectV2, FormatError,
     ROPROJ_V1_PATHS, ROPROJ_V2_PATHS, decode_portable_package_v1, decode_roproj_v1,
-    decode_roproj_v2, encode_portable_package_v1, encode_roproj_v1, encode_roproj_v2,
-    from_bytes, to_canonical_string,
+    decode_roproj_v2, encode_portable_package_v1, encode_roproj_v1, encode_roproj_v2, from_bytes,
+    to_canonical_string,
 };
 use tachiko_workspace_engine::{
     CalculationFailure, Date, Document, Entity, EntityId, EntityKey, Expression, FieldDefinition,
