@@ -49,7 +49,36 @@ source_commit="$("${git_env[@]}" git -C "${repo_root}" --no-replace-objects \
 [[ "${source_commit}" =~ ^[0-9a-f]{40}$ ]] ||
   fail "source Git object format must provide a 40-character commit ID"
 
-scratch="$(mktemp -d "${TMPDIR:-/tmp}/tachiko-experimental-client.XXXXXX")"
+# Build metadata includes the physical source path.  A same-commit export must
+# therefore materialize under one stable physical path, never under mktemp's
+# randomly named directory.  The full captured commit and UID make the slot
+# specific to one user and source commit, without reusing any existing entry.
+tmpdir_arg="${TMPDIR:-/tmp}"
+tmp_root="$(cd "${tmpdir_arg}" && pwd -P)" ||
+  fail "could not resolve TMPDIR as a physical directory: ${tmpdir_arg}"
+[[ -d "${tmp_root}" ]] || fail "TMPDIR is not a directory: ${tmp_root}"
+uid="$(id -u)" || fail "could not determine current UID"
+[[ "${uid}" =~ ^[0-9]+$ ]] || fail "current UID is not numeric: ${uid}"
+scratch="${tmp_root}/tachiko-experimental-client.uid-${uid}.source-${source_commit}"
+
+# mkdir is the ownership claim: do not pre-check, reuse, lock, or delete a
+# pre-existing slot.  In particular, another same-SHA export is fail-closed
+# even if its creator has already exited, because that entry is not ours.
+previous_umask="$(umask)"
+umask 077
+if mkdir -- "${scratch}"; then
+  umask "${previous_umask}"
+else
+  umask "${previous_umask}"
+  if [[ -e "${scratch}" || -L "${scratch}" ]]; then
+    fail "scratch slot is occupied for uid ${uid} and source commit ${source_commit}: ${scratch}; refusing to reuse or delete an occupied slot"
+  fi
+  fail "could not atomically create scratch slot for uid ${uid} and source commit ${source_commit}: ${scratch}"
+fi
+
+# This trap is installed only after this process has won the mkdir claim.  It
+# consequently cleans up only the slot created above, on either success or
+# failure; an occupied/stale slot is never removed by this exporter.
 cleanup() { rm -rf -- "${scratch}"; }
 trap cleanup EXIT
 

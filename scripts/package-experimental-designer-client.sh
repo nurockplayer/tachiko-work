@@ -31,7 +31,20 @@ output_name="$(basename "${output_dir}")"
   fail "output must name a dedicated kit directory"
 mkdir -p "${output_parent_arg}"
 output_parent="$(cd "${output_parent_arg}" && pwd -P)" || fail "could not resolve output parent"
+scratch="$(cd "${scratch}" && pwd -P)" || fail "could not resolve SCRATCH_DIRECTORY"
 output_dir="${output_parent}/${output_name}"
+
+# The exporter owns and removes SCRATCH_DIRECTORY at exit.  Publishing either
+# the destination or its parent under that slot would report a kit that its
+# own cleanup immediately deletes, so reject it before any install or build.
+path_is_within_scratch() {
+  local candidate="$1"
+  [[ "${candidate}" == "${scratch}" || "${candidate}" == "${scratch}/"* ]]
+}
+if path_is_within_scratch "${output_parent}" || path_is_within_scratch "${output_dir}"; then
+  fail "output parent or destination resolves inside owned scratch slot and would be removed by exporter cleanup: ${scratch}"
+fi
+
 [[ ! -e "${output_dir}" && ! -L "${output_dir}" ]] ||
   fail "output must be absent: ${output_dir}"
 

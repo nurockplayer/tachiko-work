@@ -1,8 +1,9 @@
 # Experimental Designer client kit: first contact
 
-Status: bounded Issue #232 experiment. This is not a stable/public SDK, npm
-package, wire protocol, plugin ABI, or compatibility promise. The kit may
-change or disappear after the first external-frontend pilot.
+Status: bounded experimental kit, with producer and canonical I/O qualification
+under Issue #359. This is not a stable/public SDK, npm package, wire protocol,
+plugin ABI, or compatibility promise. The kit may change or disappear after
+the first external-frontend pilot.
 
 The browser frontend receives **projections**: derived semantic facts intended
 for rendering. Every edit carries an **expected revision**, so a stale UI cannot
@@ -26,6 +27,14 @@ verifies that committed tree, and builds only from that private snapshot. It
 then publishes a completed kit with a platform no-replace rename; if another
 writer creates the destination first, the export fails without replacing it.
 
+Each source commit uses one exclusive, deterministic temporary build directory
+per user. This keeps Cargo identity stable for local dependencies outside the
+runtime workspace. An occupied directory makes the exporter refuse the build
+and is left intact; it may belong to another export or an interrupted build.
+The exporter cleans only the directory it created, and outputs cannot be placed
+inside that directory. Source-path remapping remains enabled. Repeat equality
+applies to the same runner/toolchain, not different machines or toolchains.
+
 The command compiles and copies one self-contained browser kit:
 
 ```text
@@ -48,9 +57,9 @@ before consuming the kit: it lists every regular file other than the manifest
 itself, rejects undeclared assets, records the full source commit without
 requiring a remote link, names the currently exposed client methods, and names
 the copied notices. It is an artifact integrity record, not a cross-toolchain
-reproducibility or compatibility claim. The current method inventory records
-the experimental artifact surface only; it does not make project bytes a `.ro`
-claim or add portable-format, canonical-storage, or occurrence capabilities.
+reproducibility or compatibility claim. The method inventory records
+the experimental artifact surface. Use the explicit canonical/portable methods
+described below; private `exportProject` bytes are not a portable `.ro` file.
 
 ## Open Product Gap and render the first table
 

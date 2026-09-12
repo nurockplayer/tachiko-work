@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Proposed repository location: scripts/export-experimental-designer-client-immutable-source-test.sh
 #
 # This is a hermetic regression for Issue #359's immutable-source and
 # absent-only-publication contract. It runs the real exporter script copied
@@ -8,9 +7,8 @@
 # not a substitute for the real build/runtime qualification.
 set -euo pipefail
 
-# TACHIKO_EXPORTER_UNDER_TEST makes this proposal runnable from /tmp before it
-# is moved to scripts/. In its proposed location the default is the repository
-# exporter beside this test.
+# TACHIKO_EXPORTER_UNDER_TEST selects an alternative exporter path; otherwise
+# this test runs the repository exporter beside it.
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 exporter_source="${TACHIKO_EXPORTER_UNDER_TEST:-${repo_root}/scripts/export-experimental-designer-client.sh}"
 [[ -f "${exporter_source}" ]] || {
@@ -23,7 +21,10 @@ test_root="$(mktemp -d "${TMPDIR:-/tmp}/tachiko-359-immutable-source.XXXXXX")"
 cleanup() { rm -rf -- "${test_root}"; }
 trap cleanup EXIT
 controlled_tmp="${test_root}/controlled-tmp"
+controlled_tmp_link="${test_root}/controlled-tmp-link"
 mkdir "${controlled_tmp}"
+ln -s "${controlled_tmp}" "${controlled_tmp_link}"
+controlled_tmp_physical="$(cd "${controlled_tmp_link}" && pwd -P)"
 
 fail() { echo "immutable-source test: $*" >&2; exit 1; }
 fixture="${test_root}/fixture"
@@ -102,6 +103,7 @@ case "${1:-}" in
     done
     [[ -n "${out}" ]] || { echo 'fake tsc missing --outDir' >&2; exit 64; }
     mkdir -p "${out}/host" "${out}/runtime"
+    printf '%s\n' "${designer}" >>"${TMPDIR}/designer-paths"
     # This is the source-byte oracle: the committed first line must be emitted.
     cp "${designer}/src/experimental-client.ts" "${out}/experimental-client.js"
     cp "${designer}/src/experimental-client.worker.ts" "${out}/experimental-client.worker.js"
@@ -142,9 +144,15 @@ git -C "${fixture}" remote add origin 'https://github.com/nurockplayer/tachiko-w
 git -C "${fixture}" add .
 git -C "${fixture}" commit --quiet -m 'committed exporter fixture'
 source_commit="$(git -C "${fixture}" rev-parse HEAD)"
+owned_slot="${controlled_tmp_physical}/tachiko-experimental-client.uid-$(id -u).source-${source_commit}"
 
 run_export() {
-  TMPDIR="${controlled_tmp}" PATH="${fake_bin}:${PATH}" /bin/bash "${fixture}/scripts/export-experimental-designer-client.sh" "$1"
+  TMPDIR="${controlled_tmp_link}" PATH="${fake_bin}:${PATH}" /bin/bash "${fixture}/scripts/export-experimental-designer-client.sh" "$1"
+}
+
+assert_owned_slot_absent() {
+  [[ ! -e "${owned_slot}" && ! -L "${owned_slot}" ]] ||
+    fail "exporter cleanup retained owned scratch slot: ${owned_slot}"
 }
 
 assert_no_output() {
@@ -204,11 +212,64 @@ assert.doesNotMatch(emitted,/DIRTY_CLIENT_SOURCE|STAGED_CLIENT_SOURCE|SYMLINK_CL
 EOF_NODE
 }
 
-# A clean export has to retain the committed identity and publish a manifest
-# that declares every emitted asset and notice with matching digests.
+# An occupied deterministic slot is never reusable or deletable. Check both a
+# directory and a symlink before any successful export claims its own slot.
+mkdir "${owned_slot}"
+printf 'occupied directory sentinel\n' >"${owned_slot}/sentinel.txt"
+occupied_slot_log="${test_root}/occupied-slot.log"
+if run_export "${test_root}/occupied-slot-kit" >"${occupied_slot_log}" 2>&1; then
+  fail 'occupied scratch directory was accepted'
+fi
+grep -F 'scratch slot is occupied for uid' "${occupied_slot_log}" >/dev/null ||
+  fail 'occupied scratch directory did not report a non-reuse refusal'
+assert_unchanged_file "${owned_slot}/sentinel.txt" 'occupied directory sentinel'
+rm -rf -- "${owned_slot}"
+
+slot_symlink_target="${test_root}/occupied-slot-target"
+printf 'occupied symlink sentinel\n' >"${slot_symlink_target}"
+ln -s "${slot_symlink_target}" "${owned_slot}"
+occupied_symlink_log="${test_root}/occupied-slot-symlink.log"
+if run_export "${test_root}/occupied-slot-symlink-kit" >"${occupied_symlink_log}" 2>&1; then
+  fail 'occupied scratch symlink was accepted'
+fi
+grep -F 'scratch slot is occupied for uid' "${occupied_symlink_log}" >/dev/null ||
+  fail 'occupied scratch symlink did not report a non-reuse refusal'
+[[ -L "${owned_slot}" ]] || fail 'occupied scratch symlink was replaced or removed'
+assert_unchanged_file "${slot_symlink_target}" 'occupied symlink sentinel'
+rm -- "${owned_slot}"
+
+# The package helper must reject any output whose resolved parent or destination
+# lies inside the slot that the exporter owns and removes at exit.
+inside_slot_output="${owned_slot}/nested-kit"
+inside_slot_log="${test_root}/inside-slot.log"
+if run_export "${inside_slot_output}" >"${inside_slot_log}" 2>&1; then
+  fail 'output nested inside the owned scratch slot was accepted'
+fi
+grep -F 'output parent or destination resolves inside owned scratch slot' "${inside_slot_log}" >/dev/null ||
+  fail 'nested output did not report the owned-slot rejection'
+assert_no_output "${inside_slot_output}"
+assert_owned_slot_absent
+
+# Two same-SHA exports must materialize at the same physical path even though
+# TMPDIR is supplied through a symlink. The final artifact diff remains the
+# integration proof; this is only the focused path-identity unit assertion.
+rm -f -- "${controlled_tmp}/designer-paths"
 clean_output="${test_root}/clean-kit"
+stable_output="${test_root}/stable-kit"
 run_export "${clean_output}"
 assert_manifest_and_exact_inventory "${clean_output}"
+assert_owned_slot_absent
+run_export "${stable_output}"
+assert_manifest_and_exact_inventory "${stable_output}"
+assert_owned_slot_absent
+materialized_path_count="$(wc -l <"${controlled_tmp}/designer-paths" | tr -d ' ')"
+[[ "${materialized_path_count}" == 2 ]] ||
+  fail "expected two materialized designer paths, got ${materialized_path_count}"
+first_materialized_designer_path="$(sed -n '1p' "${controlled_tmp}/designer-paths")"
+second_materialized_designer_path="$(sed -n '2p' "${controlled_tmp}/designer-paths")"
+expected_designer_path="${owned_slot}/source/apps/designer"
+[[ "${first_materialized_designer_path}" == "${expected_designer_path}" && "${second_materialized_designer_path}" == "${expected_designer_path}" ]] ||
+  fail 'same-SHA exports did not use one stable physical source path'
 
 # This changes the live tracked path only after the exporter has completed its
 # clean preflight and archived the commit. The successful kit must keep the
@@ -272,5 +333,6 @@ if run_export "${race_output}"; then fail 'destination publication race was acce
 rm -f -- "${controlled_tmp}/race-output"
 assert_unchanged_file "${race_output}/race-sentinel.txt" 'race sentinel'
 [[ "$(find "${race_output}" -mindepth 1 -maxdepth 1 -print | wc -l | tr -d ' ')" == 1 ]] || fail 'race destination gained nested or partial kit files'
+assert_owned_slot_absent
 
 echo "Issue #359 immutable source and absent-only exporter regression passed"
