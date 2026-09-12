@@ -57,6 +57,13 @@ This section is the canonical operating contract for issue-driven repository
 delivery. The role names describe responsibilities and do not depend on a
 particular person, AI provider, or implementation tool.
 
+**Stewarded Continuous Delivery (SCD)** names this existing operating mode:
+Steward-owned readiness and acceptance, coordinated bounded implementation,
+independent exact-head review, material GitHub checkpoints, and live-state
+recalibration before successor work. The name adds no authority or rules;
+existing risk, parallel-lane, merge, and stop policies remain unchanged.
+Naming record: [#370](https://github.com/nurockplayer/tachiko-work/issues/370).
+
 Origin: [Issue #141](https://github.com/nurockplayer/tachiko-work/issues/141)
 
 ### Responsibilities
@@ -222,7 +229,7 @@ ISSUE: 123
 PR: 456
 OWNER: agent:codex
 STATE: active
-HEAD: 0123456789abcdef0123456789abcdef01234567
+HEAD: 0123456789abcdef01234567abcdef01234567
 MAIN: 89abcdef0123456789abcdef0123456789abcdef
 ```
 
@@ -516,6 +523,10 @@ A Decision Issue is not itself an Accepted architecture decision.
 
 Important questions raised during discussion are part of the architectural record and should be preserved when they materially shape the problem, expose an assumption, introduce a useful analogy, challenge an existing direction, or may remain valuable if technology and ecosystem conditions change later.
 
+Questions should not be discarded merely because a current answer has been reached. A good question can outlive its present answer and may need to be revisited when standards, libraries, markets, product constraints, or implementation evidence change later.
+
+The goal is not to archive every conversational sentence. Routine clarification, repetition, and chat scaffolding can be omitted. The goal is to preserve all materially important questions and problem framings without requiring future maintainers to reconstruct them from raw chat history.
+
 Question Logs should preserve, as closely as practical:
 
 - the substantive question or problem framing that was raised;
@@ -523,10 +534,6 @@ Question Logs should preserve, as closely as practical:
 - assumptions it challenged;
 - evidence or alternatives it caused the project to investigate;
 - the current answer or status, including whether the question remains open.
-
-Questions should not be discarded merely because a current answer has been reached. A good question can outlive its present answer and may need to be revisited when standards, libraries, markets, product constraints, or implementation evidence change later.
-
-The goal is not to archive every conversational sentence. Routine clarification, repetition, and chat scaffolding can be omitted. The goal is to preserve all materially important questions and problem framings without requiring future maintainers to reconstruct them from raw chat history.
 
 ### Decision Logs
 
