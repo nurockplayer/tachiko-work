@@ -2,6 +2,7 @@ import "./styles.css";
 
 import { mountDesigner } from "./designer-app.ts";
 import { BrowserProjectHost } from "./host/browser-project-host.ts";
+import { registerTauriLocalDocumentLaunch } from "./host/tauri-local-document-launch.ts";
 import { registerPwaFileLaunch } from "./pwa-file-launch.ts";
 import { WorkerDesignerClient } from "./runtime/worker-client.ts";
 
@@ -23,6 +24,10 @@ const designer = mountDesigner(
 );
 
 registerPwaFileLaunch(window, (handles) => designer.openLocalDocumentHandles(handles));
+void registerTauriLocalDocumentLaunch(
+  window,
+  (handles) => designer.openLocalDocumentHandles(handles),
+).catch(() => undefined);
 if ("serviceWorker" in navigator) {
   void navigator.serviceWorker.register("/service-worker.js").catch(() => undefined);
 }
