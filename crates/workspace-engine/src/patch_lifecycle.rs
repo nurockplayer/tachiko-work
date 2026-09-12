@@ -2853,13 +2853,21 @@ impl PatchLifecycle {
     ) -> Result<(), PatchLifecycleError> {
         for entity in document.entities.values() {
             for (field_id, value) in &entity.fields {
-                if matches!(value, Value::Formula(_)) {
+                if let Value::Formula(expression) = value {
                     self.insert_keyed_grouped_sum_entity_field(
                         document,
                         &entity.id,
                         field_id,
                         disclosures,
                     )?;
+                    for reference in expression_references(expression) {
+                        self.insert_keyed_grouped_sum_entity_field(
+                            document,
+                            &reference.entity,
+                            &reference.field,
+                            disclosures,
+                        )?;
+                    }
                 }
             }
         }
