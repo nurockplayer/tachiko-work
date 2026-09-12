@@ -3299,6 +3299,9 @@ fn proposal_is_terminal(proposal: &ProposalRecord) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use crate::keyed_grouped_sum_operations::{
+        KeyedGroupedSumGroup, KeyedGroupedSumOutcome, evaluate_keyed_grouped_sum,
+    };
     use tachiko_semantic_core::{
         EntityKey, FieldDefinition, FieldKey, FieldType, KeyedGroupedSumOrdersBinding,
         KeyedGroupedSumProductsBinding, Schema, SchemaKey,
@@ -3903,5 +3906,210 @@ mod tests {
                 Value::Formula(Expression::Number(Number::new(2.0).unwrap())),
             );
         assert!(keyed_grouped_sum_query_footprint(&price_backed).contains(&unrelated_root));
+    }
+
+    // Steward HOLD oracle: `quantity` is required by the grouped definition,
+    // and its two-hop bound formula chain is quantity -> quantity-mid ->
+    // quantity-base. The unrelated formula is present to prove that required
+    // formula calculation includes every root and its own static input, while
+    // unrelated-scalar must remain outside the trusted footprint.
+    fn keyed_grouped_sum_formula_dependency_document() -> Document {
+        let mut document = keyed_grouped_sum_document();
+        let orders = document
+            .schemas
+            .get_mut(&SchemaId::from("orders"))
+            .expect("orders schema");
+        for field in [
+            "quantity-mid",
+            "quantity-base",
+            "unrelated-formula",
+            "unrelated-input",
+            "unrelated-scalar",
+        ] {
+            let id = FieldId::from(field);
+            orders.fields.insert(
+                id.clone(),
+                FieldDefinition {
+                    id,
+                    key: FieldKey::from(field),
+                    field_type: FieldType::Number,
+                    required: true,
+                },
+            );
+        }
+        let order = document
+            .entities
+            .get_mut(&EntityId::from("order"))
+            .expect("orders entity");
+        order.fields.insert(
+            FieldId::from("quantity"),
+            Value::Formula(Expression::Reference(FieldRef::new(
+                "order",
+                "quantity-mid",
+            ))),
+        );
+        order.fields.insert(
+            FieldId::from("quantity-mid"),
+            Value::Formula(Expression::Reference(FieldRef::new(
+                "order",
+                "quantity-base",
+            ))),
+        );
+        order.fields.insert(
+            FieldId::from("quantity-base"),
+            Value::Number(Number::new(3.0).unwrap()),
+        );
+        order.fields.insert(
+            FieldId::from("unrelated-formula"),
+            Value::Formula(Expression::Reference(FieldRef::new(
+                "order",
+                "unrelated-input",
+            ))),
+        );
+        order.fields.insert(
+            FieldId::from("unrelated-input"),
+            Value::Number(Number::new(11.0).unwrap()),
+        );
+        order.fields.insert(
+            FieldId::from("unrelated-scalar"),
+            Value::Number(Number::new(13.0).unwrap()),
+        );
+        document
+    }
+
+    fn formula_dependency_oracle_scopes() -> BTreeSet<DisclosureRequirement> {
+        BTreeSet::from([
+            // This narrow set isolates the additional formula-root and static
+            // dependency facts. Existing focused coverage owns the ordinary
+            // definition membership, binding type, and local value scopes.
+            keyed_grouped_sum_query_requirement(keyed_grouped_sum_entity_field(
+                "order", "orders", "quantity",
+            )),
+            keyed_grouped_sum_query_requirement(keyed_grouped_sum_entity_field(
+                "order",
+                "orders",
+                "quantity-mid",
+            )),
+            keyed_grouped_sum_query_requirement(keyed_grouped_sum_entity_field(
+                "order",
+                "orders",
+                "quantity-base",
+            )),
+            keyed_grouped_sum_query_requirement(keyed_grouped_sum_entity_field(
+                "order",
+                "orders",
+                "unrelated-formula",
+            )),
+            keyed_grouped_sum_query_requirement(keyed_grouped_sum_entity_field(
+                "order",
+                "orders",
+                "unrelated-input",
+            )),
+        ])
+    }
+
+    fn query_grant_requirements(
+        requirements: impl IntoIterator<Item = DisclosureRequirement>,
+    ) -> Vec<GrantRequirement> {
+        requirements
+            .into_iter()
+            .map(|requirement| GrantRequirement::query(requirement.family, requirement.scope))
+            .collect()
+    }
+
+    #[test]
+    fn keyed_grouped_sum_formula_dependency_footprint_matches_steward_oracle() {
+        let document = keyed_grouped_sum_formula_dependency_document();
+        let footprint = keyed_grouped_sum_query_footprint(&document);
+        let oracle = formula_dependency_oracle_scopes();
+        let unrelated_scalar = keyed_grouped_sum_query_requirement(keyed_grouped_sum_entity_field(
+            "order",
+            "orders",
+            "unrelated-scalar",
+        ));
+
+        // This is intentionally RED on the frozen implementation: it records
+        // ADR-0036/ADR-0018 dependency closure independently of its current
+        // formula-root-only implementation.
+        assert!(oracle.is_subset(&footprint));
+        assert!(!footprint.contains(&unrelated_scalar));
+    }
+
+    #[test]
+    fn keyed_grouped_sum_formula_dependency_narrow_grant_denies_then_succeeds() {
+        let document = keyed_grouped_sum_formula_dependency_document();
+        let oracle = formula_dependency_oracle_scopes();
+        let omitted = keyed_grouped_sum_query_requirement(keyed_grouped_sum_entity_field(
+            "order",
+            "orders",
+            "quantity-base",
+        ));
+        let (mut lifecycle, reader) = keyed_grouped_sum_lifecycle(&document);
+        lifecycle
+            .provision_grant(Grant::new(
+                GrantId::from("narrow-without-referenced-input"),
+                PrincipalId::from("authority"),
+                reader.clone(),
+                query_grant_requirements(oracle.iter().filter(|scope| *scope != &omitted).cloned()),
+                None,
+            ))
+            .unwrap();
+        let error = lifecycle
+            .authorize_query(&reader, &oracle, TrustedInstant::new(1))
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            PatchLifecycleError::InsufficientCapability {
+                action: AuthorizationAction::Query
+            }
+        ));
+
+        lifecycle
+            .provision_grant(Grant::new(
+                GrantId::from("referenced-input"),
+                PrincipalId::from("authority"),
+                reader.clone(),
+                query_grant_requirements([omitted]),
+                None,
+            ))
+            .unwrap();
+        assert!(
+            lifecycle
+                .authorize_query(&reader, &oracle, TrustedInstant::new(1))
+                .is_ok()
+        );
+        assert_eq!(
+            evaluate_keyed_grouped_sum(&document, &KeyedGroupedSumDefinitionId::from("summary")),
+            KeyedGroupedSumOutcome::Complete(vec![KeyedGroupedSumGroup {
+                category: "hardware".to_owned(),
+                value: Number::new(6.0).unwrap(),
+            }])
+        );
+    }
+
+    #[test]
+    fn keyed_grouped_sum_all_literal_control_excludes_unrelated_formula_closure() {
+        let mut document = keyed_grouped_sum_formula_dependency_document();
+        document
+            .entities
+            .get_mut(&EntityId::from("order"))
+            .expect("orders entity")
+            .fields
+            .insert(
+                FieldId::from("quantity"),
+                Value::Number(Number::new(3.0).unwrap()),
+            );
+        let footprint = keyed_grouped_sum_query_footprint(&document);
+        for field in [
+            "quantity-mid",
+            "quantity-base",
+            "unrelated-formula",
+            "unrelated-input",
+            "unrelated-scalar",
+        ] {
+            assert!(!footprint.contains(&keyed_grouped_sum_query_requirement(
+                keyed_grouped_sum_entity_field("order", "orders", field),
+            )));
+        }
     }
 }
