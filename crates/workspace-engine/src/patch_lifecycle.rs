@@ -18,6 +18,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
+use tachiko_semantic_core::{KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId};
 use thiserror::Error;
 
 use super::{
@@ -107,6 +108,7 @@ pub enum OperationFamily {
     FormulaInverseRestore,
     AnalysisQuery,
     FieldCapabilityDiscovery,
+    KeyedGroupedSumDefinition,
 }
 
 /// Accepted MVP semantic mutation classes.
@@ -310,6 +312,18 @@ pub enum SemanticCommand {
     },
     FormulaUpdate(FormulaUpdateCommand),
     FormulaInverseRestore(FormulaInverseRestoreCommand),
+    /// Persist one complete saved keyed lookup + grouped-sum definition.
+    ///
+    /// The definition is a document-level structure rather than an inferred
+    /// formula or view setting, so its proposal remains subject to the normal
+    /// lifecycle authorization and publication boundary.
+    UpsertKeyedGroupedSumDefinition {
+        definition: KeyedGroupedSumDefinition,
+    },
+    /// Remove one saved keyed lookup + grouped-sum definition by stable ID.
+    RemoveKeyedGroupedSumDefinition {
+        definition: KeyedGroupedSumDefinitionId,
+    },
 }
 
 impl SemanticCommand {
@@ -2007,6 +2021,10 @@ impl PatchLifecycle {
                     SemanticCommand::FormulaInverseRestore(_) => {
                         OperationFamily::FormulaInverseRestore
                     }
+                    SemanticCommand::UpsertKeyedGroupedSumDefinition { .. }
+                    | SemanticCommand::RemoveKeyedGroupedSumDefinition { .. } => {
+                        OperationFamily::KeyedGroupedSumDefinition
+                    }
                 },
                 scope: ScopedSemanticSubject::new(
                     self.document_scope.clone(),
@@ -2211,6 +2229,58 @@ impl PatchLifecycle {
                         command.value(),
                     )?;
                 }
+                SemanticCommand::UpsertKeyedGroupedSumDefinition { definition } => {
+                    let scope = ScopedSemanticSubject::new(
+                        self.document_scope.clone(),
+                        self.document.clone(),
+                        SemanticScope::Document,
+                    );
+                    writes.insert(AssociatedWriteRequirement {
+                        family: OperationFamily::KeyedGroupedSumDefinition,
+                        mutation_class: MutationClass::Structure,
+                        scope,
+                    });
+                    if candidate
+                        .keyed_grouped_sum_definitions
+                        .contains_key(&definition.id)
+                    {
+                        writes.insert(AssociatedWriteRequirement {
+                            family: OperationFamily::KeyedGroupedSumDefinition,
+                            mutation_class: MutationClass::Destructive,
+                            scope: ScopedSemanticSubject::new(
+                                self.document_scope.clone(),
+                                self.document.clone(),
+                                SemanticScope::Document,
+                            ),
+                        });
+                    }
+                    candidate
+                        .keyed_grouped_sum_definitions
+                        .insert(definition.id.clone(), definition.clone());
+                }
+                SemanticCommand::RemoveKeyedGroupedSumDefinition { definition } => {
+                    if candidate
+                        .keyed_grouped_sum_definitions
+                        .remove(definition)
+                        .is_none()
+                    {
+                        return Err(WorkspaceError::MissingKeyedGroupedSumDefinition {
+                            definition: definition.clone(),
+                        });
+                    }
+                    let scope = ScopedSemanticSubject::new(
+                        self.document_scope.clone(),
+                        self.document.clone(),
+                        SemanticScope::Document,
+                    );
+                    for mutation_class in [MutationClass::Structure, MutationClass::Destructive] {
+                        writes.insert(AssociatedWriteRequirement {
+                            family: OperationFamily::KeyedGroupedSumDefinition,
+                            mutation_class,
+                            scope: scope.clone(),
+                        });
+                    }
+                }
             }
         }
         Ok((candidate, writes))
@@ -2223,6 +2293,36 @@ impl PatchLifecycle {
         body: &SemanticPatchBody,
         associated_write_requirements: BTreeSet<AssociatedWriteRequirement>,
     ) -> Result<EvaluatedPatch, PatchLifecycleError> {
+        // The v1 semantic diff deliberately refuses to represent saved
+        // grouped-summary definition changes. That refusal is not a
+        // publication veto: validate the candidate and preserve the normal
+        // lifecycle/authorization path with an empty v1 diff projection.
+        if base.keyed_grouped_sum_definitions != candidate.keyed_grouped_sum_definitions {
+            match super::validate(&candidate)
+                .and_then(|()| super::preflight_formula_projections(&candidate))
+            {
+                Ok(()) => {}
+                Err(WorkspaceError::InvalidDocument { report, .. }) => {
+                    return Err(PatchLifecycleError::ValidationFailed { report });
+                }
+                Err(source) => {
+                    return Err(PatchLifecycleError::CommandRejected {
+                        source: Box::new(source),
+                    });
+                }
+            }
+            let disclosure_requirements = self.derive_disclosures(base, &candidate, body, &[])?;
+            return Ok(EvaluatedPatch {
+                validation_report: super::validation_report(&candidate),
+                document: candidate,
+                semantic_changes: Vec::new(),
+                formula_impacts: Vec::new(),
+                footprint: AuthorizationFootprint {
+                    disclosure_requirements,
+                    associated_write_requirements,
+                },
+            });
+        }
         let edit = match finalize_edit(base, candidate) {
             Ok(edit) => edit,
             Err(WorkspaceError::InvalidDocument { report, .. }) => {
@@ -2418,6 +2518,18 @@ impl PatchLifecycle {
                     &Value::Number(command.value()),
                     disclosures,
                 )
+            }
+            SemanticCommand::UpsertKeyedGroupedSumDefinition { .. }
+            | SemanticCommand::RemoveKeyedGroupedSumDefinition { .. } => {
+                disclosures.insert(DisclosureRequirement {
+                    family: OperationFamily::KeyedGroupedSumDefinition,
+                    scope: ScopedSemanticSubject::new(
+                        self.document_scope.clone(),
+                        self.document.clone(),
+                        SemanticScope::Document,
+                    ),
+                });
+                Ok(())
             }
         }
     }

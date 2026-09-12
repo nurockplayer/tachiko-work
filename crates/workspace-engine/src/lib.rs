@@ -26,13 +26,16 @@ pub use tachiko_merge_engine::{
 };
 use tachiko_merge_engine::{MergeOutcome, UnmaterializedStoredFact, merge};
 use tachiko_semantic_core::{
-    AddressIndex, AddressIndexError, is_valid_identifier, validate_document_core,
+    AddressIndex, AddressIndexError, KeyedGroupedSumDefinitionError, is_valid_identifier,
+    validate_document_core, validate_keyed_grouped_sum_definitions,
 };
 pub use tachiko_semantic_core::{
     Date, Diagnostic, DiagnosticCode, DiagnosticFact, DiagnosticLocation, DiagnosticProvider,
     DiagnosticSeverity, Document, DocumentId, Entity, EntityId, EntityKey, Expression,
-    FieldAddress, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, Number, Schema,
-    SchemaId, SchemaKey, SemanticSubject, StableDiagnosticObservation, Value,
+    FieldAddress, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType,
+    KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding,
+    KeyedGroupedSumProductsBinding, Number, Schema, SchemaId, SchemaKey, SemanticSubject,
+    StableDiagnosticObservation, Value,
 };
 use thiserror::Error;
 
@@ -473,6 +476,12 @@ pub enum WorkspaceError {
     Diff(#[from] DiffError),
     #[error("semantic-conflict/v1 does not support keyed grouped-sum definition changes")]
     UnsupportedKeyedGroupedSumDefinitionMerge,
+    #[error("keyed grouped-sum definitions are invalid: {0}")]
+    InvalidKeyedGroupedSumDefinition(#[from] KeyedGroupedSumDefinitionError),
+    #[error("keyed grouped-sum definition '{definition}' is unavailable")]
+    MissingKeyedGroupedSumDefinition {
+        definition: KeyedGroupedSumDefinitionId,
+    },
     #[error(
         "merge inputs belong to different documents: base '{base}', left '{left}', right '{right}'"
     )]
@@ -512,6 +521,7 @@ pub fn create_document(
 ///
 /// Returns the shared semantic or calculation failure for this snapshot.
 pub fn validate(document: &Document) -> Result<(), WorkspaceError> {
+    validate_keyed_grouped_sum_definitions(document)?;
     require_validated_calculation(document)?;
     Ok(())
 }

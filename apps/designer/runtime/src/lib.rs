@@ -10,16 +10,20 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use tachiko_storage::{
-    CanonicalRoProjectAdmissionError, CanonicalRoProjectV1, FormatError, ROPROJ_V1_PATHS,
-    encode_roproj_v1, from_bytes, to_canonical_string,
+    CanonicalRoProjectAdmissionError, CanonicalRoProjectV1, CanonicalRoProjectV2, FormatError,
+    ROPROJ_V1_PATHS, ROPROJ_V2_PATHS, decode_roproj_v2, encode_roproj_v1, encode_roproj_v2,
+    from_bytes, to_canonical_string,
 };
 use tachiko_workspace_engine::{
     CalculationFailure, Date, Document, Entity, EntityId, EntityKey, Expression, FieldDefinition,
-    FieldId, FieldKey, FieldRef, FieldType, IdGenerator, Number, Schema, SchemaId, SchemaKey,
-    SemanticIdKind, StarterTemplate, Value, WorkspaceError, analyze_field, create_document,
+    FieldId, FieldKey, FieldRef, FieldType, IdGenerator, KeyedGroupedSumDefinition,
+    KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,
+    Number, Schema, SchemaId, SchemaKey, SemanticIdKind, StarterTemplate, Value, WorkspaceError,
+    analyze_field, create_document,
     formula_operations::{
         FormulaCalculationOutcome, FormulaInverseRestoreRequest, FormulaUpdateRequest,
     },
+    keyed_grouped_sum_operations::{KeyedGroupedSumOutcome, evaluate_keyed_grouped_sum},
     patch_lifecycle::{
         AuthorizationAction, AuthorizationDomainId, AuthorizationPolicyVersion, DocumentScopeId,
         Grant, GrantId, GrantRequirement, MutationClass, OperationFamily, PatchLifecycle,
@@ -145,6 +149,13 @@ pub enum DesignerRequest {
         target: FieldTarget,
         source: String,
     },
+    CreateKeyedGroupedSum {
+        expected_revision: String,
+        definition: KeyedGroupedSumDefinitionInput,
+    },
+    QueryKeyedGroupedSum {
+        definition_id: String,
+    },
 }
 
 /// App-private responses returned by the Designer runtime adapter.
@@ -161,6 +172,8 @@ pub enum DesignerResponse {
     Imported(Box<ImportedProjection>),
     SpreadsheetExported(SpreadsheetExportProjection),
     ProjectExported(ProjectExportProjection),
+    KeyedGroupedSum(KeyedGroupedSumProjection),
+    KeyedGroupedSumPublished(KeyedGroupedSumPublishedProjection),
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -175,6 +188,7 @@ pub struct BootstrapProjection {
     pub revision: String,
     pub default_collection: String,
     pub collections: Vec<CollectionSummary>,
+    pub keyed_grouped_sum_definition_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -343,6 +357,47 @@ impl FieldTarget {
 pub struct FieldBatchProjection {
     pub revision: String,
     pub fields: Vec<FieldProjection>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct KeyedGroupedSumDefinitionInput {
+    pub id: String,
+    pub orders_schema: String,
+    pub order_lookup_key_field: String,
+    pub order_quantity_field: String,
+    pub products_schema: String,
+    pub product_key_field: String,
+    pub product_category_field: String,
+    pub product_price_field: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct KeyedGroupedSumProjection {
+    pub definition_id: String,
+    pub revision: String,
+    pub groups: Vec<KeyedGroupedSumGroupProjection>,
+    pub diagnostics: Vec<KeyedGroupedSumDiagnosticProjection>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct KeyedGroupedSumGroupProjection {
+    pub category: String,
+    pub value: f64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct KeyedGroupedSumDiagnosticProjection {
+    pub code: String,
+    pub entity: Option<String>,
+    pub field: Option<String>,
+    pub lookup_key: Option<String>,
+    pub candidates: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct KeyedGroupedSumPublishedProjection {
+    pub publication: PublicationProjection,
+    pub result: KeyedGroupedSumProjection,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -707,6 +762,24 @@ impl DesignerRuntime {
                 &target,
                 &source,
             )?)),
+            DesignerRequest::CreateKeyedGroupedSum {
+                expected_revision,
+                definition,
+            } => {
+                let definition_id = KeyedGroupedSumDefinitionId::from(definition.id.clone());
+                let publication = self.create_keyed_grouped_sum(&expected_revision, definition)?;
+                Ok(DesignerResponse::KeyedGroupedSumPublished(
+                    KeyedGroupedSumPublishedProjection {
+                        result: self.query_keyed_grouped_sum(&definition_id),
+                        publication,
+                    },
+                ))
+            }
+            DesignerRequest::QueryKeyedGroupedSum { definition_id } => {
+                Ok(DesignerResponse::KeyedGroupedSum(
+                    self.query_keyed_grouped_sum(&KeyedGroupedSumDefinitionId::from(definition_id)),
+                ))
+            }
         }
     }
 
@@ -716,6 +789,84 @@ impl DesignerRuntime {
             revision: self.session.revision().as_str().to_owned(),
             default_collection: self.default_collection.clone(),
             collections: self.collections.clone(),
+            keyed_grouped_sum_definition_ids: self
+                .session
+                .export_snapshot()
+                .document()
+                .keyed_grouped_sum_definitions
+                .keys()
+                .map(ToString::to_string)
+                .collect(),
+        }
+    }
+
+    fn create_keyed_grouped_sum(
+        &mut self,
+        expected_revision: &str,
+        input: KeyedGroupedSumDefinitionInput,
+    ) -> Result<PublicationProjection, DesignerError> {
+        if input.id.is_empty() {
+            return Err(tracker_error(
+                "grouped summary definition identity is required",
+            ));
+        }
+        let definition = KeyedGroupedSumDefinition {
+            id: KeyedGroupedSumDefinitionId::from(input.id),
+            orders: KeyedGroupedSumOrdersBinding {
+                schema: SchemaId::from(input.orders_schema),
+                lookup_key_field: FieldId::from(input.order_lookup_key_field),
+                quantity_field: FieldId::from(input.order_quantity_field),
+            },
+            products: KeyedGroupedSumProductsBinding {
+                schema: SchemaId::from(input.products_schema),
+                key_field: FieldId::from(input.product_key_field),
+                category_field: FieldId::from(input.product_category_field),
+                price_field: FieldId::from(input.product_price_field),
+            },
+        };
+        self.publish_commands(
+            expected_revision,
+            vec![SemanticCommand::UpsertKeyedGroupedSumDefinition { definition }],
+        )
+    }
+
+    fn query_keyed_grouped_sum(
+        &self,
+        definition_id: &KeyedGroupedSumDefinitionId,
+    ) -> KeyedGroupedSumProjection {
+        let revision = self.current_revision().to_owned();
+        match evaluate_keyed_grouped_sum(self.session.export_snapshot().document(), definition_id) {
+            KeyedGroupedSumOutcome::Complete(groups) => KeyedGroupedSumProjection {
+                definition_id: definition_id.to_string(),
+                revision,
+                groups: groups
+                    .into_iter()
+                    .map(|group| KeyedGroupedSumGroupProjection {
+                        category: group.category,
+                        value: group.value.get(),
+                    })
+                    .collect(),
+                diagnostics: Vec::new(),
+            },
+            KeyedGroupedSumOutcome::Unavailable(diagnostics) => KeyedGroupedSumProjection {
+                definition_id: definition_id.to_string(),
+                revision,
+                groups: Vec::new(),
+                diagnostics: diagnostics
+                    .into_iter()
+                    .map(|diagnostic| KeyedGroupedSumDiagnosticProjection {
+                        code: diagnostic.code.to_owned(),
+                        entity: diagnostic.entity.map(|value| value.to_string()),
+                        field: diagnostic.field.map(|value| value.to_string()),
+                        lookup_key: diagnostic.lookup_key,
+                        candidates: diagnostic
+                            .candidates
+                            .into_iter()
+                            .map(|value| value.to_string())
+                            .collect(),
+                    })
+                    .collect(),
+            },
         }
     }
 
@@ -785,6 +936,9 @@ impl DesignerRuntime {
         let snapshot = self.session.export_snapshot();
         let bytes = if document_contains_date(snapshot.document()) {
             encode_project_record_v2(snapshot.document())?
+        } else if !snapshot.document().keyed_grouped_sum_definitions.is_empty() {
+            let tree = encode_roproj_v2(snapshot.document())?;
+            encode_project_bundle_v2(&tree)?
         } else {
             let tree = encode_roproj_v1(snapshot.document())?;
             encode_project_bundle_v1(&tree)?
@@ -1305,6 +1459,7 @@ impl DesignerRuntime {
         Ok(publication)
     }
 
+    #[allow(clippy::too_many_lines)] // Closed semantic command catalogue publishes atomically.
     fn publish_commands(
         &mut self,
         expected_revision: &str,
@@ -1340,6 +1495,14 @@ impl DesignerRuntime {
                 }
                 SemanticCommand::FormulaUpdate(_) => {
                     return Err(tracker_error("unsupported history command"));
+                }
+                SemanticCommand::UpsertKeyedGroupedSumDefinition { definition } => {
+                    candidate
+                        .keyed_grouped_sum_definitions
+                        .insert(definition.id.clone(), definition.clone());
+                }
+                SemanticCommand::RemoveKeyedGroupedSumDefinition { definition } => {
+                    candidate.keyed_grouped_sum_definitions.remove(definition);
                 }
             }
         }
@@ -2035,26 +2198,35 @@ fn budget_item(
 }
 
 fn encode_project_bundle_v1(tree: &CanonicalRoProjectV1) -> Result<Vec<u8>, DesignerError> {
-    let total = tree.files().iter().try_fold(
+    encode_project_bundle(tree.files().iter().map(|file| (file.path(), file.bytes())))
+}
+
+fn encode_project_bundle_v2(tree: &CanonicalRoProjectV2) -> Result<Vec<u8>, DesignerError> {
+    encode_project_bundle(tree.files().iter().map(|file| (file.path(), file.bytes())))
+}
+
+fn encode_project_bundle<'a>(
+    files: impl IntoIterator<Item = (&'a str, &'a [u8])>,
+) -> Result<Vec<u8>, DesignerError> {
+    let files = files.into_iter().collect::<Vec<_>>();
+    let total = files.iter().try_fold(
         PROJECT_BUNDLE_V1_MAGIC.len() + size_of::<u32>(),
-        |total, file| {
-            let path_length = u16::try_from(file.path().len()).map_err(|_| {
-                DesignerError::InvalidProjectTransfer {
+        |total, (path, bytes)| {
+            let path_length =
+                u16::try_from(path.len()).map_err(|_| DesignerError::InvalidProjectTransfer {
                     message: "a canonical path exceeds the private transfer profile".to_owned(),
-                }
-            })?;
-            let byte_length = u32::try_from(file.bytes().len()).map_err(|_| {
-                DesignerError::ProjectTransferTooLarge {
-                    actual: file.bytes().len(),
+                })?;
+            let byte_length =
+                u32::try_from(bytes.len()).map_err(|_| DesignerError::ProjectTransferTooLarge {
+                    actual: bytes.len(),
                     maximum: MAX_PROJECT_TRANSFER_BYTES,
-                }
-            })?;
+                })?;
             Ok::<usize, DesignerError>(
                 total
                     .saturating_add(size_of_val(&path_length))
                     .saturating_add(size_of_val(&byte_length))
-                    .saturating_add(file.path().len())
-                    .saturating_add(file.bytes().len()),
+                    .saturating_add(path.len())
+                    .saturating_add(bytes.len()),
             )
         },
     )?;
@@ -2062,23 +2234,23 @@ fn encode_project_bundle_v1(tree: &CanonicalRoProjectV1) -> Result<Vec<u8>, Desi
     let mut output = Vec::with_capacity(total);
     output.extend_from_slice(PROJECT_BUNDLE_V1_MAGIC);
     output.extend_from_slice(
-        &u32::try_from(tree.files().len())
+        &u32::try_from(files.len())
             .expect("canonical project file count fits u32")
             .to_le_bytes(),
     );
-    for file in tree.files() {
+    for (path, bytes) in files {
         output.extend_from_slice(
-            &u16::try_from(file.path().len())
+            &u16::try_from(path.len())
                 .expect("canonical project paths fit u16")
                 .to_le_bytes(),
         );
         output.extend_from_slice(
-            &u32::try_from(file.bytes().len())
+            &u32::try_from(bytes.len())
                 .expect("bounded project file lengths fit u32")
                 .to_le_bytes(),
         );
-        output.extend_from_slice(file.path().as_bytes());
-        output.extend_from_slice(file.bytes());
+        output.extend_from_slice(path.as_bytes());
+        output.extend_from_slice(bytes);
     }
     Ok(output)
 }
@@ -2139,8 +2311,25 @@ fn decode_project_bundle(input: &[u8]) -> Result<Document, DesignerError> {
             message: "project transfer contains trailing bytes".to_owned(),
         });
     }
-    let mut files = Vec::with_capacity(ROPROJ_V1_PATHS.len());
-    for path in ROPROJ_V1_PATHS {
+    let manifest = files_by_path.get("manifest.json").ok_or_else(|| {
+        DesignerError::InvalidProjectTransfer {
+            message: "project transfer is missing 'manifest.json'".to_owned(),
+        }
+    })?;
+    let version = serde_json::from_slice::<serde_json::Value>(manifest)
+        .ok()
+        .and_then(|value| value.get("format_version")?.as_u64());
+    let expected_paths: &[&str] = match version {
+        Some(1) => &ROPROJ_V1_PATHS,
+        Some(2) => &ROPROJ_V2_PATHS,
+        _ => {
+            return Err(DesignerError::InvalidProjectTransfer {
+                message: "project manifest has no supported format version".to_owned(),
+            });
+        }
+    };
+    let mut files = Vec::with_capacity(expected_paths.len());
+    for &path in expected_paths {
         let bytes =
             files_by_path
                 .remove(path)
@@ -2154,10 +2343,22 @@ fn decode_project_bundle(input: &[u8]) -> Result<Document, DesignerError> {
             message: format!("project transfer contains unexpected path '{extra}'"),
         });
     }
-    match CanonicalRoProjectV1::try_from_files_with_profile(files, ensure_cheap_document_profile) {
-        Ok((_, document)) => Ok(document),
-        Err(CanonicalRoProjectAdmissionError::Format(error)) => Err(error.into()),
-        Err(CanonicalRoProjectAdmissionError::Profile(error)) => Err(error),
+    match version {
+        Some(1) => match CanonicalRoProjectV1::try_from_files_with_profile(
+            files,
+            ensure_cheap_document_profile,
+        ) {
+            Ok((_, document)) => Ok(document),
+            Err(CanonicalRoProjectAdmissionError::Format(error)) => Err(error.into()),
+            Err(CanonicalRoProjectAdmissionError::Profile(error)) => Err(error),
+        },
+        Some(2) => {
+            let tree = CanonicalRoProjectV2::try_from_files(files)?;
+            let document = decode_roproj_v2(&tree)?;
+            ensure_cheap_document_profile(&document)?;
+            Ok(document)
+        }
+        _ => unreachable!("manifest version was dispatched above"),
     }
 }
 
@@ -2782,6 +2983,7 @@ fn ensure_static_profile(
         revision: "resident/0".to_owned(),
         default_collection: default_collection.to_owned(),
         collections: collections.to_vec(),
+        keyed_grouped_sum_definition_ids: Vec::new(),
     };
     ensure_projection_size(&bootstrap).map_err(|error| DesignerError::UnsupportedProject {
         message: error.to_string(),
@@ -2897,6 +3099,10 @@ fn designer_lifecycle(
             (OperationFamily::RemoveEntity, MutationClass::Structure),
             (OperationFamily::RemoveEntity, MutationClass::Destructive),
             (OperationFamily::RemoveEntity, MutationClass::Formula),
+            (
+                OperationFamily::KeyedGroupedSumDefinition,
+                MutationClass::Structure,
+            ),
         ]
         .into_iter()
         .flat_map(|(family, class)| {
