@@ -1,5 +1,7 @@
 import {
   createExperimentalDesignerClient,
+  openCanonicalTreeFromEntries,
+  type CanonicalProjectTransferEntry,
   type CanonicalTreeExport,
   type OccurrenceProjection,
   type OpenedProjection,
@@ -29,4 +31,17 @@ export async function exercisePackagedClientContract(): Promise<{
   await client.closeProject();
   client.close();
   return {canonical, portable, canonicalOpened, portableOpened, occurrence};
+}
+
+/** Compile-only external consumer check for the public canonical preflight. */
+export async function exercisePackagedCanonicalPreflight(
+  entries: readonly CanonicalProjectTransferEntry[],
+): Promise<OpenedProjection> {
+  const client = createExperimentalDesignerClient();
+  try {
+    return await openCanonicalTreeFromEntries(client, entries);
+  } finally {
+    await client.closeProject().catch(() => undefined);
+    client.close();
+  }
 }
