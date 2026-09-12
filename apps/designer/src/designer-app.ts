@@ -92,6 +92,7 @@ export function mountDesigner(
   let busy = false;
   let newTableConfirmed = false;
   let genericPasteBound = false;
+  let genericShortcutBound = false;
   let pendingExport: {occurrence: symbol; exported: SpreadsheetExport; format: SpreadsheetFormat; ledger: FidelityFinding[]} | null = null;
   let destroyed = false;
   let occurrenceClosed = false;
@@ -1316,7 +1317,7 @@ export function mountDesigner(
       });
     });
     if (!genericPasteBound) {
-      root.addEventListener("paste", event => {
+      window.addEventListener("paste", event => {
         if (root.querySelector("[data-generic-cell]") === null) return;
         event.preventDefault();
         const text = event.clipboardData?.getData("text/plain");
@@ -1325,6 +1326,14 @@ export function mountDesigner(
         }
       });
       genericPasteBound = true;
+    }
+    if (!genericShortcutBound) {
+      window.addEventListener("keydown", event => {
+        if (root.querySelector("[data-generic-cell]") === null || event.key.toLowerCase() !== "v" || (!event.ctrlKey && !event.metaKey)) return;
+        event.preventDefault();
+        void navigator.clipboard.readText().then(text => pasteGeneric(text)).catch((error: unknown) => { showProjectFailure("Paste not applied", error); render(); });
+      });
+      genericShortcutBound = true;
     }
     root.querySelector<HTMLFormElement>("[data-generic-edit]")?.addEventListener("submit", event => {
       event.preventDefault();
@@ -2019,7 +2028,7 @@ function genericEditorMarkup(table: TableProjection, busy: boolean): string {
 }
 
 function genericCellAttributes(field: FieldProjection): string {
-  return `role="gridcell" data-generic-cell data-entity="${encodeOpaqueAttribute(field.target.entity)}" data-field="${encodeOpaqueAttribute(field.target.field)}" aria-label="${escapeHtml(storedValue(field))}"`;
+  return `role="gridcell" tabindex="0" data-generic-cell data-entity="${encodeOpaqueAttribute(field.target.entity)}" data-field="${encodeOpaqueAttribute(field.target.field)}" aria-label="${escapeHtml(storedValue(field))}"`;
 }
 
 function noticeMarkup(notice: Notice | null): string {
