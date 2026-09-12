@@ -93,6 +93,9 @@ export function mountDesigner(
   let newTableConfirmed = false;
   let genericPasteBound = false;
   let genericShortcutBound = false;
+  let genericPasteInFlight = false;
+  let queuedGenericPaste: string | null = null;
+  let genericPasteEventCount = 0;
   let pendingExport: {occurrence: symbol; exported: SpreadsheetExport; format: SpreadsheetFormat; ledger: FidelityFinding[]} | null = null;
   let destroyed = false;
   let occurrenceClosed = false;
@@ -580,7 +583,7 @@ export function mountDesigner(
     }
   };
 
-  const showFailure = (error: unknown, published: boolean): void => {
+  const showFailure = (error: unknown, published: boolean, context = ""): void => {
     const failure =
       error instanceof DesignerRuntimeError
         ? error.failure
@@ -591,7 +594,7 @@ export function mountDesigner(
     notice = {
       tone: "error",
       title: published ? "Edit published; refresh incomplete" : "Edit not published",
-      message: failure.message,
+      message: `${context}${failure.message}`,
       diagnostics: failure.diagnostics,
     };
     if (published) {
@@ -1272,6 +1275,7 @@ export function mountDesigner(
     const table = store.snapshot().table;
     const firstColumn = table.columns[0];
     if (!firstColumn) return;
+    genericPasteInFlight = true;
     busy = true; notice = null; render();
     let published = false;
     try {
@@ -1292,11 +1296,22 @@ export function mountDesigner(
       store = createProjectionStore(refreshed);
       if (bootstrap) bootstrap = {...bootstrap, revision: refreshed.revision, collections: bootstrap.collections.map(collection => collection.id === refreshed.collection.id ? refreshed.collection : collection)};
     } catch (error) {
-      showFailure(error, published);
+      showFailure(error, published, published ? "" : "Paste rejected: ");
     } finally {
-      busy = false; syncBeforeUnloadGuard(); render();
+      busy = false; genericPasteInFlight = false; syncBeforeUnloadGuard(); render();
       root.querySelector<HTMLElement>("[data-generic-cell]")?.focus();
+      const queued = queuedGenericPaste;
+      queuedGenericPaste = null;
+      if (queued !== null) void pasteGeneric(queued);
     }
+  };
+
+  const enqueueGenericPaste = (text: string): void => {
+    if (genericPasteInFlight) {
+      queuedGenericPaste = text;
+      return;
+    }
+    void pasteGeneric(text);
   };
 
   const bindInteractions = (): void => {
@@ -1308,8 +1323,8 @@ export function mountDesigner(
         const form = root.querySelector<HTMLFormElement>("[data-generic-edit]");
         const input = form?.querySelector<HTMLInputElement>("[aria-label='Cell value']");
         if (!form || !input) return;
-        form.dataset.entity = cell.dataset.entity ?? "";
-        form.dataset.field = cell.dataset.field ?? "";
+        form.dataset.entity = cell.dataset.genericEntity ?? "";
+        form.dataset.field = cell.dataset.genericField ?? "";
         input.value = cell.getAttribute("aria-label") ?? "";
         input.disabled = false;
         form.querySelector<HTMLButtonElement>("button[type='submit']")?.removeAttribute("disabled");
@@ -1318,20 +1333,25 @@ export function mountDesigner(
     });
     if (!genericPasteBound) {
       window.addEventListener("paste", event => {
-        if (root.querySelector("[data-generic-cell]") === null) return;
+        if (root.querySelector("[data-generic-grid]") === null) return;
         event.preventDefault();
+        genericPasteEventCount += 1;
         const text = event.clipboardData?.getData("text/plain");
         if (text !== undefined) {
-          void pasteGeneric(text).catch((error: unknown) => { showProjectFailure("Paste not applied", error); });
+          enqueueGenericPaste(text);
         }
       });
       genericPasteBound = true;
     }
     if (!genericShortcutBound) {
       window.addEventListener("keydown", event => {
-        if (root.querySelector("[data-generic-cell]") === null || event.key.toLowerCase() !== "v" || (!event.ctrlKey && !event.metaKey)) return;
+        if (root.querySelector("[data-generic-grid]") === null || event.key.toLowerCase() !== "v" || (!event.ctrlKey && !event.metaKey)) return;
         event.preventDefault();
-        void navigator.clipboard.readText().then(text => pasteGeneric(text)).catch((error: unknown) => { showProjectFailure("Paste not applied", error); render(); });
+        const pasteEventsAtShortcut = genericPasteEventCount;
+        window.setTimeout(() => {
+          if (genericPasteEventCount !== pasteEventsAtShortcut) return;
+          void navigator.clipboard.readText().then(enqueueGenericPaste).catch((error: unknown) => { showProjectFailure("Paste not applied", error); render(); });
+        }, 0);
       });
       genericShortcutBound = true;
     }
@@ -1754,7 +1774,7 @@ function designerMarkup(
           <div class="session-history-slot">${historyControls}${refreshControl}</div>
 
           <div class="table-scroll">
-            <table role="grid" aria-label="${escapeHtml(humanize(table.collection.key))} cells">
+            <table role="grid" aria-label="${escapeHtml(humanize(table.collection.key))} cells" ${isTracker ? "" : "data-generic-grid"}>
               <thead>
                 <tr>
                   ${isTracker ? '<th scope="col">Entity</th>' : ""}
@@ -2028,7 +2048,7 @@ function genericEditorMarkup(table: TableProjection, busy: boolean): string {
 }
 
 function genericCellAttributes(field: FieldProjection): string {
-  return `role="gridcell" tabindex="0" data-generic-cell data-entity="${encodeOpaqueAttribute(field.target.entity)}" data-field="${encodeOpaqueAttribute(field.target.field)}" aria-label="${escapeHtml(storedValue(field))}"`;
+  return `role="gridcell" tabindex="0" data-generic-cell data-generic-entity="${encodeOpaqueAttribute(field.target.entity)}" data-generic-field="${encodeOpaqueAttribute(field.target.field)}" aria-label="${escapeHtml(storedValue(field))}"`;
 }
 
 function noticeMarkup(notice: Notice | null): string {

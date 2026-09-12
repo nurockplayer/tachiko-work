@@ -209,6 +209,7 @@ test("invalid typed paste does not publish into newly created Inventory", async 
   await createInventory(page);
   await page.getByRole("gridcell", { name: "Paste rows here, or choose Append row." }).click();
   await paste(page, "0012\t3\ttrue\t2024-02-29");
+  await expect(page.getByRole("gridcell", { name: "0012", exact: true })).toBeVisible();
   const revision = await page.getByTestId("revision").textContent();
   await paste(page, "valid\t3\ttrue\t2024-02-29\ninvalid\tNaN\tyes\t2026-02-30");
   await expect(page.getByRole("alert")).toContainText(/invalid|rejected/i);
