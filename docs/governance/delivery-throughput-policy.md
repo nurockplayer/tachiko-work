@@ -2,7 +2,8 @@
 
 Status: Accepted governance policy when merged
 
-Decision issue: [#307](https://github.com/nurockplayer/tachiko-work/issues/307)
+Decision issue: [#307](https://github.com/nurockplayer/tachiko-work/issues/307);
+amended by [#334](https://github.com/nurockplayer/tachiko-work/issues/334).
 
 ## Purpose
 
