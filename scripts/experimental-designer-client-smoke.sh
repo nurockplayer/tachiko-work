@@ -6,12 +6,22 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 consumer_dir="${repo_root}/examples/experimental-designer-client"
 vendor_dir="${consumer_dir}/vendor/tachiko"
 check_dir="$(mktemp -d "${TMPDIR:-/tmp}/tachiko-experimental-client-smoke.XXXXXX")"
+acceptance_runner="${repo_root}/scripts/experimental-designer-client-acceptance.sh"
 
 rm -rf -- "${consumer_dir}/vendor"
 cleanup() {
   rm -rf -- "${consumer_dir}/vendor" "${check_dir}"
 }
 trap cleanup EXIT
+
+[[ -x "${acceptance_runner}" ]] || {
+  echo "experimental-designer-client-smoke: acceptance runner is missing or not executable" >&2
+  exit 1
+}
+source_commit="$(git -C "${repo_root}" rev-parse --verify HEAD^{commit})" ||
+  { echo "experimental-designer-client-smoke: HEAD must resolve to a source commit" >&2; exit 1; }
+[[ "${source_commit}" =~ ^[0-9a-f]{40}$ ]] ||
+  { echo "experimental-designer-client-smoke: source Git object format must provide a 40-character commit ID" >&2; exit 1; }
 
 require_no_matches() {
   local boundary="$1"
@@ -97,5 +107,10 @@ pnpm --dir "${repo_root}/apps/designer" exec tsc \
   --pretty false
 pnpm --dir "${repo_root}/apps/designer" exec playwright test \
   --config playwright.experimental-client.config.ts
+
+# This consumes the just-built primary vendor kit without rebuilding it. It
+# proves the preserved C1 and runtime-canary contracts against the same source
+# identity captured before export; a manifest cannot vouch for itself.
+bash "${acceptance_runner}" "${vendor_dir}" "${source_commit}"
 
 echo "experimental Designer client smoke passed"

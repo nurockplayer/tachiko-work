@@ -106,15 +106,37 @@ const observed = await client.queryFields(publication.resulting_revision, [
 ]);
 
 console.log(observed.fields); // priority calculates to 8; diagnostics come from Rust
-const exported = await client.exportProject(publication.resulting_revision);
+const exported = await client.exportCanonicalTree(publication.resulting_revision);
 ```
 
 The same client exposes revision-pinned `editText` and `editBoolean`. A stale
 call throws `DesignerRuntimeError` with `failure.code === "stale_revision"`;
 query or export the reported current revision instead of rebasing the edit in
-frontend code. Export also requires the exact current revision and returns
-opaque canonical project bytes suitable for host-owned persistence or a later
-`openProject` round trip.
+frontend code. `exportCanonicalTree(revision)` requires the exact current
+revision and returns `{revision, files: [{path, bytes}]}` containing all 18
+canonical v1 files, including empty shards. Rust owns their contents.
+`openCanonicalTree(files)` passes the opaque entries back to Rust admission.
+
+For a genuine portable `.ro` file, use the existing storage codec through:
+
+```ts
+const portable = await client.exportPortableRo(publication.resulting_revision);
+await client.verifyPortableRo(portable.bytes); // verifies without changing active work
+const reopened = await client.openPortableRo(portable.bytes.slice(0));
+const occurrence = await client.observeOccurrence();
+console.log(reopened.bootstrap.revision, occurrence.scope);
+```
+
+Open installs a candidate only after successful admission. Rejected candidates
+preserve the previous occurrence and data. Occurrence scope comes from the
+resident runtime, stays stable for that occurrence, and changes on successful
+open; it is not a document ID. Revision and scope remain opaque tokens.
+
+The canonical-v1 and portable-v1 paths reject unsupported Date data. The
+existing `exportProject`/`openProject` private transfer path retains its Date
+round trip; those private bytes must not be relabeled as `.ro`. Export produces
+a snapshot. Only the separate host persistence operation can confirm a durable
+save.
 
 Always tear down the occurrence and Worker when the UI is finished:
 
@@ -132,11 +154,21 @@ bash scripts/experimental-designer-client-smoke.sh
 This check requires ripgrep (`rg`), which is also a prerequisite of the full
 Designer gate; install it with the operating system's package manager.
 
-That throwaway consumer exports the kit twice (proving deterministic contents),
+That throwaway consumer compares two complete exports under the same toolchain,
 imports no `apps/designer` source, opens Product Gap, queries its typed table,
 publishes a Number edit, observes the priority calculation and diagnostic list,
 proves a stale edit leaves exported canonical bytes unchanged, and reopens an
 exact round trip.
+
+The same smoke also runs the preserved Sheet kit, C1 storage and runtime-canary
+acceptance against its just-built artifact. `tests/consumer-kit/seed/provenance.json`
+records the unchanged seed bytes; the public-kit driver calls the real Worker
+and existing codecs. These checks qualify the producer boundary, not Sheet UI
+journeys or host durability. To check a retained artifact without rebuilding:
+
+```sh
+bash scripts/experimental-designer-client-acceptance.sh /absolute/kit EXACT_SOURCE_SHA
+```
 
 Deeper authority: [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic-api.md),
 [ADR-0022](../decisions/ADR-0022-resident-semantic-runtime-and-host-boundary.md),

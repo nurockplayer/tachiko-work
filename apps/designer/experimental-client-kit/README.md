@@ -42,8 +42,8 @@ if (field) {
     ...publication.affected_calculations,
   ]);
   console.log(refreshed); // calculation and diagnostic projections are authoritative
-  const exported = await client.exportProject(publication.resulting_revision);
-  console.log(exported.bytes);
+  const exported = await client.exportCanonicalTree(publication.resulting_revision);
+  console.log(exported.files); // full canonical v1 path/byte entries
 }
 
 await client.closeProject();
@@ -55,6 +55,20 @@ the Rust runtime remains the sole parser and authority for `.roproj` meaning.
 The frontend may retain disposable revision-keyed projections and ordinary UI
 state, but it must not calculate formulas, validate candidates, invent revision
 semantics, or mirror an authoritative document.
+
+`exportCanonicalTree(revision)` returns every canonical `.roproj/v1` file,
+including empty shards; `openCanonicalTree(files)` submits those opaque bytes
+to Rust admission. `exportPortableRo(revision)` returns genuine portable `.ro`
+bytes; `verifyPortableRo(bytes)` verifies them without changing the active work,
+and `openPortableRo(bytes)` admits them before replacing it. A rejected open
+preserves the active occurrence. These v1 paths reject unsupported Date data;
+`exportProject` remains the existing private transfer round-trip operation and
+its bytes must not be given a public `.ro` filename.
+
+`observeOccurrence()` returns the runtime's actual `{scope, revision}`. Scope
+is stable within one live occurrence and fresh after a successful open. Treat
+both values as opaque. A successful export is a snapshot, not confirmation of
+a durable host save.
 
 See the repository's first-contact guide for the Product Gap walkthrough:
 <https://github.com/nurockplayer/tachiko-work/blob/main/docs/engineering/experimental-designer-client-kit.md>.

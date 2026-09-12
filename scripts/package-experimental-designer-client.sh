@@ -57,6 +57,10 @@ if [[ "${RUSTUP_HOME+x}" == x ]]; then clean_env+=("RUSTUP_HOME=${RUSTUP_HOME}")
 clean_env+=(
   "RUSTUP_TOOLCHAIN=stable"
   "CARGO_HOME=${scratch}/cargo-home"
+  # Rust otherwise records unique snapshot and registry source paths in the
+  # WASM payload. These process-local remaps retain source-faithful builds
+  # while making their recorded path identities stable across exports.
+  "RUSTFLAGS=--remap-path-prefix=${source_root}=/tachiko-source --remap-path-prefix=${scratch}/cargo-home=/tachiko-cargo-home"
   "NPM_CONFIG_USERCONFIG=/dev/null"
   "NPM_CONFIG_GLOBALCONFIG=/dev/null"
   "XDG_CONFIG_HOME=${scratch}/config-home"
@@ -143,6 +147,12 @@ fs.writeFileSync(path.join(kitDir, "artifact-manifest.json"), `${JSON.stringify(
     "editDate",
     "updateFormula",
     "exportProject",
+    "exportCanonicalTree",
+    "openCanonicalTree",
+    "exportPortableRo",
+    "verifyPortableRo",
+    "openPortableRo",
+    "observeOccurrence",
     "close",
     "inspectSpreadsheet",
     "importSpreadsheet",

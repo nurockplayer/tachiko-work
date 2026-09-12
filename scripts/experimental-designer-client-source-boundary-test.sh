@@ -10,7 +10,9 @@ make_fixture() {
   mkdir -p "$root/scripts" "$root/examples/experimental-designer-client/src" "$root/bin"
   cp "$smoke" "$root/scripts/experimental-designer-client-smoke.sh"
   printf '#!/usr/bin/env bash\nexit 0\n' >"$root/scripts/export-experimental-designer-client.sh"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$root/scripts/experimental-designer-client-acceptance.sh"
   chmod +x "$root/scripts/export-experimental-designer-client.sh"
+  chmod +x "$root/scripts/experimental-designer-client-acceptance.sh"
   for tool in bash dirname mktemp rm sed sort; do
     ln -s "$(command -v "$tool")" "$root/bin/$tool"
   done
@@ -48,7 +50,15 @@ EOF_FIND
   # this test remains isolated to rg status semantics; real integrity checks
   # run in the smoke and immutable-source regressions.
   printf '#!/usr/bin/env bash\nexit 0\n' >"$root/bin/pnpm"
-  chmod +x "$root/bin/diff" "$root/bin/find" "$root/bin/pnpm"
+  cat >"$root/bin/git" <<'EOF_GIT'
+#!/usr/bin/env bash
+if [[ "$*" == *"rev-parse --verify HEAD^{commit}"* ]]; then
+  printf '%s\n' '0123456789abcdef0123456789abcdef01234567'
+  exit 0
+fi
+exit 64
+EOF_GIT
+  chmod +x "$root/bin/diff" "$root/bin/find" "$root/bin/pnpm" "$root/bin/git"
 }
 
 run_case() {
