@@ -439,6 +439,11 @@ pub fn decode(tree: &CanonicalRoProjectV2) -> Result<Document, FormatError> {
 /// Convert a validated v1 semantic document into the independently rendered
 /// v2 representation. The v2 codec never delegates its v2 admission or DTO
 /// interpretation to the v1 codec.
+///
+/// # Errors
+///
+/// Returns an error if the v1 tree cannot be decoded or the resulting semantic
+/// document cannot be represented as canonical v2.
 pub fn migrate_v1(
     tree: &super::v1::CanonicalRoProjectV1,
 ) -> Result<CanonicalRoProjectV2, FormatError> {
@@ -466,7 +471,10 @@ fn canonicalize_unordered(
             "manifest.json" => manifest = Some(bytes),
             "schemas.json" => schemas = Some(bytes),
             "definitions.json" => definitions = Some(bytes),
-            _ if path.starts_with("entities/") && path.ends_with(".jsonl") => {
+            _ if path.starts_with("entities/")
+                && std::path::Path::new(&path).extension()
+                    == Some(std::ffi::OsStr::new("jsonl")) =>
+            {
                 if bytes.is_empty() {
                     continue;
                 }
