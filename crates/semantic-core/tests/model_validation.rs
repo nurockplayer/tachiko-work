@@ -62,6 +62,7 @@ fn valid_document() -> Document {
         title: "Balance".to_owned(),
         schemas: BTreeMap::from([(SchemaId::from("weapon"), weapon_schema)]),
         entities: BTreeMap::from([(EntityId::from("sword"), sword)]),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }
 

@@ -16,6 +16,7 @@ export type BootstrapProjection = {
   revision: string;
   default_collection: string;
   collections: CollectionSummary[];
+  keyed_grouped_sum_definition_ids?: string[];
 };
 
 export type OpenedProjection = {
@@ -82,6 +83,29 @@ export type ProjectExport = {
   bytes: ArrayBuffer;
 };
 
+export type KeyedGroupedSumDefinitionInput = {
+  id: string;
+  orders_schema: string;
+  order_lookup_key_field: string;
+  order_quantity_field: string;
+  products_schema: string;
+  product_key_field: string;
+  product_category_field: string;
+  product_price_field: string;
+};
+
+export type KeyedGroupedSumProjection = {
+  definition_id: string;
+  revision: string;
+  groups: Array<{category: string; value: number}>;
+  diagnostics: Array<{code: string; entity: string | null; field: string | null; lookup_key: string | null; candidates: string[]}>;
+};
+
+export type KeyedGroupedSumPublishedProjection = {
+  publication: PublicationProjection;
+  result: KeyedGroupedSumProjection;
+};
+
 export type FailureProjection = {
   code: string;
   message: string;
@@ -132,7 +156,9 @@ export type DesignerRequest =
       expected_revision: string;
       target: FieldTarget;
       source: string;
-    };
+    }
+  | {type: "create_keyed_grouped_sum"; expected_revision: string; definition: KeyedGroupedSumDefinitionInput}
+  | {type: "query_keyed_grouped_sum"; definition_id: string};
 
 export type DesignerResponse =
   | {type: "cleanup_preview"; payload: CleanupPreview}
@@ -144,6 +170,8 @@ export type DesignerResponse =
   | { type: "table"; payload: TableProjection }
   | { type: "fields"; payload: FieldBatchProjection }
   | { type: "published"; payload: PublicationProjection }
+  | { type: "keyed_grouped_sum"; payload: KeyedGroupedSumProjection }
+  | { type: "keyed_grouped_sum_published"; payload: KeyedGroupedSumPublishedProjection }
   | { type: "project_exported"; payload: ProjectExportProjection };
 
 export type DesignerWireReply =

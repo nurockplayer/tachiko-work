@@ -42,6 +42,7 @@ fn date_document(value: &str) -> Document {
                 fields: BTreeMap::from([("published".into(), Value::Date(value.parse().unwrap()))]),
             },
         )]),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }
 

@@ -64,6 +64,7 @@ fn security_document(note: &str) -> Document {
                 ]),
             },
         )]),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }
 

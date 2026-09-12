@@ -16,6 +16,7 @@ pub const SEMANTIC_CONFLICT_V1: &str = "tachiko.semantic-conflict/v1";
 pub enum MergeOutcome {
     Merged(MergeCandidate),
     Conflicted(Vec<MergeConflict>),
+    UnsupportedKeyedGroupedSumDefinitionChange,
 }
 
 /// Conflict-free structural result awaiting workspace finalization.
@@ -484,6 +485,12 @@ impl From<&Entity> for EntitySubject {
 /// semantic validation and operation-specific gates to inputs and candidates.
 #[must_use]
 pub fn merge(base: &Document, ours: &Document, theirs: &Document) -> MergeOutcome {
+    if base.keyed_grouped_sum_definitions != ours.keyed_grouped_sum_definitions
+        || base.keyed_grouped_sum_definitions != theirs.keyed_grouped_sum_definitions
+    {
+        return MergeOutcome::UnsupportedKeyedGroupedSumDefinitionChange;
+    }
+
     let mut conflicts = Vec::new();
     let mut unmaterialized_fields = Vec::new();
     let title = merge_scalar(
@@ -538,6 +545,7 @@ pub fn merge(base: &Document, ours: &Document, theirs: &Document) -> MergeOutcom
             title,
             schemas,
             entities,
+            keyed_grouped_sum_definitions: base.keyed_grouped_sum_definitions.clone(),
         },
         unmaterialized_fields,
     })

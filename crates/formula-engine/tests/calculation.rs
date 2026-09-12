@@ -59,6 +59,7 @@ fn balance_document() -> Document {
         title: "Balance".to_owned(),
         schemas: BTreeMap::from([(SchemaId::from("weapon"), schema)]),
         entities: BTreeMap::from([(EntityId::from("sword"), weapon)]),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }
 
@@ -395,6 +396,7 @@ fn long_acyclic_dependency_chains_are_stack_safe() {
                 fields,
             },
         )]),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     };
 
     let calculation = calculate(&document).unwrap();
@@ -536,6 +538,7 @@ fn generated_dags_match_an_independent_oracle_and_survive_key_renames() {
                     fields: values,
                 },
             )]),
+            keyed_grouped_sum_definitions: BTreeMap::new(),
         };
 
         let calculation = calculate(&document).unwrap();

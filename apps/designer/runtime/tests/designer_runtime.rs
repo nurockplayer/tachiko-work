@@ -35,6 +35,7 @@ fn product_gap_document_without_formulas() -> Document {
         title: "Tachiko Product Gaps".to_owned(),
         schemas: product_gap_schemas_without_formulas(),
         entities: product_gap_entities_without_formulas(),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }
 
@@ -213,6 +214,7 @@ fn date_document() -> Document {
                 )]),
             },
         )]),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }
 
