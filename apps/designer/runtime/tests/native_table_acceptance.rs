@@ -5,6 +5,7 @@ use tachiko_designer_runtime::{
 };
 
 const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000315";
+const SECOND_OCCURRENCE: &str = "00000000-0000-4000-8000-000000000316";
 
 fn inventory_columns() -> Vec<Value> {
     vec![
@@ -15,10 +16,10 @@ fn inventory_columns() -> Vec<Value> {
     ]
 }
 
-fn new_inventory() -> Value {
+fn new_inventory(occurrence_id: &str) -> Value {
     json!({
         "type": "new_table",
-        "occurrence_id": OCCURRENCE,
+        "occurrence_id": occurrence_id,
         "name": "Inventory",
         "columns": inventory_columns(),
     })
@@ -165,8 +166,11 @@ fn assert_fresh_creation_generates_distinct_ids(first: &TableProjection, second:
 fn inventory_creation_paste_and_reopen_preserve_typed_values_order_and_semantic_ids() {
     let mut runtime = None;
     let mut separately_created_runtime = None;
-    let separately_created = opened(request(&mut separately_created_runtime, &new_inventory()));
-    let opened = opened(request(&mut runtime, &new_inventory()));
+    let separately_created = opened(request(
+        &mut separately_created_runtime,
+        &new_inventory(SECOND_OCCURRENCE),
+    ));
+    let opened = opened(request(&mut runtime, &new_inventory(OCCURRENCE)));
     assert_eq!(opened.bootstrap.title, "Inventory");
     assert_eq!(opened.table.columns.len(), 4);
     assert_opaque_table_and_column_ids(&opened.table);
@@ -322,7 +326,7 @@ fn invalid_or_over_capacity_creation_does_not_replace_or_dirty_the_current_occur
 #[test]
 fn typed_invalid_paste_and_stale_first_edit_preserve_the_new_inventory_occurrence() {
     let mut runtime = None;
-    let opened = opened(request(&mut runtime, &new_inventory()));
+    let opened = opened(request(&mut runtime, &new_inventory(OCCURRENCE)));
     let initial = table(&mut runtime, &opened.table.collection.id);
     let first = published(request(
         &mut runtime,
