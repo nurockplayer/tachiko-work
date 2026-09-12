@@ -101,7 +101,8 @@ separate implementation Issue to become Ready.
 
 ### Acceptance-first preparation and handoff
 
-Origin: [Issue #307](https://github.com/nurockplayer/tachiko-work/issues/307).
+Origin: [Issue #307](https://github.com/nurockplayer/tachiko-work/issues/307);
+amended by [Issue #334](https://github.com/nurockplayer/tachiko-work/issues/334).
 The Steward authors the specification and bounded executable acceptance tests;
 the delivery agent implements the product and writes its own unit tests. An
 instruction to the implementer to invent all acceptance assertions is not an

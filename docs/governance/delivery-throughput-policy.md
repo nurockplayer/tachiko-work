@@ -142,7 +142,7 @@ risk-tier review rules remain applicable.
 
 ## Rollout
 
-Apply this policy prospectively to newly Readied work and at the next material checkpoint of already active lanes. Do not restart sound active work solely to rename its risk class.
+Apply this policy prospectively to newly Readied work and at the next material checkpoint of already active lanes. Do not restart a sound active PR merely to combine it with another lane, rename it, or reclassify its risk.
 
 Re-evaluate queued or pre-Ready work before activation. Combine slices only when
 the anti-fragmentation conditions are met; do not combine Guarded semantic,
