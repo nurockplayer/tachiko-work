@@ -6,6 +6,11 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- The experimental Designer consumer kit is built from one captured Git commit
+  and includes an exact asset digest inventory, capability names, and existing
+  license notices. Packaging rejects a dirty checkout and publishes only to an
+  absent destination using an atomic no-replace rename.
+
 - The browser Designer can export the exact native Driver Tracker profile as
   values-only CSV or typed XLSX for 0–128 current rows. This outbound-only path
   preserves stable row mapping and supported cell styles without fabricating

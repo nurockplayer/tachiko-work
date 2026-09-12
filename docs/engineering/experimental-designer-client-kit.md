@@ -12,16 +12,21 @@ formulas, validates candidates, or owns canonical state.
 
 ## Export and vendor the kit
 
-From a clean Tachiko Work checkout with Rust, `wasm32-unknown-unknown`, and pnpm
-11.25.0 installed:
+From a fully clean Tachiko Work checkout with Rust, `wasm32-unknown-unknown`, a
+C compiler, and pnpm 11.25.0 installed:
 
 ```sh
 bash scripts/export-experimental-designer-client.sh \
   /path/to/external-ui/vendor/tachiko
 ```
 
-The destination must be absent or empty. The command compiles and copies one
-self-contained browser kit:
+The destination must be absent. The exporter rejects staged, modified, or
+untracked source files, resolves the full Git commit ID, materializes and
+verifies that committed tree, and builds only from that private snapshot. It
+then publishes a completed kit with a platform no-replace rename; if another
+writer creates the destination first, the export fails without replacing it.
+
+The command compiles and copies one self-contained browser kit:
 
 ```text
 vendor/tachiko/
@@ -32,11 +37,20 @@ vendor/tachiko/
 ├── host/                         # generated private support modules
 ├── runtime/                      # generated private support modules
 ├── package.json                  # ESM/artifact metadata; private, unpublished
-└── README.md                     # instability and authority boundary
+├── README.md                     # instability and authority boundary
+├── notices/                       # copied existing project and third-party notices
+└── artifact-manifest.json         # source identity and SHA-256 asset inventory
 ```
 
 Keep the directory together and import only `experimental-client.js`. Do not
-call the Worker support modules or WASM exports directly.
+call the Worker support modules or WASM exports directly. Verify the manifest
+before consuming the kit: it lists every regular file other than the manifest
+itself, rejects undeclared assets, records the full source commit without
+requiring a remote link, names the currently exposed client methods, and names
+the copied notices. It is an artifact integrity record, not a cross-toolchain
+reproducibility or compatibility claim. The current method inventory records
+the experimental artifact surface only; it does not make project bytes a `.ro`
+claim or add portable-format, canonical-storage, or occurrence capabilities.
 
 ## Open Product Gap and render the first table
 

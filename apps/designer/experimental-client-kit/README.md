@@ -9,6 +9,13 @@ Keep this directory intact. `experimental-client.js` is the only intended
 entry; its neighboring Worker modules and `designer_runtime.wasm` are private
 runtime assets. Do not import those assets directly or call the raw WASM ABI.
 
+`artifact-manifest.json` records the exact Tachiko Work commit, every packaged
+file's SHA-256 digest, the one intended entry, the current exposed client
+method inventory, and copied license notices. Keep the manifest and `notices/`
+directory with the kit. The manifest identifies the captured source used for
+this build; it does not claim that different machines or toolchains produce
+byte-identical output.
+
 ```ts
 import {
   createExperimentalDesignerClient,
