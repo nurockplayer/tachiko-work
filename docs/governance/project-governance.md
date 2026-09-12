@@ -101,7 +101,8 @@ separate implementation Issue to become Ready.
 
 ### Acceptance-first preparation and handoff
 
-Origin: [Issue #307](https://github.com/nurockplayer/tachiko-work/issues/307).
+Origin: [Issue #307](https://github.com/nurockplayer/tachiko-work/issues/307);
+amended by [Issue #334](https://github.com/nurockplayer/tachiko-work/issues/334).
 The Steward authors the specification and bounded executable acceptance tests;
 the delivery agent implements the product and writes its own unit tests. An
 instruction to the implementer to invent all acceptance assertions is not an
@@ -142,15 +143,16 @@ product tests for these cases. A justified exception changes the preparation
 method, not the required product behavior or final merge/release gates. Real-user
 or external-tool evidence remains unverified until actually obtained.
 
-The Steward may prepare a tests-only branch before Ready. Do not open the
-implementation PR before the Issue is Ready. After Ready, retain that seed on
-the one delivery branch and open the one draft implementation PR; the delivery
-agent then adds production implementation and applicable unit-test commits there.
+The Steward may prepare a tests-only branch before Ready and may open one Draft
+PR solely to expose Steward-owned acceptance/evidence for review. That Draft
+does not authorize production mutation. After Ready, retain and reuse that exact
+branch and Draft PR for production implementation and applicable unit-test
+commits; if no pre-Ready Draft exists, open the one draft implementation PR then.
 Preserve seed provenance and any accepted amendments across ordinary non-force
 updates. Never merge a knowingly failing seed to `main`, report expected failure
 as PASS, or use skip/expected-failure annotations or runner changes to manufacture
-green acceptance. A prepared seed branch does not itself grant production
-authority.
+green acceptance. A prepared seed branch or Draft PR does not itself grant
+production authority.
 
 ### Challenges and acceptance changes
 
@@ -197,7 +199,7 @@ Each Ready Issue uses one independently reviewable PR:
 
 ```text
 live main + Ready Issue + acceptance seed or applicable evidence baseline
-  -> continue prepared seed branch / open one draft PR after Ready
+  -> reuse a pre-Ready Steward acceptance/evidence Draft PR, or open one Draft PR
   -> confirm baseline / implement / applicable unit test
   -> local review + repository gates
   -> hosted review / CI on that PR

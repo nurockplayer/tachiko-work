@@ -4,7 +4,8 @@ This policy refines the issue-driven repository delivery workflow in
 [`project-governance.md`](project-governance.md#repository-delivery-workflow).
 It does not replace that workflow or its one-Ready-Issue -> one-PR rule.
 
-Origin: [Issue #294](https://github.com/nurockplayer/tachiko-work/issues/294)
+Origin: [Issue #294](https://github.com/nurockplayer/tachiko-work/issues/294);
+amended by [Issue #334](https://github.com/nurockplayer/tachiko-work/issues/334).
 
 ## Purpose
 
@@ -20,6 +21,19 @@ The governing principle is:
 A parent/product Issue may coordinate several child implementation Issues. Each
 Ready child still owns exactly one independently reviewable PR under the
 canonical delivery workflow.
+
+## Anti-fragmentation floor
+
+Do not create another Ready Issue or PR for an otherwise coherent vertical slice
+merely because its UI, runtime adapter, tests, documentation, or fixtures live
+in different files; it has several mechanically related implementation steps;
+an in-scope defect appears while proving the same acceptance journey; or agents
+could theoretically work on parts in parallel.
+
+Keep the work in one Issue/PR when it has one user-visible outcome, one primary
+reviewer mental model, one compatible risk class, and splitting would not
+materially improve failure or rollback isolation. The size signals below remain
+re-evaluation ceilings, not targets. This floor does not permit an oversized PR.
 
 ## Pre-Ready decomposition gate
 
@@ -71,8 +85,9 @@ correctness or reviewability rather than improve it.
 Keeping a proposed change above a strong size signal in one Issue/PR is
 acceptable only when the work is still one coherent review unit and the
 implementation Issue records the justification **before it is marked Ready**.
-PR-side justification alone cannot satisfy this pre-Ready exception because the
-canonical delivery workflow opens the implementation PR only after Ready.
+PR-side justification alone cannot satisfy this pre-Ready exception. A Draft PR
+may expose Steward-owned acceptance/evidence before Ready, but it does not
+establish production readiness.
 Typical bounded exceptions include:
 
 - generated or machine-maintained artifacts;
@@ -87,6 +102,30 @@ and Steward disposition in the active Issue/PR handoff context before continuing
 under the unexpected-growth procedure below.
 
 "The agent can implement it in one run" is not a justification.
+
+## Fast maintenance batches
+
+For **Fast** risk only, the Steward may use one bounded maintenance/batch Issue
+instead of several micro-Issues when the batch:
+
+- contains only items that touch the same subsystem or public-presence surface;
+- contains only isolated, reversible items with no Guarded trigger;
+- shares one reviewer mental model and validation route;
+- as a whole remains comfortably below the size signals above; and
+- names and independently checks each item in the Issue and PR.
+
+A batch must not hide unrelated product decisions, semantic or storage behavior,
+security work, migration, import/export correctness, or other Guarded work.
+
+## Findings within an active PR
+
+A reviewer finding required to satisfy the active Issue's existing acceptance or
+authority stays in the active PR. Do not create a follow-up Issue or PR merely
+to reduce the current diff or make a dashboard look cleaner.
+
+Create follow-up work only for a genuinely adjacent, independently valuable
+concern after explicit scope reconciliation. A follow-up never by itself removes
+an existing acceptance requirement from the active Issue.
 
 ## Unexpected growth after Ready
 

@@ -2,7 +2,8 @@
 
 Status: Accepted governance policy when merged
 
-Decision issue: [#307](https://github.com/nurockplayer/tachiko-work/issues/307)
+Decision issue: [#307](https://github.com/nurockplayer/tachiko-work/issues/307);
+amended by [#334](https://github.com/nurockplayer/tachiko-work/issues/334).
 
 ## Purpose
 
@@ -120,10 +121,40 @@ The Project Steward owns the bounded specification and executable acceptance han
 
 This split is intended to reduce implementation search space: the delivery agent should usually be able to drive from a concrete failing/target acceptance boundary to a passing exact head without inventing the product contract during implementation.
 
+## Single-lane acceptance and implementation
+
+For one Ready implementation slice, Steward acceptance and delivery
+implementation normally share one eventual PR. Do not merge a standalone
+acceptance-only PR and then open a second implementation PR for the same slice
+by default.
+
+Before Ready, the Steward may open a Draft PR solely to expose Steward-owned
+acceptance/evidence for review. Production mutation remains prohibited until the
+Ready gate is satisfied. After promotion, reuse that exact PR for production
+implementation, applicable unit tests, validation, and review rather than
+opening a successor implementation PR.
+
+A separate acceptance PR is justified only when the acceptance artifact is
+independently valuable durable repository state that must land before
+implementation, or when the Steward explicitly records a Guarded sequencing
+reason. All branch protection, exact-head validation, known-blocker, and
+risk-tier review rules remain applicable.
+
 ## Rollout
 
-Apply this policy prospectively to newly Readied work and at the next material checkpoint of already active lanes. Do not restart sound active work solely to rename its risk class.
+Apply this policy prospectively to newly Readied work and at the next material checkpoint of already active lanes. Do not restart a sound active PR merely to combine it with another lane, rename it, or reclassify its risk.
+
+Re-evaluate queued or pre-Ready work before activation. Combine slices only when
+the anti-fragmentation conditions are met; do not combine Guarded semantic,
+schema, or storage slices merely to reduce PR count.
 
 Existing repository authority remains in force. Where an older Issue prompt hard-codes a stronger review or validation route, obey that Issue until the Project Steward explicitly reconciles it; do not silently downgrade an already-dispatched contract.
 
 After rollout, prefer measuring product throughput by completed user-visible capability and milestone convergence, not by raw Issue count or agent activity.
+
+For the next 20 completed implementation or maintenance outcomes, record a
+lightweight comparison of PRs per shipped outcome, median Ready-to-merge elapsed
+time, substantive review findings, and reverts or post-merge correctness
+regressions. Success requires materially less PR/coordination overhead without
+an observed increase in escaped correctness or data-integrity failures; raw
+PR-count reduction alone is not success.
