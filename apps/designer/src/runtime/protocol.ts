@@ -160,7 +160,7 @@ export type DesignerResponse =
   | { type: "project_exported"; payload: ProjectExportProjection }
   | { type: "canonical_tree_exported"; payload: ProjectExportProjection }
   | { type: "portable_ro_exported"; payload: ProjectExportProjection }
-  | { type: "portable_ro_verified"; payload: { accepted: true } }
+  | { type: "portable_ro_verified"; payload: { accepted: boolean } }
   | { type: "occurrence_observed"; payload: OccurrenceProjection };
 
 export type DesignerWireReply =

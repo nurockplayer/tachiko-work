@@ -3,7 +3,6 @@ import { projectTransferToEntries } from "../host/project-transfer.ts";
 import type {
   CanonicalTreeExport,
   DesignerRequest,
-  OccurrenceProjection,
   ProjectExport,
   DesignerWireReply,
 } from "./protocol.ts";

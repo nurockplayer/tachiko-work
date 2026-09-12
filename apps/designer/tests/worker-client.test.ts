@@ -55,7 +55,7 @@ describe("Designer project inspection", () => {
 });
 
 describe("Designer canonical and portable storage bridge", () => {
-  it("keeps canonical tree entries distinct from genuine portable .ro bytes", async () => {
+  it("keeps canonical tree entries distinct from genuine portable .ro bytes and fails closed on rejected verification", async () => {
     const { WorkerDesignerClient } = await import("../src/runtime/worker-client.ts");
     let receive: ((event: MessageEvent) => void) | undefined;
     const requests: Array<{ id: number; kind: string; bytes?: ArrayBuffer }> = [];
@@ -67,6 +67,8 @@ describe("Designer canonical and portable storage bridge", () => {
           receive?.({ data: { id: request.id, status: "canonical_tree_exported", export: { revision: "resident/0", files: [{ path: "manifest.json", bytes: new ArrayBuffer(1) }] } } } as MessageEvent);
         } else if (request.kind === "export_portable_ro") {
           receive?.({ data: { id: request.id, status: "portable_ro_exported", export: { revision: "resident/0", bytes: new Uint8Array([0x50, 0x4b, 3, 4]).buffer } } } as MessageEvent);
+        } else if (request.kind === "verify_portable_ro") {
+          receive?.({ data: { id: request.id, status: "ok", response: { type: "portable_ro_verified", payload: { accepted: false } } } } as MessageEvent);
         }
       },
     } as unknown as Worker;
@@ -76,11 +78,13 @@ describe("Designer canonical and portable storage bridge", () => {
       revision: "resident/0",
       files: [{ path: "manifest.json" }],
     });
-    await expect(client.exportPortableRo("resident/0")).resolves.toMatchObject({
+    const portable = await client.exportPortableRo("resident/0");
+    expect(portable).toMatchObject({
       revision: "resident/0",
-      bytes: expect.any(ArrayBuffer),
     });
-    expect(requests.map(request => request.kind)).toEqual(["export_canonical_tree", "export_portable_ro"]);
+    expect(portable.bytes).toBeInstanceOf(ArrayBuffer);
+    await expect(client.verifyPortableRo(new ArrayBuffer(1))).rejects.toThrow("Expected portable .ro verification, received 'ok'.");
+    expect(requests.map(request => request.kind)).toEqual(["export_canonical_tree", "export_portable_ro", "verify_portable_ro"]);
   });
 
   it("uses fresh host identity for portable open and reads the runtime occurrence projection", async () => {
