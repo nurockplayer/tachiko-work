@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import type { DesignerWireReply } from "../src/runtime/protocol.ts";
 
 const shortcut = process.platform === "darwin" ? "Meta" : "Control";
@@ -44,14 +44,16 @@ async function wasmRequest(request: unknown): Promise<DesignerWireReply> {
   return JSON.parse(decoder.decode(new Uint8Array(abi.memory.buffer, abi.tachiko_designer_response_ptr(), abi.tachiko_designer_response_len()))) as DesignerWireReply;
 }
 
-async function createInventory(page: Page): Promise<void> {
-  await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Moonfall Balance" })).toBeVisible();
+async function openNewTableDialog(page: Page) {
   const newTable = page.getByRole("button", { name: "New Table", exact: true });
   await expect(newTable).toBeVisible();
   await newTable.click();
   const dialog = page.getByRole("dialog", { name: "New table", exact: true });
   await expect(dialog).toBeVisible();
+  return dialog;
+}
+
+async function fillInventory(dialog: Locator): Promise<void> {
   await dialog.getByLabel("Table name", { exact: true }).fill("Inventory");
   for (const [index, name, type] of [
     [0, "item", "Text"],
@@ -63,8 +65,23 @@ async function createInventory(page: Page): Promise<void> {
     await dialog.getByLabel("Column name", { exact: true }).nth(index).fill(name);
     await dialog.getByLabel("Column type", { exact: true }).nth(index).selectOption({ label: type });
   }
+}
+
+async function createInventory(page: Page): Promise<void> {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Moonfall Balance" })).toBeVisible();
+  const dialog = await openNewTableDialog(page);
+  await fillInventory(dialog);
   await dialog.getByRole("button", { name: "Create table", exact: true }).click();
   await expect(page.getByRole("grid", { name: "Inventory cells", exact: true })).toBeVisible();
+}
+
+async function createDirtyTracker(page: Page): Promise<void> {
+  await page.goto("/");
+  page.once("dialog", dialog => dialog.accept());
+  await page.getByRole("button", { name: "New Tracker", exact: true }).click();
+  await expect(page.getByRole("grid", { name: "Tracker cells", exact: true })).toBeVisible();
+  await expect(page.getByTestId("durability")).toHaveAttribute("data-dirty", "true");
 }
 
 test("Driver creates Inventory, pastes typed rows, saves, reopens, and continues the same table", async ({ page }) => {
@@ -91,11 +108,7 @@ test("Driver creates Inventory, pastes typed rows, saves, reopens, and continues
 });
 
 test("cancelled New Table preserves a dirty current occurrence", async ({ page }) => {
-  await page.goto("/");
-  page.once("dialog", dialog => dialog.accept());
-  await page.getByRole("button", { name: "New Tracker", exact: true }).click();
-  await expect(page.getByRole("grid", { name: "Tracker cells", exact: true })).toBeVisible();
-  await expect(page.getByTestId("durability")).toHaveAttribute("data-dirty", "true");
+  await createDirtyTracker(page);
 
   const confirmation = page.waitForEvent("dialog");
   await page.getByRole("button", { name: "New Table", exact: true }).click();
@@ -103,6 +116,67 @@ test("cancelled New Table preserves a dirty current occurrence", async ({ page }
 
   await expect(page.getByRole("grid", { name: "Tracker cells", exact: true })).toBeVisible();
   await expect(page.getByTestId("durability")).toHaveAttribute("data-dirty", "true");
+});
+
+test("invalid New Table candidate preserves a dirty current occurrence", async ({ page }) => {
+  await createDirtyTracker(page);
+
+  page.once("dialog", dialog => dialog.accept());
+  const dialog = await openNewTableDialog(page);
+  await dialog.getByLabel("Table name", { exact: true }).fill("Inventory");
+  await dialog.getByLabel("Column name", { exact: true }).nth(0).fill("item");
+  await dialog.getByRole("button", { name: "Add column", exact: true }).click();
+  await dialog.getByLabel("Column name", { exact: true }).nth(1).fill("item");
+  await dialog.getByRole("button", { name: "Create table", exact: true }).click();
+
+  await expect(page.getByRole("alert")).toContainText(/duplicate|invalid/i);
+  await expect(page.getByRole("grid", { name: "Tracker cells", exact: true })).toBeVisible();
+  await expect(page.getByTestId("durability")).toHaveAttribute("data-dirty", "true");
+});
+
+test("New Table serializes other project actions while candidate admission is in flight", async ({ page }) => {
+  await page.addInitScript(() => {
+    const NativeWorker = window.Worker;
+    let release: (() => void) | undefined;
+    class DelayedNewTableWorker extends NativeWorker {
+      postMessage(message: unknown, transfer: Transferable[]): void;
+      postMessage(message: unknown, options?: StructuredSerializeOptions): void;
+      postMessage(message: unknown, transferOrOptions?: Transferable[] | StructuredSerializeOptions): void {
+        const candidate = message as { kind?: string; request?: { type?: string } };
+        const dispatch = (): void => {
+          if (Array.isArray(transferOrOptions)) super.postMessage(message, transferOrOptions);
+          else super.postMessage(message, transferOrOptions);
+        };
+        if (candidate.kind === "command" && candidate.request?.type === "new_table") {
+          release = dispatch;
+          (window as typeof window & { __newTableHeld?: boolean }).__newTableHeld = true;
+          return;
+        }
+        dispatch();
+      }
+    }
+    window.Worker = DelayedNewTableWorker;
+    (window as typeof window & { __releaseNewTable?: () => void }).__releaseNewTable = () => {
+      if (release === undefined) throw new Error("New Table request was not held");
+      const dispatch = release;
+      release = undefined;
+      dispatch();
+    };
+  });
+
+  await page.goto("/");
+  const dialog = await openNewTableDialog(page);
+  await fillInventory(dialog);
+  await dialog.getByRole("button", { name: "Create table", exact: true }).click();
+  await page.waitForFunction(() => (window as typeof window & { __newTableHeld?: boolean }).__newTableHeld === true);
+
+  await expect(page.getByRole("button", { name: "New Tracker", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+  await page.evaluate(() => {
+    const release = (window as typeof window & { __releaseNewTable?: () => void }).__releaseNewTable;
+    if (release === undefined) throw new Error("New Table release hook is unavailable");
+    release();
+  });
 });
 
 test("invalid New Table candidates leave the current saved occurrence and durability state unchanged", async ({ page }) => {
