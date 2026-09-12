@@ -236,6 +236,12 @@ fn invalid_or_over_capacity_creation_does_not_replace_or_dirty_the_current_occur
             "type": "new_table",
             "occurrence_id": OCCURRENCE,
             "name": "Inventory",
+            "columns": [{"name": "", "field_type": "text"}],
+        }),
+        json!({
+            "type": "new_table",
+            "occurrence_id": OCCURRENCE,
+            "name": "Inventory",
             "columns": [
                 {"name": "item", "field_type": "text"},
                 {"name": "item", "field_type": "number"},
