@@ -125,12 +125,52 @@ fn expected_inventory_values() -> Vec<Vec<Option<StoredValueProjection>>> {
     ]
 }
 
+fn assert_opaque_table_and_column_ids(table: &TableProjection) {
+    assert_ne!(
+        table.collection.id, table.collection.key,
+        "table identity must not use the user-facing table label",
+    );
+    assert!(
+        table.columns.iter().all(|column| column.id != column.key),
+        "field identity must not use a user-facing column label",
+    );
+}
+
+fn assert_fresh_creation_generates_distinct_ids(first: &TableProjection, second: &TableProjection) {
+    assert_eq!(first.collection.key, second.collection.key);
+    assert_ne!(first.collection.id, second.collection.id);
+    assert_eq!(
+        first
+            .columns
+            .iter()
+            .map(|column| &column.key)
+            .collect::<Vec<_>>(),
+        second
+            .columns
+            .iter()
+            .map(|column| &column.key)
+            .collect::<Vec<_>>(),
+    );
+    assert!(
+        first
+            .columns
+            .iter()
+            .zip(&second.columns)
+            .all(|(first, second)| first.id != second.id),
+        "each independently admitted candidate must receive new semantic field IDs",
+    );
+}
+
 #[test]
 fn inventory_creation_paste_and_reopen_preserve_typed_values_order_and_semantic_ids() {
     let mut runtime = None;
+    let mut separately_created_runtime = None;
+    let separately_created = opened(request(&mut separately_created_runtime, &new_inventory()));
     let opened = opened(request(&mut runtime, &new_inventory()));
     assert_eq!(opened.bootstrap.title, "Inventory");
     assert_eq!(opened.table.columns.len(), 4);
+    assert_opaque_table_and_column_ids(&opened.table);
+    assert_fresh_creation_generates_distinct_ids(&opened.table, &separately_created.table);
     assert_eq!(
         opened
             .table
@@ -200,6 +240,7 @@ fn inventory_creation_paste_and_reopen_preserve_typed_values_order_and_semantic_
     tachiko_designer_runtime::close_project(&mut runtime);
     let reopened = tachiko_designer_runtime::open_project(&mut runtime, &bytes, OCCURRENCE)
         .expect("saved Inventory must reopen through the actual project boundary");
+    assert_eq!(reopened.table.collection, before_close.collection);
     assert_eq!(reopened.table.columns, before_close.columns);
     assert_eq!(reopened.table.rows, before_close.rows);
 
