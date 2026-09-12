@@ -17,11 +17,6 @@ export const EXPERIMENTAL_CLIENT_KIT_ID = "tachiko-designer-client-kit/v0-experi
 
 const CANONICAL_PROJECT_FILE_COUNT = 18;
 const MAX_PROJECT_TRANSFER_BYTES = 64 * 1024 * 1024;
-const CANONICAL_PROJECT_PATHS = new Set([
-  "manifest.json",
-  "schemas.json",
-  ..."0123456789abcdef".split("").map((digit) => `entities/${digit}.jsonl`),
-]);
 
 /**
  * Public client surface exposed by the experimental kit.
@@ -48,8 +43,8 @@ export interface ExperimentalDesignerClient extends DesignerClient {
 export function preflightCanonicalProjectEntries(
   entries: readonly CanonicalProjectTransferEntry[],
 ): void {
-  if (entries.length !== CANONICAL_PROJECT_FILE_COUNT) {
-    throw new Error("A canonical .roproj/v1 directory must contain exactly 18 files.");
+  if (entries.length > CANONICAL_PROJECT_FILE_COUNT) {
+    throw new Error("A canonical .roproj/v1 directory cannot contain more than 18 files.");
   }
   const paths = new Set<string>();
   let total = 8 + 4;
@@ -66,11 +61,6 @@ export function preflightCanonicalProjectEntries(
     total += 2 + 4 + pathBytes.byteLength + bytes.byteLength;
     if (total > MAX_PROJECT_TRANSFER_BYTES) {
       throw new Error("The selected project exceeds the 64 MiB host transfer boundary.");
-    }
-  }
-  for (const path of CANONICAL_PROJECT_PATHS) {
-    if (!paths.has(path)) {
-      throw new Error("The canonical project entries do not contain the complete .roproj/v1 tree.");
     }
   }
 }
