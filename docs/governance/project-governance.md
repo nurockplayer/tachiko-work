@@ -57,6 +57,13 @@ This section is the canonical operating contract for issue-driven repository
 delivery. The role names describe responsibilities and do not depend on a
 particular person, AI provider, or implementation tool.
 
+**Stewarded Continuous Delivery (SCD)** names this existing operating mode:
+Steward-owned readiness and acceptance, coordinated bounded implementation,
+independent exact-head review, material GitHub checkpoints, and live-state
+recalibration before successor work. The name adds no authority or rules;
+existing risk, parallel-lane, merge, and stop policies remain unchanged.
+Naming record: [#370](https://github.com/nurockplayer/tachiko-work/issues/370).
+
 Origin: [Issue #141](https://github.com/nurockplayer/tachiko-work/issues/141)
 
 ### Responsibilities
