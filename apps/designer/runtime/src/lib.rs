@@ -824,6 +824,11 @@ impl DesignerRuntime {
     /// The returned bytes use the app-private host/WASM transfer record. The
     /// bridge decodes that record only into opaque path/byte entries; callers
     /// must not present it as a portable `.ro` artifact.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stale-revision, storage, or bounded-transfer failure without
+    /// mutating the resident occurrence.
     pub fn export_canonical_tree(
         &self,
         expected_revision: &str,
@@ -838,6 +843,11 @@ impl DesignerRuntime {
 
     /// Export the exact current snapshot as a genuine portable-package/v1
     /// `.ro` artifact.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stale-revision, storage, or bounded-transfer failure without
+    /// mutating the resident occurrence.
     pub fn export_portable_ro(
         &self,
         expected_revision: &str,
@@ -1991,6 +2001,11 @@ pub fn open_local_document(
 ///
 /// This accepts only the genuine storage codec. It does not widen the
 /// app-private project-transfer format used by [`open_project`].
+///
+/// # Errors
+///
+/// Returns storage, profile, or projection failures while preserving the
+/// current resident occurrence.
 pub fn open_portable_ro(
     runtime: &mut Option<DesignerRuntime>,
     input: &[u8],
@@ -2006,6 +2021,11 @@ pub fn open_portable_ro(
 
 /// Completely verify one portable-package/v1 `.ro` artifact without changing
 /// the resident occurrence.
+///
+/// # Errors
+///
+/// Returns a bounded-transfer or storage failure without changing the resident
+/// occurrence.
 pub fn verify_portable_ro(input: &[u8]) -> Result<(), DesignerError> {
     enforce_project_transfer_limit(input.len())?;
     decode_portable_package_v1(input)?;
