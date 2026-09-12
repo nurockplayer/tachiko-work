@@ -50,9 +50,12 @@ describe("public canonical-entry preflight", () => {
     ["over file count", () => [...entries(), {path: "entities/extra.jsonl", bytes: new ArrayBuffer(0)}]],
     ["over transfer size", () => { const value = entries(); value[17] = {path: "entities/f.jsonl", bytes: new ArrayBuffer(64 * 1024 * 1024)}; return value; }],
   ])("rejects %s before dispatch and leaves the resident occurrence unchanged", async (_name, makeEntries) => {
-    const openProject = vi.fn(async () => opened("unexpected"));
+    let resident = "resident/0";
+    const openProject = vi.fn(async () => {
+      resident = "unexpected";
+      return opened(resident);
+    });
     const client = {openProject} as unknown as Pick<ExperimentalDesignerClient, "openProject">;
-    const resident = "resident/0";
 
     await expect(openCanonicalTreeFromEntries(client, makeEntries())).rejects.toThrow();
 

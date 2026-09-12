@@ -1,6 +1,7 @@
 import {
   createExperimentalDesignerClient,
-  openCanonicalTreeFromEntries,
+  preflightCanonicalProjectEntries,
+  projectTransferFromEntries,
   type CanonicalProjectTransferEntry,
   type CanonicalTreeExport,
   type OccurrenceProjection,
@@ -39,7 +40,9 @@ export async function exercisePackagedCanonicalPreflight(
 ): Promise<OpenedProjection> {
   const client = createExperimentalDesignerClient();
   try {
-    return await openCanonicalTreeFromEntries(client, entries);
+    preflightCanonicalProjectEntries(entries);
+    const transfer = projectTransferFromEntries(entries);
+    return await client.openProject(transfer);
   } finally {
     await client.closeProject().catch(() => undefined);
     client.close();
