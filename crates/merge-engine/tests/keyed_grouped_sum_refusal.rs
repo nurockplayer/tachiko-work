@@ -1,7 +1,7 @@
 use tachiko_merge_engine::{MergeOutcome, merge};
 use tachiko_semantic_core::{
-    Document, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
-    KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,
+    Document, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding,
+    KeyedGroupedSumProductsBinding,
 };
 
 fn definition(id: &str, suffix: &str) -> KeyedGroupedSumDefinition {

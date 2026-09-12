@@ -165,6 +165,7 @@ fn synthetic_document(entity_count: usize) -> Document {
         title: format!("Issue 95 synthetic {entity_count}"),
         schemas,
         entities,
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }
 

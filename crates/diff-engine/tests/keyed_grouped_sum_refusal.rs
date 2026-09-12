@@ -1,7 +1,7 @@
 use tachiko_diff_engine::{DiffError, diff};
 use tachiko_semantic_core::{
-    Document, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
-    KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,
+    Document, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding,
+    KeyedGroupedSumProductsBinding,
 };
 
 fn definition(id: &str, suffix: &str) -> KeyedGroupedSumDefinition {

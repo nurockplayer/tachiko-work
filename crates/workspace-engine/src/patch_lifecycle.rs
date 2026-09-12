@@ -2919,6 +2919,7 @@ mod tests {
             title: "Document".to_owned(),
             schemas: BTreeMap::new(),
             entities: BTreeMap::new(),
+            keyed_grouped_sum_definitions: BTreeMap::new(),
         };
 
         let error = lifecycle

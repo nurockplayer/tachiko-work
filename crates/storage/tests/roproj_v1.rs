@@ -110,6 +110,7 @@ fn frozen_roproj_v1_rejects_date_instead_of_widening_the_contract() {
             },
         )]),
         entities: BTreeMap::new(),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     };
 
     let error = encode_roproj_v1(&document).unwrap_err();
@@ -948,6 +949,7 @@ fn character_document() -> Document {
                 ]),
             },
         )]),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }
 
@@ -1039,6 +1041,7 @@ fn full_shape_document() -> Document {
             (EntityId::from("entity-a"), entity_a),
             (EntityId::from("entity-b"), entity_b),
         ]),
+        keyed_grouped_sum_definitions: BTreeMap::new(),
     }
 }
 

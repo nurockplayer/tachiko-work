@@ -7,8 +7,8 @@ use std::collections::BTreeMap;
 
 use tachiko_formula_engine::{Calculation, CalculationOutcome, calculate_complete};
 use tachiko_semantic_core::{
-    Document, Entity, EntityId, FieldId, FieldRef, KeyedGroupedSumDefinition,
-    KeyedGroupedSumDefinitionId, Number, Value, validate_keyed_grouped_sum_definitions,
+    Document, Entity, EntityId, FieldId, FieldRef, KeyedGroupedSumDefinitionId, Number, Value,
+    validate_keyed_grouped_sum_definitions,
 };
 
 /// Provisional finite profile for a complete group-map projection.
@@ -86,6 +86,9 @@ pub enum KeyedGroupedSumOutcome {
 /// Exact Text lookup is ordinary Rust `String` equality over decoded Unicode
 /// scalar sequences: no normalization, case folding, locale handling, wildcard,
 /// or numeric coercion occurs.
+// The evaluation pipeline is intentionally linear and cohesive; extracting
+// helpers solely to satisfy the line-count lint would broaden this change.
+#[allow(clippy::too_many_lines)]
 #[must_use]
 pub fn evaluate_keyed_grouped_sum(
     document: &Document,
@@ -149,10 +152,7 @@ pub fn evaluate_keyed_grouped_sum(
                 continue;
             }
         };
-        let candidates = product_index
-            .get(lookup_key)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
+        let candidates = product_index.get(lookup_key).map_or(&[][..], Vec::as_slice);
         match candidates {
             [] => diagnostics.push(KeyedGroupedSumDiagnostic::lookup(
                 LOOKUP_MISSING_KEY,
@@ -263,7 +263,7 @@ pub fn evaluate_keyed_grouped_sum(
     let mut groups = Vec::with_capacity(contributions.len());
     for (category, mut values) in contributions {
         values.sort_unstable();
-        let mut sum = Number::new(0.0).expect("semantic zero is finite");
+        let mut sum = Number::default();
         for value in values {
             let Ok(next) = Number::new(sum.get() + value.get()) else {
                 diagnostics.push(KeyedGroupedSumDiagnostic::definition(NUMBER_NON_FINITE));
@@ -330,16 +330,15 @@ fn number_input(
         Some(Value::Number(value)) => Some(*value),
         Some(Value::Formula(_)) => {
             let target = FieldRef::new(entity.id.clone(), field.clone());
-            match calculation.and_then(|state| state.value(&target)) {
-                Some(value) => Some(value),
-                None => {
-                    diagnostics.push(KeyedGroupedSumDiagnostic::input(
-                        FORMULA_UNAVAILABLE,
-                        &entity.id,
-                        field,
-                    ));
-                    None
-                }
+            if let Some(value) = calculation.and_then(|state| state.value(&target)) {
+                Some(value)
+            } else {
+                diagnostics.push(KeyedGroupedSumDiagnostic::input(
+                    FORMULA_UNAVAILABLE,
+                    &entity.id,
+                    field,
+                ));
+                None
             }
         }
         Some(_) => {
@@ -373,7 +372,7 @@ mod tests {
 
     use tachiko_semantic_core::{
         Document, Entity, EntityId, EntityKey, Expression, FieldDefinition, FieldId, FieldKey,
-        FieldRef, FieldType, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
+        FieldType, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
         KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, Number, Schema, SchemaId,
         SchemaKey, Value,
     };

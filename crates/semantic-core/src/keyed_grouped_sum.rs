@@ -214,14 +214,15 @@ fn require_type(
     role: KeyedGroupedSumBindingRole,
     expected: FieldType,
 ) -> Result<(), KeyedGroupedSumDefinitionError> {
-    let definition = schema
-        .fields
-        .get(field)
-        .ok_or_else(|| KeyedGroupedSumDefinitionError::MissingField {
-            role,
-            schema: schema.id.clone(),
-            field: field.clone(),
-        })?;
+    let definition =
+        schema
+            .fields
+            .get(field)
+            .ok_or_else(|| KeyedGroupedSumDefinitionError::MissingField {
+                role,
+                schema: schema.id.clone(),
+                field: field.clone(),
+            })?;
     if definition.field_type != expected {
         return Err(KeyedGroupedSumDefinitionError::WrongFieldType {
             role,

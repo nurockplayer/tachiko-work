@@ -113,10 +113,11 @@ impl CanonicalRoProjectV2 {
 ///
 /// Returns a semantic, v1-body, JSON, or v2 representation failure.
 pub fn encode(document: &Document) -> Result<CanonicalRoProjectV2, FormatError> {
-    validate_keyed_grouped_sum_definitions(document)
-        .map_err(|error| FormatError::InvalidRoProjectRepresentation {
+    validate_keyed_grouped_sum_definitions(document).map_err(|error| {
+        FormatError::InvalidRoProjectRepresentation {
             message: format!("invalid keyed grouped-sum definition: {error}"),
-        })?;
+        }
+    })?;
 
     let mut body = document.clone();
     body.keyed_grouped_sum_definitions.clear();
@@ -172,21 +173,20 @@ pub fn migrate_v1(tree: &CanonicalRoProjectV1) -> Result<CanonicalRoProjectV2, F
 }
 
 fn decode_unvalidated(tree: &CanonicalRoProjectV2) -> Result<Document, FormatError> {
-    dispatch_manifest(
-        tree.file("manifest.json")
-            .ok_or_else(|| FormatError::InvalidRoProjectRepresentation {
-                message: "canonical v2 tree is missing manifest.json".to_owned(),
-            })?,
-    )?;
+    dispatch_manifest(tree.file("manifest.json").ok_or_else(|| {
+        FormatError::InvalidRoProjectRepresentation {
+            message: "canonical v2 tree is missing manifest.json".to_owned(),
+        }
+    })?)?;
 
     let mut v1_files = ROPROJ_V1_PATHS
         .iter()
         .map(|path| {
-            let bytes = tree.file(path).ok_or_else(|| {
-                FormatError::InvalidRoProjectRepresentation {
-                    message: format!("canonical v2 tree is missing '{path}'"),
-                }
-            })?;
+            let bytes =
+                tree.file(path)
+                    .ok_or_else(|| FormatError::InvalidRoProjectRepresentation {
+                        message: format!("canonical v2 tree is missing '{path}'"),
+                    })?;
             Ok(((*path).to_owned(), bytes.to_vec()))
         })
         .collect::<Result<Vec<_>, FormatError>>()?;
@@ -194,12 +194,11 @@ fn decode_unvalidated(tree: &CanonicalRoProjectV2) -> Result<Document, FormatErr
     let v1 = CanonicalRoProjectV1::try_from_files(v1_files)?;
     let mut document = super::v1::decode(&v1)?;
 
-    let definitions = decode_definitions(
-        tree.file("definitions.json")
-            .ok_or_else(|| FormatError::InvalidRoProjectRepresentation {
-                message: "canonical v2 tree is missing definitions.json".to_owned(),
-            })?,
-    )?;
+    let definitions = decode_definitions(tree.file("definitions.json").ok_or_else(|| {
+        FormatError::InvalidRoProjectRepresentation {
+            message: "canonical v2 tree is missing definitions.json".to_owned(),
+        }
+    })?)?;
     document.keyed_grouped_sum_definitions = definitions;
     validate_keyed_grouped_sum_definitions(&document).map_err(|error| {
         FormatError::InvalidRoProjectRepresentation {
@@ -212,17 +211,19 @@ fn decode_unvalidated(tree: &CanonicalRoProjectV2) -> Result<Document, FormatErr
 fn decode_definitions(
     bytes: &[u8],
 ) -> Result<BTreeMap<KeyedGroupedSumDefinitionId, KeyedGroupedSumDefinition>, FormatError> {
-    let source = std::str::from_utf8(bytes).map_err(|source| FormatError::InvalidRoProjectUtf8 {
-        path: "definitions.json".to_owned(),
-        source,
-    })?;
+    let source =
+        std::str::from_utf8(bytes).map_err(|source| FormatError::InvalidRoProjectUtf8 {
+            path: "definitions.json".to_owned(),
+            source,
+        })?;
     inspect_roproj(source, DEFINITIONS_MAX_NESTING)
         .map_err(|error| map_frontend_error("definitions.json", error))?;
-    let definitions: Vec<KeyedGroupedSumDefinition> = serde_json::from_str(source).map_err(|error| {
-        FormatError::InvalidRoProjectRepresentation {
-            message: format!("'definitions.json' does not match .roproj/v2: {error}"),
-        }
-    })?;
+    let definitions: Vec<KeyedGroupedSumDefinition> =
+        serde_json::from_str(source).map_err(|error| {
+            FormatError::InvalidRoProjectRepresentation {
+                message: format!("'definitions.json' does not match .roproj/v2: {error}"),
+            }
+        })?;
     let mut map = BTreeMap::new();
     let mut previous: Option<KeyedGroupedSumDefinitionId> = None;
     for definition in definitions {
@@ -248,21 +249,50 @@ fn render_definitions(document: &Document) -> Result<String, FormatError> {
         .keyed_grouped_sum_definitions
         .values()
         .collect::<Vec<_>>();
-    definitions.sort_by(|left, right| left.id.as_str().as_bytes().cmp(right.id.as_str().as_bytes()));
+    definitions.sort_by(|left, right| {
+        left.id
+            .as_str()
+            .as_bytes()
+            .cmp(right.id.as_str().as_bytes())
+    });
     let mut output = serde_json::to_string_pretty(&definitions)?;
     output.push('\n');
     Ok(output)
 }
 
 fn dispatch_manifest(bytes: &[u8]) -> Result<(), FormatError> {
-    let source = std::str::from_utf8(bytes).map_err(|source| FormatError::InvalidRoProjectUtf8 {
-        path: "manifest.json".to_owned(),
-        source,
-    })?;
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Manifest {
+        format: String,
+        format_version: u32,
+        document: DocumentIdentity,
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct DocumentIdentity {
+        id: String,
+        title: String,
+    }
+
+    let source =
+        std::str::from_utf8(bytes).map_err(|source| FormatError::InvalidRoProjectUtf8 {
+            path: "manifest.json".to_owned(),
+            source,
+        })?;
     let inspection = inspect_roproj(source, MANIFEST_MAX_NESTING)
         .map_err(|error| map_frontend_error("manifest.json", error))?;
-    match inspection.format.as_deref() {
-        Some("tachiko.roproj") => {}
+    // `inspect_roproj` performs the strict duplicate/nesting pass while reading
+    // `format_version`, but its fast path does not retain the sibling `format`
+    // member. Read it from the already-validated bytes so the manifest still
+    // dispatches on the frozen v2 discriminator without weakening validation.
+    let value: serde_json::Value = serde_json::from_str(source).map_err(|error| {
+        FormatError::InvalidRoProjectRepresentation {
+            message: format!("manifest.json does not match .roproj/v2: {error}"),
+        }
+    })?;
+    match value.get("format") {
+        Some(serde_json::Value::String(format)) if format == "tachiko.roproj" => {}
         None => return Err(FormatError::RoProjectFormatMissing),
         Some(_) => return Err(FormatError::RoProjectFormatMalformed),
     }
@@ -282,20 +312,7 @@ fn dispatch_manifest(bytes: &[u8]) -> Result<(), FormatError> {
             supported: ROPROJ_V2_FORMAT_VERSION,
         });
     }
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Manifest {
-        format: String,
-        format_version: u32,
-        document: DocumentIdentity,
-    }
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct DocumentIdentity {
-        id: String,
-        title: String,
-    }
-    let manifest: Manifest = serde_json::from_str(source).map_err(|error| {
+    let manifest: Manifest = serde_json::from_value(value).map_err(|error| {
         FormatError::InvalidRoProjectRepresentation {
             message: format!("manifest.json does not match .roproj/v2: {error}"),
         }
@@ -337,10 +354,11 @@ fn manifest_v2_to_v1(bytes: &[u8]) -> Result<Vec<u8>, FormatError> {
 }
 
 fn replace_manifest_version(bytes: &[u8], from: u32, to: u32) -> Result<Vec<u8>, FormatError> {
-    let source = std::str::from_utf8(bytes).map_err(|source| FormatError::InvalidRoProjectUtf8 {
-        path: "manifest.json".to_owned(),
-        source,
-    })?;
+    let source =
+        std::str::from_utf8(bytes).map_err(|source| FormatError::InvalidRoProjectUtf8 {
+            path: "manifest.json".to_owned(),
+            source,
+        })?;
     let needle = format!("  \"format_version\": {from},\n");
     let replacement = format!("  \"format_version\": {to},\n");
     if source.matches(&needle).count() != 1 {
@@ -381,6 +399,24 @@ mod tests {
     };
 
     use super::{ROPROJ_V2_PATHS, decode, encode, migrate_v1};
+
+    #[test]
+    fn manifest_dispatch_fails_closed_without_the_v2_format_discriminator() {
+        let tree = encode(&Document::empty("doc", "title")).unwrap();
+        let mut files = tree
+            .files()
+            .iter()
+            .map(|file| (file.path().to_owned(), file.bytes().to_vec()))
+            .collect::<Vec<_>>();
+        let manifest = String::from_utf8(files[0].1.clone()).unwrap();
+        files[0].1 = manifest
+            .replacen("  \"format\": \"tachiko.roproj\",\n", "", 1)
+            .into_bytes();
+        assert!(matches!(
+            super::CanonicalRoProjectV2::try_from_files(files),
+            Err(crate::FormatError::RoProjectFormatMissing)
+        ));
+    }
 
     #[test]
     fn empty_v1_migration_preserves_body_bytes_and_adds_only_v2_members() {
